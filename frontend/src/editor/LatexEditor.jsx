@@ -9,7 +9,7 @@ import { createPortal } from "react-dom";
 import katex from "katex";
 import { escapedAt } from "./latexInput";
 import { editBarSpace } from "./EditBar";
-import { useFloatingPosition } from "../shared/ui/placement.js";
+import { useFloatingPosition, surfaceSize } from "../shared/ui/placement.js";
 import { t } from "../shared/i18n/i18n.js";
 import { guideEvents } from "../guide/events.js";
 
@@ -70,7 +70,7 @@ export function useCaretAnchored(anchor, preferAbove, deps) {
     el.style.setProperty("--caret-max-width",
       `${Math.max(0, dock ? Math.min(dock.right - dock.left, width - 16) : width - 16)}px`);
     el.style.setProperty("--caret-max-height", `${Math.max(0, height - 16)}px`);
-    const { width: w, height: h } = el.getBoundingClientRect();
+    const { width: w, height: h } = surfaceSize(el);
     const left = Math.max(x + 8, Math.min(dock ? dock.left : rect.left, x + width - w - 8));
     const fits = (t) => t >= y + 8 && t + h <= y + height - 8;
     const above = (b) => b - h - 6, below = (b) => b + 6;

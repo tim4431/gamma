@@ -29,6 +29,7 @@ import { filedIn, filingChips, folderEntries, folderSubtree, pageAttachment } fr
 import { markedParts, plainSnippet } from "./snippets";
 import { NOTES_PAGE, PDF_PAGE, TITLES_PAGE, appendNew, searchQuery } from "./searchPages";
 import { t, tn } from "../shared/i18n/i18n.js";
+import { Popover } from "../shared/ui/Surfaces";
 
 export { buildSearchRegex, normalizeQuery };
 
@@ -384,7 +385,7 @@ export default function SearchPanel({
         <span className="barLabel">{t("Search")}</span>
       </button>
       {open ? (
-        <div className="popover searchPopover">
+        <Popover className="searchPopover">
           <div className="searchRow">
             <button
               className={`searchToggle ${showDetails ? "on" : ""}`}
@@ -537,7 +538,7 @@ export default function SearchPanel({
               </>
             ) : null}
           </div>
-        </div>
+        </Popover>
       ) : null}
     </span>
   );

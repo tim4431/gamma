@@ -11,7 +11,8 @@
 // is drawn as it nears the view (comments.js laterComments).
 import React, { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { useFloatingPosition, placeFloating } from "../shared/ui/placement.js";
+import { useLeave } from "../shared/ui/leave.js";
+import { growFrom, placeFloating, surfaceSize, useFloatingPosition } from "../shared/ui/placement.js";
 import { PlusIcon, XIcon } from "../shared/ui/Icons";
 import { t, tn, T } from "../shared/i18n/i18n.js";
 import { touchTyping } from "../shared/lib/pointer.js";
@@ -74,12 +75,16 @@ export default function ThreadPopover({ target, threads, kind = "note", me, owne
   }, [focusNew]);
   const refClick = useLatestHandler(onBlockRefClick);
 
+  // Under its anchor by their right edges, growing from that corner
+  // (growFrom); with no anchor in sight, centred near the top.
   const pos = useFloatingPosition(ref, (el) => {
-    const size = el.getBoundingClientRect();
+    const size = surfaceSize(el);
     const r = anchorRect(target);
-    if (!r) return placeFloating(size, { x: (window.innerWidth - size.width) / 2, y: 80 });
-    return placeFloating(size, { x: r.right, y: r.bottom + 4, anchorRight: true, flipY: r.top - 4 });
+    if (!r) return { ...placeFloating(size, { x: (window.innerWidth - size.width) / 2, y: 80 }), origin: "50% 0" };
+    const at = placeFloating(size, { x: r.right, y: r.bottom + 4, anchorRight: true, flipY: r.top - 4 });
+    return { ...at, origin: growFrom(r.right, r.bottom + 4, at) };
   }, [target.blockId, target.anchor], { follow: true });
+  const leaveRef = useLeave("surface", ref);
 
   // A press anywhere else closes it; not one in a menu, a popup or another
   // popover (its own "⋯" menu, a field's [[, @ and "/" menus, its LaTeX
@@ -105,12 +110,12 @@ export default function ThreadPopover({ target, threads, kind = "note", me, owne
   };
   return createPortal(
     <div
-      ref={ref}
+      ref={leaveRef}
       className="popover commentPopover"
       data-popover="thread"
       role="dialog"
       aria-label={t(TITLES[kind] || TITLES.note)}
-      style={pos ? { left: pos.left, top: pos.top } : { left: 0, top: 0, visibility: "hidden" }}
+      style={pos ? { left: pos.left, top: pos.top, transformOrigin: pos.origin } : { left: 0, top: 0, visibility: "hidden" }}
       onMouseDown={(e) => e.stopPropagation()}
       onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); escape(); } }}
     >

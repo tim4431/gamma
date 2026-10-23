@@ -12,6 +12,7 @@ import { PersonAvatar } from "../collaboration/Presence";
 import { t } from "../shared/i18n/i18n.js";
 import { formatRelativeTime } from "../library/libraryUtils";
 import { inboxActor, inboxDays, inboxSentence, inboxSnippet, isUnread } from "./inboxText.js";
+import { Popover } from "../shared/ui/Surfaces";
 
 const EMPTY_TEXT = {
   unread: () => t("You're all caught up."),
@@ -61,7 +62,7 @@ export default function InboxPanel({ inbox, workspaceId, onOpen }) {
   const days = inboxDays(inbox.items, now);
   const filters = [["unread", t("Unread")], ["all", t("All")], ["archived", t("Archived")]];
   return (
-    <div className="popover inboxPopover" role="region" aria-label={t("Inbox")}>
+    <Popover className="inboxPopover" role="region" aria-label={t("Inbox")}>
       <div className="popoverTitle inboxHead">
         <span>{t("Inbox")}</span>
         <button type="button" className="uiBtn ghost sm inboxMarkAll" disabled={!inbox.unread}
@@ -89,6 +90,6 @@ export default function InboxPanel({ inbox, workspaceId, onOpen }) {
           <button type="button" className="uiBtn ghost sm inboxMore" onClick={() => inbox.loadMore()}>{t("Show older")}</button>
         ) : null}
       </div>
-    </div>
+    </Popover>
   );
 }

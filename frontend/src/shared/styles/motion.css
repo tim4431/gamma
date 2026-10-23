@@ -1,0 +1,92 @@
+/* How things move (docs/dev/ui-design.md, "Motion"): the recipes the
+   surfaces, swaps and reveals share, on the motion tokens of tokens.css.
+   A component opts in by its class; this file holds no layout and no
+   colour. main.jsx loads it after app.css, so a recipe here wins over a
+   rule there of the same weight; the reduced-motion rule in app.css ends
+   every one of them at once. */
+
+/* ---- The motions --------------------------------------------------------
+   They animate the individual scale and translate properties, never
+   transform: a surface's own transform (a centring translate) stays its
+   own, and both rest at none, so nothing a surface holds is positioned
+   against it. A keyframe list with one end plays from (or to) the
+   element's own look. */
+@keyframes surface-in { from { opacity: 0; scale: var(--scale-in); } }
+@keyframes surface-out { to { opacity: 0; scale: var(--scale-out); } }
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes fade-out { to { opacity: 0; } }
+/* A toast rises into place through a soft focus and sinks back out. */
+@keyframes rise-in { from { opacity: 0; translate: 0 var(--move-md); scale: var(--scale-in); filter: blur(var(--blur-swap)); } }
+@keyframes rise-out { to { opacity: 0; translate: 0 var(--move-md); filter: blur(var(--blur-swap)); } }
+
+/* ---- Surfaces arrive ----------------------------------------------------
+   Anchored: a menu or a popover grows from where it opens. ContextMenu
+   sets its transform-origin to the point it opens from (Menus.jsx), so a
+   menu at the cursor grows from the cursor and one under a button from
+   the button's corner; it is placed by its size without that scale
+   (placement.js surfaceSize). A popover under a topbar button stands at
+   the button's right edge, one that opens upward (.popUp) at its left. */
+.ctxMenu,
+.popover {
+  animation: surface-in var(--dur-slow) var(--ease-out);
+}
+.popover { transform-origin: top right; }
+.popover.popUp { transform-origin: bottom left; }
+/* In the compact shell a popover opens upward across the bottom bar
+   (app.css .phoneBottomBar), and on a wider one at its right end. */
+.phoneBottomBar .popover { transform-origin: bottom center; }
+@media (min-width: 701px) {
+  .phoneBottomBar .popover { transform-origin: bottom right; }
+}
+/* A flyout fades in beside its row: growing, it would make a pass down
+   the rows feel slow. */
+.ctxSubMenu { animation: fade-in var(--dur-fast); }
+
+/* Centred: a dialog's backdrop fades in and the dialog grows from its
+   middle. */
+.reportOverlay,
+.lightbox {
+  animation: fade-in var(--dur-base);
+}
+.reportOverlay > :is(.reportModal, .settingsModal),
+.lightbox > img {
+  animation: surface-in var(--dur-slow) var(--ease-out);
+}
+
+/* Tips fade in where they stand: hovering along a row of buttons shows one
+   after another, and a tip that grew would trail the pointer. The PDF
+   selection popup (.plainTip) and the caret's popups ("/", [[, @, the
+   LaTeX completion and preview) fade in quickly, so typing never waits
+   on one. */
+.inkTooltip,
+.citePreview,
+.pdfNoteTip {
+  animation: fade-in var(--dur-base);
+}
+.plainTip,
+.refPopup,
+.slashMenu,
+.mathPreviewTip,
+.latexAcPopup {
+  animation: fade-in var(--dur-fast);
+}
+
+/* Toasts rise into place: the reminder cards and the status pill. */
+.reminderCard,
+.statusPill {
+  animation: rise-in var(--dur-long) var(--ease-out);
+}
+
+/* ---- Surfaces leave -----------------------------------------------------
+   A closed surface leaves through a still copy of itself (useLeave,
+   shared/ui/leave.js) that plays its kind's way out where the surface
+   stood and then goes. The copy takes no pointer, and what it holds stands
+   still: a flyout or a spinner inside it does not start over. */
+[data-leaving] { pointer-events: none !important; }
+[data-leaving] * { animation-name: none; }
+[data-leaving="surface"] { animation: surface-out var(--dur-base) var(--ease-out) forwards; }
+[data-leaving="dialog"] { animation: fade-out var(--dur-base) forwards; }
+[data-leaving="dialog"] > :is(.reportModal, .settingsModal, img) {
+  animation: surface-out var(--dur-base) var(--ease-out) forwards;
+}
+[data-leaving="toast"] { animation: rise-out var(--dur-slow) var(--ease-out) forwards; }

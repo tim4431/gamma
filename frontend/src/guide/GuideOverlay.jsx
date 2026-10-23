@@ -20,6 +20,7 @@ import { ANCHORS, anchorElement } from "./anchors.js";
 import { keyText, resolveKey } from "./keys.js";
 import { mediaRatio } from "./media.js";
 import { CARD_W, placeCard } from "./place.js";
+import { arriving } from "../shared/ui/motion.js";
 import { POINTER_PATH, playScene } from "./scene.js";
 import { KeyCaps } from "../shared/ui/KeyCaps.jsx";
 import { CheckIcon, HighlightIcon, LabelIcon, PaperIcon, PencilIcon, XIcon } from "../shared/ui/Icons";
@@ -206,6 +207,8 @@ export default function GuideOverlay({ guide, keybindings }) {
     let raf = 0;
     let gone = false;
     let marked = null; // the element carrying data-guide-active
+    let landed = false; // the anchor has been measured where it stands
+    let stopped = false;
     const started = performance.now();
     const measure = () => {
       raf = 0;
@@ -216,6 +219,16 @@ export default function GuideOverlay({ guide, keybindings }) {
         marked?.removeAttribute("data-guide-active");
         el?.setAttribute("data-guide-active", "");
         marked = el;
+      }
+      // An anchor in a surface still arriving (the Add popover growing in,
+      // motion.css) is not yet where it will stand: the step's card waits
+      // for it to land rather than follow it there, and a card already up
+      // keeps its place until then.
+      const moving = el ? arriving(el) : [];
+      if (moving.length) {
+        if (!landed) setRect(null);
+        Promise.all(moving.map((a) => a.finished.catch(() => {}))).then(() => { if (!stopped) schedule(); });
+        return;
       }
       const b = el?.getBoundingClientRect();
       if (!b?.width || !b?.height) {
@@ -238,6 +251,7 @@ export default function GuideOverlay({ guide, keybindings }) {
       const holds = own && b.left >= own.left && b.right <= own.right && b.top >= own.top && b.bottom <= own.bottom;
       const a = step.avoid && anchor === step.anchor ? anchorElement(step.avoid)?.getBoundingClientRect() : holds ? own : null;
       const keep = [s, a].filter((box) => box?.width).map(pad);
+      landed = true;
       setRect({ ...pad(b), hole: s?.width ? pad(s) : null,
         avoid: keep.length ? { top: Math.min(...keep.map((k) => k.top)), left: Math.min(...keep.map((k) => k.left)),
           right: Math.max(...keep.map((k) => k.right)), bottom: Math.max(...keep.map((k) => k.bottom)) } : null });
@@ -254,6 +268,7 @@ export default function GuideOverlay({ guide, keybindings }) {
     window.addEventListener("scroll", schedule, true);
     const retry = setInterval(schedule, 250); // covers the wait for a late mount
     return () => {
+      stopped = true;
       mo.disconnect();
       window.removeEventListener("resize", schedule);
       window.removeEventListener("scroll", schedule, true);

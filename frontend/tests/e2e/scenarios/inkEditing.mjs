@@ -1,6 +1,6 @@
 import { encodeStroke, newInk, decodeStroke, strokeBounds } from "../../../src/ink/ink.js";
 import { waitForPdf } from "./pdf.mjs";
-import { assertNear as near, assertMenuFrom, assertMenuRoles, assertOpensInPlace } from "../harness.mjs";
+import { assertNear as near, assertMenuFrom, assertMenuRoles, assertOpensInPlace, live } from "../harness.mjs";
 
 export async function inkEditingScenarios({ server, browser, alice, bob, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags }) {
   let ctx, page, cdp, pageId, noteId, secondId;
@@ -349,7 +349,7 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     await page.waitForFunction(() => window.e2eRightClick);
     assertEq(await pasteHere.count(), 0, "the hand offers no paste");
     // (Escape with no menu open would close the strip, which the next steps use.)
-    if (await page.locator(".ctxMenu").count()) await page.keyboard.press("Escape");
+    if (await page.locator(live(".ctxMenu")).count()) await page.keyboard.press("Escape");
     assertNoProblems(page);
   });
 

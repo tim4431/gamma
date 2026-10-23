@@ -1,5 +1,6 @@
 import React, { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
+import { useLeave } from "./leave.js";
 
 // The share of the window a zoomed picture may take (app.css .lightbox img).
 const FIT_W = 0.94;
@@ -18,6 +19,9 @@ export function lightboxFit(width, height) {
 // here: a press on it never selects the note object or opens the block
 // editor underneath. Escape is caught first and closes only the lightbox.
 export function Lightbox({ src, alt = "", caption = "", onClose }) {
+  // It fades in with the picture growing from the middle, and leaves the
+  // same way (motion.css, useLeave).
+  const leave = useLeave("dialog");
   const close = useRef(onClose);
   close.current = onClose;
   useEffect(() => {
@@ -31,7 +35,7 @@ export function Lightbox({ src, alt = "", caption = "", onClose }) {
   }, []);
   const stop = (e) => e.stopPropagation();
   return createPortal(
-    <div className="lightbox" onPointerDown={stop} onPointerUp={stop} onMouseDown={stop}
+    <div ref={leave} className="lightbox" onPointerDown={stop} onPointerUp={stop} onMouseDown={stop}
       onDoubleClick={stop} onContextMenu={stop}
       onClick={(e) => { e.stopPropagation(); close.current(); }}>
       <img src={src} alt={alt} draggable={false} />

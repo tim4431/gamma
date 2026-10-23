@@ -18,6 +18,7 @@ import { diagramFence, normalizeChatMarkdown, remarkDiagrams } from "../lib/diag
 import { DiagramFigure, diagramCodeProps } from "./DiagramFigure";
 import { highlightCode } from "../../editor/codeHighlight.js";
 import { t } from "../../shared/i18n/i18n.js";
+import { Popover } from "./Surfaces";
 
 // Shared chrome for every dockable window: one grip (drag to move or
 // reorder, double press to fold), the close button right beside it, then
@@ -595,7 +596,7 @@ function OpenTabs({
             <span className="tabsMenuCount">{tabs.length}</span>
           </button>
           {menuOpen ? (
-            <div className="popover tabsPopover" role="dialog" aria-label={t("All open tabs")}>
+            <Popover className="tabsPopover" role="dialog" aria-label={t("All open tabs")}>
               <input
                 autoFocus
                 className="searchInput"
@@ -643,7 +644,7 @@ function OpenTabs({
                 ))}
                 {!listed.length ? <div className="popoverHint">{t("No open tab matches.")}</div> : null}
               </div>
-            </div>
+            </Popover>
           ) : null}
         </span>
       ) : null}

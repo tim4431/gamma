@@ -9,6 +9,8 @@ import "@fontsource-variable/inter/wght-italic.css";
 import "./shared/styles/app.css";
 import "./library/library.css";
 import "./settings/settings.css";
+// How things move, after the stylesheets whose surfaces it animates.
+import "./shared/styles/motion.css";
 import { holdMathForFonts, warmKatexFonts } from "./shared/lib/katexFonts.js";
 
 // The formulas' fonts start loading now, beside the app's code, and a

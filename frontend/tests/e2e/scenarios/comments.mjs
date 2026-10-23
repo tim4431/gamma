@@ -22,7 +22,7 @@
 // card keeping its right-click, Enter and Escape from the strip.
 import { editRow } from "./notes.mjs";
 import { dragSelectPdfText, selectPdfText, waitForPdf } from "./pdf.mjs";
-import { Account, assertOpensInPlace, sleep, wanted } from "../harness.mjs";
+import { Account, arrived, assertOpensInPlace, sleep, wanted } from "../harness.mjs";
 
 export async function commentScenarios({ server, browser, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags }) {
   if (!wanted("comments")) return;
@@ -414,6 +414,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     const send = popover(A).locator(".commentNew .commentSend");
     assertEq(await send.getAttribute("title"), "Comment (Shift+Enter)", "the title names the key");
     assertEq(await send.getAttribute("aria-label"), "Comment", "the name is the plain action");
+    await arrived(send);
     const size = await send.evaluate((el) => [el.getBoundingClientRect().width, el.getBoundingClientRect().height, el.querySelector("svg").getBoundingClientRect().width]);
     assertEq(size.join(), "24,24,12", "a 24px circle with a 12px arrow");
     // the bare "/": the commands that write text, none that make a page, a sheet, an upload or an embed

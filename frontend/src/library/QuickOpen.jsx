@@ -25,6 +25,7 @@ import { createLibraryMatcher, rankLibraryPages } from "./librarySearch";
 import { filedIn, folderPath } from "./libraryUtils";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { guideEvents } from "../guide/events.js";
+import { DialogOverlay } from "../shared/ui/Surfaces";
 
 const MAX_ROWS = 40;
 const MAX_CONTAINERS = 8;
@@ -198,7 +199,7 @@ export default function QuickOpen({
     return <PageOption key={r.key} {...optionProps(r, i)} row={r} tree={tree} query={q} currentPageId={currentPageId} />;
   };
   return (
-    <div className="reportOverlay quickOpenOverlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+    <DialogOverlay className="quickOpenOverlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="reportModal quickOpen" role="dialog" aria-label={commandMode ? t("Command palette") : t("Open a page")}>
         <div className="quickOpenInput" data-guide="palette.input">
           {commandMode ? <TerminalIcon size={16} /> : <SearchIcon size={16} />}
@@ -248,6 +249,6 @@ export default function QuickOpen({
         </div>
         <div className="chatMentionHint">{hint}</div>
       </div>
-    </div>
+    </DialogOverlay>
   );
 }

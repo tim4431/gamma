@@ -213,6 +213,7 @@ import { preloadCommentMargin } from "../comments/marginSlot";
 import { useInbox } from "../inbox/useInbox";
 import { InboxBadge, InboxButton } from "../inbox/InboxButton";
 import { inboxJump, isUnread } from "../inbox/inboxText.js";
+import { DialogOverlay, Popover } from "../shared/ui/Surfaces";
 
 // Surfaces fetched on first use, each mounted inside a LazyBoundary
 // (docs/dev/frontend-refactor.md, "Lazy boundaries"). `preload()` fetches
@@ -2307,8 +2308,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         el.style.transition = "none";
         el.style.transform = `translateX(${old - left}px)`;
         requestAnimationFrame(() => {
-          el.style.transition = "transform 0.16s ease";
+          // a move (docs/dev/ui-design.md, "Motion"); the tab's own
+          // transitions (its hover colours) come back once it has landed
+          el.style.transition = "transform var(--dur-slow) var(--ease-out)";
           el.style.transform = "";
+          const landed = (e) => {
+            if (e.target !== el || e.propertyName !== "transform") return;
+            el.style.transition = "";
+            el.removeEventListener("transitionend", landed);
+          };
+          el.addEventListener("transitionend", landed);
         });
       }
     }
@@ -8622,7 +8631,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       onClick={() => setOpenPopover((p) => (p === "attach" ? null : "attach"))}
                     ><PaperclipIcon size={16} /></button>
                     {openPopover === "attach" && pageAttach ? (
-                      <MenuScope className="popover addPopover attachPopover" aria-label={t("Document")}>
+                      <Popover as={MenuScope} className="addPopover attachPopover" aria-label={t("Document")}>
                         <div className="popoverTitle">{t("Document")}</div>
                         <div className="popoverHint attachFileName" title={pageAttach.url}>
                           <PaperclipIcon size={14} /> {pageAttach.name || defaultPageTitle(pageAttach)}
@@ -8638,9 +8647,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         {!readOnly ? (
                           <MenuItem icon={ScissorsIcon} onClick={detachPdfFromPage}>{t("Detach the PDF…")}</MenuItem>
                         ) : null}
-                      </MenuScope>
+                      </Popover>
                     ) : openPopover === "attach" ? (
-                      <div className="popover addPopover attachPopover">
+                      <Popover className="addPopover attachPopover">
                         <div className="popoverTitle">{t("Attach a document")}</div>
                         <input
                           autoFocus
@@ -8661,7 +8670,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           hidden
                           onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) attachPdfToPage({ file: f }); }}
                         />
-                      </div>
+                      </Popover>
                     ) : null}
                   </span>
                 ) : null}
@@ -8692,8 +8701,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       <span className="metaWarnDot" aria-hidden="true">!</span>
                     ) : null}
                     {openPopover === "meta" ? (
-                      <div
-                        className="popover sourcePopover metaPopover"
+                      <Popover
+                        className="sourcePopover metaPopover"
                         style={{
                           position: "fixed",
                           top: metaPopPos.top,
@@ -8889,7 +8898,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             </div>
                           ) : null}
                           {pdfTextPreview ? (
-                            <div className="reportOverlay" {...backdropPress(() => setPdfTextPreview(null))}>
+                            <DialogOverlay {...backdropPress(() => setPdfTextPreview(null))}>
                               <div className="reportModal" style={{ width: "min(640px, calc(100vw - 32px))" }} onClick={(e) => e.stopPropagation()}>
                                 <div className="reportModalTitle">{t("Extracted PDF text")}</div>
                                 <div className="reportPageList" style={{ maxHeight: "60vh", whiteSpace: "pre-wrap", fontSize: "calc(12px * var(--ui-font-scale, 1))", color: "var(--text-secondary)", padding: 10 }}>
@@ -8900,7 +8909,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                                   <button className="uiBtn" onClick={() => setPdfTextPreview(null)}>{t("Close")}</button>
                                 </div>
                               </div>
-                            </div>
+                            </DialogOverlay>
                           ) : null}
                         </div>
                         {!pageMeta ? (
@@ -8917,7 +8926,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             </button>
                           </div>
                         ) : null}
-                      </div>
+                      </Popover>
                     ) : null}
                   </span>
                 ) : null}
@@ -10086,7 +10095,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         <MenuIcon size={16} />
       </button>
       {openPopover === "menu" ? (
-        <MenuScope className="popover menuPopover" data-guide="view.menu" aria-label={t("View")}>{viewMenuItems(menuReadOnly)}</MenuScope>
+        <Popover as={MenuScope} className="menuPopover" data-guide="view.menu" aria-label={t("View")}>{viewMenuItems(menuReadOnly)}</Popover>
       ) : null}
     </PopoverAnchor>
   );
@@ -10146,7 +10155,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           <span className="barLabel">{t("Add")}</span>
         </button>
         {openPopover === "add" ? (
-          <div className="popover addPopover" data-guide="add.popover">
+          <Popover className="addPopover" data-guide="add.popover">
             <input
               autoFocus
               className="searchInput"
@@ -10192,7 +10201,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               hidden
               onChange={(e) => { const files = Array.from(e.target.files || []); e.target.value = ""; setOpenPopover(null); if (files.length) uploadFiles(files); }}
             />
-          </div>
+          </Popover>
         ) : null}
       </span>
       <span data-popover="downloads" className={`popoverAnchor ${isPhone ? "sheetOnly" : ""}`}>
@@ -10321,7 +10330,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               : notices.tone ? <span className={`noticeDot ${dotTone(notices.tone)}`} data-tone={notices.tone} aria-hidden="true" /> : null}
           </button>
           {openPopover === "user" ? (
-            <MenuScope className="popover userPopover" data-guide="account.menu" aria-label={isPhone ? t("More") : t("Account & settings")}>
+            <Popover as={MenuScope} className="userPopover" data-guide="account.menu" aria-label={isPhone ? t("More") : t("Account & settings")}>
               {/* The card is the way into your account: Settings → Account & sync. */}
               <button type="button" role="menuitem" className="userCard" data-guide="account.card"
                 onClick={() => openSettingsPane("account")} title={t("Account & sync")}>
@@ -10435,7 +10444,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               </MenuItem>
               <MenuDivider />
               <MenuItem icon={LogOutIcon} danger onClick={authUser.is_guest ? confirmGuestLogout : doLogout}>{t("Log out")}</MenuItem>
-            </MenuScope>
+            </Popover>
           ) : null}
         </span>
       )}
@@ -11124,7 +11133,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       ) : null}
       {confirmBox ? (
         // data-popover keeps an open popover (e.g. search) alive while the dialog is up
-        <div className="reportOverlay" data-popover="confirm" {...backdropPress(() => setConfirmBox(null))}>
+        <DialogOverlay data-popover="confirm" {...backdropPress(() => setConfirmBox(null))}>
           <div
             className="reportModal confirmModal"
             onClick={(e) => e.stopPropagation()}
@@ -11153,10 +11162,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               >{confirmBox.confirmLabel ? t(confirmBox.confirmLabel) : t("OK")}</button>
             </div>
           </div>
-        </div>
+        </DialogOverlay>
       ) : null}
       {labelRenaming ? (
-        <div className="reportOverlay" {...backdropPress(() => setLabelRenaming(null))}>
+        <DialogOverlay {...backdropPress(() => setLabelRenaming(null))}>
           <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}>
             <div className="reportModalTitle">{t("Rename label")}</div>
             <div className="reportModalHint confirmMessage">{t("Renames “{name}” on every page that carries it.", { name: labelName(libTree, labelRenaming.id) })}</div>
@@ -11178,10 +11187,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               >{t("Rename")}</button>
             </div>
           </div>
-        </div>
+        </DialogOverlay>
       ) : null}
       {moveBlockDialog ? (
-        <div className="reportOverlay" {...backdropPress(() => setMoveBlockDialog(null))}>
+        <DialogOverlay {...backdropPress(() => setMoveBlockDialog(null))}>
           <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => stepList(e, e.currentTarget.querySelector("[data-find]"), [...e.currentTarget.querySelectorAll(".moveBlockList .ctxMenuItem")])}>
             <div className="reportModalTitle">{moveBlockDialog.fragment ? t("Move to page") : t("Move block to page")}</div>
@@ -11214,10 +11223,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               ) : null}
             </div>
           </div>
-        </div>
+        </DialogOverlay>
       ) : null}
       {linkPrompt ? (
-        <div className="reportOverlay" {...backdropPress(() => setLinkPrompt(null))}>
+        <DialogOverlay {...backdropPress(() => setLinkPrompt(null))}>
           <div className="reportModal confirmModal linkPromptModal" onClick={(e) => e.stopPropagation()}>
             <div className="confirmHead">
               <span className="confirmIcon"><LinkIcon size={16} /></span>
@@ -11253,10 +11262,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               ><ExternalLinkIcon size={14} />{t("Open in browser")}</button>
             </div>
           </div>
-        </div>
+        </DialogOverlay>
       ) : null}
       {linkDialog ? (
-        <div className="reportOverlay" {...backdropPress(() => setLinkDialog(null))}>
+        <DialogOverlay {...backdropPress(() => setLinkDialog(null))}>
           <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}>
             <div className="reportModalTitle">{linkDialog.editBlockId ? t("Change reference link") : t("Link reference to a page")}</div>
             {linkDialog.content?.text ? (
@@ -11319,7 +11328,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               <button className="uiBtn" onClick={() => setLinkDialog(null)}>{t("Cancel")}</button>
             </div>
           </div>
-        </div>
+        </DialogOverlay>
       ) : null}
       {/* Mounted once first wanted, then kept, as when they loaded with the
           app (useLatch): closed, they render nothing and run no requests. */}

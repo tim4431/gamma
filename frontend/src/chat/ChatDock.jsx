@@ -43,6 +43,7 @@ import { chipSegments } from "./chipText";
 import { effortFor, providerModels, speedFor } from "./modelPrefs";
 import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, BotIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, CopyIcon, DownloadIcon, EyeIcon, FileIcon, FolderIcon, HighlightIcon, HistoryIcon, InfoIcon, MessageSquareIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PenIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, ShieldIcon, SlidersIcon, SparklesIcon, SquareCheckIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon, ZapIcon } from "../shared/ui/Icons";
 import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
+import { DialogOverlay, Popover } from "../shared/ui/Surfaces";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -1642,7 +1643,7 @@ export default function ChatDock({
                 <SettingsIcon size={16} />
               </button>
               {settingsOpen ? (
-                <div className="popover chatSettingsPop">
+                <Popover className="chatSettingsPop">
                   <div className="popoverHint">{t("These preferences also appear in Settings and follow your account. Choose the model and reasoning effort on the message box.")}</div>
                   <div className="popoverSection">{t("Context per page · {pages}", { pages: approxPages(chatContextChars) })}</div>
                   <CharSlider value={chatContextChars} onChange={setChatContextChars} />
@@ -1671,7 +1672,7 @@ export default function ChatDock({
                   ) : (
                     <div className="popoverHint">{t("No token counts yet — they appear under each reply once the provider reports them.")}</div>
                   )}
-                </div>
+                </Popover>
               ) : null}
             </span>
           );
@@ -1696,7 +1697,7 @@ export default function ChatDock({
             <HistoryIcon size={16} />
           </button>
           {historyOpen ? (
-            <div className="popover chatHistoryPop">
+            <Popover className="chatHistoryPop">
               <input
                 autoFocus={!touchTyping()}
                 className="searchInput"
@@ -1777,7 +1778,7 @@ export default function ChatDock({
                   <button type="button" className="uiBtn sm danger" onClick={deletePicked}>{t("Delete")}</button>
                 </div>
               ) : null}
-            </div>
+            </Popover>
           ) : null}
         </span> : (
           <span className="uiTag" title={t("You can view this workspace: this conversation stays in this tab and isn't saved")}>
@@ -2203,7 +2204,7 @@ export default function ChatDock({
               <PlusIcon size={16} />{chatDocs.length ? <span className="chatPlusCount">{chatDocs.length}</span> : null}
             </button>
             {openPopover === "chatdocs" ? (
-              <div className="popover popUp chatPlusMenu">
+              <Popover className="popUp chatPlusMenu">
                 <button type="button" className="chatPlusMenuItem"
                   onClick={() => { setOpenPopover(null); fileInputRef.current?.click(); }}>
                   <span className="chatPlusMenuIcon">
@@ -2230,7 +2231,7 @@ export default function ChatDock({
                   <span className="chatPlusMenuLabel">{t("Add pages from library")}</span>
                   <span className="chatPlusMenuHint">{chatDocs.length ? t("{n} selected", { n: chatDocs.length }) : t("Search your pages")}</span>
                 </button>
-              </div>
+              </Popover>
             ) : null}
           </span>
           <input
@@ -2328,7 +2329,7 @@ export default function ChatDock({
       </form>
       ) : null}
       {docPicker ? (
-        <div className="reportOverlay" {...backdropPress(() => setDocPicker(false))}>
+        <DialogOverlay {...backdropPress(() => setDocPicker(false))}>
           <div className="reportModal docPickerModal" onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => {
               // ↑/↓ walk the search box and the pages' checkboxes; Enter on a
@@ -2404,7 +2405,7 @@ export default function ChatDock({
               <button className="uiBtn primary" onClick={() => setDocPicker(false)}>{t("Done")}</button>
             </div>
           </div>
-        </div>
+        </DialogOverlay>
       ) : null}
     </div>
     </DockWindow>

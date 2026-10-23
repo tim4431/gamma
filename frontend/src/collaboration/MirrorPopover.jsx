@@ -35,6 +35,7 @@ import {
   ClockIcon, CloudDownloadIcon, DownloadIcon, ExternalLinkIcon, HandIcon, HistoryIcon, LinkIcon, PenIcon, RefreshIcon,
   SettingsIcon, TrashIcon, UnlinkIcon, UploadIcon,
 } from "../shared/ui/Icons";
+import { Popover } from "../shared/ui/Surfaces";
 
 // The server's sync_log actions, in git's words.
 export const ACTION_TEXT = {
@@ -531,7 +532,7 @@ export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication
           : st.dot ? <span className={`mirrorPillDot ${st.tone}`} /> : null}
       </button>
       {open ? (
-        <div className="popover mirrorPopover" role="dialog" aria-label={t("Sync status")}>
+        <Popover className="mirrorPopover" role="dialog" aria-label={t("Sync status")}>
           {view === "settings" ? <SettingsView info={info} wsId={wsId} publication={publication} onBack={() => setView("main")} reload={load} onOpenSettings={onOpenSettings} />
             : view === "review" ? <ReviewView wsId={wsId} onBack={() => setView("main")} jumpTo={jumpTo} />
             : (
@@ -563,7 +564,7 @@ export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication
                   : <div className="popoverHint">{running ? t("Pages show up here as they are pulled.") : s.last_sync ? t("Nothing pulled or pushed yet.") : t("Nothing cloned yet.")}</div>}
               </>
             )}
-        </div>
+        </Popover>
       ) : null}
     </span>
   );

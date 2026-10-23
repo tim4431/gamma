@@ -353,11 +353,30 @@ export async function assertOpensInPlace(page, selector, act, { ms = 600, what =
   if (!seen) throw new Error(`${what} never showed`);
 }
 
+// Resolves once a surface has arrived (docs/dev/ui-design.md, "Motion"):
+// the finite animations on the element, inside it and on what holds it
+// have ended. A box read before then is the smaller one a menu, a popover,
+// a dialog or a zoomed picture grows from.
+export async function arrived(locator) {
+  await locator.evaluate((el) => {
+    const finite = (a) => Number.isFinite(a.effect?.getComputedTiming().endTime);
+    const all = el.getAnimations({ subtree: true });
+    for (let n = el.parentElement; n; n = n.parentElement) all.push(...n.getAnimations());
+    return Promise.all(all.filter(finite).map((a) => a.finished.catch(() => {})));
+  });
+}
+
+// A selector's matches without the copies of closed surfaces on their way
+// out (data-leaving, shared/ui/leave.js), for a count or a check taken
+// the moment a menu or popover closes.
+export const live = (selector) => selector.split(",").map((s) => `${s.trim()}:not([data-leaving], [data-leaving] *)`).join(", ");
+
 // Asserts where an open menu stands from the button that opened it
 // (useMenuTrigger, placement.js menuAnchor): its left edge on the button's,
 // and its top 4 px under the button (`side` "below") or its bottom 4 px
 // over it ("above").
 export async function assertMenuFrom(menu, button, side, what = "the menu") {
+  await arrived(menu);
   const m = await menu.boundingBox(), b = await button.boundingBox();
   const gap = side === "above" ? b.y - (m.y + m.height) : m.y - (b.y + b.height);
   if (Math.abs(gap - 4) > 1 || Math.abs(m.x - b.x) > 1) {

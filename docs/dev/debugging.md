@@ -468,6 +468,13 @@ button, by its left edge ([ui-design.md](ui-design.md#menus-and-submenus)).
 `assertMenuRoles` reads an open menu's roles: one `role="menu"` around its
 items, every control in it an item, and no menu around it but a flyout's
 parent. The locator that finds the menu by its name checks the name.
+Surfaces arrive and leave with motion
+([ui-design.md](ui-design.md#surfaces-come-and-go)), and the suite runs
+with it on. `arrived(locator)` waits until a surface has grown in before
+its box is read; `assertMenuFrom` does. `live(selector)` leaves out the
+copies of closed surfaces on their way out, for a count taken the moment
+a menu closes. Role-based locators skip those copies by themselves (they
+are `aria-hidden`).
 
 The run is split into groups (`GROUPS` in `tests/e2e/select.mjs`, one per
 scenario file except `notes-pdf-share`, whose scenarios hand data along;

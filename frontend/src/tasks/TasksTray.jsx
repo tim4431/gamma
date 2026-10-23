@@ -16,6 +16,7 @@ import { t, tn } from "../shared/i18n/i18n.js";
 import { isActive, progressFraction } from "./taskModel.js";
 import { canOpen, kindOf, progressText, taskActions, taskInfo, taskTime, taskTitle } from "./taskKinds.js";
 import "./tasks.css";
+import { Popover } from "../shared/ui/Surfaces";
 
 const ICONS = {
   activity: ActivityIcon, cloudDownload: CloudDownloadIcon, database: DatabaseIcon, download: DownloadIcon,
@@ -147,7 +148,7 @@ export function TasksPanel({ tasks, onOpen, onRetry }) {
   const now = useNow(active.length > 0);
   const row = (task) => <TaskRow key={task.id} task={task} tasks={tasks} now={now} onOpen={onOpen} onRetry={onRetry} />;
   return (
-    <div className="popover tasksPopover" role="region" data-guide="tasks.panel" aria-label={t("Background tasks")}>
+    <Popover className="tasksPopover" role="region" data-guide="tasks.panel" aria-label={t("Background tasks")}>
       <div className="popoverTitle tasksHead">
         <span>{t("Background tasks")}</span>
         {finished.length ? (
@@ -159,7 +160,7 @@ export function TasksPanel({ tasks, onOpen, onRetry }) {
       {active.map(row)}
       {finished.length ? <div className="popoverSection">{t("Finished")}</div> : null}
       {finished.map(row)}
-    </div>
+    </Popover>
   );
 }
 

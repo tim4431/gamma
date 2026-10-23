@@ -56,6 +56,7 @@ import {
   LinkIcon, PenIcon, RefreshIcon, ShareIcon, ShieldIcon, Trash2Icon, UnlinkIcon, UserIcon, UsersIcon,
   XIcon,
 } from "../shared/ui/Icons";
+import { Popover } from "../shared/ui/Surfaces";
 
 const ROLE_SEGMENTS = {
   page: [
@@ -445,7 +446,7 @@ export function SharePopover({
   const errorLine = error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null;
 
   return (
-    <div className="popover sharePopover" role="dialog" aria-label={title} data-guide="share.popover">
+    <Popover className="sharePopover" role="dialog" aria-label={title} data-guide="share.popover">
       <div className="sharePopoverHead">
         <span className="popoverTitle" title={title}>{title}</span>
         <button type="button" className="uiClose" onClick={onClose} aria-label={t("Close")} title={t("Close")}><XIcon size={14} /></button>
@@ -559,6 +560,6 @@ export function SharePopover({
         {settings && publish ? <PublishSection {...publish} /> : null}
         {settings ? citation : null}
       </div>
-    </div>
+    </Popover>
   );
 }

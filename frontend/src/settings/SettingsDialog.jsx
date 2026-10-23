@@ -74,6 +74,7 @@ import {
   XIcon,
   ZapIcon,
 } from "../shared/ui/Icons";
+import { DialogOverlay } from "../shared/ui/Surfaces";
 
 // One rail: the account card on top (the Account & sync pane), then
 // captioned groups — everyday preferences, AI, the library's housekeeping
@@ -1165,7 +1166,7 @@ export default function SettingsDialog({
   return (
     <SettingsDraftContext.Provider value={drafts}>
       <SettingsSyncContext.Provider value={syncState}>
-      <div className="reportOverlay" {...backdropPress(() => guard(onClose))}>
+      <DialogOverlay {...backdropPress(() => guard(onClose))}>
         <div className={`settingsModal ${mobileIndex ? "settingsIndexOpen" : ""}`}
           role="dialog" aria-modal="true" aria-label={t("Settings")}
           tabIndex={-1} ref={modalRef} onClick={(event) => event.stopPropagation()}
@@ -1278,7 +1279,7 @@ export default function SettingsDialog({
             </span>
           </div> : null}
         </div>
-      </div>
+      </DialogOverlay>
       </SettingsSyncContext.Provider>
     </SettingsDraftContext.Provider>
   );

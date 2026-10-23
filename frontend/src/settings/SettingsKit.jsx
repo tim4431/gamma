@@ -16,6 +16,7 @@ import { backdropPress } from "../shared/ui/press.js";
 import { BROWSER_TAG, profileSyncState } from "./syncState.js";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { fmtTokens } from "../chat/tokenUsage";
+import { DialogOverlay } from "../shared/ui/Surfaces";
 
 export const SettingsDraftContext = React.createContext(null);
 
@@ -248,7 +249,7 @@ export function SubDialog({ title, onClose, children, draft, className = "", clo
     return () => previous?.focus?.();
   }, []);
   return (
-    <div className="reportOverlay subDialog" {...backdrop} onClick={(event) => { event.stopPropagation(); backdrop.onClick(event); }}>
+    <DialogOverlay className="subDialog" {...backdrop} onClick={(event) => { event.stopPropagation(); backdrop.onClick(event); }}>
       <div className={`reportModal ${className}`} role="dialog" aria-modal="true" aria-label={title}
         ref={ref} tabIndex={-1} onClick={(event) => event.stopPropagation()}
         onClickCapture={(event) => {
@@ -283,7 +284,7 @@ export function SubDialog({ title, onClose, children, draft, className = "", clo
           </span>
         </div> : null}
       </div>
-    </div>
+    </DialogOverlay>
   );
 }
 

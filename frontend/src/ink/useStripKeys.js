@@ -74,8 +74,9 @@ export function useStripKeys({ inkUi, inkSelection, inkVisible, inkTools, setInk
       const onControl = !!e.target?.closest?.("button, a[href], [role^='menuitem'], .commentMargin, .commentPopover");   // i18n-ignore: a selector
       const action = stripKey(e, { ...K, onControl, eraserDown: inkHoldRef.current?.since ?? null });
       if (!action) return;
-      // an open menu, a preset being dragged and a focused comment thread take Escape first
-      if (e.code === "Escape" && (document.querySelector(".ctxMenu, .inkDragGhost")
+      // an open menu (not one on its way out, shared/ui/leave.js), a preset
+      // being dragged and a focused comment thread take Escape first
+      if (e.code === "Escape" && (document.querySelector(".ctxMenu:not([data-leaving]), .inkDragGhost")
         || e.target?.closest?.(".commentMargin, .commentPopover"))) return;   // i18n-ignore: a selector
       if (action.prevent) e.preventDefault();
       if (action.stop) e.stopPropagation();

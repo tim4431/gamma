@@ -15,6 +15,22 @@ import { flushSync } from "react-dom";
 // Gap a surface keeps to the edge of the window (or of `bounds`).
 export const VIEWPORT_PAD = 8;
 
+// The size a surface lays out at, without the scale it arrives with: a
+// menu grows in from var(--scale-in) (motion.css), and its rect is that
+// much smaller until it has. Place a surface by this, not by its rect.
+// Only its own scale is taken out, not an ancestor's.
+export function surfaceSize(el) {
+  const { width, height } = el.getBoundingClientRect();
+  const scale = parseFloat(getComputedStyle(el).scale); // "none" at rest
+  return scale > 0 && scale !== 1 ? { width: width / scale, height: height / scale } : { width, height };
+}
+
+// The transform-origin that makes a surface placed at {left, top} grow
+// from the point (x, y) it opens from, and shrink back toward it
+// (motion.css): the cursor, or the corner at its button, also when the
+// surface took the other side of it or was kept inside the window.
+export const growFrom = (x, y, { left, top }) => `${x - left}px ${y - top}px`;
+
 // The top-left corner for a surface of `size` at (x, y): x is its left
 // edge, or its right one with `anchorRight`; y its top edge, or its bottom
 // one with `anchorBottom` (it opens upward). `flipY` is the other side of
@@ -56,10 +72,12 @@ export function menuAnchor(r, { side = "below" } = {}) {
 }
 
 // The {left, top} of the element `ref` holds, from place(element) — which
-// measures it — again whenever `deps` change, its size or the window's
-// does, and with `follow` whenever anything scrolls (an anchor that moves
-// with the page). Null until it is first placed: render the element hidden
-// at a provisional spot until then, so no frame of it is ever seen there.
+// measures it (surfaceSize) — again whenever `deps` change, its size or the
+// window's does, and with `follow` whenever anything scrolls (an anchor
+// that moves with the page). What else place returns comes along (an
+// `origin` from growFrom). Null until it is first placed: render the
+// element hidden at a provisional spot until then, so no frame of it is
+// ever seen there.
 export function useFloatingPosition(ref, place, deps, { follow = false } = {}) {
   const [pos, setPos] = useState(null);
   const placeRef = useRef(place);
@@ -68,8 +86,9 @@ export function useFloatingPosition(ref, place, deps, { follow = false } = {}) {
     const el = ref.current;
     if (!el) return undefined;
     const apply = (now) => {
-      const { left, top } = placeRef.current(el);
-      const set = () => setPos((old) => (old?.left === left && old.top === top ? old : { left, top }));
+      const placed = placeRef.current(el); // {left, top}, and what else the caller keeps (an origin)
+      const same = (old) => old && Object.keys(placed).every((k) => old[k] === placed[k]);
+      const set = () => setPos((old) => (same(old) ? old : placed));
       if (now) flushSync(set); else set();
     };
     apply(false);

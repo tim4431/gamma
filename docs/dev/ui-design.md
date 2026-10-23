@@ -566,10 +566,19 @@ built on it; the guide card's anchor is measured the same way
 popovers) has nothing to correct. The browser suite's
 `assertOpensInPlace` (harness.mjs) checks a surface frame by frame.
 
+A surface grows in from where it opens ([Motion](#motion)), so for a few
+frames its rect is smaller than the box it lays out at. It is placed by
+`surfaceSize(el)`, which takes that arrival scale back out, and never by
+its rect. `growFrom(x, y, pos)` is the transform-origin that makes it
+grow from the point it opens from, also when it took the other side or
+was kept inside the window.
+
 ### Dialogs
 
 `.reportOverlay` › `.reportModal` is the one dialog surface (settingsKit's
-`SubDialog` wraps it for the settings editors). Confirm-style dialogs — the
+`SubDialog` wraps it for the settings editors). `DialogOverlay`
+(`shared/ui/Surfaces.jsx`) renders the backdrop, so every dialog fades in
+growing from its middle and leaves the same way ([Motion](#motion)). Confirm-style dialogs — the
 shared `confirmBox`, the external-link prompt — add a `.confirmHead`: an icon
 chip (`.confirmIcon`, `.danger` for destructive) leading a title plus one
 line of explanation, the same shape as a settings `PaneHead`, over the
@@ -929,6 +938,39 @@ what the motion does, not by the nearest number:
 - **Reduced motion ends everything at once.** The global rule in app.css
   ([Scales](#scales)) covers every recipe; a component adds a rule of its
   own only for a different still state.
+
+### Surfaces come and go
+
+`shared/styles/motion.css` holds the recipes, keyed by the surfaces'
+classes, so a new menu, popover or dialog moves with no code of its own.
+They animate the individual `scale` and `translate` properties, never
+`transform`, so a surface's own centring transform stays its own. Both
+rest at none, so nothing a surface holds is positioned against it.
+
+| Surface | Arrives | Leaves |
+|---|---|---|
+| Menus (`ContextMenu`) and popovers (`Popover`) | fades in growing from `--scale-in` over `--dur-slow`, from the point it opens from: `ContextMenu` sets that origin (`growFrom`), a popover grows from its button's corner (top right; `.popUp` bottom left; bottom centre in the compact shell's bar) | shrinks to `--scale-out` fading over `--dur-base` |
+| Flyouts (`SubMenuItem`) | fade in over `--dur-fast`: growing, they would make a pass down the rows feel slow | at once |
+| Dialogs (`DialogOverlay`) and the lightbox | the backdrop fades in over `--dur-base` while the dialog or picture grows from its middle over `--dur-slow` | together, over `--dur-base` |
+| Tips and the citation preview | fade in where they stand over `--dur-base` | at once |
+| The PDF selection popup and the caret's popups ("/", `[[`, `@`, LaTeX) | fade in over `--dur-fast`, so typing never waits on one | at once |
+| Toasts: the reminder cards, the status pill | rise `--move-md` into place through `--blur-swap` over `--dur-long` | sink back out over `--dur-slow` (the cards; the pill fades) |
+
+React takes a closed surface out of the page at once. `useLeave(kind)`
+(`shared/ui/leave.js`), the callback ref on its root, puts a still copy
+of it where it stood, and the copy plays its kind's way out
+(`[data-leaving="surface" | "dialog" | "toast"]`) and goes.
+`DialogOverlay`, `Popover`, `ContextMenu`, `ThreadPopover`, `Lightbox`
+and the reminder cards carry it. The copy is plain DOM outside React:
+inert, `aria-hidden`, without ids or guide anchors, and it takes no
+pointer, so nothing in it answers a press or a key. A surface that
+arrives takes the place of a copy of its kind still leaving, as a native
+menu does: only one of a kind is ever seen going, and never while
+another stands. Under reduced motion there is no copy. Code that asks
+whether a surface is open skips the copies (`:not([data-leaving])`, as
+`topDialog()` in appCommands.js does). A box read while a surface is
+arriving is the smaller one it grows from: the guide's card waits for
+its anchor to land (`arriving(el)`, `shared/ui/motion.js`).
 
 ## Block editor interactions
 
