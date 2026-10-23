@@ -6,11 +6,13 @@
 // going with them), a note moved in with a reload surviving Ctrl+Z, a failed
 // refresh keeping the page, undo never deleting what the other wrote in our
 // note, an indent around an open editor keeping it open, typing at one caret
-// keeping both people's keystrokes, a two-batch paste leaving the idle tab
-// silent, typing kept through Recently deleted and a restore, a highlight
-// one person makes on the PDF showing up for the other, and a stroke one
-// person is drawing showing on the other's page before it is saved
-// (ink-live), and going from it at once when undone before its save.
+// keeping both people's keystrokes, a word taken back while a save waits
+// for its retry kept taken back through a tab switch, a two-batch paste
+// leaving the idle tab silent, typing kept through Recently deleted and a
+// restore, a highlight one person makes on the PDF showing up for the
+// other, and a stroke one person is drawing showing on the other's page
+// before it is saved (ink-live), and going from it at once when undone
+// before its save.
 import { tree, same, editRow, closeEditor } from "./notes.mjs";
 import { waitForPdf, selectPdfText } from "./pdf.mjs";
 
@@ -336,6 +338,41 @@ export async function collabScenarios({ server, browser, alice, bob, makePdf, st
     }, { what: "five x's and five Y's on the server" });
     await bodyHas(A, final); await bodyHas(B, final);
     assertNoProblems(A); assertNoProblems(B);
+  });
+
+  await step("collab: a word taken back while a save waits for its retry, then a tab switch, leaves the server with the tab's text", async () => {
+    const pg = await scratchPage("Tab switch", ["hello"], [A]);
+    await editRow(A, "hello");
+    // the save's first POST meets a server restarting: the batch waits for its retry
+    await A.route("**/api/pages/*/ops", (route) => route.fulfill({ status: 503, contentType: "application/json", body: "{\"detail\":\"restarting\"}" }), { times: 1 });
+    const refused = A.waitForResponse((r) => r.url().includes("/ops") && r.request().method() === "POST" && r.status() === 503);
+    await A.keyboard.type(" world");
+    await refused;
+    for (let i = 0; i < 6; i++) await A.keyboard.press("Backspace");   // taken back, queued behind it
+    // a slow connection holds the first POST after the switch a moment, so a copy sent beside it would land first
+    let held = false, answered = 0;
+    await A.route("**/api/pages/*/ops", async (route) => {
+      if (route.request().method() === "POST" && !held) { held = true; await sleep(150); }
+      await route.continue();
+    });
+    const onFinished = (r) => { if (r.url().includes("/ops") && r.method() === "POST") answered++; };
+    A.on("requestfinished", onFinished);
+    await A.evaluate(() => {
+      Object.defineProperty(document, "visibilityState", { value: "hidden", configurable: true });
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    await sleep(300);
+    await A.evaluate(() => {
+      delete document.visibilityState;
+      document.dispatchEvent(new Event("visibilitychange"));
+    });
+    // the batch that waited, then the word taken back: two POSTs, in order
+    await until(async () => answered >= 2 && !(await pill(A)).includes("Not saved"), { what: "both saves answered" });
+    A.off("requestfinished", onFinished);
+    await A.unroute("**/api/pages/*/ops");
+    assertEq((await pg.tree())[0]?.content, "hello", "the server's text");
+    await closeEditor(A);
+    assertNoProblems(A, [/ops -> 503/]);
   });
 
   await step("collab: a long paste arriving in two batches makes the idle tab send nothing", async () => {

@@ -52,3 +52,27 @@ test("flushSession writes a pending save at once, and once", async (t) => {
   flushSession();
   assert.equal(writes, 1, "the second flush finds nothing pending");
 });
+
+// Firefox can stop a closing page's pagehide listener, so the write the
+// debounce holds goes on going hidden too.
+test("a pending save is written on pagehide and on going hidden", async (t) => {
+  const listeners = { window: new Map(), document: new Map() };
+  const target = (name) => ({ addEventListener: (type, fn) => listeners[name].set(type, fn) });
+  const data = new Map();
+  globalThis.window = target("window");
+  globalThis.document = { ...target("document"), visibilityState: "visible" };
+  globalThis.localStorage = { getItem: (key) => data.get(key) ?? null, setItem: (key, value) => data.set(key, value), removeItem: (key) => data.delete(key) };
+  t.mock.method(globalThis, "setTimeout", () => 1);
+  t.mock.method(globalThis, "clearTimeout", () => {});
+  t.after(() => { delete globalThis.window; delete globalThis.document; delete globalThis.localStorage; });
+  const wired = await import("../src/app/sessionState.js?wired");
+  wired.setSessionScope("alice", "team");
+  wired.saveSession({ focusedBlockId: "page-1" });
+  globalThis.document.visibilityState = "hidden";
+  listeners.document.get("visibilitychange")();
+  assert.deepEqual(wired.loadSession(), { focusedBlockId: "page-1" }, "going hidden wrote it");
+  wired.saveSession({ focusedBlockId: "page-2" });
+  listeners.window.get("pagehide")();
+  assert.deepEqual(wired.loadSession(), { focusedBlockId: "page-2" }, "pagehide wrote it");
+  wired.setSessionScope("", "");
+});

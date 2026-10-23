@@ -43,8 +43,8 @@ function socketUrl(pageId) {
 // reloadFailed/tooLong/gone, `peers`, `me`, and `reconnect` (reopen the
 // socket — after a display-name change, since the name travels in the
 // handshake). While edits are unsaved, leaving the tab asks first
-// (beforeunload); a tab going to the background sends them as a closing
-// one does (a phone may kill it without a pagehide), and the browser coming
+// (beforeunload); a tab going to the background sends the next batch with
+// keepalive (a phone may kill it without a pagehide), and the browser coming
 // back online or the window regaining focus retries a failed save at once.
 export function usePageCollab(opts) {
   const o = useRef(opts);
@@ -77,33 +77,40 @@ export function usePageCollab(opts) {
   }
   const session = ref.current;
 
-  // The tab closing, reloading or hidden: every unsaved edit goes at once
-  // with keepalive (session.hide), and the browser's "leave site?" while
-  // anything is unsaved. A close fires pagehide and then visibilitychange
-  // (hidden) in one task, and Firefox can stop a pagehide listener before
-  // it sends (docs/research/keepalive-abort.md), so each of the two sends
-  // them unless the other did in that task. Until then the bytes they will
-  // carry are claimed from the page's keepalive room, so the lower
-  // priorities (handwriting, the profile) leave it free; none once sent,
-  // until the next task or the page shows again (pageshow from the
-  // back-forward cache, or visible).
+  // The tab closing or reloading: every unsaved edit goes at once with
+  // keepalive (session.hide), and the browser's "leave site?" while
+  // anything is unsaved. Going hidden, the next batch goes with keepalive
+  // and the rest follows its answer, in order (hide(false)). A close fires
+  // pagehide and then visibilitychange (hidden) in one task, and Firefox
+  // can stop a pagehide listener (docs/research/keepalive-abort.md):
+  // visibilitychange sends nothing more after a pagehide that sent
+  // everything, everything after one stopped part way, and the next batch
+  // after none. `closing`: pagehide began in this task (1) or sent
+  // everything (2). Until then the bytes a close will send are claimed from
+  // the page's keepalive room, so the lower priorities (handwriting, the
+  // profile) leave it free; none once sent, until the next task or the
+  // page shows again (pageshow from the back-forward cache, or visible).
   useEffect(() => {
-    let sent = false;
+    let closing = 0;
     const unclaim = registerKeepaliveClaim("page-edits",
-      () => (sent ? 0 : keepaliveShare(session.pendingKeepaliveBodies().map((b) => b.body))));
+      () => (closing === 2 ? 0 : keepaliveShare(session.pendingKeepaliveBodies().map((b) => b.body))));
     const onHide = () => {
-      if (sent) return;
+      closing = 1;
       session.hide();
-      sent = true;
-      setTimeout(() => { sent = false; });
+      closing = 2;
+      setTimeout(() => { closing = 0; });
     };
-    const onShow = () => { sent = false; };
+    const onShow = () => { closing = 0; };
     const onLeave = (e) => {
       if (!session.hasPending()) return;
       e.preventDefault();
       e.returnValue = "";
     };
-    const onVisibility = () => { if (document.visibilityState === "hidden") onHide(); else onShow(); };
+    const onVisibility = () => {
+      if (document.visibilityState !== "hidden") onShow();
+      else if (closing === 1) onHide();
+      else if (!closing) session.hide(false);
+    };
     const onOnline = () => session.retryNow();
     window.addEventListener("pagehide", onHide);
     window.addEventListener("pageshow", onShow);

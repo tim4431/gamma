@@ -325,7 +325,7 @@ export function journalAll() {
 }
 // On pagehide and on going hidden: a close fires both, in one task, and
 // Firefox can stop a pagehide listener (this is the page's first).
-if (typeof window !== "undefined" && typeof window.addEventListener === "function") {
+if (typeof window !== "undefined" && typeof window.addEventListener === "function" && typeof document !== "undefined") {
   window.addEventListener("pagehide", journalAll);
   document.addEventListener("visibilitychange", () => { if (document.visibilityState === "hidden") journalAll(); });
 }

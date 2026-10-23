@@ -211,11 +211,11 @@ test("edits made after hide queue behind the batches it named: none folds into t
   h.edit([block("a", "one"), block("b")]);
   h.session.flush();   // a batch on its way
   h.edit([block("a", "one two"), block("b", "b1")]);
-  h.session.hide();   // the tab is hidden: the queue behind that batch is named, and copied
+  h.session.hide();   // pagehide, into the back-forward cache: the queue behind that batch is named, and copied
   const [out, behind] = h.session.pendingKeepaliveBodies().map((b) => JSON.parse(b.body));
   assert.deepEqual(h.keepalive.map((b) => b.body), [out, behind], "the batch on its way, and the one behind it");
   assert.deepEqual(behind.ops.map((op) => [op.id, op.content]), [["a", "one two"], ["b", "b1"]]);
-  // shown again, typing goes on: the set of a queues behind the named batch, not in it
+  // shown again from the cache, typing goes on: the set of a queues behind the named batch, not in it
   h.edit([block("a", "one two three"), block("b", "b1")]);
   const answered = [];
   for (let seq = 1; seq <= 3; seq++) {
@@ -235,6 +235,40 @@ test("edits made after hide queue behind the batches it named: none folds into t
   assert.equal(h.session.hasPending(), false);
 });
 
+// Going hidden is no close: copies sent at once can land out of order, and
+// one landing before the batch it follows is never undone (its in-order
+// send is a replay), so the server would keep the word taken back here.
+test("hide(false), the tab going hidden: only the batch that goes next leaves, and the edit behind it follows its answer", async (t) => {
+  let answer = null;
+  const h = setup(t, () => {
+    if (answer) return answer.promise;
+    const e = new Error("503 restarting");
+    e.status = 503;
+    return Promise.reject(e);
+  });
+  h.edit([block("a", "a world"), block("b")]);
+  await h.session.flush();   // refused: the batch waits for its retry
+  answer = deferred();
+  h.edit([block("a", "a"), block("b")]);   // the word taken back, queued behind it
+  h.session.hide(false);
+  assert.deepEqual(h.calls.map((c) => [c.keepalive, c.body.batch, c.body.ops.map((op) => op.content)]),
+    [[null, h.calls[0].body.batch, ["a world"]], ["critical", h.calls[0].body.batch, ["a world"]]],
+    "the batch waiting for its retry goes at once, with keepalive, under its id");
+  h.session.hide(false);   // shown and hidden again while it is on its way: a copy of it alone
+  assert.deepEqual(h.keepalive.map((b) => [b.body.batch, b.body.ops.map((op) => op.content)]),
+    [[h.calls[0].body.batch, ["a world"]]], "nothing of the edit behind it, which could land first");
+  const first = answer;
+  answer = deferred();
+  first.resolve({ seq: 1, ops: h.calls[1].body.ops });
+  await settle();
+  assert.deepEqual(h.calls.slice(2).map((c) => [c.keepalive, c.body.ops.map((op) => [op.content, op.base])]),
+    [[null, [["a", "a world"]]]], "the edit behind it goes once that batch is answered");
+  assert.ok(!h.calls.slice(0, 2).some((c) => c.body.batch === h.calls[2].body.batch), "under an id of its own");
+  answer.resolve({ seq: 2, ops: h.calls[2].body.ops });
+  await settle();
+  assert.equal(h.session.hasPending(), false);
+});
+
 test("hide leaves a page in Recently deleted alone: its edits wait, unsent and unclaimed", async (t) => {
   const h = setup(t, async () => { throw new Error("offline"); });
   h.edit([block("a", "mine"), block("b")]);
@@ -244,7 +278,6 @@ test("hide leaves a page in Recently deleted alone: its edits wait, unsent and u
   assert.deepEqual([h.keepalive, h.calls], [[], []]);
   assert.equal(h.session.hasPending(), true, "the edits stay for when the page is restored");
 });
-
 
 test("a rejected batch is dropped and the page reloads", async (t) => {
   const h = setup(t, async () => { const e = new Error("invalid position"); e.status = 400; throw e; });

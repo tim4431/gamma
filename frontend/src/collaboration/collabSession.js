@@ -5,8 +5,8 @@
 //     sends them in debounced batches to POST /api/pages/{id}/ops — the
 //     HTTP response is the ack (positions the server re-keyed come back
 //     in it); HTTP saves continue when the socket drops, and a tab that
-//     closes or is hidden sends every unsaved edit at once with keepalive
-//     (hide; queued edits are not durable offline).
+//     closes sends every unsaved edit at once with keepalive, one going
+//     hidden its next batch (hide; queued edits are not durable offline).
 //     A batch holds at most MAX_OPS ops and keeps its id until the server
 //     answers it, so a retry of a batch that did land is answered, not
 //     applied twice; failed sends are retried, ever longer apart, never
@@ -777,12 +777,12 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
     if (s) park(s, trashed);
   }
 
-  // What hide() sends, as [{path, body}], without sending it: per page
-  // with unsaved edits (not one in Recently deleted: the server refuses
-  // it), the batch out under its own id (the server answers a copy that
-  // already landed instead of applying it twice), then the queue in batches
-  // of MAX_OPS under the ids they take (the ones hide() named, then the
-  // ones it will name). usePageCollab claims their bytes of the page's
+  // What hide() sends at a close, as [{path, body}], without sending it:
+  // per page with unsaved edits (not one in Recently deleted: the server
+  // refuses it), the batch out under its own id (the server answers a copy
+  // that already landed instead of applying it twice), then the queue in
+  // batches of MAX_OPS under the ids they take (the ones hide() named, then
+  // the ones it will name). usePageCollab claims their bytes of the page's
   // keepalive room (shared/lib/keepalive.js), read only when a lower
   // priority asks for room.
   function pendingKeepaliveBodies() {
@@ -809,21 +809,27 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
     }
   }
 
-  // The tab is closing, or hidden (a hidden tab may be ended without a
-  // pagehide): every body pendingKeepaliveBodies names goes now, with
-  // keepalive, none waiting for another's answer, since nothing is sure to
-  // run once a closing page is gone. The queue is named first (seal). With
-  // no batch on its way the next one goes through send(), whose answer is
-  // read if the page lives on; one on its way goes again as a copy under
-  // its id, since a closing page may cut a plain request off. The named
-  // batches behind it go as copies. The edits stay pending until answered:
-  // the send of a batch whose copy landed first is a replay, answered and
-  // not applied again, and so is a second hide(). usePageCollab calls it on
-  // pagehide and on going hidden.
-  function hide() {
+  // The tab is closing (`closing`, pagehide): every body
+  // pendingKeepaliveBodies names goes now, with keepalive, none waiting for
+  // another's answer, since nothing is sure to run once a closing page is
+  // gone. The queue is named first (seal). With no batch on its way the
+  // next one goes through send(), whose answer is read if the page lives on
+  // (the back-forward cache); one on its way goes again as a copy under its
+  // id, since a closing page may cut a plain request off. The named batches
+  // behind it go as copies. The edits stay pending until answered: the send
+  // of a batch whose copy landed first is a replay, answered and not applied
+  // again, and so is a second hide().
+  // Going hidden (`closing` false: a hidden tab may be ended without a
+  // pagehide), only the batch that goes next leaves now, in the same way,
+  // and the rest follows its answer, in order. Copies sent at once can land
+  // out of order, and a batch that lands before the one it follows is never
+  // undone, since its in-order send is then a replay: the server would keep
+  // a word the tab took back. usePageCollab calls it on pagehide and on
+  // going hidden.
+  function hide(closing = true) {
     for (const s of st.sessions) {
       if (s.gone) continue;
-      seal(s);
+      if (closing) seal(s);
       const path = `/pages/${encodeURIComponent(s.pageId)}/ops`;
       const copy = (b) => {
         try { keepalivePost(path, JSON.stringify({ client: clientId, batch: b.id, ops: b.ops })); } catch {}
@@ -833,6 +839,7 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
         if (s.out) s.retries = 0; // tried now, as a flush does
         send(s, true);
       }
+      if (!closing) continue;
       let at = 0;
       for (const b of s.sealed) copy({ id: b.id, ops: s.queue.slice(at, at += b.n) });
     }

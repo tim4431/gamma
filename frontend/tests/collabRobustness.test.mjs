@@ -97,7 +97,7 @@ test("a conflict drops the vanished block's ops from the batches hide named too:
   h.edit(setText(h.tree, "x", "x!"));
   h.fire();   // its batch goes, and waits for its answer
   h.edit(setText(setText(h.tree, "x", "x!!"), "y", "y typed"));
-  h.session.hide();   // the tab is hidden: the queue behind that batch is named, and copied
+  h.session.hide();   // pagehide, into the back-forward cache: the queue behind that batch is named, and copied
   const named = h.keepalive.at(-1).body;
   assert.deepEqual(named.ops.map((op) => op.id), ["x", "y"]);
   // x moved to another page meanwhile: the batch out is refused for it

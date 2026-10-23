@@ -537,6 +537,52 @@ its edits going from `visibilitychange` as a plain fetch, and in WebKit
 keepalive. It kept the stroke closed at 400 ms (9/9), which the journal
 had written at 300 ms.
 
+### A tab switch with a save waiting
+
+The fifth round's build sent the edits from going hidden as from a close:
+the next batch through the session and the batches behind it as copies, at
+once. A probe tried that on a tab switch, the same day, on the browser
+suite's harness and the app at `66e006f4`:
+
+- A note held "hello". A route answered its save's first `POST` with 503,
+  as a restarting server would, so the batch waited for its retry.
+- " world" was typed before that `POST`, and six Backspaces took it back.
+  That edit queued behind the waiting batch.
+- The tab went hidden, and visible 300 ms later. The probe dispatched
+  `visibilitychange` with `document.visibilityState` overridden, since a
+  headless tab never hides.
+- A route held the first `POST` after the switch for 150 ms, as a slow
+  connection might.
+
+The server's text once the saves were answered:
+
+| Build | Chromium shell | WebKit | Firefox |
+|---|---|---|---|
+| `73fd244c`, a flush on going hidden | "hello" 4/4 | – | – |
+| `66e006f4` | "hello world" 4/4 | "hello world" 4/4 | "hello world" 4/4 |
+| `66e006f4`, no `POST` held | "hello" 12/12 | – | – |
+| Going hidden sends the next batch alone | "hello" 4/4 | "hello" 4/4 | "hello" 4/4 |
+
+At `66e006f4` the copy of the edit behind the waiting batch landed first
+and changed nothing. The waiting batch landed after it and put " world"
+back. The edit's own send was then a replay, answered from the log. So the
+server kept the word the tab had taken back, and the tab counted its edits
+saved. Without the hold the waiting batch, sent first, landed first.
+
+So going hidden sends the next batch alone (`hide(false)`), and the rest
+follows its answer, in order. Only `pagehide` sends copies behind a batch.
+Going hidden in the same task sends nothing more after a `pagehide` that
+sent everything, and all again after one stopped part way. A close whose
+edits' `pagehide` listener Firefox stopped before its first statement sends
+just the next batch then. In the app's closes Firefox stopped only
+`journalAll`. The suite's collab group has the probe as a step, which fails
+at `66e006f4` in all three engines.
+
+`tabClose.mjs` ran on the build with that change, 3 runs a case, one
+engine at a time, by `page.close()` and with `--stop pagehide`. Every case
+kept its change, 90 of 90, and the journal held every stroke (54/54). The
+outcomes matched the fifth round's, case by case.
+
 ## What follows
 
 - The ledger never aborts a request to make room for another. No build
@@ -586,9 +632,15 @@ had written at 300 ms.
 - In the app the stop falls on `journalAll`, the first of its six
   `pagehide` listeners. Each sender also sends from `visibilitychange`,
   and marks its data sent only once the request has gone, so a stop of
-  any of them loses nothing. With no `pagehide` listener of the app
-  running, every change a `page.close()` followed was kept in all three
-  engines ("With every sender on both events").
+  any of them loses nothing. The edits' batches behind an unanswered one
+  are the exception: `visibilitychange` leaves them to its answer. With
+  no `pagehide` listener of the app running, every change a
+  `page.close()` followed was kept in all three engines ("With every
+  sender on both events", "A tab switch with a save waiting").
+- Copies of the edits' batches sent at once can land out of order. One
+  that applies before the batch it follows is never undone, since its
+  in-order send is a replay. So only `pagehide` sends them at once, and
+  going hidden sends the next batch, the rest after its answer.
 - A note typed or a setting changed just before `page.close()` reached
   the server in every run of every engine.
 - At `73fd244c` a stroke drawn as the tab closed was lost in all three
@@ -631,8 +683,11 @@ had written at 300 ms.
   before `pagehide` (the tab strip's own close fired `pagehide` first).
 - A user's Firefox, headed and with its own process rules: whether
   closing a tab there stops its first `pagehide` listener, or another.
-  The app's senders hold whichever one it stops ("With every sender on
-  both events").
+  The app's senders hold whichever one it stops, but for the edits'
+  batches behind an unanswered one ("With every sender on both events").
+- A close or a reload with a batch unanswered and edits behind it still
+  sends them at once, and they can land out of order. Keeping their order
+  would take a server that holds a batch until the one it follows lands.
 - Timing. Whether a drawing is named before the close varied between
   rounds. So does whether a stroke drawn as the tab closes is saved by the
   close or brought back by the journal.
