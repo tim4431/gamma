@@ -26,10 +26,13 @@ point.
 """
 
 import bisect
+import json
 import math
+import os
 import posixpath
 import sys
 import unicodedata
+import zlib
 from array import array
 from collections import Counter
 from dataclasses import dataclass, field
@@ -74,6 +77,10 @@ _MAX_PAGE_NUMBER = 1_000_000     # past it a layout entry is a blank page (Notab
 _LAST = 1 << 62                  # the z-order position of an ink group that has no index: above the rest
 _PATH_MAGIC = b"\x25\xb3\xe5\x48"  # an archived CGPath (``_path``)
 _PATH_POINTS = (1, 1, 2, 3, 0)   # the points of each CGPath element: move, line, quadratic, cubic, close
+GAMMA_UUID = b"GAMMAI\x80"       # how a curve UUID Gamma's export wrote begins (a version 8 UUID): its anchors
+                                 # are the stroke's samples (``Curve.gamma``)
+PRIVATE_KEY = "GammaNoteKey"     # the root's key for Gamma's own copy of what the note holds (``Note.private``)
+MAX_PRIVATE_BYTES = 64 << 20     # that copy, inflated
 
 # What a note left out, by kind, as its warning says it once per note
 # (``left_out_reasons``); ``{n}`` is the count.
@@ -214,6 +221,7 @@ class Curve:
     style: int                     # 3 pen, 4 highlighter, 5 pencil; any other value reads as a pen
     dash: str | None               # "dashed" | "dotted"
     z: int = 0                     # its place in the note's drawing order, which the shapes share
+    gamma: bytes | None = None     # its UUID when Gamma's export wrote it (GAMMA_UUID): its anchors are samples
 
     @property
     def anchors(self) -> int:
@@ -237,6 +245,7 @@ class Shape:
     segments: tuple = ()           # a path's after its first point: 1 a line to the next, 3 a cubic through
                                    # the next three
     z: int = 0                     # its place in the note's drawing order, which the curves share
+    uuid: bytes | None = None      # its ``uuid``, which Gamma's copy (``Note.private``) is keyed by
 
 
 @dataclass
@@ -274,6 +283,7 @@ class Media:
     crop: tuple | None = None      # picture: FigureCropRectKey, in source pixels
     crop_size: tuple | None = None  # picture: the size the crop is given in, when not the image's pixels
     caption: str = ""              # picture: captionFieldText when isCaptionEnabled
+    uuid: bytes | None = None      # its UUID, which Gamma's copy (``Note.private``) is keyed by
 
 
 @dataclass
@@ -304,6 +314,7 @@ class Note:
     warnings: list = field(default_factory=list)
     left_out: Counter = field(default_factory=Counter)  # what was left out, counted by kind (LEFT_OUT)
     classes: Counter = field(default_factory=Counter)   # the classes of the media objects left out
+    private: dict | None = None    # Gamma's own copy of what a note its export wrote holds (PRIVATE_KEY), unchecked
 
 
 def left_out_reasons(counts: Counter, classes: Counter | None = None, pages: int = 0) -> list[str]:
@@ -493,10 +504,32 @@ class _Reader:
         self._layout(model)
         if ink:
             self._ink()
+            note.private = self._private()
         self._media()
         note.flow = self._runs(arch.get(self.rich, "attributedString"))
         self._recordings()
         return note
+
+    def _private(self) -> dict | None:
+        """Gamma's own copy of what the note holds, when Gamma's export wrote
+        it: zlib-compressed JSON under PRIVATE_KEY, at most
+        MAX_PRIVATE_BYTES inflated, an object of its format; None for
+        anything else. It is not checked here: the import uses each part
+        only where the note still holds what it describes
+        (gamma/notability_map.py)."""
+        raw = self.arch.data(self.arch.root.get(PRIVATE_KEY))
+        if raw is None:
+            return None
+        try:
+            self._spend(raw)
+            inflate = zlib.decompressobj()
+            data = inflate.decompress(raw, MAX_PRIVATE_BYTES)
+            if inflate.unconsumed_tail:
+                return None
+            value = json.loads(data, parse_constant=_no_constant)
+        except (ArchiveError, zlib.error, ValueError, RecursionError):
+            return None
+        return value if isinstance(value, dict) and value.get("format") == "gamma-notability" else None
 
     def _spend(self, raw: bytes) -> None:
         """Spend ``raw``'s size from what the plists inside the note (its ink
@@ -683,7 +716,10 @@ class _Reader:
             if n > MAX_CURVE_POINTS:
                 note.left_out["stroke"] += 1
             elif style != STYLE_HIDDEN and rgba[3]:  # style 6 Notability does not draw; alpha 0 shows nothing
-                kept.append((stroke, Curve(ink, p, n, f, r == 0, widths[i] * scale, rgba, style, dashes.get(stroke))))
+                curve = Curve(ink, p, n, f, r == 0, widths[i] * scale, rgba, style, dashes.get(stroke))
+                if uuids is not None and len(uuids) == 16 * n_curves and is_gamma(uuids[16 * i:16 * i + 16]):
+                    curve.gamma = uuids[16 * i:16 * i + 16]
+                kept.append((stroke, curve))
                 self.curve_count += 1
             p += n
             f += anchors
@@ -692,6 +728,7 @@ class _Reader:
             message = "The handwriting's width data does not match its strokes: they are drawn at an even width"
             if (n_anchors or fractional) and message not in note.warnings:
                 note.warnings.append(message)
+        kept = _joined(kept)
         taken = self._shape_list(arch.data(h.get("shapes")), transform, scale, zkey)
         taken += self._groups(arch, h, transform, depth, zkey)
         free, last, key = _free_positions(taken), -1, None
@@ -853,10 +890,11 @@ class _Reader:
         if len(pieces) > room:
             note.left_out["shapes limit"] += len(pieces) - room
         color = _rgba(look.get("strokeColor")) or (group_look and _rgba(group_look.get("strokeColor"))) or (0, 0, 0, 1)
+        uuid = d.get("uuid") if isinstance(d.get("uuid"), bytes) and len(d["uuid"]) == 16 else None
         return [Shape(kind="path" if kind == "partialshape" else kind, points=points, control=control,
                       arrow=kind != "partialshape" and whole(dash_style.get("arrowHead")) == 1, width=width * scale,
                       rgba=color, fill=_rgba(look.get("fillColor")), style=whole(look.get("style")) or STYLE_PEN,
-                      dash={1: "dashed", 2: "dotted"}.get(pattern), grouped=grouped, segments=segments)
+                      dash={1: "dashed", 2: "dotted"}.get(pattern), grouped=grouped, segments=segments, uuid=uuid)
                 for points, segments in pieces[:room]]
 
     # --- media ---------------------------------------------------------------------------
@@ -893,6 +931,8 @@ class _Reader:
             media = Media(kind=kind, x=origin[0], y=origin[1], w=size[0], h=size[1],
                           rotation=arch.number(obj.get("rotationDegrees")) or 0.0,
                           z=arch.number(obj.get("zIndex")) or 0.0)
+            ident = arch.data(arch.get(arch.get(obj, "UUID"), "NS.uuidbytes"))
+            media.uuid = ident if ident is not None and len(ident) == 16 else None
             paper = arch.get(arch.get(obj, "paperStyleObject"), "paperColor")
             if kind == "text":
                 media.runs = self._runs(arch.get(arch.get(obj, "textStore"), "attributedString"))
@@ -1155,6 +1195,66 @@ def _rgba(value) -> tuple | None:
     if len(values) == 3:
         values.append(1.0)
     return tuple(min(1.0, max(0.0, v)) for v in values)
+
+
+def gamma_uuid() -> bytes:
+    """A curve UUID as Gamma's export writes it: GAMMA_UUID, then random
+    bits, the variant set (an RFC 9562 version 8 UUID, which no random
+    version 4 one can be)."""
+    raw = bytearray(os.urandom(16))
+    raw[:len(GAMMA_UUID)] = GAMMA_UUID
+    raw[8] = 0x80 | (raw[8] & 0x3F)
+    return bytes(raw)
+
+
+def is_gamma(uuid: bytes) -> bool:
+    return len(uuid) == 16 and uuid[:len(GAMMA_UUID)] == GAMMA_UUID and uuid[8] & 0xC0 == 0x80
+
+
+def _no_constant(name: str):
+    raise ValueError(f"not a finite number: {name}")
+
+
+def _joined(kept: list[tuple[int, Curve]]) -> list[tuple[int, Curve]]:
+    """A stroke Gamma's export cut into curves (one longer than a curve
+    may be) made whole again: consecutive curves of one Gamma UUID, the
+    next starting on the anchor the last ended on, as one curve over
+    arrays of its own. A piece Notability's eraser left, which starts
+    elsewhere, stays a curve."""
+    if not any(c.gamma for _s, c in kept):
+        return kept
+    out: list[tuple[int, Curve]] = []
+    for stroke, curve in kept:
+        last = out[-1][1] if out else None
+        if (last is not None and curve.gamma and last.gamma == curve.gamma and last.bezier and curve.bezier
+                and out[-1][0] == stroke and _point_at(last, last.n - 1) == _point_at(curve, 0)):
+            out[-1] = (stroke, _concat(last, curve))
+        else:
+            out.append((stroke, curve))
+    return out
+
+
+def _point_at(curve: Curve, i: int) -> tuple[float, float]:
+    at = 2 * (curve.p + i)
+    return curve.ink.points[at], curve.ink.points[at + 1]
+
+
+def _concat(a: Curve, b: Curve) -> Curve:
+    """Two curves of one stroke, ``b`` starting on ``a``'s last anchor, as
+    one curve on arrays of its own (that anchor once)."""
+    def part(values, curve, per, skip):
+        if values is None:
+            return None
+        return values[per * (curve.f + skip):per * (curve.f + curve.anchors)]
+
+    ink, other = a.ink, b.ink
+    points = array("f", ink.points[2 * a.p:2 * (a.p + a.n)]) + other.points[2 * (b.p + 1):2 * (b.p + b.n)]
+    arrays = []
+    for name, per in (("fractional", 1), ("force", 1), ("altitude", 1), ("azimuth", 2)):
+        first, second = part(getattr(ink, name), a, per, 0), part(getattr(other, name), b, per, 1)
+        arrays.append(None if first is None or second is None else array("f", first) + second)
+    joined = InkHash(points, *arrays, ink.transform, ink.scale)
+    return Curve(joined, 0, a.n + b.n - 1, 0, True, a.base, a.rgba, a.style, a.dash, a.z, a.gamma)
 
 
 def _free_positions(taken: list[int]):

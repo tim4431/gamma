@@ -25,7 +25,7 @@ from starlette.background import BackgroundTask
 
 from .. import bibtex as bibtex_mod
 from .. import ink as inkmod
-from .. import comments, jobs, notebook
+from .. import comments, jobs, notability_export, notebook
 from ..auth import require_user, require_ws, resolve_ws, share_scope
 from ..blocks_store import (
     BLOCK_COLUMNS, PATH_SEP, STORED_COLUMNS, TREES, assert_block_in_scope, block_to_dict,
@@ -764,6 +764,65 @@ class _AnnotatedPdfBuilder(_Builder):
         return super().save(dest, progress)
 
 
+class _NotabilityBuilder(_Builder):
+    """Each page as a Notability note (``notability_export``): its PDF or
+    its sheets of paper, its handwriting, boxes, pictures, notes and
+    recordings, which Gamma's Notability import brings back as they were.
+    One page: the .note itself. A folder: a zip of them,
+    ``<dir>/<Title>.note``, the directories mirroring the page's folders
+    below the exported folder, as the annotated PDFs are filed. What a page
+    loses on the way (its highlights, a recording that is no .m4a, …) is
+    listed under its title in the result's ``warnings``; a page that cannot
+    be a note (a PDF page whose file is gone) is left out."""
+    suffix = "-notability.zip"
+
+    def __init__(self, ws, base, opts):
+        super().__init__(ws, base, opts)
+        self.used = set()
+        self.single_name = ""
+        self.warnings = []
+        self.resolve_ref = None
+
+    def begin(self, conn, root_ids):
+        super().begin(conn, root_ids)
+        self.resolve_ref = block_ref_resolver(conn)  # the walk's connection: open while the pages are written
+
+    def add_page(self, n, rows, page):
+        if self._spool is None:
+            self._spool = Path(tempfile.mkdtemp(prefix="gamma-export-"))
+        path = self._spool / f"{len(self.files)}.part"
+        try:
+            warnings = notability_export.write_page([block_to_dict(r) for r in rows], page["id"], self.uploads_dir,
+                                                    path, self.resolve_ref)
+        except notability_export.ExportError as e:
+            path.unlink(missing_ok=True)
+            self.skip(page, str(e))
+            return
+        title = (page.get("content") or "").strip() or "Untitled"
+        self.warnings += [{"page_id": page["id"], "title": title, "reason": reason} for reason in warnings]
+        name = unique_name(self.used, page_dir(self.filing.folder(page["properties"])),
+                           vault_name(page.get("content") or ""), ".note")
+        self.single_name = name.rsplit("/", 1)[-1]
+        self.files.append((name, path))
+
+    def save(self, dest, progress=jobs.no_progress):
+        if not self.files:
+            reasons = {s["reason"] for s in self.skipped}
+            self.discard()
+            raise HTTPException(status_code=400, detail=next(iter(reasons)) if len(reasons) == 1 else
+                                "none of these pages could be written as a note")
+        if self.opts.get("folder_scope") is None:  # one page: the .note itself
+            try:
+                shutil.copyfile(self.files[0][1], dest)
+            finally:
+                self.discard()
+            return self.single_name, "application/octet-stream"
+        return super().save(dest, progress)
+
+    def summary(self) -> dict:
+        return {**super().summary(), "warnings": self.warnings}
+
+
 class _BibtexBuilder(_Builder):
     """One ``.bib`` bibliography: the citation entry of every page that has
     paper metadata — ``properties.bibtex``, the entry the metadata lookup
@@ -835,6 +894,7 @@ _BUILDERS = {
     "gamma": _GammaBuilder,
     "notes-pdf": _NotesPdfBuilder,
     "annotated-pdf": _AnnotatedPdfBuilder,
+    "notability": _NotabilityBuilder,
 }
 
 

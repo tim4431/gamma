@@ -497,13 +497,14 @@ class _Import:
                 media = note.media[i]
                 box = (self._store_picture(members, media, page.frame, title, uses) if media.kind == "picture"
                        else nmap.text_box(media, page.frame, plan.left_out))
+                box = nmap.copied_box(note, media, box, page.frame)
                 if box is not None:
                     found.append(box)
                     counts["pictures" if media.kind == "picture" else "boxes"] += 1
             boxes.append(found)
-        recordings = [r for r in (self._store_recording(members, ref, note) for ref in note.recordings) if r]
+        recordings = self._recordings(members, note)
         self._left_out(title, note.left_out + plan.left_out, note.classes)
-        tree = list(plan.flow) + _markup(plan, groups, boxes) + recordings
+        tree = _ordered(note, plan, list(plan.flow), _markup(plan, groups, boxes), recordings)
         written = self._write(note, props, tree, dirs, entry)
         if written:
             self.report["strokes_imported"] += sum(g["ink_strokes"] for page in groups for g in page)
@@ -661,6 +662,31 @@ class _Import:
         return {"content": f"![{escape_markdown(caption)}](/api/uploads/{stored})",
                 "text_box": nmap.picture_box(media, frame)}
 
+    def _recordings(self, members, note: nb.Note) -> list[dict]:
+        """The note's recordings as recording blocks, each stored
+        (``_store_recording``). A note Gamma's export wrote names in its copy
+        (``Note.private``) the recording each file is a segment of: those
+        files become that recording again, its title, times and segments as
+        they were, the files the note holds."""
+        copies = (note.private or {}).get("recordings")
+        copies = copies if isinstance(copies, dict) else {}
+        out, grouped = [], {}
+        for ref in note.recordings:
+            made = self._store_recording(members, ref, note)
+            if made is None:
+                continue
+            copy = copies.get(posixpath.basename(ref.path or ""))
+            block = copy.get("block") if isinstance(copy, dict) else None
+            joined = _copied_recording(copy, made) if isinstance(block, int) else None
+            if joined is None:
+                out.append(made)
+            elif block in grouped:
+                grouped[block]["properties"]["recording"]["segments"] += joined["properties"]["recording"]["segments"]
+            else:
+                grouped[block] = joined
+                out.append(joined)
+        return out
+
     def _store_recording(self, members, ref: nb.RecordingRef, note: nb.Note) -> dict | None:
         """A recording as a recording block with one segment; None, with a
         warning, when it cannot be stored. No stroke is placed on it: the
@@ -696,12 +722,34 @@ class _Import:
             self.warn(title, f"Recording {ref.name} is left out: {exc.detail}")
             return None
         self.progress(item=ref.name)
-        started = int((ref.created or note.created or datetime.now(UTC)).timestamp() * 1000)
+        started = round((ref.created or note.created or datetime.now(UTC)).timestamp() * 1000)
         return {"content": ref.name or "Recording",
                 "properties": {"recording": {"started": started, "state": "done", "dur": duration,
                                              "segments": [{"url": f"/api/uploads/{stored}", "started": started,
                                                            "dur": duration, "bytes": entry.size,
                                                            "mime": "audio/mp4"}]}}}
+
+
+def _ms(value) -> int | None:
+    return value if isinstance(value, int) and not isinstance(value, bool) and 0 <= value < 1 << 53 else None
+
+
+def _copied_recording(copy: dict, made: dict) -> dict | None:
+    """The recording block ``made`` of one file, as Gamma's copy says the
+    recording it is a segment of was: its title, its start, state and
+    length, and this segment's start and length (the file, its size and
+    type are ``made``'s). None when the copy does not read."""
+    rec, segment, content = copy.get("recording"), copy.get("segment"), copy.get("content")
+    if not isinstance(rec, dict) or not isinstance(segment, dict) or not isinstance(content, str):
+        return None
+    started, dur = _ms(rec.get("started")), _ms(rec.get("dur"))
+    seg_started, seg_dur = _ms(segment.get("started")), _ms(segment.get("dur"))
+    if None in (started, dur, seg_started, seg_dur) or len(content) > 500:
+        return None
+    ours = made["properties"]["recording"]["segments"][0]
+    return {"content": content, "properties": {"recording": {
+        "started": started, "state": "done", "dur": dur,
+        "segments": [{**ours, "started": seg_started, "dur": seg_dur}]}}}
 
 
 def _missing(path: str) -> str:
@@ -721,12 +769,39 @@ def _markup(plan: nmap.NotePlan, groups: list, boxes: list) -> list[dict]:
         inks = [{"content": "", "properties": group} for group in (groups[k - 1] if groups else [])]
         if plan.kind == "notebook":
             placed = [{"content": box["content"], "properties": {"text_box": box["text_box"]}} for box in boxes[k - 1]]
-            tree.append({"id": new_block_id(), "content": "", "properties": {"sheet": plan.paper, "collapsed": True},
+            sheet = plan.papers[k - 1] if plan.papers else plan.paper
+            tree.append({"id": new_block_id(), "content": "", "properties": {"sheet": sheet, "collapsed": True},
                          "children": inks + placed})
         elif plan.kind in ("original", "composed"):
             tree += inks + [{"content": box["content"], "properties": {"text_box": box["text_box"], "pdf_page": k}}
                             for box in boxes[k - 1]]
     return tree
+
+
+def _ordered(note: nb.Note, plan: nmap.NotePlan, notes: list, markup: list, recordings: list) -> list[dict]:
+    """The page's blocks: its notes, then its sheets or its PDF's
+    handwriting and boxes, then its recordings; in the order of Gamma's
+    copy when the note is one Gamma's export wrote and the copy names as
+    many notes, sheets and recordings as the note brings (a PDF's
+    handwriting and boxes go together, where the first of them was)."""
+    canonical = notes + markup + recordings
+    order = (note.private or {}).get("order")
+    if not isinstance(order, list) or len(order) > len(canonical) + 1:
+        return canonical
+    parts = {"note": notes, "recording": recordings}
+    if plan.kind == "notebook":
+        parts["sheet"] = markup
+    else:
+        parts["markup"] = [markup] if markup else []
+    counts = {kind: order.count(kind) for kind in parts}
+    if sum(counts.values()) != len(order) or any(counts[kind] != len(items) for kind, items in parts.items()):
+        return canonical
+    taken = {kind: iter(items) for kind, items in parts.items()}
+    out = []
+    for kind in order:
+        item = next(taken[kind])
+        out += item if kind == "markup" else [item]
+    return out
 
 
 def _note_dirs(bundles: list[nb.Bundle]) -> dict[str, list[str]]:
