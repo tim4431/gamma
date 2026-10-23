@@ -4473,7 +4473,8 @@ reach.
 - A snap of straight highlights to the PDF's text lines, the gap left
   from the Notability comparison in the research note.
 - Xournal++ `.xopp` import.
-- Notability `.ntb` import: its op log's deletes and undos are not mapped
+- From a Notability `.ntb`: its recordings, a shape's fill and arrowhead,
+  which no bundle seen yet shows
   ([research/notability-format.md](../research/notability-format.md)).
 - Strokes placed on a recording the Notability import brings: the note
   times a stroke as an event, not its samples.

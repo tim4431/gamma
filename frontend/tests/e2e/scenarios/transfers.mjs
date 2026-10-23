@@ -368,22 +368,27 @@ with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as z:
     } finally { await ctx.close(); }
   });
 
-  await step("transfer: a Notability note imports as a page with its ink, text box, picture and recording", async () => {
+  await step("transfer: a Notability note imports as a page with its ink, text box, picture and recording, and an .ntb as its note would", async () => {
     const { ctx, page } = await setup();
     try {
-      // The backend's writer of what Notability writes (backend/tests/notability_fixtures.py):
-      // a PDF page then a paper page, a pen stroke and a highlighter, a text
-      // box and a picture on page 1, a dot on page 2, and a recording. And
-      // an .ntb, Notability Cloud's format, which the import refuses.
+      // The backend's writers of what Notability writes (backend/tests/notability_fixtures.py,
+      // ntb_fixtures.py): a .note of a PDF page then a paper page, a pen stroke and a
+      // highlighter, a text box and a picture on page 1, a dot on page 2, and a recording;
+      // an .ntb, the NTB export, of a stroke and typed text. And a Supernote .note, which
+      // the import refuses.
       const note = path.join(server.dir, "E2E Notability note.note");
-      const ntb = path.join(server.dir, "Cloud note.ntb");
+      const ntb = path.join(server.dir, "E2E NTB note.ntb");
+      const supernote = path.join(server.dir, "Supernote.note");
       execFileSync(python, ["-c", `
 import sys
 sys.path.insert(0, 'backend/tests')
-from notability_fixtures import ntb, sample_note
+import ntb_fixtures as tx
+from notability_fixtures import sample_note
 open(sys.argv[1], 'wb').write(sample_note())
-open(sys.argv[2], 'wb').write(ntb())
-`, note, ntb], { cwd: ROOT });
+open(sys.argv[2], 'wb').write(tx.ntb_zip(tx.bundle((1, tx.DOCUMENT, tx.document("E2E NTB note")),
+    (15, (0, 10), tx.ink(tx.cubic([(0, 0), (10, 0), (20, 10), (30, 10)]))), (8, (0, 11), tx.text("Typed in the bundle")))))
+open(sys.argv[3], 'wb').write(b"noteSN_FILE_VER_20230015" + bytes(64))
+`, note, ntb, supernote], { cwd: ROOT });
       await page.waitForSelector(".folderNewBtn");
       const pickNotes = async (file) => {
         const dialog = await openDialog(page, "Import");
@@ -393,15 +398,30 @@ open(sys.argv[2], 'wb').write(ntb())
         await (await chooser).setFiles(file);
         return page.getByRole("dialog", { name: "Review Notability import", exact: true });
       };
-      // The .ntb: the server's refusal says how to export "Note" instead, and
-      // sending the same file again is not offered.
-      let review = await pickNotes(ntb);
-      await review.getByRole("alert").filter({ hasText: "NTB" }).waitFor();
+      // A file the import does not read: the server's refusal says what it is,
+      // and sending the same file again is not offered.
+      let review = await pickNotes(supernote);
+      await review.getByRole("alert").filter({ hasText: "Supernote" }).waitFor();
       assertEq(await choice(review, "Retry preview").count(), 0, "a refused file is not offered again");
       assert(!(await review.innerText()).includes("Choose what to import"), "nothing to choose from");
       await choice(review, "Cancel").click();
       await review.waitFor({ state: "detached" });
       assertNoProblems(page, [/^POST \/api\/import\/review\S* -> 400$/]);
+
+      // The .ntb comes in as its note would: a notebook of its page, its typed
+      // text as the page's note and its stroke on the sheet.
+      review = await pickNotes(ntb);
+      await review.getByRole("region", { name: "Library after import", exact: true })
+        .getByText("E2E NTB note", { exact: true }).waitFor();
+      await choice(review, "Import to library").click();
+      const fromNtb = page.getByRole("dialog", { name: "Import complete", exact: true });
+      await fromNtb.waitFor();
+      await choice(fromNtb, "Done").click();
+      const ntbPage = (await alice.api("/api/blocks/root/children")).children.find((p) => p.content === "E2E NTB note");
+      const [typed, sheet] = (await alice.api(`/api/blocks/${ntbPage.id}/subtree`)).block.children;
+      assertEq(typed.content, "Typed in the bundle", "its typed text, the page's note");
+      const sheetInk = (sheet?.children || []).find((b) => b.properties?.ink_url);
+      assertEq((await alice.api(sheetInk.properties.ink_url)).strokes.length, 1, "its stroke on its sheet");
 
       review = await pickNotes(note);
       const target = review.getByRole("region", { name: "Library after import", exact: true });
@@ -628,7 +648,7 @@ open(sys.argv[2], 'wb').write(ntb())
       await choice(dialog, "Done").click();
       await dialog.waitFor({ state: "detached" });
       for (const [name, accept, multiple] of [["Gamma export (.zip)", ".zip,application/zip", false], ["Logseq highlights", ".pdf,.edn,.md", true],
-        ["Notability notes", ".note,.zip,application/zip", true]]) {
+        ["Notability notes", ".note,.ntb,.zip,application/zip", true]]) {
         dialog = await openDialog(page, "Import");
         const chooser = page.waitForEvent("filechooser");
         if (multiple) {

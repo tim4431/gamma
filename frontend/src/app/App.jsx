@@ -6364,9 +6364,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       else if (o.source === "notability") {
         // Notes picked together go up as one .zip. Safari on an iPhone or
         // iPad (no folder picker: canPickFolder) greys out a file whose
-        // extension it has no type for, a .note among them, so there the
-        // picker takes any file and the server says what it cannot read.
-        pickFiles({ accept: canPickFolder() ? ".note,.zip,application/zip" : "", multiple: true },
+        // extension it has no type for, a .note or .ntb among them, so there
+        // the picker takes any file and the server says what it cannot read.
+        pickFiles({ accept: canPickFolder() ? ".note,.ntb,.zip,application/zip" : "", multiple: true },
           (files) => review(files.length === 1 ? files[0] : filesUpload(files, t("Notability notes"))));
       } else pickFiles({ accept: o.source === "markdown" ? ".md,.markdown,.zip,text/markdown,application/zip" : ".zip,application/zip" },
         ([file]) => review(file));

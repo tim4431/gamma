@@ -83,10 +83,11 @@ class NotePlan:
 
 def paper_page(note: Note) -> tuple[float, float, float]:
     """``(page width in pt, page height in pt, H)`` of a paper page, H its
-    height in document units: 612 pt wide (A4 595.28), as tall as its size
-    asks — A4 841.89/595.28, legal 14/8.5, a static-width letter page
-    11/8.5 with H floored to a whole unit (as gnnote and nokcha0 read it),
-    anything else 803.25/612 — and landscape the inverse ratio."""
+    height in document units: 612 pt wide (A4 595.28), as tall as the note
+    says (an .ntb's ``page_height``) or else as its size asks — A4
+    841.89/595.28, legal 14/8.5, a static-width letter page 11/8.5 with H
+    floored to a whole unit (as gnnote and nokcha0 read it), anything else
+    803.25/612 — and landscape the inverse ratio."""
     spec, width = note.paper, note.width
     pw = A4_PT if spec.size == "a4" else LETTER_PT
     static = spec.size == "letter" and spec.sizing == "staticWidth"
@@ -94,22 +95,22 @@ def paper_page(note: Note) -> tuple[float, float, float]:
              else 11 / 8.5 if static else _PAGE_RATIO)
     if spec.landscape:
         ratio = 1 / ratio
-    height = math.floor(width * ratio) if static else width * ratio
+    height = note.page_height or (math.floor(width * ratio) if static else width * ratio)
     return pw, height * pw / width, height
 
 
 def paper(note: Note) -> dict:
     """The note's paper as a sheet's (normalized): its page size; its colour
     (the identifier's, else cream for legacy paper 0, the tinted paper of
-    2014, else white); ruled every ``lines`` inches, a legacy small grid
-    every 18 pt, else blank. The ruling's colour stays the default: the
-    note does not store one."""
+    2014, else white); ruled (or an .ntb's grid or dots) every ``lines``
+    inches, a legacy small grid every 18 pt, else blank. The ruling's
+    colour stays the default: the note does not store one."""
     pw, ph, _height = paper_page(note)
     spec = note.paper
     raw = {"width": pw, "height": ph, "color": spec.color or (CREAM if spec.legacy == 0 else "#ffffff"),
            "pattern": "blank"}
     if spec.lines:
-        raw.update(pattern="ruled", spacing=spec.lines * 72 * pw / LETTER_PT)
+        raw.update(pattern=spec.ruling, spacing=spec.lines * 72 * pw / LETTER_PT)
     elif spec.grid:
         raw.update(pattern="grid", spacing=GRID_PT)
     return normalize_paper(raw)

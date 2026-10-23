@@ -21,8 +21,9 @@ Tags:
 - **`.note`**, Notability's "Note" export, is read: one note per file, with
   its PDFs, paper, handwriting, shapes, typed text, math, sticky notes,
   pictures and recordings.
-- **`.ntb`**, Notability Cloud's format and the Mac app's Save As, is
-  detected and refused with how to export "Note" instead (below, ".ntb").
+- **`.ntb`**, the "NTB" export (Notability Cloud's format and the Mac app's
+  Save As), is read into the same model (below, ".ntb"), all but its
+  recordings.
 - GoodNotes is out of scope.
 
 ## Sources
@@ -305,30 +306,89 @@ agree where they overlap [V]:
 - `noteBundle` is an append-only log of ops, oldest first: document, text,
   styles, ink (type 15), shapes (18), media (22). An ink op carries its
   page, origin, turn, scale, tool, dash, RGBA, base width and a point blob
-  of offsets from the origin with two float16 values and an opacity byte per
-  anchor.
+  of offsets from the origin with, per anchor, two float16 values and two
+  bytes (the second float the force; the first byte, which renderers read
+  as a pencil's opacity, is the altitude).
 
-**Verdict: not imported.** Fresh strokes decode reliably, partial erases
-too. Not established: what the op log keeps for a stroke deleted, undone,
-moved or restyled (inkterop's erase audit leaves it open, and nothing in a
-file says whether such edits happened, so an importer would bring back
-erased ink in an unknown share of notes); the meaning of the two width
-values; PDF placement beyond one PDF in order; text-box ownership edge cases;
-audio; and the schema's stability (its one version marker is a constant).
-Since then nokcha0's converter reads type 25 events as lists of erased
-records and leaves those out, and turns its example's `.ntb` into the
-strokes, shapes, groups, pictures and text of the same note's "Note"
-export [V1]; deletes, undos, moves and restyles in general stay unmapped.
-Gamma refuses an `.ntb` (400) with how to export "Note" instead: Export
-Options → File Format "Note" (in a note: the options icon; in the library:
-press and hold the note). Third-Party Backup offers only NTB, PDF and PDF +
-Recording; 16.1.5 on the iPad still writes `.note`.
+What Gamma reads (gamma/notability_ntb.py), from nokcha0's description and
+the bytes of its example, which the "Note" export of the same note checks
+[V on that sample unless tagged]:
+
+- **The root** table: field 4 the creation time in ms, field 6 the records.
+  A record: field 0 its id (two uint32), 1 a time, 4 its kind (a byte), 5
+  its payload, a table. A **position** is an inline struct of an id and a
+  uint32 count: a page is the page list's id (the kind 3 record) and the
+  page's index, a text offset an anchor's id and UTF-16 units past it.
+- **The document** (kind 1): field 0 → its title; 1 → 0 → the layout, its
+  page size at 3 (679 × 891.1875 in the sample) and its paper at 0 (0 the
+  pattern: 0 ruled, 1 dots, 2 grid [V1 for 1 and 2]; 1 the spacing, in
+  units of a page W wide, so ÷ (W / 8.5) is inches; 4 a colour; 5 the
+  legacy paper); 4 the font, 5 its size.
+- **Ink** (15): 0 the page, 1 the origin, 2 the turn about it, 3 a scale of
+  the points and the width, 4 the tool (0 pen, 1 pencil, 2 highlighter), 5
+  the line style (2 dashed, 3 dotted), 7 RGBA bytes, 8 the width, 9 the
+  path: a precision byte (0 half floats, 1 floats), the point count
+  (uint16), the kind (3 cubic, 7 linear), then the first point, zero in
+  every sample, and offsets from the origin. A cubic path is a node, a
+  command (0 a segment's three points, 3 a move to the next piece's
+  first) and its points per anchor after the first, then the last node; a
+  node is the width multiplier and force (half floats), the altitude (a
+  byte of π/2) and the azimuth (a byte of a turn). A linear path is a
+  command (6 a line, 7 a move) and a point each. A move is where the eraser
+  cut the stroke: its pieces become the curves a .note keeps under one
+  UUID, and a partly erased shape is an ink record of linear pieces (the
+  sample's 23 `partialshape`s are 23 of its 249 ink records).
+- **Shapes** (18): 0, 1 and 2 as ink's; 4 the kind (1 a line: 0 its start,
+  1 its quadratic control, 3 its end; 2 a polygon: 0 its points; 3 an
+  ellipse: 1 the size of its box), 6 the tool, 7 the dash, 9 RGBA, 10 the
+  width, 14 a pencil shape's force [V1]. Fills and arrowheads: no sample
+  has them, so their fields are not known.
+- **Groups** (20): 0 the members' ids; the members carry their own turn.
+- **Media** (22): 2 the page, 3 the frame's top-left corner as turned
+  about its centre, 4 the turn, 6 the size, 9 a sort key, 10 → 0 the asset
+  (0 its SHA-512, 2 its MIME type) and → 1 its logical size, 11 a crop in
+  that logical size (the sample's GIF is 352 × 240 px, its logical size
+  220 × 150), 15 a sticky's paper (4 its colour). A media record whose id
+  owns text is a text box [V1: no sample has one].
+- **Text** (8): 0 its owner (the document, or a text box), 1 the string,
+  appended to the owner's text; its id is an anchor at where it starts.
+  An anchor (7) marks a range's last character. Character styles (12): 0
+  and 1 the range, then a table each: 3 bold, 4 italic, 5 underline, 7 the
+  font, 8 its size, 9 the colour, 11 strikethrough. Paragraph styles (13):
+  2 the indent level, 4 the line spacing, 5 the list (1 bullet, 2
+  numbered). No number is stored: a list counts its paragraphs per level,
+  bullets too, as the .note's numbers do.
+- **A log** [V1: the sample is a compacted list, one version of each record
+  and no erase record]: a record given again is current at its last
+  version, in the place of its first, and an erase record (25) lists the
+  records that are gone, with the text they own.
+- **Order**: strokes, shapes and groups are drawn in the order of their
+  records, a group in its first member's place, as the .note's z-order
+  has them, except highlighter shapes: the sample lists its 16 apart,
+  marked by a field 12 of 999 999, while the .note stacks them among the
+  rest.
+- **PDF**: the one PDF under `assets/` is the note's first pages, all of
+  them in order; several are not placed [V1].
+
+Not read: recordings (no sample has one), a checklist's ticks, a highlight
+on text, and where the pages of several PDFs go. Gamma imports an `.ntb`
+since 2026-10, the decoders having closed most of what the verdict before
+left open: the example's NTB export reads as its Note export does,
+stroke for stroke within a point, the same notes (but for a bold the .ntb
+keeps where the .note names the font alone, Impact) and the same pictures.
+What the op log keeps of a stroke deleted, undone, moved or restyled is
+taken as nokcha0 found it, versions and erase records; a bundle that kept
+it some other way would bring back what was erased.
 
 ## What Gamma decided where the sources conflict or say nothing
 
 - **A static-width letter page's height** is floored to a whole unit, as
-  gnnote and nokcha0 read `.note`; the `.ntb` exports' 789.41 differs by 0.4
-  units a page.
+  gnnote and nokcha0 read `.note`; an `.ntb` states its own (789.41 in those
+  exports, 0.4 units a page more), and Gamma keeps that.
+- **An `.ntb`'s order** is its records' (a group at its first member's
+  place), so its highlighter shapes, which it lists apart, may lie
+  elsewhere among the strokes than the same note's .note stacks them;
+  drawn translucent, that hardly shows.
 - **Which page an item is on** is the page holding the vertical centre of
   its bounding box (notesconverter's mean, not gnnote's first anchor), so a
   stroke that starts in a page's last line stays on that page. An item is
@@ -372,8 +432,10 @@ Recording; 16.1.5 on the iPad still writes `.note`.
 
 ## Still open
 
-- `.ntb`: the op log's deletes, undos, moves and restyles; the width values;
-  several PDFs; audio.
+- `.ntb`: a bundle that is an edit log (read as nokcha0 describes it, with
+  none to check it on); recordings; shape fills and arrowheads; checklist
+  ticks and text highlights; where several PDFs' pages go; text boxes and
+  PDF pages, checked on written bundles alone.
 - Strokes on recordings: the event join on current versions, and per-sample
   times interpolated over an event's duration.
 - The flow text's layout on the page (it is imported as notes).

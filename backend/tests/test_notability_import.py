@@ -1,9 +1,10 @@
 """The Notability import through its endpoints and its review job: what a
-note becomes (a PDF page, a composed PDF, a notebook, a plain note), its
-files in storage, filing and re-import, the refusals that keep an untrusted
-upload bounded, and a stop that keeps what was written
-(docs/dev/import_export.md "Notability notes")."""
+note, a .note or an .ntb, becomes (a PDF page, a composed PDF, a notebook,
+a plain note), its files in storage, filing and re-import, the refusals
+that keep an untrusted upload bounded, and a stop that keeps what was
+written (docs/dev/import_export.md "Notability notes")."""
 
+import hashlib
 import io
 import json
 import math
@@ -15,8 +16,9 @@ import pytest
 from fastapi import HTTPException
 
 import notability_fixtures as fx
+import ntb_fixtures as tx
 from conftest import account_of, folder_names, login, make_folder, make_user, workspace_of
-from gamma import import_zip, jobs, notability as nb, notability_import as ni, storage
+from gamma import import_zip, ink, jobs, notability as nb, notability_import as ni, storage
 from gamma.blocks_store import folder_paths, pages_in_folder
 from gamma.db import connect_pages_db, ws_uploads_dir
 
@@ -450,8 +452,6 @@ def test_a_note_whose_page_fails_to_write_leaves_no_folder(monkeypatch):
 
 def test_what_is_refused(accounts):
     owner = accounts["nbi_owner"]
-    r = send(owner, fx.ntb(), "Cloud.ntb")
-    assert r.status_code == 400 and r.json()["detail"] == nb.NTB_REASON
     r = send(owner, b"noteSN_FILE_VER_20230015" + bytes(64), "supernote.note")
     assert r.status_code == 400 and r.json()["detail"] == nb.SUPERNOTE_REASON
     r = send(owner, b"%PDF-1.7 not a zip", "file.note")
@@ -459,9 +459,61 @@ def test_what_is_refused(accounts):
     r = send(owner, fx.zip_of({"readme.txt": b"x"}), "other.zip")
     assert r.status_code == 400 and r.json()["detail"] == nb.NO_NOTES_REASON
     beside = imported(owner, fx.zip_of({"Old.ntb": fx.ntb(), "Renamed.note": fx.ntb(),
-                                        "New.note": note("Beside an ntb")}))
-    assert beside["pages_created"] == 1 and nb.NTB_REASON in reasons(beside)
-    assert f"Not imported: {nb.NTB_REASON}" in reasons(beside)  # an .ntb named .note
+                                        "New.note": note("Beside a damaged ntb")}))
+    assert beside["pages_created"] == 1  # an .ntb named .note is read as one, and neither reads
+    assert reasons(beside).count("Not imported: its noteBundle holds no Notability note") == 2
+
+
+def _ntb(*records, title="Cloud lecture", assets=None) -> bytes:
+    return tx.ntb_zip(tx.bundle((1, tx.DOCUMENT, tx.document(title)), *records), assets)
+
+
+def test_an_ntb_imports_as_its_note_would(accounts):
+    """An .ntb, Notability's NTB export (gamma/notability_ntb.py), comes in
+    as a .note does: a notebook of its pages, its ink, shapes, pictures and
+    sticky notes on them and its typed text as notes; imported again, it is
+    the same note."""
+    owner, ws = accounts["nbi_owner"], workspace_of("nbi_owner")
+    png = fx.png(40, 30)
+    digest = hashlib.sha512(png).digest()
+    data = _ntb((15, (0, 10), tx.ink(tx.cubic([(0, 0), (10, 0), (20, 10), (30, 10)]), page=1)),
+                (18, (0, 11), tx.shape("ellipse", size=(40, 20))),
+                (22, (0, 12), tx.picture(digest, corner=(300, 60), size=(40, 30), logical=(40, 30))),
+                (22, (0, 13), tx.sticky()), (8, (0, 14), tx.text("Typed on the page")),
+                assets={f"{digest.hex()}.png": png})
+    result = imported(owner, data, "Cloud lecture.ntb")
+    assert (result["pages_created"], result["strokes_imported"], result["pictures_imported"]) == (1, 3, 1)
+    assert not reasons(result) and result["pages"][0]["kind"] == "page"
+    page = subtree(owner, result["pages"][0]["id"])
+    flow, *sheets = page["children"]
+    assert (page["content"], flow["content"], len(sheets)) == ("Cloud lecture", "Typed on the page", 2)
+    assert sheets[0]["properties"]["sheet"]["pattern"] == "ruled"
+    picture = next(c for c in sheets[0]["children"] if c["content"].startswith("!["))
+    assert stored(ws, picture["content"].split("(")[1][:-1]) == png
+    first, second = (ink_of(ws, next(c for c in sheet["children"] if c["properties"].get("ink_url"))) for sheet in sheets)
+    assert [len(f["strokes"]) for f in (first, second)] == [2, 1] and first["strokes"][0]["band"] == 0  # the sticky
+    again = imported(owner, data, "Cloud lecture.ntb")
+    assert again["pages_skipped"] == 1 and again["pages"][0]["id"] == result["pages"][0]["id"]
+
+
+def test_an_ntb_on_a_pdf_keeps_it(accounts):
+    """An .ntb's one PDF is its first pages, all of them in order: the page
+    carries the PDF as it came, and the ink on its second page is on the
+    PDF's second page, where Notability drew it."""
+    owner, ws = accounts["nbi_owner"], workspace_of("nbi_owner")
+    pdf = fx.pdf(((600, 780), (600, 780)))  # a PDF of its own: one stored before is not stored again
+    data = _ntb((15, (0, 10), tx.ink(tx.cubic([(0, 0), (10, 0), (20, 0), (30, 0)]), page=1, origin=(100, 100))),
+                title="Annotated", assets={f"{hashlib.sha256(pdf).hexdigest()}.pdf": pdf})
+    result = imported(owner, data, "Annotated.ntb")
+    assert (result["pages_created"], result["pdfs_stored"], result["pages"][0]["kind"]) == (1, 1, "pdf")
+    page = subtree(owner, result["pages"][0]["id"])
+    assert page["properties"]["doc_id"] == storage.content_digest(pdf)
+    (group,) = [c for c in page["children"] if c["properties"].get("ink_url")]
+    assert group["properties"]["pdf_position"]["pageNumber"] == 2
+    stroke = ink_of(ws, group)["strokes"][0]
+    first = ink.decode_stroke(ink.Stroke.model_validate(stroke))[0]
+    k = 600 / 679  # the PDF's points per document unit
+    assert (first["x"], first["y"]) == (pytest.approx(100 * k, abs=0.01), pytest.approx(100 * k, abs=0.01))
 
 
 def test_a_central_directory_past_the_cap(accounts, monkeypatch):

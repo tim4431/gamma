@@ -183,7 +183,7 @@ Gamma exports share one review flow: Upload → Review → Import → Summary.
   the job runs, and the job's row in Background tasks opens it again on that
   job (`{jobId}`, no file: the summary then shows the library column only).
   A preview the server refuses (400, 413, 415: a file the source does not
-  read, such as a Notability `.ntb`, or one too large) shows its reason
+  read, such as a Supernote `.note`, or one too large) shows its reason
   without the retry a lost connection gets. The source column is headed by
   what was uploaded: one file, a ZIP's contents, a folder, or the files
   picked together.
@@ -485,10 +485,14 @@ rechecks the current library, and leaves actual results and warnings in the dial
 `gamma/notability.py` and `gamma/notability_archive.py` and places it through
 `gamma/notability_map.py`) imports Notability's "Note" export. A `.note` is a
 zip holding one folder: `Session.plist` (the whole note, a keyed archive),
-`metadata.plist`, its PDFs, pictures and recordings. The upload is one
-`.note`, several picked together (the dialog packs them into one `.zip`), a
-`.zip` of them (a library's export), or a zip of an unzipped note folder
-(`.nbn`, iCloud's form). Each note becomes one page. It is a source of the
+`metadata.plist`, its PDFs, pictures and recordings. It imports the "NTB"
+export too: an `.ntb` is a zip of `noteBundle`, a FlatBuffers log of the
+note's records, and the pictures and PDF they name under `assets/`, read by
+`gamma/notability_ntb.py` into the same model, so what follows holds for
+both. The upload is one `.note` or `.ntb`, several picked together (the
+dialog packs them into one `.zip`), a `.zip` of them (a library's export),
+or a zip of an unzipped note folder (`.nbn`, iCloud's form). Each note
+becomes one page. It is a source of the
 reviewed import above (`source` `notability`), so the import itself is the
 `import` job. The format, its sources and what was decided where they
 disagree are in [research/notability-format.md](../research/notability-format.md).
@@ -716,12 +720,13 @@ lists the upload's notes and, not imported, its other files.
 
 **Not read, and said so.**
 
-- `.ntb`, the format of Notability Cloud and the Mac app's Save As, is
-  refused (400) with how to export "Note" instead. Three public decoders
-  agree on fresh strokes, but none has mapped what its op log keeps for a
-  stroke deleted, undone, moved or restyled, so erased ink could come back.
-  An `.ntb` beside notes is a warning.
 - A Supernote `.note`, and a "PDF + Recording" backup (add its PDF instead).
+- From an `.ntb`, what no bundle seen yet has shown how it keeps: its
+  recordings, a shape's fill and arrowhead, a checklist's ticks, a highlight
+  on text. A bundle with several PDFs does not say where their pages go:
+  they are paper, with a warning. Its log is read as the decoders found it
+  (a record's last version, erase records); the sample is a compacted
+  list.
 - Left out with a warning: a partly erased shape whose centre line does
   not read, a polygon's fill, objects
   of a kind this import does not know, and anything past the limits. A
@@ -738,14 +743,17 @@ lists the upload's notes and, not imported, its other files.
   mounts every sheet ([notebooks.md](notebooks.md) "Not built yet").
 
 **Real notes.** `backend/tests/test_notability_samples.py` imports every
-`.note` of `backend/tests/samples/notability/` and fails on anything left
-out for want of reading it, and checks that each `.ntb` is refused. The
-folder holds the example note of
+`.note` and `.ntb` of `backend/tests/samples/notability/` and fails on
+anything left out for want of reading it. The folder holds the example
+note of
 [Notability-notes-converter](https://github.com/nokcha0/Notability-notes-converter),
 exported by Notability 16 as both "Note" and "NTB" (its README says
-more), which the module also pins against the note's own bytes and its
-thumbnail. `GAMMA_NOTABILITY_SAMPLES` names a folder of more notes to
-import the same way.
+more): the module pins the Note export against the note's own bytes and
+its thumbnail, and holds the NTB export to it, stroke for stroke within a
+point. `test_notability_ntb.py` covers what the sample does not (a log's
+versions and erase records, text boxes, a PDF's pages, damage) on bundles
+`ntb_fixtures.py` writes. `GAMMA_NOTABILITY_SAMPLES` names a folder of
+more notes to import the same way.
 
 ## Zotero RDF export
 

@@ -383,7 +383,7 @@ def _commit_markdown_file(ws, actor, data, meta, selection, progress=jobs.no_pro
 
 
 def _notability(ws, data, meta, *, actor="", preview=False, selection=None, progress=jobs.no_progress):
-    """Notability notes (one .note, or a .zip of them) → a page each
+    """Notability notes (one .note or .ntb, or a .zip of them) → a page each
     (gamma/notability_import.py)."""
     with connect_pages_db(ws) as conn:  # the import commits note by note
         return {"ok": True, **import_notes(ws, data, conn, meta.get("folder", ""), name=meta.get("filename", ""),
@@ -473,8 +473,8 @@ def preview_notability(request: Request, file: UploadFile = File(...), folder: s
 @router.post("/import/notability")
 def import_notability(request: Request, file: UploadFile = File(...), folder: str = Form(""),
                       selected: str | None = Form(None)):
-    """Notability notes (one .note, or a .zip of them) → a page each; the
-    web app goes through the review (``/import/review``, source
+    """Notability notes (one .note or .ntb, or a .zip of them) → a page
+    each; the web app goes through the review (``/import/review``, source
     ``notability``)."""
     ws = require_ws(request, write=True)
     return _commit_notability(ws, actor_of(request), file.file, _meta(file, folder), parse_selection(selected))

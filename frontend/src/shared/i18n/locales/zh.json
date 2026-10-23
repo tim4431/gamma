@@ -2399,7 +2399,7 @@
   "Pick an owner.": "请选择所有者。",
   "Pick at least one workspace to continue.": "至少选择一个工作区后即可继续。",
   "Pick models on the connection (Manage) to choose one here.": "在连接（管理）中选取模型后才能在此选择。",
-  "Pick one or more .note files, or a .zip of them. In Notability, export with File Format “Note”, not “NTB”: in a note, the options icon → Export Options; in the library, press and hold a note → Export Options. Each note becomes a page: a PDF note keeps its PDF, a paper note becomes a notebook, and its handwriting, typed text, pictures and recordings come along. Notes already imported are skipped.": "选择一个或多个 .note 文件，或它们的 .zip。在 Notability 中导出时，文件格式选“Note”，不要选“NTB”：在笔记里，点选项图标 → 导出选项；在资料库里，按住笔记 → 导出选项。每条笔记成为一个页面：PDF 笔记保留它的 PDF，纸张笔记成为笔记本，手写、输入的文字、图片和录音一并导入。已导入的笔记会被跳过。",
+  "Pick one or more .note or .ntb files, or a .zip of them: Notability's exports with File Format “Note” or “NTB” (in a note, the options icon → Export Options; in the library, press and hold a note → Export Options). Each note becomes a page: a PDF note keeps its PDF, a paper note becomes a notebook, and its handwriting, typed text and pictures come along, and from a “Note” export its recordings. Notes already imported are skipped.": "选择一个或多个 .note 或 .ntb 文件，或它们的 .zip：Notability 以文件格式“Note”或“NTB”导出的笔记（在笔记里，点选项图标 → 导出选项；在资料库里，按住笔记 → 导出选项）。每条笔记成为一个页面：PDF 笔记保留它的 PDF，纸张笔记成为笔记本，手写、输入的文字和图片一并导入，以“Note”导出的笔记还带着录音。已导入的笔记会被跳过。",
   "Pick one to link it here; start with `![[` to embed it instead.": "选一个即可在这里链接它；改用 `![[` 开头则会嵌入它。",
   "Pick several pages or folders to act on together": "选择多个页面或文件夹，一起操作",
   "Pick the exported folder, or a .zip of it": "选择导出的文件夹，或它的 .zip",

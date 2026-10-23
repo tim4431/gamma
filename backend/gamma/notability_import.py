@@ -1,16 +1,18 @@
-"""The Notability import: an upload of Notability's "Note" export (one
-``.note``, or a ``.zip`` of them, a library's export, a zipped note folder)
-→ one Gamma page per note, with its PDF, handwriting, shapes, typed text,
-pictures and recordings (docs/dev/import_export.md "Notability notes").
+"""The Notability import: an upload of Notability's "Note" or "NTB" export
+(one ``.note`` or ``.ntb``, or a ``.zip`` of them, a library's export, a
+zipped note folder) → one Gamma page per note, with its PDF, handwriting,
+shapes, typed text, pictures and recordings (docs/dev/import_export.md
+"Notability notes").
 
 It is a source of the reviewed import (routers/imports.py): a preview,
 then a commit run as a background job. The upload is untrusted:
 
 - it is walked through the guarded zip walk (gamma/import_zip.py), with the
   central directory capped (MAX_DIRECTORY_BYTES) before zipfile reads it;
-- a ``.note`` inside it is opened only while it is read, one at a time, in
-  a stack of its own, so the temporary disk a note takes is given back
-  before the next and a library of thousands of notes imports whole;
+- a ``.note`` or ``.ntb`` inside it is opened only while it is read, one at
+  a time, in a stack of its own, so the temporary disk a note takes is
+  given back before the next and a library of thousands of notes imports
+  whole;
 - every member is read only after its size is checked, recordings are
   streamed, and the ink is made and stored one page at a time;
 - every file goes through ``store_pdf``, ``store_file`` or
@@ -19,11 +21,11 @@ then a commit run as a background job. The upload is untrusted:
 
 Files are stored first, outside any transaction; each note's folder and
 page are then written in one short transaction under the write lock, the
-note's Session.plist digest checked again there (``notability_import``, the
-re-import key), so an import that finds the note there writes neither. A
-stopped job keeps the notes it finished. A 413 on one of a note's files
-skips that note; a 507 (the quota, or the disk) stops the import, since
-every later note would meet it too.
+digest of the note's Session.plist or noteBundle checked again there
+(``notability_import``, the re-import key), so an import that finds the
+note there writes neither. A stopped job keeps the notes it finished. A
+413 on one of a note's files skips that note; a 507 (the quota, or the
+disk) stops the import, since every later note would meet it too.
 """
 
 import contextlib
@@ -42,6 +44,7 @@ from . import config, jobs
 from . import ink as inkmod
 from . import notability as nb
 from . import notability_map as nmap
+from . import notability_ntb as ntb
 from .ai_pictures import sniff
 from .blocks_store import (FOLDERS, attachment_props, filing, folder_inserts, folder_paths, insert_page_tree,
                            load_props, new_block_id, write_lock)
@@ -134,8 +137,9 @@ def picture_bytes(data: bytes, media: nb.Media, animation: bytes | None = None) 
     image, an animated GIF's still frame; its ``animation`` comes in its
     place when nothing is to be done and it is a GIF that opens. Something
     is to be done when the picture is cropped (FigureCropRectKey short of
-    the whole image), flipped, turned, or shown at an aspect over 1 % off
-    the cropped image's: then the EXIF orientation is applied, the crop
+    the whole image; an .ntb's crop is in ``media.crop_size`` units, scaled
+    to the image's pixels), flipped, turned, or shown at an aspect over 1 %
+    off the cropped image's: then the EXIF orientation is applied, the crop
     (clamped to the image), the flips, the stretch to the shown aspect and
     the turn (corners transparent), in that order. A turned picture is a PNG, the
     one format the server writes that keeps its transparent corners, its
@@ -154,7 +158,7 @@ def picture_bytes(data: bytes, media: nb.Media, animation: bytes | None = None) 
             width, height = opened.size
             if (opened.getexif() or {}).get(0x0112, 1) in (5, 6, 7, 8):  # EXIF orientation: a quarter turn
                 width, height = height, width
-            crop = _crop_box(media.crop, width, height)
+            crop = _crop_box(_in_pixels(media.crop, media.crop_size, width, height), width, height)
             cw, ch = crop[2] - crop[0], crop[3] - crop[1]
             stretch = abs((media.w / media.h) / (cw / ch) - 1) > 0.01
             if not (angle or media.flip_h or media.flip_v or stretch or crop != (0, 0, width, height)):
@@ -209,6 +213,15 @@ def _opens(data: bytes) -> bool:
         return False
 
 
+def _in_pixels(crop, size, width: int, height: int):
+    """A crop given in ``size`` units (an .ntb's logical asset size, not
+    always the image's pixels) as the image's pixels."""
+    if crop is None or size is None or not (size[0] > 0 and size[1] > 0):
+        return crop
+    sx, sy = width / size[0], height / size[1]
+    return crop[0] * sx, crop[1] * sy, crop[2] * sx, crop[3] * sy
+
+
 def _crop_box(crop, width: int, height: int) -> tuple[int, int, int, int]:
     """FigureCropRectKey (x, y, w, h in source pixels) as a box clamped to
     the image; the whole image when there is none or it holds nothing."""
@@ -223,7 +236,7 @@ def import_notes(ws: str, data, conn, folder: str = "", *, name: str = "", actor
                  preview: bool = False, selected: set[str] | None = None, progress=None) -> dict:
     """Import the Notability notes in the upload ``data`` into ``ws``, through
     the open pages.db connection ``conn``. ``data`` is a seekable binary
-    file: one .note, or a .zip of notes.
+    file: one .note or .ntb, or a .zip of notes.
 
     - One page per note, filed below the folder ``folder`` (an id; "" is
       the top; 400 when it is no folder), made by ``actor``.
@@ -235,8 +248,8 @@ def import_notes(ws: str, data, conn, folder: str = "", *, name: str = "", actor
       A stopped job keeps the notes it finished.
 
     Returns the report. Raises HTTPException 400 (no notes, a Supernote
-    file, an .ntb, a bad destination or selection), 413 (a central
-    directory or an archive past the limits) or 507 (no disk to unpack)."""
+    file, a bad destination or selection), 413 (a central directory or an
+    archive past the limits) or 507 (no disk to unpack)."""
     name = display_filename(name)  # a browser may send a relative path
     zf = open_upload(data, name)
     with zf, contextlib.ExitStack() as stack:
@@ -244,11 +257,11 @@ def import_notes(ws: str, data, conn, folder: str = "", *, name: str = "", actor
         entries: list = []
         walk_zip(zf, "", entries, walk, nested=nb.nested_zip)
         check_ratio(walk)
-        bundles, reasons = nb.find_bundles(entries, name)
+        bundles = nb.find_bundles(entries, name)
         if not bundles:
-            raise HTTPException(status_code=400, detail=nb.NTB_REASON if reasons else nb.NO_NOTES_REASON)
+            raise HTTPException(status_code=400, detail=nb.NO_NOTES_REASON)
         run = _Import(ws, conn, folder, actor, preview, progress or jobs.no_progress)
-        return run.run(bundles, entries, walk["left_out"] + [list(r) for r in reasons], selected)
+        return run.run(bundles, entries, walk["left_out"], selected)
 
 
 class _Import:
@@ -267,6 +280,7 @@ class _Import:
         self.seen = {}     # digest → the page entry of a note earlier in this upload
         self.paths = {}    # folder id → its names from the top
         self.dirs = {}     # bundle path → its folder path below the destination
+        self.opened = {}   # the note at hand's PDFs: member path → (sizes, reader, bytes), or None (_open_pdf)
 
     def warn(self, title: str, reason: str) -> None:
         if len(self.report["warnings"]) < MAX_WARNINGS:
@@ -308,14 +322,19 @@ class _Import:
 
     def _note(self, bundle: nb.Bundle, stack: contextlib.ExitStack) -> None:
         start = len(self.report["warnings"])
+        self.opened = {}
         try:
             members = self._open(bundle, stack)
-            session = self._session(members)
-            digest = content_digest(session)
+            name, data = self._document(members)
+            digest = content_digest(data)
             if self._skip(bundle, digest, start):
                 return
-            note = nb.read_note(members, session, path=bundle.path, digest=digest, ink=not self.preview)
-            del session
+            if name == "Session.plist":
+                note = nb.read_note(members, data, path=bundle.path, digest=digest, ink=not self.preview)
+            else:
+                note = ntb.read_ntb(members, data, path=bundle.path, digest=digest, ink=not self.preview,
+                                    pdf_pages={} if self.preview else self._ntb_pages(members))
+            del data
         except (_Skip, nb.NoteError) as exc:
             self.warn(bundle.path, f"Not imported: {exc}")
             return
@@ -391,18 +410,34 @@ class _Import:
             self.warn(bundle.path, f"{path}: {reason}")
         members = nb.note_members(entries)
         if members is None:
-            ntb = any(e.path.rsplit("/", 1)[-1] == "noteBundle" for e in entries)
-            raise _Skip(nb.NTB_REASON if ntb else "not a Notability note")
+            raise _Skip("not a Notability note")
         return members
 
-    def _session(self, members: nb.Members) -> bytes:
-        entry = members.find("Session.plist")
+    def _document(self, members: nb.Members) -> tuple[str, bytes]:
+        """``(its name, its bytes)`` of the file the note is: a .note's
+        Session.plist, else an .ntb's noteBundle, its size checked against
+        MAX_SESSION_BYTES before it is read."""
+        name = "Session.plist" if members.find("Session.plist") is not None else "noteBundle"
+        entry = members.find(name)
         if entry.size > nb.MAX_SESSION_BYTES:
-            raise _Skip(f"its Session.plist is over {nb.MAX_SESSION_BYTES >> 20} MB")
+            raise _Skip(f"its {name} is over {nb.MAX_SESSION_BYTES >> 20} MB")
         try:
-            return entry.read()
+            return name, entry.read()
         except READ_ERRORS:
-            raise _Skip("its Session.plist could not be read") from None
+            raise _Skip(f"its {name} could not be read") from None
+
+    def _ntb_pages(self, members: nb.Members) -> dict:
+        """The display sizes of an .ntb's PDF's pages, which place the items
+        on them: the PDF opened once for the note (``_pdf_sources`` takes it
+        from ``self.opened``). Empty when the note has several, or its one is
+        past the per-file cap (``_pdf_sources`` then skips the note)."""
+        found = ntb.pdf_assets(members)
+        if len(found) != 1 or members.find(found[0]).size > self.max_mb * MB:
+            return {}
+        key = found[0]
+        if key not in self.opened:
+            self.opened[key] = self._open_pdf(members.find(key), posixpath.basename(key))
+        return {posixpath.basename(key): self.opened[key][0]} if self.opened[key] else {}
 
     def _skip(self, bundle: nb.Bundle, digest: str, start: int) -> bool:
         """A note already in the library, or earlier in this upload, is
@@ -524,11 +559,12 @@ class _Import:
     def _pdf_sources(self, members, note: nb.Note) -> tuple[dict, dict, dict]:
         """The PDFs the layout names, each checked against the per-file cap
         before it is read (one past it skips the note), read whole and
-        opened once however many names lead to it: ``(display sizes of
-        their pages, readers, bytes)`` by file name. One that does not open
-        is left out, and its pages become paper."""
+        opened once however many names lead to it (an .ntb's before it was
+        read, ``_ntb_pages``): ``(display sizes of their pages, readers,
+        bytes)`` by file name, which the note's own ``opened`` lets go of.
+        One that does not open is left out, and its pages become paper."""
         pages, readers, sources = {}, {}, {}
-        opened = {}  # member path → (sizes, reader, bytes), or None when it does not open
+        opened, self.opened = self.opened, {}  # member path → (sizes, reader, bytes), or None when it does not open
         for name in dict.fromkeys(e.pdf for e in note.layout if e.pdf in note.pdfs):
             path = note.pdfs[name].path
             if path not in opened:
