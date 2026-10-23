@@ -132,13 +132,11 @@ export function useProfileSync(prefs, user, { onReplaced } = {}) {
   }
 
   function push(keepalive = false) {
-    clearTimeout(timerRef.current);
-    timerRef.current = null;
     const { snap: now, user: u } = latest.current;
-    if (!u || syncedRef.current === null) return Promise.resolve();
-    if (now === syncedRef.current) { mark("loaded"); return lastPushRef.current; } // changed back, or already on its way
+    const stopTimer = () => { clearTimeout(timerRef.current); timerRef.current = null; };
+    if (!u || syncedRef.current === null) { stopTimer(); return Promise.resolve(); }
+    if (now === syncedRef.current) { stopTimer(); mark("loaded"); return lastPushRef.current; } // changed back, or already on its way
     const before = syncedRef.current;
-    syncedRef.current = now;
     const was = before ? JSON.parse(before) : {};
     const changed = Object.entries(JSON.parse(now)).filter(([name, v]) => JSON.stringify(v) !== JSON.stringify(was[name]));
     const request = {
@@ -150,12 +148,19 @@ export function useProfileSync(prefs, user, { onReplaced } = {}) {
     // The page is going away: keepalive when the page's keepalive room has
     // space for it at the normal priority (shared/lib/keepalive.js), since
     // it is small and losing it costs only the last change of a setting.
-    // An answer the page lives to read is remembered as a push's is.
+    // An answer the page lives to read is remembered as a push's is. It is
+    // marked sent once it is sent, not before: a close flushes on pagehide
+    // and on going hidden, and Firefox can stop a pagehide listener part
+    // way, so the other one sends it again (the same values set twice).
     if (keepalive) {
       keepaliveFetch(PROFILE_URL, { ...request, credentials: "same-origin" }, { priority: "normal" })
         .then((r) => { if (r.ok && latest.current.user === u) rememberSeen(sent); }).catch(() => {});
+      syncedRef.current = now;
+      stopTimer();
       return Promise.resolve();
     }
+    syncedRef.current = now;
+    stopTimer();
     const confirmed = confirmedRef.current || {};
     const names = ACCOUNT_PREFS.filter((name) => sent[name] !== confirmed[name]);
     const id = ++pushIdRef.current;

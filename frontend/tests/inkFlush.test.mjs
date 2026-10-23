@@ -2,7 +2,8 @@
 // handwriting drafts sends for each group, and which of it goes with fetch
 // keepalive in the room the page's keepalive ledger leaves handwriting, the
 // lowest priority (ink/inkFlush.js, shared/lib/keepalive.js,
-// docs/dev/handwriting.md "Fences"). The e2e cannot drive a pagehide, so
+// docs/dev/handwriting.md "Fences"). No step of the browser suite checks
+// what a closing tab sends (the scratch tests/e2e/tabClose.mjs does), so
 // this is the proof.
 import assert from "node:assert/strict";
 import { test } from "node:test";

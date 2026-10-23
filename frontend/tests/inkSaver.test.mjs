@@ -4,8 +4,8 @@
 // tells the draft store, the pill and the retry after a failure, and which
 // requests go with keepalive. The draft store, the API and the keepalive
 // room are fakes; the timers and the clock are node:test's mock timers.
-// The e2e cannot drive a pagehide or a failing request, so this is the
-// proof.
+// No step of the browser suite checks what a closing tab sends (the scratch
+// tests/e2e/tabClose.mjs does), so this is the proof.
 import assert from "node:assert/strict";
 import { mock, test } from "node:test";
 import { encodeStroke, inkProps, newInk, serializeInk } from "../src/ink/ink.js";

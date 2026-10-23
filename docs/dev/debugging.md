@@ -436,10 +436,31 @@ A context without `hasTouch` reports no touch points whatever the host has
 digitizer through, and a Remote Desktop session from a touch device brings
 the client's ten points, which turn on the touch-only controls and guide
 steps.
-`GAMMA_E2E_BROWSER=webkit` (after `npx playwright install webkit`) runs the
-suite in WebKit. Native touch gestures need Chromium's CDP, so under WebKit
-the touch scenario checks only the 400% PDF/ink paint and bitmap release at
-tablet dimensions and DPR 2. That is browser emulation, not an iPad measurement.
+`GAMMA_E2E_BROWSER=webkit` or `GAMMA_E2E_BROWSER=firefox` (after
+`npx playwright install webkit` or `firefox`) runs the suite in that engine.
+Native touch gestures need Chromium's CDP, so there the touch scenario checks
+only the 400% PDF/ink paint and bitmap release at tablet dimensions and DPR 2.
+That is browser emulation, not an iPad measurement. Both engines skip the
+steps gated on `browser.browserType().name() === "chromium"`. The other steps
+that open a CDP session fail in both. So does every context that asks for the
+clipboard permissions: WebKit lacks `clipboard-write`, Firefox both.
+Neither engine passes the whole suite.
+
+`node tests/e2e/tabClose.mjs` is a scratch scenario apart from the groups. A
+note is typed, a stroke drawn or a setting changed, and `page.close()` follows
+at once, in the engine `GAMMA_E2E_BROWSER` names. Each step asserts that the
+server has the change or, for a stroke, that the draft journal brings it back
+on the next visit. `--runs N` repeats each case, `--close page,context` adds
+`context.close()`, and a table counts the outcomes. `--stop pagehide` keeps
+every `pagehide` listener the app adds from running, as Firefox stops a
+closing page's first one. Every `page.close()` case passes in Chromium,
+WebKit and Firefox, with or without `--stop pagehide`.
+`context.close()` loses the changes in Chromium's headless shell, which
+runs no listener there, and in Firefox, which sends without the session
+cookie
+([research/keepalive-abort.md](../research/keepalive-abort.md#the-app-at-a-close)).
+A step that times a close passes `{lastLook: false}` to `page.close` or
+`context.close`, which skips the screenshot the harness takes first.
 
 `frontend/tests/e2e/run.mjs` starts an ISOLATED backend (the project venv's
 python — or the interpreter `GAMMA_E2E_PYTHON` names — over a fresh

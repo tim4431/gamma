@@ -4,8 +4,9 @@
 //   - turns the block tree's transitions into ops (blockOps.diffTrees) and
 //     sends them in debounced batches to POST /api/pages/{id}/ops — the
 //     HTTP response is the ack (positions the server re-keyed come back
-//     in it); HTTP saves continue when the socket drops, and a closing tab
-//     attempts a keepalive flush (queued edits are not durable offline).
+//     in it); HTTP saves continue when the socket drops, and a tab that
+//     closes sends every unsaved edit at once with keepalive, one going
+//     hidden its next batch (hide; queued edits are not durable offline).
 //     A batch holds at most MAX_OPS ops and keeps its id until the server
 //     answers it, so a retry of a batch that did land is answered, not
 //     applied twice; failed sends are retried, ever longer apart, never
@@ -70,6 +71,7 @@ function pageSession(pageId = "") {
   return {
     pageId, base: [], pos: new Map(), queue: [], timer: null, sending: null,
     out: null, // the batch out ({id, ops, cursor}), kept until the server answers it
+    sealed: [], // the queue's first batches as hide() named them, [{id, n}]: n ops under that id (send)
     acked: 0, // the seq of our newest answered batch: an own batch after it is the one out
     inflight: new Map(), deferred: new Map(), retries: 0, rescues: 0, seq: 0,
     remote: 0, // remote batches applied so far; `queueMark`: the count when the queue last started
@@ -155,15 +157,30 @@ function dependents(ops, gone) {
   return { kept, dropped };
 }
 
+// How many of the queue's ops hide() has named into batches (`sealed`).
+const sealedOps = (s) => s.sealed.reduce((n, b) => n + b.n, 0);
+
+// The named batches over what is left of the queue (`kept`, in order): each
+// loses the ops dropped from it and keeps its name; one left empty goes.
+function resealed(s, kept) {
+  const left = new Set(kept);
+  let at = 0;
+  return s.sealed.map((b) => ({ ...b, n: s.queue.slice(at, at += b.n).filter((op) => left.has(op)).length }))
+    .filter((b) => b.n);
+}
+
 // deps:
 //   clientId              — this tab's id (goes on every batch and the socket URL)
-//   api(path, init)       — JSON call under /api; rejects with err.status on
-//                           an HTTP error (utils.apiJson)
+//   api(path, init, opts) — JSON call under /api; rejects with err.status on
+//                           an HTTP error (utils.apiJson; opts {keepalive:
+//                           'critical'} sends it through the page's keepalive
+//                           ledger)
 //   openSocket(pageId)    — a WebSocket-like object for the page's room
 //                           (onopen/onmessage/onclose/onerror, send, close,
 //                           readyState)
-//   keepalivePost(path, body) — fire-and-forget POST while the tab closes
-//                           (the page's keepalive ledger, priority 'critical')
+//   keepalivePost(path, body) — fire-and-forget POST while the tab closes or
+//                           is hidden (the page's keepalive ledger, priority
+//                           'critical')
 //   opts()                — the live options, read on every use so callers
 //                           may pass fresh closures:
 //       pageId                        the open page (root block id); "" → idle
@@ -417,16 +434,20 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
 
   // Send the page's batch: the one out again (a retry, or what is left of a
   // refused one), else the next MAX_OPS ops of the queue, in order — the
-  // rest follows the ack. The batch keeps its id until the server answers
-  // it: a retry of one whose answer was lost is answered, not re-applied.
-  function send(s = st.session) {
+  // rest follows the ack — or the next batch hide() named, its ops under
+  // its name. The batch keeps its id until the server answers it: a retry
+  // of one whose answer was lost, or whose copy hide() sent landed first,
+  // is answered, not re-applied. `keepalive`: through the page's keepalive
+  // ledger (hide).
+  function send(s = st.session, keepalive = false) {
     if (s.sending) return s.sending;
     if (s.gone) return false; // parked until the page is back
     if (!s.out) {
       if (!s.queue.length) return null;
       // Our caret in the text this batch produces, for the page it belongs to.
       const cur = s === st.session && cursor.latest ? cursor.latest : null;
-      s.out = { id: nextBatchId(), ops: s.queue.splice(0, MAX_OPS), cursor: cur, mark: s.queueMark };
+      const named = s.sealed.shift();
+      s.out = { id: named?.id || nextBatchId(), ops: s.queue.splice(0, named?.n || MAX_OPS), cursor: cur, mark: s.queueMark };
     }
     const page = s.pageId;
     const batch = s.out;
@@ -440,7 +461,7 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ client: clientId, batch: batch.id, ops, ...(cur ? { cursor: cur } : {}) }),
-        });
+        }, keepalive ? { keepalive: "critical" } : undefined);
         s.out = null;
         s.retries = 0;
         s.rescues = 0;
@@ -553,6 +574,7 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
         const inBatch = dependents(rest, gone);
         const inQueue = dependents(s.queue, gone);
         rest = inBatch.kept;
+        s.sealed = resealed(s, inQueue.kept);
         s.queue = inQueue.kept;
         dropped = [failed, ...inBatch.dropped, ...inQueue.dropped];
       }
@@ -601,7 +623,7 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
       // settles once per op of the batch, so the two must agree): a
       // keystroke folded into a set that already carries text adds
       // nothing; text folded into a queued props-only set makes one more.
-      const into = pushOp(s.queue, op);
+      const into = pushOp(s.queue, op, sealedOps(s)); // never into a batch hide() named
       if (op.op === "set" && op.content !== undefined && into?.content === undefined) {
         s.inflight.set(op.id, (s.inflight.get(op.id) || 0) + 1);
       }
@@ -755,13 +777,14 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
     if (s) park(s, trashed);
   }
 
-  // What pagehide sends, as [{path, body}], without sending it: per page
-  // with unsaved edits (not one in Recently deleted: the server refuses
-  // it), the batch out under its own id (the server answers a copy that
-  // already landed instead of applying it twice), then the queue in batches
-  // of MAX_OPS under the ids they will take. usePageCollab claims their
-  // bytes of the page's keepalive room (shared/lib/keepalive.js), read only
-  // when a lower priority asks for room.
+  // What hide() sends at a close, as [{path, body}], without sending it:
+  // per page with unsaved edits (not one in Recently deleted: the server
+  // refuses it), the batch out under its own id (the server answers a copy
+  // that already landed instead of applying it twice), then the queue in
+  // batches of MAX_OPS under the ids they take (the ones hide() named, then
+  // the ones it will name). usePageCollab claims their bytes of the page's
+  // keepalive room (shared/lib/keepalive.js), read only when a lower
+  // priority asks for room.
   function pendingKeepaliveBodies() {
     const out = [];
     let count = batchCount;
@@ -769,25 +792,56 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
       if (s.gone) continue;
       const path = `/pages/${encodeURIComponent(s.pageId)}/ops`;
       const batches = s.out ? [s.out] : [];
-      for (let i = 0; i < s.queue.length; i += MAX_OPS) {
-        batches.push({ id: batchId(++count), ops: s.queue.slice(i, i + MAX_OPS) });
-      }
+      let at = 0;
+      for (const b of s.sealed) batches.push({ id: b.id, ops: s.queue.slice(at, at += b.n) });
+      for (; at < s.queue.length; at += MAX_OPS) batches.push({ id: batchId(++count), ops: s.queue.slice(at, at + MAX_OPS) });
       for (const b of batches) out.push({ path, body: JSON.stringify({ client: clientId, batch: b.id, ops: b.ops }) });
     }
     return out;
   }
 
-  // Tab closing / reloading: a keepalive POST of every body
-  // pendingKeepaliveBodies names; the queue is spent (its batch ids too).
-  function pagehide() {
-    const bodies = pendingKeepaliveBodies();
+  // Name the rest of the page's queue, MAX_OPS ops a batch, under the ids
+  // pendingKeepaliveBodies gave it: send() takes these batches as named,
+  // and later edits queue after them.
+  function seal(s) {
+    for (let at = sealedOps(s); at < s.queue.length; at += MAX_OPS) {
+      s.sealed.push({ id: nextBatchId(), n: Math.min(MAX_OPS, s.queue.length - at) });
+    }
+  }
+
+  // The tab is closing (`closing`, pagehide): every body
+  // pendingKeepaliveBodies names goes now, with keepalive, none waiting for
+  // another's answer, since nothing is sure to run once a closing page is
+  // gone. The queue is named first (seal). With no batch on its way the
+  // next one goes through send(), whose answer is read if the page lives on
+  // (the back-forward cache); one on its way goes again as a copy under its
+  // id, since a closing page may cut a plain request off. The named batches
+  // behind it go as copies. The edits stay pending until answered: the send
+  // of a batch whose copy landed first is a replay, answered and not applied
+  // again, and so is a second hide().
+  // Going hidden (`closing` false: a hidden tab may be ended without a
+  // pagehide), only the batch that goes next leaves now, in the same way,
+  // and the rest follows its answer, in order. Copies sent at once can land
+  // out of order, and a batch that lands before the one it follows is never
+  // undone, since its in-order send is then a replay: the server would keep
+  // a word the tab took back. usePageCollab calls it on pagehide and on
+  // going hidden.
+  function hide(closing = true) {
     for (const s of st.sessions) {
       if (s.gone) continue;
-      batchCount += Math.ceil(s.queue.length / MAX_OPS);
-      s.queue = [];
-    }
-    for (const { path, body } of bodies) {
-      try { keepalivePost(path, body); } catch {}
+      if (closing) seal(s);
+      const path = `/pages/${encodeURIComponent(s.pageId)}/ops`;
+      const copy = (b) => {
+        try { keepalivePost(path, JSON.stringify({ client: clientId, batch: b.id, ops: b.ops })); } catch {}
+      };
+      if (s.sending) copy(s.out);
+      else {
+        if (s.out) s.retries = 0; // tried now, as a flush does
+        send(s, true);
+      }
+      if (!closing) continue;
+      let at = 0;
+      for (const b of s.sealed) copy({ id: b.id, ops: s.queue.slice(at, at += b.n) });
     }
   }
 
@@ -1026,7 +1080,7 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
   }
 
   return {
-    commit, flush, hasPending, sendCursor, sendInkLive, pagehide, pendingKeepaliveBodies, connect, disconnect,
+    commit, flush, hasPending, sendCursor, sendInkLive, hide, pendingKeepaliveBodies, connect, disconnect,
     overlay, retryNow, reloadFailed, tooLong, gone,
     get peers() { return peers; },
     get me() { return me; },

@@ -270,12 +270,13 @@ export function displacedRow(tree, ops, id, pageId) {
 }
 
 // Coalesce a queue of ops: a `set` for a block folds into the last `set`
-// for the same block when nothing structural about it sits in between.
-// Returns the queued op it was folded into (as it was before), or null when
-// it was appended.
-export function pushOp(queue, op) {
+// for the same block when nothing structural about it sits in between,
+// never into the first `floor` ops (ones already sent under a batch's
+// name, collabSession's hide). Returns the queued op it was folded into
+// (as it was before), or null when it was appended.
+export function pushOp(queue, op, floor = 0) {
   if (op.op === "set") {
-    for (let i = queue.length - 1; i >= 0; i--) {
+    for (let i = queue.length - 1; i >= floor; i--) {
       const q = queue[i];
       if (q.id !== op.id) continue;
       if (q.op !== "set") break;

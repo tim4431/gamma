@@ -2083,24 +2083,29 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // being switched TO (or a refresh moments later) pulls the fresh value —
     // the 15s throttle would otherwise delay a quick scroll-then-switch.
     // Deliberately not marked confirmed: keepalive can't report success, and
-    // the pull-merge heal covers a flush the server never got.
+    // the pull-merge heal covers a flush the server never got. The armed
+    // timer goes once the PUT is sent, not before: a close flushes on
+    // pagehide and on going hidden, and Firefox can stop a pagehide listener
+    // part way, so the other one sends it again.
     function flushReadPos() {
       if (!readPosPushTimerRef.current || !prefsUserRef.current) return;
+      const body = JSON.stringify({ value: readPosRef.current });
+      if (body === readPosSentRef.current) dbg("read-pos flush skipped (server current)");
+      else {
+        dbg("read-pos flushed (blur/pagehide)");
+        // keepalive when the page's keepalive room has space for it at the
+        // normal priority (shared/lib/keepalive.js): small, and recoverable
+        try {
+          keepaliveFetch(`${API}/prefs/read-pos`, {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body,
+            credentials: "same-origin",
+          }, { priority: "normal" }).catch(() => {});
+        } catch {}
+      }
       clearTimeout(readPosPushTimerRef.current);
       readPosPushTimerRef.current = null;
-      const body = JSON.stringify({ value: readPosRef.current });
-      if (body === readPosSentRef.current) { dbg("read-pos flush skipped (server current)"); return; }
-      dbg("read-pos flushed (blur/pagehide)");
-      // keepalive when the page's keepalive room has space for it at the
-      // normal priority (shared/lib/keepalive.js): small, and recoverable
-      try {
-        keepaliveFetch(`${API}/prefs/read-pos`, {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body,
-          credentials: "same-origin",
-        }, { priority: "normal" }).catch(() => {});
-      } catch {}
     }
     // Focus flaps (alt-tabbing through windows) must not hammer the server:
     // wake pulls run at most once per 15s. Cross-window handoff still

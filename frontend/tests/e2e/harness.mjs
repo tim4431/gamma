@@ -9,7 +9,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
-import { chromium, webkit } from "playwright";
+import { chromium, firefox, webkit } from "playwright";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const BACKEND = path.join(ROOT, "backend");
@@ -201,9 +201,12 @@ export class Account {
 // ---------------------------------------------------------------------------
 // Browser
 
+// Chromium, or the engine GAMMA_E2E_BROWSER names (webkit, firefox: each
+// installed once with `npx playwright install <name>`).
 export async function launchBrowser() {
   const opts = { headless: !flags.headed };
   if (process.env.GAMMA_E2E_BROWSER === "webkit") return english(await webkit.launch(opts));
+  if (process.env.GAMMA_E2E_BROWSER === "firefox") return english(await firefox.launch(opts));
   try {
     return english(await chromium.launch(opts));
   } catch (e) {
@@ -234,9 +237,9 @@ function english(browser) {
     // emulation.
     if (!options.hasTouch) await ctx.addInitScript(() => { Object.defineProperty(Navigator.prototype, "maxTouchPoints", { get: () => 0, configurable: true }); });
     const close = ctx.close.bind(ctx);
-    ctx.close = async (...args) => {
-      for (const page of ctx.pages()) await lastLook(page);
-      return close(...args);
+    ctx.close = async ({ lastLook: look = true, ...options } = {}) => {
+      if (look) for (const page of ctx.pages()) await lastLook(page);
+      return close(options);
     };
     return ctx;
   };
@@ -246,7 +249,10 @@ function english(browser) {
 // A scenario closes its context in `finally`, which runs before step()'s
 // catch: by then the page that shows the failure is gone. So a page closed
 // during a step leaves its last look (a screenshot and its recorded
-// problems), which step() writes out only if the step fails.
+// problems), which step() writes out only if the step fails. A step timing
+// its close (a page closed before a save is due) passes
+// `{lastLook: false}` to `page.close` or `context.close`, which closes at
+// once.
 async function lastLook(page) {
   if (!running || page.isClosed()) return;
   let shot = null;
@@ -272,7 +278,10 @@ export async function openPage(ctx, url) {
   openPages.add(page);
   page.on("close", () => openPages.delete(page));
   const close = page.close.bind(page);
-  page.close = async (...args) => { await lastLook(page); return close(...args); };
+  page.close = async ({ lastLook: look = true, ...options } = {}) => {
+    if (look) await lastLook(page);
+    return close(options);
+  };
   page.on("response", (r) => {
     const u = r.url();
     if (!u.includes("/api/") || r.status() < 400) return;

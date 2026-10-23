@@ -30,29 +30,38 @@ export function keyBlock(rest) {
 // Whether an entry is older than JOURNAL_DAYS (or carries no date).
 const expired = (entry, now = Date.now()) => !(now - (entry?.at || 0) <= JOURNAL_DAYS * DAY_MS);
 
-let opening = null;
-function openDb() {
+let opening = null, opened = null;
+// The database, opened once: inkStore asks for it as the page loads, so a
+// write the page makes in its last moments (a stroke drawn as the tab
+// closes) finds it open, and its transaction starts in the caller's own
+// task (transact), ahead of what that task does next (a render).
+export function openDb() {
   if (opening) return opening;
   opening = new Promise((resolve) => {
     let req = null;
     try { req = globalThis.indexedDB?.open(DB, 1) || null; } catch { req = null; }
     if (!req) { resolve(null); return; }
     req.onupgradeneeded = () => { try { req.result.createObjectStore(STORE); } catch { /* there already */ } };
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => { opened = req.result; resolve(req.result); };
     req.onerror = () => resolve(null);
     req.onblocked = () => resolve(null);
   });
   return opening;
 }
 // One transaction on the store: `fn(store)` issues the requests; → what
-// `done(requests)` makes of them once it completes, or `fallback`.
+// `done(requests)` makes of them once it completes, or `fallback`. A write
+// is committed as soon as its requests are made (commit()), not left to
+// commit when its task ends: Chromium and Firefox keep a write made as the
+// page goes only when it was committed so, and WebKit keeps none
+// (docs/research/keepalive-abort.md "The app at a close").
 async function transact(mode, fn, done = () => true, fallback = null) {
-  const db = await openDb();
+  const db = opened || await openDb();
   if (!db) return fallback;
   return new Promise((resolve) => {
     try {
       const tx = db.transaction(STORE, mode);
       const reqs = fn(tx.objectStore(STORE));
+      if (mode === "readwrite") try { tx.commit?.(); } catch { /* it commits as the task ends */ }
       tx.oncomplete = () => { try { resolve(done(reqs)); } catch { resolve(fallback); } };
       tx.onerror = () => resolve(fallback);
       tx.onabort = () => resolve(fallback);
