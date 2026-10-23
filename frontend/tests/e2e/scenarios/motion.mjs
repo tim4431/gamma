@@ -362,4 +362,21 @@ export async function motionScenarios(env) {
       await assertNoProblems(page);
     } finally { await ctx.close(); }
   });
+
+  await step("motion: the rows Load more brings arrive at once", async () => {
+    for (let i = 1; i <= 30; i++) await user.api("/api/pages", { method: "POST", body: { title: `Filler ${i}` } });
+    const ctx = await user.context(browser);
+    await watch(ctx);
+    const page = await openPage(ctx, home);
+    try {
+      await page.locator(".loadMoreBtn").waitFor();
+      const shown = await page.locator(".fileList .fileRow").count();
+      await glides(page);
+      await page.locator(".loadMoreBtn").click();
+      await until(async () => (await page.locator(".fileList .fileRow").count()) > shown, { what: "more rows" });
+      await page.waitForTimeout(100);
+      assertEq((await glides(page)).length, 0, "no row fades in, none glides");
+      await assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
 }

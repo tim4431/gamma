@@ -1124,11 +1124,11 @@ the first one opens.
 The library's listing, in both views, is a third. A row comes in fading
 and goes fading, a card grows in and shrinks away, and a delete or an
 item its sort moves glides the rest. A listing's `scope` is its view, kind
-filter, folder, label, sort and filter text, so typing in the filter box
-or opening a folder moves nothing; Load more brings more than `most`, so
-its rows arrive at once. Its holders (`.fileList`, `.fileGrid`) position
-the copies. The listing mounts once it has loaded, so the first one a
-load or a page left brings is a first render.
+filter, folder, label, sort, filter text and how many rows Load more has
+shown, so typing in the filter box, opening a folder or Load more moves
+nothing: the rows arrive at once. Its holders (`.fileList`, `.fileGrid`)
+position the copies. The listing mounts once it has loaded, so the first
+one a load or a page left brings is a first render.
 
 ## Block editor interactions
 

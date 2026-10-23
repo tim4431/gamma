@@ -7740,9 +7740,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // "Lists that change"): within one listing an item added, removed or
   // moved by its sort glides the others to their places. Another view,
   // kind filter, folder, label, sort or filter text is another listing, in
-  // which nothing moves.
+  // which nothing moves, and so is the next chunk Load more brings: its
+  // rows arrive at once.
   const homeVisibleKeys = useMemo(() => homeVisibleItems.map((it) => it.key), [homeVisibleItems]);
-  const homeListingScope = `${homeView}|${homeKinds}|${folderFilter}|${labelFilter}|${homeSort}|${homeQuery}`;
+  const homeListingScope = `${homeView}|${homeKinds}|${folderFilter}|${labelFilter}|${homeSort}|${homeQuery}|${homeShowCount}`;
   // A listing that takes another's place (another view, kind filter, folder
   // or label) comes into focus where it stands, as a pane does: its class is
   // played again on the listing in place, rather than remounting it, which
