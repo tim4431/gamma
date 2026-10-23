@@ -735,14 +735,14 @@ lists the upload's notes and, not imported, its other files.
   mounts every sheet ([notebooks.md](notebooks.md) "Not built yet").
 
 **Real notes.** `backend/tests/test_notability_samples.py` imports every
-`.note` of a folder of samples and fails on anything left out for want of
-reading it, and checks that each `.ntb` is refused. The folder is
-`GAMMA_NOTABILITY_SAMPLES`, by default the `input/` of a
-[Notability-notes-converter](https://github.com/nokcha0/Notability-notes-converter)
-checkout beside this repository. That folder's example note (16.1.5,
-exported as both "Note" and "NTB") is pinned against its own bytes and its
-thumbnail. The samples are not in this repository, since the converter has
-no licence, so CI skips the module.
+`.note` of `backend/tests/samples/notability/` and fails on anything left
+out for want of reading it, and checks that each `.ntb` is refused. The
+folder holds the example note of
+[Notability-notes-converter](https://github.com/nokcha0/Notability-notes-converter),
+exported by Notability 16 as both "Note" and "NTB" (its README says
+more), which the module also pins against the note's own bytes and its
+thumbnail. `GAMMA_NOTABILITY_SAMPLES` names a folder of more notes to
+import the same way.
 
 ## Zotero RDF export
 

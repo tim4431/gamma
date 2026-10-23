@@ -1,13 +1,13 @@
 """The Notability import on real notes (docs/dev/import_export.md
-"Notability notes"): every ``.note`` of a folder of samples imports whole,
-nothing in it left out for want of reading it, and every ``.ntb`` is refused
-with how to export a note instead. The samples are not in this repository:
-GAMMA_NOTABILITY_SAMPLES names the folder, by default the ``input/`` of a
-checkout of github.com/nokcha0/Notability-notes-converter beside this one.
-That folder holds one note exported by Notability 16 both as "Note" and as
-"NTB", and the second half of this module pins what the import makes of it
-against the note's own bytes and its thumbnail, which Notability drew.
-Without the folder the module skips."""
+"Notability notes"): every ``.note`` of the samples imports whole, nothing
+in it left out for want of reading it, and every ``.ntb`` is refused with
+how to export a note instead. The samples are ``samples/notability/``
+(its README says where they come from), and the files of the folder
+GAMMA_NOTABILITY_SAMPLES names, when it is set. The second half of this
+module pins what the import makes of the example note of
+Notability-notes-converter, exported by Notability 16 both as "Note" and as
+"NTB", against the note's own bytes and its thumbnail, which Notability
+drew."""
 
 import contextlib
 import functools
@@ -28,17 +28,15 @@ from gamma.db import connect_pages_db, ws_uploads_dir
 from gamma.import_zip import new_walk, walk_zip
 from gamma.notebook import sheets_of
 
-SAMPLES = Path(os.environ.get("GAMMA_NOTABILITY_SAMPLES")
-               or Path(__file__).resolve().parents[3] / "Notability-notes-converter" / "input")
-NOTES = sorted(SAMPLES.rglob("*.note")) if SAMPLES.is_dir() else []
-NTBS = sorted(SAMPLES.rglob("*.ntb")) if SAMPLES.is_dir() else []
+SAMPLES = Path(__file__).resolve().parent / "samples" / "notability"
+EXTRA = os.environ.get("GAMMA_NOTABILITY_SAMPLES")  # a folder of more notes to import
+FOLDERS = [SAMPLES] + ([Path(EXTRA)] if EXTRA else [])
+NOTES = sorted(path for folder in FOLDERS for path in folder.rglob("*.note"))
+NTBS = sorted(path for folder in FOLDERS for path in folder.rglob("*.ntb"))
 EXAMPLE = SAMPLES / "NOTE Note Apr 26, 2026.note"
 # What a report says of content the import could not read: the reasons of
 # notability.LEFT_OUT's unreadable kinds, the width data's warning, a picture's.
 UNREAD = ("could not be read", "does not know", "ends early", "does not match its strokes", "is left out: not a")
-
-pytestmark = pytest.mark.skipif(not NOTES and not NTBS, reason=(
-    f"no Notability samples in {SAMPLES}: set GAMMA_NOTABILITY_SAMPLES to a folder of .note and .ntb files"))
 
 
 def read(path: Path) -> nb.Note:
@@ -82,8 +80,6 @@ def test_every_sample_ntb_is_refused_with_how_to_export_a_note(path):
 
 @pytest.fixture(scope="module")
 def example() -> nb.Note:
-    if not EXAMPLE.is_file():
-        pytest.skip(f"the converter's example note is not in {SAMPLES}")
     return read(EXAMPLE)
 
 
