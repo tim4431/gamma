@@ -10,6 +10,7 @@ Gamma keeps a PDF and your notes on it side by side. Highlight a passage and it 
 - **Add a paper**: click **+** in the top bar and paste an arXiv link, a DOI or a PDF address, or drop PDF files on the library.
 - **Highlight**: select text in the PDF and pick a colour, or Ctrl+drag a box around a figure or an equation. Each highlight becomes a note beside the paper.
 - **Write**: click a line and type. **Shift+Enter** starts a new note, **Tab** and **Shift+Tab** indent and outdent, and **/** inserts headings, math, tables and more.
+- **Draw**: the *Sketchbook* in your library is a notebook to try the pens on. **+ → New notebook** starts one of your own.
 - **Organize**: add labels under a page's title, and drag pages into folders in the library.
 - **Find**: **Ctrl+P** opens any page by name. **Ctrl+F**, or the magnifier in the top bar, searches every note and PDF.
 - **Share**: the link button in the top bar makes a view or edit link to a page, or to a whole folder.

@@ -5,7 +5,7 @@ import { BrandMark } from "../shared/ui/BrandMark";
 import { DownloadIcon, FilePlusIcon, LinkIcon, UploadIcon } from "../shared/ui/Icons.jsx";
 
 // "Start your library": what a library with nothing of the user's in it yet
-// (isFreshLibrary — no pages, or only the seeded Welcome page) shows above
+// (isFreshLibrary — no pages, or only the seeded Welcome page and Sketchbook) shows above
 // its listing. Four ways in, each an existing handler: a paper by link (the
 // Add popover), uploads, a blank note page, the Import dialog; plus the first
 // tour. It goes away with the first page of the user's own.

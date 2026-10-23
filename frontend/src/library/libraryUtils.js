@@ -244,8 +244,8 @@ export function friendlyApiError(error) {
 }
 
 // A library with nothing of the user's in it yet: no pages, or only the ones
-// seeding put there (properties.seeded — the Welcome page every new account
-// starts with, gamma/seed.py). What "Start your library" and the first
+// seeding put there (properties.seeded — the Welcome page and the Sketchbook
+// every new account starts with, gamma/seed.py). What "Start your library" and the first
 // tour's offer mean by a new library.
 export function isFreshLibrary(pages) {
   return (pages || []).every((page) => page?.properties?.seeded);

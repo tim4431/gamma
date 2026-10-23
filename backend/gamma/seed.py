@@ -1,11 +1,11 @@
 """Workspace file creation and seeding: the empty pages.db / data.db /
-uploads/ of a new workspace, the Welcome page every new account starts
-with, the first admin.
+uploads/ of a new workspace, the Welcome page and the Sketchbook every new
+account starts with, the first admin.
 
 Shared by the app (guest logins, first run, cloud sign-ups, the admin API)
-and manage.py (user CRUD) so the welcome page and schemas never drift
+and manage.py (user CRUD) so the welcome pages and schemas never drift
 between the two. Account and membership rows are gamma/workspaces.py's job;
-this module writes files and the Welcome page's blocks.
+this module writes files and the seeded pages' blocks.
 """
 
 import functools
@@ -17,7 +17,7 @@ from pathlib import Path
 
 import bcrypt
 
-from fractional_indexing import generate_n_keys_between
+from fractional_indexing import generate_key_between, generate_n_keys_between
 
 from .config import WORKSPACES_DIR
 from .db import (DATA_SCHEMA, PAGES_SCHEMA, SCHEMA_VERSION, connect_pages_db, connect_users_db, new_account_id,
@@ -30,6 +30,7 @@ from .server_settings import guest_ttl_hours
 # text (docs/dev/onboarding.md "The welcome page and its sample PDF").
 WELCOME_MD = Path(__file__).resolve().parent / "onboarding" / "welcome.md"
 SEEDED_WELCOME = "welcome"  # the page's properties.seeded: tours and the library find it by this
+SEEDED_SKETCHBOOK = "sketchbook"  # the notebook seeded beside it (gamma/sketchbook.py)
 _WELCOME_PDF_NAME = "Welcome to Gamma.pdf"
 
 
@@ -85,30 +86,52 @@ def welcome_pdf(text: str) -> bytes:
 
 
 def _insert_ops(page_id: str, tree: list) -> list[dict]:
-    """``insert`` ops for a ``{content, children}`` tree under the page,
-    parents before children, positions minted per sibling run."""
+    """``insert`` ops for a ``{content, props?, children}`` tree under the
+    page, parents before children, positions minted per sibling run."""
     ops, pending = [], [(page_id, tree)]
     while pending:
         parent, nodes = pending.pop(0)
         for node, pos in zip(nodes, generate_n_keys_between(None, None, n=len(nodes))):
             bid = secrets.token_urlsafe(9)
             ops.append({"op": "insert", "id": bid, "parent": parent, "position": pos,
-                        "content": node.get("content", ""), "props": {}})
+                        "content": node.get("content", ""), "props": node.get("props") or {}})
             if node.get("children"):
                 pending.append((bid, node["children"]))
     return ops
 
 
+def _seed_sketchbook(ws: str, conn, actor: str) -> dict | None:
+    """The Sketchbook (gamma/sketchbook.py), a notebook marked
+    ``properties.seeded = "sketchbook"``: its ink files stored like any
+    upload, then the page and its sheets as one op batch. Its page dict, or
+    None, and no page, when a file is refused or the drawing fails."""
+    from .blocks_store import create_page
+    from .ops import after_commit, apply_ops
+    from .sketchbook import TITLE, blocks
+    from .storage import store_file
+
+    try:
+        tree = blocks(lambda data: f"/api/uploads/{store_file(ws, data, '.ink')[0]}")
+        page = create_page(conn, TITLE, {"seeded": SEEDED_SKETCHBOOK}, actor=actor)
+        after_commit(ws, conn, apply_ops(conn, page["id"], _insert_ops(page["id"], tree), actor=actor))
+    except Exception as e:  # noqa: BLE001 — the Welcome page goes in all the same
+        log.warning(f"[seed] sketchbook skipped: {e}")
+        return None
+    return page
+
+
 def seed_welcome(ws: str, *, actor: str, guest: bool = False) -> str | None:
-    """Seed the Welcome page into a workspace that has no pages yet: a page
-    marked ``properties.seeded = "welcome"`` carrying the sample PDF, its
-    notes inserted as one op batch like every other block writer's (logged
-    under ``actor``, the account's id). A
-    guest's page ends with a callout naming the lifetime. Returns the page
-    id, or None when skipped (the workspace already has pages, welcome.md is
-    missing, or this server is a share host, whose workspaces hold published
-    pages only — each counts against the plan's cap). A PDF the writer or the
-    storage limits refuse leaves the page without one."""
+    """Seed the Welcome page and the Sketchbook into a workspace that has
+    no pages yet. The Welcome page is marked ``properties.seeded =
+    "welcome"`` and carries the sample PDF, its notes inserted as one op
+    batch like every other block writer's (logged under ``actor``, the
+    account's id); a guest's ends with a callout naming the lifetime. It is
+    made after the Sketchbook and placed before it, so it leads the library
+    in every order. Returns the Welcome page's id, or None when skipped (the
+    workspace already has pages, welcome.md is missing, or this server is a
+    share host, whose workspaces hold published pages only — each counts
+    against the plan's cap). A PDF the writer or the storage limits refuse
+    leaves the page without one."""
     from . import cloud_auth
     from .blocks_store import attachment_props, create_page
     from .ops import after_commit, apply_ops
@@ -127,6 +150,7 @@ def seed_welcome(ws: str, *, actor: str, guest: bool = False) -> str | None:
         with connect_pages_db(ws) as conn:
             if conn.execute("SELECT 1 FROM unified_blocks WHERE parent_id = 'root' LIMIT 1").fetchone():
                 return None
+            sketchbook = _seed_sketchbook(ws, conn, actor)
             props = {"seeded": SEEDED_WELCOME}
             try:
                 # The content-hash store, like any upload — but not
@@ -142,7 +166,8 @@ def seed_welcome(ws: str, *, actor: str, guest: bool = False) -> str | None:
                              ppt_cite=f"Gamma, *{document}*")
             except Exception as e:  # noqa: BLE001 — the notes still make a Welcome page
                 log.warning(f"[seed] welcome PDF skipped: {e}")
-            page = create_page(conn, title, props, actor=actor)
+            page = create_page(conn, title, props, actor=actor,
+                               position=generate_key_between(None, sketchbook["position"]) if sketchbook else "")
             # commit_ops on a connection closed here (a handle left for the
             # GC would keep the directory from being deleted on Windows)
             after_commit(ws, conn, apply_ops(conn, page["id"], _insert_ops(page["id"], tree), actor=actor))
