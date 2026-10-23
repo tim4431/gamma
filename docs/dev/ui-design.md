@@ -1107,6 +1107,18 @@ the tail under them; it plays only when the tree's shape changed
 (`sameShape`, `shared/model/blockModel.js`), so a keystroke or a fold
 moves nothing.
 
+The tab strip (`OpenTabs`) is another. A tab opened rises in, one closed
+sinks back out where it stood while the tabs after it glide over its
+place, and a tab dragged along the strip moves the others through the
+same glides. A tab still gliding under the pointer is not one to swap
+with, so a swap never swaps back. It measures in the strip's content,
+since the strip scrolls to the active tab in the same change. Tabs read
+from this browser's cache or the server's copy come still, and so does
+any change before the person has pressed or typed anything in the window
+(the page it opened on getting its tab): that is the window loading. The
+strip is as tall with no tab as with one, so the topbar never grows as
+the first one opens.
+
 ## Block editor interactions
 
 `editor/BlockTree.jsx` owns row interactions and the editor's popups;
@@ -1210,7 +1222,7 @@ preview), and image/table paste with the ordinary row editor. The card footer na
 | `editor/LatexEditor.jsx` | LaTeX aids while editing: the live preview docked to the editor column with a caret marker, the `\command` popup, `renderKatex`/`useCaretAnchored` shared helpers; `editor/latexCompletion.js` is the pure catalog (prefix/abbreviation/fuzzy tiers, snippets, Tab-out navigation) it re-exports; `editor/latexInput.js` supplies scalable delimiter pairing. See [LaTeX editing](latex_editing.md) for shortcuts and browser checks |
 | `library/RecentlyDeleted.jsx` | the Recently deleted dialog: a `SubDialog` of `aiProvRow` rows (title, who deleted it and when, days left, folder) with Restore and a delete-for-good icon button behind App's confirm box, Empty in its `DialogButtons` ([home_library.md](home_library.md) "Recently deleted") |
 | `library/libraryUtils.js` | the library's folder and label helpers over the folder and label trees ([home_library.md](home_library.md) "Folders and labels"), and `pageAttachment`, what a page carries |
-| `shared/ui/Widgets.jsx`, `shared/ui/Menus.jsx`, `shared/ui/Icons.jsx` | shared components; `OpenTabs` in Widgets is the topbar's tab strip (a kind icon per tab, pinned tabs first, full width with a pin in place of the close button, the active tab kept in view clear of the right-edge fade, and on overflow a "⌄ n" popover listing every tab with a filter); `useMenuTrigger` in Menus is the menus a toolbar's buttons open on the press ([Menus and submenus](#menus-and-submenus)) |
+| `shared/ui/Widgets.jsx`, `shared/ui/Menus.jsx`, `shared/ui/Icons.jsx` | shared components; `OpenTabs` in Widgets is the topbar's tab strip (a kind icon per tab, pinned tabs first, full width with a pin in place of the close button, the active tab kept in view clear of the right-edge fade, tabs that come, go and move through `ListMotion`, and on overflow a "⌄ n" popover listing every tab with a filter); `useMenuTrigger` in Menus is the menus a toolbar's buttons open on the press ([Menus and submenus](#menus-and-submenus)) |
 | `shared/ui/wheelPan.js` | `useWheelPan`: a plain mouse wheel pans a sideways strip (the card strips, the tab strip) |
 | `shared/ui/listKeys.js` | `stepList`: ↑/↓ between a search box and the results listed under it (Settings search, the move-to-page filter, the chat's page picker) |
 | `shared/ui/DiagramFigure.jsx`, `shared/ui/ResizeGrip.jsx` | the diagram figure (a Mermaid diagram inline, or a sanitized SVG drawing shown as an image) with its toolbar of `ctlBtn`s, ended by a note's object "⋯" (`tools`) ([diagrams.md](diagrams.md)); the two-sided drag grips (`ResizeGrips`) + `useDragResize` hook that size centred note images and diagrams alike, a double-click or double tap on a grip restoring the natural size |

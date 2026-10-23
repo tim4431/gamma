@@ -219,4 +219,71 @@ export async function motionScenarios(env) {
       await assertNoProblems(page);
     } finally { await ctx.close(); }
   });
+
+  // Three pages to open as tabs; a tab's motion key is its page's id.
+  const tabTitles = ["Tab one", "Tab two", "Tab three"];
+  const tabPages = [];
+  for (const title of tabTitles) tabPages.push({ id: (await user.api("/api/pages", { method: "POST", body: { title } })).id, title });
+  const liveTab = (page, title) => page.locator(live(".tabStrip .tab"), { hasText: title });
+  async function openTab(page, title) {
+    await page.locator('[data-guide="header.home"]').click();
+    await page.locator(".fileRow", { hasText: title }).dblclick();
+    await liveTab(page, title).waitFor();
+  }
+  const tabMarks = (seen) => seen.filter((g) => tabPages.some((p) => g.endsWith(` ${p.id}`)));
+
+  await step("motion: a tab opened rises in and the topbar keeps its height; one closed sinks out through an inert copy as the next glides over; tabs read back come still", async () => {
+    await user.api("/api/prefs/open-tabs", { method: "PUT", body: { value: [] } });
+    const ctx = await user.context(browser);
+    await watch(ctx);
+    const page = await openPage(ctx, home);
+    try {
+      await folderRow(page).waitFor();
+      const topbar = () => page.locator(".topbar").evaluate((el) => el.getBoundingClientRect().height);
+      const bare = await topbar();
+      await openTab(page, "Tab one");
+      assertEq(await topbar(), bare, "the topbar keeps its height as the first tab opens");
+      assert((await glides(page)).includes(`entering ${tabPages[0].id}`), "the tab rises in");
+      await openTab(page, "Tab two");
+      await openTab(page, "Tab three");
+      await arrived(liveTab(page, "Tab three"));
+      await glides(page);
+      // the middle one, in the background
+      await liveTab(page, "Tab two").getByRole("button", { name: "Close Tab two", exact: true }).click();
+      const copy = page.locator('.tabStrip .tab[data-leaving="tab"]', { hasText: "Tab two" });
+      await copy.waitFor({ state: "attached" });
+      assert(await copy.evaluate((el) => el.getAttribute("aria-hidden") === "true" && el.hasAttribute("inert")
+        && !el.hasAttribute("role") && !el.hasAttribute("aria-selected")), "the copy is inert, and no tab");
+      const seen = tabMarks(await glides(page));
+      assert(seen.includes(`moving ${tabPages[2].id}`), `the tab after it glides over its place: ${seen}`);
+      assert(!seen.includes(`moving ${tabPages[0].id}`), `the tab before it stays: ${seen}`);
+      await copy.waitFor({ state: "detached", timeout: 2000 });
+      await arrived(liveTab(page, "Tab three"));
+      assertEq(await page.locator(".tabStrip .tab").count(), 2, "two tabs are left");
+      await page.reload();
+      await liveTab(page, "Tab three").waitFor();
+      await page.waitForTimeout(300);
+      const back = tabMarks(await glides(page));
+      assertEq(back.length, 0, `tabs read back from the cache and the server move nothing: ${back}`);
+      await assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("motion: under reduced motion a tab closed goes at once and the others jump to their places", async () => {
+    await user.api("/api/prefs/open-tabs", { method: "PUT", body: { value: tabPages } });
+    const ctx = await user.context(browser, { reducedMotion: "reduce" });
+    await watch(ctx);
+    const page = await openPage(ctx, `${server.base}/?ws=${user.ws}&page=${tabPages[2].id}`);
+    try {
+      for (const title of tabTitles) await liveTab(page, title).waitFor();
+      await glides(page);
+      await liveTab(page, "Tab two").getByRole("button", { name: "Close Tab two", exact: true }).click();
+      const left = await page.evaluate(() => new Promise((done) =>
+        requestAnimationFrame(() => done(document.querySelectorAll("[data-leaving]").length))));
+      assertEq(left, 0, "no copy");
+      assertEq(await page.locator(".tabStrip .tab").count(), 2, "the tab is gone at once");
+      assertEq(tabMarks(await glides(page)).length, 0, "nothing glides");
+      await assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
 }

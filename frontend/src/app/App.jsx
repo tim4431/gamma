@@ -941,7 +941,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // Local cache first for instant paint…
     let localTabs = [];
     try { localTabs = JSON.parse(localStorage.getItem(`gamma-tabs:${u}`) || "[]"); } catch {}
-    setOpenTabs(Array.isArray(localTabs) ? localTabs : []);
+    if (!Array.isArray(localTabs)) localTabs = [];
+    tabsReadRef.current.add(localTabs);
+    setOpenTabs(localTabs);
     let localRecents = [];
     try { localRecents = JSON.parse(localStorage.getItem(`gamma-recent-views:${u}`) || "[]"); } catch {}
     if (!Array.isArray(localRecents)) localRecents = [];
@@ -1861,6 +1863,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Persistence happens inside the updater (not an effect) so a user switch
   // can't race an in-flight save into the wrong key.
   const [openTabs, setOpenTabs] = useState([]);
+  // Tabs read from this browser's cache or the server's copy: the strip
+  // takes them without moving (OpenTabs `still`).
+  const tabsReadRef = useRef(new WeakSet());
   // Local viewing order, separate from the link-jump Back stack and the
   // synced tab order. Home keeps its folder/label so closing a page can
   // return to the view it was opened from.
@@ -1915,6 +1920,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         pushTabsToServer(tabs);
       }
       try { localStorage.setItem(`gamma-tabs:${user}`, JSON.stringify(tabs)); } catch {}
+      tabsReadRef.current.add(tabs);
       return tabs;
     });
   }
@@ -2286,39 +2292,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // id, title and pinned).
   const tabKinds = useMemo(() => new Map(homeBlocks.map((b) => [b.id, pageAttachment(b) ? "pdf" : "page"])), [homeBlocks]);
   const tabKindOf = useCallback((id) => tabKinds.get(id) || "page", [tabKinds]);
-  // FLIP animation: when tab order changes, slide each tab from its old
-  // position to the new one (Chrome-style), instead of snapping. Positions
-  // are the tab's place in the strip's content (offsetLeft; the strip is its
-  // offset parent), so the strip scrolling to the active tab moves nothing.
-  const tabElsRef = useRef(new Map());
-  const tabLeftsRef = useRef(new Map());
-  useLayoutEffect(() => {
-    const prev = tabLeftsRef.current;
-    const next = new Map();
-    for (const [id, el] of tabElsRef.current) {
-      if (!el) continue;
-      const left = el.offsetLeft;
-      next.set(id, left);
-      const old = prev.get(id);
-      if (old != null && Math.abs(old - left) > 2) {
-        el.style.transition = "none";
-        el.style.transform = `translateX(${old - left}px)`;
-        requestAnimationFrame(() => {
-          // a move (docs/dev/ui-design.md, "Motion"); the tab's own
-          // transitions (its hover colours) come back once it has landed
-          el.style.transition = "transform var(--dur-slow) var(--ease-out)";
-          el.style.transform = "";
-          const landed = (e) => {
-            if (e.target !== el || e.propertyName !== "transform") return;
-            el.style.transition = "";
-            el.removeEventListener("transitionend", landed);
-          };
-          el.addEventListener("transitionend", landed);
-        });
-      }
-    }
-    tabLeftsRef.current = next;
-  }, [openTabs]);
 
   // Background tasks (tasks/useTasks.js, docs/dev/tasks.md): the server's
   // jobs — exports, backups, restores, imports, the search indexer — and
@@ -10552,7 +10525,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             <OpenTabs
               tabs={openTabs}
               activeId={focusedBlockId}
-              tabElements={tabElsRef}
+              still={tabsReadRef.current.has(openTabs)}
               kindOf={tabKindOf}
               menuOpen={openPopover === "tabs"}
               onMenuOpenChange={(open) => setOpenPopover(open ? "tabs" : null)}
