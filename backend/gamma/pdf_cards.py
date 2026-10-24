@@ -18,7 +18,10 @@ colour down its left edge.
 **A thread** is its comments oldest first, each as the viewer's margin
 draws it (``frontend/src/comments/Thread.jsx``): the author's avatar, an
 initial on their colour (``person_color``), their name and the day, and the
-comment's Markdown under them, past the avatar.
+comment's Markdown under them, past the avatar. A thread on one of the
+notes goes under that note in the note card, as replies to it; on a card
+of its own (the notes elsewhere, or not printed) it opens with the note's
+first line, quoted, so the reply keeps what it answers.
 """
 
 import math
@@ -26,7 +29,7 @@ from collections import namedtuple
 
 from . import vector_text
 from .note_markup import TEXT, latex_spans
-from .pdf_document import MUTED, QUOTE_COLOR, RULE_COLOR, _ref_label, chunks
+from .pdf_document import MUTED, QUOTE_COLOR, RULE_COLOR, _ref_label, chunks, inline
 from .pdf_typeset import (
     BOLD,
     CODE_BG,
@@ -70,7 +73,8 @@ DISPLAY_MATH_SCALE = 1.15
 MIN_PICTURE = 16.0                  # a picture a cut falls in shrinks to the room left, down to this
 AVATAR = 11.0                       # a comment's avatar, across
 AVATAR_GAP = 4.0                    # the avatar to the name, and the name to the day
-COMMENT_GAP = 5.0                   # between two comments of a thread
+COMMENT_GAP = 5.0                   # between two comments of a thread, and a note and its replies
+REPLY_INDENT = 6.0                  # a note's replies, past its text
 DAY_SCALE = 0.9                     # the day beside the name
 
 CARD_FILL = (1.0, 1.0, 1.0)
@@ -137,25 +141,61 @@ class Layout:
     # -- the two kinds of card --
 
     def notes(self, blocks):
-        """A highlight's notes, ``[(depth, markdown)]``: depth 0 its own
-        note, a deeper one a bullet indented by its depth."""
-        for depth, md in blocks:
+        """A highlight's notes, ``[(depth, markdown[, threads])]``: depth 0
+        its own note, a deeper one a bullet indented by its depth. A note's
+        threads (each its comments, oldest first) go under it, a little
+        past its text, as replies to it."""
+        for depth, md, *rest in blocks:
+            x = min(depth, MAX_NEST) * NEST
             self._space(BLOCK_GAP)
-            self._markdown(md, min(depth, MAX_NEST) * NEST, BULLET if depth else None)
+            self._markdown(md, x, BULLET if depth else None)
+            for comments in rest[0] if rest else ():
+                self._space(COMMENT_GAP)
+                self._comments(comments, x + REPLY_INDENT)
         return self
 
-    def thread(self, comments):
+    def thread(self, comments, quote: str = ""):
         """A thread's comments, oldest first: ``{author, created_at, body,
-        deleted}`` each."""
-        indent = AVATAR + AVATAR_GAP
-        for c in comments:
+        deleted}`` each. ``quote``: the note the thread answers, when the
+        card stands apart from it, as one line over the comments."""
+        if quote.strip():
+            self._quote(quote)
             self._space(COMMENT_GAP)
+        self._comments(comments, 0.0)
+        return self
+
+    def _quote(self, md: str):
+        """A note's first line, as one line behind a quote bar: italic and
+        muted, ending in an ellipsis when there is more of it."""
+        line = md.strip().split("\n")[0]
+        style = Style(ITALIC, None)
+        more = len(md.strip().split("\n")) > 1
+        room = max(8.0, self.width - QUOTE_PAD - span_width(ELLIPSIS, FONT_SIZE))
+        lines = wrap(resolve(inline(line, style, self.resolve_ref), FONT_SIZE, room), room, FONT_SIZE, hang=0.0)
+        first = lines[0][1]
+        if more or len(lines) > 1:
+            first = first + [(TEXT, ELLIPSIS, 0, style)]
+        ascent, h = line_metrics(first, FONT_SIZE, LEADING)
+        top = self._place()
+        self.rows.append(Row("fill", 0.0, top, QUOTE_BAR, h, RULE_COLOR))
+        self.rows.append(Row("text", QUOTE_PAD, top, spans_width(first, FONT_SIZE), h,
+                             (first, FONT_SIZE, ascent, QUOTE_COLOR)))
+        self.y = top + h
+
+    def _comments(self, comments, x: float):
+        """Comments at ``x``, as the viewer's margin draws them: the
+        author's avatar, name and day, and the text under them past the
+        avatar."""
+        indent = x + AVATAR + AVATAR_GAP
+        for n, c in enumerate(comments):
+            if n:
+                self._space(COMMENT_GAP)
             name = (c.get("author") or "").strip()
             initial = name[0].upper() if name and name != "Anonymous" else "?"
             ascent, line_h = line_metrics([], FONT_SIZE, LEADING)
             h = max(line_h, AVATAR)
             top = self._place()
-            self.rows.append(Row("avatar", 0.0, top + (h - AVATAR) / 2, AVATAR, AVATAR,
+            self.rows.append(Row("avatar", x, top + (h - AVATAR) / 2, AVATAR, AVATAR,
                                  (initial, person_color(name))))
             base = top + (h - line_h) / 2
             who = [(TEXT, name or "Anonymous", 0, Style(BOLD, None))]
@@ -172,7 +212,6 @@ class Layout:
                 self._lines([(TEXT, "Comment deleted", 0, Style(ITALIC, None))], indent, color=MUTED)
             else:
                 self._markdown(c.get("body") or "", indent, None)
-        return self
 
     # -- Markdown --
 

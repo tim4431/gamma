@@ -105,7 +105,12 @@ comments oldest first, each as the viewer's margin draws it: the author's
 avatar (their initial on their colour, `person_color`, the app's
 `personColor` with the same eight colours, held to it by a test), their
 name, the day, and the comment under them past the avatar. A deleted root
-reads "Comment deleted". The Markdown goes through `pdf_document.chunks`,
+reads "Comment deleted". A thread on one of the notes is drawn under that
+note in the note card, a little past its text, when the note card is
+beside the page too: a reply then stays next to what it answers. When the
+note is on the page, or not printed (the Notes switch off, an empty note,
+a text box), the thread is a card of its own in the column that opens with
+the note's first line, quoted (italic, behind a bar, cut with an ellipsis). The Markdown goes through `pdf_document.chunks`,
 the parser the notes PDF and text boxes use, and is set in the compact look
 of a rendered note: headings a little larger, lists with their bullets or
 numbers, to-dos with a drawn box, quotes with a bar, fenced code on a tint,
@@ -122,8 +127,14 @@ down to 16 pt).
 **Every card of a highlight** is collected by the router's `_collect_cards`
 from every highlight block, the ones still embedded in the PDF included
 (their annotations are not rewritten, but their notes and threads are the
-reader's own). The threads are `comments.threads_for(…, state="open")`:
-resolved ones leave the margin and stay out here too.
+reader's own): its notes, each with the threads on it
+(`highlight_note_blocks` names each note's block); the threads on the
+highlight itself; and the threads on blocks under it no card shows, each
+with that block's text to quote. The threads are
+`comments.threads_for(…, state="open")`: resolved ones leave the margin and
+stay out here too. In the column a highlight's cards come in this order:
+the note card, the threads on the highlight, then the quoted threads of its
+notes in reading order.
 
 **The column.** When anything goes beside the page, every page of the copy
 is widened on the right of the page as shown (`_widen`). The media and crop

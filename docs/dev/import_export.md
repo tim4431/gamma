@@ -1108,8 +1108,9 @@ Highlights, Notes and Bundle-the-files switches beside an illustrative page
 (`shared/illustrations/TransferPreview.jsx`, an example of the options, not
 a render of the document). Annotated PDF has two more: "Place notes", a
 choice between Beside the page and On the page (`NOTES_PLACES`; it waits on
-the Notes switch), and Comments, the open threads as cards beside the
-page, with or without the notes. The preview draws them where they go: the
+the Notes switch), and Comments, the open threads on each highlight and on
+its notes as cards beside the page, with or without the notes (a note's
+threads under it when the notes are beside the page too). The preview draws them where they go: the
 note and a comment card in a column beside the paper, or the note on it. Gamma and Notability have fixed contents, and a
 PDF without a stored copy can only be the original file, so these export
 straight from step one. Logseq

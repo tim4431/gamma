@@ -6,7 +6,9 @@ notes in its annotation popup: invisible on paper, and a click away in every
 viewer. With the Notes switch a highlight's notes are also printed as a card
 (``pdf_cards``), and with the Comments switch each of its open comment
 threads is a card of its own. Notes go where ``notes_at`` says; threads
-always go beside the page.
+always go beside the page. A thread on one of the notes goes under that
+note when its card is beside the page too, and is otherwise a card of its
+own quoting the note.
 
 **Beside the page** (``notes_at`` ``beside``, and every thread) is where the
 viewer shows a highlight's comment threads once a lower zoom leaves room for
@@ -102,10 +104,12 @@ PAGE_EDGE = (0.80, 0.80, 0.82)
 # middle of the first line.
 Anchor = namedtuple("Anchor", "x0 top x1 bottom mid")
 
-# One card: a highlight's notes (``blocks``) or one of its threads
-# (``thread``, its comments). ``group`` is the highlight's index: its cards
-# stand together, and the first of them is the one tied to it.
-Card = namedtuple("Card", "group anchor color blocks thread")
+# One card: a highlight's notes (``blocks``, each with the threads on it)
+# or one of its threads (``thread``, its comments, under ``quote``: the note
+# it answers when that note is not in the same card). ``group`` is the
+# highlight's index: its cards stand together, and the first of them is
+# the one tied to it.
+Card = namedtuple("Card", "group anchor color blocks thread quote")
 
 
 class _Drawing:
@@ -132,7 +136,7 @@ class _Drawing:
 def _layout(card: Card, card_w: float, images, resolve_ref):
     """The card's content laid out for a card ``card_w`` wide."""
     lay = pdf_cards.Layout(inner_width(card_w, card.blocks is not None), images, resolve_ref)
-    return lay.notes(card.blocks) if card.blocks is not None else lay.thread(card.thread)
+    return lay.notes(card.blocks) if card.blocks is not None else lay.thread(card.thread, card.quote)
 
 
 def _bar(card: Card):
@@ -417,12 +421,18 @@ def render_notes(pdf_bytes: bytes, highlights, *, notes_at: str = "beside", uplo
     """Return (pdf bytes with the cards drawn, cards drawn).
 
     ``highlights``: ``[{position: <pdf_position dict>, color: <css string>,
-    blocks: [(depth, markdown)], threads: [[comment, …], …]}]``. ``blocks``
-    are the highlight's notes (``pdf_export.highlight_note_blocks``; without
-    it, a ``note`` string is one block), placed as ``notes_at`` says.
-    ``threads`` are its comment threads to print beside the page, each its
-    comments oldest first (``{author, created_at, body, deleted}``). A
-    highlight with neither, without usable rects or on a page out of range is
+    blocks: [(depth, markdown, threads)], threads: [thread, …],
+    note_threads: [(markdown, thread), …]}]``, a thread its comments oldest
+    first (``{author, created_at, body, deleted}``). ``blocks`` are the
+    highlight's notes (``pdf_export.highlight_note_blocks``; a block may
+    leave out its threads, and without ``blocks`` a ``note`` string is one
+    block), placed as ``notes_at`` says, each with the threads on it: under
+    the note in its card beside the page, else a card of their own beside
+    the page, quoting the note. ``threads`` are the threads on the
+    highlight itself, each a card beside the page. ``note_threads`` are the
+    threads on its notes the cards do not show (the Notes switch off, an
+    empty note, a text box), each a card quoting its note. A highlight with
+    nothing to print, without usable rects or on a page out of range is
     skipped; nothing to draw leaves the bytes as they are. ``uploads_dir`` is
     where ``/api/uploads/…`` pictures are read from (without it they read as
     their alt text), and ``resolve_ref`` (block id → {content, …} or None)
@@ -440,9 +450,19 @@ def render_notes(pdf_bytes: bytes, highlights, *, notes_at: str = "beside", uplo
     beside: dict[int, list] = {}
     on_page: dict[int, list] = {}
     for group, h in enumerate(highlights):
-        blocks = [(depth, md.strip()) for depth, md in (h.get("blocks") or [(0, h.get("note") or "")])
-                  if (md or "").strip()]
-        threads = [thread for thread in h.get("threads") or () if thread]
+        # A note's threads ride in its card when that card is beside the
+        # page with them; else they stand apart, each quoting its note.
+        blocks, apart = [], []
+        for depth, md, *rest in h.get("blocks") or [(0, h.get("note") or "")]:
+            replies = [thread for thread in (rest[0] if rest else ()) if thread]
+            md = (md or "").strip()
+            together = md and notes_at == "beside"
+            if md:
+                blocks.append((depth, md, replies if together else []))
+            if not together:
+                apart += [(md, thread) for thread in replies]
+        apart += [(md or "", thread) for md, thread in h.get("note_threads") or () if thread]
+        threads = [("", thread) for thread in h.get("threads") or () if thread] + apart
         pos = h.get("position") or {}
         try:
             index = int(pos.get("pageNumber") or 0) - 1
@@ -456,9 +476,10 @@ def render_notes(pdf_bytes: bytes, highlights, *, notes_at: str = "beside", uplo
         color = parse_css_color(h.get("color"))
         if blocks:
             (beside if notes_at == "beside" else on_page).setdefault(index, []).append(
-                Card(group, anchor, color, blocks, None))
+                Card(group, anchor, color, blocks, None, ""))
         if threads:
-            beside.setdefault(index, []).extend(Card(group, anchor, color, None, thread) for thread in threads)
+            beside.setdefault(index, []).extend(
+                Card(group, anchor, color, None, thread, quote) for quote, thread in threads)
     if not beside and not on_page:
         return pdf_bytes, 0
 
