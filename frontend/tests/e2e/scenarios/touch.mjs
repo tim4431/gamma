@@ -9,8 +9,9 @@
 // iPad (docs/dev/ipad.md has the device checks). The last step reads the
 // menus these steps open as assistive technology does: one role="menu"
 // around each menu's items, named by what opens it.
+import { generateNKeysBetween } from "fractional-indexing";
 import { assertMenuRoles, fakeAiModels, wanted } from "../harness.mjs";
-import { waitForPdf } from "./pdf.mjs";
+import { selectPdfText, waitForPdf } from "./pdf.mjs";
 import { PNG_1PX } from "./notes.mjs";
 
 // The tablet held in landscape (the docks) and upright (the compact shell).
@@ -117,6 +118,74 @@ export async function touchScenarios({ server, browser, alice, makePdf, step, un
     } finally { await ctx.close(); }
   });
 
+  // Notes, first in the column, fold to a bar right where their grip was:
+  // the second tap's click lands on it and must not open it again.
+  await step("touch: two taps on the Notes grip fold them where the bar takes the grip's place, closing a note's editor open there", async () => {
+    const ctx = await alice.context(browser, TABLET);
+    try {
+      const page = await openPage(ctx, paperUrl);
+      await waitForPdf(page);
+      const grip = page.locator('[data-guide="notes.grip"]');
+      await page.locator(".blockRow", { hasText: "First touch note" }).first().locator(".blockBody").tap();
+      await page.locator(".editBar").waitFor();
+      const at = await centre(grip);
+      await page.touchscreen.tap(at.x, at.y);
+      await page.touchscreen.tap(at.x, at.y);
+      await page.locator('.dockWindow.collapsed [data-guide="notes.grip"]').waitFor();
+      await sleep(500); // the second tap's click has long come
+      assertEq(await page.locator('.dockWindow.collapsed [data-guide="notes.grip"]').count(), 1, "Notes stay folded");
+      assertEq(await page.locator(".blockEditorCm").count(), 0, "the editor closed with the fold");
+      assertEq(await page.locator(".editBar").count(), 0, "and the editing bar with it");
+      const folded = await centre(grip);
+      await page.touchscreen.tap(folded.x, folded.y);
+      await page.locator('.dockWindow:not(.collapsed) [data-guide="notes.grip"]').waitFor();
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  // A folded window holds its rows but opens no editor there (ui-design.md
+  // "Dock windows"): a highlight made on the PDF with Notes folded opens its
+  // note's editor when they open, as it did when a fold unmounted them.
+  await step("touch: a highlight made while Notes are folded opens its note's editor only as they open, with the focus, and no editing bar or cursor chip before", async () => {
+    const hup = await alice.upload("/api/uploads", makePdf([["Highlight me while the notes are folded", "And me, with a mouse"]]), "folded.pdf", "application/pdf");
+    const hpaper = await alice.api(`/api/blocks/by-doc/${hup.doc_id}`, { method: "POST", body: { default_title: "Folded highlight paper", source_url: hup.source_url } });
+    await alice.api("/api/blocks", { method: "POST", body: { parent_id: hpaper.id, content: "A note already here" } });
+    for (const finger of [true, false]) {
+      const ctx = await alice.context(browser, finger ? TABLET : undefined);
+      try {
+        const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&page=${hpaper.id}`);
+        await waitForPdf(page);
+        await page.locator(".sidebar .blockRow", { hasText: "A note already here" }).waitFor();
+        const grip = page.locator('[data-guide="notes.grip"]');
+        if (finger) {
+          const at = await centre(grip);
+          await page.touchscreen.tap(at.x, at.y);
+          await page.touchscreen.tap(at.x, at.y);
+        } else await grip.dblclick();
+        await page.locator('.dockWindow.collapsed [data-guide="notes.grip"]').waitFor();
+        await sleep(500); // past the fold's echo
+        const rows = await page.locator(".sidebar .blockRowWrap").count();
+        await selectPdfText(page, 1, finger ? "Highlight me" : "And me");
+        await page.locator(".plainTip .colorBtn").first().click();
+        await until(async () => (await page.locator(".sidebar .blockRowWrap").count()) > rows, { what: "the highlight's note is in the folded Notes" });
+        await sleep(600); // past the editing bar's wait for the keyboard
+        assertEq(await page.locator(".blockEditorCm").count(), 0, "no editor opens in the folded Notes");
+        assertEq(await page.locator(".editBar").count(), 0, "nor its editing bar over the PDF");
+        assertEq(await page.locator(".chatSelChip.isCursor").count(), 0, "nor the chat's chip for a block out of sight");
+        const bar = await centre(grip);
+        if (finger) await page.touchscreen.tap(bar.x, bar.y); else await grip.click();
+        await page.locator('.dockWindow:not(.collapsed) [data-guide="notes.grip"]').waitFor();
+        await until(() => page.evaluate(() => !!document.activeElement?.closest(".blockEditorCm")), { what: "the new note's editor takes the focus as Notes open" });
+        if (finger) await page.locator(".editBar:not(.moving)").waitFor();
+        await page.locator(".chatSelChip.isCursor").waitFor();
+        const typed = finger ? "written by finger as Notes opened" : "written by mouse as Notes opened";
+        await page.keyboard.type(typed);
+        await page.locator(".sidebar .blockRowWrap", { hasText: typed }).waitFor();
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+    }
+  });
+
   await step("touch: a double-click on the Chat grip folds it, a click on the folded header opens it", async () => {
     const ctx = await alice.context(browser);
     try {
@@ -129,6 +198,68 @@ export async function touchScenarios({ server, browser, alice, makePdf, step, un
       await until(async () => !(await chatFolded(page)), { what: "a click on the folded header opens Chat" });
       await sleep(900);
       assert(!(await chatFolded(page)), "Chat stays open after the opening click");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  // A fold keeps the window (ui-design.md "Dock windows"): Chat and Notes
+  // folded and opened again are the same windows, at the same place, with
+  // nothing read again.
+  await step("touch: a fold keeps the window: Chat opens again at once on the place it was read, with its draft and no new read, and Notes keep their scroll", async () => {
+    const fup = await alice.upload("/api/uploads", makePdf([["A paper to fold windows over"]]), "fold.pdf", "application/pdf");
+    const fold = await alice.api(`/api/blocks/by-doc/${fup.doc_id}`, { method: "POST", body: { default_title: "Fold paper", source_url: fup.source_url } });
+    await alice.api(`/api/pages/${fold.id}/ops`, { method: "POST", body: { client: "e2e", ops: generateNKeysBetween(null, null, 30).map((position, i) => (
+      { op: "insert", id: `fold${i}`, parent: fold.id, position, content: `Fold note ${i}: a line long enough to wrap once in the notes window` })) } });
+    await alice.api(`/api/chats/${fold.id}`, { method: "PUT", body: { messages: Array.from({ length: 12 }, (_, i) => [
+      { role: "user", text: `Question ${i} about the paper?` },
+      { role: "ai", text: `Answer ${i}. ${"A reply long enough to wrap over a few lines of the chat window. ".repeat(3)}` }]).flat() } });
+    const ctx = await alice.context(browser);
+    try {
+      await fakeAiModels(ctx);
+      await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+      const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&page=${fold.id}`);
+      await waitForPdf(page);
+      await page.locator(".chatBubbleRow").nth(23).waitFor({ state: "attached" });
+      await page.locator(".sidebar .blockRowWrap", { hasText: "Fold note 29" }).waitFor({ state: "attached" });
+      const reads = [];
+      page.on("request", (r) => { if (r.url().includes("/api/chats/")) reads.push(r.url()); });
+      const place = () => page.evaluate(() => {
+        const msgs = document.querySelector(".chatMessages");
+        return { chat: Math.round(msgs.scrollTop), notes: Math.round(document.querySelector(".sidebar .blockList").scrollTop),
+          draft: document.querySelector(".chatInputArea").value };
+      });
+      await page.evaluate(() => {
+        const msgs = document.querySelector(".chatMessages");
+        msgs.scrollTop = Math.round((msgs.scrollHeight - msgs.clientHeight) / 2);
+        document.querySelector(".sidebar .blockList").scrollTop = 300;
+      });
+      await page.getByRole("combobox", { name: "Message AI" }).fill("half a thought");
+      await sleep(300);
+      const before = await place();
+      assert(before.chat > 100 && before.notes > 100, `scrolled into both windows: ${JSON.stringify(before)}`);
+      await chatGrip(page).dblclick();
+      await until(() => chatFolded(page), { what: "Chat folded" });
+      assert(!(await page.locator(".chatBubbleRow").first().isVisible()), "folded, the conversation is out of sight");
+      await sleep(900); // past the fold's echo
+      // The frame the click paints: the conversation is there, where it was.
+      const opened = await page.evaluate(() => new Promise((resolve) => {
+        document.querySelector('.collapsedBar [data-guide="chat.grip"]').closest(".dockWindowHeader").click();
+        requestAnimationFrame(() => {
+          const msgs = document.querySelector(".chatMessages");
+          resolve({ bubbles: msgs.querySelectorAll(".chatBubbleRow").length, height: Math.round(msgs.clientHeight), chat: Math.round(msgs.scrollTop) });
+        });
+      }));
+      assertEq(opened.bubbles, 24, "the first frame open shows the whole conversation");
+      assert(opened.height > 100, `and its transcript has its room: ${opened.height}px`);
+      assertEq(opened.chat, before.chat, "at the place it was read");
+      await sleep(900); // past the opening click's echo
+      await page.locator('[data-guide="notes.grip"]').dblclick();
+      await page.locator('.dockWindow.collapsed [data-guide="notes.grip"]').waitFor();
+      await sleep(900);
+      await page.locator('[data-guide="notes.grip"]').click();
+      await page.locator('.dockWindow:not(.collapsed) [data-guide="notes.grip"]').waitFor();
+      assertEq(JSON.stringify(await place()), JSON.stringify(before), "both windows keep their place, and the draft stays");
+      assertEq(reads.length, 0, `nothing is read again: ${reads.join(", ")}`);
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

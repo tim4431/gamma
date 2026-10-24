@@ -22,6 +22,7 @@ import {
   BlockDropIndicator,
   ChatMarkdown,
   CopyBox,
+  DockBar,
   DockWindow,
   GammaNavContext,
   OpenTabs,
@@ -4148,7 +4149,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (!pendingBlockScrollRef.current) return;
     const id = pendingBlockScrollRef.current;
     const row = document.querySelector(`[data-block-id="${id}"]`);
-    if (row) {
+    if (row && !row.closest("[inert]")) {
       row.scrollIntoView({ block: "center", behavior: "smooth" });
       setFocusedId(id);
       pendingBlockScrollRef.current = null;
@@ -4158,9 +4159,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setView((v) => revealBlock(blocks, v, id));
     }
     // Otherwise the row isn't rendered yet (not in the tree yet, or the notes
-    // window is closed or collapsed — a highlight made on the PDF alone):
-    // keep the ref and try again on the next tree change or when the notes
-    // come back.
+    // window is closed, or folded — where its row waits inert and out of
+    // sight — a highlight made on the PDF alone): keep the ref and try again
+    // on the next tree change or when the notes come back.
   }, [blocks, view, blockScrollReq, notesVisible, collapsedWins.notes, phonePanel]);
 
   // A page's passive landing (openBlock): the notes scroll to where the
@@ -10011,13 +10012,27 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     chat: !chatHidden && (!shareMode || !!focusedBlockId),
     comments: !commentsHidden && !!focusedBlockId && !homeMode && commentsOn,
   };
-  function renderWindow(id) {
+  // A window's frame: its title, the grip's drag and fold, and its close.
+  // The window and its folded bar share it.
+  function windowFrame(id) {
     // Phone: windows are full-screen overlays — no dock dragging or collapsing,
     // and closing just returns to the main view.
     const common = {
       onGrip: isPhone ? undefined : (e) => startWindowDock(e, id),
       onFold: isPhone ? undefined : () => {
         const collapsed = !collapsedWins[id];
+        // Folded, the window keeps the size it has now for what it holds
+        // (--fold-w, --fold-h; app.css), so nothing in it lays out again
+        // while it waits, unseen, in its panel at no size. The focus leaves
+        // it, as a press elsewhere takes it: a finger's taps on the grip
+        // leave it in a note's editor, which then closes.
+        const panel = collapsed ? document.querySelector(`[data-panel-id="${id}"]`) : null;
+        const box = panel?.getBoundingClientRect();
+        if (box?.width && box.height) {
+          panel.style.setProperty("--fold-w", `${box.width}px`);
+          panel.style.setProperty("--fold-h", `${box.height}px`);
+        }
+        if (panel?.contains(document.activeElement)) document.activeElement.blur();
         setCollapsedWins((prev) => ({ ...prev, [id]: collapsed }));
         guideEvents.emit("window.collapsed", { id, collapsed });
       },
@@ -10030,19 +10045,24 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       hide();
       guideEvents.emit("window.closed", { id });
     };
+    if (id === "notes") return { title: t("Notes"), common, onClose: closeWindow(() => setNotesVisible(false)) };
+    if (id === "chat") return { title: t("Chat"), common, onClose: closeWindow(() => setChatHidden(true)) };
+    return { title: t("Comments"), common, onClose: closeWindow(() => setCommentsHidden(true)) };
+  }
+  function renderWindow(id) {
+    const { title, common, onClose } = windowFrame(id);
     if (id === "notes") {
       return (
-        <DockWindow title={t("Notes")} guide="notes.grip" {...common} onClose={closeWindow(() => setNotesVisible(false))}>
+        <DockWindow title={title} guide="notes.grip" {...common} onClose={onClose}>
           {notesWindow}
         </DockWindow>
       );
     }
     if (id === "chat") {
-      const closeChat = closeWindow(() => setChatHidden(true));
       return (
         // Until the chat's module is in, its window frame with an empty body.
         <LazyBoundary fallback={(
-          <DockWindow title={t("Chat")} guide="chat.grip" {...common} onClose={closeChat}>
+          <DockWindow title={title} guide="chat.grip" {...common} onClose={onClose}>
             <div className="chatPanel chatWindow" />
           </DockWindow>
         )}>
@@ -10051,7 +10071,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           session={chatSession}
           readOnly={shareMode}
           canSave={canWriteWorkspace}
-          onClose={closeChat}
+          onClose={onClose}
           docId={docId} pageAttach={pageAttach} focusedBlockId={focusedBlockId} homeBlocks={homeBlocks} libraryTree={libTree} pageTitle={pageTitle}
           openTabs={openTabs} recentViews={recentViews}
           onOpenPage={openPageLink}
@@ -10093,17 +10113,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       );
     }
     if (id === "comments") {
-      const closeComments = closeWindow(() => setCommentsHidden(true));
       return (
         // Until its module is in, the window's frame with an empty body.
         <LazyBoundary fallback={(
-          <DockWindow title={t("Comments")} guide="comments.grip" {...common} onClose={closeComments}>
+          <DockWindow title={title} guide="comments.grip" {...common} onClose={onClose}>
             <div className="commentsPanel" />
           </DockWindow>
         )}>
           <CommentsPanel
             {...common}
-            onClose={closeComments}
+            onClose={onClose}
             threads={comments.threads}
             pageId={focusedBlockId}
             // what a thread is on: a highlight's quote, else the note's text
@@ -10124,30 +10143,58 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const slotWins = (side) => (isPhone ? [] : layout[side].filter((w) => winVisible[w]));
   function renderSlotGroup(side, direction) {
     const wins = slotWins(side);
-    // Collapsed windows live OUTSIDE the panel group as fixed header bars —
-    // panel sizes are percentage-based, so a collapsed panel could never
-    // shrink to exactly one header height. Bars keep their side of the
-    // expanded group so collapsing doesn't reorder the column.
-    const expanded = wins.filter((w) => !collapsedWins[w]);
-    const firstExpanded = wins.findIndex((w) => !collapsedWins[w]);
-    const bar = (w) => <div key={w} className="collapsedBar">{renderWindow(w)}</div>;
-    const before = wins.filter((w, i) => collapsedWins[w] && (firstExpanded === -1 || i < firstExpanded));
-    const after = wins.filter((w, i) => collapsedWins[w] && firstExpanded !== -1 && i > firstExpanded);
+    // A folded window shows as a bar OUTSIDE the panel group: panel sizes
+    // are percentage-based, so a panel could never be exactly one header
+    // tall. Bars keep their side of the open windows so folding doesn't
+    // reorder the column. The window itself stays in its panel, mounted and
+    // out of sight (DockWindow; .dockPanelFolded in app.css), so a fold
+    // keeps all it holds. While another window of the group is open, a
+    // folded one's panel is pinned at no size (its min, max and default 0),
+    // and the group's sizes are those of the open windows, shared evenly
+    // until a layout is saved; with all of them folded the panels keep
+    // their sizes, unseen.
+    const firstOpen = wins.findIndex((w) => !collapsedWins[w]);
+    const bar = (w) => {
+      const { title, common, onClose } = windowFrame(w);
+      return (
+        <div key={w} className="collapsedBar">
+          <DockBar title={title} guide={w === "notes" ? "notes.grip" : w === "chat" ? "chat.grip" : "comments.grip"}
+            onGrip={common.onGrip} onFold={common.onFold} onClose={onClose} />
+        </div>
+      );
+    };
+    const before = wins.filter((w, i) => collapsedWins[w] && (firstOpen === -1 || i < firstOpen));
+    const after = wins.filter((w, i) => collapsedWins[w] && firstOpen !== -1 && i > firstOpen);
+    // The group keeps a saved layout per set of folded windows, as it kept
+    // one per set of open windows when a fold took a window out of it. A
+    // panel's `order` names the set too, since the group reads its saved
+    // layout as its panels register: a fold registers them again.
+    const folds = wins.filter((w) => collapsedWins[w]);
+    const foldSet = wins.reduce((n, w, i) => (collapsedWins[w] ? n | (1 << i) : n), 0);
     return (
       <div className={`slotStack slotStack-${direction}`}>
         {before.map(bar)}
-        {expanded.length ? (
-          <div className="slotStackGroup">
-            <PanelGroup direction={direction} autoSaveId={`gamma-slot-${side}`} ref={(h) => { panelGroupRefs.current[`slot-${side}`] = h; }}>
-              {expanded.map((w, i) => (
+        <div className="slotStackGroup">
+          <PanelGroup direction={direction} autoSaveId={`gamma-slot-${side}${folds.length ? `:${folds.join("+")}` : ""}`}
+            ref={(h) => { panelGroupRefs.current[`slot-${side}`] = h; }}>
+            {wins.map((w, i) => {
+              const folded = !!collapsedWins[w];
+              const pinned = folded && firstOpen !== -1;
+              // One splitter between two open windows, right after the first:
+              // the group moves it past the pinned panels between them.
+              const sash = i > 0 && !collapsedWins[wins[i - 1]] && wins.slice(i).some((x) => !collapsedWins[x]);
+              return (
                 <React.Fragment key={w}>
-                  {i > 0 ? <PanelResizeHandle className={`sash sash-${direction}`} hitAreaMargins={SASH_MARGINS} /> : null}
-                  <Panel id={w} order={i + 1} minSize={15}>{renderWindow(w)}</Panel>
+                  {i > 0 ? (
+                    <PanelResizeHandle className={sash ? `sash sash-${direction}` : "sashFolded"} disabled={!sash} hitAreaMargins={SASH_MARGINS} />
+                  ) : null}
+                  <Panel id={w} order={foldSet * wins.length + i + 1} minSize={pinned ? 0 : 15} maxSize={pinned ? 0 : 100}
+                    defaultSize={pinned ? 0 : undefined} className={folded ? "dockPanelFolded" : undefined}>{renderWindow(w)}</Panel>
                 </React.Fragment>
-              ))}
-            </PanelGroup>
-          </div>
-        ) : null}
+              );
+            })}
+          </PanelGroup>
+        </div>
         {after.map(bar)}
       </div>
     );

@@ -891,10 +891,27 @@ own controls.
   changes. A `pointercancel` (the system took the touch) moves nothing,
   and the drop's click is swallowed.
 - **Fold.** A double press on the grip folds the window to its header
-  (`onFold` through `doublePress`). Folded, one press anywhere on the
-  header but a button opens it. When that press was the first of a
+  (`onFold` through `doublePress`). Folded, the header is a bar in its
+  slot beside the open windows (`DockBar`), and one press anywhere on it
+  but a button opens the window. When that press was the first of a
   double-click, the second, landing on the opened grip within 800 ms,
-  does not fold it again.
+  does not fold it again. A finger's double tap folds on its second
+  release, and that tap's click, landing on the bar where the grip was
+  (Notes, first in their column), does not open it again.
+- **A fold keeps the window.** The folded window stays mounted in its
+  panel, which takes no room (`.dockPanelFolded`): its body is inert and
+  out of sight, at the size it had as it folded, so nothing in it lays out
+  again. The focus leaves it, so a note's editor open there closes, and no
+  editor opens there while it is folded (`useDockFolded`): the one a
+  highlight made on the PDF opens, or an empty page's first block, mounts
+  with the focus and its editing bar as the Notes open, and the jump to
+  its row and the chat's cursor chip wait for them too. The window opens
+  in the frame of the press on what it held, with nothing read again: the
+  chat's conversation at the place it was read, a half-typed message, the
+  notes at their scroll. While another window of the slot is open, a
+  folded panel is pinned at no size, so the slot's sizes are the open
+  windows' and a splitter stands only between two open windows. The slot
+  keeps a saved layout for each set of folded windows.
 - **Close.** A closed window forgets its fold: shown again, from the View
   menu or anywhere, it comes back whole.
 - **Splitters.** Each `PanelResizeHandle` between docks takes a press

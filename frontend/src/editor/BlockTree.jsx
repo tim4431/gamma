@@ -21,7 +21,7 @@ import { useBlockFrame } from "../replay/useFrame.js";
 import { isTextBox } from "../markup/textBox.js";
 import { isSheet } from "../notebook/notebook";
 import { NoteSheet } from "../notebook/NoteSheet";
-import { CitationPill, GammaLinkCard, handleMarkdownCopy } from "../shared/ui/Widgets";
+import { CitationPill, GammaLinkCard, handleMarkdownCopy, useDockFolded } from "../shared/ui/Widgets";
 import { Collapse } from "../shared/ui/MotionWidgets";
 import { DiagramFigure, diagramCodeProps } from "../shared/ui/DiagramFigure";
 import { mapOutsideCodeFences, remarkDiagrams, scanDiagramFences, setDiagramWidth } from "../shared/lib/diagramMarkdown.js";
@@ -35,7 +35,7 @@ import { useMathUi } from "./useMathUi.js";
 import { BlockCmEditor, OBJECT_DRAG_TYPE } from "./BlockCmEditor";
 import { expandBlankLines } from "./mdMarks";
 import { BLOCK_COMMANDS } from "./blockCommands.js";
-import EditBar from "./EditBar";
+import { EditBarHost, useEditBarRow } from "./EditBar";
 import { dispatch as dispatchHotkey } from "../shared/lib/hotkeys.js";
 import { blockStartInSource, gapInSource, renderedGaps, sourceOffsetAtPoint } from "./clickToSource";
 import { highlightCode, makeCopyButton } from "./codeHighlight";
@@ -1002,6 +1002,8 @@ const BlockRow = React.memo(function BlockRow({
     block, tree: getTree?.(), view, folded: collapsed, readOnly, editor: ref.current,
     row: { onHop, onMoveBlock, onDuplicate, onDelete, onEnterSibling, onIndent, onOutdent, onToggle, onAddToChat, onMoveToPage, onComment },
   });
+  // While this row's editor is open, the tree's editing bar is this row's.
+  useEditBarRow(!readOnly && editing, commandContext);
 
   useEffect(() => {
     registerRef(block.id, ref);
@@ -1765,7 +1767,6 @@ const BlockRow = React.memo(function BlockRow({
           ) : null}
         </>
       ) : null}
-      {!readOnly && editing ? <EditBar context={commandContext} onUndo={onUndo} /> : null}
       {!readOnly && editing && slash.popup ? (
         <SlashMenuPopup {...slash.popup} guide="editor.slashMenu" event="slash.opened" />
       ) : null}
@@ -2023,7 +2024,14 @@ function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = 
   // (a new one on every tree change would re-render each memoized row).
   // So too the comment counts: each row its own number, and whether its
   // thread popover is open.
-  const { refLabelsById, commentCounts, commentOpenFor, foldMoving, ...rowRest } = rowProps;
+  const { refLabelsById, commentCounts, commentOpenFor, foldMoving, view: openView, ...rest } = rowProps;
+  // In a folded dock window (useDockFolded) no row's editor is open: one
+  // there could take neither the focus nor a finger, and its editing bar
+  // would show over the rest of the screen. The view keeps the block that
+  // is open, whose editor mounts and takes the focus as the window opens.
+  const folded = useDockFolded();
+  const view = useMemo(() => (folded && openView?.editingId ? { ...openView, editingId: null } : openView), [folded, openView]);
+  const rowRest = { ...rest, view };
   const live = rowProps.aiLive;
   const ghost = live?.tool === "create_block" && live.parentId === (parentId ?? rowProps.rootId) ? live : null;
   if ((!blocks || blocks.length === 0) && !ghost) return null;
@@ -2038,7 +2046,7 @@ function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = 
   // document order across the page (rowProps.sheetNumbers), else among
   // these rows.
   let sheets = 0;
-  return (
+  const rows = (
     <>
       {ghostAt === 0 ? ghostRow : null}
       {list.map((rawBlock, idx) => { const block = legacy(rawBlock);
@@ -2078,6 +2086,10 @@ function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = 
       );})}
     </>
   );
+  // The top of the tree holds the editing bar of whichever row's editor is
+  // open (EditBar.jsx).
+  if (parentId !== undefined) return rows;
+  return <EditBarHost open={readOnly ? null : rowRest.view?.editingId} onUndo={rowRest.onUndo}>{rows}</EditBarHost>;
 }
 
 export { BlockTree, _dragState };

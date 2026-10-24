@@ -1101,7 +1101,9 @@ The iPad app shows this same bar, since it is the web app.
   pointer is fine, a mouse or trackpad press never brings it. It is read
   once when the editor opens (`touchTyping()` in `shared/lib/pointer.js`,
   [ui-design.md](ui-design.md#one-behaviour-for-mouse-and-finger)). A
-  read-only page opens no editor, so it has no bar.
+  read-only page opens no editor, so it has no bar, and nor do folded
+  Notes: the editor a highlight made on the PDF opens waits for them to
+  open, and its bar with it ([ui-design.md](ui-design.md#dock-windows)).
 - **What it looks like.** The markup tool strip's surface and separators
   (`.pdfInkBar`, `.pdfInkSep`), centred and floating 6 px above what it
   sits on. Its `ctlBtn`s carry the strip's 16 px icons and are 36 px, the
@@ -1118,6 +1120,12 @@ The iPad app shows this same bar, since it is the web app.
     its place has been still for 150 ms (`useBarPlace`).
   - Opening an editor counts as a move for 350 ms, the keyboard's rise, so
     the bar appears with the keyboard rather than under it.
+  - From one open editor to the next (a new block, an indent or outdent
+    that remounts the row, another note tapped) the keyboard stays up, and
+    so does the bar, where it is. It is one bar for the notes, held by the
+    top of the tree (`EditBarHost`) while a row's editor is open, and the
+    open row hands it its command context each time it renders
+    (`useEditBarRow`), so its tools are always the open block's.
   - The events do not always come at the end of a move, and none come when
     the keyboard returns to an editor that kept the focus. So the
     viewport's and the window's events, a focus change and a tap each
@@ -1200,8 +1208,10 @@ the panes scroll.
 - `tests/e2e/scenarios/touch.mjs` (`npm run e2e -- --only touch`), by
   finger on an emulated tablet: Inline code and Strikethrough wrap a
   selection, Next math argument shows only in a math argument and hops to
-  the next, the typing aids are on in prose and off in math, and a tapped
-  picture's toolbar ⋯ opens the object menu.
+  the next, the typing aids are on in prose and off in math, a tapped
+  picture's toolbar ⋯ opens the object menu, and a highlight made with
+  Notes folded shows no bar until they open, its note's editor then
+  focused under the bar.
 - `tests/e2e/scenarios/ipad.mjs` (`npm run e2e -- --only ipad`), in
   Chromium touch contexts:
   - Tablet-sized: the manifest parses with `standalone` display, and every
@@ -1230,6 +1240,10 @@ the panes scroll.
       it shows where the pan stops.
     - Indent, Outdent and Move down change the saved tree, and after each
       the same block's editor still has the focus.
+    - Landscape, the bar stays in sight every frame from one editor to the
+      next: Shift+Enter, Tab and Shift+Tab, the bar's New block, Indent and
+      Outdent, another note tapped; its Indent and Outdent follow the open
+      block.
     - New block focuses a new empty block.
     - Bold wraps the selection; Undo and Redo take it back and put it
       back, and so do the keyboard's `historyUndo` / `historyRedo` input

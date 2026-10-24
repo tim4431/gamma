@@ -1049,7 +1049,11 @@ save path, workspaces, auth or rendering of URLs should add a step here; the
   the server logs `client closed the stream after Ns`; if it still happens,
   a proxy in front of Gamma is closing idle responses sooner than that.
 - The docks use `react-resizable-panels` v2, pinned on purpose: v4 changed
-  the API incompatibly. Do not let a dependency refresh move it.
+  the API incompatibly. Do not let a dependency refresh move it. A folded
+  window leans on how v2 works (`renderSlotGroup` in App.jsx): a panel
+  registered again, its `order` changed, makes the group read its saved
+  layout, and a splitter moves the panels by its index among the
+  splitters, past any pinned at no size.
 - Timestamps are UTC ISO strings with `Z` (`page_now()`); keep the format.
   `db.format_stamp` writes a datetime in it and `db.parse_stamp` reads one
   back (None when unreadable — whether that means expired, due or now is
