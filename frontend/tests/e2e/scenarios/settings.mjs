@@ -751,15 +751,63 @@ export async function settingsScenarios(env) {
       assertEq((await user.api("/api/prefs/profile")).value?.enterNewNote, true);
       await nav(page, "Appearance").click();
       assertEq(await sync("Theme"), "saved");
-      // the sync pill's scope is an account preference shown under Appearance
+      // the top bar's buttons are an account preference shown under Appearance
       await row(page, "Sync pill").getByRole("button", { name: "Every page", exact: true }).click();
-      await until(async () => (await user.api("/api/prefs/profile")).value?.syncPillScope === "all");
-      assertEq(await sync("Theme"), "saved", "the change spins only Sync status");
+      await until(async () => (await user.api("/api/prefs/profile")).value?.topbar?.sync === "always");
+      assertEq(await sync("Theme"), "saved", "the change spins only Top bar");
       await row(page, "Sync pill").getByRole("button", { name: "Synced pages", exact: true }).click();
-      await until(async () => (await user.api("/api/prefs/profile")).value?.syncPillScope === "synced");
+      await until(async () => (await user.api("/api/prefs/profile")).value?.topbar?.sync === "auto");
       await nav(page, "Keyboard").click();
       await row(page, "Enter makes").getByRole("button", { name: "New line", exact: true }).click();
       await until(async () => (await user.api("/api/prefs/profile")).value?.enterNewNote === false);
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("settings: the top bar's buttons hide into the account menu, open their panels from it, and come back with Reset", async () => {
+    const { ctx, page } = await setup();
+    try {
+      const topbar = () => user.api("/api/prefs/profile").then((r) => r.value?.topbar);
+      const onBar = (id) => page.locator(`.topbar [data-guide="${id}"]`).count();
+      const menu = page.locator('[data-guide="account.menu"]');
+      const openMenu = () => page.locator('[data-guide="header.account"]').click();
+      for (const id of ["header.add", "header.tasks", "header.search", "header.inbox", "header.view"]) assertEq(await onBar(id), 1, `${id} starts on the bar`);
+      await openSettings(page);
+      await nav(page, "Appearance").click();
+      for (const label of ["Background tasks", "Search", "View menu"]) {
+        await row(page, label).getByRole("button", { name: "Hidden", exact: true }).click();
+      }
+      // nothing unread: an Inbox that shows only then is off the bar too
+      await row(page, "Inbox").getByRole("button", { name: "When unread", exact: true }).click();
+      await until(async () => {
+        const value = await topbar();
+        return value?.tasks === "hidden" && value.search === "hidden" && value.view === "hidden" && value.inbox === "auto";
+      });
+      await page.getByRole("button", { name: "Close settings", exact: true }).click();
+      for (const id of ["header.tasks", "header.search", "header.inbox", "header.view"]) assertEq(await onBar(id), 0, `${id} is off the bar`);
+      assertEq(await onBar("header.add"), 1, "Add stays");
+      // each is a row of the account menu that opens its own panel
+      await openMenu();
+      await menu.getByRole("menuitem", { name: "Background tasks", exact: true }).click();
+      await page.locator('[data-guide="tasks.panel"]').waitFor();
+      await openMenu();
+      await menu.locator('[data-command="app.search"]').click();
+      await page.locator(".searchPopover .searchInput").waitFor();
+      await openMenu();
+      await menu.getByRole("menuitem", { name: "Inbox", exact: true }).click();
+      await page.locator(".inboxPopover").waitFor();
+      assertEq(await onBar("header.inbox"), 1, "an open panel keeps its button while it shows");
+      // the View menu's rows join the account menu
+      await openMenu();
+      await menu.getByRole("menuitem", { name: "Import…", exact: true }).waitFor();
+      // Reset: every button back
+      await menu.getByRole("menuitem", { name: "Settings…", exact: true }).click();
+      await nav(page, "Appearance").click();
+      await page.locator('.settingsPane .setSection[data-setting="Top bar"]').getByRole("button", { name: "Reset", exact: true }).click();
+      await until(async () => (await topbar())?.tasks === "always");
+      assertEq(JSON.stringify(await topbar()), JSON.stringify({ add: "always", tasks: "always", search: "always", share: "always", sync: "auto", inbox: "always", view: "always" }));
+      await page.getByRole("button", { name: "Close settings", exact: true }).click();
+      for (const id of ["header.tasks", "header.search", "header.inbox", "header.view"]) assertEq(await onBar(id), 1, `${id} is back on the bar`);
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

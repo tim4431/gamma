@@ -648,6 +648,9 @@ selects by class name, text or DOM position.** It selects by anchor id.
   element carries, or referencing an unregistered id from a tour fails
   `npm test`; the scan also reads a conditional
   `data-guide={cond ? "id" : undefined}`.
+- The topbar's buttons a person can hide (Settings → Appearance › Top bar,
+  [settings.md](settings.md#the-top-bars-buttons)) are all on the bar while
+  a tour runs or a hint is offered, so a step's `header.*` anchor is there.
 - Anchors move with the JSX they decorate. When a control is deleted, delete
   its registry row; the tests then name every step that referenced it. The
   registry may keep a control no tour points at yet (`header.search`,

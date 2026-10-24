@@ -28,6 +28,7 @@ import { LANGUAGES } from "../shared/i18n/locales.js";
 import { normalizeChord } from "../shared/lib/hotkeys.js";
 import { DEFAULT_PALETTE, normalizePalette } from "../shared/model/palette.js";
 import { DARK_THEMES, THEMES, themeScheme } from "./theme.js";
+import { DEFAULT_TOPBAR, normalizeTopbar } from "./topbarItems.js";
 
 export const ACCOUNT = "account";
 export const BROWSER = "browser";
@@ -161,11 +162,13 @@ export const PREFS = {
   // box's menu offer. A changed swatch affects what is made from now on;
   // stored highlights and strokes keep their own colour.
   palette: pref("gamma-palette", ACCOUNT, DEFAULT_PALETTE, json(normalizePalette)),
-  // Where the header's sync pill shows for a publication (pages published
-  // to Gamma Cloud; Settings → Appearance › Sync status): on the
-  // published pages only, or on every page of the workspace. A clone's pill
-  // is on every page regardless (it syncs them all).
-  syncPillScope: pref("gamma-sync-pill", ACCOUNT, "synced", oneOf(["synced", "all"])),
+  // The topbar's buttons (Settings → Appearance › Top bar;
+  // app/topbarItems.js): a mode per item — always on the bar, on it while
+  // it has something to say, or a row of the account menu instead. The
+  // sync pill's auto is "on the pages that sync", its always "on every page
+  // of a workspace that syncs some"; a clone's pill is on every page either
+  // way (it syncs them all).
+  topbar: pref("gamma-topbar", ACCOUNT, DEFAULT_TOPBAR, json(normalizeTopbar)),
   // Interface size: index.html applies the stored value before first paint,
   // App.jsx keeps `--ui-scale` on the root in sync afterwards. Screens
   // differ, so it stays with the device.

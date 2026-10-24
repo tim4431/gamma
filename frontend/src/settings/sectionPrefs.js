@@ -27,7 +27,7 @@ export const SECTION_PREFS = Object.freeze({
     "PDF pages": ["pdfDarkPage"],
     Colors: ["palette"],
     Library: ["recentThumbs", "fileLabels"],
-    "Sync status": ["syncPillScope"],
+    "Top bar": ["topbar"],
     Tours: ["suggestTours", "tourProgress"],
   }),
   reading: sections({
