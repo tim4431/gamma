@@ -118,6 +118,31 @@ export async function touchScenarios({ server, browser, alice, makePdf, step, un
     } finally { await ctx.close(); }
   });
 
+  // Notes, first in the column, fold to a bar right where their grip was:
+  // the second tap's click lands on it and must not open it again.
+  await step("touch: two taps on the Notes grip fold them where the bar takes the grip's place, closing a note's editor open there", async () => {
+    const ctx = await alice.context(browser, TABLET);
+    try {
+      const page = await openPage(ctx, paperUrl);
+      await waitForPdf(page);
+      const grip = page.locator('[data-guide="notes.grip"]');
+      await page.locator(".blockRow", { hasText: "First touch note" }).first().locator(".blockBody").tap();
+      await page.locator(".editBar").waitFor();
+      const at = await centre(grip);
+      await page.touchscreen.tap(at.x, at.y);
+      await page.touchscreen.tap(at.x, at.y);
+      await page.locator('.dockWindow.collapsed [data-guide="notes.grip"]').waitFor();
+      await sleep(500); // the second tap's click has long come
+      assertEq(await page.locator('.dockWindow.collapsed [data-guide="notes.grip"]').count(), 1, "Notes stay folded");
+      assertEq(await page.locator(".blockEditorCm").count(), 0, "the editor closed with the fold");
+      assertEq(await page.locator(".editBar").count(), 0, "and the editing bar with it");
+      const folded = await centre(grip);
+      await page.touchscreen.tap(folded.x, folded.y);
+      await page.locator('.dockWindow:not(.collapsed) [data-guide="notes.grip"]').waitFor();
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("touch: a double-click on the Chat grip folds it, a click on the folded header opens it", async () => {
     const ctx = await alice.context(browser);
     try {

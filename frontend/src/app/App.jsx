@@ -9968,13 +9968,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         const collapsed = !collapsedWins[id];
         // Folded, the window keeps the size it has now for what it holds
         // (--fold-w, --fold-h; app.css), so nothing in it lays out again
-        // while it waits, unseen, in its panel at no size.
+        // while it waits, unseen, in its panel at no size. The focus leaves
+        // it, as a press elsewhere takes it: a finger's taps on the grip
+        // leave it in a note's editor, which then closes.
         const panel = collapsed ? document.querySelector(`[data-panel-id="${id}"]`) : null;
         const box = panel?.getBoundingClientRect();
         if (box?.width && box.height) {
           panel.style.setProperty("--fold-w", `${box.width}px`);
           panel.style.setProperty("--fold-h", `${box.height}px`);
         }
+        if (panel?.contains(document.activeElement)) document.activeElement.blur();
         setCollapsedWins((prev) => ({ ...prev, [id]: collapsed }));
         guideEvents.emit("window.collapsed", { id, collapsed });
       },

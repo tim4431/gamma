@@ -36,22 +36,31 @@ import ListMotion from "./ListMotion";
 //
 // When the click that opened a folded window was the first of a double
 // click, the second lands on the opened grip: that one does not fold it.
+// A finger's double tap folds on its second release, and that tap's click
+// comes after, onto the bar where the grip was: it does not open it again.
 let unfoldedAt = -Infinity;
+let foldedAt = -Infinity;
 const UNFOLD_ECHO_MS = 800;
+const FOLD_ECHO_MS = 350;
 
 function DockHeader({ title, guide, onGrip, onFold, onClose, headerContent, collapsed }) {
   const unfold = collapsed && onFold ? (e) => {
-    if (e.target.closest("button")) return;
+    if (e.target.closest("button") || e.timeStamp - foldedAt < FOLD_ECHO_MS) return;
     unfoldedAt = e.timeStamp;
     onFold();
   } : undefined;
+  const fold = onFold && ((e) => {
+    if (e.timeStamp - unfoldedAt <= UNFOLD_ECHO_MS) return;
+    foldedAt = e.timeStamp;
+    onFold();
+  });
   return (
     <div className="dockWindowHeader" onClick={unfold}>
       <span
         className="dockGrip"
         data-guide={guide}
         onPointerDown={onGrip}
-        {...doublePress(onFold && ((e) => { if (e.timeStamp - unfoldedAt > UNFOLD_ECHO_MS) onFold(); }))}
+        {...doublePress(fold)}
         title={onGrip ? (collapsed ? t("Click to expand · drag to move this window") : t("Drag to move this window · double-click to collapse")) : undefined}
       >{onGrip ? "⠿ " : null}{title}</span>
       {onClose ? (
