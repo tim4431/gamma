@@ -479,6 +479,10 @@ export async function motionScenarios(env) {
       assert(seen.includes("leaving row taskRow"), `it leaves through a copy: ${seen}`);
       await copiesGone(page);
 
+      // (the slow upload's metadata lookup over first, as the quick ones' were:
+      // a row still running when the clear lands leaves with the next listing)
+      await until(async () => !(await tray.locator(live(".popoverSection"), { hasText: "In progress" }).count()), { timeout: 15000, what: "nothing running" });
+      await copiesGone(page);
       await moves(page);
       await tray.getByRole("button", { name: "Clear finished", exact: true }).click();
       await tray.locator(".setEmpty", { hasText: "Nothing running" }).waitFor();
