@@ -1060,9 +1060,10 @@ is plain markup, and a first render never moves.
 - **`FADE_IN`**, spread on an `<img>`: a picture fades in once loaded
   (the library cards' snapshots, the Import and Export dialogs' Zotero
   mark); one already in the cache shows at once.
-- **`.loadingHint`**: a "Loading…" placeholder that fades in only after
-  `--dur-slow`, so an answer that comes quickly takes the place of a blank,
-  never of the word (the chat's History popover on its first read). What
+- **`.loadingHint`**: a lone "Loading…" placeholder that fades in only
+  after `--dur-slow`, as a `Reveal`'s fallback does, so an answer that
+  comes quickly takes the place of a blank, never of the word (the chat's
+  History popover on its first read). What
   was read before shows instead while it is read again in place: the
   History popover keeps each page's list, the chat keeps the last twenty
   conversations it showed. Under reduced motion the word shows at once.

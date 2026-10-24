@@ -329,15 +329,13 @@ img[data-fade] {
 }
 img[data-fade="shown"] { opacity: 1; }
 
-/* A placeholder for what is on its way ("Loading…", .loadingHint) shows
-   only when the wait is long: it fades in after --dur-slow, so an answer
-   that comes quickly takes the place of a blank, never of the word. */
-.loadingHint { animation: fade-in var(--dur-base) var(--dur-slow) both; }
-
-/* A first load's place (Reveal): a column that keeps its content's last
-   height while it waits. What stands in for the content ("Loading…") fades
-   in only after a moment, so a load that answers fast shows none of it;
-   the content that takes its place comes into focus. */
-.reveal { display: flex; flex-direction: column; }
+/* A placeholder for what is on its way ("Loading…": a .loadingHint, or
+   what a Reveal holds while it waits) shows only when the wait is long: it
+   fades in after --dur-slow, so an answer that comes quickly takes the
+   place of a blank, never of the word. A Reveal is a column that keeps
+   its content's last height while it waits, and the content that takes a
+   placeholder's place comes into focus. */
+.loadingHint,
 .reveal[data-reveal="wait"] > * { animation: fade-in var(--dur-base) var(--dur-slow) both; }
+.reveal { display: flex; flex-direction: column; }
 .reveal[data-reveal="in"] { animation: sharpen-in var(--dur-base); }

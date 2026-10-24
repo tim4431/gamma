@@ -2794,7 +2794,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setAiKeyTests({});
     setAiKeyUsage({});
     const fromChat = pendingAiFormRef.current?.service ? chatKeysInfoRef.current : null;
-    setAiKeysInfo(fromChat);
+    // What the pane showed last stays while it is read again, so a visit
+    // opens on the list rather than "Loading…".
+    setAiKeysInfo((prev) => fromChat || prev);
     if (fromChat) {
       openAiForm(pendingAiFormRef.current, fromChat);
       pendingAiFormRef.current = null;
@@ -6189,7 +6191,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function openPageShare(id) {
     loadShareSettings({ kind: "page", id });
     setShareError("");
-    loadPublishState();
+    // The same page's publication stays on screen while it is read again
+    // (its Gamma Cloud section opens on its content); another page's starts
+    // from nothing.
+    if (publishState?.page === focusedBlockId) {
+      setPublishError("");
+      resetPublishCopied();
+      loadPublishState({ quiet: true });
+    } else loadPublishState();
     setOpenPopover("share");
   }
   // The chat window shown and expanded (on a phone, its panel).
@@ -7168,7 +7177,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     homePicks: homeMode && lib.organize ? selectedPages.size : 0,
     deletePages: () => deletePages([...selectedPages]),
     organize: lib.organize,
-    recentlyDeleted: () => { setOpenPopover(null); setTrashOpen(true); },
+    recentlyDeleted: () => { preloadTrash(); setOpenPopover(null); setTrashOpen(true); },
     // On a phone Chat and Notes are the bottom bar's panels, which the
     // desktop windows' hidden flags don't drive.
     toggleChat: () => {
