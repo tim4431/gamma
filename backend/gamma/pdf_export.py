@@ -527,10 +527,10 @@ def _text_box_annotation(writer, glyphs, tb, rotation, crop, author, resolve_ref
     return annot
 
 
-def highlight_note_blocks(block, children_by_id) -> list[tuple[int, str]]:
-    """A highlight's notes as ``(depth, markdown)``, in reading order: its
-    own note at depth 0, then the notes under it at their depth below it
-    (comment threads are no part of them). A text box on a PDF page among
+def highlight_note_blocks(block, children_by_id) -> list[tuple[int, str, str]]:
+    """A highlight's notes as ``(depth, markdown, block id)``, in reading
+    order: its own note at depth 0, then the notes under it at their depth
+    below it (comment threads are no part of them). A text box on a PDF page among
     them is left out with the notes under it: it is written as its own
     /FreeText, whose text speaks for itself on the page. A box under a sheet
     among them is on that sheet (the nearest sheet wins), so it stays a
@@ -542,7 +542,7 @@ def highlight_note_blocks(block, children_by_id) -> list[tuple[int, str]]:
     out = []
     own = (block.get("content") or "").strip()
     if own:
-        out.append((0, own))
+        out.append((0, own, block["id"]))
 
     def walk(bid, depth, on_sheet):
         for child in children_by_id.get(bid, []):
@@ -551,7 +551,7 @@ def highlight_note_blocks(block, children_by_id) -> list[tuple[int, str]]:
                 continue
             text = (child.get("content") or "").strip()
             if text:
-                out.append((depth, text))
+                out.append((depth, text, child["id"]))
             walk(child["id"], depth + 1, on_sheet or is_sheet(props))
 
     walk(block["id"], 1, False)
@@ -561,7 +561,7 @@ def highlight_note_blocks(block, children_by_id) -> list[tuple[int, str]]:
 def popup_text(blocks) -> str:
     """``highlight_note_blocks`` as an annotation popup's text: the
     highlight's own note, the notes under it as an indented bullet list."""
-    return "\n".join(md if not depth else "  " * (depth - 1) + "- " + md for depth, md in blocks)
+    return "\n".join(md if not depth else "  " * (depth - 1) + "- " + md for depth, md, *_ in blocks)
 
 
 def highlight_note_text(block, children_by_id) -> str:

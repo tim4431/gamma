@@ -158,16 +158,36 @@ def _collect_marks(blocks) -> list[dict]:
 
 
 def _collect_cards(blocks, *, notes: bool, threads: dict) -> list[dict]:
-    """Every highlight block → what ``render_notes`` prints for it: its
-    notes (``highlight_note_blocks``) with ``notes``, and its open threads
-    from ``threads`` (``{block id: [[comment, …], …]}``). Unlike the marks,
-    a highlight still embedded in the PDF has its cards too: its notes and
-    threads are the reader's own, whatever the file already carries."""
+    """Every highlight block → what ``render_notes`` prints for it, from
+    ``threads`` (``{block id: [[comment, …], …]}``, the open ones): with
+    ``notes`` its notes (``highlight_note_blocks``), each with the threads
+    on it; the threads on the highlight itself; and the threads on the
+    blocks under it the cards do not show (all of them with the notes off,
+    an empty note, a text box), each with its block's text to quote, in
+    reading order. Unlike the marks, a highlight still embedded in the PDF
+    has its cards too: its notes and threads are the reader's own, whatever
+    the file already carries."""
     children_by_id = _children_by_id(blocks)
-    return [{"position": b["properties"].get("pdf_position") or {}, "color": b["properties"].get("color"),
-             "blocks": highlight_note_blocks(b, children_by_id) if notes else [],
-             "threads": threads.get(b["id"], [])}
-            for b in blocks if b["kind"] == "highlight"]
+
+    def under(bid):
+        for child in children_by_id.get(bid, []):
+            yield child
+            yield from under(child["id"])
+
+    cards = []
+    for b in blocks:
+        if b["kind"] != "highlight":
+            continue
+        shown = highlight_note_blocks(b, children_by_id) if notes else []
+        ids = {bid for _depth, _md, bid in shown}
+        cards.append({
+            "position": b["properties"].get("pdf_position") or {}, "color": b["properties"].get("color"),
+            "blocks": [(depth, md, threads.get(bid, []) if depth else []) for depth, md, bid in shown],
+            "threads": threads.get(b["id"], []),
+            "note_threads": [(child.get("content") or "", thread) for child in under(b["id"])
+                             if child["id"] not in ids for thread in threads.get(child["id"], [])],
+        })
+    return cards
 
 
 def _collect_ink(blocks, uploads_dir) -> list[dict]:

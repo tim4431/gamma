@@ -1082,7 +1082,7 @@
   "Each action shows as a chip you can open.": "每个操作都会显示为可展开的标签。",
   "Each gets View or Edit.": "每人各有查看或编辑权限。",
   "Each highlight's notes as a card, beside the page or on it as chosen below. Off: they stay in the annotation popups.": "每个高亮的笔记成为一张卡片，按下方的选择放在页面旁或页面上。关闭：它们保留在批注弹窗中。",
-  "Each highlight's open comment threads as cards in a column beside the page, as the viewer's margin shows them. Resolved threads stay out.": "每个高亮未解决的评论讨论以卡片排在页面旁的一栏中，就像阅读器页边显示的那样。已解决的讨论不包含在内。",
+  "Each highlight's open comment threads, and those on its notes, as cards in a column beside the page, as the viewer's margin shows them. A note's threads sit under it when the notes are beside the page too, and quote it otherwise. Resolved threads stay out.": "每个高亮及其笔记上未解决的评论讨论以卡片排在页面旁的一栏中，就像阅读器页边显示的那样。笔记也放在页面旁时，笔记的讨论紧跟在笔记下方，否则会引用该笔记。已解决的讨论不包含在内。",
   "Each highlight's writing as a card": "每个高亮的笔记成为一张卡片",
   "Each highlighted passage as a [!quote] callout whose title opens the bundled PDF at that page.": "每段高亮文字作为一个 [!quote] 标注框，其标题可在打包的 PDF 中打开对应页。",
   "Each highlighted passage as a blockquote with its page number.": "每段高亮文字作为带页码的引用块。",
