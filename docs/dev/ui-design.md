@@ -28,9 +28,11 @@ the ground toward the ink. The dark one takes chrome and wells toward black,
 and raised surfaces toward the ink.
 
 The root carries `data-scheme="light|dark"` beside `data-theme`, and the
-scheme picks the recipe (`DARK_THEMES` / `themeScheme` in `app/prefDefs.js`).
-Three places set both attributes: `index.html`'s pre-paint, App.jsx's theme
-effect and the desktop shell. A rule that differs by scheme keys on
+scheme picks the recipe (`DARK_THEMES` / `themeScheme` in `app/theme.js`).
+Three places set both attributes: `index.html`'s pre-paint, `applyTheme`
+(`app/theme.js`: App.jsx's theme effect, and `main.jsx` as the session
+brings the account's theme, before the app's first screen) and the desktop
+shell. A rule that differs by scheme keys on
 `[data-scheme="light"]`, never on a list of themes. The recipes match any
 element carrying the attributes, not only the root, so a subtree can show
 another theme in its own colours: the Appearance pane's swatches do.
@@ -969,6 +971,11 @@ what the motion does, not by the nearest number:
 - **Reduced motion ends everything at once.** The global rule in app.css
   ([Scales](#scales)) covers every recipe; a component adds a rule of its
   own only for a different still state.
+- **A theme changes in one frame.** Every colour switches together: for
+  the frame that draws the new theme the root carries `.themeSwitch`
+  (`applyTheme`, `app/theme.js`), whose rule in motion.css turns every
+  transition off, so a button or a row never eases from the old theme's
+  colour while the rest has changed.
 
 ### Surfaces come and go
 
@@ -1098,8 +1105,12 @@ is plain markup, and a first render never moves.
   settings while it asks for them again, the Inbox opens each tab on the
   first page it showed last and refreshes it in place, and Recently deleted
   asks for its list with its module, as the pointer or the focus reaches
-  its button, so it lands whole. Search results, which change with every
-  key, take none.
+  its button, so it lands whole. A Settings pane does the same: its reads go
+  out as the pointer or the focus reaches its sidebar button, the pane
+  before stays until they are in (at most 250 ms), and a pane read before
+  shows at once and is read again in place ([settings.md](settings.md)
+  "What a pane reads"). Search results, which change with every key, take
+  none.
 - A switch's thumb travels with `--ease-pop`, its one overshoot.
 - **`.shakeNo`**, replayed by removing and adding it: a field that
   refused what was typed shakes once, a small no (a wrong password at

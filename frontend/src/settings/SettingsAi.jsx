@@ -16,6 +16,7 @@ import { UsageChart } from "./UsageChart.jsx";
 import { AccountPicker, Section, SubDialog, Step, Field, CopyField, Empty, IconChoices, PercentMeter, Row, PasswordInput, UnitInput } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import { useAccounts } from "./SettingsWorkspace";
+import { useSettingsRead } from "./settingsReads.js";
 import { accessSummary, aiServiceTiles, modelList, onThisMachine, serviceGroups, signInAddress, useProviderEditor } from "./providerEditor.js";
 import { ActivityIcon, CheckIcon, ExternalLinkIcon, GlobeIcon, KeyIcon, MicIcon, PaperIcon, RefreshIcon, SparklesIcon, Trash2Icon, UserIcon, UsersIcon, XIcon } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
@@ -156,17 +157,15 @@ const inMillions = (tokens) => String(Math.max(0, Number(tokens) || 0) / ALLOWAN
 // ChatGPT subscription signed in here (its e-mail shown to admins only),
 // each saying who may use it (every account, guests too, or the accounts
 // named). The allowance rows meter them per account per day.
+// The list is the Server pane's read of /api/admin/ai-providers
+// (settingsReads.js), kept while the dialog is open.
 export function SharedAiProviderSettings({ setStatus, confirm }) {
   const base = `${API}/admin/ai-providers`;
-  const [info, setInfo] = React.useState(null);
-  const [loadError, setLoadError] = React.useState("");
+  const { data: info, error: readError, set: setInfo } = useSettingsRead("/admin/ai-providers");
+  const [ownError, setLoadError] = React.useState("");
+  const loadError = ownError || (!info ? readError : "");
   const [tests, setTests] = React.useState({});
   const [usage, setUsage] = React.useState({});
-  React.useEffect(() => {
-    let active = true;
-    apiJson(base).then((v) => { if (active) setInfo(v); }).catch((err) => { if (active) setLoadError(err.message); });
-    return () => { active = false; };
-  }, [base]);
   const editor = useProviderEditor({ info, setInfo, base, shared: true, onSaved: () => setStatus?.(t("Shared AI provider saved.")),
     onConnected: (entry) => test(entry) });
   async function test(p) {
@@ -223,7 +222,7 @@ export function SharedAiProviderSettings({ setStatus, confirm }) {
     <Section title={t("Shared AI provider")} action={info ? (
       <button className="uiBtn sm" onClick={() => editor.startAdd("openai")}>{t("+ Add provider")}</button>
     ) : null}>
-      {!info && !loadError ? <p className="setNotice">{t("Loading…")}</p> : null}
+      {!info && !loadError ? <p className="setNotice loadingHint">{t("Loading…")}</p> : null}
       {info && !providers.length ? <Empty icon={KeyIcon}>{t("No shared connection. Each account uses its own keys.")}</Empty> : null}
       {providers.map((provider) => {
         const el = tests[provider.id];

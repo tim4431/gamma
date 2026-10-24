@@ -5,6 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { keepaliveFetch } from "../shared/lib/keepalive.js";
 import { API, apiJson, usePersistedState } from "../shared/lib/utils";
+import { PROFILE_SEEN_KEY } from "./boot.js";
 import { ACCOUNT_PREFS, PREFS, profileOf, readProfile, setterName } from "./prefDefs.js";
 
 export { FREE_TRANSLATE_ENGINE, TRANSLATE_LANGS, TRANSLATE_PARALLEL_MAX, UI_SCALE, themeScheme, translateModelFor } from "./prefDefs.js";
@@ -25,6 +26,35 @@ export function useAppPrefs() {
 }
 
 const PROFILE_URL = `${API}/prefs/profile`;
+
+// The first load's preference reads (the profile, open tabs, recents,
+// reading positions, the AI key) go out as one request, GET /api/prefs?keys=,
+// as soon as the session is known (App.jsx checkSession), right behind the
+// library listing: five requests would queue for the browser's six
+// connections to the server and hold the listing back. A key the answer
+// leaves out is read on its own: the server leaves out the profile of an
+// account whose profile syncs with Gamma Cloud, since reading it may wait
+// on that sync, a round trip to the account server. Each reader takes its
+// key's answer once, for the account it was read for; any later read asks
+// for its key alone. A guest's preferences stay in its browser, so it reads
+// no profile.
+const FIRST_LOAD_PREFS = ["profile", "open-tabs", "recent-views", "read-pos", "ai-provider"];
+const preloads = new Map(); // key -> {user, read}
+export function preloadPrefs(user, { guest = false } = {}) {
+  const keys = FIRST_LOAD_PREFS.filter((key) => !guest || key !== "profile");
+  preloads.clear();
+  const all = apiJson(`${API}/prefs?keys=${keys.map(encodeURIComponent).join(",")}`);
+  for (const key of keys) {
+    const read = all.then((d) => d.prefs[key] || apiJson(`${API}/prefs/${key}`));
+    read.catch(() => {}); // its reader sees a failure; a key nobody reads is no error
+    preloads.set(key, { user, read });
+  }
+}
+export function readPref(key, user) {
+  const preload = preloads.get(key);
+  preloads.delete(key);
+  return preload && preload.user === user ? preload.read : apiJson(`${API}/prefs/${key}`);
+}
 // Changes are pushed once they settle, so a slider does not send one per tick.
 const PUSH_DELAY_MS = 1000;
 // Focus flaps must not hammer the server: wake pulls at most this often.
@@ -69,21 +99,21 @@ const NONE = new Set();
 const perName = (values) => Object.fromEntries(ACCOUNT_PREFS.map((name) => [name, JSON.stringify(values[name])]));
 // The profile as this browser last took it from the server or sent it
 // there ({name: JSON}, perName's), whichever account it was
-// (`gamma-profile-seen`): a local value equal to it came from an account,
-// not from this browser, even when another account signs in next. One
-// record for the browser, as its settings are one: the next account's
-// first pull writes over it. Without it (another browser profile, storage
-// cleared) every local value that is not the default counts as this
-// browser's.
-const SEEN_KEY = "gamma-profile-seen";
+// (`gamma-profile-seen`, PROFILE_SEEN_KEY): a local value equal to it came
+// from an account, not from this browser, even when another account signs
+// in next. One record for the browser, as its settings are one: the next
+// account's first pull writes over it. Without it (another browser
+// profile, storage cleared) every local value that is not the default
+// counts as this browser's. main.jsx reads it too: a stored language equal
+// to the seen one is the account's, so the app need not wait for the session.
 function seenOf() {
   try {
-    const seen = JSON.parse(localStorage.getItem(SEEN_KEY) || "null");
+    const seen = JSON.parse(localStorage.getItem(PROFILE_SEEN_KEY) || "null");
     return seen && typeof seen === "object" && !Array.isArray(seen) ? seen : {};
   } catch { return {}; }
 }
 function rememberSeen(seen) {
-  try { localStorage.setItem(SEEN_KEY, JSON.stringify(seen)); } catch { /* the next load asks as if none were kept */ }
+  try { localStorage.setItem(PROFILE_SEEN_KEY, JSON.stringify(seen)); } catch { /* the next load asks as if none were kept */ }
 }
 // failed: {name: the value whose push failed}; awaitingAt: the server time of the last push
 const IDLE = { inflight: NONE, failed: {}, awaiting: NONE, awaitingAt: "" };
@@ -200,7 +230,7 @@ export function useProfileSync(prefs, user, { onReplaced } = {}) {
 
   function pull(u) {
     const startSnap = latest.current.snap;
-    return apiJson(PROFILE_URL).then((d) => {
+    return readPref("profile", u).then((d) => {
       // A local change waiting to go out, or on its way, is newer than what the server holds.
       if (latest.current.user !== u) return;
       setCloudChoice(!!d.cloud_choice);

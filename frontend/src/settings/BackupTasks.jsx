@@ -5,6 +5,7 @@ import { ClockIcon, DatabaseIcon, HardDriveIcon, MoreIcon, PlusIcon, Trash2Icon 
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { DialogButtons, Empty, Field, Section, Segmented, SubDialog, Toggle, ToggleGroup } from "./SettingsKit";
 import { fmtWhen } from "./SettingsBackups";
+import { useSettingsRead } from "./settingsReads.js";
 import { fromUtcCron, localOffset, observesDst, parseCron, shiftTime, toUtcCron } from "./backupSchedule.js";
 import "./backupTasks.css";
 import { T, t, tn } from "../shared/i18n/i18n.js";
@@ -209,22 +210,24 @@ function TaskEditor({ initial, workspaces, onClose, onSaved }) {
   </SubDialog>;
 }
 
+// The tasks are the Backups pane's read (settingsReads.js), read again
+// every 5 s while the pane is open; a task that succeeded since the last
+// read reloads the snapshot lists.
 export function BackupTasks({ workspaces, confirm, onRefresh }) {
-  const [tasks, setTasks] = React.useState(null);
+  const { data, error: readError, reload } = useSettingsRead("/backup-tasks", { poll: 5000 });
+  const tasks = data?.tasks ?? null;
   const [editor, setEditor] = React.useState(null);
   const [busy, setBusy] = React.useState(null);
-  const [error, setError] = React.useState("");
+  const [ownError, setError] = React.useState("");
+  const error = ownError || readError;
+  const load = React.useCallback(() => reload().catch((e) => setError(e.message)), [reload]);
   const previous = React.useRef("");
-  const load = React.useCallback(async () => {
-    try {
-      const data = await apiJson(endpoint);
-      setTasks(data.tasks);
-      const signature = JSON.stringify(data.tasks.map((task) => [task.id, task.last_success]));
-      if (previous.current && previous.current !== signature) workspaces.forEach((w) => onRefresh(w.id));
-      previous.current = signature;
-    } catch (e) { setError(e.message); }
-  }, [workspaces, onRefresh]);
-  React.useEffect(() => { load(); const timer = setInterval(load, 5000); return () => clearInterval(timer); }, [load]);
+  React.useEffect(() => {
+    if (!tasks) return;
+    const signature = JSON.stringify(tasks.map((task) => [task.id, task.last_success]));
+    if (previous.current && previous.current !== signature) workspaces.forEach((w) => onRefresh(w.id));
+    previous.current = signature;
+  }, [tasks]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function action(task, kind) {
     setBusy(task.id);
@@ -244,7 +247,7 @@ export function BackupTasks({ workspaces, confirm, onRefresh }) {
     <Section title={t("Periodic backup tasks")} action={<button className="uiBtn" disabled={!owned.length || full} onClick={() => setEditor({})}
       title={full ? limitHint : t("Runs while the server is on. Missed runs catch up once; failed tasks retry after an hour.")}><PlusIcon size={14} /> {t("Add task")}</button>} />
     {error ? <div className="backupTaskError aiKeysError" role="alert">{error}<button className="uiBtn sm" onClick={() => { setError(""); load(); }}>{t("Retry")}</button></div> : null}
-    {tasks === null && !error ? <Empty icon={ClockIcon}>{t("Loading tasks…")}</Empty> : null}
+    {tasks === null && !error ? <Empty icon={ClockIcon} loading>{t("Loading tasks…")}</Empty> : null}
     {tasks?.length === 0 ? <Empty icon={ClockIcon}>{t("No tasks yet. Add one for a nightly backup, or a schedule of your own.")}</Empty> : null}
     {!!tasks?.length && <div className="backupTaskTableWrap" role="region" aria-label={t("Periodic backup tasks")} tabIndex={0}>
       <table className="backupTaskTable"><thead><tr><th>{t("Task / Workspaces")}</th><th>{t("Frequency")}</th><th>{t("Next run")}</th><th>{t("Last run")}</th><th>{t("Enabled")}</th><th><span className="srOnly">{t("Actions")}</span></th></tr></thead>

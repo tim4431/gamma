@@ -12,6 +12,11 @@ import "./settings/settings.css";
 // How things move, after the stylesheets whose surfaces it animates.
 import "./shared/styles/motion.css";
 import { holdMathForFonts, warmKatexFonts } from "./shared/lib/katexFonts.js";
+import { adoptAccountLook, languageSeen, startBootReads } from "./app/boot.js";
+
+// The server's config and the session are asked for now, beside the code
+// (app/boot.js): the app takes their answers as it mounts.
+const boot = startBootReads();
 
 // The formulas' fonts start loading now, beside the app's code, and a
 // formula whose faces are still loading stays hidden until they are in, so
@@ -30,12 +35,24 @@ if (navigator.maxTouchPoints > 0) document.documentElement.dataset.touch = "1";
 // app's modules are, so text in module-level constants (option lists, menu
 // tables) is translated when those modules first evaluate. A later change of
 // language reloads the page (app/App.jsx) for the same reason.
+//
+// The session's answer carries the account's theme and language, which go
+// on as it lands. A stored language this browser last took from an account
+// is most likely still the account's, so the app's modules load at once;
+// any other (a browser that has never seen the account) waits for the
+// session, so the app comes up in the account's language instead of
+// reloading into it once it has shown. (A first session that still
+// disagrees reloads before the library shows: App.jsx checkSession.)
 let stored = "system";
 try { stored = localStorage.getItem("gamma-language") || "system"; } catch {}
-const locale = resolveLocale(stored);
-loadLocale(locale)
-  .catch(() => ({}))
-  .then((catalog) => {
+const look = (boot.session || Promise.resolve(null)).then((session) => adoptAccountLook(session?.profile).language, () => null);
+Promise.all([loadLocale(resolveLocale(stored)).catch(() => ({})), languageSeen(stored) ? null : look])
+  .then(async ([catalog, language]) => {
+    let locale = resolveLocale(stored);
+    if (language && resolveLocale(language) !== locale) {
+      locale = resolveLocale(language);
+      catalog = await loadLocale(locale).catch(() => ({}));
+    }
     setLocale(locale, catalog);
     return import("./app/App.jsx");
   })

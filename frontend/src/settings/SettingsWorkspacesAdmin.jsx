@@ -10,22 +10,23 @@ import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { MenuSelect } from "../shared/ui/Menus";
 import { Section, SubDialog, Field, DialogButtons, Empty, UnitInput, AccountPicker } from "./SettingsKit";
 import { ManageWorkspaceDialog, useAccounts, ACCESS_OPTIONS, PUBLIC_ROLE_OPTIONS } from "./SettingsWorkspace";
+import { useSettingsRead } from "./settingsReads.js";
 import { GlobeIcon, PenIcon, PlusIcon, UsersIcon } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { t, tn } from "../shared/i18n/i18n.js";
 
 export function WorkspacesAdmin({ value }) {
   const { me, workspaces: mine, switchWorkspace, refreshSession, setStatus, confirm, closeSettings } = value;
-  const [listing, setListing] = React.useState(null); // {workspaces, orphans}
-  const [error, setError] = React.useState("");
+  // {workspaces, orphans}: the Server pane's read (settingsReads.js)
+  const { data: listing, error: readError, reload } = useSettingsRead("/admin/workspaces");
+  const [ownError, setError] = React.useState("");
+  const error = ownError || readError;
   const [manage, setManage] = React.useState(null);   // workspace id
   const [creating, setCreating] = React.useState(false);
   const accounts = useAccounts();
-
   const refresh = React.useCallback(() => {
-    apiJson(`${API}/admin/workspaces`).then(setListing).catch((err) => setError(err.message));
-  }, []);
-  React.useEffect(() => { refresh(); }, [refresh]);
+    reload().then(() => setError(""), (err) => setError(err.message));
+  }, [reload]);
 
   const shared = (listing?.workspaces || []).filter((w) => !w.personal);
   const openable = new Set((mine || []).map((w) => w.id));
@@ -63,7 +64,7 @@ export function WorkspacesAdmin({ value }) {
 
   return (
     <>
-      {!listing && !error ? <Empty icon={UsersIcon}>{t("Loading…")}</Empty> : null}
+      {!listing && !error ? <Empty icon={UsersIcon} loading>{t("Loading…")}</Empty> : null}
       {error ? <Empty icon={UsersIcon}>{t("Workspaces unavailable — {error}", { error: error })}</Empty> : null}
       {listing ? (
         <>

@@ -112,7 +112,9 @@ import { ROLE_LABEL, workspaceMeta } from "../settings/workspaceRoles.js";
 import { LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailablePage, cloudOutcomeInUrl } from "../auth/LoginPage";
 import { guestExpiryLabel } from "../auth/guestExpiry";
 import { McpAuthorization } from "../auth/McpConsent";
-import { TRANSLATE_LANGS, themeScheme, translateModelFor, useAppPrefs, useProfileSync } from "./prefs";
+import { TRANSLATE_LANGS, preloadPrefs, readPref, translateModelFor, useAppPrefs, useProfileSync } from "./prefs";
+import { adoptAccountLook, takeBootRead } from "./boot.js";
+import { applyTheme } from "./theme.js";
 import { useNotices } from "./useNotices";
 import { useReminders } from "./useReminders";
 import { ReminderAlerts } from "./ReminderAlerts";
@@ -472,7 +474,7 @@ function PageHostGate() {
     let active = true;
     (async () => {
       let config = null;
-      try { config = await apiJson(`${API}/server-config`); } catch {}
+      try { config = await (takeBootRead("config") || apiJson(`${API}/server-config`)); } catch {}
       if (!active) return;
       if (!pageHostUser(config?.page_host, window.location.hostname)) { setBoot({ serverConfig: config }); return; }
       let found = null;
@@ -668,10 +670,26 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return () => { active = false; };
   }, []);
 
+  // The load's first session is the one main.jsx asked for (app/boot.js).
+  // A session that signs this tab in (that one, or a sign-in's) brings the
+  // account's theme, on before the library draws, and its language, each
+  // only if this app knows it (boot.js adoptAccountLook): a language other
+  // than the running one reloads into it now, before the library shows
+  // (main.jsx has already taken it for a browser new to the account).
+  // Then the reads the first screen needs go out before the app renders the
+  // session, so they lead what its parts ask for as they mount (the browser
+  // keeps six requests in flight to the server): the library listing, an
+  // account's preferences as one request (prefs.js preloadPrefs; the same
+  // account's session read again keeps the ones it has) and the AI models.
   async function checkSession() {
     try {
-      const data = await apiJson(`${API}/session`);
+      const data = await (takeBootRead("session") || apiJson(`${API}/session`));
       if (data.user) {
+        if (!authUser?.user && data.profile) {
+          const { theme, language } = adoptAccountLook(data.profile);
+          if (language && resolveLocale(language) !== getLocale()) { window.location.reload(); return; }
+          if (theme) setTheme(theme);
+        }
         const list = data.workspaces || [];
         const chosen = await chooseWorkspace(data.user, list, data.default_workspace || "");
         if (!chosen) {
@@ -680,6 +698,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         }
         setWorkspaceUnavailable(false);
         applyWorkspace(data.user, chosen, list);
+        fetchHomeBlocks({ still: true });
+        if (data.user !== authUser?.user) preloadPrefs(data.user, { guest: data.is_guest });
+        refreshAiModels();
         setAuthUser({ user: data.user, is_guest: data.is_guest, is_admin: data.is_admin, build: data.build,
           guest_expires_at: data.guest_expires_at || "" });
       } else {
@@ -964,7 +985,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     try { readPosRef.current = JSON.parse(localStorage.getItem(`gamma-read-pos:${u}`) || "{}"); } catch { readPosRef.current = {}; }
     // …then the server copy, which wins (tabs sync across browsers). An
     // account that has never synced seeds the server with this browser's tabs.
-    apiJson(`${API}/prefs/open-tabs`).then((d) => {
+    readPref("open-tabs", authUser.user).then((d) => {
       if (prefsUserRef.current !== u) return;
       if (d.updated_at) applyServerTabs(u, d.value, d.updated_at);
       else if (Array.isArray(localTabs) && localTabs.length) pushTabsToServer(localTabs);
@@ -974,7 +995,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // snapsSyncedRef lets the prune run — else a pre-sync local queue could
     // sweep covers another device just captured.
     Promise.allSettled([
-      apiJson(`${API}/prefs/recent-views`),
+      readPref("recent-views", authUser.user),
       apiJson(`${API}/page-snaps`),
     ]).then(([rv, sn]) => {
       if (prefsUserRef.current !== u) return;
@@ -987,7 +1008,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         snapsSyncedRef.current = true;
       }
     });
-    apiJson(`${API}/prefs/read-pos`).then((d) => {
+    readPref("read-pos", authUser.user).then((d) => {
       if (prefsUserRef.current !== u) return;
       readPosLoadedRef.current = true;
       if (mergeReadPos(u, d.value)) pushReadPosSoon(u);
@@ -2738,7 +2759,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // The pick is the account's, in every workspace: an answer is stale only
     // once the account changed (not prefsUserRef, which is "user@ws").
     let active = true;
-    apiJson(`${API}/prefs/ai-provider`).then((d) => {
+    readPref("ai-provider", u).then((d) => {
       if (!active) return;
       if (d.updated_at) {
         const server = typeof d.value === "string" ? d.value : "";
@@ -3628,11 +3649,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
 
   useEffect(() => {
-    if (!authUser?.user || shareMode) return;
-    refreshAiModels();
-  }, [authUser]);
-
-  useEffect(() => {
     if (!chatModel) return;
     try {
       localStorage.setItem("gamma-chat-model", chatModel);
@@ -3751,9 +3767,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       });
   }
 
-  useEffect(() => {
-    if (authUser?.user && !shareMode) fetchHomeBlocks({ still: true });
-  }, [authUser]);
   // The listing is read again when the window comes back (at most every
   // 15 s, like the prefs' wake pulls), so a folder or label another device
   // made, renamed, moved or deleted shows without a reload — the home view
@@ -4632,16 +4645,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     document.documentElement.style.setProperty("--ui-scale", String(uiScale));
   }, [uiScale]);
 
-  // Theme: System tracks the OS preference live; Light/Dark pin it. The
+  // Theme: System tracks the OS preference live; Light/Dark pin it. Every
+  // colour changes in one frame, with no transition (app/theme.js). The
   // theme-color meta follows: installed as a home-screen app, the status bar
   // is painted with it, so it matches what sits under it (docs/dev/ipad.md).
   const phoneBareTopRef = useRef(false);
   useEffect(() => {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
-      const resolved = theme === "system" ? (mq.matches ? "dark" : "light") : theme;
-      document.documentElement.setAttribute("data-scheme", themeScheme(resolved));
-      document.documentElement.setAttribute("data-theme", resolved);
+      applyTheme(theme === "system" ? (mq.matches ? "dark" : "light") : theme);
       paintStatusBar(phoneBareTopRef.current);
     };
     apply();

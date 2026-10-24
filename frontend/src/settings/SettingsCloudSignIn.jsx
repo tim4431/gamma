@@ -18,7 +18,8 @@
 //   button for an admin.
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
-import { Row, Segmented, PasswordInput, SettingsSyncContext, Toggle, useSettingsDraft } from "./SettingsKit";
+import { Row, Segmented, PasswordInput, SettingsSyncContext, Toggle, useDraftOf, useSettingsDraft } from "./SettingsKit";
+import { useSettingsRead } from "./settingsReads.js";
 import { cloudSyncHint } from "./syncState.js";
 import { REOPEN_SETTINGS_KEY } from "./settingsNavigation.js";
 import { formatRelativeTime } from "../library/libraryUtils";
@@ -48,23 +49,22 @@ function takeConnectResult() {
 }
 
 // `action` receives the Save button (present while the draft is dirty) so
-// the Server pane can put it on its Sign-in section rule.
+// the Server pane can put it on its Sign-in section rule. The settings are
+// the Server pane's one read of /api/admin/settings (settingsReads.js).
+const NO_CLOUD_DRAFT = { issuer: "", client_id: "", secret: "", policy: "refuse", share_host: false };
+const fromSaved = (c) => ({ issuer: c.issuer || "", client_id: c.client_id === "gamma-desktop" ? "" : (c.client_id || ""),
+  secret: "", policy: c.policy || "refuse", share_host: !!c.share_host });
 export function CloudSignInSettings({ setStatus, action }) {
-  const [saved, setSaved] = React.useState(null); // the `cloud` object of /api/admin/settings
-  const [draft, setDraft] = React.useState({ issuer: "", client_id: "", secret: "", policy: "refuse", share_host: false });
-  const [error, setError] = React.useState("");
+  const settings = useSettingsRead("/admin/settings");
+  const saved = settings.data?.cloud || null; // the `cloud` object of /api/admin/settings
+  const [draft, setDraft] = useDraftOf(saved, fromSaved, NO_CLOUD_DRAFT);
+  const [ownError, setError] = React.useState("");
+  const error = ownError || (!saved ? settings.error : "");
   const [busy, setBusy] = React.useState(false);
-  const fromSaved = (c) => ({ issuer: c.issuer || "", client_id: c.client_id === "gamma-desktop" ? "" : (c.client_id || ""),
-    secret: "", policy: c.policy || "refuse", share_host: !!c.share_host });
   React.useEffect(() => {
-    let active = true;
-    apiJson(`${API}/admin/settings`).then((v) => {
-      if (active) { setSaved(v.cloud); setDraft(fromSaved(v.cloud)); }
-    }).catch((err) => { if (active) setError(err.message); });
     const result = takeConnectResult();
     if (result?.ok) setStatus(t("This server is connected to Gamma Cloud. People can sign in with it now."));
     else if (result) setError(result.error);
-    return () => { active = false; };
   }, []);
   const managed = saved?.source === "environment";
   const connect = () => {
@@ -85,7 +85,7 @@ export function CloudSignInSettings({ setStatus, action }) {
       const value = await apiJson(`${API}/admin/settings`, {
         method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
       });
-      setSaved(value.cloud); setDraft(fromSaved(value.cloud));
+      settings.set(value); setDraft(fromSaved(value.cloud));
       setStatus(value.cloud.enabled ? t("Cloud sign-in saved. The login page now offers it.") : t("Cloud sign-in turned off."));
     } catch (err) { setError(err.message); }
     finally { setBusy(false); }
@@ -165,22 +165,18 @@ function joinRequestLine(q, now) {
 // (a declined person may ask again, an approval not used yet is withdrawn).
 // Shown under the invited policy, and under another while some are left.
 function JoinRequests({ invited, setStatus }) {
-  const [list, setList] = React.useState(null);
-  const [error, setError] = React.useState("");
+  const requests = useSettingsRead("/admin/join-requests");
+  const list = requests.data ? requests.data.requests || [] : null;
+  const [ownError, setError] = React.useState("");
+  const error = ownError || (!list ? requests.error : "");
   const [busy, setBusy] = React.useState(false);
-  React.useEffect(() => {
-    let live = true;
-    apiJson(`${API}/admin/join-requests`).then((d) => { if (live) setList(d.requests || []); })
-      .catch((err) => { if (live) setError(err.message); });
-    return () => { live = false; };
-  }, []);
   async function act(q, status) {
     setBusy(true); setError("");
     try {
       const d = await apiJson(`${API}/admin/join-requests/${encodeURIComponent(q.subject)}`, status
         ? { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ status }) }
         : { method: "DELETE" });
-      setList(d.requests || []);
+      requests.set(d);
       setStatus?.(status === "approved" ? t("{username} can sign in here now.", { username: q.username })
         : status === "declined" ? t("Declined the request of {username}.", { username: q.username })
         : t("Removed the request of {username}.", { username: q.username }));
@@ -232,12 +228,10 @@ function JoinRequests({ invited, setStatus }) {
 // `onSetUp` (admins) opens Settings → Server → Sign-in, where cloud sign-in
 // that is off is turned on and a server that waits is connected.
 export function CloudIdentityRow({ setStatus, confirm, onSetUp }) {
-  const [state, setState] = React.useState(null); // {identity, enabled, issuer, connected}
+  const status = useSettingsRead("/auth/cloud/status");
+  const state = status.data; // {identity, enabled, issuer, connected}
   const [error, setError] = React.useState("");
-  const load = React.useCallback(() => {
-    apiJson(`${API}/auth/cloud/status`).then(setState).catch((err) => setError(err.message));
-  }, []);
-  React.useEffect(() => { load(); }, [load]);
+  const load = () => { status.reload().catch((err) => setError(err.message)); };
   if (!state) return null;
   const id = state.identity;
   const off = !state.enabled;

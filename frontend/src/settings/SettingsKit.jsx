@@ -30,6 +30,26 @@ export function useSettingsDraft(key, dirty, discard) {
   }, [drafts, key, dirty, discard]);
 }
 
+// A form's draft over a value read from the server (`saved`, null until it
+// is in): it starts from `initial(saved)`, `empty` before, and follows the
+// value when it is read again in place or another section saves it,
+// unless it was edited since (it then differs from what the earlier value
+// gave), so a refresh never takes away what is being typed. It follows in
+// the render that brings the value, so no frame shows the form as edited.
+const sameDraft = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+export function useDraftOf(saved, initial, empty) {
+  const [state, setState] = React.useState(() => ({ base: saved, draft: saved ? initial(saved) : empty }));
+  if (state.base !== saved) {
+    const was = state.base;
+    const follow = !!saved && (!was || sameDraft(state.draft, initial(was)));
+    setState({ base: saved, draft: follow ? initial(saved) : state.draft });
+  }
+  const setDraft = React.useCallback((next) => {
+    setState((now) => ({ ...now, draft: typeof next === "function" ? next(now.draft) : next }));
+  }, []);
+  return [state.draft, setDraft];
+}
+
 // A pane's header: icon, title, one line of context (children). A page one
 // level down names its way back as breadcrumbs before the title — `crumbs`
 // are [{label, onClick, ariaLabel}] — and `action` is a control at the
@@ -526,7 +546,9 @@ export function StatText({ icon: Icon, label, value, hint, tone = "", title }) {
 // log (Advanced) and the admin server log (Server). Entries are normalized
 // to {key, timeMs, text, tone?} — tone "warn" / "error" adds a badge.
 // `extra` sits before the Copy button (a level filter).
-export function LogBox({ icon, label, description, entries, emptyText, copyStatus, setStatus, extra }) {
+// `loading`: the empty text says the log is being read, and fades in only
+// after a moment (.loadingHint).
+export function LogBox({ icon, label, description, entries, emptyText, loading = false, copyStatus, setStatus, extra }) {
   const prefix = (entry) => (entry.tone ? `[${entry.tone === "error" ? "ERROR" : "WARNING"}] ` : "");
   function copy() {
     const text = entries
@@ -549,14 +571,16 @@ export function LogBox({ icon, label, description, entries, emptyText, copyStatu
             {entry.tone ? <span className={`sysLogLevel ${entry.tone}`}>{entry.tone === "error" ? "ERR" : "WARN"}</span> : null}
             <span className="sysLogMsg">{entry.text}</span>
           </div>
-        )) : <div className="sysLogEmpty">{emptyText}</div>}
+        )) : <div className={`sysLogEmpty${loading ? " loadingHint" : ""}`}>{emptyText}</div>}
       </div>
     </>
   );
 }
 
-export function Empty({ icon: Icon, children }) {
-  return <div className="setEmpty"><Icon size={20} />{children}</div>;
+// `loading`: a placeholder for what is being read, which fades in only
+// after a moment (.loadingHint, motion.css), so a quick answer never shows it.
+export function Empty({ icon: Icon, loading = false, children }) {
+  return <div className={`setEmpty${loading ? " loadingHint" : ""}`}><Icon size={20} />{children}</div>;
 }
 
 // A workspace's folder in the server's data directory (workspaces/<id>/),
@@ -698,10 +722,10 @@ export function QuotaMeter({ usedBytes, quotaMb, barOnly }) {
 // avatar initial, name, "Account · 4 KB used" and the storage bar (with a
 // quota). It opens the account pane, whose name (`label`) is its accessible
 // name; `dot` is that pane's notice dot.
-export function NavAccountCard({ name, usedBytes, quotaMb, label, active, dot, onClick }) {
+export function NavAccountCard({ name, usedBytes, quotaMb, label, active, dot, onClick, onIntent }) {
   return (
     <button type="button" className={`setNavAccount${active ? " active" : ""}`} aria-label={label}
-      aria-current={active ? "page" : undefined} onClick={onClick}>
+      aria-current={active ? "page" : undefined} onClick={onClick} onPointerEnter={onIntent} onFocus={onIntent}>
       <span className="setNavAvatar" aria-hidden="true">{(name || "?").slice(0, 1).toUpperCase()}</span>
       <span className="setNavAccountText">
         <span className="setNavAccountName"><span>{name}</span>{dot}</span>

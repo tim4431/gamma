@@ -1968,6 +1968,75 @@ export async function settingsScenarios(env) {
     }
   });
 
+  await step("settings: a pane's reads go out together and once, as the pointer reaches its button; the pane before stays until they are in, but not for long; a second visit shows at once and reads again in place", async () => {
+    await server.manage("set-admin", "settings-user", "on");
+    const { ctx, page } = await setup();
+    try {
+      const asked = [];
+      page.on("request", (r) => {
+        const url = new URL(r.url());
+        if (url.pathname.startsWith("/api/") && r.method() === "GET") asked.push(url.pathname + url.search);
+      });
+      const count = (path) => asked.filter((u) => u === path).length;
+      const title = () => page.locator(".settingsPane .settingsPaneTitle").first().textContent();
+      // the pane's title as the next one shows, and whether what it read is there in that frame
+      const nextPane = (name, text) => page.evaluate(([name, text]) => new Promise((resolve) => {
+        const tick = () => {
+          const pane = document.querySelector(".settingsPane");
+          if (pane?.querySelector(".settingsPaneTitle")?.textContent === name) resolve(pane.textContent.includes(text));
+          else requestAnimationFrame(tick);
+        };
+        tick();
+      }), [name, text]);
+      // The Server pane (where Settings opens while a notice points there, else
+      // a click away): its five sections over the server's settings make one
+      // read, and no path is read twice.
+      await openSettings(page);
+      await page.locator(".settingsPane .settingsPaneTitle").first().waitFor();
+      if ((await title()) !== "Server") await nav(page, "Server").click();
+      await until(async () => (await title()) === "Server", { what: "the Server pane" });
+      await page.getByRole("textbox", { name: "Public server URL" }).waitFor();
+      await page.waitForTimeout(500);
+      assertEq(count("/api/admin/settings"), 1, `five sections over the server's settings, one read: ${asked}`);
+      // (the pane's own reads; the storage line and the sync state are the menu's and the dialog's)
+      const panes = asked.filter((u) => /^\/api\/(admin\/|accounts$)/.test(u));
+      assertEq(panes.length, new Set(panes).size, `no path read twice: ${asked}`);
+      // Pointing at Users reads its pane ahead; the click then finds it in.
+      await nav(page, "Appearance").click();
+      await until(async () => (await title()) === "Appearance", { what: "Appearance" });
+      const read = page.waitForResponse((r) => r.url().endsWith("/api/admin/users"));
+      await nav(page, "Users").hover();
+      await read;
+      await nav(page, "Users").click();
+      assertEq(await title(), "Users", "a pane whose reads are in shows in the click's commit");
+      assert((await page.locator(".settingsPane").textContent()).includes("settings-user"), "with its accounts");
+      // A later visit shows what the first read at once, and reads it again in place.
+      await page.waitForTimeout(3200);
+      await nav(page, "Server").click();
+      assertEq(await title(), "Server", "a second visit shows at once");
+      assert((await page.getByRole("textbox", { name: "Public server URL" }).inputValue()).startsWith("http"),
+        "the public URL is in its box at once");
+      await until(() => count("/api/admin/settings") === 2, { what: "the settings read again in place" });
+      // The pane before stays while the next one's reads come in, its button marked at once.
+      await page.route("**/api/auth/cloud/status", async (route) => { await sleep(200); await route.continue(); });
+      const account = nextPane("Account & sync", "Gamma Cloud");
+      await page.getByRole("button", { name: "Account & sync", exact: true }).click();
+      assertEq(await title(), "Server", "Server stays while the account pane reads");
+      assertEq(await page.getByRole("button", { name: "Account & sync", exact: true }).getAttribute("aria-current"), "page",
+        "the account card is marked at once");
+      assert(await account, "the account pane comes with its Gamma Cloud row");
+      // But not for long: a slow read lets the pane show without it after a moment.
+      await page.route("**/api/backup-tasks", async (route) => { await sleep(2000); await route.continue(); });
+      const shownAt = Date.now();
+      await nav(page, "Backups").click();
+      await until(async () => (await title()) === "Backups", { timeout: 1000, what: "the Backups pane, before its slow read" });
+      assert(Date.now() - shownAt < 1000, "it waits a moment, not for the read");
+      await page.getByText("Loading tasks…", { exact: true }).waitFor({ state: "attached" });
+      await page.getByText("Loading tasks…", { exact: true }).waitFor({ state: "detached", timeout: 5000 });
+      assertNoProblems(page);
+    } finally { await ctx.close(); } // settings-user stays an admin for the steps below
+  });
+
   await step("settings: a shared AI provider from Server is a read-only connection for every account", async () => {
     // settings-user is an admin since the step above.
     await server.manage("create-user", "settings-member", "settings-member-pw");

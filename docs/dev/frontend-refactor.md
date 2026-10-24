@@ -18,7 +18,9 @@ current constraints" on is open work, but for that row.
 ## Lazy boundaries
 
 Built, unlike the plan below. The startup bundle is `main.jsx` plus the
-`App` chunk it imports once the locale catalog is in. What the first screen
+`App` chunk it imports once the locale catalog is in (in a browser new to
+the account, once the session has said the account's language too:
+`app/boot.js`). What the first screen
 does not show comes in chunks of its own, through `lazySurface` and
 `LazyBoundary` (`shared/ui/lazy.jsx`):
 
