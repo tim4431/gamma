@@ -339,3 +339,13 @@ img[data-fade="shown"] { opacity: 1; }
 .reveal[data-reveal="wait"] > * { animation: fade-in var(--dur-base) var(--dur-slow) both; }
 .reveal { display: flex; flex-direction: column; }
 .reveal[data-reveal="in"] { animation: sharpen-in var(--dur-base); }
+
+/* ---- What never moves ----------------------------------------------------
+   A theme changes every colour in one frame (app/theme.js applyTheme puts
+   .themeSwitch on the root for the frame that draws the new colours), so
+   the things that transition a colour (a button, a row, a panel's border)
+   do not ease from the old theme's while everything else has changed. */
+:root.themeSwitch,
+:root.themeSwitch *,
+:root.themeSwitch *::before,
+:root.themeSwitch *::after { transition: none !important; }

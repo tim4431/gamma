@@ -191,6 +191,28 @@ export async function authScenarios({ server, browser, alice, step, until, asser
     } finally { await ctx.close(); }
   });
 
+  await step("auth: a first load asks for the session beside the server's config, then for the library listing first and the preferences in one request", async () => {
+    const ctx = await alice.context(browser);
+    try {
+      const page = await openPage(ctx);
+      const asked = [];
+      page.on("request", (r) => {
+        const url = new URL(r.url());
+        if (url.pathname.startsWith("/api/") && r.method() === "GET") asked.push(url.pathname + url.search);
+      });
+      await page.goto(`${server.base}/?ws=${alice.ws}`);
+      await page.locator(".fileRow").first().waitFor({ timeout: 15000 });
+      const first = asked.slice(0, 4);
+      assertEq([...first.slice(0, 2)].sort().join(" "), "/api/server-config /api/session", `the session and the config go first, together: ${first}`);
+      assertEq(first[2], "/api/blocks/root/children", `then the listing: ${first}`);
+      assert(/^\/api\/prefs\?keys=profile,open-tabs,recent-views,read-pos,ai-provider$/.test(first[3]), `then the preferences, as one request: ${first}`);
+      const alone = asked.filter((u) => /^\/api\/prefs\//.test(u));
+      assertEq(alone.join(" "), "", "no preference is read on its own");
+      assertEq(asked.filter((u) => u === "/api/session").length, 1, "the session is read once");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("auth: a first listing read that fails ends the wait: New page and New folder show under a line that says so, and Try again brings the rows", async () => {
     const ctx = await alice.context(browser);
     try {

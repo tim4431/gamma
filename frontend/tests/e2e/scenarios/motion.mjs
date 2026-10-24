@@ -19,8 +19,9 @@ import { selectPdfText, waitForPdf } from "./pdf.mjs";
 // popover and Recently deleted open on their content; a tab opened rises
 // in and one closed sinks out as the next glides over its place; the
 // library's listing glides within one listing and comes into focus when
-// another takes its place, but not for a read that is a load; under
-// reduced motion none of it moves.
+// another takes its place, but not for a read that is a load; a theme
+// changes every colour in one frame; under reduced motion none of it
+// moves.
 export async function motionScenarios(env) {
   const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until } = env;
   if (!wanted("motion")) return;
@@ -804,9 +805,10 @@ export async function motionScenarios(env) {
     const ctx = await user.context(browser);
     await watch(ctx);
     await ctx.addInitScript(() => { try { localStorage.setItem("gamma-home-sort-map", JSON.stringify({ "": "viewed" })); } catch {} });
-    // the view history a beat behind the listing, as on a slow link
-    await ctx.route("**/api/prefs/recent-views", async (route) => {
-      if (route.request().method() === "GET") await new Promise((done) => setTimeout(done, 400));
+    // the view history a beat behind the listing, as on a slow link (a
+    // first load reads it with the other preferences, in one request)
+    await ctx.route(/\/api\/prefs\?keys=[^&]*recent-views/, async (route) => {
+      await new Promise((done) => setTimeout(done, 400));
       await route.continue();
     });
     const page = await openPage(ctx, home);
@@ -851,6 +853,32 @@ export async function motionScenarios(env) {
       await copy.waitFor({ state: "detached", timeout: 2000 });
       await arrived(liveTab(page, before.title));
       assert(await leftOf(liveTab(page, before.title)) > beforeAt + 1, "it came in from the left, as the strip scrolled back");
+      await assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("motion: a theme change draws every colour in one frame: nothing eases from the old theme's colours, and hover eases again after", async () => {
+    // The account's theme is System, so the OS turning dark changes it
+    // with no pointer near anything that eases on hover.
+    const ctx = await user.context(browser, { colorScheme: "light" });
+    await ctx.addInitScript(() => {
+      window.__eases = [];
+      const name = (el) => (typeof el.className === "string" && el.className ? el.className.split(" ")[0] : el.localName);
+      document.addEventListener("transitionrun", (e) => window.__eases.push(`${e.propertyName} ${name(e.target)}`), true);
+    });
+    const page = await openPage(ctx, home);
+    try {
+      await page.locator(".fileRow").first().waitFor();
+      await page.waitForTimeout(500);
+      assertEq(await page.locator("html").getAttribute("data-theme"), "light", "the OS's light theme");
+      await page.evaluate(() => { window.__eases = []; });
+      await page.emulateMedia({ colorScheme: "dark" });
+      await until(() => page.locator("html").getAttribute("data-theme").then((v) => v === "dark"), { what: "the dark theme" });
+      await page.waitForTimeout(400);
+      assertEq((await page.evaluate(() => window.__eases)).join(", "), "", "no colour eases from the old theme");
+      assertEq(await page.evaluate(() => document.documentElement.classList.contains("themeSwitch")), false, "the frame's class is gone");
+      await page.locator('[data-guide="header.account"]').hover();
+      await until(async () => (await page.evaluate(() => window.__eases.length)) > 0, { timeout: 2000, what: "a hover eases again" });
       await assertNoProblems(page);
     } finally { await ctx.close(); }
   });

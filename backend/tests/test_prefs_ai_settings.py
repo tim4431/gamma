@@ -112,6 +112,43 @@ def test_prefs_require_session(client):
     anon = TestClient(app)
     assert anon.get("/api/prefs/open-tabs").status_code == 401
     assert anon.put("/api/prefs/open-tabs", json={"value": []}).status_code == 401
+    assert anon.get("/api/prefs?keys=open-tabs").status_code == 401
+
+
+def test_prefs_read_several_keys_in_one_answer(alice):
+    # the web app's first load: each key answered as its one-key read answers it
+    from gamma import db
+    from conftest import account_of
+    me = account_of("prefs_alice")
+    db.set_profile(me, {"theme": "sepia"})
+    assert alice.put("/api/prefs/open-tabs", json={"value": ["t1"]}).status_code == 200
+    keys = ["profile", "open-tabs", "read-pos", "ai-provider"]
+    r = alice.get("/api/prefs", params={"keys": ",".join(keys + ["open-tabs"])})
+    assert r.status_code == 200, r.text
+    prefs = r.json()["prefs"]
+    assert list(prefs) == keys  # in the order asked, each once
+    for key in keys:
+        assert prefs[key] == alice.get(f"/api/prefs/{key}").json()
+    assert prefs["profile"]["value"] == {"theme": "sepia"} and prefs["profile"]["cloud_choice"] is False
+    assert prefs["read-pos"] == {"key": "read-pos", "value": None, "updated_at": ""}
+    # one bad key refuses the whole read, as the one-key read refuses it
+    for bad in ("open-tabs,ai-settings", "profile-base", "open-tabs,No Spaces", "", ",",
+                ",".join(f"k{i}" for i in range(17))):
+        assert alice.get("/api/prefs", params={"keys": bad}).status_code == 400, bad
+
+
+def test_session_carries_the_theme_and_language_the_first_screen_needs(alice, guest):
+    # a browser that has never seen the account paints in its theme and
+    # language from the session alone; nothing else of the profile comes along
+    from gamma import db
+    from conftest import account_of
+    me = account_of("prefs_alice")
+    db.set_profile(me, {"theme": "gamma-dark", "language": "zh", "enterNewNote": True})
+    assert alice.get("/api/session").json()["profile"] == {"theme": "gamma-dark", "language": "zh"}
+    db.set_profile(me, {"enterNewNote": True})
+    assert alice.get("/api/session").json()["profile"] == {}
+    # a guest's preferences stay in its browser
+    assert "profile" not in guest.get("/api/session").json()
 
 
 def _stored(ws, user_id):
