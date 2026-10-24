@@ -18,7 +18,7 @@ import { t, tn, T } from "../shared/i18n/i18n.js";
 import { touchTyping } from "../shared/lib/pointer.js";
 import { CommentComposer, hasDraft } from "./CommentComposer";
 import { COMMENT_POPUPS, SignInToComment, Thread, useLatestHandler } from "./Thread";
-import { isOpen, laterComments, popoverThreads } from "./comments.js";
+import { isOpen, laterComments, popoverThreads, threadAnchor } from "./comments.js";
 
 const TITLES = {
   note: T("Comments on this note"),
@@ -26,12 +26,9 @@ const TITLES = {
   highlight: T("Comments on this highlight"),
 };
 
-// The element the popover hangs from: the one that opened it while it is
-// in the document, else the block's row control (a row that remounted).
+// The box of what the popover hangs from (comments.js threadAnchor).
 function anchorRect(target) {
-  const el = target.anchor?.isConnected ? target.anchor
-    : document.querySelector(`[data-comment-for="${CSS.escape(target.blockId)}"]`);
-  return el ? el.getBoundingClientRect() : null;
+  return threadAnchor(target)?.getBoundingClientRect() || null;
 }
 
 // target: {blockId, threadId (the thread to show and scroll to), anchor

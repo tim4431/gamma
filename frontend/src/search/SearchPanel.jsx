@@ -45,7 +45,7 @@ export function MarkedText({ text, query, opts, lead = 0 }) {
 export default function SearchPanel({
   open, onOpenChange,
   focusedBlockId, homeBlocks, tree,
-  openBlock, pendingBlockScrollRef,
+  openBlock,
   pdfSearchRef, scrollToRef, cancelCoarseRestoreRef, setPdfHidden, docNonce,
   onFindMarks, detailsDefault, wakeTasks, initialQuery = "",
 }) {
@@ -274,8 +274,8 @@ export default function SearchPanel({
 
   function openNoteHit(r) {
     onOpenChange(false);
-    if (r.page_root_id && r.page_root_id !== r.id) pendingBlockScrollRef.current = r.id;
-    openBlock(r.page_root_id || r.id);
+    if (r.page_root_id && r.page_root_id !== r.id) openBlock(r.page_root_id, { block: r.id });
+    else openBlock(r.id);
   }
 
   // ---- result grouping: titles → this page (notes, then its PDF text) →

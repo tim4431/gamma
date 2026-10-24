@@ -215,7 +215,7 @@ import {
 import { createLibraryMatcher } from "../library/librarySearch";
 import { prefetchTrash } from "../library/trashList";
 import { useComments } from "../comments/useComments";
-import { abandonedCommentHighlight, isOpen, shortCount, threadLink } from "../comments/comments.js";
+import { abandonedCommentHighlight, isOpen, shortCount, threadAnchor, threadLink } from "../comments/comments.js";
 import { preloadCommentMargin } from "../comments/marginSlot";
 import { useInbox } from "../inbox/useInbox";
 import { InboxBadge, InboxButton } from "../inbox/InboxButton";
@@ -1183,10 +1183,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
 
   // Double-click / Enter / context-menu "Open": the old single-click behavior.
-  function openPage(id) {
+  // `block`: a block of the page to land on (openBlock).
+  function openPage(id, block = "") {
     if (!id) return;
     clearSelection();
-    openBlock(id, { restoreScroll: true });
+    openBlock(id, { restoreScroll: true, block });
   }
 
   // Container (folder or label) single-click selects, Ctrl/Cmd toggles within
@@ -1323,8 +1324,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       return;
     }
     fetchHomeBlocks();
-    if (id !== trashed.id) pendingBlockScrollRef.current = id;
-    openBlock(trashed.id, { link: true });
+    openBlock(trashed.id, { link: true, block: id !== trashed.id ? id : "" });
   }
   // The open page went to Recently deleted while open (pageGone): Restore
   // brings it back and refetches it — the edits that waited go out with
@@ -3953,6 +3953,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const blockRefs = useRef({});
   const pendingFocusRef = useRef(null);
   const pendingBlockScrollRef = useRef(null);
+  // The home menu's Share… / Export… / Ask AI waiting for its page
+  // ({id, action}): staged by the open that lands it (openBlock's `then`),
+  // run by the effect after openPageThen.
+  const pendingPageActionRef = useRef(null);
   // A request to scroll to (and focus) a block's row once it is rendered:
   // the id in the ref, and a counter the effect below listens to — a
   // request must be answered even when nothing else changes (the block was
@@ -4145,9 +4149,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const jumpToRef = useRef(null);
   jumpToRef.current = (pageId, blockId) => {
     setOpenPopover(null);
-    if (blockId) scrollToBlock(blockId);
-    if (pageId && pageId !== focusedBlockId) { openPage(pageId); return; }
-    if (blockId) reveal(blockId);
+    if (pageId && pageId !== focusedBlockId) { openPage(pageId, blockId); return; }
+    if (blockId) { scrollToBlock(blockId); reveal(blockId); }
   };
   useEffect(() => {
     const h = (e) => jumpToRef.current?.(e.detail?.page, e.detail?.block);
@@ -4299,8 +4302,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const pop = threadPop;
     setThreadPop(null);
     if (!returnFocus || !pop || pop.margin) return;
-    const el = pop.anchor?.isConnected ? pop.anchor : document.querySelector(`[data-comment-for="${CSS.escape(pop.blockId)}"]`);
-    el?.focus();
+    threadAnchor(pop)?.focus();
   }
   // The selection popup's Comment: the highlight it just made ({id,
   // opened}), whose popover opens on it, from the passage once that is
@@ -4531,9 +4533,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       reveal(id);
     } else {
       pushNav(); // block-ref click = link jump to another page
-      scrollToBlock(id);
       const rootId = pageId || refCache[id]?.page_root_id;
-      await openBlock(rootId && rootId !== id ? rootId : id, { link: true });
+      if (rootId && rootId !== id) await openBlock(rootId, { link: true, block: id });
+      else await openBlock(id, { link: true });
     }
   }
 
@@ -4618,9 +4620,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           const block = data.blocks?.[0];
           const rootId = block?.page_root_id;
           if (rootId && rootId !== initialBlockId) {
-            scrollToBlock(initialBlockId);
             pendingJumpRef.current = initialBlockId; // highlight blocks also jump the PDF
-            openBlock(rootId, { link: true });
+            openBlock(rootId, { link: true, block: initialBlockId });
           } else {
             openBlock(initialBlockId, { link: true });
           }
@@ -5680,9 +5681,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return () => window.removeEventListener("popstate", onPop);
   }, [shareMode]);
 
+  // `opts.block`: a block of the page to land on, scrolled to and focused
+  // (a [[ref]], a search hit, a deep link); `opts.then`: what to do once the
+  // page is on screen (openPageThen). Both belong to this open: staged as
+  // its tree lands, never by an open a later one took over.
   async function openBlock(blockId, opts) {
     if (!blockId) return;
-    if (shareMode) { goSharedPage(blockId); return; }
+    if (shareMode) {
+      if (opts?.block) pendingBlockScrollRef.current = opts.block;
+      goSharedPage(blockId);
+      return;
+    }
     // Back records LINK jumps only — callers opt in via {pushNav: true}.
     // Plain navigation (library, search, tabs, home) never pushes.
     if (opts?.pushNav && blockId !== focusedBlockId) pushNav();
@@ -5715,6 +5724,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (openSeqRef.current !== seq) return undefined;
       const block = subtreeData.block;
       if (!block) throw new Error("Block not found");
+      // What this open was asked to land on and then do; a jump or an
+      // action staged for an earlier page that never came is dropped.
+      pendingBlockScrollRef.current = opts?.block || null;
+      pendingPageActionRef.current = opts?.then ? { id: blockId, action: opts.then } : null;
       const props = block.properties || {};
       // Back on a page left with edits still unsaved (their save may be
       // retrying): they are laid over the fetched tree, and the page's
@@ -5759,9 +5772,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
       // The notes land where the reader left off (text-only pages) or at the
       // top — a passive landing that focuses no row (see landingRef) —
-      // unless an explicit target was already queued (a ?block= deep link).
+      // unless this open lands on a block of its own (`opts.block`).
       const notePos = !attachment ? readPosRef.current[blockId] : null;
-      landingRef.current = pendingBlockScrollRef.current ? null : {
+      landingRef.current = opts?.block ? null : {
         id: notePos?.page === 0 && notePos.block && flattenBlocks(childBlocks).some((b) => b.id === notePos.block) ? notePos.block : "",
       };
 
@@ -5840,10 +5853,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       }
     }
   }
-  // A tab pressed: selected at once, its page opened behind it.
+  // A tab pressed: selected at once, its page opened behind it. The tab of
+  // the page on screen, pressed while another's page opens, takes that
+  // press back: the page stays as it is, not read again.
   function selectTab(id) {
+    if (id === focusedBlockId) { dropTabPick(); return undefined; }
     setTabPick(id);
     return openBlock(id, { restoreScroll: true });
+  }
+  // The pending open of a picked tab let go: neither its landing nor its
+  // finally runs, so the page on screen stays, its tab selected again.
+  function dropTabPick() {
+    if (!tabPick) return;
+    ++openSeqRef.current;
+    setTabPick("");
+    postPill("opening", null);
+    setLoading(false);
   }
 
   // --- Global back: one history for every navigation ------------------------
@@ -6090,6 +6115,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     updateTabs(next);
     // Closed tabs must never become a later close's return destination.
     tabHistoryRef.current = tabHistoryRef.current.filter((entry) => entry.blockId !== id);
+    // The tab a press picked, closed before its page lands: the press is
+    // taken back, and what is on screen stays.
+    if (tabPick && id === tabPick && id !== focusedBlockId) { dropTabPick(); return; }
     if (id !== focusedBlockId) return;
     const entry = [...tabHistoryRef.current].reverse().find((entry) =>
       !entry.blockId || next.some((tab) => tab.id === entry.blockId));
@@ -6360,12 +6388,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     copyText(withWorkspace(`${window.location.origin}/?page=${encodeURIComponent(id)}`))
       .then((ok) => setStatus(ok ? t("Link copied.") : t("Couldn't copy the link.")));
   }
-  const pendingPageActionRef = useRef(null); // {id, action}
   function openPageThen(id, action) {
     setHomeMenu(null);
     clearSelection();
-    pendingPageActionRef.current = { id, action };
-    openBlock(id, { restoreScroll: true });
+    openBlock(id, { restoreScroll: true, then: action });
   }
   // The open page's Share popover (the topbar's link button, the page menu).
   function openPageShare(id) {
@@ -10553,7 +10579,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         homeBlocks={homeBlocks}
         tree={libTree}
         openBlock={openBlock}
-        pendingBlockScrollRef={pendingBlockScrollRef}
         pdfSearchRef={pdfSearchRef}
         wakeTasks={tasks.wake}
         scrollToRef={scrollToRef}
