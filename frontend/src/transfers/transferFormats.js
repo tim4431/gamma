@@ -31,7 +31,7 @@ const EXPORT_SWITCH_TEXT = {
   },
   comments: {
     pdf: [t("Open threads beside each page"),
-      t("Each highlight's open comment threads, and those on its notes, as cards in a column beside the page, as the viewer's margin shows them. A note's threads sit under it when the notes are beside the page too, and quote it otherwise. Resolved threads stay out.")],
+      t("Each highlight's open comment threads, and those on its notes, as cards in a column beside the page, as the viewer's margin shows them. When the notes are beside the page too, a note's comments sit under it. Resolved threads stay out.")],
   },
   bundle: {
     markdown: [t("Pack the PDF and images into the .zip"),
