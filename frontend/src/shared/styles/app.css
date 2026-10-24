@@ -5385,7 +5385,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   --scrollbar-thumb: var(--scrollbar-thumb-dark);
   --scrollbar-thumb-hover: var(--scrollbar-thumb-dark-hover); } /* dark surround + scrollbar even in the light theme */
 .pdfViewer.pdfDark .pdfPageWrap { background: #0f0f0f !important; }
-.pdfViewer.pdfDark .pdfPageCanvas { filter: invert(0.94) hue-rotate(180deg); }
+.pdfViewer.pdfDark :is(.pdfPageCanvas, .pdfTransMath > canvas) { filter: invert(0.94) hue-rotate(180deg); }
 :is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) .pdfPageWrap .pdfFindMark { mix-blend-mode: screen !important; }
 /* Screened, a pastel wash turns into a mid-tone the light text can't be
    read on (about 2.4:1 on yellow). Every highlight instead draws the
@@ -5415,7 +5415,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   background: var(--pdf-paper) !important;
   isolation: isolate;
 }
-[data-theme="gamma-dark"] .pdfViewer .pdfPageCanvas {
+[data-theme="gamma-dark"] .pdfViewer :is(.pdfPageCanvas, .pdfTransMath > canvas) {
   filter: invert(1) hue-rotate(180deg);
   mix-blend-mode: screen;
   opacity: 0.9;
@@ -5441,8 +5441,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
    ground itself (~#2e2c29, about 12.6:1 - the "charcoal not pure black"
    eye-strain guidance) without a contrast() filter, which would darken the
    paper too. Figures fade toward paper by the same 18%, a mild wash. */
-:is([data-theme="sepia"], [data-theme="solarized"], [data-theme="gray"]) .pdfViewer:not(.pdfDark) .pdfPageCanvas { mix-blend-mode: multiply; opacity: 0.82; }
-[data-theme="gamma-light"] .pdfViewer:not(.pdfDark) .pdfPageCanvas { mix-blend-mode: multiply; }
+:is([data-theme="sepia"], [data-theme="solarized"], [data-theme="gray"]) .pdfViewer:not(.pdfDark) :is(.pdfPageCanvas, .pdfTransMath > canvas) { mix-blend-mode: multiply; opacity: 0.82; }
+[data-theme="gamma-light"] .pdfViewer:not(.pdfDark) :is(.pdfPageCanvas, .pdfTransMath > canvas) { mix-blend-mode: multiply; }
 
 /* --- AI translated view (overlay over the original text runs) ---
    The layer sits between the canvas and the text layer: each block is an
@@ -5489,6 +5489,26 @@ a.shareBrand:hover { background: var(--bg-hover); }
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }
+/* A formula, citation marker or URL of the original inside the translated
+   text (pdf/PdfViewer.jsx TransMath). A formula is a crop of the page's own
+   rendering, sized in em so it shrinks with the text and sitting on its
+   baseline; its extracted text lies under it, transparent, so a copy of the
+   translation carries it. Until the page has pixels to crop (it has not
+   been drawn yet) the extracted text shows instead. The page colour
+   treatments above apply to the crop as to the page. */
+.pdfTransMath { display: inline-block; position: relative; }
+.pdfTransMath > canvas { display: block; width: 100%; height: 100%; }
+.pdfTransMath > .pdfTransMathText {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  color: transparent;
+  font-size: 0.7em;
+}
+.pdfTransMath.bare { width: auto !important; height: auto !important; vertical-align: baseline !important; }
+.pdfTransMath.bare > canvas { display: none; }
+.pdfTransMath.bare > .pdfTransMathText { position: static; color: inherit; font-size: inherit; }
 /* Translation still arriving (pdfViewer TransPending / TransPara
    streaming): queued paragraphs get a faint accent wash over their original
    lines, in-flight ones shimmer, text being streamed types in behind a

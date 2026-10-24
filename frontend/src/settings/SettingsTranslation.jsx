@@ -92,7 +92,7 @@ export function TranslationSettings({ value }) {
         label={t("Translate with")}
         scope="browser"
         hint={t("A chat model, or a translation service below")}
-        title={t("What translates page text. A chat model keeps formulas and citations intact and follows the paper's register; a translation service (Microsoft for free, or Google and Youdao with a key) is faster and cheaper per page and needs no AI connection. Translation is a bulk job — a fast, cheap model usually reads fine.")}
+        title={t("What translates page text. A chat model reads a brief of the whole paper first, so its terms stay the same from page to page, and follows the paper's register; a translation service (Microsoft for free, or Google and Youdao with a key) translates sentence by sentence, is faster and cheaper per page, and needs no AI connection. Formulas, citations and links stay as printed either way. Translation is a bulk job — a fast, cheap model usually reads fine.")}
       >
         <TranslateModelSelect value={value} />
       </Row>
@@ -113,8 +113,8 @@ function TranslationPerformance({ value }) {
     {!engine ? <Row
       icon={ActivityIcon}
       label={t("Translation effort")}
-      hint={t("Low makes reasoning models translate much faster")}
-      title={t("Reasoning effort sent with translation calls. Reasoning models spend their thinking budget before writing any output, which is wasted on translation — Low or Minimal typically cuts a page from ~20s to a few seconds. Default omits the parameter (some models reject it).")}
+      hint={t("Default asks for the model's lowest level, the fastest")}
+      title={t("Reasoning effort sent with translation calls. Reasoning models spend their thinking budget before writing any output, which a translation rarely needs, so Default asks for the model's lowest level and sends none to a model that takes none. Pick a higher level for a paper that needs it.")}
     >
       <MenuSelect
         label={t("Translation effort")}

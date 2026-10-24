@@ -19,7 +19,7 @@ from fastapi.responses import JSONResponse, Response, StreamingResponse
 from pydantic import BaseModel, Field, field_validator
 
 from .. import (ai_catalog, ai_permissions, ai_pictures, ai_protocols, ai_revert, ai_usage, chatgpt_oauth,
-                search_services, translate_engines)
+                search_services, translate_context, translate_engines)
 from ..ai_client import (
     CallRefused,
     UpstreamError,
@@ -1012,17 +1012,7 @@ class WatchedStream(StreamingResponse):
 # The allowlisted target languages are translate_engines.TRANSLATE_LANGS
 # (code → the name spliced into the prompt), shared with the engines.
 
-_TRANSLATE_PROMPT = (
-    "You translate paragraphs extracted from an academic paper into {lang}. "
-    "The user message is a JSON array of strings; each string is one paragraph, "
-    "heading, or caption. Reply with ONLY a JSON array of strings of the SAME "
-    "length and order — element i is the translation of element i. No code "
-    "fences, no commentary. Rules: keep inline math, LaTeX, numbers, symbols, "
-    "variable names, citation markers like [12], and URLs exactly as written; "
-    "keep the register of an academic paper; translate headings as headings. "
-    "Return a string unchanged when it is already in the target language or is "
-    "pure math/code."
-)
+# The system prompt is translate_context.system_prompt.
 
 _TRANSLATE_MAX_TEXTS = 200      # paragraphs per request (a page is ~10–50)
 _TRANSLATE_MAX_CHARS = 60000    # total source chars per request
@@ -1064,14 +1054,33 @@ class AITranslateRequest(BaseModel):
     # writes each paragraph (the viewer types them into the page), then the
     # same final {"translations", "model", "cached"} object as the plain reply.
     stream: bool = False
+    # The page whose PDF is being translated: its paper's brief
+    # (translate_context) is made from the stored file and carried in the
+    # system prompt. Checked against the request's workspace.
+    page_id: str = ""
+    # The document's opening text, for a page with no stored PDF (shown from
+    # its source URL): the brief is made from it instead.
+    head: str = ""
+    # False: carry the paper's brief only when one is made already, never
+    # wait for it (the selection translator's single quick text).
+    build_brief: bool = True
+    # The paper's text just before and after the texts, and the heading they
+    # sit under: context the model reads but does not translate
+    # (translate_context.user_turn cuts them to size).
+    before: str = ""
+    after: str = ""
+    section: str = ""
 
 
-def _translate_key(user_id: str, lang: str, model: str, text: str) -> str:
+def _translate_key(user_id: str, lang: str, model: str, brief: str, text: str) -> str:
     # Keyed on the bare model NAME (not the registry id): registry ids embed
     # the provider-entry id, which changes when a key is re-added — the cached
     # translation shouldn't die with it. The account id scopes the shared
-    # in-memory dict per account.
-    return hashlib.sha256(f"{user_id}\x00{lang}\x00{model}\x00{text}".encode()).hexdigest()
+    # in-memory dict per account; `brief` (the brief's key, "" for none)
+    # keeps a translation made without the paper's context apart from one
+    # made with it. The key names the paper, not the brief's text, so the
+    # translation outlives the brief in its LRU.
+    return hashlib.sha256(f"{user_id}\x00{lang}\x00{model}\x00{brief}\x00{text}".encode()).hexdigest()
 
 
 def _parse_translation_array(reply: str, n: int) -> list:
@@ -1085,6 +1094,63 @@ def _parse_translation_array(reply: str, n: int) -> list:
     if not isinstance(arr, list) or len(arr) != n:
         raise ValueError(f"expected {n} translations, got {len(arr) if isinstance(arr, list) else 'non-list'}")
     return ["" if t is None else str(t) for t in arr]
+
+
+def _translate_effort(requested: str, rt: dict, entry: dict) -> str:
+    """The effort a translation call asks for: the user's pick
+    (Settings → Translation), else the model's lowest level
+    (translate_context.default_effort; "" when its levels are unknown)."""
+    if (requested or "").strip():
+        return _resolve_effort(requested)
+    conf = rt["providers"][entry["provider"]]
+    try:
+        levels, _ = ai_catalog.reasoning_efforts(entry["provider"], conf, entry["model"])
+    except Exception as e:
+        log.warning(f"[ai_translate] effort lookup failed: {e}")
+        return ""
+    ordered = [e for e in EFFORT_ORDER if e in (levels or [])]
+    return translate_context.default_effort(ordered, _wire_protocol(rt, entry))
+
+
+class _TranslateBatch:
+    """One request's texts against the paragraph cache: their keys, the
+    translations cached already, and the misses that go upstream (whitespace
+    never; duplicates once)."""
+
+    def __init__(self, texts: list, keys: list):
+        self.texts, self.keys = texts, keys
+        self.hits = _cache_get(keys)
+        self.miss, self.queued = [], set()
+        for i, t in enumerate(texts):
+            if keys[i] not in self.hits and keys[i] not in self.queued and t.strip():
+                self.queued.add(keys[i])
+                self.miss.append(i)
+        self.miss_texts = [texts[i] for i in self.miss]
+
+    def targets(self) -> list:
+        """Per upstream element, the request indices sharing its key."""
+        slots = {}
+        for i, k in enumerate(self.keys):
+            if k in self.queued:
+                slots.setdefault(k, []).append(i)
+        return [slots[self.keys[i]] for i in self.miss]
+
+    def settle(self, translated: list) -> list:
+        """Record the misses' translations (cache + hits); every text's
+        translation, in order. Identity fallbacks stay uncached so a retry
+        can improve them."""
+        for i, t in zip(self.miss, translated):
+            self.hits[self.keys[i]] = t
+            if t and t != self.texts[i]:
+                _cache_put(self.keys[i], t)
+        return [self.hits.get(k, self.texts[i]) for i, k in enumerate(self.keys)]
+
+
+def _translate_budget(batch: list) -> int:
+    # Output roughly tracks input length (CJK ≈ 1 token/char); the generous
+    # floor covers JSON overhead and reasoning models whose thinking spends
+    # from the same budget.
+    return min(30000, 8000 + 2 * sum(len(t) for t in batch))
 
 
 # Sync def: the AI call runs in the threadpool.
@@ -1102,33 +1168,6 @@ def ai_translate(payload: AITranslateRequest, request: Request):
     if sum(len(t) for t in texts) > _TRANSLATE_MAX_CHARS:
         raise HTTPException(status_code=413, detail="too much text in one request")
 
-    # A machine-translation engine ("engine:<id>", Settings → Reading) needs
-    # no AI provider; anything else resolves to a chat model.
-    engine = translate_engines.engine_of(payload.model)
-    if engine:
-        engine_conf = translate_engines.credentials(user_id, engine)
-        model_id = model_name = translate_engines.MODEL_PREFIX + engine
-    else:
-        rt = require_ai_runtime(user_id)
-        entry = _resolve_model(rt, payload.model)
-        model_id, model_name = entry["id"], entry["model"]
-
-    keys = [_translate_key(user_id, lang, model_name, t) for t in texts]
-    # hits: key → translation, for every paragraph that won't need the model.
-    # Filled from the cache now and from the provider reply below; the final
-    # response reads texts the map doesn't cover (whitespace-only paragraphs)
-    # verbatim.
-    hits = _cache_get(keys)
-
-    # Whitespace-only paragraphs never go upstream; every other cache miss
-    # does, once (duplicates collapsed): one model call, or a service's
-    # batches.
-    miss, queued = [], set()
-    for i, t in enumerate(texts):
-        if keys[i] not in hits and keys[i] not in queued and t.strip():
-            queued.add(keys[i])
-            miss.append(i)
-
     def reply_with(final):
         # The whole answer at once; a streaming client reads it as the
         # final NDJSON line.
@@ -1137,53 +1176,74 @@ def ai_translate(payload: AITranslateRequest, request: Request):
         return StreamingResponse(iter([json.dumps(final, ensure_ascii=False) + "\n"]),
                                  media_type="application/x-ndjson")
 
-    def settle(translated, cached):
-        """Record the misses' translations (cache + hits) and build the final
-        response object."""
-        for i, t in zip(miss, translated):
-            hits[keys[i]] = t
-            if t and t != texts[i]:  # identity fallbacks stay uncached so a retry can improve them
-                _cache_put(keys[i], t)
-        out = [hits.get(k, texts[i]) for i, k in enumerate(keys)]
-        return {"translations": out, "model": model_id, "cached": cached}
-
-    if not miss:
-        return reply_with(settle([], True))
-
-    miss_texts = [texts[i] for i in miss]
+    # A machine-translation engine ("engine:<id>", Settings → Translation)
+    # needs no AI provider and takes no brief; anything else resolves to a
+    # chat model.
+    engine = translate_engines.engine_of(payload.model)
     if engine:
-        # One engine call per batch limit, no streaming: the reply is aligned
-        # by the API, so there is nothing to salvage either.
-        try:
-            translated = translate_engines.translate(engine, engine_conf, miss_texts, lang, user_id)
-        except translate_engines.EngineError as e:
-            log.warning(f"[ai_translate] {e}")
-            raise HTTPException(status_code=502, detail=f"translation failed: {e}")
-        return reply_with(settle(translated, False))
+        engine_conf = translate_engines.credentials(user_id, engine)
+        model_id = translate_engines.MODEL_PREFIX + engine
+        batch = _TranslateBatch(texts, [_translate_key(user_id, lang, model_id, "", t) for t in texts])
+        translated = []
+        if batch.miss:
+            # One engine call per batch limit, no streaming: the reply is
+            # aligned by the API, so there is nothing to salvage either.
+            try:
+                translated = translate_engines.translate(engine, engine_conf, batch.miss_texts, lang, user_id)
+            except translate_engines.EngineError as e:
+                log.warning(f"[ai_translate] {e}")
+                raise HTTPException(status_code=502, detail=f"translation failed: {e}")
+            # A service that mangled a formula token shows the original instead.
+            translated = [translate_context.checked(src, t) or src for src, t in zip(batch.miss_texts, translated)]
+        return reply_with({"translations": batch.settle(translated), "model": model_id,
+                           "cached": not batch.miss, "redone": 0})
 
-    system = _TRANSLATE_PROMPT.format(lang=TRANSLATE_LANGS[lang])
-    effort = _resolve_effort(payload.effort)
-
-    def user_turn(batch):
-        return [{"role": "user", "content": json.dumps(batch, ensure_ascii=False)}]
-
-    def budget(batch):
-        # Output roughly tracks input length (CJK ≈ 1 token/char); the
-        # generous floor covers JSON overhead and reasoning models whose
-        # thinking spends from the same budget.
-        return min(30000, 8000 + 2 * sum(len(t) for t in batch))
-
+    rt = require_ai_runtime(user_id)
+    entry = _resolve_model(rt, payload.model)
+    model_id, model_name = entry["id"], entry["model"]
+    effort = _translate_effort(payload.effort, rt, entry)
     count_usage = ai_usage.recorder("translate", entry, rt)
 
-    def call(batch):
-        return _call_ai(user_turn(batch), system, entry, rt, effort=effort,
-                        max_tokens=budget(batch), timeout=180, on_usage=count_usage)
+    # The paper's brief: made once per paper, language and model (the first
+    # request makes it, the parallel ones wait), then read from memory. The
+    # workspace is checked only when a page is named: a context-free request
+    # keeps working for an account that left the header's one.
+    ws = require_ws(request) if payload.page_id else ""
+    paper = translate_context.paper_of(ws, payload.page_id, payload.head)
+    brief_key = translate_context.brief_key(user_id, ws, paper, lang, model_name) if paper else ""
+    prompt_cache = translate_context.cache_key(user_id, ws, paper, lang) if paper else ""
 
-    def stream_call(batch):
+    def make_brief():
+        system_b, messages_b = translate_context.brief_messages(paper, lang)
+        return _call_ai(messages_b, system_b, entry, rt, effort=effort,
+                        max_tokens=8000, timeout=150, on_usage=count_usage)
+
+    def resolve(wait: bool):
+        """(brief, batch): the paper's brief and the texts against the cache
+        under it. The cache keys on the brief's stable key, not its text, so
+        a brief made again after it left memory finds the same paragraphs."""
+        brief = translate_context.brief_for(brief_key, make_brief, user_id, wait=wait) if paper else None
+        ref = brief_key if brief else ""
+        return brief, _TranslateBatch(texts, [_translate_key(user_id, lang, model_name, ref, t) for t in texts])
+
+    def request_parts(brief, batch_texts, alone):
+        # A paragraph redone on its own keeps the section, not the request's
+        # neighbours: they are the chunk's, not its own.
+        context = ("", "", payload.section) if alone else (payload.before, payload.after, payload.section)
+        return (translate_context.user_turn(batch_texts, *context),
+                translate_context.system_prompt(lang, brief.text if brief else ""))
+
+    def call(brief, batch_texts, alone=False):
+        messages, system = request_parts(brief, batch_texts, alone)
+        return _call_ai(messages, system, entry, rt, effort=effort, max_tokens=_translate_budget(batch_texts),
+                        timeout=180, on_usage=count_usage, cache_key=prompt_cache if brief else "")
+
+    def stream_call(brief, batch_texts):
         """The same call, streamed: yields ("partial", text-so-far) as the
         reply arrives, then ("reply", full text)."""
-        resp = _open_ai(user_turn(batch), system, entry, rt, effort=effort,
-                        max_tokens=budget(batch), timeout=180, stream=True)
+        messages, system = request_parts(brief, batch_texts, False)
+        resp = _open_ai(messages, system, entry, rt, effort=effort, max_tokens=_translate_budget(batch_texts),
+                        timeout=180, stream=True, cache_key=prompt_cache if brief else "")
         acc = ""
         try:
             for text in _sse_deltas(resp, _protocol(rt, entry), count_usage):
@@ -1193,61 +1253,93 @@ def ai_translate(payload: AITranslateRequest, request: Request):
             resp.close()
         yield ("reply", acc)
 
-    def finish(reply):
-        """Parse the batch reply (salvaging a miscounted array paragraph by
-        paragraph), fill the cache, and build the final response object."""
+    def finish(brief, batch, reply):
+        """Parse the reply, redo what it got wrong, fill the cache, and build
+        the final response object. `redone` counts the paragraphs asked
+        again (the bench reads it)."""
+        src = batch.miss_texts
+        n = len(src)
         try:
-            translated = _parse_translation_array(reply, len(miss_texts))
+            translated = _parse_translation_array(reply, n)
+            # A paragraph that lost, doubled or invented a formula token
+            # would show the wrong formula: the broken ones are redone in one
+            # call (aligned by index; one of the account's call slots).
+            translated = [translate_context.checked(s, t) for s, t in zip(src, translated)]
+            redo = [j for j, t in enumerate(translated) if t is None]
+            if redo:
+                log.warning(f"[ai_translate] {len(redo)} of {n} lost a formula token — redoing them")
+                try:
+                    again = _parse_translation_array(call(brief, [src[j] for j in redo], alone=True), len(redo))
+                    for j, t in zip(redo, again):
+                        translated[j] = translate_context.checked(src[j], t)
+                except Exception as e:
+                    log.warning(f"[ai_translate] redo failed: {e}")
         except ValueError as e:
             # The provider answered but the array is off — models sometimes
             # merge or drop an element. Salvage paragraph by paragraph (a
-            # 1-element array can't misalign) instead of failing the chunk;
-            # a paragraph that still won't translate comes back VERBATIM, so
-            # the viewer shows the original there instead of erroring. The
-            # single-paragraph calls run concurrently — sequential salvage of
-            # a 6-paragraph chunk would take 6 model round-trips.
+            # 1-element array can't misalign) instead of failing the chunk,
+            # the single-paragraph calls concurrently: one after another, a
+            # 10-paragraph chunk would take 10 model round-trips.
             log.warning(f"[ai_translate] {e} — salvaging per paragraph")
+            redo = list(range(n))
 
             def salvage(t):
                 try:
-                    return _parse_translation_array(call([t]), 1)[0]
+                    return translate_context.checked(t, _parse_translation_array(call(brief, [t], alone=True), 1)[0])
                 except Exception as e2:
                     log.warning(f"[ai_translate] paragraph salvage failed: {e2}")
-                    return t
+                    return None
 
-            with ThreadPoolExecutor(max_workers=min(4, len(miss_texts))) as pool:
-                translated = list(pool.map(salvage, miss_texts))
-        return settle(translated, False)
+            with ThreadPoolExecutor(max_workers=min(4, n)) as pool:
+                translated = list(pool.map(salvage, src))
+        # A paragraph that still won't translate comes back VERBATIM, so the
+        # viewer shows the original there instead of erroring.
+        translated = [s if t is None else t for s, t in zip(src, translated)]
+        return {"translations": batch.settle(translated), "model": model_id, "cached": False,
+                "redone": len(redo), "effort": effort}
 
-    if not payload.stream:
-        try:
-            reply = call(miss_texts)
-        except CallRefused:
-            raise
-        except Exception as e:
-            log.warning(f"[ai_translate] {e}")
-            raise HTTPException(status_code=502, detail=f"translation failed: {e}")
-        return finish(reply)
+    def cached(batch):
+        return {"translations": batch.settle([]), "model": model_id, "cached": True, "redone": 0, "effort": effort}
+
+    # When the brief is made already (or failed a moment ago), everything is
+    # known now. Otherwise a streamed request starts its response at once and
+    # makes the brief (or waits for the request making it) inside the stream,
+    # where keepalive_lines pings through a slow brief and the wait holds no
+    # request thread; a plain request waits here.
+    settled = translate_context.brief_known(brief_key)[1] if paper else True
+    inline = settled or not payload.build_brief or not payload.stream
+    brief = batch = None
+    if inline:
+        brief, batch = resolve(payload.build_brief)
+        if not batch.miss:
+            return reply_with(cached(batch))
+        if not payload.stream:
+            try:
+                reply = call(brief, batch.miss_texts)
+            except CallRefused:
+                raise
+            except Exception as e:
+                log.warning(f"[ai_translate] {e}")
+                raise HTTPException(status_code=502, detail=f"translation failed: {e}")
+            return finish(brief, batch, reply)
 
     # Streamed: the call opens inside the stream, so a call Gamma would
     # refuse (a used-up shared allowance, too many open at once) is refused
     # here, while it can still be an HTTP 429.
     _check_allowance(rt["providers"][entry["provider"]])
     _check_call_slot(user_id)
-    # Element j of the batch reply belongs to every request index sharing
-    # its key (duplicates were collapsed into one upstream element).
-    slots = {}
-    for i, k in enumerate(keys):
-        if k in queued:
-            slots.setdefault(k, []).append(i)
-    targets = [slots[keys[i]] for i in miss]
 
     def ndjson():
         shown = {}  # j -> partial text already sent
         last = 0.0
         reply = ""
         try:
-            for kind, data in stream_call(miss_texts):
+            b, bt = (brief, batch) if inline else resolve(True)
+            if not bt.miss:
+                yield json.dumps(cached(bt), ensure_ascii=False) + "\n"
+                return
+            targets = bt.targets()
+            for kind, data in stream_call(b, bt.miss_texts):
                 if kind == "reply":
                     reply = data
                     break
@@ -1256,11 +1348,11 @@ def ai_translate(payload: AITranslateRequest, request: Request):
                     continue
                 last = now
                 parts = _partial_json_strings(data)
-                for j, t in enumerate(parts[:len(miss_texts)]):
+                for j, t in enumerate(parts[:len(bt.miss_texts)]):
                     if t and shown.get(j) != t:
                         shown[j] = t
                         yield json.dumps({"i": targets[j], "text": t}, ensure_ascii=False) + "\n"
-            yield json.dumps(finish(reply), ensure_ascii=False) + "\n"
+            yield json.dumps(finish(b, bt, reply), ensure_ascii=False) + "\n"
         except Exception as e:
             log.warning(f"[ai_translate] {e}")
             yield json.dumps({"error": _failure(e, "translation failed")}) + "\n"

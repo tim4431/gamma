@@ -628,6 +628,12 @@ nothing ("Asking before a call" below). The system prompt changes only when the 
 prompts, the tool permissions, the pages in context or their coverage
 change.
 
+The translated view's requests are one-turn calls whose shared prefix is
+the system prompt: the rules and the paper's brief. Every chunk of a paper
+sends the same one, and the OpenAI wires get a `prompt_cache_key` per
+account, workspace, paper and language ([translation.md](translation.md)
+"The paper's brief").
+
 ### Fitting the window
 
 Nothing is trimmed by turn count or summarized. Before a call the router
@@ -678,7 +684,9 @@ preference itself never changes with the model: `effortFor` in
 nearest level the model does (a tie goes to the lower), so `xhigh` becomes
 `high` on a model that stops there and comes back on the next model that
 has it. The chip shows that effective level beside the model's name. The
-server accepts `EFFORT_ORDER` (none … max) and drops anything else.
+server accepts `EFFORT_ORDER` (none … max) and drops anything else. The
+translated view asks for the model's lowest level unless Settings →
+Translation names one ([translation.md](translation.md) "The server").
 
 Every reply names what answered it: the stream's `{"model": {id, name,
 effort, speed}}` line (after `{context}`) is saved on the reply as `model`,
@@ -1580,7 +1588,8 @@ show what a week cost. Code: `gamma/ai_usage.py`, `ai_client.normalize_usage`,
   `users.db` (account, time, kind, provider id + name, model, the four
   counts); `ai_usage.recorder(kind, entry, rt)` is the `on_usage` callback the
   call sites bind (`rt["user"]` names the account). Kinds: `chat` (every
-  chat turn, agent rounds included), `translate` (each batch), `metadata`
+  chat turn, agent rounds included), `translate` (each batch, and a paper's
+  brief), `metadata`
   (AI extraction), `cite` (the slide citation), `test` (the Test button and
   the login test). Dictation has no token report. Rows older than
   `KEEP_DAYS` (400) go on the next write. Recording never raises.

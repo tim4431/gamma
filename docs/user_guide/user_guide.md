@@ -103,6 +103,7 @@ A notebook is a page with sheets of paper to write on, and any page can hold the
 <img alt="The translate button is clicked and the paragraphs are redrawn in another language over the original while the figure stays; holding Alt peeks at the original" src="assets/translate.svg" width="100%">
 
 - The **文A button** translates the page you are reading, in place. Hold **Alt** to peek at the original; right-click for the whole document.
+- Formulas, citations and links keep their printed look inside the translation, and a paragraph that runs on into the next column is translated as one, as is one that runs over a page break when you translate the whole document.
 - Select text and press 文A in the popup to translate a passage.
 - Settings → Language and Translation picks the language and what translates: a chat model, or a translation service (Microsoft works with no setup).
 

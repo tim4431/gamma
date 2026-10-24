@@ -435,9 +435,9 @@ Preferences:
   account's, kept on the server): "Translate with" (a chat model or a set-up
   translation service; a browser pref, tagged on its row), the Microsoft
   (free) row with only Test (no key), the Google / Youdao credential rows
-  with Test / Edit / remove. **Speed**: translation effort (hidden while a
-  translation service is picked, or with no AI connection) and parallel
-  requests.
+  with Test / Edit / remove. **Speed**: translation effort (Default asks for
+  the model's lowest level; hidden while a translation service is picked, or
+  with no AI connection) and parallel requests.
 - **Keyboard** ([SettingsKeyboard.jsx](../../frontend/src/settings/SettingsKeyboard.jsx),
   [hotkeys.md](hotkeys.md)): a filter box in the head, then **Shortcuts**
   (the one account section, "Reset all" as its action) listing every command

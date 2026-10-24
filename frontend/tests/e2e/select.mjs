@@ -47,6 +47,7 @@ export const GROUPS = [
   { id: "folders", files: ["folders.mjs"], s: 14 },
   { id: "mcp", files: ["mcp.mjs"], s: 12 },
   { id: "note-mentions", files: ["noteMentions.mjs"], s: 10 },
+  { id: "translation", files: ["translation.mjs"], s: 10 },
   { id: "recording", files: ["recording.mjs"], s: 10 },
   { id: "mirror", files: ["mirror.mjs"], s: 7 },
   { id: "ink-zoom", files: ["inkZoom.mjs"], s: 7 },
@@ -74,7 +75,7 @@ const ALL = "all";
 const GUIDES = ["guide", "contextual-guide", "triggered-guide"];
 const CHAT = ["chat-navigation", "mentions", "contextual-guide", "triggered-guide", "notes-pdf-share", "touch"];
 // every group that opens a PDF in the viewer
-const PDF_VIEW = ["notes-pdf-share", "pdf-load", "pdf-touch", "ink", "ink-editing", "ink-shapes", "ink-zoom", "textbox", "collab", "comments", "files", "transfers", "touch", ...GUIDES];
+const PDF_VIEW = ["notes-pdf-share", "translation", "pdf-load", "pdf-touch", "ink", "ink-editing", "ink-shapes", "ink-zoom", "textbox", "collab", "comments", "files", "transfers", "touch", ...GUIDES];
 const EXPORTS = ["transfers", "files", "ink", "diagrams"];
 // what a change to the handwriting (src/ink/) can break: a text box's menu is
 // placed and labelled by the ink layer's helpers; ipad: the host claim path;
@@ -165,9 +166,11 @@ export const RULES = [
   ["backend/tests/notability_fixtures.py", ["transfers"]], // the Notability note the transfers scenario imports
   ["backend/tests/**", []],
   ["backend/gamma/ai_protocols/**", [...CHAT, "settings"]],
+  // the AI client is the translated view's path to the model too
+  ["backend/gamma/ai_client.py", [...CHAT, "settings", "ink-zoom", "translation"]],
   ["backend/gamma/ai_*.py", [...CHAT, "settings", "ink-zoom"]],
   ["backend/gamma/chatgpt_oauth.py", ["settings"]],
-  ["backend/gamma/routers/ai.py", [...CHAT, "settings", "ink-zoom"]],
+  ["backend/gamma/routers/ai.py", [...CHAT, "settings", "ink-zoom", "translation"]],
   ["backend/gamma/routers/chats.py", CHAT],
   ["backend/gamma/mcp_*", ["mcp"]],
   ["backend/gamma/integrations.py", ["mcp", "mirror", "settings"]],
@@ -237,7 +240,8 @@ export const RULES = [
   ["backend/gamma/join_requests.py", ["cloud-sign-in", "inbox", "settings"]],
   ["backend/gamma/routers/links.py", ["notes-pdf-share", "guide"]],
   ["backend/gamma/routers/metadata.py", ["notes-pdf-share", "guide"]],
-  ["backend/gamma/translate_engines.py", ["settings", "notes-pdf-share"]],
+  ["backend/gamma/translate_engines.py", ["settings", "notes-pdf-share", "translation"]],
+  ["backend/gamma/translate_context.py", ["translation", "notes-pdf-share"]],
   // deleting a folder or a label (the trees' other writes are ops, ALL below)
   ["backend/gamma/routers/folders.py", ["folders", "notes-pdf-share"]],
   // comments: their storage and API, and the hooks every block writer runs
