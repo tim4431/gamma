@@ -842,8 +842,10 @@ The scenarios live in `tests/e2e/scenarios/`:
   from the manifest (a landscape page below the fold), fit-width sized to the
   text pages past a small cover (with the manifest and measured), the last-read page
   after a reload, two large documents through the parsed-document cache, a
-  paper's tab coming back drawn in every frame where it was left, the
-  anonymous share view by ranges ([pdf_loading.md](pdf_loading.md)).
+  paper's tab coming back drawn in every frame where it was left (from a
+  notes page, in a browser launched with its scrollbars shown, and between
+  two papers read at different zooms), the anonymous share view by ranges
+  ([pdf_loading.md](pdf_loading.md)).
   `npm run e2e -- --only "pdf load"`.
 - `files.mjs`: files dropped on a block row / the page body become file
   chips (a `dropFiles` helper builds a real DataTransfer; the paste step

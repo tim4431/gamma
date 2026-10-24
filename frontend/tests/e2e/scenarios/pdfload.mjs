@@ -6,8 +6,13 @@
 // document paints at all, so a slow machine never fails the suite — the
 // numbers are the deliverable. Then the behaviours the fast path must keep:
 // page boxes laid out from the manifest, a reading position restored across
-// a reload, two large documents alternating without mixing, and the share
-// view opening a large document by ranges with the token on every request.
+// a reload, two large documents alternating without mixing, a paper's tab
+// coming back drawn where it was left (from a notes page with the scrollbar
+// taking room, and between two papers read at different zooms), and the
+// share view opening a large document by ranges with the token on every
+// request.
+import { launchBrowser } from "../harness.mjs";
+
 export async function pdfLoadScenarios({ server, browser, alice, makePdf, step, until, assert, assertNoProblems, openPage }) {
   const PAGES = 300;
   const PAD = 20 * 1024 * 1024;
@@ -312,60 +317,154 @@ export async function pdfLoadScenarios({ server, browser, alice, makePdf, step, 
     return `B cold ${fmt(firstB)} ms; A back ${fmt(backA)} ms; B back ${fmt(backB)} ms`;
   });
 
-  await step("pdf load: back to a paper's tab from a notes page, every frame shows its pages drawn, where they were left, at the same zoom, round after round", async () => {
+  // From the next press on, every painted frame while `name` is the
+  // page's title: its page boxes in view, how many of them hold pixels, the
+  // scroll, the first page's width, the page number shown and the status
+  // pill. `framesSeen` ends the watch and hands the frames over.
+  const watchFrames = (p, name) => p.evaluate((name) => {
+    const seen = (window.__seen = []);
+    let pressed = false;
+    window.addEventListener("pointerdown", () => { pressed = true; }, { capture: true, once: true });
+    const look = () => {
+      if (window.__seen !== seen) return;
+      const v = document.querySelector(".viewerWrap:not(.pdfHidden) .pdfViewer");
+      if (pressed && v && document.querySelector(".pageTitleRow .titleText")?.textContent.trim() === name) {
+        const box = v.getBoundingClientRect();
+        const inView = [...v.querySelectorAll(".pdfPageWrap")].filter((el) => {
+          const r = el.getBoundingClientRect();
+          return r.bottom > box.top && r.top < box.bottom;
+        });
+        const drawn = inView.filter((el) => [...el.querySelectorAll(".pdfPageCanvas > canvas")]
+          .some((cv) => cv.width > 0 && getComputedStyle(cv).display !== "none"));
+        seen.push({ pages: inView.length, drawn: drawn.length, top: Math.round(v.scrollTop),
+          width: Math.round(v.querySelector('[data-page="1"]')?.getBoundingClientRect().width || 0),
+          pn: document.querySelector(".pdfPageWidget input")?.value || "",
+          pill: document.querySelector(".statusPill .pillText")?.textContent || "" });
+      }
+      requestAnimationFrame(look);
+    };
+    requestAnimationFrame(look);
+  }, name);
+  const framesSeen = (p) => p.evaluate(() => { const s = window.__seen; window.__seen = null; return s; });
+  const saidOf = (seen) => seen.map((f) => `${f.drawn}/${f.pages} at ${f.top} w${f.width} p${f.pn}${f.pill ? ` "${f.pill}"` : ""}`).join(", ");
+  // Where the reader is, once every page in view holds its pixels (what a
+  // document leaving keeps is what its pages in view show) and two readings
+  // agree (the page number follows a scroll a frame later).
+  const placeOf = async (p) => {
+    let at = null;
+    await until(async () => {
+      const now = await p.locator(".pdfViewer").evaluate((v) => {
+        const box = v.getBoundingClientRect();
+        const inView = [...v.querySelectorAll(".pdfPageWrap")].filter((el) => {
+          const r = el.getBoundingClientRect();
+          return r.bottom > box.top && r.top < box.bottom;
+        });
+        const drawn = inView.filter((el) => [...el.querySelectorAll(".pdfPageCanvas > canvas")].some((cv) => cv.width > 0 && getComputedStyle(cv).display !== "none"));
+        return { all: inView.length > 0 && drawn.length === inView.length, top: Math.round(v.scrollTop),
+          width: Math.round(v.querySelector('[data-page="1"]').getBoundingClientRect().width),
+          pn: document.querySelector("input[aria-label='Current page']")?.value || "" };
+      });
+      const same = at && now.all && at.all && now.top === at.top && now.width === at.width && now.pn === at.pn;
+      at = now;
+      return same;
+    }, { what: "every page in view drawn, the place settled" });
+    return { top: at.top, width: at.width, pn: at.pn };
+  };
+
+  // With the browser's scrollbars shown, which take room in the viewer as
+  // on Windows, Linux and a Mac with a mouse: the pages' width must not
+  // depend on whether the scrollbar is there yet, or the fit-width settles
+  // twice as the viewer comes back and each return lands a few px higher.
+  await step("pdf load: back to a paper's tab from a notes page, every frame shows its pages drawn, where they were left, at the same zoom, round after round, with the scrollbar taking room", async () => {
     const pdf = makePdf(Array.from({ length: 4 }, (_, i) => [`Return page ${i + 1}`, "Lorem ipsum dolor sit amet"]));
     const up = await account.upload("/api/uploads", pdf, "return.pdf", "application/pdf");
     const paper = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Return paper", source_url: up.source_url } });
     const notes = await account.api("/api/pages", { method: "POST", body: { title: "Return notes" } });
     await account.api("/api/prefs/open-tabs", { method: "PUT", body: { value: [{ id: paper.id, title: "Return paper" }, { id: notes.id, title: "Return notes" }] } });
-    const c = await account.context(browser);
+    const shown = await launchBrowser({ scrollbars: true });
+    const c = await account.context(shown);
     const p = await openPage(c, `${server.base}/?page=${paper.id}&ws=${account.ws}`);
     const title = () => p.locator(".pageTitleRow .titleText").innerText();
     const tab = (name) => p.locator(".tabStrip .tab:not([data-leaving])", { hasText: name });
-    // From the press on, every painted frame with the paper's title: its
-    // page boxes in view, how many of them hold pixels, the scroll, the
-    // first page's width and the page number shown.
-    const watch = () => p.evaluate(() => {
-      const seen = (window.__seen = []);
-      let pressed = false;
-      window.addEventListener("pointerdown", () => { pressed = true; }, { capture: true, once: true });
-      const look = () => {
-        if (window.__seen !== seen) return;
-        const v = document.querySelector(".viewerWrap:not(.pdfHidden) .pdfViewer");
-        if (pressed && v && document.querySelector(".pageTitleRow .titleText")?.textContent.trim() === "Return paper") {
-          const box = v.getBoundingClientRect();
-          const inView = [...v.querySelectorAll(".pdfPageWrap")].filter((el) => {
-            const r = el.getBoundingClientRect();
-            return r.bottom > box.top && r.top < box.bottom;
-          });
-          const drawn = inView.filter((el) => [...el.querySelectorAll(".pdfPageCanvas > canvas")]
-            .some((cv) => cv.width > 0 && getComputedStyle(cv).display !== "none"));
-          seen.push({ pages: inView.length, drawn: drawn.length, top: Math.round(v.scrollTop),
-            width: Math.round(v.querySelector('[data-page="1"]')?.getBoundingClientRect().width || 0),
-            pn: document.querySelector(".pdfPageWidget input")?.value || "" });
-        }
-        requestAnimationFrame(look);
-      };
-      requestAnimationFrame(look);
-    });
     try {
       await waitPainted(p, 0);
+      if (shown.browserType().name() === "chromium") {
+        const gutter = await p.locator(".pdfViewer").evaluate((el) => el.offsetWidth - el.clientWidth);
+        assert(gutter > 0, `the viewer's scrollbar takes room (${gutter} px)`);
+      }
       await p.locator(".pdfViewer").evaluate((el) => el.scrollTo(0, 1000));
       await until(async () => (await p.inputValue("input[aria-label='Current page']")) === "2", { what: "the reader on page 2" });
-      const left = await p.locator(".pdfViewer").evaluate((el) => ({ top: Math.round(el.scrollTop), width: Math.round(el.querySelector('[data-page="1"]').getBoundingClientRect().width) }));
-      for (const round of [1, 2]) {
+      const left = await placeOf(p);
+      for (const round of [1, 2, 3]) {
         await tab("Return notes").click();
         await until(async () => (await title()) === "Return notes", { what: "the notes page open" });
-        await watch();
+        await watchFrames(p, "Return paper");
         await tab("Return paper").click();
         await until(async () => (await title()) === "Return paper", { what: "the paper back" });
         await p.waitForTimeout(300);
-        const seen = await p.evaluate(() => { const s = window.__seen; window.__seen = null; return s; });
-        const said = seen.map((f) => `${f.drawn}/${f.pages} at ${f.top} w${f.width} p${f.pn}`).join(", ");
+        const seen = await framesSeen(p);
+        const said = saidOf(seen);
         assert(seen.length > 0, `round ${round}: frames of the paper seen`);
         assert(seen.every((f) => f.pages > 0 && f.drawn === f.pages), `round ${round}: every page in view is drawn in every frame: ${said}`);
         assert(seen.every((f) => Math.abs(f.top - left.top) <= 1 && f.width === left.width), `round ${round}: every frame at the place and zoom left (${left.top}, w${left.width}): ${said}`);
         assert(seen.every((f) => f.pn === "2"), `round ${round}: the page number it was left on in every frame: ${said}`);
+      }
+      assertNoProblems(p);
+    } finally {
+      await c.close();
+      await shown.close();
+    }
+  });
+
+  // Each tab brings its zoom with its url, so the paper leaving is laid
+  // out at the next one's zoom in the commit that takes it off screen: what
+  // it keeps must be the pages the reader saw, not the ones under its
+  // scroll at the other zoom.
+  await step("pdf load: between two papers' tabs read at different zooms, every frame shows the pages in view drawn, where each was left, at its own zoom, with no \"Rendering page…\"", async () => {
+    const paperOf = async (name) => {
+      const pdf = makePdf(Array.from({ length: 10 }, (_, i) => [`${name} page ${i + 1}`, "Lorem ipsum dolor sit amet"]));
+      const up = await account.upload("/api/uploads", pdf, `${name.toLowerCase()}.pdf`, "application/pdf");
+      return account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: `${name} paper`, source_url: up.source_url } });
+    };
+    const near = await paperOf("Near"), far = await paperOf("Far");
+    await account.api("/api/prefs/open-tabs", { method: "PUT", body: { value: [{ id: near.id, title: "Near paper" }, { id: far.id, title: "Far paper" }] } });
+    const c = await account.context(browser);
+    const p = await openPage(c, `${server.base}/?page=${near.id}&ws=${account.ws}`);
+    const title = () => p.locator(".pageTitleRow .titleText").innerText();
+    const tab = (name) => p.locator(".tabStrip .tab:not([data-leaving])", { hasText: name });
+    const width = () => p.locator(".pdfViewer").evaluate((el) => Math.round(el.querySelector('[data-page="1"]').getBoundingClientRect().width));
+    // Zoomed by the toolbar's button, `times` presses, and read from
+    // `share` of the way down.
+    const readAt = async (button, times, share) => {
+      for (let i = 0; i < times; i++) {
+        const before = await width();
+        await p.getByRole("button", { name: button, exact: true }).click();
+        await until(async () => (await width()) !== before, { what: `${button} applied` });
+      }
+      await p.locator(".pdfViewer").evaluate((el, share) => el.scrollTo(0, Math.round(el.scrollHeight * share)), share);
+      return placeOf(p);
+    };
+    try {
+      await waitPainted(p, 0);
+      const left = { "Near paper": await readAt("Zoom in", 2, 0.45) };
+      const painted = await paintCount(p);
+      await tab("Far paper").click();
+      await until(async () => (await title()) === "Far paper", { what: "the far paper open" });
+      await waitPainted(p, painted);
+      left["Far paper"] = await readAt("Zoom out", 3, 0.4);
+      assert(left["Near paper"].width !== left["Far paper"].width, `the two papers read at different zooms (w${left["Near paper"].width}, w${left["Far paper"].width})`);
+      for (const name of ["Near paper", "Far paper", "Near paper", "Far paper"]) {
+        await watchFrames(p, name);
+        await tab(name).click();
+        await until(async () => (await title()) === name, { what: `${name} back` });
+        await p.waitForTimeout(300);
+        const seen = await framesSeen(p);
+        const said = saidOf(seen);
+        const at = left[name];
+        assert(seen.length > 0, `${name}: frames of it seen`);
+        assert(seen.every((f) => f.pages > 0 && f.drawn === f.pages), `${name}: every page in view is drawn in every frame: ${said}`);
+        assert(seen.every((f) => Math.abs(f.top - at.top) <= 1 && f.width === at.width && f.pn === at.pn), `${name}: every frame where it was left (${at.top}, w${at.width}, p${at.pn}): ${said}`);
+        assert(!seen.some((f) => f.pill.includes("Rendering page")), `${name}: no "Rendering page…" for a paper drawn already: ${said}`);
       }
       assertNoProblems(p);
     } finally {

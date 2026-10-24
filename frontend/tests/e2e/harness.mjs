@@ -201,9 +201,13 @@ export class Account {
 // ---------------------------------------------------------------------------
 // Browser
 
-export async function launchBrowser() {
-  const opts = { headless: !flags.headed };
-  if (process.env.GAMMA_E2E_BROWSER === "webkit") return english(await webkit.launch(opts));
+// `scrollbars`: Chromium shows its scrollbars, which then take room in
+// their scroller as on Windows, Linux and a Mac with a mouse. Playwright
+// hides them by default.
+export async function launchBrowser({ scrollbars = false } = {}) {
+  const headless = { headless: !flags.headed };
+  if (process.env.GAMMA_E2E_BROWSER === "webkit") return english(await webkit.launch(headless));
+  const opts = scrollbars ? { ...headless, ignoreDefaultArgs: ["--hide-scrollbars"] } : headless;
   try {
     return english(await chromium.launch(opts));
   } catch (e) {

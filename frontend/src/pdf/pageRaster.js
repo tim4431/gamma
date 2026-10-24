@@ -228,7 +228,9 @@ export function keepPixels(doc, wraps) {
   if (!pages.size) KEPT.delete(doc);
 }
 
-export const hasPixels = (doc) => KEPT.has(doc);
+// Whether a page box still shows what its page showed when its document
+// last left the viewer, not yet a paint of its own.
+export const showsKept = (wrap) => !!RASTERS.get(wrap)?.kept();
 
 // The copy kept of one page, taken out of the store: the caller owns it.
 export function takePixels(doc, pageNumber) {
@@ -325,7 +327,10 @@ function pair(front) {
 //   prime(canvas)  start from `canvas` (takePixels), shown until the page's
 //       own first paint lands; it is the raster's to release.
 //   copy()   what the page shows, as a canvas at the screen's resolution
-//       (keepPixels), or null while it shows nothing.
+//       for the box it was drawn for (keepPixels), or null while it shows
+//       nothing.
+//   kept()   whether it shows the canvas it was primed with, not yet a
+//       paint of its own.
 //   onPainted(page)  fresh pixels of `page` landed.
 //   isCancel(error)  tells pdf.js's cancellation from a failure; the caller
 //       owns the pdf.js module.
@@ -528,7 +533,10 @@ export function installPageRaster({ wrap, base: baseEl, detail: detailEl, onPain
   function copy() {
     const front = base.front;
     if ((!shown && !primed) || !front.width || !front.height) return null;
-    const size = canvasSize(wrap.offsetWidth, wrap.offsetHeight, screenRatio(dpr()));
+    // For the box its pixels were drawn for, not the box as it is now: a
+    // document leaves in a commit that may already lay its pages out at the
+    // next one's zoom. A primed page shows a copy made at that size.
+    const size = shown ? canvasSize(shown.width, shown.height, screenRatio(dpr())) : front;
     const out = document.createElement("canvas");
     out.width = Math.min(size.width, front.width);
     out.height = Math.min(size.height, front.height);
@@ -540,6 +548,7 @@ export function installPageRaster({ wrap, base: baseEl, detail: detailEl, onPain
 
   const raster = {
     show, prime, copy,
+    kept: () => primed,
     dispose: () => { primed = false; show(null); RASTERS.delete(wrap); },
   };
   RASTERS.set(wrap, raster);

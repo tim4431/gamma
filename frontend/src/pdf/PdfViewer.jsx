@@ -15,7 +15,7 @@ import { MarkupLayers, NO_MARKS } from "../markup/MarkupLayers";
 import { armedClasses, usePageTools } from "../markup/PageTools";
 import { ZoomWindow } from "../ink/ZoomWindow.jsx";
 import { revealDelta } from "../ink/zoomWindow.js";
-import { KEEP_MARGIN, RENDER_MARGIN, ZOOM_SETTLE_MS, cropPage, forgetPixels, hasPixels, installPageRaster, keepPixels, takePixels } from "./pageRaster.js";
+import { KEEP_MARGIN, RENDER_MARGIN, ZOOM_SETTLE_MS, cropPage, forgetPixels, installPageRaster, keepPixels, showsKept, takePixels } from "./pageRaster.js";
 import { installVerticalScrollSnap } from "./verticalScrollSnap.js";
 import { segmentPage, selectionParagraphs } from "./pdfTranslate";
 import { BACKFILL_DELAY_MS, chooseTransport, docIdOf, layoutFromManifest, rangeOpenOptions, typicalPageIndex } from "./pdfSource";
@@ -131,15 +131,21 @@ function pageTopAt(heights, idx, scale) {
   return y;
 }
 
-// The page boxes the scroller shows, the ones a document leaving keeps
-// the pixels of (pageRaster keepPixels).
-function pagesInView(scroller) {
-  if (!scroller) return [];
-  const v = scroller.getBoundingClientRect();
-  return [...scroller.querySelectorAll(".pdfPageWrap[data-page]")].filter((el) => {
-    const r = el.getBoundingClientRect();
-    return r.bottom > v.top && r.top < v.bottom && r.right > v.left && r.left < v.right;
-  });
+// The page boxes the scroller shows from `top` when its pages, of natural
+// `heights`, are laid out at `scale`. Worked out in the layout model above,
+// not from the boxes' rectangles, so it answers for the layout the reader
+// saw even in a commit that has already laid the boxes out at another zoom.
+function pagesInView(scroller, heights, scale, top) {
+  const out = [];
+  if (!scroller) return out;
+  const bottom = top + scroller.clientHeight;
+  for (let i = 0, y = 0; i < heights.length && y < bottom; i++) {
+    const h = (heights[i] || FALLBACK_H) * scale;
+    const wrap = y + h > top && scroller.querySelector(`.pdfPageWrap[data-page="${i + 1}"]`);
+    if (wrap) out.push(wrap);
+    y += h + PAGE_GAP;
+  }
+  return out;
 }
 
 // The bytes of the document most recently downloaded, so a reopen while the
@@ -859,10 +865,12 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     if (pdfDoc) {
       awaitingPaintRef.current = url;
       onLoadState?.(url, { phase: "rendered", scale });
-      // Back with the pixels its pages showed when it left: the reader has
-      // them already.
-      if (cameBackRef.current) onPagePainted();
-      cameBackRef.current = false;
+      // A page in view at the restored place shows what it showed when its
+      // document last left (pageRaster keepPixels): the reader has it
+      // already, and no "Rendering page…" rises. Without one the pill stays
+      // until a page paints, as for any document.
+      const v = viewerRef.current;
+      if (v && pagesInView(v, pageHeightsRef.current, scale, v.scrollTop).some(showsKept)) onPagePainted();
     }
   }, [pdfDoc]);
 
@@ -881,13 +889,16 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // lands on it (the host's "layout" phase), and when the real document
   // arrives it fills the same boxes — same keys, nothing remounts.
   const skeletonRef = useRef(null); // url whose skeleton is on screen, else null
-  // Whether the document being committed comes back with what its pages
-  // showed when it left (pageRaster keepPixels).
-  const cameBackRef = useRef(false);
-  // The document whose pages are on screen leaves them: what they show in
-  // view is kept for its return. A skeleton on screen holds none of its.
+  // The document whose pages are on screen leaves them: what the pages the
+  // reader last saw show is kept for its return. Those pages are found in
+  // the layout the reader saw, at the scale the zoom anchor below last laid
+  // them out at and the scroll last seen, not in the DOM: a tab brings its
+  // zoom in the same commit as its url, so in that commit the leaving pages
+  // are already laid out at the next tab's zoom, under the old scroll. A
+  // skeleton on screen holds none of its.
   const keepLeaving = () => {
-    if (displayedDocRef.current && !skeletonRef.current) keepPixels(displayedDocRef.current, pagesInView(viewerRef.current));
+    if (!displayedDocRef.current || skeletonRef.current) return;
+    keepPixels(displayedDocRef.current, pagesInView(viewerRef.current, pageHeightsRef.current, prevScaleRef.current, lastScrollRef.current));
   };
   const commitLayout = (heights, widths, exact) => {
     heightsExactRef.current = exact;
@@ -907,7 +918,6 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   };
   const commitDoc = (url, doc, heights, widths, exact) => {
     if (displayedDocRef.current !== doc) keepLeaving();
-    cameBackRef.current = hasPixels(doc);
     displayedDocRef.current = doc;
     docUrlRef.current = url;
     commitLayout(heights, widths, exact);
@@ -1840,9 +1850,16 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
         </div>
       ) : null}
       {/* overflow-anchor off: the browser's own scroll anchoring would fight
-          the zoom re-placement above with adjustments of its own. */}
+          the zoom re-placement above with adjustments of its own. The
+          scrollbar's room stays reserved while nothing scrolls, so the
+          pages are as wide with the scrollbar as without it: the fit-width
+          worked out in an empty viewer (a document back from DOC_CACHE is
+          committed before its pages are in) is the fit its pages keep. A
+          scrollbar arriving with them would fit them a second time, which
+          the zoom anchor re-places about the viewport's centre, and each
+          return to the tab would land a few px higher. */}
       <div ref={viewerRef} data-guide="pdf.viewer" className={"pdfViewer" + (areaCursor || areaMode ? " areaCursor" : "") + (areaMode ? " areaMode" : "") + (darkPage ? " pdfDark" : "") + (transPeek ? " transPeek" : "") + armedClasses(tools) + (ink.tool?.tool === "select" ? " inkSelect" : "")}
-        style={{ height: zoom ? `calc(100% - ${zoomHeight}px)` : "100%", overflowY: "auto", overflowX: "auto", overflowAnchor: "none" }}
+        style={{ height: zoom ? `calc(100% - ${zoomHeight}px)` : "100%", overflowY: "auto", overflowX: "auto", overflowAnchor: "none", scrollbarGutter: "stable" }}
         onScroll={(e) => {
           lastScrollRef.current = e.currentTarget.scrollTop;
           lastScrollLeftRef.current = e.currentTarget.scrollLeft;
