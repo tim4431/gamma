@@ -594,7 +594,8 @@ The scenarios live in `tests/e2e/scenarios/`:
   controls, the popover opening in place, live replies, resolve and
   reopen, the Comments window, Ctrl+Shift+M and Escape, edit and delete, a
   viewer's and a link visitor's side, `?thread=` and a folder share's
-  thread link. Also the field as a note's editor, the selection popup's
+  thread link, and a page's threads (and a PDF's margin cards) asked for
+  alongside its tree. Also the field as a note's editor, the selection popup's
   Comment and the PDF margin's cards ([comments.md](comments.md) "In the
   app"), and the cards beside the pen strip: a pen or the Text tool on a
   card, a handwriting selection let go by a press on one, its right-click,
@@ -695,9 +696,9 @@ The scenarios live in `tests/e2e/scenarios/`:
   - A browser with pens of its own is asked once, on the account's first
     pull, whether to keep them. *Use this browser's* pushes them, and
     another browser shows them after a reload.
-  - The question stays up while a page opens under it, the page's "Ready."
-    showing over it for its second, and while a link to a page that is
-    gone opens.
+  - The question stays up while a page opens under it, the "Ready." of a
+    page that kept it waiting long enough to say "Opening…" showing over
+    it for its second, and while a link to a page that is gone opens.
   - A later pull and a browser on the defaults never ask. Nor does a later
     load of a browser that only took the account's list or sent its own,
     by a push or with keepalive as its page was hidden.
@@ -840,7 +841,8 @@ The scenarios live in `tests/e2e/scenarios/`:
   step's note, asserts only that it paints), then the behaviours: page boxes
   from the manifest (a landscape page below the fold), fit-width sized to the
   text pages past a small cover (with the manifest and measured), the last-read page
-  after a reload, two large documents through the parsed-document cache, the
+  after a reload, two large documents through the parsed-document cache, a
+  paper's tab coming back drawn in every frame where it was left, the
   anonymous share view by ranges ([pdf_loading.md](pdf_loading.md)).
   `npm run e2e -- --only "pdf load"`.
 - `files.mjs`: files dropped on a block row / the page body become file
@@ -865,7 +867,10 @@ The scenarios live in `tests/e2e/scenarios/`:
 - `share.mjs`: the share dialog, the anonymous share view (PDF, highlight,
   image through the share token, no editor), an edit share.
 - `settings.mjs`, `folders.mjs`, `trash.mjs`, `quickOpen.mjs`, `mcp.mjs`
-  and `cloudSignIn.mjs` are groups of their own. The headers of
+  and `cloudSignIn.mjs` are groups of their own. `quickOpen.mjs` holds the
+  tabs' steps too: a tab pressed selected in the press's own frame while
+  the page it leaves stays whole, and "Opening…" only for an open that
+  keeps the reader waiting. The headers of
   `folders.mjs`, `trash.mjs` and `cloudSignIn.mjs` name the doc each
   covers. `cloudSignIn.mjs`'s last step starts a Gamma under the `invited`
   policy against `fakeCloud.mjs`: a page shared by Gamma Cloud username,
