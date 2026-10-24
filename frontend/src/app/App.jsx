@@ -947,6 +947,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     let localRecents = [];
     try { localRecents = JSON.parse(localStorage.getItem(`gamma-recent-views:${u}`) || "[]"); } catch {}
     if (!Array.isArray(localRecents)) localRecents = [];
+    homeReadRef.current.add(localRecents);
     setRecentViews(localRecents);
     let localSnaps = {};
     try { localSnaps = JSON.parse(localStorage.getItem(`gamma-page-snaps:${u}`) || "{}"); } catch {}
@@ -1716,6 +1717,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [blocks, setBlocks] = useState([]);
   const [homeBlocks, setHomeBlocks] = useState([]);
   const [homeLoaded, setHomeLoaded] = useState(false); // the library listing has come back once
+  // What the listing's loads set (the pages and trees a read brings back,
+  // the view history read from the cache or the server): a change in the
+  // listing only they made moves nothing (homeStill).
+  const homeReadRef = useRef(new WeakSet());
   const [refCache, setRefCache] = useState({}); // { [blockId]: { content, page_title } }
   const [backlinks, setBacklinks] = useState([]);
   const [chatHidden, setChatHidden] = useState(false);
@@ -2157,6 +2162,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       list = [{ id: fid, at: new Date().toISOString() }, ...list.filter((r) => r.id !== fid)].slice(0, RECENTS_CAP);
       pushRecentsToServer(list);
     }
+    homeReadRef.current.add(list);
     setRecentViews(list);
     try { localStorage.setItem(`gamma-recent-views:${user}`, JSON.stringify(list)); } catch {}
   }
@@ -3233,7 +3239,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (data.meta?.title && focusedBlock?.properties?.auto_title === focusedBlock?.content) {
         await renameTitle(data.meta.title);
       }
-      fetchHomeBlocks(); // keep the library's meta fresh for DOI-link matching
+      fetchHomeBlocks({ still: true }); // keep the library's meta fresh for DOI-link matching
       const site = data.lookup?.registry === "arxiv" ? "arXiv" : "doi.org";
       setStatus(!data.lookup ? t("Metadata saved.")
         : data.lookup.found ? t("Metadata filled in from {site} ({id}).", { site, id: data.lookup.id })
@@ -3262,7 +3268,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setFocusedBlock((prev) => prev && prev.id === blockId
         ? { ...prev, properties: { ...prev.properties, meta: data.meta } }
         : prev);
-      fetchHomeBlocks();
+      fetchHomeBlocks({ still: true });
       setStatus(t("Metadata marked as verified."));
     } catch (err) {
       setStatus(t("Verify failed: {message}", { message: err.message }));
@@ -3438,7 +3444,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (data.page_title && focusedBlockIdRef.current === block.id) setPageTitle(data.page_title);
       if (!data.cached) {
         setStatus(t("Paper metadata found ({source}).", { source: data.source === "ai" ? t("AI-extracted") : data.source }));
-        fetchHomeBlocks(); // keep the library's meta fresh for DOI-link matching
+        fetchHomeBlocks({ still: true }); // keep the library's meta fresh for DOI-link matching
       }
     } catch (err) {
       if (focusedBlockIdRef.current === block.id) setStatus(t("Metadata: {message}", { message: err.message }));
@@ -3681,22 +3687,33 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   useEffect(() => { setPdfSelections([]); }, [focusedBlockId]);
 
   // The library listing: the pages, and the folder and label trees read in
-  // the same snapshot (GET /blocks/root/children).
-  function fetchHomeBlocks() {
+  // the same snapshot (GET /blocks/root/children). A read that is a load
+  // rather than the person's own change (`still`: the session's first,
+  // coming back from a page, the window's wake, a refresh in the
+  // background) marks what it sets, so the listing moves nothing for it,
+  // and so does one that fails.
+  function fetchHomeBlocks({ still = false } = {}) {
     return apiJson(`${API}/blocks/root/children`)
       .then((data) => {
         const children = Array.isArray(data.children) ? data.children : [];
-        setHomeBlocks(children);
         libTreeRef.current = libraryTree(data);
+        if (still) for (const read of [children, libTreeRef.current]) homeReadRef.current.add(read);
+        setHomeBlocks(children);
         setLibTree(libTreeRef.current);
         setHomeLoaded(true);
         return children;
       })
-      .catch(() => { setHomeBlocks([]); setLibTree(EMPTY_TREE); return []; });
+      .catch(() => {
+        const none = [];
+        for (const read of [none, EMPTY_TREE]) homeReadRef.current.add(read);
+        setHomeBlocks(none);
+        setLibTree(EMPTY_TREE);
+        return [];
+      });
   }
 
   useEffect(() => {
-    if (authUser?.user && !shareMode) fetchHomeBlocks();
+    if (authUser?.user && !shareMode) fetchHomeBlocks({ still: true });
   }, [authUser]);
   // The listing is read again when the window comes back (at most every
   // 15 s, like the prefs' wake pulls), so a folder or label another device
@@ -3708,7 +3725,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const onWake = () => {
       if (document.hidden || Date.now() - lastAt < 15000) return;
       lastAt = Date.now();
-      fetchHomeBlocks();
+      fetchHomeBlocks({ still: true });
     };
     window.addEventListener("focus", onWake);
     document.addEventListener("visibilitychange", onWake);
@@ -5851,7 +5868,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setFolderFilter("");
       setLabelFilter("");
     }
-    if (refreshHome) fetchHomeBlocks();
+    if (refreshHome) fetchHomeBlocks({ still: true });
     if (keepFilters && (labelFilter || folderFilter)) {
       window.history.replaceState(null, "", homeUrlFor(folderFilter, labelFilter));
     } else {
@@ -7744,6 +7761,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // rows arrive at once.
   const homeVisibleKeys = useMemo(() => homeVisibleItems.map((it) => it.key), [homeVisibleItems]);
   const homeListingScope = `${homeView}|${homeKinds}|${folderFilter}|${labelFilter}|${homeSort}|${homeQuery}|${homeShowCount}`;
+  // What the listing is read from: the pages, the trees, and the view
+  // history the "viewed" sort ranks by. A change is still when each of them
+  // that changed was set by a load (homeReadRef: the listing read again on
+  // coming home or on the window's wake, the server's view history landing
+  // after it), so the person's own change moves even after a load.
+  const homeSources = [homeBlocks, libTree, recentViews];
+  const homeSourcesRef = useRef(homeSources);
+  const homeChanged = homeSources.filter((source, i) => source !== homeSourcesRef.current[i]);
+  const homeStill = homeChanged.length > 0 && homeChanged.every((source) => homeReadRef.current.has(source));
+  useLayoutEffect(() => { homeSourcesRef.current = homeSources; });
   // A listing that takes another's place (another view, kind filter, folder
   // or label) comes into focus where it stands, as a pane does: its class is
   // played again on the listing in place, rather than remounting it, which
@@ -9221,7 +9248,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         onClick={() => { setNewFolderName(""); setNewFolderOpen(true); }}
                       />
                     )}
-                    <ListMotion keys={homeVisibleKeys} scope={homeListingScope} enter="card" leave="card">
+                    <ListMotion keys={homeVisibleKeys} scope={homeListingScope} still={homeStill} enter="card" leave="card">
                     {withSearchMore(homeVisibleItems.map((item) => {
                       const dim = homeQuery && !item._match ? "homeDim" : "";
                       if (item.kind === "label") { const l = item.label; return (
@@ -9370,7 +9397,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         {menuSlot}
                       </div>
                     ) : null}
-                    <ListMotion keys={homeVisibleKeys} scope={homeListingScope} enter="fade" leave="row">
+                    <ListMotion keys={homeVisibleKeys} scope={homeListingScope} still={homeStill} enter="fade" leave="row">
                     {withSearchMore(homeVisibleItems.map((item) => {
                       const dim = homeQuery && !item._match ? "homeDim" : "";
                       if (item.kind === "label") { const l = item.label; const menu = l === NO_LABEL ? null : openTagMenu("label", l); return (

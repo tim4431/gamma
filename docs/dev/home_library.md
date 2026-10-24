@@ -271,7 +271,13 @@ new row fades in and a new card grows in where it will rest, and one that
 goes fades (a row) or shrinks away (a card) where it stood while the rest
 close up. Another view, kind filter, folder or label is another listing,
 which comes into focus where it stands; a sort, the filter box's text and
-Load more change the listing at once.
+Load more change the listing at once. A read that is a load moves nothing
+either (`fetchHomeBlocks({ still: true })`): the listing read again on
+coming home from a page, on the window's wake or after a metadata
+refresh, and the server's view history landing after the listing. Each
+marks what it sets (`homeReadRef`), and a change is still when everything
+it changed came from such a read. A read after the person's own write (a
+delete, a new folder, a filing) moves.
 
 **Selecting.** A click selects, Ctrl/⌘+click toggles one item and
 Shift+click extends a range; a finger's tap opens instead, as in a phone's

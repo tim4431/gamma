@@ -380,6 +380,69 @@ export async function motionScenarios(env) {
     } finally { await ctx.close(); }
   });
 
+  // The library read again is a load: the order it brings lands at once.
+  const firstItem = (page) => page.locator(live(".fileList > .listMotion > *")).first().innerText();
+
+  await step("motion: the library read again on coming home from an edited page moves nothing, and a delete right after still glides", async () => {
+    const edited = await user.api("/api/pages", { method: "POST", body: { title: "Edited later" } });
+    await user.api(`/api/pages/${edited.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "ed0", parent: edited.id, position: generateNKeysBetween(null, null, 1)[0], content: "First line" },
+    ] } });
+    await user.api("/api/pages", { method: "POST", body: { title: "Made after" } });
+    const ctx = await user.context(browser);
+    await watch(ctx);
+    const page = await openPage(ctx, `${server.base}/?ws=${user.ws}&page=${edited.id}`);
+    try {
+      await rowOf(page, "ed0").locator(".blockRow").click();
+      await page.locator(".blockEditorCm").first().waitFor();
+      await page.keyboard.press("End");
+      await page.keyboard.type(" and more");
+      await page.keyboard.press("Escape");
+      await until(async () => JSON.stringify(await user.api(`/api/blocks/${edited.id}/subtree`)).includes("and more"), { what: "the edit saved" });
+      await glides(page);
+      // the listing it comes home to is the one it left, then the read lands
+      await page.locator('[data-guide="header.home"]').click();
+      await listRow(page, "Made after").waitFor();
+      await until(async () => (await firstItem(page)).includes("Edited later"), { what: "the edited page on top" });
+      await page.waitForTimeout(200);
+      const back = await glides(page);
+      assertEq(back.length, 0, `the order the read brings lands at once: ${back}`);
+      await deleteRow(page, "Made after");
+      await page.locator('.fileList [data-leaving="row"]', { hasText: "Made after" }).waitFor({ state: "attached" });
+      const gone = await glides(page);
+      assert(gone.some((g) => g.startsWith("moving ")), `the person's own delete right after still glides: ${gone}`);
+      await assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("motion: the server's view history landing after the listing reorders the Recently viewed sort without a glide", async () => {
+    const viewed = [];
+    for (const title of ["Viewed long ago", "Viewed just now"]) viewed.push(await user.api("/api/pages", { method: "POST", body: { title } }));
+    // seen on another device: the older page last
+    const at = (ago) => new Date(Date.now() - ago).toISOString();
+    await user.api("/api/prefs/recent-views", { method: "PUT", body: { value: [
+      { id: viewed[0].id, at: at(0) }, { id: viewed[1].id, at: at(60000) },
+    ] } });
+    const ctx = await user.context(browser);
+    await watch(ctx);
+    await ctx.addInitScript(() => { try { localStorage.setItem("gamma-home-sort-map", JSON.stringify({ "": "viewed" })); } catch {} });
+    // the view history a beat behind the listing, as on a slow link
+    await ctx.route("**/api/prefs/recent-views", async (route) => {
+      if (route.request().method() === "GET") await new Promise((done) => setTimeout(done, 400));
+      await route.continue();
+    });
+    const page = await openPage(ctx, home);
+    try {
+      await listRow(page, "Viewed long ago").waitFor();
+      assert((await firstItem(page)).includes("Viewed just now"), "before the history lands the sort falls back to the modified time");
+      await until(async () => (await firstItem(page)).includes("Viewed long ago"), { what: "the view history's order" });
+      await page.waitForTimeout(200);
+      const seen = await glides(page);
+      assertEq(seen.length, 0, `the history's order lands at once: ${seen}`);
+      await assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("motion: the last tab closed in a strip scrolled to its end sinks out where it was seen while the tabs before it glide over its place", async () => {
     const strip = [...tabPages];
     for (const name of "abcdefghi") {
