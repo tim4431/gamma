@@ -6,9 +6,10 @@ notes in its annotation popup: invisible on paper, and a click away in every
 viewer. With the Notes switch a highlight's notes are also printed as a card
 (``pdf_cards``), and with the Comments switch each of its open comment
 threads is a card of its own. Notes go where ``notes_at`` says; threads
-always go beside the page. A thread on one of the notes goes under that
-note when its card is beside the page too, and is otherwise a card of its
-own quoting the note.
+always go beside the page. A thread on a note (the highlight's own text
+is its note) goes under that note when its card is beside the page too,
+and is otherwise a card of its own, quoting the note when it is one of the
+notes under the highlight.
 
 **Beside the page** (``notes_at`` ``beside``, and every thread) is where the
 viewer shows a highlight's comment threads once a lower zoom leaves room for
@@ -428,8 +429,10 @@ def render_notes(pdf_bytes: bytes, highlights, *, notes_at: str = "beside", uplo
     leave out its threads, and without ``blocks`` a ``note`` string is one
     block), placed as ``notes_at`` says, each with the threads on it: under
     the note in its card beside the page, else a card of their own beside
-    the page, quoting the note. ``threads`` are the threads on the
-    highlight itself, each a card beside the page. ``note_threads`` are the
+    the page, quoting the note (the depth-0 note's threads, the
+    highlight's own, need no quote: the card is tied to the highlight).
+    ``threads`` are threads on the highlight with no note to sit under,
+    each a card beside the page. ``note_threads`` are the
     threads on its notes the cards do not show (the Notes switch off, an
     empty note, a text box), each a card quoting its note. A highlight with
     nothing to print, without usable rects or on a page out of range is
@@ -460,7 +463,7 @@ def render_notes(pdf_bytes: bytes, highlights, *, notes_at: str = "beside", uplo
             if md:
                 blocks.append((depth, md, replies if together else []))
             if not together:
-                apart += [(md, thread) for thread in replies]
+                apart += [(md if depth else "", thread) for thread in replies]
         apart += [(md or "", thread) for md, thread in h.get("note_threads") or () if thread]
         threads = [("", thread) for thread in h.get("threads") or () if thread] + apart
         pos = h.get("position") or {}

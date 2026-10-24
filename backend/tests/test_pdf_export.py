@@ -880,6 +880,25 @@ def test_a_notes_threads_apart_from_it_quote_it():
     assert "quotedline" in text and "\u2026" in text and "more of it" not in text and "answer" in text
 
 
+def test_a_highlights_threads_go_under_its_own_note():
+    """A highlight's own text is its note: its threads go under that note in
+    the card beside the page, and are a card of their own, unquoted, with
+    the notes on the page."""
+    from gamma.pdf_notes import render_notes
+
+    blocks = [(0, "ownnote", [[_comment("carol", "onthepassage")]]), (1, "nestednote", [])]
+    out, drawn = render_notes(_blank_pdf(), [{"position": _position(y1=300, y2=320), "blocks": blocks}])
+    assert drawn == 1
+    words = _shown_words(out)
+    assert words["ownnote"][1] < words["onthepassage"][1] < words["nestednote"][1]
+
+    out, drawn = render_notes(_blank_pdf(), [{"position": _position(y1=300, y2=320), "blocks": blocks}],
+                              notes_at="page")
+    assert drawn == 2
+    assert _page_text(out).count("ownnote") == 1
+    assert _shown_words(out)["onthepassage"][0] > PAGE_W
+
+
 def test_render_notes_refuses_an_unknown_place():
     from gamma.pdf_notes import render_notes
 
@@ -936,6 +955,12 @@ def test_export_pdf_comments_switch(guest):
     assert both.headers["x-notes-rendered"] == "2"
     words = _shown_words(both.content)
     assert words["my"][0] < PAGE_W < words["an"][0]
+
+    # Beside the page the highlight's thread goes under its own note: one card.
+    together = guest.get(f"/api/pages/{page['id']}/export-pdf?notes=1&comments=1")
+    assert together.headers["x-notes-rendered"] == "1"
+    words = _shown_words(together.content)
+    assert PAGE_W < words["my"][0] and words["my"][1] < words["an"][1]
 
     assert guest.get(f"/api/pages/{page['id']}/export-pdf?notes=1&notes_at=margin").status_code == 400
     assert guest.get(f"/api/pages/{page['id']}/export?mode=annotated-pdf&notes_at=x").status_code == 400
