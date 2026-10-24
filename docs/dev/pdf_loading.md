@@ -74,7 +74,11 @@ cover is often an image of another size, and fitting it pushed every text page
 past the viewer's edge. The viewer's load effect composes them:
 
 1. **A parsed document from a recent visit** (`DOC_CACHE`, the last two
-   `PDFDocumentProxy` objects with their layout) is committed as it is.
+   `PDFDocumentProxy` objects with their layout) is committed as it is, in
+   the commit that asks for it and before paint (a layout effect), at the
+   fit-width scale worked out for it there: the viewer's first frame holds
+   its pages at their zoom, with the pixels they showed when they left
+   (below, "Coming back to a document").
    Documents are never destroyed on a tab switch or a viewer unmount, only on
    eviction, a second after the commit so mounted pages are not torn out from
    under pdf.js. The byte cache (`PDF_CACHE`) holds one entry, which pays
@@ -133,6 +137,55 @@ past the viewer's edge. The viewer's load effect composes them:
    among them (`typicalPageIndex`, so a cover of another size does not set
    the layout or the fit-width zoom) and refines in the background. Bytes from the cache wait at most
    250 ms for the manifest; measuring is still correct, only slower.
+
+**Coming back to a document.** A page with no PDF unmounts the viewer
+(a notes page's tab, the library), and a document taking another's place
+remounts every page box (they are keyed by the document). Either way
+pdf.js draws the pages again, tens of milliseconds for a plain page and
+more for one with figures or on a slow device, and until then they would
+be blank boxes. Keeping the viewer mounted would keep them, but a hidden
+viewer is `display: none`, which takes every page out of its observers'
+view and so releases its pixels anyway, loses its scroll, and leaves a
+second `.pdfViewer` in the DOM for the app's and the tests' lookups. So
+the viewer keeps the pixels instead (`pdf/pageRaster.js`). As a document
+leaves, in a layout cleanup that React runs before it takes the boxes
+out, or as a swap commits the next one, `keepPixels` copies what each page
+in view shows, under the document. The pages in view are the ones the
+reader last saw, worked out from the page heights, the scale the zoom
+anchor last laid them out at and the last scroll, not from the boxes in
+the DOM: a tab brings its zoom in the same commit as its url, so between
+two papers read at different zooms the leaving pages are already laid
+out at the next one's zoom, under the old scroll, and the DOM would name
+other pages. Each copy is at the screen's resolution for the box its
+pixels were drawn for, not for the box as it is in that commit. A page
+box of that document mounting again starts from its copy (`takePixels`,
+then the raster's `prime`, before paint), and its own first paint
+replaces it; a primed page keeps the copy through `show(null)` until
+then. The copies of the last two documents left stay, within 96 MB (32 MB
+under the touch and WebKit canvas limits), the oldest going first, and a
+document `DOC_CACHE` evicts takes its copies with it (`forgetPixels`).
+A document back with a copy on a page in view at the restored place
+reports `painted` with `rendered`: the reader has that page, and no
+"Rendering page…" pill rises for the switch. Without one the pill stays
+until a page paints, as for any document.
+
+The viewer reports the scale its boxes are laid out at with `rendered`
+and `layout`, and the host's pending tab position is measured in it. A
+remounted viewer starts at a fit-width of 1 while the host still holds
+the last viewer's effective scale; measured in that, every return to a
+PDF tab would land a fit-width's factor further down. The fit-width
+scale is worked out before paint (a layout effect), so a document is
+never seen at the scale the one before it fitted. The viewer keeps its
+scrollbar's room while nothing scrolls (`scrollbar-gutter: stable`), so
+where the scrollbar takes room (Windows, Linux, a Mac with a mouse) the
+pages are as wide with it as without it. A document back from the cache
+is fitted in an empty viewer, before its pages bring the scrollbar; had
+the scrollbar then narrowed the fit, the zoom anchor would have re-placed
+it about the viewport's centre, and each return to the tab landed about
+5 px higher than the last. A document laid out at
+its own scale in the commit that brought it is not re-placed by the zoom
+anchor's swap rule, which is for a fit-width settling after the swap; and
+the page number shown is synced before paint, after the restore.
 
 **Where a page stands.** Pages are laid out one under another,
 `PAGE_GAP` (8 px) apart. Each page box is centred in the viewer by its auto
@@ -394,14 +447,14 @@ counts from the `open` phase of that url.
 | Phase | Meaning |
 |---|---|
 | `open` | the viewer started opening this url (the clock starts) |
-| `layout` | skeleton page boxes from the manifest are in the DOM (pre-paint; the pending restore lands here) |
+| `layout` | skeleton page boxes from the manifest are in the DOM (pre-paint; the pending restore lands here, measured at the `scale` the phase carries) |
 | `start` / `progress` / `done` | a whole-file download, with byte progress |
 | `cached` | bytes came from memory / IndexedDB, or the document from `DOC_CACHE` |
 | `parsing` | `getDocument` called (range open: pdf.js is fetching its chunks) |
 | `opened` | pdf.js has the document: xref and page tree parsed |
 | `measuring` | the fallback page measure, when there is no manifest |
-| `rendered` | the document's pages are in the DOM (pre-paint; the pending restore lands here when there was no skeleton) |
-| `painted` | the first canvas painted; the pill clears |
+| `rendered` | the document's pages are in the DOM (pre-paint; the pending restore lands here when there was no skeleton, measured at the `scale` the phase carries) |
+| `painted` | the first canvas painted, or the pages came back with the pixels they had (with `rendered`); the pill clears |
 | `error` / `cancelled` | failed with `detail` / the url changed mid-load |
 
 ## Measured
@@ -414,7 +467,11 @@ timing steps assert only that the document paints; the numbers are their
 notes. The same scenario then pins the behaviours: a landscape page far below
 the fold has its own box shape (only the manifest could have said so), the
 last-read page comes back after a reload, two large documents alternate
-through the parsed-document cache without mixing, and an anonymous share
+through the parsed-document cache without mixing, a paper's tab left for a
+notes page comes back drawn in every frame, where it was left and at its
+zoom, round after round (in a browser whose scrollbar takes room), so does
+each of two papers' tabs read at different zooms, with no "Rendering
+page…", and an anonymous share
 visitor opens the large document by ranges with no request rejected (the
 share token rides on the ranges, the manifest and the HEAD).
 

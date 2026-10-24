@@ -649,10 +649,11 @@ test("the finish card lists only what the run made", () => {
 
 // A repeated anchor: the newest one ("last"), or the one inside the element
 // the app marks data-guide-recent ("recent") — the table the user just made,
-// not the page's first — else the first.
-test("a repeated anchor picks the newest, the marked, or the first element", () => {
+// not the page's first — else the first. One inside inert content (a folded
+// dock window's body) is never one.
+test("a repeated anchor picks the newest, the marked, or the first element, never an inert one", () => {
   for (const id of ["notes.table", "notes.tableAdd", "notes.tableCorner"]) assert.equal(ANCHORS[id].pick, "recent", id);
-  const el = (marked = false) => ({ closest: (sel) => (marked && sel === "[data-guide-recent]" ? {} : null) });
+  const el = (marked = false, inert = false) => ({ closest: (sel) => ((marked && sel === "[data-guide-recent]") || (inert && sel === "[inert]") ? {} : null) });
   const saved = globalThis.document;
   const dom = (...els) => { globalThis.document = { querySelectorAll: () => els }; };
   try {
@@ -666,6 +667,12 @@ test("a repeated anchor picks the newest, the marked, or the first element", () 
     assert.equal(anchorElement("header.home"), old);
     dom();
     assert.equal(anchorElement("notes.table"), null);
+    const folded = el(true, true);
+    dom(folded, old);
+    assert.equal(anchorElement("notes.tableAdd"), old, "the marked one is in a folded window");
+    assert.equal(anchorElement("header.home"), old);
+    dom(folded);
+    assert.equal(anchorElement("chat.citation"), null);
   } finally { globalThis.document = saved; }
 });
 

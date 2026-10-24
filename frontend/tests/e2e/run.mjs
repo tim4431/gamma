@@ -61,6 +61,7 @@ import { ipadScenarios } from "./scenarios/ipad.mjs";
 import { touchScenarios } from "./scenarios/touch.mjs";
 import { quickOpenScenarios } from "./scenarios/quickOpen.mjs";
 import { trashScenarios } from "./scenarios/trash.mjs";
+import { motionScenarios } from "./scenarios/motion.mjs";
 import { folderScenarios } from "./scenarios/folders.mjs";
 import { cloudSignInScenarios } from "./scenarios/cloudSignIn.mjs";
 import { publishScenarios } from "./scenarios/publish.mjs";
@@ -105,6 +106,7 @@ const RUNNERS = {
   "quick-open": quickOpenScenarios,
   "folders": folderScenarios,
   "trash": trashScenarios,
+  "motion": motionScenarios,
   "ipad": ipadScenarios,
   "touch": touchScenarios,
 };

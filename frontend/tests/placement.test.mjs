@@ -4,7 +4,7 @@
 // point a button's menu opens from (menuAnchor).
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { menuAnchor, placeFloating } from "../src/shared/ui/placement.js";
+import { growFrom, menuAnchor, placeFloating, surfaceSize } from "../src/shared/ui/placement.js";
 
 const view = { width: 1000, height: 800 };
 const menu = { width: 200, height: 120 };
@@ -55,4 +55,25 @@ test("a menu from a button: 4 px under or over it, its left edge on the button's
   // placed: the player's menu stands on its button, the strip's hangs under it
   assert.deepEqual(placeFloating(menu, menuAnchor(button, { side: "above" }), view), { left: 300, top: 276 });
   assert.deepEqual(placeFloating(menu, menuAnchor(button), view), { left: 300, top: 436 });
+});
+
+// A surface grows in from var(--scale-in) (motion.css): it is placed by the
+// size it lays out at, not by its smaller rect mid-arrival.
+test("surfaceSize: the rect without the surface's own arriving scale", () => {
+  const was = globalThis.getComputedStyle;
+  try {
+    const el = { getBoundingClientRect: () => ({ width: 194, height: 97 }) };
+    globalThis.getComputedStyle = () => ({ scale: "0.97" });
+    assert.deepEqual(surfaceSize(el), { width: 200, height: 100 });
+    globalThis.getComputedStyle = () => ({ scale: "none" });
+    assert.deepEqual(surfaceSize(el), { width: 194, height: 97 });
+  } finally {
+    globalThis.getComputedStyle = was;
+  }
+});
+
+test("growFrom: the origin at the point a surface opens from", () => {
+  assert.equal(growFrom(100, 100, { left: 100, top: 100 }), "0px 0px", "at its top-left corner");
+  assert.equal(growFrom(500, 300, { left: 300, top: 300 }), "200px 0px", "by its right edge");
+  assert.equal(growFrom(950, 750, { left: 792, top: 672 }), "158px 78px", "kept inside the window: still from the point");
 });

@@ -15,7 +15,9 @@
 // anchor repeats, "last" means the newest one (the latest chat reply),
 // "recent" the one inside the element the app marks data-guide-recent (the
 // table the user just made); the first one otherwise, and when nothing is
-// marked.
+// marked. An anchor inside inert content is none: a folded dock window keeps
+// its body mounted, out of sight and inert (DockWindow), and nothing there
+// can be pointed at until it opens.
 
 export const ANCHORS = {
   "header.view": { view: "desktop", description: "View menu: reopen closed windows" },
@@ -147,7 +149,7 @@ export const ATTR = "data-guide";
 
 export function anchorElement(id) {
   if (!id) return null;
-  const all = [...document.querySelectorAll(`[${ATTR}="${id}"]`)];
+  const all = [...document.querySelectorAll(`[${ATTR}="${id}"]`)].filter((el) => !el.closest("[inert]"));
   const pick = ANCHORS[id]?.pick;
   if (pick === "last") return all[all.length - 1] || null;
   if (pick === "recent") return all.find((el) => el.closest(`[${ATTR}-recent]`)) || all[0] || null;

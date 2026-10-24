@@ -11,7 +11,7 @@
 // for anyone with the address kept, the synced state line, the cloud share's
 // access, Sync now, the header pill and Settings' Publishing row, Unpublish,
 // Settings' Stop publishing all, and the free plan's cap of five pages.
-import { Account, Server, wanted } from "../harness.mjs";
+import { Account, Server, wanted, live } from "../harness.mjs";
 import { FakeCloud } from "../fakeCloud.mjs";
 
 export async function publishScenarios(env) {
@@ -275,7 +275,7 @@ export async function publishScenarios(env) {
           { timeout: 15000, what: "the cloud's theme is here" });
         await until(() => sp.evaluate(() => localStorage.getItem("gamma-theme")).then((v) => v === "gray"),
           { what: "the open tab takes the merged theme" });
-        assertEq(await dialog.count(), 0, "no dialog outside a conflict");
+        assertEq(await sp.locator(live(".confirmModal")).count(), 0, "no dialog outside a conflict");
         await assertNoProblems(sp);
       } finally { await sctx.close(); }
     });

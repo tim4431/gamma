@@ -41,7 +41,7 @@
   border-radius: inherit;
   background: var(--danger);
   transform-origin: left;
-  transition: transform var(--dur-fast) linear;
+  transition: transform var(--dur-fast) linear; /* ds-allow: follows the microphone level as it comes */
 }
 /* the red dot, breathing while audio is captured */
 .recDot {
@@ -195,7 +195,7 @@
 .inkPending { opacity: 0.15; }
 /* a note not yet reached, and the one reached last */
 .blockRow.replayPending > .blockBody { opacity: 0.4; }
-.blockRow.replayPending > .blockBody, .blockRow.replayReached > .blockBody { transition: opacity var(--dur-base) ease; }
+.blockRow.replayPending > .blockBody, .blockRow.replayReached > .blockBody { transition: opacity var(--dur-base); }
 /* a stamped note's play glyph in the margin (OneNote's), on hover */
 .blockBody:has(> .replayGlyph) { position: relative; }
 .replayGlyph {
@@ -213,7 +213,7 @@
   color: var(--text-secondary);
   cursor: pointer;
   opacity: 0;
-  transition: opacity var(--dur-fast) ease;
+  transition: opacity var(--dur-fast);
 }
 .blockRow:hover .replayGlyph, .replayGlyph:focus-visible { opacity: 1; }
 .replayGlyph:hover { color: var(--text-primary); }

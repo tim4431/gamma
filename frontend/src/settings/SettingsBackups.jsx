@@ -15,6 +15,7 @@ import React from "react";
 import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { BackupTasks } from "./BackupTasks";
 import { OffsiteCopies } from "./OffsiteCopies";
+import { backupsOf, useSettingsRead, useSettingsReads } from "./settingsReads.js";
 import { ActionMenu } from "../shared/ui/Menus";
 import { PaneHead, Section, Empty } from "./SettingsKit";
 import { DatabaseIcon, DownloadIcon, HardDriveIcon, ImportIcon, PlusIcon, Trash2Icon } from "../shared/ui/Icons";
@@ -34,26 +35,27 @@ export function fmtWhen(iso, fallback = "") {
 // The workspaces a snapshot or restore job works on.
 const jobWorkspaces = (job) => (job.kind === "snapshot" ? job.params?.workspaces || [] : [job.params?.ws]);
 
+// The workspaces and each one's snapshots are the pane's reads, kept while
+// the dialog is open (settingsReads.js): a second visit shows them at once
+// and reads them again in place.
 export function WorkspaceBackups({ value }) {
   const { workspace, tasks, setStatus, confirm, isAdmin } = value;
-  const [mine, setMine] = React.useState(null);   // GET /api/workspaces/mine → workspaces
-  const [lists, setLists] = React.useState({});   // ws id → {backups, max} | {error}
-  const [error, setError] = React.useState("");
-
-  const loadList = React.useCallback(async (id) => {
-    try {
-      const d = await apiJson(`${API}/workspaces/${encodeURIComponent(id)}/backups`);
-      setLists((prev) => ({ ...prev, [id]: d }));
-    } catch (e) {
-      setLists((prev) => ({ ...prev, [id]: { backups: [], error: e.message } }));
-    }
-  }, []);
+  const reads = useSettingsReads();
+  const minePath = "/workspaces/mine";
+  const mine = reads.get(minePath).data?.workspaces || null; // GET /api/workspaces/mine → workspaces
+  const error = mine ? "" : reads.get(minePath).error;
+  // ws id → {backups, max} | {backups: [], error}, or undefined while it is read
+  const listOf = (id) => {
+    const entry = reads.get(backupsOf(id));
+    return entry.data !== undefined && !entry.error ? entry.data : entry.error ? { backups: [], error: entry.error } : undefined;
+  };
+  const loadList = React.useCallback((id) => { reads.read(backupsOf(id), { force: true }).catch(() => {}); }, [reads]);
   React.useEffect(() => {
-    apiJson(`${API}/workspaces/mine`).then((d) => {
-      setMine(d.workspaces);
-      d.workspaces.forEach((w) => loadList(w.id));
-    }).catch((e) => setError(e.message));
-  }, [loadList]);
+    reads.read(minePath).catch(() => {});
+  }, [reads]);
+  React.useEffect(() => {
+    for (const w of mine || []) reads.read(backupsOf(w.id)).catch(() => {});
+  }, [reads, mine]);
 
   // Snapshots and restores run as background jobs (tasks/useTasks.js): the
   // one running for a workspace shows under its heading, and its list
@@ -131,7 +133,7 @@ export function WorkspaceBackups({ value }) {
   const owned = (mine || []).filter((w) => w.role === "owner");
 
   function group(w) {
-    const list = lists[w.id];
+    const list = listOf(w.id);
     const owner = w.role === "owner";
     const full = list && list.backups.filter((b) => !b.scheduled && !b.auto).length >= list.max;
     const job = runningFor(w.id);
@@ -158,7 +160,7 @@ export function WorkspaceBackups({ value }) {
         ) : null}
       >
         {job ? <div className="backupJob"><span>{taskTitle(job)}</span><TaskProgress task={job} label={taskTitle(job)} /></div> : null}
-        {!list ? <Empty icon={DatabaseIcon}>{t("Loading…")}</Empty> : null}
+        {!list ? <Empty icon={DatabaseIcon} loading>{t("Loading…")}</Empty> : null}
         {list?.error ? <div className="settingsPaneHint aiKeysError">{list.error}</div> : null}
         {list && !list.error && !list.backups.length ? (
           <div className="settingsPaneHint">{owner ? t("No snapshots yet.") : t("No snapshots yet — only an owner takes them.")}</div>
@@ -209,7 +211,7 @@ export function WorkspaceBackups({ value }) {
   return (
     <>
       <PaneHead icon={DatabaseIcon} title={t("Backups")}>{t("Server-kept snapshots and the tasks that take them.")}</PaneHead>
-      {!mine && !error ? <Empty icon={DatabaseIcon}>{t("Loading…")}</Empty> : null}
+      {!mine && !error ? <Empty icon={DatabaseIcon} loading>{t("Loading…")}</Empty> : null}
       {error ? <Empty icon={DatabaseIcon}>{t("Backups unavailable — {error}", { error: error })}</Empty> : null}
       {mine ? (
         <>
@@ -234,13 +236,14 @@ export function WorkspaceBackups({ value }) {
 }
 
 export function ServerBackups({ setStatus, confirm, tasks }) {
-  const [rows, setRows] = React.useState(null);
-  const [error, setError] = React.useState("");
-
+  // the Server pane's read (settingsReads.js), newest first
+  const { data, error: readError, reload } = useSettingsRead("/admin/backups");
+  const rows = data ? [...(data.backups || [])].reverse() : null;
+  const [ownError, setError] = React.useState("");
+  const error = ownError || (!data ? readError : "");
   const refresh = React.useCallback(() => {
-    apiJson(`${API}/admin/backups`).then((d) => setRows([...d.backups].reverse())).catch((e) => setError(e.message));
-  }, []);
-  React.useEffect(() => { refresh(); }, [refresh]);
+    reload().catch((e) => setError(e.message));
+  }, [reload]);
   // A snapshot is a background job (server-backup): its progress shows
   // here and in Background tasks, and the list reloads once it ends.
   const job = tasks.jobs.find((j) => j.kind === "server-backup" && isActive(j)) || null;
@@ -305,7 +308,7 @@ export function ServerBackups({ setStatus, confirm, tasks }) {
       )}
     >
       {job ? <div className="backupJob"><span>{taskTitle(job)}</span><TaskProgress task={job} label={taskTitle(job)} /></div> : null}
-      {rows === null && !error ? <Empty icon={DatabaseIcon}>{t("Loading…")}</Empty> : null}
+      {rows === null && !error ? <Empty icon={DatabaseIcon} loading>{t("Loading…")}</Empty> : null}
       {rows && !rows.length ? <Empty icon={DatabaseIcon}>{t("No snapshots yet. The server also takes one before every data upgrade.")}</Empty> : null}
       {(rows || []).map((b) => (
         <div key={b.name} className="aiProvRow">

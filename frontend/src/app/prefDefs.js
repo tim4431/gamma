@@ -27,6 +27,7 @@ import { textStyle } from "../markup/textBox.js";
 import { LANGUAGES } from "../shared/i18n/locales.js";
 import { normalizeChord } from "../shared/lib/hotkeys.js";
 import { DEFAULT_PALETTE, normalizePalette } from "../shared/model/palette.js";
+import { DARK_THEMES, THEMES, themeScheme } from "./theme.js";
 
 export const ACCOUNT = "account";
 export const BROWSER = "browser";
@@ -123,14 +124,8 @@ const AGENT_PERMS = json((value) => {
   }));
 });
 
-export const THEMES = ["system", "light", "dark", "gamma-light", "gamma-dark", "sepia", "solarized", "gray"];
-// The themes on the dark colour scheme; every other pinned theme is light.
-// The root carries the scheme as data-scheme beside data-theme: tokens.css
-// derives each theme's colours with that scheme's recipe, and the
-// scheme-wide rules in app.css key on it. index.html's pre-paint script and
-// the desktop shell repeat the list (tests/themes.test.mjs keeps them equal).
-export const DARK_THEMES = ["dark", "gamma-dark"];
-export const themeScheme = (theme) => (DARK_THEMES.includes(theme) ? "dark" : "light");
+// The themes, and the ones on the dark scheme: app/theme.js.
+export { DARK_THEMES, THEMES, themeScheme };
 
 // Interface size (Settings → Appearance): text and control boxes share
 // --ui-scale in app.css. Ctrl+scroll further resizes notes/chat text in place
@@ -151,10 +146,12 @@ export const PREFS = {
   // System follows the OS; the other themes pin the appearance. Sepia,
   // Solarized Light and Gray also tint PDF pages (app.css). index.html
   // resolves and applies the theme (and its theme-color) from localStorage
-  // before first paint.
+  // before first paint; the account's, from /api/session, goes on as the
+  // session lands, before the app's first screen (main.jsx).
   theme: pref("gamma-theme", ACCOUNT, "system", oneOf(THEMES)),
   // Interface language (docs/dev/i18n.md): "system" follows the browser.
-  // main.jsx reads the stored value before the first render.
+  // main.jsx reads the stored value, or the account's from /api/session,
+  // before the app's modules load.
   language: pref("gamma-language", ACCOUNT, "system", oneOf(LANGUAGES.map(([code]) => code))),
   // Flip page colors: display-only inverted (night) rendering of the PDF canvas.
   pdfDarkPage: flag("gamma-pdf-dark", ACCOUNT, false),

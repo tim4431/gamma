@@ -1118,4 +1118,66 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
       assertNoProblems(page);
     } finally { await desk.close(); }
   });
+
+  // The bar is the notes' one, not each row's: from one open editor to the
+  // next it stays where it is, never out of sight, with its tools for the
+  // block now open; it starts out of sight only for the first editor, the
+  // keyboard's rise.
+  await step("ipad: the editing bar stays up from one editor to the next: a new block, an indent and an outdent by key or by tap, and another note tapped, with its tools for the open block", async () => {
+    const note = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Steady bar page" } });
+    for (const text of ["Alpha idea", "Beta idea"]) await alice.api("/api/blocks", { method: "POST", body: { parent_id: note.id, content: text } });
+    const [first, second] = (await tree(alice, note.id)).map((b) => b.content);
+    const ctx = await alice.context(browser, { hasTouch: true, isMobile: true, deviceScaleFactor: 2, viewport: { width: 1194, height: 834 } });
+    try {
+      const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&block=${note.id}`);
+      const bar = page.locator(".editBar");
+      const tool = (name) => bar.getByRole("button", { name, exact: true });
+      // Every frame from the action on, for 700 ms: the frames the bar was
+      // missing, out of sight or fading in, and the block whose editor is open.
+      const watch = (act) => page.evaluate(() => {
+        window.e2eBarFrames = { missed: 0, frames: 0 };
+        const start = performance.now();
+        const tick = () => {
+          const el = document.querySelector(".editBar");
+          const w = window.e2eBarFrames;
+          w.frames++;
+          if (!el || el.classList.contains("moving") || Number(getComputedStyle(el).opacity) < 0.99) w.missed++;
+          if (performance.now() - start < 700) requestAnimationFrame(tick); else w.done = true;
+        };
+        requestAnimationFrame(tick);
+      }).then(act).then(() => until(() => page.evaluate(() => window.e2eBarFrames.done && window.e2eBarFrames), { what: "700 ms watched" }));
+      const open = () => page.evaluate(() => document.activeElement?.closest(".blockEditorCm")?.dataset.blockId || null);
+      await page.locator(".blockRow", { hasText: first }).first().locator(".blockBody").tap();
+      await until(() => bar.evaluate((el) => !el.classList.contains("moving") && Number(getComputedStyle(el).opacity) >= 0.99).catch(() => false),
+        { what: "the bar shows for the first editor, once the keyboard's rise is over" });
+      await page.keyboard.press("End");
+      for (const [what, act] of [
+        ["Shift+Enter, a new block", () => page.keyboard.press("Shift+Enter")],
+        ["Tab, an indent", () => page.keyboard.press("Tab")],
+        ["Shift+Tab, an outdent", () => page.keyboard.press("Shift+Tab")],
+        ["the bar's New block below", () => tool("New block below").tap()],
+        ["the bar's Indent", () => tool("Indent block").tap()],
+        ["the bar's Outdent", () => tool("Outdent block").tap()],
+      ]) {
+        const seen = await watch(act);
+        assertEq(seen.missed, 0, `frames the bar was out of sight through ${what} (of ${seen.frames})`);
+      }
+      // The tools are the open block's: indented, it can be outdented and
+      // not indented again; at the top level, the reverse.
+      const fresh = await open();
+      assert(fresh, "a new block's editor is open");
+      await tool("Indent block").tap();
+      await until(async () => !(await tool("Outdent block").isDisabled()) && (await tool("Indent block").isDisabled()), { what: "indented, the bar offers Outdent" });
+      assertEq(await open(), fresh, "the indented block's editor keeps the focus");
+      await tool("Outdent block").tap();
+      await until(async () => (await tool("Outdent block").isDisabled()), { what: "back at the top, nothing to outdent" });
+      const other = await watch(() => page.locator(".blockRow", { hasText: second }).first().locator(".blockBody").tap());
+      assertEq(other.missed, 0, `frames the bar was out of sight as another note opened (of ${other.frames})`);
+      await until(async () => (await page.evaluate(() => document.activeElement?.closest(".blockRow")?.textContent || "")).includes(second), { what: "the other note's editor is open" });
+      await tool("Done").tap();
+      await page.waitForSelector(".blockEditorCm", { state: "detached", timeout: 5000 });
+      assertEq(await bar.count(), 0, "the bar leaves with the last editor");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
 }

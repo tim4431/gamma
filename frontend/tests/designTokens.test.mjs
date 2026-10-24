@@ -33,9 +33,15 @@ test("the scanner tells raw values from tokens", () => {
   assert.deepEqual(kinds("z-index", "var(--z-popover)"), []);
   assert.deepEqual(kinds("z-index", "4"), [], "1-9 orders siblings in one component");
   assert.deepEqual(kinds("z-index", "1100"), ["z"]);
-  assert.deepEqual(kinds("transition", "opacity var(--dur-fast) ease"), []);
-  assert.deepEqual(kinds("transition", "opacity 0.12s ease"), ["duration"]);
-  assert.deepEqual(kinds("animation", "pillSpin 0.9s linear infinite"), [], "a loop keeps its period");
+  assert.deepEqual(kinds("transition", "opacity var(--dur-fast)"), [], "a fade leaves its easing out");
+  assert.deepEqual(kinds("transition", "opacity 0.12s"), ["duration"]);
+  assert.deepEqual(kinds("transition", "opacity var(--dur-fast) ease"), ["easing"]);
+  assert.deepEqual(kinds("transition", "transform var(--dur-slow) var(--ease-out), opacity var(--dur-slow)"), []);
+  assert.deepEqual(kinds("transition", "transform var(--dur-base) cubic-bezier(0.2, 0, 0, 1)"), ["easing"]);
+  assert.deepEqual(kinds("animation", "tabIn var(--dur-base) ease-out"), ["easing"]);
+  assert.deepEqual(kinds("animation", "easeIn var(--dur-base) var(--ease-out)"), [], "a name is not an easing");
+  assert.deepEqual(kinds("animation", "pillSpin 0.9s linear infinite"), [], "a loop keeps its period and easing");
+  assert.deepEqual(kinds("transition", "transform 520ms cubic-bezier(0.2, 0, 0, 1), opacity var(--dur-base) ease"), ["easing"], "per item of the list");
 });
 
 test("allow comments exempt a line or a block", () => {

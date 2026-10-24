@@ -9,7 +9,7 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
-import { isFolded, isHighlightBlock, withLegacyAccessors } from "../shared/model/blockModel";
+import { countBlocks, isFolded, isHighlightBlock, withLegacyAccessors } from "../shared/model/blockModel";
 import { DEFAULT_HIGHLIGHT, normalizeColor } from "../shared/model/palette.js";
 import { citesSeveralPapers, gammaLinkId, parseGammaLink, relativeGammaLink } from "../shared/model/gammaLinks.js";
 import { NO_LABELS, REF_RE, refIdsOf } from "./refLabels.js";
@@ -21,7 +21,8 @@ import { useBlockFrame } from "../replay/useFrame.js";
 import { isTextBox } from "../markup/textBox.js";
 import { isSheet } from "../notebook/notebook";
 import { NoteSheet } from "../notebook/NoteSheet";
-import { CitationPill, GammaLinkCard, handleMarkdownCopy } from "../shared/ui/Widgets";
+import { CitationPill, GammaLinkCard, handleMarkdownCopy, useDockFolded } from "../shared/ui/Widgets";
+import { Collapse } from "../shared/ui/MotionWidgets";
 import { DiagramFigure, diagramCodeProps } from "../shared/ui/DiagramFigure";
 import { mapOutsideCodeFences, remarkDiagrams, scanDiagramFences, setDiagramWidth } from "../shared/lib/diagramMarkdown.js";
 import { MdObject, ObjectMenuButton, findObject } from "./MdObject";
@@ -34,7 +35,7 @@ import { useMathUi } from "./useMathUi.js";
 import { BlockCmEditor, OBJECT_DRAG_TYPE } from "./BlockCmEditor";
 import { expandBlankLines } from "./mdMarks";
 import { BLOCK_COMMANDS } from "./blockCommands.js";
-import EditBar from "./EditBar";
+import { EditBarHost, useEditBarRow } from "./EditBar";
 import { dispatch as dispatchHotkey } from "../shared/lib/hotkeys.js";
 import { blockStartInSource, gapInSource, renderedGaps, sourceOffsetAtPoint } from "./clickToSource";
 import { highlightCode, makeCopyButton } from "./codeHighlight";
@@ -1002,6 +1003,8 @@ const BlockRow = React.memo(function BlockRow({
     block, tree: getTree?.(), view, folded: collapsed, readOnly, editor: ref.current,
     row: { onHop, onMoveBlock, onDuplicate, onDelete, onEnterSibling, onIndent, onOutdent, onToggle, onAddToChat, onMoveToPage, onComment },
   });
+  // While this row's editor is open, the tree's editing bar is this row's.
+  useEditBarRow(!readOnly && editing, commandContext);
 
   useEffect(() => {
     registerRef(block.id, ref);
@@ -1461,12 +1464,16 @@ const BlockRow = React.memo(function BlockRow({
         {hasChildren ? (
           <button
             className="collapseBtn"
+            aria-expanded={!collapsed}
+            aria-label={collapsed ? t("Expand children") : t("Collapse children")}
             onClick={(e) => {
               e.stopPropagation();
               onToggle(block.id);
             }}
           >
-            {collapsed ? "▸" : "▾"}
+            {/* one caret that turns (motion.css .turnCaret); turning the
+                glyph rather than the button keeps the button's hit box */}
+            <span className={`turnCaret${collapsed ? "" : " open"}`} aria-hidden="true">▸</span>
           </button>
         ) : (
           <span className="collapseSpacer" />
@@ -1761,7 +1768,6 @@ const BlockRow = React.memo(function BlockRow({
           ) : null}
         </>
       ) : null}
-      {!readOnly && editing ? <EditBar context={commandContext} onUndo={onUndo} /> : null}
       {!readOnly && editing && slash.popup ? (
         <SlashMenuPopup {...slash.popup} guide="editor.slashMenu" event="slash.opened" />
       ) : null}
@@ -1836,7 +1842,7 @@ const SortableBlockRow = React.memo(function SortableBlockRow({ block, ...rowPro
   }
 
   return (
-    <div className="sortableBlockWrap" data-block-id={block.id} data-depth={depth}>
+    <div className="sortableBlockWrap" data-block-id={block.id} data-motion-key={block.id} data-depth={depth}>
       {/* One narrow gutter column: ⋮⋮ (drag / menu) with the "+" (add a
           block) sitting right under it, shown only while the row is hovered. */}
       <span className="rowHandles">
@@ -1980,10 +1986,13 @@ function joinBlockText(existing, addition, mode, find, at) {
 // A block the AI agent is creating right now (a create_block call still
 // streaming): a read-only row at the position the block will take, typing
 // in the markdown as it arrives. Replaced by the real block when the call
-// lands and the tree reloads.
+// lands and the tree reloads. An item of the outline's ListMotion (one
+// call streams at a time, so its key is unique): a change the person makes
+// above it glides it with the rows around it. It comes and goes with the
+// call, which is no change of the tree's shape, so at once.
 function AiGhostRow({ content, depth }) {
   return (
-    <div className="sortableBlockWrap aiGhostWrap" data-depth={depth}>
+    <div className="sortableBlockWrap aiGhostWrap" data-depth={depth} data-motion-key="ai-ghost">
       {/* Inert stand-in for the handle column (hidden in CSS). */}
       <span className="rowHandles" aria-hidden="true"><span className="dragHandle" /></span>
       <div className="blockRowWrap">
@@ -2008,12 +2017,22 @@ function AiGhostRow({ content, depth }) {
 // sibling the call names (at the end when it names none or an unknown one).
 // `onSheet`: a sheet holds these rows (notebook/notebook.js), which puts
 // a text box among them on it.
+// A fold of more blocks than this opens and shuts at once.
+const FOLD_MOVES_MOST = 60;
+
 function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = false }) {
   // Every row takes its own entry of the labels map, never the map itself
   // (a new one on every tree change would re-render each memoized row).
   // So too the comment counts: each row its own number, and whether its
   // thread popover is open.
-  const { refLabelsById, commentCounts, commentOpenFor, ...rowRest } = rowProps;
+  const { refLabelsById, commentCounts, commentOpenFor, foldMoving, view: openView, ...rest } = rowProps;
+  // In a folded dock window (useDockFolded) no row's editor is open: one
+  // there could take neither the focus nor a finger, and its editing bar
+  // would show over the rest of the screen. The view keeps the block that
+  // is open, whose editor mounts and takes the focus as the window opens.
+  const folded = useDockFolded();
+  const view = useMemo(() => (folded && openView?.editingId ? { ...openView, editingId: null } : openView), [folded, openView]);
+  const rowRest = { ...rest, view };
   const live = rowProps.aiLive;
   const ghost = live?.tool === "create_block" && live.parentId === (parentId ?? rowProps.rootId) ? live : null;
   if ((!blocks || blocks.length === 0) && !ghost) return null;
@@ -2028,7 +2047,7 @@ function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = 
   // document order across the page (rowProps.sheetNumbers), else among
   // these rows.
   let sheets = 0;
-  return (
+  const rows = (
     <>
       {ghostAt === 0 ? ghostRow : null}
       {list.map((rawBlock, idx) => { const block = legacy(rawBlock);
@@ -2050,17 +2069,28 @@ function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = 
             <BlockRow block={block} depth={depth} sheetNumber={sheetNumber} onSheet={onSheet} refLabels={refLabels}
               commentCount={commentCount} commentOpen={commentOpen} place={idx} siblings={list.length} {...rowRest} />
           )}
-          {!isFolded(block, rowProps.view) && (block.children?.length > 0 || live?.parentId === block.id) ? (
-            <div className="blockChildren">
-              <BlockTree blocks={block.children} readOnly={readOnly} rowProps={rowProps} depth={depth + 1} parentId={block.id}
-                onSheet={onSheet || isSheet(rawBlock)} />
-            </div>
+          {/* The children fold under their row: the person's own toggle
+              moves (foldMoving), anything else that folds or opens them (a
+              jump revealing a block, another viewer's default) does so at
+              once, as does a subtree too large to move smoothly. */}
+          {block.children?.length > 0 || live?.parentId === block.id ? (
+            <Collapse className="blockFold" open={!isFolded(block, rowProps.view)}
+              still={foldMoving !== block.id || countBlocks(block.children, FOLD_MOVES_MOST) > FOLD_MOVES_MOST}>
+              <div className="blockChildren" data-motion-key={`under:${block.id}`}>
+                <BlockTree blocks={block.children} readOnly={readOnly} rowProps={rowProps} depth={depth + 1} parentId={block.id}
+                  onSheet={onSheet || isSheet(rawBlock)} />
+              </div>
+            </Collapse>
           ) : null}
           {ghostAt === idx + 1 ? ghostRow : null}
         </React.Fragment>
       );})}
     </>
   );
+  // The top of the tree holds the editing bar of whichever row's editor is
+  // open (EditBar.jsx).
+  if (parentId !== undefined) return rows;
+  return <EditBarHost open={readOnly ? null : rowRest.view?.editingId} onUndo={rowRest.onUndo}>{rows}</EditBarHost>;
 }
 
 export { BlockTree, _dragState };

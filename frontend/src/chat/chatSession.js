@@ -12,9 +12,14 @@
 // that fails on the network or with a 5xx is retried; one that still fails
 // marks the conversation in `failed` (the dock says it is not saved) until
 // a later save goes through.
+//
+// It also keeps what the dock last showed of each conversation it read or
+// made (`recall`, the last SHOWN of them), so coming back to one shows it at
+// once, an empty one too, while the stored copy is read again.
 
 const RETRY_DELAYS = [1000, 3000, 8000];
 const MAX_MERGES = 5;
+const SHOWN = 20;
 const NO_VERSION = { at: "", base: [] };
 
 const messageKey = (m) => (m && m.id) || JSON.stringify(m);
@@ -83,6 +88,7 @@ export function createChatSession(save, { retryDelays = RETRY_DELAYS,
   const versions = new Map(); // key -> {at, base}: the stored conversation as last read or written here
   const inputs = new Map();   // key -> the list a reply last handed in (rebased after a merge)
   const merges = new Map();   // key -> merges so far: a save queued before one saves what is shown now
+  const shown = new Map();    // key -> {messages, title} the dock last showed, the latest last
   const emit = () => { for (const listener of listeners) listener(); };
   const setFailed = (key, message) => {
     if ((snapshot.failed.get(key) || "") === message) return;
@@ -211,6 +217,14 @@ export function createChatSession(save, { retryDelays = RETRY_DELAYS,
       emit();
     },
     stop(key) { controllers.get(key)?.abort(); },
+    // What the dock showed of a conversation: kept for the last SHOWN of
+    // them, and handed back (`recall`) when the dock comes back to it.
+    remember(key, messages, title = "") {
+      shown.delete(key);
+      shown.set(key, { messages, title });
+      if (shown.size > SHOWN) shown.delete(shown.keys().next().value);
+    },
+    recall: (key) => shown.get(key) || null,
     flush,
     // Drop the tab's copy (the stored conversation moved to history, or the
     // server's copy is shown again); its version goes with it.

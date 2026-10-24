@@ -123,7 +123,7 @@
   background: var(--bg-block);
   border: 1px solid var(--border-subtle);
   color: var(--text-muted);
-  transition: color var(--dur-fast) ease, border-color var(--dur-fast) ease;
+  transition: color var(--dur-fast), border-color var(--dur-fast);
 }
 .settingRow:hover .setIcon { color: var(--text-secondary); border-color: var(--border-hover); }
 .settingsPane .settingRow { flex-shrink: 0; }
@@ -134,14 +134,28 @@
 .setNum { width: 92px; flex: 0 0 auto; margin-bottom: 0; text-align: right; }
 .setRange { width: 108px; cursor: pointer; }
 
-/* Joined pill buttons (segmented choice). Layout only — the buttons are
-   .uiBtn, and .uiBtn.on (app.css) carries the selected look. */
-.segGroup { display: inline-flex; flex-shrink: 0; }
+/* Joined pill buttons (segmented choice). The buttons are .uiBtn, and
+   .uiBtn.on (app.css) carries the selected look until the sliding frame
+   (.slidePill, motion.css) is placed: then the frame draws the choice
+   over the buttons and slides to the next one chosen. */
+.segGroup { position: relative; display: inline-flex; flex-shrink: 0; }
 .segGroup .uiBtn { border-radius: 0; padding: 4px 10px; }
-.segGroup .uiBtn:first-child { border-radius: var(--radius-md) 0 0 var(--radius-md); }
+.segGroup .uiBtn:first-of-type { border-radius: var(--radius-md) 0 0 var(--radius-md); }
 .segGroup .uiBtn:last-child { border-radius: 0 var(--radius-md) var(--radius-md) 0; }
 .segGroup .uiBtn + .uiBtn { margin-left: -1px; }
 .segGroup .uiBtn.on { z-index: 1; }
+/* The frame lies over the labels, so its tint is see-through in every
+   theme (a theme may pin --accent-bg-light to a solid colour). */
+.segGroup > .slidePill {
+  z-index: 2;
+  border: 1px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+.segGroup[data-pill] > .uiBtn.on,
+.segGroup[data-pill] > .uiBtn.on:hover:not(:disabled) {
+  background: var(--bg-elevated);
+  border-color: var(--border);
+}
 
 /* Stepper: −/+ around a readout; the readout is a quiet button (click = reset). */
 .stepper { display: inline-flex; align-items: center; gap: 2px; flex-shrink: 0; }
@@ -261,7 +275,7 @@
 .setStatLabel { display: flex; align-items: center; gap: 5px; font-size: var(--fs-2xs); color: var(--text-muted); }
 .setStatLabel svg { flex-shrink: 0; }
 .setStatBar { display: block; height: 3px; border-radius: 2px; background: var(--bg-active); overflow: hidden; }
-.setStatBar > i { display: block; height: 100%; border-radius: 2px; background: var(--accent-fill); transition: width var(--dur-slow) ease; }
+.setStatBar > i { display: block; height: 100%; border-radius: 2px; background: var(--accent-fill); transition: width var(--dur-slow) var(--ease-out); }
 .setStatBar > i.ok { background: var(--ok); }
 .setStatBar > i.warn { background: var(--warn); }
 /* Text tiles (StatText): version, uptime, counts — a smaller value, a hint line, a toned frame. */

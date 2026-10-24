@@ -72,7 +72,7 @@
   width: 100%;
   height: 100%;
   --m-t: 1;
-  animation: m-clock var(--m-period) linear 2;
+  animation: m-clock var(--m-period) linear 2; /* ds-allow: a drawing's clock runs at an even pace over its own period */
   /* start at the empty frame: the first loop skips the rewind */
   animation-delay: calc(var(--m-period) * -0.08);
 }

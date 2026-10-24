@@ -263,6 +263,27 @@ an empty folder is real, shared and synced like any; a name a sibling has
 already makes nothing. The toolbar is filter box → sort → kind → list/grid
 → Select.
 
+**What moves.** The listing shows once it has loaded: before, it is blank,
+so it never says it is empty before its rows arrive. A read that fails
+ends the wait too: the New page and New folder items show, with "Could
+not load the library." and a Try again button in place of the empty line
+or the start panel. Within one listing an item added, removed or moved by
+its sort glides the others to their places (`ListMotion`,
+[ui-design.md](ui-design.md) "Lists that change"): a new row fades in and
+a new card grows in where it will rest, and one that goes fades (a row)
+or shrinks away (a card) where it stood while the rest close up. Another
+view, kind filter, folder or label is another listing, which comes into
+focus where it stands; a sort, the filter box's text and Load more change
+the listing at once. A read that is a load moves nothing either
+(`fetchHomeBlocks({ still: true })`): the listing read again on coming
+home from a page, on the window's wake or after a metadata refresh (the
+page's own and a lookup job's end, `tasks/useAppJobs.js`), an import
+started elsewhere landing, and the server's view history landing after
+the listing. Each marks what it
+sets (`homeReadRef`), and a change is still when everything it changed
+came from such a read. A read after the person's own write (a delete, a
+new folder, a filing) moves.
+
 **Selecting.** A click selects, Ctrl/⌘+click toggles one item and
 Shift+click extends a range; a finger's tap opens instead, as in a phone's
 file manager (`isTap`). **Select** in the toolbar is the way to pick
@@ -508,7 +529,11 @@ toolbar (at the library root, where `lib.organize`) or from the
 deleted it and when, the days it has left and its folder, as `aiProvRow`
 rows (a row's folder: the first of its entry's `folders` ids the folder
 tree has, by its path). Each row has Restore and a trash button that deletes for good after
-App's confirm box, and the dialog's footer has Empty. A link to a trashed
+App's confirm box, and the dialog's footer has Empty. The pointer or the
+focus reaching the trash button asks for `GET /api/trash` with the
+dialog's module (`library/trashList.js`), so a click lands on the dialog
+with its pages; the dialog takes an answer asked in the last 2 s as it
+is, shows an older one while it asks again, and lets it go as it closes. A link to a trashed
 page gets a 404 whose body carries `trashed` (the page's trash entry). The
 missing-page notice then names the page and offers Restore, which restores
 it and opens what the link named. A `[[ref]]` or `![[embed]]` naming a block

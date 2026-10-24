@@ -161,4 +161,97 @@ export async function authScenarios({ server, browser, alice, step, until, asser
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
+
+  await step("auth: one splash, its mark drawn in place, holds until the library, which never says it is empty before its rows", async () => {
+    const ctx = await alice.context(browser);
+    try {
+      // A server a little away: the session and the listing each take a beat.
+      for (const url of ["**/api/session", "**/api/blocks/root/children"]) {
+        await ctx.route(url, async (route) => { await new Promise((r) => setTimeout(r, 300)); await route.continue(); });
+      }
+      // What the page showed before the rows, caught as it went in.
+      await ctx.addInitScript(() => {
+        const seen = (window.__shown = { splash: 0, picture: 0, card: 0, empty: 0 });
+        new MutationObserver(() => {
+          if (document.querySelector(".fileRow")) return;
+          if (document.querySelector("#splash svg.mark")) seen.splash++;
+          if (document.querySelector("#splash img")) seen.picture++;
+          if (document.querySelector(".loginCard")) seen.card++;
+          if (document.querySelector(".blockList .empty")) seen.empty++;
+        }).observe(document, { childList: true, subtree: true });
+      });
+      const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+      await page.locator(".fileRow").first().waitFor({ timeout: 15000 });
+      const shown = await page.evaluate(() => window.__shown);
+      assert(shown.splash > 0, "the splash showed while the session was read");
+      assertEq(shown.picture, 0, "its mark never waits on a picture");
+      assertEq(shown.card, 0, "no card of its own while the session is read");
+      assertEq(shown.empty, 0, "the listing never says it is empty before its rows");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("auth: under reduced motion the splash's spinner keeps turning, slowly, while the session is read", async () => {
+    const ctx = await alice.context(browser, { reducedMotion: "reduce" });
+    try {
+      await ctx.route("**/api/session", async (route) => { await new Promise((r) => setTimeout(r, 2000)); await route.continue(); });
+      const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+      // index.html's splash, or Splash once the app draws it: the session is
+      // asked for as the page starts, so either may be up while it is read
+      const spin = page.locator("#splash .spin").first();
+      await spin.waitFor({ timeout: 5000 });
+      const turning = await spin.evaluate((el) => {
+        const cs = getComputedStyle(el);
+        return { period: cs.animationDuration, count: cs.animationIterationCount, running: el.getAnimations().some((a) => a.playState === "running") };
+      });
+      assertEq(`${turning.period} ${turning.count}`, "2.4s infinite", "it turns slowly, without end");
+      assert(turning.running, "it is turning");
+      await page.locator(".fileRow").first().waitFor({ timeout: 15000 });
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("auth: a first load asks for the session beside the server's config, then for the library listing first and the preferences in one request", async () => {
+    const ctx = await alice.context(browser);
+    try {
+      const page = await openPage(ctx);
+      const asked = [];
+      page.on("request", (r) => {
+        const url = new URL(r.url());
+        if (url.pathname.startsWith("/api/") && r.method() === "GET") asked.push(url.pathname + url.search);
+      });
+      await page.goto(`${server.base}/?ws=${alice.ws}`);
+      await page.locator(".fileRow").first().waitFor({ timeout: 15000 });
+      const first = asked.slice(0, 4);
+      assertEq([...first.slice(0, 2)].sort().join(" "), "/api/server-config /api/session", `the session and the config go first, together: ${first}`);
+      assertEq(first[2], "/api/blocks/root/children", `then the listing: ${first}`);
+      assert(/^\/api\/prefs\?keys=profile,open-tabs,recent-views,read-pos,ai-provider$/.test(first[3]), `then the preferences, as one request: ${first}`);
+      const alone = asked.filter((u) => /^\/api\/prefs\//.test(u));
+      assertEq(alone.join(" "), "", "no preference is read on its own");
+      assertEq(asked.filter((u) => u === "/api/session").length, 1, "the session is read once");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("auth: a first listing read that fails ends the wait: New page and New folder show under a line that says so, and Try again brings the rows", async () => {
+    const ctx = await alice.context(browser);
+    try {
+      let failed = false;
+      await ctx.route("**/api/blocks/root/children*", async (route) => {
+        if (failed) return route.continue();
+        failed = true;
+        return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ detail: "Service unavailable" }) });
+      });
+      const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+      const line = page.locator(".blockList .empty", { hasText: "Could not load the library." });
+      await line.waitFor();
+      assert(await page.locator(".folderNewBtn", { hasText: "New page" }).isVisible(), "New page shows");
+      assert(await page.locator(".folderNewBtn", { hasText: "New folder" }).isVisible(), "New folder shows");
+      assertEq(await page.getByText("No pages yet", { exact: false }).count(), 0, "it never says the library is empty");
+      await line.getByRole("button", { name: "Try again", exact: true }).click();
+      await page.locator(".fileRow").first().waitFor();
+      assertEq(await line.count(), 0, "the line goes as the rows come");
+      assertNoProblems(page, ["GET /api/blocks/root/children -> 503"]);
+    } finally { await ctx.close(); }
+  });
 }

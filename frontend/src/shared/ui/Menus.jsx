@@ -12,7 +12,8 @@ import React, { createContext, useCallback, useContext, useEffect, useId, useLay
 import { createPortal } from "react-dom";
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, MoreIcon } from "./Icons";
 import { useMenuAim } from "./menuAim";
-import { VIEWPORT_PAD, menuAnchor, placeFloating, useFloatingPosition } from "./placement.js";
+import { useLeave } from "./leave.js";
+import { VIEWPORT_PAD, growFrom, menuAnchor, placeFloating, surfaceSize, useFloatingPosition } from "./placement.js";
 import { pressAt, triggerPress } from "./press.js";
 import { t } from "../../shared/i18n/i18n.js";
 
@@ -66,8 +67,11 @@ function ContextMenu({ x, y, onClose, className = "", anchorRight = false, ancho
   // frame its size changes (placement.js). Until it is first placed it is
   // laid out where it stands but not shown: a menu opening upward stands
   // over its button and below it until then, and must never be seen there.
-  const pos = useFloatingPosition(ref, (el) => placeFloating(el.getBoundingClientRect(), { x, y, anchorRight, anchorBottom, flipY, bounds }),
+  const pos = useFloatingPosition(ref, (el) => placeFloating(surfaceSize(el), { x, y, anchorRight, anchorBottom, flipY, bounds }),
     [x, y, anchorRight, anchorBottom, flipY, bounds?.top, bounds?.bottom]);
+  // It grows in from the point it opens from and shrinks back toward it
+  // when it goes (growFrom, motion.css).
+  const leaveRef = useLeave("surface", ref);
 
   useEffect(() => {
     function onDown(e) {
@@ -91,10 +95,10 @@ function ContextMenu({ x, y, onClose, className = "", anchorRight = false, ancho
 
   return createPortal(
     <MenuScope
-      ref={ref}
+      ref={leaveRef}
       {...rest}
       className={`ctxMenu ${className}`}
-      style={pos ? { left: pos.left, top: pos.top } : { left: x, top: y, visibility: "hidden" }}
+      style={pos ? { left: pos.left, top: pos.top, transformOrigin: growFrom(x, y, pos) } : { left: x, top: y, visibility: "hidden" }}
       onContextMenu={(e) => e.preventDefault()}
     >
       <NestCtx.Provider value={nest}>{children}</NestCtx.Provider>

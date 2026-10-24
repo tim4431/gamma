@@ -13,7 +13,14 @@
 // that remounts the row (indent and outdent re-parent it) renders inside
 // the tap (flushSync): iPadOS shows the keyboard for a focus() made during
 // the gesture, not for one made a frame later.
-import React, { useLayoutEffect, useRef, useState } from "react";
+//
+// The bar is one for the notes, not one per row: the tree's top holds it
+// (`EditBarHost`) while a row's editor is open, and the open row hands it
+// its command context (`useEditBarRow`). So it stays where it is from one
+// open editor to the next (a new note, an indent that remounts the row,
+// another note tapped), where a bar of each row's own would start out of
+// sight for the keyboard's rise every time.
+import React, { createContext, useContext, useLayoutEffect, useMemo, useReducer, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { EditorView } from "@codemirror/view";
 import { commandById } from "../app/commands.js";
@@ -130,17 +137,16 @@ function keepCaret(id, before, sel) {
 
 const hold = (e) => e.preventDefault();
 
-// `context()`: the row's command context, built fresh for each press;
+// `context()`: the open row's command context, built fresh for each press;
 // `onUndo(redo)`: the page's block history.
-export default function EditBar({ context, onUndo }) {
-  const [shown] = useState(touchTyping);
+function EditBar({ context, onUndo }) {
   const ref = useRef(null);
   const place = useBarPlace(ref);
-  if (!shown) return null;
 
   const ctx = context();
   function press(id, keep) {
     const c = context();
+    if (!c) return;
     const view = c.editor?.view;
     const sel = view?.state.selection.main;
     flushSync(() => {
@@ -189,4 +195,40 @@ export default function EditBar({ context, onUndo }) {
     </div>,
     document.body,
   );
+}
+
+// Where the open row's command context waits for the bar.
+const EditBarSlot = createContext(null);
+
+// The top of the notes: the bar while `open` (the open editor's block id)
+// is set and the editor is typed in by touch (`touchTyping()`, read once
+// for each editor that opens).
+export function EditBarHost({ open, onUndo, children }) {
+  const [, redraw] = useReducer((n) => n + 1, 0);
+  const slot = useRef(null);
+  if (!slot.current) slot.current = { context: null, redraw };
+  const touch = useMemo(() => !!open && touchTyping(), [open]);
+  return (
+    <EditBarSlot.Provider value={slot.current}>
+      {children}
+      {touch && slot.current.context ? <EditBar context={() => slot.current.context?.()} onUndo={onUndo} /> : null}
+    </EditBarSlot.Provider>
+  );
+}
+
+// A row: while its editor is open, the bar runs its commands with
+// `commandContext` and draws again each time the row renders, as a bar of
+// the row's own did (a tool's `when` reads the row and the caret in it).
+export function useEditBarRow(open, commandContext) {
+  const slot = useContext(EditBarSlot);
+  useLayoutEffect(() => {
+    if (!open || !slot) return undefined;
+    slot.context = commandContext;
+    slot.redraw();
+    return () => {
+      if (slot.context !== commandContext) return;
+      slot.context = null;
+      slot.redraw();
+    };
+  });
 }

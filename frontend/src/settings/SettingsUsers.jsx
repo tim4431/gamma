@@ -15,38 +15,39 @@ import { API, apiJson, fmtBytes, getExpectedUser, setExpectedUser } from "../sha
 import { PaneHead, Section, Row, SubDialog, Field, UnitInput, Empty, QuotaMeter, PasswordInput } from "./SettingsKit";
 import { CloudIdentityRow } from "./SettingsCloudSignIn";
 import { ManageWorkspaceDialog, useAccounts } from "./SettingsWorkspace";
+import { useSettingsRead } from "./settingsReads.js";
 import { BookIcon, HardDriveIcon, PenIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon } from "../shared/ui/Icons";
+import { MorphText } from "../shared/ui/MotionWidgets";
 import { T, t } from "../shared/i18n/i18n.js";
 
 // `onServer` (admins) opens Settings → Server at the Gamma Cloud sign-in.
 export function UsersSettings({ value, selfOnly = false, onServer }) {
   const { setStatus, confirm, onSelfRenamed, refreshQuota, isAdmin, me, isGuest, quotaInfo,
     workspaces: mine, switchWorkspace, refreshSession, closeSettings } = value;
-  const [info, setInfo] = React.useState(null); // {users, me}
-  const [error, setError] = React.useState("");
+  // The pane's reads (settingsReads.js): the accounts {users, me}, the
+  // server-wide default limits and, in Users, the personal workspaces.
+  const listing = useSettingsRead(isAdmin ? "/admin/users" : null);
+  const info = listing.data;
+  const setInfo = listing.set;
+  const [ownError, setError] = React.useState("");
+  const error = ownError || (!info ? listing.error : "");
   const [busy, setBusy] = React.useState(false);
   const [edit, setEdit] = React.useState(null); // {original, username, password, is_admin, max_upload_mb, quota_mb}
   const [addForm, setAddForm] = React.useState(null); // {username, password, is_admin}
-  const [wsRows, setWsRows] = React.useState(null); // /api/admin/workspaces, personal ones only
   const [manage, setManage] = React.useState(null); // workspace id being managed
   const listWorkspaces = isAdmin && !selfOnly;
-
-  const [defaults, setDefaults] = React.useState(null); // {max_upload_mb, quota_mb} server-wide
+  const defaults = useSettingsRead(isAdmin ? "/admin/settings" : null).data; // {max_upload_mb, quota_mb} server-wide
   React.useEffect(() => {
-    if (!isAdmin) {
-      refreshQuota?.(); // the self row's storage meter comes from /api/quota
-      return;
-    }
-    apiJson(`${API}/admin/users`).then((d) => setInfo(d)).catch((err) => setError(err.message));
-    apiJson(`${API}/admin/settings`).then(setDefaults).catch(() => {});
-  }, [isAdmin]);
+    if (!isAdmin) refreshQuota?.(); // the self row's storage meter comes from /api/quota
+  }, [isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
+  const adminWorkspaces = useSettingsRead(listWorkspaces ? "/admin/workspaces" : null);
+  // /api/admin/workspaces, personal ones only
+  const wsRows = adminWorkspaces.data ? (adminWorkspaces.data.workspaces || []).filter((w) => w.personal)
+    : adminWorkspaces.error ? [] : null;
+  const reloadWorkspaces = adminWorkspaces.reload;
   const refreshWorkspaces = React.useCallback(() => {
-    if (!listWorkspaces) return;
-    apiJson(`${API}/admin/workspaces`)
-      .then((d) => setWsRows((d.workspaces || []).filter((w) => w.personal)))
-      .catch(() => setWsRows([]));
-  }, [listWorkspaces]);
-  React.useEffect(() => { refreshWorkspaces(); }, [refreshWorkspaces]);
+    if (listWorkspaces) reloadWorkspaces().catch(() => {});
+  }, [listWorkspaces, reloadWorkspaces]);
   const openable = new Set((mine || []).map((w) => w.id));
   // An account's personal workspaces, its default first. The admin listing
   // keys them by username, so account changes re-fetch (usersCall below).
@@ -351,7 +352,7 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
   return (
     <>
       {isAdmin && !selfOnly ? <PaneHead icon={UsersIcon} title={t("Users")} /> : <PaneHead icon={UserIcon} title={t("Account & sync")} />}
-      {isAdmin && !info && !error ? <Empty icon={UsersIcon}>{t("Loading…")}</Empty> : null}
+      {isAdmin && !info && !error ? <Empty icon={UsersIcon} loading>{t("Loading…")}</Empty> : null}
       {(selfOnly ? rows.filter((row) => row.username === me) : rows).map(userRow)}
       {!isGuest && (selfOnly || !isAdmin) ? <CloudIdentityRow setStatus={setStatus} confirm={confirm} onSetUp={onServer} /> : null}
       {edit?.kind === "account" ? accountDialog() : null}
@@ -393,7 +394,7 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
           <div className="reportModalBtns">
             <button className="uiBtn" onClick={() => { setAddForm(null); setError(""); }}>{t("Cancel")}</button>
             <button className="uiBtn primary" disabled={busy} onClick={submitAdd}>
-              {busy ? t("Creating…") : t("Create user")}
+              <MorphText>{busy ? t("Creating…") : t("Create user")}</MorphText>
             </button>
           </div>
           </div>

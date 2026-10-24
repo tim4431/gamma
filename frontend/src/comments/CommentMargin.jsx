@@ -5,10 +5,13 @@
 // (marginLayout.js stackCards, marginSlot.jsx createMarginStack). A card at rest shows its thread's first
 // comment, clamped, and how many replies follow; the active one is the
 // whole thread as the popover draws it (Thread.jsx), with its reply field.
-// A new comment opens as a card of its own, its field focused. Loaded on
-// first use (marginSlot.jsx).
+// A new comment opens as a card of its own, its field focused. A card
+// that comes grows in where it stands and one that goes shrinks away there
+// (ListMotion); the others move to their new places through their `top`.
+// Loaded on first use (marginSlot.jsx).
 import React, { useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { t } from "../shared/i18n/i18n.js";
+import ListMotion from "../shared/ui/ListMotion";
 import { CommentComposer } from "./CommentComposer";
 import { COMMENT_POPUPS, SignInToComment, Thread, useLatestHandler } from "./Thread";
 import { isOpen, laterComments } from "./comments.js";
@@ -21,6 +24,8 @@ const CARD_H = 72;
 // card, or a menu or popup the card opened.
 const INSIDE = `[data-comment-margin], ${COMMENT_POPUPS}`;
 const NO_STACK = () => () => {};
+const NOTHING = () => {};
+const NO_LATER = new Set();
 
 // The key of the card that is active: the new comment's, else the thread
 // the target names, else the block's first open thread.
@@ -50,17 +55,26 @@ function ThreadCard({ thread, active, margin, onActivate, onEscape }) {
   );
 }
 
-// A new thread on the highlight: its field, focused. Stored, the thread's
-// own card takes its place as the active one.
-function NewCard({ blockId, margin, onEscape }) {
-  const { me, canComment, people, labelsFor, links, onAdd, onSignIn, onActivate } = margin;
+// A new thread on the highlight: its field, focused. Sent, the comment
+// shows above the emptied field while it is on its way (`pending`, read
+// only), and once stored the thread's own card takes this one's place as
+// the active one; refused, the field gets its text back.
+function NewCard({ blockId, pending, margin, onEscape }) {
+  const { me, owner, canComment, people, labelsFor, links, onAdd, onSignIn, onActivate, onCopyLink, onBlockRefClick } = margin;
   if (!canComment) return <SignInToComment onSignIn={onSignIn} />;
   return (
-    <div className="commentThread active commentNew">
-      <CommentComposer blockId={blockId} links={links} labelsFor={labelsFor} autoFocus people={people} me={me}
-        draftKey={`new:${blockId}`} placeholder={t("Write a comment…")} submitLabel={t("Comment")}
-        onSubmit={async (body) => { const id = await onAdd(blockId, body, ""); if (id) onActivate(blockId, id); return id; }}
-        onEscape={onEscape} />
+    <div className="commentNewCard">
+      {pending.map((th) => (
+        <Thread key={th.id} thread={th} active={false} canComment={false} me={me} owner={owner} people={people}
+          labelsFor={labelsFor} later={NO_LATER} field={{ blockId, links, labelsFor }} onBlockRefClick={onBlockRefClick}
+          onCopyLink={onCopyLink} onEscape={onEscape} onActivate={NOTHING} onResolve={NOTHING} onReply={NOTHING} />
+      ))}
+      <div className="commentThread active commentNew">
+        <CommentComposer blockId={blockId} links={links} labelsFor={labelsFor} autoFocus people={people} me={me}
+          draftKey={`new:${blockId}`} placeholder={t("Write a comment…")} submitLabel={t("Comment")}
+          onSubmit={async (body) => { const id = await onAdd(blockId, body, ""); if (id) onActivate(blockId, id); return id; }}
+          onEscape={onEscape} />
+      </div>
     </div>
   );
 }
@@ -70,15 +84,29 @@ function NewCard({ blockId, margin, onEscape }) {
 // `margin`: the context App provides (marginSlot.jsx).
 export default function CommentMargin({ margin, anchors, pageNumber, pageTop = 0 }) {
   const { threadsByBlock, target } = margin;
-  const cards = [];
+  // A new comment stored hands its card to its thread's: while the new card
+  // stands on its highlight, a thread there that was not shown when it came
+  // (the one on its way) has no card of its own, so the two never stand
+  // together, the new card above the other: the new card shows it. Once
+  // stored, the thread's card takes the new card's place as the active one,
+  // mounted where it rests, and neither comes in nor goes with motion.
+  const composing = target?.compose && anchors.some((a) => a.id === target.blockId) ? target.blockId : "";
+  const shown = useRef({ composing: "", keys: [] });
+  const was = shown.current;
+  const onItsWay = (th) => !!composing && th.block_id === composing && was.composing === composing && !was.keys.includes(th.id);
+  const cards = [], pending = [];
   for (const a of anchors) {
     for (const th of threadsByBlock.get(a.id) || []) {
-      if (isOpen(th)) cards.push({ key: th.id, blockId: a.id, top: a.top, thread: th });
+      if (!isOpen(th)) continue;
+      if (onItsWay(th)) pending.push(th);
+      else cards.push({ key: th.id, blockId: a.id, top: a.top, thread: th });
     }
-    if (target?.compose && target.blockId === a.id) cards.push({ key: `new:${a.id}`, blockId: a.id, top: a.top, compose: true });
+    if (composing === a.id) cards.push({ key: `new:${a.id}`, blockId: a.id, top: a.top, compose: true });
   }
   const active = activeKey(target, threadsByBlock);
   const hasActive = cards.some((c) => c.key === active);
+  const handoff = !!was.composing && !composing && cards.some((c) => c.blockId === was.composing && !was.keys.includes(c.key));
+  useLayoutEffect(() => { shown.current = { composing, keys: cards.map((c) => c.key) }; });
 
   // Each card's height as drawn, measured before the paint and again when
   // it changes size (a thread opening, a field growing, a formula drawn).
@@ -155,18 +183,21 @@ export default function CommentMargin({ margin, anchors, pageNumber, pageTop = 0
 
   return (
     <div className={`commentMargin${hasActive ? " hasActive" : ""}`} data-comment-margin={pageNumber} style={{ left: `calc(100% + ${COLUMN_GAP}px)`, width: CARD_W }}>
-      {cards.map((c) => (
-        <div key={c.key} ref={boxRef(c.key)} className={`commentCard${c.key === active ? " active" : ""}`}
-          data-card-for={c.blockId} style={{ top: tops.get(c.key) ?? c.top }}
-          onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } }}>
-          {c.compose ? (
-            <NewCard blockId={c.blockId} margin={margin} onEscape={close} />
-          ) : (
-            <ThreadCard thread={c.thread} active={c.key === active} margin={margin}
-              onActivate={(threadId) => activate(c.blockId, threadId)} onEscape={close} />
-          )}
-        </div>
-      ))}
+      <ListMotion keys={cards.map((c) => c.key)} moves={false} enter="card" leave="card" still={handoff}
+        strip={["data-card-for", "data-thread-id", "data-comment-id"]}>
+        {cards.map((c) => (
+          <div key={c.key} ref={boxRef(c.key)} className={`commentCard${c.key === active ? " active" : ""}`}
+            data-motion-key={c.key} data-card-for={c.blockId} style={{ top: tops.get(c.key) ?? c.top }}
+            onKeyDown={(e) => { if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); close(); } }}>
+            {c.compose ? (
+              <NewCard blockId={c.blockId} pending={pending} margin={margin} onEscape={close} />
+            ) : (
+              <ThreadCard thread={c.thread} active={c.key === active} margin={margin}
+                onActivate={(threadId) => activate(c.blockId, threadId)} onEscape={close} />
+            )}
+          </div>
+        ))}
+      </ListMotion>
     </div>
   );
 }

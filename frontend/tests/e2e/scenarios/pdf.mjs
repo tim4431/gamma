@@ -4,7 +4,7 @@
 // PDF text on another page.
 import { execFileSync } from "node:child_process";
 import { tree, same, partialBlockSearch } from "./notes.mjs";
-import { PYTHON, fakeAiModels, until } from "../harness.mjs";
+import { PYTHON, arrived, fakeAiModels, until } from "../harness.mjs";
 import { DEFAULT_PALETTE, darkPageColor } from "../../../src/shared/model/palette.js";
 
 // Select `needle` inside one text-layer span of `pageNo` and release the
@@ -429,11 +429,13 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await page.getByRole("button", { name: "Account & settings", exact: true }).click();
       const settings = page.getByRole("menuitem", { name: "Settings…", exact: true });
       const tours = page.locator('[data-guide="account.tour"]');
+      await arrived(tours);
       const settingsBox = await settings.boundingBox();
       const toursBox = await tours.boundingBox();
       assert(Math.abs(settingsBox.height - toursBox.height) < 1, "Tours matches adjacent menu controls");
       await tours.click();
       const tour = page.getByRole("menuitem", { name: "Your first paper", exact: true });
+      await arrived(tour);
       assert(Math.abs((await tour.boundingBox()).height - toursBox.height) < 1, "submenu scales once");
       await settings.click();
       const font = await page.getByText("Interface size", { exact: true }).evaluate((el) => parseFloat(getComputedStyle(el).fontSize));

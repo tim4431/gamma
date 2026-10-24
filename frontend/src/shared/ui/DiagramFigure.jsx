@@ -5,6 +5,7 @@ import { renderMermaid } from "../lib/mermaidRenderer.js";
 import { sanitizeSvg } from "../lib/svgSanitize.js";
 import { CheckIcon, CodeIcon, CopyIcon, DownloadIcon, ZoomInIcon } from "./Icons";
 import { Lightbox, lightboxFit } from "./Lightbox";
+import { IconSwap } from "./MotionWidgets";
 import { ResizeGrips, useDragResize } from "./ResizeGrip";
 import "./diagram.css";
 import { t } from "../../shared/i18n/i18n.js";
@@ -159,7 +160,7 @@ export function DiagramFigure({ kind, source, pending = false, width = null, idx
         <button type="button" className="ctlBtn" aria-label={t("Copy source")}
           title={copyStatus === "copied" ? t("Copied") : copyStatus === "failed" ? t("Copy failed") : t("Copy source")}
           onClick={async () => setCopyStatus(await copyText(source) ? "copied" : "failed")}>
-          {copyStatus === "copied" ? <CheckIcon /> : <CopyIcon />}
+          <IconSwap swap={copyStatus === "copied"} from={<CopyIcon />} to={<CheckIcon />} />
         </button>
         <button type="button" className="ctlBtn" aria-label={t("Download SVG")} title={t("Download SVG")}
           disabled={!active?.svg} onClick={download}><DownloadIcon /></button>

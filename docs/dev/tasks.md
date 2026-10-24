@@ -197,7 +197,12 @@ actions, where a click opens it (`open`) and how to start it again
 
 - The button shows a spinner while anything runs, a red dot for a failure
   worth a look, and an accent dot for a file waiting to be downloaded.
-- The panel lists In progress, then Finished, with Clear finished.
+- The panel lists In progress, then Finished, with Clear finished, which
+  takes every finished row away at once, the server's before it answers.
+  Its list moves as it changes ([ui-design.md](ui-design.md) "Lists that
+  change"): a task that finishes glides past the header to the top of
+  Finished, a new one fades in, and one removed leaves from where it stood
+  while the rest close up.
 - A row has its title, elapsed or finish time, bar and detail, plus Stop,
   Download, Start again and Remove. A click on an export or import row
   opens its dialog on that job again; a backup row opens Settings → Backups.

@@ -14,6 +14,7 @@
 import React, { createContext, useContext, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal, flushSync } from "react-dom";
 import { ContextMenu, MenuItem, useMenuTrigger } from "../shared/ui/Menus";
+import { IconSwap } from "../shared/ui/MotionWidgets";
 import { getStroke } from "perfect-freehand";
 import {
   ClipboardIcon, CopyIcon, DuplicateIcon, FileTextIcon, FlipHIcon, FlipVIcon, HighlightIcon, LineWidthIcon, MergeIcon, MoreIcon, NotebookPenIcon,
@@ -2670,7 +2671,7 @@ export function InkReplayButton({ replay, className = "" }) {
     <button type="button" className={"inkReplayBtn " + className} aria-label={label} aria-pressed={replay.playing}
       title={replay.playing ? t("Stop the replay") : t("Replay: watch the handwriting being written, stroke by stroke")}
       onClick={(e) => { e.stopPropagation(); if (replay.playing) replay.stop(); else replay.play(); }}>
-      {replay.playing ? <StopIcon size={12} /> : <PlayIcon size={12} />}
+      <IconSwap swap={replay.playing} from={<PlayIcon size={12} />} to={<StopIcon size={12} />} />
     </button>
   );
 }

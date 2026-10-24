@@ -136,7 +136,9 @@
 
 /* Reduced motion (the OS setting): every transition and animation ends at
    once, so nothing slides, fades, pulses or blinks. Spinners keep turning,
-   slowly, because a frozen one reads as a hang. */
+   slowly, because a frozen one reads as a hang: the splash's too (index.html
+   holds its keyframes; this sheet is render-blocking in the build, so it
+   turns slowly from the first frame). */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     transition-duration: 1ms !important; /* ds-allow: reduced motion ends at once */
@@ -147,7 +149,7 @@
     scroll-behavior: auto !important;
   }
   :is(.guideSpinner, .pillSpin, .transferSpin, .mirrorPill.busy svg, .mirrorSpin svg,
-    .mirrorState.busy > svg, .mirrorAvatar.busy svg) {
+    .mirrorState.busy > svg, .mirrorAvatar.busy svg, #splash .spin) {
     animation-duration: 2400ms !important;
     animation-iteration-count: infinite !important;
   }
@@ -195,7 +197,7 @@
 html, body, .app, .topbar, .sidebar, .blockRowWrap, .blockRow,
 .blockEditor, .carouselTrack, .pageCard, .categoryFrontmatter,
 .backlinksPanel {
-  transition: background-color var(--dur-base) ease, color var(--dur-base) ease, border-color var(--dur-base) ease;
+  transition: background-color var(--dur-base), color var(--dur-base), border-color var(--dur-base);
 }
 
 html, body, #root {
@@ -283,7 +285,7 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   color: var(--text-muted);
   font-size: var(--fs-lg);
   flex-shrink: 0;
-  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
+  transition: background var(--dur-fast), color var(--dur-fast);
 }
 .topbar .iconBtn:disabled { opacity: 0.4; cursor: default; }
 
@@ -308,7 +310,7 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  transition: background var(--dur-fast) ease, color var(--dur-fast) ease, transform var(--dur-fast) ease;
+  transition: background var(--dur-fast), color var(--dur-fast), transform var(--dur-fast) var(--ease-out);
 }
 .uiClose:hover { background: var(--bg-subtle); color: var(--text-bright); }
 .uiClose:active { transform: scale(0.82); }
@@ -458,7 +460,7 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   margin-top: 2px;
   opacity: 0;
   pointer-events: none;
-  transition: opacity var(--dur-fast), background var(--dur-fast) ease, color var(--dur-fast) ease, transform var(--dur-fast) ease;
+  transition: opacity var(--dur-fast), background var(--dur-fast), color var(--dur-fast), transform var(--dur-fast) var(--ease-out);
 }
 
 .blockRow:hover .blockDeleteBtn,
@@ -715,7 +717,7 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   color: var(--text-muted);
   user-select: none;
   pointer-events: none;
-  transition: opacity var(--dur-fast) ease;
+  transition: opacity var(--dur-fast);
 }
 /* Where a pointer hovers, a hover crossfade: the language badge yields its
    corner to the copy button. Where nothing hovers, both stay, the badge
@@ -913,7 +915,8 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   border-right: 2px solid var(--co-color);
   border-bottom: 2px solid var(--co-color);
   transform: rotate(-45deg);
-  transition: transform var(--dur-fast);
+  /* it turns with the body opening under it (motion.css, details) */
+  transition: transform var(--dur-slow) var(--ease-out);
 }
 .blockRendered details.callout[open] > summary.calloutTitle::before { transform: rotate(45deg); }
 .blockRendered details.callout[open] > summary.calloutTitle:not(:last-child) { margin-bottom: 4px; }
@@ -1404,8 +1407,6 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   cursor: pointer; text-align: left;
 }
 .selTransToggle:hover { background: var(--bg-hover); }
-.selTransChev { transition: transform var(--dur-fast) ease; flex-shrink: 0; }
-.selTransChev.open { transform: rotate(90deg); }
 .selTransLang { font-weight: 400; color: var(--text-tertiary); }
 .selTransCopy { flex-shrink: 0; }
 .selTransBody {
@@ -1459,9 +1460,10 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   100% { background: transparent; box-shadow: inset 3px 0 0 transparent; }
 }
 /* The ghost row's handle columns are inert stand-ins that keep its card
-   aligned with its siblings'. */
+   aligned with its siblings'. Its tint is the one the block it becomes
+   starts its fade from (ai-create), so the handoff does not pulse. */
 .sortableBlockWrap.aiGhostWrap > .rowHandles { visibility: hidden; pointer-events: none; }
-.aiGhostWrap .blockRow { animation: none; background: color-mix(in srgb, var(--accent) 10%, transparent); box-shadow: inset 3px 0 0 var(--accent); }
+.aiGhostWrap .blockRow { animation: none; background: color-mix(in srgb, var(--accent) 22%, transparent); box-shadow: inset 3px 0 0 var(--accent); }
 .blockRendered.aiStreaming { min-height: 1.45em; }
 .blockRendered.aiStreaming > :last-child { display: inline-block; margin-bottom: 0; }
 .blockRendered.aiStreaming::after {
@@ -1618,7 +1620,7 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   pointer-events: none;
   z-index: var(--z-popover);
   transform: translateY(-1px);
-  transition: left 25ms ease-out; /* ds-allow: follows the pointer */
+  transition: left 25ms var(--ease-out); /* ds-allow: follows the pointer */
 }
 .sortableBlockWrap {
   display: flex;
@@ -1653,7 +1655,7 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   color: var(--text-muted);
   opacity: 0;
   pointer-events: none;
-  transition: opacity var(--dur-fast) ease, color var(--dur-fast) ease, background var(--dur-fast) ease;
+  transition: opacity var(--dur-fast), color var(--dur-fast), background var(--dur-fast);
   user-select: none;
 }
 .rowHandles > .addHandle {
@@ -1967,8 +1969,6 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 }
 /* translucent gray so it stays visible on top of the row's own hover tint */
 button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: var(--text-primary); }
-.pdfOutlineChevron svg { transition: transform var(--dur-fast); }
-.pdfOutlineChevron.open svg { transform: rotate(90deg); }
 .pdfOutlineTitle {
   flex: 1 1 auto;
   min-width: 0;
@@ -2184,8 +2184,9 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   cursor: pointer;
 }
 .backlinksHead:hover { background: var(--bg-hover); color: var(--text-secondary); }
-.backlinksCaret { font-size: var(--fs-2xs); width: 10px; }
+.backlinksCaret { font-size: var(--fs-2xs); width: 10px; text-align: center; }
 .backlinkGroup { margin-bottom: 6px; }
+.backlinkGroup:last-child { margin-bottom: 0; }
 .backlinkPage,
 .backlinkItem {
   border-radius: var(--radius-sm);
@@ -2231,7 +2232,12 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
      active tab's ::after fills that band, joining the page below. */
   padding-bottom: 7px;
   margin-bottom: -7px;
-  position: relative; /* the tabs' offset parent: FLIP and scroll-into-view read offsetLeft */
+  /* As tall with no tab as with one (the tab and the padding around it), so
+     the topbar keeps its height when the first tab opens. */
+  min-height: calc(4px + var(--ctl-tab) + 7px);
+  /* The tabs' offset parent: scroll-into-view reads offsetLeft, and a closed
+     tab's copy stands, clipped, in the strip's content (ListMotion). */
+  position: relative;
 }
 .tabStrip::-webkit-scrollbar { display: none; }
 /* Tabs hidden past the right edge: the strip fades out there (gone once it
@@ -2239,10 +2245,6 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .tabStrip.fadeEnd {
   -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent);
   mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent);
-}
-@keyframes tabIn {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
 }
 .tab {
   display: flex;
@@ -2260,9 +2262,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   border: 1px solid transparent;
   border-bottom: none;
   min-height: var(--ctl-tab);
-  transition: background var(--dur-fast) ease, color var(--dur-fast) ease;
-  animation: tabIn var(--dur-base) ease-out;
-  will-change: transform;
+  transition: background var(--dur-fast), color var(--dur-fast);
   position: relative;
 }
 /* Chrome-style divider bar between adjacent tabs… */
@@ -2434,7 +2434,7 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .mirrorStateBody > .popoverHint { padding: 0; }
 .mirrorBar { height: 5px; border-radius: var(--radius-xs); background: var(--bg-hover); overflow: hidden; }
 .mirrorBar.thin { height: 3px; flex-basis: 100%; }
-.mirrorBar span { display: block; height: 100%; background: var(--accent); transition: width var(--dur-slow) ease; }
+.mirrorBar span { display: block; height: 100%; background: var(--accent); transition: width var(--dur-slow) var(--ease-out); }
 .mirrorFile { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; font-size: var(--fs-2xs); color: var(--text-muted); min-width: 0; }
 .mirrorFile > svg { flex-shrink: 0; }
 .mirrorFile .mirrorEllipsis { flex: 1; min-width: 0; }
@@ -2732,7 +2732,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
   height: 20px;
   border-radius: var(--radius-full);
   background: var(--bg-subtle);
-  transition: background var(--dur-base) ease;
+  transition: background var(--dur-base);
   pointer-events: none;
 }
 .switchTrack::after {
@@ -2745,7 +2745,8 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
   border-radius: 50%;
   background: #fff;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
-  transition: transform var(--dur-base) ease;
+  /* the thumb travels with a small overshoot (docs/dev/ui-design.md, "Motion") */
+  transition: transform var(--dur-slow) var(--ease-pop);
 }
 .switch input:checked + .switchTrack { background: var(--accent-fill); }
 .switch input:checked + .switchTrack::after { transform: translateX(14px); }
@@ -2931,7 +2932,7 @@ mark.searchMark {
 .sash {
   background: var(--border);
   flex-shrink: 0;
-  transition: background var(--dur-base) ease var(--dur-fast);
+  transition: background var(--dur-base) var(--dur-fast);
 }
 .sash-horizontal { width: 5px; cursor: col-resize; }
 .sash-vertical { height: 5px; cursor: row-resize; }
@@ -2990,6 +2991,15 @@ mark.searchMark {
 .slotStack-horizontal .collapsedBar .dockWindow { border-right: 1px solid var(--border-subtle); }
 .slotStackGroup { flex: 1; min-width: 0; min-height: 0; display: flex; }
 .slotStackGroup > [data-panel-group] { flex: 1; }
+/* A collapsed window stays in its panel while its bar shows: the panel
+   takes no room and clips, nothing can scroll it, and the window keeps the
+   size it had as it folded (--fold-w, --fold-h, set by the fold), unseen
+   and inert, so what it holds neither lays out again nor loses its place.
+   Only the splitters between open windows show. */
+.dockPanelFolded { flex: 0 0 0px !important; overflow: clip !important; }
+.dockPanelFolded > .dockWindow { flex: none; width: var(--fold-w, 100%); height: var(--fold-h, 100%); visibility: hidden; }
+.dockWindowFolded .dockWindowBody { overflow: clip; }
+.sashFolded { display: none; }
 /* Header controls use the shared uiBtn sizes; keep only layout here. */
 .dockWindowHeader .chatPanelHeaderBtns { flex-shrink: 0; }
 .dockWindowBody {
@@ -3385,7 +3395,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   border: 2px solid var(--accent-fill);
   border-radius: var(--radius-md);
   pointer-events: none;
-  transition: left var(--dur-fast) ease, top var(--dur-fast) ease, width var(--dur-fast) ease, height var(--dur-fast) ease;
+  transition: left var(--dur-fast) var(--ease-out), top var(--dur-fast) var(--ease-out), width var(--dur-fast) var(--ease-out), height var(--dur-fast) var(--ease-out);
 }
 .chatPanel {
   display: flex;
@@ -3705,10 +3715,11 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 /* A reply's papers (chat/ReplyPapers.jsx): one pill, opening to a checklist
    saved into the library together. */
 .chatPapersWrap { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; margin-top: 8px; min-width: 0; }
+/* The list folds under its pill (Collapse) at the card's full width. */
+.chatPapersFold { align-self: stretch; }
 .chatPapers {
   display: flex;
   flex-direction: column;
-  align-self: stretch;
   gap: 2px;
   padding: 6px 8px;
   border: 1px solid var(--border-subtle);
@@ -3816,39 +3827,6 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   color: var(--text-muted);
 }
 .chatBubble.ai .katex-display { margin: 8px 0; overflow-x: auto; overflow-y: hidden; }
-/* The live status stays inside the reply alongside tool activity and text. */
-.chatThinking {
-  display: flex;
-  align-items: center;
-  gap: 0.6em;
-  width: fit-content;
-  margin-top: 6px;
-  padding: 0.3em 0.7em;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius-full);
-  background: var(--bg-raised);
-  color: var(--text-muted);
-  font-size: calc(var(--fs-2xs) * var(--text-scale, 1));
-  line-height: 1.5;
-}
-.chatThinking:first-child { margin-top: 0; }
-.chatTyping { display: inline-flex; align-items: center; gap: 0.3em; }
-.chatTyping span {
-  width: 0.4em;
-  height: 0.4em;
-  border-radius: 50%;
-  background: var(--text-dim);
-  animation: chatTypingBlink 1.2s infinite ease-in-out;
-}
-.chatTyping span:nth-child(2) { animation-delay: 0.2s; }
-.chatTyping span:nth-child(3) { animation-delay: 0.4s; }
-@keyframes chatTypingBlink {
-  0%, 80%, 100% { opacity: 0.25; transform: translateY(0); }
-  40% { opacity: 1; transform: translateY(-2px); }
-}
-@media (prefers-reduced-motion: reduce) {
-  .chatTyping span { animation: none; opacity: 0.6; }
-}
 /* Model + effort switchers use shared MenuSelect/uiBtn sizing; this block is
    layout-only so chat controls cannot drift from buttons elsewhere. */
 /* prompt editor */
@@ -3949,7 +3927,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   line-height: var(--lh-ui);
   white-space: nowrap;
   box-shadow: var(--shadow-1);
-  transition: background var(--dur-fast) ease, color var(--dur-fast) ease, border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
+  transition: background var(--dur-fast), color var(--dur-fast), border-color var(--dur-fast), box-shadow var(--dur-fast);
 }
 .uiBtn:active:not(:disabled) { background: var(--bg-active); box-shadow: none; }
 .uiBtn.sm { min-height: var(--ctl-btn-sm); font-size: var(--fs-xs); padding: var(--space-2) var(--space-5); }
@@ -4011,7 +3989,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   gap: 10px;
   padding: 8px 8px;
   border-radius: var(--radius-lg);
-  transition: background var(--dur-fast) ease;
+  transition: background var(--dur-fast);
 }
 /* Flat at rest: rows are separated by a straight inset hairline (a border
    would curve around the radius and read as a card edge), and only hover
@@ -4040,7 +4018,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 }
 .quotaBarFill {
   display: block; height: 100%; border-radius: 2px;
-  background: var(--accent-fill); transition: width var(--dur-slow) ease;
+  background: var(--accent-fill); transition: width var(--dur-slow) var(--ease-out);
 }
 .quotaBarFill.warn { background: var(--warn); }
 .quotaBarFill.full { background: #e5534b; }
@@ -4438,11 +4416,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
   line-height: var(--lh-tight);
   margin-bottom: 12px;
 }
-.loginLoading {
-  color: var(--text-muted);
-  text-align: center;
-  margin-bottom: 24px;
-}
 .loginSubtitle {
   color: var(--text-secondary);
   text-align: center;
@@ -4570,8 +4543,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
   cursor: pointer;
 }
 .loginDisclosure:hover { color: var(--text-primary); }
-.loginDisclosureChev { transition: transform var(--dur-base); }
-.loginDisclosureChev.open { transform: rotate(90deg); }
 .loginDisclosureBody { margin-top: 12px; }
 /* a demo server's landing (LoginPage's `scene`): the product pictured on the
    left, what it does and Try the demo on the right; stacked on narrow screens */
@@ -4893,6 +4864,9 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .chatPill svg { flex: none; }
 .chatPillText { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .chatCoverage { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; min-width: 0; }
+/* A pill's note and its pictures fold open under the pills (Collapse). */
+.chatCoverageMore { flex-basis: 100%; min-width: 0; }
+.chatCoverageMore > .collapseBody { display: flex; flex-wrap: wrap; gap: 6px; }
 .chatCoverageNote {
   flex-basis: 100%;
   margin: 0;
@@ -4915,6 +4889,10 @@ a.shareBrand:hover { background: var(--bg-hover); }
    changes it made, each old → new, under an accent rule. */
 .chatStepsWrap { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; min-width: 0; }
 .chatSteps { align-self: flex-start; }
+/* While the reply's first step has not landed the pill is its status alone,
+   with nothing to unfold. */
+.chatSteps:not([aria-expanded]) { cursor: default; }
+.chatSteps:not([aria-expanded]):hover { color: var(--text-muted); }
 .chatStepsFailed { flex: none; color: var(--danger); }
 .chatStepsDeclined { flex: none; color: var(--text-secondary); }
 :is(.chatStepsFailed, .chatStepsDeclined)::before { content: "·"; margin-right: 6px; color: var(--text-muted); }
@@ -4967,6 +4945,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
    arguments and the output the model got back. */
 .chatToolActions { display: flex; flex-direction: column; gap: 3px; }
 .chatToolAction { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+/* A chip's calls, picture and output fold open under it (Collapse). */
+.chatToolMore > .collapseBody { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
 .chatToolActionHead {
   display: flex;
   align-items: center;
@@ -5225,10 +5205,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .transferDot.info { background: var(--accent); }
 
 /* --- global Back button (topbar) --- */
-@keyframes navBackIn {
-  from { opacity: 0; transform: translateX(-6px) scale(0.85); }
-  to { opacity: 1; transform: translateX(0) scale(1); }
-}
+@keyframes navBackIn { from { opacity: 0; translate: -6px 0; scale: 0.85; } }
 .topbar .navBackBtn {
   position: relative;
   border-radius: 50%;
@@ -5236,16 +5213,16 @@ a.shareBrand:hover { background: var(--bg-hover); }
   background: var(--bg-elevated);
   color: var(--accent);
   box-shadow: var(--shadow-1);
-  animation: navBackIn var(--dur-base) ease-out;
-  transition: background var(--dur-fast), border-color var(--dur-fast), transform var(--dur-fast);
+  animation: navBackIn var(--dur-base) var(--ease-out);
+  transition: background var(--dur-fast), border-color var(--dur-fast), translate var(--dur-fast) var(--ease-out), scale var(--dur-fast) var(--ease-out);
 }
 .topbar .navBackBtn:hover {
   background: var(--accent-bg);
   border-color: var(--accent-fill);
   color: var(--accent-bright);
-  transform: translateX(-1px);
+  translate: -1px 0;
 }
-.topbar .navBackBtn:active { transform: translateX(-2px) scale(0.95); }
+.topbar .navBackBtn:active { translate: -2px 0; scale: 0.95; }
 .navBackBadge {
   position: absolute;
   top: -3px;
@@ -6325,7 +6302,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
    the pointer. Several chips stack leftwards from that anchor. */
 .peerChips {
   position: absolute; right: calc(100% + 1px); top: 3px; display: flex; z-index: 3;
-  pointer-events: none; transition: opacity var(--dur-fast) ease;
+  pointer-events: none; transition: opacity var(--dur-fast);
 }
 .sortableBlockWrap:is(:hover, :focus-within) > .blockRowWrap > .peerChips { opacity: 0.25; }
 .peerChips .peerAvatar { width: 16px; height: 16px; font-size: var(--fs-2xs); margin-left: -4px; }
@@ -6641,7 +6618,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   color: var(--text-secondary);
   cursor: pointer;
   opacity: 0;
-  transition: opacity var(--dur-fast) ease;
+  transition: opacity var(--dur-fast);
 }
 .blockInkCardWrap .inkReplayBtn:hover { color: var(--text-primary); }
 .blockInkCardWrap:hover .inkReplayBtn, .blockInkCardWrap .inkReplayBtn:is(:focus-visible, [aria-pressed="true"]) { opacity: 1; }

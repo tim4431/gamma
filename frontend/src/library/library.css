@@ -44,7 +44,7 @@
   text-align: left;
   color: var(--text-primary);
   font: inherit;
-  transition: background var(--dur-fast) ease, border-color var(--dur-fast) ease, box-shadow var(--dur-fast) ease;
+  transition: background var(--dur-fast), border-color var(--dur-fast), box-shadow var(--dur-fast);
 }
 /* One width for every fixed-width strip card, and the grid's minimum track —
    so a card is the same card wherever it is shown. */
@@ -406,6 +406,12 @@
 }
 .homeViewBtn:hover { color: var(--text-primary); }
 .homeViewBtn.active { background: var(--bg-input); color: var(--accent); box-shadow: var(--shadow-1); }
+/* The chosen one's plate slides under the buttons (.slidePill, motion.css)
+   once it is placed. */
+.homeViewToggle { position: relative; }
+.homeViewBtn { position: relative; z-index: 1; transition: color var(--dur-fast); }
+.homeViewToggle > .slidePill { background: var(--bg-input); box-shadow: var(--shadow-1); }
+.homeViewToggle[data-pill] > .homeViewBtn.active { background: none; box-shadow: none; }
 
 /* selected state — a solid border (not outline) so it never clips at the
    scroll-container edge */
@@ -422,6 +428,9 @@
   flex-direction: column;
   gap: 1px;
   padding: 2px 4px;
+  /* A row that goes leaves through a copy standing here (ListMotion), so it
+     is clipped and scrolled with the rows. */
+  position: relative;
 }
 /* An empty listing's line starts in the rows' column (the list's 4px inset
    plus a row's 1px border and 10px padding), a size under the rows. */
@@ -588,6 +597,7 @@
   gap: 8px;
   padding: 4px;
   align-content: start;
+  position: relative; /* as .fileList's: a card's copy on its way out stands here */
 }
 .tileGlyph { width: 52px; height: 52px; flex-shrink: 0; }
 .folderGlyph { color: var(--accent); }
@@ -753,7 +763,7 @@
   font-family: inherit; font-weight: inherit; line-height: inherit;
   text-align: left;
   cursor: pointer;
-  transition: background var(--dur-fast) ease, border-color var(--dur-fast) ease;
+  transition: background var(--dur-fast), border-color var(--dur-fast);
 }
 .libEmptyCard:hover { background: var(--bg-block); border-color: var(--border-hover); }
 .libEmptyCard.primary { border-color: var(--accent-fill); }

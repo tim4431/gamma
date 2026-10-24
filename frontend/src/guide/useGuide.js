@@ -16,6 +16,7 @@ import { answersOffer, canOffer, createGuideProgress, factsMatch, guideStorage, 
 import { createRunLog, madeItems, recordEvent } from "./finish.js";
 import { t, T } from "../shared/i18n/i18n.js";
 import { chordLabel } from "../shared/lib/hotkeys.js";
+import { arriving } from "../shared/ui/motion.js";
 
 const VARS_KEY = "gamma-guide-vars"; // {name: value} overriding a tour's vars (tests, demos)
 const ANCHOR_WAIT_MS = 4000;
@@ -32,7 +33,9 @@ async function waitAnchor(id, timeout = ANCHOR_WAIT_MS) {
   const started = performance.now();
   for (;;) {
     const el = anchorElement(id);
-    if (el) return el;
+    // a row in a popover still growing in is not yet where it will stand
+    // (motion.css): the demo's pointer goes to where it lands
+    if (el) { await Promise.all(arriving(el).map((a) => a.finished.catch(() => {}))); return el; }
     if (performance.now() - started > timeout) throw new Error(`anchor "${id}" not found`);
     await sleep(50);
   }

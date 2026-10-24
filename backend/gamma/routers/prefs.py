@@ -9,7 +9,9 @@ workspace carries); the keys in ``db.USER_PREF_KEYS`` (the preference
 profile, the AI provider entries) follow the account everywhere, in
 users.db (``user_prefs``). ``db.get_pref`` / ``set_pref`` pick the store.
 Session-only — share links never read or write prefs. Values are opaque
-JSON blobs; keep them small.
+JSON blobs; keep them small. ``GET /prefs?keys=a,b`` reads several keys in
+one answer, as the web app's first load does, and leaves out a profile
+whose read could wait on Gamma Cloud.
 
 `profile` holds every account-scoped setting of the web app as one object
 keyed by preference name (``db.get_profile`` / ``db.set_profile``); the
@@ -99,16 +101,50 @@ def write_profile_entries(payload: ProfilePatchRequest, request: Request):
     return {"key": PROFILE_PREF_KEY, "value": value, "updated_at": updated_at}
 
 
-@router.get("/prefs/{key}")
-def read_pref(key: str, request: Request):
-    user_id = require_user_id(request)
-    _check_key(key)
+def _read(user_id: str, key: str, request: Request) -> dict:
+    """One pref as ``GET /prefs/{key}`` answers it."""
     out = {"key": key}
     if key == PROFILE_PREF_KEY:
         cloud_sync.sync_if_stale(user_id)
         out["cloud_choice"] = cloud_sync.profile_status(user_id)["state"] == "choose"
     value, updated_at = get_pref(user_id, key, "" if key in USER_PREF_KEYS else require_ws(request))
     return {**out, "value": value, "updated_at": updated_at}
+
+
+# A first load asks for five; more than this in one read is not the web app.
+MAX_KEYS_PER_READ = 16
+
+
+@router.get("/prefs")
+def read_prefs(request: Request, keys: str = ""):
+    """Several prefs in one answer: ``?keys=profile,open-tabs`` gives
+    ``{prefs: {key: what GET /prefs/{key} answers}}``. The web app's first
+    load reads its preferences this way, so they travel as one request
+    behind the library listing rather than five queueing for the browser's
+    six connections. Every key is checked as the one-key read checks it,
+    and any bad one refuses the whole read.
+
+    The answer never waits on the network: the profile of an account whose
+    profile syncs through Gamma Cloud is left out, since its read may first
+    sync it (a round trip to the account server, seconds when that server
+    is slow) and would hold every other key's answer meanwhile. The caller
+    reads it on its own."""
+    user_id = require_user_id(request)
+    names = list(dict.fromkeys(k.strip() for k in keys.split(",") if k.strip()))
+    if not names or len(names) > MAX_KEYS_PER_READ:
+        raise HTTPException(status_code=400, detail=f"name 1 to {MAX_KEYS_PER_READ} pref keys")
+    for key in names:
+        _check_key(key)
+    if PROFILE_PREF_KEY in names and cloud_sync.syncs(user_id):
+        names.remove(PROFILE_PREF_KEY)
+    return {"prefs": {key: _read(user_id, key, request) for key in names}}
+
+
+@router.get("/prefs/{key}")
+def read_pref(key: str, request: Request):
+    user_id = require_user_id(request)
+    _check_key(key)
+    return _read(user_id, key, request)
 
 
 @router.put("/prefs/{key}")

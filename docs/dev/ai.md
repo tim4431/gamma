@@ -1289,8 +1289,8 @@ prefix holds. An asking `edit_block` or `create_block`
 streams no `progress`, so the note is not typed in before the user decides.
 
 In the client (`chat/ApprovalCard.jsx`, its rules in `chat/approvals.js`),
-the card takes the Thinking pill's place in the streaming reply. The steps
-pill reads "Waiting for your approval" until the user answers. The card
+the card stands under the streaming reply's pill, which reads "Waiting for
+your approval" until the user answers. The card
 carries the `chat.approval` guide anchor and emits `approval.shown` while it
 is up, so a hint beside the first one ever shown explains the four answers
 ([onboarding.md](onboarding.md)). The card
@@ -1395,8 +1395,14 @@ struck through → new, "… moved to ML/Generative") and "Changed in your
 notes". Each entry is a link that opens the page or the block
 (`openBlock(blockId, pageId)` of `GammaNavContext`). Actions saved before
 the structured fields fall back to their summary. While the reply streams,
-the pill names the step running now ("Searching library for “…”…") in
-place of the "Thinking" pill, from those arguments (`runningLabel`):
+the same pill says what is under way from the start of the turn: "Thinking",
+then the step running now ("Searching library for “…”…"), "Thinking" again
+between steps and "Responding" once text arrives, each change a morph. A
+reply that ends without a step folds its pill away. Until a step lands the
+pill opens nothing, so it takes no focus; only its label is a live region,
+so a screen reader hears each label once and not the token count that
+ticks beside it. The step's label comes
+from its arguments (`runningLabel`):
 "Renaming “A” to “B”…", "Moving “A” to ML/Generative…", "Appending to a
 note…", "Reading notes of “A”…" when `read_block` names a page. A call
 that hands documents to helpers lists them under the pill, one row each:
@@ -1542,8 +1548,8 @@ show what a week cost. Code: `gamma/ai_usage.py`, `ai_client.normalize_usage`,
   The panel shows a dim line under each reply (↑ input, ↓ output, "N%
   cached" when the provider served part of the prompt from its cache) and
   the conversation total in the chat-settings popover and the button's
-  tooltip. While a reply streams the same line ticks up inside the
-  "Thinking / Responding" pill, Claude Code style: exact counts for the
+  tooltip. While a reply streams the same line ticks up inside the reply's
+  pill, Claude Code style: exact counts for the
   rounds already reported plus a `~` estimate for the one still arriving
   (`estimateTokens`: characters received / 4, text deltas and previewed
   tool arguments alike; reset when that round's report lands). Replies

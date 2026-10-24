@@ -21,7 +21,8 @@
 
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { API, apiJson } from "../shared/lib/utils";
-import { ChevronDownIcon, ChevronRightIcon, ChevronUpIcon, FileGlyph, FolderIcon, LabelIcon, SearchIcon, XIcon } from "../shared/ui/Icons";
+import { ChevronDownIcon, ChevronUpIcon, FileGlyph, FolderIcon, LabelIcon, SearchIcon, XIcon } from "../shared/ui/Icons";
+import { Chevron, MorphText } from "../shared/ui/MotionWidgets";
 
 import { buildSearchRegex, normalizeQuery } from "../shared/lib/textnorm";
 import { createTitleScorer } from "../library/librarySearch";
@@ -29,6 +30,7 @@ import { filedIn, filingChips, folderEntries, folderSubtree, pageAttachment } fr
 import { markedParts, plainSnippet } from "./snippets";
 import { NOTES_PAGE, PDF_PAGE, TITLES_PAGE, appendNew, searchQuery } from "./searchPages";
 import { t, tn } from "../shared/i18n/i18n.js";
+import { Popover } from "../shared/ui/Surfaces";
 
 export { buildSearchRegex, normalizeQuery };
 
@@ -365,7 +367,7 @@ export default function SearchPanel({
   // A group's next page: the home feed's "load more" pill, at the group's end.
   const moreButton = (group, onClick) => (
     <button type="button" className="loadMoreBtn" disabled={moreBusy === group} onClick={onClick}>
-      {moreBusy === group ? t("Loading…") : t("Show more")}
+      <MorphText>{moreBusy === group ? t("Loading…") : t("Show more")}</MorphText>
     </button>
   );
   const notesElsewhereLabel = focusedBlockId ? t("Other notes") : t("Notes");
@@ -384,7 +386,7 @@ export default function SearchPanel({
         <span className="barLabel">{t("Search")}</span>
       </button>
       {open ? (
-        <div className="popover searchPopover">
+        <Popover className="searchPopover">
           <div className="searchRow">
             <button
               className={`searchToggle ${showDetails ? "on" : ""}`}
@@ -393,9 +395,7 @@ export default function SearchPanel({
                 ? t("Collapse result details (compact find — the default is in Settings → Search)") : t("Expand result details: titles, notes, and other pages")}
               aria-label={t("Toggle result details")}
             >
-              {showDetails
-                ? <ChevronDownIcon size={14} />
-                : <ChevronRightIcon size={14} />}
+              <Chevron open={showDetails} dir="right" size={14} />
             </button>
             <div className="searchInputWrap">
               {labels.map((l) => (
@@ -537,7 +537,7 @@ export default function SearchPanel({
               </>
             ) : null}
           </div>
-        </div>
+        </Popover>
       ) : null}
     </span>
   );
