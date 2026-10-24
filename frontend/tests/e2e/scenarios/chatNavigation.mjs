@@ -1631,9 +1631,12 @@ export async function chatNavigationScenarios(env) {
       await page.waitForTimeout(300); // what is absent is looked for once the read has landed
       assertEq(await page.locator(".chatEmpty").count(), 0, "no empty-state text yet");
       assertEq(await page.getByRole("button", { name: "Find in this conversation" }).count(), 0, "no header tools yet");
+      const composer = page.getByRole("combobox", { name: "Message AI" });
+      assertEq(await composer.getAttribute("placeholder"), "", "the field names nothing yet");
       release();
       await page.locator(".chatEmpty", { hasText: "Ask AI anything" }).waitFor();
       await page.getByRole("button", { name: "Find in this conversation" }).waitFor();
+      assert(/^Ask/.test(await composer.getAttribute("placeholder")), "then it asks");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

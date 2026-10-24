@@ -2305,7 +2305,9 @@ export default function ChatDock({
           onChange={setChatInput}
           onPaste={handleChatPaste}
           disabled={aiOff}
-          placeholder={aiOff ? t("Connect an AI service to start chatting") : (
+          // Until the chat knows its AI the field names nothing, so it
+          // never offers to ask before it says a service is needed.
+          placeholder={!aiKnown ? "" : aiOff ? t("Connect an AI service to start chatting") : (
             // Names what the message will be about, most specific attachment first.
             chatFiles.length ? tn("Ask about the attached file…", "Ask about the attached files…", chatFiles.length)
             : chatImages.length ? t("Ask about the attached picture…") : pdfSelections.length > 1 ? t("Ask about the {n} selected passages…", { n: pdfSelections.length })

@@ -5593,6 +5593,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setLoading(true);
     try {
       const subtreeData = await apiJson(`${API}/blocks/${blockId}/subtree`);
+      // A later open took over while this one waited (two tabs pressed in
+      // quick succession): its page is the one wanted, whichever answers last.
+      if (openSeqRef.current !== seq) return undefined;
       const block = subtreeData.block;
       if (!block) throw new Error("Block not found");
       const props = block.properties || {};
@@ -5692,6 +5695,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       guideEvents.emit("page.opened", { id: blockId, title: block.content || t("Untitled") });
       return openedPdfUrl;
     } catch (err) {
+      if (openSeqRef.current !== seq) return undefined; // a later open took over
       if (err.status === 404 && opts?.link) {
         // Not a failure to report as one: the page is gone (or in Recently
         // deleted), or lives in another workspace. The notice says so; a dead
@@ -5711,9 +5715,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (!window.location.search.includes("block=")) clearSession();
     } finally {
       clearTimeout(opening);
-      if (openSeqRef.current === seq) postPill("opening", null);
-      setTabPick((pick) => (pick === blockId ? "" : pick));
-      setLoading(false);
+      // What the open on screen holds is the latest open's to let go of.
+      if (openSeqRef.current === seq) {
+        postPill("opening", null);
+        setLoading(false);
+        setTabPick((pick) => (pick === blockId ? "" : pick));
+      }
     }
   }
   // A tab pressed: selected at once, its page opened behind it.

@@ -345,11 +345,13 @@ export async function quickOpenScenarios(env) {
     }
     await user.api("/api/prefs/open-tabs", { method: "PUT", body: { value: made.map((b) => ({ id: b.id, title: b.content })) } });
     const ctx = await user.context(browser);
-    // Each page's tree answers after `delay` ms, or once `hold` resolves.
-    const gate = { delay: 0, hold: null };
+    // Each page's tree answers after `delay` ms, or once `hold` resolves;
+    // the page `late` names answers 800 ms late.
+    const gate = { delay: 0, hold: null, late: "" };
     for (const b of made) {
       await ctx.route(`**/api/blocks/${b.id}/subtree*`, async (route) => {
         if (gate.hold) await gate.hold;
+        else if (gate.late === b.id) await new Promise((resolve) => setTimeout(resolve, 800));
         else if (gate.delay) await new Promise((resolve) => setTimeout(resolve, gate.delay));
         await route.continue();
       });
@@ -411,6 +413,17 @@ export async function quickOpenScenarios(env) {
       assertEq(said(seen[0]), "Switch from | Switch to | ", "the press's own frame, again");
       assert(seen.every((f) => f.tabs.length === 1 && f.tabs[0] === "Switch from"), `the pressed tab stays selected: ${seen.map(said).join(" / ")}`);
       assert(seen.every((f) => !f.pill), `no pill for a quick switch: ${seen.map(said).join(" / ")}`);
+      // two presses in quick succession: the later one's page stays, though
+      // the earlier one's tree answers after it
+      gate.delay = 0;
+      gate.late = made[1].id;
+      await tab("Switch to").click();
+      await tab("Switch from").click();
+      await onPage("Switch from");
+      await page.waitForTimeout(1200);
+      assertEq(await page.locator(".pageTitleRow .titleText").innerText(), "Switch from", "the late answer does not take over");
+      assertEq((await page.locator(".tabStrip .tab.active:not([data-leaving]) .tabTitle").allInnerTexts()).join(), "Switch from");
+      assertEq(await page.locator(".statusPill").count(), 0, "and leaves no pill behind");
       assertNoProblems(page);
     } finally {
       await ctx.close();
