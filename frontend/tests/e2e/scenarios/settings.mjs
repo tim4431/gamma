@@ -1,4 +1,4 @@
-import { Account, FAKE_AI_MODELS, ROOT, Server, fakeAiModels, wanted } from "../harness.mjs";
+import { Account, FAKE_AI_MODELS, ROOT, Server, arrived, fakeAiModels, wanted } from "../harness.mjs";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
@@ -917,6 +917,8 @@ export async function settingsScenarios(env) {
       await dialog.getByPlaceholder("e.g. Nightly research backup").fill("Nightly");
       // Text selected with a drag let go past the dialog's edge is no click
       // on the backdrop (press.js backdropPress); a real click there asks.
+      // (Its edge is read once it has grown in.)
+      await arrived(dialog);
       const keep = await dialog.getByRole("spinbutton", { name: "Keep for", exact: true }).boundingBox();
       const edge = await dialog.boundingBox();
       await page.mouse.move(keep.x + keep.width / 2, keep.y + keep.height / 2);
@@ -1611,26 +1613,77 @@ export async function settingsScenarios(env) {
   await step("settings: with no AI connected the chat is a setup card; connecting from it comes back to the chat, ready", async () => {
     // The model list the browser sees flips once the connection is saved
     // (the real server stores it; its model listing and test are faked).
-    let connected = false;
+    // The chat's first read of the key list is held, to see the card wait
+    // for its tiles.
+    let connected = false, modelsAnswered = false, releaseKeys;
+    const keysHeld = new Promise((resolve) => { releaseKeys = resolve; });
+    let keysAsked = 0;
     const { ctx, page } = await setup(undefined, async (c) => {
-      await c.route("**/api/ai/models*", (route) => route.fulfill({ json: connected
-        ? { ...FAKE_AI_MODELS, default: "x:claude-e2e", models: [{ id: "x:claude-e2e", provider: "x", provider_name: "Anthropic", model: "claude-e2e" }] }
-        : { enabled: false, models: [], default: "", efforts: ["low", "medium", "high"] } }));
+      await c.route("**/api/ai/models*", async (route) => {
+        await route.fulfill({ json: connected
+          ? { ...FAKE_AI_MODELS, default: "x:claude-e2e", models: [{ id: "x:claude-e2e", provider: "x", provider_name: "Anthropic", model: "claude-e2e" }] }
+          : { enabled: false, models: [], default: "", efforts: ["low", "medium", "high"] } });
+        modelsAnswered = true;
+      });
+      await c.route("**/api/ai/settings", async (route) => {
+        if (++keysAsked === 1) await keysHeld;
+        await route.continue();
+      });
       await c.route("**/api/ai/model-catalog", (route) => route.fulfill({ json: { models: ["claude-e2e", "claude-e2e-mini"] } }));
       await c.route("**/api/ai/providers/*/test", (route) => route.fulfill({ json: { ok: true, model: "claude-e2e", latency_ms: 200 } }));
       await c.route("**/api/ai/providers", (route) => { connected = true; return route.continue(); });
     });
     try {
+      // Known to be off, the chat waits for the tiles: no card, and nothing
+      // in its place, until it can show the card whole.
+      await until(() => modelsAnswered && keysAsked === 1, { what: "the models answered, the key list asked for" });
+      await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+      assertEq(await page.locator(".chatSetup").count(), 0, "the card waits for its tiles");
+      assertEq(await page.locator(".chatEmpty").count(), 0, "and no empty-state text stands in for it");
       const tiles = page.locator(".chatSetup").getByRole("group", { name: "Connect an AI service" });
-      await tiles.getByRole("button", { name: /^Anthropic/ }).waitFor();
+      releaseKeys();
+      await page.locator(".chatSetup").waitFor();
       assertEq(await tiles.getByRole("button").count(), 4, "ChatGPT, Anthropic, OpenAI API, Other service");
       const input = page.getByRole("combobox", { name: "Message AI" });
       assert(await input.isDisabled(), "a send could only fail");
       assertEq(await input.getAttribute("placeholder"), "Connect an AI service to start chatting");
       assertEq(await page.getByRole("button", { name: "Find in this conversation" }).count(), 0, "no header tools without AI");
       assertEq(await page.getByRole("button", { name: "Start dictation" }).count(), 0, "no mic without AI");
-      await tiles.getByRole("button", { name: /^Anthropic/ }).click();
+      const anthropic = tiles.getByRole("button", { name: /^Anthropic/ });
+      const settings = page.getByRole("dialog", { name: "Settings", exact: true });
       const dialog = page.getByRole("dialog", { name: "Connect an AI service", exact: true });
+      const hasFocus = (locator) => locator.evaluate((el) => el.contains(document.activeElement));
+      // The tile opens Settings with the connect dialog, which takes the
+      // focus; one Escape closes the dialog alone and Settings has it back,
+      // a second closes Settings and the tile has it.
+      await anthropic.click();
+      await dialog.waitFor();
+      await until(() => hasFocus(dialog), { what: "the connect dialog has the focus" });
+      await page.keyboard.press("Escape");
+      await dialog.waitFor({ state: "detached" });
+      assert(await settings.isVisible() && await hasFocus(settings), "Settings stays, with the focus");
+      await page.keyboard.press("Escape");
+      await settings.waitFor({ state: "detached" });
+      assert(await anthropic.evaluate((el) => el === document.activeElement), "the tile has the focus back");
+      // Settings closed while the dialog is up (an Escape Settings itself
+      // takes) leaves no form behind: Connections opens on its list alone.
+      await anthropic.click();
+      await dialog.waitFor();
+      await page.locator(".settingsModal").evaluate((el) => el.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+      await settings.waitFor({ state: "detached" });
+      await openSettings(page);
+      await page.evaluate(() => {
+        window.__subDialogs = 0;
+        new MutationObserver((records) => {
+          for (const r of records) for (const n of r.addedNodes) if (n.nodeType === 1 && n.matches(".subDialog")) window.__subDialogs++;
+        }).observe(document.querySelector(".settingsModal"), { childList: true, subtree: true });
+      });
+      await nav(page, "Connections").click();
+      await page.locator(".settingsPane").getByText("Test connection").first().waitFor();
+      assertEq(await page.evaluate(() => window.__subDialogs), 0, "no connect dialog was drawn on the way");
+      await page.getByRole("button", { name: "Close settings", exact: true }).click();
+      await settings.waitFor({ state: "detached" });
+      await anthropic.click();
       await dialog.waitFor();
       assertEq(await dialog.getByRole("group", { name: "AI service" }).getByRole("button", { name: "Anthropic", exact: true }).getAttribute("aria-pressed"), "true", "the dialog is on the tile's service");
       await dialog.locator('input[autocomplete="new-password"]').fill("sk-ant-e2e-key-4242");
@@ -1913,6 +1966,75 @@ export async function settingsScenarios(env) {
         method: "PUT", body: { guest_ttl_hours: before.guest_ttl_hours, demo_mode: false, guest_logins: true },
       });
     }
+  });
+
+  await step("settings: a pane's reads go out together and once, as the pointer reaches its button; the pane before stays until they are in, but not for long; a second visit shows at once and reads again in place", async () => {
+    await server.manage("set-admin", "settings-user", "on");
+    const { ctx, page } = await setup();
+    try {
+      const asked = [];
+      page.on("request", (r) => {
+        const url = new URL(r.url());
+        if (url.pathname.startsWith("/api/") && r.method() === "GET") asked.push(url.pathname + url.search);
+      });
+      const count = (path) => asked.filter((u) => u === path).length;
+      const title = () => page.locator(".settingsPane .settingsPaneTitle").first().textContent();
+      // the pane's title as the next one shows, and whether what it read is there in that frame
+      const nextPane = (name, text) => page.evaluate(([name, text]) => new Promise((resolve) => {
+        const tick = () => {
+          const pane = document.querySelector(".settingsPane");
+          if (pane?.querySelector(".settingsPaneTitle")?.textContent === name) resolve(pane.textContent.includes(text));
+          else requestAnimationFrame(tick);
+        };
+        tick();
+      }), [name, text]);
+      // The Server pane (where Settings opens while a notice points there, else
+      // a click away): its five sections over the server's settings make one
+      // read, and no path is read twice.
+      await openSettings(page);
+      await page.locator(".settingsPane .settingsPaneTitle").first().waitFor();
+      if ((await title()) !== "Server") await nav(page, "Server").click();
+      await until(async () => (await title()) === "Server", { what: "the Server pane" });
+      await page.getByRole("textbox", { name: "Public server URL" }).waitFor();
+      await page.waitForTimeout(500);
+      assertEq(count("/api/admin/settings"), 1, `five sections over the server's settings, one read: ${asked}`);
+      // (the pane's own reads; the storage line and the sync state are the menu's and the dialog's)
+      const panes = asked.filter((u) => /^\/api\/(admin\/|accounts$)/.test(u));
+      assertEq(panes.length, new Set(panes).size, `no path read twice: ${asked}`);
+      // Pointing at Users reads its pane ahead; the click then finds it in.
+      await nav(page, "Appearance").click();
+      await until(async () => (await title()) === "Appearance", { what: "Appearance" });
+      const read = page.waitForResponse((r) => r.url().endsWith("/api/admin/users"));
+      await nav(page, "Users").hover();
+      await read;
+      await nav(page, "Users").click();
+      assertEq(await title(), "Users", "a pane whose reads are in shows in the click's commit");
+      assert((await page.locator(".settingsPane").textContent()).includes("settings-user"), "with its accounts");
+      // A later visit shows what the first read at once, and reads it again in place.
+      await page.waitForTimeout(3200);
+      await nav(page, "Server").click();
+      assertEq(await title(), "Server", "a second visit shows at once");
+      assert((await page.getByRole("textbox", { name: "Public server URL" }).inputValue()).startsWith("http"),
+        "the public URL is in its box at once");
+      await until(() => count("/api/admin/settings") === 2, { what: "the settings read again in place" });
+      // The pane before stays while the next one's reads come in, its button marked at once.
+      await page.route("**/api/auth/cloud/status", async (route) => { await sleep(200); await route.continue(); });
+      const account = nextPane("Account & sync", "Gamma Cloud");
+      await page.getByRole("button", { name: "Account & sync", exact: true }).click();
+      assertEq(await title(), "Server", "Server stays while the account pane reads");
+      assertEq(await page.getByRole("button", { name: "Account & sync", exact: true }).getAttribute("aria-current"), "page",
+        "the account card is marked at once");
+      assert(await account, "the account pane comes with its Gamma Cloud row");
+      // But not for long: a slow read lets the pane show without it after a moment.
+      await page.route("**/api/backup-tasks", async (route) => { await sleep(2000); await route.continue(); });
+      const shownAt = Date.now();
+      await nav(page, "Backups").click();
+      await until(async () => (await title()) === "Backups", { timeout: 1000, what: "the Backups pane, before its slow read" });
+      assert(Date.now() - shownAt < 1000, "it waits a moment, not for the read");
+      await page.getByText("Loading tasks…", { exact: true }).waitFor({ state: "attached" });
+      await page.getByText("Loading tasks…", { exact: true }).waitFor({ state: "detached", timeout: 5000 });
+      assertNoProblems(page);
+    } finally { await ctx.close(); } // settings-user stays an admin for the steps below
   });
 
   await step("settings: a shared AI provider from Server is a read-only connection for every account", async () => {

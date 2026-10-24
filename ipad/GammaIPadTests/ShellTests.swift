@@ -19,13 +19,6 @@ final class ServerAddressTests: XCTestCase {
         XCTAssertNil(ServerAddress.parse(""))
         XCTAssertNil(ServerAddress.parse("https://"))
     }
-
-    func testRecentServersPutTheLatestFirstOnce() throws {
-        let a = try XCTUnwrap(URL(string: "https://a.example")), b = try XCTUnwrap(URL(string: "https://b.example"))
-        XCTAssertEqual(ServerAddress.remember(a, in: [b, a]), [a, b])
-        let many = (0..<(ServerAddress.recentLimit + 5)).compactMap { URL(string: "https://s\($0).example") }
-        XCTAssertEqual(ServerAddress.remember(a, in: many).count, ServerAddress.recentLimit)
-    }
 }
 
 final class RouteTests: XCTestCase {

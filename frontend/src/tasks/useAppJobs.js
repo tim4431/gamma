@@ -57,18 +57,23 @@ export function useAppJobs({
 
   // Run what the export dialog was configured to do: a background job
   // (export) the dialog then follows — it may close meanwhile, and the
-  // file downloads by itself while it watches. A PDF with both switches
+  // file downloads by itself while it watches. A PDF with every switch
   // off is the stored file itself, which the raw path serves without a
   // round trip (and works for PDFs that only exist behind the proxy). A
   // share view has no background tasks: it downloads the same export
   // through the download endpoints.
   async function runExport(o) {
     if (!exportFolder && !pageId) { setExportOpen(false); setStatus(t("Open a page first to export it.")); return; }
-    if (!exportFolder && o.format === "pdf" && !o.highlights && !o.notes) { setExportOpen(false); await exportRawPdf(); return; }
+    if (!exportFolder && o.format === "pdf" && !o.highlights && !o.notes && !o.comments) {
+      setExportOpen(false);
+      await exportRawPdf();
+      return;
+    }
     const body = exportJobBody(o, { pageId, folder: exportFolder || "" });
     if (shareMode) {
       setExportOpen(false);
-      const query = new URLSearchParams({ mode: body.mode, pdf: body.pdf ? 1 : 0, highlights: body.highlights ? 1 : 0, notes: body.notes ? 1 : 0 });
+      const query = new URLSearchParams({ mode: body.mode, pdf: body.pdf ? 1 : 0, highlights: body.highlights ? 1 : 0,
+        notes: body.notes ? 1 : 0, ...(body.notes_at ? { comments: body.comments ? 1 : 0, notes_at: body.notes_at } : {}) });
       await downloadExport(exportFolder
         ? `/folders/${encodeURIComponent(exportFolder)}/export?${query}` : `/pages/${pageId}/export?${query}`, "export");
       return;
@@ -165,7 +170,9 @@ export function useAppJobs({
     if (job.kind === "import") {
       if (job.state === "done" && here) {
         refreshQuota?.();
-        fetchHomeBlocks();
+        // this tab's import brings its pages in; one from elsewhere is
+        // another client's change, which lands at once
+        fetchHomeBlocks({ still: !started });
         if (!shownInDialog && started) {
           tasks.fetchJob(job.id).then((full) => full?.result && setStatus(t("Import: {summary}.", { summary: importSummary(full.result) }))).catch(() => {});
         }
@@ -175,8 +182,9 @@ export function useAppJobs({
       return;
     }
     if (job.kind === "metadata") {
-      // Done or stopped part-way, papers may carry their registry titles now.
-      if (here && job.state !== "failed") fetchHomeBlocks();
+      // Done or stopped part-way, papers may carry their registry titles
+      // now: a read that is a load, so the order they bring lands at once.
+      if (here && job.state !== "failed") fetchHomeBlocks({ still: true });
       if (!started) return;
       if (job.state === "done") {
         tasks.fetchJob(job.id).then((full) => {

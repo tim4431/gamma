@@ -65,7 +65,7 @@ button.taskMain:hover .taskName { color: var(--text-primary); }
 
 /* The bar: its width is the fraction done; without one, a sweep. */
 .taskBar { position: relative; display: block; height: 3px; border-radius: 2px; background: var(--border-subtle); overflow: hidden; }
-.taskBar > span { display: block; height: 100%; background: var(--accent); border-radius: 2px; transition: width var(--dur-base) ease; }
+.taskBar > span { display: block; height: 100%; background: var(--accent); border-radius: 2px; transition: width var(--dur-base) var(--ease-out); }
 .taskBar.indeterminate > span { width: 30%; animation: taskBarSweep 1.4s ease-in-out infinite; }
 @keyframes taskBarSweep {
   from { transform: translateX(-100%); }

@@ -33,7 +33,11 @@
 }
 .inboxHead { display: flex; align-items: center; justify-content: space-between; gap: var(--space-4); min-height: var(--ctl-btn-sm); }
 .inboxTabs { display: flex; padding: 0 var(--space-2); }
-.inboxList { display: flex; flex-direction: column; gap: var(--space-1); min-height: 0; overflow-y: auto; }
+/* The listing scrolls; its rows (.inboxRows, a Reveal) are a column. A
+   row that goes leaves through a copy placed against the list, so it
+   scrolls and is clipped with it. */
+.inboxList { position: relative; min-height: 0; overflow-y: auto; }
+.inboxRows { gap: var(--space-1); }
 .inboxList .popoverSection { padding: var(--space-4) 6px var(--space-1); }
 .inboxList .setEmpty { padding: 18px 12px; }
 .inboxLoading { padding: var(--space-4); }
@@ -81,7 +85,7 @@
 .inboxMeta { display: flex; flex-wrap: wrap; gap: var(--space-3); font-size: var(--fs-2xs); color: var(--text-muted); }
 .inboxWs { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .inboxWs::after { content: "·"; margin-left: var(--space-3); }
-.inboxActions { flex-shrink: 0; opacity: 0; transition: opacity var(--dur-fast) ease; }
+.inboxActions { flex-shrink: 0; opacity: 0; transition: opacity var(--dur-fast); }
 .inboxRow:is(:hover, :focus-within) .inboxActions { opacity: 1; }
 @media (hover: none) { .inboxActions { opacity: 1; } }
 .inboxDot {

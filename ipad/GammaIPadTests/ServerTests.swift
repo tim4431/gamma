@@ -128,14 +128,15 @@ final class SavedServersTests: XCTestCase {
             saved.save(to: defaults)
             XCTAssertEqual(SavedServers.load(from: defaults), saved)
         }
+        let named = SavedServers(current: .remote(b), remotes: [a, b], names: ["local": "Studio", b.absoluteString: "NAS"])
+        named.save(to: defaults)
+        XCTAssertEqual(SavedServers.load(from: defaults), named)
     }
 
-    func testPhaseOnesConnectionBecomesTheCurrentRemote() throws {
-        defaults.set("https://gamma.example.org", forKey: "gamma.server")
-        defaults.set(["https://gamma.example.org", "nas.local:8080"], forKey: "gamma.recentServers")
-        let saved = SavedServers.load(from: defaults)
-        XCTAssertEqual(saved.current, .remote(try XCTUnwrap(URL(string: "https://gamma.example.org"))))
-        XCTAssertEqual(saved.remotes.map(\.absoluteString), ["https://gamma.example.org", "https://nas.local:8080"])
+    func testAListSavedBeforeNamesStillReads() throws {
+        defaults.set(Data(#"{"current":{"local":{}},"remotes":["https://a.example"]}"#.utf8), forKey: SavedServers.key)
+        XCTAssertEqual(SavedServers.load(from: defaults),
+                       SavedServers(current: .local, remotes: [try XCTUnwrap(URL(string: "https://a.example"))]))
     }
 
     func testNothingSavedIsNoServer() {

@@ -5,7 +5,9 @@
 # carries the backend and the built web app, so a change to the server's
 # dependencies starts this workflow too; the code itself is the one the
 # other checks test. The two ink fixtures the Swift ports are held to
-# (tests/shared/inkwidth.json, inkhold.json) start it as well.
+# (tests/shared/inkwidth.json, inkhold.json) start it as well, and so do
+# the desktop app's chrome pages (desktop/ui/), which the app carries as
+# its own bar and launcher.
 # Overview: docs/dev/github_actions.md.
 
 name: ipad
@@ -16,6 +18,7 @@ on:
       - "ipad/**"
       - "tests/shared/inkwidth.json"
       - "tests/shared/inkhold.json"
+      - "desktop/ui/**"
       - "backend/requirements.txt"
       - "tools/build_frontend_if_needed.mjs"
       - ".github/workflows/ipad.yml"

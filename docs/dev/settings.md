@@ -25,6 +25,18 @@ device or names something that exists only on this server.
 
 The profile syncs through `useProfileSync` in prefs.js. On sign-in the
 server copy wins; an account without one is seeded from this browser.
+The first screen does not wait for it: `/api/session` carries the
+profile's `theme` and `language`, which `main.jsx` puts on as the session
+lands (`app/boot.js`), so a browser new to the account draws in its theme
+and language from the start ([i18n.md](i18n.md)); a theme or language this
+app does not know (one a newer server synced through Gamma Cloud) is not
+applied, as the profile's codecs drop it. The first load then reads the
+profile with the other synced keys (open tabs, recents, reading positions,
+the AI key) in one request, `GET /api/prefs?keys=`, sent right behind the
+library listing (`preloadPrefs`); later reads ask for one key. An account
+whose profile syncs through Gamma Cloud gets its profile from a read of its
+own, after that answer: reading it may wait on the sync, which would hold
+the open tabs and the reading positions back with it.
 Entries are validated with the same codecs as localStorage, so unknown names
 and bad values are dropped and a partial profile applies what it has.
 A change is pushed one second after it settles (a slider sends one request)
@@ -459,9 +471,15 @@ AI:
   the same numbers under the storage meter. The check, models and usage
   sections appear only once a provider exists; a guest sees the usage too,
   without Reset. The chat's setup card (no AI connected, `ChatSetupCard` in
-  `chat/ChatDock.jsx`) opens this pane through `openAiKeysEditor({service})`,
-  and the add dialog comes up set to the tile's service once the key list
-  has loaded (a chat error card's fix opens an entry's form the same way,
+  `chat/ChatDock.jsx`) reads the masked key list alongside `/api/ai/models`
+  and shows once both are in, tiles and all. Until the chat knows whether
+  an AI is connected it is a plain frame, with no header tools and no
+  empty-state text; when the `/api/ai/models` read fails it shows them as if
+  one were (App's `aiInfoFailed`), and a send says what is wrong. The card
+  opens this pane through `openAiKeysEditor({service})`: Settings is fetched as the pointer or the
+  focus reaches a tile, and the add dialog, set to the tile's service, opens
+  with Settings on the list the card read while the pane reads its own (a
+  chat error card's fix opens an entry's form once the list has loaded,
   `openAiKeysEditor({entry})`); the card's tiles and the dialog's service tiles are one list
   (`aiServiceTiles` in `settings/providerEditor.js`). Once a connection made from the
   card is saved with a model, Settings closes, the status says "Connected —
@@ -715,6 +733,45 @@ dialogs protect unsaved drafts on Cancel, Escape and backdrop dismissal.
 `useSettingsDraft` registers dirty editors with the settings navigation
 guard.
 
+### What a pane reads
+
+The sections of a pane read the server through one store, made each time
+the dialog opens and kept until it closes
+([settingsReads.js](../../frontend/src/settings/settingsReads.js)): one
+entry per path, shared by every section over it. The Server pane's five
+sections over `/api/admin/settings` (the public URL, sign-in, the plan, the
+storage defaults, guests) make one request, and what one of them saves the
+others show. `useSettingsRead(path, {poll})` gives a section the entry
+(`data`, `error`, `set` for what a write answered, `reload`); a read whose
+answer is less than three seconds old, or one already on its way, is taken
+rather than sent again, and only the newest read sent lands: one asked for
+again after a change goes out at once, and an answer that lands after a
+write to the same path is older than what the write brought, so it is
+dropped. A form over
+read values (`useDraftOf`, SettingsKit.jsx) follows them as they are read
+again, unless it was edited since.
+
+`PANE_READS` names each pane's reads, in the order they go out: what the
+top of the pane shows first, since the browser keeps six requests in
+flight to the server. A read may lead to others once it lands (Backups: each
+workspace's snapshots), and one marked `later` (the server log, the account
+pickers' directory) goes out with the rest without being waited for. They
+start together from the pointer or the focus reaching a pane's sidebar
+button, so a click mostly finds them in, and from the click itself. A
+pane asked for from the sidebar or a search result keeps the one before on
+screen, its own button already marked, until its reads are in or 250 ms
+have passed (`HOLD_MS`); it then shows with what it has, its placeholders
+fading in only after a moment (`.loadingHint`; `Empty`'s and `LogBox`'s
+`loading`). A pane whose reads are in shows at once, and its reads go out
+again to refresh it in place: a second visit is instant. Settings opened
+straight onto a pane (a notice, the chat's AI tiles) shows it at once, its
+reads starting together as it mounts. A test checks that every path a
+section reads is named in `PANE_READS` (`tests/settingsReads.test.mjs`).
+Measured at 150 ms of latency, the Server pane went from 12 requests in five
+waves, its sections jumping down four times as the ones above them filled,
+to 8 requests in two waves and one switch at 208 ms with every section in
+place (at once after a hover).
+
 ## Chat settings are global
 
 The chat's shortcuts edit the **same shared preferences** as Settings: the
@@ -772,7 +829,8 @@ accept a `draft` value for dismissal protection. See
 
 ## Verification
 
-`npm test` covers permission presets, search visibility and legacy pane aliases.
+`npm test` covers permission presets, search visibility, legacy pane aliases
+and the panes' shared reads (`tests/settingsReads.test.mjs`).
 After building, `npm run e2e -- --only settings` exercises the actual UI:
 preferences and reload, management navigation, prompt/connection draft guards,
 shared chat settings, mobile layout, administrator account separation, and

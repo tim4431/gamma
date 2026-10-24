@@ -5,7 +5,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   applyMark, inFilter, inboxActor, inboxDays, inboxJump, inboxSentence, inboxSnippet, inboxUrl, isFolderShare,
-  isUnread, itemsToRing, mergeListing, RING_AT_ONCE, sameListing,
+  isUnread, itemsToRing, lookedListing, mergeListing, reopenedListing, RING_AT_ONCE, sameListing,
 } from "../src/inbox/inboxText.js";
 
 const item = (id, at, extra = {}) => ({
@@ -107,6 +107,25 @@ test("a listing's first page keeps the older items loaded before, and drops what
   assert.equal(mergeListing(prev, got, true).more, true);
   const whole = mergeListing(prev, { items: [item("a", "5")], more: false });
   assert.deepEqual(whole.items.map((i) => i.id), ["a"], "a listing that says it is all replaces the rest");
+});
+
+test("a tab opened again holds the first page it showed, and its first look replaces it; later looks keep the older rows", () => {
+  // All showed seven rows, Show older's among them; a new one has come since
+  const held = { filter: "all", items: ["g", "f", "e", "d", "c", "b", "a"].map((id, i) => item(id, String(7 - i))), more: false, loaded: true, failed: false };
+  const opened = reopenedListing(held, "all", 5);
+  assert.deepEqual(opened.items.map((i) => i.id), ["g", "f", "e", "d", "c"], "only the page a look says again");
+  assert.equal(opened.more, false, "no Show older until the look says there is more");
+  assert.equal(opened.loaded, false);
+  assert.deepEqual(reopenedListing(undefined, "archived", 5), { filter: "archived", items: [], more: false, loaded: false, failed: false },
+    "nothing the first time");
+  const page = { items: ["n", "g", "f", "e", "d"].map((id, i) => item(id, String(["8", "7", "6", "5", "4"][i]))), more: true };
+  const looked = lookedListing(opened, page);
+  assert.deepEqual(looked.items.map((i) => i.id), ["n", "g", "f", "e", "d"], "the server's page as it stands, nothing held past it");
+  assert.deepEqual([looked.more, looked.loaded, looked.failed], [true, true, false]);
+  // Show older brings "c" to "a" afresh, "b" read meanwhile; the next poll keeps them past its page
+  const older = { ...looked, items: [...looked.items, item("c", "3"), item("b", "2", { read_at: "x" }), item("a", "1")], more: false };
+  assert.deepEqual(lookedListing(older, page).items.map((i) => i.id), ["n", "g", "f", "e", "d", "c", "b", "a"]);
+  assert.equal(lookedListing(older, page).items[6].read_at, "x");
 });
 
 test("a poll that changes nothing is the same listing; any field, the tab or its state differs", () => {

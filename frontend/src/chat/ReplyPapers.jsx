@@ -8,7 +8,8 @@
 // papers it holds already and the registry for titles the reply left out.
 import React, { useEffect, useMemo, useState } from "react";
 import { API, apiJson } from "../shared/lib/utils";
-import { CheckIcon, ChevronDownIcon, ChevronUpIcon, FilePlusIcon, PaperIcon } from "../shared/ui/Icons";
+import { CheckIcon, FilePlusIcon, PaperIcon } from "../shared/ui/Icons";
+import { Chevron, Collapse, MorphText } from "../shared/ui/MotionWidgets";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { clipPayload, lookupQuery, replyPapers } from "./chatPapers.js";
 
@@ -89,9 +90,9 @@ export default function ReplyPapers({ actions, text, folder = "", folderName = "
         <span className="chatPillText">
           {tn("{n} paper in this reply", "{n} papers in this reply", papers.length)} · {t("Save to library")}
         </span>
-        {open ? <ChevronUpIcon size={14} /> : <ChevronDownIcon size={14} />}
+        <Chevron open={open} dir="down" size={14} />
       </button>
-      {open ? (
+      <Collapse open={open} className="chatPapersFold">
         <div className="chatPapers" role="group" aria-label={t("Papers in this reply")}>
           {papers.map((p) => {
             const st = status[p.key] || {};
@@ -125,7 +126,7 @@ export default function ReplyPapers({ actions, text, folder = "", folderName = "
           <div className="chatPapersFoot">
             <button type="button" className="uiBtn sm ghost" disabled={busy || !choosable.length}
               onClick={() => setPicked(chosen.length === choosable.length ? new Set() : new Set(choosable.map((p) => p.key)))}>
-              {chosen.length === choosable.length && choosable.length ? t("Select none") : t("Select all")}
+              <MorphText>{chosen.length === choosable.length && choosable.length ? t("Select none") : t("Select all")}</MorphText>
             </button>
             <button type="button" className="uiBtn sm primary" disabled={busy || !chosen.length} onClick={save}
               title={folderName ? t("Saved into {folder}", { folder: folderName }) : t("Saved into your library")}>
@@ -136,7 +137,7 @@ export default function ReplyPapers({ actions, text, folder = "", folderName = "
             </button>
           </div>
         </div>
-      ) : null}
+      </Collapse>
     </div>
   );
 }

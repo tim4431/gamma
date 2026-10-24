@@ -20,6 +20,7 @@ import { API, apiJson, isPdfFile } from "../shared/lib/utils";
 import { xhrUpload } from "../shared/lib/xhrUpload.js";
 import { IS_DESKTOP } from "../shared/lib/connector.js";
 import { CheckIcon, ExternalLinkIcon, ShieldIcon, UploadIcon } from "../shared/ui/Icons";
+import { IconSwap } from "../shared/ui/MotionWidgets";
 import { t } from "../shared/i18n/i18n.js";
 import {
   NEEDS_YOU, SETTLED, autoOpens, canContinue, connectorNote, continuePrompt, handoffHint, handoffState,
@@ -214,7 +215,7 @@ function HandoffCard({ handoff, isLast, readOnly, autoOpen, onState, live = fals
     <div className={`chatHandoff ${state}${dragOver ? " dragOver" : ""}`} role="group"
       aria-label={t("Get this paper in your browser")} data-handoff={handoff.id} {...drop}>
       <div className="chatHandoffHead">
-        {state === "done" ? <CheckIcon size={16} /> : <ShieldIcon size={16} />}
+        <IconSwap swap={state === "done"} from={<ShieldIcon size={16} />} to={<CheckIcon size={16} />} />
         <span>{state === "done" ? t("The PDF arrived") : wallHeadline(view?.wall || handoff.wall, host)}</span>
         {state === "watching" && !yours ? <span className="transferSpin inline" aria-hidden="true" /> : null}
       </div>

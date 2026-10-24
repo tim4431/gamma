@@ -35,6 +35,8 @@ import {
   ClockIcon, CloudDownloadIcon, DownloadIcon, ExternalLinkIcon, HandIcon, HistoryIcon, LinkIcon, PenIcon, RefreshIcon,
   SettingsIcon, TrashIcon, UnlinkIcon, UploadIcon,
 } from "../shared/ui/Icons";
+import { Collapse } from "../shared/ui/MotionWidgets";
+import { Popover } from "../shared/ui/Surfaces";
 
 // The server's sync_log actions, in git's words.
 export const ACTION_TEXT = {
@@ -411,7 +413,9 @@ function LogList({ log, jumpTo }) {
                 <ExternalLinkIcon size={16} />
               </button>
             </div>
-            {open ? (c.changes?.length ? <ChangeList changes={c.changes} /> : <div className="popoverHint mirrorChangesNone">{t("No block-level detail for this row.")}</div>) : null}
+            <Collapse open={open}>
+              {c.changes?.length ? <ChangeList changes={c.changes} /> : <div className="popoverHint mirrorChangesNone">{t("No block-level detail for this row.")}</div>}
+            </Collapse>
           </li>
         );
       })}
@@ -531,7 +535,7 @@ export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication
           : st.dot ? <span className={`mirrorPillDot ${st.tone}`} /> : null}
       </button>
       {open ? (
-        <div className="popover mirrorPopover" role="dialog" aria-label={t("Sync status")}>
+        <Popover className="mirrorPopover" role="dialog" aria-label={t("Sync status")}>
           {view === "settings" ? <SettingsView info={info} wsId={wsId} publication={publication} onBack={() => setView("main")} reload={load} onOpenSettings={onOpenSettings} />
             : view === "review" ? <ReviewView wsId={wsId} onBack={() => setView("main")} jumpTo={jumpTo} />
             : (
@@ -563,7 +567,7 @@ export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication
                   : <div className="popoverHint">{running ? t("Pages show up here as they are pulled.") : s.last_sync ? t("Nothing pulled or pushed yet.") : t("Nothing cloned yet.")}</div>}
               </>
             )}
-        </div>
+        </Popover>
       ) : null}
     </span>
   );

@@ -3,6 +3,7 @@
 // and Stop. It re-renders for every level reading on its own; App does not.
 import React, { useSyncExternalStore } from "react";
 import { BookmarkIcon, PauseIcon, PlayIcon, StopIcon } from "../shared/ui/Icons";
+import { IconSwap } from "../shared/ui/MotionWidgets";
 import { t } from "../shared/i18n/i18n.js";
 import { fmtClock } from "../replay/clock.js";
 import * as recorderStore from "./recorderStore.js";
@@ -28,7 +29,7 @@ export function RecordingPill() {
           {paused ? <span className="recText">{t("Paused")}</span> : null}
           <button type="button" onMouseDown={(e) => e.preventDefault()} className="ctlBtn" onClick={() => recorderStore.toggle()}
             title={paused ? t("Resume recording") : t("Pause recording")} aria-label={paused ? t("Resume recording") : t("Pause recording")}>
-            {paused ? <PlayIcon size={14} /> : <PauseIcon size={14} />}
+            <IconSwap swap={paused} from={<PauseIcon size={14} />} to={<PlayIcon size={14} />} />
           </button>
           <button type="button" onMouseDown={(e) => e.preventDefault()} className="ctlBtn" onClick={() => recorderStore.bookmark()}
             title={t("Bookmark this moment: a note stamped a few seconds back")} aria-label={t("Bookmark this moment")}>

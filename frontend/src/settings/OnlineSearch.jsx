@@ -9,7 +9,9 @@ import { API, apiJson } from "../shared/lib/utils";
 import { friendlyApiError } from "../library/libraryUtils";
 import { MenuSelect } from "../shared/ui/Menus";
 import { Row, SubDialog, Field, PasswordInput } from "./SettingsKit";
+import { useSettingsRead } from "./settingsReads.js";
 import { BookIcon, GlobeIcon, KeyIcon, ServerIcon, Trash2Icon } from "../shared/ui/Icons";
+import { MorphText } from "../shared/ui/MotionWidgets";
 import { T, t } from "../shared/i18n/i18n.js";
 
 // Per service: the form's fields, where to get them, and the row's icon.
@@ -49,16 +51,17 @@ function serviceHint(service, result) {
   return service.id === "openalex" ? t("Optional — works without a key") : t("Not set up");
 }
 
+// The services are the pane's read (settingsReads.js), kept while the
+// dialog is open.
 export function OnlineSearchSettings() {
-  const [info, setInfo] = React.useState(null); // {engine, services, can_edit}
-  const [error, setError] = React.useState("");
+  const services = useSettingsRead("/ai/search-services");
+  const info = services.data; // {engine, services, can_edit}
+  const setInfo = services.set;
+  const [ownError, setError] = React.useState("");
+  const error = ownError || (!info && services.error ? friendlyApiError({ message: services.error }) : "");
   const [form, setForm] = React.useState(null); // {service, label, configured, fields}
   const [busy, setBusy] = React.useState(false);
   const [tests, setTests] = React.useState({}); // service → {busy} | {ok, text} | {ok: false, error}
-
-  React.useEffect(() => {
-    apiJson(`${API}/ai/search-services`).then(setInfo).catch((err) => setError(friendlyApiError(err)));
-  }, []);
 
   async function change(call) {
     setBusy(true);
@@ -149,7 +152,7 @@ export function OnlineSearchSettings() {
           {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
           <div className="reportModalBtns">
             <button className="uiBtn" onClick={() => { setForm(null); setError(""); }}>{t("Cancel")}</button>
-            <button className="uiBtn primary" disabled={busy} onClick={save}>{busy ? t("Saving…") : t("Save")}</button>
+            <button className="uiBtn primary" disabled={busy} onClick={save}><MorphText>{busy ? t("Saving…") : t("Save")}</MorphText></button>
           </div>
         </div>
       </SubDialog>

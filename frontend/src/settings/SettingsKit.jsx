@@ -16,6 +16,8 @@ import { backdropPress } from "../shared/ui/press.js";
 import { BROWSER_TAG, profileSyncState } from "./syncState.js";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { fmtTokens } from "../chat/tokenUsage";
+import { DialogOverlay } from "../shared/ui/Surfaces";
+import { IconSwap, useSlidingPill } from "../shared/ui/MotionWidgets";
 
 export const SettingsDraftContext = React.createContext(null);
 
@@ -26,6 +28,26 @@ export function useSettingsDraft(key, dirty, discard) {
     else drafts?.current.delete(key);
     return () => drafts?.current.delete(key);
   }, [drafts, key, dirty, discard]);
+}
+
+// A form's draft over a value read from the server (`saved`, null until it
+// is in): it starts from `initial(saved)`, `empty` before, and follows the
+// value when it is read again in place or another section saves it,
+// unless it was edited since (it then differs from what the earlier value
+// gave), so a refresh never takes away what is being typed. It follows in
+// the render that brings the value, so no frame shows the form as edited.
+const sameDraft = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+export function useDraftOf(saved, initial, empty) {
+  const [state, setState] = React.useState(() => ({ base: saved, draft: saved ? initial(saved) : empty }));
+  if (state.base !== saved) {
+    const was = state.base;
+    const follow = !!saved && (!was || sameDraft(state.draft, initial(was)));
+    setState({ base: saved, draft: follow ? initial(saved) : state.draft });
+  }
+  const setDraft = React.useCallback((next) => {
+    setState((now) => ({ ...now, draft: typeof next === "function" ? next(now.draft) : next }));
+  }, []);
+  return [state.draft, setDraft];
 }
 
 // A pane's header: icon, title, one line of context (children). A page one
@@ -146,14 +168,18 @@ export function Toggle({ checked, onChange, disabled, label, ...row }) {
   );
 }
 
-// Joined pill buttons for a single mutually-exclusive choice.
+// Joined pill buttons for a single mutually-exclusive choice; the chosen
+// one's frame slides to the next one chosen (useSlidingPill).
 // `options` are [value, label, Icon, tooltip].
 export function Segmented({ value, onChange, options, disabled }) {
   // In a menu (the table column menu's alignment) its choices are the
   // menu's radio items; anywhere else, pressed buttons.
   const inMenu = useInMenu();
+  const ref = React.useRef(null);
+  useSlidingPill(ref, value);
   return (
-    <span className="segGroup">
+    <span className="segGroup" ref={ref}>
+      <span className="slidePill" aria-hidden="true" />
       {options.map(([val, label, Icon, tip]) => (
         <button
           key={val} type="button" title={t(tip || label)} disabled={disabled}
@@ -248,7 +274,7 @@ export function SubDialog({ title, onClose, children, draft, className = "", clo
     return () => previous?.focus?.();
   }, []);
   return (
-    <div className="reportOverlay subDialog" {...backdrop} onClick={(event) => { event.stopPropagation(); backdrop.onClick(event); }}>
+    <DialogOverlay className="subDialog" {...backdrop} onClick={(event) => { event.stopPropagation(); backdrop.onClick(event); }}>
       <div className={`reportModal ${className}`} role="dialog" aria-modal="true" aria-label={title}
         ref={ref} tabIndex={-1} onClick={(event) => event.stopPropagation()}
         onClickCapture={(event) => {
@@ -283,7 +309,7 @@ export function SubDialog({ title, onClose, children, draft, className = "", clo
           </span>
         </div> : null}
       </div>
-    </div>
+    </DialogOverlay>
   );
 }
 
@@ -342,7 +368,7 @@ export function CopyField({ label, value, action, rows = 2 }) {
       <textarea className="aiKeyInput" aria-label={label} readOnly rows={rows} value={value}
         onFocus={(event) => event.target.select()} />
       <button type="button" className={`uiBtn sm iconSq integrationCopy${copied ? " on" : ""}`} aria-label={action} title={action} onClick={copy}>
-        {copied ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
+        <IconSwap swap={copied} from={<CopyIcon size={16} />} to={<CheckIcon size={16} />} />
       </button>
     </div>
     <span className={`settingDesc integrationCopyStatus${copied ? " srOnly" : ""}`} role="status">{status}</span>
@@ -379,7 +405,7 @@ export function PasswordInput({ className = "aiKeyInput", inputRef, ...props }) 
         onMouseDown={(event) => event.preventDefault()} // keep the input's focus + caret
         onClick={() => setShown((v) => !v)}
       >
-        {shown ? <EyeOffIcon size={16} /> : <EyeIcon size={16} />}
+        <IconSwap swap={shown} from={<EyeIcon size={16} />} to={<EyeOffIcon size={16} />} />
       </button>
     </span>
   );
@@ -520,7 +546,9 @@ export function StatText({ icon: Icon, label, value, hint, tone = "", title }) {
 // log (Advanced) and the admin server log (Server). Entries are normalized
 // to {key, timeMs, text, tone?} — tone "warn" / "error" adds a badge.
 // `extra` sits before the Copy button (a level filter).
-export function LogBox({ icon, label, description, entries, emptyText, copyStatus, setStatus, extra }) {
+// `loading`: the empty text says the log is being read, and fades in only
+// after a moment (.loadingHint).
+export function LogBox({ icon, label, description, entries, emptyText, loading = false, copyStatus, setStatus, extra }) {
   const prefix = (entry) => (entry.tone ? `[${entry.tone === "error" ? "ERROR" : "WARNING"}] ` : "");
   function copy() {
     const text = entries
@@ -543,14 +571,16 @@ export function LogBox({ icon, label, description, entries, emptyText, copyStatu
             {entry.tone ? <span className={`sysLogLevel ${entry.tone}`}>{entry.tone === "error" ? "ERR" : "WARN"}</span> : null}
             <span className="sysLogMsg">{entry.text}</span>
           </div>
-        )) : <div className="sysLogEmpty">{emptyText}</div>}
+        )) : <div className={`sysLogEmpty${loading ? " loadingHint" : ""}`}>{emptyText}</div>}
       </div>
     </>
   );
 }
 
-export function Empty({ icon: Icon, children }) {
-  return <div className="setEmpty"><Icon size={20} />{children}</div>;
+// `loading`: a placeholder for what is being read, which fades in only
+// after a moment (.loadingHint, motion.css), so a quick answer never shows it.
+export function Empty({ icon: Icon, loading = false, children }) {
+  return <div className={`setEmpty${loading ? " loadingHint" : ""}`}><Icon size={20} />{children}</div>;
 }
 
 // A workspace's folder in the server's data directory (workspaces/<id>/),
@@ -692,10 +722,10 @@ export function QuotaMeter({ usedBytes, quotaMb, barOnly }) {
 // avatar initial, name, "Account · 4 KB used" and the storage bar (with a
 // quota). It opens the account pane, whose name (`label`) is its accessible
 // name; `dot` is that pane's notice dot.
-export function NavAccountCard({ name, usedBytes, quotaMb, label, active, dot, onClick }) {
+export function NavAccountCard({ name, usedBytes, quotaMb, label, active, dot, onClick, onIntent }) {
   return (
     <button type="button" className={`setNavAccount${active ? " active" : ""}`} aria-label={label}
-      aria-current={active ? "page" : undefined} onClick={onClick}>
+      aria-current={active ? "page" : undefined} onClick={onClick} onPointerEnter={onIntent} onFocus={onIntent}>
       <span className="setNavAvatar" aria-hidden="true">{(name || "?").slice(0, 1).toUpperCase()}</span>
       <span className="setNavAccountText">
         <span className="setNavAccountName"><span>{name}</span>{dot}</span>

@@ -1,76 +1,45 @@
 import SwiftUI
 import UIKit
+import WebKit
 
-/// The whole window: the web app, with the Pencil layer over it, and a
-/// native page of its own only when the server cannot be reached (the web
-/// app cannot say so itself before it has loaded).
-struct ShellView: View {
-    let server: URL
-    /// The local server's seeded account when `server` is the local one (WebShell signs in with it).
-    let login: LocalLogin?
-    @EnvironmentObject private var model: AppModel
-    @State private var failure: String?
-    @State private var attempt = 0
-
-    var body: some View {
-        ZStack {
-            // A pick in the server picker counts as a retry too: choosing the
-            // server that just failed must load it again.
-            ShellHost(server: server, login: login, attempt: attempt + model.connects,
-                      onServers: { model.choosingServer = true },
-                      onLoad: { failure = $0 })
-                // Full-screen, so the theme's colour paints the strip under the
-                // status bar; the web view itself starts below it (loadView).
-                .ignoresSafeArea()
-            if let failure {
-                ContentUnavailableView {
-                    Label("Gamma cannot reach \(server.host ?? server.absoluteString)", systemImage: "wifi.exclamationmark")
-                } description: {
-                    Text(failure)
-                } actions: {
-                    Button("Try again") { attempt += 1 }
-                        .buttonStyle(.borderedProminent)
-                    Button("Choose a server") { model.choosingServer = true }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(Color(uiColor: .systemBackground))
-            }
-        }
-    }
-}
-
-/// Hosts the controller, so Safari views, alerts and the share sheet have a
-/// presenter. It is made once: a new server or a retry reaches the same
-/// web view through `show`.
-private struct ShellHost: UIViewControllerRepresentable {
-    let server: URL
-    let login: LocalLogin?
-    let attempt: Int
-    let onServers: () -> Void
-    let onLoad: (String?) -> Void
+/// The whole window, made once: the controller is kept, and a new server, a
+/// retry or the launcher reaches it here, which also hands the chrome its
+/// state whenever the model or the local server changes.
+struct ShellView: UIViewControllerRepresentable {
+    @ObservedObject var model: AppModel
+    @ObservedObject var local: LocalServer
 
     func makeUIViewController(context: Context) -> ShellController {
-        let controller = ShellController()
+        let controller = ShellController(model: model)
         updateUIViewController(controller, context: context)
         return controller
     }
 
     func updateUIViewController(_ controller: ShellController, context: Context) {
-        controller.onServers = onServers
-        controller.onLoad = onLoad
-        controller.show(server, login: login, attempt: attempt)
+        let server = model.shellURL
+        controller.show(server, login: server.flatMap { model.login(for: $0) }, attempt: model.connects)
+        controller.showLauncher(model.launcher)
+        controller.pushState()
     }
 }
 
-/// The container: the web view, the live stroke over it, and the Pencil
-/// capture and gestures on the container itself, so they see every touch
-/// the web view gets. It answers the web's messages; none of it knows what
-/// the page shows.
+/// The container, bottom to top: the web app's web view with the live
+/// stroke over it, the launcher while it is up, and the bar (Chrome), with
+/// the Pencil capture and gestures on the container itself, so they see
+/// every touch the web view gets. It answers the web's messages and the
+/// chrome's calls; none of it knows what the page shows. Safari views,
+/// alerts and the share sheet are presented from here.
 final class ShellController: UIViewController {
-    var onServers: (() -> Void)?
-    var onLoad: ((String?) -> Void)?
-
+    private let model: AppModel
     private let shell: WebShell
+    private let chrome: Chrome
+    private let bar: WKWebView
+    private var launcherView: WKWebView?
+    private var launcher: AppModel.Launcher?
+    /// The bar's bottom edge: under its strip, or at the window's bottom
+    /// while a dropdown is open (`expandBar`). Made with the view.
+    private var barStrip: NSLayoutConstraint?
+    private var barFull: NSLayoutConstraint?
     private let live: LiveStrokeView
     private let capture: PencilCapture
     private let gestures: PencilGestures
@@ -78,20 +47,38 @@ final class ShellController: UIViewController {
     private var scheme: WebMessage.Scheme?
     private var sceneStyle: (any UITraitChangeRegistration)?
 
+    /// The bar's strip below the status bar: bar.html's `.bar` on the iPad,
+    /// 44 px under its env(safe-area-inset-top) padding.
+    private static let barHeight: CGFloat = 44
     /// How long a finished stroke's line waits for the web's paint before it
     /// goes anyway (a page that never answers leaves nothing behind).
     private static let paintTimeout: UInt64 = 3_000_000_000
 
-    init() {
+    init(model: AppModel) {
+        self.model = model
         shell = WebShell()
+        let chrome = Chrome()
+        self.chrome = chrome
+        bar = chrome.makeView(bar: true)
         live = LiveStrokeView(frame: .zero)
         capture = PencilCapture(target: nil, action: nil)
         gestures = PencilGestures()
         super.init(nibName: nil, bundle: nil)
         // Wired before the first load starts (`show` can come before the view).
         shell.navigation.presenter = self
-        shell.navigation.onLoad = { [weak self] failure in self?.onLoad?(failure) }
+        shell.navigation.onLoad = { [weak self] failure in
+            guard let self else { return }
+            if let failure { self.model.loadFailed(failure) } else { self.model.pageLoaded() }
+        }
+        shell.onChange = { [weak self] in self?.pushState() }
         shell.bridge.onMessage = { [weak self] message in self?.answer(message) ?? [:] }
+        chrome.onCall = { [weak self] method, args in try await self?.call(method, args) }
+        // A bar reloaded after its process ended has no dropdown open.
+        chrome.onTerminate = { [weak self] view in
+            guard let self, view === self.bar else { return }
+            self.expandBar(false)
+        }
+        bar.loadFileURL(Chrome.barURL, allowingReadAccessTo: Chrome.folder)
         capture.onPreview = { [weak self] samples, predicted, shape, tool in
             self?.live.show(samples, predicted: predicted, shape: shape, tool: tool)
         }
@@ -105,6 +92,13 @@ final class ShellController: UIViewController {
             guard let self else { return }
             Task { await self.shell.bridge.send(message) }
         }
+        // A file opened while the page is up: the page asks for it when it
+        // can take it. One opened before the page loaded is asked for at
+        // its start, so this may reach no one.
+        model.opened.onArrival = { [weak self] in
+            guard let self else { return }
+            Task { await self.shell.bridge.send(.filesOpened) }
+        }
     }
 
     required init?(coder: NSCoder) { fatalError("not from a storyboard") }
@@ -112,20 +106,27 @@ final class ShellController: UIViewController {
     override func loadView() {
         let container = UIView()
         container.backgroundColor = WebShell.savedBackground ?? .systemBackground
-        // The web view starts below the status bar, as the page expects (it
+        // The web view starts below the bar's strip, as the page expects (it
         // pads only the bottom: app.css `html[data-shell]`), and runs under
         // the home indicator. The live stroke keeps exactly the web view's
         // frame: the samples and the preview are both in its points.
         for child in [shell.webView, live] as [UIView] {
-            child.translatesAutoresizingMaskIntoConstraints = false
             container.addSubview(child)
-            NSLayoutConstraint.activate([
-                child.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor),
-                child.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-                child.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-                child.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-            ])
+            fillContent(child, in: container)
         }
+        // The bar from the window's top: it paints the strip under the
+        // status bar itself.
+        bar.translatesAutoresizingMaskIntoConstraints = false
+        container.addSubview(bar)
+        let strip = bar.bottomAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor, constant: Self.barHeight)
+        barStrip = strip
+        barFull = bar.bottomAnchor.constraint(equalTo: container.bottomAnchor)
+        NSLayoutConstraint.activate([
+            bar.topAnchor.constraint(equalTo: container.topAnchor),
+            bar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            bar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            strip,
+        ])
         capture.surface = shell.webView
         gestures.surface = shell.webView
         container.addGestureRecognizer(capture)
@@ -133,19 +134,178 @@ final class ShellController: UIViewController {
         view = container
     }
 
+    /// The web view's frame, which the live stroke and the launcher share.
+    private func fillContent(_ child: UIView, in container: UIView) {
+        child.translatesAutoresizingMaskIntoConstraints = false
+        NSLayoutConstraint.activate([
+            child.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor, constant: Self.barHeight),
+            child.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            child.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            child.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
+    }
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         applyScheme()
+        becomeFirstResponder() // the shortcuts work before any web view has focus
     }
 
-    func show(_ server: URL, login: LocalLogin?, attempt: Int) {
+    override var canBecomeFirstResponder: Bool { true }
+
+    override var keyCommands: [UIKeyCommand]? {
+        [UIKeyCommand(title: "All Servers", action: #selector(toggleLauncher), input: "l", modifierFlags: [.command, .shift]),
+         UIKeyCommand(title: "Reload", action: #selector(reloadPage), input: "r", modifierFlags: .command)]
+    }
+
+    func show(_ server: URL?, login: LocalLogin?, attempt: Int) {
         shell.login = login
-        if server != shell.server {
+        if let server, server != shell.server {
             shell.open(server)
         } else if attempt != self.attempt {
             shell.retry()
         }
         self.attempt = attempt
+    }
+
+    /// The launcher over the page, each showing a fresh load of it, or none.
+    func showLauncher(_ launcher: AppModel.Launcher?) {
+        guard launcher != self.launcher else { return }
+        self.launcher = launcher
+        guard let launcher else {
+            // A tap in the launcher made its content view first responder:
+            // take it back, so the key commands still have a chain.
+            let focused = launcherView?.scrollView.subviews.contains(where: \.isFirstResponder) == true
+            launcherView?.removeFromSuperview()
+            launcherView = nil
+            if focused { becomeFirstResponder() }
+            return
+        }
+        let page = launcherView ?? addLauncherView()
+        page.loadFileURL(Chrome.launcherURL(error: launcher.error), allowingReadAccessTo: Chrome.folder)
+    }
+
+    private func addLauncherView() -> WKWebView {
+        let page = chrome.makeView(bar: false)
+        view.insertSubview(page, belowSubview: bar)
+        fillContent(page, in: view)
+        launcherView = page
+        return page
+    }
+
+    /// The state to every chrome page: when the model or the local server
+    /// changes (ShellView), and when the page's session or theme does
+    /// (WebShell).
+    func pushState() {
+        let state = self.state()
+        for page in [bar, launcherView].compactMap({ $0 }) { Chrome.push(state, to: page) }
+    }
+
+    private func state(sizeBytes: Int64? = nil) -> [String: Any] {
+        ShellState.make(version: HostInfo.current.version, theme: shell.themeName, servers: model.saved,
+                        reachable: model.reachable, local: model.local.state, slowStart: model.local.slowStart,
+                        login: model.local.login, session: shell.session, page: shell.webView.url, sizeBytes: sizeBytes)
+    }
+
+    /// The bar over the whole window while a dropdown is open, so its menu
+    /// has room and a tap beside it closes it (bar.html), else its strip.
+    private func expandBar(_ on: Bool) {
+        guard let barStrip, let barFull else { return }
+        let (old, new) = on ? (barStrip, barFull) : (barFull, barStrip)
+        old.isActive = false
+        new.isActive = true
+    }
+
+    @objc private func toggleLauncher() {
+        // An open dropdown closes in the page too (bar.html's Escape), so
+        // its next tap opens it again; the strip itself for a bar not loaded.
+        bar.evaluateJavaScript("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}))", completionHandler: nil)
+        expandBar(false)
+        model.toggleLauncher()
+    }
+
+    @objc private func reloadPage() {
+        shell.reload()
+    }
+
+    // --- the chrome's calls (Chrome) ----------------------------------------------------
+
+    /// One `gammaShell` call, answered as desktop/main.js answers it, with
+    /// what the iPad has: the reply's value, or a throw the page shows.
+    private func call(_ method: String, _ args: [Any]) async throws -> Any? {
+        func arg<T>(_ index: Int) throws -> T {
+            guard index < args.count, let value = args[index] as? T else {
+                throw Refusal("Gamma for iPad cannot read this call to \(method).")
+            }
+            return value
+        }
+        // A listed server, by its id.
+        func server(_ index: Int) throws -> Server {
+            let id: String = try arg(index)
+            switch Server(id: id) {
+            case .local?:
+                return .local
+            case let .remote(url)? where model.remotes.contains(url):
+                return .remote(url)
+            default:
+                throw Refusal("\(id) is not a listed server.")
+            }
+        }
+        switch method {
+        case "state":
+            model.probe(model.remotes)
+            shell.readSession()
+            return state()
+        case "list":
+            model.probe(model.remotes)
+            let size = await model.local.dataSize()
+            return state(sizeBytes: size)
+        case "open":
+            try model.open(server(0))
+        case "openWorkspace":
+            expandBar(false)
+            try shell.openWorkspace(arg(0))
+        case "launcher":
+            toggleLauncher()
+        case "reload":
+            reloadPage()
+        case "barExpand":
+            try expandBar(arg(0))
+        case "addRemote":
+            let name: String = try arg(0)
+            guard let url = try ServerAddress.parse(arg(1)) else { throw Refusal("That is not a web address.") }
+            guard !model.remotes.contains(url) else { throw Refusal("\(url.absoluteString) is already listed") }
+            model.add(url)
+            model.rename(.remote(url), to: name)
+        case "rename":
+            try model.rename(server(0), to: arg(1))
+        case "setUrl":
+            guard case let .remote(old) = try server(0) else { throw Refusal("This iPad's address is its own.") }
+            guard let new = try ServerAddress.parse(arg(1)) else { throw Refusal("That is not a web address.") }
+            model.replace(old, with: new)
+        case "remove":
+            guard case let .remote(url) = try server(0) else { throw Refusal("This iPad cannot be removed.") }
+            model.remove(url)
+        case "revealData":
+            reveal(model.local.dataDirectory)
+        case "revealLog":
+            reveal(model.local.logFile.deletingLastPathComponent())
+        case "copyAddress":
+            guard let address = model.local.url?.absoluteString else { return nil }
+            UIPasteboard.general.string = address
+            return address
+        default:
+            throw Refusal("Gamma for iPad has no \(method).")
+        }
+        return nil
+    }
+
+    /// A folder of This iPad's in the Files app, made first if it is missing.
+    private func reveal(_ folder: URL) {
+        try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        guard let path = folder.path.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed),
+              let url = URL(string: "shareddocuments://" + path) else { return }
+        UIApplication.shared.open(url)
     }
 
     // --- the web's messages (Bridge) ----------------------------------------------------
@@ -154,18 +314,22 @@ final class ShellController: UIViewController {
         switch message {
         case let .claim(pointerId, at, tool):
             return ["taken": capture.claim(pointerId: pointerId, at: at, tool: tool)]
-        case let .theme(bg, scheme):
-            if let color = shell.paint(bg) { view.backgroundColor = color }
+        case let .theme(bg, scheme, name):
+            if let color = shell.paint(bg, name: name ?? scheme.rawValue) { view.backgroundColor = color }
             self.scheme = scheme
             applyScheme()
-            return [:]
-        case .servers:
-            onServers?()
             return [:]
         case let .haptic(kind, at):
             // A gesture's tick comes without a place: where the Pencil hovered for it.
             let place: CGPoint? = at ?? (kind == .tool ? gestures.recentHover : nil)
             PencilHaptics.play(kind, at: place, in: shell.webView)
+            return [:]
+        case .files:
+            return model.opened.listing
+        case let .fileData(id, offset):
+            return model.opened.chunk(id: id, offset: offset) ?? [:]
+        case let .fileDone(id):
+            model.opened.done(id: id)
             return [:]
         }
     }

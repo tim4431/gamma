@@ -22,26 +22,24 @@ import {
   AlertCircleIcon, ArrowDownIcon, ArrowUpDownIcon, CheckIcon, CloudDownloadIcon, CloudIcon, CloudOffIcon, HardDriveIcon, LinkIcon,
   MoreIcon, PlusIcon, RefreshIcon, TrashIcon, UnlinkIcon, UploadIcon,
 } from "../shared/ui/Icons";
+import { MorphText } from "../shared/ui/MotionWidgets";
 import { clock, hostOf, isPublication, isPullOnly, mirrorState, n, roundSummary, versionGap } from "../collaboration/MirrorPopover";
 import { ConflictCard, useConflicts } from "../collaboration/MergeResolver";
+import { useSettingsRead } from "./settingsReads.js";
 import { T, t } from "../shared/i18n/i18n.js";
 
-// The account's mirrors (null while loading). `enabled` false (a guest, or
-// signed out) reads nothing: the endpoint would refuse.
+// The account's mirrors (null while loading), the pane's read, kept while
+// the dialog is open (settingsReads.js). `enabled` false (a guest, or
+// signed out) reads nothing: the endpoint would refuse. While a round runs
+// its row moves ("21 of 79 pages", the file in flight): it is read again
+// every 2 s.
 export function useMirrors(enabled = true) {
-  const [mirrors, setMirrors] = React.useState(null);
-  const refresh = React.useCallback(() => {
-    if (!enabled) { setMirrors([]); return; }
-    apiJson(`${API}/mirrors`).then((d) => setMirrors(d.mirrors || [])).catch(() => setMirrors([]));
-  }, [enabled]);
-  React.useEffect(() => { refresh(); }, [refresh]);
-  // while a round runs its row moves ("21 of 79 pages", the file in flight): read again every 2 s
-  const running = !!mirrors?.some((m) => m.status?.running);
-  React.useEffect(() => {
-    if (!running) return undefined;
-    const id = setInterval(refresh, 2000);
-    return () => clearInterval(id);
-  }, [running, refresh]);
+  const [running, setRunning] = React.useState(false);
+  const { data, error, reload } = useSettingsRead(enabled ? "/mirrors" : null, { poll: running ? 2000 : 0 });
+  const mirrors = !enabled || (error && !data) ? [] : data ? data.mirrors || [] : null;
+  const now = !!mirrors?.some((m) => m.status?.running);
+  if (now !== running) setRunning(now);
+  const refresh = React.useCallback(() => { reload().catch(() => {}); }, [reload]);
   return [mirrors, refresh];
 }
 
@@ -134,7 +132,7 @@ export function MirrorDialog({ busy, error, onSubmit, onClose, candidates = [] }
         <button className="uiBtn" onClick={onClose} disabled={busy}>{t("Cancel")}</button>
         <button className="uiBtn primary" disabled={!ok || busy}
           onClick={() => onSubmit({ remote_url: url.trim(), token: token.trim(), name: name.trim(), mode, workspace_id: into, adopt })}>
-          {busy ? t("Connecting…") : t("Clone")}
+          <MorphText>{busy ? t("Connecting…") : t("Clone")}</MorphText>
         </button>
       </DialogButtons>
       </div>
@@ -151,7 +149,7 @@ export function MirrorConflicts({ mirror, onClose, setStatus, closeSettings }) {
   }
   return (
     <Section title={t("Conflicts · {name}", { name: mirror.name })} action={<button className="uiBtn sm" onClick={onClose}>{t("Back")}</button>}>
-      {items === null ? <Empty icon={HardDriveIcon}>{t("Loading…")}</Empty>
+      {items === null ? <Empty icon={HardDriveIcon} loading>{t("Loading…")}</Empty>
         : items.length ? <div className="mirrorCards">{items.map((c) => <ConflictCard key={c.id} conflict={c} busy={busy} showPage onResolve={resolve} onOpen={open} />)}</div>
         : <Empty icon={CheckIcon}>{t("No conflicts — every change merged cleanly.")}</Empty>}
     </Section>
@@ -297,7 +295,7 @@ export function MirrorsSection({ mirrors, refresh, workspaces, currentId, switch
           </button>
         )}
       >
-        {mirrors === null ? <Empty icon={CloudDownloadIcon}>{t("Loading…")}</Empty>
+        {mirrors === null ? <Empty icon={CloudDownloadIcon} loading>{t("Loading…")}</Empty>
           : clones.length ? clones.map(row)
           : <Empty icon={CloudDownloadIcon}>
               <span>{t("No clones yet.")}</span>
@@ -398,7 +396,7 @@ export function PublishingSection({ mirrors, refresh, currentId, closeSettings, 
   const publications = (mirrors || []).filter((m) => isPublication(m) && (m.page_filter || []).length);
   return (
     <Section title={t("Publishing")}>
-      {mirrors === null ? <Empty icon={CloudIcon}>{t("Loading…")}</Empty>
+      {mirrors === null ? <Empty icon={CloudIcon} loading>{t("Loading…")}</Empty>
         : publications.length ? publications.map(publicationRow)
         : <Empty icon={CloudIcon}>
             <span>{t("No published pages yet.")}</span>

@@ -1,13 +1,15 @@
-// The formatting commands of the block editor (bold, italic, code, strike,
-// highlight, link, inline math) and the "/" that opens the insert menu, as
-// functions of a CodeMirror view over plans of the text alone (`…Plan`,
-// `…At`: {changes, selection} or null). Plain JS, no editor imports:
-// editor/blockCommands.js makes them catalog commands and node tests load
-// the catalog. Toggle semantics live in mdMarks.toggleMark; inside math, a
-// code fence or inline code a formatting key is swallowed and does nothing —
-// letting it through would hand Ctrl+B to the browser (Firefox: bookmarks).
+// The formatting commands of the block editor (bold, italic, underline,
+// code, strike, highlight, color, link, inline math) and the "/" that opens
+// the insert menu, as functions of a CodeMirror view over plans of the text
+// alone (`…Plan`, `…At`: {changes, selection} or null), and what each is to
+// a selection (`…StateAt`, the selection toolbar's buttons). Plain JS, no
+// editor imports: editor/blockCommands.js makes them catalog commands and
+// node tests load the catalog. Toggle semantics live in mdMarks.toggleMark;
+// inside math, a code fence or inline code a formatting key is swallowed and
+// does nothing — letting it through would hand Ctrl+B to the browser
+// (Firefox: bookmarks).
 import { fenceInnerAt } from "./fences.js";
-import { insertLink, isUrl, scanMarks, toggleMark } from "./mdMarks.js";
+import { colorAt, insertLink, isUrl, markedAt, recolor, scanMarks, toggleMark } from "./mdMarks.js";
 import { scanMathSpans } from "./mdScan.js";
 
 // Whether [from, to] is in a code fence or reaches inside a math span (a
@@ -34,6 +36,27 @@ export function markPlan(doc, from, to, marker) {
 export function linkPlan(doc, from, to) {
   return markBlockedAt(doc, from, to, "") ? null : insertLink(doc, from, to);
 }
+
+// [from, to] recolored by `patch` ({color, background}: a CSS color sets
+// one, null clears it; mdMarks.recolor), or null where marks mean nothing.
+export function colorPlan(doc, from, to, patch) {
+  return markBlockedAt(doc, from, to, "") ? null : recolor(doc, from, to, patch);
+}
+
+// What a command is to the selection [from, to]: "blocked" where it does
+// nothing (the selection toolbar greys its button out), "on" where the
+// selection carries its mark and the toggle would take it away (pressed),
+// else "off".
+export function markStateAt(doc, from, to, marker) {
+  if (markBlockedAt(doc, from, to, marker)) return "blocked";
+  return markedAt(doc, from, to, marker) ? "on" : "off";
+}
+export const linkStateAt = (doc, from, to) => (linkPlan(doc, from, to) ? "off" : "blocked");
+export const mathStateAt = (doc, from, to) => (mathInsertAt(doc, from, to) ? "off" : "blocked");
+// The color row's: {blocked}, or the style the selection's runs share
+// ({color, background}, either absent; null when they differ, mdMarks.colorAt).
+export const colorStateAt = (doc, from, to) => (markBlockedAt(doc, from, to, "")
+  ? { blocked: true, style: null } : { blocked: false, style: colorAt(doc, from, to) });
 
 // The insert menu without typing (the touch editing bar, editor/EditBar.jsx):
 // a "/" after the selection, with a space before it when it would follow a
@@ -69,6 +92,7 @@ export const runInsertSlash = (view) => runInsert(view, slashInsertAt);
 export const runInsertMath = (view) => runInsert(view, mathInsertAt);
 
 export const runToggleMark = (view, marker) => runInsert(view, (doc, from, to) => markPlan(doc, from, to, marker));
+export const runRecolor = (view, patch) => runInsert(view, (doc, from, to) => colorPlan(doc, from, to, patch));
 
 export function runInsertLink(view) {
   const doc = view.state.doc.toString();

@@ -1,6 +1,6 @@
 """The typesetting engine both PDF writers draw with: fonts, widths, layout.
 
-``pdf_notes`` paints small note boxes onto an existing page; ``pdf_document``
+``pdf_cards`` sets note cards beside or on an existing page; ``pdf_document``
 typesets a whole note page as a fresh PDF. Both need the same things — decide
 which built-in font can draw a character, measure it, break spans into lines,
 and emit the content-stream operators — so that machinery lives here once.
@@ -11,9 +11,9 @@ A **span** is ``(kind, payload, level, style)``:
   ``(Drawing, width, height, ascent)`` tuple ``vector_text`` returns for a
   typeset expression or a CJK glyph);
 * ``level`` is 0, ``SUP`` or ``SUB`` — a genuinely raised/lowered run;
-* ``style`` is a :class:`Style`: emphasis bits plus a link target. Notes drawn
-  on a page are all one style (``PLAIN``); a document renders bold, italic,
-  code, strike-through, ``==marked==`` text and links.
+* ``style`` is a :class:`Style`: emphasis bits plus a link target. Both
+  writers render bold, italic, underline, code, strike-through,
+  ``==marked==`` text and links.
 
 Everything is laid out in a **y-down frame** (x right, y down, origin at the
 visible top-left) — the frame the viewer stores highlight rects in. Callers map
@@ -50,7 +50,7 @@ from .note_markup import MATH, SUB, SUP, TEXT, latex_spans
 
 # --- styles ------------------------------------------------------------------
 
-BOLD, ITALIC, MONO, STRIKE, MARK, LINK = 1, 2, 4, 8, 16, 32
+BOLD, ITALIC, MONO, STRIKE, MARK, LINK, UNDERLINE = 1, 2, 4, 8, 16, 32, 64
 
 # ``bits`` is the mask above; ``href`` the target of a LINK span (kept in the
 # style so wrapping and merging treat two different links as two different
@@ -76,8 +76,8 @@ LEADING = 1.22          # × font size, the default line height
 
 # --- fonts -------------------------------------------------------------------
 
-# Content-stream resource names. F1/F2/F3 keep the numbering pdf_notes has
-# always written, so its output is unchanged by this module existing.
+# Content-stream resource names: F1/F2/F3, the three fonts the note boxes
+# drew with first, then the styles.
 HELV, CID, SYM, HELVB, HELVI, HELVBI, COUR = "F1", "F2", "F3", "F4", "F5", "F6", "F7"
 
 _BASE14 = {
@@ -564,10 +564,13 @@ def draw_spans(ops, x: float, base: float, spans, size: float,
                     font.encode(), num(fs), num(cursor), num(base + shift), body))
             cursor += span_width(chunk, size, level, style)
         ops.append(b"ET")
-        if drawn and bits & STRIKE:
-            ops.append(b"%s %s %s RG %s w %s %s m %s %s l S" % (
-                num(rgb[0]), num(rgb[1]), num(rgb[2]), num(max(0.4, size * 0.06)),
-                num(x), num(base - size * 0.26), num(x + width), num(base - size * 0.26)))
+        # Strike-through across the x-height, underline just under the
+        # baseline (y down), both in the text's colour.
+        for bit, rise in ((STRIKE, -0.26), (UNDERLINE, 0.12)):
+            if drawn and bits & bit:
+                ops.append(b"%s %s %s RG %s w %s %s m %s %s l S" % (
+                    num(rgb[0]), num(rgb[1]), num(rgb[2]), num(max(0.4, size * 0.06)),
+                    num(x), num(base + size * rise), num(x + width), num(base + size * rise)))
         if drawn and bits & LINK and links is not None and style.href:
             links.append((x, base - ascent, x + width, base + height - ascent, style.href))
         x += width

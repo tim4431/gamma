@@ -3,7 +3,7 @@
 // ratchet in tests/designTokens.test.mjs.
 //
 //   node tools/designTokens.mjs              # totals per kind and per file
-//   node tools/designTokens.mjs --list z     # every offender of one kind (color, size, radius, shadow, z, duration)
+//   node tools/designTokens.mjs --list z     # every offender of one kind (color, size, radius, shadow, z, duration, easing)
 //   node tools/designTokens.mjs --baseline   # rewrite tests/design-baseline.json
 //
 // What counts, per declaration, in every .css under src/ except tokens.css:
@@ -17,6 +17,9 @@
 //   z         a z-index above 9 that isn't a var(--z-*); 1-9 orders siblings in one component
 //   duration  a transition/animation time under 500 ms that isn't a var(--dur-*);
 //             loops and attention effects of half a second or more keep their own period
+//   easing    a transition/animation timing function that isn't a var(--ease-*):
+//             a bezier, steps() or any keyword; a colour or opacity fade leaves it
+//             out (the default ease). A loop of half a second or more keeps its own
 //
 // A justified raw value carries a comment: `ds-allow: why` in a comment on
 // the declaration's line exempts that line, and `ds-allow-start: why` …
@@ -29,7 +32,7 @@ import { fileURLToPath } from "node:url";
 const FRONTEND = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const SRC = path.join(FRONTEND, "src");
 export const BASELINE = path.join(FRONTEND, "tests", "design-baseline.json");
-export const KINDS = ["color", "size", "radius", "shadow", "z", "duration"];
+export const KINDS = ["color", "size", "radius", "shadow", "z", "duration", "easing"];
 const TOKENS = path.join("shared", "styles", "tokens.css");
 
 export function cssFiles(dir = SRC) {
@@ -76,6 +79,11 @@ export function declarations(css) {
 }
 
 const COLOR = /#[0-9a-f]{3,8}\b|\b(?:rgba?|hsla?)\(/gi;
+// A timing function written out: a function, or a keyword standing alone
+// (not part of an animation's name).
+const EASING = /\b(?:cubic-bezier|steps|linear)\(|(?<![\w-])(?:ease(?:-in|-out|-in-out)?|linear|step-start|step-end)(?![\w-])/g;
+// The times in a transition or animation value, in ms.
+const times = (value) => [...value.matchAll(/(?<![\w.-])(\d*\.?\d+)(ms|s)\b/g)].map(([, num, unit]) => (unit === "s" ? +num * 1000 : +num));
 const splitTop = (s) => {
   const parts = []; let depth = 0, cur = "";
   for (const ch of s) {
@@ -111,9 +119,13 @@ export function offences({ prop, value }) {
     if (Number.isFinite(n) && n > 9) hits.push("z");
   }
   if (/^(transition|animation)(-duration)?$/.test(prop)) {
-    for (const [, num, unit] of value.matchAll(/(?<![\w.-])(\d*\.?\d+)(ms|s)\b/g)) {
-      const ms = unit === "s" ? +num * 1000 : +num;
-      if (ms > 0 && ms < 500) hits.push("duration");
+    for (const ms of times(value)) if (ms > 0 && ms < 500) hits.push("duration");
+  }
+  if (/^(transition|animation)(-timing-function)?$/.test(prop)) {
+    // per transition or animation of the list: a loop keeps its own easing
+    for (const item of splitTop(value)) {
+      if (times(item).some((ms) => ms >= 500)) continue;
+      for (const _ of item.replace(/var\(--[\w-]+\)/g, " ").matchAll(EASING)) hits.push("easing");
     }
   }
   return hits;

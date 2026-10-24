@@ -1,22 +1,20 @@
 import React from "react";
 import { PasswordInput } from "../settings/SettingsKit";
-import { AlertCircleIcon, ArrowLeftIcon, CheckIcon, ChevronRightIcon, MailIcon, ServerIcon } from "../shared/ui/Icons";
+import { AlertCircleIcon, ArrowLeftIcon, CheckIcon, MailIcon } from "../shared/ui/Icons";
 import { BrandMark } from "../shared/ui/BrandMark";
-import { nativeHost, postToHost } from "../shared/lib/host.js";
+import { Chevron, Collapse } from "../shared/ui/MotionWidgets";
 import { T, t, tn } from "../shared/i18n/i18n.js";
 
 // The demo landing's picture: the README hero's paper and notes, cropped by
 // tools/branding (design/brand/outputs.json) and served under /media/.
 const DEMO_SCENE_URL = "/media/gamma-scene-light.svg";
 
-// Every page shown before (or instead of) the app: login, loading, an
-// unavailable workspace, a session conflict, a blocked share link. A page
-// that reports a situation (`headline`) leads with it under the mark; the
-// others with the name. `scene` (a demo server's landing) puts a picture
-// beside the content instead, which then brings its own heading. Under the
-// iPad app every one of them also offers the app's server picker (the
-// account menu's "Server…" row needs a signed-in library), so a reachable
-// but wrong server is never a dead end.
+// Every page shown before (or instead of) the app: login, an unavailable
+// workspace, a session conflict, a blocked share link. While the session is
+// still being read the splash shows instead (Splash, shared/ui/BrandMark.jsx).
+// A page that reports a situation (`headline`) leads with it under the mark;
+// the others with the name. `scene` (a demo server's landing) puts a picture
+// beside the content instead, which then brings its own heading.
 function AuthShell({ headline, scene, children }) {
   return (
     <div className="app">
@@ -24,7 +22,7 @@ function AuthShell({ headline, scene, children }) {
         {scene ? (
           <div className="loginCard loginLanding">
             <div className="loginScene"><img src={scene} alt="" /></div>
-            <div className="loginLandingBody">{children}<HostServerLink /></div>
+            <div className="loginLandingBody">{children}</div>
           </div>
         ) : (
           <div className="loginCard">
@@ -33,21 +31,10 @@ function AuthShell({ headline, scene, children }) {
               ? <h1 className="loginTitle loginHeadline">{headline}</h1>
               : <div className="loginTitle">{t("Gamma")}</div>}
             {children}
-            <HostServerLink />
           </div>
         )}
       </div>
     </div>
-  );
-}
-
-function HostServerLink() {
-  if (!nativeHost()?.servers) return null;
-  return (
-    <button type="button" className="loginDisclosure" title={t("Connect this app to another Gamma server")}
-      onClick={() => postToHost({ type: "servers" }).catch(() => {})}>
-      <ServerIcon size={14} />{t("Server…")}
-    </button>
   );
 }
 
@@ -68,10 +55,6 @@ function LoginNotice({ children }) {
       <span>{children}</span>
     </div>
   );
-}
-
-export function AuthLoading() {
-  return <AuthShell><p className="loginLoading">{t("Loading...")}</p></AuthShell>;
 }
 
 export function WorkspaceUnavailablePage() {
@@ -204,7 +187,17 @@ export function LoginPage({
   const errorText = typeof error === "string" ? error : error?.text || "";
   const badPassword = error?.field === "password";
   const passwordRef = React.useRef(null);
-  React.useEffect(() => { if (badPassword) passwordRef.current?.focus(); }, [error, badPassword]);
+  React.useEffect(() => {
+    if (!badPassword) return;
+    const input = passwordRef.current;
+    input?.focus();
+    // the field shakes once, a small no, on each refusal (motion.css .shakeNo)
+    const field = input?.closest(".pwField");
+    if (!field) return;
+    field.classList.remove("shakeNo");
+    void field.offsetWidth;
+    field.classList.add("shakeNo");
+  }, [error, badPassword]);
   // on a Gamma Cloud server a refused password keeps the folded form it was typed in open
   React.useEffect(() => { if (errorText && leadsWithCloud) setSignInOpen(true); }, [errorText, leadsWithCloud]);
   const hours = Number(guestTtlHours) || 0;
@@ -270,7 +263,7 @@ export function LoginPage({
   const adminSignIn = (
     <button type="button" className="loginDisclosure" aria-expanded={signInOpen}
       onClick={() => setSignInOpen((open) => !open)}>
-      <ChevronRightIcon size={14} className={`loginDisclosureChev ${signInOpen ? "open" : ""}`} />
+      <Chevron open={signInOpen} dir="right" size={14} />
       {t("Admin sign-in")}
     </button>
   );
@@ -284,7 +277,7 @@ export function LoginPage({
         {cloudError ? <LoginError>{cloudError}</LoginError> : null}
         {joinOutcome}
         {adminSignIn}
-        {signInOpen ? <div className="loginDisclosureBody">{passwordForm}</div> : null}
+        <Collapse open={signInOpen}><div className="loginDisclosureBody">{passwordForm}</div></Collapse>
         {onBack ? (
           <button type="button" className="loginDisclosure" onClick={onBack}>
             <ArrowLeftIcon size={14} />{t("Back to the shared page")}
@@ -338,7 +331,7 @@ export function LoginPage({
       {cloudError && !signInOpen ? <LoginError>{cloudError}</LoginError> : null}
       {!signInOpen ? joinOutcome : null}
       {adminSignIn}
-      {signInOpen ? <div className="loginDisclosureBody">{signIn}</div> : null}
+      <Collapse open={signInOpen}><div className="loginDisclosureBody">{signIn}</div></Collapse>
     </AuthShell>
   );
 }

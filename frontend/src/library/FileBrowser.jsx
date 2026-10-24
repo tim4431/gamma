@@ -7,6 +7,7 @@
 import React from "react";
 import { CheckIcon, FileIcon, FolderFilesIcon, FolderIcon, GridIcon, ListIcon, LabelIcon, SearchIcon, XIcon } from "../shared/ui/Icons";
 import { MenuButton } from "../shared/ui/Menus";
+import { FADE_IN, useSlidingPill } from "../shared/ui/MotionWidgets";
 import { menuPress } from "../shared/ui/press.js";
 import { t } from "../shared/i18n/i18n.js";
 
@@ -64,7 +65,7 @@ function PageCard({
   return (
     <div className={`pageCard ${onMenu ? "rowMenuHost" : ""} ${className}`} title={tip || title} {...menuPress(onMenu)} {...rootProps}>
       <div className="pageCardCover">
-        {snap ? <img src={snap} alt="" draggable={false} />
+        {snap ? <img src={snap} alt="" draggable={false} {...FADE_IN} />
           : preview ? <div className="pageCardPreview" aria-hidden="true">{preview}</div>
           : glyph}
       </div>
@@ -91,10 +92,14 @@ function SelectCheck() {
   return <span className="selectCheck" aria-hidden="true"><CheckIcon size={12} weight={3} /></span>;
 }
 
-// List / Grid segmented control.
+// List / Grid segmented control; the chosen one's plate slides
+// (useSlidingPill), as in the kind toggle below.
 function ViewToggle({ view, onChange }) {
+  const ref = React.useRef(null);
+  useSlidingPill(ref, view);
   return (
-    <div className="homeViewToggle" role="group" aria-label={t("View mode")}>
+    <div className="homeViewToggle" role="group" aria-label={t("View mode")} ref={ref}>
+      <span className="slidePill" aria-hidden="true" />
       <button
         className={`homeViewBtn ${view === "list" ? "active" : ""}`}
         onClick={() => onChange("list")}
@@ -125,8 +130,11 @@ function KindToggle({ value, onChange, scopeLabel }) {
     ["files", t("Files only"), FileIcon],
     ["labels", t("Labels"), LabelIcon],
   ];
+  const ref = React.useRef(null);
+  useSlidingPill(ref, value);
   return (
-    <div className="homeViewToggle" role="group" aria-label={scopeLabel || t("Shown items")} title={scopeLabel || undefined}>
+    <div className="homeViewToggle" role="group" aria-label={scopeLabel || t("Shown items")} title={scopeLabel || undefined} ref={ref}>
+      <span className="slidePill" aria-hidden="true" />
       {kinds.map(([val, label, Icon]) => (
         <button
           key={val}

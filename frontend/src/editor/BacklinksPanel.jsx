@@ -8,6 +8,7 @@ import React, { useEffect, useMemo } from "react";
 import { BlockMarkdown } from "./BlockTree";
 import { REF_RE, refLabelOf } from "./refLabels.js";
 import { FileGlyph } from "../shared/ui/Icons";
+import { Collapse } from "../shared/ui/MotionWidgets";
 import { t, tn } from "../shared/i18n/i18n.js";
 
 export function BacklinksPanel({ backlinks, pageId, pageTitle, pages, refCache, onFetchRefs, collapsed, onCollapsedChange, onOpen }) {
@@ -48,13 +49,13 @@ export function BacklinksPanel({ backlinks, pageId, pageTitle, pages, refCache, 
     if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(bl); }
   };
   return (
-    <section className="backlinksPanel">
+    <section className="backlinksPanel" data-motion-key="backlinks">
       <button type="button" className="backlinksHead" aria-expanded={!collapsed}
         onClick={() => onCollapsedChange(!collapsed)}>
-        <span className="backlinksCaret" aria-hidden="true">{collapsed ? "▸" : "▾"}</span>
+        <span className={`backlinksCaret turnCaret${collapsed ? "" : " open"}`} aria-hidden="true">▸</span>
         {tn("Linked from {n} page", "Linked from {n} pages", groups.length)}
       </button>
-      {collapsed ? null : groups.map((g) => {
+      <Collapse open={!collapsed}>{groups.map((g) => {
         const isPdf = !!pages?.find((p) => p.id === g.id)?._attachment;
         return (
           <div key={g.id} className="backlinkGroup">
@@ -76,7 +77,7 @@ export function BacklinksPanel({ backlinks, pageId, pageTitle, pages, refCache, 
             ))}
           </div>
         );
-      })}
+      })}</Collapse>
     </section>
   );
 }

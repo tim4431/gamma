@@ -22,7 +22,7 @@
 // card keeping its right-click, Enter and Escape from the strip.
 import { editRow } from "./notes.mjs";
 import { dragSelectPdfText, selectPdfText, waitForPdf } from "./pdf.mjs";
-import { Account, assertOpensInPlace, sleep, wanted } from "../harness.mjs";
+import { Account, arrived, assertOpensInPlace, sleep, wanted } from "../harness.mjs";
 
 export async function commentScenarios({ server, browser, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags }) {
   if (!wanted("comments")) return;
@@ -65,6 +65,12 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
   const fieldText = (f) => f.evaluate((el) => (el.querySelector(".cm-placeholder") ? "" : el.innerText.trim()));
   // The composer takes the focus a frame after the popover is placed.
   const focused = (f, what) => until(async () => f.evaluate((el) => el === document.activeElement).catch(() => false), { what });
+  // A reply steps in under the thread's first comment: its avatar under that comment's name.
+  const replyStepsIn = (thread, what) => until(async () => thread.evaluate((el) => {
+    const name = el.querySelector(".commentItem:not(.reply) .commentAuthor")?.getBoundingClientRect().left;
+    const avatar = el.querySelector(".commentItem.reply > .peerAvatar")?.getBoundingClientRect().left;
+    return name > 0 && Math.abs(name - avatar) <= 1;
+  }), { what });
   // A thread's reply field shows once the thread is pressed (as in Notion):
   // a press on its first comment's text, then its field.
   const openReply = async (scope) => {
@@ -119,6 +125,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     await B.keyboard.type("appendix");
     await B.keyboard.press("Shift+Enter");
     await until(async () => (await popover(A).innerText()).includes("Yes, see the appendix"), { what: "the reply shows live in the open popover", timeout: 10000 });
+    await replyStepsIn(popover(A).locator(".commentThread").first(), "the reply steps in under the first comment");
     // The emptied field's history starts afresh: an undo brings back none of the sent text.
     await until(async () => (await fieldText(replyB)) === "", { what: "the reply field empties" });
     await B.keyboard.press("Control+Z");
@@ -414,6 +421,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     const send = popover(A).locator(".commentNew .commentSend");
     assertEq(await send.getAttribute("title"), "Comment (Shift+Enter)", "the title names the key");
     assertEq(await send.getAttribute("aria-label"), "Comment", "the name is the plain action");
+    await arrived(send);
     const size = await send.evaluate((el) => [el.getBoundingClientRect().width, el.getBoundingClientRect().height, el.querySelector("svg").getBoundingClientRect().width]);
     assertEq(size.join(), "24,24,12", "a 24px circle with a 12px arrow");
     // the bare "/": the commands that write text, none that make a page, a sheet, an upload or an embed
@@ -536,6 +544,35 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
       await popover(P).locator(".commentBody", { hasText: "Seen on a phone" }).waitFor({ timeout: 10000 });
       await P.locator(".phonePanel:not(.phonePanelHidden) .blockRow", { hasText: "A note on the paper" }).waitFor();
       assert(await P.locator(".phonePanel:not(.phonePanelHidden) .blockRow", { hasText: "A note on the paper" }).isVisible(), "the note shows under its thread");
+      assertNoProblems(P);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  await step("comments: a page opening asks for its threads alongside its tree, and a PDF's for the margin cards' module too, before any card is wanted", async () => {
+    const ctx = await ben.context(browser);
+    try {
+      const P = await openPage(ctx, url);
+      await rowOf(P, "The first claim").waitFor();
+      await P.locator('[data-guide="header.home"]').first().click();
+      const row = P.locator(".fileRow", { hasText: "Reviewed paper" }).first();
+      await row.waitFor();
+      await P.evaluate(() => performance.clearResourceTimings());
+      await row.dblclick();
+      await waitForPdf(P, 1);
+      await P.locator('[data-page="1"] .pdfNoteBadge.hasThread').waitFor({ timeout: 10000 });
+      const seen = await P.evaluate((id) => {
+        const all = performance.getEntriesByType("resource");
+        const at = (re) => all.find((e) => re.test(e.name));
+        const tree = at(new RegExp(`/api/blocks/${id}/subtree`));
+        const threads = at(new RegExp(`/api/pages/${id}/comments`));
+        const cards = at(/\/assets\/CommentMargin-[^/]*\.js/);
+        return { answered: tree?.responseEnd, threads: threads?.startTime, cards: cards?.startTime };
+      }, reviewed);
+      assert(seen.answered != null && seen.threads != null, `the tree and the threads were asked for: ${JSON.stringify(seen)}`);
+      assert(seen.threads < seen.answered, `the threads were asked for before the tree answered: ${JSON.stringify(seen)}`);
+      assert(seen.cards != null && seen.cards < seen.answered, `the margin cards' module too: ${JSON.stringify(seen)}`);
       assertNoProblems(P);
     } finally {
       await ctx.close();
@@ -671,6 +708,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     await until(async () => (await ann.api(`/api/pages/${reviewed}/comments?state=all`)).threads
       .find((x) => x.id === first.id)?.comments.some((x) => x.body === "Found it: the 2004 review"), { what: "the reply is stored" });
     await active.locator(".commentBody", { hasText: "Found it: the 2004 review" }).waitFor();
+    await replyStepsIn(active.locator(".commentThread"), "in the card, the reply steps in under the first comment");
     await settled("the grown active card pushes the one under it down");
     boxes = await geometry();
     const activeBox = boxes.find((b) => b.active);

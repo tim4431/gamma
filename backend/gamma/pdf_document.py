@@ -1,7 +1,7 @@
 """A note page typeset as a fresh PDF ("Notes as PDF" export).
 
 ``pdf_export``/``pdf_notes`` write *onto a paper*: highlights become
-annotations, notes get painted into the free space around them. This module is
+annotations, notes and comments go beside its pages or on them. This module is
 the other direction — the notes themselves as a document. It takes the block
 subtrees the export driver walks (a note page, a paper's notes, or a whole
 folder of them) and lays them out as a real PDF: title and metadata, nested
@@ -12,13 +12,14 @@ No font file is embedded and no PDF-generation library is used:
 ``vector_text`` + ``pdf_glyphs`` turn LaTeX and CJK into Type 3 text built
 from glyph outlines, and ``pdf_image`` embeds the pasted uploads as image
 XObjects (Pillow decodes only those that can't go in as they are) — the
-same machinery the note boxes use.
+same machinery the cards beside a paper use.
 
 Blocks carry markdown, so each block's content is parsed twice over: into
 *chunks* (headings, paragraphs, quotes, list items, todos, fenced code, rules,
 images, display math — the constructs the block editor renders live) and then
-each chunk's text into styled inline spans (bold, italic, code, strike,
-``==marked==``, links, ``$…$`` math). Links become real /Link annotations and
+each chunk's text into styled inline spans (bold, italic, ``<u>underline</u>``,
+code, strike, ``==marked==``, links, ``$…$`` math; a colored run's
+``<span style>`` tags are dropped and its text kept). Links become real /Link annotations and
 page titles become PDF bookmarks, so a folder export is navigable.
 
 The whole page is drawn in ``pdf_typeset``'s y-down frame and flipped into user
@@ -47,6 +48,7 @@ from .pdf_typeset import (
     MONO,
     PLAIN,
     STRIKE,
+    UNDERLINE,
     Style,
     TEXT_COLOR,
     draw_spans,
@@ -76,7 +78,7 @@ BODY_SIZE = 10.0
 CODE_SIZE = 8.8
 SMALL_SIZE = 8.2
 TITLE_SIZE = 19.0
-LEADING = 1.45                           # × font size, roomier than a note box
+LEADING = 1.45                           # × font size, roomier than a note card
 HEADING_SIZES = {1: 15.5, 2: 13.4, 3: 11.8, 4: 11.0, 5: 10.4, 6: 10.0}
 INDENT = 15.0                            # per nesting level
 MAX_INDENT_LEVELS = 8                    # deeper blocks stop marching right
@@ -129,6 +131,8 @@ _INLINE_RE = re.compile(
     r"|(?P<dmath>\$\$[^\n]+?\$\$)"
     r"|(?P<math>\$[^$\n]+?\$|\\\([^\n]+?\\\))"
     r"|(?P<esc>\\[!-/:-@\[-`{-~])"
+    r"|(?P<underline><u>.+?</u>)"
+    r'|(?P<color><span style="[^"<>]*">.*?</span>)'
     r"|(?P<bold>\*\*(?=\S).+?(?<=[^\s\\])\*\*|__(?=\S).+?(?<=[^\s\\])__)"
     r"|(?P<italic>\*(?=\S)[^*\n]+?(?<=[^\s\\])\*|(?<![\w_])_(?=\S)[^_\n]+?(?<=[^\s\\])_(?![\w_]))"
     r"|(?P<strike>~~(?=\S).+?(?<=[^\s\\])~~)"
@@ -139,8 +143,13 @@ _INLINE_RE = re.compile(
     r"|(?P<url>https?://[^\s<>()\[\]]+)"
 )
 _LINK_PARTS = re.compile(r"\[([^\]]*)\]\(\s*([^)\s]+)")
-_WRAPPERS = {"bold": 2, "italic": 1, "strike": 2, "mark": 2}
-_BITS = {"bold": BOLD, "italic": ITALIC, "strike": STRIKE, "mark": MARK}
+# The constructs that wrap their content: the characters that open and close
+# one, and the style bit its content takes. Underline and color are the
+# inline HTML the note editor writes; a colored run's opening tag varies
+# with its style (None: up to its '">'), and the PDF keeps its text, not
+# its color.
+_WRAPPERS = {"bold": (2, 2, BOLD), "italic": (1, 1, ITALIC), "strike": (2, 2, STRIKE), "mark": (2, 2, MARK),
+             "underline": (3, 4, UNDERLINE), "color": (None, 7, 0)}
 
 
 # --- markdown → chunks -------------------------------------------------------
@@ -174,8 +183,9 @@ def inline(text: str, style: Style = PLAIN, resolver=None):
             if tex:
                 out.append((MATH, tex, 0, style))
         elif which in _WRAPPERS:
-            marks = _WRAPPERS[which]
-            out.extend(inline(body[marks:-marks], styled(style, _BITS[which]), resolver))
+            opens, closes, bit = _WRAPPERS[which]
+            opens = opens or body.index('">') + 2
+            out.extend(inline(body[opens:-closes], styled(style, bit), resolver))
         elif which in ("embed", "ref"):
             # A page reference can't be followed outside Gamma; it still reads
             # as a reference — with the referenced block's text when the

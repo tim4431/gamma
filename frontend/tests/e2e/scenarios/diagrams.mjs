@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { closeEditor, newPageViaUi } from "./notes.mjs";
-import { fakeAiModels } from "../harness.mjs";
+import { arrived, fakeAiModels } from "../harness.mjs";
 
 const flow = 'flowchart LR\n  A["Start $a|b$ \\(x\\)"] --> B[Finish]';
 const sequence = "sequenceDiagram\n  Alice->>Bob: Hello\n  Bob-->>Alice: Hi";
@@ -117,6 +117,7 @@ export async function diagramScenarios(env) {
     const img = page.locator(".lightbox img");
     await img.waitFor();
     await until(() => drawn(img), { what: "the zoomed drawing loads" });
+    await arrived(img);
     const box = await img.boundingBox();
     const { width, height } = page.viewportSize();
     assert(Math.abs(box.width - width * 0.94) < 2 || Math.abs(box.height - height * 0.9) < 2,

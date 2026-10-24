@@ -5,9 +5,13 @@
 // note editor brings; and the iPad app's shell over it (shared/lib/host.js),
 // played by a stand-in host: the Pencil's claim in the preset's look and the
 // stroke handed back, the hold and its answer, the theme message, the
-// Pencil gestures with their choices and phases, the haptics, the Apple
-// Pencil settings and the Server row. Chromium in a tablet-sized touch
-// context — emulation, not an iPad.
+// Pencil gestures with their choices and phases, the haptics and the Apple
+// Pencil settings. Chromium in a tablet-sized touch context — emulation, not
+// an iPad.
+import fs from "node:fs";
+import path from "node:path";
+import { execFileSync } from "node:child_process";
+import { Account, ROOT } from "../harness.mjs";
 import { decodeStroke } from "../../../src/ink/ink.js";
 import { newInkStrokes, savedInkStrokes } from "./ink.mjs";
 import { same, tree } from "./notes.mjs";
@@ -16,24 +20,52 @@ import { waitForPdf } from "./pdf.mjs";
 // What the iPad app's user script declares before the bundle runs (HostInfo,
 // every flag this build's shell declares; `flags` overrides them, e.g.
 // {hold: false} for an older shell), with a message handler that records
-// what the page posts, a haptic included, and takes every claim.
-function fakeShell(flags = {}) {
+// what the page posts, a haptic included, and takes every claim. `files`
+// (not a flag: [{id, name, type, b64}]) are what the system opened in the
+// app, held as OpenedFiles.swift holds them: listed, read in chunks (of 1000
+// bytes here, so a file takes several) and let go by `fileDone`. Like the
+// shell, it still holds them after a reload (the init script runs again);
+// `window.e2eHold(file)` adds one later, as a share while the page is up
+// does, and `window.e2eHeld` is what it holds.
+function fakeShell(options = {}) {
+  const { files = [], ...flags } = options;
   const sent = [];
   window.e2eHostSent = sent;
+  const withBytes = (f) => ({ ...f, bytes: Uint8Array.from(atob(f.b64), (c) => c.charCodeAt(0)) });
+  const held = files.map(withBytes);
+  window.e2eHeld = held;
+  window.e2eHold = (f) => { held.push(withBytes(f)); };
   const native = { platform: "ipad", version: "0.2.0", ink: true,
     inkLooks: ["pressure", "dash", "blend", "stabilize", "pencil", "calligraphy", "snap"],
-    hold: true, pencil: true, pencilPhases: true, pencilRoll: true, haptics: true, servers: true, ...flags };
+    hold: true, pencil: true, pencilPhases: true, pencilRoll: true, haptics: true, openFiles: true, ...flags };
   native.receive = (msg) => new Promise((resolve, reject) => (native.queue ||= []).push({ msg, resolve, reject }));
   window.gammaNative = native;
+  const answer = (msg) => {
+    if (msg.type === "claim") return { taken: true };
+    if (msg.type === "files") return { files: held.map(({ id, name, type, bytes }) => ({ id, name, type, size: bytes.length })) };
+    if (msg.type === "fileData") {
+      const file = held.find((f) => f.id === msg.id);
+      if (!file) return {};
+      let bin = "";
+      for (const b of file.bytes.subarray(msg.offset, msg.offset + 1000)) bin += String.fromCharCode(b);
+      return { data: btoa(bin) };
+    }
+    if (msg.type === "fileDone") {
+      const i = held.findIndex((f) => f.id === msg.id);
+      if (i >= 0) held.splice(i, 1);
+    }
+    return {};
+  };
   window.webkit = { messageHandlers: { gamma: { postMessage: (msg) => {
-    sent.push(JSON.parse(JSON.stringify(msg)));
-    return Promise.resolve(msg.type === "claim" ? { taken: true } : {});
+    if (msg.type !== "fileData") sent.push(JSON.parse(JSON.stringify(msg)));
+    return Promise.resolve(answer(msg));
   } } } };
 }
 // An iPad's own Safari, which would be offered Add to Home Screen; the shell never is.
 const SHELL_UA = "Mozilla/5.0 (iPad; CPU OS 18_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Mobile/15E148 Safari/604.1";
 
 export async function ipadScenarios({ server, browser, alice, makePdf, step, until, sleep, assert, assertEq, assertNoProblems, openPage }) {
+  const python = process.env.GAMMA_E2E_PYTHON || path.join(ROOT, "backend", "venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
   await step("ipad: install manifest, icons, status-bar colour and standalone mode", async () => {
     await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Status bar page" } });
     await alice.api("/api/prefs/open-tabs", { method: "PUT", body: { value: [] } }); // groups before this one leave tabs
@@ -177,7 +209,7 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
   // finished samples back in viewport CSS px, which commit as the browser's
   // own stroke. The device side (the
   // recognizer, the live line) is the Swift tests' and the device checks'.
-  await step("ipad shell: a Pencil stroke is claimed and committed from the host's samples; theme, gestures, Server row", async () => {
+  await step("ipad shell: a Pencil stroke is claimed and committed from the host's samples; theme, gestures", async () => {
     const up = await alice.upload("/api/uploads", makePdf([["A page the Pencil writes on."]]), "shell.pdf", "application/pdf");
     const paper = await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Shell paper", source_url: up.source_url } });
     const ctx = await alice.context(browser, { hasTouch: true, viewport: { width: 1194, height: 834 }, userAgent: SHELL_UA });
@@ -189,11 +221,13 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
       assertEq(await page.locator("html").getAttribute("data-host"), "ipad");
       assertEq(await page.locator("html").getAttribute("data-shell"), "ipad", "the shell takes the full-screen rules");
 
-      // theme: the colour under the status bar, and the scheme for its style.
+      // theme: the colour under the status bar, the scheme for its style, and
+      // the theme's name for the shell's bar and launcher.
       const theme = (await sent("theme")).at(-1);
       assert(theme, "a theme message");
       assertEq(theme.bg, await page.locator('meta[name="theme-color"]').getAttribute("content"), "the window's colour is the status bar's");
       assertEq(theme.scheme, await page.locator("html").getAttribute("data-scheme"));
+      assertEq(theme.name, await page.locator("html").getAttribute("data-theme"), "the theme's name");
       assert(/^#[0-9a-f]{6}$/.test(theme.bg), `a hex colour: ${theme.bg}`);
 
       await page.click("button[aria-label='Handwriting tools']");
@@ -278,25 +312,152 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
       await gesture("ignore");
       assertEq(await armed(), pen, "an ignored gesture changes nothing");
 
-      // The account menu's Server row asks the host for its server picker.
-      await page.getByRole("button", { name: "Account & settings", exact: true }).click();
-      await page.getByRole("menuitem", { name: "Server…", exact: true }).click();
-      await until(async () => (await sent("servers")).length === 1, { what: "the servers message" });
       // No install offer under the shell.
       assertEq(await page.getByText("Add to Home Screen").count(), 0, "no install offer");
       assertNoProblems(page);
     } finally { await ctx.close(); }
-    // Signed out, the sign-in page offers the same picker: a reachable but
-    // wrong server is never a dead end.
-    const anon = await browser.newContext({ hasTouch: true, viewport: { width: 1194, height: 834 } });
-    await anon.addInitScript(fakeShell);
+  });
+
+  // --- the shell: files the system opened in the app (docs/dev/ipad.md "Opened files") ---
+  await step("ipad shell: files the app was given open as picked ones do: a PDF its page, Markdown a note, an .ntb the Notability review, a .zip the Import dialog; a workspace others see asks first, a read-only one sends them to the personal workspace", async () => {
+    // Accounts of its own: the workspaces it shares, and the notices they
+    // bring, stay out of the steps that follow. A server admin makes the
+    // shared workspaces, then stops being one.
+    for (const [name, pw] of [["ip-admin", "ip-admin-pw"], ["ip-ann", "ip-ann-pw"], ["ip-ben", "ip-ben-pw"]]) {
+      await server.manage("create-user", name, pw);
+    }
+    const ann = await new Account(server, "ip-ann", "ip-ann-pw").login();
+    const ben = await new Account(server, "ip-ben", "ip-ben-pw").login();
+    const b64 = (bytes) => Buffer.from(bytes).toString("base64");
+    const pdfFile = (id, name, text) => ({ id, name, type: "application/pdf", b64: b64(makePdf([[text]])) });
+    const pages = async (who = ann) => (await who.api("/api/blocks/root/children")).children;
+    const fileDone = (page, id) => until(async () => (await page.evaluate(() => window.e2eHostSent))
+      .some((m) => m.type === "fileDone" && m.id === id), { what: `the shell lets ${id} go` });
+    const hand = (page, file) => page.evaluate((file) => { window.e2eHold(file); return window.gammaNative.receive({ type: "filesOpened" }); }, file);
+    // An .ntb and a .zip of a Markdown note, as the transfer group makes them.
+    const dir = fs.mkdtempSync(path.join(server.dir, "opened-"));
+    const ntbPath = path.join(dir, "Handed.ntb");
+    const zipPath = path.join(dir, "Handed vault.zip");
+    execFileSync(python, ["-c", `
+import sys, zipfile
+sys.path.insert(0, 'backend/tests')
+import ntb_fixtures as tx
+open(sys.argv[1], 'wb').write(tx.ntb_zip(tx.bundle((1, tx.DOCUMENT, tx.document("Handed NTB note")),
+    (8, (0, 11), tx.text("Typed on the iPad")))))
+with zipfile.ZipFile(sys.argv[2], 'w') as z:
+    z.writestr('Vault/Vault note.md', '# Vault note\\n\\nFrom a zipped vault.\\n')
+`, ntbPath, zipPath], { cwd: ROOT });
+    const personal = (await ann.api("/api/session")).workspaces.find((w) => w.personal);
+
+    // This iPad's own library: a PDF waiting when the page loads becomes its
+    // page at the library's top, opened, and the shell lets it go.
+    let ctx = await ann.context(browser, { hasTouch: true, viewport: { width: 1194, height: 834 }, userAgent: SHELL_UA });
+    await ctx.addInitScript(fakeShell, { files: [pdfFile("F1", "Handed paper.pdf", "A paper the iPad was handed.")] });
     try {
-      const page = await openPage(anon, `${server.base}/`);
-      await page.waitForSelector(".loginInput");
-      await page.getByRole("button", { name: "Server…", exact: true }).click();
-      await until(async () => (await page.evaluate(() => window.e2eHostSent.filter((m) => m.type === "servers").length)) === 1,
-        { what: "the sign-in page's servers message" });
-    } finally { await anon.close(); }
+      const page = await openPage(ctx, `${server.base}/?ws=${ann.ws}`);
+      await waitForPdf(page, 1);
+      await fileDone(page, "F1");
+      const paper = (await pages()).find((p) => p.content === "Handed paper.pdf");
+      assert(paper, `the PDF is a page titled with its name: ${(await pages()).map((p) => p.content).join(" | ")}`);
+      assertEq((paper.properties?.folders || []).length, 0, "at the library's top");
+      await until(async () => (await page.locator(".titleText").first().innerText().catch(() => "")) === "Handed paper.pdf",
+        { what: "its page is the one open" });
+
+      // Shared while the page is up: the shell says so and the page asks.
+      await hand(page, { id: "F2", name: "Handed note.md", type: "text/markdown", b64: b64("# Handed note\n\nWritten in another app.\n") });
+      await fileDone(page, "F2");
+      await page.getByText("Written in another app.").first().waitFor();
+      assert((await pages()).some((p) => p.content === "Handed note"), `the Markdown is a note page: ${(await pages()).map((p) => p.content).join(" | ")}`);
+
+      // A Notability .ntb: the Notability import's review, as Import → Notability opens it.
+      await hand(page, { id: "F3", name: "Handed.ntb", type: "", b64: b64(fs.readFileSync(ntbPath)) });
+      await fileDone(page, "F3");
+      let review = page.getByRole("dialog", { name: "Review Notability import", exact: true });
+      await review.getByRole("region", { name: "Library after import", exact: true }).getByText("Handed NTB note", { exact: true }).waitFor();
+      await review.getByRole("button", { name: "Import to library", exact: true }).click();
+      let report = page.getByRole("dialog", { name: "Import complete", exact: true });
+      await report.waitFor();
+      await report.getByRole("button", { name: "Done", exact: true }).click();
+      assert((await pages()).some((p) => p.content === "Handed NTB note"), "the note is a page");
+
+      // A .zip: the Import dialog asks which export it is, offering only the
+      // sources that read an archive, and imports it with no picker.
+      await hand(page, { id: "F4", name: "Handed vault.zip", type: "application/zip", b64: b64(fs.readFileSync(zipPath)) });
+      await fileDone(page, "F4");
+      const chooser = page.getByRole("dialog", { name: "Import Handed vault.zip", exact: true });
+      await chooser.waitFor();
+      assertEq(await chooser.getByText("Logseq highlights", { exact: true }).count(), 0, "Logseq reads no archive");
+      await chooser.getByText("Markdown notes", { exact: true }).click();
+      await chooser.getByRole("button", { name: "Import", exact: true }).click();
+      review = page.getByRole("dialog", { name: "Review Markdown import", exact: true });
+      await review.getByRole("region", { name: "Library after import", exact: true }).getByText("Vault note", { exact: true }).first().waitFor();
+      await review.getByRole("button", { name: "Import to library", exact: true }).click();
+      report = page.getByRole("dialog", { name: "Import complete", exact: true });
+      await report.waitFor();
+      await report.getByRole("button", { name: "Done", exact: true }).click();
+      await until(async () => (await pages()).some((p) => p.content === "Vault note"), { what: "the vault's note is a page" });
+
+      // A file Gamma does not open is let go, and the status says so.
+      await hand(page, { id: "F5", name: "photo.heic", type: "image/heic", b64: b64("not a picture") });
+      await fileDone(page, "F5");
+      await page.getByRole("status").filter({ hasText: "Gamma does not open photo.heic." }).waitFor();
+      assertEq(await page.evaluate(() => window.e2eHeld.length), 0, "the shell holds nothing more");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+
+    // A shared workspace asks first, as the desktop does. Cancel lets the
+    // file go and adds nothing; the personal workspace's button takes it
+    // there, the page reloading on that workspace with the file still held.
+    // Ann's lab, which Ben edits, and Ben's reading room, which Ann only reads.
+    await server.manage("set-admin", "ip-admin", "on");
+    const admin = await new Account(server, "ip-admin", "ip-admin-pw").login();
+    const lab = await admin.api("/api/workspaces", { method: "POST", body: { name: "Handed lab", kind: "shared", owner: "ip-ann" } });
+    const reading = await admin.api("/api/workspaces", { method: "POST", body: { name: "Ben's reading room", kind: "shared", owner: "ip-ben" } });
+    await server.manage("set-admin", "ip-admin", "off");
+    await ann.api(`/api/workspaces/${lab.id}/members/ip-ben`, { method: "PUT", body: { role: "editor" } });
+    await ben.api(`/api/workspaces/${reading.id}/members/ip-ann`, { method: "PUT", body: { role: "viewer" } });
+    const asked = async (file) => {
+      const c = await ann.context(browser, { hasTouch: true, viewport: { width: 1194, height: 834 }, userAgent: SHELL_UA });
+      await c.addInitScript(fakeShell, { files: [file] });
+      const page = await openPage(c, `${server.base}/?ws=${lab.id}`);
+      const box = page.locator(".confirmModal");
+      await box.getByText(`Add “${file.name}” to Handed lab?`).waitFor();
+      await box.getByText("Handed lab is shared: everyone in it can see what you add.").waitFor();
+      return { c, page, box };
+    };
+    let shown = await asked(pdfFile("F6", "Lab paper.pdf", "A paper for the lab, then not."));
+    try {
+      const { page, box } = shown;
+      await box.getByRole("button", { name: "Cancel", exact: true }).click();
+      await fileDone(page, "F6");
+      await page.getByRole("status").filter({ hasText: "Not added: “Lab paper.pdf”" }).waitFor();
+      assert(!(await pages()).some((p) => p.content === "Lab paper.pdf"), "nothing added");
+      assertNoProblems(page);
+    } finally { await shown.c.close(); }
+    shown = await asked(pdfFile("F7", "Mine after all.pdf", "A paper that goes to the personal workspace."));
+    try {
+      const { page, box } = shown;
+      await box.getByRole("button", { name: `Add to ${personal.name}`, exact: true }).click();
+      await page.waitForURL((url) => url.searchParams.get("ws") === personal.id);
+      await waitForPdf(page, 1);
+      await fileDone(page, "F7");
+      assert((await pages()).some((p) => p.content === "Mine after all.pdf"), "in the personal workspace");
+      assertNoProblems(page);
+    } finally { await shown.c.close(); }
+
+    // A workspace the account can only read: the files go to the personal
+    // one at once, and the status says why after the reload.
+    ctx = await ann.context(browser, { hasTouch: true, viewport: { width: 1194, height: 834 }, userAgent: SHELL_UA });
+    await ctx.addInitScript(fakeShell, { files: [pdfFile("F8", "Read only.pdf", "A paper handed to a reader.")] });
+    try {
+      const page = await openPage(ctx, `${server.base}/?ws=${reading.id}`);
+      await page.waitForURL((url) => url.searchParams.get("ws") === personal.id);
+      await waitForPdf(page, 1);
+      await fileDone(page, "F8");
+      await page.getByRole("status").filter({ hasText: `“Read only.pdf” went into ${personal.name}: you can only read Ben's reading room.` }).waitFor();
+      assert((await pages()).some((p) => p.content === "Read only.pdf"), "in the personal workspace");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
   });
 
   // --- the shell: the claim's look, the hold, the gestures' choices, the haptics ---
@@ -943,5 +1104,67 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
       assertEq(await page.locator(".editBar").count(), 0, "no bar with a mouse");
       assertNoProblems(page);
     } finally { await desk.close(); }
+  });
+
+  // The bar is the notes' one, not each row's: from one open editor to the
+  // next it stays where it is, never out of sight, with its tools for the
+  // block now open; it starts out of sight only for the first editor, the
+  // keyboard's rise.
+  await step("ipad: the editing bar stays up from one editor to the next: a new block, an indent and an outdent by key or by tap, and another note tapped, with its tools for the open block", async () => {
+    const note = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Steady bar page" } });
+    for (const text of ["Alpha idea", "Beta idea"]) await alice.api("/api/blocks", { method: "POST", body: { parent_id: note.id, content: text } });
+    const [first, second] = (await tree(alice, note.id)).map((b) => b.content);
+    const ctx = await alice.context(browser, { hasTouch: true, isMobile: true, deviceScaleFactor: 2, viewport: { width: 1194, height: 834 } });
+    try {
+      const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&block=${note.id}`);
+      const bar = page.locator(".editBar");
+      const tool = (name) => bar.getByRole("button", { name, exact: true });
+      // Every frame from the action on, for 700 ms: the frames the bar was
+      // missing, out of sight or fading in, and the block whose editor is open.
+      const watch = (act) => page.evaluate(() => {
+        window.e2eBarFrames = { missed: 0, frames: 0 };
+        const start = performance.now();
+        const tick = () => {
+          const el = document.querySelector(".editBar");
+          const w = window.e2eBarFrames;
+          w.frames++;
+          if (!el || el.classList.contains("moving") || Number(getComputedStyle(el).opacity) < 0.99) w.missed++;
+          if (performance.now() - start < 700) requestAnimationFrame(tick); else w.done = true;
+        };
+        requestAnimationFrame(tick);
+      }).then(act).then(() => until(() => page.evaluate(() => window.e2eBarFrames.done && window.e2eBarFrames), { what: "700 ms watched" }));
+      const open = () => page.evaluate(() => document.activeElement?.closest(".blockEditorCm")?.dataset.blockId || null);
+      await page.locator(".blockRow", { hasText: first }).first().locator(".blockBody").tap();
+      await until(() => bar.evaluate((el) => !el.classList.contains("moving") && Number(getComputedStyle(el).opacity) >= 0.99).catch(() => false),
+        { what: "the bar shows for the first editor, once the keyboard's rise is over" });
+      await page.keyboard.press("End");
+      for (const [what, act] of [
+        ["Shift+Enter, a new block", () => page.keyboard.press("Shift+Enter")],
+        ["Tab, an indent", () => page.keyboard.press("Tab")],
+        ["Shift+Tab, an outdent", () => page.keyboard.press("Shift+Tab")],
+        ["the bar's New block below", () => tool("New block below").tap()],
+        ["the bar's Indent", () => tool("Indent block").tap()],
+        ["the bar's Outdent", () => tool("Outdent block").tap()],
+      ]) {
+        const seen = await watch(act);
+        assertEq(seen.missed, 0, `frames the bar was out of sight through ${what} (of ${seen.frames})`);
+      }
+      // The tools are the open block's: indented, it can be outdented and
+      // not indented again; at the top level, the reverse.
+      const fresh = await open();
+      assert(fresh, "a new block's editor is open");
+      await tool("Indent block").tap();
+      await until(async () => !(await tool("Outdent block").isDisabled()) && (await tool("Indent block").isDisabled()), { what: "indented, the bar offers Outdent" });
+      assertEq(await open(), fresh, "the indented block's editor keeps the focus");
+      await tool("Outdent block").tap();
+      await until(async () => (await tool("Outdent block").isDisabled()), { what: "back at the top, nothing to outdent" });
+      const other = await watch(() => page.locator(".blockRow", { hasText: second }).first().locator(".blockBody").tap());
+      assertEq(other.missed, 0, `frames the bar was out of sight as another note opened (of ${other.frames})`);
+      await until(async () => (await page.evaluate(() => document.activeElement?.closest(".blockRow")?.textContent || "")).includes(second), { what: "the other note's editor is open" });
+      await tool("Done").tap();
+      await page.waitForSelector(".blockEditorCm", { state: "detached", timeout: 5000 });
+      assertEq(await bar.count(), 0, "the bar leaves with the last editor");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
   });
 }

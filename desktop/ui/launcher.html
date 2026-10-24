@@ -2,6 +2,7 @@
 <html>
 <head>
 <meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <title>Gamma — Servers</title>
 <link rel="stylesheet" href="tokens.css" />
 <link rel="stylesheet" href="theme.css" />
@@ -61,7 +62,7 @@
   dialog p { margin: 0 0 8px; color: var(--text-muted); font-size: var(--fs-xs); }
   dialog label { display: block; color: var(--text-muted); font-size: var(--fs-xs); margin: 10px 0 4px; }
   dialog .row { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; margin-top: 18px; }
-  .creds { font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1.7; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 8px 10px; -webkit-user-select: text; user-select: text; white-space: pre; }
+  .creds { font-family: var(--font-mono); font-size: var(--fs-xs); line-height: 1.7; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius-md); padding: 8px 10px; -webkit-user-select: text; user-select: text; white-space: pre-wrap; overflow-wrap: anywhere; }
 
   .settings { background: var(--bg-card); border: 1px solid var(--border); border-radius: var(--radius-lg); padding: 12px 14px; }
   .setRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 6px 0; }
@@ -94,11 +95,11 @@
       <h1>Servers</h1>
     </div>
   </div>
-  <p class="sub">A server keeps your libraries: one run on this computer, or a Gamma you host elsewhere. Inside a server, workspaces (your own and shared ones) are switched from the toolbar, together with the servers.</p>
+  <p class="sub">A server keeps your libraries: one run on <span id="thisDevice">this computer</span>, or a Gamma you host elsewhere. Inside a server, workspaces (your own and shared ones) are switched from the toolbar, together with the servers.</p>
 
   <div class="cards" id="cards"></div>
   <div class="adders">
-    <button class="uiBtn primary" id="btnAddLocal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>New local server</button>
+    <button class="uiBtn primary desktopOnly" id="btnAddLocal"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg>New local server</button>
     <button class="uiBtn" id="btnAddRemote"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/></svg>Add remote server…</button>
   </div>
   <div class="status" id="status"></div>
@@ -118,63 +119,65 @@
     </details>
   </div>
 
-  <div class="sectionTitle">Settings</div>
-  <div class="settings">
-    <div class="setRow">
-      <div>
-        <div class="l">Reopen the last server at launch</div>
-        <div class="d">Off: start on this page every time.</div>
-      </div>
-      <label class="switch"><input type="checkbox" role="switch" id="swOpenLast" aria-label="Reopen the last server at launch"><span class="switchTrack"></span></label>
-    </div>
-    <div class="setRow">
-      <div>
-        <div class="l">Keep running in the background</div>
-        <div class="d">Closing the window leaves Gamma in the tray; clones and folders on disk keep syncing.</div>
-      </div>
-      <label class="switch"><input type="checkbox" role="switch" id="swBackground" aria-label="Keep running in the background"><span class="switchTrack"></span></label>
-    </div>
-    <div class="setRow">
-      <div>
-        <div class="l">Start at login</div>
-        <div class="d">Starts hidden in the tray when you sign in to this computer (the installed app only).</div>
-      </div>
-      <label class="switch"><input type="checkbox" role="switch" id="swLogin" aria-label="Start at login"><span class="switchTrack"></span></label>
-    </div>
-    <div class="setRow">
-      <div>
-        <div class="l">Local server storage</div>
-        <div class="d path" id="dataRootText"></div>
-      </div>
-      <div class="btns">
-        <button class="uiBtn sm" id="btnDataRootReset" hidden>Use default</button>
-        <button class="uiBtn sm" id="btnDataRoot">Change…</button>
-      </div>
-    </div>
-    <div class="setRow">
-      <div>
-        <div class="l">Updates</div>
-        <div class="d" id="updText"></div>
-      </div>
-      <button class="uiBtn sm" id="btnUpdate"></button>
-    </div>
-  </div>
-
-  <details id="advanced">
-    <summary>Advanced: run local servers from a source checkout</summary>
+  <div id="settingsBlock" hidden>
+    <div class="sectionTitle">Settings</div>
     <div class="settings">
-      <label>Python executable (blank = auto-detect)</label>
-      <input class="uiInput mono" id="setPython" spellcheck="false" />
-      <label>Backend directory</label>
-      <input class="uiInput mono" id="setBackend" spellcheck="false" />
-      <label>Frontend dist directory</label>
-      <input class="uiInput mono" id="setStatic" spellcheck="false" />
-      <div class="row">
-        <span class="detected" id="detected"></span>
-        <button class="uiBtn sm" id="btnSaveSettings">Save</button>
+      <div class="setRow">
+        <div>
+          <div class="l">Reopen the last server at launch</div>
+          <div class="d">Off: start on this page every time.</div>
+        </div>
+        <label class="switch"><input type="checkbox" role="switch" id="swOpenLast" aria-label="Reopen the last server at launch"><span class="switchTrack"></span></label>
+      </div>
+      <div class="setRow">
+        <div>
+          <div class="l">Keep running in the background</div>
+          <div class="d">Closing the window leaves Gamma in the tray; clones and folders on disk keep syncing.</div>
+        </div>
+        <label class="switch"><input type="checkbox" role="switch" id="swBackground" aria-label="Keep running in the background"><span class="switchTrack"></span></label>
+      </div>
+      <div class="setRow">
+        <div>
+          <div class="l">Start at login</div>
+          <div class="d">Starts hidden in the tray when you sign in to this computer (the installed app only).</div>
+        </div>
+        <label class="switch"><input type="checkbox" role="switch" id="swLogin" aria-label="Start at login"><span class="switchTrack"></span></label>
+      </div>
+      <div class="setRow">
+        <div>
+          <div class="l">Local server storage</div>
+          <div class="d path" id="dataRootText"></div>
+        </div>
+        <div class="btns">
+          <button class="uiBtn sm" id="btnDataRootReset" hidden>Use default</button>
+          <button class="uiBtn sm" id="btnDataRoot">Change…</button>
+        </div>
+      </div>
+      <div class="setRow">
+        <div>
+          <div class="l">Updates</div>
+          <div class="d" id="updText"></div>
+        </div>
+        <button class="uiBtn sm" id="btnUpdate"></button>
       </div>
     </div>
-  </details>
+
+    <details id="advanced">
+      <summary>Advanced: run local servers from a source checkout</summary>
+      <div class="settings">
+        <label>Python executable (blank = auto-detect)</label>
+        <input class="uiInput mono" id="setPython" spellcheck="false" />
+        <label>Backend directory</label>
+        <input class="uiInput mono" id="setBackend" spellcheck="false" />
+        <label>Frontend dist directory</label>
+        <input class="uiInput mono" id="setStatic" spellcheck="false" />
+        <div class="row">
+          <span class="detected" id="detected"></span>
+          <button class="uiBtn sm" id="btnSaveSettings">Save</button>
+        </div>
+      </div>
+    </details>
+  </div>
 
   <div class="foot"><span id="version"></span><span id="userData" style="-webkit-user-select:text;user-select:text"></span></div>
 </div>
@@ -206,7 +209,7 @@
   <h3>Add remote server</h3>
   <p>A Gamma you host elsewhere (NAS, VPS). You sign in with that server's accounts.</p>
   <label>Server URL</label>
-  <input class="uiInput mono" id="remoteUrl" placeholder="https://gamma.example.com  or  http://192.168.1.10:9001" spellcheck="false" />
+  <input class="uiInput mono" id="remoteUrl" placeholder="https://gamma.example.com  or  http://192.168.1.10:9001" spellcheck="false" autocapitalize="off" autocorrect="off" inputmode="url" />
   <label>Name (optional)</label>
   <input class="uiInput" id="remoteName" placeholder="Home server" />
   <div class="row">
@@ -218,7 +221,7 @@
 <dialog id="dlgRename">
   <h3 id="dlgRenameTitle">Rename server</h3>
   <input class="uiInput" id="renameName" aria-label="Name" />
-  <input class="uiInput mono" id="renameUrl" aria-label="Address" placeholder="http://192.168.1.10:9001" spellcheck="false" hidden />
+  <input class="uiInput mono" id="renameUrl" aria-label="Address" placeholder="http://192.168.1.10:9001" spellcheck="false" autocapitalize="off" autocorrect="off" inputmode="url" hidden />
   <div class="row">
     <button class="uiBtn" onclick="dlgRename.close()">Cancel</button>
     <button class="uiBtn primary" id="btnRename">Save</button>
@@ -266,6 +269,9 @@
     trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>',
   };
   const $ = (id) => document.getElementById(id);
+  document.body.dataset.platform = gammaShell.platform;
+  const ipad = gammaShell.platform === 'ipad';
+  if (ipad) $('thisDevice').textContent = 'this iPad';
   const statusEl = $('status');
   let busy = false;
   let state = null;
@@ -374,6 +380,7 @@
         actions.appendChild(iconBtn('folder', 'Open data folder', () => gammaShell.revealData(ws.id)));
         actions.appendChild(iconBtn('log', 'Show server log', () => gammaShell.revealLog(ws.id)));
       }
+      // The iPad's one local server, This iPad, cannot be removed.
       actions.appendChild(iconBtn('trash', 'Remove server', () => {
         $('removeTitle').textContent = `Remove "${ws.name}"?`;
         if (ws.type === 'local') {
@@ -388,11 +395,19 @@
         $('btnRemoveKeep').onclick = async () => { $('dlgRemove').close(); await gammaShell.remove(ws.id, {}); refresh(); };
         $('btnRemoveWipe').onclick = async () => { $('dlgRemove').close(); await gammaShell.remove(ws.id, { deleteData: ws.type === 'local' }); refresh(); };
         $('dlgRemove').showModal();
-      }, 'danger'));
+      }, 'danger' + (ws.type === 'local' ? ' desktopOnly' : '')));
       card.appendChild(actions);
       cards.appendChild(card);
     }
 
+    $('settingsBlock').hidden = !state.settings;
+    if (state.settings) renderSettings();
+    $('version').textContent = ipad ? `Gamma for iPad ${state.version}` : `Gamma desktop ${state.version}${state.packaged ? '' : ' (dev)'}`;
+    $('userData').textContent = state.userDataDir || '';
+  }
+
+  // The Settings block, the desktop's alone: the iPad's state has no settings.
+  function renderSettings() {
     $('swOpenLast').checked = Boolean(state.settings.openLastOnLaunch);
     $('swBackground').checked = Boolean(state.settings.background);
     $('swLogin').checked = Boolean(state.settings.openAtLogin);
@@ -404,8 +419,6 @@
     $('setBackend').placeholder = state.detected.backendDir;
     $('setStatic').placeholder = state.detected.staticDir;
     $('detected').textContent = state.packaged ? 'Packaged app: the bundled server is used unless a Python path is set.' : 'Dev mode: repo auto-detected.';
-    $('version').textContent = `Gamma desktop ${state.version}${state.packaged ? '' : ' (dev)'}`;
-    $('userData').textContent = state.userDataDir;
     $('dataRootText').textContent = state.dataRoot;
     $('btnDataRootReset').hidden = !state.settings.dataRoot;
   }
@@ -549,9 +562,9 @@
     refresh();
   };
 
-  // A failed open arrives as ?error= carrying the diagnosis main.js built
-  // (lib/startup.js) as JSON; a payload without one falls back to a line of
-  // status text.
+  // A failed open arrives as ?error= carrying the diagnosis the shell built
+  // (main.js with lib/startup.js, or the iPad app) as JSON; a payload without
+  // one falls back to a line of status text.
   function showFailure(f) {
     $('failTitle').textContent = f.summary;
     $('failHint').textContent = f.hint || '';

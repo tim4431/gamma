@@ -28,9 +28,11 @@ the ground toward the ink. The dark one takes chrome and wells toward black,
 and raised surfaces toward the ink.
 
 The root carries `data-scheme="light|dark"` beside `data-theme`, and the
-scheme picks the recipe (`DARK_THEMES` / `themeScheme` in `app/prefDefs.js`).
-Three places set both attributes: `index.html`'s pre-paint, App.jsx's theme
-effect and the desktop shell. A rule that differs by scheme keys on
+scheme picks the recipe (`DARK_THEMES` / `themeScheme` in `app/theme.js`).
+Three places set both attributes: `index.html`'s pre-paint, `applyTheme`
+(`app/theme.js`: App.jsx's theme effect, and `main.jsx` as the session
+brings the account's theme, before the app's first screen) and the desktop
+shell. A rule that differs by scheme keys on
 `[data-scheme="light"]`, never on a list of themes. The recipes match any
 element carrying the attributes, not only the root, so a subtree can show
 another theme in its own colours: the Appearance pane's swatches do.
@@ -120,7 +122,7 @@ layer from these scales instead of a number of its own:
 | Shadow | `--shadow-1` · `-2` · `-3` | 1: raised controls (buttons, chips, the find box, the composer); 2: what floats (popovers, menus, tips, the guide card, floating toolbars and pills, a hovered card); 3: dialogs and the lightbox. Each scheme defines its own: the dark one shades with black, the light one with a little of the theme's ink. Rings (`0 0 0 Npx`) and inset accent bars are borders, not depth, and stay with their component |
 | Spacing | `--space-1`…`-8` = 2 · 4 · 6 · 8 · 12 · 16 · 24 · 32 | the shared controls and new rules. The ratchet below doesn't count spacing, so layout rules may keep their pixels |
 | Controls | `--ctl-btn` 35 · `-btn-sm` 31 · `-icon-btn` 29 · `-icon-btn-xs` 24 · `-close-sm` 22 · `-close` 26 · `-close-lg` 31 · `-tab` 33 | a `uiBtn` and a `uiBtn sm` (an `iconSq` is that square, a topbar icon button a button tall); the frameless icon button (`ctlBtn`, the viewer's control boxes, search toggles); a compact button inside a line of text (find arrows, metadata rows, the chat's change list); the round × in its three sizes; a tab. One set for a mouse and a finger alike: no pointer media query changes them ([below](#one-behaviour-for-mouse-and-finger)). What sits around a control derives from them with `calc()` (a control box's width, a field's room for its eye button, the gap kept clear of the viewer's control boxes), so a size changes in one place |
-| Motion | `--dur-fast` 100 ms · `--dur-base` 160 ms · `--dur-slow` 240 ms | fast: hover and press; base: enter, fade, small moves; slow: bars and larger moves. Loops and attention effects of half a second or more (spinners, pulses, the landed flash) keep their own period |
+| Motion | durations `--dur-fast` 100 ms · `-base` 160 ms · `-slow` 240 ms · `-long` 400 ms; easings `--ease-out` · `--ease-swap` · `--ease-pop`; travel `--move-sm` 4 · `-md` 8 · `-lg` 16; `--scale-in` 0.97 · `--scale-out` 0.99; `--blur-swap` 2 px | fast: hover, press, a tooltip going; base: a surface leaving, a swap in place, a tooltip coming; slow: a surface arriving, bars and larger moves; long: a toast or panel arriving, a reveal. `--ease-out` for whatever moves, scales or resizes, `--ease-swap` for a cross-fade in place, `--ease-pop` for a badge or a switch's thumb; a colour or opacity fade leaves its easing out. Loops and attention effects of half a second or more (spinners, pulses, the landed flash) keep their own period and easing. How each kind of thing moves is [Motion](#motion) |
 | Layers | `--z-dock` 20 · `--z-float` 30 · `--z-phone-overlay` 80 · `--z-editbar` 90 · `--z-dropdown` 100 · `--z-overlay` 1000 · `--z-popover` 1100 · `--z-modal` 1200 · `--z-subdialog` 1290 · `--z-confirm` 1300 · `--z-lightbox` 1500 · `--z-ctxmenu` 1600 · `--z-refpopup` 2000 · `--z-drop` 9999 · `--z-tip` 30000 | every z-index above 9 is a layer token (one step above a layer is `calc(var(--z-dock) + 1)`); 1–9 only orders siblings inside one component |
 
 **Reduced motion.** One rule in app.css's primitives layer honours the OS
@@ -143,7 +145,9 @@ Two node tests hold the tokens in place. Each may only get better.
 - **Raw values.** `tests/designTokens.test.mjs` scans every stylesheet
   under `src/` (tokens.css aside) for values that should be tokens: a
   colour literal, a pixel font size, a corner radius over 2 px, an
-  elevation shadow, a z-index above 9, a transition under half a second. It
+  elevation shadow, a z-index above 9, a transition's time under half a
+  second or its easing written out (a bezier or keyword: a fade leaves it
+  out, anything that moves takes an `--ease-*`). It
   fails when a file holds more of one kind than `tests/design-baseline.json`
   records, and lists the new offenders. What is left is mostly the PDF
   page's own colours. After a cleanup,
@@ -564,10 +568,19 @@ built on it; the guide card's anchor is measured the same way
 popovers) has nothing to correct. The browser suite's
 `assertOpensInPlace` (harness.mjs) checks a surface frame by frame.
 
+A surface grows in from where it opens ([Motion](#motion)), so for a few
+frames its rect is smaller than the box it lays out at. It is placed by
+`surfaceSize(el)`, which takes that arrival scale back out, and never by
+its rect. `growFrom(x, y, pos)` is the transform-origin that makes it
+grow from the point it opens from, also when it took the other side or
+was kept inside the window.
+
 ### Dialogs
 
 `.reportOverlay` › `.reportModal` is the one dialog surface (settingsKit's
-`SubDialog` wraps it for the settings editors). Confirm-style dialogs — the
+`SubDialog` wraps it for the settings editors). `DialogOverlay`
+(`shared/ui/Surfaces.jsx`) renders the backdrop, so every dialog fades in
+growing from its middle and leaves the same way ([Motion](#motion)). Confirm-style dialogs — the
 shared `confirmBox`, the external-link prompt — add a `.confirmHead`: an icon
 chip (`.confirmIcon`, `.danger` for destructive) leading a title plus one
 line of explanation, the same shape as a settings `PaneHead`, over the
@@ -581,6 +594,14 @@ or raise the unsaved-edits question. Every `reportOverlay` dialog uses it
 (Settings, its `SubDialog` editors, the confirm box, the link, label and
 move-block dialogs, the chat's page picker); Quick Open closes on its own
 `mousedown` check instead.
+
+A dialog takes the focus as it opens, unless something inside it holds it
+already, and gives it back on close to what had it as it opened. When
+Settings opens with an editor dialog in it (the chat's AI tiles open it on
+the connect dialog), the editor holds the focus, Escape closes the editor
+alone and Settings has the focus back; a second Escape closes Settings and
+the tile has it. Closing Settings closes its editor too, so the next visit
+to the pane never shows the one left open.
 
 Destructive affordances all read from one set of tokens — `--danger`,
 `--danger-bg`, `--danger-border` — so the solid confirm button
@@ -600,7 +621,10 @@ backup restore) is a `danger` row.
 
 App's `setStatus(msg)` logs a message (Settings → Diagnostics) and posts
 it to the floating pill: one ending in "…" is in progress and spins,
-anything else is final and fades after a second. `setStatus(msg, action)`
+anything else is final and fades after a second. It rises into place
+when it comes, and a new message morphs out of the one it replaces
+(`MorphText`, [Motion](#motion)); an error, which wraps to be read in
+full, shows at once. `setStatus(msg, action)`
 with an `action` `{label, run}` puts its button on the pill
 (`.statusPill.interactive`), which then stays 8 seconds to be pressed.
 Each source posts to a channel of its own (`postPill(channel, entry)`),
@@ -620,6 +644,12 @@ the stroke history. A finger that scrolls a page while a tool is
 armed and only a pen draws gets "Fingers scroll while a pen draws" with
 **Draw with finger**, once a session and never after a pen has drawn
 ([handwriting.md](handwriting.md)).
+
+A page opening says "Opening…" only once it has kept the reader waiting
+300 ms (`OPENING_PILL_MS`, on a channel of its own), and takes it down as
+the page lands. "Ready." answers it only for a page opened where none was
+(the library, a link): a switch between pages is answered by the page
+itself.
 
 ### The share popover
 
@@ -661,6 +691,9 @@ citation (`PublishSection`): Publish, or the published link with Copy and
 an inline-confirmed Unpublish, the sync state line with Sync now, and the
 cloud share's access as the same tiles and View / Edit toggle
 ([mirror.md](mirror.md) "What the person sees").
+Opened again on the same page or folder it shows the settings it had at
+once and asks for them again in place; a first load, and the Gamma Cloud
+section's state, come into focus where they will stand (`Reveal`).
 Every change saves at once; nothing is a bespoke control. There is no
 "reset link": stopping and sharing again mints a new address. The read-only
 view's top bar is the visitor's side of it: the brand mark (the way to the
@@ -674,9 +707,20 @@ library" for a signed-in one, "Open in my library" for the owner.
 
 ### Sign-in and status pages
 
+Until the first real screen there is one splash: the one `index.html`
+paints before the bundle, then the same one drawn by `Splash`
+(`shared/ui/BrandMark.jsx`) while the server's config, the session and an
+assistant's consent request are read. Its mark is drawn in place, not
+loaded as a picture, and its spinner turns on from where it was, so no
+hand-over shows; under reduced motion it turns slowly, as every spinner
+does. The library's listing stays blank until it has come
+back, so it never says it is empty before its rows arrive. A read that
+fails ends the wait too: New page and New folder show under "Could not
+load the library." and a Try again button.
+
 `AuthShell` in `auth/LoginPage.jsx` frames every page shown before or
-instead of the app: the login (also a share link's sign-in gate), loading,
-an unavailable workspace, a session conflict and a blocked share link. It
+instead of the app: the login (also a share link's sign-in gate), an
+unavailable workspace, a session conflict and a blocked share link. It
 shows the brand mark (`shared/ui/BrandMark.jsx`, the favicon artwork) over the name, or over the
 situation's headline on a status page. The card hangs at a fixed height near
 the optical centre instead of being centred, so an error that appears
@@ -848,10 +892,27 @@ own controls.
   changes. A `pointercancel` (the system took the touch) moves nothing,
   and the drop's click is swallowed.
 - **Fold.** A double press on the grip folds the window to its header
-  (`onFold` through `doublePress`). Folded, one press anywhere on the
-  header but a button opens it. When that press was the first of a
+  (`onFold` through `doublePress`). Folded, the header is a bar in its
+  slot beside the open windows (`DockBar`), and one press anywhere on it
+  but a button opens the window. When that press was the first of a
   double-click, the second, landing on the opened grip within 800 ms,
-  does not fold it again.
+  does not fold it again. A finger's double tap folds on its second
+  release, and that tap's click, landing on the bar where the grip was
+  (Notes, first in their column), does not open it again.
+- **A fold keeps the window.** The folded window stays mounted in its
+  panel, which takes no room (`.dockPanelFolded`): its body is inert and
+  out of sight, at the size it had as it folded, so nothing in it lays out
+  again. The focus leaves it, so a note's editor open there closes, and no
+  editor opens there while it is folded (`useDockFolded`): the one a
+  highlight made on the PDF opens, or an empty page's first block, mounts
+  with the focus and its editing bar as the Notes open, and the jump to
+  its row and the chat's cursor chip wait for them too. The window opens
+  in the frame of the press on what it held, with nothing read again: the
+  chat's conversation at the place it was read, a half-typed message, the
+  notes at their scroll. While another window of the slot is open, a
+  folded panel is pinned at no size, so the slot's sizes are the open
+  windows' and a splitter stands only between two open windows. The slot
+  keeps a saved layout for each set of folded windows.
 - **Close.** A closed window forgets its fold: shown again, from the View
   menu or anywhere, it comes back whole.
 - **Splitters.** Each `PanelResizeHandle` between docks takes a press
@@ -904,6 +965,307 @@ own controls.
    account field turns capitalization and correction off.
 9. A file pick goes through `pickFiles`.
 
+## Motion
+
+Motion says where a thing comes from and where it goes. It never
+decorates and never makes anyone wait. The timings, easings, travel,
+scale and blur are tokens ([Scales](#scales)), and a value is chosen by
+what the motion does, not by the nearest number:
+
+- **Coming is slower than going.** A surface arrives on `--dur-slow` and
+  leaves on `--dur-base`. A toast or a panel arrives on `--dur-long`. Hover,
+  press and a tooltip's going take `--dur-fast`.
+- **What moves eases out.** A move, a scale or a resize takes `--ease-out`,
+  both ways: a quick start that settles softly. A cross-fade between two
+  things in one place takes `--ease-swap`. A badge or a switch's thumb may
+  overshoot once with `--ease-pop`, nothing else does. A colour or opacity
+  fade leaves its easing out.
+- **Small distances.** A surface grows from `--scale-in` and shrinks to
+  `--scale-out`. Text lifts `--move-sm`, a toast `--move-md`, a panel
+  `--move-lg`. A cross-fade passes through `--blur-swap`, which makes a
+  short move read as a whole one.
+- **Name the properties.** A transition lists the properties it animates,
+  never `all`, so an unrelated change does not ride along.
+- **Reduced motion ends everything at once.** The global rule in app.css
+  ([Scales](#scales)) covers every recipe; a component adds a rule of its
+  own only for a different still state.
+- **A theme changes in one frame.** Every colour switches together: for
+  the frame that draws the new theme the root carries `.themeSwitch`
+  (`applyTheme`, `app/theme.js`), whose rule in motion.css turns every
+  transition off, so a button or a row never eases from the old theme's
+  colour while the rest has changed.
+
+### Surfaces come and go
+
+`shared/styles/motion.css` holds the recipes, keyed by the surfaces'
+classes, so a new menu, popover or dialog moves with no code of its own.
+They animate the individual `scale` and `translate` properties, never
+`transform`, so a surface's own centring transform stays its own. Both
+rest at none, so nothing a surface holds is positioned against it.
+
+| Surface | Arrives | Leaves |
+|---|---|---|
+| Menus (`ContextMenu`) and popovers (`Popover`) | fades in growing from `--scale-in` over `--dur-slow`, from the point it opens from: `ContextMenu` sets that origin (`growFrom`), a popover grows from its button's corner (top right; `.popUp` bottom left; bottom centre in the compact shell's bar) | shrinks to `--scale-out` fading over `--dur-base` |
+| Flyouts (`SubMenuItem`) | fade in over `--dur-fast`: growing, they would make a pass down the rows feel slow | at once |
+| Dialogs (`DialogOverlay`) and the lightbox | the backdrop fades in over `--dur-base` while the dialog or picture grows from its middle over `--dur-slow` | together, over `--dur-base` |
+| Tips and the citation preview | fade in where they stand over `--dur-base` | at once |
+| The PDF selection popup, a note's selection toolbar and the caret's popups ("/", `[[`, `@`, LaTeX) | fade in over `--dur-fast`, so typing never waits on one | at once |
+| Toasts: the reminder cards, the status pill | rise `--move-md` into place through `--blur-swap` over `--dur-long` | sink back out over `--dur-slow` (the cards; the pill fades) |
+
+React takes a closed surface out of the page at once. `useLeave(kind)`
+(`shared/ui/leave.js`), the callback ref on its root, puts a still copy
+of it where it stood, and the copy plays its kind's way out
+(`[data-leaving="surface" | "dialog" | "toast"]`) and goes.
+`DialogOverlay`, `Popover`, `ContextMenu`, `ThreadPopover`, `Lightbox`
+and the reminder cards carry it. The copy is plain DOM outside React:
+inert, `aria-hidden`, without ids or guide anchors, and it takes no
+pointer, so nothing in it answers a press or a key. What stands in its
+DOM but over the window (a sub-dialog, the caret's popups) goes at once,
+so the copy holds none of it. A surface that arrives takes the place of
+a copy of its kind still leaving, as a native menu does: only one of a
+kind is ever seen going, and never while another stands. A dialog opened
+as one closes keeps the dim that was there (`data-over`). One opened
+inside a dialog still arriving (Settings opened straight onto an editor,
+as the chat's AI tiles do) waits for it to land, unseen, then arrives
+itself (`data-wait`): growing together, its backdrop was laid out inside
+the growing dialog and snapped to the window as it landed. Toasts stand
+side by side, so a toast takes no other's place, and one leaving a stack
+that moves (the reminders, hung from the window's bottom) leaves from
+where it was seen. Under reduced motion there is no copy. Code that asks
+whether a surface is open skips the copies and what they hold
+(`:not([data-leaving], [data-leaving] *)`, as `topDialog()` in
+appCommands.js does). A box read while a surface is arriving is the
+smaller one it grows from: the guide's card waits for its anchor to land
+(`arriving(el)`, `shared/ui/motion.js`, which counts only the arrivals
+that move or size what they hold).
+
+A pane that takes another's place comes into focus where it stands (a
+Settings pane, keyed by its name; a window the compact shell's bottom
+bar shows; the library's listing for another view, kind filter, folder
+or label, its `.listingIn` played again on it in place), and the guide's
+card rises `--move-sm` into place.
+
+A page that takes another's place does not move at all: the switch is
+instant and whole, since a fade would only make the reader wait. The tab
+pressed is selected in the press's own frame (`selectTab`), the page it
+leaves stays on screen, whole and in use, until the new page's tree lands
+(`openBlock`), and the new page then takes its place in one frame, its
+threads asked for alongside its tree and a PDF's pages drawn where they
+were left ([pdf_loading.md](pdf_loading.md) "Coming back to a document").
+
+### Things that change in place
+
+What changes without leaving its place uses a widget from
+`shared/ui/MotionWidgets.jsx`, whose recipe is in motion.css. At rest each
+is plain markup, and a first render never moves.
+
+- **`IconSwap`** `swap from to`: two icons in one slot (copy and its
+  check, play and pause, an eye and a struck eye). The one going shrinks
+  into `--blur-swap` as the other grows out of it, on `--ease-swap`. Both
+  stay in the DOM, so the slot never changes size. Not for an icon chosen
+  by an item's kind, and not for a state with a spinner.
+- **`MorphText`**: a short label that changes in place (Copy → Copied,
+  Save → Saving…). The letters both texts share at each end stay; the
+  part between cross-fades and its width eases, so the button around it
+  resizes smoothly. Mid-swap, assistive technology reads the new label
+  whole. It shows the new label at once under reduced motion, when the
+  label changes faster than a swap takes (a progress count), and when an
+  ellipsis cuts the old or the new one, and while `still` holds (a label
+  a load changed, as a chat reply's read again). Not inside a surface
+  placed from its size (the selection popup): its width would move it
+  every frame.
+  The chat's reply pill is one label from the start of a turn:
+  "Thinking", each step running, "Responding", then its summary, every
+  change a morph.
+- **`Collapse`** `open still`: a body under the header that opens it. Its
+  row grows from nothing over `--dur-slow` while it comes into focus, and
+  folds over `--dur-base`; shut, nothing is rendered, and while it folds
+  the body stays, inert. In a column with a gap, the gap above it folds
+  with it; while it moves nothing scrolls it (a field focusing itself as
+  it mounts). While `still` holds it opens and shuts at once: the outline
+  moves only the fold a person makes, and a jump that reveals a block
+  opens its parents still, since it scrolls to the block right away. The
+  outline's bodies fade in without the blur. Not inside a surface placed
+  from its size, which would move as it grows. A native `<details>` opens
+  the same way where the browser animates `::details-content`.
+- **`Chevron`** `open dir`: one glyph that turns with what it opens:
+  `"right"` turns down, `"down"` flips up. A text caret ▸ turns the
+  same way with `.turnCaret`.
+- **`useSlidingPill(ref, value)`**: the chosen option's frame in a
+  segmented group slides to the next one chosen (`Segmented`, the
+  library's view and kind toggles). The group renders a `.slidePill` as
+  its first child; its stylesheet gives the pill its look.
+- **`.shimmerText`**: text that says work is under way (the chat's
+  Thinking) carries a soft light across its letters while it holds.
+- **`.countIn`**, keyed by the number: a badge's number rises into
+  place when it changes; the Inbox badge also pops on when it comes.
+- **`FADE_IN`**, spread on an `<img>`: a picture fades in once loaded
+  (the library cards' snapshots, the Import and Export dialogs' Zotero
+  mark); one already in the cache shows at once.
+- **`.loadingHint`**: a lone "Loading…" placeholder that fades in only
+  after `--dur-slow`, as a `Reveal`'s fallback does, so an answer that
+  comes quickly takes the place of a blank, never of the word (the chat's
+  History popover on its first read). What
+  was read before shows instead while it is read again in place: the
+  History popover keeps each page's list, the chat keeps the last twenty
+  conversations it showed. Under reduced motion the word shows at once.
+- **`Reveal`** `ready k fallback`: where a first load lands (the share
+  popover's settings, the Inbox's listing, Recently deleted's pages).
+  While it waits it holds, blank, the height its content last had under
+  `k`, and its `fallback` ("Loading…") fades in only after `--dur-slow`,
+  so a load that answers fast never shows it. Content that takes the
+  place of a placeholder comes into focus as a pane does; content ready at
+  once is plain. It is a column, and it never eases a height: what holds
+  it changes size once, as the content lands, so it is not for a surface
+  placed from its size (the thread popover), which would jump. Under
+  reduced motion the fallback shows at once. Content already there is
+  better than any placeholder: the share popover keeps a target's
+  settings while it asks for them again, the Inbox opens each tab on the
+  first page it showed last and refreshes it in place, and Recently deleted
+  asks for its list with its module, as the pointer or the focus reaches
+  its button, so it lands whole. A Settings pane does the same: its reads go
+  out as the pointer or the focus reaches its sidebar button, the pane
+  before stays until they are in (at most 250 ms), and a pane read before
+  shows at once and is read again in place ([settings.md](settings.md)
+  "What a pane reads"). Search results, which change with every key, take
+  none.
+- A switch's thumb travels with `--ease-pop`, its one overshoot.
+- **`.shakeNo`**, replayed by removing and adding it: a field that
+  refused what was typed shakes once, a small no (a wrong password at
+  sign-in).
+
+The desktop shell's and the extension's own stylesheets move on the same
+tokens (their copies of tokens.css): the switch's thumb, the buttons, the
+extension's drawer and cookie badge.
+
+### Lists that change
+
+A list whose items are added, removed or reordered in place wraps them in
+`ListMotion` (`shared/ui/ListMotion.jsx`), which has no box of its own.
+Its items are the elements under it with a `data-motion-key`, unique in
+the list. An item may hold others, as a row's children body holds rows,
+and what it holds travels with it.
+
+- **What moves glides.** The page is laid out at once in its new order.
+  An item whose place changed is drawn from where it stood and glides to
+  its place on `--dur-slow` `--ease-out`: a Web Animation of `translate`
+  ("list-move"), so the item's own animation and transitions are left
+  alone, and it carries `data-moving` meanwhile. One interrupted starts
+  again from where it was seen.
+- **What comes comes in where it will rest** (`enter`, motion.css
+  `[data-entering]`). `"fade"`, the default, fades in a moment late, so the
+  items around it have opened its room first: an outline's row. `"rise"`
+  lifts `--move-sm` into place: a message, a tab. `"card"` grows in as a
+  surface does. A fading item never travels, so a box read right after the
+  change is its own. A new item that holds one that was already there,
+  such as the body a row was just indented into, does not come in. While
+  it comes in the recipe stands in for the item's own animation, so an
+  item in such a list has no arrival of its own.
+- **What goes leaves from where it stood** while the rest closes up over
+  its place (`leave`, `[data-leaving]`): `"row"` fades, `"tab"` sinks back,
+  `"card"` shrinks away. It goes through a still copy made while it stands
+  (`stillCopy`, leave.js), so the list renders the `keys` it holds, in
+  order, for ListMotion to see which went. The copy drops its key and the
+  attributes in `strip`, those app code finds the list's items by. Without
+  `leave` it is gone at once. Its holder should position it
+  (`position: relative`), so the copy is clipped and scrolled with the
+  list.
+- **Nothing moves** on a first render, in a new `scope` (another page,
+  another filter), for a change marked `still` (a load, another client's
+  or the agent's edit, a text box's measured size), while it is `off`,
+  under reduced motion, or while the list is out of sight. It plays only
+  when `shape` changed (by `same`; with neither, the `keys`). Only what is
+  near the window moves, and a change that moves more than 60 items or
+  brings or takes more than `most` (8) does that part at once (a paste of
+  many blocks, Mark all read). `moves={false}` leaves the places alone
+  where they transition already (the comment margin's cards).
+- **Boxes are the window's**, so an insert above the view that scroll
+  anchoring absorbs moves nothing, and a scroll the change forces on the
+  list's own scroller glides what it carries: a strip scrolled to its end
+  that a close narrows scrolls back, and what is left closes up from the
+  left. A glide is turned into the item's own pixels, so an item starts
+  from where it stood under a text zoom around the list and under a zoom
+  of its own (the Interface size every button carries, as the Comments
+  window's rows do).
+- **A popup over the window stays put.** An item holding what matches
+  `hold`, such as the caret's "/" or `[[` menu, stays still, since a
+  moving ancestor would carry it off. Text typed or pasted in the list,
+  from any keyboard or input method, and a press outside the list (the
+  editing bar's Insert…) land every glide at once, so a popup they open is
+  placed against a row at rest. A press in the list aims at what is drawn
+  and lands nothing.
+
+`arriving(el)` counts a glide as an arrival, so the guide's card waits
+for its anchor's row to land.
+
+The notes outline is the first list on it. Its rows and their children
+bodies are the items, with the agent's row still being written (a
+create_block streaming, which glides with its neighbours when the person
+changes the tree above it) and the backlinks and the tail under them; it
+plays only when the tree's shape changed (`sameShape`,
+`shared/model/blockModel.js`), so a keystroke or a fold moves nothing.
+
+The chat's transcript is another: a question sent and its reply rise in
+together (`enter="rise"`, `moves={false}`, keyed by their places, one
+scope per conversation), while a conversation loaded, switched to or read
+again shows still: its messages are the ones a load just delivered. Its
+rows are keyed by the conversation too, so a switch renders its own from
+the first frame, and in a conversation that came from a load each reply's
+steps pill opens and shuts at once and its label changes without a morph
+and is not read out: only this tab's own reply is a live region.
+
+The tab strip (`OpenTabs`) is another. A tab opened rises in, one closed
+sinks back out where it stood while the tabs after it glide over its
+place, and a tab dragged along the strip moves the others through the
+same glides. A tab still gliding under the pointer is not one to swap
+with, so a swap never swaps back. Closed at the end of a strip scrolled
+there, a tab sinks out where it was seen as the tabs before it glide over
+its place from the left. Tabs read from this browser's cache or the
+server's copy come still, and so does any change before the person has
+pressed or typed anything in the window (the page it opened on getting
+its tab): that is the window loading. The strip is as tall with no tab
+as with one, so the topbar never grows as the first one opens.
+
+The library's listing, in both views, is another. A row comes in fading
+and goes fading, a card grows in and shrinks away, and a delete or an
+item its sort moves glides the rest. A listing's `scope` is its view, kind
+filter, folder, label, sort, filter text and how many rows Load more has
+shown, so typing in the filter box, opening a folder or Load more moves
+nothing: the rows arrive at once. Its holders (`.fileList`, `.fileGrid`)
+position the copies. The listing mounts once it has loaded (or its read
+has failed), so the first one a load or a page left brings is a first
+render. The reads that are loads come still: the listing read again on
+coming home, on the window's wake or as a metadata lookup ends, an import
+started elsewhere landing, and the server's view history landing after
+it. Each marks what it sets, and a change is still when all it
+changed was read that way, so a delete right after a load still moves.
+
+The small lists are on it too. An empty state can be an item of its own
+(its key "empty"), so it fades in as the last item leaves; a section's
+header is one, so it goes with its last row.
+
+- **The Inbox**: its rows and day headers; a row read in Unread or
+  archived leaves (`"row"`) and a new one fades in. Each tab is a scope,
+  and Mark all read empties the tab at once (`still`).
+- **Background tasks**: a task that finishes glides past the header to
+  the top of Finished (with nothing else running, In progress goes with
+  it and Finished's header glides up), one removed leaves (`"row"`), and
+  Clear finished takes them all at once.
+- **The PDF margin**: a card grows in and shrinks away (`"card"`), and
+  `moves={false}`, since stackCards places the cards and their `top`
+  moves them on `--dur-slow`. A new comment sent shows in its card over
+  the emptied field while it is on its way, and stored, the thread's card
+  takes that card's place still, where it stood: the two never stand
+  together.
+- **The Comments window**: a thread rises in (`"rise"`) and one with a
+  new reply glides to the top. A list that fills from none (the page's
+  threads loading) comes in still.
+- **A thread's comments**: a reply rises in. A margin card opening to its
+  whole thread is another scope.
+
+The copies drop the ids the app and the tests find these items by
+(`data-inbox-id`; `data-card-for`, `data-thread-id`, `data-comment-id`).
+
 ## Block editor interactions
 
 `editor/BlockTree.jsx` owns row interactions and the editor's popups;
@@ -949,6 +1311,38 @@ and reconcile the reference cache with the response ([collaboration](collab.md))
 Its editor shares `useMathUi` (`editor/useMathUi.js`: completion and
 preview), and image/table paste with the ordinary row editor. The card footer navigates to the source.
 
+### The selection toolbar
+
+Selected text in a note's open editor gets Notion's floating bar
+(`editor/SelectionToolbar.jsx`): bold, italic, underline and
+strikethrough; inline code, inline equation and link; highlight and Color.
+Every tool but Color is a block command run with the row's
+`commandContext`, so a button does what its key does, and its title names
+the account's chord. The command's `state` ([hotkeys.md](hotkeys.md))
+presses the button (`.modeActive`, `aria-pressed`) where the selection
+carries the mark and disables it where the command would do nothing. The
+bar does not show where no tool applies, such as math or a code fence.
+Color opens two rows under the tools: Default and the eight text colors,
+then Default and the eight background tints (`TEXT_COLORS` in
+`editor/mdMarks.js`, the palette the "/" color commands write). Each
+choice is an "A" drawn as the text would come out, and the selection's
+own color is the pressed one. A choice recolors the selection
+(`markCommands.colorPlan` over `mdMarks.recolor`): part of a colored run
+splits it, runs that end up alike merge, and Default takes the color off.
+
+When it shows is `editor/useSelectionToolbar.js`. A mouse selection shows
+it once the button is released, so a drag or a double-click never has it
+jump along. A keyboard selection shows it at once. Escape puts it away
+until the selection changes. On an on-screen keyboard it stays hidden,
+and the editing bar has the same tools. It sits above the selection's
+first line, or under its last when there is no room, inside the box the
+note scrolls in. It is placed before it is painted and follows that box's
+scrolling (`useFloatingPosition` with `follow`), and it is out of sight
+while the selection is scrolled away. Its buttons take no focus, and a
+press is kept from the editor and the row, so the selection stays where
+it was. It joins the shared floating surface, at `--z-refpopup` with the
+editor's other popups.
+
 ## File map (frontend/src)
 
 | File | Owns |
@@ -991,10 +1385,11 @@ preview), and image/table paste with the ordinary row editor. The card footer na
 | `editor/MdObject.jsx` | the object frame around every rendered image, table and diagram, Mermaid or SVG (`MdObject`, wrapped by `BlockMarkdown`; kinds `image`, `table`, `diagram`). A press on the object's body (`.mdImgFrame`, `.mdTableWrap`, `.diagramCard`) selects it (`mdObjectSelected` ring, and a selected picture or diagram shows its toolbar and grips; an editable picture zooms on double-click or double tap, a read-only one on click) and never reaches the block row; a press on the frame's margin does reach it, and click-to-source puts the caret at the object's near end. One menu for all kinds, on a right-click or a held finger (`menuPress`), or from the "⋯" (`ObjectMenuButton`) ending a picture's or a diagram's toolbar: Edit markdown source (click-to-source with the object's offset), Move to ▸ new block above / below / another page (the block move's page picker), Copy image (a loaded picture or a drawn diagram, the element `objectPicture` finds in the frame, handed to `copyImage`; greyed out with the reason outside a secure context), Copy as markdown, Delete (Delete/Backspace on a selected object does the same); the table's corner handle opens it through `useObjectMenu`. The frame is the HTML5 drag source: `dragStart` publishes `{blockId, kind, idx}` as `_dragState.fragment` plus the `application/x-gamma-object` data type, and App's `onBlockDragOver`/`onBlockDrop` route it. The row's outer 30 % (6–14px) means a new sibling block (the block drop indicator); the middle means inside the block at the gap nearest the pointer (`dropGapAtPoint`: `renderedGaps` plus a gap above the first and below the last construct, mapped to a source line start by the object scanners or `blockStartInSource` + `gapInSource`; drawn by `BlockDropIndicator` as `dropIndicatorInside`). `scanObjects` merges `scanImages` / `scanTables` / `scanDiagramFences` (one index for both diagram kinds) into one source-ordered list; quoted tables and prefixed or unfinished fences are not `editable` (menu without move/delete, no drag) |
 | `editor/mdScan.js` | the pure scanners the rendered view (mdPreprocess, MdTools, the object frame) and the editor's widgets share, so all agree on which construct is the nth one: `scanMathSpans`, `protectedSpans` (math, fences, inline code — where markdown syntax is not read), `scanImages`, `scanTables`, `parseTable`, `serializeTable`, and `blockSpans` (the fences and display math a line boundary must not split) |
 | `editor/mdObjects.js` | the pure source-range algebra behind every object move (`tests/mdObjects.test.mjs`). `cutObject`: the object's markdown and the content without it; a whole-line object takes its lines and the blank lines around it close up to the wider gap, an image inside a text line leaves the text; `mapOffset` carries a drop offset across the cut and returns null inside the removed zone, so a drop onto itself is a no-op. `insertObject`: a paragraph of its own at a line start or the end, the next line's indentation kept. `moveObject` (same block) and `moveObjectInTree` (the one tree edit for the drop and the menu: `inside` splices source, `sibling` / `child` make a new block) — one `setBlocks`, so a cross-block move is one undo step and one op batch. Nothing new is stored; the object's markdown changes place |
-| `editor/BlockCmEditor.jsx` | the CodeMirror 6 block editor (textarea-compatible facade) with live in-place rendering of closed `$…$`/`$$…$$` spans, ``` ``` ``` fences (highlight.js cards), `[[ref]]`/`![[embed]]` chips, `@` mention chips ([mentions.md](mentions.md)), `![alt](url)` images (the picture, sized like the rendered view, alt as caption; `scanImageSyntax` in `mdMarks.js` is the one image scanner, shared with `MdTools`) and GFM tables (`TableWidget`, a read-only table of the raw cells). Pictures and tables are objects, not text: they stay rendered while the caret rests at either end or steps through their lines, and only a selection reaching strictly inside shows the source. A click puts the caret after them; a right-click or a held finger (`menuPress`) drops it inside (the editor's "Edit markdown source"). The widget is a drag source through `onObjectDrag` (BlockRow's object action → `_dragState.fragment`), so a table can be dragged out of a block while it is being edited. A drop INTO an open editor is the editor's own: capture-phase `dragover`/`drop` on its host, recognized by the `application/x-gamma-object` data type, land at the line boundary nearest the pointer (the inside drop line, then `onMoveObject` `inside`); CodeMirror's default drop, which would paste the markdown at the caret as a copy, never runs. The object index comes from `mdScan.js`, so it matches the rendered view's frame. Markdown renders live too (headings, `**`/`*`/`` ` ``/`~~`/`==`, links + bare URLs, clickable `- [ ]` checkboxes, `- ` bullets, `1. ` numbers in tabular figures (Inter's own are proportional, so a `1.` item's text would start left of a `2.` item's), `---` rules, quote lines and full `> [!type]` callout boxes with their fold flag (a heading, list marker or rule after a line's quote marks renders as it does outside a quote), colored runs — `<span style="color:…">` / `background:…` inline HTML, tags hidden, `scanColorSpans` in `mdMarks.js`) — the construct the caret touches stays raw source (line-level touch for heading/quote prefixes, marker-only touch for list markers so a todo's checkbox survives editing its text). Raw math gets VSCode-style bracket-pair colorization (depth-cycled `--bracket-*` colors, enclosing pair boxed). Opening a block's editor keeps its height (checked by notes.mjs): the rendered view's outer margins stop at the block's edges, a list, quote, callout or table hugs the text line above it as its source lines do, and the editor's widgets take the rendered metrics — the `$$` math and code cards their margins, a callout's first and last lines the box's 6px padding (the title 2px under it, 4px when foldable), the table widget the object frame's 3px halo, 6px under the line above and the 14px the rendered table keeps under it for its + row. Blank lines still differ (the rendered view folds one into a paragraph break), as does a heading directly under text. Decorations come from a `StateField`, not a ViewPlugin — plugin decorations may not replace line breaks (multi-line fences/`$$` would throw). Formatting hotkeys — Ctrl/Cmd+B/I/E, Ctrl+Shift+X/H toggle `**`/`*`/`` ` ``/`~~`/`==` Obsidian-style, Ctrl+K inserts `[sel](url)` (clipboard URL fills the slot); swallowed inside math/fences/inline code — are block commands of `editor/blockCommands.js`, planned by `markCommands.js` and dispatched to the editor; a system keyboard's or menu's `beforeinput` `formatBold` / `formatItalic` / `formatStrikeThrough` runs the same commands. The system's typing aids (autocorrect, capitals, spelling, suggestions) are on in prose and off in a code fence or math, decided as the caret moves (`typingAids`, [ipad.md](ipad.md#the-editing-bar)) |
+| `editor/BlockCmEditor.jsx` | the CodeMirror 6 block editor (textarea-compatible facade) with live in-place rendering of closed `$…$`/`$$…$$` spans, ``` ``` ``` fences (highlight.js cards), `[[ref]]`/`![[embed]]` chips, `@` mention chips ([mentions.md](mentions.md)), `![alt](url)` images (the picture, sized like the rendered view, alt as caption; `scanImageSyntax` in `mdMarks.js` is the one image scanner, shared with `MdTools`) and GFM tables (`TableWidget`, a read-only table of the raw cells). Pictures and tables are objects, not text: they stay rendered while the caret rests at either end or steps through their lines, and only a selection reaching strictly inside shows the source. A click puts the caret after them; a right-click or a held finger (`menuPress`) drops it inside (the editor's "Edit markdown source"). The widget is a drag source through `onObjectDrag` (BlockRow's object action → `_dragState.fragment`), so a table can be dragged out of a block while it is being edited. A drop INTO an open editor is the editor's own: capture-phase `dragover`/`drop` on its host, recognized by the `application/x-gamma-object` data type, land at the line boundary nearest the pointer (the inside drop line, then `onMoveObject` `inside`); CodeMirror's default drop, which would paste the markdown at the caret as a copy, never runs. The object index comes from `mdScan.js`, so it matches the rendered view's frame. Markdown renders live too (headings, `**`/`*`/`` ` ``/`~~`/`==`, links + bare URLs, clickable `- [ ]` checkboxes, `- ` bullets, `1. ` numbers in tabular figures (Inter's own are proportional, so a `1.` item's text would start left of a `2.` item's), `---` rules, quote lines and full `> [!type]` callout boxes with their fold flag (a heading, list marker or rule after a line's quote marks renders as it does outside a quote), underline and colored runs — `<u>…</u>` and `<span style="color:…">` / `background:…` inline HTML, tags hidden, inline marks of `scanMarks` in `mdMarks.js` that nest with the rest) — the construct the caret touches stays raw source (line-level touch for heading/quote prefixes, marker-only touch for list markers so a todo's checkbox survives editing its text). Raw math gets VSCode-style bracket-pair colorization (depth-cycled `--bracket-*` colors, enclosing pair boxed). Opening a block's editor keeps its height (checked by notes.mjs): the rendered view's outer margins stop at the block's edges, a list, quote, callout or table hugs the text line above it as its source lines do, and the editor's widgets take the rendered metrics — the `$$` math and code cards their margins, a callout's first and last lines the box's 6px padding (the title 2px under it, 4px when foldable), the table widget the object frame's 3px halo, 6px under the line above and the 14px the rendered table keeps under it for its + row. Blank lines still differ (the rendered view folds one into a paragraph break), as does a heading directly under text. Decorations come from a `StateField`, not a ViewPlugin — plugin decorations may not replace line breaks (multi-line fences/`$$` would throw). Formatting hotkeys — Ctrl/Cmd+B/I/U/E, Ctrl+Shift+X/H toggle `**`/`*`/`<u>`/`` ` ``/`~~`/`==` Obsidian-style, Ctrl+K inserts `[sel](url)` (clipboard URL fills the slot); swallowed inside math/fences/inline code — are block commands of `editor/blockCommands.js`, planned by `markCommands.js` and dispatched to the editor; a system keyboard's or menu's `beforeinput` `formatBold` / `formatItalic` / `formatUnderline` / `formatStrikeThrough` runs the same commands. The system's typing aids (autocorrect, capitals, spelling, suggestions) are on in prose and off in a code fence or math, decided as the caret moves (`typingAids`, [ipad.md](ipad.md#the-editing-bar)) |
 | `editor/EditBar.jsx` | the touch editing bar: the markup strip's surface (`.pdfInkBar`'s elevated box, border, radius and light-scheme shadow) with its `.pdfInkSep` separators, holding `ctlBtn`s with 16 px icons at the ink menu's finger size (36 px), then a Done ✓. It floats centred 6 px above the on-screen keyboard, never lower than the compact shell's bottom bar, else at the screen's edge, at `--z-editbar` while a note's editor is open on a touch screen. Every button but Undo / Redo (the page's block history) is a block command, disabled when its `when` fails. Presses never take focus ([ipad.md](ipad.md) "The editing bar") |
+| `editor/SelectionToolbar.jsx`, `editor/useSelectionToolbar.js` | the selection toolbar over a note's selected text (*The selection toolbar* above): the formatting commands as `ctlBtn`s pressed or disabled by their `state`, with `.pdfInkSep` separators, and the color row; the hook decides when it shows (after the mouse button's release, hidden on Escape and on an on-screen keyboard) |
 | `editor/clickToSource.js` | maps the rendered view back to the raw source by text (the layouts differ too much for coordinates): the clicked character a new editor opens on (`sourceOffsetAtPoint`), the gap line between two rendered blocks (`renderedBlocks`, `renderedGaps`, `blockStartInSource`, `gapInSource`), a Ctrl-selection's source range for the chat (`sourceRangeOfSelection`), and other people's carets placed on the rendered view (`renderedCaretRect`, via `locateInRendered`); `locateInSource` / `locateInRendered` / `gapInSource` are pure and unit-tested |
-| `editor/mdMarks.js` | the inline-mark table (regex + class per marker) shared by the live renderer and the hotkeys, plus the pure `toggleMark`/`insertLink` transforms (wrap / unwrap / empty pair / per-line for multi-line selections). `scanMarks` allows proper nesting (`**a *b* c**`, `*a **b** c*`; nothing inside inline code) and treats `***x***` as one bold+italic span with two `layers`, so Ctrl+B and Ctrl+I each peel off their own delimiters |
+| `editor/mdMarks.js` | the inline-mark table (regex + class per marker, and a `close` where the closing delimiter differs: `<u>`…`</u>`, the colored run's `<span style>`…`</span>`) shared by the live renderer and the hotkeys, plus the pure `toggleMark`/`insertLink` transforms (wrap / unwrap / empty pair / per-line for multi-line selections) and `markedAt`, which reads the same target the toggle acts on. `scanMarks` allows proper nesting (`**a *b* c**`, `*a **b** c*`, a colored run in bold or bold in it; nothing inside inline code) and treats `***x***` as one bold+italic span with two `layers`, so Ctrl+B and Ctrl+I each peel off their own delimiters. `recolor` and `colorAt` are the color row's: a selection's runs restyled, split and merged, and the style they share |
 | `editor/mdLines.js` | the pure structure of a note's lines (`tests/mdLines.test.mjs`): `parseLine` splits one into where it sits (quote marks, nested `> > `, and indentation) and what it is (a bullet, number, to-do, heading or a callout's `[!type]` title) and its text, and everything else works on that. `enterPlan` is the line-break Enter's Obsidian-style continuation (`> - [x] ` continues as `> - [ ] `; on an empty item the list ends, then a quote level); `pastePlacements` moves pasted lines to the level of the line they land on (the clipboard bullet above); `retypeLine` is the "/" menu's line commands, which swap what a line is and keep where it sits (`/todo` on `> - item` is `> - [ ] item`; `/quote` adds a quote level; `/callout` turns the quote the line starts into a callout, else starts a box there, one level in); `toggleQuotePlan` is Toggle quote (Ctrl+Shift+.) over the selected lines. Every line of a quote carries its marks, a blank one a bare `>`, so it stays one box here, in Obsidian and on GitHub |
 | `editor/slashCommands.js`, `editor/SlashMenu.jsx`, `editor/useSlashMenu.js` (their text-only insertions in `editor/slashInserts.js`) | the "/" command catalog and its matching (pure, `tests/slashCommands.test.mjs`): headings, to-do, lists, quote, callout, divider, equations, `/page` (a new library page, linked) and `/note` (a sheet of paper), table, code, mermaid, image, date, link, embed, highlight, and the `hidden` text/background color commands from `mdMarks.TEXT_COLORS` that show only when the query matches. The bare "/" list is the catalog in order under the `SLASH_GROUPS` titles (Text, Math, Insert, Link, Style); a typed query is one ranked list, by tier: the command's own name, a name it begins, a word of its label it begins, a keyword it begins, then a VS Code-style fuzzy match of the name or label (anchored on the first letter, jumping to word starts: `/cb` → Code block), like the `\command` completion's ([latex_editing.md](latex_editing.md)). A command that `needs` an ability (`newPage`, `sheet`, `image`, `embed`) is left out where the editor lacks it (`filterSlashCommands`' `can`: a share's editor makes no library page, a comment's field writes text only). `SlashMenuPopup` draws a row as an icon tile (`MENU_ICONS` by the item's `icon` key; the colors keep a tinted "A" `glyph`), the label over a one-line description, and the `/name` to type at the right, the matched letters marked with search's `mark.searchMark` in the name or the label, wherever they matched; a key-hint footer (Tab or Enter inserts). The same popup is the "Paste as" chooser shown after a URL paste (gamma block link → mention/synced block/URL, other URLs → URL/titled link), without names. `useSlashMenu.js` owns the menu's trigger (typed only, never inside math or a code fence), its keys and the run of a command, for a note row and a comment's field; BlockTree owns the "Paste as" chooser |
 | `editor/RefPicker.jsx`, `editor/refLists.js` | the `[[` link picker: a caret-anchored popup (the "/" menu's placement) with pages matched by title (`rankRefPages`, the library matcher) above note blocks from `/api/block-search`, each block one plain line under its page path (`refBlockText` / `refBlockPath`, search's `plainSnippet`); when that search stopped at the server's time budget (`partial`) the key-hint footer leads with a "stopped early" line; the typed text is marked with search's `MarkedText` and a page row says `pageKindLabel()` ("Page" / "PDF"), as Search, Quick Open and the library do. `pageByTitle` is the hand-typed rule: `[[title]]` closed by hand becomes `[[id]]` when exactly one page has that title, else it renders as a dashed `.unlinkedRef` chip; `refQueryAt`, `refInsertEdit` and `typedTitleLink` are the typed `[[query`, a picked row's edit and the hand-typed rule's edit. `editor/useRefPicker.js` owns the trigger, the block search, the keys and the insertion, for a note row and a comment's field |
@@ -1007,7 +1402,7 @@ preview), and image/table paste with the ordinary row editor. The card footer na
 | `editor/LatexEditor.jsx` | LaTeX aids while editing: the live preview docked to the editor column with a caret marker, the `\command` popup, `renderKatex`/`useCaretAnchored` shared helpers; `editor/latexCompletion.js` is the pure catalog (prefix/abbreviation/fuzzy tiers, snippets, Tab-out navigation) it re-exports; `editor/latexInput.js` supplies scalable delimiter pairing. See [LaTeX editing](latex_editing.md) for shortcuts and browser checks |
 | `library/RecentlyDeleted.jsx` | the Recently deleted dialog: a `SubDialog` of `aiProvRow` rows (title, who deleted it and when, days left, folder) with Restore and a delete-for-good icon button behind App's confirm box, Empty in its `DialogButtons` ([home_library.md](home_library.md) "Recently deleted") |
 | `library/libraryUtils.js` | the library's folder and label helpers over the folder and label trees ([home_library.md](home_library.md) "Folders and labels"), and `pageAttachment`, what a page carries |
-| `shared/ui/Widgets.jsx`, `shared/ui/Menus.jsx`, `shared/ui/Icons.jsx` | shared components; `OpenTabs` in Widgets is the topbar's tab strip (a kind icon per tab, pinned tabs first, full width with a pin in place of the close button, the active tab kept in view clear of the right-edge fade, and on overflow a "⌄ n" popover listing every tab with a filter); `useMenuTrigger` in Menus is the menus a toolbar's buttons open on the press ([Menus and submenus](#menus-and-submenus)) |
+| `shared/ui/Widgets.jsx`, `shared/ui/Menus.jsx`, `shared/ui/Icons.jsx` | shared components; `OpenTabs` in Widgets is the topbar's tab strip (a kind icon per tab, pinned tabs first, full width with a pin in place of the close button, the active tab kept in view clear of the right-edge fade, tabs that come, go and move through `ListMotion`, and on overflow a "⌄ n" popover listing every tab with a filter); `useMenuTrigger` in Menus is the menus a toolbar's buttons open on the press ([Menus and submenus](#menus-and-submenus)) |
 | `shared/ui/wheelPan.js` | `useWheelPan`: a plain mouse wheel pans a sideways strip (the card strips, the tab strip) |
 | `shared/ui/listKeys.js` | `stepList`: ↑/↓ between a search box and the results listed under it (Settings search, the move-to-page filter, the chat's page picker) |
 | `shared/ui/DiagramFigure.jsx`, `shared/ui/ResizeGrip.jsx` | the diagram figure (a Mermaid diagram inline, or a sanitized SVG drawing shown as an image) with its toolbar of `ctlBtn`s, ended by a note's object "⋯" (`tools`) ([diagrams.md](diagrams.md)); the two-sided drag grips (`ResizeGrips`) + `useDragResize` hook that size centred note images and diagrams alike, a double-click or double tap on a grip restoring the natural size |

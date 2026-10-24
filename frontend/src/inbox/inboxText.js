@@ -1,8 +1,9 @@
 // The Inbox as the app reads it (docs/dev/comments.md "In the app" › "The
 // Inbox"): one sentence per kind, the snippet under it, the days the list
 // is grouped by, where a click goes, which items a system notification
-// rings for, and the changes a mark makes before the server answers. Pure,
-// so node tests it (tests/inboxText.test.mjs).
+// rings for, the listing a tab holds as it opens and as looks come in, and
+// the changes a mark makes before the server answers. Pure, so node tests
+// it (tests/inboxText.test.mjs).
 //
 // An item is the server's `{id, kind, actor, workspace_id, workspace_name,
 // page_id, page_title, block_id, thread_id, comment_id, share_token,
@@ -134,6 +135,23 @@ export function mergeListing(prev, answer, prevMore = false) {
   const seen = new Set(items.map((i) => i.id));
   const older = (prev || []).filter((i) => i.at < edge && !seen.has(i.id));
   return { items: [...items, ...older], more: older.length ? prevMore : true };
+}
+
+// The tab `filter` opened again on `held`, the listing it showed last
+// (nothing the first time), its fresh look still to come: only its first
+// `page` items, the ones that look says again, and no Show older until the
+// look says there is more.
+export const reopenedListing = (held, filter, page) => ({
+  filter, items: (held?.items || []).slice(0, page), more: false, loaded: false, failed: false,
+});
+
+// A look's first page over the listing `cur` the tab holds. The first look
+// since the tab opened is the server's page as it stands: what was held
+// from before may have changed since, past that page too. A later one
+// keeps the older items Show older has loaded.
+export function lookedListing(cur, answer) {
+  const { items, more } = mergeListing(cur.loaded ? cur.items : [], answer, cur.more);
+  return { filter: cur.filter, items, more, loaded: true, failed: false };
 }
 
 // Whether two held listings show the same: the tab, its state, and each

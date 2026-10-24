@@ -1,11 +1,12 @@
-"""Note markdown/LaTeX → drawable spans, and uploads → PDF image XObjects."""
+"""LaTeX → drawable spans (the fallback when the math renderer is out), and
+uploads → PDF image XObjects."""
 
 import io
 import zlib
 
 
 from conftest import require_math_renderer
-from gamma.note_markup import MATH, SUB, SUP, SYMBOLS, TEXT, latex_spans, parse_note
+from gamma.note_markup import MATH, SUB, SUP, SYMBOLS, TEXT, latex_spans
 from gamma.pdf_image import image_xobject
 from gamma.pdf_typeset import CID, font_of
 
@@ -40,27 +41,6 @@ def test_latex_becomes_symbols_and_scripts():
     assert flat(latex_spans(r"\sqrt{2}\times\mathbf{A}")) == "√2×A"
     # An unknown command keeps its name — that is what \sin, \log, \max need.
     assert flat(latex_spans(r"\argmax_x")) == "argmaxx"
-
-
-def test_parse_note_splits_math_images_and_markdown():
-    items = parse_note(
-        "**bold** and `code` and a [link](https://x.dev) with $\\alpha$\n"
-        "![shot](/api/uploads/ab12cd.png)\n"
-        "$$E = mc^2$$"
-    )
-    kinds = [i["kind"] for i in items]
-    assert kinds == ["text", "image", "math"]
-    # Inline math stays in the line (typeset in place); display math is its own
-    # item so pdf_notes can centre it.
-    assert flat(items[0]["spans"]) == r"bold and code and a link with ⟪\alpha⟫"
-    assert items[1]["src"] == "/api/uploads/ab12cd.png"
-    assert items[1]["alt"] == "shot"
-    assert items[2]["tex"] == "E = mc^2"
-
-
-def test_parse_note_keeps_plain_text_intact():
-    items = parse_note("top comment\n- nested note\n  - deeper")
-    assert [flat(i["spans"]) for i in items] == ["top comment", "- nested note", "  - deeper"]
 
 
 def _png(width, height, ctype, depth=8, filt=0):

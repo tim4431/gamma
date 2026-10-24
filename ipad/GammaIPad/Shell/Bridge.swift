@@ -39,8 +39,10 @@ struct HostInfo: Encodable, Equatable {
     }()
     /// The host plays `haptic` (PencilHaptics).
     var haptics = true
-    /// The host has a server picker (the web shows a "Server…" row).
-    var servers = true
+    /// The host holds the files the system opens in the app (OpenedFiles)
+    /// for the page to take: `files`, `fileData` and `fileDone`, with
+    /// `filesOpened` when one comes.
+    var openFiles = true
 
     static var current: HostInfo {
         HostInfo(version: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0")
@@ -202,18 +204,28 @@ enum WebMessage: Equatable {
     /// which tells the shell which touch the page means (ClaimQueue).
     case claim(pointerId: Int, at: CGPoint, tool: InkTool)
     /// Paint the window behind the web view and pick the status bar style.
-    case theme(bg: String, scheme: Scheme)
-    /// Show the server picker.
-    case servers
+    /// `name` is the theme's (`<html data-theme>`), which the chrome paints
+    /// in; a page from before it sends none, and the scheme, "light" or
+    /// "dark", is a theme's name too.
+    case theme(bg: String, scheme: Scheme, name: String?)
     /// Play the kind's feedback (PencilHaptics), sent once per event. `at`
     /// is where, in viewport CSS px, when the page says.
     case haptic(kind: HapticKind, at: CGPoint?)
+    /// The files the system opened in the app that the shell still holds
+    /// (OpenedFiles): replied `{files: [{id, name, size, type}]}`.
+    case files
+    /// Up to `OpenedFiles.chunkBytes` of a held file from `offset`: replied
+    /// `{data}` in base64, "" at its end, `{}` when the shell holds no such
+    /// file.
+    case fileData(id: String, offset: Int)
+    /// The page is done with a held file: the shell drops its copy.
+    case fileDone(id: String)
 
     enum Scheme: String, Decodable { case light, dark }
 }
 
 extension WebMessage: Decodable {
-    private enum Keys: String, CodingKey { case type, pointerId, at, tool, bg, scheme, kind }
+    private enum Keys: String, CodingKey { case type, pointerId, at, tool, bg, scheme, name, kind, id, offset }
     private struct Point: Decodable { let x, y: Double }
 
     init(from decoder: Decoder) throws {
@@ -225,13 +237,18 @@ extension WebMessage: Decodable {
             self = .claim(pointerId: try c.decode(Int.self, forKey: .pointerId), at: CGPoint(x: at.x, y: at.y),
                           tool: try c.decode(InkTool.self, forKey: .tool))
         case "theme":
-            self = .theme(bg: try c.decode(String.self, forKey: .bg), scheme: try c.decode(Scheme.self, forKey: .scheme))
-        case "servers":
-            self = .servers
+            self = .theme(bg: try c.decode(String.self, forKey: .bg), scheme: try c.decode(Scheme.self, forKey: .scheme),
+                          name: try? c.decodeIfPresent(String.self, forKey: .name))
         case "haptic":
             let kind = (try? c.decodeIfPresent(String.self, forKey: .kind)).flatMap { HapticKind(rawValue: $0) } ?? .tool
             let at: CGPoint? = (try? c.decodeIfPresent(Point.self, forKey: .at)).map { (p: Point) -> CGPoint in CGPoint(x: p.x, y: p.y) }
             self = .haptic(kind: kind, at: at)
+        case "files":
+            self = .files
+        case "fileData":
+            self = .fileData(id: try c.decode(String.self, forKey: .id), offset: try c.decode(Int.self, forKey: .offset))
+        case "fileDone":
+            self = .fileDone(id: try c.decode(String.self, forKey: .id))
         default:
             throw DecodingError.dataCorruptedError(forKey: .type, in: c, debugDescription: "unknown message \(type)")
         }
@@ -286,6 +303,10 @@ enum HostMessage: Equatable {
     /// A squeeze's start (.began) or its cancel (.cancelled, in place of its
     /// `pencil`): a type of its own, so a page that predates it ignores both.
     case squeeze(phase: SqueezePhase, action: String)
+    /// The system opened a file in the app (OpenedFiles): the page asks for
+    /// what is held (`files`) when it can take it. A page that is not ready,
+    /// or predates it, ignores it, and a ready page asks on its own.
+    case filesOpened
 }
 
 extension HostMessage: Encodable {
@@ -312,6 +333,8 @@ extension HostMessage: Encodable {
             try c.encode("squeeze", forKey: .type)
             try c.encode(phase, forKey: .phase)
             try c.encode(action, forKey: .action)
+        case .filesOpened:
+            try c.encode("filesOpened", forKey: .type)
         }
     }
 }

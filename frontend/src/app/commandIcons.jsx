@@ -13,7 +13,7 @@ import {
   ImportIcon, IndentIcon, InfoIcon, InsertAboveIcon, InsertBelowIcon, ItalicIcon, KeyboardIcon, LinkIcon,
   MarkdownIcon, MessageSquareIcon, OutdentIcon, OutlineIcon, PaperclipIcon, PaperIcon, PencilIcon, PlusIcon, QuoteMarkIcon,
   RectSelectIcon, RedoIcon, ScissorsIcon, SearchIcon, SettingsIcon, SigmaIcon, SlashIcon, SparklesIcon, SquareCheckIcon,
-  StrikethroughIcon, TerminalIcon, TextCursorIcon, TextSearchIcon, Trash2Icon, UndoIcon, UsersIcon, XIcon,
+  StrikethroughIcon, TerminalIcon, TextCursorIcon, TextSearchIcon, Trash2Icon, UnderlineIcon, UndoIcon, UsersIcon, XIcon,
 } from "../shared/ui/Icons";
 
 const COMMAND_ICONS = {
@@ -69,6 +69,7 @@ const COMMAND_ICONS = {
   "block.selectAll": TextCursorIcon,
   "block.bold": BoldIcon,
   "block.italic": ItalicIcon,
+  "block.underline": UnderlineIcon,
   "block.code": CodeIcon,
   "block.strike": StrikethroughIcon,
   "block.highlight": HighlightIcon,

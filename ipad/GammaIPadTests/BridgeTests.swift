@@ -101,10 +101,27 @@ final class BridgeTests: XCTestCase {
         XCTAssertEqual(try tool(["brush": "calligraphy", "nib": 150]).liveNib(roll: 30), 150, "Lock angle: no roll")
     }
 
-    func testThemeAndServersDecode() throws {
+    func testThemeDecodesWithItsName() throws {
+        XCTAssertEqual(try WebMessage(body: ["type": "theme", "bg": "#1e1e1e", "scheme": "dark", "name": "gamma-dark"]),
+                       .theme(bg: "#1e1e1e", scheme: .dark, name: "gamma-dark"))
         XCTAssertEqual(try WebMessage(body: ["type": "theme", "bg": "#1e1e1e", "scheme": "dark"]),
-                       .theme(bg: "#1e1e1e", scheme: .dark))
-        XCTAssertEqual(try WebMessage(body: ["type": "servers"]), .servers)
+                       .theme(bg: "#1e1e1e", scheme: .dark, name: nil), "a page from before the name")
+        let numbered: [String: Any] = ["type": "theme", "bg": "#fff", "scheme": "light", "name": 3]
+        XCTAssertEqual(try WebMessage(body: numbered), .theme(bg: "#fff", scheme: .light, name: nil),
+                       "a name that is no string is dropped, not the theme")
+    }
+
+    func testTheOpenedFilesMessagesDecode() throws {
+        XCTAssertEqual(try WebMessage(body: ["type": "files"]), .files)
+        XCTAssertEqual(try WebMessage(body: ["type": "fileData", "id": "F1", "offset": 2_097_152]),
+                       .fileData(id: "F1", offset: 2_097_152))
+        XCTAssertEqual(try WebMessage(body: ["type": "fileDone", "id": "F1"]), .fileDone(id: "F1"))
+        XCTAssertThrowsError(try WebMessage(body: ["type": "fileData", "id": "F1"]), "a read without its offset")
+        XCTAssertThrowsError(try WebMessage(body: ["type": "fileDone"]), "done without the file")
+    }
+
+    func testAnOpenedFileIsAnnouncedByTypeAlone() throws {
+        XCTAssertEqual(try json(.filesOpened) as NSDictionary, ["type": "filesOpened"] as NSDictionary)
     }
 
     func testAHapticDecodesWithItsPlace() throws {
@@ -120,6 +137,7 @@ final class BridgeTests: XCTestCase {
 
     func testAnythingElseIsRefused() {
         XCTAssertThrowsError(try WebMessage(body: ["type": "open-page"]), "an unknown type")
+        XCTAssertThrowsError(try WebMessage(body: ["type": "servers"]), "no message of the host contract")
         XCTAssertThrowsError(try WebMessage(body: ["type": "claim", "pointerId": 1, "at": ["x": 0, "y": 0]]),
                              "a claim without its tool")
         XCTAssertThrowsError(try WebMessage(body: ["type": "claim", "pointerId": 1,
@@ -212,7 +230,7 @@ final class BridgeTests: XCTestCase {
     func testTheUserScriptDeclaresTheHost() {
         let script = HostInfo(version: "0.2.0").userScript
         XCTAssertTrue(script.contains(
-            #"{"haptics":true,"hold":true,"ink":true,"inkLooks":["pressure","dash","blend","stabilize","pencil","calligraphy","snap"],"pencil":true,"pencilPhases":true,"pencilRoll":true,"platform":"ipad","servers":true,"version":"0.2.0"}"#
+            #"{"haptics":true,"hold":true,"ink":true,"inkLooks":["pressure","dash","blend","stabilize","pencil","calligraphy","snap"],"openFiles":true,"pencil":true,"pencilPhases":true,"pencilRoll":true,"platform":"ipad","version":"0.2.0"}"#
         ), script)
         XCTAssertTrue(script.contains(#"setAttribute("data-host", "ipad")"#))
         XCTAssertTrue(script.contains("queue.push({ msg, resolve, reject })"), "the stub queues until host.js drains it")

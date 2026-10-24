@@ -37,7 +37,7 @@ from . import notability_write as nw
 from .ai_pictures import sniff
 from .notebook import DEFAULT_PAPER, normalize_paper, sheets_of
 from .pdf_export import ExportPdfReader, display_size, page_frame
-from .pdf_typeset import BOLD, ITALIC, LINK, MARK, MONO, STRIKE
+from .pdf_typeset import BOLD, ITALIC, LINK, MARK, MONO, STRIKE, UNDERLINE
 from .text_box import PAD, box_page, normalize_text_box
 
 PRIVATE_FORMAT = "gamma-notability"
@@ -604,8 +604,8 @@ def _font(bits: int) -> str:
 
 def inline_runs(text: str, base: nw.Run, resolve_ref=None) -> list[nw.Run]:
     """One line of Markdown as runs of ``base``'s look: bold and italic in
-    the font's name, code in Menlo, strikes and marks as Notability keeps
-    them, a link underlined, a ``[[ref]]`` as the text of the block it
+    the font's name, code in Menlo, strikes, underlines and marks as
+    Notability keeps them, a link underlined, a ``[[ref]]`` as the text of the block it
     names (``resolve_ref``), math as its TeX between dollars (Notability
     has no inline math)."""
     from .note_markup import TEXT
@@ -618,7 +618,7 @@ def inline_runs(text: str, base: nw.Run, resolve_ref=None) -> list[nw.Run]:
             continue
         bits = style.bits
         out.append(replace(base, text=shown, font=_font(bits), strike=bool(bits & STRIKE),
-                           underline=bool(bits & LINK), mark=MARK_RGBA if bits & MARK else None))
+                           underline=bool(bits & (LINK | UNDERLINE)), mark=MARK_RGBA if bits & MARK else None))
     return out
 
 

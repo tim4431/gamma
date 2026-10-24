@@ -1,4 +1,4 @@
-import { Account, wanted } from "../harness.mjs";
+import { Account, live, wanted } from "../harness.mjs";
 
 // Ctrl+P: the quick-open page palette (library/QuickOpen.jsx).
 export async function quickOpenScenarios(env) {
@@ -252,7 +252,8 @@ export async function quickOpenScenarios(env) {
       await tab(2).waitFor({ state: "detached" });
       await tab(1).getByRole("button", { name: `Close ${made[1].content}`, exact: true }).click();
       await page.locator(".homeListBar").waitFor();
-      assertEq(await page.locator(".tabStrip .tab").count(), 0, "closing the last tab returns home without reopening closed pages");
+      // (a closed tab's copy may still be sinking out)
+      assertEq(await page.locator(live(".tabStrip .tab")).count(), 0, "closing the last tab returns home without reopening closed pages");
 
       // Closing a background tab keeps the active page and removes that
       // background page from subsequent return destinations.
@@ -292,8 +293,8 @@ export async function quickOpenScenarios(env) {
         const params = new URL(page.url()).searchParams;
         assertEq(params.get("folder"), nested, "closing restores the nested folder");
         assertEq(params.get("label") || "", label, "closing restores the label filter");
-        assertEq(await page.locator(".tabStrip .tab", { hasText: other.content }).count(), 1, "the other tab stays open");
-        assertEq(await page.locator(".tabStrip .tab.active").count(), 0, "the source library view takes priority over other tabs");
+        assertEq(await page.locator(live(".tabStrip .tab"), { hasText: other.content }).count(), 1, "the other tab stays open");
+        assertEq(await page.locator(live(".tabStrip .tab.active")).count(), 0, "the source library view takes priority over other tabs");
         assertNoProblems(page);
       } finally { await ctx.close(); }
     }
@@ -328,6 +329,101 @@ export async function quickOpenScenarios(env) {
       await page.keyboard.press("Enter");
       await until(() => new URL(page.url()).searchParams.get("block") === made[2].id, { what: "the pick opens" });
       assertEq(await menu.count(), 0, "opening closes the list");
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await user.api("/api/prefs/open-tabs", { method: "PUT", body: { value: [] } });
+    }
+  });
+
+  await step("tabs: a tab pressed is selected at once while the page it leaves stays whole until its own lands; a quick switch shows no pill, a slow one says Opening… and takes it down as the page lands, never Ready.", async () => {
+    const made = [];
+    for (const title of ["Switch from", "Switch to"]) {
+      const b = await user.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: title } });
+      await user.api("/api/blocks", { method: "POST", body: { parent_id: b.id, content: `the body of ${title}` } });
+      made.push(b);
+    }
+    await user.api("/api/prefs/open-tabs", { method: "PUT", body: { value: made.map((b) => ({ id: b.id, title: b.content })) } });
+    const ctx = await user.context(browser);
+    // Each page's tree answers after `delay` ms, or once `hold` resolves;
+    // the page `late` names answers 800 ms late.
+    const gate = { delay: 0, hold: null, late: "" };
+    for (const b of made) {
+      await ctx.route(`**/api/blocks/${b.id}/subtree*`, async (route) => {
+        if (gate.hold) await gate.hold;
+        else if (gate.late === b.id) await new Promise((resolve) => setTimeout(resolve, 800));
+        else if (gate.delay) await new Promise((resolve) => setTimeout(resolve, gate.delay));
+        await route.continue();
+      });
+    }
+    const page = await openPage(ctx, `${server.base}/?page=${made[0].id}&ws=${user.ws}`);
+    // Every painted frame from the press on: the tabs selected, the page's
+    // title and first row, the pill.
+    const watch = () => page.evaluate(() => {
+      const seen = (window.__seen = []);
+      let pressed = false;
+      window.addEventListener("pointerdown", () => { pressed = true; }, { capture: true, once: true });
+      const look = () => {
+        if (window.__seen !== seen) return;
+        if (pressed) {
+          seen.push({
+            tabs: [...document.querySelectorAll(".tabStrip .tab.active:not([data-leaving]) .tabTitle")].map((el) => el.textContent.trim()),
+            title: document.querySelector(".pageTitleRow .titleText")?.textContent.trim() || "",
+            row: document.querySelector(".blockList .blockRow")?.textContent.trim() || "",
+            pill: document.querySelector(".statusPill .pillText")?.textContent.trim() || "",
+          });
+        }
+        requestAnimationFrame(look);
+      };
+      requestAnimationFrame(look);
+    });
+    const frames = () => page.evaluate(() => { const seen = window.__seen; window.__seen = null; return seen; });
+    const onPage = (title) => until(async () => (await page.locator(".pageTitleRow .titleText").innerText()) === title
+      && (await page.locator(".blockList .blockRow").first().innerText()).includes(`the body of ${title}`), { what: `${title} open` });
+    const tab = (title) => page.locator(live(".tabStrip .tab"), { hasText: title });
+    try {
+      await onPage("Switch from");
+      await tab("Switch to").waitFor();
+      // slow: the tree held well past the 300 ms after which an open says so
+      let release;
+      gate.hold = new Promise((resolve) => { release = resolve; });
+      await watch();
+      await tab("Switch to").click();
+      await page.locator(".statusPill", { hasText: "Opening" }).waitFor({ timeout: 3000 });
+      gate.hold = null;
+      release();
+      await onPage("Switch to");
+      await page.locator(".statusPill").waitFor({ state: "detached", timeout: 3000 });
+      let seen = await frames();
+      assert(seen.length > 2, `frames seen: ${seen.length}`);
+      const said = (f) => `${f.tabs.join("+")} | ${f.title} | ${f.pill}`;
+      assertEq(said(seen[0]), "Switch to | Switch from | ", "the press's own frame: the tab selected, the page it leaves still on screen");
+      assert(seen.every((f) => f.tabs.length === 1), `one tab selected in every frame: ${seen.map(said).join(" / ")}`);
+      assert(seen.every((f) => f.row.includes(`the body of ${f.title}`)),
+        `every frame shows one page whole: ${seen.map((f) => `${f.title}: ${f.row}`).join(" / ")}`);
+      assert(seen.some((f) => f.title === "Switch from" && f.pill.startsWith("Opening")), "the slow open said Opening… over the page it leaves");
+      assert(!seen.some((f) => /Ready/.test(f.pill)), `no Ready. for a switch: ${seen.map(said).join(" / ")}`);
+      // quick: under the threshold, nothing but the switch itself
+      gate.delay = 150;
+      await watch();
+      await tab("Switch from").click();
+      await onPage("Switch from");
+      await page.waitForTimeout(400);
+      seen = await frames();
+      assertEq(said(seen[0]), "Switch from | Switch to | ", "the press's own frame, again");
+      assert(seen.every((f) => f.tabs.length === 1 && f.tabs[0] === "Switch from"), `the pressed tab stays selected: ${seen.map(said).join(" / ")}`);
+      assert(seen.every((f) => !f.pill), `no pill for a quick switch: ${seen.map(said).join(" / ")}`);
+      // two presses in quick succession: the later one's page stays, though
+      // the earlier one's tree answers after it
+      gate.delay = 0;
+      gate.late = made[1].id;
+      await tab("Switch to").click();
+      await tab("Switch from").click();
+      await onPage("Switch from");
+      await page.waitForTimeout(1200);
+      assertEq(await page.locator(".pageTitleRow .titleText").innerText(), "Switch from", "the late answer does not take over");
+      assertEq((await page.locator(".tabStrip .tab.active:not([data-leaving]) .tabTitle").allInnerTexts()).join(), "Switch from");
+      assertEq(await page.locator(".statusPill").count(), 0, "and leaves no pill behind");
       assertNoProblems(page);
     } finally {
       await ctx.close();

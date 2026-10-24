@@ -209,10 +209,14 @@ export function useTasks({ enabled, onFinished }) {
     take(jobsRef.current.filter((j) => j.id !== task.id));
   }, [removeLocal, take]);
 
+  // Every finished row goes at once, the server's with this tab's; a
+  // refused clear is put right by the listing after it.
   const clear = useCallback(async () => {
     setLocalRows((rows) => rows.filter(isActive));
+    listingSeq.current += 1; // a listing asked before the clear is older than it
+    take(jobsRef.current.filter(isActive));
     try { await clearJobs(); } finally { refresh(); }
-  }, [setLocalRows, refresh]);
+  }, [setLocalRows, take, refresh]);
 
   // What this tab does once a job it started ends (a dialog closed while it
   // ran wants its file offered instead of fetched).

@@ -384,7 +384,12 @@ control's rules.
 reads `GET /api/pages/{id}/comments?state=all` when the page opens, and
 again when the page's socket says `comments` or says `hello` after a
 reconnect: `collabSession.js` hands both to its `onComments` option
-([collab.md](collab.md)). One request is out at a time, and nudges that
+([collab.md](collab.md)). For a page the library lists, the first read
+is asked for alongside the page's tree (`prefetch`, from App's
+`openBlock`), so the threads come with the page rather than a round trip
+after it; a link to a page that is gone asks for its tree alone. Only the fetch the page's
+opening makes takes that answer, and the room's `hello` as the page joins
+reads again whatever was written in between. One request is out at a time, and nudges that
 arrive meanwhile make one more after it. `refresh()` resolves with what
 the request it waited for answered (`{pageId, threads}`, or null). A page
 whose comments answer 404 or 403 has none, and `readable` turns false. The
@@ -451,7 +456,10 @@ Notion: a press on the thread (not on one of its buttons, links or fields),
 Enter or Space on it, or the link that opened the popover at it makes it
 active, and a thread holding an unsent reply keeps its field. Its first comment's author line carries the thread's Resolve
 (a check mark) or Reopen button beside the "⋯"; a resolved thread says
-who resolved it at its foot, where the reply field was. A comment shows its author's avatar (`PersonAvatar`), name, time and text rendered as a note is (`BlockMarkdown`
+who resolved it at its foot, where the reply field was. The replies step in
+under the first comment's text, each avatar under its name, as the
+annotated PDF prints them ([pdf_typesetting.md](pdf_typesetting.md)); the
+reply field keeps the thread's full width. A comment shows its author's avatar (`PersonAvatar`), name, time and text rendered as a note is (`BlockMarkdown`
 with `blockId="comment:<id>"`, so math, @people chips and `[[links]]` work,
 a link to a block outside the page getting its label from App's reference
 cache, which `onFetchRefs` fills when the threads arrive; the
@@ -604,7 +612,10 @@ activity first, each with what it is on: the highlight's quote, the
 note's words, or "This page". Its lines name a `[[link]]` by its label
 (`anchorSnippet`'s `labelOf`: the page's blocks, then App's reference
 cache), not by its id. A click scrolls to the anchor, flashes it
-and opens its popover at the thread.
+and opens its popover at the thread. A thread that comes rises into the
+list, and one with a new reply glides to the top as the others make room
+(`ListMotion`); the page's threads loading fill it still. In a thread,
+wherever it is drawn, a new comment rises into place.
 
 **Links.** Copy link gives `?page=&block=&thread=` (no `block` for the
 page's own thread) with the workspace, or with `share=` in a share view.
@@ -665,7 +676,10 @@ card's target and the popover's props and handlers. A page's
 `CommentMarginSlot` reads it, so a new comment re-renders the margins and
 not the pages, and finds the page's highlights with an open thread (and
 the one a new thread's card is for), each at its first rect's top
-(`highlightTop`). The cards (`CommentMargin.jsx`) load on first use.
+(`highlightTop`). Every page with room draws its column, with or without
+cards, so a page's first card can grow in and its last one shrink away.
+The cards (`CommentMargin.jsx`) load on first use, which a PDF page
+opening asks for with its tree.
 
 **Stacking.** `stackCards` (`marginLayout.js`, `tests/marginLayout.test.mjs`)
 sorts the cards by their highlight's top, keeping a highlight's threads in
@@ -674,7 +688,11 @@ card above when it would overlap it. The active card stays level with its
 highlight: the ones under it are pushed down, the ones over it up, as in
 Notion, but none above `min`; when they would go there, the cards stack
 down from it and the active one comes as near its highlight as they leave
-room for. Cards near a page's foot may run past it.
+room for. Cards near a page's foot may run past it. The annotated-PDF
+export prints a highlight's notes the same way, with no active card and
+the run kept on its page (`gamma/pdf_notes.py` `_stack`,
+[pdf_typesetting.md](pdf_typesetting.md#notes-and-comments-as-cards)): a change
+to this rule belongs there too.
 
 The drawn pages' margins are one column. Each page knows its top in px
 from the first page's top (the viewer sums the page heights and
@@ -694,7 +712,17 @@ formula is drawn. A measure is compared with the last one, kept in a ref,
 and sets no state when they agree: done in a state updater, React re-ran
 it against an older state as the observer's updates and the layout
 effect's interleaved, and it looped ("Maximum update depth exceeded"). A
-card moves with a short `top` transition.
+card moves to its new place through its `top`, on `--dur-slow`; one that
+comes grows in where it stands and one that goes (resolved, a new thread's
+card closed) shrinks away there (`ListMotion`, [ui-design.md](ui-design.md)
+"Lists that change"). A new thread sent shows in the new card, over its
+emptied field, while it is on its way: it has no card of its own then
+(`CommentMargin` leaves out a thread on the highlight that was not shown
+when the new card came), so the two never stand together with the new
+card pushing the other up. When `add` answers, the thread's card takes
+the new card's place as the active one, mounted where it rests, so its
+`top` has nothing to move from, and neither comes in nor goes with
+motion. Refused, the field gets its text back.
 
 **A card.** At rest it is the thread's first comment (avatar, name, time
 and text as comments are drawn, clamped to three lines) and "n replies",
@@ -783,8 +811,17 @@ username asking, `inboxActor`: "cat asks to open Draft"), the note's or the comm
 the workspace's name when it is not this one, and the time. Its actions,
 shown on hover and focus (always under a touch screen), mark it read or
 unread and archive it or move it back. Items load when the panel opens, 50
-at a time, with Show older. A mark shows at once and takes the item out
-of a tab it no longer belongs in. A refused one puts back the rows and the
+at a time, with Show older. Each tab keeps the listing it showed last:
+the panel opens again, and a tab comes back, at its top on the first page
+of what it held while a fresh look is on its way, and the server's page
+that look brings takes its place, changing it in place. The older rows
+Show older had loaded are not kept, since no look would refresh them, and
+Show older comes back with the look (`reopenedListing`, `lookedListing`).
+A tab seen for the first time, or empty when it was, keeps its place
+blank until the listing is in (`Reveal`). A mark shows at once and takes the item out
+of a tab it no longer belongs in, the row leaving from where it stood
+while the rest close up (`ListMotion`); a day's header goes with its last
+row, and Mark all read empties Unread at once. A refused one puts back the rows and the
 count it changed, unless a later mark has changed them since, and is put
 right by a fresh look once the marks have settled. Each tab has its own
 empty state.
@@ -827,8 +864,13 @@ has notifications; the iPad's WKWebView has none, and the row says so.
   publication says so: "Comments stay on each server: a sync carries
   none." (`MirrorPopover`).
 - **Comments in the other readers.** The exports other than the Gamma zip
-  (Markdown, the annotated PDF, Obsidian, Logseq, Zotero), the AI's context
-  and tools, search and the MCP tools leave comments out.
+  and the annotated PDF (Markdown, Obsidian, Logseq, Zotero), the AI's
+  context and tools, search and the MCP tools leave comments out. The
+  annotated PDF's Comments switch prints the open threads on a highlight
+  and on its notes as cards beside the page, as the margin draws them, a
+  note's threads (a highlight's own under its own text) under the note
+  when it is printed beside the page too
+  ([pdf_typesetting.md](pdf_typesetting.md#notes-and-comments-as-cards)).
   `comments.threads_for` is the reader they would call. A highlight's
   threads could become PDF reply annotations (`/IRT`), which the import
   already reads as child notes.

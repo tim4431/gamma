@@ -15,31 +15,52 @@ function HighlightSample() {
   </blockquote>;
 }
 
-function NoteSample({ annotation = false }) {
-  return <div className={`transferNote${annotation ? " transferMarginNote" : ""}`} data-preview="notes">
+// `card`: a card as the annotated PDF prints a highlight's notes
+// (backend/gamma/pdf_cards.py), in the column beside the page or on it.
+function NoteSample({ card = false }) {
+  return <div className={`transferNote${card ? " transferNoteCard" : ""}`} data-preview="notes">
     <strong>{t("Your note")}</strong>
     <span>{t("A connection worth coming back to.")}</span>
   </div>;
 }
 
-function Paper({ original = false, highlights, notes }) {
-  return <div className="transferPaper" data-preview={original ? "original" : undefined}>
-    <div className="transferPaperTitle">{t("Patterns in nature")}</div>
-    <div className="transferPaperByline">{t("A. Rivera · 2026")}</div>
-    {original ? <><PaperLines /><div className="transferPaperFigure" aria-hidden="true"><i /><i /><i /></div></> : null}
-    {highlights ? <HighlightSample /> : null}
-    {notes ? <NoteSample annotation={original} /> : null}
-    {original ? <PaperLines /> : null}
-    <span className="transferPageNumber">1</span>
+// A comment thread's card, as the viewer's margin draws one.
+function CommentSample() {
+  return <div className="transferCommentCard" data-preview="comments">
+    <div className="transferCommentHead"><span className="transferAvatar" aria-hidden="true">A</span>
+      <strong>{t("Alex")}</strong></div>
+    <span>{t("Same effect as in the figure?")}</span>
   </div>;
 }
 
-export function ExportPreview({ format, highlights, notes, bundle }) {
+// The original paper with cards beside it stands beside a column: the
+// column goes just before the highlight, so its cards stand level with it.
+// Notes on the page are a card in the paper itself.
+function Paper({ original = false, highlights, notes, comments = false, notesAt = "beside" }) {
+  const notesBeside = original && notes && notesAt !== "page";
+  const beside = notesBeside || (original && comments);
+  const paper = <div className="transferPaper" data-preview={original ? "original" : undefined}>
+    <div className="transferPaperTitle">{t("Patterns in nature")}</div>
+    <div className="transferPaperByline">{t("A. Rivera · 2026")}</div>
+    {original ? <><PaperLines /><div className="transferPaperFigure" aria-hidden="true"><i /><i /><i /></div></> : null}
+    {beside ? <div className="transferMargin">
+      {notesBeside ? <NoteSample card /> : null}
+      {comments ? <CommentSample /> : null}
+    </div> : null}
+    {highlights ? <HighlightSample /> : null}
+    {notes && !notesBeside ? <NoteSample card={original} /> : null}
+    {original ? <PaperLines /> : null}
+    <span className="transferPageNumber">1</span>
+  </div>;
+  return beside ? <div className="transferSpread">{paper}</div> : paper;
+}
+
+export function ExportPreview({ format, highlights, notes, bundle, comments, notesAt }) {
   const files = format !== "pdf" && format !== "notespdf";
   const metadataOnly = format === "zotero" && !bundle;
   return <figure className="transferPreview" aria-label={t("Export preview")}>
     <figcaption>{t("Example")} {format === "pdf" ? t("PDF page") : files ? "export" : t("page layout")}</figcaption>
-    <Paper original={format === "pdf"} highlights={highlights} notes={notes} />
+    <Paper original={format === "pdf"} highlights={highlights} notes={notes} comments={comments} notesAt={notesAt} />
     {format === "gamma" ? <div className="transferPreviewExtra">{t("Metadata, page structure and AI chats included")}</div> : null}
     {files ? <div className="transferFiles" data-preview={bundle ? "bundled-files" : "linked-files"}>
       <PaperclipIcon size={14} />

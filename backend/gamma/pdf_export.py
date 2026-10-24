@@ -527,33 +527,46 @@ def _text_box_annotation(writer, glyphs, tb, rotation, crop, author, resolve_ref
     return annot
 
 
-def highlight_note_text(block, children_by_id):
-    """The annotation popup text: the highlight's own note plus its nested
-    notes as an indented bullet list (comment threads are no part of it). A text box on a PDF page among them is
-    left out with the notes under it: it is written as its own /FreeText,
-    whose text speaks for itself on the page. A box under a sheet among them
-    is on that sheet (the nearest sheet wins), so it stays a note line."""
+def highlight_note_blocks(block, children_by_id) -> list[tuple[int, str, str]]:
+    """A highlight's notes as ``(depth, markdown, block id)``, in reading
+    order: its own note at depth 0, then the notes under it at their depth
+    below it (comment threads are no part of them). A text box on a PDF page among
+    them is left out with the notes under it: it is written as its own
+    /FreeText, whose text speaks for itself on the page. A box under a sheet
+    among them is on that sheet (the nearest sheet wins), so it stays a
+    note. An empty note is left out and the notes under it keep their
+    depth."""
     from .notebook import is_sheet
     from .text_box import box_page
 
+    out = []
+    own = (block.get("content") or "").strip()
+    if own:
+        out.append((0, own, block["id"]))
+
     def walk(bid, depth, on_sheet):
-        lines = []
         for child in children_by_id.get(bid, []):
             props = child.get("properties")
             if box_page(props, on_sheet):
                 continue
             text = (child.get("content") or "").strip()
             if text:
-                lines.append("  " * depth + "- " + text)
-            lines.extend(walk(child["id"], depth + 1, on_sheet or is_sheet(props)))
-        return lines
+                out.append((depth, text, child["id"]))
+            walk(child["id"], depth + 1, on_sheet or is_sheet(props))
 
-    parts = []
-    own = (block.get("content") or "").strip()
-    if own:
-        parts.append(own)
-    parts.extend(walk(block["id"], 0, False))
-    return "\n".join(parts)
+    walk(block["id"], 1, False)
+    return out
+
+
+def popup_text(blocks) -> str:
+    """``highlight_note_blocks`` as an annotation popup's text: the
+    highlight's own note, the notes under it as an indented bullet list."""
+    return "\n".join(md if not depth else "  " * (depth - 1) + "- " + md for depth, md, *_ in blocks)
+
+
+def highlight_note_text(block, children_by_id) -> str:
+    """The annotation popup text (``popup_text``) of a highlight's notes."""
+    return popup_text(highlight_note_blocks(block, children_by_id))
 
 
 def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=(),

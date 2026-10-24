@@ -1,0 +1,352 @@
+/* How things move (docs/dev/ui-design.md, "Motion"): the recipes the
+   surfaces, swaps and reveals share, on the motion tokens of tokens.css.
+   A component opts in by its class or a widget (shared/ui/MotionWidgets.jsx)
+   brings its own; the components' stylesheets keep their look (the only
+   colours here are the shimmer's, the theme's text). main.jsx loads this
+   file after app.css, so a recipe here wins over a rule there of the same
+   weight; the reduced-motion rule in app.css ends every one of them at
+   once. */
+
+/* ---- The motions --------------------------------------------------------
+   They animate the individual scale and translate properties, never
+   transform: a surface's own transform (a centring translate) stays its
+   own, and both rest at none, so nothing a surface holds is positioned
+   against it. A keyframe list with one end plays from (or to) the
+   element's own look. */
+@keyframes surface-in { from { opacity: 0; scale: var(--scale-in); } }
+@keyframes surface-out { to { opacity: 0; scale: var(--scale-out); } }
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes fade-out { to { opacity: 0; } }
+/* A toast rises into place through a soft focus and sinks back out. */
+@keyframes rise-in { from { opacity: 0; translate: 0 var(--move-md); scale: var(--scale-in); filter: blur(var(--blur-swap)); } }
+@keyframes rise-out { to { opacity: 0; translate: 0 var(--move-md); filter: blur(var(--blur-swap)); } }
+/* A pane or a body comes into focus where it stands. */
+@keyframes sharpen-in { from { opacity: 0; filter: blur(var(--blur-swap)); } }
+
+/* ---- Surfaces arrive ----------------------------------------------------
+   Anchored: a menu or a popover grows from where it opens. ContextMenu
+   sets its transform-origin to the point it opens from (Menus.jsx), so a
+   menu at the cursor grows from the cursor and one under a button from
+   the button's corner; it is placed by its size without that scale
+   (placement.js surfaceSize). A popover under a topbar button stands at
+   the button's right edge, one that opens upward (.popUp) at its left. */
+.ctxMenu,
+.popover {
+  animation: surface-in var(--dur-slow) var(--ease-out);
+}
+.popover { transform-origin: top right; }
+.popover.popUp { transform-origin: bottom left; }
+/* In the compact shell a popover opens upward across the bottom bar
+   (app.css .phoneBottomBar), and on a wider one at its right end. */
+.phoneBottomBar .popover { transform-origin: bottom center; }
+@media (min-width: 701px) {
+  .phoneBottomBar .popover { transform-origin: bottom right; }
+}
+/* A flyout fades in beside its row: growing, it would make a pass down
+   the rows feel slow. */
+.ctxSubMenu { animation: fade-in var(--dur-fast); }
+
+/* Centred: a dialog's backdrop fades in and the dialog grows from its
+   middle. */
+.reportOverlay,
+.lightbox {
+  animation: fade-in var(--dur-base);
+}
+.reportOverlay > :is(.reportModal, .settingsModal),
+.lightbox > img {
+  animation: surface-in var(--dur-slow) var(--ease-out);
+}
+/* A dialog opened as another closes takes its place on the dim that was
+   there (data-over, leave.js): only the dialog grows in. */
+.reportOverlay[data-over] { animation: none; }
+/* One opened inside a dialog still arriving waits, unseen, for it to land
+   (data-wait, DialogOverlay), then arrives itself. It can take the focus
+   meanwhile, not a press. */
+.reportOverlay[data-wait],
+.reportOverlay[data-wait] > * {
+  opacity: 0;
+  animation: none;
+}
+.reportOverlay[data-wait] { pointer-events: none; }
+
+/* Tips fade in where they stand: hovering along a row of buttons shows one
+   after another, and a tip that grew would trail the pointer. The PDF
+   selection popup (.plainTip), a note's selection toolbar (.selTools) and
+   the caret's popups ("/", [[, @, the LaTeX completion and preview) fade
+   in quickly, so typing never waits on one. */
+.inkTooltip,
+.citePreview,
+.pdfNoteTip {
+  animation: fade-in var(--dur-base);
+}
+.plainTip,
+.selTools,
+.refPopup,
+.slashMenu,
+.mathPreviewTip,
+.latexAcPopup {
+  animation: fade-in var(--dur-fast);
+}
+
+/* Panes that take each other's place fade in through a soft focus: a
+   pane of Settings (keyed by its name, SettingsDialog), and a window the
+   compact shell's bottom bar brings up (.phonePanel, kept laid out while
+   hidden), each time it is shown. The one before goes at once, under it. */
+.settingsPane { animation: sharpen-in var(--dur-base); }
+.phonePanel:not(.phonePanelHidden) { animation: sharpen-in var(--dur-slow); }
+/* The library's listing taking another's place (another view, kind filter,
+   folder or label): the class is played again on it in place (App.jsx). */
+.listingIn { animation: sharpen-in var(--dur-base); }
+
+/* Toasts rise into place: the reminder cards and the status pill. */
+.reminderCard,
+.statusPill {
+  animation: rise-in var(--dur-long) var(--ease-out);
+}
+
+/* ---- Surfaces leave -----------------------------------------------------
+   A closed surface leaves through a still copy of itself (useLeave,
+   shared/ui/leave.js) that plays its kind's way out where the surface
+   stood and then goes. The copy takes no pointer, and what it holds stands
+   still: a flyout or a spinner inside it does not start over (whatever
+   recipe of its own it has, hence the importance; only a dialog in its
+   backdrop plays a way out). */
+[data-leaving] { pointer-events: none !important; }
+[data-leaving] * { animation-name: none !important; }
+[data-leaving="surface"] { animation: surface-out var(--dur-base) var(--ease-out) forwards; }
+[data-leaving="dialog"] { animation: fade-out var(--dur-base) forwards; }
+[data-leaving="dialog"] > :is(.reportModal, .settingsModal, img) {
+  animation: surface-out var(--dur-base) var(--ease-out) forwards !important;
+}
+[data-leaving="toast"] { animation: rise-out var(--dur-slow) var(--ease-out) forwards; }
+
+/* ---- Things that change in place ---------------------------------------
+   Two icons in one slot (IconSwap): the one going shrinks into
+   a soft blur as the one coming grows out of it. */
+.iconSwap {
+  display: inline-grid;
+  place-items: center;
+  flex: none;
+}
+.iconSwapFace {
+  grid-area: 1 / 1;
+  display: inline-flex;
+  transition: opacity var(--dur-slow) var(--ease-swap), filter var(--dur-slow) var(--ease-swap), scale var(--dur-slow) var(--ease-swap);
+}
+.iconSwap[data-swap="from"] > [data-face="to"],
+.iconSwap[data-swap="to"] > [data-face="from"] {
+  opacity: 0;
+  filter: blur(var(--blur-swap));
+  scale: 0.25;
+}
+
+/* A label that changes in place (MorphText): the letters the two texts
+   share stay put; between them the old part blurs out as the new one
+   blurs in, in one cell whose width eases from the one to the other. */
+.morph.moving { white-space: nowrap; }
+/* Mid-swap the label's text stays, unseen, for assistive technology and
+   whatever reads it; what moves is drawn beside it from its data-text. */
+.morphShow [data-text]::before {
+  /* the zero-width space gives an empty piece a line, so its cell keeps
+     the text's baseline */
+  content: attr(data-text) "\200b";
+  white-space: pre;
+}
+.morph.moving > .morphText {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+.morphSwap {
+  display: inline-grid;
+  justify-items: start;
+  transition: width var(--dur-slow) var(--ease-out);
+}
+.morphSwap > span {
+  grid-area: 1 / 1;
+  white-space: pre;
+  transition: opacity var(--dur-base) var(--ease-swap), filter var(--dur-base) var(--ease-swap);
+}
+.morphSwap > .morphTo,
+.morphSwap.go > .morphFrom {
+  opacity: 0;
+  filter: blur(var(--blur-swap));
+}
+.morphSwap.go > .morphTo {
+  opacity: 1;
+  filter: none;
+}
+
+/* A body opening under its header (Collapse): the grid row grows from
+   nothing to its content's height while the content fades in and
+   sharpens; it folds back faster than it opened. Until it has settled
+   open, the row clips what it holds. */
+@keyframes collapse-open { from { grid-template-rows: 0fr; margin-top: calc(-1 * var(--fold-gap, 0px)); } }
+.collapse {
+  display: grid;
+  grid-template-rows: 1fr;
+  grid-template-columns: minmax(0, 1fr);
+}
+.collapseBody { min-height: 0; min-width: 0; }
+.collapse:not([data-phase="open"]) > .collapseBody { overflow: hidden; }
+.collapse[data-phase="opening"] { animation: collapse-open var(--dur-slow) var(--ease-out); }
+.collapse[data-phase="opening"] > .collapseBody { animation: sharpen-in var(--dur-slow); }
+.collapse[data-phase="closing"] {
+  grid-template-rows: 0fr;
+  margin-top: calc(-1 * var(--fold-gap, 0px));
+  transition: grid-template-rows var(--dur-base) var(--ease-out), margin-top var(--dur-base) var(--ease-out);
+}
+.collapse[data-phase="closing"] > .collapseBody {
+  opacity: 0;
+  transition: opacity var(--dur-fast);
+}
+
+/* The outline's children (BlockTree) open without the blur: blurring a
+   body as tall as a subtree costs more than it shows. */
+.blockFold.collapse[data-phase="opening"] > .collapseBody { animation-name: fade-in; }
+
+/* ---- Lists that change ---------------------------------------------------
+   ListMotion (shared/ui/ListMotion.jsx) wraps a list without a box of its
+   own. An item that moved is laid out at its new place at once and glides
+   there from where it stood, on --dur-slow --ease-out (a Web Animation it
+   starts: [data-moving] marks the item meanwhile). A new item comes in
+   where it will rest: "fade" a moment late, so the items around it have
+   opened its room first (an outline's row); "rise" lifting --move-sm into
+   place (a message, a tab); "card" growing in as a surface does. One that
+   goes leaves through a still copy where it stood while the rest closes
+   up: "row" fades, "tab" sinks back, "card" shrinks away. */
+.listMotion { display: contents; }
+@keyframes list-in { 0%, 30% { opacity: 0; } }
+@keyframes list-rise { from { opacity: 0; translate: 0 var(--move-sm); } }
+@keyframes list-sink { to { opacity: 0; translate: 0 var(--move-sm); } }
+[data-entering="fade"] { animation: list-in var(--dur-slow); }
+[data-entering="rise"] { animation: list-rise var(--dur-slow) var(--ease-out); }
+[data-entering="card"] { animation: surface-in var(--dur-slow) var(--ease-out); }
+[data-leaving="row"] { animation: fade-out var(--dur-base) forwards; }
+[data-leaving="tab"] { animation: list-sink var(--dur-base) var(--ease-out) forwards; }
+[data-leaving="card"] { animation: surface-out var(--dur-base) var(--ease-out) forwards; }
+
+/* A chevron that turns with what it opens (Chevron): a right-pointing
+   one turns down, a down-pointing one flips up. A text caret (▸) turns
+   the same way (.turnCaret). */
+.turnChev,
+.turnCaret {
+  flex: none;
+  transition: rotate var(--dur-slow) var(--ease-out), scale var(--dur-slow) var(--ease-out);
+}
+.turnCaret { display: inline-block; }
+.turnChev.right.open,
+.turnCaret.open { rotate: 90deg; }
+.turnChev.down.open { scale: 1 -1; }
+
+/* A chosen option's highlight that slides to the next one chosen
+   (useSlidingPill): the group's stylesheet gives it its look and keeps
+   it under or over the options; this places and moves it. */
+.slidePill { display: none; }
+[data-pill] > .slidePill {
+  display: block;
+  position: absolute;
+  left: 0;
+  top: 0;
+  box-sizing: border-box;
+  width: var(--pill-w);
+  height: var(--pill-h);
+  translate: var(--pill-x) var(--pill-y);
+  border-radius: var(--pill-r);
+  pointer-events: none;
+  transition: translate var(--dur-slow) var(--ease-out), width var(--dur-slow) var(--ease-out),
+    height var(--dur-slow) var(--ease-out), border-radius var(--dur-slow) var(--ease-out);
+}
+[data-pill-still] > .slidePill { transition: none; }
+
+/* Text that says work is under way (the chat's "Thinking"): a soft light
+   sweeps across its letters while it holds. Still, it reads in the muted
+   colour. */
+@keyframes shimmer { from { background-position: 100% 0; } to { background-position: 0 0; } }
+.shimmerText {
+  background: linear-gradient(90deg, var(--text-muted) 40%, var(--text-primary) 50%, var(--text-muted) 60%) 0 0 / 300% 100% no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: shimmer 1.8s linear infinite;
+}
+/* Its word changing (MorphText): a part fading inside text painted by its
+   background would show at full strength, so the light rests meanwhile. */
+.shimmerText:has(> .morph.moving) {
+  background: none;
+  color: var(--text-muted);
+  animation: none;
+}
+
+/* A native disclosure (<details>) opens and folds like Collapse where the
+   browser can animate its content box; elsewhere it opens at once. */
+@supports selector(::details-content) {
+  details::details-content {
+    interpolate-size: allow-keywords;
+    block-size: 0;
+    overflow: clip;
+    /* a focus ring or a field's halo at its edge stays whole */
+    overflow-clip-margin: 4px;
+    transition: block-size var(--dur-base) var(--ease-out), content-visibility var(--dur-base) allow-discrete;
+  }
+  details[open]::details-content {
+    block-size: auto;
+    transition-duration: var(--dur-slow);
+  }
+  /* app.css's reduced-motion rule does not reach this pseudo-element */
+  @media (prefers-reduced-motion: reduce) {
+    details::details-content { transition: none; }
+  }
+}
+
+/* A badge pops onto its button when it comes, and its number rises into
+   place when it changes (.countIn, keyed by the number). */
+@keyframes badge-pop { from { opacity: 0; scale: 0.4; } }
+@keyframes count-in { from { opacity: 0; translate: 0 var(--move-sm); filter: blur(var(--blur-swap)); } }
+.inboxBadge { animation: badge-pop var(--dur-long) var(--ease-pop); }
+.countIn {
+  display: inline-block;
+  animation: count-in var(--dur-base) var(--ease-out);
+}
+
+/* A field that refused what was typed (a wrong password at sign-in)
+   shakes once, a small no; it is played again for each refusal. */
+@keyframes shake-no {
+  20% { translate: calc(-1 * var(--move-md)) 0; }
+  40% { translate: var(--move-md) 0; }
+  60% { translate: calc(-1 * var(--move-sm)) 0; }
+  80% { translate: var(--move-sm) 0; }
+}
+.shakeNo { animation: shake-no var(--dur-long) var(--ease-swap); }
+
+/* A picture fades in once it has loaded (FADE_IN): a page's snapshot on
+   its library card arrives softly instead of popping into its frame. */
+img[data-fade] {
+  opacity: 0;
+  transition: opacity var(--dur-slow);
+}
+img[data-fade="shown"] { opacity: 1; }
+
+/* A placeholder for what is on its way ("Loading…": a .loadingHint, or
+   what a Reveal holds while it waits) shows only when the wait is long: it
+   fades in after --dur-slow, so an answer that comes quickly takes the
+   place of a blank, never of the word. A Reveal is a column that keeps
+   its content's last height while it waits, and the content that takes a
+   placeholder's place comes into focus. */
+.loadingHint,
+.reveal[data-reveal="wait"] > * { animation: fade-in var(--dur-base) var(--dur-slow) both; }
+.reveal { display: flex; flex-direction: column; }
+.reveal[data-reveal="in"] { animation: sharpen-in var(--dur-base); }
+
+/* ---- What never moves ----------------------------------------------------
+   A theme changes every colour in one frame (app/theme.js applyTheme puts
+   .themeSwitch on the root for the frame that draws the new colours), so
+   the things that transition a colour (a button, a row, a panel's border)
+   do not ease from the old theme's while everything else has changed. */
+:root.themeSwitch,
+:root.themeSwitch *,
+:root.themeSwitch *::before,
+:root.themeSwitch *::after { transition: none !important; }

@@ -191,6 +191,38 @@ export function visibleBlocks(blocks, view) {
   return walkBlocks(blocks, view || EMPTY_VIEW);
 }
 
+// Whether two trees hold the same blocks in the same places: the same
+// ids in the same order under the same parents, whatever their text or
+// properties. A tree copies only the path of an edit, so a keystroke
+// compares one path; the list's motion (shared/ui/ListMotion.jsx) moves
+// rows only when this is false.
+export function sameShape(a, b) {
+  if (a === b) return true;
+  const x = a || [], y = b || [];
+  if (x.length !== y.length) return false;
+  for (let i = 0; i < x.length; i++) {
+    if (x[i] === y[i]) continue;
+    if (x[i].id !== y[i].id) return false;
+    if (x[i].children !== y[i].children && !sameShape(x[i].children, y[i].children)) return false;
+  }
+  return true;
+}
+
+// How many blocks are under `blocks`, counting up to `most` + 1 at most
+// (whether a subtree is larger than `most`, without walking all of it).
+export function countBlocks(blocks, most = Infinity) {
+  let n = 0;
+  const walk = (list) => {
+    for (const b of list || []) {
+      if (++n > most) return;
+      walk(b.children);
+      if (n > most) return;
+    }
+  };
+  walk(blocks);
+  return n;
+}
+
 export function getParentInfo(blocks, id, parent = null) {
   for (let i = 0; i < (blocks || []).length; i++) {
     const b = blocks[i];

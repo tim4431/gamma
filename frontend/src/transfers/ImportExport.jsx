@@ -1,8 +1,9 @@
 import React from "react";
-import { FileIcon, HighlightIcon, PaperclipIcon, PenIcon, PinIcon, ScissorsIcon } from "../shared/ui/Icons";
-import { CopyField, PictureChoices, Step, SubDialog, Toggle } from "../settings/SettingsKit";
+import { FileIcon, HighlightIcon, LayoutIcon, MessageSquareIcon, PaperclipIcon, PenIcon, PinIcon, ScissorsIcon } from "../shared/ui/Icons";
+import { CopyField, PictureChoices, Row, Segmented, Step, SubDialog, Toggle } from "../settings/SettingsKit";
 import { ExportPreview, ImportPreview, FormatIllustration } from "../shared/illustrations";
 import { CopyBox, useCopied } from "../shared/ui/Widgets";
+import { MorphText } from "../shared/ui/MotionWidgets";
 import { copyText } from "../shared/lib/utils";
 import { fmtBytes } from "../shared/lib/format.js";
 import { bibliographyPreview, shareToken, sharedBibliographyUrl } from "./exportApi";
@@ -18,6 +19,8 @@ import { guideEvents } from "../guide/events.js";
 const EXPORT_CONTROLS = {
   highlights: { icon: HighlightIcon, label: T("Highlights") },
   notes: { icon: PenIcon, label: T("Notes") },
+  notesAt: { icon: LayoutIcon, label: T("Place notes") },
+  comments: { icon: MessageSquareIcon, label: T("Comments") },
   bundle: { icon: PaperclipIcon, label: T("Bundle the files") },
 };
 
@@ -212,7 +215,7 @@ function ExportSetup({ opts, setOpts, hasPdf, pdfStored, hasMeta, pageId, folder
   const entries = bib.data?.entries || [];
   const copyAction = isBibtex && entries.length > 1 ? <button type="button" className={`uiBtn ${copied === "all" ? "on" : ""}`}
     onClick={() => copy(bib.data.text)}>
-    {copied === "all" ? t("Copied") : t("Copy all")}</button> : null;
+    <MorphText>{copied === "all" ? t("Copied") : t("Copy all")}</MorphText></button> : null;
   // Only the review step waits on the bibliography — nothing has been fetched
   // while the format cards are still up, so Next must not be held there.
   const bibNotReady = isBibtex && step === 1 && (bib.loading || !!bib.error || !entries.length);
@@ -230,10 +233,14 @@ function ExportSetup({ opts, setOpts, hasPdf, pdfStored, hasMeta, pageId, folder
       <div className="transferReview">
         <ExportPreview {...payload} />
         <div className="transferControls">
-          {controls.map(({ key, hint, title, disabled }) => {
+          {controls.map(({ key, hint, title, disabled, choice }) => {
             const { icon, label } = EXPORT_CONTROLS[key];
-            return <Toggle key={key} icon={icon} label={label} hint={hint} title={title}
-              checked={payload[key]} disabled={disabled} onChange={(value) => set({ [key]: value })} />;
+            return choice
+              ? <Row key={key} icon={icon} label={t(label)} hint={hint} title={title} className="transferChoice">
+                <Segmented value={payload[key]} options={choice} disabled={disabled} onChange={(value) => set({ [key]: value })} />
+              </Row>
+              : <Toggle key={key} icon={icon} label={t(label)} hint={hint} title={title}
+                checked={payload[key]} disabled={disabled} onChange={(value) => set({ [key]: value })} />;
           })}
           {isZotero && !bundle ? <p className="reportModalHint">{t("Highlights travel inside PDF files. Turn on file bundling to include them.")}</p> : null}
         </div>
@@ -352,7 +359,7 @@ function ExportJobStep({ job, folder, folderName, fetchJob, onClose, onDownload,
       {isActive(job) && job.stoppable ? <button type="button" className="uiBtn" onClick={onStop}>{t("Stop")}</button> : null}
       {job.state === "done" ? <button type="button" className="uiBtn" onClick={onClose}>{t("Done")}</button> : null}
       {job.state === "done" ? <button type="button" className="uiBtn primary" onClick={onDownload}>
-        {job.downloaded ? t("Download again") : t("Download")}</button> : null}
+        <MorphText>{job.downloaded ? t("Download again") : t("Download")}</MorphText></button> : null}
       {job.state === "failed" || job.state === "cancelled" ? <>
         <button type="button" className="uiBtn" onClick={onClose}>{t("Close")}</button>
         <button type="button" className="uiBtn primary" onClick={onRetry}>{t("Start again")}</button>
@@ -397,21 +404,26 @@ function ExportDrop({ busy, onDrop, children }) {
 // switch that source understands, confirm. Nothing here is remembered — the
 // strip switch starts from the Settings preference every time, so the setting
 // stays the standing policy and the dialog is only ever a one-off override.
-export function ImportDialog({ hasPdf, stripDefault, busy, onCancel, onImport }) {
+// `file`: a .zip already chosen, one the iPad app was given (docs/dev/ipad.md
+// "Opened files"): the dialog asks only which export it is, offers the
+// sources that read an archive, and imports it with no picker.
+export function ImportDialog({ hasPdf, stripDefault, busy, onCancel, onImport, file = null }) {
   const [step, setStep] = React.useState(0);
   // Zotero is the default source; with a PDF open, that PDF's own annotations
   // are the more likely intent and win instead.
-  const [source, setSource] = React.useState(hasPdf ? "annots" : "zotero");
+  const [source, setSource] = React.useState(hasPdf && !file ? "annots" : "zotero");
   const [strip, setStrip] = React.useState(stripDefault);
-  const { definition, formats, needsReview, payload } = resolveImport(source, { hasPdf, strip });
+  const scope = { hasPdf: hasPdf && !file, archive: Boolean(file) };
+  const { definition, formats, needsReview, payload } = resolveImport(source, { ...scope, strip });
   const src = definition.id;
-  const folderFirst = Boolean(definition.folderLabel) && canPickFolder();
+  const folderFirst = !file && Boolean(definition.folderLabel) && canPickFolder();
+  const withFile = (chosen) => (file ? { ...chosen, file } : chosen);
   const advance = (id = src) => {
     if (busy) return;
-    const next = resolveImport(id, { hasPdf, strip });
+    const next = resolveImport(id, { ...scope, strip });
     setSource(next.definition.id);
     if (next.needsReview) setStep(1);
-    else onImport(next.payload);
+    else onImport(withFile(next.payload));
   };
   const review = <>
     <div className="transferReview">
@@ -441,13 +453,15 @@ export function ImportDialog({ hasPdf, stripDefault, busy, onCancel, onImport })
       <div className="reportModalHint">{t(definition.instructions)}</div>
     )}
   </>;
-  return <TransferDialog title={t("Import")} step={step} setStep={setStep} onCancel={onCancel} busy={busy}
+  return <TransferDialog title={file ? t("Import {name}", { name: file.name }) : t("Import")} step={step} setStep={setStep}
+    onCancel={onCancel} busy={busy}
     firstTitle={t("Choose a source")} secondTitle={t(definition.label)} needsReview={needsReview} onContinue={() => advance()}
-    actionLabel={t(folderFirst ? definition.folderLabel : definition.actionLabel)}
-    action={() => onImport(folderFirst ? { ...payload, pick: "folder" } : payload)}
+    actionLabel={file ? t("Import") : t(folderFirst ? definition.folderLabel : definition.actionLabel)}
+    action={() => onImport(file ? withFile(payload) : folderFirst ? { ...payload, pick: "folder" } : payload)}
     secondaryAction={folderFirst
       ? <button type="button" className="uiBtn ghost" disabled={busy} onClick={() => onImport(payload)}>{t("or choose a .zip")}</button> : null}>
     {step === 0 ? <>
+      {file ? <p className="reportModalHint">{t("Which kind of export is this .zip?")}</p> : null}
       <FormatChoices label={t("Import from")} value={src} onChange={setSource} onConfirm={advance} options={formats} />
       {!needsReview ? <p className="reportModalHint">{t(definition.instructions)}</p> : null}
     </> : src === "zotero" ? <ExportDrop busy={busy} onDrop={(file) => onImport({ ...payload, file })}>{review}</ExportDrop> : review}
