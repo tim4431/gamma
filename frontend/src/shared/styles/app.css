@@ -136,7 +136,9 @@
 
 /* Reduced motion (the OS setting): every transition and animation ends at
    once, so nothing slides, fades, pulses or blinks. Spinners keep turning,
-   slowly, because a frozen one reads as a hang. */
+   slowly, because a frozen one reads as a hang: the splash's too (index.html
+   holds its keyframes; this sheet is render-blocking in the build, so it
+   turns slowly from the first frame). */
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after {
     transition-duration: 1ms !important; /* ds-allow: reduced motion ends at once */
@@ -147,7 +149,7 @@
     scroll-behavior: auto !important;
   }
   :is(.guideSpinner, .pillSpin, .transferSpin, .mirrorPill.busy svg, .mirrorSpin svg,
-    .mirrorState.busy > svg, .mirrorAvatar.busy svg) {
+    .mirrorState.busy > svg, .mirrorAvatar.busy svg, #splash .spin) {
     animation-duration: 2400ms !important;
     animation-iteration-count: infinite !important;
   }

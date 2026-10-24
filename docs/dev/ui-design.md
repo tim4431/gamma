@@ -703,7 +703,8 @@ paints before the bundle, then the same one drawn by `Splash`
 (`shared/ui/BrandMark.jsx`) while the server's config, the session and an
 assistant's consent request are read. Its mark is drawn in place, not
 loaded as a picture, and its spinner turns on from where it was, so no
-hand-over shows. The library's listing stays blank until it has come
+hand-over shows; under reduced motion it turns slowly, as every spinner
+does. The library's listing stays blank until it has come
 back, so it never says it is empty before its rows arrive. A read that
 fails ends the wait too: New page and New folder show under "Could not
 load the library." and a Try again button.

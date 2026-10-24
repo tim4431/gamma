@@ -191,6 +191,25 @@ export async function authScenarios({ server, browser, alice, step, until, asser
     } finally { await ctx.close(); }
   });
 
+  await step("auth: under reduced motion the splash's spinner keeps turning, slowly, while the session is read", async () => {
+    const ctx = await alice.context(browser, { reducedMotion: "reduce" });
+    try {
+      await ctx.route("**/api/session", async (route) => { await new Promise((r) => setTimeout(r, 2000)); await route.continue(); });
+      const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+      // Splash's own (index.html's holds the slow-connection line)
+      const spin = page.locator("#splash:not(:has(#splashSlow)) .spin");
+      await spin.waitFor({ timeout: 5000 });
+      const turning = await spin.evaluate((el) => {
+        const cs = getComputedStyle(el);
+        return { period: cs.animationDuration, count: cs.animationIterationCount, running: el.getAnimations().some((a) => a.playState === "running") };
+      });
+      assertEq(`${turning.period} ${turning.count}`, "2.4s infinite", "it turns slowly, without end");
+      assert(turning.running, "it is turning");
+      await page.locator(".fileRow").first().waitFor({ timeout: 15000 });
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("auth: a first listing read that fails ends the wait: New page and New folder show under a line that says so, and Try again brings the rows", async () => {
     const ctx = await alice.context(browser);
     try {
