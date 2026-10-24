@@ -109,7 +109,7 @@ import { commandById, commandChord } from "./commands.js";
 import { CommandMenuItem } from "./CommandMenuItem.jsx";
 import { loadSession, saveSession, clearSession, setSessionScope } from "./sessionState";
 import { ROLE_LABEL, workspaceMeta } from "../settings/workspaceRoles.js";
-import { AuthLoading, LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailablePage, cloudOutcomeInUrl } from "../auth/LoginPage";
+import { LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailablePage, cloudOutcomeInUrl } from "../auth/LoginPage";
 import { guestExpiryLabel } from "../auth/guestExpiry";
 import { McpAuthorization } from "../auth/McpConsent";
 import { TRANSLATE_LANGS, themeScheme, translateModelFor, useAppPrefs, useProfileSync } from "./prefs";
@@ -162,7 +162,7 @@ import { retryableStatus } from "../collaboration/collabSession.js";
 import { applyOps, applyPatch, displacedRow } from "../shared/model/blockOps";
 import { PresenceBar } from "../collaboration/Presence";
 import { ShareAccessPill } from "../sharing/ShareAccess";
-import { BrandMark } from "../shared/ui/BrandMark";
+import { BrandMark, Splash } from "../shared/ui/BrandMark";
 import { cleanLinkName, loadLinkName, saveLinkName, LINK_NAME_MAX } from "../collaboration/linkName";
 import { modelList, useProviderEditor } from "../settings/providerEditor.js";
 import { useGuide } from "../guide/useGuide";
@@ -480,15 +480,8 @@ function PageHostGate() {
     })();
     return () => { active = false; };
   }, [boot]);
-  // The same splash index.html paints before the bundle, so the hand-over
-  // doesn't jump (BrandMark is the cached favicon).
-  if (!boot) return (
-    <div id="splash" role="status" aria-label={t("Loading Gamma…")}>
-      <BrandMark className="mark" size={56} />
-      <div className="name">{t("Gamma")}</div>
-      <div className="spin" />
-    </div>
-  );
+  // The splash stays until the server's config is read.
+  if (!boot) return <Splash />;
   return <LibraryApp publicPage={boot.publicPage || null} initialServerConfig={boot.serverConfig || null} />;
 }
 
@@ -948,10 +941,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // Local cache first for instant paint…
     let localTabs = [];
     try { localTabs = JSON.parse(localStorage.getItem(`gamma-tabs:${u}`) || "[]"); } catch {}
-    setOpenTabs(Array.isArray(localTabs) ? localTabs : []);
+    if (!Array.isArray(localTabs)) localTabs = [];
+    tabsReadRef.current.add(localTabs);
+    setOpenTabs(localTabs);
     let localRecents = [];
     try { localRecents = JSON.parse(localStorage.getItem(`gamma-recent-views:${u}`) || "[]"); } catch {}
     if (!Array.isArray(localRecents)) localRecents = [];
+    homeReadRef.current.add(localRecents);
     setRecentViews(localRecents);
     let localSnaps = {};
     try { localSnaps = JSON.parse(localStorage.getItem(`gamma-page-snaps:${u}`) || "{}"); } catch {}
@@ -1721,6 +1717,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [blocks, setBlocks] = useState([]);
   const [homeBlocks, setHomeBlocks] = useState([]);
   const [homeLoaded, setHomeLoaded] = useState(false); // the library listing has come back once
+  const [homeFailed, setHomeFailed] = useState(false); // its last read failed
+  // What the listing's loads set (the pages and trees a read brings back,
+  // the view history read from the cache or the server): a change in the
+  // listing only they made moves nothing (homeStill).
+  const homeReadRef = useRef(new WeakSet());
   const [refCache, setRefCache] = useState({}); // { [blockId]: { content, page_title } }
   const [backlinks, setBacklinks] = useState([]);
   const [chatHidden, setChatHidden] = useState(false);
@@ -1868,6 +1869,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Persistence happens inside the updater (not an effect) so a user switch
   // can't race an in-flight save into the wrong key.
   const [openTabs, setOpenTabs] = useState([]);
+  // Tabs read from this browser's cache or the server's copy: the strip
+  // takes them without moving (OpenTabs `still`).
+  const tabsReadRef = useRef(new WeakSet());
   // Local viewing order, separate from the link-jump Back stack and the
   // synced tab order. Home keeps its folder/label so closing a page can
   // return to the view it was opened from.
@@ -1922,6 +1926,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         pushTabsToServer(tabs);
       }
       try { localStorage.setItem(`gamma-tabs:${user}`, JSON.stringify(tabs)); } catch {}
+      tabsReadRef.current.add(tabs);
       return tabs;
     });
   }
@@ -2158,6 +2163,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       list = [{ id: fid, at: new Date().toISOString() }, ...list.filter((r) => r.id !== fid)].slice(0, RECENTS_CAP);
       pushRecentsToServer(list);
     }
+    homeReadRef.current.add(list);
     setRecentViews(list);
     try { localStorage.setItem(`gamma-recent-views:${user}`, JSON.stringify(list)); } catch {}
   }
@@ -2293,39 +2299,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // id, title and pinned).
   const tabKinds = useMemo(() => new Map(homeBlocks.map((b) => [b.id, pageAttachment(b) ? "pdf" : "page"])), [homeBlocks]);
   const tabKindOf = useCallback((id) => tabKinds.get(id) || "page", [tabKinds]);
-  // FLIP animation: when tab order changes, slide each tab from its old
-  // position to the new one (Chrome-style), instead of snapping. Positions
-  // are the tab's place in the strip's content (offsetLeft; the strip is its
-  // offset parent), so the strip scrolling to the active tab moves nothing.
-  const tabElsRef = useRef(new Map());
-  const tabLeftsRef = useRef(new Map());
-  useLayoutEffect(() => {
-    const prev = tabLeftsRef.current;
-    const next = new Map();
-    for (const [id, el] of tabElsRef.current) {
-      if (!el) continue;
-      const left = el.offsetLeft;
-      next.set(id, left);
-      const old = prev.get(id);
-      if (old != null && Math.abs(old - left) > 2) {
-        el.style.transition = "none";
-        el.style.transform = `translateX(${old - left}px)`;
-        requestAnimationFrame(() => {
-          // a move (docs/dev/ui-design.md, "Motion"); the tab's own
-          // transitions (its hover colours) come back once it has landed
-          el.style.transition = "transform var(--dur-slow) var(--ease-out)";
-          el.style.transform = "";
-          const landed = (e) => {
-            if (e.target !== el || e.propertyName !== "transform") return;
-            el.style.transition = "";
-            el.removeEventListener("transitionend", landed);
-          };
-          el.addEventListener("transitionend", landed);
-        });
-      }
-    }
-    tabLeftsRef.current = next;
-  }, [openTabs]);
 
   // Background tasks (tasks/useTasks.js, docs/dev/tasks.md): the server's
   // jobs — exports, backups, restores, imports, the search indexer — and
@@ -3283,7 +3256,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (data.meta?.title && focusedBlock?.properties?.auto_title === focusedBlock?.content) {
         await renameTitle(data.meta.title);
       }
-      fetchHomeBlocks(); // keep the library's meta fresh for DOI-link matching
+      fetchHomeBlocks({ still: true }); // keep the library's meta fresh for DOI-link matching
       const site = data.lookup?.registry === "arxiv" ? "arXiv" : "doi.org";
       setStatus(!data.lookup ? t("Metadata saved.")
         : data.lookup.found ? t("Metadata filled in from {site} ({id}).", { site, id: data.lookup.id })
@@ -3312,7 +3285,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setFocusedBlock((prev) => prev && prev.id === blockId
         ? { ...prev, properties: { ...prev.properties, meta: data.meta } }
         : prev);
-      fetchHomeBlocks();
+      fetchHomeBlocks({ still: true });
       setStatus(t("Metadata marked as verified."));
     } catch (err) {
       setStatus(t("Verify failed: {message}", { message: err.message }));
@@ -3488,7 +3461,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (data.page_title && focusedBlockIdRef.current === block.id) setPageTitle(data.page_title);
       if (!data.cached) {
         setStatus(t("Paper metadata found ({source}).", { source: data.source === "ai" ? t("AI-extracted") : data.source }));
-        fetchHomeBlocks(); // keep the library's meta fresh for DOI-link matching
+        fetchHomeBlocks({ still: true }); // keep the library's meta fresh for DOI-link matching
       }
     } catch (err) {
       if (focusedBlockIdRef.current === block.id) setStatus(t("Metadata: {message}", { message: err.message }));
@@ -3731,22 +3704,36 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   useEffect(() => { setPdfSelections([]); }, [focusedBlockId]);
 
   // The library listing: the pages, and the folder and label trees read in
-  // the same snapshot (GET /blocks/root/children).
-  function fetchHomeBlocks() {
+  // the same snapshot (GET /blocks/root/children). A read that is a load
+  // rather than the person's own change (`still`: the session's first,
+  // coming back from a page, the window's wake, a refresh in the
+  // background) marks what it sets, so the listing moves nothing for it,
+  // and so does one that fails. A read that fails ends the wait as well:
+  // the listing says so where its empty line would be.
+  function fetchHomeBlocks({ still = false } = {}) {
     return apiJson(`${API}/blocks/root/children`)
       .then((data) => {
         const children = Array.isArray(data.children) ? data.children : [];
-        setHomeBlocks(children);
         libTreeRef.current = libraryTree(data);
+        if (still) for (const read of [children, libTreeRef.current]) homeReadRef.current.add(read);
+        setHomeBlocks(children);
         setLibTree(libTreeRef.current);
         setHomeLoaded(true);
+        setHomeFailed(false);
         return children;
       })
-      .catch(() => { setHomeBlocks([]); setLibTree(EMPTY_TREE); return []; });
+      .catch(() => {
+        const none = [];
+        for (const read of [none, EMPTY_TREE]) homeReadRef.current.add(read);
+        setHomeBlocks(none);
+        setLibTree(EMPTY_TREE);
+        setHomeFailed(true);
+        return [];
+      });
   }
 
   useEffect(() => {
-    if (authUser?.user && !shareMode) fetchHomeBlocks();
+    if (authUser?.user && !shareMode) fetchHomeBlocks({ still: true });
   }, [authUser]);
   // The listing is read again when the window comes back (at most every
   // 15 s, like the prefs' wake pulls), so a folder or label another device
@@ -3758,7 +3745,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const onWake = () => {
       if (document.hidden || Date.now() - lastAt < 15000) return;
       lastAt = Date.now();
-      fetchHomeBlocks();
+      fetchHomeBlocks({ still: true });
     };
     window.addEventListener("focus", onWake);
     document.addEventListener("visibilitychange", onWake);
@@ -5901,7 +5888,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setFolderFilter("");
       setLabelFilter("");
     }
-    if (refreshHome) fetchHomeBlocks();
+    if (refreshHome) fetchHomeBlocks({ still: true });
     if (keepFilters && (labelFilter || folderFilter)) {
       window.history.replaceState(null, "", homeUrlFor(folderFilter, labelFilter));
     } else {
@@ -7786,6 +7773,44 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return [...items.filter((it) => it._match), ...items.filter((it) => !it._match)];
   }, [libTree, scopePages, labelFilter, levelFolders, folderMeta, scopeLabels, labelMeta, viewedAtById, homeSort, homeKinds, homeQuery]);
   const homeVisibleItems = useMemo(() => homeItems.slice(0, homeShowCount), [homeItems, homeShowCount]);
+  // The listing is a list that moves (ListMotion, docs/dev/ui-design.md
+  // "Lists that change"): within one listing an item added, removed or
+  // moved by its sort glides the others to their places. Another view,
+  // kind filter, folder, label, sort or filter text is another listing, in
+  // which nothing moves, and so is the next chunk Load more brings: its
+  // rows arrive at once.
+  const homeVisibleKeys = useMemo(() => homeVisibleItems.map((it) => it.key), [homeVisibleItems]);
+  const homeListingScope = `${homeView}|${homeKinds}|${folderFilter}|${labelFilter}|${homeSort}|${homeQuery}|${homeShowCount}`;
+  // What the listing is read from: the pages, the trees, and the view
+  // history the "viewed" sort ranks by. A change is still when each of them
+  // that changed was set by a load (homeReadRef: the listing read again on
+  // coming home or on the window's wake, the server's view history landing
+  // after it), so the person's own change moves even after a load.
+  const homeSources = [homeBlocks, libTree, recentViews];
+  const homeSourcesRef = useRef(homeSources);
+  const homeChanged = homeSources.filter((source, i) => source !== homeSourcesRef.current[i]);
+  const homeStill = homeChanged.length > 0 && homeChanged.every((source) => homeReadRef.current.has(source));
+  useLayoutEffect(() => { homeSourcesRef.current = homeSources; });
+  // A listing that takes another's place (another view, kind filter, folder
+  // or label) comes into focus where it stands, as a pane does: its class is
+  // played again on the listing in place, rather than remounting it, which
+  // would build every card again. Not the listing a load or a page left
+  // brings.
+  const homeListingRef = useRef(null);
+  const homeEmptyRef = useRef(null);
+  const homeListingShownRef = useRef(null);
+  useLayoutEffect(() => {
+    const shown = homeMode && homeLoaded ? `${homeView}|${homeKinds}|${folderFilter}|${labelFilter}` : null;
+    const before = homeListingShownRef.current;
+    homeListingShownRef.current = shown;
+    if (!shown || !before || shown === before) return;
+    for (const el of [homeListingRef.current, homeEmptyRef.current]) {
+      if (!el) continue;
+      el.classList.remove("listingIn");
+      void el.offsetWidth;
+      el.classList.add("listingIn");
+    }
+  }, [homeMode, homeLoaded, homeView, homeKinds, folderFilter, labelFilter]);
   // The filter box matches titles and chips only; past it, the workspace
   // search reads notes and PDF text. With nothing matched a banner hands the
   // query over (Enter in the box does the same); with matches a quiet row
@@ -7832,6 +7857,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       ? (folderFilter ? t("No labels on the pages in this folder yet.") : t("No labels yet — add one from a page’s label field."))
       : folderFilter ? (lib.organize ? t("This folder is empty — start a page here or drag pages onto it from the library.") : t("This folder is empty."))
       : t("No pages yet — start with “New page”, or open a PDF from the + button above.");
+  // The line over the listing: the start panel or what it is empty for, or,
+  // when the read failed, that it could not be read. A failed read empties
+  // the listing, which says nothing of the library: no "No pages yet".
+  const homeEmptyLine = homeFailed ? (
+    <div className="empty" ref={homeEmptyRef} role="alert">
+      {t("Could not load the library.")}{" "}
+      <button type="button" className="uiBtn sm" onClick={() => fetchHomeBlocks({ still: true })}>{t("Try again")}</button>
+    </div>
+  ) : libraryStart || (homeItems.length === 0 && !newFolderOpen ? (
+    <div className="empty" ref={homeEmptyRef}>{homeEmptyText}</div>
+  ) : null);
   // Timestamp shown on a library card and in the list's date column follows
   // the active sort: sorted by view time → viewed (falling back to modified,
   // same as the sort), by added → created; modified otherwise (incl. Title
@@ -8232,7 +8268,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
 
   if (workspaceUnavailable) return <WorkspaceUnavailablePage />;
-  if (authUser === null) return <AuthLoading />;
+  if (authUser === null) return <Splash />;
 
   if (authUser === false) {
     return (
@@ -9194,12 +9230,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               </div>
             ) : null}
             {homeMode && homeMatchCount === 0 ? searchElsewhere(true) : null}
-            {homeMode && homeView === "grid" ? (
+            {/* Until the listing has come back (or its read failed) it is
+                blank: no "empty" line before the rows, and nothing the rows
+                would push down. */}
+            {homeMode && !homeLoaded && !homeFailed ? null : homeMode && homeView === "grid" ? (
                 <>
-                  {libraryStart || (homeItems.length === 0 && !newFolderOpen ? (
-                    <div className="empty">{homeEmptyText}</div>
-                  ) : null)}
-                  <div className="fileGrid" onClick={(e) => { if (e.target.classList.contains("fileGrid")) clearSelection(); }}>
+                  {homeEmptyLine}
+                  <div className="fileGrid" ref={homeListingRef} onClick={(e) => { if (e.target.classList.contains("fileGrid")) clearSelection(); }}>
                     {newPageAllowed ? (
                       <PageCard
                         className="pageCardAdd"
@@ -9241,11 +9278,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         onClick={() => { setNewFolderName(""); setNewFolderOpen(true); }}
                       />
                     )}
+                    <ListMotion keys={homeVisibleKeys} scope={homeListingScope} still={homeStill} enter="card" leave="card">
                     {withSearchMore(homeVisibleItems.map((item) => {
                       const dim = homeQuery && !item._match ? "homeDim" : "";
                       if (item.kind === "label") { const l = item.label; return (
                       <PageCard
                         key={item.key}
+                        data-motion-key={item.key}
                         className={`${dim} ${folderDragOver === l ? "dragOver" : ""} ${selectedLabels.has(l) ? "selected" : ""}`}
                         glyph={<LabelGlyph dashed={l === NO_LABEL} />}
                         title={labelName(libTree, l)}
@@ -9268,6 +9307,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       if (item.kind === "folder") { const f = item.folder; return (
                       <PageCard
                         key={item.key}
+                        data-motion-key={item.key}
                         {...folderCardProps(f)}
                         className={`${dim} ${folderDropClass(f)} ${selectedFolders.has(f) ? "selected" : ""}`}
                         tip={lib.organize ? t("Click to select · double-click to open · drop a page or folder to move it in") : t("Click to select · double-click to open")}
@@ -9296,6 +9336,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       return (
                         <PageCard
                           key={id}
+                          data-motion-key={item.key}
                           className={`${dim} ${selectedPages.has(id) ? "selected" : ""}`}
                           data-guide="home.card"
                           glyph={<FileGlyph isPdf={!!b._attachment} />}
@@ -9335,6 +9376,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         </PageCard>
                       );
                     }))}
+                    </ListMotion>
                   </div>
                   {homeItems.length > homeVisibleItems.length ? (
                     <button ref={loadMoreRef} className="loadMoreBtn" onClick={() => setHomeShowCount((c) => c + HOME_PAGE_CHUNK)}>
@@ -9344,10 +9386,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 </>
             ) : homeMode ? (
                 <>
-                  {libraryStart || (homeItems.length === 0 && !newFolderOpen ? (
-                    <div className="empty">{homeEmptyText}</div>
-                  ) : null)}
-                  <div className="fileList" onClick={(e) => { if (e.target.classList.contains("fileList")) clearSelection(); }}>
+                  {homeEmptyLine}
+                  <div className="fileList" ref={homeListingRef} onClick={(e) => { if (e.target.classList.contains("fileList")) clearSelection(); }}>
                     {newPageAllowed ? (
                       <button className="folderRow folderNewBtn" onClick={() => createPage()} title={t("Start a blank page here")}>
                         <FilePlusIcon size={16} />
@@ -9385,11 +9425,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         {menuSlot}
                       </div>
                     ) : null}
+                    <ListMotion keys={homeVisibleKeys} scope={homeListingScope} still={homeStill} enter="fade" leave="row">
                     {withSearchMore(homeVisibleItems.map((item) => {
                       const dim = homeQuery && !item._match ? "homeDim" : "";
                       if (item.kind === "label") { const l = item.label; const menu = l === NO_LABEL ? null : openTagMenu("label", l); return (
                       <div
                         key={item.key}
+                        data-motion-key={item.key}
                         className={`folderRow labelRow rowMenuHost ${dim} ${folderDragOver === l ? "dragOver" : ""} ${selectedLabels.has(l) ? "selected" : ""}`}
                         onClick={(e) => handleLabelClick(l, e)}
                         onDoubleClick={() => openLabel(l)}
@@ -9409,6 +9451,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       if (item.kind === "folder") { const f = item.folder; const menu = openTagMenu("folder", f); return (
                       <div
                         key={item.key}
+                        data-motion-key={item.key}
                         className={`folderRow rowMenuHost ${dim} ${folderDropClass(f)} ${selectedFolders.has(f) ? "selected" : ""}`}
                         draggable={lib.organize && folderRenaming?.id !== f}
                         onDragStart={(e) => startFolderDrag(e, f)}
@@ -9448,6 +9491,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       return (
                         <div
                           key={id}
+                          data-motion-key={item.key}
                           className={`fileRow rowMenuHost ${dim} ${selectedPages.has(id) ? "selected" : ""}`}
                           data-guide="home.card"
                           draggable={lib.organize && !isEditing}
@@ -9485,6 +9529,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         </div>
                       );
                     }))}
+                    </ListMotion>
                   </div>
                   {homeItems.length > homeVisibleItems.length ? (
                     <button ref={loadMoreRef} className="loadMoreBtn" onClick={() => setHomeShowCount((c) => c + HOME_PAGE_CHUNK)}>
@@ -10574,7 +10619,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             <OpenTabs
               tabs={openTabs}
               activeId={focusedBlockId}
-              tabElements={tabElsRef}
+              still={tabsReadRef.current.has(openTabs)}
               kindOf={tabKindOf}
               menuOpen={openPopover === "tabs"}
               onMenuOpenChange={(open) => setOpenPopover(open ? "tabs" : null)}

@@ -695,9 +695,19 @@ library" for a signed-in one, "Open in my library" for the owner.
 
 ### Sign-in and status pages
 
+Until the first real screen there is one splash: the one `index.html`
+paints before the bundle, then the same one drawn by `Splash`
+(`shared/ui/BrandMark.jsx`) while the server's config, the session and an
+assistant's consent request are read. Its mark is drawn in place, not
+loaded as a picture, and its spinner turns on from where it was, so no
+hand-over shows. The library's listing stays blank until it has come
+back, so it never says it is empty before its rows arrive. A read that
+fails ends the wait too: New page and New folder show under "Could not
+load the library." and a Try again button.
+
 `AuthShell` in `auth/LoginPage.jsx` frames every page shown before or
-instead of the app: the login (also a share link's sign-in gate), loading,
-an unavailable workspace, a session conflict and a blocked share link. It
+instead of the app: the login (also a share link's sign-in gate), an
+unavailable workspace, a session conflict and a blocked share link. It
 shows the brand mark (`shared/ui/BrandMark.jsx`, the favicon artwork) over the name, or over the
 situation's headline on a status page. The card hangs at a fixed height near
 the optical centre instead of being centred, so an error that appears
@@ -996,7 +1006,9 @@ that move or size what they hold).
 
 A pane that takes another's place comes into focus where it stands (a
 Settings pane, keyed by its name; a window the compact shell's bottom
-bar shows), and the guide's card rises `--move-sm` into place.
+bar shows; the library's listing for another view, kind filter, folder
+or label, its `.listingIn` played again on it in place), and the guide's
+card rises `--move-sm` into place.
 
 ### Things that change in place
 
@@ -1101,8 +1113,10 @@ and what it holds travels with it.
   many blocks, Mark all read). `moves={false}` leaves the places alone
   where they transition already (the comment margin's cards).
 - **Boxes are the window's**, so an insert above the view that scroll
-  anchoring absorbs moves nothing. A strip that scrolls itself to an item
-  in the same change measures in its content instead (`space="content"`).
+  anchoring absorbs moves nothing, and a scroll the change forces on the
+  list's own scroller glides what it carries: a strip scrolled to its end
+  that a close narrows scrolls back, and what is left closes up from the
+  left.
 - **A popup over the window stays put.** An item holding what matches
   `hold`, such as the caret's "/" or `[[` menu, stays still, since a
   moving ancestor would carry it off. A key typed or a paste in the list
@@ -1119,6 +1133,31 @@ Its rows and their children bodies are the items, with the backlinks and
 the tail under them; it plays only when the tree's shape changed
 (`sameShape`, `shared/model/blockModel.js`), so a keystroke or a fold
 moves nothing.
+
+The tab strip (`OpenTabs`) is another. A tab opened rises in, one closed
+sinks back out where it stood while the tabs after it glide over its
+place, and a tab dragged along the strip moves the others through the
+same glides. A tab still gliding under the pointer is not one to swap
+with, so a swap never swaps back. Closed at the end of a strip scrolled
+there, a tab sinks out where it was seen as the tabs before it glide over
+its place from the left. Tabs read from this browser's cache or the
+server's copy come still, and so does any change before the person has
+pressed or typed anything in the window (the page it opened on getting
+its tab): that is the window loading. The strip is as tall with no tab
+as with one, so the topbar never grows as the first one opens.
+
+The library's listing, in both views, is a third. A row comes in fading
+and goes fading, a card grows in and shrinks away, and a delete or an
+item its sort moves glides the rest. A listing's `scope` is its view, kind
+filter, folder, label, sort, filter text and how many rows Load more has
+shown, so typing in the filter box, opening a folder or Load more moves
+nothing: the rows arrive at once. Its holders (`.fileList`, `.fileGrid`)
+position the copies. The listing mounts once it has loaded (or its read
+has failed), so the first one a load or a page left brings is a first
+render. The reads that are loads come still: the listing read again on
+coming home or on the window's wake, and the server's view history landing
+after it. Each marks what it sets, and a change is still when all it
+changed was read that way, so a delete right after a load still moves.
 
 ## Block editor interactions
 
@@ -1223,7 +1262,7 @@ preview), and image/table paste with the ordinary row editor. The card footer na
 | `editor/LatexEditor.jsx` | LaTeX aids while editing: the live preview docked to the editor column with a caret marker, the `\command` popup, `renderKatex`/`useCaretAnchored` shared helpers; `editor/latexCompletion.js` is the pure catalog (prefix/abbreviation/fuzzy tiers, snippets, Tab-out navigation) it re-exports; `editor/latexInput.js` supplies scalable delimiter pairing. See [LaTeX editing](latex_editing.md) for shortcuts and browser checks |
 | `library/RecentlyDeleted.jsx` | the Recently deleted dialog: a `SubDialog` of `aiProvRow` rows (title, who deleted it and when, days left, folder) with Restore and a delete-for-good icon button behind App's confirm box, Empty in its `DialogButtons` ([home_library.md](home_library.md) "Recently deleted") |
 | `library/libraryUtils.js` | the library's folder and label helpers over the folder and label trees ([home_library.md](home_library.md) "Folders and labels"), and `pageAttachment`, what a page carries |
-| `shared/ui/Widgets.jsx`, `shared/ui/Menus.jsx`, `shared/ui/Icons.jsx` | shared components; `OpenTabs` in Widgets is the topbar's tab strip (a kind icon per tab, pinned tabs first, full width with a pin in place of the close button, the active tab kept in view clear of the right-edge fade, and on overflow a "⌄ n" popover listing every tab with a filter); `useMenuTrigger` in Menus is the menus a toolbar's buttons open on the press ([Menus and submenus](#menus-and-submenus)) |
+| `shared/ui/Widgets.jsx`, `shared/ui/Menus.jsx`, `shared/ui/Icons.jsx` | shared components; `OpenTabs` in Widgets is the topbar's tab strip (a kind icon per tab, pinned tabs first, full width with a pin in place of the close button, the active tab kept in view clear of the right-edge fade, tabs that come, go and move through `ListMotion`, and on overflow a "⌄ n" popover listing every tab with a filter); `useMenuTrigger` in Menus is the menus a toolbar's buttons open on the press ([Menus and submenus](#menus-and-submenus)) |
 | `shared/ui/wheelPan.js` | `useWheelPan`: a plain mouse wheel pans a sideways strip (the card strips, the tab strip) |
 | `shared/ui/listKeys.js` | `stepList`: ↑/↓ between a search box and the results listed under it (Settings search, the move-to-page filter, the chat's page picker) |
 | `shared/ui/DiagramFigure.jsx`, `shared/ui/ResizeGrip.jsx` | the diagram figure (a Mermaid diagram inline, or a sanitized SVG drawing shown as an image) with its toolbar of `ctlBtn`s, ended by a note's object "⋯" (`tools`) ([diagrams.md](diagrams.md)); the two-sided drag grips (`ResizeGrips`) + `useDragResize` hook that size centred note images and diagrams alike, a double-click or double tap on a grip restoring the natural size |

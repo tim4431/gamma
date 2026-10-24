@@ -219,4 +219,261 @@ export async function motionScenarios(env) {
       await assertNoProblems(page);
     } finally { await ctx.close(); }
   });
+
+  // Three pages to open as tabs; a tab's motion key is its page's id.
+  const tabTitles = ["Tab one", "Tab two", "Tab three"];
+  const tabPages = [];
+  for (const title of tabTitles) tabPages.push({ id: (await user.api("/api/pages", { method: "POST", body: { title } })).id, title });
+  const liveTab = (page, title) => page.locator(live(".tabStrip .tab"), { hasText: title });
+  async function openTab(page, title) {
+    await page.locator('[data-guide="header.home"]').click();
+    await page.locator(".fileRow", { hasText: title }).dblclick();
+    await liveTab(page, title).waitFor();
+  }
+  const tabMarks = (seen) => seen.filter((g) => tabPages.some((p) => g.endsWith(` ${p.id}`)));
+
+  await step("motion: a tab opened rises in and the topbar keeps its height; one closed sinks out through an inert copy as the next glides over; tabs read back come still", async () => {
+    await user.api("/api/prefs/open-tabs", { method: "PUT", body: { value: [] } });
+    const ctx = await user.context(browser);
+    await watch(ctx);
+    const page = await openPage(ctx, home);
+    try {
+      await folderRow(page).waitFor();
+      const topbar = () => page.locator(".topbar").evaluate((el) => el.getBoundingClientRect().height);
+      const bare = await topbar();
+      await openTab(page, "Tab one");
+      assertEq(await topbar(), bare, "the topbar keeps its height as the first tab opens");
+      assert((await glides(page)).includes(`entering ${tabPages[0].id}`), "the tab rises in");
+      await openTab(page, "Tab two");
+      await openTab(page, "Tab three");
+      await arrived(liveTab(page, "Tab three"));
+      await glides(page);
+      // the middle one, in the background
+      await liveTab(page, "Tab two").getByRole("button", { name: "Close Tab two", exact: true }).click();
+      const copy = page.locator('.tabStrip .tab[data-leaving="tab"]', { hasText: "Tab two" });
+      await copy.waitFor({ state: "attached" });
+      assert(await copy.evaluate((el) => el.getAttribute("aria-hidden") === "true" && el.hasAttribute("inert")
+        && !el.hasAttribute("role") && !el.hasAttribute("aria-selected")), "the copy is inert, and no tab");
+      const seen = tabMarks(await glides(page));
+      assert(seen.includes(`moving ${tabPages[2].id}`), `the tab after it glides over its place: ${seen}`);
+      assert(!seen.includes(`moving ${tabPages[0].id}`), `the tab before it stays: ${seen}`);
+      await copy.waitFor({ state: "detached", timeout: 2000 });
+      await arrived(liveTab(page, "Tab three"));
+      assertEq(await page.locator(".tabStrip .tab").count(), 2, "two tabs are left");
+      await page.reload();
+      await liveTab(page, "Tab three").waitFor();
+      await page.waitForTimeout(300);
+      const back = tabMarks(await glides(page));
+      assertEq(back.length, 0, `tabs read back from the cache and the server move nothing: ${back}`);
+      await assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("motion: under reduced motion a tab closed goes at once and the others jump to their places", async () => {
+    await user.api("/api/prefs/open-tabs", { method: "PUT", body: { value: tabPages } });
+    const ctx = await user.context(browser, { reducedMotion: "reduce" });
+    await watch(ctx);
+    const page = await openPage(ctx, `${server.base}/?ws=${user.ws}&page=${tabPages[2].id}`);
+    try {
+      for (const title of tabTitles) await liveTab(page, title).waitFor();
+      await glides(page);
+      await liveTab(page, "Tab two").getByRole("button", { name: "Close Tab two", exact: true }).click();
+      const left = await page.evaluate(() => new Promise((done) =>
+        requestAnimationFrame(() => done(document.querySelectorAll("[data-leaving]").length))));
+      assertEq(left, 0, "no copy");
+      assertEq(await page.locator(".tabStrip .tab").count(), 2, "the tab is gone at once");
+      assertEq(tabMarks(await glides(page)).length, 0, "nothing glides");
+      await assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  // The library's listing: a row's motion key is its item's (a page's id,
+  // folder:<id>).
+  const listRow = (page, text) => page.locator(live(".fileList > .listMotion > *"), { hasText: text });
+  async function deleteRow(page, text) {
+    await listRow(page, text).click({ button: "right" });
+    await page.locator(".ctxMenuItem", { hasText: "Delete" }).click();
+    const confirm = page.locator(".confirmModal", { hasText: "Move this page to Recently deleted?" });
+    await confirm.getByRole("button", { name: "Delete", exact: true }).click();
+  }
+
+  await step("motion: in the library a new folder fades in as the rows below glide down, a page deleted leaves through a copy as they close up, and another listing comes into focus without a glide", async () => {
+    for (const title of ["Shelved page", "Doomed page"]) await user.api("/api/pages", { method: "POST", body: { title } });
+    const ctx = await user.context(browser);
+    await watch(ctx);
+    const page = await openPage(ctx, home);
+    try {
+      await listRow(page, "Doomed page").waitFor();
+      assertEq((await glides(page)).length, 0, "the listing a load brings moves nothing");
+      await page.locator(".folderNewBtn", { hasText: "New folder" }).click();
+      await page.locator(".folderNewInput").fill("Shelf");
+      await page.keyboard.press("Enter");
+      await listRow(page, "Shelf").waitFor();
+      const added = await glides(page);
+      assert(added.some((g) => g.startsWith("entering folder:")), `the folder fades in: ${added}`);
+      assert(added.includes(`moving ${tabPages[0].id}`), `the rows below glide down: ${added}`);
+      await arrived(listRow(page, "Tab one"));
+
+      await deleteRow(page, "Doomed page");
+      const copy = page.locator('.fileList [data-leaving="row"]', { hasText: "Doomed page" });
+      await copy.waitFor({ state: "attached" });
+      assert(await copy.evaluate((el) => el.getAttribute("aria-hidden") === "true" && el.hasAttribute("inert")
+        && !el.hasAttribute("data-motion-key") && getComputedStyle(el.parentElement.closest(".fileList")).position === "relative"),
+      "the copy is inert, keyless, and stands in the list");
+      const gone = await glides(page);
+      assert(gone.includes(`moving ${tabPages[0].id}`), `the rows below close up: ${gone}`);
+      await copy.waitFor({ state: "detached", timeout: 2000 });
+      await arrived(listRow(page, "Tab one"));
+
+      // a typed filter and a sort are other listings: nothing glides
+      await page.locator(".homeFindInput").fill("Tab");
+      await page.locator(".homeFindInput").fill("");
+      await page.waitForTimeout(100);
+      assertEq((await glides(page)).length, 0, "a typed filter moves nothing");
+      // another kind filter: the listing comes into focus where it stands
+      await page.evaluate(() => {
+        window.__focusIn = new Promise((done) => {
+          document.addEventListener("animationstart", (e) => { if (e.target.classList?.contains("listingIn")) done(e.animationName); });
+          setTimeout(() => done(null), 3000);
+        });
+      });
+      await page.locator(".homeViewToggle").first().locator("button").nth(2).click();
+      assertEq(await page.evaluate(() => window.__focusIn), "sharpen-in", "the listing comes into focus");
+      assertEq((await glides(page)).length, 0, "and nothing in it glides");
+      await page.locator(".homeViewToggle").first().locator("button").nth(0).click();
+      await assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("motion: under reduced motion a page deleted from the library goes at once and the rows jump up", async () => {
+    await user.api("/api/pages", { method: "POST", body: { title: "Quietly doomed" } });
+    const ctx = await user.context(browser, { reducedMotion: "reduce" });
+    await watch(ctx);
+    const page = await openPage(ctx, home);
+    try {
+      await listRow(page, "Quietly doomed").waitFor();
+      await glides(page);
+      await deleteRow(page, "Quietly doomed");
+      await page.locator(".fileRow", { hasText: "Quietly doomed" }).waitFor({ state: "detached" });
+      const left = await page.evaluate(() => new Promise((done) =>
+        requestAnimationFrame(() => done(document.querySelectorAll(".fileList [data-leaving]").length))));
+      assertEq(left, 0, "no copy");
+      assertEq((await glides(page)).length, 0, "nothing glides");
+      await assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("motion: the rows Load more brings arrive at once", async () => {
+    for (let i = 1; i <= 30; i++) await user.api("/api/pages", { method: "POST", body: { title: `Filler ${i}` } });
+    const ctx = await user.context(browser);
+    await watch(ctx);
+    const page = await openPage(ctx, home);
+    try {
+      await page.locator(".loadMoreBtn").waitFor();
+      const shown = await page.locator(".fileList .fileRow").count();
+      await glides(page);
+      await page.locator(".loadMoreBtn").click();
+      await until(async () => (await page.locator(".fileList .fileRow").count()) > shown, { what: "more rows" });
+      await page.waitForTimeout(100);
+      assertEq((await glides(page)).length, 0, "no row fades in, none glides");
+      await assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  // The library read again is a load: the order it brings lands at once.
+  const firstItem = (page) => page.locator(live(".fileList > .listMotion > *")).first().innerText();
+
+  await step("motion: the library read again on coming home from an edited page moves nothing, and a delete right after still glides", async () => {
+    const edited = await user.api("/api/pages", { method: "POST", body: { title: "Edited later" } });
+    await user.api(`/api/pages/${edited.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "ed0", parent: edited.id, position: generateNKeysBetween(null, null, 1)[0], content: "First line" },
+    ] } });
+    await user.api("/api/pages", { method: "POST", body: { title: "Made after" } });
+    const ctx = await user.context(browser);
+    await watch(ctx);
+    const page = await openPage(ctx, `${server.base}/?ws=${user.ws}&page=${edited.id}`);
+    try {
+      await rowOf(page, "ed0").locator(".blockRow").click();
+      await page.locator(".blockEditorCm").first().waitFor();
+      await page.keyboard.press("End");
+      await page.keyboard.type(" and more");
+      await page.keyboard.press("Escape");
+      await until(async () => JSON.stringify(await user.api(`/api/blocks/${edited.id}/subtree`)).includes("and more"), { what: "the edit saved" });
+      await glides(page);
+      // the listing it comes home to is the one it left, then the read lands
+      await page.locator('[data-guide="header.home"]').click();
+      await listRow(page, "Made after").waitFor();
+      await until(async () => (await firstItem(page)).includes("Edited later"), { what: "the edited page on top" });
+      await page.waitForTimeout(200);
+      const back = await glides(page);
+      assertEq(back.length, 0, `the order the read brings lands at once: ${back}`);
+      await deleteRow(page, "Made after");
+      await page.locator('.fileList [data-leaving="row"]', { hasText: "Made after" }).waitFor({ state: "attached" });
+      const gone = await glides(page);
+      assert(gone.some((g) => g.startsWith("moving ")), `the person's own delete right after still glides: ${gone}`);
+      await assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("motion: the server's view history landing after the listing reorders the Recently viewed sort without a glide", async () => {
+    const viewed = [];
+    for (const title of ["Viewed long ago", "Viewed just now"]) viewed.push(await user.api("/api/pages", { method: "POST", body: { title } }));
+    // seen on another device: the older page last
+    const at = (ago) => new Date(Date.now() - ago).toISOString();
+    await user.api("/api/prefs/recent-views", { method: "PUT", body: { value: [
+      { id: viewed[0].id, at: at(0) }, { id: viewed[1].id, at: at(60000) },
+    ] } });
+    const ctx = await user.context(browser);
+    await watch(ctx);
+    await ctx.addInitScript(() => { try { localStorage.setItem("gamma-home-sort-map", JSON.stringify({ "": "viewed" })); } catch {} });
+    // the view history a beat behind the listing, as on a slow link
+    await ctx.route("**/api/prefs/recent-views", async (route) => {
+      if (route.request().method() === "GET") await new Promise((done) => setTimeout(done, 400));
+      await route.continue();
+    });
+    const page = await openPage(ctx, home);
+    try {
+      await listRow(page, "Viewed long ago").waitFor();
+      assert((await firstItem(page)).includes("Viewed just now"), "before the history lands the sort falls back to the modified time");
+      await until(async () => (await firstItem(page)).includes("Viewed long ago"), { what: "the view history's order" });
+      await page.waitForTimeout(200);
+      const seen = await glides(page);
+      assertEq(seen.length, 0, `the history's order lands at once: ${seen}`);
+      await assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("motion: the last tab closed in a strip scrolled to its end sinks out where it was seen while the tabs before it glide over its place", async () => {
+    const strip = [...tabPages];
+    for (const name of "abcdefghi") {
+      const title = `Strip ${name}`;
+      strip.push({ id: (await user.api("/api/pages", { method: "POST", body: { title } })).id, title });
+    }
+    await user.api("/api/prefs/open-tabs", { method: "PUT", body: { value: strip } });
+    const last = strip[strip.length - 1], before = strip[strip.length - 2];
+    const ctx = await user.context(browser);
+    await watch(ctx);
+    const page = await openPage(ctx, `${server.base}/?ws=${user.ws}&page=${last.id}`);
+    try {
+      await liveTab(page, last.title).waitFor();
+      await liveTab(page, last.title).click(); // the person has acted (the active tab: nothing opens)
+      const atEnd = await page.locator(".tabStrip").evaluate((el) => el.scrollWidth > el.clientWidth && el.scrollLeft + el.clientWidth >= el.scrollWidth - 1);
+      assert(atEnd, "the strip overflows and stands at its end");
+      const leftOf = (locator) => locator.evaluate((el) => el.getBoundingClientRect().left);
+      const seenAt = await leftOf(liveTab(page, last.title));
+      const beforeAt = await leftOf(liveTab(page, before.title));
+      await glides(page);
+      await liveTab(page, last.title).hover();
+      await liveTab(page, last.title).getByRole("button", { name: `Close ${last.title}`, exact: true }).click();
+      const copy = page.locator('.tabStrip .tab[data-leaving="tab"]', { hasText: last.title });
+      await copy.waitFor({ state: "attached" });
+      assertNear(await leftOf(copy), seenAt, 1, "the copy sinks out where the tab was seen");
+      const seen = await glides(page);
+      assert(seen.includes(`moving ${before.id}`), `the tab before it glides over its place: ${seen}`);
+      await copy.waitFor({ state: "detached", timeout: 2000 });
+      await arrived(liveTab(page, before.title));
+      assert(await leftOf(liveTab(page, before.title)) > beforeAt + 1, "it came in from the left, as the strip scrolled back");
+      await assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
 }

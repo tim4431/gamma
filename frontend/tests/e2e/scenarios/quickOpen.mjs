@@ -1,4 +1,4 @@
-import { Account, wanted } from "../harness.mjs";
+import { Account, live, wanted } from "../harness.mjs";
 
 // Ctrl+P: the quick-open page palette (library/QuickOpen.jsx).
 export async function quickOpenScenarios(env) {
@@ -252,7 +252,8 @@ export async function quickOpenScenarios(env) {
       await tab(2).waitFor({ state: "detached" });
       await tab(1).getByRole("button", { name: `Close ${made[1].content}`, exact: true }).click();
       await page.locator(".homeListBar").waitFor();
-      assertEq(await page.locator(".tabStrip .tab").count(), 0, "closing the last tab returns home without reopening closed pages");
+      // (a closed tab's copy may still be sinking out)
+      assertEq(await page.locator(live(".tabStrip .tab")).count(), 0, "closing the last tab returns home without reopening closed pages");
 
       // Closing a background tab keeps the active page and removes that
       // background page from subsequent return destinations.
@@ -292,8 +293,8 @@ export async function quickOpenScenarios(env) {
         const params = new URL(page.url()).searchParams;
         assertEq(params.get("folder"), nested, "closing restores the nested folder");
         assertEq(params.get("label") || "", label, "closing restores the label filter");
-        assertEq(await page.locator(".tabStrip .tab", { hasText: other.content }).count(), 1, "the other tab stays open");
-        assertEq(await page.locator(".tabStrip .tab.active").count(), 0, "the source library view takes priority over other tabs");
+        assertEq(await page.locator(live(".tabStrip .tab"), { hasText: other.content }).count(), 1, "the other tab stays open");
+        assertEq(await page.locator(live(".tabStrip .tab.active")).count(), 0, "the source library view takes priority over other tabs");
         assertNoProblems(page);
       } finally { await ctx.close(); }
     }

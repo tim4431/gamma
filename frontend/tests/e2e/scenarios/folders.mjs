@@ -43,7 +43,7 @@ export async function folderScenarios(env) {
       await row(page, "Empty one").waitFor();
       // Recently modified (the default sort) dates an empty folder from its
       // making: the newest thing here, it leads Lab and both papers.
-      const first = page.locator(".fileList > .folderRow:not(.folderNewBtn), .fileList > .fileRow").first();
+      const first = page.locator(".fileList .folderRow:not(.folderNewBtn), .fileList .fileRow").first();
       await until(async () => (await first.textContent()).includes("Empty one"),
         { what: "the new, empty folder leads the Recently modified listing" });
 

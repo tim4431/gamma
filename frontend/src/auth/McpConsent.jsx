@@ -2,7 +2,8 @@ import React from "react";
 import { MenuSelect } from "../shared/ui/Menus";
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { API, apiJson, setExpectedUser } from "../shared/lib/utils";
-import { AuthLoading, LoginPage, SessionConflictPage } from "./LoginPage";
+import { LoginPage, SessionConflictPage } from "./LoginPage";
+import { Splash } from "../shared/ui/BrandMark";
 import { t } from "../shared/i18n/i18n.js";
 
 // A standalone sign-in gate: no workspace/session restoration runs while the
@@ -59,7 +60,7 @@ export function McpAuthorization({ requestId }) {
       setPassword("");
     } catch (err) { setError(err.message || t("Login failed")); }
   };
-  if (user === null) return <AuthLoading />;
+  if (user === null) return <Splash />;
   if (!user) return <LoginPage username={username} password={password} error={error}
     onUsernameChange={setUsername} onPasswordChange={setPassword} onSubmit={login}
     subtitle={t("Sign in to connect your assistant")} />;
@@ -99,6 +100,8 @@ export default function McpConsent({ requestId }) {
       window.location.reload();
     } catch (err) { setError(err.message); setBusy(false); }
   };
+  // The splash stays until the request is read: the card shows whole.
+  if (!details && !error) return <Splash />;
   return <div className="app mcpConsentPage"><div className="loginPage"><div className="loginCard mcpConsent">
     <div className="loginTitle">{t("Gamma")}</div>
     <h1 className="loginSubtitle">{t("Connect your workspace")}</h1>
@@ -125,7 +128,7 @@ export default function McpConsent({ requestId }) {
       </button>
       <button className="loginGuestBtn" disabled={busy} onClick={() => decide(false)}>{t("Cancel")}</button>
       </div>
-    </> : !error ? <p>{t("Loading connection request…")}</p> : null}
+    </> : null}
     {error ? <p className="loginError" role="alert">{error}</p> : null}
     <button className="loginGuestBtn" disabled={busy} onClick={switchAccount}>{t("Use another account")}</button>
   </div></div></div>;

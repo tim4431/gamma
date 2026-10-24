@@ -20,6 +20,7 @@ import { highlightCode } from "../../editor/codeHighlight.js";
 import { t } from "../../shared/i18n/i18n.js";
 import { Popover } from "./Surfaces";
 import { Chevron, IconSwap, MorphText } from "./MotionWidgets";
+import ListMotion from "./ListMotion";
 
 // Shared chrome for every dockable window: one grip (drag to move or
 // reorder, double press to fold), the close button right beside it, then
@@ -440,13 +441,29 @@ function PopoverAnchor({ name, children, className = "" }) {
 // title and carry a pin (click to unpin) where the close button would be.
 // The strip keeps the active tab in view, pans with a plain mouse wheel, and
 // when it overflows fades its right edge and shows a "⌄ n" button whose
-// popover lists every open tab with a filter.
+// popover lists every open tab with a filter. The tabs are a list that moves
+// (ListMotion, docs/dev/ui-design.md "Lists that change"): one opened rises
+// in, one closed sinks back out where it stood, and the others glide to
+// their places; tabs read from elsewhere (this browser's cache, the server's
+// copy) come `still`.
 const TAB_FADE = 40; // the right-edge fade the active tab keeps clear of
+// Until the person has pressed or typed anything in this window, what
+// changes the strip is the window loading (its tabs read back, the page it
+// opened on getting its tab): nothing moves for that.
+let acted = false;
+const onAct = (event) => {
+  if (!event.isTrusted) return;
+  acted = true;
+  window.removeEventListener("pointerdown", onAct, true);
+  window.removeEventListener("keydown", onAct, true);
+};
+window.addEventListener("pointerdown", onAct, true);
+window.addEventListener("keydown", onAct, true);
 
 function OpenTabs({
   tabs,
   activeId,
-  tabElements,
+  still = false,
   kindOf,
   menuOpen = false,
   onMenuOpenChange,
@@ -461,6 +478,7 @@ function OpenTabs({
   const dragTab = useRef(null);
   const [draggingId, setDraggingId] = useState(null);
   const stripRef = useRef(null);
+  const tabElements = useRef(new Map());
   const wheelPan = useWheelPan();
   const setStrip = useCallback((el) => { stripRef.current = el; wheelPan(el); }, [wheelPan]);
   // Whether the tabs overflow the strip, and whether it is scrolled to its
@@ -493,7 +511,7 @@ function OpenTabs({
       else if (strip.scrollLeft < right) strip.scrollLeft = right;
     }
     measure();
-  }, [activeId, tabs, tabElements, measure]);
+  }, [activeId, tabs, measure]);
   // The strip stops overflowing (tabs closed): the menu has nothing to add.
   useEffect(() => { if (!overflow.over && menuOpen) onMenuOpenChange?.(false); }, [overflow.over, menuOpen, onMenuOpenChange]);
 
@@ -518,71 +536,82 @@ function OpenTabs({
     <>
       <div ref={setStrip} role="tablist" data-guide="header.tabs"
         className={`tabStrip${overflow.over && !overflow.atEnd ? " fadeEnd" : ""}`}>
-        {tabs.map((tab) => (
-          <div
-            key={tab.id}
-            role="tab"
-            aria-selected={tab.id === activeId}
-            ref={(element) => {
-              if (element) tabElements.current.set(tab.id, element);
-              else tabElements.current.delete(tab.id);
-            }}
-            className={`tab ${tab.id === activeId ? "active" : ""} ${draggingId === tab.id ? "dragging" : ""} ${tab.pinned ? "pinned" : ""}`}
-            title={tab.title}
-            draggable
-            onDragStart={(event) => {
-              dragTab.current = tab.id;
-              setDraggingId(tab.id);
-              event.dataTransfer.effectAllowed = "move";
-            }}
-            onDragEnd={() => {
-              dragTab.current = null;
-              setDraggingId(null);
-            }}
-            onDragOver={(event) => {
-              const draggedId = dragTab.current;
-              if (!draggedId || draggedId === tab.id) return;
-              event.preventDefault();
-              onReorder(draggedId, tab.id);
-            }}
-            onDrop={(event) => event.preventDefault()}
-            onClick={() => {
-              if (tab.id !== activeId) onOpen(tab.id);
-            }}
-            {...menuPress((event) => {
-              event.preventDefault();
-              onContext(tab, event.clientX, event.clientY);
-            })}
-          >
-            <span className="tabKind">{kindIcon(tab, 14)}</span>
-            <span className="tabTitle">{tab.title}</span>
-            {tab.pinned ? (
-              <button
-                className="uiClose tabClose tabPin"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onTogglePin?.(tab.id);
-                }}
-                title={t("Unpin tab")}
-                aria-label={t("Unpin tab")}
-              >
-                <PinIcon filled size={14} />
-              </button>
-            ) : (
-              <button
-                className="uiClose tabClose"
-                onClick={(event) => {
-                  event.stopPropagation();
-                  onClose(tab.id);
-                }}
-                title={t("Close tab")}
-                aria-label={t("Close {title}", { title: tab.title })}
-              >
-                <XIcon size={14} />
-              </button>
-            )}
-          </div>
-        ))}
+        {/* Measured in the window: a close that narrows a strip scrolled to
+            its end scrolls it back, and the tabs before the one closed
+            glide over its place from the left. */}
+        <ListMotion keys={tabs.map((tab) => tab.id)} still={still || !acted} enter="rise" leave="tab"
+          strip={["role", "aria-selected"]}>
+          {tabs.map((tab) => (
+            <div
+              key={tab.id}
+              data-motion-key={tab.id}
+              role="tab"
+              aria-selected={tab.id === activeId}
+              ref={(element) => {
+                if (element) tabElements.current.set(tab.id, element);
+                else tabElements.current.delete(tab.id);
+              }}
+              className={`tab ${tab.id === activeId ? "active" : ""} ${draggingId === tab.id ? "dragging" : ""} ${tab.pinned ? "pinned" : ""}`}
+              title={tab.title}
+              draggable
+              onDragStart={(event) => {
+                dragTab.current = tab.id;
+                setDraggingId(tab.id);
+                event.dataTransfer.effectAllowed = "move";
+              }}
+              onDragEnd={() => {
+                dragTab.current = null;
+                setDraggingId(null);
+              }}
+              onDragOver={(event) => {
+                const draggedId = dragTab.current;
+                if (!draggedId || draggedId === tab.id) return;
+                event.preventDefault();
+                // A tab still gliding to the place a swap gave it passes under
+                // the pointer on its way: it is not where it stands, and
+                // swapping with it would only swap back.
+                if (event.currentTarget.hasAttribute("data-moving")) return;
+                onReorder(draggedId, tab.id);
+              }}
+              onDrop={(event) => event.preventDefault()}
+              onClick={() => {
+                if (tab.id !== activeId) onOpen(tab.id);
+              }}
+              {...menuPress((event) => {
+                event.preventDefault();
+                onContext(tab, event.clientX, event.clientY);
+              })}
+            >
+              <span className="tabKind">{kindIcon(tab, 14)}</span>
+              <span className="tabTitle">{tab.title}</span>
+              {tab.pinned ? (
+                <button
+                  className="uiClose tabClose tabPin"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onTogglePin?.(tab.id);
+                  }}
+                  title={t("Unpin tab")}
+                  aria-label={t("Unpin tab")}
+                >
+                  <PinIcon filled size={14} />
+                </button>
+              ) : (
+                <button
+                  className="uiClose tabClose"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onClose(tab.id);
+                  }}
+                  title={t("Close tab")}
+                  aria-label={t("Close {title}", { title: tab.title })}
+                >
+                  <XIcon size={14} />
+                </button>
+              )}
+            </div>
+          ))}
+        </ListMotion>
       </div>
       {overflow.over ? (
         <span data-popover="tabs" className="popoverAnchor tabsMenuAnchor">

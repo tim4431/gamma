@@ -263,6 +263,25 @@ an empty folder is real, shared and synced like any; a name a sibling has
 already makes nothing. The toolbar is filter box → sort → kind → list/grid
 → Select.
 
+**What moves.** The listing shows once it has loaded: before, it is blank,
+so it never says it is empty before its rows arrive. A read that fails
+ends the wait too: the New page and New folder items show, with "Could
+not load the library." and a Try again button in place of the empty line
+or the start panel. Within one listing an item added, removed or moved by
+its sort glides the others to their places (`ListMotion`,
+[ui-design.md](ui-design.md) "Lists that change"): a new row fades in and
+a new card grows in where it will rest, and one that goes fades (a row)
+or shrinks away (a card) where it stood while the rest close up. Another
+view, kind filter, folder or label is another listing, which comes into
+focus where it stands; a sort, the filter box's text and Load more change
+the listing at once. A read that is a load moves nothing either
+(`fetchHomeBlocks({ still: true })`): the listing read again on coming
+home from a page, on the window's wake or after a metadata refresh, and
+the server's view history landing after the listing. Each marks what it
+sets (`homeReadRef`), and a change is still when everything it changed
+came from such a read. A read after the person's own write (a delete, a
+new folder, a filing) moves.
+
 **Selecting.** A click selects, Ctrl/⌘+click toggles one item and
 Shift+click extends a range; a finger's tap opens instead, as in a phone's
 file manager (`isTap`). **Select** in the toolbar is the way to pick

@@ -161,4 +161,55 @@ export async function authScenarios({ server, browser, alice, step, until, asser
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
+
+  await step("auth: one splash, its mark drawn in place, holds until the library, which never says it is empty before its rows", async () => {
+    const ctx = await alice.context(browser);
+    try {
+      // A server a little away: the session and the listing each take a beat.
+      for (const url of ["**/api/session", "**/api/blocks/root/children"]) {
+        await ctx.route(url, async (route) => { await new Promise((r) => setTimeout(r, 300)); await route.continue(); });
+      }
+      // What the page showed before the rows, caught as it went in.
+      await ctx.addInitScript(() => {
+        const seen = (window.__shown = { splash: 0, picture: 0, card: 0, empty: 0 });
+        new MutationObserver(() => {
+          if (document.querySelector(".fileRow")) return;
+          if (document.querySelector("#splash svg.mark")) seen.splash++;
+          if (document.querySelector("#splash img")) seen.picture++;
+          if (document.querySelector(".loginCard")) seen.card++;
+          if (document.querySelector(".blockList .empty")) seen.empty++;
+        }).observe(document, { childList: true, subtree: true });
+      });
+      const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+      await page.locator(".fileRow").first().waitFor({ timeout: 15000 });
+      const shown = await page.evaluate(() => window.__shown);
+      assert(shown.splash > 0, "the splash showed while the session was read");
+      assertEq(shown.picture, 0, "its mark never waits on a picture");
+      assertEq(shown.card, 0, "no card of its own while the session is read");
+      assertEq(shown.empty, 0, "the listing never says it is empty before its rows");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("auth: a first listing read that fails ends the wait: New page and New folder show under a line that says so, and Try again brings the rows", async () => {
+    const ctx = await alice.context(browser);
+    try {
+      let failed = false;
+      await ctx.route("**/api/blocks/root/children*", async (route) => {
+        if (failed) return route.continue();
+        failed = true;
+        return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ detail: "Service unavailable" }) });
+      });
+      const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+      const line = page.locator(".blockList .empty", { hasText: "Could not load the library." });
+      await line.waitFor();
+      assert(await page.locator(".folderNewBtn", { hasText: "New page" }).isVisible(), "New page shows");
+      assert(await page.locator(".folderNewBtn", { hasText: "New folder" }).isVisible(), "New folder shows");
+      assertEq(await page.getByText("No pages yet", { exact: false }).count(), 0, "it never says the library is empty");
+      await line.getByRole("button", { name: "Try again", exact: true }).click();
+      await page.locator(".fileRow").first().waitFor();
+      assertEq(await line.count(), 0, "the line goes as the rows come");
+      assertNoProblems(page, ["GET /api/blocks/root/children -> 503"]);
+    } finally { await ctx.close(); }
+  });
 }

@@ -2230,7 +2230,12 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
      active tab's ::after fills that band, joining the page below. */
   padding-bottom: 7px;
   margin-bottom: -7px;
-  position: relative; /* the tabs' offset parent: FLIP and scroll-into-view read offsetLeft */
+  /* As tall with no tab as with one (the tab and the padding around it), so
+     the topbar keeps its height when the first tab opens. */
+  min-height: calc(4px + var(--ctl-tab) + 7px);
+  /* The tabs' offset parent: scroll-into-view reads offsetLeft, and a closed
+     tab's copy stands, clipped, in the strip's content (ListMotion). */
+  position: relative;
 }
 .tabStrip::-webkit-scrollbar { display: none; }
 /* Tabs hidden past the right edge: the strip fades out there (gone once it
@@ -2238,10 +2243,6 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .tabStrip.fadeEnd {
   -webkit-mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent);
   mask-image: linear-gradient(to right, #000 calc(100% - 40px), transparent);
-}
-@keyframes tabIn {
-  from { opacity: 0; transform: translateY(4px); }
-  to { opacity: 1; transform: translateY(0); }
 }
 .tab {
   display: flex;
@@ -2260,8 +2261,6 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   border-bottom: none;
   min-height: var(--ctl-tab);
   transition: background var(--dur-fast), color var(--dur-fast);
-  animation: tabIn var(--dur-base) var(--ease-out);
-  will-change: transform;
   position: relative;
 }
 /* Chrome-style divider bar between adjacent tabs… */
@@ -4406,11 +4405,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
   line-height: var(--lh-tight);
   margin-bottom: 12px;
 }
-.loginLoading {
-  color: var(--text-muted);
-  text-align: center;
-  margin-bottom: 24px;
-}
 .loginSubtitle {
   color: var(--text-secondary);
   text-align: center;
@@ -5200,10 +5194,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .transferDot.info { background: var(--accent); }
 
 /* --- global Back button (topbar) --- */
-@keyframes navBackIn {
-  from { opacity: 0; transform: translateX(-6px) scale(0.85); }
-  to { opacity: 1; transform: translateX(0) scale(1); }
-}
+@keyframes navBackIn { from { opacity: 0; translate: -6px 0; scale: 0.85; } }
 .topbar .navBackBtn {
   position: relative;
   border-radius: 50%;
@@ -5212,15 +5203,15 @@ a.shareBrand:hover { background: var(--bg-hover); }
   color: var(--accent);
   box-shadow: var(--shadow-1);
   animation: navBackIn var(--dur-base) var(--ease-out);
-  transition: background var(--dur-fast), border-color var(--dur-fast), transform var(--dur-fast);
+  transition: background var(--dur-fast), border-color var(--dur-fast), translate var(--dur-fast) var(--ease-out), scale var(--dur-fast) var(--ease-out);
 }
 .topbar .navBackBtn:hover {
   background: var(--accent-bg);
   border-color: var(--accent-fill);
   color: var(--accent-bright);
-  transform: translateX(-1px);
+  translate: -1px 0;
 }
-.topbar .navBackBtn:active { transform: translateX(-2px) scale(0.95); }
+.topbar .navBackBtn:active { translate: -2px 0; scale: 0.95; }
 .navBackBadge {
   position: absolute;
   top: -3px;
