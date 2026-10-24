@@ -20,6 +20,7 @@ import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
 import { PaneHead, Section, Row, SubDialog, Field, DialogButtons, Empty, QuotaMeter, UnitInput, AccountPicker, Segmented, WorkspaceFolder } from "./SettingsKit";
 import { MirrorsSection, useMirrors } from "./SettingsMirrors";
+import { useSettingsRead } from "./settingsReads.js";
 import {
   CheckIcon, DatabaseIcon, ExportIcon, FoldersIcon, GlobeIcon, HardDriveIcon, ImportIcon, LogOutIcon, PenIcon,
   PlusIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon,
@@ -32,15 +33,11 @@ export const ACCESS_OPTIONS = [["private", t("Private"), UsersIcon], ["public", 
 export const PUBLIC_ROLE_OPTIONS = [["viewer", t("Everyone can view")], ["editor", t("Everyone can edit")]];
 
 // The account directory (GET /api/accounts) for the pickers: null while
-// loading, [] when it cannot be read (the guest).
+// loading, [] when it cannot be read (the guest). In the Settings dialog
+// it is the pane's read, kept while the dialog is open (settingsReads.js).
 export function useAccounts() {
-  const [accounts, setAccounts] = React.useState(null);
-  React.useEffect(() => {
-    let live = true;
-    apiJson(`${API}/accounts`).then((d) => { if (live) setAccounts(d.accounts || []); }).catch(() => { if (live) setAccounts([]); });
-    return () => { live = false; };
-  }, []);
-  return accounts;
+  const { data, error } = useSettingsRead("/accounts");
+  return data ? data.accounts || [] : error ? [] : null;
 }
 
 // A Gamma Cloud username as typed ("@Alice " → "alice"); the server checks
@@ -50,13 +47,7 @@ export const cloudUsername = (text) => String(text || "").trim().replace(/^@/, "
 // Whether this server signs people in with Gamma Cloud (GET /api/server-config)
 // — what lets an owner invite someone by their cloud username.
 export function useCloudSignIn() {
-  const [on, setOn] = React.useState(false);
-  React.useEffect(() => {
-    let live = true;
-    apiJson(`${API}/server-config`).then((c) => { if (live) setOn(!!c?.cloud?.enabled); }).catch(() => {});
-    return () => { live = false; };
-  }, []);
-  return on;
+  return !!useSettingsRead("/server-config").data?.cloud?.enabled;
 }
 
 // One workspace as the Settings dialogs see it: GET /api/workspaces/{id}
@@ -582,8 +573,10 @@ export function WorkspaceDataMenus({ w, exportWorkspace, importWorkspace, closeS
 export function WorkspacesSettings({ value, onServer }) {
   const { workspace, me, isAdmin, switchWorkspace, refreshSession,
           exportWorkspace, exportAll, importWorkspace, setStatus, confirm, closeSettings } = value;
-  const [data, setData] = React.useState(null);  // GET /api/workspaces/mine: {workspaces, account}
-  const [error, setError] = React.useState("");
+  // GET /api/workspaces/mine: {workspaces, account}, the pane's read (settingsReads.js)
+  const { data, error: readError, reload } = useSettingsRead("/workspaces/mine");
+  const [ownError, setError] = React.useState("");
+  const error = ownError || readError;
   const [manage, setManage] = React.useState(null); // workspace id
   const [creating, setCreating] = React.useState(false);
   const [createError, setCreateError] = React.useState("");
@@ -594,9 +587,8 @@ export function WorkspacesSettings({ value, onServer }) {
   const [mirrors, refreshMirrors] = useMirrors(signedIn);
 
   const refresh = React.useCallback(() => {
-    apiJson(`${API}/workspaces/mine`).then(setData).catch((err) => setError(err.message));
-  }, []);
-  React.useEffect(() => { refresh(); }, [refresh]);
+    reload().then(() => setError(""), (err) => setError(err.message));
+  }, [reload]);
   // A new clone is also a new workspace: read both lists again.
   const refreshClones = React.useCallback(() => { refreshMirrors(); refresh(); }, [refreshMirrors, refresh]);
 
@@ -678,7 +670,7 @@ export function WorkspacesSettings({ value, onServer }) {
   return (
     <>
       <PaneHead icon={FoldersIcon} title={t("Workspaces")} />
-      {!data && !error ? <Empty icon={UsersIcon}>{t("Loading…")}</Empty> : null}
+      {!data && !error ? <Empty icon={UsersIcon} loading>{t("Loading…")}</Empty> : null}
       {error ? <Empty icon={UsersIcon}>{t("Workspaces unavailable — {error}", { error: error })}</Empty> : null}
       {data ? (
         <>

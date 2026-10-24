@@ -1,24 +1,21 @@
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
-import { Row, useSettingsDraft } from "./SettingsKit";
+import { Row, useSettingsDraft, useDraftOf } from "./SettingsKit";
+import { useSettingsRead } from "./settingsReads.js";
 import { LinkIcon } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { t } from "../shared/i18n/i18n.js";
 
+// Settings → Server → Assistant connections: the address assistants reach
+// this server at, over /api/admin/settings (the pane's one read of it).
 export function PublicUrlSettings({ setStatus }) {
-  const [saved, setSaved] = React.useState(null);
-  const [draft, setDraft] = React.useState("");
-  const [error, setError] = React.useState("");
-  const [busy, setBusy] = React.useState(false);
+  const { data: saved, error: readError, set: setSaved } = useSettingsRead("/admin/settings");
   const suggested = window.location.origin;
   const initial = (value) => value.public_url || suggested;
-  React.useEffect(() => {
-    let active = true;
-    apiJson(`${API}/admin/settings`).then((value) => {
-      if (active) { setSaved(value); setDraft(initial(value)); }
-    }).catch((err) => { if (active) setError(err.message); });
-    return () => { active = false; };
-  }, []);
+  const [draft, setDraft] = useDraftOf(saved, initial, "");
+  const [saveError, setError] = React.useState("");
+  const error = saveError || (!saved ? readError : "");
+  const [busy, setBusy] = React.useState(false);
   const managed = saved?.public_url_source === "environment";
   const dirty = !!saved && !managed && draft !== initial(saved);
   const discard = () => { setDraft(initial(saved)); setError(""); };

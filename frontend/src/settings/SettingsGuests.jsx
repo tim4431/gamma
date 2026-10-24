@@ -6,29 +6,27 @@
 // (GAMMA_GUEST_TTL_HOURS, GAMMA_DEMO) overrides the saved value, and the row
 // is then read-only. A server that can take no guest logins (a hosted
 // container, a share host, GAMMA_GUEST_MAX=0) has no Guests section — there
-// is nothing to switch on. docs/dev/guests.md.
+// is nothing to switch on. docs/dev/guests.md. The settings are the Server
+// pane's one read of /api/admin/settings (settingsReads.js).
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { Row, Section, Toggle, UnitInput } from "./SettingsKit";
+import { useSettingsRead } from "./settingsReads.js";
 import { ClockIcon, GlobeIcon, UserIcon } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
 
 const envHint = (name) => t("Set by {name} in the server's environment", { name });
 
 export function GuestSettings({ setStatus }) {
-  const [saved, setSaved] = React.useState(null);
-  const [error, setError] = React.useState("");
-  React.useEffect(() => {
-    let active = true;
-    apiJson(`${API}/admin/settings`).then((value) => { if (active) setSaved(value); })
-      .catch((err) => { if (active) setError(err.message); });
-    return () => { active = false; };
-  }, []);
+  const { data: saved, error: readError, set: setSaved } = useSettingsRead("/admin/settings");
+  const [saveError, setError] = React.useState("");
+  const error = saveError || (!saved ? readError : "");
   // Only the changed field: another box committing meanwhile keeps its value.
-  // A switch shows its new state at once and flips back if the save fails.
+  // A switch shows its new state at once and flips back if the save fails
+  // (only its own field: the other sections over these settings keep theirs).
   async function save(patch, message) {
     setError("");
-    const before = saved;
+    const before = Object.fromEntries(Object.keys(patch).map((key) => [key, saved[key]]));
     setSaved((prev) => ({ ...prev, ...patch }));
     try {
       setSaved(await apiJson(`${API}/admin/settings`, {
@@ -36,7 +34,7 @@ export function GuestSettings({ setStatus }) {
       }));
       setStatus?.(message);
     } catch (err) {
-      setSaved(before);
+      setSaved((prev) => ({ ...prev, ...before }));
       setError(t("Could not save: {message}", { message: err.message }));
     }
   }
@@ -47,7 +45,7 @@ export function GuestSettings({ setStatus }) {
   }
   if (saved?.guest_logins_available === false) return null;
   if (!saved) return <Section title={t("Guests")}>
-    {error ? <p className="settingsPaneHint aiKeysError" role="alert">{error}</p> : <p className="setNotice">{t("Loading…")}</p>}
+    {error ? <p className="settingsPaneHint aiKeysError" role="alert">{error}</p> : <p className="setNotice loadingHint">{t("Loading…")}</p>}
   </Section>;
   const ttlManaged = saved.guest_ttl_source === "environment";
   const demoManaged = saved.demo_mode_source === "environment";

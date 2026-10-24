@@ -1088,8 +1088,12 @@ is plain markup, and a first render never moves.
   settings while it asks for them again, the Inbox opens each tab on the
   first page it showed last and refreshes it in place, and Recently deleted
   asks for its list with its module, as the pointer or the focus reaches
-  its button, so it lands whole. Search results, which change with every
-  key, take none.
+  its button, so it lands whole. A Settings pane does the same: its reads go
+  out as the pointer or the focus reaches its sidebar button, the pane
+  before stays until they are in (at most 250 ms), and a pane read before
+  shows at once and is read again in place ([settings.md](settings.md)
+  "What a pane reads"). Search results, which change with every key, take
+  none.
 - A switch's thumb travels with `--ease-pop`, its one overshoot.
 - **`.shakeNo`**, replayed by removing and adding it: a field that
   refused what was typed shakes once, a small no (a wrong password at

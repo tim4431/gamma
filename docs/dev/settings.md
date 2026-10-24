@@ -727,6 +727,45 @@ dialogs protect unsaved drafts on Cancel, Escape and backdrop dismissal.
 `useSettingsDraft` registers dirty editors with the settings navigation
 guard.
 
+### What a pane reads
+
+The sections of a pane read the server through one store, made each time
+the dialog opens and kept until it closes
+([settingsReads.js](../../frontend/src/settings/settingsReads.js)): one
+entry per path, shared by every section over it. The Server pane's five
+sections over `/api/admin/settings` (the public URL, sign-in, the plan, the
+storage defaults, guests) make one request, and what one of them saves the
+others show. `useSettingsRead(path, {poll})` gives a section the entry
+(`data`, `error`, `set` for what a write answered, `reload`); a read whose
+answer is less than three seconds old, or one already on its way, is taken
+rather than sent again, and only the newest read sent lands: one asked for
+again after a change goes out at once, and an answer that lands after a
+write to the same path is older than what the write brought, so it is
+dropped. A form over
+read values (`useDraftOf`, SettingsKit.jsx) follows them as they are read
+again, unless it was edited since.
+
+`PANE_READS` names each pane's reads, in the order they go out: what the
+top of the pane shows first, since the browser keeps six requests in
+flight to the server. A read may lead to others once it lands (Backups: each
+workspace's snapshots), and one marked `later` (the server log, the account
+pickers' directory) goes out with the rest without being waited for. They
+start together from the pointer or the focus reaching a pane's sidebar
+button, so a click mostly finds them in, and from the click itself. A
+pane asked for from the sidebar or a search result keeps the one before on
+screen, its own button already marked, until its reads are in or 250 ms
+have passed (`HOLD_MS`); it then shows with what it has, its placeholders
+fading in only after a moment (`.loadingHint`; `Empty`'s and `LogBox`'s
+`loading`). A pane whose reads are in shows at once, and its reads go out
+again to refresh it in place: a second visit is instant. Settings opened
+straight onto a pane (a notice, the chat's AI tiles) shows it at once, its
+reads starting together as it mounts. A test checks that every path a
+section reads is named in `PANE_READS` (`tests/settingsReads.test.mjs`).
+Measured at 150 ms of latency, the Server pane went from 12 requests in five
+waves, its sections jumping down four times as the ones above them filled,
+to 8 requests in two waves and one switch at 208 ms with every section in
+place (at once after a hover).
+
 ## Chat settings are global
 
 The chat's shortcuts edit the **same shared preferences** as Settings: the
@@ -784,7 +823,8 @@ accept a `draft` value for dismissal protection. See
 
 ## Verification
 
-`npm test` covers permission presets, search visibility and legacy pane aliases.
+`npm test` covers permission presets, search visibility, legacy pane aliases
+and the panes' shared reads (`tests/settingsReads.test.mjs`).
 After building, `npm run e2e -- --only settings` exercises the actual UI:
 preferences and reload, management navigation, prompt/connection draft guards,
 shared chat settings, mobile layout, administrator account separation, and

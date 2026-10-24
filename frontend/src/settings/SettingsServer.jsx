@@ -7,8 +7,12 @@
 // the database check, whole-data-directory snapshots (SettingsBackups.jsx
 // ServerBackups) and the scrubbed server log with a level filter. Per-account things — including each account's personal
 // workspaces — stay in Users; per-workspace backups in Backups.
+// The sections read through the dialog's store (settingsReads.js), so the
+// pane's reads go out together and /api/admin/settings is read once for
+// all the sections over it.
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
+import { LOG_START, useSettingsRead } from "./settingsReads.js";
 import { PaneHead, Section, Row, Segmented, StatText, UnitInput, LogBox } from "./SettingsKit";
 import { WorkspacesAdmin } from "./SettingsWorkspacesAdmin";
 import { ServerBackups } from "./SettingsBackups";
@@ -23,7 +27,6 @@ import { fmtDate, t, tn } from "../shared/i18n/i18n.js";
 
 export function ServerSettings({ value }) {
   const [signInAction, setSignInAction] = React.useState(null);
-  const [planSyncs, setPlanSyncs] = React.useState(0); // a Sync now reloads the storage rows the plan caps
   return (
     <>
       <PaneHead icon={ServerIcon} title={t("Server")} />
@@ -36,9 +39,9 @@ export function ServerSettings({ value }) {
       <Section title={t("Sign-in")} action={signInAction}>
         <CloudSignInSettings setStatus={value.setStatus} action={setSignInAction} />
       </Section>
-      <HostedPlan setStatus={value.setStatus} onSynced={() => { setPlanSyncs((n) => n + 1); value.refreshQuota?.(); }} />
+      <HostedPlan setStatus={value.setStatus} onSynced={() => value.refreshQuota?.()} />
       <Section title={t("Storage defaults")}>
-        <ServerLimitRows key={planSyncs} setStatus={value.setStatus} refreshQuota={value.refreshQuota} />
+        <ServerLimitRows setStatus={value.setStatus} refreshQuota={value.refreshQuota} />
       </Section>
       <GuestSettings setStatus={value.setStatus} />
       <SharedAiProviderSettings setStatus={value.setStatus} confirm={value.confirm} />
@@ -83,28 +86,24 @@ function updateHint(info) {
 // Docker server cannot update itself, so an available update is a hint
 // to pull the image; the desktop app updates on its own.
 function ServerDashboard() {
-  const [info, setInfo] = React.useState(null);
-  const [error, setError] = React.useState("");
+  const { data: info, error: readError, set: setInfo } = useSettingsRead("/admin/server-info", { poll: 30000 });
+  const [checkError, setCheckError] = React.useState("");
   const [checking, setChecking] = React.useState(false);
-  const load = React.useCallback(async (refresh) => {
-    if (refresh) setChecking(true);
+  const error = checkError || readError;
+  async function checkNow() {
+    setChecking(true);
     try {
-      setInfo(await apiJson(`${API}/admin/server-info${refresh ? "?refresh=1" : ""}`));
-      setError("");
+      setInfo(await apiJson(`${API}/admin/server-info?refresh=1`));
+      setCheckError("");
     } catch (err) {
-      setError(err.message);
+      setCheckError(err.message);
     } finally {
       setChecking(false);
     }
-  }, []);
-  React.useEffect(() => {
-    load(false);
-    const timer = setInterval(() => load(false), 30000);
-    return () => clearInterval(timer);
-  }, [load]);
+  }
   if (!info) {
     return error ? <p className="settingsPaneHint aiKeysError" role="alert">{t("Dashboard unavailable: {error}", { error: error })}</p>
-      : <p className="setNotice">{t("Loading…")}</p>;
+      : <p className="setNotice loadingHint">{t("Loading…")}</p>;
   }
   const counts = info.log_counts || {};
   const logTone = counts.error ? "error" : counts.warning ? "warn" : "";
@@ -130,7 +129,7 @@ function ServerDashboard() {
         ) : info.latest?.url ? (
           <button className="uiBtn sm" onClick={() => window.open(info.latest.url, "_blank", "noopener")}>{t("Release notes")}</button>
         ) : null}
-        <button className={`uiBtn sm ${updateTone ? "primary" : ""}`} disabled={checking} onClick={() => load(true)}>
+        <button className={`uiBtn sm ${updateTone ? "primary" : ""}`} disabled={checking} onClick={checkNow}>
           <MorphText>{checking ? t("Checking…") : t("Check now")}</MorphText>
         </button>
       </span>
@@ -166,21 +165,18 @@ const POLICY_NAMES = { refuse: t("linked accounts only"), claim: t("cloud accoun
 // (Manage plan); Sync now (POST /api/admin/hosted/sync) asks for the
 // answer again instead of waiting for the hourly sync.
 function HostedPlan({ setStatus, onSynced }) {
-  const [pane, setPane] = React.useState(null);
+  const { data: settings, set: setSettings, reload } = useSettingsRead("/admin/settings");
   const [error, setError] = React.useState("");
   const [busy, setBusy] = React.useState(false);
-  React.useEffect(() => {
-    let active = true;
-    apiJson(`${API}/admin/settings`).then((v) => { if (active) setPane(v.hosted || null); }).catch(() => {});
-    return () => { active = false; };
-  }, []);
+  const pane = settings?.hosted || null;
   if (!pane) return null;
   async function sync() {
     setBusy(true); setError("");
     try {
       const d = await apiJson(`${API}/admin/hosted/sync`, { method: "POST" });
-      setPane(d.hosted); // a failed sync shows as the pane's last_failure
-      if (d.ok) { setStatus(t("The plan was synced with Gamma Cloud.")); onSynced?.(); }
+      setSettings((s) => ({ ...s, hosted: d.hosted })); // a failed sync shows as the pane's last_failure
+      // the plan caps the storage rows below: the settings are read again
+      if (d.ok) { setStatus(t("The plan was synced with Gamma Cloud.")); reload().catch(() => {}); onSynced?.(); }
     } catch (err) { setError(t("Could not sync: {message}", { message: err.message })); }
     finally { setBusy(false); }
   }
@@ -247,11 +243,9 @@ function limitHint(saved, key, own) {
 // Each limit saves when its box commits (Enter / blur), like every other
 // setting; an invalid entry snaps back to the stored value.
 function ServerLimitRows({ setStatus, refreshQuota }) {
-  const [saved, setSaved] = React.useState(null);
-  const [error, setError] = React.useState("");
-  React.useEffect(() => {
-    apiJson(`${API}/admin/settings`).then(setSaved).catch((err) => setError(err.message));
-  }, []);
+  const { data: saved, error: readError, set: setSaved } = useSettingsRead("/admin/settings");
+  const [saveError, setError] = React.useState("");
+  const error = saveError || (!saved ? readError : "");
   // The box commits only after an edit, so every commit is sent: a check
   // against `saved` could read a value an earlier save has already replaced
   // on the server and drop this one.
@@ -281,7 +275,7 @@ function ServerLimitRows({ setStatus, refreshQuota }) {
         <UnitInput unit="MB" min={0} value={String(saved.quota_mb)}
           onCommit={(raw) => commit("quota_mb", raw, 0)} />
       </Row>
-    </> : !error ? <p className="setNotice">{t("Loading…")}</p> : null}
+    </> : !error ? <p className="setNotice loadingHint">{t("Loading…")}</p> : null}
     {error ? <p className="settingsPaneHint aiKeysError" role="alert">{error}</p> : null}
   </>;
 }
@@ -331,35 +325,43 @@ function DatabaseCheck({ setStatus }) {
 const LEVEL_FILTERS = [["all", t("All")], ["warn", t("Warnings")], ["error", t("Errors")]];
 const toneOf = (level) => (level === "ERROR" || level === "CRITICAL" ? "error" : level === "WARNING" ? "warn" : "");
 
-// The backend's in-memory log (GET /api/admin/logs). Polls with a seq
-// cursor while the pane is open; secrets are scrubbed server-side before
-// entries ever reach the buffer. The filter narrows to warnings or errors.
+// The backend's in-memory log (GET /api/admin/logs). The pane's read takes
+// it from the start (LOG_START, kept in the dialog's store, so a second
+// visit shows what the first had while it reads again); then it polls
+// with a seq cursor while the pane is open, keeping the last 500 lines.
+// Secrets are scrubbed server-side before entries ever reach the buffer.
+// The filter narrows to warnings or errors.
+const LOG_KEEP = 500;
 function ServerLogBox({ setStatus }) {
-  const [entries, setEntries] = React.useState(null); // null = first poll pending
-  const [error, setError] = React.useState("");
+  const { data, error: readError, set } = useSettingsRead(LOG_START);
+  const [pollError, setPollError] = React.useState("");
   const [level, setLevel] = React.useState("all");
-  const stateRef = React.useRef({ cursor: 0, entries: [] });
+  const entries = data ? (data.entries || []).slice(-LOG_KEEP) : readError ? [] : null; // null = first read pending
+  const error = pollError || readError;
+  const latest = React.useRef(data);
+  latest.current = data;
+  const loaded = !!data;
   React.useEffect(() => {
+    if (!loaded) return undefined;
     let alive = true;
-    async function poll() {
+    const timer = setInterval(async () => {
+      const after = latest.current?.entries?.at(-1)?.seq || 0;
       try {
-        const data = await apiJson(`${API}/admin/logs?after=${stateRef.current.cursor}`);
+        const fresh = (await apiJson(`${API}/admin/logs?after=${after}`)).entries || [];
         if (!alive) return;
-        const fresh = data.entries || [];
-        if (fresh.length) {
-          stateRef.current.cursor = fresh[fresh.length - 1].seq;
-          stateRef.current.entries = [...stateRef.current.entries, ...fresh].slice(-500);
-        }
-        setEntries([...stateRef.current.entries]);
-        setError("");
+        setPollError("");
+        if (!fresh.length) return;
+        // only what is newer than the last line held: the pane's read again may have brought some
+        set((d) => {
+          const last = d?.entries?.at(-1)?.seq || 0;
+          return { ...d, entries: [...(d?.entries || []), ...fresh.filter((entry) => entry.seq > last)].slice(-LOG_KEEP) };
+        });
       } catch (err) {
-        if (alive) { setError(err.message); setEntries((prev) => prev || []); }
+        if (alive) setPollError(err.message);
       }
-    }
-    poll();
-    const timer = setInterval(poll, 2000);
+    }, 2000);
     return () => { alive = false; clearInterval(timer); };
-  }, []);
+  }, [loaded, set]);
   const shown = (entries || [])
     .map((entry) => ({ key: entry.seq, timeMs: entry.t * 1000, text: entry.msg, tone: toneOf(entry.level) }))
     .filter((entry) => level === "all" || (level === "warn" ? !!entry.tone : entry.tone === "error"));
@@ -372,6 +374,7 @@ function ServerLogBox({ setStatus }) {
       emptyText={error ? t("Server log unavailable: {error}", { error })
         : !entries ? t("Loading…") : level === "all" ? t("Nothing logged since the server started.")
             : t("No {errors} since the server started.", { errors: level === "warn" ? t("warnings") : t("errors") })}
+      loading={!entries && !error}
       copyStatus={t("Server log copied.")}
       setStatus={setStatus}
       extra={<Segmented value={level} onChange={setLevel} options={LEVEL_FILTERS} />}

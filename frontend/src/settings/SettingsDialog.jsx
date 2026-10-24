@@ -29,6 +29,7 @@ import { ServerSettings } from "./SettingsServer";
 import { dotTone } from "../app/notices";
 import { resolveSettingsPane } from "./settingsNavigation";
 import { searchSettings } from "./settingsSearch.js";
+import { SettingsReadsContext, createSettingsReads, useSettingsRead } from "./settingsReads.js";
 import { TranslationSettings } from "./SettingsTranslation";
 import {
   ActivityIcon,
@@ -376,8 +377,7 @@ async function requestReindex(setStatus, scheduledSuffix, wakeTasks) {
 
 // Everyone sees their own usage against their effective limits (GET /api/quota).
 function StorageCard() {
-  const [q, setQ] = React.useState(null);
-  React.useEffect(() => { apiJson(`${API}/quota`).then(setQ).catch(() => {}); }, []);
+  const q = useSettingsRead("/quota").data;
   if (!q) return null;
   return (
     <div className="setCard" data-setting={t("Uploaded files")}>
@@ -433,9 +433,12 @@ function fmtStoredAt(stamp, now = new Date()) {
     ? { month: "short", day: "numeric" } : { year: "numeric", month: "short", day: "numeric" });
 }
 
+// The table is the pane's read of /api/metadata/status (settingsReads.js),
+// kept while the dialog is open.
 function MetaStatusSection({ value }) {
-  const [papers, setPapers] = React.useState(null); // null = loading
-  const [error, setError] = React.useState("");
+  const status = useSettingsRead("/metadata/status");
+  const papers = status.data ? status.data.papers || [] : status.error ? [] : null; // null = loading
+  const error = status.error;
   const [selected, setSelected] = React.useState(() => new Set());
   const [starting, setStarting] = React.useState(false);
   const [sortMode, setSortMode] = React.useState("meta"); // meta | text | updated
@@ -453,18 +456,15 @@ function MetaStatusSection({ value }) {
     wasRunning.current = !!job;
   }, [job]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function refresh() {
-    try {
-      const data = await apiJson(`${API}/metadata/status`);
-      setPapers(data.papers || []);
-      setError("");
-      setSelected((prev) => new Set([...prev].filter((id) => (data.papers || []).some((p) => p.id === id))));
-    } catch (err) {
-      setError(err.message);
-      setPapers((prev) => prev || []);
-    }
+  function refresh() {
+    status.reload().catch(() => {});
   }
-  React.useEffect(() => { refresh(); }, []);
+  // A selected paper that is gone from the table is no longer selected.
+  React.useEffect(() => {
+    if (!status.data) return;
+    const ids = new Set((status.data.papers || []).map((p) => p.id));
+    setSelected((prev) => (prev.size ? new Set([...prev].filter((id) => ids.has(id))) : prev));
+  }, [status.data]);
 
   // Indexing runs in a background thread server-side, so after scheduling we
   // re-poll the table a few times to let the dots fill in. A newer poll (or
@@ -649,7 +649,7 @@ function MetaStatusSection({ value }) {
         </span>
       }
     >
-      {papers === null ? <Empty icon={ListIcon}>{t("Loading…")}</Empty> : null}
+      {papers === null ? <Empty icon={ListIcon} loading>{t("Loading…")}</Empty> : null}
       {error ? <Empty icon={ActivityIcon}>{t("Status unavailable — {error}", { error: error })}</Empty> : null}
       {papers !== null && !list.length && !error ? <Empty icon={PaperIcon}>{t("No papers yet — open a PDF first.")}</Empty> : null}
       {list.length ? (
@@ -1041,6 +1041,10 @@ function SearchResults({ results, query, nav, onPick }) {
 const SYNC_POLL_MS = 15000;
 const SYNC_SOON_MS = 6000; // the server pushes to Gamma Cloud 5 s after a change lands
 
+// How long a pane opened from the sidebar waits for its reads before it
+// shows with what it has: about a round trip and a half on a slow link.
+const HOLD_MS = 250;
+
 // The account profile's sync state for the section tags while the dialog is
 // open: this browser's (useProfileSync, `local`, per preference name) plus
 // this server's with Gamma Cloud (GET /api/auth/cloud/sync-status, `cloud`,
@@ -1078,6 +1082,10 @@ export default function SettingsDialog({
   context, search, users, workspace, backups, server, diagnostics, profileSync, notices,
 }) {
   const syncState = useCloudSyncStatus(!!activePane, profileSync);
+  // What the panes read, kept while the dialog is open (settingsReads.js).
+  const reads = React.useMemo(() => createSettingsReads(), [!!activePane]); // eslint-disable-line react-hooks/exhaustive-deps
+  const who = React.useMemo(() => ({ admin: !!users?.isAdmin, signedIn: !!users?.me && !users.isGuest }),
+    [users?.isAdmin, users?.me, users?.isGuest]);
   const [query, setQuery] = React.useState("");
   const [mobileIndex, setMobileIndex] = React.useState(false);
   const [jump, setJump] = React.useState(null);
@@ -1101,13 +1109,37 @@ export default function SettingsDialog({
     if (drafts.current.size) setPending(() => action);
     else action();
   };
+  // A pane asked for from the sidebar or a search result takes the place
+  // of the one shown once its reads are in (they all go out now, if the
+  // pointer or the focus on its button has not sent them already), or after
+  // HOLD_MS with what it has; the one before stays meanwhile, the new
+  // button already marked. A pane whose reads are in (a second visit) shows
+  // at once and reads them again in place.
+  const [heading, setHeading] = React.useState(null);
+  const headingRef = React.useRef(null);
   const navigate = (id, label) => guard(() => {
-    setQuery(""); setMobileIndex(false); onPaneChange(id);
-    setJump(label ? { label } : null);
-    paneRef.current?.scrollTo(0, 0);
+    const open = () => {
+      headingRef.current = null; setHeading(null);
+      setQuery(""); setMobileIndex(false); onPaneChange(id);
+      setJump(label ? { label } : null);
+      paneRef.current?.scrollTo(0, 0);
+    };
+    const visit = reads.pane(id, who);
+    if (reads.ready(id, who)) { open(); return; }
+    headingRef.current = id; setHeading(id);
+    Promise.race([visit, new Promise((done) => { setTimeout(done, HOLD_MS); })])
+      .then(() => { if (headingRef.current === id) open(); });
   });
+  const prefetch = (id) => { reads.pane(id, who, { missing: true }); };
+  // The pane shown reads what it needs together, also when it was opened
+  // from outside the sidebar (Settings opening on it, a notice's link).
+  const shownPane = activePane ? pane : "";
+  React.useEffect(() => { if (shownPane) reads.pane(shownPane, who); }, [reads, shownPane]); // eslint-disable-line react-hooks/exhaustive-deps
   React.useEffect(() => {
-    if (!activePane) { setQuery(""); setPending(null); setMobileIndex(false); return; }
+    if (!activePane) {
+      headingRef.current = null; setHeading(null);
+      setQuery(""); setPending(null); setMobileIndex(false); return;
+    }
     const legacyTarget = { notes: t("Enter makes"), search: t("On the home page"), viewer: t("Imported annotations"),
       context: t("Single paper"), "ai-advanced": t("Context size"), prompts: t("Prompts"), handwriting: t("Reset presets") }[activePane];
     if (legacyTarget) setJump({ label: legacyTarget });
@@ -1159,9 +1191,11 @@ export default function SettingsDialog({
   const paperValue = { ...papers, chatModelName: (ai.aiModels || []).find((m) => m.id === ai.chatModel)?.model };
   const dot = (id) => (notices?.panes?.[id]
     ? <i className={`noticeDot inline ${dotTone(notices.panes[id])}`} data-tone={notices.panes[id]} aria-hidden="true" /> : null);
+  const marked = heading || (query ? null : pane);
   const navButton = ([id, label, Icon]) => <button key={id} type="button"
-    className={`settingsNavBtn ${pane === id && !query ? "active" : ""}`}
-    aria-current={pane === id && !query ? "page" : undefined} onClick={() => navigate(id)}>
+    className={`settingsNavBtn ${marked === id ? "active" : ""}`}
+    aria-current={marked === id ? "page" : undefined} onClick={() => navigate(id)}
+    onPointerEnter={() => prefetch(id)} onFocus={() => prefetch(id)}>
     <Icon size={16} /><span>{t(label)}</span>
     {dot(id)}
   </button>;
@@ -1174,6 +1208,7 @@ export default function SettingsDialog({
   };
   return (
     <SettingsDraftContext.Provider value={drafts}>
+      <SettingsReadsContext.Provider value={reads}>
       <SettingsSyncContext.Provider value={syncState}>
       <DialogOverlay {...backdropPress(() => guard(onClose))}>
         <div className={`settingsModal ${mobileIndex ? "settingsIndexOpen" : ""}`}
@@ -1221,8 +1256,8 @@ export default function SettingsDialog({
             <nav className="settingsSidebar" aria-label={t("Settings categories")}>
               {available("account") ? (
                 <NavAccountCard name={users.me} usedBytes={users.quotaInfo?.used_bytes} quotaMb={users.quotaInfo?.quota_mb}
-                  label={t(ACCOUNT_NAV[1])} active={pane === "account" && !query} dot={dot("account")}
-                  onClick={() => navigate("account")} />
+                  label={t(ACCOUNT_NAV[1])} active={marked === "account"} dot={dot("account")}
+                  onClick={() => navigate("account")} onIntent={() => prefetch("account")} />
               ) : null}
               {navGroup(t("Preferences"), PREFERENCE_NAV)}
               {navGroup(t("AI"), AI_NAV)}
@@ -1290,6 +1325,7 @@ export default function SettingsDialog({
         </div>
       </DialogOverlay>
       </SettingsSyncContext.Provider>
+      </SettingsReadsContext.Provider>
     </SettingsDraftContext.Provider>
   );
 }
