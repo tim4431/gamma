@@ -1,3 +1,4 @@
+import { generateNKeysBetween } from "fractional-indexing";
 import { Account, live, wanted } from "../harness.mjs";
 
 // Ctrl+P: the quick-open page palette (library/QuickOpen.jsx).
@@ -424,6 +425,95 @@ export async function quickOpenScenarios(env) {
       assertEq(await page.locator(".pageTitleRow .titleText").innerText(), "Switch from", "the late answer does not take over");
       assertEq((await page.locator(".tabStrip .tab.active:not([data-leaving]) .tabTitle").allInnerTexts()).join(), "Switch from");
       assertEq(await page.locator(".statusPill").count(), 0, "and leaves no pill behind");
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await user.api("/api/prefs/open-tabs", { method: "PUT", body: { value: [] } });
+    }
+  });
+
+  // A jump to a block of another page, or the home menu's Share…, belongs
+  // to the open it was asked of: a tab pressed before that page lands
+  // drops both, and no page after it lands on the block or opens Share.
+  await step("tabs: a [[ref]] jump or a Share… whose page a tab press overtook is dropped with it: the pages after land at their own place, and that page opens later as any other", async () => {
+    const made = {};
+    for (const name of ["Jump from", "Jump target", "Jump over"]) {
+      const pg = await user.api("/api/pages", { method: "POST", body: { title: name } });
+      const tag = name.split(" ")[1].toLowerCase();
+      const ops = generateNKeysBetween(null, null, 60).map((position, i) => ({ op: "insert", id: `jt${tag}${i}`, parent: pg.id, position,
+        content: tag === "from" && i === 30 ? "jump to [[jttarget40]] here" : `${name} row ${i} with words enough to fill a line` }));
+      await user.api(`/api/pages/${pg.id}/ops`, { method: "POST", body: { client: "seed", ops } });
+      made[tag] = { id: pg.id, title: name };
+    }
+    await user.api("/api/prefs/open-tabs", { method: "PUT", body: { value: [made.from, made.over] } });
+    const ctx = await user.context(browser);
+    const gate = { hold: null };
+    await ctx.route(`**/api/blocks/${made.target.id}/subtree*`, async (route) => {
+      if (gate.hold) await gate.hold;
+      await route.continue();
+    });
+    const page = await openPage(ctx, `${server.base}/?page=${made.from.id}&ws=${user.ws}`);
+    const tab = (title) => page.locator(live(".tabStrip .tab"), { hasText: title });
+    const title = () => page.locator(".pageTitleRow .titleText").innerText();
+    // The notes' scroll and the first row in view.
+    const notesAt = () => page.evaluate(() => {
+      const list = document.querySelector(".sidebar .blockList");
+      const top = list.getBoundingClientRect().top + 4;
+      const first = [...list.querySelectorAll(".blockRowWrap[data-block-id]")].find((r) => r.getBoundingClientRect().bottom > top);
+      return `${Math.round(list.scrollTop)} ${first?.dataset.blockId}`;
+    });
+    try {
+      await page.locator(".blockList .blockRow", { hasText: "Jump from row 59 with" }).waitFor();
+      const chip = page.locator(".blockRefChip").first();
+      // once it names its block (the chip renders again as its title lands)
+      await until(async () => /Jump target row 40/.test(await chip.innerText().catch(() => "")), { what: "the chip names its block" });
+      await page.waitForTimeout(300);
+      await chip.scrollIntoViewIfNeeded();
+      await until(async () => (await notesAt()).split(" ")[0] !== "0", { what: "the notes scrolled to the chip" });
+      let release;
+      gate.hold = new Promise((resolve) => { release = resolve; });
+      await chip.click();
+      await tab("Jump over").click();
+      await until(async () => (await title()) === "Jump over", { what: "the tab pressed after the jump opens" });
+      gate.hold = null;
+      release();
+      await page.waitForTimeout(800);
+      assertEq(await title(), "Jump over", "the jump's page does not take over");
+      assertEq(await notesAt(), "0 jtover0", "the page after lands at its top, not at the scroll the jump left");
+      // The home menu's Share… for the target page, overtaken the same way.
+      await page.locator('[data-guide="header.home"]').click();
+      const row = page.locator(".fileRow, .pageCard", { hasText: "Jump target" }).first();
+      await row.waitFor();
+      gate.hold = new Promise((resolve) => { release = resolve; });
+      await row.click({ button: "right" });
+      await page.locator(".ctxMenuItem", { hasText: "Share…" }).click();
+      await tab("Jump over").click();
+      await until(async () => (await title().catch(() => "")) === "Jump over", { what: "the tab pressed after Share… opens" });
+      gate.hold = null;
+      release();
+      await page.waitForTimeout(800);
+      assertEq(await page.locator(".sharePopover").count(), 0, "no Share popover over the page after");
+      // That page opened later, from a link to its block: it lands on it,
+      // and only on it, with no Share popover.
+      await page.keyboard.press("Control+p");
+      const dialog = page.getByRole("dialog", { name: "Open a page" });
+      await dialog.getByRole("textbox", { name: "Search pages by title or label" }).fill("Jump target");
+      await dialog.getByRole("option", { name: /Jump target/ }).first().click();
+      await until(async () => (await title()) === "Jump target", { what: "the target page open" });
+      await page.waitForTimeout(800);
+      assertEq(await page.locator(".sharePopover").count(), 0, "the dropped Share… does not open with its page later");
+      assertEq((await notesAt()).split(" ")[0], "0", "nor does the dropped jump land it on the block");
+      // The jump with nothing overtaking it lands on its block, focused.
+      await tab("Jump from").click();
+      await until(async () => (await title()) === "Jump from", { what: "back on the page with the chip" });
+      await page.locator(".blockRefChip").first().click();
+      await until(async () => (await title()) === "Jump target", { what: "the jump's page open" });
+      const target = page.locator('.blockRowWrap[data-block-id="jttarget40"] .blockRow');
+      await until(async () => /focused/.test(await target.getAttribute("class")) && await target.isVisible()
+        && await target.evaluate((el) => {
+          const r = el.getBoundingClientRect(), list = el.closest(".blockList").getBoundingClientRect();
+          return r.top >= list.top && r.bottom <= list.bottom;
+        }), { what: "the jump lands on its block, focused and in view" });
       assertNoProblems(page);
     } finally {
       await ctx.close();
