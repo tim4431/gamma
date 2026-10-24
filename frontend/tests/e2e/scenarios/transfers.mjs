@@ -653,8 +653,19 @@ open(sys.argv[3], 'wb').write(b"noteSN_FILE_VER_20230015" + bytes(64))
       const paperBox = await dialog.locator('[data-preview="original"]').boundingBox();
       const noteBox = await dialog.locator('[data-preview="notes"]').boundingBox();
       assert(noteBox.x >= paperBox.x + paperBox.width, "the note card stands beside the paper");
+      // comment threads are cards in the column too; notes on the page are a card on the paper
+      await toggle(dialog, "Comments").check();
+      const commentBox = await dialog.locator('[data-preview="comments"]').boundingBox();
+      assert(commentBox.x >= paperBox.x + paperBox.width, "the comment card stands beside the paper");
+      await choice(dialog, "On the page").click();
+      const pageBox = await dialog.locator('[data-preview="original"]').boundingBox();
+      const onPage = await dialog.locator('[data-preview="notes"]').boundingBox();
+      assert(onPage.x + onPage.width <= pageBox.x + pageBox.width + 1, "the note card is on the paper");
+      await toggle(dialog, "Comments").uncheck();
+      assertEq(await dialog.locator('[data-preview="comments"]').count(), 0);
       await toggle(dialog, "Notes").uncheck();
       assertEq(await dialog.locator('[data-preview="notes"]').count(), 0);
+      assert(await choice(dialog, "On the page").isDisabled(), "the notes' place waits on the Notes switch");
       await choice(dialog, "Close Export").click();
       dialog = await openDialog(page, "Import");
       assertEq(await dialog.getByRole("group", { name: "Import from" }).getByRole("button").count(), 6);

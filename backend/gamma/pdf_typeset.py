@@ -1,6 +1,6 @@
 """The typesetting engine both PDF writers draw with: fonts, widths, layout.
 
-``pdf_notes`` sets note cards beside an existing page; ``pdf_document``
+``pdf_cards`` sets note cards beside or on an existing page; ``pdf_document``
 typesets a whole note page as a fresh PDF. Both need the same things — decide
 which built-in font can draw a character, measure it, break spans into lines,
 and emit the content-stream operators — so that machinery lives here once.

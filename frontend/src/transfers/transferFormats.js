@@ -1,8 +1,9 @@
 import { t, T } from "../shared/i18n/i18n.js";
 // Format capabilities are independent of the dialog. Only editable options
 // become switches; fixed values still reach the preview and export handler.
-// What the Highlights / Notes / Bundle switches mean per format: a short hint
-// under the label, the long explanation on hover. Only editable options need text.
+// What the Highlights / Notes / Comments / Bundle switches mean per format: a
+// short hint under the label, the long explanation on hover. Only editable
+// options need text.
 const EXPORT_SWITCH_TEXT = {
   highlights: {
     pdf: [t("Standard PDF annotations"),
@@ -17,8 +18,8 @@ const EXPORT_SWITCH_TEXT = {
       t("Written into the exported PDF copies as standard annotations — Zotero's own “Include Annotations” convention, its reader picks them up on import.")],
   },
   notes: {
-    pdf: [t("In a column beside each page"),
-      t("Your notes as cards in a column beside each page, level with the passages they belong to, as the viewer shows comments. Off: they stay in the annotation popups.")],
+    pdf: [t("Each highlight's writing as a card"),
+      t("Each highlight's notes as a card, beside the page or on it as chosen below. Off: they stay in the annotation popups.")],
     notespdf: [t("Typeset under their highlights"),
       t("Your own writing, typeset under the highlight it belongs to — headings, lists, code, math and pasted images included.")],
     markdown: [t("Nested under their highlights"),
@@ -27,6 +28,10 @@ const EXPORT_SWITCH_TEXT = {
       t("Your own writing as a document: top-level headings and paragraphs, deeper blocks as nested lists, mentions and synced blocks as wikilinks.")],
     zotero: [t("Zotero notes on each item"),
       t("Top-level notes become Zotero notes attached to the item; writing under a highlight travels in its annotation popup.")],
+  },
+  comments: {
+    pdf: [t("Open threads beside each page"),
+      t("Each highlight's open comment threads as cards in a column beside the page, as the viewer's margin shows them. Resolved threads stay out.")],
   },
   bundle: {
     markdown: [t("Pack the PDF and images into the .zip"),
@@ -40,6 +45,17 @@ const EXPORT_SWITCH_TEXT = {
   },
 };
 
+// Where an annotated PDF's notes go (routers/export.py `notes_at`): the
+// choice's [value, label] and what each means. Comment threads always go
+// beside the page.
+export const NOTES_PLACES = [["beside", T("Beside the page")], ["page", T("On the page")]];
+const NOTES_PLACE_TEXT = {
+  beside: [t("In a column beside each page"),
+    t("In a column beside each page, level with the passages they belong to, as the viewer shows comments.")],
+  page: [t("In the page's own free space"),
+    t("Printed onto the page in nearby free space, with a line back to the highlight. The page keeps its size.")],
+};
+
 // The rows of both dialogs, in order; a format's `category` names its row.
 export const CATEGORIES = [T("This paper"), T("Papers"), T("Notes"), T("Library")];
 
@@ -48,7 +64,8 @@ export const CATEGORIES = [T("This paper"), T("Papers"), T("Notes"), T("Library"
 // so there that format is "Papers", with its own hint.
 const EXPORT_FORMATS = [
   { id: "pdf", mode: "annotated-pdf", label: T("Annotated PDF"), category: "This paper",
-    hint: T("Your original paper, with annotations"), editable: ["highlights", "notes"], fixed: { bundle: false },
+    hint: T("Your original paper, with annotations"), editable: ["highlights", "notes", "notesAt", "comments"],
+    fixed: { bundle: false },
     folder: { category: "Papers", hint: T("Each paper's PDF with its annotations, in one .zip") } },
   { id: "bibtex", mode: "bibtex", label: "BibTeX", category: "This paper",
     hint: T("A citation entry for LaTeX"), editable: [], fixed: { highlights: false, notes: false, bundle: false },
@@ -102,8 +119,12 @@ export function exportFormatOf(mode) {
 // folder, in the server's terms (routers/export.py ExportJob).
 export function exportJobBody(payload, { pageId = "", folder = "" } = {}) {
   const format = exportFormatOf(payload.format);
-  return { ...(folder ? { folder } : { page_id: pageId }), mode: format?.mode || "readable",
+  const body = { ...(folder ? { folder } : { page_id: pageId }), mode: format?.mode || "readable",
     pdf: Boolean(payload.bundle), highlights: Boolean(payload.highlights), notes: Boolean(payload.notes) };
+  // The annotated PDF's own options go with it alone.
+  return format?.editable.includes("comments")
+    ? { ...body, comments: Boolean(payload.comments), notes_at: payload.notesAt === "page" ? "page" : "beside" }
+    : body;
 }
 
 // Whether a format's export goes through a review step: one with a switch to
@@ -122,22 +143,40 @@ export function resolveExport(opts, { hasPdf, pdfStored, folder, hasMeta } = {})
     .map((format) => (folder && format.folder ? { ...format, ...format.folder } : format));
   const definition = formats.find(({ id }) => id === opts.format) || formats.find(({ id }) => id === "notespdf");
   const noPdfCopy = definition.id === "pdf" && !folder && !pdfStored;
-  const values = { highlights: Boolean(opts.highlights), notes: Boolean(opts.notes), bundle: Boolean(opts.bundle), ...definition.fixed };
-  if (noPdfCopy) Object.assign(values, { highlights: false, notes: false });
+  // Comments and the notes' place are the annotated PDF's own options.
+  const own = (key) => definition.editable.includes(key);
+  const values = { highlights: Boolean(opts.highlights), notes: Boolean(opts.notes), bundle: Boolean(opts.bundle),
+    comments: own("comments") && Boolean(opts.comments), notesAt: own("notesAt") && opts.notesAt === "page" ? "page" : "beside",
+    ...definition.fixed };
+  if (noPdfCopy) Object.assign(values, { highlights: false, notes: false, comments: false });
   // Zotero stores highlights inside the bundled PDFs, never in metadata alone.
   const withoutPdfFiles = definition.id === "zotero" && !values.bundle;
   if (withoutPdfFiles) values.highlights = false;
-  const controls = (noPdfCopy ? [] : definition.editable).map((key) => ({
-    key, hint: EXPORT_SWITCH_TEXT[key][definition.id][0], title: EXPORT_SWITCH_TEXT[key][definition.id][1],
-    disabled: key === "highlights" && withoutPdfFiles,
-  }));
+  // A switch, or for the notes' place a choice, which says where the notes
+  // go and waits on the Notes switch.
+  const controls = (noPdfCopy ? [] : definition.editable).map((key) => (key === "notesAt"
+    ? { key, choice: NOTES_PLACES, hint: NOTES_PLACE_TEXT[values.notesAt][0], title: NOTES_PLACE_TEXT[values.notesAt][1],
+      disabled: !values.notes }
+    : { key, hint: EXPORT_SWITCH_TEXT[key][definition.id][0], title: EXPORT_SWITCH_TEXT[key][definition.id][1],
+      disabled: key === "highlights" && withoutPdfFiles }));
   return { definition, formats, noPdfCopy, controls,
     needsReview: hasReviewStep(definition, controls.filter(({ disabled }) => !disabled)),
     payload: { format: definition.id, ...values } };
 }
 
+// What an annotated PDF's cards add, for its summary: the notes beside the
+// page or on it, the comment threads beside it.
+function cardsSummary({ notes, comments, notesAt }) {
+  if (notes && comments) {
+    return notesAt === "page" ? t(" and your notes printed onto the page, the comment threads beside it")
+      : t(" and your notes and comment threads in a column beside each page");
+  }
+  if (notes) return notesAt === "page" ? t(" and every note printed onto the page") : t(" and your notes in a column beside each page");
+  return comments ? t(" and the comment threads in a column beside each page") : "";
+}
+
 export function exportSummary({ payload, noPdfCopy }, folder) {
-  const { format, highlights, notes } = payload;
+  const { format, highlights, notes, comments } = payload;
   switch (format) {
     case "bibtex":
       return folder
@@ -154,17 +193,17 @@ export function exportSummary({ payload, noPdfCopy }, folder) {
     case "obsidian":
       return t("An Obsidian vault: one note per page{folders}, links as [[wikilinks]], labels as tags{callouts}{lists}. Unzip it into a vault, or open it as one.", { folders: folder ? t(", subfolders as folders") : "", callouts: highlights ? t(", highlights as quote callouts") : "", lists: notes ? t(", your notes as headings, paragraphs and lists") : "" });
     case "pdf":
-      // Text boxes are written as annotations with either switch (they are
-      // the user's own writing on the page); highlights and ink only with
-      // the first (routers/export.py).
+      // Text boxes are written as annotations with any switch (they are the
+      // user's own writing on the page); highlights and ink only with the
+      // first (routers/export.py).
       if (folder) {
-        return highlights || notes
-          ? t("Every paper's PDF in one .zip, with {annotations}{page}, its subfolders as folders. Pages without a PDF are left out.", { annotations: highlights ? t("highlight annotations") : t("text box annotations only"), page: notes ? t(" and your notes in a column beside each page") : "" })
+        return highlights || notes || comments
+          ? t("Every paper's PDF in one .zip, with {annotations}{page}, its subfolders as folders. Pages without a PDF are left out.", { annotations: highlights ? t("highlight annotations") : t("text box annotations only"), page: cardsSummary(payload) })
           : t("Every paper's PDF in one .zip, exactly as stored, its subfolders as folders. Pages without a PDF are left out.");
       }
       if (noPdfCopy) return t("This PDF isn't stored on the server, so only the file itself can be exported.");
-      if (!highlights && !notes) return t("The PDF file exactly as stored, with nothing added.");
-      return t("The PDF with {annotations}{page}.", { annotations: highlights ? t("highlight annotations") : t("text box annotations only"), page: notes ? t(" and your notes in a column beside each page") : "" });
+      if (!highlights && !notes && !comments) return t("The PDF file exactly as stored, with nothing added.");
+      return t("The PDF with {annotations}{page}.", { annotations: highlights ? t("highlight annotations") : t("text box annotations only"), page: cardsSummary(payload) });
     case "notespdf":
       if (!highlights && !notes) return t("A new PDF with the title and metadata only — both switches are off.");
       return t("A new PDF of {page} — title, {quotes}{typeset}.", { page: folder ? t("every page in the folder") : t("this page"), quotes: highlights ? t("quoted highlights") : t("no quotes"), typeset: notes ? t(" and your notes, typeset") : "" });

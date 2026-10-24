@@ -41,7 +41,7 @@ Every writer here maps through the page's view box (`page_frame`), the frame
 the viewer stores positions in (scaled by the position's `width` /
 `height`, the page as measured when it was taken): the crop box clipped to the media box, as
 pdf.js, pdfium and MuPDF show a page, or the media box when the two do not
-meet. `pdf_notes` places its notes in the same frame. A popup's text
+meet. `pdf_notes` places its cards in the same frame. A popup's text
 (`highlight_note_text`) is the highlight's own note and the notes under it,
 as an indented bullet list (`popup_text` of `highlight_note_blocks`).
 A text box on a PDF page among them is left out with the notes under it,
@@ -85,43 +85,62 @@ calligraphy nib included (a dashed or dotted pressure stroke as one
 dashed line at its mean width and shade). The page is the drawing, so
 there is no `/FreeText` or `/Ink` layer. The switches do not apply.
 
-### Notes beside the page
+### Notes and comments as cards
 
-`?notes=1` adds a column from `gamma/pdf_notes.py`: each highlight's notes
-are a card beside the page, level with the highlight's first line, where
-the viewer puts a highlight's comment threads once a lower zoom leaves room
-for them ([comments.md](comments.md) "The PDF margin").
+`?notes=1` prints each highlight's notes as a card, and `?comments=1` each
+of its open comment threads as a card of its own (`gamma/pdf_notes.py`).
+Notes go where `?notes_at=` says: `beside` (the default) in a column beside
+the page, `page` in the page's own free space. Threads always go beside the
+page, where the viewer puts a highlight's threads once a lower zoom leaves
+room for them ([comments.md](comments.md) "The PDF margin"). Comments work
+with the Notes switch off. The full text of the notes stays in the popup
+either way.
 
-**The column.** Every page of the copy is widened on the right of the page
-as shown (`_widen`). The media and crop boxes become the view box grown on
-the user-space side the display frame's x axis runs to: the right on an
-upright page, the top on a quarter turn, the left upside down, the bottom on
-three quarters. So the page's content, its annotations and the display
-origin stay where they were, and the trim, bleed and art boxes, which lay
-inside the old box, are dropped. The column is `COLUMN_GAP` (18 pt) from
-the page, `EDGE` (12 pt) from the new edge, and as wide as 45% of the
-document's widest page as shown, between 170 and 300 pt (`_column_width`).
-Every page gets it, notes or not, so the pages keep one width as they do in
-the viewer. The strip is painted the viewer's backdrop grey with a hairline
-at the page's edge, which also covers whatever the old crop box hid there.
-
-**A card** is the highlight's own note and the notes under it
-(`pdf_export.highlight_note_blocks`: `(depth, markdown)` in reading order,
-the same walk the popup text is made from), each deeper one a bullet
-indented by its depth. Each note's Markdown goes through
-`pdf_document.chunks`, the parser the notes PDF and text boxes use, and is
-laid out by `_Layout` in the compact look of a rendered note, at 8 pt:
-headings a little larger, lists with their bullets or numbers, to-dos with
-a drawn box, quotes with a bar, fenced code on a tint, tables a line per
-row, pictures (capped at 150 pt tall), display math centred; bold, italic,
-code, marks, links and inline math within a line. `[[refs]]` and
-`![[embeds]]` read as the block they name (the router's
+**A card** (`gamma/pdf_cards.py`) is laid out once into rows, each measured
+from the content's top-left, at 8 pt. A note card is the highlight's own
+note and the notes under it (`pdf_export.highlight_note_blocks`:
+`(depth, markdown)` in reading order, the same walk the popup text is made
+from), each deeper one a bullet indented by its depth. A thread card is its
+comments oldest first, each as the viewer's margin draws it: the author's
+avatar (their initial on their colour, `person_color`, the app's
+`personColor` with the same eight colours, held to it by a test), their
+name, the day, and the comment under them past the avatar. A deleted root
+reads "Comment deleted". The Markdown goes through `pdf_document.chunks`,
+the parser the notes PDF and text boxes use, and is set in the compact look
+of a rendered note: headings a little larger, lists with their bullets or
+numbers, to-dos with a drawn box, quotes with a bar, fenced code on a tint,
+tables a line per row, pictures (capped at 150 pt tall), display math
+centred; bold, italic, code, marks, links and inline math within a line.
+`[[refs]]` and `![[embeds]]` read as the block they name (the router's
 `block_ref_resolver`). Links become `/Link` annotations over their text. A
-card is white with a hairline border and rounded corners, the highlight's
-colour down its left edge. In the gap a thin bar in a darker shade of that
-colour spans the highlight's lines, and a line joins its first line to the
-same height in the card: level when the card is, slanted when stacking
-moved it.
+card is white with a hairline border and rounded corners; a note card
+carries its highlight's colour down its left edge, a thread card none, as
+in the viewer. `clip` shortens a card to a height, ending it in an
+ellipsis (a picture or equation the cut falls in shrinks to the room left,
+down to 16 pt).
+
+**Every card of a highlight** is collected by the router's `_collect_cards`
+from every highlight block, the ones still embedded in the PDF included
+(their annotations are not rewritten, but their notes and threads are the
+reader's own). The threads are `comments.threads_for(…, state="open")`:
+resolved ones leave the margin and stay out here too.
+
+**The column.** When anything goes beside the page, every page of the copy
+is widened on the right of the page as shown (`_widen`). The media and crop
+boxes become the view box grown on the user-space side the display frame's
+x axis runs to: the right on an upright page, the top on a quarter turn,
+the left upside down, the bottom on three quarters. So the page's content,
+its annotations and the display origin stay where they were, and the trim,
+bleed and art boxes, which lay inside the old box, are dropped. The column
+is `COLUMN_GAP` (18 pt) from the page, `EDGE` (12 pt) from the new edge, and
+as wide as 45% of the document's widest page as shown, between 170 and
+300 pt (`_column_width`). Every page gets it, cards or not, so the pages
+keep one width as they do in the viewer. The strip is painted the viewer's
+backdrop grey with a hairline at the page's edge, which also covers
+whatever the old crop box hid there. A highlight's cards stand together,
+its note card first; in the gap a thin bar in a darker shade of its colour
+spans its lines, and a line joins its first line to the same height in its
+first card: level when the card is, slanted when stacking moved it.
 
 **Stacking** (`_stack`) is the viewer's `stackCards`
 (`comments/marginLayout.js`) without an active card: sorted by their
@@ -130,15 +149,41 @@ none above the page's top edge. A page cannot run on into the next one's
 column, as the viewer's does, so the run is then pushed up off the page's
 foot, each card ending a gap over the one under it. When the cards do not
 fit even so, `_column` shortens them: the tallest are cut to one height,
-the largest that fits (`_water_level`), each card ending in an ellipsis
-(`_clip`; a picture or equation the cut falls in shrinks to the room left
-instead, down to 16 pt). A card keeps at least `MIN_LINES` (three) lines,
-as a card at rest in the viewer does. Past that the column zooms out
-through `SCALES`: laid out wider by the scale's inverse and drawn that much
-smaller, as the viewer's column is at a lower zoom. At the last (0.45) a
-card keeps two lines, and cards that still do not fit are left out and
-logged (past about 45 on a Letter page). The full text is in the popup
-either way.
+the largest that fits (`_water_level`). A card keeps at least `MIN_LINES`
+(three) lines, as a card at rest in the viewer does. Past that the column
+zooms out through `SCALES`: laid out wider by the scale's inverse and drawn
+that much smaller, as the viewer's column is at a lower zoom. At the last
+(0.45) a card keeps two lines, and cards that still do not fit are left out
+and logged (past about 45 on a Letter page).
+
+**On the page** (`notes_at=page`) a note card goes in the nearest patch of
+the page's own empty space, with a dashed leader back to its highlight, and
+the page keeps its size (unless threads widen it). Free space comes from
+`gamma/pdf_free_space.py`: MuPDF's drawing log of the page (a bbox device
+of the module's own, logging what `page.get_bboxlog()` logs: one box per
+drawing operation, form XObjects flattened into the page's space,
+invisible text skipped, except that a shading is bounded by the clip it is
+painted through, where `get_bboxlog` logs the whole plane, so a
+gradient-filled box counts as occupied) rasterized into an occupancy grid
+(display space, 3 pt cells) with a summed-area table behind the candidate
+search (`place`); a placed card is marked too, so cards never overlap. The
+log takes in the annotations' appearances, so what `annotate_pdf` wrote
+first counts as occupied: the text boxes with any switch, the highlights
+and ink when the highlight layer is on. The log comes in the unrotated
+page's space, its origin at the view box's corner and scaled by
+`/UserUnit` like `page.rect`; `bbox_log` takes the unit out
+(`pdf_text.user_unit`), and `page_space` maps it to user space against the
+view box `page_frame` found, not through `page.transformation_matrix`,
+which on a rotated page forgets a crop box's offset. The read holds
+`pdf_text._lock` (PyMuPDF is not thread-safe and holds the GIL in every
+call): one open of the document, one short call per page, the grids built
+after the lock is let go. A file MuPDF cannot open, or one that needs a
+password, reads as a page with its usual text block busy, so the cards go
+in its margins. A card tries three widths, wider ones for a picture or
+display math (`BOX_WIDTHS`, `WIDE_WIDTHS`), up to 45% of the page tall; a
+one-line note gets a one-line-wide card, and a narrow card or a squeezed
+equation costs extra in the search. On a page with no free space a card
+takes the least-covered spot and covers some of the page.
 
 **Drawing.** Everything is laid out in the page's display frame (x right,
 y down, origin at the view box's top-left, /Rotate applied: the frame the
@@ -149,11 +194,12 @@ Type 3 fonts and the pictures. `_stamp` adds it to a copy of the page's
 resources as `/GmNotes` (numbered past a name the page already has) and
 makes the page's contents a shared `q` stream, the streams the page had,
 then `Q` and the form's `Do`. The page's own streams are never parsed or
-rewritten. PyPDF2's `merge_page`, which the earlier writer used, parses
+rewritten. PyPDF2's `merge_page`, which an earlier writer used, parses
 every content stream into operators and writes it back uncompressed, which
-for a whole book is slow and swells the file. The pages without notes share
-one form per geometry, holding only the strip. The `/UserUnit` is left out,
-as Gamma's viewer, pdf.js and pdfium leave it out.
+for a whole book is slow and swells the file. The pages without cards
+share one form per geometry, holding only the strip, and a page that gets
+neither a strip nor a card is left as it is. The `/UserUnit` is left out of
+the layout, as Gamma's viewer, pdf.js and pdfium leave it out.
 
 ### Vector text (math and CJK) → Type 3 fonts
 

@@ -677,7 +677,7 @@ down from it and the active one comes as near its highlight as they leave
 room for. Cards near a page's foot may run past it. The annotated-PDF
 export prints a highlight's notes the same way, with no active card and
 the run kept on its page (`gamma/pdf_notes.py` `_stack`,
-[pdf_typesetting.md](pdf_typesetting.md#notes-beside-the-page)): a change
+[pdf_typesetting.md](pdf_typesetting.md#notes-and-comments-as-cards)): a change
 to this rule belongs there too.
 
 The drawn pages' margins are one column. Each page knows its top in px
@@ -831,8 +831,11 @@ has notifications; the iPad's WKWebView has none, and the row says so.
   publication says so: "Comments stay on each server: a sync carries
   none." (`MirrorPopover`).
 - **Comments in the other readers.** The exports other than the Gamma zip
-  (Markdown, the annotated PDF, Obsidian, Logseq, Zotero), the AI's context
-  and tools, search and the MCP tools leave comments out.
+  and the annotated PDF (Markdown, Obsidian, Logseq, Zotero), the AI's
+  context and tools, search and the MCP tools leave comments out. The
+  annotated PDF's Comments switch prints a highlight's open threads as
+  cards beside the page, as the margin draws them
+  ([pdf_typesetting.md](pdf_typesetting.md#notes-and-comments-as-cards)).
   `comments.threads_for` is the reader they would call. A highlight's
   threads could become PDF reply annotations (`/IRT`), which the import
   already reads as child notes.
