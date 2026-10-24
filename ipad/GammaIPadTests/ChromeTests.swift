@@ -103,7 +103,7 @@ final class ShellStateTests: XCTestCase {
         XCTAssertEqual(stopped["adminUser"] as? String, "admin")
         XCTAssertEqual(stopped["adminPassword"] as? String, ShellState.noPassword, "no password kept for it")
 
-        let running = try servers(state(local: .running(address), login: LocalLogin(username: "admin", password: "abcdefghijkl"),
+        let running = try servers(state(local: .running(address), login: LocalLogin(username: LocalLogin.account, password: "abcdefghijkl"),
                                         sizeBytes: 123_456))[0]
         XCTAssertEqual(running["running"] as? Bool, true)
         XCTAssertEqual(running["url"] as? String, "http://127.0.0.1:50123")
@@ -144,7 +144,7 @@ final class ShellStateTests: XCTestCase {
         XCTAssertEqual(keys, ["version", "theme", "current", "busy", "gamma", "servers", "lastOpened"],
                        "no keeping, update or settings: the pages hide what reads them")
         let full = state(current: .local, remotes: [a, nas], names: ["local": "Studio"], reachable: [a: true],
-                         local: .running(address), login: LocalLogin(username: "admin", password: "abcdefghijkl"),
+                         local: .running(address), login: LocalLogin(username: LocalLogin.account, password: "abcdefghijkl"),
                          session: session, page: address, sizeBytes: 9_876_543_210)
         XCTAssertTrue(JSONSerialization.isValidJSONObject(full))
         XCTAssertNoThrow(try JSONSerialization.data(withJSONObject: full))
