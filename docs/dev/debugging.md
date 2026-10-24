@@ -664,7 +664,15 @@ The scenarios live in `tests/e2e/scenarios/`:
   highlighting its quote on the cited page ([pdf_citations.md](pdf_citations.md)),
   the chat's coverage pills against a mocked `/api/ai/chat` (a selection's
   page and picture, a PDF that went as text and why), the translate button and the selection popup's translator (against a
-  mocked `/api/ai/translate`).
+  mocked `/api/ai/translate`; the selection names its page and does not wait
+  for the paper's brief).
+- `translation.mjs`: a two-column page whose paragraph runs over the column
+  break: the request carries one text with `{br}`, the formulas and the
+  citation marker as tokens, the page and the section; the reply fills both
+  columns' boxes, and a formula comes back as a crop of the page inside the
+  translated line (against a mocked `/api/ai/translate`). What a change does
+  to the requests on real papers is the translation bench's
+  ([translation.md](translation.md) "The bench").
 - `transfers.mjs`: the Import and Export dialogs — format/source cards,
   the review step and its switches, direct export for fixed formats, the
   export job's finished step, and a folder's annotated PDFs exported in the

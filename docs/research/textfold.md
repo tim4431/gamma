@@ -193,10 +193,10 @@ Fold finished replies only; copying and saving to a note use the full text. Gamm
 
 - **Thinking off for background work.** TextFold sets a default per task: levels and translation off, links and questions low ([`models.py` L22](https://github.com/chenxiachan/textfold/blob/2cd77e0/textfold/models.py#L22)). Its bench found that thinking took 3 to 9 times as long for little quality.
   - Here, translation sends the raw `translateEffort` (`App.jsx:3236`) without `effortFor`; metadata and cite send none.
-  - To take: the model's lowest level for background work, with the preference as the override.
+  - To take: the model's lowest level for background work, with the preference as the override. Built for translation ([translation.md](../dev/translation.md) "The server"); metadata and cite still send none.
 - **Translation context.** TextFold's prompt gives the paper's title, the outline and "the standard terms, the same way throughout" ([`translate.py` L64–L82](https://github.com/chenxiachan/textfold/blob/2cd77e0/textfold/translate.py#L64-L82)). It also counts formula and citation markers lost in translation (L134–L136).
   - Here, `_TRANSLATE_PROMPT` (`routers/ai.py:993`) sends paragraphs only, in chunks spread across parallel workers, so terms can drift between chunks.
-  - To take: the title and a terminology rule in the prompt, and a paragraph that lost its `[12]` markers sent to the existing per-paragraph salvage.
+  - To take: the title and a terminology rule in the prompt, and a paragraph that lost its `[12]` markers sent to the existing per-paragraph salvage. Built, as a per-paper brief and tokens checked on the server ([translation-quality.md](translation-quality.md)).
 - **Pacing per host.** TextFold keeps bioRxiv's 7-second crawl delay under one lock ([`biorxiv.py` L118–L143](https://github.com/chenxiachan/textfold/blob/2cd77e0/textfold/biorxiv.py#L118-L143)).
   - Here, `routers/metadata.py:434` and `:450` call arXiv's export API with no pacing. arXiv asks for one request every 3 seconds, and a hosted server shares one address.
   - To take: a `pace(host, seconds)` beside `net_guard`.
