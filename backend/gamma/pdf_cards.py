@@ -18,7 +18,9 @@ colour down its left edge.
 **A thread** is its comments oldest first, each as the viewer's margin
 draws it (``frontend/src/comments/Thread.jsx``): the author's avatar, an
 initial on their colour (``person_color``), their name and the day, and the
-comment's Markdown under them, past the avatar. A thread on one of the
+comment's Markdown under them, past the avatar. The replies step in to the
+first comment's text, so each thread reads as one comment and its answers
+even where several follow one another under a note. A thread on one of the
 notes goes under that note in the note card, as replies to it; on a card
 of its own (the notes elsewhere, or not printed) it opens with the note's
 first line, quoted, so the reply keeps what it answers.
@@ -183,19 +185,21 @@ class Layout:
         self.y = top + h
 
     def _comments(self, comments, x: float):
-        """Comments at ``x``, as the viewer's margin draws them: the
+        """A thread's comments, as the viewer's margin draws them: the
         author's avatar, name and day, and the text under them past the
-        avatar."""
-        indent = x + AVATAR + AVATAR_GAP
+        avatar. The first is at ``x``; the replies to it step in to its
+        text."""
         for n, c in enumerate(comments):
             if n:
                 self._space(COMMENT_GAP)
+            at = x + (AVATAR + AVATAR_GAP if n else 0.0)
+            indent = at + AVATAR + AVATAR_GAP
             name = (c.get("author") or "").strip()
             initial = name[0].upper() if name and name != "Anonymous" else "?"
             ascent, line_h = line_metrics([], FONT_SIZE, LEADING)
             h = max(line_h, AVATAR)
             top = self._place()
-            self.rows.append(Row("avatar", x, top + (h - AVATAR) / 2, AVATAR, AVATAR,
+            self.rows.append(Row("avatar", at, top + (h - AVATAR) / 2, AVATAR, AVATAR,
                                  (initial, person_color(name))))
             base = top + (h - line_h) / 2
             who = [(TEXT, name or "Anonymous", 0, Style(BOLD, None))]
