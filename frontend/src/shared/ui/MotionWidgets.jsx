@@ -198,3 +198,35 @@ export const FADE_IN = {
   onLoad: (e) => showImage(e.currentTarget),
   onError: (e) => showImage(e.currentTarget),
 };
+
+// A first load's place (motion.css .reveal): while `ready` is false it
+// draws `fallback` ("Loading…"), which comes in only after a moment, so a
+// load that answers fast never shows it, and it keeps the height its
+// content last had under `k`, so what holds it keeps its size for a load
+// that brings back what was there. Content that takes the place of a
+// placeholder comes into focus; content ready at once is plain. A column
+// (a flex one, like the forms and lists it stands in), that never eases a
+// height.
+const revealHeights = new Map(); // k → its content's last height, in its own px
+export function Reveal({ ready, k, fallback = null, className = "", children }) {
+  const ref = useRef(null);
+  const [waited, setWaited] = useState(!ready); // a placeholder was drawn
+  if (!ready && !waited) setWaited(true);
+  const now = useRef({ ready, k });
+  useLayoutEffect(() => { now.current = { ready, k }; });
+  useLayoutEffect(() => {
+    // the content's height as laid out, kept while it shows
+    const observer = new ResizeObserver(([entry]) => {
+      if (now.current.ready) revealHeights.set(now.current.k, entry.borderBoxSize?.[0]?.blockSize ?? entry.target.offsetHeight);
+    });
+    observer.observe(ref.current);
+    return () => observer.disconnect();
+  }, []);
+  const height = ready ? 0 : revealHeights.get(k);
+  return (
+    <div ref={ref} className={`reveal ${className}`.trim()} data-reveal={!ready ? "wait" : waited ? "in" : undefined}
+      style={height ? { minHeight: height } : undefined} aria-busy={ready ? undefined : "true"}>
+      {ready ? children : fallback}
+    </div>
+  );
+}

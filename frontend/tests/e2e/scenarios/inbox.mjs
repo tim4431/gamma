@@ -8,8 +8,9 @@
 // invitee hears of the share, a mention and a reply, and opens the reply
 // through the share; Mark all read; Archive and back; an item whose page
 // went to Recently deleted settles into Archived; with Inbox notifications
-// on, a new item rings once per browser.
-import { Account, wanted } from "../harness.mjs";
+// on, a new item rings once per browser; a tab opens at its top, on the
+// first page of what it showed last, which its first look replaces.
+import { Account, live, wanted } from "../harness.mjs";
 import { closeEditor, editRow, tree } from "./notes.mjs";
 
 export async function inboxScenarios({ server, browser, step, until, assert, assertEq, assertNoProblems, openPage }) {
@@ -261,6 +262,58 @@ export async function inboxScenarios({ server, browser, step, until, assert, ass
       assertNoProblems(N);
     } finally {
       await ctxN.close();
+    }
+  });
+
+  await step("inbox: a tab opens at its top, on the first page of what it showed last, and its first look replaces what was held", async () => {
+    await server.manage("create-user", "ib-dee", "ib-dee-pw");
+    const dee = await login("ib-dee", "");
+    for (let i = 0; i < 55; i++) {
+      const shared = await ann.api("/api/pages", { method: "POST", body: { title: `Paper ${i}` } });
+      await ann.api(`/api/share/${shared.id}`, { method: "POST", body: { audience: "list", users: [{ name: "ib-dee", role: "view" }] } });
+    }
+    const ctxD = await dee.context(browser);
+    const D = await openPage(ctxD, `${server.base}/`);
+    try {
+      const list = panel(D).locator(".inboxList");
+      const rows = panel(D).locator(live(".inboxRow"));
+      const unreadRows = panel(D).locator(live(".inboxRow.unread"));
+      const older = panel(D).getByRole("button", { name: "Show older" });
+      const scrolled = () => list.evaluate((el) => el.scrollTop);
+      const toEnd = () => list.evaluate((el) => { el.scrollTop = el.scrollHeight; return el.scrollTop; });
+      await openPanel(D);
+      await until(async () => (await rows.count()) === 50, { what: "Unread's first page" });
+      assert((await toEnd()) > 0, "Unread scrolled to its end");
+      // All, the first time: at its top while it waits and once it is in
+      await panel(D).locator(".segGroup button", { hasText: "All" }).click();
+      assertEq(await scrolled(), 0, "All waits at its top");
+      await tab(D, "All");
+      assertEq(await rows.count(), 50, "All's first page");
+      assertEq(await scrolled(), 0, "All opens at its top");
+      await toEnd();
+      await older.click();
+      await until(async () => (await rows.count()) === 55, { what: "Show older brings the rest" });
+      await toEnd();
+      // Unread again, on what it showed and at its top; every item read there
+      await panel(D).locator(".segGroup button", { hasText: "Unread" }).click();
+      assertEq(await scrolled(), 0, "Unread comes back at its top");
+      await panel(D).getByRole("button", { name: "Mark all read", exact: true }).click();
+      await panel(D).locator(".setEmpty", { hasText: "You're all caught up." }).waitFor();
+      await until(async () => (await items(dee, "unread")).length === 0, { what: "read on the server" });
+      // All again: its first page, which the look shows read, and nothing older held from before
+      await panel(D).locator(".segGroup button", { hasText: "All" }).click();
+      await until(async () => (await unreadRows.count()) === 0, { what: "All's look shows every row read" });
+      assertEq(await rows.count(), 50, "the first page, not the rows Show older brought before");
+      await older.waitFor();
+      await D.keyboard.press("Escape");
+      await panel(D).waitFor({ state: "detached" });
+      await bell(D).click();
+      await panel(D).waitFor();
+      await until(async () => (await rows.count()) === 50 && (await older.count()) === 1, { what: "opened again on All's first page" });
+      assertEq(await unreadRows.count(), 0, "none shown unread");
+      assertNoProblems(D);
+    } finally {
+      await ctxD.close();
     }
   });
 

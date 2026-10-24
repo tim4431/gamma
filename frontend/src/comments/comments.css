@@ -168,11 +168,13 @@
    with it; its width and its distance from the page are marginLayout.js's,
    set inline. Each card stands where stackCards put it. At rest a card is
    its thread's first comment, clamped, with the reply count; the active one
-   is lifted and holds the whole thread. The pages' columns stack as one
-   (a page's cards start under the ones above), and the one holding the
-   active card is drawn over the others. The page's own cursors (a crosshair
-   while Ctrl is held), its selection rules and its pens stop at the
-   column. */
+   is lifted and holds the whole thread. A card moves to its new place on
+   --dur-slow, as everything that moves does, and comes and goes as
+   ListMotion has it (motion.css [data-entering="card"],
+   [data-leaving="card"]). The pages' columns stack as one (a page's cards
+   start under the ones above), and the one holding the active card is
+   drawn over the others. The page's own cursors (a crosshair while Ctrl
+   is held), its selection rules and its pens stop at the column. */
 .commentMargin {
   position: absolute;
   top: 0;
@@ -195,7 +197,7 @@
   border-radius: var(--radius-md);
   box-shadow: var(--shadow-1);
   color: var(--text-primary);
-  transition: top var(--dur-fast) var(--ease-out), box-shadow var(--dur-fast);
+  transition: top var(--dur-slow) var(--ease-out), box-shadow var(--dur-fast);
 }
 .commentCard.active { z-index: 1; box-shadow: var(--shadow-2); border-color: var(--border-light); }
 /* The thread fills the card: no list rule under it, and its press area

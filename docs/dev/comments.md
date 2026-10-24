@@ -604,7 +604,10 @@ activity first, each with what it is on: the highlight's quote, the
 note's words, or "This page". Its lines name a `[[link]]` by its label
 (`anchorSnippet`'s `labelOf`: the page's blocks, then App's reference
 cache), not by its id. A click scrolls to the anchor, flashes it
-and opens its popover at the thread.
+and opens its popover at the thread. A thread that comes rises into the
+list, and one with a new reply glides to the top as the others make room
+(`ListMotion`); the page's threads loading fill it still. In a thread,
+wherever it is drawn, a new comment rises into place.
 
 **Links.** Copy link gives `?page=&block=&thread=` (no `block` for the
 page's own thread) with the workspace, or with `share=` in a share view.
@@ -665,7 +668,9 @@ card's target and the popover's props and handlers. A page's
 `CommentMarginSlot` reads it, so a new comment re-renders the margins and
 not the pages, and finds the page's highlights with an open thread (and
 the one a new thread's card is for), each at its first rect's top
-(`highlightTop`). The cards (`CommentMargin.jsx`) load on first use.
+(`highlightTop`). Every page with room draws its column, with or without
+cards, so a page's first card can grow in and its last one shrink away.
+The cards (`CommentMargin.jsx`) load on first use.
 
 **Stacking.** `stackCards` (`marginLayout.js`, `tests/marginLayout.test.mjs`)
 sorts the cards by their highlight's top, keeping a highlight's threads in
@@ -694,7 +699,12 @@ formula is drawn. A measure is compared with the last one, kept in a ref,
 and sets no state when they agree: done in a state updater, React re-ran
 it against an older state as the observer's updates and the layout
 effect's interleaved, and it looped ("Maximum update depth exceeded"). A
-card moves with a short `top` transition.
+card moves to its new place through its `top`, on `--dur-slow`; one that
+comes grows in where it stands and one that goes (resolved, a new thread's
+card closed) shrinks away there (`ListMotion`, [ui-design.md](ui-design.md)
+"Lists that change"). A new thread stored is shown as its own card at
+once, and the new card's place goes to it when `add` answers: neither
+comes in nor goes with motion.
 
 **A card.** At rest it is the thread's first comment (avatar, name, time
 and text as comments are drawn, clamped to three lines) and "n replies",
@@ -783,8 +793,17 @@ username asking, `inboxActor`: "cat asks to open Draft"), the note's or the comm
 the workspace's name when it is not this one, and the time. Its actions,
 shown on hover and focus (always under a touch screen), mark it read or
 unread and archive it or move it back. Items load when the panel opens, 50
-at a time, with Show older. A mark shows at once and takes the item out
-of a tab it no longer belongs in. A refused one puts back the rows and the
+at a time, with Show older. Each tab keeps the listing it showed last:
+the panel opens again, and a tab comes back, at its top on the first page
+of what it held while a fresh look is on its way, and the server's page
+that look brings takes its place, changing it in place. The older rows
+Show older had loaded are not kept, since no look would refresh them, and
+Show older comes back with the look (`reopenedListing`, `lookedListing`).
+A tab seen for the first time, or empty when it was, keeps its place
+blank until the listing is in (`Reveal`). A mark shows at once and takes the item out
+of a tab it no longer belongs in, the row leaving from where it stood
+while the rest close up (`ListMotion`); a day's header goes with its last
+row, and Mark all read empties Unread at once. A refused one puts back the rows and the
 count it changed, unless a later mark has changed them since, and is put
 right by a fresh look once the marks have settled. Each tab has its own
 empty state.

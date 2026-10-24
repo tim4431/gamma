@@ -4,9 +4,12 @@
 // thread beside its highlight. Each comment with its author, time and text
 // rendered as a note is (so @people and [[links]] work), its "⋯" menu, the
 // thread's Resolve and its reply field once the thread is the active one.
+// A comment that comes (a reply, yours or someone's) rises into place
+// (ListMotion).
 import React, { startTransition, useCallback, useEffect, useRef, useState } from "react";
 import { ContextMenu, MenuButton, MenuItem } from "../shared/ui/Menus";
 import { CheckIcon, LinkIcon, PencilIcon, RefreshIcon, Trash2Icon } from "../shared/ui/Icons";
+import ListMotion from "../shared/ui/ListMotion";
 import { IconSwap } from "../shared/ui/MotionWidgets";
 import { PersonAvatar } from "../collaboration/Presence";
 import { BlockMarkdown } from "../editor/BlockTree";
@@ -56,7 +59,7 @@ function Comment({ comment, me, owner, canComment, people, labelsFor, later, fie
   const mayDelete = canComment && canDeleteComment(comment, me, owner);
   const openMenu = (e) => setMenu({ x: e.clientX, y: e.clientY });
   return (
-    <div className="commentItem rowMenuHost" data-comment-id={comment.id}>
+    <div className="commentItem rowMenuHost" data-motion-key={comment.id} data-comment-id={comment.id}>
       <PersonAvatar name={comment.author || "?"} title={comment.author} />
       <div className="commentMain">
         <div className="commentMeta">
@@ -130,10 +133,13 @@ export function Thread({ thread, focused = false, active, onActivate, canComment
       tabIndex={canActivate ? 0 : undefined}
       aria-label={canActivate ? (canComment ? t("Reply to this thread") : t("Show this thread")) : undefined}
       onKeyDown={(e) => { if (canActivate && e.target === e.currentTarget && (e.key === "Enter" || e.key === " ")) { e.preventDefault(); onActivate(thread.id); } }}>
-      {comments.map((c, i) => (
-        <Comment key={c.id} comment={c} me={me} canComment={canComment} people={people} {...rest} actions={!collapsed}
-          resolve={i === 0 && canComment ? { open, onClick: () => onResolve(thread.id, open) } : null} />
-      ))}
+      {/* a card opening to its whole thread is another list: nothing comes in */}
+      <ListMotion keys={comments.map((c) => c.id)} scope={collapsed} enter="rise" moves={false}>
+        {comments.map((c, i) => (
+          <Comment key={c.id} comment={c} me={me} canComment={canComment} people={people} {...rest} actions={!collapsed}
+            resolve={i === 0 && canComment ? { open, onClick: () => onResolve(thread.id, open) } : null} />
+        ))}
+      </ListMotion>
       {collapsed && replies > 0 ? (
         <div className="commentReplies">{tn("{n} reply", "{n} replies", replies)}</div>
       ) : null}

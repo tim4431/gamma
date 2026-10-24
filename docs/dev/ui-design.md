@@ -682,6 +682,9 @@ citation (`PublishSection`): Publish, or the published link with Copy and
 an inline-confirmed Unpublish, the sync state line with Sync now, and the
 cloud share's access as the same tiles and View / Edit toggle
 ([mirror.md](mirror.md) "What the person sees").
+Opened again on the same page or folder it shows the settings it had at
+once and asks for them again in place; a first load, and the Gamma Cloud
+section's state, come into focus where they will stand (`Reveal`).
 Every change saves at once; nothing is a bespoke control. There is no
 "reset link": stopping and sharing again mints a new address. The read-only
 view's top bar is the visitor's side of it: the brand mark (the way to the
@@ -1055,13 +1058,30 @@ is plain markup, and a first render never moves.
 - **`.countIn`**, keyed by the number: a badge's number rises into
   place when it changes; the Inbox badge also pops on when it comes.
 - **`FADE_IN`**, spread on an `<img>`: a picture fades in once loaded
-  (the library cards' snapshots); one already in the cache shows at once.
+  (the library cards' snapshots, the Import and Export dialogs' Zotero
+  mark); one already in the cache shows at once.
 - **`.loadingHint`**: a "Loading…" placeholder that fades in only after
   `--dur-slow`, so an answer that comes quickly takes the place of a blank,
   never of the word (the chat's History popover on its first read). What
   was read before shows instead while it is read again in place: the
   History popover keeps each page's list, the chat keeps the last twenty
   conversations it showed. Under reduced motion the word shows at once.
+- **`Reveal`** `ready k fallback`: where a first load lands (the share
+  popover's settings, the Inbox's listing, Recently deleted's pages).
+  While it waits it holds, blank, the height its content last had under
+  `k`, and its `fallback` ("Loading…") fades in only after `--dur-slow`,
+  so a load that answers fast never shows it. Content that takes the
+  place of a placeholder comes into focus as a pane does; content ready at
+  once is plain. It is a column, and it never eases a height: what holds
+  it changes size once, as the content lands, so it is not for a surface
+  placed from its size (the thread popover), which would jump. Under
+  reduced motion the fallback shows at once. Content already there is
+  better than any placeholder: the share popover keeps a target's
+  settings while it asks for them again, the Inbox opens each tab on the
+  first page it showed last and refreshes it in place, and Recently deleted
+  asks for its list with its module, as the pointer or the focus reaches
+  its button, so it lands whole. Search results, which change with every
+  key, take none.
 - A switch's thumb travels with `--ease-pop`, its one overshoot.
 - **`.shakeNo`**, replayed by removing and adding it: a field that
   refused what was typed shakes once, a small no (a wrong password at
@@ -1124,15 +1144,17 @@ and what it holds travels with it.
   a row at rest.
 
 `arriving(el)` counts a glide as an arrival, so the guide's card waits
-for its anchor's row to land. The chat's transcript is one too: a question
-sent and its reply rise in together (`enter="rise"`, `moves={false}`, keyed
-by their places, one scope per conversation), while a conversation loaded,
-switched to or read again shows still: its messages are the ones a load
-just delivered. The notes outline is the first list on it.
-Its rows and their children bodies are the items, with the backlinks and
-the tail under them; it plays only when the tree's shape changed
-(`sameShape`, `shared/model/blockModel.js`), so a keystroke or a fold
-moves nothing.
+for its anchor's row to land.
+
+The notes outline is the first list on it. Its rows and their children
+bodies are the items, with the backlinks and the tail under them; it
+plays only when the tree's shape changed (`sameShape`,
+`shared/model/blockModel.js`), so a keystroke or a fold moves nothing.
+
+The chat's transcript is another: a question sent and its reply rise in
+together (`enter="rise"`, `moves={false}`, keyed by their places, one
+scope per conversation), while a conversation loaded, switched to or read
+again shows still: its messages are the ones a load just delivered.
 
 The tab strip (`OpenTabs`) is another. A tab opened rises in, one closed
 sinks back out where it stood while the tabs after it glide over its
@@ -1146,7 +1168,7 @@ pressed or typed anything in the window (the page it opened on getting
 its tab): that is the window loading. The strip is as tall with no tab
 as with one, so the topbar never grows as the first one opens.
 
-The library's listing, in both views, is a third. A row comes in fading
+The library's listing, in both views, is another. A row comes in fading
 and goes fading, a card grows in and shrinks away, and a delete or an
 item its sort moves glides the rest. A listing's `scope` is its view, kind
 filter, folder, label, sort, filter text and how many rows Load more has
@@ -1158,6 +1180,30 @@ render. The reads that are loads come still: the listing read again on
 coming home or on the window's wake, and the server's view history landing
 after it. Each marks what it sets, and a change is still when all it
 changed was read that way, so a delete right after a load still moves.
+
+The small lists are on it too. An empty state can be an item of its own
+(its key "empty"), so it fades in as the last item leaves; a section's
+header is one, so it goes with its last row.
+
+- **The Inbox**: its rows and day headers; a row read in Unread or
+  archived leaves (`"row"`) and a new one fades in. Each tab is a scope,
+  and Mark all read empties the tab at once (`still`).
+- **Background tasks**: a task that finishes glides past the header to
+  the top of Finished (with nothing else running, In progress goes with
+  it and Finished's header glides up), one removed leaves (`"row"`), and
+  Clear finished takes them all at once.
+- **The PDF margin**: a card grows in and shrinks away (`"card"`), and
+  `moves={false}`, since stackCards places the cards and their `top`
+  moves them on `--dur-slow`. A new comment stored hands its card to its
+  thread's still.
+- **The Comments window**: a thread rises in (`"rise"`) and one with a
+  new reply glides to the top. A list that fills from none (the page's
+  threads loading) comes in still.
+- **A thread's comments**: a reply rises in. A margin card opening to its
+  whole thread is another scope.
+
+The copies drop the ids the app and the tests find these items by
+(`data-inbox-id`; `data-card-for`, `data-thread-id`, `data-comment-id`).
 
 ## Block editor interactions
 

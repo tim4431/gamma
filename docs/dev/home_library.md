@@ -527,7 +527,11 @@ toolbar (at the library root, where `lib.organize`) or from the
 deleted it and when, the days it has left and its folder, as `aiProvRow`
 rows (a row's folder: the first of its entry's `folders` ids the folder
 tree has, by its path). Each row has Restore and a trash button that deletes for good after
-App's confirm box, and the dialog's footer has Empty. A link to a trashed
+App's confirm box, and the dialog's footer has Empty. The pointer or the
+focus reaching the trash button asks for `GET /api/trash` with the
+dialog's module (`library/trashList.js`), so a click lands on the dialog
+with its pages; the dialog takes an answer asked in the last 2 s as it
+is, shows an older one while it asks again, and lets it go as it closes. A link to a trashed
 page gets a 404 whose body carries `trashed` (the page's trash entry). The
 missing-page notice then names the page and offers Restore, which restores
 it and opens what the link named. A `[[ref]]` or `![[embed]]` naming a block
