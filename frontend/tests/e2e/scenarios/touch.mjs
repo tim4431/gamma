@@ -9,6 +9,7 @@
 // iPad (docs/dev/ipad.md has the device checks). The last step reads the
 // menus these steps open as assistive technology does: one role="menu"
 // around each menu's items, named by what opens it.
+import { generateNKeysBetween } from "fractional-indexing";
 import { assertMenuRoles, fakeAiModels, wanted } from "../harness.mjs";
 import { waitForPdf } from "./pdf.mjs";
 import { PNG_1PX } from "./notes.mjs";
@@ -129,6 +130,68 @@ export async function touchScenarios({ server, browser, alice, makePdf, step, un
       await until(async () => !(await chatFolded(page)), { what: "a click on the folded header opens Chat" });
       await sleep(900);
       assert(!(await chatFolded(page)), "Chat stays open after the opening click");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  // A fold keeps the window (ui-design.md "Dock windows"): Chat and Notes
+  // folded and opened again are the same windows, at the same place, with
+  // nothing read again.
+  await step("touch: a fold keeps the window: Chat opens again at once on the place it was read, with its draft and no new read, and Notes keep their scroll", async () => {
+    const fup = await alice.upload("/api/uploads", makePdf([["A paper to fold windows over"]]), "fold.pdf", "application/pdf");
+    const fold = await alice.api(`/api/blocks/by-doc/${fup.doc_id}`, { method: "POST", body: { default_title: "Fold paper", source_url: fup.source_url } });
+    await alice.api(`/api/pages/${fold.id}/ops`, { method: "POST", body: { client: "e2e", ops: generateNKeysBetween(null, null, 30).map((position, i) => (
+      { op: "insert", id: `fold${i}`, parent: fold.id, position, content: `Fold note ${i}: a line long enough to wrap once in the notes window` })) } });
+    await alice.api(`/api/chats/${fold.id}`, { method: "PUT", body: { messages: Array.from({ length: 12 }, (_, i) => [
+      { role: "user", text: `Question ${i} about the paper?` },
+      { role: "ai", text: `Answer ${i}. ${"A reply long enough to wrap over a few lines of the chat window. ".repeat(3)}` }]).flat() } });
+    const ctx = await alice.context(browser);
+    try {
+      await fakeAiModels(ctx);
+      await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+      const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&page=${fold.id}`);
+      await waitForPdf(page);
+      await page.locator(".chatBubbleRow").nth(23).waitFor({ state: "attached" });
+      await page.locator(".sidebar .blockRowWrap", { hasText: "Fold note 29" }).waitFor({ state: "attached" });
+      const reads = [];
+      page.on("request", (r) => { if (r.url().includes("/api/chats/")) reads.push(r.url()); });
+      const place = () => page.evaluate(() => {
+        const msgs = document.querySelector(".chatMessages");
+        return { chat: Math.round(msgs.scrollTop), notes: Math.round(document.querySelector(".sidebar .blockList").scrollTop),
+          draft: document.querySelector(".chatInputArea").value };
+      });
+      await page.evaluate(() => {
+        const msgs = document.querySelector(".chatMessages");
+        msgs.scrollTop = Math.round((msgs.scrollHeight - msgs.clientHeight) / 2);
+        document.querySelector(".sidebar .blockList").scrollTop = 300;
+      });
+      await page.getByRole("combobox", { name: "Message AI" }).fill("half a thought");
+      await sleep(300);
+      const before = await place();
+      assert(before.chat > 100 && before.notes > 100, `scrolled into both windows: ${JSON.stringify(before)}`);
+      await chatGrip(page).dblclick();
+      await until(() => chatFolded(page), { what: "Chat folded" });
+      assert(!(await page.locator(".chatBubbleRow").first().isVisible()), "folded, the conversation is out of sight");
+      await sleep(900); // past the fold's echo
+      // The frame the click paints: the conversation is there, where it was.
+      const opened = await page.evaluate(() => new Promise((resolve) => {
+        document.querySelector('.collapsedBar [data-guide="chat.grip"]').closest(".dockWindowHeader").click();
+        requestAnimationFrame(() => {
+          const msgs = document.querySelector(".chatMessages");
+          resolve({ bubbles: msgs.querySelectorAll(".chatBubbleRow").length, height: Math.round(msgs.clientHeight), chat: Math.round(msgs.scrollTop) });
+        });
+      }));
+      assertEq(opened.bubbles, 24, "the first frame open shows the whole conversation");
+      assert(opened.height > 100, `and its transcript has its room: ${opened.height}px`);
+      assertEq(opened.chat, before.chat, "at the place it was read");
+      await sleep(900); // past the opening click's echo
+      await page.locator('[data-guide="notes.grip"]').dblclick();
+      await page.locator('.dockWindow.collapsed [data-guide="notes.grip"]').waitFor();
+      await sleep(900);
+      await page.locator('[data-guide="notes.grip"]').click();
+      await page.locator('.dockWindow:not(.collapsed) [data-guide="notes.grip"]').waitFor();
+      assertEq(JSON.stringify(await place()), JSON.stringify(before), "both windows keep their place, and the draft stays");
+      assertEq(reads.length, 0, `nothing is read again: ${reads.join(", ")}`);
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

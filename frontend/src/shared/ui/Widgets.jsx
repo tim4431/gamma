@@ -24,39 +24,61 @@ import ListMotion from "./ListMotion";
 
 // Shared chrome for every dockable window: one grip (drag to move or
 // reorder, double press to fold), the close button right beside it, then
-// the window's own controls. Folded, a window is its header alone, and one
-// press on it anywhere but a button opens it. Notes and chat both use this
-// so their behavior can't drift apart. Without `onGrip` (the compact shell
-// has no drag and no fold) the title is a plain label.
+// the window's own controls. Notes and chat both use this so their behavior
+// can't drift apart. Without `onGrip` (the compact shell has no drag and no
+// fold) the title is a plain label.
+//
+// Folded (`collapsed`), a window is its header alone: its slot shows the
+// header as a bar (`DockBar`), and one press on the bar anywhere but a
+// button opens it. The window itself keeps its body mounted, out of sight
+// and inert, where it stood: a fold changes no state inside it (the chat's
+// conversation and its place, the notes' scroll, a half-typed message).
 //
 // When the click that opened a folded window was the first of a double
 // click, the second lands on the opened grip: that one does not fold it.
 let unfoldedAt = -Infinity;
 const UNFOLD_ECHO_MS = 800;
 
-function DockWindow({ title, guide, onGrip, onFold, onClose, headerContent, collapsed, children }) {
+function DockHeader({ title, guide, onGrip, onFold, onClose, headerContent, collapsed }) {
   const unfold = collapsed && onFold ? (e) => {
     if (e.target.closest("button")) return;
     unfoldedAt = e.timeStamp;
     onFold();
   } : undefined;
   return (
-    <div className={`dockWindow ${collapsed ? "collapsed" : ""}`}>
-      <div className="dockWindowHeader" onClick={unfold}>
-        <span
-          className="dockGrip"
-          data-guide={guide}
-          onPointerDown={onGrip}
-          {...doublePress(onFold && ((e) => { if (e.timeStamp - unfoldedAt > UNFOLD_ECHO_MS) onFold(); }))}
-          title={onGrip ? (collapsed ? t("Click to expand · drag to move this window") : t("Drag to move this window · double-click to collapse")) : undefined}
-        >{onGrip ? "⠿ " : null}{title}</span>
-        {onClose ? (
-          <button className="uiClose" onClick={onClose} title={t("Close window (reopen from the View menu)")} aria-label={t("Close {title}", { title: title })}><XIcon size={14} /></button>
-        ) : null}
-        <span className="dockHeaderSpacer" />
-        {collapsed ? null : headerContent}
-      </div>
-      {collapsed ? null : <div className="dockWindowBody">{children}</div>}
+    <div className="dockWindowHeader" onClick={unfold}>
+      <span
+        className="dockGrip"
+        data-guide={guide}
+        onPointerDown={onGrip}
+        {...doublePress(onFold && ((e) => { if (e.timeStamp - unfoldedAt > UNFOLD_ECHO_MS) onFold(); }))}
+        title={onGrip ? (collapsed ? t("Click to expand · drag to move this window") : t("Drag to move this window · double-click to collapse")) : undefined}
+      >{onGrip ? "⠿ " : null}{title}</span>
+      {onClose ? (
+        <button className="uiClose" onClick={onClose} title={t("Close window (reopen from the View menu)")} aria-label={t("Close {title}", { title: title })}><XIcon size={14} /></button>
+      ) : null}
+      <span className="dockHeaderSpacer" />
+      {collapsed ? null : headerContent}
+    </div>
+  );
+}
+
+function DockWindow({ title, guide, onGrip, onFold, onClose, headerContent, collapsed, children }) {
+  return (
+    <div className={`dockWindow${collapsed ? " dockWindowFolded" : ""}`} inert={collapsed ? "" : undefined}>
+      {collapsed ? null : (
+        <DockHeader title={title} guide={guide} onGrip={onGrip} onFold={onFold} onClose={onClose} headerContent={headerContent} />
+      )}
+      <div className="dockWindowBody">{children}</div>
+    </div>
+  );
+}
+
+// A folded window's bar: its header, in its slot beside the open windows.
+function DockBar({ title, guide, onGrip, onFold, onClose }) {
+  return (
+    <div className="dockWindow collapsed">
+      <DockHeader title={title} guide={guide} onGrip={onGrip} onFold={onFold} onClose={onClose} collapsed />
     </div>
   );
 }
@@ -763,6 +785,7 @@ export {
   GammaNavContext,
   BlockDropIndicator,
   ChatMarkdown,
+  DockBar,
   DockWindow,
   handleMarkdownCopy,
   OpenTabs,

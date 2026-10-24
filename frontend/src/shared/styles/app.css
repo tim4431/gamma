@@ -2989,6 +2989,15 @@ mark.searchMark {
 .slotStack-horizontal .collapsedBar .dockWindow { border-right: 1px solid var(--border-subtle); }
 .slotStackGroup { flex: 1; min-width: 0; min-height: 0; display: flex; }
 .slotStackGroup > [data-panel-group] { flex: 1; }
+/* A collapsed window stays in its panel while its bar shows: the panel
+   takes no room and clips, nothing can scroll it, and the window keeps the
+   size it had as it folded (--fold-w, --fold-h, set by the fold), unseen
+   and inert, so what it holds neither lays out again nor loses its place.
+   Only the splitters between open windows show. */
+.dockPanelFolded { flex: 0 0 0px !important; overflow: clip !important; }
+.dockPanelFolded > .dockWindow { flex: none; width: var(--fold-w, 100%); height: var(--fold-h, 100%); visibility: hidden; }
+.dockWindowFolded .dockWindowBody { overflow: clip; }
+.sashFolded { display: none; }
 /* Header controls use the shared uiBtn sizes; keep only layout here. */
 .dockWindowHeader .chatPanelHeaderBtns { flex-shrink: 0; }
 .dockWindowBody {
