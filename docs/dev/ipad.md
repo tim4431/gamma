@@ -1118,6 +1118,12 @@ The iPad app shows this same bar, since it is the web app.
     its place has been still for 150 ms (`useBarPlace`).
   - Opening an editor counts as a move for 350 ms, the keyboard's rise, so
     the bar appears with the keyboard rather than under it.
+  - From one open editor to the next (a new block, an indent or outdent
+    that remounts the row, another note tapped) the keyboard stays up, and
+    so does the bar, where it is. It is one bar for the notes, held by the
+    top of the tree (`EditBarHost`) while a row's editor is open, and the
+    open row hands it its command context each time it renders
+    (`useEditBarRow`), so its tools are always the open block's.
   - The events do not always come at the end of a move, and none come when
     the keyboard returns to an editor that kept the focus. So the
     viewport's and the window's events, a focus change and a tap each
@@ -1230,6 +1236,10 @@ the panes scroll.
       it shows where the pan stops.
     - Indent, Outdent and Move down change the saved tree, and after each
       the same block's editor still has the focus.
+    - Landscape, the bar stays in sight every frame from one editor to the
+      next: Shift+Enter, Tab and Shift+Tab, the bar's New block, Indent and
+      Outdent, another note tapped; its Indent and Outdent follow the open
+      block.
     - New block focuses a new empty block.
     - Bold wraps the selection; Undo and Redo take it back and put it
       back, and so do the keyboard's `historyUndo` / `historyRedo` input

@@ -35,7 +35,7 @@ import { useMathUi } from "./useMathUi.js";
 import { BlockCmEditor, OBJECT_DRAG_TYPE } from "./BlockCmEditor";
 import { expandBlankLines } from "./mdMarks";
 import { BLOCK_COMMANDS } from "./blockCommands.js";
-import EditBar from "./EditBar";
+import { EditBarHost, useEditBarRow } from "./EditBar";
 import { dispatch as dispatchHotkey } from "../shared/lib/hotkeys.js";
 import { blockStartInSource, gapInSource, renderedGaps, sourceOffsetAtPoint } from "./clickToSource";
 import { highlightCode, makeCopyButton } from "./codeHighlight";
@@ -1002,6 +1002,8 @@ const BlockRow = React.memo(function BlockRow({
     block, tree: getTree?.(), view, folded: collapsed, readOnly, editor: ref.current,
     row: { onHop, onMoveBlock, onDuplicate, onDelete, onEnterSibling, onIndent, onOutdent, onToggle, onAddToChat, onMoveToPage, onComment },
   });
+  // While this row's editor is open, the tree's editing bar is this row's.
+  useEditBarRow(!readOnly && editing, commandContext);
 
   useEffect(() => {
     registerRef(block.id, ref);
@@ -1765,7 +1767,6 @@ const BlockRow = React.memo(function BlockRow({
           ) : null}
         </>
       ) : null}
-      {!readOnly && editing ? <EditBar context={commandContext} onUndo={onUndo} /> : null}
       {!readOnly && editing && slash.popup ? (
         <SlashMenuPopup {...slash.popup} guide="editor.slashMenu" event="slash.opened" />
       ) : null}
@@ -2035,7 +2036,7 @@ function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = 
   // document order across the page (rowProps.sheetNumbers), else among
   // these rows.
   let sheets = 0;
-  return (
+  const rows = (
     <>
       {ghostAt === 0 ? ghostRow : null}
       {list.map((rawBlock, idx) => { const block = legacy(rawBlock);
@@ -2075,6 +2076,10 @@ function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = 
       );})}
     </>
   );
+  // The top of the tree holds the editing bar of whichever row's editor is
+  // open (EditBar.jsx).
+  if (parentId !== undefined) return rows;
+  return <EditBarHost open={readOnly ? null : rowRest.view?.editingId} onUndo={rowRest.onUndo}>{rows}</EditBarHost>;
 }
 
 export { BlockTree, _dragState };
