@@ -196,8 +196,9 @@ export async function authScenarios({ server, browser, alice, step, until, asser
     try {
       await ctx.route("**/api/session", async (route) => { await new Promise((r) => setTimeout(r, 2000)); await route.continue(); });
       const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
-      // Splash's own (index.html's holds the slow-connection line)
-      const spin = page.locator("#splash:not(:has(#splashSlow)) .spin");
+      // index.html's splash, or Splash once the app draws it: the session is
+      // asked for as the page starts, so either may be up while it is read
+      const spin = page.locator("#splash .spin").first();
       await spin.waitFor({ timeout: 5000 });
       const turning = await spin.evaluate((el) => {
         const cs = getComputedStyle(el);
