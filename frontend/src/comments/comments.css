@@ -91,6 +91,7 @@
   overscroll-behavior: contain;
 }
 .commentThread {
+  --comment-text-x: calc(20px + var(--space-3)); /* a comment's text, past its avatar */
   display: flex;
   flex-direction: column;
   gap: var(--space-3);
@@ -123,6 +124,8 @@
   gap: var(--space-3);
 }
 .commentItem > .peerAvatar { flex-shrink: 0; margin-top: 2px; border: none; }
+/* a reply steps in under the first comment's text, its avatar under that name */
+.commentItem.reply { margin-left: var(--comment-text-x); }
 .commentMain { flex: 1; min-width: 0; }
 .commentMeta {
   display: flex;
@@ -210,7 +213,7 @@
   max-height: calc(3em * var(--lh-ui));
   overflow: hidden;
 }
-.commentReplies { font-size: var(--fs-xs); font-weight: 600; color: var(--text-muted); padding-left: calc(20px + var(--space-3)); } /* under the text, past the avatar */
+.commentReplies { font-size: var(--fs-xs); font-weight: 600; color: var(--text-muted); padding-left: var(--comment-text-x); } /* under the text, past the avatar */
 .commentCard .commentSignIn { padding-bottom: 0; }
 /* a new comment sent shows over its emptied field until its thread's card
    takes the place */

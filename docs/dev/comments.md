@@ -456,7 +456,10 @@ Notion: a press on the thread (not on one of its buttons, links or fields),
 Enter or Space on it, or the link that opened the popover at it makes it
 active, and a thread holding an unsent reply keeps its field. Its first comment's author line carries the thread's Resolve
 (a check mark) or Reopen button beside the "⋯"; a resolved thread says
-who resolved it at its foot, where the reply field was. A comment shows its author's avatar (`PersonAvatar`), name, time and text rendered as a note is (`BlockMarkdown`
+who resolved it at its foot, where the reply field was. The replies step in
+under the first comment's text, each avatar under its name, as the
+annotated PDF prints them ([pdf_typesetting.md](pdf_typesetting.md)); the
+reply field keeps the thread's full width. A comment shows its author's avatar (`PersonAvatar`), name, time and text rendered as a note is (`BlockMarkdown`
 with `blockId="comment:<id>"`, so math, @people chips and `[[links]]` work,
 a link to a block outside the page getting its label from App's reference
 cache, which `onFetchRefs` fills when the threads arrive; the
