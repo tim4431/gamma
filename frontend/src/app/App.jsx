@@ -4122,7 +4122,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (!pendingBlockScrollRef.current) return;
     const id = pendingBlockScrollRef.current;
     const row = document.querySelector(`[data-block-id="${id}"]`);
-    if (row) {
+    if (row && !row.closest("[inert]")) {
       row.scrollIntoView({ block: "center", behavior: "smooth" });
       setFocusedId(id);
       pendingBlockScrollRef.current = null;
@@ -4132,9 +4132,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setView((v) => revealBlock(blocks, v, id));
     }
     // Otherwise the row isn't rendered yet (not in the tree yet, or the notes
-    // window is closed or collapsed — a highlight made on the PDF alone):
-    // keep the ref and try again on the next tree change or when the notes
-    // come back.
+    // window is closed, or folded — where its row waits inert and out of
+    // sight — a highlight made on the PDF alone): keep the ref and try again
+    // on the next tree change or when the notes come back.
   }, [blocks, view, blockScrollReq, notesVisible, collapsedWins.notes, phonePanel]);
 
   // A page's passive landing (openBlock): the notes scroll to where the

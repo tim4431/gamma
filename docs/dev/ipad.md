@@ -1101,7 +1101,9 @@ The iPad app shows this same bar, since it is the web app.
   pointer is fine, a mouse or trackpad press never brings it. It is read
   once when the editor opens (`touchTyping()` in `shared/lib/pointer.js`,
   [ui-design.md](ui-design.md#one-behaviour-for-mouse-and-finger)). A
-  read-only page opens no editor, so it has no bar.
+  read-only page opens no editor, so it has no bar, and nor do folded
+  Notes: the editor a highlight made on the PDF opens waits for them to
+  open, and its bar with it ([ui-design.md](ui-design.md#dock-windows)).
 - **What it looks like.** The markup tool strip's surface and separators
   (`.pdfInkBar`, `.pdfInkSep`), centred and floating 6 px above what it
   sits on. Its `ctlBtn`s carry the strip's 16 px icons and are 36 px, the
@@ -1206,8 +1208,10 @@ the panes scroll.
 - `tests/e2e/scenarios/touch.mjs` (`npm run e2e -- --only touch`), by
   finger on an emulated tablet: Inline code and Strikethrough wrap a
   selection, Next math argument shows only in a math argument and hops to
-  the next, the typing aids are on in prose and off in math, and a tapped
-  picture's toolbar ⋯ opens the object menu.
+  the next, the typing aids are on in prose and off in math, a tapped
+  picture's toolbar ⋯ opens the object menu, and a highlight made with
+  Notes folded shows no bar until they open, its note's editor then
+  focused under the bar.
 - `tests/e2e/scenarios/ipad.mjs` (`npm run e2e -- --only ipad`), in
   Chromium touch contexts:
   - Tablet-sized: the manifest parses with `standalone` display, and every

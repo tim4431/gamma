@@ -11,7 +11,7 @@
 // around each menu's items, named by what opens it.
 import { generateNKeysBetween } from "fractional-indexing";
 import { assertMenuRoles, fakeAiModels, wanted } from "../harness.mjs";
-import { waitForPdf } from "./pdf.mjs";
+import { selectPdfText, waitForPdf } from "./pdf.mjs";
 import { PNG_1PX } from "./notes.mjs";
 
 // The tablet held in landscape (the docks) and upright (the compact shell).
@@ -141,6 +141,49 @@ export async function touchScenarios({ server, browser, alice, makePdf, step, un
       await page.locator('.dockWindow:not(.collapsed) [data-guide="notes.grip"]').waitFor();
       assertNoProblems(page);
     } finally { await ctx.close(); }
+  });
+
+  // A folded window holds its rows but opens no editor there (ui-design.md
+  // "Dock windows"): a highlight made on the PDF with Notes folded opens its
+  // note's editor when they open, as it did when a fold unmounted them.
+  await step("touch: a highlight made while Notes are folded opens its note's editor only as they open, with the focus, and no editing bar or cursor chip before", async () => {
+    const hup = await alice.upload("/api/uploads", makePdf([["Highlight me while the notes are folded", "And me, with a mouse"]]), "folded.pdf", "application/pdf");
+    const hpaper = await alice.api(`/api/blocks/by-doc/${hup.doc_id}`, { method: "POST", body: { default_title: "Folded highlight paper", source_url: hup.source_url } });
+    await alice.api("/api/blocks", { method: "POST", body: { parent_id: hpaper.id, content: "A note already here" } });
+    for (const finger of [true, false]) {
+      const ctx = await alice.context(browser, finger ? TABLET : undefined);
+      try {
+        const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&page=${hpaper.id}`);
+        await waitForPdf(page);
+        await page.locator(".sidebar .blockRow", { hasText: "A note already here" }).waitFor();
+        const grip = page.locator('[data-guide="notes.grip"]');
+        if (finger) {
+          const at = await centre(grip);
+          await page.touchscreen.tap(at.x, at.y);
+          await page.touchscreen.tap(at.x, at.y);
+        } else await grip.dblclick();
+        await page.locator('.dockWindow.collapsed [data-guide="notes.grip"]').waitFor();
+        await sleep(500); // past the fold's echo
+        const rows = await page.locator(".sidebar .blockRowWrap").count();
+        await selectPdfText(page, 1, finger ? "Highlight me" : "And me");
+        await page.locator(".plainTip .colorBtn").first().click();
+        await until(async () => (await page.locator(".sidebar .blockRowWrap").count()) > rows, { what: "the highlight's note is in the folded Notes" });
+        await sleep(600); // past the editing bar's wait for the keyboard
+        assertEq(await page.locator(".blockEditorCm").count(), 0, "no editor opens in the folded Notes");
+        assertEq(await page.locator(".editBar").count(), 0, "nor its editing bar over the PDF");
+        assertEq(await page.locator(".chatSelChip.isCursor").count(), 0, "nor the chat's chip for a block out of sight");
+        const bar = await centre(grip);
+        if (finger) await page.touchscreen.tap(bar.x, bar.y); else await grip.click();
+        await page.locator('.dockWindow:not(.collapsed) [data-guide="notes.grip"]').waitFor();
+        await until(() => page.evaluate(() => !!document.activeElement?.closest(".blockEditorCm")), { what: "the new note's editor takes the focus as Notes open" });
+        if (finger) await page.locator(".editBar:not(.moving)").waitFor();
+        await page.locator(".chatSelChip.isCursor").waitFor();
+        const typed = finger ? "written by finger as Notes opened" : "written by mouse as Notes opened";
+        await page.keyboard.type(typed);
+        await page.locator(".sidebar .blockRowWrap", { hasText: typed }).waitFor();
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+    }
   });
 
   await step("touch: a double-click on the Chat grip folds it, a click on the folded header opens it", async () => {

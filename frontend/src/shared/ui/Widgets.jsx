@@ -72,13 +72,20 @@ function DockHeader({ title, guide, onGrip, onFold, onClose, headerContent, coll
   );
 }
 
+// Whether the dock window around is folded (`useDockFolded`). What it holds
+// stays mounted but can take neither the focus nor a press, so what would
+// (a note's editor, and its editing bar outside the window) waits for the
+// window to open, as it did when a fold unmounted it.
+const DockFolded = createContext(false);
+const useDockFolded = () => useContext(DockFolded);
+
 function DockWindow({ title, guide, onGrip, onFold, onClose, headerContent, collapsed, children }) {
   return (
     <div className={`dockWindow${collapsed ? " dockWindowFolded" : ""}`} inert={collapsed ? "" : undefined}>
       {collapsed ? null : (
         <DockHeader title={title} guide={guide} onGrip={onGrip} onFold={onFold} onClose={onClose} headerContent={headerContent} />
       )}
-      <div className="dockWindowBody">{children}</div>
+      <div className="dockWindowBody"><DockFolded.Provider value={!!collapsed}>{children}</DockFolded.Provider></div>
     </div>
   );
 }
@@ -800,5 +807,6 @@ export {
   OpenTabs,
   PopoverAnchor,
   useCopied,
+  useDockFolded,
   useTextScale,
 };

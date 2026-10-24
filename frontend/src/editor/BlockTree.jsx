@@ -21,7 +21,7 @@ import { useBlockFrame } from "../replay/useFrame.js";
 import { isTextBox } from "../markup/textBox.js";
 import { isSheet } from "../notebook/notebook";
 import { NoteSheet } from "../notebook/NoteSheet";
-import { CitationPill, GammaLinkCard, handleMarkdownCopy } from "../shared/ui/Widgets";
+import { CitationPill, GammaLinkCard, handleMarkdownCopy, useDockFolded } from "../shared/ui/Widgets";
 import { Collapse } from "../shared/ui/MotionWidgets";
 import { DiagramFigure, diagramCodeProps } from "../shared/ui/DiagramFigure";
 import { mapOutsideCodeFences, remarkDiagrams, scanDiagramFences, setDiagramWidth } from "../shared/lib/diagramMarkdown.js";
@@ -2021,7 +2021,14 @@ function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = 
   // (a new one on every tree change would re-render each memoized row).
   // So too the comment counts: each row its own number, and whether its
   // thread popover is open.
-  const { refLabelsById, commentCounts, commentOpenFor, foldMoving, ...rowRest } = rowProps;
+  const { refLabelsById, commentCounts, commentOpenFor, foldMoving, view: openView, ...rest } = rowProps;
+  // In a folded dock window (useDockFolded) no row's editor is open: one
+  // there could take neither the focus nor a finger, and its editing bar
+  // would show over the rest of the screen. The view keeps the block that
+  // is open, whose editor mounts and takes the focus as the window opens.
+  const folded = useDockFolded();
+  const view = useMemo(() => (folded && openView?.editingId ? { ...openView, editingId: null } : openView), [folded, openView]);
+  const rowRest = { ...rest, view };
   const live = rowProps.aiLive;
   const ghost = live?.tool === "create_block" && live.parentId === (parentId ?? rowProps.rootId) ? live : null;
   if ((!blocks || blocks.length === 0) && !ghost) return null;
