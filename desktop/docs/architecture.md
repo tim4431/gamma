@@ -261,7 +261,9 @@ on this computer"), the update pill (only while an update is ready, see
 below) and a reload button. One dropdown is open at a time. While one is,
 the bar view is temporarily enlarged over the content (its page is
 transparent outside the strip and the dropdown), which is how a 38 px view
-can show a menu.
+can show a menu. A press outside the dropdown and its button closes it
+(a `pointerdown`, not a click: iOS sends no click for a tap on the bare
+see-through page), as do Escape and the window losing focus.
 
 The **content view** shows the launcher or the server. The launcher lists
 servers as cards (kind, running / reachable dot, size on disk, a running
@@ -305,6 +307,21 @@ derive a theme's colours from its scheme, so the shell pages set
 as Gamma's topbar under it), and `main.js`'s title-bar palette repeats that
 colour per theme. The same test checks both copies. The icons are the same
 stroke glyphs as `frontend/src/shared/ui/Icons.jsx`.
+
+**The iPad app shows these pages too.** It copies `ui/` into its bundle
+and shows `bar.html` above its web view and `launcher.html` over it, with
+a `gammaShell` of its own in Swift ([docs/dev/ipad.md "The chrome"](../../docs/dev/ipad.md#the-chrome)),
+so a change to the bar or the launcher is a change to both shells. Its
+`gammaShell.platform` is `ipad`, which each page puts on
+`body[data-platform]`. What only the desktop does is hidden there in two
+ways, neither of which changes the desktop. Its state has no `keeping`,
+`update` or `settings`, so the bar shows no sync button, *clone* chip or
+update pill, and the launcher no Settings block. And one rule in
+`theme.css`, `body[data-platform="ipad"] .desktopOnly`, hides *New local
+server* and a local card's Remove. Under the same attribute `theme.css`
+and `bar.html` take touch sizes (a 44 px bar below the status bar's inset,
+36 px targets, no 146 px reserve), the bar's status stays on one line, and
+the shortcut hints read ⌘⇧L and ⌘R.
 
 ### Gamma Cloud sign-in
 
@@ -517,9 +534,10 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   `switch`, the `dot` states) for the shell pages. The pages take every
   size, radius and shadow from the tokens (`--fs-*`, `--radius-*`,
   `--shadow-*`, `--font-mono`), icons at Gamma's 14 / 16 / 20 px with its
-  1.6 px stroke, and section labels in Gamma's sentence case.
+  1.6 px stroke, and section labels in Gamma's sentence case; and the
+  iPad's rules (`.desktopOnly`, touch sizes; "Window").
 - `ui/bar.html` — the shell bar. `ui/launcher.html` — the server picker.
-  Both plain HTML, no build step.
+  Both plain HTML, no build step, and the iPad app's chrome as well.
 - `lib/registry.js` — `servers.json` load/save, add/rename/remove,
   last-opened, settings, window bounds, data-dir size.
 - `lib/sidecar.js` — local server lifecycle: the port (`pickPort`, "A local
@@ -588,6 +606,11 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   `data-theme` attribute (read-only, via the preload).
 - Server pages never get an IPC bridge; `gammaShell` exists only on the
   shell's own `file:` pages, and every handler re-checks the sender.
+- `ui/` is also the iPad app's chrome ("Window"). A page keeps working
+  under the iPad's `gammaShell`, which has only the calls the iPad answers
+  and no `keeping`, `update` or `settings` in its state: a control only
+  the desktop answers either reads one of those keys or carries
+  `.desktopOnly`.
 - Local sidecars bind `127.0.0.1` only (the LAN-exposed use case is the
   existing server/Docker deployment, not the desktop app).
 - Navigation allowlist: only registered server origins render in the

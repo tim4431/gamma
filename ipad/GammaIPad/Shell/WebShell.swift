@@ -2,13 +2,14 @@ import ObjectiveC
 import UIKit
 import WebKit
 
-/// The one web view the app shows, set up once and kept for the app's life:
-/// the server's web app in it, the host declared before the bundle runs
-/// (Bridge), and the delegates that keep the window the web app's
-/// (Navigation, CloudSignIn). Under it, the page lays out as in Safari on an
-/// iPad: the desktop content mode on every model (an iPad mini would get the
-/// phone's otherwise), one CSS pixel to one point, and a document that never
-/// scrolls or bounces (the web app scrolls its own panes).
+/// The web view of the server's page, set up once and kept for the app's
+/// life (the chrome over it has views of its own, Chrome): the server's web
+/// app in it, the host declared before the bundle runs (Bridge), and the
+/// delegates that keep the window the web app's (Navigation, CloudSignIn).
+/// Under it, the page lays out as in Safari on an iPad: the desktop content
+/// mode on every model (an iPad mini would get the phone's otherwise), one
+/// CSS pixel to one point, and a document that never scrolls or bounces
+/// (the web app scrolls its own panes).
 @MainActor
 final class WebShell {
     let webView: WKWebView
@@ -24,11 +25,25 @@ final class WebShell {
     /// (desktop/main.js openServerNow). A person who signs out stays out
     /// until the server is opened again.
     private var loginDue = false
+    /// What the page's server answered `/api/session` (its user, default
+    /// workspace and workspaces: the bar's switcher), nil while no one is
+    /// signed in or it is not known.
+    private(set) var session: [String: Any]?
+    /// The page's theme (`<html data-theme>`), which the chrome pages paint
+    /// in, kept for the next launch like the background; "" until a page
+    /// has reported one.
+    private(set) var themeName: String
+    /// `session` or `themeName` changed (the controller hands the chrome its state).
+    var onChange: (() -> Void)?
+    private var readingSession = false
     private var loading: NSKeyValueObservation?
+    private var address: NSKeyValueObservation?
 
     private static let backgroundKey = "gamma.theme.background"
+    private static let themeNameKey = "gamma.theme.name"
 
     init() {
+        themeName = UserDefaults.standard.string(forKey: Self.themeNameKey) ?? ""
         let configuration = WKWebViewConfiguration()
         // The default store keeps the server's session cookie (a year) across launches.
         configuration.websiteDataStore = .default()
@@ -66,7 +81,15 @@ final class WebShell {
         // (KVO on WKWebView comes on the main thread).
         loading = webView.observe(\.isLoading, options: [.new]) { [weak self] _, change in
             guard change.newValue == false else { return }
-            MainActor.assumeIsolated { self?.signInIfDue() }
+            MainActor.assumeIsolated {
+                self?.signInIfDue()
+                self?.readSession()
+            }
+        }
+        // The address changes without a load too: the web app writes the
+        // workspace (?ws=) with replaceState, and signs in in place.
+        address = webView.observe(\.url, options: [.new]) { [weak self] _, _ in
+            MainActor.assumeIsolated { self?.readSession() }
         }
     }
 
@@ -78,7 +101,18 @@ final class WebShell {
         bridge.origin = origin
         navigation.server = origin
         loginDue = true
+        session = nil
         webView.load(URLRequest(url: server))
+    }
+
+    /// The server's web app on one of its workspaces, as the desktop's
+    /// switcher opens one (`?ws=`).
+    func openWorkspace(_ id: String) {
+        guard let server, var parts = URLComponents(url: server, resolvingAgainstBaseURL: false) else { return }
+        parts.path = "/"
+        parts.queryItems = [URLQueryItem(name: "ws", value: id)]
+        guard let url = parts.url else { return }
+        webView.load(URLRequest(url: url))
     }
 
     /// After a failed load: the server's address again.
@@ -88,12 +122,47 @@ final class WebShell {
         webView.load(URLRequest(url: server))
     }
 
+    /// The page again while it is on the shown server, else the server's
+    /// address (none has loaded, or a switch to it failed).
+    func reload() {
+        if let page = webView.url, let server, Origin(page) == Origin(server) { webView.reload() } else { retry() }
+    }
+
     /// The page's process was ended by the system: the page reloads, and the
     /// web app restores itself as after any reload.
     private func recover() {
         loginDue = true
         Self.hideKeyboardAccessoryBar(of: webView) // a new process may bring a new content view
-        if webView.url == nil { retry() } else { webView.reload() }
+        reload()
+    }
+
+    // --- the session, for the bar's switcher --------------------------------------------------
+
+    /// The desktop's refreshGamma (desktop/main.js): a public API call with
+    /// the page's own cookie, run in the app's content world, so nothing is
+    /// put into the page's.
+    static let sessionScript = """
+    const answer = await fetch("/api/session", { credentials: "same-origin", cache: "no-store" });
+    const session = answer.ok ? await answer.json().catch(() => null) : null;
+    if (!session || !session.user) return null;
+    return { user: session.user, default_workspace: session.default_workspace ?? null, workspaces: session.workspaces || [] };
+    """
+
+    /// Reads the session while the page is on the shown server and not
+    /// loading (a load's new address comes before its document: a read then
+    /// runs in the old one), one read at a time; the change is announced
+    /// whatever it is (`onChange`).
+    func readSession() {
+        guard !readingSession, !webView.isLoading, let server, let page = webView.url,
+              let origin = Origin(server), Origin(page) == origin else { return }
+        readingSession = true
+        let webView = self.webView
+        Task {
+            let answer = try? await webView.callAsync(Self.sessionScript, in: .defaultClient)
+            readingSession = false
+            session = answer as? [String: Any]
+            onChange?()
+        }
     }
 
     // --- the local server's silent sign-in --------------------------------------------------
@@ -136,9 +205,14 @@ final class WebShell {
     }
 
     /// The theme's background behind and under the page, kept for the next
-    /// launch so the app opens in the colour it closed in. Nil when `hex`
-    /// is no colour.
-    func paint(_ hex: String) -> UIColor? {
+    /// launch so the app opens in the colour it closed in, and its name for
+    /// the chrome. Nil when `hex` is no colour.
+    func paint(_ hex: String, name: String) -> UIColor? {
+        if name != themeName {
+            themeName = name
+            UserDefaults.standard.set(name, forKey: Self.themeNameKey)
+            onChange?()
+        }
         guard let color = UIColor(cssHex: hex) else { return nil }
         webView.underPageBackgroundColor = color
         UserDefaults.standard.set(hex, forKey: Self.backgroundKey)

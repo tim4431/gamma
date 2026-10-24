@@ -3,13 +3,13 @@
 There are two ways to use Gamma on an iPad, and both are the same web app:
 
 - **The iPad app** (`ipad/`, [ipad/README.md](../../ipad/README.md)) is a
-  shell over Gamma's own web app. It shows it in one `WKWebView` and adds
-  what Safari cannot: Apple Pencil strokes captured natively, the
-  Pencil's double tap and squeeze, the Apple Pencil Pro's haptics, a
-  Gamma Cloud sign-in that works with Google, and a Gamma server of its
-  own inside the app, so it works with no connection, as the desktop app
-  runs its own ([The local server](#the-local-server)). Why it has this
-  shape:
+  shell over Gamma's own web app. It shows it in a `WKWebView`, under the
+  desktop app's own bar and launcher, and adds what Safari cannot: Apple
+  Pencil strokes captured natively, the Pencil's double tap and squeeze,
+  the Apple Pencil Pro's haptics, a Gamma Cloud sign-in that works with
+  Google, and a Gamma server of its own inside the app, so it works with
+  no connection, as the desktop app runs its own
+  ([The local server](#the-local-server)). Why it has this shape:
   [research/ipad-web-shell.md](../research/ipad-web-shell.md).
 - **The web app installed to the home screen** is every feature, online,
   with Safari's own pen. It is described under
@@ -23,9 +23,10 @@ ink layer still encodes and saves every stroke.
 
 ### What the user does
 
-1. Pick a server. The first launch shows the server picker: **This
-   iPad**, the server inside the app, or another server by its address (a
-   NAS, a hosted Gamma). The app loads that server's page.
+1. Pick a server. The first launch shows the launcher, the desktop app's
+   own page of servers: **This iPad**, the server inside the app, or
+   another server added by its address (a NAS, a hosted Gamma). *Open*
+   loads that server's page under the bar.
 2. Sign in. On This iPad the app signs in by itself with the account it
    made ([below](#the-account-and-the-silent-sign-in)). On another server
    the person signs in on the web app's own login page, with a password or
@@ -38,11 +39,13 @@ ink layer still encodes and saves every stroke.
    a calligraphy pen's nib. Its double tap and squeeze
    do what the system's Pencil settings ask for, unless Settings →
    Reading & editing → Apple Pencil, in the web app, says otherwise.
-4. **Server…**, in the account menu and on every page shown before the
-   library (the sign-in page, an unavailable workspace, a blocked share
-   link), brings the picker back. When a server cannot be reached, the
-   app shows a page of its own with Try again and Choose a server;
-   choosing the same server again retries.
+4. The bar above every page is the desktop app's
+   ([The chrome](#the-chrome)): the mark, which brings the launcher back,
+   the "server · workspace" switcher, whose dropdown lists the open
+   server's workspaces, then every server with its dot, then *All
+   servers…*, and the reload button. With a keyboard, ⌘⇧L is the
+   launcher and ⌘R reloads. When a server cannot be reached, or This iPad
+   could not start, the launcher shows why, with *Try again*.
 5. For work away from the network, a workspace of another server is
    cloned onto This iPad in the web app's settings
    ([Offline use](#offline-use-clones)).
@@ -64,17 +67,23 @@ The web app is the one owner of the page. Native code is a window, an
 input device, a preview layer and, for This iPad, a process manager, and
 nothing in Swift knows what a block is. So a web feature reaches the iPad
 when the server has it (This iPad's at the app's next build), with no
-iPad work. The two halves share only the host contract below. The files
-are listed in [ipad/README.md](../../ipad/README.md).
+iPad work. The two halves share only the host contract below. The bar
+and the launcher are the desktop app's own pages, answered through a
+second, separate contract ([The chrome](#the-chrome)). The files are
+listed in [ipad/README.md](../../ipad/README.md).
 
-- **The window.** `ShellView` hosts one controller (`ShellController`),
+- **The window.** `ShellView` wraps one controller (`ShellController`),
   made once and kept: a new server or a retry loads into the same web
-  view. Its container fills the screen and is painted with the theme's
-  background, so the strip under the status bar is the page's colour. The
-  web view starts below the status bar (pinned to the safe area's top)
-  and runs under the home indicator, as the page's CSS expects
-  (`html[data-shell] .app` pads only the bottom, [below](#what-the-install-adds-and-where-it-lives)).
-  The live stroke view keeps exactly the web view's frame.
+  view. Its container fills the whole screen and is painted with the
+  theme's background. Bottom to top it holds:
+  - the page's web view and the live stroke view, with identical frames,
+    from the safe area's top plus 44 pt (`ShellController.barHeight`,
+    the height of `bar.html`'s row on the iPad) to the screen's bottom.
+    So the page runs under the home indicator, as its CSS expects
+    (`html[data-shell] .app` pads only the bottom, [below](#what-the-install-adds-and-where-it-lives));
+  - the launcher's web view while it is up, in the same frame;
+  - the bar's web view from the screen's top edge, which paints the strip
+    under the status bar itself.
 - **One CSS pixel is one point.** The viewport is at scale 1
   (`width=device-width, initial-scale=1`), the document never scrolls
   (`html, body, #root` fill the viewport; the panes scroll), and the web
@@ -90,12 +99,15 @@ are listed in [ipad/README.md](../../ipad/README.md).
   the server's page for recordings. The Gamma Cloud start is taken over
   ([below](#gamma-cloud)). When the system ends the page's process, the
   shell reloads, and the web app restores itself as after any reload.
-- **Theme.** The page posts `theme` where it sets `theme-color`. The shell
-  paints the colour under the page and behind it, keeps it for the next
-  launch so the app opens in the colour it closed in, and gives the window
-  the page's scheme for the status bar's style. The web view itself stays
-  at the system's style, so a page on the "system" theme still reads the
-  system's preference.
+- **Theme.** The page posts `theme` where it sets `theme-color`, with the
+  colour, the scheme and the theme's name. The shell paints the colour
+  under the page and behind it, and keeps it and the name for the next
+  launch (`gamma.theme.background`, `gamma.theme.name`), so the app opens
+  in the colour it closed in. The name goes to the bar and the launcher,
+  which paint themselves in that theme, as the desktop's preload hands
+  them `data-theme`. The window takes the page's scheme for the status
+  bar's style. The web view itself stays at the system's style, so a page
+  on the "system" theme still reads the system's preference.
 
 ### The host contract
 
@@ -114,14 +126,13 @@ window.gammaNative = {
   pencilPhases: true, // a squeeze's start and cancel come too (`squeeze`)
   pencilRoll: true,   // the samples carry Apple Pencil Pro's barrel roll (`r`)
   haptics: true,      // the host plays `haptic`, in an Apple Pencil Pro
-  servers: true,      // the host has a server picker (the web shows "Server…")
   openFiles: true,    // the host holds the files the system opens in the app (`files`)
 };
 document.documentElement.setAttribute("data-host", "ipad");
 ```
 
 The web app reads `platform` and the flags `ink`, `hold`, `pencil`,
-`pencilPhases`, `pencilRoll`, `haptics`, `servers` and `openFiles`, never
+`pencilPhases`, `pencilRoll`, `haptics` and `openFiles`, never
 `version`:
 what a shell does not declare it does not do, and the web leaves it out
 (no `hold` listener, no `haptic`, no Apple Pencil settings). `inkLooks`
@@ -153,8 +164,7 @@ takes messages only from the server's own main frame.
 | Message | Reply | Meaning |
 |---|---|---|
 | `{type: "claim", pointerId, at: {x, y}, tool: {kind: "pen"\|"highlighter", color, size, opacity, brush?, pressure?, dash?, blend?, stabilize?, nib?, nibRoll?, snap?}}` | `{taken}` | This Pencil touch is a stroke: take it. `at` is where the pointer went down, in viewport CSS px; `size` is the width on screen, in CSS px; the other keys are the preset's look, below |
-| `{type: "theme", bg: "#rrggbb", scheme: "light"\|"dark"}` | `{}` | Paint the window behind the page and pick the status bar's style |
-| `{type: "servers"}` | `{}` | Show the server picker |
+| `{type: "theme", bg: "#rrggbb", scheme: "light"\|"dark", name}` | `{}` | Paint the window behind the page and pick the status bar's style. `name` is the theme's, `<html data-theme>`, which the chrome paints in; a page from before it sends none, and a name that is no string is dropped, so the shell takes the scheme, `light` or `dark`, which are theme names too |
 | `{type: "haptic", kind: "snap"\|"select"\|"tool", at?: {x, y}}` | `{}` | Play the kind's own feedback ([The pen](#the-pen) "Gestures"): `snap`, a held stroke snapped to a shape; `select`, a pen lasso selected strokes; `tool`, a Pencil gesture switched the tool (a kind the shell does not know plays as `tool`). `at` is where, in viewport CSS px, when there is a where. Sent once per event, only under `haptics` and with *Haptics* on |
 | `{type: "files"}` | `{files: [{id, name, size, type}]}` | The files the system opened in the app that the shell still holds, in the order they came; `type` is the MIME type of the name's extension, `""` when it has none ([Opened files](#opened-files)) |
 | `{type: "fileData", id, offset}` | `{data}`, or `{}` | Up to 2 MiB of that file from byte `offset`, in base64; `""` at its end. `{}`: the shell holds no such file, or the offset is past its end |
@@ -201,6 +211,225 @@ page, and its `hold` and `squeeze` change nothing there. A message the
 shell does not know gets an error reply, and keys it does not know are
 ignored, so a newer page's claim still draws under an older shell.
 
+### The chrome
+
+The bar and the launcher are the desktop app's own pages,
+`desktop/ui/bar.html` and `launcher.html`, with the `theme.css`,
+`tokens.css` and fonts they share. The build copies `desktop/ui/` into the
+bundle's `chrome` folder ([How the bundle is made](#how-the-bundle-is-made)),
+so the same two files serve both shells, and a change to them is a change
+to both ([desktop/docs/architecture.md "Window"](../../desktop/docs/architecture.md#window)).
+Each page shows in a `WKWebView` of its own, loaded with
+`loadFileURL(_:allowingReadAccessTo:)` of that folder, through one
+configuration that loads nothing else (`Shell/Chrome.swift`). The page's
+web view never gets any of it, and keeps loading server pages only
+(`Route`).
+
+- **The bar** is always up. Its view runs from the screen's top edge and
+  is see-through outside its strip and its open menu. `bar.html` pads by
+  `env(safe-area-inset-top)` (`viewport-fit=cover`, and no inset
+  adjustment on the view), so it paints the strip under the status bar
+  itself, with its 44 pt row below. While a dropdown is open
+  (`barExpand(true)`), the view's bottom moves from the row's bottom to
+  the screen's, so the menu has room and a tap beside it closes it. The
+  menu scrolls in a box of its own; the view itself does not scroll.
+  When the system ends the bar's web content process, the view goes back
+  to its strip, since the page that loads again has no dropdown open
+  (`Chrome.onTerminate`); a launcher whose process ends loads again too.
+- **The launcher** shows over the page, between the page's web view and
+  the bar, in the page's frame, so the page beneath stays loaded and the
+  bar stays above. Its view is made when the launcher shows and dropped
+  when it closes, and it starts in the theme's saved colour, before the
+  page paints. Each showing is a fresh load (`AppModel.Launcher`, with an
+  id of its own), so the same failure twice still loads it again. The
+  mark, *All servers…* and ⌘⇧L toggle it (`AppModel.toggleLauncher`): a
+  launcher that is up without an error closes, and otherwise a fresh one
+  opens. *Open* on the server shown closes it too.
+- **Keyboard.** `UIKeyCommand`s on the controller, which becomes first
+  responder when it appears, so they work before any web view has focus,
+  and takes it back when a launcher that had it closes, so they keep
+  working after a tap in the launcher: ⌘⇧L toggles the launcher, and ⌘R
+  reloads the page (`reload`, below). ⌘⇧L first closes an open dropdown
+  through the bar's page (an Escape keydown, which `bar.html` closes it
+  on), so the next tap on the switcher opens it again, and puts the bar's
+  view back to its strip.
+- **What the iPad leaves out.** There are no capability flags: the pages
+  ship in the same bundle as the Swift that answers them. What only the
+  desktop does is hidden in two ways:
+  - by the state: the iPad's has no `keeping`, `update` or `settings`, so
+    the bar shows no sync button, no *clone* chip and no update pill, and
+    the launcher no Settings block (the section, its card and the
+    Advanced details);
+  - by one rule in `theme.css`: each page puts `gammaShell.platform` on
+    `body[data-platform]`, and under `ipad` a `.desktopOnly` control is
+    hidden. Two carry it: *New local server*, and a local card's Remove
+    (This iPad cannot be removed).
+
+  The same attribute gives touch sizes. `theme.css` makes `.ctlBtn` 36 px
+  square, and `bar.html`'s own iPad block makes the row 44 px and the
+  mark, the switcher and the menu rows about 36 px, keeps the status on
+  one line, clipped where it does not fit, leaves out the 146 px kept for
+  the desktop's window controls, and stops the menu 16 px above the
+  screen's bottom. The launcher's footer reads "Gamma for iPad
+  <version>", its intro says "this iPad", and the shortcut hints read
+  "⌘⇧L" and "⌘R". Nothing of it changes the desktop.
+
+#### The bridge
+
+A user script at document start (main frame, page world, on the chrome's
+configuration only) defines `window.gammaShell`: `platform: "ipad"`,
+`onState(cb)`, `_state(s)`, which Swift calls to hand the listeners the
+state, and one function per method below, which posts `{method, args}` to
+the `shell` handler and returns its reply as a promise. The handler
+(`WKScriptMessageHandlerWithReply`, page world) answers only a main frame
+whose URL is a `file:` URL (`Chrome.accepts`), as the desktop's preload
+exposes `gammaShell` only on `file:` pages. It hands the method's name
+and arguments to one closure, `ShellController.call`, which switches on
+the name. A bad argument, an id that names no listed server or a refused
+change throws (`Refusal`), and the page's promise rejects with its
+sentence. The calls, answered as `desktop/main.js` answers them:
+
+| Method | Args | On the iPad |
+|---|---|---|
+| `state` | | The state. Also asks the remotes' `/api/health` for their dots (`AppModel.probe`: a 3 s timeout, each answer kept for 30 s, as the desktop caches its remotes') and reads the session; their answers come as pushes |
+| `list` | | The state with This iPad's `sizeBytes` (`LocalServer.dataSize()`), and the same probes. No session read: the launcher calls `list` on every push, and a read pushes |
+| `open` | `id` | `AppModel.open` ([below](#opening-failing-and-starting)) |
+| `openWorkspace` | `id` | `<the server's origin>/?ws=<id>` in the page's web view; the bar collapses |
+| `launcher` | | The bar collapses and the launcher toggles |
+| `reload` | | The page again while it is on the shown server's origin, else the server's address (none has loaded, or a switch to it failed) |
+| `barExpand` | `on` | The bar's view over the whole screen, or back to its strip |
+| `addRemote` | `name, url` | `ServerAddress.parse` (a bare host means `https`, and a page link keeps only its origin), then the server at the end of the list, not opened, with the name when it is not blank. Refuses "That is not a web address." and "<origin> is already listed" |
+| `rename` | `id, name` | The server's name; a blank one gives it back its own |
+| `setUrl` | `id, url` | `AppModel.replace`: the shown server loads its new address, and the name goes with it. Refuses This iPad and an address that is none |
+| `remove` | `id, opts` | Takes a remote off the list. The server chosen is unchosen, as on the desktop: its page stays under the launcher until another is opened, and the next launch shows the launcher. Refuses This iPad |
+| `revealData` | `id` | The Files app at This iPad's data folder (`shareddocuments://` and its path), made first if it is missing |
+| `revealLog` | `id` | The same for the folder that holds the server's log |
+| `copyAddress` | `id` | This iPad's address to the pasteboard, resolving with it; with nothing while it is not running |
+
+`revealData` and `revealLog` take no notice of the id: only This iPad has a
+data folder and a log, and only its card offers them. The desktop's other
+methods (`addLocal`, `keepOffline`, `keeping`, `folders`, the clone and
+folder calls, `setSettings`, `pickFolder`, `setDataRoot`, `updateCheck`,
+`updateInstall`) do not exist here; only controls the iPad hides call
+them.
+
+#### The state
+
+One pure function builds it, `ShellState.make` (`App/ShellState.swift`),
+over plain values, so the tests call it. It holds JSON values only, as
+WebKit hands them to the page, and only what the pages read. Swift pushes
+it to every chrome view (`Chrome.push`: `callAsyncJavaScript` calling
+`gammaShell._state`) from two places: when the model or the local server
+changes (`ShellView.updateUIViewController`), and when the page's session
+or theme name changes (`WebShell.onChange`). A page not loaded yet has no
+listener, and asks for the state itself once it runs.
+
+```
+{
+  version,                             // CFBundleShortVersionString, for the launcher's footer
+  theme,                               // the page's theme name; "" before any page reported one
+  current: {id, name, type} | null,    // the server chosen, also while This iPad starts
+  busy: <string> | null,               // This iPad starting (below)
+  gamma: {user, current, list} | null, // the workspaces of the page's server
+  servers: [                           // This iPad first, then the remotes in the order added
+    {id: "local", name, type: "local", url?, running, sizeBytes?, dataDir, adminUser, adminPassword},
+    {id: <origin>, name, type: "remote", url, reachable?},
+  ],
+  lastOpened,                          // the current server's id; absent before the first
+}
+```
+
+- **Ids and names.** This iPad is `local`, and a remote is its origin as
+  `ServerAddress.parse` gives it (`Server.id`). `SavedServers` keeps the
+  names by id beside `current` and `remotes`, in `UserDefaults` as one
+  JSON value (`gamma.servers`, `AppModel.swift`). `names` is optional, so
+  a list saved before it still reads, and an older build still reads the
+  new one. A server without a name is "This iPad", or a remote's host,
+  with its port when it has one. `replace` moves a name to the new
+  address, and `remove` drops it.
+- **The session.** WebShell runs `fetch("/api/session", {credentials:
+  "same-origin", cache: "no-store"})` in the page's web view, in the app's
+  content world (`.defaultClient`, the silent sign-in's), so the page's
+  own cookie goes along and nothing is put into the page's world: the
+  desktop's `refreshGamma`. It reads after every finished main-frame load,
+  on every change of the web view's `url` (the web app writes `?ws=` with
+  `replaceState`, and signs in without a load) and on the `state` call;
+  only while the page is on the shown server's origin and not loading,
+  one read at a time. A load's new address comes before its document, so
+  a read then would run in the old one; it reads once the load finishes
+  instead. Opening another server clears it.
+- **`gamma`** is null with no one signed in, and while the page is not on
+  the chosen server's origin (a remote's page still showing while This
+  iPad starts). Otherwise `user` and `list` are the session's, as the
+  server sent them, and `current` is the page's `?ws=`, else the
+  account's default workspace.
+- **This iPad's card.** `dataDir` is "On My iPad › Gamma › Gamma › local",
+  the Files app's name for the data folder ([Where the data lives](#where-the-data-lives)).
+  `adminUser` and `adminPassword` are the seeded account
+  ([The account and the silent sign-in](#the-account-and-the-silent-sign-in));
+  with no password kept, `admin` and a sentence saying so, and that a
+  password the server made itself is in its log. The credentials box
+  wraps (`white-space: pre-wrap`, on both shells), so the sentence fits
+  the dialog.
+
+#### Opening, failing and starting
+
+`AppModel.open`, which *Open*, a server row in the bar's dropdown and *Try
+again* call:
+
+- The server already shown, with no load error and, for This iPad, its
+  server running: the launcher closes, and nothing reloads.
+- A remote: the launcher closes, and the page loads its address.
+  `connects` counts the opens, so the same address loads again (a retry).
+- This iPad running: the same. Not running: `LocalServer.restart`, which
+  starts a server never started, restarts one that failed, and does
+  nothing while one starts. The launcher stays up, its own status line
+  saying "Starting This iPad…", until the server runs and it closes, or
+  it reopens with the failure.
+
+`open` never adds a server: an address is listed with the launcher's *Add
+remote server…*. `AppModel.loadError` is set when the page's main-frame
+load fails and cleared when a page commits (`Navigation.onLoad`); a commit
+while it was set also closes a launcher that shows an error.
+
+Failures reach the launcher as the desktop sends them: it loads with
+`?error=` and the JSON its `showFailure` reads (`ShellFailure`). The query
+is percent-encoded by hand, since `URLComponents` leaves a `+`, which
+`URLSearchParams` reads as a space.
+
+- The page's main-frame load failed: `{summary: "Gamma cannot reach
+  <host>", detail: <the message>, action: "retry", server: <id>}`.
+- This iPad's server failed (`LocalServer.State.failed`) while it is the
+  current server: `{summary: "Gamma could not start on this iPad", detail:
+  <the message>, log: <the log's last 4 KB>, action: "retry", server:
+  "local"}`, without `log` when the log is empty.
+
+*Try again* calls `open`, which retries, and *Show log file* calls
+`revealLog`. The desktop's `lib/startup.js` rule table is Node, so the
+iPad sends the plain message and the log, the desktop's own fallback, with
+no hint and no other action.
+
+While This iPad starts, the bar's status reads "Starting This iPad…" (its
+name, when it has one), and after a minute (`slowStart`) "Still starting
+This iPad… the first start after an install or an update can take a few
+minutes". Nothing covers the page under the bar meanwhile: it stays as
+it is, empty at the first launch.
+
+The first launch, with no server chosen, shows the launcher over an empty
+page, and so does a launch after the server chosen was removed. A
+relaunch opens the last server, as the desktop does with *Reopen the last
+server at launch* on.
+
+#### Not built
+
+- The clone chips on the workspace rows and the sync panel, the plan's
+  optional phase 4 ([research/ipad-desktop-chrome.md](../research/ipad-desktop-chrome.md)).
+  Clones are made in the web app ([Offline use](#offline-use-clones)).
+- *Reopen the last server at launch*: the iPad always reopens it, and the
+  Settings block is hidden.
+- A *Done* button on the launcher, `can` flags, and a state fixture shared
+  with the desktop's tests.
+
 ### The pen
 
 The web decides, native executes. On a Pencil touch the web's ink layer
@@ -216,7 +445,9 @@ claimed.
    touch as in Safari. The recorder also keeps the stroke's **stillness
    anchor** (`stillSince`): the latest sample that landed more than 3 pt
    (`PencilCapture.holdSlop`) from the anchor before it, at first the
-   first sample.
+   first sample. A Pencil touch on the bar or the launcher is theirs, and
+   the recognizer ignores it, so it never stands in the way of a claim
+   (step 3).
 2. **The page claims it.** `InkLayer.jsx` starts its stroke as always,
    draws its own draft, and posts `claim` with the pointer's id, where it
    went down and the tool in the preset's look (`claimForHost`,
@@ -446,7 +677,7 @@ Native code still decides nothing about a file. The page asks for the
 list (`files`) once it is signed in to a workspace, and again on each
 `filesOpened`. It reads each file in 2 MiB base64 chunks (`fileData`),
 then says `fileDone`, and only then does the copy go. So a file opened
-at the server picker, on the sign-in page, while This iPad starts or
+before a server is chosen, on the sign-in page, while This iPad starts or
 before a reload waits until a page can take it. The web half is
 `frontend/src/transfers/openedFiles.js`, wired in `App.jsx`
 (`takeOpenedFiles`):
@@ -580,8 +811,9 @@ The data directory (`GAMMA_DATA_DIR`) is `Documents/Gamma/local` in the
 app's container. It is in Documents because that is the folder the Files
 app shows (`UIFileSharingEnabled` and `LSSupportsOpeningDocumentsInPlace`
 in `project.yml`). There it appears as On My iPad › Gamma › Gamma › local,
-with the log, as the desktop app shows its data folder. The picker shows
-its size. It is in the iPad's backups like any app's documents, and
+with the log, as the desktop app shows its data folder. This iPad's card
+in the launcher shows its size and opens it in Files. It is in the iPad's
+backups like any app's documents, and
 deleting the app deletes it.
 
 #### The address
@@ -610,8 +842,8 @@ Keychain (`Server/Keychain.swift`). It is readable after the first unlock
 and travels in an encrypted backup, so a restored iPad gets it back with
 the data directory. The app passes the account as `GAMMA_ADMIN_USER` and
 `GAMMA_ADMIN_PASSWORD` only on that start, since the server ignores them
-once it has accounts. The picker shows the account and copies the
-password, for signing in again after a sign-out.
+once it has accounts. The launcher's *Show credentials* shows the account
+and its password, for signing in again after a sign-out.
 
 A data directory whose password the Keychain does not hold gets no silent
 sign-in: one restored from a backup without the Keychain, or one whose
@@ -633,9 +865,11 @@ own store.
   the password.
 - It runs only when the page's origin is the local server's; nothing runs
   in another server's page.
-- It runs once per open: a pick in the picker, Try again, or the reload
-  after the page's process ended. So a person who signs out stays signed
-  out until This iPad is opened again, as on the desktop.
+- It runs once per open: This iPad opened from the launcher or the bar,
+  *Try again*, a reload that has to load the server's address again
+  ([The bridge](#the-bridge), `reload`), or the reload after the page's
+  process ended. So a person who signs out stays signed out until This
+  iPad is opened again, as on the desktop.
 
 #### The environment
 
@@ -656,30 +890,31 @@ app's ([folder_sync.md](folder_sync.md#folders-kept-by-the-desktop-app)).
 
 #### Starting, and the log
 
-The server starts at launch when This iPad was the last pick, and
-otherwise the first time it is opened. It then runs while the app does,
+The server starts at launch when This iPad was the last server opened,
+and otherwise the first time it is opened. It then runs while the app does,
 whichever server the window shows.
 
 - **Before the start**, the app checks that the bundle has the server and
   the web app in it, so a build made without the Python step says so.
-- **While it starts**, a page of its own covers the web view
-  (`LocalStartView`), and the app asks `/api/health` every 250 ms. It
-  counts as up by the desktop's rule: a 2xx, or the 503 with
-  `data_directory_not_upgradable`, a server that is up and shows its own
-  guidance ([migrations.md](migrations.md)).
+- **While it starts**, the bar says so
+  ([The chrome](#opening-failing-and-starting)), and the app asks
+  `/api/health` every 250 ms. It counts as up by the desktop's rule: a
+  2xx, or the 503 with `data_directory_not_upgradable`, a server that is
+  up and shows its own guidance ([migrations.md](migrations.md)).
 - **There is no deadline**: giving up would only hide a server that
   answers later. After a minute the start is marked slow (the first one
-  after an install, on an older iPad). The pages then say it can take a
+  after an install, on an older iPad). The bar then says it can take a
   few minutes, and the polling drops to once a second.
 - **A failed start** is what the supervisor reports. It writes
   `<data>/logs/server.state` (`{state, detail, at}`, replaced whole):
   `starting` when a server is about to run, `stopped` with why when one
   ended without a restart asked for (a port it could not listen on, the
   usual case). The app reads the file between health probes
-  (`ServerState`) and shows the detail with *Try again*, which calls
-  `LocalServer.restart`. The app removes the last launch's file before it
-  starts, and `restart()` writes `starting` before it returns, so an old
-  failure is never read as the new start's. A failure before the
+  (`ServerState`). While This iPad is the server chosen, the launcher
+  shows the detail with *Try again*, which opens This iPad again and so
+  calls `LocalServer.restart`. The app removes the last launch's file
+  before it starts, and `restart()` writes `starting` before it returns,
+  so an old failure is never read as the new start's. A failure before the
   interpreter (no free port, no data folder) is tried from the beginning;
   the interpreter's own end stays failed.
 - **Back from the background.** iOS suspends the app, and the server with
@@ -688,7 +923,7 @@ whichever server the window shows.
   `/api/health` up to three times, a second apart. A server that stays
   silent is run again in the same interpreter (`restart`), on the same
   port, so the page's origin and what the web app keeps per origin stay;
-  the start page covers the shell for the moment that takes. The app's
+  the bar says it starts for the moment that takes. The app's
   lifespan (`gamma/app.py`: the sweeps, the backup schedule) ends with
   the old server and runs with the new one.
 
@@ -697,7 +932,8 @@ Everything the server prints goes to `<data>/logs/server.log`
 marked with a `--- <UTC time> start port <port> ---` line, the desktop
 sidecar's marker. `faulthandler` writes the threads' stacks there before a
 crash in native code. A failed start shows its message and the log's last
-4 KB in the picker, and the Files app reaches the whole file.
+4 KB in the launcher, and the Files app reaches the whole file (*Show log
+file*).
 
 #### Offline use: clones
 
@@ -708,8 +944,9 @@ desktop's are ([desktop/docs/architecture.md](../../desktop/docs/architecture.md
 The Swift side keeps no sync state.
 
 The desktop makes a clone with one click on its switcher's *clone* chip.
-The iPad shell has no switcher, so a clone is made the way any Gamma
-makes one ([mirror.md](mirror.md#making-one)):
+The iPad's switcher is the desktop's bar without its clone chips
+([The chrome](#not-built)), so a clone is made the way any Gamma makes
+one ([mirror.md](mirror.md#making-one)):
 
 1. On the other server, Settings → Integrations: a read-and-write token.
 2. On This iPad, Settings → Workspaces → Clones → *Clone a remote
@@ -718,29 +955,6 @@ makes one ([mirror.md](mirror.md#making-one)):
 From then on the sync pill, the merge chips and the conflict cards are the
 web app's. A clone syncs only while the local server runs, that is, while
 the app is open and This iPad has been opened in that launch.
-
-#### The server picker
-
-`Views/ServersView.swift` shows at first launch, and whenever the web
-app's Server… posts `servers`. It is plain SwiftUI with the system's
-styling.
-
-- **This iPad**: a dot for the state (green running, orange starting, red
-  failed, grey not started), the address or the state with the data
-  directory's size, and Open. A failed start adds its message and the
-  log's tail. The account's name and Copy the password sit under it.
-- **Servers**: the other servers by address, newest first. Each has a
-  reachability dot from `/api/health` (a 3 s timeout, the answer kept for
-  30 s, as the desktop caches its remotes'), Open, and Edit and Remove on
-  a swipe or a long press. Editing the shown server's address loads the
-  new one.
-- **Add a server**: the address as typed or pasted, opened at once. A bare
-  host means `https`, and a page link keeps only its origin.
-
-The pick and the list are kept in `UserDefaults` as one JSON value
-(`gamma.servers`, `AppModel.swift`). The single address and recent list an
-earlier version kept become the current server and the list the first
-time it is read.
 
 #### How the bundle is made
 
@@ -755,10 +969,11 @@ server from source.
 
 After Xcode has copied the resources, a post-build phase in `project.yml`
 copies `python/app`, `python/frontend_dist` and the platform's wheels into
-the bundle. It then runs the support package's `install_python`. That
-adds the standard library and turns each compiled module (`.so`) into a
-framework of its own, signed, since iOS loads an app's native code only
-from frameworks.
+the bundle, and the desktop app's `desktop/ui/` into its `chrome` folder
+([The chrome](#the-chrome)). It then runs the support package's
+`install_python`. That adds the standard library and turns each compiled
+module (`.so`) into a framework of its own, signed, since iOS loads an
+app's native code only from frameworks.
 
 Two of the standard library's modules, `_ssl` and `_hashlib`, link OpenSSL
 statically, and Apple requires a privacy manifest in every framework that
@@ -804,8 +1019,25 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
     and `snap` among it, and a claim without them), `haptic`, `hold` and
     its replies, the `stroke`'s `held`, `squeeze` and the `pencil` phase,
     the opened files' `files`, `fileData`, `fileDone` and `filesOpened`,
-    the declared flags (`pencilRoll`, `openFiles`, and `calligraphy` and
-    `snap` in `inkLooks`)
+    `theme` with its `name` and without it (and with one that is no
+    string), a `servers` message refused, the declared flags
+    (`pencilRoll`, `openFiles`, and `calligraphy` and `snap` in
+    `inkLooks`)
+  - the chrome without a web view (`ChromeTests.swift`): who may call
+    (`Chrome.accepts`: a `file:` main frame, not a frame inside it, a
+    server's page or none), the launcher's URL with a failure that
+    survives the round trip (a `+` included), both failures' JSON
+    (`ChromeTests`); the state (`ShellStateTests`): This iPad first, the
+    ids, kept and default names, `busy` while starting and when slow,
+    `gamma` from a session with and without `?ws=` and not from another
+    origin, no `keeping`, `update` or `settings`, and a full state valid
+    JSON; and `AppModel`'s rules (`LauncherTests`): the launcher at the
+    first launch only, its toggle, opening the server shown closing it
+    without a reload, a load error sent to the launcher and opening
+    retrying, a page arriving closing a launcher with an error and not one
+    opened by hand, servers added at the end, names moved and dropped
+    with their server, `open` never listing a server, and removing the
+    server chosen unchoosing it
   - the opened files' store (`OpenedFilesTests`): a file copied and
     listed with its name, size and type, read back whole over several
     chunks, an offset past the end and an unknown id refused, the copy
@@ -831,8 +1063,8 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
   - the address, navigation and colour rules, and the keyboard accessory
     bar hidden on a real `WKWebView` (`ShellTests`)
   - the local server's port rule, environment, password shape, module
-    paths, health rule and state file, and the saved servers, an earlier
-    version's keys included (`ServerTests`)
+    paths, health rule and state file, and the saved servers, with their
+    names and as saved before names (`ServerTests`)
 - `LocalServerStartTests` (in `ServerTests.swift`) starts the embedded
   server for real in the test host. It checks the bundle's layout first,
   so an unprepared build says what is missing. It starts the server with
@@ -856,12 +1088,12 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
   wheel or an import error fails here instead of on an iPad, and a call
   that does not answer as expected fails with the server's log tail. It
   skips when the app had already started its own server (a simulator
-  whose last pick was This iPad), since an interpreter starts once per
-  process, and skips the PDF part on a simulator whose data directory
-  has accounts already and the Keychain holds no password for them (the
-  seed reaches nothing there; a directory the test itself seeded on an
-  unsigned host is one until deleted), or that a newer build upgraded
-  (the server is up but answers every `/api` call with the
+  whose last server opened was This iPad), since an interpreter starts
+  once per process, and skips the PDF part on a simulator whose data
+  directory has accounts already and the Keychain holds no password for
+  them (the seed reaches nothing there; a directory the test itself
+  seeded on an unsigned host is one until deleted), or that a newer build
+  upgraded (the server is up but answers every `/api` call with the
   `data_directory_not_upgradable` 503).
 - `backend/tests/test_ios_requirements.py`: every server dependency is in
   the iOS requirements or excluded with a reason, and nothing excluded is
@@ -909,8 +1141,9 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
   turned by it, and with *Lock angle* on without. With the ruler on, a
   claim that starts by its edge carries `snap`, and the stroke commits as
   the projected line (`xyt`, a `line` shape record). The theme message
-  matches `theme-color`. The gestures switch tools under *System
-  setting*, and a double tap set to *Undo* undoes. A squeeze set to
+  matches `theme-color`, and its `name` the page's `data-theme`. The
+  gestures switch tools under *System setting*, and a double tap set to
+  *Undo* undoes. A squeeze set to
   *Eraser while held* (`squeeze` `began`, then `pencil` `ended`) arms the
   eraser and goes back, as its cancel does. A short one stays, and the
   next short one gives the pen back (a held one, with the eraser armed,
@@ -920,8 +1153,7 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
   switch posts `haptic` `tool`, and a pen lasso that selects posts
   `select` at its lift, none with *Haptics* off. The Apple Pencil
   settings show only under the stand-in (`ink.mjs` checks a browser has
-  none). The account menu's Server… row and the sign-in page's Server…
-  link post `servers`, and no install offer shows. The stand-in also
+  none), and no install offer shows. The stand-in also
   holds opened files, read in 1000-byte chunks. A PDF held when the page
   loads becomes its page at the library's top and opens. Files handed
   while the page is up, with `filesOpened`, follow: a Markdown note
@@ -933,9 +1165,8 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
   sends the PDF to the personal workspace, with the status saying why.
   Every file is let go (`fileDone`).
 
-A change to the bridge (`host.js`, the ink layer's claim, App's theme,
-gesture or Server wiring, the sign-in pages, or anything under `ipad/`)
-runs:
+A change to the bridge (`host.js`, the ink layer's claim, App's theme or
+gesture wiring, or anything under `ipad/`) runs:
 
 ```bash
 cd frontend && node --test tests/host.test.mjs tests/hostInk.test.mjs tests/shapes.test.mjs tests/pencilActions.test.mjs tests/openedFiles.test.mjs && npm run e2e -- --group ipad,ink
@@ -944,8 +1175,11 @@ cd frontend && node --test tests/host.test.mjs tests/hostInk.test.mjs tests/shap
 and, for `ipad/**` and for the two fixtures it reads
 (`tests/shared/inkwidth.json`, `inkhold.json`), the XCTest suite on a
 Mac, which `ipad.yml` does in CI
-([github_actions.md](github_actions.md#ipadyml)). A change to
-`backend/requirements.txt` runs `test_ios_requirements.py`, and
+([github_actions.md](github_actions.md#ipadyml)). A change to the chrome
+pages (`desktop/ui/`) is a change to both shells: the desktop's suite
+drives them (`cd desktop && npm run e2e`), `ipad.yml` runs for them too,
+and on the iPad only a device shows them (device checks 23 to 29). A
+change to `backend/requirements.txt` runs `test_ios_requirements.py`, and
 `ipad.yml` runs for it too. Other backend and frontend changes reach This
 iPad at the app's next build, as the same code the other checks test.
 `ipad.yml` does not run for them, so a change that matters on the device
@@ -984,12 +1218,13 @@ Only an iPad can show these, and none has been run yet:
    the highlighter shows at its plain opacity), and a held shape
    refitting under the pen.
 9. A terminated web content process: the reload and the web app's
-   restoration.
+   restoration, and the bar's and the launcher's pages loading again
+   (the bar back to its strip).
 10. The local server's first start on a real iPad: how long it takes,
     and the memory of the server and the page's process together.
 11. The server after the background and a locked screen: whether iOS
     reclaims its socket, how often the recheck restarts it, and how long
-    the restart takes behind the start page.
+    the restart takes while the bar says it starts.
 12. A device build signed with a real team: `install_python`'s
     frameworks loading on the device, and the two MuPDF frameworks the
     post-build step makes: `import pymupdf`, then a PDF read through the
@@ -1049,8 +1284,37 @@ Only an iPad can show these, and none has been run yet:
     belongs in the NTB document type in `project.yml`. Check a file shared from
     Mail (a copy in `Documents/Inbox`, which should not stay in Files), a
     file opened in place from iCloud Drive (its security scope), a file
-    shared at a cold launch and while the server picker is up, and the
-    time a large PDF takes to cross the bridge.
+    shared at a cold launch and while the first launch's launcher is up,
+    and the time a large PDF takes to cross the bridge.
+23. The bar's strip under the status bar ([The chrome](#the-chrome)):
+    `env(safe-area-inset-top)` in the bar's view, which has
+    `viewport-fit=cover` and no inset adjustment, in both orientations,
+    in Split View and in Stage Manager; and the slow start's long sentence
+    in its status on a portrait iPad, where it stays on one line and is
+    clipped: how much of it shows.
+24. The launcher loaded from the bundle with a query
+    (`loadFileURL` of `launcher.html?error=…`): the failure shows, *Try
+    again* retries, and *Show log file* and *Open data folder* open Files
+    at the folder (`shareddocuments://`) on iPadOS 17.
+25. The pen's places with the page's web view moved down by the bar: the
+    live line under the Pencil's tip, and claims matched at the 10-point
+    reach (check 2).
+26. A tap on the see-through area beside the open menu closes it (the
+    `pointerdown` `bar.html` listens for), and the page takes touches
+    again once the bar's view is back to its strip. Also whether the
+    chrome's buttons flash iOS's grey tap highlight or keep a `:hover`
+    background after a tap.
+27. A Pencil tap on the bar opens the menu, and a stroke begun on the page
+    just after it is still claimed (the capture ignores the bar's touch).
+28. The memory of the extra web content processes, the bar's always and
+    the launcher's while it is up, on a 4 GB iPad with a large PDF at high
+    zoom (Xcode's memory gauge, with and without them, on the pdf-zoom
+    scenario): WebKit ends the page's process sooner under memory
+    pressure (check 9).
+29. ⌘⇧L and ⌘R from a hardware keyboard, before anything has focus,
+    while a text field in the page has it, and after a tap in a launcher
+    that then closed; and ⌘⇧L with the bar's dropdown open, which closes
+    it, the next tap on the switcher opening it again.
 
 ### Not built yet
 

@@ -142,3 +142,14 @@ body {
   animation: spin 0.8s linear infinite; flex-shrink: 0;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* --- the iPad app -------------------------------------------------------- */
+
+/* The iPad app shows these two pages too. Its gammaShell reports the
+   platform "ipad", which each page puts on body[data-platform]: a control
+   only the desktop answers carries .desktopOnly, and touch takes larger
+   targets (bar.html sizes its own). iOS would enlarge the text in
+   landscape; the desktop never does, so that rule needs no scope. */
+html { -webkit-text-size-adjust: 100%; }
+body[data-platform="ipad"] .desktopOnly { display: none !important; }
+body[data-platform="ipad"] .ctlBtn { width: 36px; height: 36px; }

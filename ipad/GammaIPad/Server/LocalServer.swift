@@ -27,7 +27,7 @@ final class LocalServer: ObservableObject {
     /// Nil when this iPad does not know the account's password (`start`).
     private(set) var login: LocalLogin?
     /// Still starting after a minute. The interpreter keeps going and the
-    /// server is used once it answers; the pages say it can take a while.
+    /// server is used once it answers; the bar says it can take a while.
     @Published private(set) var slowStart = false
 
     /// <Documents>/Gamma/local: the server's GAMMA_DATA_DIR. In Documents so
@@ -160,10 +160,10 @@ final class LocalServer: ObservableObject {
         }
     }
 
-    /// Asked when the app is active again (RootView). iOS can reclaim a
+    /// Asked when the app is active again (GammaApp). iOS can reclaim a
     /// suspended app's listening sockets, notably while the screen is locked
     /// (Apple TN2277). A server that no longer answers is run again in the
-    /// same interpreter (`restart`), behind the start page for the moment
+    /// same interpreter (`restart`), the bar saying it starts for the moment
     /// that takes, rather than left behind a page that cannot load.
     func recheck() {
         guard case let .running(url) = state, !rechecking else { return }
@@ -179,7 +179,7 @@ final class LocalServer: ObservableObject {
         }
     }
 
-    /// The server again: after a failed start (the pages' Try again) or when
+    /// The server again: after a failed start (the launcher's Try again) or when
     /// it stopped answering (`recheck`). With the interpreter up,
     /// `gamma_ios.restart` stops a server still running and runs a new one
     /// on the same port, so the address, and what the web app keeps per

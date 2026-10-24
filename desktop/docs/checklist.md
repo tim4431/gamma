@@ -36,7 +36,7 @@ or says it is a manual look (**manual**).
 | 2.1 | Bar dropdown lists every server with running dots, check on the current one, *All servers…* | auto: *second server; switch from the shell bar while Alpha keeps running* |
 | 2.2 | Switching to another local server starts its sidecar; the first one keeps running | auto (same step) |
 | 2.3 | Switching back is instant and hits the same server process (no restart, session still valid) | auto: *switch back to Alpha: instant, same server, no restart* |
-| 2.4 | The dropdown closes on choose / outside click / Esc, and the bar shrinks back to 38 px | auto (bar height asserted) + manual feel |
+| 2.4 | The dropdown closes on choose / a press outside it / Esc, and the bar shrinks back to 38 px | auto (bar height asserted) + manual feel |
 | 2.5 | The logo, `Ctrl/Cmd+Shift+L` and the *All servers…* item go to the launcher | auto: *launcher lists sizes …* clicks the logo; accelerator and menu item manual |
 | 2.6 | A server added while another is open shows up in the dropdown | auto (Beta is added mid-session) |
 | 2.7 | Clones: on a remote server a workspace row shows *clone* on hover; choosing it makes the clone on the local server and moves the window there; the clone's row reads *clone* with an *origin* chip back to the remote; the remote row now shows *open clone* and opens the clone; a second *clone* opens the existing clone instead of making another | auto: *clone: the "clone" chip on a remote row makes the clone; the rows then cross-link* |

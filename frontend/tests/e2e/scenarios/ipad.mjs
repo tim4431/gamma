@@ -5,9 +5,9 @@
 // note editor brings; and the iPad app's shell over it (shared/lib/host.js),
 // played by a stand-in host: the Pencil's claim in the preset's look and the
 // stroke handed back, the hold and its answer, the theme message, the
-// Pencil gestures with their choices and phases, the haptics, the Apple
-// Pencil settings and the Server row. Chromium in a tablet-sized touch
-// context — emulation, not an iPad.
+// Pencil gestures with their choices and phases, the haptics and the Apple
+// Pencil settings. Chromium in a tablet-sized touch context — emulation, not
+// an iPad.
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
@@ -37,7 +37,7 @@ function fakeShell(options = {}) {
   window.e2eHold = (f) => { held.push(withBytes(f)); };
   const native = { platform: "ipad", version: "0.2.0", ink: true,
     inkLooks: ["pressure", "dash", "blend", "stabilize", "pencil", "calligraphy", "snap"],
-    hold: true, pencil: true, pencilPhases: true, pencilRoll: true, haptics: true, servers: true, openFiles: true, ...flags };
+    hold: true, pencil: true, pencilPhases: true, pencilRoll: true, haptics: true, openFiles: true, ...flags };
   native.receive = (msg) => new Promise((resolve, reject) => (native.queue ||= []).push({ msg, resolve, reject }));
   window.gammaNative = native;
   const answer = (msg) => {
@@ -209,7 +209,7 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
   // finished samples back in viewport CSS px, which commit as the browser's
   // own stroke. The device side (the
   // recognizer, the live line) is the Swift tests' and the device checks'.
-  await step("ipad shell: a Pencil stroke is claimed and committed from the host's samples; theme, gestures, Server row", async () => {
+  await step("ipad shell: a Pencil stroke is claimed and committed from the host's samples; theme, gestures", async () => {
     const up = await alice.upload("/api/uploads", makePdf([["A page the Pencil writes on."]]), "shell.pdf", "application/pdf");
     const paper = await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Shell paper", source_url: up.source_url } });
     const ctx = await alice.context(browser, { hasTouch: true, viewport: { width: 1194, height: 834 }, userAgent: SHELL_UA });
@@ -221,11 +221,13 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
       assertEq(await page.locator("html").getAttribute("data-host"), "ipad");
       assertEq(await page.locator("html").getAttribute("data-shell"), "ipad", "the shell takes the full-screen rules");
 
-      // theme: the colour under the status bar, and the scheme for its style.
+      // theme: the colour under the status bar, the scheme for its style, and
+      // the theme's name for the shell's bar and launcher.
       const theme = (await sent("theme")).at(-1);
       assert(theme, "a theme message");
       assertEq(theme.bg, await page.locator('meta[name="theme-color"]').getAttribute("content"), "the window's colour is the status bar's");
       assertEq(theme.scheme, await page.locator("html").getAttribute("data-scheme"));
+      assertEq(theme.name, await page.locator("html").getAttribute("data-theme"), "the theme's name");
       assert(/^#[0-9a-f]{6}$/.test(theme.bg), `a hex colour: ${theme.bg}`);
 
       await page.click("button[aria-label='Handwriting tools']");
@@ -310,25 +312,10 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
       await gesture("ignore");
       assertEq(await armed(), pen, "an ignored gesture changes nothing");
 
-      // The account menu's Server row asks the host for its server picker.
-      await page.getByRole("button", { name: "Account & settings", exact: true }).click();
-      await page.getByRole("menuitem", { name: "Server…", exact: true }).click();
-      await until(async () => (await sent("servers")).length === 1, { what: "the servers message" });
       // No install offer under the shell.
       assertEq(await page.getByText("Add to Home Screen").count(), 0, "no install offer");
       assertNoProblems(page);
     } finally { await ctx.close(); }
-    // Signed out, the sign-in page offers the same picker: a reachable but
-    // wrong server is never a dead end.
-    const anon = await browser.newContext({ hasTouch: true, viewport: { width: 1194, height: 834 } });
-    await anon.addInitScript(fakeShell);
-    try {
-      const page = await openPage(anon, `${server.base}/`);
-      await page.waitForSelector(".loginInput");
-      await page.getByRole("button", { name: "Server…", exact: true }).click();
-      await until(async () => (await page.evaluate(() => window.e2eHostSent.filter((m) => m.type === "servers").length)) === 1,
-        { what: "the sign-in page's servers message" });
-    } finally { await anon.close(); }
   });
 
   // --- the shell: files the system opened in the app (docs/dev/ipad.md "Opened files") ---

@@ -65,7 +65,7 @@ import {
   ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph,
   FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, HelpCircleIcon, HomeIcon, ImportIcon, InfoIcon, LabelGlyph, LabelIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon,
-  RectSelectIcon, RefreshIcon, ServerIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
+  RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
   ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon, MicIcon, MessageSquareIcon, BellIcon,
 } from "../shared/ui/Icons";
 
@@ -294,13 +294,16 @@ const HOME_SCREEN_INSTALLABLE = (/iPad|iPhone/.test(navigator.userAgent)
 // library itself (content, --bg-surface). Read from the theme variables, not
 // the elements: the topbar's background transitions, and a mid-transition
 // read would lag a theme change. The iPad app's shell takes the same colour
-// for the window behind its web view, and the scheme for its status bar.
+// for the window behind its web view, the scheme for its status bar, and the
+// theme's name (data-theme) for its bar and launcher: the desktop app's chrome
+// pages, which paint themselves by that name.
 function paintStatusBar(bareTop) {
   const bg = tokenHex(bareTop ? "--bg-surface" : "--bg-page");
   document.querySelector('meta[name="theme-color"]')?.setAttribute("content", bg);
   if (nativeHost()) {
-    const scheme = document.documentElement.getAttribute("data-scheme") === "dark" ? "dark" : "light";
-    postToHost({ type: "theme", bg, scheme }).catch(() => {});
+    const root = document.documentElement;
+    const scheme = root.getAttribute("data-scheme") === "dark" ? "dark" : "light";
+    postToHost({ type: "theme", bg, scheme, name: root.getAttribute("data-theme") }).catch(() => {});
   }
 }
 // A colour token as #rrggbb. Most tokens are color-mix() expressions
@@ -10541,10 +10544,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 trailing={notices.tone ? <span className={`noticeDot inline ${dotTone(notices.tone)}`} aria-hidden="true" /> : null}>
                 {t("Settings…")}
               </MenuItem>
-              {nativeHost()?.servers ? (
-                <MenuItem icon={ServerIcon} onClick={() => { setOpenPopover(null); postToHost({ type: "servers" }).catch(() => {}); }}
-                  title={t("Connect this app to another Gamma server")}>{t("Server…")}</MenuItem>
-              ) : null}
               <MenuDivider />
               {/* The tours that can start here (guide.startable); a tour
                   whose first step needs no open popover closes this menu. */}
