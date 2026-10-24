@@ -5252,7 +5252,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       ...(later.length ? [t("Open {names} again once this import is done.", { names: later.map((f) => f.name).join(", ") })] : []),
       ...(failed.length ? [t("Could not read {names}.", { names: failed.join(", ") })] : []),
     ];
-    if (problems.length || note) setStatus([note, ...problems].filter(Boolean).join(" "));
+    const text = [note, ...problems].filter(Boolean).join(" ");
+    if (note) {
+      // Why the files are here, after the reload: it holds a channel of its
+      // own for 8 s, as the pens question does, so the upload's statuses and
+      // its metadata lookup's, ending a moment later, never take it down.
+      logSys(text);
+      postPill("opened", { msg: text, question: true }, { after: [8000, null] });
+    } else if (problems.length) setStatus(text);
   }
   const takeOpenedRef = useRef(takeOpenedFiles);
   takeOpenedRef.current = takeOpenedFiles;

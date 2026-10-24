@@ -691,7 +691,8 @@ before a reload waits until a page can take it. The web half is
    lets the files go. Going to the personal workspace is a workspace
    switch, so the page reloads on it, takes the files the shell still
    holds there, and the status says why when the shown workspace was
-   read-only.
+   read-only. That line holds the pill for 8 s, as the pens question does,
+   so the statuses of the upload and of its metadata lookup do not replace it.
 2. **What.** Each file is read, then let go, then takes the path a picked
    file takes. A PDF or a Markdown note becomes a page at the library's
    top, as *Upload files…* makes one, and a single one opens. A PDF keeps
