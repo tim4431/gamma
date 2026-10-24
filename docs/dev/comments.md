@@ -384,7 +384,12 @@ control's rules.
 reads `GET /api/pages/{id}/comments?state=all` when the page opens, and
 again when the page's socket says `comments` or says `hello` after a
 reconnect: `collabSession.js` hands both to its `onComments` option
-([collab.md](collab.md)). One request is out at a time, and nudges that
+([collab.md](collab.md)). For a page the library lists, the first read
+is asked for alongside the page's tree (`prefetch`, from App's
+`openBlock`), so the threads come with the page rather than a round trip
+after it; a link to a page that is gone asks for its tree alone. Only the fetch the page's
+opening makes takes that answer, and the room's `hello` as the page joins
+reads again whatever was written in between. One request is out at a time, and nudges that
 arrive meanwhile make one more after it. `refresh()` resolves with what
 the request it waited for answered (`{pageId, threads}`, or null). A page
 whose comments answer 404 or 403 has none, and `readable` turns false. The
@@ -670,7 +675,8 @@ not the pages, and finds the page's highlights with an open thread (and
 the one a new thread's card is for), each at its first rect's top
 (`highlightTop`). Every page with room draws its column, with or without
 cards, so a page's first card can grow in and its last one shrink away.
-The cards (`CommentMargin.jsx`) load on first use.
+The cards (`CommentMargin.jsx`) load on first use, which a PDF page
+opening asks for with its tree.
 
 **Stacking.** `stackCards` (`marginLayout.js`, `tests/marginLayout.test.mjs`)
 sorts the cards by their highlight's top, keeping a highlight's threads in

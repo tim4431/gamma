@@ -1954,17 +1954,18 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
       const C = await openPage(await browserWith(), library);
       await until(async () => (await localFirst(C)) === "#15803d", { what: "C takes the account's pens" });
       // B had pens of its own when it signed in: the account's stand, and it is asked once. B opens the
-      // paper, the page held back until the question is up: the "Ready." of the page opening shows over the
-      // question for its second and goes, the PDF's loading pill stays under it, and the question stays on
-      // the pill until it is answered
+      // paper, the page held back until the question is up and the open has waited long enough to say
+      // "Opening…" (300 ms): the "Ready." that answers it shows over the question for its second and goes,
+      // the PDF's loading pill stays under it, and the question stays on the pill until it is answered
       const bContext = await browserWith({ cookies: [], origins: [{ origin: server.base,
         localStorage: [{ name: "gamma-ink-tools", value: JSON.stringify(ownPens) }] }] });
-      let release;
+      let release, askedAt = 0;
       const held = new Promise((resolve) => { release = resolve; });
-      await bContext.route(`**/api/blocks/${paper.id}/subtree*`, async (route) => { await held; await route.continue(); });
+      await bContext.route(`**/api/blocks/${paper.id}/subtree*`, async (route) => { askedAt ||= Date.now(); await held; await route.continue(); });
       const B = await openPage(bContext, paperUrl);
       const pill = B.locator(".statusPill", { hasText: ask });
       await pill.waitFor();
+      await until(() => askedAt && Date.now() - askedAt > 400, { what: "the open waiting past its Opening… threshold" });
       release();
       await B.locator(".statusPill", { hasText: "Ready." }).waitFor({ timeout: 5000 });
       await waitForPdf(B, 1);

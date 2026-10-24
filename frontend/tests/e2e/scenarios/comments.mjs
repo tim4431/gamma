@@ -543,6 +543,35 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     }
   });
 
+  await step("comments: a page opening asks for its threads alongside its tree, and a PDF's for the margin cards' module too, before any card is wanted", async () => {
+    const ctx = await ben.context(browser);
+    try {
+      const P = await openPage(ctx, url);
+      await rowOf(P, "The first claim").waitFor();
+      await P.locator('[data-guide="header.home"]').first().click();
+      const row = P.locator(".fileRow", { hasText: "Reviewed paper" }).first();
+      await row.waitFor();
+      await P.evaluate(() => performance.clearResourceTimings());
+      await row.dblclick();
+      await waitForPdf(P, 1);
+      await P.locator('[data-page="1"] .pdfNoteBadge.hasThread').waitFor({ timeout: 10000 });
+      const seen = await P.evaluate((id) => {
+        const all = performance.getEntriesByType("resource");
+        const at = (re) => all.find((e) => re.test(e.name));
+        const tree = at(new RegExp(`/api/blocks/${id}/subtree`));
+        const threads = at(new RegExp(`/api/pages/${id}/comments`));
+        const cards = at(/\/assets\/CommentMargin-[^/]*\.js/);
+        return { answered: tree?.responseEnd, threads: threads?.startTime, cards: cards?.startTime };
+      }, reviewed);
+      assert(seen.answered != null && seen.threads != null, `the tree and the threads were asked for: ${JSON.stringify(seen)}`);
+      assert(seen.threads < seen.answered, `the threads were asked for before the tree answered: ${JSON.stringify(seen)}`);
+      assert(seen.cards != null && seen.cards < seen.answered, `the margin cards' module too: ${JSON.stringify(seen)}`);
+      assertNoProblems(P);
+    } finally {
+      await ctx.close();
+    }
+  });
+
   await step("comments: the selection popup opens at the pointer; its Comment makes a commented highlight, and an abandoned one leaves none", async () => {
     // (A is on the reviewed paper from the step above, its badge's popover open)
     if (await popover(A).count()) await closePopover(A);

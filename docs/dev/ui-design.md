@@ -643,6 +643,12 @@ armed and only a pen draws gets "Fingers scroll while a pen draws" with
 **Draw with finger**, once a session and never after a pen has drawn
 ([handwriting.md](handwriting.md)).
 
+A page opening says "Opening…" only once it has kept the reader waiting
+300 ms (`OPENING_PILL_MS`, on a channel of its own), and takes it down as
+the page lands. "Ready." answers it only for a page opened where none was
+(the library, a link): a switch between pages is answered by the page
+itself.
+
 ### The share popover
 
 `sharing/SharePopover.jsx` (the topbar link button) is the one place a page
@@ -1013,6 +1019,14 @@ Settings pane, keyed by its name; a window the compact shell's bottom
 bar shows; the library's listing for another view, kind filter, folder
 or label, its `.listingIn` played again on it in place), and the guide's
 card rises `--move-sm` into place.
+
+A page that takes another's place does not move at all: the switch is
+instant and whole, since a fade would only make the reader wait. The tab
+pressed is selected in the press's own frame (`selectTab`), the page it
+leaves stays on screen, whole and in use, until the new page's tree lands
+(`openBlock`), and the new page then takes its place in one frame, its
+threads asked for alongside its tree and a PDF's pages drawn where they
+were left ([pdf_loading.md](pdf_loading.md) "Coming back to a document").
 
 ### Things that change in place
 

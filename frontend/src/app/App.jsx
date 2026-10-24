@@ -256,6 +256,10 @@ const preloadTrash = () => { RecentlyDeleted.preload(); prefetchTrash(); };
 // catch-all marks unrecognized phases as failed, so a new local phase must
 // fail closed (ignored) rather than show a spurious error row.
 const TRANSFER_PHASES = new Set(["start", "progress", "done", "cached", "error", "cancelled"]);
+// A page that opens within this long shows no "Opening…" (openBlock): the
+// page it leaves stays on screen until then, and the new one takes its
+// place whole.
+const OPENING_PILL_MS = 300;
 
 // The compact layout ("phone" in the code): below 700px the desktop dock
 // system is unusable, so the workspace switches to a single full-width panel
@@ -2298,6 +2302,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setSnapsState(next);
   }, [recentViews, pageSnaps]);
   const [tabMenu, setTabMenu] = useState(null); // {id, pinned, x, y} — tab right-click menu
+  // The tab a press picked while its page opens (selectTab): the strip shows
+  // it selected from the press's own commit, while the page it leaves stays
+  // on screen until the new one's tree lands (openBlock). "" when none is.
+  const [tabPick, setTabPick] = useState("");
+  // The latest openBlock call: an earlier open landing after it neither
+  // posts nor takes down the "Opening…" of the one the reader is waiting on.
+  const openSeqRef = useRef(0);
   // What each open tab's page carries, for its kind icon (tabs store only
   // id, title and pinned).
   const tabKinds = useMemo(() => new Map(homeBlocks.map((b) => [b.id, pageAttachment(b) ? "pdf" : "page"])), [homeBlocks]);
@@ -2330,12 +2341,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // document's page boxes are in the DOM: on "layout" (a skeleton from the
   // manifest, no document yet) and on "rendered". Applying the pending
   // restore HERE means the document appears already scrolled to its
-  // position: no flash of the top, no visible jump.
-  function applyPendingRestore(url) {
+  // position: no flash of the top, no visible jump. `scale` is the one the
+  // boxes are laid out at, which the viewer reports with the phase: a
+  // viewer mounted again starts from its own, not the one the host last
+  // heard of, and re-places the position itself when its fit-width settles.
+  function applyPendingRestore(url, scale) {
     const p = pendingRestoreRef.current;
     if (!p || p.url !== url || restoreTokenRef.current !== p.token) return;
     const scroller = viewerWrapRef.current?.querySelector(".pdfViewer");
-    const targetTop = p.entry.top * ((pdfEffScaleRef.current || p.entry.scale || 1) / (p.entry.scale || 1));
+    const targetTop = p.entry.top * ((scale || pdfEffScaleRef.current || p.entry.scale || 1) / (p.entry.scale || 1));
     if (scroller && scroller.scrollHeight > targetTop) {
       scroller.scrollTo({ top: targetTop, behavior: "instant" });
       pendingRestoreRef.current = null;
@@ -2386,7 +2400,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // which accepts a laid-out skeleton as "pages in the DOM".
       postPill("pdf-load", { msg: t("Preparing document…"), spinner: true });
       pdfLaidOutUrlRef.current = url;
-      applyPendingRestore(url);
+      applyPendingRestore(url, st.scale);
       return;
     }
     if (st.phase === "rendered") {
@@ -2396,7 +2410,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       postPill("pdf-load", { msg: t("Rendering page…"), spinner: true }, { after: [20000, null] });
       pdfRenderedUrlRef.current = url; // this document's pages are now in the DOM
       setPdfDocNonce((n) => n + 1);    // lets a pinned search re-find its matches here
-      applyPendingRestore(url);
+      applyPendingRestore(url, st.scale);
       return;
     }
     // Only phases that own a transfer row from here on — the catch-all branch
@@ -5544,8 +5558,26 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (opts?.pushNav && blockId !== focusedBlockId) pushNav();
     leaveCurrentPage();
     forgetDocPages(); // the file chips' "which page carries this PDF" cache
+    // A tab's pick stays for its own open (selectTab); another open drops it.
+    setTabPick((pick) => (pick === blockId ? pick : ""));
+    // The page's threads are asked for alongside its tree, and a PDF's
+    // comment margin with them, so neither comes a round trip after it.
+    // Only for a page the library lists: a link to one that is gone asks
+    // for its tree alone.
+    const listed = tabKinds.get(blockId);
+    if (listed && blockId !== focusedBlockId) commentsRef.current.prefetch(blockId);
+    if (listed === "pdf") preloadCommentMargin();
+    // Until the tree lands the page on screen stays, and "Opening…" shows
+    // only once the open has kept the reader waiting.
+    const switching = !!focusedBlockId;
+    const seq = ++openSeqRef.current;
+    let slow = false;
+    const opening = setTimeout(() => {
+      if (openSeqRef.current !== seq) return;
+      slow = true;
+      postPill("opening", { msg: t("Opening..."), spinner: true });
+    }, OPENING_PILL_MS);
     setLoading(true);
-    setStatus(t("Opening..."));
     try {
       const subtreeData = await apiJson(`${API}/blocks/${blockId}/subtree`);
       const block = subtreeData.block;
@@ -5576,6 +5608,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         setInputUrl(src);
         setPdfUrl(openedPdfUrl);
         setBlocks(loaded(childBlocks));
+        preloadCommentMargin();
       } else {
         setInputUrl("");
         setPdfUrl("");
@@ -5638,7 +5671,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (savedUi?.pdfScale) setPdfScale(savedUi.pdfScale);
       else if (!attachment && sheetsOf(childBlocks).length) setPdfScale("page-width");
       if (opts?.restoreScroll) restorePdfScroll(tabScrollRef.current[blockId], blockId, openedPdfUrl);
-      setStatus(t("Ready."));
+      // "Ready." answers an "Opening…" the reader saw, for a page opened
+      // where none was (the library, a link): a switch between pages is
+      // answered by the page taking the other's place.
+      if (slow && !switching) setStatus(t("Ready."));
       // Emit for every successful open, including reopening the same paper.
       guideEvents.emit("page.opened", { id: blockId, title: block.content || t("Untitled") });
       return openedPdfUrl;
@@ -5649,7 +5685,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         // deep link leaves the address bar (a tab restore, which has no
         // `link`, just clears it).
         setMissingPage({ id: blockId, trashed: err.data?.trashed || null });
-        postPill("status", null); // take down "Opening..."
         const url = new URL(window.location.href);
         if (url.searchParams.get("block") === blockId || url.searchParams.get("page") === blockId) {
           url.searchParams.delete("block");
@@ -5662,8 +5697,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // If this was a session restore attempt that failed, clear it
       if (!window.location.search.includes("block=")) clearSession();
     } finally {
+      clearTimeout(opening);
+      if (openSeqRef.current === seq) postPill("opening", null);
+      setTabPick((pick) => (pick === blockId ? "" : pick));
       setLoading(false);
     }
+  }
+  // A tab pressed: selected at once, its page opened behind it.
+  function selectTab(id) {
+    setTabPick(id);
+    return openBlock(id, { restoreScroll: true });
   }
 
   // --- Global back: one history for every navigation ------------------------
@@ -5914,7 +5957,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const entry = [...tabHistoryRef.current].reverse().find((entry) =>
       !entry.blockId || next.some((tab) => tab.id === entry.blockId));
     if (entry?.blockId) {
-      return openBlock(entry.blockId, { restoreScroll: true });
+      return selectTab(entry.blockId);
     } else if (entry) {
       goHome(refresh);
       openFolder(entry.folder);
@@ -10632,7 +10675,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             ) : null}
             <OpenTabs
               tabs={openTabs}
-              activeId={focusedBlockId}
+              activeId={tabPick || focusedBlockId}
               still={tabsReadRef.current.has(openTabs)}
               kindOf={tabKindOf}
               menuOpen={openPopover === "tabs"}
@@ -10648,7 +10691,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 next.splice(to, 0, moved);
                 return next;
               })}
-              onOpen={(id) => openBlock(id, { restoreScroll: true })}
+              onOpen={selectTab}
               onClose={closeTab}
               onTogglePin={toggleTabPinned}
               onContext={(tab, x, y) => { setTabMenu({ id: tab.id, pinned: !!tab.pinned, x, y }); guideEvents.emit("tab.menu"); }}

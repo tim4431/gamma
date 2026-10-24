@@ -335,4 +335,86 @@ export async function quickOpenScenarios(env) {
       await user.api("/api/prefs/open-tabs", { method: "PUT", body: { value: [] } });
     }
   });
+
+  await step("tabs: a tab pressed is selected at once while the page it leaves stays whole until its own lands; a quick switch shows no pill, a slow one says Opening… and takes it down as the page lands, never Ready.", async () => {
+    const made = [];
+    for (const title of ["Switch from", "Switch to"]) {
+      const b = await user.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: title } });
+      await user.api("/api/blocks", { method: "POST", body: { parent_id: b.id, content: `the body of ${title}` } });
+      made.push(b);
+    }
+    await user.api("/api/prefs/open-tabs", { method: "PUT", body: { value: made.map((b) => ({ id: b.id, title: b.content })) } });
+    const ctx = await user.context(browser);
+    // Each page's tree answers after `delay` ms, or once `hold` resolves.
+    const gate = { delay: 0, hold: null };
+    for (const b of made) {
+      await ctx.route(`**/api/blocks/${b.id}/subtree*`, async (route) => {
+        if (gate.hold) await gate.hold;
+        else if (gate.delay) await new Promise((resolve) => setTimeout(resolve, gate.delay));
+        await route.continue();
+      });
+    }
+    const page = await openPage(ctx, `${server.base}/?page=${made[0].id}&ws=${user.ws}`);
+    // Every painted frame from the press on: the tabs selected, the page's
+    // title and first row, the pill.
+    const watch = () => page.evaluate(() => {
+      const seen = (window.__seen = []);
+      let pressed = false;
+      window.addEventListener("pointerdown", () => { pressed = true; }, { capture: true, once: true });
+      const look = () => {
+        if (window.__seen !== seen) return;
+        if (pressed) {
+          seen.push({
+            tabs: [...document.querySelectorAll(".tabStrip .tab.active:not([data-leaving]) .tabTitle")].map((el) => el.textContent.trim()),
+            title: document.querySelector(".pageTitleRow .titleText")?.textContent.trim() || "",
+            row: document.querySelector(".blockList .blockRow")?.textContent.trim() || "",
+            pill: document.querySelector(".statusPill .pillText")?.textContent.trim() || "",
+          });
+        }
+        requestAnimationFrame(look);
+      };
+      requestAnimationFrame(look);
+    });
+    const frames = () => page.evaluate(() => { const seen = window.__seen; window.__seen = null; return seen; });
+    const onPage = (title) => until(async () => (await page.locator(".pageTitleRow .titleText").innerText()) === title
+      && (await page.locator(".blockList .blockRow").first().innerText()).includes(`the body of ${title}`), { what: `${title} open` });
+    const tab = (title) => page.locator(live(".tabStrip .tab"), { hasText: title });
+    try {
+      await onPage("Switch from");
+      await tab("Switch to").waitFor();
+      // slow: the tree held well past the 300 ms after which an open says so
+      let release;
+      gate.hold = new Promise((resolve) => { release = resolve; });
+      await watch();
+      await tab("Switch to").click();
+      await page.locator(".statusPill", { hasText: "Opening" }).waitFor({ timeout: 3000 });
+      gate.hold = null;
+      release();
+      await onPage("Switch to");
+      await page.locator(".statusPill").waitFor({ state: "detached", timeout: 3000 });
+      let seen = await frames();
+      assert(seen.length > 2, `frames seen: ${seen.length}`);
+      const said = (f) => `${f.tabs.join("+")} | ${f.title} | ${f.pill}`;
+      assertEq(said(seen[0]), "Switch to | Switch from | ", "the press's own frame: the tab selected, the page it leaves still on screen");
+      assert(seen.every((f) => f.tabs.length === 1), `one tab selected in every frame: ${seen.map(said).join(" / ")}`);
+      assert(seen.every((f) => f.row.includes(`the body of ${f.title}`)),
+        `every frame shows one page whole: ${seen.map((f) => `${f.title}: ${f.row}`).join(" / ")}`);
+      assert(seen.some((f) => f.title === "Switch from" && f.pill.startsWith("Opening")), "the slow open said Opening… over the page it leaves");
+      assert(!seen.some((f) => /Ready/.test(f.pill)), `no Ready. for a switch: ${seen.map(said).join(" / ")}`);
+      // quick: under the threshold, nothing but the switch itself
+      gate.delay = 150;
+      await watch();
+      await tab("Switch from").click();
+      await onPage("Switch from");
+      await page.waitForTimeout(400);
+      seen = await frames();
+      assertEq(said(seen[0]), "Switch from | Switch to | ", "the press's own frame, again");
+      assert(seen.every((f) => f.tabs.length === 1 && f.tabs[0] === "Switch from"), `the pressed tab stays selected: ${seen.map(said).join(" / ")}`);
+      assert(seen.every((f) => !f.pill), `no pill for a quick switch: ${seen.map(said).join(" / ")}`);
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await user.api("/api/prefs/open-tabs", { method: "PUT", body: { value: [] } });
+    }
+  });
 }

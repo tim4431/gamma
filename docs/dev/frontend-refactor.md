@@ -31,6 +31,7 @@ does not show comes in chunks of its own, through `lazySurface` and
 | Import, Export, import review, Recently deleted, Report a problem | while open | nothing |
 | Share popover | while open | nothing |
 | Thread popover (comments) | while open | nothing |
+| PDF margin cards (comments) | beside a page with room and an open thread | nothing |
 | Comments window | with its dock window | the window's frame (`DockWindow`), body empty |
 | Inbox panel | while open | nothing |
 | pdf.js and its worker | `loadPdfEngine()` in `pdf/PdfViewer.jsx`, awaited just before `getDocument` | the viewer's skeleton and status pill |
@@ -54,7 +55,11 @@ screen downloads only what it paints.
   is idle after the library is up.
 - A surface on the first screen is fetched with the startup requests: the
   chat dock on a desktop, the PDF engine when the address names a page, a
-  share or a PDF, the thread popover when it names a thread. On the library the engine waits until the listing has been
+  share or a PDF, the thread popover when it names a thread. A PDF page
+  opening fetches the margin cards with its tree (as it is asked for, when
+  the library lists the page as a PDF; else as the tree lands), so they
+  come with its threads.
+  On the library the engine waits until the listing has been
   in for 1.5 s and the main thread is idle, so it is warm for the first PDF
   without competing with the library.
 - What every page paints at first render stays in the `App` chunk: the
