@@ -28,9 +28,7 @@
 // transition already). An item holding what matches `hold` (a popup placed
 // against the window, which a moving item would carry off) stays still. A
 // key typed or a paste in the list lands the glides at once, so what the
-// caret opens is placed against a row at rest. Boxes are the window's,
-// unless `space` is "content": then the list's own scroller's (a strip
-// that scrolls itself to an item as it changes).
+// caret opens is placed against a row at rest. Boxes are the window's.
 import React from "react";
 import { listGlides, longestMs, reducedMotion, sameKeys } from "./motion.js";
 import { standBack, standing, stillCopy } from "./leave.js";
@@ -105,24 +103,17 @@ export default class ListMotion extends React.Component {
     return box.offsetWidth ? box.getBoundingClientRect().width / box.offsetWidth : 1;
   }
 
-  // The items in document order, each with its box (in the window, or in
-  // the scroller's content).
+  // The items in document order, each with its box in the window.
   read() {
     const root = this.root.current;
     const list = [], byKey = new Map();
-    let dx = 0, dy = 0;
-    if (this.props.space === "content") {
-      const k = this.scale(), box = root.parentElement;
-      dx = box.scrollLeft * k;
-      dy = box.scrollTop * k;
-    }
     for (const el of root.querySelectorAll("[data-motion-key]")) {
       if (el.closest("[data-list-motion]") !== root) continue; // a list inside one of these items
       const key = el.dataset.motionKey;
       const seen = byKey.get(key);
       if (seen) { seen.twin = true; continue; } // one key twice: which is which is unknown
       const r = el.getBoundingClientRect();
-      const item = { el, key, box: { x: r.left + dx, y: r.top + dy, h: r.height }, twin: false };
+      const item = { el, key, box: { x: r.left, y: r.top, h: r.height }, twin: false };
       byKey.set(key, item);
       list.push(item);
     }

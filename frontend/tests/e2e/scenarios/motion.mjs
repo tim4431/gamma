@@ -379,4 +379,38 @@ export async function motionScenarios(env) {
       await assertNoProblems(page);
     } finally { await ctx.close(); }
   });
+
+  await step("motion: the last tab closed in a strip scrolled to its end sinks out where it was seen while the tabs before it glide over its place", async () => {
+    const strip = [...tabPages];
+    for (const name of "abcdefghi") {
+      const title = `Strip ${name}`;
+      strip.push({ id: (await user.api("/api/pages", { method: "POST", body: { title } })).id, title });
+    }
+    await user.api("/api/prefs/open-tabs", { method: "PUT", body: { value: strip } });
+    const last = strip[strip.length - 1], before = strip[strip.length - 2];
+    const ctx = await user.context(browser);
+    await watch(ctx);
+    const page = await openPage(ctx, `${server.base}/?ws=${user.ws}&page=${last.id}`);
+    try {
+      await liveTab(page, last.title).waitFor();
+      await liveTab(page, last.title).click(); // the person has acted (the active tab: nothing opens)
+      const atEnd = await page.locator(".tabStrip").evaluate((el) => el.scrollWidth > el.clientWidth && el.scrollLeft + el.clientWidth >= el.scrollWidth - 1);
+      assert(atEnd, "the strip overflows and stands at its end");
+      const leftOf = (locator) => locator.evaluate((el) => el.getBoundingClientRect().left);
+      const seenAt = await leftOf(liveTab(page, last.title));
+      const beforeAt = await leftOf(liveTab(page, before.title));
+      await glides(page);
+      await liveTab(page, last.title).hover();
+      await liveTab(page, last.title).getByRole("button", { name: `Close ${last.title}`, exact: true }).click();
+      const copy = page.locator('.tabStrip .tab[data-leaving="tab"]', { hasText: last.title });
+      await copy.waitFor({ state: "attached" });
+      assertNear(await leftOf(copy), seenAt, 1, "the copy sinks out where the tab was seen");
+      const seen = await glides(page);
+      assert(seen.includes(`moving ${before.id}`), `the tab before it glides over its place: ${seen}`);
+      await copy.waitFor({ state: "detached", timeout: 2000 });
+      await arrived(liveTab(page, before.title));
+      assert(await leftOf(liveTab(page, before.title)) > beforeAt + 1, "it came in from the left, as the strip scrolled back");
+      await assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
 }

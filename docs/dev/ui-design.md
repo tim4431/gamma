@@ -1094,8 +1094,10 @@ and what it holds travels with it.
   many blocks, Mark all read). `moves={false}` leaves the places alone
   where they transition already (the comment margin's cards).
 - **Boxes are the window's**, so an insert above the view that scroll
-  anchoring absorbs moves nothing. A strip that scrolls itself to an item
-  in the same change measures in its content instead (`space="content"`).
+  anchoring absorbs moves nothing, and a scroll the change forces on the
+  list's own scroller glides what it carries: a strip scrolled to its end
+  that a close narrows scrolls back, and what is left closes up from the
+  left.
 - **A popup over the window stays put.** An item holding what matches
   `hold`, such as the caret's "/" or `[[` menu, stays still, since a
   moving ancestor would carry it off. A key typed or a paste in the list
@@ -1113,13 +1115,13 @@ The tab strip (`OpenTabs`) is another. A tab opened rises in, one closed
 sinks back out where it stood while the tabs after it glide over its
 place, and a tab dragged along the strip moves the others through the
 same glides. A tab still gliding under the pointer is not one to swap
-with, so a swap never swaps back. It measures in the strip's content,
-since the strip scrolls to the active tab in the same change. Tabs read
-from this browser's cache or the server's copy come still, and so does
-any change before the person has pressed or typed anything in the window
-(the page it opened on getting its tab): that is the window loading. The
-strip is as tall with no tab as with one, so the topbar never grows as
-the first one opens.
+with, so a swap never swaps back. Closed at the end of a strip scrolled
+there, a tab sinks out where it was seen as the tabs before it glide over
+its place from the left. Tabs read from this browser's cache or the
+server's copy come still, and so does any change before the person has
+pressed or typed anything in the window (the page it opened on getting
+its tab): that is the window loading. The strip is as tall with no tab
+as with one, so the topbar never grows as the first one opens.
 
 The library's listing, in both views, is a third. A row comes in fading
 and goes fading, a card grows in and shrinks away, and a delete or an

@@ -536,9 +536,10 @@ function OpenTabs({
     <>
       <div ref={setStrip} role="tablist" data-guide="header.tabs"
         className={`tabStrip${overflow.over && !overflow.atEnd ? " fadeEnd" : ""}`}>
-        {/* Measured in the strip's content: it scrolls to the active tab in
-            the same change (the layout effect above). */}
-        <ListMotion keys={tabs.map((tab) => tab.id)} still={still || !acted} space="content" enter="rise" leave="tab"
+        {/* Measured in the window: a close that narrows a strip scrolled to
+            its end scrolls it back, and the tabs before the one closed
+            glide over its place from the left. */}
+        <ListMotion keys={tabs.map((tab) => tab.id)} still={still || !acted} enter="rise" leave="tab"
           strip={["role", "aria-selected"]}>
           {tabs.map((tab) => (
             <div
