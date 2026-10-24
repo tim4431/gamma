@@ -1,6 +1,6 @@
 import React from "react";
-import { FileIcon, HighlightIcon, PaperclipIcon, PenIcon, PinIcon, ScissorsIcon } from "../shared/ui/Icons";
-import { CopyField, PictureChoices, Step, SubDialog, Toggle } from "../settings/SettingsKit";
+import { FileIcon, HighlightIcon, LayoutIcon, MessageSquareIcon, PaperclipIcon, PenIcon, PinIcon, ScissorsIcon } from "../shared/ui/Icons";
+import { CopyField, PictureChoices, Row, Segmented, Step, SubDialog, Toggle } from "../settings/SettingsKit";
 import { ExportPreview, ImportPreview, FormatIllustration } from "../shared/illustrations";
 import { CopyBox, useCopied } from "../shared/ui/Widgets";
 import { copyText } from "../shared/lib/utils";
@@ -18,6 +18,8 @@ import { guideEvents } from "../guide/events.js";
 const EXPORT_CONTROLS = {
   highlights: { icon: HighlightIcon, label: T("Highlights") },
   notes: { icon: PenIcon, label: T("Notes") },
+  notesAt: { icon: LayoutIcon, label: T("Place notes") },
+  comments: { icon: MessageSquareIcon, label: T("Comments") },
   bundle: { icon: PaperclipIcon, label: T("Bundle the files") },
 };
 
@@ -230,10 +232,14 @@ function ExportSetup({ opts, setOpts, hasPdf, pdfStored, hasMeta, pageId, folder
       <div className="transferReview">
         <ExportPreview {...payload} />
         <div className="transferControls">
-          {controls.map(({ key, hint, title, disabled }) => {
+          {controls.map(({ key, hint, title, disabled, choice }) => {
             const { icon, label } = EXPORT_CONTROLS[key];
-            return <Toggle key={key} icon={icon} label={label} hint={hint} title={title}
-              checked={payload[key]} disabled={disabled} onChange={(value) => set({ [key]: value })} />;
+            return choice
+              ? <Row key={key} icon={icon} label={t(label)} hint={hint} title={title} className="transferChoice">
+                <Segmented value={payload[key]} options={choice} disabled={disabled} onChange={(value) => set({ [key]: value })} />
+              </Row>
+              : <Toggle key={key} icon={icon} label={t(label)} hint={hint} title={title}
+                checked={payload[key]} disabled={disabled} onChange={(value) => set({ [key]: value })} />;
           })}
           {isZotero && !bundle ? <p className="reportModalHint">{t("Highlights travel inside PDF files. Turn on file bundling to include them.")}</p> : null}
         </div>

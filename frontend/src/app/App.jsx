@@ -2724,9 +2724,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   });
   const [exportOpts, setExportOpts] = usePersistedState(
     "gamma-export-opts",
-    { format: "pdf", highlights: true, notes: true, bundle: true },
+    { format: "pdf", highlights: true, notes: true, bundle: true, comments: false, notesAt: "beside" },
     {
-      parse: (raw) => ({ format: "pdf", highlights: true, notes: true, bundle: true, ...JSON.parse(raw) }),
+      parse: (raw) => ({ format: "pdf", highlights: true, notes: true, bundle: true, comments: false, notesAt: "beside",
+        ...JSON.parse(raw) }),
       serialize: JSON.stringify,
     },
   );

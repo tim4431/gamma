@@ -88,6 +88,21 @@ def test_one_page_as_its_annotated_pdf(user, lab):
     assert failed["state"] == "failed" and failed["error"] == "page has no PDF"
 
 
+def test_an_annotated_pdf_job_takes_the_notes_place_and_the_comments(user, lab):
+    """The dialog's notes placement and Comments switch reach the export:
+    a thread on the highlight is a card beside the page, the note a card on
+    it, and the job's params keep both."""
+    from test_pdf_export import PAGE_W, _shown_words
+
+    top = lab["top"]
+    r = user.post(f"/api/pages/{top['id']}/comments", json={"block_id": f"hl-{top['id']}", "body": "jobthread"})
+    assert r.status_code == 201, r.text
+    job = _export(user, page_id=top["id"], mode="annotated-pdf", notes=True, comments=True, notes_at="page")
+    words = _shown_words(_download(user, job).content)
+    assert words["a"][0] < PAGE_W < words["jobthread"][0]
+    assert job["params"]["comments"] is True and job["params"]["notes_at"] == "page"
+
+
 def test_the_folder_download_offers_annotated_pdfs_too(user, lab):
     r = user.get(f"/api/folders/{lab['folder']}/export", params={"mode": "annotated-pdf", "notes": 0})
     assert r.status_code == 200 and r.headers["content-type"] == "application/zip"
@@ -143,6 +158,8 @@ def test_an_export_stops_between_pages(user, lab, monkeypatch):
 
 def test_what_an_export_job_refuses(user, lab):
     assert user.post("/api/jobs/export", json={"folder": lab["folder"], "mode": "pptx"}).status_code == 400
+    assert user.post("/api/jobs/export", json={"folder": lab["folder"], "mode": "annotated-pdf",
+                                               "notes_at": "margin"}).status_code == 400
     assert user.post("/api/jobs/export", json={"folder": "no-such-folder"}).status_code == 404
     assert user.post("/api/jobs/export", json={}).status_code == 400
     assert user.post("/api/jobs/export", json={"page_id": "nope"}).status_code == 404

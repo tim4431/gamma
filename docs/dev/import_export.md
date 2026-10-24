@@ -1014,8 +1014,9 @@ for one page with no local files, `_AnnotatedPdfBuilder` one page's PDF,
 
 `annotated-pdf` (`_AnnotatedPdfBuilder`) is each page's PDF with its
 highlights, handwriting and text boxes as standard annotations and, with
-the notes switch, its notes as cards in a column beside each page
-([pdf_typesetting.md](pdf_typesetting.md#notes-beside-the-page);
+the Notes switch, its notes as cards beside each page or on it, and
+with the Comments switch its open comment threads as cards beside it
+([pdf_typesetting.md](pdf_typesetting.md#notes-and-comments-as-cards);
 `annotated_page_pdf`, what `/pages/{id}/export-pdf` runs). For one page it is that PDF. For a folder it
 is a zip of them, `<subfolder>/<Title>.pdf`, the directories mirroring the
 page's first folder path below the exported folder (`Filing`,
@@ -1105,7 +1106,11 @@ Markdown and Notability, the ZIP row Obsidian, Logseq, Zotero and Gamma. Double-
 Next confirms. Formats with editable options get a review step: the
 Highlights, Notes and Bundle-the-files switches beside an illustrative page
 (`shared/illustrations/TransferPreview.jsx`, an example of the options, not
-a render of the document). Gamma and Notability have fixed contents, and a
+a render of the document). Annotated PDF has two more: "Place notes", a
+choice between Beside the page and On the page (`NOTES_PLACES`; it waits on
+the Notes switch), and Comments, the open threads as cards beside the
+page, with or without the notes. The preview draws them where they go: the
+note and a comment card in a column beside the paper, or the note on it. Gamma and Notability have fixed contents, and a
 PDF without a stored copy can only be the original file, so these export
 straight from step one. Logseq
 shows only the bundle switch. BibTeX has no switches but still gets a step:
@@ -1132,7 +1137,7 @@ Export starts the export as a background job ([tasks.md](tasks.md)).
 the server's mode for the format (each format's `mode`: `annotated-pdf`,
 `notes-pdf`, `readable`, `notability`, `obsidian`, `logseq-graph`,
 `zotero-rdf`, `bibtex`, `gamma`)
-and the three flags. The dialog then shows its last step, the job's
+and the three flags, and for an annotated PDF `comments` and `notes_at`. The dialog then shows its last step, the job's
 (`ExportJobStep`). While the job runs it shows its progress (pages, then
 the packing of the zip) with Stop, and says the window may close. The job
 goes on in Background tasks, whose row opens this step again. Once ready,
@@ -1164,8 +1169,9 @@ self-contained — and reads as plain text otherwise; a `![[embed]]`
 materializes the synced block's content with a *(from …)* attribution,
 nested embeds degrading to mentions; ids the resolver doesn't know stay as
 typed) and
-`mode=annotated-pdf` (`/pages/{id}/export-pdf?highlights=&notes=` answers the
-same). "Annotated PDF" is the paper itself and is hidden when there is none
+`mode=annotated-pdf` (`/pages/{id}/export-pdf?highlights=&notes=&comments=&notes_at=`
+answers the same; `notes_at` is `beside` or `page`, 400 for anything
+else). "Annotated PDF" is the paper itself and is hidden when there is none
 (a note page); a page with sheets of paper shows it too, and exports them
 ([notebooks.md](notebooks.md)). An unsaved proxy PDF can
 export only its original file, so it skips the options page and exports directly.
@@ -1173,7 +1179,7 @@ export only its original file, so it skips the options page and exports directly
 Bundle switch is hidden because a document always embeds its images. Two
 combinations are special: a
 Logseq graph is defined by carrying both layers, so highlights and notes are
-always included and only file bundling gets a switch; a PDF with both off is the stored file itself, which the frontend
+always included and only file bundling gets a switch; a PDF with every switch off is the stored file itself, which the frontend
 downloads from the viewer's own URL (so it also works for a PDF that only
 exists behind the proxy).
 
@@ -1181,7 +1187,7 @@ The dialog can also target a whole folder: opened from home with a folder open
 (the View menu's Export…) or from a folder card's context menu (`exportFolder`
 state in App.jsx), it exports every page filed there or below, in any
 format. There Annotated PDF and BibTeX sit in their own "Papers" row: each
-paper's annotated PDF, with the Highlights and Notes switches, in one zip
+paper's annotated PDF, with the Highlights, Notes and Comments switches and the notes' place, in one zip
 whose directories are the subfolders; pages without a PDF are left out and
 listed once it is done. BibTeX is one `.bib` for every paper in the folder.
 
@@ -1507,6 +1513,7 @@ switch on ([pdf_typesetting.md](pdf_typesetting.md#annotated-pdf-export)).
 ## The PDF writers
 
 The typesetting engine both PDF writers draw with (`gamma/pdf_typeset.py`)
-and the annotated-PDF export (reading through `ExportPdfReader`, notes in a
-column beside the page, vector text as Type 3 fonts, images, fonts and content
-streams) are described in [pdf_typesetting.md](pdf_typesetting.md).
+and the annotated-PDF export (reading through `ExportPdfReader`, notes and
+comments as cards beside the page or on it, vector text as Type 3 fonts,
+images, fonts and content streams) are described in
+[pdf_typesetting.md](pdf_typesetting.md).

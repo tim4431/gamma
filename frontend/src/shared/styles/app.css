@@ -6162,6 +6162,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .transferControls .setRow { grid-template-columns: 28px minmax(0, 1fr) auto; margin: 5px 0; }
 .transferControls .setRow > .settingText { grid-column: 2; grid-row: 1; padding-right: 0; }
 .transferControls .setRow > .switch { grid-column: 3; grid-row: 1; }
+/* A choice (where an annotated PDF's notes go): its buttons under the label. */
+.transferControls .transferChoice > .segGroup { grid-column: 2 / 4; grid-row: 2; justify-self: start; margin-top: 6px; }
 .transferFooter { flex-shrink: 0; padding-top: 14px; margin-top: 14px; border-top: 1px solid var(--border-subtle); align-items: center; }
 .transferHelp { font-size: var(--fs-xs); color: var(--text-secondary); }
 .transferHelp summary { cursor: pointer; padding: 6px 0; }
