@@ -13,9 +13,9 @@
 // marks the conversation in `failed` (the dock says it is not saved) until
 // a later save goes through.
 //
-// It also keeps what the dock last showed of each conversation (`recall`,
-// the last SHOWN of them), so coming back to one shows it at once while the
-// stored copy is read again.
+// It also keeps what the dock last showed of each conversation it read or
+// made (`recall`, the last SHOWN of them), so coming back to one shows it at
+// once, an empty one too, while the stored copy is read again.
 
 const RETRY_DELAYS = [1000, 3000, 8000];
 const MAX_MERGES = 5;

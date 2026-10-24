@@ -21,11 +21,16 @@ findable. ChatDock's `chatKey` is the open page's id, else the open
 folder's id, else `home`. A bucket switch empties the composer at once and
 then reads the stored conversation; a draft typed while that read is in
 flight stays (opening a history entry still empties it). Meanwhile the
-transcript shows what this tab holds of the bucket, before the frame is
-painted: its own copy (a reply sent here), else what the dock last showed
-of it (the session's `remember` / `recall`, the last twenty
-conversations), which the stored copy then replaces in place. A bucket
-never shown stays blank until it is read, rather than saying it is empty. A remount of the
+transcript shows what this tab holds of the bucket from the switch's
+first render: its own copy (a reply sent here), else what the dock last
+showed of it (the session's `remember` / `recall`, the last twenty
+conversations read or made here), which the stored copy then replaces in
+place. Its rows are its own (keyed by the bucket and their place), so
+nothing of the conversation before opens, folds or morphs into it, and an
+empty one known this way shows its empty line, or the setup card, at once.
+A bucket never read stays blank until it is read, rather than saying it is
+empty; what it showed meanwhile is not remembered, so coming back to it
+before its read lands is blank again. A remount of the
 dock in the same bucket (an iPad turning, the dock closed and opened
 again) brings the draft back, and an ask from App (a handwriting block's
 "Transcribe with AI") is sent once however often the dock mounts: both

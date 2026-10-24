@@ -1653,4 +1653,123 @@ export async function chatNavigationScenarios(env) {
       assertNoProblems(page, [/\/api\/ai\/models -> 500/]);
     } finally { await ctx.close(); }
   });
+
+  // Pages opened from the library, each its own conversation, then walked
+  // between by their tabs.
+  async function openFromLibrary(page, title) {
+    await page.locator('[data-guide="header.home"]').click();
+    await page.locator(".fileRow", { hasText: title }).first().dblclick();
+    await page.locator(".tabStrip .tab.active", { hasText: title }).waitFor();
+  }
+  const tabOf = (page, title) => page.locator(".tabStrip .tab[role=tab]", { hasText: title }).first();
+
+  await step("chat navigation: switched back to a conversation seen before, its replies show still: no steps pill grows in, morphs or folds away, and none is read out", async () => {
+    const pages = [];
+    for (const [title, question, answer, actions] of [
+      ["Switch alpha", "What is in alpha?", "Alpha holds one note.", [{ kind: "read", tool: "read_page", summary: "Read Switch alpha", ok: true }]],
+      ["Switch beta", "Search for beta", "Found two.", [{ kind: "search", tool: "search_library", summary: "Searched for x", ok: true },
+        { kind: "search", tool: "search_library", summary: "Searched for y", ok: true }]],
+      ["Switch charlie", "Hi charlie", "Hello there.", null],
+    ]) {
+      const made = await alice.api("/api/pages", { method: "POST", body: { title } });
+      await alice.api(`/api/chats/${made.id}`, { method: "PUT", body: { messages: [
+        { role: "user", text: question }, { role: "ai", text: answer, ...(actions ? { actions } : {}) },
+      ] } });
+      pages.push({ id: made.id, title, answer });
+    }
+    const ctx = await streamingContext();
+    // A steps pill growing in or folding away, a label morphing, and text
+    // changing inside a live region, from any commit.
+    await ctx.addInitScript(() => {
+      window.chatSwitch = [];
+      const look = (el) => {
+        if (!(el instanceof Element)) return;
+        for (const fold of [el, ...el.querySelectorAll(".chatStepsFold")]) {
+          if (fold.matches(".chatStepsFold") && /opening|closing/.test(fold.dataset.phase)) window.chatSwitch.push(`fold ${fold.dataset.phase}`);
+        }
+        if (el.closest(".chatPanel") && (el.matches(".morph.moving") || el.querySelector(".morph.moving"))) window.chatSwitch.push("morph");
+      };
+      new MutationObserver((records) => {
+        for (const r of records) {
+          if (r.type === "attributes") look(r.target);
+          else for (const n of r.addedNodes) look(n);
+          const at = r.target.nodeType === 1 ? r.target : r.target.parentElement;
+          const live = r.type !== "attributes" && at?.closest('.chatPanel [aria-live="polite"]');
+          if (live) window.chatSwitch.push(`said ${live.textContent}`);
+        }
+      }).observe(document, { subtree: true, childList: true, characterData: true, attributes: true, attributeFilter: ["data-phase", "class"] });
+    });
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    try {
+      const reply = (p) => page.locator(".chatBubbleRow.ai", { hasText: p.answer });
+      for (const p of pages) {
+        await openFromLibrary(page, p.title);
+        await reply(p).waitFor();
+      }
+      await page.waitForLoadState("networkidle");
+      await page.waitForTimeout(400);
+      await page.evaluate(() => window.chatSwitch.splice(0));
+      // from charlie: to alpha, beta, charlie, beta, alpha
+      for (const p of [pages[0], pages[1], pages[2], pages[1], pages[0]]) {
+        await tabOf(page, p.title).click();
+        await reply(p).waitFor();
+        await page.waitForLoadState("networkidle");
+        await page.waitForTimeout(300);
+        const seen = await page.evaluate(() => window.chatSwitch.splice(0));
+        assertEq(seen.join(" | "), "", `switched to ${p.title}, its replies show still`);
+      }
+      assertEq(await page.locator('.chatPanel .chatPillText[aria-live="polite"]').count(), 0, "a loaded reply's label is no live region");
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      for (const p of pages) await alice.api(`/api/blocks/${p.id}`, { method: "DELETE" });
+    }
+  });
+
+  for (const ai of [true, false]) {
+    await step(`chat navigation: a tab switched back to an empty conversation already read keeps its ${ai ? "empty line" : "setup card (no AI connected)"} while it is read again`, async () => {
+      const pages = [];
+      for (const title of [`Empty one ${ai}`, `Empty two ${ai}`]) {
+        const made = await alice.api("/api/pages", { method: "POST", body: { title } });
+        pages.push({ id: made.id, title });
+      }
+      const ctx = await alice.context(browser);
+      if (ai) await fakeAiModels(ctx);
+      await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+      // the conversations' reads from a server a little away, once both were read
+      let slow = false;
+      await ctx.route((url) => pages.some((p) => url.pathname === `/api/chats/${p.id}`), async (route) => {
+        if (slow && route.request().method() === "GET") await new Promise((done) => setTimeout(done, 400));
+        await route.continue();
+      });
+      const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+      const placeholder = ai ? ".chatPanel .chatEmpty" : ".chatPanel .chatSetup";
+      try {
+        for (const p of pages) {
+          await openFromLibrary(page, p.title);
+          await page.waitForLoadState("networkidle");
+          await page.locator(placeholder).waitFor();
+        }
+        slow = true;
+        for (const p of [pages[0], pages[1]]) {
+          // after every change to the page, whether the placeholder stands
+          await page.evaluate((placeholder) => {
+            window.placeholderGone = 0;
+            window.placeholderWatch?.disconnect();
+            window.placeholderWatch = new MutationObserver(() => { if (!document.querySelector(placeholder)) window.placeholderGone++; });
+            window.placeholderWatch.observe(document, { subtree: true, childList: true });
+          }, placeholder);
+          const read = page.waitForResponse((res) => res.url().endsWith(`/api/chats/${p.id}`));
+          await tabOf(page, p.title).click();
+          await read;
+          await page.waitForTimeout(100);
+          assertEq(await page.evaluate(() => window.placeholderGone), 0, `back on ${p.title}, its placeholder never went`);
+        }
+        assertNoProblems(page);
+      } finally {
+        await ctx.close();
+        for (const p of pages) await alice.api(`/api/blocks/${p.id}`, { method: "DELETE" });
+      }
+    });
+  }
 }

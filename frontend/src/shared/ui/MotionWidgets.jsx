@@ -36,8 +36,9 @@ const cut = (el) => {
 // smoothly (motion.css .morph). Two texts that share nothing cross-fade
 // whole. One span of plain text at rest. It shows the new text at once
 // under reduced motion, when the text changes faster than a swap takes,
-// and when the old or the new text is cut by its box.
-export function MorphText({ children, className = "" }) {
+// when the old or the new text is cut by its box, and while `still` holds
+// (a label a load changed, not the work it names).
+export function MorphText({ children, className = "", still = false }) {
   const text = String(children ?? "");
   const [morph, setMorph] = useState(null); // {text, head, from, to, tail}
   const shown = useRef(text);
@@ -56,7 +57,7 @@ export function MorphText({ children, className = "" }) {
     // this render shows the new text plainly: its fit is measured now
     const fitted = fits.current;
     fits.current = !cut(rootRef.current);
-    setMorph(reducedMotion() || quick || !fitted || !fits.current ? null : { text, ...textSplit(from, text) });
+    setMorph(still || reducedMotion() || quick || !fitted || !fits.current ? null : { text, ...textSplit(from, text) });
   }, [text]);
 
   useLayoutEffect(() => {

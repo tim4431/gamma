@@ -48,6 +48,8 @@ import { DialogOverlay, Popover } from "../shared/ui/Surfaces";
 import ListMotion from "../shared/ui/ListMotion";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
+// A conversation this tab has nothing of yet (one array, never written).
+const NO_MESSAGES = Object.freeze([]);
 
 // What a remount (an iPad turning, the dock closed and opened again) must
 // not lose: the composer's draft, with the conversation it was typed in, and
@@ -186,7 +188,9 @@ function ChatErrorCard({ message, compact, actions }) {
 // handed documents to, a row each under the pill, laid out as a chip: the
 // document and what its helper is doing now. A reply that ends without a
 // step folds its pill away (ChatDock); meanwhile it keeps its last words.
-function AgentSteps({ actions, live, running, waiting, helpers = [], usage, text, open, onToggle, titleOf, children }) {
+// `still`: a reply loaded or read again, not this tab's own: its label
+// changes at once and is not read out.
+function AgentSteps({ actions, live, still, running, waiting, helpers = [], usage, text, open, onToggle, titleOf, children }) {
   const { failed, declined } = splitActions(actions);
   const done = !live && actions.length > 0;
   const label = waiting === "paper" ? t("Waiting for the paper from your browser")
@@ -199,15 +203,16 @@ function AgentSteps({ actions, live, running, waiting, helpers = [], usage, text
       {/* One element from the turn's start to its end, so its label morphs
           through every step: until a step lands it opens nothing, so it
           takes no focus (disabled) and a reply that ends without one can
-          fold it away from under nobody. Only the label is a live region:
-          the token count ticking beside it while the reply streams is
-          not read out. */}
+          fold it away from under nobody. Only the label is a live region,
+          and only on this tab's own replies: the token count ticking
+          beside it while the reply streams is not read out, nor is a
+          label a load changes. */}
       <button type="button" className={`chatPill chatSteps${live ? " live" : ""}`} disabled={!actions.length}
         onClick={actions.length ? onToggle : undefined} aria-expanded={actions.length ? open : undefined}
         title={!actions.length ? undefined : open ? t("Hide the steps") : t("Show every step with its arguments and output")}>
         {waiting ? <ShieldIcon size={14} /> : done ? <CheckIcon size={14} /> : <span className="transferSpin inline" aria-hidden="true" />}
-        <span className={`chatPillText${live && !waiting ? " shimmerText" : ""}`} aria-live="polite" aria-atomic="true">
-          <MorphText>{label}</MorphText>
+        <span className={`chatPillText${live && !waiting ? " shimmerText" : ""}`} aria-live={still ? "off" : "polite"} aria-atomic="true">
+          <MorphText still={still}>{label}</MorphText>
         </span>
         {live ? <span aria-hidden="true"><UsageLine usage={usage} className="chatMsgUsage live" /></span> : null}
         {failed && done ? <span className="chatStepsFailed">{t("{n} failed", { n: failed })}</span> : null}
@@ -493,7 +498,8 @@ export default function ChatDock({
   askSignal = null,
   onGrip, onFold, collapsed, onClose,
 }) {
-  const [loadedMessages, setChatMessages] = useState([]);
+  const [loadedMessages, setChatMessages] = useState(NO_MESSAGES);
+  const [shownFor, setShownFor] = useState(null); // the bucket loadedMessages are of
   const [loadError, setLoadError] = useState("");
   // Chat history is per page; the home view buckets per folder (the folder's
   // id, "home" at the library root) — switching folders switches
@@ -506,7 +512,18 @@ export default function ChatDock({
   const [chatInput, setChatInput] = useState(() => (kept.key === chatKey ? kept.draft : ""));
   useEffect(() => { kept.draft = chatInput; }, [chatInput]);
   const sessionState = useSyncExternalStore(session.subscribe, session.getSnapshot);
-  const chatMessages = sessionState.replies.get(chatKey)?.messages || loadedMessages;
+  // What the dock shows of the bucket: this tab's own copy (a reply sent
+  // here), else what came from the server; a switch renders, from its first
+  // render, what the dock last showed of the bucket switched to
+  // (session.recall: only what was read or made here), never the
+  // conversation before it.
+  const recalled = shownFor === chatKey ? null : session.recall(chatKey);
+  const loadedHere = shownFor === chatKey ? loadedMessages : recalled?.messages || NO_MESSAGES;
+  const chatMessages = sessionState.replies.get(chatKey)?.messages || loadedHere;
+  // A conversation loaded, switched to or read again (not this tab's own
+  // reply) shows still: no message rises, no steps pill opens, shuts or
+  // morphs, and no label is read out.
+  const fromLoad = chatMessages === loadedHere;
   // A reply is streaming into THIS conversation. Other buckets stream on
   // their own — asking one paper never waits for another's answer.
   const busyHere = session.isActive(chatKey);
@@ -733,8 +750,8 @@ export default function ChatDock({
   // it touched reload where no live socket brought the ops. The
   // conversation is the one the reply belongs to, even if the dock moved
   // on while a "Revert all" ran.
-  const loadedRef = useRef(loadedMessages);
-  loadedRef.current = loadedMessages;
+  const loadedRef = useRef(loadedHere);
+  loadedRef.current = loadedHere;
   const changesReverted = (id, indexes, answer, reverted = true) => {
     const current = session.getSnapshot().replies.get(chatKey)?.messages
       || (chatKeyRef.current === chatKey ? loadedRef.current : null);
@@ -758,9 +775,12 @@ export default function ChatDock({
   // current one. The composer is left alone: a bucket switch empties it up
   // front, so a draft typed while the stored copy loads stays. The session
   // keeps what was shown (`remember`), for a return to this bucket.
-  function showLoaded(msgs, title) {
+  function showLoaded(msgs, title, known = true) {
     setChatMessages(msgs);
-    session.remember(chatKey, msgs, title || "");
+    setShownFor(chatKey);
+    // nothing shown of a bucket not read yet is remembered: coming back to
+    // it before its read lands, the dock does not take it for empty
+    if (known) session.remember(chatKey, msgs, title || "");
     const lastUser = [...msgs].reverse().find((m) => m.role === "user");
     const references = [...new Set((lastUser?.contextPages || []).map((p) => p.id))].slice(0, MAX_CHAT_REFERENCES);
     setChatDocs(references);
@@ -782,7 +802,7 @@ export default function ChatDock({
   // holds of it shows at once, before the frame is painted: its own copy
   // (a reply sent here), else what the dock last showed of it; the stored
   // copy then replaces it in place. A bucket never seen shows nothing until
-  // it is read.
+  // it is read, not even what an empty one shows.
   useLayoutEffect(() => {
     let cancelled = false;
     setChatDocs([]);
@@ -792,7 +812,7 @@ export default function ChatDock({
     const reply = session.getSnapshot().replies.get(chatKey);
     const reloadSaved = session.isSaved(chatKey);
     const shown = reply || session.recall(chatKey);
-    showLoaded(shown?.messages || [], shown?.title);
+    showLoaded(shown?.messages || NO_MESSAGES, shown?.title, !!shown);
     setLoadError("");
     apiJson(`${API}/chats/${encodeURIComponent(chatKey)}`)
       .then(data => {
@@ -1986,8 +2006,10 @@ export default function ChatDock({
       >
         {chatTextScale.badge}
         {/* What stands in for an empty conversation waits until the chat
-            knows its AI and has read the stored conversation. */}
-        {visibleMessages.length || !aiKnown || loadedFor !== chatKey ? null
+            knows its AI and has read the stored conversation, or holds
+            what it last showed of it (an empty one switched back to shows
+            its line at once while it is read again). */}
+        {visibleMessages.length || !aiKnown || (loadedFor !== chatKey && !session.recall(chatKey)) ? null
           : setupCard && !loadError ? setupCard : (
             <div className="chatEmpty">
               {loadError || (readOnly ? t("No saved conversation for this page.")
@@ -1996,8 +2018,10 @@ export default function ChatDock({
           )}
         {/* A message sent or answered rises into place; a conversation
             loaded or switched to shows still (its messages are the ones
-            just loaded). */}
-        <ListMotion scope={chatKey} keys={motionKeys} enter="rise" moves={false} still={chatMessages === loadedMessages}>
+            just loaded). Rows are keyed by their conversation as well as
+            their place, so a switch mounts its own: nothing of the one
+            before opens, folds or morphs into it. */}
+        <ListMotion scope={chatKey} keys={motionKeys} enter="rise" moves={false} still={fromLoad}>
           {visibleMessages.map((m, i) => {
             const isUser = m.role === "user";
             const isResponding = busyHere && !isUser && m.partial && i === visibleMessages.length - 1;
@@ -2005,7 +2029,7 @@ export default function ChatDock({
             if (editingMsg?.idx === i) {
               const resend = () => { const text = editingMsg.text; setEditingMsg(null); resendFrom(i, text); };
               return (
-                <div key={i} className="chatBubbleRow user" data-msg-idx={i} data-motion-key={i}>
+                <div key={`${chatKey}:${i}`} className="chatBubbleRow user" data-msg-idx={i} data-motion-key={i}>
                   <div className="chatMsgCol">
                     <div className="chatBubble user chatEditBubble">
                       <AutoGrowTextarea
@@ -2034,7 +2058,7 @@ export default function ChatDock({
               );
             }
             return (
-              <div key={i} className={`chatBubbleRow ${isUser ? "user" : "ai"}${isFindHit ? " findHit" : ""}`} data-msg-idx={i} data-motion-key={i}>
+              <div key={`${chatKey}:${i}`} className={`chatBubbleRow ${isUser ? "user" : "ai"}${isFindHit ? " findHit" : ""}`} data-msg-idx={i} data-motion-key={i}>
                 <div className="chatMsgCol">
                   <div className={`chatBubble ${isUser ? "user" : "ai"}${m.error && !m.errorKind ? " error" : ""}`}>
                     {m.images?.length ? (
@@ -2059,8 +2083,8 @@ export default function ChatDock({
                     {/* The reply's one status pill, from the start of the turn; a
                         reply that ends without a step folds it away. */}
                     {!isUser ? (
-                      <Collapse open={isResponding || !!m.actions?.length} className="chatStepsFold">
-                      <AgentSteps actions={m.actions || []} live={isResponding} running={isResponding ? m.step : null}
+                      <Collapse open={isResponding || !!m.actions?.length} className="chatStepsFold" still={fromLoad}>
+                      <AgentSteps actions={m.actions || []} live={isResponding} still={fromLoad} running={isResponding ? m.step : null}
                         helpers={m.helpers} usage={isResponding ? liveUsage(m.usage, m.live) : null} text={m.text}
                         waiting={!isResponding ? ""
                           : m.approval && !answeredApprovals.has(m.approval.id) ? "approval"

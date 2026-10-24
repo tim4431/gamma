@@ -1031,8 +1031,10 @@ is plain markup, and a first render never moves.
   resizes smoothly. Mid-swap, assistive technology reads the new label
   whole. It shows the new label at once under reduced motion, when the
   label changes faster than a swap takes (a progress count), and when an
-  ellipsis cuts the old or the new one. Not inside a surface placed from
-  its size (the selection popup): its width would move it every frame.
+  ellipsis cuts the old or the new one, and while `still` holds (a label
+  a load changed, as a chat reply's read again). Not inside a surface
+  placed from its size (the selection popup): its width would move it
+  every frame.
   The chat's reply pill is one label from the start of a turn:
   "Thinking", each step running, "Responding", then its summary, every
   change a morph.
@@ -1163,7 +1165,11 @@ plays only when the tree's shape changed (`sameShape`,
 The chat's transcript is another: a question sent and its reply rise in
 together (`enter="rise"`, `moves={false}`, keyed by their places, one
 scope per conversation), while a conversation loaded, switched to or read
-again shows still: its messages are the ones a load just delivered.
+again shows still: its messages are the ones a load just delivered. Its
+rows are keyed by the conversation too, so a switch renders its own from
+the first frame, and in a conversation that came from a load each reply's
+steps pill opens and shuts at once and its label changes without a morph
+and is not read out: only this tab's own reply is a live region.
 
 The tab strip (`OpenTabs`) is another. A tab opened rises in, one closed
 sinks back out where it stood while the tabs after it glide over its
