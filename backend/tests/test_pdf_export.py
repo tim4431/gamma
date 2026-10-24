@@ -810,7 +810,8 @@ def _comment(author, body, day="2026-10-20", deleted=False):
 def test_comment_threads_are_cards_beside_the_page():
     """Each thread is a card in the column, drawn as the viewer's margin
     draws it: each comment's author, its day and its text, a deleted one
-    as such. Threads alone widen the page."""
+    as such, the replies stepped in to the first comment's text. Threads
+    alone widen the page."""
     from gamma.pdf_notes import render_notes
 
     out, drawn = render_notes(_blank_pdf(), [{"position": _position(y1=300, y2=320), "threads": [
@@ -827,6 +828,7 @@ def test_comment_threads_are_cards_beside_the_page():
     words = _shown_words(out)
     assert words["alice"][0] > PAGE_W and abs(words["alice"][1] - 300) < 16
     assert words["alice"][1] < words["bob"][1] < words["carol"][1]
+    assert words["bob"][0] > words["alice"][0] + 10 and abs(words["carol"][0] - words["alice"][0]) < 0.5
 
 
 def test_notes_on_the_page_and_threads_beside_it():
@@ -844,19 +846,23 @@ def test_notes_on_the_page_and_threads_beside_it():
 
 def test_a_notes_threads_go_under_it_beside_the_page():
     """Notes and comments both beside the page: a thread on a note is drawn
-    under that note in its card, a little past its text, as replies to it."""
+    under that note in its card, a little past its text, as replies to it;
+    a reply in the thread steps in again, so the next thread's start stands
+    out."""
     from gamma.pdf_notes import render_notes
 
     out, drawn = render_notes(_blank_pdf(), [{"position": _position(y1=300, y2=320), "blocks": [
         (0, "ownnote", []),
-        (1, "nestednote", [[_comment("alice", "replyone")], [_comment("bob", "replytwo")]]),
+        (1, "nestednote", [[_comment("alice", "replyone"), _comment("dave", "answerone")],
+                           [_comment("bob", "replytwo")]]),
         (1, "laternote"),
     ]}])
     assert drawn == 1
     words = _shown_words(out)
-    assert words["ownnote"][1] < words["nestednote"][1] < words["replyone"][1] < words["replytwo"][1] \
-        < words["laternote"][1]
+    assert words["ownnote"][1] < words["nestednote"][1] < words["replyone"][1] < words["answerone"][1] \
+        < words["replytwo"][1] < words["laternote"][1]
     assert words["alice"][0] > words["nestednote"][0]
+    assert words["dave"][0] > words["alice"][0] and abs(words["bob"][0] - words["alice"][0]) < 0.5
 
 
 def test_a_notes_threads_apart_from_it_quote_it():
