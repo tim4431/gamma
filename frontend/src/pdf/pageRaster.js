@@ -178,6 +178,68 @@ export async function cropPage(page, rect, box, annotationMode) {
 const release = (canvas) => { canvas.width = 0; canvas.height = 0; };
 const bytesOf = (canvas) => canvas.width * canvas.height * 4;
 
+// What a document's pages showed when it last left the viewer, so coming
+// back to its tab draws them at once instead of blank page boxes. When a
+// document leaves (a page without one takes the viewer's place, or another
+// document does), the viewer hands its page boxes in view to `keepPixels`,
+// which copies what each shows at the screen's resolution. A page of that
+// document mounting again starts from its copy (`takePixels`, then the
+// raster's `prime`), and its own first paint replaces it. The copies of
+// the last KEPT_DOCS documents stay, within KEPT_BUDGET_BYTES (the ones
+// left longest ago go first), and a document the viewer's cache lets go
+// takes its copies with it (`forgetPixels`).
+const KEPT_DOCS = 2;
+const KEPT_BUDGET_BYTES = (ROOMY ? 96 : 32) * 1024 * 1024;
+const KEPT = new Map(); // document -> Map(pageNumber -> canvas), insertion order = LRU
+// Each page box's raster, for keepPixels to ask the boxes it is handed.
+const RASTERS = new WeakMap();
+
+export function forgetPixels(doc) {
+  const pages = KEPT.get(doc);
+  if (!pages) return;
+  for (const canvas of pages.values()) release(canvas);
+  KEPT.delete(doc);
+}
+
+export function keepPixels(doc, wraps) {
+  forgetPixels(doc);
+  const pages = new Map();
+  for (const wrap of wraps) {
+    const copy = RASTERS.get(wrap)?.copy();
+    if (copy) pages.set(Number(wrap.dataset.page), copy);
+  }
+  if (!pages.size) return;
+  KEPT.set(doc, pages);
+  let total = 0;
+  for (const kept of KEPT.values()) for (const canvas of kept.values()) total += bytesOf(canvas);
+  for (const [old, kept] of KEPT) {
+    if (KEPT.size <= KEPT_DOCS && total <= KEPT_BUDGET_BYTES) break;
+    if (old === doc) continue;
+    for (const canvas of kept.values()) total -= bytesOf(canvas);
+    forgetPixels(old);
+  }
+  // Alone over the budget (a tall screen at a high zoom): its last pages go.
+  for (const [n, canvas] of [...pages].reverse()) {
+    if (total <= KEPT_BUDGET_BYTES) break;
+    total -= bytesOf(canvas);
+    release(canvas);
+    pages.delete(n);
+  }
+  if (!pages.size) KEPT.delete(doc);
+}
+
+export const hasPixels = (doc) => KEPT.has(doc);
+
+// The copy kept of one page, taken out of the store: the caller owns it.
+export function takePixels(doc, pageNumber) {
+  const pages = KEPT.get(doc);
+  const canvas = pages?.get(pageNumber) || null;
+  if (!canvas) return null;
+  pages.delete(pageNumber);
+  if (!pages.size) KEPT.delete(doc);
+  return canvas;
+}
+
 // What the pages of one scroller share: the render queue
 // (pdf/renderQueue.js) fed with the scroller's speed, and the pages holding
 // pixels, kept to the memory budget.
@@ -259,6 +321,11 @@ function pair(front) {
 //       `pinned`: rendered on request (a jump, the cited page), never
 //       trimmed for memory.
 //   show(null)   release all: a page far from the view keeps no backing store.
+//       A primed page keeps its kept pixels until its own first paint.
+//   prime(canvas)  start from `canvas` (takePixels), shown until the page's
+//       own first paint lands; it is the raster's to release.
+//   copy()   what the page shows, as a canvas at the screen's resolution
+//       (keepPixels), or null while it shows nothing.
 //   onPainted(page)  fresh pixels of `page` landed.
 //   isCancel(error)  tells pdf.js's cancellation from a failure; the caller
 //       owns the pdf.js module.
@@ -274,6 +341,7 @@ export function installPageRaster({ wrap, base: baseEl, detail: detailEl, onPain
   let settle = 0, quiet = 0, frame = 0; // a zoom settling; a scroll going quiet; a coalesced view change
   let outrun = false;     // scrolling cancelled the last detail render, and none has landed since
   let resized = null;     // the scroller's ResizeObserver, while the view is followed
+  let primed = false;     // the base shows pixels kept from the page's last time on screen (prime)
 
   const dpr = () => window.devicePixelRatio || 1;
   const report = (e) => { if (want) console.error("PdfPage render error:", e); };
@@ -323,6 +391,7 @@ export function installPageRaster({ wrap, base: baseEl, detail: detailEl, onPain
       if (!(await settled(task, target))) { if (baseTask === task) release(base.back); return; }
       base.show();
       shown = target;
+      primed = false;
       held();
       onPainted?.(target.page);
     } finally {
@@ -432,7 +501,7 @@ export function installPageRaster({ wrap, base: baseEl, detail: detailEl, onPain
       halt();
       want = shown = null;
       follow(false);
-      base.clear();
+      if (primed) release(base.back); else base.clear();
       dropDetail();
       shared.holders.delete(holder);
       return;
@@ -445,5 +514,34 @@ export function installPageRaster({ wrap, base: baseEl, detail: detailEl, onPain
     else draw().catch(report);
   }
 
-  return { show, dispose: () => show(null) };
+  function prime(kept) {
+    if (!kept) return;
+    if (!shown) {
+      const canvas = base.front;
+      canvas.width = 0; canvas.height = kept.height; canvas.width = kept.width;
+      const ctx = canvas.getContext("2d");
+      if (ctx) { ctx.drawImage(kept, 0, 0); primed = true; } else release(canvas);
+    }
+    release(kept);
+  }
+
+  function copy() {
+    const front = base.front;
+    if ((!shown && !primed) || !front.width || !front.height) return null;
+    const size = canvasSize(wrap.offsetWidth, wrap.offsetHeight, screenRatio(dpr()));
+    const out = document.createElement("canvas");
+    out.width = Math.min(size.width, front.width);
+    out.height = Math.min(size.height, front.height);
+    const ctx = out.getContext("2d");
+    if (!ctx) return null;
+    ctx.drawImage(front, 0, 0, out.width, out.height);
+    return out;
+  }
+
+  const raster = {
+    show, prime, copy,
+    dispose: () => { primed = false; show(null); RASTERS.delete(wrap); },
+  };
+  RASTERS.set(wrap, raster);
+  return raster;
 }

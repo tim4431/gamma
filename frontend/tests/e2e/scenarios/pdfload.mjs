@@ -312,6 +312,67 @@ export async function pdfLoadScenarios({ server, browser, alice, makePdf, step, 
     return `B cold ${fmt(firstB)} ms; A back ${fmt(backA)} ms; B back ${fmt(backB)} ms`;
   });
 
+  await step("pdf load: back to a paper's tab from a notes page, every frame shows its pages drawn, where they were left, at the same zoom, round after round", async () => {
+    const pdf = makePdf(Array.from({ length: 4 }, (_, i) => [`Return page ${i + 1}`, "Lorem ipsum dolor sit amet"]));
+    const up = await account.upload("/api/uploads", pdf, "return.pdf", "application/pdf");
+    const paper = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Return paper", source_url: up.source_url } });
+    const notes = await account.api("/api/pages", { method: "POST", body: { title: "Return notes" } });
+    await account.api("/api/prefs/open-tabs", { method: "PUT", body: { value: [{ id: paper.id, title: "Return paper" }, { id: notes.id, title: "Return notes" }] } });
+    const c = await account.context(browser);
+    const p = await openPage(c, `${server.base}/?page=${paper.id}&ws=${account.ws}`);
+    const title = () => p.locator(".pageTitleRow .titleText").innerText();
+    const tab = (name) => p.locator(".tabStrip .tab:not([data-leaving])", { hasText: name });
+    // From the press on, every painted frame with the paper's title: its
+    // page boxes in view, how many of them hold pixels, the scroll, the
+    // first page's width and the page number shown.
+    const watch = () => p.evaluate(() => {
+      const seen = (window.__seen = []);
+      let pressed = false;
+      window.addEventListener("pointerdown", () => { pressed = true; }, { capture: true, once: true });
+      const look = () => {
+        if (window.__seen !== seen) return;
+        const v = document.querySelector(".viewerWrap:not(.pdfHidden) .pdfViewer");
+        if (pressed && v && document.querySelector(".pageTitleRow .titleText")?.textContent.trim() === "Return paper") {
+          const box = v.getBoundingClientRect();
+          const inView = [...v.querySelectorAll(".pdfPageWrap")].filter((el) => {
+            const r = el.getBoundingClientRect();
+            return r.bottom > box.top && r.top < box.bottom;
+          });
+          const drawn = inView.filter((el) => [...el.querySelectorAll(".pdfPageCanvas > canvas")]
+            .some((cv) => cv.width > 0 && getComputedStyle(cv).display !== "none"));
+          seen.push({ pages: inView.length, drawn: drawn.length, top: Math.round(v.scrollTop),
+            width: Math.round(v.querySelector('[data-page="1"]')?.getBoundingClientRect().width || 0),
+            pn: document.querySelector(".pdfPageWidget input")?.value || "" });
+        }
+        requestAnimationFrame(look);
+      };
+      requestAnimationFrame(look);
+    });
+    try {
+      await waitPainted(p, 0);
+      await p.locator(".pdfViewer").evaluate((el) => el.scrollTo(0, 1000));
+      await until(async () => (await p.inputValue("input[aria-label='Current page']")) === "2", { what: "the reader on page 2" });
+      const left = await p.locator(".pdfViewer").evaluate((el) => ({ top: Math.round(el.scrollTop), width: Math.round(el.querySelector('[data-page="1"]').getBoundingClientRect().width) }));
+      for (const round of [1, 2]) {
+        await tab("Return notes").click();
+        await until(async () => (await title()) === "Return notes", { what: "the notes page open" });
+        await watch();
+        await tab("Return paper").click();
+        await until(async () => (await title()) === "Return paper", { what: "the paper back" });
+        await p.waitForTimeout(300);
+        const seen = await p.evaluate(() => { const s = window.__seen; window.__seen = null; return s; });
+        const said = seen.map((f) => `${f.drawn}/${f.pages} at ${f.top} w${f.width} p${f.pn}`).join(", ");
+        assert(seen.length > 0, `round ${round}: frames of the paper seen`);
+        assert(seen.every((f) => f.pages > 0 && f.drawn === f.pages), `round ${round}: every page in view is drawn in every frame: ${said}`);
+        assert(seen.every((f) => Math.abs(f.top - left.top) <= 1 && f.width === left.width), `round ${round}: every frame at the place and zoom left (${left.top}, w${left.width}): ${said}`);
+        assert(seen.every((f) => f.pn === "2"), `round ${round}: the page number it was left on in every frame: ${said}`);
+      }
+      assertNoProblems(p);
+    } finally {
+      await c.close();
+    }
+  });
+
   await step("pdf load: an anonymous share visitor opens the large document by ranges", async () => {
     const share = await account.api(`/api/share/${A.pageId}`, { method: "POST" });
     assert(share.token, "share token");

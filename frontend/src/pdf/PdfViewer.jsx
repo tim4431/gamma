@@ -15,7 +15,7 @@ import { MarkupLayers, NO_MARKS } from "../markup/MarkupLayers";
 import { armedClasses, usePageTools } from "../markup/PageTools";
 import { ZoomWindow } from "../ink/ZoomWindow.jsx";
 import { revealDelta } from "../ink/zoomWindow.js";
-import { KEEP_MARGIN, RENDER_MARGIN, ZOOM_SETTLE_MS, cropPage, installPageRaster } from "./pageRaster.js";
+import { KEEP_MARGIN, RENDER_MARGIN, ZOOM_SETTLE_MS, cropPage, forgetPixels, hasPixels, installPageRaster, keepPixels, takePixels } from "./pageRaster.js";
 import { installVerticalScrollSnap } from "./verticalScrollSnap.js";
 import { segmentPage, selectionParagraphs } from "./pdfTranslate";
 import { BACKFILL_DELAY_MS, chooseTransport, docIdOf, layoutFromManifest, rangeOpenOptions, typicalPageIndex } from "./pdfSource";
@@ -131,6 +131,17 @@ function pageTopAt(heights, idx, scale) {
   return y;
 }
 
+// The page boxes the scroller shows, the ones a document leaving keeps
+// the pixels of (pageRaster keepPixels).
+function pagesInView(scroller) {
+  if (!scroller) return [];
+  const v = scroller.getBoundingClientRect();
+  return [...scroller.querySelectorAll(".pdfPageWrap[data-page]")].filter((el) => {
+    const r = el.getBoundingClientRect();
+    return r.bottom > v.top && r.top < v.bottom && r.right > v.left && r.left < v.right;
+  });
+}
+
 // The bytes of the document most recently downloaded, so a reopen while the
 // IndexedDB copy below is still being written never re-downloads. One entry
 // only: raw bytes are the cheap half of a reopen (re-reading them from
@@ -177,6 +188,7 @@ function rememberDoc(url, entry) {
     const victim = DOC_CACHE.keys().next().value;
     const { doc } = DOC_CACHE.get(victim);
     DOC_CACHE.delete(victim);
+    forgetPixels(doc);
     // Its pages may still be mounted mid-swap — destroying now would spam
     // transport-destroyed rejections; after the commit has settled is fine.
     setTimeout(() => doc.destroy().catch(() => {}), 1000);
@@ -577,9 +589,10 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // shared/lib/viewerZoom.js (the notebook viewer shares it). What is left
   // here is each commit — the part that knows this viewer's layout.
   const zoomAnchorRef = useRef(null); // viewport point to zoom around; consumed by the anchor effect, null → viewport center
-  // Set when a new document mounts; consumed by the next scale change so the
-  // anchor effect can tell "fit-width settling for the swapped-in document"
-  // apart from a user zoom — the two need different anchoring (see below).
+  // Set when a new document mounts, to the scale its pages were first laid
+  // out at; consumed by the next scale change so the anchor effect can tell
+  // "fit-width settling for the swapped-in document" apart from a user zoom —
+  // the two need different anchoring (see below).
   const docSwapPendingRef = useRef(false);
   const zoomLayerRef = useRef(null);
   const viewerZoomRef = useRef(null);
@@ -813,15 +826,22 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // next gesture compounds on; sync() ignores it while a dispatch is in flight.
   useEffect(() => { viewerZoomRef.current?.sync(scale); }, [scale]);
   useEffect(() => { onEffectiveScale?.(scale); }, [scale, onEffectiveScale]);
-  useEffect(() => {
+  // The scale that fits the typical page of `widths` to the viewer's width,
+  // or null while the viewer has none.
+  const fitScale = (widths) => {
+    const naturalW = widths[typicalPageIndex(widths)];
+    const containerW = viewerRef.current?.clientWidth;
+    return naturalW > 0 && containerW > 0 ? Math.max(ZOOM_MIN, containerW / naturalW) : null;
+  };
+  // Before paint, so a document is never seen at the scale the one before
+  // it fitted.
+  useLayoutEffect(() => {
     if (!isFitWidth || !pdfDoc || !viewerRef.current) return;
     // The widths are in pageWidthsRef, measured before the doc was shown —
     // no async worker round trip per sidebar drag / rotation.
     const compute = () => {
-      const widths = pageWidthsRef.current;
-      const naturalW = widths[typicalPageIndex(widths)];
-      const containerW = viewerRef.current?.clientWidth;
-      if (naturalW > 0 && containerW > 0) setFitWidthScale(Math.max(ZOOM_MIN, containerW / naturalW));
+      const fit = fitScale(pageWidthsRef.current);
+      if (fit) setFitWidthScale(fit);
     };
     compute();
     const ro = new ResizeObserver(compute);
@@ -833,10 +853,16 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // purpose: it fires after the swap commit but BEFORE paint, so the host can
   // apply a restored scroll position and the user never sees the document at
   // the wrong offset.
+  // `scale`: what the boxes are laid out at, which a restored position is
+  // measured in.
   useLayoutEffect(() => {
     if (pdfDoc) {
       awaitingPaintRef.current = url;
-      onLoadState?.(url, { phase: "rendered" });
+      onLoadState?.(url, { phase: "rendered", scale });
+      // Back with the pixels its pages showed when it left: the reader has
+      // them already.
+      if (cameBackRef.current) onPagePainted();
+      cameBackRef.current = false;
     }
   }, [pdfDoc]);
 
@@ -855,6 +881,14 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // lands on it (the host's "layout" phase), and when the real document
   // arrives it fills the same boxes — same keys, nothing remounts.
   const skeletonRef = useRef(null); // url whose skeleton is on screen, else null
+  // Whether the document being committed comes back with what its pages
+  // showed when it left (pageRaster keepPixels).
+  const cameBackRef = useRef(false);
+  // The document whose pages are on screen leaves them: what they show in
+  // view is kept for its return. A skeleton on screen holds none of its.
+  const keepLeaving = () => {
+    if (displayedDocRef.current && !skeletonRef.current) keepPixels(displayedDocRef.current, pagesInView(viewerRef.current));
+  };
   const commitLayout = (heights, widths, exact) => {
     heightsExactRef.current = exact;
     pageHeightsRef.current = heights;
@@ -864,6 +898,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     setNumPages(heights.length);
   };
   const commitSkeleton = (url, { heights, widths }) => {
+    keepLeaving();
     skeletonRef.current = url;
     commitLayout(heights, widths, true);
     setDocSeq((s) => s + 1);
@@ -871,6 +906,8 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     setSkeletonUrl(url);
   };
   const commitDoc = (url, doc, heights, widths, exact) => {
+    if (displayedDocRef.current !== doc) keepLeaving();
+    cameBackRef.current = hasPixels(doc);
     displayedDocRef.current = doc;
     docUrlRef.current = url;
     commitLayout(heights, widths, exact);
@@ -883,8 +920,26 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // Skeleton boxes are in the DOM, pre-paint: the host applies its pending
   // scroll restore now, before a byte of the PDF has been parsed.
   useLayoutEffect(() => {
-    if (skeletonUrl) onLoadState?.(skeletonUrl, { phase: "layout" });
+    if (skeletonUrl) onLoadState?.(skeletonUrl, { phase: "layout", scale });
   }, [skeletonUrl]);
+  // The viewer going (its page's tab left for one without a PDF, the
+  // library) keeps what its pages show, as a document swap does. A layout
+  // cleanup: React runs it before it takes the viewer's boxes out.
+  useLayoutEffect(() => keepLeaving, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A document parsed on an earlier visit goes on screen in the commit
+  // that asks for it, before paint and at the scale it is read at, so the
+  // viewer's first frame already holds its pages, and what they showed
+  // when it left.
+  useLayoutEffect(() => {
+    const live = url ? DOC_CACHE.get(url) : null;
+    if (!live || docUrlRef.current === url) return;
+    onLoadState?.(url, { phase: "open" });
+    onLoadState?.(url, { phase: "cached" });
+    const fit = isFitWidth && fitScale(live.widths);
+    if (fit) setFitWidthScale(fit);
+    commitDoc(url, live.doc, live.heights, live.widths, true);
+  }, [url]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!url) return;
@@ -895,6 +950,8 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     };
     (async () => {
       try {
+        // On screen already from the parsed-document cache (above).
+        if (docUrlRef.current === url && displayedDocRef.current === DOC_CACHE.get(url)?.doc) return;
         report({ phase: "open" });
         // A document parsed on an earlier visit is handed over as it is.
         const live = DOC_CACHE.get(url);
@@ -1019,7 +1076,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // is defined after the "rendered" one, so it sees the restored value. Also
   // flag the swap for the anchor effect below.
   useLayoutEffect(() => {
-    docSwapPendingRef.current = true;
+    docSwapPendingRef.current = scale;
     // A settle loop from a zoom on the PREVIOUS document may still be alive
     // (its [scale] cleanup never fires when the swap keeps the scale, e.g.
     // both tabs at the same numeric zoom) — the swap's scrollHeight change
@@ -1046,7 +1103,10 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // scale — the only one known pre-paint — i.e. the ratio was applied to the
   // raw scrollTop, so its exact inverse is a TOP-of-viewport re-map
   // (anchor point 0,0), not a centered one. Anchoring the viewport center
-  // here is what made tab switches land hundreds of px off.
+  // here is what made tab switches land hundreds of px off. A document laid
+  // out at its own scale in the commit that brought it (one parsed before,
+  // committed at its fit) was never seen at the old one, and its restored
+  // position is measured at the new one: nothing to re-place.
   //
   // Layout effect + the scroll-tracked refs, on purpose: the page boxes
   // resize in this same commit, and when zooming out that shrinks the scroll
@@ -1064,7 +1124,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     zoomAnchorRef.current = null;
     const docSwap = docSwapPendingRef.current;
     docSwapPendingRef.current = false;
-    if (prev === scale || !viewerRef.current) return;
+    if (prev === scale || docSwap === scale || !viewerRef.current) return;
     const v = viewerRef.current;
     const heights = pageHeightsRef.current;
     if (heights.length === 0) return;
@@ -1258,8 +1318,9 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   };
   // Resync outside of scroll events: document swaps (a restore to the same
   // scrollTop fires no scroll event), zoom changes, and height refinement on
-  // long documents can all move the page under the reference point.
-  useEffect(() => { syncCurPage(); }, [docSeq, scale, numPages, pageHeights]);
+  // long documents can all move the page under the reference point. Before
+  // paint, after the restore, so a document comes back with its own number.
+  useLayoutEffect(() => { syncCurPage(); }, [docSeq, scale, numPages, pageHeights]);
   const jumpToPage = (pn) => {
     if (!numPages || !Number.isFinite(pn)) return;
     const p = Math.max(1, Math.min(numPages, pn));
@@ -2080,8 +2141,11 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
 
   // The page's canvases belong to the raster (pdf/pageRaster.js). This
   // component only tells it which page, at what zoom, and whether the page is
-  // near enough to the view to hold pixels at all.
-  useEffect(() => {
+  // near enough to the view to hold pixels at all. Installed before paint,
+  // so a page coming back starts, in its first frame, from what it showed
+  // when its document left the viewer (pageRaster keepPixels); its own
+  // first paint replaces that.
+  useLayoutEffect(() => {
     const raster = installPageRaster({
       wrap: wrapRef.current, base: baseRef.current, detail: detailRef.current,
       onPainted: (p) => { setPaintedPage(p); onPaintedRef.current?.(); },
@@ -2091,6 +2155,9 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
     rasterRef.current = raster;
     return () => raster.dispose();
   }, []);
+  useLayoutEffect(() => {
+    if (pdfDoc) rasterRef.current.prime(takePixels(pdfDoc, pageNumber));
+  }, [pdfDoc, pageNumber]);
 
   // The pdf.js page and its size, once this page first comes near the view.
   useEffect(() => {

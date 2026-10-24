@@ -2330,12 +2330,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // document's page boxes are in the DOM: on "layout" (a skeleton from the
   // manifest, no document yet) and on "rendered". Applying the pending
   // restore HERE means the document appears already scrolled to its
-  // position: no flash of the top, no visible jump.
-  function applyPendingRestore(url) {
+  // position: no flash of the top, no visible jump. `scale` is the one the
+  // boxes are laid out at, which the viewer reports with the phase: a
+  // viewer mounted again starts from its own, not the one the host last
+  // heard of, and re-places the position itself when its fit-width settles.
+  function applyPendingRestore(url, scale) {
     const p = pendingRestoreRef.current;
     if (!p || p.url !== url || restoreTokenRef.current !== p.token) return;
     const scroller = viewerWrapRef.current?.querySelector(".pdfViewer");
-    const targetTop = p.entry.top * ((pdfEffScaleRef.current || p.entry.scale || 1) / (p.entry.scale || 1));
+    const targetTop = p.entry.top * ((scale || pdfEffScaleRef.current || p.entry.scale || 1) / (p.entry.scale || 1));
     if (scroller && scroller.scrollHeight > targetTop) {
       scroller.scrollTo({ top: targetTop, behavior: "instant" });
       pendingRestoreRef.current = null;
@@ -2386,7 +2389,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // which accepts a laid-out skeleton as "pages in the DOM".
       postPill("pdf-load", { msg: t("Preparing document…"), spinner: true });
       pdfLaidOutUrlRef.current = url;
-      applyPendingRestore(url);
+      applyPendingRestore(url, st.scale);
       return;
     }
     if (st.phase === "rendered") {
@@ -2396,7 +2399,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       postPill("pdf-load", { msg: t("Rendering page…"), spinner: true }, { after: [20000, null] });
       pdfRenderedUrlRef.current = url; // this document's pages are now in the DOM
       setPdfDocNonce((n) => n + 1);    // lets a pinned search re-find its matches here
-      applyPendingRestore(url);
+      applyPendingRestore(url, st.scale);
       return;
     }
     // Only phases that own a transfer row from here on — the catch-all branch
