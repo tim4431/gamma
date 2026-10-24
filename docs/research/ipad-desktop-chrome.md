@@ -1,7 +1,8 @@
 # The iPad app with the desktop's chrome
 
-Survey from 2026-10-23. Findings and a plan; nothing here is built. The
-question: can the iPad app have the same shell as the Windows desktop app,
+Survey from 2026-10-23. Findings and a plan. Phases 1 to 3 were decided
+and built the same day; what differs from this note is at its end
+([Decided and built](#decided-and-built-2026-10-23)). The question: can the iPad app have the same shell as the Windows desktop app,
 the bar with the mark, the "server · workspace" switcher and its dropdown
 (the open server's workspaces, then every server with its dot, then *All
 servers…*), and the launcher behind it, in place of the SwiftUI server
@@ -333,3 +334,87 @@ Size: two days.
 account menu in `frontend/src/app/App.jsx`, `frontend/tools/copy-tokens.mjs`,
 `frontend/tests/themes.test.mjs`; [dev/ipad.md](../dev/ipad.md),
 [dev/desktop.md](../dev/desktop.md), [ipad-web-shell.md](ipad-web-shell.md).
+
+## Decided and built (2026-10-23)
+
+Phases 1 to 3 were built together, as one change meant to leave the
+project simpler than it was: the iPad's SwiftUI picker, its start page
+and its failure page are gone, and so is the web app's *Server…* plumbing.
+The bar takes touch sizes under the iPad rule (the first risk above). The
+mechanics are in [dev/ipad.md "The chrome"](../dev/ipad.md#the-chrome) and
+[desktop/docs/architecture.md "Window"](../../desktop/docs/architecture.md#window).
+What differs from this note:
+
+- **No `can` flags, and no change to `desktop/main.js` or the preload.**
+  The iPad's state leaves out `keeping`, `update` and `settings`, so the
+  bar hides its sync button, its *clone* chip and the update pill, and the
+  launcher its whole Settings block (the *Updates* and *Local server
+  storage* rows with it). One rule in `theme.css`,
+  `body[data-platform="ipad"] .desktopOnly`, hides *New local server* and
+  a local card's Remove. The *Reveal* buttons stay: the iPad answers them
+  with the Files app.
+- **No *Done* button and no `settings.openLast`.** The mark, *All
+  servers…* and ⌘⇧L toggle the launcher, and *Open* on the server shown
+  closes it. The iPad always reopens the last server, unless it was
+  removed: removing the server chosen unchooses it, as on the desktop,
+  and the next launch shows the launcher.
+- **Reload and the shortcuts.** `reload` and ⌘R load the page again only
+  while it is on the shown server's origin, and otherwise the server's
+  address, not a plain `webView.reload()`: after a failed switch the page
+  still shown is the other server's. ⌘⇧L first closes the bar's open
+  dropdown through its page (an Escape keydown), and a launcher that had
+  focus hands it back to the controller as it closes, so the key
+  commands keep working.
+- **The copy** is one `rsync` of `desktop/ui/` into the bundle's `chrome`
+  folder in `project.yml`'s post-build phase, not a step of
+  `build-python.sh` through a gitignored `Resources/chrome/`.
+- **Fewer files and no call enum.** One `Shell/Chrome.swift` holds the
+  configuration, the user script, the handler, the view factory and the
+  push, in place of `ChromeView.swift` and `ShellBridge.swift`. The
+  handler passes the method's name and arguments to one closure, and
+  `ShellController.call` switches on the name. The user script's push is
+  `_state(s)`, and it declares no `version`. The handler accepts any
+  `file:` main frame: the chrome's configuration loads nothing else.
+- **The state** is one pure function returning JSON values
+  (`App/ShellState.swift`), not a Codable mirror, and there is no state
+  fixture shared with `desktop/test/`.
+- **Ids and names without a migration.** `remotes` stays `[URL]`. The ids
+  are `local` and a remote's origin, not UUIDs, and the names are an
+  optional map by id beside it, so a list saved before reads as it is.
+  The phase-one keys (`gamma.server`, `gamma.recentServers`) are no longer
+  read. Remotes keep the order they were added in, with no cap, and
+  opening a server never adds one.
+- **The `servers` flag and message are deleted**, with the account menu's
+  *Server…* row, the sign-in page's link, their translations and tests,
+  rather than kept for older shells; no message opens the launcher. An
+  older TestFlight build loading a newer server loses its row until it
+  updates.
+- **The theme's name** is the `theme` message's `name` key. The bar's view
+  is pinned to the screen's top, not the safe area's, and the page pads by
+  `env(safe-area-inset-top)`, so it paints the strip under the status bar
+  itself and posts no colour back. The page's web view starts at the
+  safe area's top plus the bar's 44 pt.
+- **The session read** runs after every finished load, on every change of
+  the web view's `url` (the web app's `?ws=` and its sign-in change it
+  without a load) and on the `state` call, only on the shown server's
+  origin and never while a load is under way (its new address comes
+  before its document). `list`, which the launcher calls on every push,
+  does not read it.
+- **Failures** load the launcher with `?error=` in the desktop's own shape
+  (`ShellFailure`), not a `fail` key in the state, and the slow start's
+  sentence is the `busy` text itself, with no `notice`. `revealLog` opens
+  the log's folder in Files instead of sharing the file.
+- **A Pencil on the bar or the launcher** is ignored by the capture, not
+  left as an ordinary tap: a tap in the claim queue would refuse a claim
+  for a stroke begun at the same place just after.
+- **The menu closes on a `pointerdown` outside it**, on both shells: iOS
+  sends no click for a tap on the bar's bare see-through page. The
+  launcher's credentials box wraps on both shells too, for the iPad's
+  sentence about a password it does not keep; on the iPad the bar's
+  status stays on one line, clipped.
+- **Tests** are XCTest's pure parts (`ChromeTests.swift`); the simulator
+  step that would click `#wsBtn` in the bar's view is not written.
+
+Not built: phase 4 (the clone chips and the sync panel). Every device
+check above is open; [dev/ipad.md](../dev/ipad.md#device-checks) lists
+them, from check 23.

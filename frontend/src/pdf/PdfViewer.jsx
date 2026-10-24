@@ -112,19 +112,29 @@ function afterScrollRest(el, ms, fn) {
 
 // Whether the page box in `wrapRef` lies within `margin` (an
 // IntersectionObserver rootMargin) of its scroller's viewport; `initial`
-// until the observer first reports.
+// until the observer first reports. The second value, `assume()`, counts
+// the box within until the observer reports again, which it is asked to
+// do afresh: for a page known to be in view before the observer can say
+// so (one that came back showing its kept pixels).
 function useWithin(wrapRef, margin, pageNumber, initial = false) {
   const [within, setWithin] = useState(initial);
+  const obsRef = useRef(null);
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
     const obs = new IntersectionObserver((entries) => {
-      setWithin(entries[0].isIntersecting);
+      setWithin(entries[entries.length - 1].isIntersecting);
     }, { root: el.closest(".pdfViewer"), rootMargin: margin });
     obs.observe(el);
-    return () => obs.disconnect();
+    obsRef.current = obs;
+    return () => { obs.disconnect(); obsRef.current = null; };
   }, [pageNumber, margin]);
-  return within;
+  const assume = useCallback(() => {
+    setWithin(true);
+    const obs = obsRef.current, el = wrapRef.current;
+    if (obs && el) { obs.unobserve(el); obs.observe(el); }
+  }, [wrapRef]);
+  return [within, assume];
 }
 
 // Content-y of page idx's top edge at the given scale.
@@ -2272,7 +2282,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
   const [paintedPage, setPaintedPage] = useState(null); // the pdf.js page whose first pixels have landed
   const [basePaints, setBasePaints] = useState(0); // counts the whole-page bitmap's paints (pageRaster onBase)
   const [textReady, setTextReady] = useState(null); // {page, layer, runs}: the built pdf.js text layer
-  const visible = useWithin(wrapRef, RENDER_MARGIN, pageNumber); // inside the look-ahead: rendered
+  const [visible, assumeVisible] = useWithin(wrapRef, RENDER_MARGIN, pageNumber); // inside the look-ahead: rendered
   const renderVisible = visible || forceRender;
   // Highlights, find marks and link boxes are drawn only inside the
   // look-ahead too. Each is a positioned element, which Blink gives its own
@@ -2292,21 +2302,24 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
   // Farther out, up to KEEP_MARGIN, a page keeps the pixels it has (on a
   // desktop; pdf/pageRaster.js trims them to a memory budget) and draws
   // nothing new, so a scroll back over read pages redraws nothing.
-  const nearby = useWithin(wrapRef, KEEP_MARGIN, pageNumber);
+  const [nearby, assumeNearby] = useWithin(wrapRef, KEEP_MARGIN, pageNumber);
   const kept = nearby || renderVisible;
 
   // Far from the view (FAR_MARGIN past it) a page gives up its text layer
   // too; a long read would otherwise leave every visited page's spans in
   // the DOM. It is rebuilt after the page's next paint. A page rendered on
   // request (a jump, the cited page) is never far.
-  const far = !useWithin(wrapRef, FAR_MARGIN, pageNumber, true) && !forceRender;
+  const far = !useWithin(wrapRef, FAR_MARGIN, pageNumber, true)[0] && !forceRender;
 
   // The page's canvases belong to the raster (pdf/pageRaster.js). This
   // component only tells it which page, at what zoom, and whether the page is
   // near enough to the view to hold pixels at all. Installed before paint,
   // so a page coming back starts, in its first frame, from what it showed
   // when its document left the viewer (pageRaster keepPixels); its own
-  // first paint replaces that.
+  // first paint replaces that. Such a page was in view as it left, so it
+  // counts as in view before that frame too: its highlights, badges and
+  // margin cards come with its pixels, not a frame after them, when the
+  // observer first reports (it takes over from there).
   useLayoutEffect(() => {
     const raster = installPageRaster({
       wrap: wrapRef.current, base: baseRef.current, detail: detailRef.current,
@@ -2324,8 +2337,12 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
     return () => raster.dispose();
   }, []);
   useLayoutEffect(() => {
-    if (pdfDoc) rasterRef.current.prime(takePixels(pdfDoc, pageNumber));
-  }, [pdfDoc, pageNumber]);
+    const kept = pdfDoc ? takePixels(pdfDoc, pageNumber) : null;
+    if (!kept) return;
+    rasterRef.current.prime(kept);
+    assumeVisible();
+    assumeNearby();
+  }, [pdfDoc, pageNumber]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // The pdf.js page and its size, once this page first comes near the view.
   useEffect(() => {

@@ -49,17 +49,18 @@ function CommentText({ comment, later, labelsFor, onBlockRefClick }) {
 }
 
 // `resolve`, on a thread's first comment only: {open, onClick}, the
-// Resolve (or Reopen) button on its author line, beside the "⋯". `later`:
+// Resolve (or Reopen) button on its author line, beside the "⋯". `reply`:
+// a comment after the first, stepped in under the first one's text. `later`:
 // the ids of the comments drawn as they near the view. Without `actions`
 // (a margin card at rest) the line has neither.
-function Comment({ comment, me, owner, canComment, people, labelsFor, later, field, onBlockRefClick, onEdit, onDelete, onCopyLink, resolve = null, actions = true }) {
+function Comment({ comment, me, owner, canComment, people, labelsFor, later, field, onBlockRefClick, onEdit, onDelete, onCopyLink, resolve = null, reply = false, actions = true }) {
   const [menu, setMenu] = useState(null);
   const [editing, setEditing] = useState(() => hasDraft(`edit:${comment.id}`)); // an edit left unsaved
   const mayEdit = canComment && canEditComment(comment, me);
   const mayDelete = canComment && canDeleteComment(comment, me, owner);
   const openMenu = (e) => setMenu({ x: e.clientX, y: e.clientY });
   return (
-    <div className="commentItem rowMenuHost" data-motion-key={comment.id} data-comment-id={comment.id}>
+    <div className={`commentItem rowMenuHost${reply ? " reply" : ""}`} data-motion-key={comment.id} data-comment-id={comment.id}>
       <PersonAvatar name={comment.author || "?"} title={comment.author} />
       <div className="commentMain">
         <div className="commentMeta">
@@ -137,7 +138,7 @@ export function Thread({ thread, focused = false, active, onActivate, canComment
       <ListMotion keys={comments.map((c) => c.id)} scope={collapsed} enter="rise" moves={false}>
         {comments.map((c, i) => (
           <Comment key={c.id} comment={c} me={me} canComment={canComment} people={people} {...rest} actions={!collapsed}
-            resolve={i === 0 && canComment ? { open, onClick: () => onResolve(thread.id, open) } : null} />
+            reply={i > 0} resolve={i === 0 && canComment ? { open, onClick: () => onResolve(thread.id, open) } : null} />
         ))}
       </ListMotion>
       {collapsed && replies > 0 ? (

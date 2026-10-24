@@ -64,11 +64,11 @@ import { bibliographyPreview } from "../transfers/exportApi";
 import { collectEntryFiles } from "../shared/lib/dropEntries.js";
 import { useWheelPan } from "../shared/ui/wheelPan";
 import {
-  ActivityIcon, AlertCircleIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpDownIcon, ArrowUpIcon, BookIcon, BugIcon, CheckIcon, CopyIcon, DownloadIcon, ExportIcon,
+  ActivityIcon, AlertCircleIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpDownIcon, ArrowUpIcon, BookIcon, BugIcon, CheckIcon, CloudIcon, CopyIcon, DownloadIcon, ExportIcon,
   ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph,
   FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, HelpCircleIcon, HomeIcon, ImportIcon, InfoIcon, LabelGlyph, LabelIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon,
-  RectSelectIcon, RefreshIcon, ServerIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
+  RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
   ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon, MicIcon, MessageSquareIcon, BellIcon,
 } from "../shared/ui/Icons";
 
@@ -118,6 +118,7 @@ import { LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailableP
 import { guestExpiryLabel } from "../auth/guestExpiry";
 import { McpAuthorization } from "../auth/McpConsent";
 import { TRANSLATE_LANGS, preloadPrefs, readPref, translateModelFor, useAppPrefs, useProfileSync } from "./prefs";
+import { topbarPlaces } from "./topbarItems.js";
 import { adoptAccountLook, takeBootRead } from "./boot.js";
 import { applyTheme } from "./theme.js";
 import { useNotices } from "./useNotices";
@@ -217,7 +218,7 @@ import {
 import { createLibraryMatcher } from "../library/librarySearch";
 import { prefetchTrash } from "../library/trashList";
 import { useComments } from "../comments/useComments";
-import { abandonedCommentHighlight, isOpen, shortCount, threadLink } from "../comments/comments.js";
+import { abandonedCommentHighlight, isOpen, shortCount, threadAnchor, threadLink } from "../comments/comments.js";
 import { preloadCommentMargin } from "../comments/marginSlot";
 import { useInbox } from "../inbox/useInbox";
 import { InboxBadge, InboxButton } from "../inbox/InboxButton";
@@ -310,13 +311,16 @@ const HOME_SCREEN_INSTALLABLE = (/iPad|iPhone/.test(navigator.userAgent)
 // library itself (content, --bg-surface). Read from the theme variables, not
 // the elements: the topbar's background transitions, and a mid-transition
 // read would lag a theme change. The iPad app's shell takes the same colour
-// for the window behind its web view, and the scheme for its status bar.
+// for the window behind its web view, the scheme for its status bar, and the
+// theme's name (data-theme) for its bar and launcher: the desktop app's chrome
+// pages, which paint themselves by that name.
 function paintStatusBar(bareTop) {
   const bg = tokenHex(bareTop ? "--bg-surface" : "--bg-page");
   document.querySelector('meta[name="theme-color"]')?.setAttribute("content", bg);
   if (nativeHost()) {
-    const scheme = document.documentElement.getAttribute("data-scheme") === "dark" ? "dark" : "light";
-    postToHost({ type: "theme", bg, scheme }).catch(() => {});
+    const root = document.documentElement;
+    const scheme = root.getAttribute("data-scheme") === "dark" ? "dark" : "light";
+    postToHost({ type: "theme", bg, scheme, name: root.getAttribute("data-theme") }).catch(() => {});
   }
 }
 // A colour token as #rrggbb. Most tokens are color-mix() expressions
@@ -1185,10 +1189,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
 
   // Double-click / Enter / context-menu "Open": the old single-click behavior.
-  function openPage(id) {
+  // `block`: a block of the page to land on (openBlock).
+  function openPage(id, block = "") {
     if (!id) return;
     clearSelection();
-    openBlock(id, { restoreScroll: true });
+    openBlock(id, { restoreScroll: true, block });
   }
 
   // Container (folder or label) single-click selects, Ctrl/Cmd toggles within
@@ -1325,8 +1330,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       return;
     }
     fetchHomeBlocks();
-    if (id !== trashed.id) pendingBlockScrollRef.current = id;
-    openBlock(trashed.id, { link: true });
+    openBlock(trashed.id, { link: true, block: id !== trashed.id ? id : "" });
   }
   // The open page went to Recently deleted while open (pageGone): Restore
   // brings it back and refetches it — the edits that waited go out with
@@ -2648,7 +2652,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     keybindings, setKeybindings,
     statusBarVisible, setStatusBarVisible, suggestTours, setSuggestTours, tourProgress, setTourProgress,
     inboxSystemNotifications, setInboxSystemNotifications,
-    syncPillScope, setSyncPillScope,
+    topbar, setTopbar,
     chatEffort, setChatEffort, chatSpeed, setChatSpeed, aiLoginCheck, setAiLoginCheck, metaModel, setMetaModel,
     dictationModel, setDictationModel, dictationLang, setDictationLang,
     chatSystem, setChatSystem, agentSystem, setAgentSystem,
@@ -3958,6 +3962,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const blockRefs = useRef({});
   const pendingFocusRef = useRef(null);
   const pendingBlockScrollRef = useRef(null);
+  // The home menu's Share… / Export… / Ask AI waiting for its page
+  // ({id, action}): staged by the open that lands it (openBlock's `then`),
+  // run by the effect after openPageThen.
+  const pendingPageActionRef = useRef(null);
   // A request to scroll to (and focus) a block's row once it is rendered:
   // the id in the ref, and a counter the effect below listens to — a
   // request must be answered even when nothing else changes (the block was
@@ -4150,9 +4158,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const jumpToRef = useRef(null);
   jumpToRef.current = (pageId, blockId) => {
     setOpenPopover(null);
-    if (blockId) scrollToBlock(blockId);
-    if (pageId && pageId !== focusedBlockId) { openPage(pageId); return; }
-    if (blockId) reveal(blockId);
+    if (pageId && pageId !== focusedBlockId) { openPage(pageId, blockId); return; }
+    if (blockId) { scrollToBlock(blockId); reveal(blockId); }
   };
   useEffect(() => {
     const h = (e) => jumpToRef.current?.(e.detail?.page, e.detail?.block);
@@ -4304,8 +4311,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const pop = threadPop;
     setThreadPop(null);
     if (!returnFocus || !pop || pop.margin) return;
-    const el = pop.anchor?.isConnected ? pop.anchor : document.querySelector(`[data-comment-for="${CSS.escape(pop.blockId)}"]`);
-    el?.focus();
+    threadAnchor(pop)?.focus();
   }
   // The selection popup's Comment: the highlight it just made ({id,
   // opened}), whose popover opens on it, from the passage once that is
@@ -4536,9 +4542,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       reveal(id);
     } else {
       pushNav(); // block-ref click = link jump to another page
-      scrollToBlock(id);
       const rootId = pageId || refCache[id]?.page_root_id;
-      await openBlock(rootId && rootId !== id ? rootId : id, { link: true });
+      if (rootId && rootId !== id) await openBlock(rootId, { link: true, block: id });
+      else await openBlock(id, { link: true });
     }
   }
 
@@ -4623,9 +4629,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           const block = data.blocks?.[0];
           const rootId = block?.page_root_id;
           if (rootId && rootId !== initialBlockId) {
-            scrollToBlock(initialBlockId);
             pendingJumpRef.current = initialBlockId; // highlight blocks also jump the PDF
-            openBlock(rootId, { link: true });
+            openBlock(rootId, { link: true, block: initialBlockId });
           } else {
             openBlock(initialBlockId, { link: true });
           }
@@ -5254,7 +5259,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       ...(later.length ? [t("Open {names} again once this import is done.", { names: later.map((f) => f.name).join(", ") })] : []),
       ...(failed.length ? [t("Could not read {names}.", { names: failed.join(", ") })] : []),
     ];
-    if (problems.length || note) setStatus([note, ...problems].filter(Boolean).join(" "));
+    const text = [note, ...problems].filter(Boolean).join(" ");
+    if (note) {
+      // Why the files are here, after the reload: it holds a channel of its
+      // own for 8 s, as the pens question does, so the upload's statuses and
+      // its metadata lookup's, ending a moment later, never take it down.
+      logSys(text);
+      postPill("opened", { msg: text, question: true }, { after: [8000, null] });
+    } else if (problems.length) setStatus(text);
   }
   const takeOpenedRef = useRef(takeOpenedFiles);
   takeOpenedRef.current = takeOpenedFiles;
@@ -5685,9 +5697,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return () => window.removeEventListener("popstate", onPop);
   }, [shareMode]);
 
+  // `opts.block`: a block of the page to land on, scrolled to and focused
+  // (a [[ref]], a search hit, a deep link); `opts.then`: what to do once the
+  // page is on screen (openPageThen). Both belong to this open: staged as
+  // its tree lands, never by an open a later one took over.
   async function openBlock(blockId, opts) {
     if (!blockId) return;
-    if (shareMode) { goSharedPage(blockId); return; }
+    if (shareMode) {
+      if (opts?.block) pendingBlockScrollRef.current = opts.block;
+      goSharedPage(blockId);
+      return;
+    }
     // Back records LINK jumps only — callers opt in via {pushNav: true}.
     // Plain navigation (library, search, tabs, home) never pushes.
     if (opts?.pushNav && blockId !== focusedBlockId) pushNav();
@@ -5720,6 +5740,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (openSeqRef.current !== seq) return undefined;
       const block = subtreeData.block;
       if (!block) throw new Error("Block not found");
+      // What this open was asked to land on and then do; a jump or an
+      // action staged for an earlier page that never came is dropped.
+      pendingBlockScrollRef.current = opts?.block || null;
+      pendingPageActionRef.current = opts?.then ? { id: blockId, action: opts.then } : null;
       const props = block.properties || {};
       // Back on a page left with edits still unsaved (their save may be
       // retrying): they are laid over the fetched tree, and the page's
@@ -5764,9 +5788,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
       // The notes land where the reader left off (text-only pages) or at the
       // top — a passive landing that focuses no row (see landingRef) —
-      // unless an explicit target was already queued (a ?block= deep link).
+      // unless this open lands on a block of its own (`opts.block`).
       const notePos = !attachment ? readPosRef.current[blockId] : null;
-      landingRef.current = pendingBlockScrollRef.current ? null : {
+      landingRef.current = opts?.block ? null : {
         id: notePos?.page === 0 && notePos.block && flattenBlocks(childBlocks).some((b) => b.id === notePos.block) ? notePos.block : "",
       };
 
@@ -5845,10 +5869,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       }
     }
   }
-  // A tab pressed: selected at once, its page opened behind it.
+  // A tab pressed: selected at once, its page opened behind it. The tab of
+  // the page on screen, pressed while another's page opens, takes that
+  // press back: the page stays as it is, not read again.
   function selectTab(id) {
+    if (id === focusedBlockId) { dropTabPick(); return undefined; }
     setTabPick(id);
     return openBlock(id, { restoreScroll: true });
+  }
+  // The pending open of a picked tab let go: neither its landing nor its
+  // finally runs, so the page on screen stays, its tab selected again.
+  function dropTabPick() {
+    if (!tabPick) return;
+    ++openSeqRef.current;
+    setTabPick("");
+    postPill("opening", null);
+    setLoading(false);
   }
 
   // --- Global back: one history for every navigation ------------------------
@@ -6095,6 +6131,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     updateTabs(next);
     // Closed tabs must never become a later close's return destination.
     tabHistoryRef.current = tabHistoryRef.current.filter((entry) => entry.blockId !== id);
+    // The tab a press picked, closed before its page lands: the press is
+    // taken back, and what is on screen stays.
+    if (tabPick && id === tabPick && id !== focusedBlockId) { dropTabPick(); return; }
     if (id !== focusedBlockId) return;
     const entry = [...tabHistoryRef.current].reverse().find((entry) =>
       !entry.blockId || next.some((tab) => tab.id === entry.blockId));
@@ -6365,12 +6404,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     copyText(withWorkspace(`${window.location.origin}/?page=${encodeURIComponent(id)}`))
       .then((ok) => setStatus(ok ? t("Link copied.") : t("Couldn't copy the link.")));
   }
-  const pendingPageActionRef = useRef(null); // {id, action}
   function openPageThen(id, action) {
     setHomeMenu(null);
     clearSelection();
-    pendingPageActionRef.current = { id, action };
-    openBlock(id, { restoreScroll: true });
+    openBlock(id, { restoreScroll: true, then: action });
   }
   // The open page's Share popover (the topbar's link button, the page menu).
   function openPageShare(id) {
@@ -10435,60 +10472,92 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     </PopoverAnchor>
   );
 
-  // Phone (the compact layout): the bottom bar keeps Add, Search and a
-  // page's Share; the account button becomes More, whose sheet is the
-  // account menu with the rest of the topbar on top — background tasks (a
-  // spinner on More while something runs), the open folder's share link
-  // and the View menu's rows. Their own buttons are not rendered, but their
-  // popovers still open from these rows, spanning the bar like the others.
+  // Where each of the topbar's items goes (app/topbarItems.js, Settings →
+  // Appearance › Top bar): on the bar, or a row of the account menu — the
+  // phone's More sheet, where Background tasks, the Inbox and the View
+  // menu always go (the bottom bar keeps Add, Search, a page's Share and
+  // the sync pill). An item off the bar keeps its popover anchor where its
+  // button would be (`.offBar`), so its row, its shortcut or App opens the
+  // popover in the same place. A tour or a hint on screen shows them all.
+  const barAt = topbarPlaces(topbar, {
+    phone: isPhone,
+    guide: guide.running || !!guide.offer,
+    open: openPopover,
+    active: { tasks: !!tasks.badge, inbox: inbox.unread > 0, sync: true },
+  });
+  const onBar = (id) => barAt[id] === "bar";
+  const offBar = (id) => (onBar(id) ? "" : "offBar");
   const folderShareable = homeMode && lib.organize && libTree.folders.has(folderFilter) && !labelFilter;
+  // the open page's Share, or the open folder's; a folder's is a row on a phone
+  const sharesPage = !!focusedBlockId && !homeMode;
+  const shareOnBar = onBar("share") && (sharesPage || !isPhone);
+  const syncs = !!authUser?.user && !!(workspace?.mirror_of || workspace?.publishing);
   const phoneMainActive = phonePanel === null || (phonePanel === "notes" && centerNotes);
-  const phoneMoreRows = () => (
-    <>
-      <MenuDivider />
-      <MenuItem icon={ActivityIcon} onClick={() => setOpenPopover("downloads")}
-        title={t("Background tasks — exports, backups, imports, downloads and uploads")}
-        trailing={<TaskBadge badge={tasks.badge} inline />}>
-        {t("Background tasks")}
-      </MenuItem>
-      {inbox.enabled ? (
-        <MenuItem icon={BellIcon} onPointerEnter={InboxPanel.preload} onClick={() => setOpenPopover("inbox")}
+  const barMenuRows = () => {
+    const rows = [
+      !onBar("add") && (
+        <MenuItem key="add" icon={PlusIcon} onClick={() => setOpenPopover("add")}
+          title={t("Add — a new page, a PDF by URL, arXiv id or DOI, or uploaded files")}>{t("Add…")}</MenuItem>
+      ),
+      !onBar("tasks") && (
+        <MenuItem key="tasks" icon={ActivityIcon} onClick={() => setOpenPopover("downloads")}
+          title={t("Background tasks — exports, backups, imports, downloads and uploads")}
+          trailing={<TaskBadge badge={tasks.badge} inline />}>
+          {t("Background tasks")}
+        </MenuItem>
+      ),
+      !onBar("search") && (
+        <CommandMenuItem key="search" id="app.search" ctx={appCmdRef.current} bindings={keybindings}
+          onClick={() => setOpenPopover("search")} />
+      ),
+      !shareOnBar && sharesPage && commandRow("app.share"),
+      !shareOnBar && folderShareable && (
+        <MenuItem key="share" icon={LinkIcon} onClick={() => openFolderShare(folderFilter)}>{t("Share this folder")}</MenuItem>
+      ),
+      !onBar("sync") && syncs && (
+        <MenuItem key="sync" icon={CloudIcon} onClick={() => setOpenPopover("mirror")}>{t("Sync status")}</MenuItem>
+      ),
+      !onBar("inbox") && inbox.enabled && (
+        <MenuItem key="inbox" icon={BellIcon} onPointerEnter={InboxPanel.preload} onClick={() => setOpenPopover("inbox")}
           trailing={<InboxBadge unread={inbox.unread} inline />}>
           {t("Inbox")}
         </MenuItem>
-      ) : null}
-      {folderShareable ? (
-        <MenuItem icon={LinkIcon} onClick={() => openFolderShare(folderFilter)}>{t("Share this folder")}</MenuItem>
-      ) : null}
-      {focusedBlockId && !homeMode && commentsOn ? (
+      ),
+      isPhone && sharesPage && commentsOn && (
         // the Comments window, as a panel over the page (no bottom tab of its own)
-        <MenuItem icon={MessageSquareIcon} onPointerEnter={CommentsPanel.preload}
+        <MenuItem key="comments" icon={MessageSquareIcon} onPointerEnter={CommentsPanel.preload}
           onClick={() => { setOpenPopover(null); setPhonePanel("comments"); }}
           trailing={comments.countByBlock.size ? <span className="ctxMenuKey">{shortCount([...comments.countByBlock.values()].reduce((a, n) => a + n, 0))}</span> : null}>
           {t("Comments")}
         </MenuItem>
-      ) : null}
-      <MenuDivider />
-      {viewMenuItems(false)}
-    </>
-  );
+      ),
+    ].filter(Boolean);
+    return (
+      <>
+        {rows.length ? <><MenuDivider />{rows}</> : null}
+        {onBar("view") ? null : <><MenuDivider />{viewMenuItems(false)}</>}
+      </>
+    );
+  };
 
   // The topbar action buttons. On a phone these move to the bottom bar:
   // the tab row is too narrow to hold both, and thumbs reach the bottom.
   // There each carries its word under the icon (.barLabel, hidden elsewhere).
   const topbarActions = (
     <>
-      <span data-popover="add" className="popoverAnchor">
-        <button
-          className={`iconBtn addBtn ${openPopover === "add" ? "activeIcon" : ""}`}
-          onClick={() => setOpenPopover((p) => (p === "add" ? null : "add"))}
-          data-guide="header.add"
-          title={t("Add — a new page, a PDF by URL, arXiv id or DOI, or uploaded files")}
-          aria-label={t("Add")}
-        >
-          <PlusIcon size={16} />
-          <span className="barLabel">{t("Add")}</span>
-        </button>
+      <span data-popover="add" className={`popoverAnchor ${offBar("add")}`}>
+        {onBar("add") ? (
+          <button
+            className={`iconBtn addBtn ${openPopover === "add" ? "activeIcon" : ""}`}
+            onClick={() => setOpenPopover((p) => (p === "add" ? null : "add"))}
+            data-guide="header.add"
+            title={t("Add — a new page, a PDF by URL, arXiv id or DOI, or uploaded files")}
+            aria-label={t("Add")}
+          >
+            <PlusIcon size={16} />
+            <span className="barLabel">{t("Add")}</span>
+          </button>
+        ) : null}
         {openPopover === "add" ? (
           <Popover className="addPopover" data-guide="add.popover">
             <input
@@ -10539,26 +10608,26 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           </Popover>
         ) : null}
       </span>
-      <span data-popover="downloads" className={`popoverAnchor ${isPhone ? "sheetOnly" : ""}`}>
+      <span data-popover="downloads" className={`popoverAnchor ${offBar("tasks")}`}>
         {/* The spinner, a red dot for a failure worth a look (a refused
             download leaves no broken page behind, so this is the sign it
             happened; AI lookups are quiet) or an accent dot for a file
             waiting to be downloaded (tasks/TasksTray.jsx). */}
-        {isPhone ? null : (
+        {onBar("tasks") ? (
           <TasksButton tasks={tasks} open={openPopover === "downloads"}
             onToggle={() => setOpenPopover((p) => (p === "downloads" ? null : "downloads"))} />
-        )}
+        ) : null}
         {openPopover === "downloads" ? <TasksPanel tasks={tasks} onOpen={openTask} onRetry={retryTask} /> : null}
       </span>
       <SearchPanel
         open={openPopover === "search"}
         onOpenChange={(v) => setOpenPopover(v ? "search" : null)}
+        button={onBar("search")}
         detailsDefault={focusedBlockId ? searchDetailsPaper : searchDetailsHome}
         focusedBlockId={focusedBlockId}
         homeBlocks={homeBlocks}
         tree={libTree}
         openBlock={openBlock}
-        pendingBlockScrollRef={pendingBlockScrollRef}
         pdfSearchRef={pdfSearchRef}
         wakeTasks={tasks.wake}
         scrollToRef={scrollToRef}
@@ -10568,28 +10637,30 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         onFindMarks={setFindMarks}
         initialQuery={searchSeed}
       />
-      {focusedBlockId && !homeMode ? (
-        <span data-popover="share" className="popoverAnchor">
-          <button
-            className={`iconBtn ${openPopover === "share" ? "activeIcon" : ""}`}
-            onClick={() => { if (openPopover === "share") setOpenPopover(null); else openPageShare(focusedBlockId); }}
-            onPointerEnter={SharePopover.preload}
-            onFocus={SharePopover.preload}
-            disabled={loading}
-            data-guide="header.share"
-            title={t("Share")}
-            aria-label={t("Share")}
-          >
-            <LinkIcon size={16} />
-            <span className="barLabel">{t("Share")}</span>
-          </button>
+      {sharesPage ? (
+        <span data-popover="share" className={`popoverAnchor ${shareOnBar ? "" : "offBar"}`}>
+          {shareOnBar ? (
+            <button
+              className={`iconBtn ${openPopover === "share" ? "activeIcon" : ""}`}
+              onClick={() => { if (openPopover === "share") setOpenPopover(null); else openPageShare(focusedBlockId); }}
+              onPointerEnter={SharePopover.preload}
+              onFocus={SharePopover.preload}
+              disabled={loading}
+              data-guide="header.share"
+              title={t("Share")}
+              aria-label={t("Share")}
+            >
+              <LinkIcon size={16} />
+              <span className="barLabel">{t("Share")}</span>
+            </button>
+          ) : null}
           {openPopover === "share" && shareTarget?.kind === "page" ? sharePopover : null}
         </span>
       ) : folderShareable ? (
         // The same button for the open folder: one link for every page filed
         // in it. On a phone the More sheet offers it instead.
-        <span data-popover="share" className={`popoverAnchor ${isPhone ? "sheetOnly" : ""}`}>
-          {isPhone ? null : (
+        <span data-popover="share" className={`popoverAnchor ${shareOnBar ? "" : "offBar"}`}>
+          {shareOnBar ? (
           <button
             className={`iconBtn ${openPopover === "share" ? "activeIcon" : ""}`}
             onClick={() => { if (openPopover === "share") setOpenPopover(null); else openFolderShare(folderFilter); }}
@@ -10601,18 +10672,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           >
             <LinkIcon size={16} />
           </button>
-          )}
+          ) : null}
           {openPopover === "share" && shareTarget?.kind === "folder" ? sharePopover : null}
         </span>
       ) : null}
-      {authUser?.user && (workspace?.mirror_of || workspace?.publishing) ? (
+      {syncs ? (
         <MirrorPopover
           key={workspace.id}
           wsId={workspace.id}
           mirrorOf={workspace.mirror_of}
           publication={!workspace.mirror_of && !!workspace.publishing}
           pageId={focusedBlockId}
-          everyPage={syncPillScope === "all"}
+          everyPage={topbar.sync === "always"}
+          button={onBar("sync")}
           open={openPopover === "mirror"}
           onToggle={() => setOpenPopover(openPopover === "mirror" ? null : "mirror")}
           jumpTo={(pageId, blockId) => jumpToRef.current?.(pageId, blockId)}
@@ -10620,12 +10692,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         />
       ) : null}
       {inbox.enabled ? (
-        // The Inbox: on a phone, a row of the More sheet opens the panel.
-        <span data-popover="inbox" className={`popoverAnchor ${isPhone ? "sheetOnly" : ""}`}>
-          {isPhone ? null : (
+        // The Inbox: off the bar (always on a phone), a row of the account
+        // menu opens the panel.
+        <span data-popover="inbox" className={`popoverAnchor ${offBar("inbox")}`}>
+          {onBar("inbox") ? (
             <InboxButton unread={inbox.unread} open={openPopover === "inbox"} onPreload={InboxPanel.preload}
               onToggle={() => setOpenPopover((p) => (p === "inbox" ? null : "inbox"))} />
-          )}
+          ) : null}
           {openPopover === "inbox" ? (
             <LazyBoundary>
               <InboxPanel inbox={inbox} workspaceId={wsId} onOpen={openInboxItem} />
@@ -10725,7 +10798,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   ))}
                 </div>
               ) : null}
-              {isPhone ? phoneMoreRows() : null}
+              {barMenuRows()}
               <MenuDivider />
               {/* The workspace switcher: every library this account belongs
                   to; switching reloads the tab on that workspace's URL. The
@@ -10760,10 +10833,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 trailing={notices.tone ? <span className={`noticeDot inline ${dotTone(notices.tone)}`} aria-hidden="true" /> : null}>
                 {t("Settings…")}
               </MenuItem>
-              {nativeHost()?.servers ? (
-                <MenuItem icon={ServerIcon} onClick={() => { setOpenPopover(null); postToHost({ type: "servers" }).catch(() => {}); }}
-                  title={t("Connect this app to another Gamma server")}>{t("Server…")}</MenuItem>
-              ) : null}
               <MenuDivider />
               {/* The tours that can start here (guide.startable); a tour
                   whose first step needs no open popover closes this menu. */}
@@ -10783,7 +10852,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           ) : null}
         </span>
       )}
-      {isPhone ? null : renderOverflowMenu(false)}
+      {onBar("view") ? renderOverflowMenu(false) : null}
     </>
   );
 
@@ -11772,8 +11841,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setRecentThumbs,
           fileLabels,
           setFileLabels,
-          syncPillScope,
-          setSyncPillScope,
+          topbar,
+          setTopbar,
           backlinksVisible,
           setBacklinksVisible,
           inboxSystemNotifications,

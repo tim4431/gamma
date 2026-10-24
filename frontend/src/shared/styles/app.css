@@ -251,13 +251,24 @@ html, body { overscroll-behavior: none; }
 html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 
 .topbar {
+  --topbar-gap: 6px;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--topbar-gap);
   padding: 6px 10px;
   border-bottom: 1px solid var(--border);
   background: var(--bg-page);
   position: relative;
+}
+/* An item off the bar (Settings → Appearance › Top bar; on a phone, a row
+   of More): only its popover lives here, opened from its row, its shortcut
+   or App, in the place its button would be. No slot: zero wide, the gap
+   before it given back, and as tall as a button so the popover hangs from
+   the bar's foot like the others. */
+.topbar > .popoverAnchor.offBar {
+  width: 0;
+  align-self: stretch;
+  margin-inline-start: calc(-1 * var(--topbar-gap));
 }
 
 .topbar input {
@@ -355,8 +366,8 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
     min-width: 80px;
   }
   .topbar {
+    --topbar-gap: 4px;
     padding: 6px 8px;
-    gap: 4px;
   }
 
 }
@@ -3074,7 +3085,7 @@ mark.searchMark {
   display: flex;
   flex: 0 1 auto;
   min-width: 0;
-  gap: 0;
+  --topbar-gap: 0px;
   padding: 0;
   border-bottom: none;
   background: none;
@@ -3092,7 +3103,7 @@ mark.searchMark {
   display: flex;
 }
 /* Only a popover lives here (the More sheet opens it): no slot. */
-.phoneBottomBar .phoneActions > .sheetOnly { width: 0; }
+.phoneBottomBar .phoneActions > .offBar { width: 0; }
 .phoneTab,
 .phoneBottomBar .topbar.phoneActions .iconBtn {
   position: relative;

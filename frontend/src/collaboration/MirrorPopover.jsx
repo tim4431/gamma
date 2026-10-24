@@ -427,7 +427,7 @@ const PENDING_GRACE_MS = 6000; // how long a local edit counts as pending before
 
 // `publication` says what the workspace listing knows before the mirror's
 // own answer (its page filter) arrives.
-export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication = false, pageId = "", everyPage = false, open, onToggle, jumpTo, onOpenSettings }) {
+export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication = false, pageId = "", everyPage = false, button = true, open, onToggle, jumpTo, onOpenSettings }) {
   const [info, setInfo] = React.useState(null);
   const [log, setLog] = React.useState(null);
   const [busy, setBusy] = React.useState(false);
@@ -463,16 +463,20 @@ export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication
   // A clone syncs the whole workspace, so its pill is on every page; a
   // publication syncs the pages in its filter, so its pill is on those
   // pages only (and nowhere until the filter is known) — unless Settings →
-  // Appearance → Sync pill says every page.
-  const shown = !publication || everyPage || Boolean(pageId && info?.page_filter?.includes(pageId));
-  const shownRef = React.useRef(shown);
-  shownRef.current = shown;
+  // Appearance › Top bar › Sync pill says every page (`everyPage`).
+  const covers = !publication || everyPage || Boolean(pageId && info?.page_filter?.includes(pageId));
+  // With the pill off the bar (`button` false: the same setting hides it)
+  // only its popover shows, opened from the account menu's row, on any page.
+  const shown = button ? covers : open;
+  const coversRef = React.useRef(covers);
+  coversRef.current = covers;
   // One read on mount and whenever the pill comes into view (unless a read
   // just ran — the mount read is what shows a publication's pill); the polls
   // only while it is shown and the tab is visible (a tab coming back reads at
   // once). A hidden publication pill still reloads on "gamma:mirror" (a
-  // publish or unpublish here changes its filter).
-  React.useEffect(() => { if (Date.now() - loadedAtRef.current > 2000) load(); }, [load, shown]);
+  // publish or unpublish here changes its filter). Off the bar, opening the
+  // popover is the read.
+  React.useEffect(() => { if (button && Date.now() - loadedAtRef.current > 2000) load(); }, [load, shown, button]);
   React.useEffect(() => {
     if (!shown) return undefined;
     const poll = () => { if (!document.hidden) load(); };
@@ -493,7 +497,7 @@ export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication
   React.useEffect(() => {
     const h = () => { load(); if (open) loadLog(); };
     // an edit on a page the pill does not cover (a publication's other pages) waits for nothing
-    const edited = () => { if (shownRef.current) setEditAt(Date.now()); };
+    const edited = () => { if (coversRef.current) setEditAt(Date.now()); };
     window.addEventListener("gamma:mirror", h);
     window.addEventListener("gamma:local-edit", edited);
     return () => { window.removeEventListener("gamma:mirror", h); window.removeEventListener("gamma:local-edit", edited); };
@@ -520,7 +524,8 @@ export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication
   if (!shown) return null;
 
   return (
-    <span data-popover="mirror" className="popoverAnchor">
+    <span data-popover="mirror" className={`popoverAnchor${button ? "" : " offBar"}`}>
+      {button ? (
       <button
         className={`iconBtn mirrorPill ${st.tone} ${open ? "activeIcon" : ""}`}
         data-guide="sync.pill"
@@ -534,6 +539,7 @@ export function MirrorPopover({ wsId, mirrorOf, publication: listedAsPublication
         {st.badge ? <span className={`mirrorPillBadge ${st.tone}`}>{st.badge}</span>
           : st.dot ? <span className={`mirrorPillDot ${st.tone}`} /> : null}
       </button>
+      ) : null}
       {open ? (
         <Popover className="mirrorPopover" role="dialog" aria-label={t("Sync status")}>
           {view === "settings" ? <SettingsView info={info} wsId={wsId} publication={publication} onBack={() => setView("main")} reload={load} onOpenSettings={onOpenSettings} />

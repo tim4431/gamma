@@ -106,6 +106,8 @@ targets:
           rsync -a --delete "$resources/app/" "$python/app/"
           rsync -a --delete "$resources/frontend_dist/" "$python/frontend_dist/"
           rsync -a --delete --exclude .gamma-stamp "$resources/app_packages.$PLATFORM_NAME/" "$python/app_packages/"
+          # The desktop app's own chrome pages, its bar and launcher (Shell/Chrome.swift).
+          rsync -a --delete "$PROJECT_DIR/../desktop/ui/" "$CODESIGNING_FOLDER_PATH/chrome/"
           # Unsigned builds (CI's CODE_SIGNING_ALLOWED=NO) have no identity,
           # and codesign needs one: "-" signs ad hoc.
           export EXPANDED_CODE_SIGN_IDENTITY="${EXPANDED_CODE_SIGN_IDENTITY:--}"

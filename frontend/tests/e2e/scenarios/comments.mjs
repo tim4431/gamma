@@ -65,6 +65,12 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
   const fieldText = (f) => f.evaluate((el) => (el.querySelector(".cm-placeholder") ? "" : el.innerText.trim()));
   // The composer takes the focus a frame after the popover is placed.
   const focused = (f, what) => until(async () => f.evaluate((el) => el === document.activeElement).catch(() => false), { what });
+  // A reply steps in under the thread's first comment: its avatar under that comment's name.
+  const replyStepsIn = (thread, what) => until(async () => thread.evaluate((el) => {
+    const name = el.querySelector(".commentItem:not(.reply) .commentAuthor")?.getBoundingClientRect().left;
+    const avatar = el.querySelector(".commentItem.reply > .peerAvatar")?.getBoundingClientRect().left;
+    return name > 0 && Math.abs(name - avatar) <= 1;
+  }), { what });
   // A thread's reply field shows once the thread is pressed (as in Notion):
   // a press on its first comment's text, then its field.
   const openReply = async (scope) => {
@@ -119,6 +125,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     await B.keyboard.type("appendix");
     await B.keyboard.press("Shift+Enter");
     await until(async () => (await popover(A).innerText()).includes("Yes, see the appendix"), { what: "the reply shows live in the open popover", timeout: 10000 });
+    await replyStepsIn(popover(A).locator(".commentThread").first(), "the reply steps in under the first comment");
     // The emptied field's history starts afresh: an undo brings back none of the sent text.
     await until(async () => (await fieldText(replyB)) === "", { what: "the reply field empties" });
     await B.keyboard.press("Control+Z");
@@ -572,6 +579,48 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     }
   });
 
+  // A folded dock window keeps its rows mounted, inert and out of sight:
+  // a note's thread opened from the Comments window then hangs from nothing
+  // there, and stands centred near the top as with no anchor at all.
+  await step("comments: with the Notes window folded, a note's thread pressed in the Comments window opens centred near the top, not over the window from the hidden row", async () => {
+    const pdf = makePdf([["A folded notes paper", "Lorem ipsum dolor sit amet"]]);
+    const up = await ann.upload("/api/uploads", pdf, "folded.pdf", "application/pdf");
+    const paper = await ann.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Folded notes paper", source_url: up.source_url } });
+    await ann.api(`/api/pages/${paper.id}/ops`, { method: "POST", body: { client: "e2e", ops: Array.from({ length: 8 }, (_, i) => (
+      { op: "insert", id: `cmfold${i}`, parent: paper.id, position: `a${i}`, content: `Folded note ${i}` })) } });
+    await ann.api(`/api/pages/${paper.id}/comments`, { method: "POST", body: { block_id: "cmfold5", body: "A remark on five" } });
+    const ctx = await ben.context(browser);
+    try {
+      const P = await openPage(ctx, `${server.base}/?ws=${wsId}&page=${paper.id}`);
+      await waitForPdf(P, 1);
+      await rowOf(P, "Folded note 7").waitFor();
+      const item = P.locator(".commentsPanelRow", { hasText: "A remark on five" });
+      if (!(await P.locator(".commentsPanel").count())) {
+        await P.getByRole("button", { name: "View", exact: true }).click();
+        await P.locator(".menuPopover .ctxMenuItem", { hasText: "Comments" }).click();
+        await P.keyboard.press("Escape");
+      }
+      await item.waitFor();
+      await P.locator('.dockGrip[data-guide="notes.grip"]').first().dblclick();
+      await until(() => P.locator('[data-comment-for="cmfold5"]').evaluate((el) => !!el.closest("[inert]")), { what: "the Notes window folded, its rows inert" });
+      await item.click();
+      await popover(P).locator(".commentBody", { hasText: "A remark on five" }).waitFor();
+      await arrived(popover(P));
+      const at = await popover(P).evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        return { left: Math.round(r.left), top: Math.round(r.top), width: Math.round(r.width), mid: Math.round(window.innerWidth / 2) };
+      });
+      const said = JSON.stringify(at);
+      assert(Math.abs(at.left + at.width / 2 - at.mid) <= 2 && Math.abs(at.top - 80) <= 2, `centred near the top: ${said}`);
+      const box = await item.boundingBox();
+      assert(at.left + at.width <= box.x || at.top > box.y + box.height || at.left >= box.x + box.width,
+        `clear of the row pressed: ${said} over ${JSON.stringify(box)}`);
+      assertNoProblems(P);
+    } finally {
+      await ctx.close();
+    }
+  });
+
   await step("comments: the selection popup opens at the pointer; its Comment makes a commented highlight, and an abandoned one leaves none", async () => {
     // (A is on the reviewed paper from the step above, its badge's popover open)
     if (await popover(A).count()) await closePopover(A);
@@ -701,6 +750,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     await until(async () => (await ann.api(`/api/pages/${reviewed}/comments?state=all`)).threads
       .find((x) => x.id === first.id)?.comments.some((x) => x.body === "Found it: the 2004 review"), { what: "the reply is stored" });
     await active.locator(".commentBody", { hasText: "Found it: the 2004 review" }).waitFor();
+    await replyStepsIn(active.locator(".commentThread"), "in the card, the reply steps in under the first comment");
     await settled("the grown active card pushes the one under it down");
     boxes = await geometry();
     const activeBox = boxes.find((b) => b.active);

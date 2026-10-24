@@ -2,6 +2,7 @@
 // reads, apart from settingsNavigation.js so App, which only resolves pane
 // names, does not load it before the dialog opens.
 import { t } from "../shared/i18n/i18n.js";
+import { TOPBAR_ITEMS } from "../app/topbarItems.js";
 
 // Search names the actual setting, including settings on the second-level
 // AI pages. Each entry: the pane, the setting's label (the `data-setting` the
@@ -33,7 +34,9 @@ const entries = [
   e("appearance", t("Inbox notifications"), t("Interface"), t("New inbox items pop up on this device, once each."), "system notifications desktop alerts bell mentions comments replies push"),
   e("appearance", t("Recents thumbnails"), t("Library"), t("Preview the page you last read."), "snapshots library home display cards"),
   e("appearance", t("File labels"), t("Library"), t("Show the folders a file belongs to."), "folders chips library display cards"),
-  e("appearance", t("Sync pill"), t("Sync status"), t("Where the header shows a page's sync with Gamma Cloud."), "sync status publish published pages Gamma Cloud header"),
+  // Top bar: a row per item of app/topbarItems.js, its label, hint and synonyms
+  ...TOPBAR_ITEMS.map((item) => e("appearance", t(item.label), t("Top bar"), t(item.hint),
+    `topbar top bar header toolbar button show hide ${item.keywords}`)),
   e("appearance", t("Suggest tours"), t("Tours"), t("A short tour the first time a feature comes up."), "guide onboarding hints help"),
   e("reading", t("Imported annotations"), t("PDFs"), t("Annotations saved inside a PDF become highlights"), "hide strip keep remove originals highlights PDF"),
   e("reading", t("Smooth wheel scrolling"), t("PDFs"), t("Glide one mouse-wheel notch at a time instead of jumping"), "smooth scroll scrolling mouse wheel animation glide PDF"),

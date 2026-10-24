@@ -105,9 +105,9 @@ comments oldest first, each as the viewer's margin draws it: the author's
 avatar (their initial on their colour, `person_color`, the app's
 `personColor` with the same eight colours, held to it by a test), their
 name, the day, and the comment under them past the avatar. The replies
-step in to the first comment's text (the viewer's margin keeps them in
-line, inside a card per thread), so on paper a thread reads as one comment
-and its answers, and two threads under one note stay apart. A deleted root
+step in to the first comment's text, as the viewer draws them, so a
+thread reads as one comment and its answers, and two threads under one
+note stay apart. A deleted root
 reads "Comment deleted". A thread on a note is drawn under that note in
 the note card, a little past its text, when the note card is beside the
 page too: a reply then stays next to what it answers. That includes the

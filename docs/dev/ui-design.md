@@ -1051,7 +1051,12 @@ pressed is selected in the press's own frame (`selectTab`), the page it
 leaves stays on screen, whole and in use, until the new page's tree lands
 (`openBlock`), and the new page then takes its place in one frame, its
 threads asked for alongside its tree and a PDF's pages drawn where they
-were left ([pdf_loading.md](pdf_loading.md) "Coming back to a document").
+were left, with their highlights and margin cards ([pdf_loading.md](pdf_loading.md)
+"Coming back to a document"). Until it lands, a press on the tab of the
+page on screen, or on the close of the tab pressed, takes the press back:
+the open is let go, and the page on screen keeps its tab, not read again.
+What an open was asked to land on or do (a `[[ref]]`'s block, the home
+menu's Share…) goes with it when a later open overtakes it.
 
 ### Things that change in place
 
@@ -1351,6 +1356,7 @@ editor's other popups.
 | `collaboration/usePageCollab.js`, `shared/model/blockOps.js`, `collaboration/Presence.jsx` | the live session (ops out, ops + presence in), the pure tree diff/apply, the avatar stack / row chips ([collab.md](collab.md)), and `PersonAvatar`, the avatar of someone not on the page by username (a share's owner, a person to mention, a comment's author, an Inbox item's actor) |
 | `collaboration/MirrorPopover.jsx`, `collaboration/MergeResolver.jsx`, `collaboration/conflictKinds.js`, `settings/SettingsMirrors.jsx` | a clone's sync pill with its settings and conflicts views, the conflict card + the row chip, what each kind of conflict row says (pure), Settings → Workspaces → Clones ([mirror.md](mirror.md)) |
 | `app/prefDefs.js`, `app/prefs.js` | every preference's key, default, codec and scope (`PREFS`); the hooks that make them state (`useAppPrefs`) and sync the account-scoped ones (`useProfileSync`) |
+| `app/topbarItems.js` | the topbar's configurable buttons, their modes and where each goes: on the bar, or a row of the account menu with its popover anchored where the button would be (`.offBar`) ([settings.md](settings.md#the-top-bars-buttons)) |
 | `settings/SettingsDialog.jsx` + the `settings/Settings*.jsx` panes | the Settings dialog (`SettingsKit.jsx` holds the shared primitives incl. `AccountPicker`, the search-box-over-account-rows people picker, and `LogBox`) |
 | `settings/sectionPrefs.js`, `settings/syncState.js` | which account preferences each settings section holds (`SECTION_PREFS`), and how their sync reads: a section's scope tag (`profileSyncState`) and the Settings sync row's hint (`cloudSyncHint`) ([settings.md](settings.md)) |
 | `settings/SettingsAppearance.jsx`, `settings/SettingsLibraryDisplay.jsx` | the Appearance pane (theme cards + PDF sample) and its Library section (a live `PageCard` beside its switches) ([settings.md](settings.md)) |

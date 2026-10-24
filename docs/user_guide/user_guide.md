@@ -399,7 +399,7 @@ Account menu → **Settings**, or **Ctrl+,**; the card with your name at the top
 | Pane | What's there |
 |---|---|
 | Account & sync | Your account, storage, the Gamma Cloud link, settings sync |
-| Appearance | Theme, dark PDF pages, library cards, interface size, Inbox notifications |
+| Appearance | Theme, dark PDF pages, library cards, interface size, Inbox notifications, the top bar's buttons |
 | Reading & editing | Imported annotations, open-access fallback, handwriting, how search opens |
 | Language and Translation | Interface language, what translates and into what |
 | Keyboard | Every shortcut, rebindable; what Enter makes |
@@ -407,6 +407,8 @@ Account menu → **Settings**, or **Ctrl+,**; the card with your name at the top
 | Workspaces, Backups, Maintenance | Workspaces and clones, snapshots, storage and index health |
 | Users, Server (administrators) | Accounts, public URL, Gamma Cloud sign-in and requests to join, shared workspaces, server backups, the log |
 | Help & diagnostics | Session log, **Report a problem…** (adds what a maintainer needs, never your notes) |
+
+**Top bar** in Appearance hides a button you never use, or shows Background tasks and the Inbox only when they have news. A hidden button becomes a row of the account menu, and its shortcut still works.
 
 ## Shortcut cheat sheet
 

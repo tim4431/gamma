@@ -319,8 +319,9 @@ export async function pdfLoadScenarios({ server, browser, alice, makePdf, step, 
 
   // From the next press on, every painted frame while `name` is the
   // page's title: its page boxes in view, how many of them hold pixels, the
-  // scroll, the first page's width, the page number shown and the status
-  // pill. `framesSeen` ends the watch and hands the frames over.
+  // highlights drawn on them, the scroll, the first page's width, the page
+  // number shown and the status pill. `framesSeen` ends the watch and hands
+  // the frames over.
   const watchFrames = (p, name) => p.evaluate((name) => {
     const seen = (window.__seen = []);
     let pressed = false;
@@ -336,7 +337,8 @@ export async function pdfLoadScenarios({ server, browser, alice, makePdf, step, 
         });
         const drawn = inView.filter((el) => [...el.querySelectorAll(".pdfPageCanvas > canvas")]
           .some((cv) => cv.width > 0 && getComputedStyle(cv).display !== "none"));
-        seen.push({ pages: inView.length, drawn: drawn.length, top: Math.round(v.scrollTop),
+        const hl = inView.reduce((n, el) => n + el.querySelectorAll("[data-hl-id]").length, 0);
+        seen.push({ pages: inView.length, drawn: drawn.length, hl, top: Math.round(v.scrollTop),
           width: Math.round(v.querySelector('[data-page="1"]')?.getBoundingClientRect().width || 0),
           pn: document.querySelector(".pdfPageWidget input")?.value || "",
           pill: document.querySelector(".statusPill .pillText")?.textContent || "" });
@@ -346,7 +348,7 @@ export async function pdfLoadScenarios({ server, browser, alice, makePdf, step, 
     requestAnimationFrame(look);
   }, name);
   const framesSeen = (p) => p.evaluate(() => { const s = window.__seen; window.__seen = null; return s; });
-  const saidOf = (seen) => seen.map((f) => `${f.drawn}/${f.pages} at ${f.top} w${f.width} p${f.pn}${f.pill ? ` "${f.pill}"` : ""}`).join(", ");
+  const saidOf = (seen) => seen.map((f) => `${f.drawn}/${f.pages} hl${f.hl} at ${f.top} w${f.width} p${f.pn}${f.pill ? ` "${f.pill}"` : ""}`).join(", ");
   // Where the reader is, once every page in view holds its pixels (what a
   // document leaving keeps is what its pages in view show) and two readings
   // agree (the page number follows a scroll a frame later).
@@ -361,24 +363,32 @@ export async function pdfLoadScenarios({ server, browser, alice, makePdf, step, 
         });
         const drawn = inView.filter((el) => [...el.querySelectorAll(".pdfPageCanvas > canvas")].some((cv) => cv.width > 0 && getComputedStyle(cv).display !== "none"));
         return { all: inView.length > 0 && drawn.length === inView.length, top: Math.round(v.scrollTop),
+          hl: inView.reduce((n, el) => n + el.querySelectorAll("[data-hl-id]").length, 0),
           width: Math.round(v.querySelector('[data-page="1"]').getBoundingClientRect().width),
           pn: document.querySelector("input[aria-label='Current page']")?.value || "" };
       });
-      const same = at && now.all && at.all && now.top === at.top && now.width === at.width && now.pn === at.pn;
+      const same = at && now.all && at.all && now.top === at.top && now.width === at.width && now.pn === at.pn && now.hl === at.hl;
       at = now;
       return same;
     }, { what: "every page in view drawn, the place settled" });
-    return { top: at.top, width: at.width, pn: at.pn };
+    return { top: at.top, width: at.width, pn: at.pn, hl: at.hl };
   };
 
   // With the browser's scrollbars shown, which take room in the viewer as
   // on Windows, Linux and a Mac with a mouse: the pages' width must not
   // depend on whether the scrollbar is there yet, or the fit-width settles
   // twice as the viewer comes back and each return lands a few px higher.
-  await step("pdf load: back to a paper's tab from a notes page, every frame shows its pages drawn, where they were left, at the same zoom, round after round, with the scrollbar taking room", async () => {
+  await step("pdf load: back to a paper's tab from a notes page, every frame shows its pages drawn, with their highlights, where they were left, at the same zoom, round after round, with the scrollbar taking room", async () => {
     const pdf = makePdf(Array.from({ length: 4 }, (_, i) => [`Return page ${i + 1}`, "Lorem ipsum dolor sit amet"]));
     const up = await account.upload("/api/uploads", pdf, "return.pdf", "application/pdf");
     const paper = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Return paper", source_url: up.source_url } });
+    // A highlight on each of the pages the reader is left on: it comes back
+    // with its page's pixels, in the same frame.
+    for (const [pageNumber, y] of [[1, 700], [2, 40]]) {
+      const rect = { x1: 60, y1: y, x2: 480, y2: y + 20 };
+      await account.api("/api/blocks", { method: "POST", body: { parent_id: paper.id, content: "",
+        properties: { quote: "", color: "rgba(255, 229, 100, 0.55)", pdf_position: { pageNumber, width: 612, height: 792, boundingRect: rect, rects: [rect] } } } });
+    }
     const notes = await account.api("/api/pages", { method: "POST", body: { title: "Return notes" } });
     await account.api("/api/prefs/open-tabs", { method: "PUT", body: { value: [{ id: paper.id, title: "Return paper" }, { id: notes.id, title: "Return notes" }] } });
     const shown = await launchBrowser({ scrollbars: true });
@@ -395,6 +405,7 @@ export async function pdfLoadScenarios({ server, browser, alice, makePdf, step, 
       await p.locator(".pdfViewer").evaluate((el) => el.scrollTo(0, 1000));
       await until(async () => (await p.inputValue("input[aria-label='Current page']")) === "2", { what: "the reader on page 2" });
       const left = await placeOf(p);
+      assert(left.hl > 0, `the highlights drawn on the pages in view (${left.hl})`);
       for (const round of [1, 2, 3]) {
         await tab("Return notes").click();
         await until(async () => (await title()) === "Return notes", { what: "the notes page open" });
@@ -406,6 +417,7 @@ export async function pdfLoadScenarios({ server, browser, alice, makePdf, step, 
         const said = saidOf(seen);
         assert(seen.length > 0, `round ${round}: frames of the paper seen`);
         assert(seen.every((f) => f.pages > 0 && f.drawn === f.pages), `round ${round}: every page in view is drawn in every frame: ${said}`);
+        assert(seen.every((f) => f.hl === left.hl), `round ${round}: their highlights with them in every frame (${left.hl}): ${said}`);
         assert(seen.every((f) => Math.abs(f.top - left.top) <= 1 && f.width === left.width), `round ${round}: every frame at the place and zoom left (${left.top}, w${left.width}): ${said}`);
         assert(seen.every((f) => f.pn === "2"), `round ${round}: the page number it was left on in every frame: ${said}`);
       }
