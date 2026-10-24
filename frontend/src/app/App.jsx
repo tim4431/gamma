@@ -3,6 +3,8 @@ import { flushSync } from "react-dom";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer, { preloadPdfEngine } from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
+import { requestFields } from "../pdf/translatePlan";
+import { docIdOf } from "../pdf/pdfSource";
 import { DEFAULT_HIGHLIGHT, colorName, highlightColor, normalizeColor, pickerColors, swatchCss } from "../shared/model/palette.js";
 import { PaletteContext } from "../shared/ui/paletteContext.js";
 import { clampZoom } from "../shared/model/zoom.js";
@@ -3374,7 +3376,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // --- PDF translation (the 文A button in the viewer's zoom column) ---
   // The queue lives in PdfViewer (translateCtl), which calls translateChunk
   // below for each chunk; the selection popup uses the same request. The
-  // settings live in Settings → Reading › Translation. What is sent: a
+  // settings live in Settings → Language and Translation. What is sent: a
   // machine-translation service ("engine:<id>") or a model, per
   // translateModelFor, else the chat model.
   const translateEngines = aiInfo?.translate_engines || [];
@@ -3417,7 +3419,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The server streams NDJSON: `{i: [indices], text}` as the model writes
   // each paragraph (→ onPartial, the viewer types it onto the page), then
   // the final `{translations}` object.
-  async function translateChunk(texts, signal, onPartial) {
+  // `context` is the viewer's for this request (pdf/translatePlan.js
+  // requestFields): the page and, for a page without a stored PDF, the
+  // document's opening text, from which the server makes the paper's brief.
+  async function translateChunk(texts, signal, onPartial, context) {
     try {
       const res = await fetch(`${API}/ai/translate`, {
         method: "POST",
@@ -3427,7 +3432,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         body: JSON.stringify({
           texts, lang: translateLang,
           model: translateSendModel || "", effort: translateEffort || "",
-          stream: true,
+          stream: true, ...requestFields(context),
         }),
       });
       if (!res.ok) {
@@ -11237,6 +11242,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               zoomHeight={appPrefs.inkZoomHeight} onZoomHeight={appPrefs.setInkZoomHeight} onZoomChange={changeInkZoom}
               darkPage={pdfDarkPage}
               translateKey={`${translateLang}|${translateSendModel}`}
+              // stored: the viewer reads the server's own copy; a PDF read through the
+              // proxy may have none, so its requests carry the opening text too.
+              translateScope={{ pageId: focusedBlockId, stored: !!docIdOf(pdfUrl) }}
               translateParallel={translateParallel}
               onTranslate={shareMode ? undefined : translateChunk}
               selTranslate={selTranslate ? (selTranslateAuto ? "auto" : "button") : ""}
