@@ -103,10 +103,10 @@ mathml.py          MathML in registry titles, as LaTeX math or as plain text
 
 # PDF writers
 pdf_export.py      highlights burned into a PDF as standard annotations
-pdf_notes.py       highlight notes painted onto the page ("notes on page" export)
+pdf_notes.py       highlight notes as cards in a column beside each page (the annotated PDF's notes switch)
 pdf_document.py    a note page typeset as a fresh PDF ("Notes as PDF")
 pdf_typeset.py     the typesetting engine both PDF writers draw with (+ pdf_glyphs, vector_text, pdf_image)
-note_markup.py     note source (markdown + LaTeX) → drawable items for the on-page note boxes
+note_markup.py     the span shape the writers draw, and LaTeX approximated as text when it cannot be typeset
 
 # HTTP plumbing and assembly
 net_guard.py       outbound-fetch safety: no internal, loopback or metadata hosts, no non-HTTP schemes

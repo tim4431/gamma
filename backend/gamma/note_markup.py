@@ -1,31 +1,24 @@
-"""Note source (markdown + LaTeX) → drawable items for the on-page note boxes.
+"""Spans the PDF writers draw, and LaTeX approximated as them.
 
-Notes are markdown with ``$…$`` / ``$$…$$`` math (the editor renders them with
-KaTeX) and ``![](/api/uploads/…)`` image refs. Drawing the raw source into the
-PDF box would show ``$\\frac{1}{2}$`` and a naked URL, so this module turns a
-note into the small item list ``pdf_notes`` lays out:
+A span here is ``(TEXT, string, level)`` — level 0, +1 superscript, -1
+subscript — or ``(MATH, latex, 0)`` for inline math, which ``vector_text``
+typesets; ``pdf_typeset`` adds a style to each. The notes are parsed from
+their Markdown by ``pdf_document.chunks``.
 
-    {"kind": "text",  "spans": [(kind, payload, level), …]}
-    {"kind": "image", "src": "/api/uploads/ab12.png", "alt": "…"}
-    {"kind": "math",  "tex": "…"}          one display ($$…$$) expression
-
-A span is ``(TEXT, string, level)`` — level 0, +1 superscript, -1 subscript —
-or ``(MATH, latex, 0)`` for inline math, which ``vector_text`` typesets as
-vector paths.
-
-``latex_spans`` here is the *fallback* for when that renderer is unavailable or
+``latex_spans`` is the *fallback* for when that renderer is unavailable or
 chokes on an expression: commands become their unicode symbol (drawn with the
 base-14 Symbol font, which every viewer has), ``^``/``_`` become genuinely
 raised/lowered runs, and structures collapse to inline forms
 (``\\frac{a}{b}`` → ``a/b``, ``\\sqrt x`` → ``√x``). Unknown commands fall back
 to their own name, which is what you want for ``\\sin``, ``\\log``, ``\\max``.
+It also keeps the one place that knows the legacy Logseq image width.
 """
 
 import re
 
 SUP, SUB = 1, -1
 # A span is (kind, payload, level): TEXT carries a string, MATH the LaTeX source
-# of an inline expression that pdf_notes typesets as vector paths.
+# of an inline expression that vector_text typesets.
 TEXT, MATH = "t", "m"
 
 # Image sizes are stored in the Obsidian dialect ``![alt|N](url)``. The legacy
@@ -82,21 +75,6 @@ _TRANSPARENT = {"text", "textrm", "textbf", "textit", "mathrm", "mathbf",
                 "mathit", "mathsf", "mathtt", "mathcal", "mathbb", "mathfrak",
                 "boldsymbol", "operatorname", "mbox", "hbox", "bm", "pmb",
                 "overline", "underline", "tilde", "hat", "bar", "vec", "dot"}
-
-# The optional size — Obsidian's ``![alt|300](url)`` pipe or the legacy
-# Logseq ``{:width N}`` suffix — is consumed so it never leaks into the note
-# text (boxes size images to fit themselves; the hint is display-only).
-_IMG_RE = re.compile(r"!\[([^\]]*)\]\(\s*([^)\s]+)[^)]*\)(?:\{:width\s+\d+\})?")
-_ALT_WIDTH_RE = re.compile(r"\|\d+(?:x\d+)?$")
-_LINK_RE = re.compile(r"\[([^\]]*)\]\(\s*([^)\s]+)[^)]*\)")
-_MATH_RE = re.compile(
-    r"\$\$(.+?)\$\$"          # display $$ … $$
-    r"|\\\[(.+?)\\\]"         # display \[ … \]
-    r"|\$([^$\n]+?)\$"        # inline $ … $
-    r"|\\\((.+?)\\\)",        # inline \( … \)
-    re.S,
-)
-
 
 def _read_group(tex: str, i: int):
     """The argument starting at ``i``: a {...} group, a \\command, or one char."""
@@ -208,18 +186,6 @@ def _latex_pairs(tex: str, level: int = 0):
     return _merge_pairs(out)
 
 
-def _plain(md: str) -> str:
-    """Markdown → the text a reader sees (emphasis markers, code ticks and
-    link targets stripped; images are pulled out before this runs)."""
-    md = re.sub(r"^\s{0,3}#{1,6}\s+", "", md)
-    md = re.sub(r"^\s*>\s?", "", md)
-    md = _LINK_RE.sub(r"\1", md)
-    md = re.sub(r"\*\*(.+?)\*\*|__(.+?)__", lambda m: m.group(1) or m.group(2), md)
-    md = re.sub(r"(?<![\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])", r"\1", md)
-    md = re.sub(r"`+([^`]*)`+", r"\1", md)
-    return md
-
-
 def _merge_pairs(pairs):
     """Collapse neighbouring (text, level) pairs that share a level."""
     out = []
@@ -240,56 +206,3 @@ def merge_spans(spans):
         elif kind == MATH or payload:
             out.append((kind, payload, level))
     return [s for s in out if s[0] == MATH or s[1]]
-
-
-def parse_note(text: str):
-    """Note source → [item]; see the module docstring for the item shapes."""
-    items, line = [], []
-
-    def flush():
-        if line:
-            spans = merge_spans(line)
-            if any(kind == MATH or payload.strip() for kind, payload, _ in spans):
-                items.append({"kind": "text", "spans": spans})
-            line.clear()
-
-    def add_spans(spans):
-        for kind, payload, level in spans:
-            if kind != TEXT:
-                line.append((kind, payload, level))
-                continue
-            for k, part in enumerate(payload.split("\n")):
-                if k:
-                    flush()
-                if part:
-                    line.append((TEXT, part, level))
-
-    def add_plain(chunk: str):
-        for k, raw in enumerate(chunk.split("\n")):
-            if k:
-                flush()
-            pos = 0
-            for m in _IMG_RE.finditer(raw):
-                add_spans([(TEXT, _plain(raw[pos:m.start()]), 0)])
-                flush()
-                items.append({"kind": "image", "src": m.group(2),
-                              "alt": _ALT_WIDTH_RE.sub("", m.group(1))})
-                pos = m.end()
-            add_spans([(TEXT, _plain(raw[pos:]), 0)])
-
-    pos = 0
-    for m in _MATH_RE.finditer(text):
-        add_plain(text[pos:m.start()])
-        display = bool(m.group(1) or m.group(2))
-        tex = (m.group(1) or m.group(2) or m.group(3) or m.group(4) or "").strip()
-        if display:
-            # Display math gets its own centred item; inline math rides along in
-            # the line and is typeset (or approximated) where it sits.
-            flush()
-            items.append({"kind": "math", "tex": tex})
-        elif tex:
-            add_spans([(MATH, tex, 0)])
-        pos = m.end()
-    add_plain(text[pos:])
-    flush()
-    return items

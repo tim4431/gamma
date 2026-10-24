@@ -649,6 +649,10 @@ open(sys.argv[3], 'wb').write(b"noteSN_FILE_VER_20230015" + bytes(64))
       await choice(dialog, "Annotated PDF").click();
       await choice(dialog, "Next").click();
       assertEq(await dialog.locator('[data-preview="original"]').count(), 1);
+      // the notes print in a column beside the page, as the export draws them
+      const paperBox = await dialog.locator('[data-preview="original"]').boundingBox();
+      const noteBox = await dialog.locator('[data-preview="notes"]').boundingBox();
+      assert(noteBox.x >= paperBox.x + paperBox.width, "the note card stands beside the paper");
       await toggle(dialog, "Notes").uncheck();
       assertEq(await dialog.locator('[data-preview="notes"]').count(), 0);
       await choice(dialog, "Close Export").click();

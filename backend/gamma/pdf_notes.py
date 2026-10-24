@@ -1,623 +1,669 @@
-"""Paint highlight notes onto the page itself ("notes on page" PDF export).
+"""Notes beside the page: the annotated-PDF export's notes switch.
 
-The plain annotated export (``pdf_export.annotate_pdf``) keeps note text in
-annotation popups — invisible when the file is printed, and one click away in
-every viewer. This module additionally draws each note as a small box placed in
-the nearest patch of *empty* page space, with a leader line back to its
-highlight.
+The plain annotated export (``pdf_export.annotate_pdf``) keeps a highlight's
+notes in its annotation popup: invisible on paper, and a click away in every
+viewer. With the switch on, this module also prints them in a column beside
+each page, where the viewer shows a highlight's comment threads once a lower
+zoom leaves room for them (docs/dev/comments.md "The PDF margin",
+``frontend/src/comments/marginLayout.js``): a card per highlight, level with
+its first line, the cards stacked down the column so none overlaps.
 
-Empty space comes from the page's own content: MuPDF logs a bounding box for
-everything the page draws (text runs, paths, images, shadings, the annotations
-already written into it), which we rasterize into a coarse occupancy grid
-(display space, top-left origin, one cell = ``CELL`` pt). A summed-area table
-over that grid answers "is this candidate rectangle free?" in O(1), so a few
-thousand candidate positions per note can be scored and the cheapest one near
-the highlight kept. Boxes already placed are marked occupied too, so notes
-never collide with each other.
+**The column.** Every page of the copy is widened on the right of the page
+as shown (``_widen``): its media and crop boxes grow on the user-space side
+the display frame's x axis runs to, so the page's content, its annotations
+and the display origin stay where they were, on every /Rotate. The column
+has one width for the whole document, a share of its widest page
+(``_column_width``), and every page gets it, notes or not, so the pages
+keep one width as in the viewer. The strip is painted the viewer's backdrop
+grey, which also covers whatever the old crop box hid there.
 
-Everything is laid out in display space (x right, y down, /Rotate applied) —
-the same space the viewer stores highlight rects in — and drawn under one ``cm``
-that maps that frame back to PDF user space, so rotated pages need no special
-casing beyond that matrix.
+**A card** holds the highlight's own note and the notes under it as
+bullets (``pdf_export.highlight_note_blocks``), typeset from their Markdown
+through ``pdf_document.chunks`` in the compact look of a rendered note:
+headings, lists, to-dos, quotes, code, tables, pictures and display math;
+bold, italic, code, marks, links and inline math within a line. A bar in
+the highlight's colour runs down its left edge. In the gap beside the page
+a thin bar spans the highlight's lines, and a line joins it to the card.
 
-Notes are markdown with LaTeX and image refs, not plain text: ``note_markup``
-splits them into text spans (with super/subscript levels), inline math, display
-math and images. ``vector_text`` typesets the math and ``pdf_glyphs`` draws it
-as Type 3 text (inline expressions sit on the text baseline, ``$$…$$`` gets
-its own centred row), ``pdf_image`` embeds the uploads as image XObjects, and
-a box that had to squeeze either one down loses to a wider candidate during
-placement.
+**Stacking** (``_stack``) is the viewer's ``stackCards`` without an active
+card: by their highlight's top, each card at that top or ``CARD_GAP`` under
+the card above; then, since a page cannot run on into the next one's
+column, the run is pushed up off the page's foot. Cards too tall to fit are
+shortened, the tallest first, to one height (``_water_level``), each keeping
+``MIN_LINES`` lines and ending in an ellipsis. When that is not enough the
+column zooms out (``SCALES``): laid out wider and drawn smaller, as the
+viewer's column is at a lower zoom. The full text stays in the popup.
 
-Prose is drawn with three fonts, all built into every PDF viewer: Helvetica for
-WinAnsi, the Symbol font for the Greek and math left over when the math
-renderer is unavailable (``\\phi`` → φ, ``\\sum`` → ∑), and a non-embedded
-STSong-Light CID font for CJK — viewers with Asian font support render that,
-others substitute, its ToUnicode map gives readers the text, and the raw text
-is still in the annotation popup.
+**Drawing.** Everything is laid out in the page's display frame (x right, y
+down, /Rotate applied: the frame the viewer stores highlight rects in) and
+drawn as a Form XObject whose /Matrix maps that frame to user space. It is
+appended to the page's content behind a ``q`` … ``Q`` pair that keeps the
+page's own graphics state out. The form has resources of its own, so
+nothing on the page is renamed, and the page's content streams are left as
+they are: PyPDF2's ``merge_page`` would parse every one of them and write it
+back uncompressed. Links in the notes become /Link annotations.
 """
 
 import io
 import math
+from collections import namedtuple
 
 from PyPDF2 import PdfWriter
-from PyPDF2._page import PageObject
 from PyPDF2.generic import (
+    AnnotationBuilder,
+    ArrayObject,
     DecodedStreamObject,
     DictionaryObject,
+    FloatObject,
+    IndirectObject,
     NameObject,
     RectangleObject,
 )
 
-from . import pdf_text, vector_text
+from . import vector_text
 from .logbuf import log
-from .note_markup import TEXT, latex_spans, parse_note
+from .note_markup import TEXT, latex_spans
+from .pdf_document import MUTED, QUOTE_COLOR, RULE_COLOR, _ref_label, chunks
 from .pdf_export import ExportPdfReader, display_size, page_frame, parse_css_color
 from .pdf_glyphs import GlyphFonts
 from .pdf_image import XObjectStore
 from .pdf_typeset import (
-    CID,
-    HELV,
-    LEADING,
-    SYM,
+    CODE_BG,
+    ITALIC,
+    LINK,
+    MONO,
+    PLAIN,
+    TEXT_COLOR,
+    Style,
     draw_spans,
+    fill_rect,
     finalize_cid,
     font_resources,
     line_metrics,
-    num as _num,
+    num,
     plain,
     resolve,
+    span_width,
     spans_width,
     wrap,
 )
 
-CELL = 3.0              # occupancy grid resolution, pt
-FONT_SIZE = 7.4
-PAD = 4.0               # box inner padding
-BORDER = 0.7
-BOX_WIDTHS = (168.0, 132.0, 102.0)
-WIDE_WIDTHS = (260.0, 190.0, 140.0)     # notes with a picture or display math
+# The column, in points of the page as shown.
+COLUMN_SHARE = 0.45                 # its width, × the document's widest page
+COLUMN_MIN, COLUMN_MAX = 170.0, 300.0
+COLUMN_GAP = 18.0                   # the page's edge to the cards
+EDGE = 12.0                         # the cards' room at the page's top and foot, and right of them
+TIE_X, TIE_W = 4.0, 1.4             # the bar beside a highlight's lines, from the page's edge
+
+# A card, in points of the column's own frame (``SCALES``).
+CARD_GAP = 6.0
+PAD_X, PAD_Y = 7.0, 5.5
+BAR = 2.6                           # the highlight's colour down its left edge
+RADIUS = 3.0
+FONT_SIZE = 8.0
+LEADING = 1.3
+HEADING_SCALE = {1: 1.3, 2: 1.15, 3: 1.05}
+NEST = 10.0                         # a nested note's or a list item's indent
+MAX_NEST = 6                        # deeper notes stop marching right
+MARKER_GAP = 3.5                    # a bullet or to-do box to its text
+BULLET, ELLIPSIS = "•", "…"
+QUOTE_PAD = 6.0
+QUOTE_BAR = 1.6
+CODE_SCALE = 0.92
+BLOCK_GAP = 2.5                     # between a highlight's own note and each note under it
+PARA_GAP = 2.0                      # a blank line in a note
+IMAGE_GAP = 2.5
 IMAGE_MAX_H = 150.0
-IMAGE_GAP = 2.0
-PX_PT = 0.75            # CSS px → pt: pasted screenshots are 96 dpi
-DISPLAY_MATH_SCALE = 1.15   # $$…$$ is set a touch larger than the note text
-PAGE_MARGIN = 8.0       # never place a box closer than this to the page edge
-CLEARANCE = 2.5         # empty space to keep around a placed box
-MAX_BOX_FRAC = 0.45     # box height cap, as a fraction of the page height
-X_STEP = 9.0            # candidate grid for the placement search
-Y_STEP = 8.0
-Y_RANGE = 320.0         # how far above/below the highlight to look
+PX_PT = 0.75                        # CSS px → pt: pasted screenshots are 96 dpi
+DISPLAY_MATH_SCALE = 1.15
 
-# The three fonts the boxes draw with (pdf_typeset picks between them per
-# character) — kept as a tuple so the page resources carry only these.
-_FONTS = (HELV, SYM, CID)
+# When the cards do not fit: each keeps MIN_LINES lines (the last an
+# ellipsis; a card at rest in the viewer shows three), then the column zooms
+# out through SCALES, keeping two lines at the last. A picture or equation
+# the cut falls in shrinks to the room left, down to MIN_PICTURE.
+MIN_LINES = 3
+SCALES = (1.0, 0.85, 0.7, 0.55, 0.45)
+MIN_PICTURE = 16.0
+
+BACKDROP = (0.945, 0.945, 0.95)     # the viewer's backdrop, light theme
+PAGE_EDGE = (0.80, 0.80, 0.82)
+CARD_FILL = (1.0, 1.0, 1.0)
+CARD_BORDER = (0.85, 0.85, 0.87)
+
+# A highlight's notes and where its lines are on the page as shown: their
+# top and bottom, and the middle of the first line.
+Note = namedtuple("Note", "blocks top bottom mid color")
+
+# One drawable piece of a card, from the card's content top-left: "text"
+# (data: spans, size, ascent, colour), "fill" (data: colour), "image" (data:
+# the XObject's name), "math" (data: drawing, scale) or "check" (data:
+# ticked). ``h`` is the height it takes, so a cut can keep what ends above it.
+Row = namedtuple("Row", "kind x top w h data")
 
 
-def _measure(items, width: float, size: float, max_h: float, images):
-    """Note items → (rows, natural width, height). A row is
-    ``("text", indent, spans, ascent, height)``, ``("image", name, w, h)`` or
-    ``("math", (drawing, scale), w, h)``. Content past ``max_h`` is dropped with an ellipsis
-    — the full text is still in the annotation popup."""
-    rows, height, natural, cut, shrink = [], 2 * PAD, 0.0, False, 1.0
-    for item in items:
-        if height >= max_h:
-            cut = True
-            break
-        if item["kind"] == "math":
-            math = vector_text.math(item["tex"], size * DISPLAY_MATH_SCALE)
-            if math:
-                drawing, w, h, _asc = math
-                scale = min(1.0, width / w) if w else 1.0
-                if h * scale > max_h - height - IMAGE_GAP:
-                    scale = min(scale, max(0.0, max_h - height - IMAGE_GAP) / h)
-                if h * scale < 5:
-                    cut = True
-                    break
-                shrink = min(shrink, scale)
-                rows.append(("math", (drawing, scale), w * scale, h * scale))
-                height += h * scale + IMAGE_GAP
-                natural = max(natural, w * scale)
+# --- a card's notes as rows ----------------------------------------------------
+
+class _Layout:
+    """A highlight's notes (``[(depth, markdown)]``) laid out ``width``
+    wide: ``rows`` from the content's top-left and ``height``, the height
+    they take. Depth 0 is the highlight's own note; a deeper one is a note
+    under it, a bullet indented by its depth."""
+
+    def __init__(self, blocks, width: float, images, resolve_ref=None):
+        self.width, self.images, self.resolve_ref = width, images, resolve_ref
+        self.rows, self.y, self.gap = [], 0.0, 0.0
+        for depth, md in blocks:
+            if self.rows:
+                self.gap = max(self.gap, BLOCK_GAP)
+            self._markdown(md, min(depth, MAX_NEST) * NEST, BULLET if depth else None)
+        self.height = self.y
+
+    def _place(self) -> float:
+        """The top of the next row: the pending gap goes in before it, never
+        after the last one."""
+        self.y += self.gap
+        self.gap = 0.0
+        return self.y
+
+    def _markdown(self, md: str, x: float, marker):
+        """One note's chunks at ``x``; ``marker`` hangs left of its first row."""
+        for c in chunks(md, self.resolve_ref):
+            kind = c["kind"]
+            if kind == "gap":
+                if self.rows:
+                    self.gap = max(self.gap, PARA_GAP)
                 continue
-            item = {"spans": latex_spans(item["tex"])}     # renderer gave up
-        elif item["kind"] == "image":
-            info = images.get(item["src"])
-            if info:
-                name, px_w, px_h = info
-                w = min(width, px_w * PX_PT)
-                h = w * px_h / max(px_w, 1)
-                for cap in (IMAGE_MAX_H, max(0.0, max_h - height - IMAGE_GAP)):
-                    if h > cap > 0:
-                        w, h = w * cap / h, cap
-                if h < 8:
-                    cut = True
-                    break
-                shrink = min(shrink, w / max(px_w * PX_PT, 1))
-                rows.append(("image", name, w, h))
-                height += h + IMAGE_GAP
-                natural = max(natural, w)
+            if kind == "rule":
+                top = self._place()
+                self.rows.append(Row("fill", x, top + 2.0, self.width - x, 0.6, RULE_COLOR))
+                self.y = top + 4.6
                 continue
-            item = {"spans": [(TEXT, (item.get("alt") or "image").strip(), 0)]}
-        spans = resolve(plain(item["spans"]), size, width)
-        for indent, line in wrap(spans, width, size):
-            ascent, line_h = line_metrics(line, size)
-            if height + line_h > max_h:
-                cut = True
-                break
-            rows.append(("text", indent, line, ascent, line_h))
-            height += line_h
-            natural = max(natural, indent + spans_width(line, size))
-        if cut:
-            break
-    if cut:
-        rows.append(("text", 0.0, plain([(TEXT, "\u2026", 0)]), size * 0.82, size * LEADING))
-        height += size * LEADING
-    return rows, natural, height, shrink
+            if marker and kind != "text":
+                self._marker(marker, x, self._place(), FONT_SIZE)
+                marker = None
+            if kind == "text":
+                self._text(c, x, marker)
+                marker = None
+            elif kind == "image":
+                self._image(c, x)
+            elif kind == "math":
+                self._display_math(c["tex"], x)
+            elif kind == "code":
+                self._code(c["lines"], x)
+            elif kind == "table":
+                for row in c["rows"]:
+                    spans = [s for n, cell in enumerate(row)
+                             for s in ([(TEXT, "   ", 0, PLAIN)] if n else []) + cell]
+                    self._lines(spans, x)
+            elif kind == "embed":
+                label = _ref_label(c["id"], self.resolve_ref)
+                self._lines([(TEXT, label, 0, Style(LINK | ITALIC, None))], x)
+
+    def _text(self, c, x: float, marker):
+        level, sub = c.get("heading"), c.get("sub", 0)
+        size = FONT_SIZE * HEADING_SCALE.get(level, 1.0)
+        check = c.get("todo")
+        if check is not None:                       # its box hangs in the indent, for a bullet
+            sub, marker = max(sub, 1), None
+        elif "bullet" in c:
+            marker = c["bullet"] or BULLET          # a numbered item keeps its number
+        tx = x + sub * NEST
+        bar = None
+        if c.get("quote"):
+            tx += QUOTE_PAD
+            bar = RULE_COLOR
+        self._lines(c["spans"], tx, size, QUOTE_COLOR if bar else TEXT_COLOR,
+                    marker=marker, check=check, bar=bar)
+
+    def _lines(self, spans, x: float, size: float = FONT_SIZE, color=TEXT_COLOR,
+               marker=None, check=None, bar=None, background=None, offset: float = 0.0):
+        """Wrapped prose at ``x`` (its text ``offset`` further in): one text
+        row per line, with the line's quote bar or background as a fill row
+        under it, and the marker or to-do box hanging left of the first (and
+        of the bar)."""
+        width = max(8.0, self.width - x - offset)
+        hang = x - QUOTE_PAD if bar else x
+        for n, (indent, line) in enumerate(wrap(resolve(spans, size, width), width, size, hang=0.0)):
+            ascent, h = line_metrics(line, size, LEADING)
+            top = self._place()
+            if background:
+                self.rows.append(Row("fill", x - 2.0, top, self.width - x + 2.0, h, background))
+            if bar:
+                self.rows.append(Row("fill", x - QUOTE_PAD, top, QUOTE_BAR, h, bar))
+            if not n and marker:
+                self._marker(marker, hang, top, size)
+            if not n and check is not None:
+                side = size * 0.68
+                self.rows.append(Row("check", hang - MARKER_GAP - side, top + ascent - side * 0.9,
+                                     side, side, check))
+            self.rows.append(Row("text", x + offset + indent, top, spans_width(line, size), h,
+                                 (line, size, ascent, color)))
+            self.y = top + h
+
+    def _marker(self, marker: str, x: float, top: float, size: float):
+        ascent, h = line_metrics([], size, LEADING)
+        w = span_width(marker, size)
+        self.rows.append(Row("text", x - MARKER_GAP - w, top, w, h,
+                             ([(TEXT, marker, 0, PLAIN)], size, ascent, MUTED)))
+
+    def _image(self, c, x: float):
+        info = self.images.resolve(c["src"])
+        if not info:
+            self._lines([(TEXT, (c.get("alt") or "").strip() or "image", 0, Style(ITALIC, None))],
+                        x, color=MUTED)
+            return
+        name, px_w, px_h = info
+        w = min(self.width - x, (c.get("px_w") or px_w) * PX_PT)
+        h = w * px_h / max(px_w, 1)
+        if h > IMAGE_MAX_H:
+            w, h = w * IMAGE_MAX_H / h, IMAGE_MAX_H
+        top = self._place()
+        self.rows.append(Row("image", x, top, w, h, name))
+        self.y, self.gap = top + h, IMAGE_GAP
+
+    def _display_math(self, tex: str, x: float):
+        drawn = vector_text.math(tex, FONT_SIZE * DISPLAY_MATH_SCALE)
+        if not drawn:                               # no ziamath, or it choked
+            self._lines(plain(latex_spans(tex)), x)
+            return
+        drawing, w, h, _ascent = drawn
+        room = self.width - x
+        scale = min(1.0, room / w) if w else 1.0
+        top = self._place()
+        self.rows.append(Row("math", x + max(0.0, (room - w * scale) / 2), top, w * scale, h * scale,
+                             (drawing, scale)))
+        self.y, self.gap = top + h * scale, IMAGE_GAP
+
+    def _code(self, lines, x: float):
+        """Fenced code on a tint, line by line so a cut keeps whole lines.
+        Leading spaces are an x offset: wrapping drops them."""
+        size = FONT_SIZE * CODE_SCALE
+        style = Style(MONO, None)
+        space = span_width(" ", size, 0, style)
+        self.gap = max(self.gap, 1.5)
+        for line in lines or [""]:
+            body = (line or "").rstrip()
+            offset = min((len(body) - len(body.lstrip(" "))) * space, (self.width - x) * 0.5)
+            self._lines([(TEXT, body.strip() or " ", 0, style)], x, size, background=CODE_BG, offset=offset)
+        self.gap = 1.5
 
 
-# --- free-space search -------------------------------------------------------
+def _clip(rows, height: float, cap: float):
+    """The rows that fit ``cap`` high, and the height they take: all of them
+    when they fit, else those ending above a closing ellipsis, a picture or
+    equation the cut falls in shrunk to the room left (when that is at least
+    ``MIN_PICTURE``)."""
+    if height <= cap:
+        return rows, height
+    ascent, line_h = line_metrics([], FONT_SIZE, LEADING)
+    limit = cap - line_h
 
-class _Space:
-    """Occupancy of one page in display space, plus the boxes placed so far."""
+    def shrinks(r):
+        return r.kind in ("image", "math") and limit - r.top >= MIN_PICTURE
 
-    def __init__(self, width: float, height: float):
-        self.w, self.h = width, height
-        self.cols = max(1, int(math.ceil(width / CELL)))
-        self.rows = max(1, int(math.ceil(height / CELL)))
-        self.grid = bytearray(self.cols * self.rows)
-        self.sat = None
-        self.placed = []
-
-    def mark(self, rect):
-        x0, y0, x1, y1 = rect
-        c0 = max(0, int(x0 / CELL))
-        c1 = min(self.cols, int(math.ceil(x1 / CELL)))
-        r0 = max(0, int(y0 / CELL))
-        r1 = min(self.rows, int(math.ceil(y1 / CELL)))
-        for r in range(r0, r1):
-            base = r * self.cols
-            for c in range(c0, c1):
-                self.grid[base + c] = 1
-
-    def freeze(self):
-        """Summed-area table so rect queries are O(1)."""
-        cols, rows = self.cols, self.rows
-        sat = [0] * ((cols + 1) * (rows + 1))
-        for r in range(rows):
-            row_sum = 0
-            base, above, cur = r * cols, r * (cols + 1), (r + 1) * (cols + 1)
-            for c in range(cols):
-                row_sum += self.grid[base + c]
-                sat[cur + c + 1] = sat[above + c + 1] + row_sum
-        self.sat = sat
-
-    def occupied(self, x0, y0, x1, y1) -> int:
-        """Number of occupied cells under the rect (page content only)."""
-        cols = self.cols
-        c0 = max(0, min(cols, int(x0 / CELL)))
-        c1 = max(0, min(cols, int(math.ceil(x1 / CELL))))
-        r0 = max(0, min(self.rows, int(y0 / CELL)))
-        r1 = max(0, min(self.rows, int(math.ceil(y1 / CELL))))
-        if c1 <= c0 or r1 <= r0:
-            return 0
-        sat, stride = self.sat, cols + 1
-        return (sat[r1 * stride + c1] - sat[r0 * stride + c1]
-                - sat[r1 * stride + c0] + sat[r0 * stride + c0])
-
-    def hits_placed(self, x0, y0, x1, y1) -> bool:
-        for px0, py0, px1, py1 in self.placed:
-            if x0 < px1 and px0 < x1 and y0 < py1 and py0 < y1:
-                return True
-        return False
-
-
-def _cost(box, anchor):
-    bx0, by0, bx1, by1 = box
-    ax0, ay0, ax1, ay1 = anchor
-    gap_x = 0.0 if bx0 < ax1 and ax0 < bx1 else min(abs(bx0 - ax1), abs(ax0 - bx1))
-    return gap_x + 1.3 * abs(by0 - ay0)
-
-
-def _place(space: _Space, anchor, box_w: float, box_h: float, width_penalty: float):
-    """Cheapest free spot for a box_w × box_h box near ``anchor`` → (score, x,
-    y, free) or None. Falls back to the least-covered spot when nothing is
-    free, so a note is never silently dropped on a densely typeset page."""
-    x_lo, x_hi = PAGE_MARGIN, space.w - PAGE_MARGIN - box_w
-    if x_hi < x_lo or box_h > space.h - 2 * PAGE_MARGIN:
-        return None
-    xs = [x_lo + i * X_STEP for i in range(int((x_hi - x_lo) / X_STEP) + 1)] + [x_hi]
-    ax_mid = (anchor[0] + anchor[2]) / 2
-    xs.sort(key=lambda x: abs(x + box_w / 2 - ax_mid))
-
-    best = None          # (score, x, y, free)
-    steps = int(Y_RANGE / Y_STEP)
-    for i in range(2 * steps + 1):
-        dy = (i + 1) // 2 * Y_STEP * (1 if i % 2 else -1)
-        y = anchor[1] + dy
-        y = min(max(y, PAGE_MARGIN), space.h - PAGE_MARGIN - box_h)
-        for x in xs:
-            box = (x, y, x + box_w, y + box_h)
-            if space.hits_placed(*box):
-                continue
-            covered = space.occupied(x - CLEARANCE, y - CLEARANCE,
-                                     x + box_w + CLEARANCE, y + box_h + CLEARANCE)
-            score = _cost(box, anchor) + width_penalty + covered * 6.0
-            if best is None or score < best[0]:
-                best = (score, x, y, covered == 0)
-        if best and best[3] and best[0] - width_penalty < 24:
-            break        # snug against the highlight already — stop looking
-    return best
-
-
-# --- content stream ----------------------------------------------------------
-
-def _draw_note(ops: list, box, anchor, rows, size: float, color, glyphs):
-    """Box + leader line + rows, all in display coordinates; ``glyphs`` is the
-    document's GlyphFonts, which draws the math."""
-    r, g, b, _a = color
-    bx0, by0, bx1, by1 = box
-    # Border: the highlight's hue darkened; fill: the same hue washed out, so
-    # the box reads as belonging to its highlight without fighting the page.
-    br, bg, bb = (max(0.0, c * 0.62) for c in (r, g, b))
-    fr, fg, fb = (1 - (1 - c) * 0.16 for c in (r, g, b))
-
-    ax0, ay0, ax1, ay1 = anchor
-    px = min(max((bx0 + bx1) / 2, ax0), ax1)
-    py = min(max((by0 + by1) / 2, ay0), ay1)
-    qx = min(max(px, bx0), bx1)
-    qy = min(max(py, by0), by1)
-    if math.hypot(qx - px, qy - py) > 3:
-        ops.append(b"%s %s %s RG %s w [2 2] 0 d %s %s m %s %s l S [] 0 d" % (
-            _num(br), _num(bg), _num(bb), _num(BORDER),
-            _num(px), _num(py), _num(qx), _num(qy)))
-        ops.append(b"%s %s %s rg %s %s 2.6 2.6 re f" % (
-            _num(br), _num(bg), _num(bb), _num(px - 1.3), _num(py - 1.3)))
-
-    ops.append(b"%s %s %s rg %s %s %s %s re f" % (
-        _num(fr), _num(fg), _num(fb),
-        _num(bx0), _num(by0), _num(bx1 - bx0), _num(by1 - by0)))
-    ops.append(b"%s %s %s RG %s w %s %s %s %s re S" % (
-        _num(br), _num(bg), _num(bb), _num(BORDER),
-        _num(bx0), _num(by0), _num(bx1 - bx0), _num(by1 - by0)))
-
-    y = by0 + PAD
-    inner = bx1 - bx0 - 2 * PAD
-    for row in rows:
-        if row[0] == "image":
-            _kind, name, w, h = row
-            # The frame has y running down, so flip the image matrix back.
-            ops.append(b"q %s 0 0 %s %s %s cm /%s Do Q" % (
-                _num(w), _num(-h), _num(bx0 + PAD), _num(y + h), name.encode()))
-            y += h + IMAGE_GAP
+    # The cut is at the top of the first row that does not fit, and what
+    # starts there goes with it: a line's marker, to-do box, bar and tint,
+    # a picture's bullet.
+    cut = min((r.top for r in rows if r.top + r.h > limit and not shrinks(r)), default=math.inf)
+    kept, bottom = [], 0.0
+    for r in rows:
+        if r.top >= cut:
             continue
-        if row[0] == "math":                     # display math, centred
-            _kind, (drawing, scale), w, h = row
-            ops.append(b"q %s 0 0 %s %s %s cm" % (
-                _num(scale), _num(scale), _num(bx0 + PAD + max(0, (inner - w) / 2)), _num(y)))
-            ops.append(glyphs.draw(drawing))
-            ops.append(b"Q")
-            y += h + IMAGE_GAP
-            continue
-        _kind, indent, spans, ascent, line_h = row
-        draw_spans(ops, bx0 + PAD + indent, y + ascent, spans, size, glyphs=glyphs)
-        y += line_h
+        if r.top + r.h > limit:
+            f = (limit - r.top) / r.h
+            data = (r.data[0], r.data[1] * f) if r.kind == "math" else r.data
+            r = r._replace(w=r.w * f, h=r.h * f, data=data)
+        kept.append(r)
+        bottom = max(bottom, r.top + r.h)
+    w = span_width(ELLIPSIS, FONT_SIZE)
+    kept.append(Row("text", 0.0, bottom, w, line_h, ([(TEXT, ELLIPSIS, 0, PLAIN)], FONT_SIZE, ascent, MUTED)))
+    return kept, bottom + line_h
 
 
-def _stamp(writer, page_index: int, matrix, ops: list, xobjects, glyph_fonts):
-    """Merge the drawing onto the page as an overlay content stream.
-    ``glyph_fonts`` is ``GlyphFonts.resources()`` — the Type 3 fonts the math
-    was drawn with, referenced now and filled in at ``finalize()``."""
-    page = writer.pages[page_index]
-    body = b"q %s cm\n" % b" ".join(_num(v) for v in matrix) + b"\n".join(ops) + b"\nQ"
+# --- the column ---------------------------------------------------------------
 
-    overlay = PageObject.create_blank_page(width=1, height=1)
-    box = [float(v) for v in (page.mediabox.left, page.mediabox.bottom,
-                              page.mediabox.right, page.mediabox.top)]
-    crop = [float(v) for v in (page.cropbox.left, page.cropbox.bottom,
-                               page.cropbox.right, page.cropbox.top)]
-    # merge_page clips the overlay to its own trim box — cover both boxes.
-    rect = RectangleObject((min(box[0], crop[0]), min(box[1], crop[1]),
-                            max(box[2], crop[2]), max(box[3], crop[3])))
-    overlay[NameObject("/MediaBox")] = rect
-    overlay[NameObject("/TrimBox")] = rect
-    stream = DecodedStreamObject()
-    stream.set_data(body)
-    overlay[NameObject("/Contents")] = stream
-    fonts = font_resources(_FONTS, writer)
-    fonts.update({NameObject("/" + name): ref for name, ref in glyph_fonts.items()})
-    resources = DictionaryObject({NameObject("/Font"): fonts})
+def _column_width(widest: float) -> float:
+    """The column's width for a document whose widest page, as shown, is
+    ``widest`` points wide."""
+    return min(COLUMN_MAX, max(COLUMN_MIN, COLUMN_SHARE * widest))
+
+
+def _water_level(heights, room: float) -> float:
+    """The largest ``c`` with Σ min(h, c) ≤ ``room``: the one height the
+    tallest cards are shortened to so the column fits. Infinite when they
+    fit as they are."""
+    if sum(heights) <= room:
+        return math.inf
+    left, rest = room, len(heights)
+    for h in sorted(heights):
+        level = left / rest
+        if h > level:
+            return max(0.0, level)
+        left -= h
+        rest -= 1
+    return math.inf
+
+
+def _stack(tops, heights, low: float, high: float, gap: float = CARD_GAP):
+    """The cards' tops, sorted by their highlight's (``tops``): each at its
+    highlight's top, or ``gap`` under the card above when that would overlap
+    it, none above ``low``; then the run pushed up off ``high``, each card
+    ending a gap over the one under it. The cards stay inside when their
+    heights and gaps fit between the two."""
+    out, bottom = [], -math.inf
+    for top, h in zip(tops, heights):
+        top = max(top, low, bottom + gap)
+        out.append(top)
+        bottom = top + h
+    ceiling = high
+    for i in reversed(range(len(out))):
+        out[i] = min(out[i], ceiling - heights[i])
+        ceiling = out[i] - gap
+    return out
+
+
+def _column(notes, col_w: float, page_h: float, images, resolve_ref=None):
+    """Lays a page's notes (sorted by top) out down the column: ``(scale,
+    [(note, rows, height, top)])``, the cards in the column's own frame,
+    which is drawn ``scale`` times its size from the column's top-left.
+    Notes that do not fit even at the last scale are left out."""
+    for scale in SCALES:
+        width, height = col_w / scale, page_h / scale
+        layouts = [_Layout(n.blocks, width - BAR - 2 * PAD_X, images, resolve_ref) for n in notes]
+        room = height - 2 * EDGE - CARD_GAP * (len(notes) - 1)
+        level = _water_level([lay.height + 2 * PAD_Y for lay in layouts], room)
+        floor = 2 * PAD_Y + (MIN_LINES if scale != SCALES[-1] else 2) * FONT_SIZE * LEADING
+        if level >= floor:
+            break
+    cards = [_clip(lay.rows, lay.height, max(level, floor) - 2 * PAD_Y) for lay in layouts]
+    heights = [h + 2 * PAD_Y for _rows, h in cards]
+    keep = len(notes)
+    while keep and sum(heights[:keep]) + CARD_GAP * (keep - 1) > height - 2 * EDGE:
+        keep -= 1
+    tops = _stack([n.top / scale for n in notes[:keep]], heights[:keep], EDGE, height - EDGE)
+    return scale, [(n, rows, h, top) for n, (rows, _h), h, top in zip(notes, cards, heights, tops)]
+
+
+# --- drawing ------------------------------------------------------------------
+
+def _rounded(ops, x: float, y: float, w: float, h: float, r: float):
+    """A rounded rectangle's path."""
+    k = r * 0.5523
+    pts = (x + r, y, x + w - r, y,
+           x + w - r + k, y, x + w, y + r - k, x + w, y + r,
+           x + w, y + h - r,
+           x + w, y + h - r + k, x + w - r + k, y + h, x + w - r, y + h,
+           x + r, y + h,
+           x + r - k, y + h, x, y + h - r + k, x, y + h - r,
+           x, y + r,
+           x, y + r - k, x + r - k, y, x + r, y)
+    ops.append(b"%s %s m %s %s l %s %s %s %s %s %s c %s %s l %s %s %s %s %s %s c "
+               b"%s %s l %s %s %s %s %s %s c %s %s l %s %s %s %s %s %s c h" % tuple(num(v) for v in pts))
+
+
+def _draw_row(ops, r: Row, x: float, y: float, glyphs, fonts, links, xobjects, images):
+    """One row with the content's top-left at (``x``, ``y``)."""
+    x, y = x + r.x, y + r.top
+    if r.kind == "text":
+        spans, size, ascent, color = r.data
+        draw_spans(ops, x, y + ascent, spans, size, color=color, fonts=fonts, links=links, glyphs=glyphs)
+    elif r.kind == "fill":
+        fill_rect(ops, x, y, x + r.w, y + r.h, r.data)
+    elif r.kind == "image":
+        # The frame has y running down, so the image matrix flips it back.
+        ops.append(b"q %s 0 0 %s %s %s cm /%s Do Q" % (num(r.w), num(-r.h), num(x), num(y + r.h),
+                                                     r.data.encode()))
+        xobjects[r.data] = images.refs[r.data]
+    elif r.kind == "math":
+        drawing, scale = r.data
+        ops += [b"q %s 0 0 %s %s %s cm" % (num(scale), num(scale), num(x), num(y)),
+                glyphs.draw(drawing), b"Q"]
+    elif r.kind == "check":
+        s = r.w
+        ops.append(b"%s %s %s RG 0.6 w %s %s %s %s re S" % (
+            num(MUTED[0]), num(MUTED[1]), num(MUTED[2]), num(x), num(y), num(s), num(s)))
+        if r.data:
+            ops.append(b"1 w %s %s m %s %s l %s %s l S" % (
+                num(x + s * 0.2), num(y + s * 0.55), num(x + s * 0.42), num(y + s * 0.8),
+                num(x + s * 0.82), num(y + s * 0.22)))
+
+
+def _draw_card(ops, y: float, w: float, h: float, rows, color, glyphs, fonts, links, xobjects, images):
+    """A card at the column's left, ``y`` from its top: white, edged, the
+    highlight's colour down its left side, the rows inside its padding."""
+    rgb = color[:3]
+    ops.append(b"q %s %s %s rg" % tuple(num(v) for v in CARD_FILL))
+    _rounded(ops, 0.0, y, w, h, RADIUS)
+    ops.append(b"f")
+    _rounded(ops, 0.0, y, w, h, RADIUS)             # the bar, clipped to the corners
+    ops.append(b"W n")
+    fill_rect(ops, 0.0, y, BAR, y + h, rgb)
+    ops.append(b"Q q %s %s %s RG 0.6 w" % tuple(num(v) for v in CARD_BORDER))
+    _rounded(ops, 0.0, y, w, h, RADIUS)
+    ops.append(b"S Q")
+    for r in rows:
+        _draw_row(ops, r, BAR + PAD_X, y + PAD_Y, glyphs, fonts, links, xobjects, images)
+
+
+def _backdrop(page_w: float, page_h: float, extra: float) -> list:
+    """The strip beside the page, and the page's edge."""
+    ops = []
+    fill_rect(ops, page_w, 0.0, page_w + extra, page_h, BACKDROP)
+    fill_rect(ops, page_w, 0.0, page_w + 0.6, page_h, PAGE_EDGE)
+    return ops
+
+
+def _draw_page(notes, page_w: float, page_h: float, extra: float, col_w: float, writer,
+               images, glyphs, resolve_ref):
+    """One page's strip and cards: ``(ops, resources, links, cards drawn)``,
+    the links ``(x0, y0, x1, y1, href)`` in the page's display frame."""
+    ops = _backdrop(page_w, page_h, extra)
+    scale, placed = _column(sorted(notes, key=lambda n: n.top), col_w, page_h, images, resolve_ref)
+    col_x = page_w + COLUMN_GAP
+    # In the gap: a bar beside each highlight's lines, and a line from it to
+    # its card, at the same height within the card as the first line's
+    # middle is within the highlight (level, when the card is).
+    for note, _rows, h, top in placed:
+        line = tuple(c * 0.7 for c in note.color[:3])
+        tie = page_w + TIE_X
+        fill_rect(ops, tie, note.top, tie + TIE_W, max(note.bottom, note.top + 2.0), line)
+        at = min(max(top * scale + note.mid - note.top, (top + PAD_Y) * scale), (top + h - PAD_Y) * scale)
+        ops.append(b"%s %s %s RG 0.5 w %s %s m %s %s l S" % (
+            num(line[0]), num(line[1]), num(line[2]), num(tie + TIE_W), num(note.mid), num(col_x), num(at)))
+    fonts, links, xobjects = set(), [], {}
+    ops.append(b"q %s 0 0 %s %s 0 cm" % (num(scale), num(scale), num(col_x)))
+    for note, rows, h, top in placed:
+        _draw_card(ops, top, col_w / scale, h, rows, note.color, glyphs, fonts, links, xobjects, images)
+    ops.append(b"Q")
+    resources = DictionaryObject()
+    font_dict = font_resources(sorted(fonts), writer)
+    font_dict.update({NameObject("/" + name): ref for name, ref in glyphs.resources().items()})
+    if font_dict:
+        resources[NameObject("/Font")] = font_dict
     if xobjects:
         resources[NameObject("/XObject")] = DictionaryObject(
             {NameObject("/" + name): ref for name, ref in xobjects.items()})
-    overlay[NameObject("/Resources")] = resources
-
-    page.merge_page(overlay)
-    # PyPDF2 leaves the merged content inline in the page dict; streams must be
-    # indirect objects or the file is unreadable.
-    page[NameObject("/Contents")] = writer._add_object(page[NameObject("/Contents")])
+    links = [(col_x + x0 * scale, y0 * scale, col_x + x1 * scale, y1 * scale, href)
+             for x0, y0, x1, y1, href in links]
+    return ops, resources, links, len(placed)
 
 
-# --- geometry ----------------------------------------------------------------
+# --- the page -----------------------------------------------------------------
 
 def _frame(crop, rotation):
     """Display frame (x right, y down, origin top-left of the visible page) →
-    (display size, cm matrix into user space, user→display point mapper)."""
+    (display size, cm matrix into user space)."""
     cx0, cy0, cx1, cy1 = crop
     size = display_size(crop, rotation)
     if rotation == 90:
-        return size, (0, 1, 1, 0, cx0, cy0), lambda px, py: (py - cy0, px - cx0)
+        return size, (0, 1, 1, 0, cx0, cy0)
     if rotation == 180:
-        return size, (-1, 0, 0, 1, cx1, cy0), lambda px, py: (cx1 - px, py - cy0)
+        return size, (-1, 0, 0, 1, cx1, cy0)
     if rotation == 270:
-        return size, (0, -1, -1, 0, cx1, cy1), lambda px, py: (cy1 - py, cx1 - px)
-    return size, (1, 0, 0, -1, cx0, cy1), lambda px, py: (px - cx0, cy1 - py)
+        return size, (0, -1, -1, 0, cx1, cy1)
+    return size, (1, 0, 0, -1, cx0, cy1)
 
 
-def _anchor_rect(pos, disp_w, disp_h):
-    """Stored viewer rects (in the position's width × height frame) → one
-    display-space bounding box."""
-    rw = float(pos.get("width") or 0) or disp_w
-    rh = float(pos.get("height") or 0) or disp_h
-    xs, ys = [], []
-    for r in pos.get("rects") or []:
-        if not r or r.get("x1") is None:
-            continue
-        for vx, vy in ((r["x1"], r["y1"]), (r["x2"], r["y2"])):
-            xs.append(float(vx) / rw * disp_w)
-            ys.append(float(vy) / rh * disp_h)
-    if not xs:
-        return None
-    return (min(xs), min(ys), max(xs), max(ys))
+def _widen(page, view, rotation: int, extra: float):
+    """Grows the page by ``extra`` on the right of the page as shown: the
+    view box's side the display frame's x axis runs to (``_frame``), so the
+    frame's origin stays put. The media and crop boxes both become the new
+    box; the trim, bleed and art boxes, inside the old one, go."""
+    x0, y0, x1, y1 = view
+    if rotation == 90:
+        y1 += extra
+    elif rotation == 180:
+        x0 -= extra
+    elif rotation == 270:
+        y0 -= extra
+    else:
+        x1 += extra
+    for key in ("/MediaBox", "/CropBox"):
+        page[NameObject(key)] = RectangleObject((x0, y0, x1, y1))
+    for key in ("/TrimBox", "/BleedBox", "/ArtBox"):
+        page.pop(NameObject(key), None)
 
 
-_BoundsLog = None
+def _stream(data: bytes, compress: bool = False):
+    stream = DecodedStreamObject()
+    stream.set_data(data)
+    return stream.flate_encode() if compress else stream
 
 
-def _bounds_log_class():
-    """The device class, built on first use: PyMuPDF is imported lazily."""
-    global _BoundsLog
-    if _BoundsLog is not None:
-        return _BoundsLog
-    from pymupdf import mupdf
-
-    def rect(r):
-        return (r.x0, r.y0, r.x1, r.y1)
-
-    class BoundsLog(mupdf.FzDevice2):
-        """What ``Page.get_bboxlog`` logs, with one difference: a shading is
-        bounded by the clip in force when it is painted. A shading has no
-        extent of its own (an axial or radial gradient fills the plane):
-        ``sh`` paints the current clip, and a path filled with a shading
-        pattern is clipped to the path first, so ``get_bboxlog``'s entry for
-        a gradient-filled box is the whole plane and the box would count as
-        free. MuPDF's device layer keeps the clip stack whichever callbacks
-        are hooked, so only the drawing ones are."""
-
-        def __init__(self, out):
-            super().__init__()
-            self.out = out
-            for name in ("fill_path", "stroke_path", "fill_text", "stroke_text",
-                         "ignore_text", "fill_shade", "fill_image", "fill_image_mask"):
-                getattr(self, "use_virtual_" + name)()
-
-        def fill_path(self, ctx, path, even_odd, ctm, *_):
-            self.out.append(("fill-path", rect(mupdf.ll_fz_bound_path(path, None, ctm))))
-
-        def stroke_path(self, ctx, path, stroke, ctm, *_):
-            self.out.append(("stroke-path", rect(mupdf.ll_fz_bound_path(path, stroke, ctm))))
-
-        def fill_text(self, ctx, text, ctm, *_):
-            self.out.append(("fill-text", rect(mupdf.ll_fz_bound_text(text, None, ctm))))
-
-        def stroke_text(self, ctx, text, stroke, ctm, *_):
-            self.out.append(("stroke-text", rect(mupdf.ll_fz_bound_text(text, stroke, ctm))))
-
-        def ignore_text(self, ctx, text, ctm, *_):
-            self.out.append(("ignore-text", rect(mupdf.ll_fz_bound_text(text, None, ctm))))
-
-        def fill_image(self, ctx, image, ctm, *_):
-            self.out.append(("fill-image", rect(mupdf.ll_fz_transform_rect(mupdf.fz_unit_rect, ctm))))
-
-        def fill_image_mask(self, ctx, image, ctm, *_):
-            self.out.append(("fill-imgmask", rect(mupdf.ll_fz_transform_rect(mupdf.fz_unit_rect, ctm))))
-
-        def fill_shade(self, ctx, shade, ctm, *_):
-            bound = mupdf.ll_fz_bound_shade(shade, ctm)
-            # The scissor wrapper stays in a name until the intersection is
-            # taken: .internal() points into it, and a temporary is freed at
-            # once (on Linux that read garbage; Windows happened to keep it).
-            scissor = mupdf.fz_device_current_scissor(self)
-            self.out.append(("fill-shade", rect(mupdf.ll_fz_intersect_rect(bound, scissor.internal()))))
-
-    _BoundsLog = BoundsLog
-    return BoundsLog
+def _form(writer, ops, width: float, height: float, matrix, resources) -> IndirectObject:
+    """A Form XObject drawing ``ops`` in the display frame, ``width`` ×
+    ``height``, mapped to user space by ``matrix``."""
+    form = _stream(b"\n".join(ops), compress=True)
+    form.update({
+        NameObject("/Type"): NameObject("/XObject"),
+        NameObject("/Subtype"): NameObject("/Form"),
+        NameObject("/BBox"): ArrayObject([FloatObject(0), FloatObject(0), FloatObject(width), FloatObject(height)]),
+        NameObject("/Matrix"): ArrayObject([FloatObject(v) for v in matrix]),
+        NameObject("/Resources"): resources,
+    })
+    return writer._add_object(form)
 
 
-def _bbox_log(doc, index: int) -> list:
-    """The drawing log for page ``index``, ``[(kind, (x0, y0, x1, y1))]`` in
-    the unrotated page's space, in points: the page run through the module's
-    own device (``_bounds_log_class``) the way ``get_bboxlog`` runs it,
-    ``pdf_text.unrotated`` for the run (a run under PyMuPDF's derotation
-    matrix instead would be off: that matrix is built from the raw crop
-    box's size, wrong on a crop box larger than the media box, which MuPDF
-    clips, and on a /UserUnit page). MuPDF scales the log by the page's
-    /UserUnit as it does page.rect, and the view box ``page_frame`` finds,
-    which the step back to user space is spelled out against, is in points
-    (``pdf_text.user_unit``), so the run's matrix takes the unit out. ``[]``
-    without a document or when the page will not load. The page object lives
-    only inside this call: PyMuPDF frees it with the reference, so there is
-    nothing to close."""
-    if doc is None:
-        return []
+def _stamp(writer, page, form, head):
+    """Draws ``form`` over the page: the page's resources gain it under a
+    name of their own (a copy, since pages may share one dictionary), and its
+    content becomes ``head`` (a shared ``q``), the streams it had, then a
+    ``Q`` and the form."""
+    resources = DictionaryObject(page[NameObject("/Resources")] if "/Resources" in page else {})
+    xobjects = DictionaryObject(resources[NameObject("/XObject")] if "/XObject" in resources else {})
+    name, n = "/GmNotes", 0
+    while name in xobjects:
+        n += 1
+        name = f"/GmNotes{n}"
+    xobjects[NameObject(name)] = form
+    resources[NameObject("/XObject")] = xobjects
+    page[NameObject("/Resources")] = resources
+
+    raw = page.raw_get("/Contents") if "/Contents" in page else None
+    own = raw.get_object() if isinstance(raw, IndirectObject) else raw
+    parts = list(own) if isinstance(own, ArrayObject) else [raw] if raw is not None else []
+    # Streams must be indirect objects or the file is unreadable.
+    parts = [p if isinstance(p, IndirectObject) else writer._add_object(p) for p in parts]
+    tail = writer._add_object(_stream(b"\nQ\n%s Do\n" % name.encode()))
+    page[NameObject("/Contents")] = ArrayObject([head, *parts, tail])
+
+
+def _link(writer, index: int, matrix, x0, y0, x1, y1, href: str):
+    a, b, c, d, e, f = matrix
+    xs, ys = zip(*((a * x + c * y + e, b * x + d * y + f) for x, y in ((x0, y0), (x1, y1))))
     try:
-        from pymupdf import mupdf
-        page = doc[index]
-        scale = 1 / pdf_text.user_unit(page)
-        out = []
-        dev = _bounds_log_class()(out)
-        with pdf_text.unrotated(page):
-            mupdf.fz_run_page(page.this, dev, mupdf.FzMatrix(scale, 0, 0, scale, 0, 0), mupdf.FzCookie())
-            mupdf.fz_close_device(dev)
-        return out
-    except Exception:
-        return []
+        writer.add_annotation(page_number=index, annotation=AnnotationBuilder.link(
+            rect=(min(xs), min(ys), max(xs), max(ys)), url=href))
+    except Exception as e:
+        log.info(f"[pdf-notes] could not link {href[:60]}: {e}")
 
 
-def _page_occupancy(bounds, crop, to_display, disp_w, disp_h) -> _Space:
-    """Everything the page already draws, as a display-space occupancy grid.
-
-    ``bounds`` is the page's bbox log: one entry per drawing operation, form
-    XObjects flattened into the page's space, and the annotations' appearances
-    among them. So what ``annotate_pdf`` wrote before ``render_notes`` ran
-    counts as occupied too: the text boxes with either export switch, the
-    highlights and ink when the highlight layer is on (the notes-only export
-    has none of them in the bytes to keep clear of); pdfium's object walk saw
-    only the content stream. Invisible text (an OCR layer) draws nothing
-    visible and is skipped. A shading's entry is the clip it was painted
-    through (``_bbox_log``), so a gradient-filled box counts as occupied, as
-    pdfium's path bounds made it.
-
-    The log's space is the unrotated page's: origin at the view box's top-left
-    corner, y down. The step back to user space is spelled out against the
-    view box ``page_frame`` found rather than taken from
-    ``page.transformation_matrix``, which on a rotated page PyMuPDF replaces
-    with a bare flip that loses the crop box's offset. From user space the
-    frame's ``to_display`` takes over, as it does for the highlight rects."""
-    space = _Space(disp_w, disp_h)
-    area = disp_w * disp_h
-    boxes = []
-    cx0, _cy0, _cx1, cy1 = crop
-    for kind, (x0, y0, x1, y1) in bounds:
-        if kind == "ignore-text":
+def _anchor(pos, page_w: float, page_h: float):
+    """A highlight's lines on the page as shown: ``(top, bottom, mid)``,
+    ``mid`` the middle of its first line; None without a usable rect. Rects
+    are stored in the frame of the position's width × height."""
+    rw = float(pos.get("width") or 0) or page_w
+    rh = float(pos.get("height") or 0) or page_h
+    lines = []
+    for r in pos.get("rects") or []:
+        if not r or r.get("y1") is None or r.get("y2") is None:
             continue
-        ax, ay = to_display(x0 + cx0, cy1 - y0)
-        bx, by = to_display(x1 + cx0, cy1 - y1)
-        box = (min(ax, bx), min(ay, by), max(ax, bx), max(ay, by))
-        if (box[2] - box[0]) * (box[3] - box[1]) > 0.6 * area:
-            continue        # page-sized background fill, not content
-        boxes.append(box)
-    if not boxes:
-        # No drawing info (PyMuPDF failed, or a scanned page): assume the usual
-        # text block is busy so notes still land in the margins.
-        boxes = [(disp_w * 0.07, disp_h * 0.05, disp_w * 0.93, disp_h * 0.95)]
-    for box in boxes:
-        space.mark(box)
-    space.freeze()
-    return space
+        y1, y2 = sorted(min(max(float(v) / rh * page_h, 0.0), page_h) for v in (r["y1"], r["y2"]))
+        lines.append((y1, y2))
+    if not lines:
+        return None
+    top, first = min(lines)
+    return top, max(y2 for _y1, y2 in lines), top + min(first - top, 2 * FONT_SIZE) / 2
 
 
-# --- entry point -------------------------------------------------------------
+# --- entry point --------------------------------------------------------------
 
-def render_notes(pdf_bytes: bytes, notes, uploads_dir=None) -> tuple[bytes, int]:
-    """Return (pdf bytes with note boxes drawn, number of boxes drawn).
+def render_notes(pdf_bytes: bytes, notes, uploads_dir=None, resolve_ref=None) -> tuple[bytes, int]:
+    """Return (pdf bytes with the notes beside its pages, cards drawn).
 
-    ``notes``: [{position: <pdf_position dict>, color: <css string>,
-    note: <str>}] — the same shape ``pdf_export.annotate_pdf`` takes. Notes
-    without text, without usable rects, or on an out-of-range page are skipped.
-    ``uploads_dir`` is where ``/api/uploads/…`` refs are read from; without it
-    images degrade to their alt text.
+    ``notes``: the marks ``pdf_export.annotate_pdf`` takes, ``[{position:
+    <pdf_position dict>, color: <css string>, note: <str>, blocks:
+    [(depth, markdown)]}]``; ``blocks`` is what the card shows
+    (``pdf_export.highlight_note_blocks``), and without it ``note`` is one
+    block. Notes without text, without usable rects or on a page out of
+    range are skipped; nothing to draw leaves the bytes as they are.
+    ``uploads_dir`` is where ``/api/uploads/…`` pictures are read from
+    (without it they read as their alt text), and ``resolve_ref`` (block
+    id → {content, …} or None) reads ``[[refs]]`` as the notes PDF does.
     """
     reader = ExportPdfReader(io.BytesIO(pdf_bytes))
     writer = PdfWriter()
     writer.append(reader)
+    pages = writer.pages
+    frames = [page_frame(page) for page in pages]
+    sizes = [display_size(view, rotation) for view, rotation in frames]
 
     by_page: dict[int, list] = {}
     for n in notes:
-        text = (n.get("note") or "").strip()
+        blocks = [(depth, md.strip()) for depth, md in (n.get("blocks") or [(0, n.get("note") or "")])
+                  if (md or "").strip()]
         pos = n.get("position") or {}
-        page_num = pos.get("pageNumber")
-        if not text or not page_num or page_num < 1 or page_num > len(writer.pages):
+        try:
+            page_num = int(pos.get("pageNumber") or 0)
+        except (TypeError, ValueError):
             continue
-        items = parse_note(text)
-        if items:
-            by_page.setdefault(int(page_num), []).append((items, pos, n.get("color")))
+        if not blocks or not 1 <= page_num <= len(pages):
+            continue
+        anchor = _anchor(pos, *sizes[page_num - 1])
+        if anchor:
+            by_page.setdefault(page_num - 1, []).append(Note(blocks, *anchor, parse_css_color(n.get("color"))))
     if not by_page:
         return pdf_bytes, 0
 
-    # PyMuPDF is not thread-safe (its documentation says so): the whole walk
-    # holds pdf_text's lock, and the document is closed inside it. Every call
-    # into it holds the GIL, so the reads are one short call per page.
-    with pdf_text._lock:
-        return _draw_notes(pdf_bytes, writer, by_page, uploads_dir)
-
-
-def _open(pdf_bytes):
-    """The document for the occupancy read, or None: the notes then go in the
-    margins. Opened through pdf_text, which keeps MuPDF's own console chatter
-    off and counts a file whose password the empty-password try did not
-    satisfy as unreadable, as it does for the text."""
-    try:
-        return pdf_text._mupdf_open(pdf_bytes)
-    except Exception as e:
-        log.warning(f"[pdf-notes] PyMuPDF open failed ({e}{pdf_text._mupdf_warnings()}); placing notes in the margins")
-        return None
-
-
-def _draw_notes(pdf_bytes, writer, by_page, uploads_dir):
-    doc = _open(pdf_bytes)
+    col_w = _column_width(max(w for w, _h in sizes))
+    extra = COLUMN_GAP + col_w + EDGE
     images = XObjectStore(writer, uploads_dir)
     glyphs = GlyphFonts(writer)
+    head = writer._add_object(_stream(b"q\n"))
+    bare = {}                   # (size, matrix) → the strip's form, shared by pages without notes
     drawn = 0
-    try:
-        for page_num, entries in sorted(by_page.items()):
-            # The frame the highlight rects are stored in, as the annotations use it.
-            crop, rotation = page_frame(writer.pages[page_num - 1])
-            (disp_w, disp_h), matrix, to_display = _frame(crop, rotation)
-            space = _page_occupancy(_bbox_log(doc, page_num - 1), crop, to_display, disp_w, disp_h)
+    for index, page in enumerate(pages):
+        view, rotation = frames[index]
+        (page_w, page_h), matrix = _frame(view, rotation)
+        size = (page_w + extra, page_h)
+        if index in by_page:
+            ops, resources, links, count = _draw_page(by_page[index], page_w, page_h, extra, col_w,
+                                                      writer, images, glyphs, resolve_ref)
+            if count < len(by_page[index]):
+                log.info(f"[pdf-notes] page {index + 1}: {len(by_page[index]) - count} notes "
+                         f"did not fit beside the page")
+            form = _form(writer, ops, *size, matrix, resources)
+            drawn += count
+        else:
+            key, links = (size, matrix), ()
+            if key not in bare:
+                bare[key] = _form(writer, _backdrop(page_w, page_h, extra), *size, matrix, DictionaryObject())
+            form = bare[key]
+        _widen(page, view, rotation, extra)
+        _stamp(writer, page, form, head)
+        for link in links:
+            _link(writer, index, matrix, *link)
 
-            placements = []
-            for items, pos, color in entries:
-                anchor = _anchor_rect(pos, disp_w, disp_h)
-                if not anchor:
-                    continue
-                resolved = {}
-                for item in items:
-                    if item["kind"] == "image":
-                        info = images.resolve(item["src"])
-                        if info:
-                            resolved[item["src"]] = info
-                placements.append((anchor, items, resolved, parse_css_color(color)))
-            placements.sort(key=lambda p: (p[0][1], p[0][0]))
-
-            ops, used = [], {}
-            max_h = disp_h * MAX_BOX_FRAC
-            for anchor, items, resolved, color in placements:
-                blocks = bool(resolved) or any(i["kind"] == "math" for i in items)
-                widths = WIDE_WIDTHS if blocks else BOX_WIDTHS
-                best = None
-                for width in widths:
-                    limit = min(width, disp_w - 2 * PAGE_MARGIN) - 2 * PAD
-                    rows, natural, box_h, shrink = _measure(
-                        items, limit, FONT_SIZE, max_h, resolved)
-                    # A one-line note gets a one-line-wide box, not a column.
-                    box_w = min(limit, natural) + 2 * PAD
-                    # Penalty for narrow boxes, and for squeezing an equation or
-                    # picture down to fit one — a shrunk formula is unreadable.
-                    penalty = (widths[0] - width) * 0.35 + (1 - shrink) * 160
-                    spot = _place(space, anchor, box_w, box_h, penalty)
-                    if spot and (best is None or spot[0] < best[0][0]):
-                        best = (spot, box_w, box_h, rows)
-                    if spot and spot[3] and spot[0] < 30:
-                        break
-                if not best:
-                    continue
-                (_score, x, y, free), box_w, box_h, rows = best
-                if not free:
-                    log.info(f"[pdf-notes] page {page_num}: no free space, "
-                             f"note box overlaps content")
-                space.placed.append((x - CLEARANCE, y - CLEARANCE,
-                                     x + box_w + CLEARANCE, y + box_h + CLEARANCE))
-                _draw_note(ops, (x, y, x + box_w, y + box_h), anchor, rows, FONT_SIZE,
-                           color, glyphs)
-                used.update({row[1]: images.refs[row[1]] for row in rows if row[0] == "image"})
-                drawn += 1
-
-            if ops:
-                _stamp(writer, page_num - 1, matrix, ops, used, glyphs.resources())
-    finally:
-        if doc is not None:
-            doc.close()
-
-    if not drawn:
-        return pdf_bytes, 0
     glyphs.finalize()
     finalize_cid(writer)
     out = io.BytesIO()

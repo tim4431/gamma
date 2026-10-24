@@ -40,11 +40,11 @@ test("a folder exports its papers' annotated PDFs as one zip, with both switches
 
 test("an annotated PDF with only the notes switch still carries its text boxes as annotations", () => {
   const notesOnly = resolveExport({ format: "pdf", highlights: false, notes: true, bundle: false }, paper);
-  assert.equal(exportSummary(notesOnly), "The PDF with text box annotations only and every note printed onto the page.");
+  assert.equal(exportSummary(notesOnly), "The PDF with text box annotations only and your notes in a column beside each page.");
   const folder = resolveExport({ format: "pdf", highlights: false, notes: true, bundle: false }, { folder: "Reading" });
-  assert.match(exportSummary(folder, "Reading"), /with text box annotations only and every note printed onto the page/);
+  assert.match(exportSummary(folder, "Reading"), /with text box annotations only and your notes in a column beside each page/);
   const both = resolveExport({ format: "pdf", highlights: true, notes: true, bundle: false }, paper);
-  assert.equal(exportSummary(both), "The PDF with highlight annotations and every note printed onto the page.");
+  assert.equal(exportSummary(both), "The PDF with highlight annotations and your notes in a column beside each page.");
   const none = resolveExport({ format: "pdf", ...allOff }, paper);
   assert.equal(exportSummary(none), "The PDF file exactly as stored, with nothing added.");
 });

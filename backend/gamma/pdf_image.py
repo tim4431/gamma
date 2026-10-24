@@ -1,6 +1,6 @@
 """Uploaded pictures → PDF image XObjects.
 
-Note boxes can contain ``![](/api/uploads/…)`` refs, and an exported note that
+Notes can contain ``![](/api/uploads/…)`` refs, and an exported note that
 shows the URL instead of the picture is useless. Two paths:
 
 * Verbatim, at any size and no decoding cost: JPEG as ``/DCTDecode`` (only the
@@ -12,7 +12,7 @@ shows the URL instead of the picture is useless. Two paths:
   or sub-byte samples, or interlaced, and GIF and WebP. The colour is
   re-encoded as an 8-bit PNG and embedded the verbatim way, and transparency
   becomes a soft mask (``/SMask``), so what is under the picture shows
-  through, as in the app: a note box's tint, not a white rectangle. A 25 MP
+  through, as in the app: a text box's tint, not a white rectangle. A 25 MP
   screenshot takes well under a second; memory, about 8 bytes a pixel while
   it is decoded, is what ``MAX_DECODED_PIXELS`` bounds.
 

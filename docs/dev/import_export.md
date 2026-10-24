@@ -1014,8 +1014,9 @@ for one page with no local files, `_AnnotatedPdfBuilder` one page's PDF,
 
 `annotated-pdf` (`_AnnotatedPdfBuilder`) is each page's PDF with its
 highlights, handwriting and text boxes as standard annotations and, with
-the notes switch, its notes printed on the page (`annotated_page_pdf`, what
-`/pages/{id}/export-pdf` runs). For one page it is that PDF. For a folder it
+the notes switch, its notes as cards in a column beside each page
+([pdf_typesetting.md](pdf_typesetting.md#notes-beside-the-page);
+`annotated_page_pdf`, what `/pages/{id}/export-pdf` runs). For one page it is that PDF. For a folder it
 is a zip of them, `<subfolder>/<Title>.pdf`, the directories mirroring the
 page's first folder path below the exported folder (`Filing`,
 `obsidian_export.page_dir`). A
@@ -1506,6 +1507,6 @@ switch on ([pdf_typesetting.md](pdf_typesetting.md#annotated-pdf-export)).
 ## The PDF writers
 
 The typesetting engine both PDF writers draw with (`gamma/pdf_typeset.py`)
-and the annotated-PDF export (reading through `ExportPdfReader`, notes drawn
-on the page, vector text as Type 3 fonts, images, fonts and content
+and the annotated-PDF export (reading through `ExportPdfReader`, notes in a
+column beside the page, vector text as Type 3 fonts, images, fonts and content
 streams) are described in [pdf_typesetting.md](pdf_typesetting.md).
