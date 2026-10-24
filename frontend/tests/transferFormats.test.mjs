@@ -3,38 +3,40 @@ import assert from "node:assert/strict";
 import { bibliographyPreviewUrl, bibliographyUrl, exportFormatOf, exportJobBody, exportSummary, hasReviewStep, resolveExport, resolveImport } from "../src/transfers/transferFormats.js";
 
 const allOff = Object.freeze({ highlights: false, notes: false, bundle: false });
+// The annotated PDF's own options, as every other format's payload has them: off.
+const noCards = Object.freeze({ comments: false, notesAt: "beside" });
 const paper = { hasPdf: true, pdfStored: true };
 
 test("fixed export contents override saved switches without changing the saved preferences", () => {
   const gamma = resolveExport({ ...allOff, format: "gamma" }, paper);
   assert.equal(gamma.needsReview, false);
-  assert.deepEqual(gamma.payload, { format: "gamma", highlights: true, notes: true, bundle: true });
+  assert.deepEqual(gamma.payload, { format: "gamma", highlights: true, notes: true, bundle: true, ...noCards });
   const graph = resolveExport({ ...allOff, format: "logseq" }, paper);
   assert.equal(graph.needsReview, true);
   assert.deepEqual(graph.controls.map(({ key }) => key), ["bundle"]);
-  assert.deepEqual(graph.payload, { format: "logseq", highlights: true, notes: true, bundle: false });
-  assert.deepEqual(resolveExport({ ...allOff, format: "markdown" }, paper).payload, { format: "markdown", ...allOff });
+  assert.deepEqual(graph.payload, { format: "logseq", highlights: true, notes: true, bundle: false, ...noCards });
+  assert.deepEqual(resolveExport({ ...allOff, format: "markdown" }, paper).payload, { format: "markdown", ...allOff, ...noCards });
 });
 
 test("remote PDFs export directly; note pages fall back to a configurable notes PDF", () => {
   const opts = { format: "pdf", highlights: true, notes: true, bundle: true };
   const remote = resolveExport(opts, { hasPdf: true, pdfStored: false });
   assert.equal(remote.needsReview, false);
-  assert.deepEqual(remote.payload, { format: "pdf", ...allOff });
+  assert.deepEqual(remote.payload, { format: "pdf", ...allOff, ...noCards });
   const notes = resolveExport(opts, { hasPdf: false });
   assert.equal(notes.needsReview, true);
-  assert.deepEqual(notes.payload, { format: "notespdf", highlights: true, notes: true, bundle: false });
+  assert.deepEqual(notes.payload, { format: "notespdf", highlights: true, notes: true, bundle: false, ...noCards });
   assert(!notes.formats.some(({ id }) => id === "pdf"));
 });
 
-test("a folder exports its papers' annotated PDFs as one zip, with both switches", () => {
+test("a folder exports its papers' annotated PDFs as one zip, with the same switches", () => {
   const opts = { format: "pdf", highlights: true, notes: false, bundle: true };
   const folder = resolveExport(opts, { folder: "Reading" });
   assert.equal(folder.definition.category, "Papers");
   assert.match(folder.definition.hint, /one \.zip/);
   assert.equal(folder.needsReview, true);
-  assert.deepEqual(folder.controls.map(({ key }) => key), ["highlights", "notes"]);
-  assert.deepEqual(folder.payload, { format: "pdf", highlights: true, notes: false, bundle: false });
+  assert.deepEqual(folder.controls.map(({ key }) => key), ["highlights", "notes", "notesAt", "comments"]);
+  assert.deepEqual(folder.payload, { format: "pdf", highlights: true, notes: false, bundle: false, ...noCards });
   assert.match(exportSummary(folder, "Reading"), /Pages without a PDF are left out/);
 });
 
@@ -49,9 +51,36 @@ test("an annotated PDF with only the notes switch still carries its text boxes a
   assert.equal(exportSummary(none), "The PDF file exactly as stored, with nothing added.");
 });
 
+test("an annotated PDF's notes go beside the page or on it, and its comment threads beside it", () => {
+  const onPage = resolveExport({ format: "pdf", highlights: true, notes: true, notesAt: "page", comments: false }, paper);
+  assert.deepEqual(onPage.payload, { format: "pdf", highlights: true, notes: true, bundle: false, comments: false, notesAt: "page" });
+  const place = onPage.controls.find(({ key }) => key === "notesAt");
+  assert.deepEqual(place.choice.map(([value]) => value), ["beside", "page"]);
+  assert.equal(place.disabled, false);
+  assert.equal(place.hint, "In the page's own free space");
+  assert.equal(exportSummary(onPage), "The PDF with highlight annotations and every note printed onto the page.");
+  // the place waits on the Notes switch; Comments stand on their own
+  const commentsOnly = resolveExport({ format: "pdf", highlights: false, notes: false, comments: true }, paper);
+  assert.equal(commentsOnly.controls.find(({ key }) => key === "notesAt").disabled, true);
+  assert.equal(commentsOnly.payload.comments, true);
+  assert.equal(exportSummary(commentsOnly), "The PDF with text box annotations only and the comment threads in a column beside each page.");
+  assert.equal(exportSummary(resolveExport({ format: "pdf", highlights: true, notes: true, comments: true }, paper)),
+    "The PDF with highlight annotations and your notes and comment threads in a column beside each page.");
+  assert.equal(exportSummary(resolveExport({ format: "pdf", highlights: true, notes: true, notesAt: "page", comments: true }, paper)),
+    "The PDF with highlight annotations and your notes printed onto the page, the comment threads beside it.");
+  // another format has neither, whatever was saved
+  const markdown = resolveExport({ format: "markdown", highlights: true, notes: true, comments: true, notesAt: "page" }, paper);
+  assert.equal(markdown.payload.comments, false);
+  assert.equal(markdown.payload.notesAt, "beside");
+  // a stored file needs no review even with comments saved on
+  assert.equal(resolveExport({ format: "pdf", comments: true }, { hasPdf: true, pdfStored: false }).payload.comments, false);
+});
+
 test("an export job's body names the server's mode for a page or a folder", () => {
   assert.deepEqual(exportJobBody({ format: "pdf", highlights: true, notes: false, bundle: false }, { folder: "Reading" }),
-    { folder: "Reading", mode: "annotated-pdf", pdf: false, highlights: true, notes: false });
+    { folder: "Reading", mode: "annotated-pdf", pdf: false, highlights: true, notes: false, comments: false, notes_at: "beside" });
+  assert.deepEqual(exportJobBody({ format: "pdf", highlights: false, notes: true, comments: true, notesAt: "page" }, { pageId: "p1" }),
+    { page_id: "p1", mode: "annotated-pdf", pdf: false, highlights: false, notes: true, comments: true, notes_at: "page" });
   assert.deepEqual(exportJobBody({ format: "logseq", highlights: true, notes: true, bundle: true }, { pageId: "p1" }),
     { page_id: "p1", mode: "logseq-graph", pdf: true, highlights: true, notes: true });
   assert.equal(exportFormatOf("zotero-rdf").id, "zotero");
@@ -97,7 +126,7 @@ test("BibTeX is offered where there is something to cite, and reviews itself", (
   assert.equal(page.needsReview, true);
   assert.deepEqual(page.controls, []);
   assert.equal(hasReviewStep(page.definition), true);
-  assert.deepEqual(page.payload, { format: "bibtex", ...allOff });
+  assert.deepEqual(page.payload, { format: "bibtex", ...allOff, ...noCards });
   // The step renders the summary, so it has to say something for one page too.
   assert.match(exportSummary(page), /citation entry as a \.bib file/);
 
@@ -136,7 +165,7 @@ test("a Notability note has no switches: it exports straight from the first step
   const note = resolveExport({ format: "notability", highlights: true, notes: false, bundle: false }, paper);
   assert.equal(note.definition.category, "Notes");
   assert.equal(note.needsReview, false);
-  assert.deepEqual(note.payload, { format: "notability", highlights: false, notes: true, bundle: true });
+  assert.deepEqual(note.payload, { format: "notability", highlights: false, notes: true, bundle: true, ...noCards });
   assert.match(exportSummary(note), /brings the page back as it was/);
   assert.equal(resolveExport({ format: "notability" }, { hasPdf: false }).definition.id, "notability");
   const folder = resolveExport({ format: "notability" }, { folder: "Reading" });

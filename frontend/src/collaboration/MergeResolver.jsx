@@ -21,6 +21,7 @@ import {
   HardDriveIcon, MergeIcon, ServerIcon, TrashIcon,
 } from "../shared/ui/Icons";
 import { inkMergeLines, isTextual, kindOf as conflictKind } from "./conflictKinds.js";
+import { Popover } from "../shared/ui/Surfaces";
 
 // Word-level tokens: runs of non-space and runs of space, so a diff never
 // splits a word and the coloured spans keep their spacing.
@@ -349,9 +350,9 @@ export function MergeChip({ conflict, onResolve, open: openProp, onOpenChange, n
         <kind.Icon size={14} />
       </button>
       {open ? (
-        <div className="popover mergePopover" role="dialog" aria-label={t("Merge")}>
+        <Popover className="mergePopover" role="dialog" aria-label={t("Merge")}>
           <ConflictCard conflict={conflict} busy={busy} onResolve={resolve} nav={nav} />
-        </div>
+        </Popover>
       ) : null}
     </span>
   );

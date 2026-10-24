@@ -318,7 +318,10 @@ def archive_chat(payload: ChatArchiveRequest, request: Request):
 def open_history(entry_id: str, payload: ChatArchiveRequest, request: Request):
     """Make a history entry the bucket's active conversation: the current
     one (sent by the client) is archived first, then the entry moves back
-    into `chats` — so a conversation is always in exactly one place."""
+    into `chats` — so a conversation is always in exactly one place. The
+    answer names the entry the current one was filed under (``archived``,
+    None when it was empty), as ``/archive`` does, so the client can show the
+    swap in its history list without reading the list again."""
     ws = _require_chat_writer(request)
     if not payload.bucket:
         raise HTTPException(status_code=400, detail="bucket required")
@@ -331,7 +334,7 @@ def open_history(entry_id: str, payload: ChatArchiveRequest, request: Request):
             raise HTTPException(status_code=404, detail="conversation not found")
         active = database.execute("SELECT updated_at FROM chats WHERE bucket = ?",
                                   (payload.bucket,)).fetchone()
-        _archive(database, payload.bucket, payload.messages, payload.title, payload.updated_at)
+        archived = _archive(database, payload.bucket, payload.messages, payload.title, payload.updated_at)
         database.execute("DELETE FROM chat_history WHERE id = ?", (entry_id,))
         at = stamp_after(active[0] if active else "")
         database.execute(
@@ -339,7 +342,8 @@ def open_history(entry_id: str, payload: ChatArchiveRequest, request: Request):
             (payload.bucket, row[1], at, row[0] or ""),
         )
         database.commit()
-    return {"messages": json.loads(row[1] or "[]"), "title": row[0] or "", "updated_at": at}
+    return {"messages": json.loads(row[1] or "[]"), "title": row[0] or "", "updated_at": at,
+            "archived": archived}
 
 
 @history_router.get("/{entry_id}/export")

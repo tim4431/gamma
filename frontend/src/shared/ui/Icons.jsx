@@ -527,6 +527,9 @@ export const BoldIcon = (p) => (
 export const ItalicIcon = (p) => (
   <Icon {...p}><path d="M19 4h-9" /><path d="M14 20H5" /><path d="M15 4 9 20" /></Icon>
 );
+export const UnderlineIcon = (p) => (
+  <Icon {...p}><path d="M6 4v6a6 6 0 0 0 12 0V4" /><path d="M4 20h16" /></Icon>
+);
 export const StrikethroughIcon = (p) => (
   <Icon {...p}><path d="M16 4H9a3 3 0 0 0-2.83 4" /><path d="M14 12a4 4 0 0 1 0 8H6" /><path d="M4 12h16" /></Icon>
 );

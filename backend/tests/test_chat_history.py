@@ -12,8 +12,9 @@ def _msgs(*texts):
 
 
 def _unversioned(chat):
-    """A chat answer without its version (``updated_at`` — test_chat_versions.py)."""
-    return {k: v for k, v in chat.items() if k != "updated_at"}
+    """A chat answer without its version (``updated_at`` — test_chat_versions.py)
+    and, for an open, the entry the current conversation went to."""
+    return {k: v for k, v in chat.items() if k not in ("updated_at", "archived")}
 
 
 def _sessions(client, bucket):
@@ -61,15 +62,21 @@ def test_open_swaps_conversations_and_keeps_titles(guest):
     assert r.status_code == 200
     assert _unversioned(r.json()) == {"messages": first, "title": "First"}
     assert _unversioned(guest.get(f"/api/chats/{key}").json()) == {"messages": first, "title": "First"}
-    # The opened entry left history; the previous active one took its place.
+    # The opened entry left history; the previous active one took its place,
+    # under the id the open answered with.
     sessions = _sessions(guest, key)
     assert [s["title"] for s in sessions] == ["Second"]
     assert all(s["id"] != entry_id for s in sessions)
+    assert r.json()["archived"] == sessions[0]["id"]
     # Opening the archived "Second" brings "First" back into history, title intact.
     guest.post(f"/api/chat-history/{sessions[0]['id']}/open",
                json={"bucket": key, "messages": first, "title": "First"})
     assert guest.get(f"/api/chats/{key}").json()["title"] == "Second"
     assert [s["title"] for s in _sessions(guest, key)] == ["First"]
+    # An empty current conversation is filed nowhere.
+    (first_entry,) = _sessions(guest, key)
+    r = guest.post(f"/api/chat-history/{first_entry['id']}/open", json={"bucket": key, "messages": []})
+    assert r.json()["archived"] is None and _sessions(guest, key) == []
     assert guest.post("/api/chat-history/nope/open", json={"bucket": key}).status_code == 404
 
 

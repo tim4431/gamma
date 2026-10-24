@@ -489,6 +489,13 @@ button, by its left edge ([ui-design.md](ui-design.md#menus-and-submenus)).
 `assertMenuRoles` reads an open menu's roles: one `role="menu"` around its
 items, every control in it an item, and no menu around it but a flyout's
 parent. The locator that finds the menu by its name checks the name.
+Surfaces arrive and leave with motion
+([ui-design.md](ui-design.md#surfaces-come-and-go)), and the suite runs
+with it on. `arrived(locator)` waits until a surface has grown in before
+its box is read; `assertMenuFrom` does. `live(selector)` leaves out the
+copies of closed surfaces on their way out, for a count taken the moment
+a menu closes. Role-based locators skip those copies by themselves (they
+are `aria-hidden`).
 
 The run is split into groups (`GROUPS` in `tests/e2e/select.mjs`, one per
 scenario file except `notes-pdf-share`, whose scenarios hand data along;
@@ -608,7 +615,8 @@ The scenarios live in `tests/e2e/scenarios/`:
   controls, the popover opening in place, live replies, resolve and
   reopen, the Comments window, Ctrl+Shift+M and Escape, edit and delete, a
   viewer's and a link visitor's side, `?thread=` and a folder share's
-  thread link. Also the field as a note's editor, the selection popup's
+  thread link, and a page's threads (and a PDF's margin cards) asked for
+  alongside its tree. Also the field as a note's editor, the selection popup's
   Comment and the PDF margin's cards ([comments.md](comments.md) "In the
   app"), and the cards beside the pen strip: a pen or the Text tool on a
   card, a handwriting selection let go by a press on one, its right-click,
@@ -709,9 +717,9 @@ The scenarios live in `tests/e2e/scenarios/`:
   - A browser with pens of its own is asked once, on the account's first
     pull, whether to keep them. *Use this browser's* pushes them, and
     another browser shows them after a reload.
-  - The question stays up while a page opens under it, the page's "Ready."
-    showing over it for its second, and while a link to a page that is
-    gone opens.
+  - The question stays up while a page opens under it, the "Ready." of a
+    page that kept it waiting long enough to say "Opening…" showing over
+    it for its second, and while a link to a page that is gone opens.
   - A later pull and a browser on the defaults never ask. Nor does a later
     load of a browser that only took the account's list or sent its own,
     by a push or with keepalive as its page was hidden.
@@ -854,8 +862,11 @@ The scenarios live in `tests/e2e/scenarios/`:
   step's note, asserts only that it paints), then the behaviours: page boxes
   from the manifest (a landscape page below the fold), fit-width sized to the
   text pages past a small cover (with the manifest and measured), the last-read page
-  after a reload, two large documents through the parsed-document cache, the
-  anonymous share view by ranges ([pdf_loading.md](pdf_loading.md)).
+  after a reload, two large documents through the parsed-document cache, a
+  paper's tab coming back drawn in every frame where it was left (from a
+  notes page, in a browser launched with its scrollbars shown, and between
+  two papers read at different zooms), the anonymous share view by ranges
+  ([pdf_loading.md](pdf_loading.md)).
   `npm run e2e -- --only "pdf load"`.
 - `files.mjs`: files dropped on a block row / the page body become file
   chips (a `dropFiles` helper builds a real DataTransfer; the paste step
@@ -879,7 +890,10 @@ The scenarios live in `tests/e2e/scenarios/`:
 - `share.mjs`: the share dialog, the anonymous share view (PDF, highlight,
   image through the share token, no editor), an edit share.
 - `settings.mjs`, `folders.mjs`, `trash.mjs`, `quickOpen.mjs`, `mcp.mjs`
-  and `cloudSignIn.mjs` are groups of their own. The headers of
+  and `cloudSignIn.mjs` are groups of their own. `quickOpen.mjs` holds the
+  tabs' steps too: a tab pressed selected in the press's own frame while
+  the page it leaves stays whole, and "Opening…" only for an open that
+  keeps the reader waiting. The headers of
   `folders.mjs`, `trash.mjs` and `cloudSignIn.mjs` name the doc each
   covers. `cloudSignIn.mjs`'s last step starts a Gamma under the `invited`
   policy against `fakeCloud.mjs`: a page shared by Gamma Cloud username,
@@ -1057,7 +1071,11 @@ save path, workspaces, auth or rendering of URLs should add a step here; the
   the server logs `client closed the stream after Ns`; if it still happens,
   a proxy in front of Gamma is closing idle responses sooner than that.
 - The docks use `react-resizable-panels` v2, pinned on purpose: v4 changed
-  the API incompatibly. Do not let a dependency refresh move it.
+  the API incompatibly. Do not let a dependency refresh move it. A folded
+  window leans on how v2 works (`renderSlotGroup` in App.jsx): a panel
+  registered again, its `order` changed, makes the group read its saved
+  layout, and a splitter moves the panels by its index among the
+  splitters, past any pinned at no size.
 - Timestamps are UTC ISO strings with `Z` (`page_now()`); keep the format.
   `db.format_stamp` writes a datetime in it and `db.parse_stamp` reads one
   back (None when unreadable — whether that means expired, due or now is

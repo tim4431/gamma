@@ -6,6 +6,7 @@
 import React, { useState, useSyncExternalStore } from "react";
 import { ContextMenu, MenuButton, MenuItem } from "../shared/ui/Menus";
 import { DownloadIcon, PauseIcon, PlayIcon, SparklesIcon } from "../shared/ui/Icons";
+import { IconSwap, MorphText } from "../shared/ui/MotionWidgets";
 import { fmtDate, t, tn } from "../shared/i18n/i18n.js";
 import { assetUrl } from "../shared/lib/utils";
 import { CLIENT_ID } from "../collaboration/usePageCollab.js";
@@ -39,7 +40,7 @@ export function RecordingCard({ block, editable }) {
       <div className="recordingCard live" data-guide="recording.card">
         <span className={"recDot" + (status === "recording" ? " live" : "")} aria-hidden="true" />
         <span className="recMeta">
-          {status === "paused" ? t("Paused") : status === "finishing" ? t("Saving…") : t("Recording…")} · {fmtClock(Number(secs) * 1000)}
+          <MorphText>{status === "paused" ? t("Paused") : status === "finishing" ? t("Saving…") : t("Recording…")}</MorphText> · {fmtClock(Number(secs) * 1000)}
         </span>
       </div>
     );
@@ -72,7 +73,7 @@ export function RecordingCard({ block, editable }) {
           onClick={(e) => { e.stopPropagation(); if (replay) playback.toggle(); else ctx?.play(block.id); }}
           title={playing ? t("Pause") : replay ? t("Play") : t("Play the recording: the notes and handwriting follow the audio")}
           aria-label={playing ? t("Pause") : t("Play recording")}>
-          {playing ? <PauseIcon size={14} /> : <PlayIcon size={14} />}
+          <IconSwap swap={playing} from={<PlayIcon size={14} />} to={<PauseIcon size={14} />} />
         </button>
       ) : null}
       <span className="recMeta">

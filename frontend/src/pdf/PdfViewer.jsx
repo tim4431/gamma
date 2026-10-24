@@ -10,18 +10,19 @@ import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useSta
 import pdfWorkerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import "pdfjs-dist/web/pdf_viewer.css";
 import { createPortal } from "react-dom";
-import { CheckIcon, ChevronRightIcon, CopyIcon, LanguagesIcon, LinkIcon, MessageSquareIcon, OutlineIcon } from "../shared/ui/Icons";
+import { CheckIcon, CopyIcon, LanguagesIcon, LinkIcon, MessageSquareIcon, OutlineIcon } from "../shared/ui/Icons";
 import { MarkupLayers, NO_MARKS } from "../markup/MarkupLayers";
 import { armedClasses, usePageTools } from "../markup/PageTools";
 import { ZoomWindow } from "../ink/ZoomWindow.jsx";
 import { revealDelta } from "../ink/zoomWindow.js";
-import { KEEP_MARGIN, RENDER_MARGIN, ZOOM_SETTLE_MS, cropPage, installPageRaster } from "./pageRaster.js";
+import { KEEP_MARGIN, RENDER_MARGIN, ZOOM_SETTLE_MS, cropPage, forgetPixels, installPageRaster, keepPixels, showsKept, takePixels } from "./pageRaster.js";
 import { installVerticalScrollSnap } from "./verticalScrollSnap.js";
 import { segmentPage, selectionParagraphs } from "./pdfTranslate";
 import { BACKFILL_DELAY_MS, chooseTransport, docIdOf, layoutFromManifest, rangeOpenOptions, typicalPageIndex } from "./pdfSource";
 import { normalizeChars } from "../shared/lib/textnorm";
 import { apiJson, copyText, withShare, withWorkspace } from "../shared/lib/utils";
 import { ChatMarkdown, useCopied } from "../shared/ui/Widgets";
+import { Chevron, Collapse, IconSwap } from "../shared/ui/MotionWidgets";
 import { menuPress } from "../shared/ui/press.js";
 import { lastPointer } from "../shared/lib/pointer.js";
 import { PdfCitationOverlay } from "./PdfCitationOverlay";
@@ -130,6 +131,23 @@ function pageTopAt(heights, idx, scale) {
   return y;
 }
 
+// The page boxes the scroller shows from `top` when its pages, of natural
+// `heights`, are laid out at `scale`. Worked out in the layout model above,
+// not from the boxes' rectangles, so it answers for the layout the reader
+// saw even in a commit that has already laid the boxes out at another zoom.
+function pagesInView(scroller, heights, scale, top) {
+  const out = [];
+  if (!scroller) return out;
+  const bottom = top + scroller.clientHeight;
+  for (let i = 0, y = 0; i < heights.length && y < bottom; i++) {
+    const h = (heights[i] || FALLBACK_H) * scale;
+    const wrap = y + h > top && scroller.querySelector(`.pdfPageWrap[data-page="${i + 1}"]`);
+    if (wrap) out.push(wrap);
+    y += h + PAGE_GAP;
+  }
+  return out;
+}
+
 // The bytes of the document most recently downloaded, so a reopen while the
 // IndexedDB copy below is still being written never re-downloads. One entry
 // only: raw bytes are the cheap half of a reopen (re-reading them from
@@ -176,6 +194,7 @@ function rememberDoc(url, entry) {
     const victim = DOC_CACHE.keys().next().value;
     const { doc } = DOC_CACHE.get(victim);
     DOC_CACHE.delete(victim);
+    forgetPixels(doc);
     // Its pages may still be mounted mid-swap — destroying now would spam
     // transport-destroyed rejections; after the commit has settled is fine.
     setTimeout(() => doc.destroy().catch(() => {}), 1000);
@@ -576,9 +595,10 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // shared/lib/viewerZoom.js (the notebook viewer shares it). What is left
   // here is each commit — the part that knows this viewer's layout.
   const zoomAnchorRef = useRef(null); // viewport point to zoom around; consumed by the anchor effect, null → viewport center
-  // Set when a new document mounts; consumed by the next scale change so the
-  // anchor effect can tell "fit-width settling for the swapped-in document"
-  // apart from a user zoom — the two need different anchoring (see below).
+  // Set when a new document mounts, to the scale its pages were first laid
+  // out at; consumed by the next scale change so the anchor effect can tell
+  // "fit-width settling for the swapped-in document" apart from a user zoom —
+  // the two need different anchoring (see below).
   const docSwapPendingRef = useRef(false);
   const zoomLayerRef = useRef(null);
   const viewerZoomRef = useRef(null);
@@ -812,15 +832,22 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // next gesture compounds on; sync() ignores it while a dispatch is in flight.
   useEffect(() => { viewerZoomRef.current?.sync(scale); }, [scale]);
   useEffect(() => { onEffectiveScale?.(scale); }, [scale, onEffectiveScale]);
-  useEffect(() => {
+  // The scale that fits the typical page of `widths` to the viewer's width,
+  // or null while the viewer has none.
+  const fitScale = (widths) => {
+    const naturalW = widths[typicalPageIndex(widths)];
+    const containerW = viewerRef.current?.clientWidth;
+    return naturalW > 0 && containerW > 0 ? Math.max(ZOOM_MIN, containerW / naturalW) : null;
+  };
+  // Before paint, so a document is never seen at the scale the one before
+  // it fitted.
+  useLayoutEffect(() => {
     if (!isFitWidth || !pdfDoc || !viewerRef.current) return;
     // The widths are in pageWidthsRef, measured before the doc was shown —
     // no async worker round trip per sidebar drag / rotation.
     const compute = () => {
-      const widths = pageWidthsRef.current;
-      const naturalW = widths[typicalPageIndex(widths)];
-      const containerW = viewerRef.current?.clientWidth;
-      if (naturalW > 0 && containerW > 0) setFitWidthScale(Math.max(ZOOM_MIN, containerW / naturalW));
+      const fit = fitScale(pageWidthsRef.current);
+      if (fit) setFitWidthScale(fit);
     };
     compute();
     const ro = new ResizeObserver(compute);
@@ -832,10 +859,18 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // purpose: it fires after the swap commit but BEFORE paint, so the host can
   // apply a restored scroll position and the user never sees the document at
   // the wrong offset.
+  // `scale`: what the boxes are laid out at, which a restored position is
+  // measured in.
   useLayoutEffect(() => {
     if (pdfDoc) {
       awaitingPaintRef.current = url;
-      onLoadState?.(url, { phase: "rendered" });
+      onLoadState?.(url, { phase: "rendered", scale });
+      // A page in view at the restored place shows what it showed when its
+      // document last left (pageRaster keepPixels): the reader has it
+      // already, and no "Rendering page…" rises. Without one the pill stays
+      // until a page paints, as for any document.
+      const v = viewerRef.current;
+      if (v && pagesInView(v, pageHeightsRef.current, scale, v.scrollTop).some(showsKept)) onPagePainted();
     }
   }, [pdfDoc]);
 
@@ -854,6 +889,17 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // lands on it (the host's "layout" phase), and when the real document
   // arrives it fills the same boxes — same keys, nothing remounts.
   const skeletonRef = useRef(null); // url whose skeleton is on screen, else null
+  // The document whose pages are on screen leaves them: what the pages the
+  // reader last saw show is kept for its return. Those pages are found in
+  // the layout the reader saw, at the scale the zoom anchor below last laid
+  // them out at and the scroll last seen, not in the DOM: a tab brings its
+  // zoom in the same commit as its url, so in that commit the leaving pages
+  // are already laid out at the next tab's zoom, under the old scroll. A
+  // skeleton on screen holds none of its.
+  const keepLeaving = () => {
+    if (!displayedDocRef.current || skeletonRef.current) return;
+    keepPixels(displayedDocRef.current, pagesInView(viewerRef.current, pageHeightsRef.current, prevScaleRef.current, lastScrollRef.current));
+  };
   const commitLayout = (heights, widths, exact) => {
     heightsExactRef.current = exact;
     pageHeightsRef.current = heights;
@@ -863,6 +909,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     setNumPages(heights.length);
   };
   const commitSkeleton = (url, { heights, widths }) => {
+    keepLeaving();
     skeletonRef.current = url;
     commitLayout(heights, widths, true);
     setDocSeq((s) => s + 1);
@@ -870,6 +917,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     setSkeletonUrl(url);
   };
   const commitDoc = (url, doc, heights, widths, exact) => {
+    if (displayedDocRef.current !== doc) keepLeaving();
     displayedDocRef.current = doc;
     docUrlRef.current = url;
     commitLayout(heights, widths, exact);
@@ -882,8 +930,26 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // Skeleton boxes are in the DOM, pre-paint: the host applies its pending
   // scroll restore now, before a byte of the PDF has been parsed.
   useLayoutEffect(() => {
-    if (skeletonUrl) onLoadState?.(skeletonUrl, { phase: "layout" });
+    if (skeletonUrl) onLoadState?.(skeletonUrl, { phase: "layout", scale });
   }, [skeletonUrl]);
+  // The viewer going (its page's tab left for one without a PDF, the
+  // library) keeps what its pages show, as a document swap does. A layout
+  // cleanup: React runs it before it takes the viewer's boxes out.
+  useLayoutEffect(() => keepLeaving, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // A document parsed on an earlier visit goes on screen in the commit
+  // that asks for it, before paint and at the scale it is read at, so the
+  // viewer's first frame already holds its pages, and what they showed
+  // when it left.
+  useLayoutEffect(() => {
+    const live = url ? DOC_CACHE.get(url) : null;
+    if (!live || docUrlRef.current === url) return;
+    onLoadState?.(url, { phase: "open" });
+    onLoadState?.(url, { phase: "cached" });
+    const fit = isFitWidth && fitScale(live.widths);
+    if (fit) setFitWidthScale(fit);
+    commitDoc(url, live.doc, live.heights, live.widths, true);
+  }, [url]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (!url) return;
@@ -894,6 +960,8 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     };
     (async () => {
       try {
+        // On screen already from the parsed-document cache (above).
+        if (docUrlRef.current === url && displayedDocRef.current === DOC_CACHE.get(url)?.doc) return;
         report({ phase: "open" });
         // A document parsed on an earlier visit is handed over as it is.
         const live = DOC_CACHE.get(url);
@@ -1018,7 +1086,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // is defined after the "rendered" one, so it sees the restored value. Also
   // flag the swap for the anchor effect below.
   useLayoutEffect(() => {
-    docSwapPendingRef.current = true;
+    docSwapPendingRef.current = scale;
     // A settle loop from a zoom on the PREVIOUS document may still be alive
     // (its [scale] cleanup never fires when the swap keeps the scale, e.g.
     // both tabs at the same numeric zoom) — the swap's scrollHeight change
@@ -1045,7 +1113,10 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // scale — the only one known pre-paint — i.e. the ratio was applied to the
   // raw scrollTop, so its exact inverse is a TOP-of-viewport re-map
   // (anchor point 0,0), not a centered one. Anchoring the viewport center
-  // here is what made tab switches land hundreds of px off.
+  // here is what made tab switches land hundreds of px off. A document laid
+  // out at its own scale in the commit that brought it (one parsed before,
+  // committed at its fit) was never seen at the old one, and its restored
+  // position is measured at the new one: nothing to re-place.
   //
   // Layout effect + the scroll-tracked refs, on purpose: the page boxes
   // resize in this same commit, and when zooming out that shrinks the scroll
@@ -1063,7 +1134,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     zoomAnchorRef.current = null;
     const docSwap = docSwapPendingRef.current;
     docSwapPendingRef.current = false;
-    if (prev === scale || !viewerRef.current) return;
+    if (prev === scale || docSwap === scale || !viewerRef.current) return;
     const v = viewerRef.current;
     const heights = pageHeightsRef.current;
     if (heights.length === 0) return;
@@ -1257,8 +1328,9 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   };
   // Resync outside of scroll events: document swaps (a restore to the same
   // scrollTop fires no scroll event), zoom changes, and height refinement on
-  // long documents can all move the page under the reference point.
-  useEffect(() => { syncCurPage(); }, [docSeq, scale, numPages, pageHeights]);
+  // long documents can all move the page under the reference point. Before
+  // paint, after the restore, so a document comes back with its own number.
+  useLayoutEffect(() => { syncCurPage(); }, [docSeq, scale, numPages, pageHeights]);
   const jumpToPage = (pn) => {
     if (!numPages || !Number.isFinite(pn)) return;
     const p = Math.max(1, Math.min(numPages, pn));
@@ -1778,9 +1850,16 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
         </div>
       ) : null}
       {/* overflow-anchor off: the browser's own scroll anchoring would fight
-          the zoom re-placement above with adjustments of its own. */}
+          the zoom re-placement above with adjustments of its own. The
+          scrollbar's room stays reserved while nothing scrolls, so the
+          pages are as wide with the scrollbar as without it: the fit-width
+          worked out in an empty viewer (a document back from DOC_CACHE is
+          committed before its pages are in) is the fit its pages keep. A
+          scrollbar arriving with them would fit them a second time, which
+          the zoom anchor re-places about the viewport's centre, and each
+          return to the tab would land a few px higher. */}
       <div ref={viewerRef} data-guide="pdf.viewer" className={"pdfViewer" + (areaCursor || areaMode ? " areaCursor" : "") + (areaMode ? " areaMode" : "") + (darkPage ? " pdfDark" : "") + (transPeek ? " transPeek" : "") + armedClasses(tools) + (ink.tool?.tool === "select" ? " inkSelect" : "")}
-        style={{ height: zoom ? `calc(100% - ${zoomHeight}px)` : "100%", overflowY: "auto", overflowX: "auto", overflowAnchor: "none" }}
+        style={{ height: zoom ? `calc(100% - ${zoomHeight}px)` : "100%", overflowY: "auto", overflowX: "auto", overflowAnchor: "none", scrollbarGutter: "stable" }}
         onScroll={(e) => {
           lastScrollRef.current = e.currentTarget.scrollTop;
           lastScrollLeftRef.current = e.currentTarget.scrollLeft;
@@ -1863,12 +1942,12 @@ function OutlineNode({ item, depth, onDest, onUrl }) {
       <div className="pdfOutlineRow">
         {kids.length ? (
           <button
-            className={"pdfOutlineChevron" + (open ? " open" : "")}
+            className="pdfOutlineChevron"
             onClick={() => setOpen((o) => !o)}
             aria-label={open ? t("Collapse section") : t("Expand section")}
             type="button"
           >
-            <ChevronRightIcon size={10} />
+            <Chevron open={open} dir="right" size={10} />
           </button>
         ) : (
           <span className="pdfOutlineChevron" />
@@ -1884,12 +1963,14 @@ function OutlineNode({ item, depth, onDest, onUrl }) {
           {item.title}
         </span>
       </div>
-      {open && kids.length ? (
-        <div className="pdfOutlineKids">
-          {kids.map((k, i) => (
-            <OutlineNode key={i} item={k} depth={depth + 1} onDest={onDest} onUrl={onUrl} />
-          ))}
-        </div>
+      {kids.length ? (
+        <Collapse open={open}>
+          <div className="pdfOutlineKids">
+            {kids.map((k, i) => (
+              <OutlineNode key={i} item={k} depth={depth + 1} onDest={onDest} onUrl={onUrl} />
+            ))}
+          </div>
+        </Collapse>
       ) : null}
     </div>
   );
@@ -2077,8 +2158,11 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
 
   // The page's canvases belong to the raster (pdf/pageRaster.js). This
   // component only tells it which page, at what zoom, and whether the page is
-  // near enough to the view to hold pixels at all.
-  useEffect(() => {
+  // near enough to the view to hold pixels at all. Installed before paint,
+  // so a page coming back starts, in its first frame, from what it showed
+  // when its document left the viewer (pageRaster keepPixels); its own
+  // first paint replaces that.
+  useLayoutEffect(() => {
     const raster = installPageRaster({
       wrap: wrapRef.current, base: baseRef.current, detail: detailRef.current,
       onPainted: (p) => { setPaintedPage(p); onPaintedRef.current?.(); },
@@ -2088,6 +2172,9 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
     rasterRef.current = raster;
     return () => raster.dispose();
   }, []);
+  useLayoutEffect(() => {
+    if (pdfDoc) rasterRef.current.prime(takePixels(pdfDoc, pageNumber));
+  }, [pdfDoc, pageNumber]);
 
   // The pdf.js page and its size, once this page first comes near the view.
   useEffect(() => {
@@ -2659,7 +2746,7 @@ function SelTranslation({ trans, langLabel, tooLong, onToggle, keep }) {
       <div className="selTransHead">
         <button type="button" className="selTransToggle" aria-expanded={trans.open}
           onMouseDown={keep} onClick={onToggle}>
-          <ChevronRightIcon size={14} className={`selTransChev ${trans.open ? "open" : ""}`} />
+          <Chevron open={trans.open} dir="right" size={14} />
           <span>{t("Translation")}</span>
           <span className="selTransLang">{langLabel}</span>
           {loading ? <span className="pillSpin" aria-hidden="true" /> : null}
@@ -2668,10 +2755,14 @@ function SelTranslation({ trans, langLabel, tooLong, onToggle, keep }) {
           <button type="button" className="ctlBtn selTransCopy" title={t("Copy translation")} aria-label={t("Copy translation")}
             onMouseDown={keep}
             onClick={async () => { if (await copyText(trans.text)) flashCopied(); }}>
-            {copied ? <CheckIcon size={16} /> : <CopyIcon size={16} />}
+            <IconSwap swap={copied} from={<CopyIcon size={16} />} to={<CheckIcon size={16} />} />
           </button>
         ) : null}
       </div>
+      {/* It opens at once: the popup it grows is placed again in every frame
+          its size changes (TipFrame), and growing over frames could move it
+          to the other side of the selection partway (docs/dev/ui-design.md,
+          "Menus and popups open in place"). Only its chevron turns. */}
       {trans.open ? (
         <div className={`selTransBody ${trans.status === "error" ? "error" : ""}`} aria-live="polite">
           {trans.status === "error"

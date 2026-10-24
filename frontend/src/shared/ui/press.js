@@ -16,6 +16,7 @@ export const HOLD_SLOP = 10;    // px a finger may wander and still be holding
 export const DOUBLE_MS = 400;   // between the two releases
 export const DOUBLE_SLOP = 30;  // px between them
 const ECHO_MS = 800;     // the browser's own event for a gesture already answered
+const LIFT_CLICK_MS = 300; // the click a lifted finger sends: a task of its own, a few frames on a busy page
 
 // What a menu opener reads from the mouse event, for a press that has none:
 // the point, the element, and the two calls it makes.
@@ -44,10 +45,13 @@ function watchHold(e) {
 }
 
 // The finger lifts over the item whose menu just opened, and its click would
-// do the item's own action (open the page). That one click goes nowhere.
+// do the item's own action (open the page). That one click goes nowhere. It
+// comes after the finger lifts, in a task of its own, so it is waited for a
+// moment (a menu just arriving keeps the page busy) and no longer: a click
+// that never came must not take the next tap.
 function swallowClick() {
   const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
-  const done = () => setTimeout(() => document.removeEventListener("click", stop, true));
+  const done = () => setTimeout(() => document.removeEventListener("click", stop, true), LIFT_CLICK_MS);
   document.addEventListener("click", stop, { capture: true, once: true });
   window.addEventListener("pointerup", done, { capture: true, once: true });
   window.addEventListener("pointercancel", done, { capture: true, once: true });

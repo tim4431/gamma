@@ -1,6 +1,7 @@
 // The open page's comment threads (docs/dev/comments.md "In the app"): one
-// instance in App. It fetches them when the page opens, again when the
-// page's room says someone wrote one (`refresh`, from the socket's
+// instance in App. It fetches them when the page opens (asked for alongside
+// the page's tree: `prefetch`), again when the page's room says someone
+// wrote one (`refresh`, from the socket's
 // `comments` message and its `hello` after a reconnect), and makes the
 // reader's own writes show at once, under ids minted here, before the
 // server answers (a refused write is put back as it was and said in the
@@ -24,6 +25,8 @@ import "./comments.css";
 const NO_THREADS = [];
 const sameList = (a, b) => !!a && a.length === b.length && a.every((x, i) => x === b[i]);
 const json = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+// Every thread of a page, open and resolved.
+const threadsOf = (page) => apiJson(`${API}/pages/${encodeURIComponent(page)}/comments?state=all`);
 
 // opts: pageId (the open page, "" for none), enabled (false on the home
 // library), me (the reader's username), onStatus(text), flush() (the page's
@@ -41,8 +44,12 @@ export function useComments({ pageId, enabled, me, onStatus, flush }) {
   // The writes on their way, by comment id: shown again over a refetch
   // that answered before the server had them.
   const pendingRef = useRef(new Map());
-  // `waiting`: the refresh() calls the next request answers.
-  const fetchRef = useRef({ busy: false, again: false, waiting: [] });
+  // `waiting`: the refresh() calls the next request answers. `ahead`: the
+  // request a page's opening asked for early ({page, request}), which the
+  // first fetch for that page takes instead of asking again.
+  const fetchRef = useRef({ busy: false, again: false, waiting: [], ahead: null });
+  // The one prefetch() started last, until the page it names opens.
+  const aheadRef = useRef(null);
 
   const set = useCallback((page, fn) => {
     setState((s) => (s.pageId === page ? { ...s, threads: fn(s.threads) } : s));
@@ -57,8 +64,10 @@ export function useComments({ pageId, enabled, me, onStatus, flush }) {
     f.waiting = [];
     const done = (out) => { for (const w of waiting) w(out); };
     if (!page) { done(null); return; }
+    const ahead = f.ahead?.page === page ? f.ahead.request : null;
+    f.ahead = null;
     f.busy = true;
-    apiJson(`${API}/pages/${encodeURIComponent(page)}/comments?state=all`).then((d) => {
+    (ahead || threadsOf(page)).then((d) => {
       if (pageRef.current !== page) { done(null); return; }
       let threads = d.threads || [];
       for (const p of pendingRef.current.values()) {
@@ -90,9 +99,23 @@ export function useComments({ pageId, enabled, me, onStatus, flush }) {
     fetchNow();
   }), [fetchNow]);
 
+  // A page about to open (App's openBlock): its threads are asked for now,
+  // in parallel with its tree, so they come with the page rather than a
+  // round trip after it. Only the fetch its opening makes takes the answer;
+  // one for a page that did not open is dropped at the next page change.
+  const prefetch = useCallback((page) => {
+    const request = threadsOf(page);
+    request.catch(() => {}); // the fetch that takes it says what failed
+    aheadRef.current = { page, request };
+  }, []);
+
   useEffect(() => {
     pendingRef.current.clear();
-    fetchRef.current.again = false;
+    const f = fetchRef.current;
+    f.again = false;
+    const ahead = aheadRef.current;
+    aheadRef.current = null;
+    f.ahead = live && ahead?.page === live ? ahead : null;
     setState({ pageId: live, threads: NO_THREADS, loaded: false, readable: true });
     if (live) refresh();
   }, [live, refresh]);
@@ -188,6 +211,6 @@ export function useComments({ pageId, enabled, me, onStatus, flush }) {
   const here = state.pageId === live;
   return {
     threads, threadsByBlock, countByBlock, loaded: state.loaded && here, readable: !here || state.readable,
-    refresh, add, edit, remove, resolve,
+    refresh, prefetch, add, edit, remove, resolve,
   };
 }

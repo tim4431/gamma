@@ -54,7 +54,8 @@ export function highlightTop(h, pageH) {
 
 // `highlights`: the page's (App's highlight objects, with `threadCount`);
 // `pageH`: the page box's height at the current zoom; `pageTop`: its top,
-// in px from the first page's top.
+// in px from the first page's top. The column stands while it has no card
+// too, so a page's first card grows in and its last one shrinks away.
 export function CommentMarginSlot({ pageNumber, highlights, pageH, pageTop }) {
   const margin = useContext(CommentMarginContext);
   if (!margin) return null;
@@ -63,7 +64,6 @@ export function CommentMarginSlot({ pageNumber, highlights, pageH, pageTop }) {
   for (const h of highlights) {
     if ((h.threadCount || 0) > 0 || h.id === composing) anchors.push({ id: h.id, top: highlightTop(h, pageH) });
   }
-  if (!anchors.length) return null;
   return (
     <LazyBoundary>
       <CommentMargin margin={margin} anchors={anchors} pageNumber={pageNumber} pageTop={pageTop} />

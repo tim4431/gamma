@@ -10,8 +10,10 @@ import { friendlyApiError } from "../library/libraryUtils";
 import { MenuSelect } from "../shared/ui/Menus";
 import { Section, Row, Toggle, SubDialog, Field, PasswordInput, UnitInput } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
+import { useSettingsRead } from "./settingsReads.js";
 import { FREE_TRANSLATE_ENGINE, TRANSLATE_LANGS, TRANSLATE_PARALLEL_MAX, translateModelFor } from "../app/prefs";
 import { ActivityIcon, GlobeIcon, HighlightIcon, KeyIcon, LanguagesIcon, RefreshIcon, SparklesIcon, TextCursorIcon, Trash2Icon } from "../shared/ui/Icons";
+import { MorphText } from "../shared/ui/MotionWidgets";
 import { LANGUAGES, T, t } from "../shared/i18n/i18n.js";
 
 // Per engine: the form's fields in order, with where to get them.
@@ -158,16 +160,17 @@ function TranslateModelSelect({ value }) {
   );
 }
 
+// The engines are the pane's read (settingsReads.js), kept while the
+// dialog is open.
 function TranslationServices({ value }) {
-  const [info, setInfo] = React.useState(null); // {engines, can_edit}
-  const [error, setError] = React.useState("");
+  const engines = useSettingsRead("/translate/engines");
+  const info = engines.data; // {engines, can_edit}
+  const setInfo = engines.set;
+  const [ownError, setError] = React.useState("");
+  const error = ownError || (!info && engines.error ? friendlyApiError({ message: engines.error }) : "");
   const [form, setForm] = React.useState(null); // {engine, label, fields}
   const [busy, setBusy] = React.useState(false);
   const [tests, setTests] = React.useState({}); // engine → {busy} | {ok, text} | {ok: false, error}
-
-  React.useEffect(() => {
-    apiJson(`${API}/translate/engines`).then(setInfo).catch((err) => setError(friendlyApiError(err)));
-  }, []);
 
   async function change(call) {
     setBusy(true);
@@ -271,7 +274,7 @@ function TranslationServices({ value }) {
             {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
             <div className="reportModalBtns">
               <button className="uiBtn" onClick={() => { setForm(null); setError(""); }}>{t("Cancel")}</button>
-              <button className="uiBtn primary" disabled={busy} onClick={save}>{busy ? t("Saving…") : t("Save")}</button>
+              <button className="uiBtn primary" disabled={busy} onClick={save}><MorphText>{busy ? t("Saving…") : t("Save")}</MorphText></button>
             </div>
           </div>
         </SubDialog>

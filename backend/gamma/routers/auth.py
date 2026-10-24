@@ -12,9 +12,13 @@ from pydantic import BaseModel
 from .. import cloud_auth, guests, ratelimit, version, workspaces
 from ..auth import TOKEN_REFUSAL, is_token, require_user, set_session_cookie
 from ..ratelimit import client_ip
-from ..db import connect_users_db, page_now
+from ..db import connect_users_db, get_profile, page_now
 
 router = APIRouter(prefix="/api", tags=["auth"])
+
+# The preference profile's entries /api/session carries: what the first
+# screen is drawn with (frontend main.jsx).
+SESSION_PROFILE_ENTRIES = ("theme", "language")
 
 
 class LoginRequest(BaseModel):
@@ -85,7 +89,12 @@ def get_session(request: Request):
     name, role, personal, members}]) and my default one — enough for the
     frontend to pick a workspace and paint the switcher without another
     round trip. ``build`` (version, commit, label, frozen) is what a
-    problem report names this server by; the login page gets it too."""
+    problem report names this server by; the login page gets it too.
+    ``profile`` holds the entries of the account's preference profile the
+    first screen is drawn with (``theme``, ``language``; those it has), so a
+    browser that has never seen the account paints in its theme and
+    language at once; a guest's preferences stay in its browser, so it gets
+    none."""
     user = request.state.user
     build = version.build_info()
     if not user:
@@ -98,6 +107,9 @@ def get_session(request: Request):
            "workspaces": workspaces.list_for_user(user_id), "build": build}
     if request.state.is_guest:
         out["guest_expires_at"] = guests.account_expires_at(user_id)  # when the account and its workspace go
+    else:
+        profile = get_profile(user_id)[0]
+        out["profile"] = {name: profile[name] for name in SESSION_PROFILE_ENTRIES if name in profile}
     return out
 
 

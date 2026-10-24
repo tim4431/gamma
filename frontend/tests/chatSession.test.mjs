@@ -101,3 +101,19 @@ test("two papers answer at the same time, each with its own Stop", async () => {
   assert.equal(session.getSnapshot().active.size, 0);
   assert.deepEqual(saved.filter((s) => s.key === "paper-a").at(-1).messages, answer("A says more"));
 });
+
+test("the dock's last shown copy of a conversation comes back, for the last twenty of them", () => {
+  const session = createChatSession(async () => ({}));
+  assert.equal(session.recall("home"), null);
+  session.remember("home", question, "Research");
+  assert.deepEqual(session.recall("home"), { messages: question, title: "Research" });
+  for (let i = 0; i < 20; i++) session.remember(`page-${i}`, answer(`reply ${i}`));
+  assert.equal(session.recall("home"), null, "the oldest of twenty-one is let go");
+  assert.equal(session.recall("page-0").messages.at(-1).text, "reply 0");
+  // Shown again, a conversation is the latest: the oldest other one goes.
+  session.remember("page-0", answer("reply 0, read again"));
+  session.remember("page-20", answer("reply 20"));
+  assert.equal(session.recall("page-1"), null);
+  assert.equal(session.recall("page-0").messages.at(-1).text, "reply 0, read again");
+  assert.equal(session.recall("page-0").title, "");
+});

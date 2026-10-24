@@ -370,4 +370,48 @@ export async function cloudSignInScenarios(env) {
       await cloud.stop();
     }
   });
+
+  // A linked account's profile syncs through Gamma Cloud, and reading it may
+  // first sync it, a round trip to the account server
+  // (docs/dev/settings.md): the first load's combined preferences read
+  // leaves it out and the app reads it on its own, so the open tabs, the
+  // recents and the reading positions never wait on Gamma Cloud.
+  await step("cloud sign-in: a linked account's first load reads its other preferences in one answer without the profile, and the profile on its own", async () => {
+    const cloud = new FakeCloud();
+    await cloud.start();
+    const lab = new Server({ env: { GAMMA_CLOUD_ISSUER: cloud.issuer, GAMMA_CLOUD_POLICY: "invited" } });
+    let ctx = null;
+    try {
+      await lab.start();
+      await lab.manage("create-user", "sync-owner", "sync-owner-pw");
+      const owner = await new Account(lab, "sync-owner", "sync-owner-pw").login();
+      cloud.person("sub-sync-owner", "sync-owner");
+      ctx = await owner.context(browser);
+      const page = await openPage(ctx);
+      const asked = [];
+      page.on("request", (r) => {
+        const url = new URL(r.url());
+        if (url.pathname.startsWith("/api/prefs") && r.method() === "GET") asked.push(url.pathname + url.search);
+      });
+      for (const load of ["the load the link lands on", "a reload"]) {
+        asked.length = 0;
+        const combined = page.waitForResponse((r) => r.url().includes("/api/prefs?keys="));
+        const alone = page.waitForResponse((r) => new URL(r.url()).pathname === "/api/prefs/profile" && r.request().method() === "GET");
+        if (load === "a reload") await page.reload();
+        else await page.goto(`${lab.base}/api/auth/cloud/start?link=1&next=${encodeURIComponent(`/?ws=${owner.ws}`)}`);
+        await page.locator(".folderNewBtn").first().waitFor({ timeout: 15000 });
+        const answer = await (await combined).json();
+        assertEq(Object.keys(answer.prefs).join(" "), "open-tabs recent-views read-pos ai-provider", `${load}: the combined read answers all but the profile`);
+        assert((await (await alone).json()).key === "profile", `${load}: the profile is read on its own`);
+        assertEq(asked.join(" "), "/api/prefs?keys=profile,open-tabs,recent-views,read-pos,ai-provider /api/prefs/profile",
+          `${load}: one combined read, then the profile once`);
+      }
+      assertEq((await owner.api("/api/auth/cloud/status")).identity?.subject, "sub-sync-owner", "the account is linked");
+      await assertNoProblems(page);
+    } finally {
+      if (ctx) await ctx.close();
+      await lab.stop();
+      await cloud.stop();
+    }
+  });
 }

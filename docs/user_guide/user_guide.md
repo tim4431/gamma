@@ -119,7 +119,8 @@ Notes are a nested outline. Highlights and free notes are the same kind of block
 - **"/" menu**: type `/` for headings, callouts, code, colors, a notebook sheet, a new page.
 - **Quotes and callouts** keep going over several lines: Enter carries the `>` (and a list inside it) to the next line, and **Ctrl+Shift+.** quotes or unquotes the selected lines. `/callout` on a quote's first line turns it into a callout; on a line inside one it starts a box inside it.
 - **Pasting keeps the structure**: pasted lines land at the level of the line you paste onto, in its quote or beside its list item, and a pasted list keeps its sub-items. The **Paste as** menu offers **Nested** (one level in) and **As copied**. The `/` line commands (headings, lists, to-dos, quote, callout) keep a line's quote and indentation.
-- **Formatting keys** are Obsidian's: Ctrl+B, Ctrl+I, Ctrl+K and so on. Rendered notes copy as rich text; math copies as LaTeX.
+- **Formatting bar**: select text in the note you are editing and a bar of tools opens above it: bold, italic, underline, strikethrough, code, equation, link, highlight and **Color**, which offers text colors and background tints. A pressed button shows what the selection already has; press it again to take that off. Escape puts the bar away. On a touch screen the same tools sit in the bar above the keyboard.
+- **Formatting keys** are Obsidian's: Ctrl+B, Ctrl+I, Ctrl+U, Ctrl+K and so on. Underline and colors are written as the HTML that Obsidian and GitHub show. Rendered notes copy as rich text; math copies as LaTeX.
 
 ## Outline and links between pages
 
@@ -425,7 +426,7 @@ Account menu → **Settings**, or **Ctrl+,**; the card with your name at the top
 | ← / → | At the text's edge: collapse / expand the note's children |
 | Ctrl+Shift+K | Delete the line (children stay) |
 | Backspace | On an empty note: delete it |
-| Ctrl+B / Ctrl+I / Ctrl+E / Ctrl+Shift+X / Ctrl+Shift+H | Bold / italic / code / strike / highlight |
+| Ctrl+B / Ctrl+I / Ctrl+U / Ctrl+E / Ctrl+Shift+X / Ctrl+Shift+H | Bold / italic / underline / code / strike / highlight |
 | Ctrl+K | Link the selection (URL from the clipboard) |
 | Ctrl+Shift+. | Quote or unquote the selected lines |
 | Ctrl+Shift+M | Comment on the note being edited |

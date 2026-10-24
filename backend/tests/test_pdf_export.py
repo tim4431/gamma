@@ -36,9 +36,11 @@ def _blank_png(width, height):
     return _encode_png(width, height, [bytes([200, 210, 220]) * width for _ in range(height)])
 
 
-def _page_drawing(content: bytes, **blank):
+def _page_drawing(content: bytes, shading=False, **blank):
     """``_blank_pdf(**blank)`` with ``content`` as its first page's content
-    stream, Flate-compressed as most files have it."""
+    stream, Flate-compressed as most files have it, and, with ``shading``,
+    an axial gradient in its resources: ``/Sh0`` for ``sh``, ``/P0`` as a
+    shading pattern."""
     import pymupdf
 
     doc = pymupdf.open(stream=_blank_pdf(**blank), filetype="pdf")
@@ -48,6 +50,15 @@ def _page_drawing(content: bytes, **blank):
         doc.update_object(stream, "<< >>")
         doc.update_stream(stream, content)
         doc.xref_set_key(page.xref, "Contents", f"{stream} 0 R")
+        if shading:
+            sh = doc.get_new_xref()
+            doc.update_object(sh, "<< /ShadingType 2 /ColorSpace /DeviceRGB /Coords [200 0 300 0]"
+                                  " /Function << /FunctionType 2 /Domain [0 1] /C0 [1 0 0] /C1 [0 0 1] /N 1 >>"
+                                  " /Extend [true true] >>")
+            pattern = doc.get_new_xref()
+            doc.update_object(pattern, f"<< /PatternType 2 /Shading {sh} 0 R >>")
+            doc.xref_set_key(page.xref, "Resources",
+                             f"<< /Shading << /Sh0 {sh} 0 R >> /Pattern << /P0 {pattern} 0 R >> >>")
         return doc.tobytes(deflate=True)
     finally:
         doc.close()
@@ -672,8 +683,316 @@ def test_highlight_note_blocks_and_their_popup_text():
             "a": [{"id": "b", "content": "two\nlines", "properties": {}}],
             "e": [{"id": "c", "content": "under an empty note", "properties": {}}]}
     blocks = highlight_note_blocks({"id": "h", "content": "own"}, kids)
-    assert blocks == [(0, "own"), (1, "first"), (2, "two\nlines"), (2, "under an empty note")]
+    assert blocks == [(0, "own", "h"), (1, "first", "a"), (2, "two\nlines", "b"), (2, "under an empty note", "c")]
     assert popup_text(blocks) == "own\n- first\n  - two\nlines\n  - under an empty note"
+
+
+def test_notes_on_the_page_keep_its_size_and_clear_of_the_highlight():
+    """notes_at=page puts a card in the page's own free space, next to its
+    highlight: the page keeps its size, the text is page content, and it
+    does not sit on the quote."""
+    from gamma.pdf_notes import render_notes
+
+    out, drawn = render_notes(_blank_pdf(pages=2), [
+        {"position": _position(x1=120, y1=300, x2=420, y2=320),
+         "color": "rgba(255, 226, 143, 0.65)", "note": "why this matters"},
+        {"position": _position(x1=120, y1=500, x2=420, y2=520), "note": ""},   # nothing to draw
+    ], notes_at="page")
+    assert drawn == 1
+    assert "why this matters" in _page_text(out)
+    for page in (1, 2):
+        assert _near(_box(out, "/MediaBox", page), (0, 0, PAGE_W, PAGE_H))
+    boxes = _text_boxes(out)
+    assert boxes
+    # Viewer y ∈ [300, 320] on a 792pt page → PDF y ∈ [472, 492]; the card
+    # must miss that band or the column it highlights.
+    for left, bottom, right, top in boxes:
+        assert 0 <= left and right <= PAGE_W
+        assert not (bottom < 492 and 472 < top and left < 420 and 120 < right)
+
+
+def test_notes_on_a_rotated_page():
+    """Display space follows /Rotate, so the card lands inside the visible
+    page (792 wide × 612 tall once the viewer applies the rotation)."""
+    from gamma.pdf_notes import render_notes
+
+    pos = {"pageNumber": 1, "width": PAGE_H, "height": PAGE_W,
+           "rects": [{"x1": 200, "y1": 100, "x2": 500, "y2": 130}]}
+    out, drawn = render_notes(_blank_pdf(rotate=90), [{"position": pos, "note": "rotated note"}], notes_at="page")
+    assert drawn == 1
+    assert "rotated note" in _page_text(out)
+    for left, bottom, right, top in _text_boxes(out):
+        assert 0 <= left and right <= PAGE_W and 0 <= bottom and top <= PAGE_H
+
+
+def test_bbox_log_is_in_points_on_a_user_unit_page():
+    """MuPDF scales its drawing log by /UserUnit as it does page.rect; the
+    view box page_frame finds, which page_space maps the log back to user
+    space against, is in points. bbox_log divides the unit out: a rectangle
+    drawn at user (50,60)-(150,90) on a /UserUnit 2 page logs where an
+    unscaled page's would, and marks the grid there, not twice as far out
+    (off the page, where nothing would have been marked)."""
+    from gamma.pdf_free_space import bbox_log, page_space
+    from gamma.pdf_notes import _frame, _to_display
+
+    doc = _open(_page_drawing(b"50 60 100 30 re f", user_unit=2))
+    try:
+        [(kind, box)] = bbox_log(doc, 0)
+    finally:
+        doc.close()
+    assert kind == "fill-path" and _near(box, (50, 702, 150, 732))
+    crop = (0, 0, PAGE_W, PAGE_H)
+    (disp_w, disp_h), matrix = _frame(crop, 0)
+    space = page_space([(kind, box)], crop, _to_display(matrix), disp_w, disp_h)
+    assert space.occupied(50, 702, 150, 732) > 0
+    assert space.occupied(400, 100, 500, 200) == 0
+
+
+def test_a_gradient_filled_box_counts_as_occupied():
+    """A shading has no extent of its own: ``sh`` paints the clip in force,
+    and a shading-pattern fill clips to its path first, so MuPDF's own bbox
+    log gives a gradient-filled box the whole plane, which the occupancy
+    read skips as a background fill. bbox_log's device bounds the shading
+    by its clip instead: the box logs its own bounds (an unclipped ``sh``
+    still the plane), and a card anchored on it moves off it, exactly where
+    it goes for the same box filled flat, instead of sitting on the
+    gradient."""
+    from gamma.pdf_free_space import bbox_log
+    from gamma.pdf_notes import render_notes
+
+    dot = b"0 0 0 rg 20 20 5 5 re f "  # something far away: a page with an empty log falls back to the margins
+    pages = {
+        "flat": _page_drawing(dot + b"0.8 0.8 0.8 rg 200 200 100 100 re f"),
+        "pattern": _page_drawing(dot + b"/Pattern cs /P0 scn 200 200 100 100 re f", shading=True),
+        "clipped": _page_drawing(dot + b"q 200 200 100 100 re W n /Sh0 sh Q", shading=True),
+        "unclipped": _page_drawing(dot + b"/Sh0 sh", shading=True),
+        "none": _page_drawing(dot),
+    }
+
+    def log(name):
+        doc = _open(pages[name])
+        try:
+            return bbox_log(doc, 0)[1:]  # after the dot's entry
+        finally:
+            doc.close()
+
+    box = (200, 492, 300, 592)  # user (200,200)-(300,300), top-left origin
+    for name, kind in (("flat", "fill-path"), ("pattern", "fill-shade"), ("clipped", "fill-shade")):
+        [(logged, bounds)] = log(name)
+        assert logged == kind and _near(bounds, box), name
+    [(kind, plane)] = log("unclipped")
+    assert kind == "fill-shade" and plane[0] < -1e9 and plane[2] > 1e9
+    assert log("none") == []
+
+    # The highlight sits on the box (a note on a figure's legend).
+    pos = _position(x1=210, y1=500, x2=290, y2=520)
+
+    def text_boxes(name):
+        out, drawn = render_notes(pages[name], [{"position": pos, "note": "the legend's note"}], notes_at="page")
+        assert drawn == 1
+        return [tuple(round(v, 2) for v in b) for b in _text_boxes(out)]
+
+    def on_the_box(boxes):
+        return any(left < 300 and 200 < right and bottom < 300 and 200 < top
+                   for left, bottom, right, top in boxes)
+
+    assert on_the_box(text_boxes("none")), "with nothing drawn there, the box is where the card goes"
+    beside = text_boxes("flat")
+    assert beside and not on_the_box(beside)
+    assert text_boxes("pattern") == beside and text_boxes("clipped") == beside
+
+
+def _comment(author, body, day="2026-10-20", deleted=False):
+    return {"author": author, "created_at": f"{day}T09:15:00.000000Z", "body": "" if deleted else body,
+            "deleted": deleted}
+
+
+def test_comment_threads_are_cards_beside_the_page():
+    """Each thread is a card in the column, drawn as the viewer's margin
+    draws it: each comment's author, its day and its text, a deleted one
+    as such, the replies stepped in to the first comment's text. Threads
+    alone widen the page."""
+    from gamma.pdf_notes import render_notes
+
+    out, drawn = render_notes(_blank_pdf(), [{"position": _position(y1=300, y2=320), "threads": [
+        [_comment("alice", "Is this **right**?"), _comment("bob", "", "2026-10-21", deleted=True)],
+        [_comment("carol", "a second thread", "2026-10-22")],
+    ]}])
+    assert drawn == 2
+    assert _near(_box(out), (0, 0, PAGE_W + _extra(), PAGE_H))
+    text = _page_text(out)
+    for part in ("alice", "Is this right?", "bob", "Comment deleted", "carol", "a second thread",
+                 "2026-10-20", "2026-10-22"):
+        assert part in text, part
+    assert "**" not in text
+    words = _shown_words(out)
+    assert words["alice"][0] > PAGE_W and abs(words["alice"][1] - 300) < 16
+    assert words["alice"][1] < words["bob"][1] < words["carol"][1]
+    assert words["bob"][0] > words["alice"][0] + 10 and abs(words["carol"][0] - words["alice"][0]) < 0.5
+
+
+def test_notes_on_the_page_and_threads_beside_it():
+    """Notes go where notes_at says; threads always go beside the page."""
+    from gamma.pdf_notes import render_notes
+
+    out, drawn = render_notes(_blank_pdf(), [{"position": _position(y1=300, y2=320),
+                                              "blocks": [(0, "onpage note")],
+                                              "threads": [[_comment("alice", "besidethread")]]}],
+                              notes_at="page")
+    assert drawn == 2
+    words = _shown_words(out)
+    assert words["onpage"][0] < PAGE_W < words["besidethread"][0]
+
+
+def test_a_notes_threads_go_under_it_beside_the_page():
+    """Notes and comments both beside the page: a thread on a note is drawn
+    under that note in its card, a little past its text, as replies to it;
+    a reply in the thread steps in again, so the next thread's start stands
+    out."""
+    from gamma.pdf_notes import render_notes
+
+    out, drawn = render_notes(_blank_pdf(), [{"position": _position(y1=300, y2=320), "blocks": [
+        (0, "ownnote", []),
+        (1, "nestednote", [[_comment("alice", "replyone"), _comment("dave", "answerone")],
+                           [_comment("bob", "replytwo")]]),
+        (1, "laternote"),
+    ]}])
+    assert drawn == 1
+    words = _shown_words(out)
+    assert words["ownnote"][1] < words["nestednote"][1] < words["replyone"][1] < words["answerone"][1] \
+        < words["replytwo"][1] < words["laternote"][1]
+    assert words["alice"][0] > words["nestednote"][0]
+    assert words["dave"][0] > words["alice"][0] and abs(words["bob"][0] - words["alice"][0]) < 0.5
+
+
+def test_a_notes_threads_apart_from_it_quote_it():
+    """With the notes on the page, a note's threads are cards beside it,
+    each quoting its note's first line; so are the threads on notes no card
+    shows (here the Notes switch off), cut with an ellipsis."""
+    from gamma.pdf_notes import render_notes
+
+    blocks = [(0, "ownnote", []), (1, "nestednote", [[_comment("alice", "replyone")]])]
+    out, drawn = render_notes(_blank_pdf(), [{"position": _position(y1=300, y2=320), "blocks": blocks}],
+                              notes_at="page")
+    assert drawn == 2
+    assert _page_text(out).count("nestednote") == 2
+    words = _shown_words(out)
+    assert words["replyone"][0] > PAGE_W
+
+    out, drawn = render_notes(_blank_pdf(), [{"position": _position(y1=300, y2=320), "blocks": [],
+                                              "note_threads": [("quotedline\nmore of it", [_comment("bob", "answer")])]}])
+    assert drawn == 1
+    text = _page_text(out)
+    assert "quotedline" in text and "\u2026" in text and "more of it" not in text and "answer" in text
+
+
+def test_a_highlights_threads_go_under_its_own_note():
+    """A highlight's own text is its note: its threads go under that note in
+    the card beside the page, and are a card of their own, unquoted, with
+    the notes on the page."""
+    from gamma.pdf_notes import render_notes
+
+    blocks = [(0, "ownnote", [[_comment("carol", "onthepassage")]]), (1, "nestednote", [])]
+    out, drawn = render_notes(_blank_pdf(), [{"position": _position(y1=300, y2=320), "blocks": blocks}])
+    assert drawn == 1
+    words = _shown_words(out)
+    assert words["ownnote"][1] < words["onthepassage"][1] < words["nestednote"][1]
+
+    out, drawn = render_notes(_blank_pdf(), [{"position": _position(y1=300, y2=320), "blocks": blocks}],
+                              notes_at="page")
+    assert drawn == 2
+    assert _page_text(out).count("ownnote") == 1
+    assert _shown_words(out)["onthepassage"][0] > PAGE_W
+
+
+def test_render_notes_refuses_an_unknown_place():
+    from gamma.pdf_notes import render_notes
+
+    with pytest.raises(ValueError):
+        render_notes(_blank_pdf(), [{"position": _position(), "note": "x"}], notes_at="margin")
+
+
+def test_person_colours_match_the_app():
+    """A comment's avatar takes its author's colour as the app picks it
+    (frontend/tests/personColor.test.mjs pins the same names), from the
+    same eight colours (--peer-0 … --peer-7 in app.css)."""
+    import re
+    from pathlib import Path
+
+    from gamma.pdf_cards import PEOPLE, person_color
+
+    css = (Path(__file__).resolve().parents[2] / "frontend/src/shared/styles/app.css").read_text(encoding="utf-8")
+    assert tuple(re.findall(r"--peer-\d: (#[0-9a-f]{6})", css)) == PEOPLE
+    rgb = {value: tuple(int(value[i:i + 2], 16) / 255 for i in (1, 3, 5)) for value in PEOPLE}
+    for name, index in (("tim-2", 5), ("Tim", 0), ("alice", 0), ("Anonymous", 5), ("张三", 1)):
+        assert person_color(name) == rgb[PEOPLE[index]], name
+
+
+def _comment_on(guest, page_id, block_id, body):
+    r = guest.post(f"/api/pages/{page_id}/comments", json={"block_id": block_id, "body": body})
+    assert r.status_code == 201, r.text
+    return r.json()["thread"]["id"]
+
+
+def test_export_pdf_comments_switch(guest):
+    """comments=1 prints the open threads on the highlights, with the notes
+    off as well; a resolved thread stays out, as it leaves the margin."""
+    up = guest.post("/api/uploads", files={"file": ("p.pdf", _blank_pdf(), "application/pdf")})
+    page = make_page(guest, "Commented",
+                     properties={"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"]})
+    r = guest.put(f"/api/blocks/{page['id']}/children", json={"blocks": [
+        {"id": "chl1", "content": "my own note", "properties": {
+            "quote": "quoted", "pdf_position": _position(y1=300, y2=320)}, "children": []},
+    ]})
+    assert r.status_code == 200, r.text
+    _comment_on(guest, page["id"], "chl1", "an open question")
+    done = _comment_on(guest, page["id"], "chl1", "a settled point")
+    assert guest.post(f"/api/comments/{done}/resolve", json={"resolved": True}).status_code == 200
+
+    r = guest.get(f"/api/pages/{page['id']}/export-pdf?highlights=0&notes=0&comments=1")
+    assert r.status_code == 200, r.text
+    assert "-comments.pdf" in r.headers["content-disposition"]
+    assert r.headers["x-notes-rendered"] == "1"
+    text = _page_text(r.content)
+    assert "an open question" in text and "a settled point" not in text and "my own note" not in text
+
+    both = guest.get(f"/api/pages/{page['id']}/export-pdf?notes=1&comments=1&notes_at=page")
+    assert both.status_code == 200, both.text
+    assert both.headers["x-notes-rendered"] == "2"
+    words = _shown_words(both.content)
+    assert words["my"][0] < PAGE_W < words["an"][0]
+
+    # Beside the page the highlight's thread goes under its own note: one card.
+    together = guest.get(f"/api/pages/{page['id']}/export-pdf?notes=1&comments=1")
+    assert together.headers["x-notes-rendered"] == "1"
+    words = _shown_words(together.content)
+    assert PAGE_W < words["my"][0] and words["my"][1] < words["an"][1]
+
+    assert guest.get(f"/api/pages/{page['id']}/export-pdf?notes=1&notes_at=margin").status_code == 400
+    assert guest.get(f"/api/pages/{page['id']}/export?mode=annotated-pdf&notes_at=x").status_code == 400
+
+
+def test_export_pdf_prints_the_threads_on_a_highlights_notes(guest):
+    """A thread on a note under a highlight: under the note when both are
+    beside the page, a card quoting the note when the notes are on the page
+    or off."""
+    up = guest.post("/api/uploads", files={"file": ("p.pdf", _blank_pdf(), "application/pdf")})
+    page = make_page(guest, "Replied",
+                     properties={"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"]})
+    r = guest.put(f"/api/blocks/{page['id']}/children", json={"blocks": [
+        {"id": "rhl1", "content": "my own note", "properties": {
+            "quote": "quoted", "pdf_position": _position(y1=300, y2=320)}, "children": [
+                {"id": "rnote1", "content": "nestednote text", "properties": {}, "children": []}]},
+    ]})
+    assert r.status_code == 200, r.text
+    _comment_on(guest, page["id"], "rnote1", "noted reply")
+    for query, cards, quoted in (("notes=1&comments=1", "1", 1), ("notes=0&comments=1", "1", 1),
+                                 ("notes=1&comments=1&notes_at=page", "2", 2)):
+        r = guest.get(f"/api/pages/{page['id']}/export-pdf?{query}")
+        assert r.status_code == 200, r.text
+        assert r.headers["x-notes-rendered"] == cards, query
+        text = _page_text(r.content)
+        assert "noted reply" in text and text.count("nestednote text") == quoted, query
 
 
 def test_export_pdf_notes_mode(guest):
@@ -836,7 +1155,7 @@ def test_render_notes_falls_back_when_math_renderer_is_missing(monkeypatch):
     from gamma import pdf_notes, vector_text
 
     vector_text.math.cache_clear()
-    monkeypatch.setattr(pdf_notes.vector_text, "math", lambda *a, **k: None)
+    monkeypatch.setattr(vector_text, "math", lambda *a, **k: None)
     out, drawn = pdf_notes.render_notes(_blank_pdf(), [{
         "position": _position(),
         "note": "ratio $\\frac{\\alpha}{\\beta}$ here",

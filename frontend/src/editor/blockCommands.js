@@ -5,9 +5,10 @@
 // entries (Ctrl+Shift+P) until the account binds them in Settings →
 // Keyboard. BlockRow's keydown dispatches this catalog
 // (shared/lib/hotkeys.js) after its popups and before the outliner's
-// Enter/Tab/Backspace; the command palette, the Settings → Keyboard pane and
-// the touch editing bar (editor/EditBar.jsx) read the same list, so a key, a
-// menu entry, a bar button and the cheat sheet can never disagree.
+// Enter/Tab/Backspace; the command palette, the Settings → Keyboard pane,
+// the touch editing bar (editor/EditBar.jsx) and the selection toolbar
+// (editor/SelectionToolbar.jsx) read the same list, so a key, a menu entry,
+// a bar button and the cheat sheet can never disagree.
 //
 // ctx: { block, tree (the page's blocks), view (the viewer's editing /
 // folding state, blockModel's `view`), folded (whether this block's
@@ -16,14 +17,20 @@
 // selectionStart/End, setSelectionRange, view — or null when run from the
 // palette on the focused row), readOnly }. A command that must
 // have an editor says so with `needsEditor`; `edits` ones are skipped on a
-// read-only page. `run` returning false declines the key.
+// read-only page. `run` returning false declines the key. A formatting
+// command's `state(ctx)` is what it is to the editor's selection — "on"
+// (the selection carries its mark: a toolbar button shows pressed), "off",
+// or "blocked" (it does nothing there: greyed out); it never stops the key,
+// which a blocked mark swallows (markCommands.js).
 import { t } from "../shared/i18n/i18n.js";
 import { getParentInfo } from "../shared/model/blockModel.js";
 import { fenceInnerAt } from "./fences.js";
 import { mathTabJump } from "./latexCompletion.js";
 import { toggleQuotePlan } from "./mdLines.js";
 import { toggleTodoLine } from "./mdMarks.js";
-import { runInsertLink, runInsertMath, runInsertSlash, runToggleMark } from "./markCommands.js";
+import {
+  linkStateAt, markStateAt, mathStateAt, runInsertLink, runInsertMath, runInsertSlash, runToggleMark,
+} from "./markCommands.js";
 
 export const GROUP_NOTES = t("Notes");
 export const GROUP_FORMAT = t("Formatting");
@@ -61,8 +68,12 @@ function slotJump(editor) {
   return mathTabJump(editor.value, editor.selectionEnd, 1);
 }
 
+// A state reader over the editor's text and selection (markCommands.js `…StateAt`).
+const selectionState = (stateAt) => (c) => stateAt(c.editor.value, c.editor.selectionStart, c.editor.selectionEnd);
+
 const mark = (id, label, keys, marker) => ({
   id, label, group: GROUP_FORMAT, keys, edits: true, needsEditor: true, palette: false,
+  state: selectionState((doc, from, to) => markStateAt(doc, from, to, marker)),
   run: (c) => runToggleMark(c.editor.view, marker),
 });
 
@@ -177,15 +188,19 @@ export const BLOCK_COMMANDS = [
   },
   mark("block.bold", t("Bold"), "Mod-b", "**"),
   mark("block.italic", t("Italic"), "Mod-i", "*"),
+  // Markdown has no underline: <u>…</u>, the tag Obsidian and GitHub draw.
+  mark("block.underline", t("Underline"), "Mod-u", "<u>"),
   mark("block.code", t("Inline code"), "Mod-e", "`"),
   mark("block.strike", t("Strikethrough"), "Mod-Shift-x", "~~"),
   mark("block.highlight", t("Highlight text"), "Mod-Shift-h", "=="),
   {
     id: "block.link", label: t("Link"), group: GROUP_FORMAT, keys: "Mod-k", edits: true, needsEditor: true, palette: false,
+    state: selectionState(linkStateAt),
     run: (c) => runInsertLink(c.editor.view),
   },
   {
     id: "block.math", label: t("Inline equation"), group: GROUP_FORMAT, keys: null, edits: true, needsEditor: true, palette: false,
+    state: selectionState(mathStateAt),
     run: (c) => runInsertMath(c.editor.view),
   },
   {

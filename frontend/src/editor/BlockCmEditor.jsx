@@ -19,7 +19,7 @@ import { latexErrors, visibleLatexErrors } from "./latexLint";
 import { calloutType } from "./callouts";
 import { highlightCode, makeCopyButton } from "./codeHighlight";
 import { fenceInnerAt, scanFences } from "./fences.js";
-import { scanColorSpans, scanImageSyntax, scanMarks } from "./mdMarks";
+import { scanImageSyntax, scanMarks } from "./mdMarks";
 import { parseTable, protectedSpans, scanImages, scanMathSpans, scanTables } from "./mdScan";
 import { NO_MENTIONS, mentionChip, mentionChipClass, proseMentions } from "./mentions.js";
 import { assetUrl } from "../shared/lib/utils";
@@ -489,30 +489,18 @@ function buildInlineDecos(state, ctx) {
     }
   }
 
-  // Inline marks (**bold** etc., table in mdMarks.js — shared with the
-  // formatting hotkeys): delimiters hidden, inner text gets the mark class.
-  for (const { marker, cls, from, to } of scanMarks(text, claimed)) {
-    if (touched(from, to)) continue;
-    const dlen = marker.length;
-    ranges.push(Decoration.replace({}).range(from, from + dlen));
-    ranges.push(Decoration.mark({ class: cls }).range(from + dlen, to - dlen));
-    ranges.push(Decoration.replace({}).range(to - dlen, to));
-  }
-
-  // Colored runs (`<span style="color:…">` / background tints, mdMarks
-  // scanColorSpans — the Obsidian-compatible inline HTML the "/" color
-  // commands write): tags hidden, the text shown in its color; touched, the
-  // raw markup comes back like any other mark.
-  for (const s of scanColorSpans(text)) {
-    if (overlapsClaimed(s.from, s.to)) continue;
-    claimed.push([s.from, s.to]);
-    // An empty span (just inserted by the "/" command) stays raw too — there
-    // is nothing to color, and a zero-length mark decoration throws.
-    if (touched(s.from, s.to) || s.to - s.closeLen <= s.from + s.openLen) continue;
-    ranges.push(Decoration.replace({}).range(s.from, s.from + s.openLen));
-    ranges.push(Decoration.mark({ class: "cmColorSpan", attributes: { style: s.style } })
-      .range(s.from + s.openLen, s.to - s.closeLen));
-    ranges.push(Decoration.replace({}).range(s.to - s.closeLen, s.to));
+  // Inline marks (table in mdMarks.js, shared with the formatting commands:
+  // **bold** and the rest, <u>underline</u> and the colored runs the color
+  // row and the "/" colors write): delimiters and tags hidden, the inner text
+  // in the mark's class, a colored run in its own style. An empty run (the
+  // "/" command's fresh span) stays raw: there is nothing to style, and a
+  // zero-length mark decoration throws.
+  for (const s of scanMarks(text, claimed)) {
+    const inner = s.from + s.openLen, outer = s.to - s.closeLen;
+    if (touched(s.from, s.to) || outer <= inner) continue;
+    ranges.push(Decoration.replace({}).range(s.from, inner));
+    ranges.push(Decoration.mark({ class: s.cls, ...(s.style ? { attributes: { style: s.style } } : {}) }).range(inner, outer));
+    ranges.push(Decoration.replace({}).range(outer, s.to));
   }
 
   // [text](url): show just the text, link-styled.
@@ -915,7 +903,9 @@ function keepUnderPointer(view, pos, y) {
 
 // The formatting a system keyboard or menu asks for (`beforeinput`), as the
 // block commands that do it.
-const FORMAT_INPUTS = { formatBold: "block.bold", formatItalic: "block.italic", formatStrikeThrough: "block.strike" };
+const FORMAT_INPUTS = {
+  formatBold: "block.bold", formatItalic: "block.italic", formatUnderline: "block.underline", formatStrikeThrough: "block.strike",
+};
 
 // Prose gets the system's typing aids, which CodeMirror switches off:
 // autocorrect, a capital to start a sentence, spelling, suggestions. In a
@@ -1010,9 +1000,9 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
           // swipes) arrive as these input types, not as Ctrl+Z: an editor
           // given `onUndo` (a note row's) hands them to the page's block
           // history, never the browser's contenteditable undo, which would
-          // edit CodeMirror's DOM behind its back. Its B and I keys, and the
-          // Format menu over a selection, arrive as format* input types: they
-          // run the commands Ctrl+B / I / Shift+X run, in every editor.
+          // edit CodeMirror's DOM behind its back. Its B, I and U keys, and
+          // the Format menu over a selection, arrive as format* input types:
+          // they run the commands Ctrl+B / I / U / Shift+X run, in every editor.
           beforeinput: (e, view) => {
             const format = FORMAT_INPUTS[e.inputType];
             if (format) {

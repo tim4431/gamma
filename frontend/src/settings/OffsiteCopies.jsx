@@ -15,7 +15,9 @@ import { API, apiJson } from "../shared/lib/utils";
 import { MenuSelect } from "../shared/ui/Menus";
 import { DialogButtons, Field, PasswordInput, Row, Section, SubDialog, Toggle, UnitInput } from "./SettingsKit";
 import { fmtWhen } from "./SettingsBackups";
+import { useSettingsRead } from "./settingsReads.js";
 import { CheckIcon, CloudIcon, CloudUploadIcon, RefreshIcon, XIcon } from "../shared/ui/Icons";
+import { MorphText } from "../shared/ui/MotionWidgets";
 import { t, tn } from "../shared/i18n/i18n.js";
 
 const ENDPOINT = `${API}/admin/offsite`;
@@ -157,38 +159,30 @@ function OffsiteDialog({ settings, onClose, onSaved }) {
         {error ? <p className="settingsPaneHint aiKeysError" role="alert">{error}</p> : null}
         <DialogButtons>
           <button type="button" className="uiBtn" onClick={onClose}>{t("Cancel")}</button>
-          <button type="submit" className="uiBtn primary" disabled={busy}>{busy ? t("Saving…") : t("Save")}</button>
+          <button type="submit" className="uiBtn primary" disabled={busy}><MorphText>{busy ? t("Saving…") : t("Save")}</MorphText></button>
         </DialogButtons>
       </form>
     </SubDialog>
   );
 }
 
+// The settings and the status are the Backups pane's read (settingsReads.js).
+// The status moves on by itself: it is read again every few seconds while
+// a round runs, else twice a minute.
 export function OffsiteCopies({ setStatus }) {
-  const [saved, setSaved] = React.useState(null); // GET's {settings, from_env}
-  const [round, setRound] = React.useState(null); // GET's status
+  const [running, setRunning] = React.useState(false);
+  const offsite = useSettingsRead("/admin/offsite", { poll: running ? 3000 : 30000 });
+  const saved = offsite.data; // GET's {settings, from_env, status}
+  const round = saved?.status || null;
+  if (!!round?.running !== running) setRunning(!!round?.running);
   const [editing, setEditing] = React.useState(false);
   const [test, setTest] = React.useState(null);   // the environment's Test
-  const [error, setError] = React.useState("");
+  const [ownError, setError] = React.useState("");
+  const error = ownError || (!saved ? offsite.error : "");
   const [switching, setSwitching] = React.useState(false);
   const [starting, setStarting] = React.useState(false);
-  const take = (value) => { setSaved(value); setRound(value.status); };
-  React.useEffect(() => {
-    let active = true;
-    apiJson(ENDPOINT).then((value) => { if (active) take(value); })
-      .catch((err) => { if (active) setError(err.message); });
-    return () => { active = false; };
-  }, []);
-  // The status moves on by itself: read it every few seconds while a round
-  // runs, else twice a minute.
-  const running = !!round?.running;
-  React.useEffect(() => {
-    if (!saved) return undefined;
-    const timer = setInterval(() => {
-      apiJson(ENDPOINT).then((value) => setRound(value.status)).catch(() => {});
-    }, running ? 3000 : 30000);
-    return () => clearInterval(timer);
-  }, [!!saved, running]); // eslint-disable-line react-hooks/exhaustive-deps
+  const take = offsite.set;
+  const setRound = (next) => offsite.set((value) => ({ ...value, status: next(value?.status) }));
 
   const settings = saved?.settings;
   const managed = !!saved?.from_env;
@@ -225,7 +219,7 @@ export function OffsiteCopies({ setStatus }) {
     : settings.bucket ? summary(settings) : t("AWS S3, Cloudflare R2, MinIO or another S3-compatible store");
   return <>
     <Section title={t("Off-site copies")}>
-      {!saved ? errorLine || <p className="setNotice">{t("Loading…")}</p> : <>
+      {!saved ? errorLine || <p className="setNotice loadingHint">{t("Loading…")}</p> : <>
         <Toggle icon={CloudUploadIcon} label={t("Copy to a bucket")} checked={settings.enabled} disabled={managed || switching} onChange={turn}
           hint={t("Databases and uploaded files, every so often; Gamma keeps running on its own disk")}
           title={t("A backup target only: Gamma keeps reading and writing its local files and copies them to an S3-compatible bucket each round.")} />
@@ -233,12 +227,12 @@ export function OffsiteCopies({ setStatus }) {
         <Row icon={CloudIcon} label={settings.bucket || t("No bucket yet")} hint={summaryHint}
           title={managed ? summary(settings) : undefined}>
           {managed ? <button className="uiBtn sm" disabled={!!test?.busy} onClick={testEnvironment}>{t("Test")}</button>
-            : <button className="uiBtn sm" onClick={() => { setError(""); setEditing(true); }}>{settings.bucket ? t("Edit…") : t("Set up…")}</button>}
+            : <button className="uiBtn sm" onClick={() => { setError(""); setEditing(true); }}><MorphText>{settings.bucket ? t("Edit…") : t("Set up…")}</MorphText></button>}
         </Row>
         {round?.enabled || round?.last_round_at ? <>
           <Row icon={RefreshIcon} label={t("Status")} hint={roundHint(round)}>
             <button className="uiBtn sm" disabled={running || starting || !round.enabled} onClick={copyNow}>
-              {running ? t("Copying…") : t("Copy now")}
+              <MorphText>{running ? t("Copying…") : t("Copy now")}</MorphText>
             </button>
           </Row>
           {round.error ? <p className="settingsPaneHint aiKeysError" role="alert">{round.error}</p> : null}

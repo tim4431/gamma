@@ -22,7 +22,7 @@
 // card keeping its right-click, Enter and Escape from the strip.
 import { editRow } from "./notes.mjs";
 import { dragSelectPdfText, selectPdfText, waitForPdf } from "./pdf.mjs";
-import { Account, assertOpensInPlace, sleep, wanted } from "../harness.mjs";
+import { Account, arrived, assertOpensInPlace, sleep, wanted } from "../harness.mjs";
 
 export async function commentScenarios({ server, browser, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags }) {
   if (!wanted("comments")) return;
@@ -414,6 +414,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     const send = popover(A).locator(".commentNew .commentSend");
     assertEq(await send.getAttribute("title"), "Comment (Shift+Enter)", "the title names the key");
     assertEq(await send.getAttribute("aria-label"), "Comment", "the name is the plain action");
+    await arrived(send);
     const size = await send.evaluate((el) => [el.getBoundingClientRect().width, el.getBoundingClientRect().height, el.querySelector("svg").getBoundingClientRect().width]);
     assertEq(size.join(), "24,24,12", "a 24px circle with a 12px arrow");
     // the bare "/": the commands that write text, none that make a page, a sheet, an upload or an embed
@@ -536,6 +537,35 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
       await popover(P).locator(".commentBody", { hasText: "Seen on a phone" }).waitFor({ timeout: 10000 });
       await P.locator(".phonePanel:not(.phonePanelHidden) .blockRow", { hasText: "A note on the paper" }).waitFor();
       assert(await P.locator(".phonePanel:not(.phonePanelHidden) .blockRow", { hasText: "A note on the paper" }).isVisible(), "the note shows under its thread");
+      assertNoProblems(P);
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  await step("comments: a page opening asks for its threads alongside its tree, and a PDF's for the margin cards' module too, before any card is wanted", async () => {
+    const ctx = await ben.context(browser);
+    try {
+      const P = await openPage(ctx, url);
+      await rowOf(P, "The first claim").waitFor();
+      await P.locator('[data-guide="header.home"]').first().click();
+      const row = P.locator(".fileRow", { hasText: "Reviewed paper" }).first();
+      await row.waitFor();
+      await P.evaluate(() => performance.clearResourceTimings());
+      await row.dblclick();
+      await waitForPdf(P, 1);
+      await P.locator('[data-page="1"] .pdfNoteBadge.hasThread').waitFor({ timeout: 10000 });
+      const seen = await P.evaluate((id) => {
+        const all = performance.getEntriesByType("resource");
+        const at = (re) => all.find((e) => re.test(e.name));
+        const tree = at(new RegExp(`/api/blocks/${id}/subtree`));
+        const threads = at(new RegExp(`/api/pages/${id}/comments`));
+        const cards = at(/\/assets\/CommentMargin-[^/]*\.js/);
+        return { answered: tree?.responseEnd, threads: threads?.startTime, cards: cards?.startTime };
+      }, reviewed);
+      assert(seen.answered != null && seen.threads != null, `the tree and the threads were asked for: ${JSON.stringify(seen)}`);
+      assert(seen.threads < seen.answered, `the threads were asked for before the tree answered: ${JSON.stringify(seen)}`);
+      assert(seen.cards != null && seen.cards < seen.answered, `the margin cards' module too: ${JSON.stringify(seen)}`);
       assertNoProblems(P);
     } finally {
       await ctx.close();

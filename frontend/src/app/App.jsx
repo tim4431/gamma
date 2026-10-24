@@ -22,6 +22,7 @@ import {
   BlockDropIndicator,
   ChatMarkdown,
   CopyBox,
+  DockBar,
   DockWindow,
   GammaNavContext,
   OpenTabs,
@@ -83,6 +84,7 @@ import {
   isFolded,
   toggleFold,
   revealBlock,
+  sameShape,
   isFoldedAway,
   updateBlockTree,
   removeBlockTree,
@@ -110,10 +112,12 @@ import { commandById, commandChord } from "./commands.js";
 import { CommandMenuItem } from "./CommandMenuItem.jsx";
 import { loadSession, saveSession, clearSession, setSessionScope } from "./sessionState";
 import { ROLE_LABEL, workspaceMeta } from "../settings/workspaceRoles.js";
-import { AuthLoading, LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailablePage, cloudOutcomeInUrl } from "../auth/LoginPage";
+import { LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailablePage, cloudOutcomeInUrl } from "../auth/LoginPage";
 import { guestExpiryLabel } from "../auth/guestExpiry";
 import { McpAuthorization } from "../auth/McpConsent";
-import { TRANSLATE_LANGS, themeScheme, translateModelFor, useAppPrefs, useProfileSync } from "./prefs";
+import { TRANSLATE_LANGS, preloadPrefs, readPref, translateModelFor, useAppPrefs, useProfileSync } from "./prefs";
+import { adoptAccountLook, takeBootRead } from "./boot.js";
+import { applyTheme } from "./theme.js";
 import { useNotices } from "./useNotices";
 import { useReminders } from "./useReminders";
 import { ReminderAlerts } from "./ReminderAlerts";
@@ -163,7 +167,7 @@ import { retryableStatus } from "../collaboration/collabSession.js";
 import { applyOps, applyPatch, displacedRow } from "../shared/model/blockOps";
 import { PresenceBar } from "../collaboration/Presence";
 import { ShareAccessPill } from "../sharing/ShareAccess";
-import { BrandMark } from "../shared/ui/BrandMark";
+import { BrandMark, Splash } from "../shared/ui/BrandMark";
 import { cleanLinkName, loadLinkName, saveLinkName, LINK_NAME_MAX } from "../collaboration/linkName";
 import { modelList, useProviderEditor } from "../settings/providerEditor.js";
 import { useGuide } from "../guide/useGuide";
@@ -209,12 +213,16 @@ import {
   PATH_SEP,
 } from "../library/libraryUtils";
 import { createLibraryMatcher } from "../library/librarySearch";
+import { prefetchTrash } from "../library/trashList";
 import { useComments } from "../comments/useComments";
 import { abandonedCommentHighlight, isOpen, shortCount, threadLink } from "../comments/comments.js";
 import { preloadCommentMargin } from "../comments/marginSlot";
 import { useInbox } from "../inbox/useInbox";
 import { InboxBadge, InboxButton } from "../inbox/InboxButton";
 import { inboxJump, isUnread } from "../inbox/inboxText.js";
+import { DialogOverlay, Popover } from "../shared/ui/Surfaces";
+import { IconSwap, MorphText } from "../shared/ui/MotionWidgets";
+import ListMotion from "../shared/ui/ListMotion";
 
 // Surfaces fetched on first use, each mounted inside a LazyBoundary
 // (docs/dev/frontend-refactor.md, "Lazy boundaries"). `preload()` fetches
@@ -248,12 +256,18 @@ const preloadViewMenu = preloading(ImportDialog, ChatDock, CommentsPanel);
 // Why the iPad app's opened files went to another workspace, kept across
 // the reload the switch is (takeOpenedFiles).
 const OPENED_NOTE = "gamma-opened-note";
+// Recently deleted asks for its list with its module, so it lands whole.
+const preloadTrash = () => { RecentlyDeleted.preload(); prefetchTrash(); };
 
 // PDF load phases that own a row in the background-transfers popover; every
 // other phase is viewer-local. Allowlist on purpose — the transfer handling's
 // catch-all marks unrecognized phases as failed, so a new local phase must
 // fail closed (ignored) rather than show a spurious error row.
 const TRANSFER_PHASES = new Set(["start", "progress", "done", "cached", "error", "cancelled"]);
+// A page that opens within this long shows no "Opening…" (openBlock): the
+// page it leaves stays on screen until then, and the new one takes its
+// place whole.
+const OPENING_PILL_MS = 300;
 
 // The compact layout ("phone" in the code): below 700px the desktop dock
 // system is unusable, so the workspace switches to a single full-width panel
@@ -469,7 +483,7 @@ function PageHostGate() {
     let active = true;
     (async () => {
       let config = null;
-      try { config = await apiJson(`${API}/server-config`); } catch {}
+      try { config = await (takeBootRead("config") || apiJson(`${API}/server-config`)); } catch {}
       if (!active) return;
       if (!pageHostUser(config?.page_host, window.location.hostname)) { setBoot({ serverConfig: config }); return; }
       let found = null;
@@ -484,15 +498,8 @@ function PageHostGate() {
     })();
     return () => { active = false; };
   }, [boot]);
-  // The same splash index.html paints before the bundle, so the hand-over
-  // doesn't jump (BrandMark is the cached favicon).
-  if (!boot) return (
-    <div id="splash" role="status" aria-label={t("Loading Gamma…")}>
-      <BrandMark className="mark" size={56} />
-      <div className="name">{t("Gamma")}</div>
-      <div className="spin" />
-    </div>
-  );
+  // The splash stays until the server's config is read.
+  if (!boot) return <Splash />;
   return <LibraryApp publicPage={boot.publicPage || null} initialServerConfig={boot.serverConfig || null} />;
 }
 
@@ -672,10 +679,26 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return () => { active = false; };
   }, []);
 
+  // The load's first session is the one main.jsx asked for (app/boot.js).
+  // A session that signs this tab in (that one, or a sign-in's) brings the
+  // account's theme, on before the library draws, and its language, each
+  // only if this app knows it (boot.js adoptAccountLook): a language other
+  // than the running one reloads into it now, before the library shows
+  // (main.jsx has already taken it for a browser new to the account).
+  // Then the reads the first screen needs go out before the app renders the
+  // session, so they lead what its parts ask for as they mount (the browser
+  // keeps six requests in flight to the server): the library listing, an
+  // account's preferences as one request (prefs.js preloadPrefs; the same
+  // account's session read again keeps the ones it has) and the AI models.
   async function checkSession() {
     try {
-      const data = await apiJson(`${API}/session`);
+      const data = await (takeBootRead("session") || apiJson(`${API}/session`));
       if (data.user) {
+        if (!authUser?.user && data.profile) {
+          const { theme, language } = adoptAccountLook(data.profile);
+          if (language && resolveLocale(language) !== getLocale()) { window.location.reload(); return; }
+          if (theme) setTheme(theme);
+        }
         const list = data.workspaces || [];
         const chosen = await chooseWorkspace(data.user, list, data.default_workspace || "");
         if (!chosen) {
@@ -684,6 +707,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         }
         setWorkspaceUnavailable(false);
         applyWorkspace(data.user, chosen, list);
+        fetchHomeBlocks({ still: true });
+        if (data.user !== authUser?.user) preloadPrefs(data.user, { guest: data.is_guest });
+        refreshAiModels();
         setAuthUser({ user: data.user, is_guest: data.is_guest, is_admin: data.is_admin, build: data.build,
           guest_expires_at: data.guest_expires_at || "" });
       } else {
@@ -952,10 +978,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // Local cache first for instant paint…
     let localTabs = [];
     try { localTabs = JSON.parse(localStorage.getItem(`gamma-tabs:${u}`) || "[]"); } catch {}
-    setOpenTabs(Array.isArray(localTabs) ? localTabs : []);
+    if (!Array.isArray(localTabs)) localTabs = [];
+    tabsReadRef.current.add(localTabs);
+    setOpenTabs(localTabs);
     let localRecents = [];
     try { localRecents = JSON.parse(localStorage.getItem(`gamma-recent-views:${u}`) || "[]"); } catch {}
     if (!Array.isArray(localRecents)) localRecents = [];
+    homeReadRef.current.add(localRecents);
     setRecentViews(localRecents);
     let localSnaps = {};
     try { localSnaps = JSON.parse(localStorage.getItem(`gamma-page-snaps:${u}`) || "{}"); } catch {}
@@ -965,7 +994,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     try { readPosRef.current = JSON.parse(localStorage.getItem(`gamma-read-pos:${u}`) || "{}"); } catch { readPosRef.current = {}; }
     // …then the server copy, which wins (tabs sync across browsers). An
     // account that has never synced seeds the server with this browser's tabs.
-    apiJson(`${API}/prefs/open-tabs`).then((d) => {
+    readPref("open-tabs", authUser.user).then((d) => {
       if (prefsUserRef.current !== u) return;
       if (d.updated_at) applyServerTabs(u, d.value, d.updated_at);
       else if (Array.isArray(localTabs) && localTabs.length) pushTabsToServer(localTabs);
@@ -975,7 +1004,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // snapsSyncedRef lets the prune run — else a pre-sync local queue could
     // sweep covers another device just captured.
     Promise.allSettled([
-      apiJson(`${API}/prefs/recent-views`),
+      readPref("recent-views", authUser.user),
       apiJson(`${API}/page-snaps`),
     ]).then(([rv, sn]) => {
       if (prefsUserRef.current !== u) return;
@@ -988,7 +1017,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         snapsSyncedRef.current = true;
       }
     });
-    apiJson(`${API}/prefs/read-pos`).then((d) => {
+    readPref("read-pos", authUser.user).then((d) => {
       if (prefsUserRef.current !== u) return;
       readPosLoadedRef.current = true;
       if (mergeReadPos(u, d.value)) pushReadPosSoon(u);
@@ -1725,6 +1754,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [blocks, setBlocks] = useState([]);
   const [homeBlocks, setHomeBlocks] = useState([]);
   const [homeLoaded, setHomeLoaded] = useState(false); // the library listing has come back once
+  const [homeFailed, setHomeFailed] = useState(false); // its last read failed
+  // What the listing's loads set (the pages and trees a read brings back,
+  // the view history read from the cache or the server): a change in the
+  // listing only they made moves nothing (homeStill).
+  const homeReadRef = useRef(new WeakSet());
   const [refCache, setRefCache] = useState({}); // { [blockId]: { content, page_title } }
   const [backlinks, setBacklinks] = useState([]);
   const [chatHidden, setChatHidden] = useState(false);
@@ -1872,6 +1906,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Persistence happens inside the updater (not an effect) so a user switch
   // can't race an in-flight save into the wrong key.
   const [openTabs, setOpenTabs] = useState([]);
+  // Tabs read from this browser's cache or the server's copy: the strip
+  // takes them without moving (OpenTabs `still`).
+  const tabsReadRef = useRef(new WeakSet());
   // Local viewing order, separate from the link-jump Back stack and the
   // synced tab order. Home keeps its folder/label so closing a page can
   // return to the view it was opened from.
@@ -1926,6 +1963,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         pushTabsToServer(tabs);
       }
       try { localStorage.setItem(`gamma-tabs:${user}`, JSON.stringify(tabs)); } catch {}
+      tabsReadRef.current.add(tabs);
       return tabs;
     });
   }
@@ -2167,6 +2205,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       list = [{ id: fid, at: new Date().toISOString() }, ...list.filter((r) => r.id !== fid)].slice(0, RECENTS_CAP);
       pushRecentsToServer(list);
     }
+    homeReadRef.current.add(list);
     setRecentViews(list);
     try { localStorage.setItem(`gamma-recent-views:${user}`, JSON.stringify(list)); } catch {}
   }
@@ -2298,35 +2337,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setSnapsState(next);
   }, [recentViews, pageSnaps]);
   const [tabMenu, setTabMenu] = useState(null); // {id, pinned, x, y} — tab right-click menu
+  // The tab a press picked while its page opens (selectTab): the strip shows
+  // it selected from the press's own commit, while the page it leaves stays
+  // on screen until the new one's tree lands (openBlock). "" when none is.
+  const [tabPick, setTabPick] = useState("");
+  // The latest openBlock call: an earlier open landing after it neither
+  // posts nor takes down the "Opening…" of the one the reader is waiting on.
+  const openSeqRef = useRef(0);
   // What each open tab's page carries, for its kind icon (tabs store only
   // id, title and pinned).
   const tabKinds = useMemo(() => new Map(homeBlocks.map((b) => [b.id, pageAttachment(b) ? "pdf" : "page"])), [homeBlocks]);
   const tabKindOf = useCallback((id) => tabKinds.get(id) || "page", [tabKinds]);
-  // FLIP animation: when tab order changes, slide each tab from its old
-  // position to the new one (Chrome-style), instead of snapping. Positions
-  // are the tab's place in the strip's content (offsetLeft; the strip is its
-  // offset parent), so the strip scrolling to the active tab moves nothing.
-  const tabElsRef = useRef(new Map());
-  const tabLeftsRef = useRef(new Map());
-  useLayoutEffect(() => {
-    const prev = tabLeftsRef.current;
-    const next = new Map();
-    for (const [id, el] of tabElsRef.current) {
-      if (!el) continue;
-      const left = el.offsetLeft;
-      next.set(id, left);
-      const old = prev.get(id);
-      if (old != null && Math.abs(old - left) > 2) {
-        el.style.transition = "none";
-        el.style.transform = `translateX(${old - left}px)`;
-        requestAnimationFrame(() => {
-          el.style.transition = "transform 0.16s ease";
-          el.style.transform = "";
-        });
-      }
-    }
-    tabLeftsRef.current = next;
-  }, [openTabs]);
 
   // Background tasks (tasks/useTasks.js, docs/dev/tasks.md): the server's
   // jobs — exports, backups, restores, imports, the search indexer — and
@@ -2355,12 +2376,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // document's page boxes are in the DOM: on "layout" (a skeleton from the
   // manifest, no document yet) and on "rendered". Applying the pending
   // restore HERE means the document appears already scrolled to its
-  // position: no flash of the top, no visible jump.
-  function applyPendingRestore(url) {
+  // position: no flash of the top, no visible jump. `scale` is the one the
+  // boxes are laid out at, which the viewer reports with the phase: a
+  // viewer mounted again starts from its own, not the one the host last
+  // heard of, and re-places the position itself when its fit-width settles.
+  function applyPendingRestore(url, scale) {
     const p = pendingRestoreRef.current;
     if (!p || p.url !== url || restoreTokenRef.current !== p.token) return;
     const scroller = viewerWrapRef.current?.querySelector(".pdfViewer");
-    const targetTop = p.entry.top * ((pdfEffScaleRef.current || p.entry.scale || 1) / (p.entry.scale || 1));
+    const targetTop = p.entry.top * ((scale || pdfEffScaleRef.current || p.entry.scale || 1) / (p.entry.scale || 1));
     if (scroller && scroller.scrollHeight > targetTop) {
       scroller.scrollTo({ top: targetTop, behavior: "instant" });
       pendingRestoreRef.current = null;
@@ -2411,7 +2435,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // which accepts a laid-out skeleton as "pages in the DOM".
       postPill("pdf-load", { msg: t("Preparing document…"), spinner: true });
       pdfLaidOutUrlRef.current = url;
-      applyPendingRestore(url);
+      applyPendingRestore(url, st.scale);
       return;
     }
     if (st.phase === "rendered") {
@@ -2421,7 +2445,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       postPill("pdf-load", { msg: t("Rendering page…"), spinner: true }, { after: [20000, null] });
       pdfRenderedUrlRef.current = url; // this document's pages are now in the DOM
       setPdfDocNonce((n) => n + 1);    // lets a pinned search re-find its matches here
-      applyPendingRestore(url);
+      applyPendingRestore(url, st.scale);
       return;
     }
     // Only phases that own a transfer row from here on — the catch-all branch
@@ -2727,9 +2751,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   });
   const [exportOpts, setExportOpts] = usePersistedState(
     "gamma-export-opts",
-    { format: "pdf", highlights: true, notes: true, bundle: true },
+    { format: "pdf", highlights: true, notes: true, bundle: true, comments: false, notesAt: "beside" },
     {
-      parse: (raw) => ({ format: "pdf", highlights: true, notes: true, bundle: true, ...JSON.parse(raw) }),
+      parse: (raw) => ({ format: "pdf", highlights: true, notes: true, bundle: true, comments: false, notesAt: "beside",
+        ...JSON.parse(raw) }),
       serialize: JSON.stringify,
     },
   );
@@ -2749,7 +2774,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // The pick is the account's, in every workspace: an answer is stale only
     // once the account changed (not prefsUserRef, which is "user@ws").
     let active = true;
-    apiJson(`${API}/prefs/ai-provider`).then((d) => {
+    readPref("ai-provider", u).then((d) => {
       if (!active) return;
       if (d.updated_at) {
         const server = typeof d.value === "string" ? d.value : "";
@@ -2810,11 +2835,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     ? scopedAiModels[0].id
     : chatModel;
 
+  // The masked key list the chat's setup card read (ChatDock onSetupInfo):
+  // the one Connections shows, so a tile's connect dialog opens on it with
+  // Settings while the pane reads its own.
+  const chatKeysInfoRef = useRef(null);
   async function loadAiKeys() {
     aiEditor.close();
-    setAiKeysInfo(null);
     setAiKeyTests({});
     setAiKeyUsage({});
+    const fromChat = pendingAiFormRef.current?.service ? chatKeysInfoRef.current : null;
+    // What the pane showed last stays while it is read again, so a visit
+    // opens on the list rather than "Loading…".
+    setAiKeysInfo((prev) => fromChat || prev);
+    if (fromChat) {
+      openAiForm(pendingAiFormRef.current, fromChat);
+      pendingAiFormRef.current = null;
+    }
     try {
       const info = await apiJson(`${API}/ai/settings`);
       setAiKeysInfo(info);
@@ -2892,9 +2928,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return () => clearTimeout(timer);
   }, [authUser?.user, shareMode]);
   // Entering the AI panes from elsewhere refetches the masked key list;
-  // moving between them keeps it (their edits refresh it themselves).
+  // moving between them keeps it (their edits refresh it themselves). It
+  // runs before the frame is painted, so a form left open on an earlier
+  // visit never shows again.
   const prevSettingsPaneRef = useRef(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const cameFrom = prevSettingsPaneRef.current;
     prevSettingsPaneRef.current = settingsOpen;
     if (isAiPane(settingsOpen) && !isAiPane(cameFrom) && authUser?.user && !shareMode) loadAiKeys();
@@ -2920,7 +2958,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
 
   // The model switchers everywhere feed off /ai/models — refresh after edits.
-  const refreshAiModels = () => apiJson(`${API}/ai/models`).then(setAiInfo).catch(() => {});
+  // A read that fails leaves the last list and says so (`aiInfoFailed`): the
+  // chat, waiting to learn its AI before it shows its tools, stops waiting.
+  const [aiInfoFailed, setAiInfoFailed] = useState(false);
+  const refreshAiModels = () => apiJson(`${API}/ai/models`)
+    .then((info) => { setAiInfo(info); setAiInfoFailed(false); })
+    .catch(() => setAiInfoFailed(true));
 
   // A connection the dialog just made: test it right away, and when the
   // dialog came from the chat's setup card go back to the chat, ready to ask.
@@ -3270,7 +3313,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (data.meta?.title && focusedBlock?.properties?.auto_title === focusedBlock?.content) {
         await renameTitle(data.meta.title);
       }
-      fetchHomeBlocks(); // keep the library's meta fresh for DOI-link matching
+      fetchHomeBlocks({ still: true }); // keep the library's meta fresh for DOI-link matching
       const site = data.lookup?.registry === "arxiv" ? "arXiv" : "doi.org";
       setStatus(!data.lookup ? t("Metadata saved.")
         : data.lookup.found ? t("Metadata filled in from {site} ({id}).", { site, id: data.lookup.id })
@@ -3299,7 +3342,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setFocusedBlock((prev) => prev && prev.id === blockId
         ? { ...prev, properties: { ...prev.properties, meta: data.meta } }
         : prev);
-      fetchHomeBlocks();
+      fetchHomeBlocks({ still: true });
       setStatus(t("Metadata marked as verified."));
     } catch (err) {
       setStatus(t("Verify failed: {message}", { message: err.message }));
@@ -3475,7 +3518,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (data.page_title && focusedBlockIdRef.current === block.id) setPageTitle(data.page_title);
       if (!data.cached) {
         setStatus(t("Paper metadata found ({source}).", { source: data.source === "ai" ? t("AI-extracted") : data.source }));
-        fetchHomeBlocks(); // keep the library's meta fresh for DOI-link matching
+        fetchHomeBlocks({ still: true }); // keep the library's meta fresh for DOI-link matching
       }
     } catch (err) {
       if (focusedBlockIdRef.current === block.id) setStatus(t("Metadata: {message}", { message: err.message }));
@@ -3623,11 +3666,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
 
   useEffect(() => {
-    if (!authUser?.user || shareMode) return;
-    refreshAiModels();
-  }, [authUser]);
-
-  useEffect(() => {
     if (!chatModel) return;
     try {
       localStorage.setItem("gamma-chat-model", chatModel);
@@ -3718,23 +3756,34 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   useEffect(() => { setPdfSelections([]); }, [focusedBlockId]);
 
   // The library listing: the pages, and the folder and label trees read in
-  // the same snapshot (GET /blocks/root/children).
-  function fetchHomeBlocks() {
+  // the same snapshot (GET /blocks/root/children). A read that is a load
+  // rather than the person's own change (`still`: the session's first,
+  // coming back from a page, the window's wake, a refresh in the
+  // background) marks what it sets, so the listing moves nothing for it,
+  // and so does one that fails. A read that fails ends the wait as well:
+  // the listing says so where its empty line would be.
+  function fetchHomeBlocks({ still = false } = {}) {
     return apiJson(`${API}/blocks/root/children`)
       .then((data) => {
         const children = Array.isArray(data.children) ? data.children : [];
-        setHomeBlocks(children);
         libTreeRef.current = libraryTree(data);
+        if (still) for (const read of [children, libTreeRef.current]) homeReadRef.current.add(read);
+        setHomeBlocks(children);
         setLibTree(libTreeRef.current);
         setHomeLoaded(true);
+        setHomeFailed(false);
         return children;
       })
-      .catch(() => { setHomeBlocks([]); setLibTree(EMPTY_TREE); return []; });
+      .catch(() => {
+        const none = [];
+        for (const read of [none, EMPTY_TREE]) homeReadRef.current.add(read);
+        setHomeBlocks(none);
+        setLibTree(EMPTY_TREE);
+        setHomeFailed(true);
+        return [];
+      });
   }
 
-  useEffect(() => {
-    if (authUser?.user && !shareMode) fetchHomeBlocks();
-  }, [authUser]);
   // The listing is read again when the window comes back (at most every
   // 15 s, like the prefs' wake pulls), so a folder or label another device
   // made, renamed, moved or deleted shows without a reload — the home view
@@ -3745,7 +3794,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const onWake = () => {
       if (document.hidden || Date.now() - lastAt < 15000) return;
       lastAt = Date.now();
-      fetchHomeBlocks();
+      fetchHomeBlocks({ still: true });
     };
     window.addEventListener("focus", onWake);
     document.addEventListener("visibilitychange", onWake);
@@ -3955,6 +4004,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (next !== prev) treeOriginRef.current.set(next, "fold");
     return next;
   });
+  // The block whose children the person folded or opened, kept on the view
+  // VALUE that did it as the origins are on the tree: that fold moves
+  // (BlockTree), and one any other view change makes (a jump revealing a
+  // block, an editor opening) does not.
+  const foldMovesRef = useRef(new WeakMap());
   const saveNowRef = useRef(false); // next autosave runs without the debounce (editor close)
   // THE undo history (Ctrl+Z anywhere on the page, editors included):
   // derived from the block tree's transitions, see blockHistory.js. Declared
@@ -4111,7 +4165,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (!pendingBlockScrollRef.current) return;
     const id = pendingBlockScrollRef.current;
     const row = document.querySelector(`[data-block-id="${id}"]`);
-    if (row) {
+    if (row && !row.closest("[inert]")) {
       row.scrollIntoView({ block: "center", behavior: "smooth" });
       setFocusedId(id);
       pendingBlockScrollRef.current = null;
@@ -4121,9 +4175,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setView((v) => revealBlock(blocks, v, id));
     }
     // Otherwise the row isn't rendered yet (not in the tree yet, or the notes
-    // window is closed or collapsed — a highlight made on the PDF alone):
-    // keep the ref and try again on the next tree change or when the notes
-    // come back.
+    // window is closed, or folded — where its row waits inert and out of
+    // sight — a highlight made on the PDF alone): keep the ref and try again
+    // on the next tree change or when the notes come back.
   }, [blocks, view, blockScrollReq, notesVisible, collapsedWins.notes, phonePanel]);
 
   // A page's passive landing (openBlock): the notes scroll to where the
@@ -4608,16 +4662,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     document.documentElement.style.setProperty("--ui-scale", String(uiScale));
   }, [uiScale]);
 
-  // Theme: System tracks the OS preference live; Light/Dark pin it. The
+  // Theme: System tracks the OS preference live; Light/Dark pin it. Every
+  // colour changes in one frame, with no transition (app/theme.js). The
   // theme-color meta follows: installed as a home-screen app, the status bar
   // is painted with it, so it matches what sits under it (docs/dev/ipad.md).
   const phoneBareTopRef = useRef(false);
   useEffect(() => {
     const mq = window.matchMedia("(prefers-color-scheme: dark)");
     const apply = () => {
-      const resolved = theme === "system" ? (mq.matches ? "dark" : "light") : theme;
-      document.documentElement.setAttribute("data-scheme", themeScheme(resolved));
-      document.documentElement.setAttribute("data-theme", resolved);
+      applyTheme(theme === "system" ? (mq.matches ? "dark" : "light") : theme);
       paintStatusBar(phoneBareTopRef.current);
     };
     apply();
@@ -5638,10 +5691,31 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (opts?.pushNav && blockId !== focusedBlockId) pushNav();
     leaveCurrentPage();
     forgetDocPages(); // the file chips' "which page carries this PDF" cache
+    // A tab's pick stays for its own open (selectTab); another open drops it.
+    setTabPick((pick) => (pick === blockId ? pick : ""));
+    // The page's threads are asked for alongside its tree, and a PDF's
+    // comment margin with them, so neither comes a round trip after it.
+    // Only for a page the library lists: a link to one that is gone asks
+    // for its tree alone.
+    const listed = tabKinds.get(blockId);
+    if (listed && blockId !== focusedBlockId) commentsRef.current.prefetch(blockId);
+    if (listed === "pdf") preloadCommentMargin();
+    // Until the tree lands the page on screen stays, and "Opening…" shows
+    // only once the open has kept the reader waiting.
+    const switching = !!focusedBlockId;
+    const seq = ++openSeqRef.current;
+    let slow = false;
+    const opening = setTimeout(() => {
+      if (openSeqRef.current !== seq) return;
+      slow = true;
+      postPill("opening", { msg: t("Opening..."), spinner: true });
+    }, OPENING_PILL_MS);
     setLoading(true);
-    setStatus(t("Opening..."));
     try {
       const subtreeData = await apiJson(`${API}/blocks/${blockId}/subtree`);
+      // A later open took over while this one waited (two tabs pressed in
+      // quick succession): its page is the one wanted, whichever answers last.
+      if (openSeqRef.current !== seq) return undefined;
       const block = subtreeData.block;
       if (!block) throw new Error("Block not found");
       const props = block.properties || {};
@@ -5670,6 +5744,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         setInputUrl(src);
         setPdfUrl(openedPdfUrl);
         setBlocks(loaded(childBlocks));
+        preloadCommentMargin();
       } else {
         setInputUrl("");
         setPdfUrl("");
@@ -5732,18 +5807,21 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (savedUi?.pdfScale) setPdfScale(savedUi.pdfScale);
       else if (!attachment && sheetsOf(childBlocks).length) setPdfScale("page-width");
       if (opts?.restoreScroll) restorePdfScroll(tabScrollRef.current[blockId], blockId, openedPdfUrl);
-      setStatus(t("Ready."));
+      // "Ready." answers an "Opening…" the reader saw, for a page opened
+      // where none was (the library, a link): a switch between pages is
+      // answered by the page taking the other's place.
+      if (slow && !switching) setStatus(t("Ready."));
       // Emit for every successful open, including reopening the same paper.
       guideEvents.emit("page.opened", { id: blockId, title: block.content || t("Untitled") });
       return openedPdfUrl;
     } catch (err) {
+      if (openSeqRef.current !== seq) return undefined; // a later open took over
       if (err.status === 404 && opts?.link) {
         // Not a failure to report as one: the page is gone (or in Recently
         // deleted), or lives in another workspace. The notice says so; a dead
         // deep link leaves the address bar (a tab restore, which has no
         // `link`, just clears it).
         setMissingPage({ id: blockId, trashed: err.data?.trashed || null });
-        postPill("status", null); // take down "Opening..."
         const url = new URL(window.location.href);
         if (url.searchParams.get("block") === blockId || url.searchParams.get("page") === blockId) {
           url.searchParams.delete("block");
@@ -5756,8 +5834,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // If this was a session restore attempt that failed, clear it
       if (!window.location.search.includes("block=")) clearSession();
     } finally {
-      setLoading(false);
+      clearTimeout(opening);
+      // What the open on screen holds is the latest open's to let go of.
+      if (openSeqRef.current === seq) {
+        postPill("opening", null);
+        setLoading(false);
+        setTabPick((pick) => (pick === blockId ? "" : pick));
+      }
     }
+  }
+  // A tab pressed: selected at once, its page opened behind it.
+  function selectTab(id) {
+    setTabPick(id);
+    return openBlock(id, { restoreScroll: true });
   }
 
   // --- Global back: one history for every navigation ------------------------
@@ -5987,7 +6076,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setFolderFilter("");
       setLabelFilter("");
     }
-    if (refreshHome) fetchHomeBlocks();
+    if (refreshHome) fetchHomeBlocks({ still: true });
     if (keepFilters && (labelFilter || folderFilter)) {
       window.history.replaceState(null, "", homeUrlFor(folderFilter, labelFilter));
     } else {
@@ -6008,7 +6097,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const entry = [...tabHistoryRef.current].reverse().find((entry) =>
       !entry.blockId || next.some((tab) => tab.id === entry.blockId));
     if (entry?.blockId) {
-      return openBlock(entry.blockId, { restoreScroll: true });
+      return selectTab(entry.blockId);
     } else if (entry) {
       goHome(refresh);
       openFolder(entry.folder);
@@ -6174,10 +6263,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const shareApi = (target, base) => (target.kind === "folder"
     ? `${API}/${base}/folder/${encodeURIComponent(target.id)}`
     : `${API}/${base}/${encodeURIComponent(target.id)}`);
+  // The same target's settings stay while they are asked again, so the
+  // popover opens on them; another target's go at once.
   async function loadShareSettings(target) {
     if (shareMode || (target.kind === "page" && !target.id)) return;
+    if (shareTarget?.kind !== target.kind || shareTarget?.id !== target.id) setShareSettings(null);
     setShareTarget(target);
-    setShareSettings(null);
     try {
       applyShareSettings(await apiJson(shareApi(target, "share-settings")));
       resetShareCopied();
@@ -6283,7 +6374,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function openPageShare(id) {
     loadShareSettings({ kind: "page", id });
     setShareError("");
-    loadPublishState();
+    // The same page's publication stays on screen while it is read again
+    // (its Gamma Cloud section opens on its content); another page's starts
+    // from nothing.
+    if (publishState?.page === focusedBlockId) {
+      setPublishError("");
+      resetPublishCopied();
+      loadPublishState({ quiet: true });
+    } else loadPublishState();
     setOpenPopover("share");
   }
   // The chat window shown and expanded (on a phone, its panel).
@@ -7262,7 +7360,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     homePicks: homeMode && lib.organize ? selectedPages.size : 0,
     deletePages: () => deletePages([...selectedPages]),
     organize: lib.organize,
-    recentlyDeleted: () => { setOpenPopover(null); setTrashOpen(true); },
+    recentlyDeleted: () => { preloadTrash(); setOpenPopover(null); setTrashOpen(true); },
     // On a phone Chat and Notes are the bottom bar's panels, which the
     // desktop windows' hidden flags don't drive.
     toggleChat: () => {
@@ -7881,6 +7979,44 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return [...items.filter((it) => it._match), ...items.filter((it) => !it._match)];
   }, [libTree, scopePages, labelFilter, levelFolders, folderMeta, scopeLabels, labelMeta, viewedAtById, homeSort, homeKinds, homeQuery]);
   const homeVisibleItems = useMemo(() => homeItems.slice(0, homeShowCount), [homeItems, homeShowCount]);
+  // The listing is a list that moves (ListMotion, docs/dev/ui-design.md
+  // "Lists that change"): within one listing an item added, removed or
+  // moved by its sort glides the others to their places. Another view,
+  // kind filter, folder, label, sort or filter text is another listing, in
+  // which nothing moves, and so is the next chunk Load more brings: its
+  // rows arrive at once.
+  const homeVisibleKeys = useMemo(() => homeVisibleItems.map((it) => it.key), [homeVisibleItems]);
+  const homeListingScope = `${homeView}|${homeKinds}|${folderFilter}|${labelFilter}|${homeSort}|${homeQuery}|${homeShowCount}`;
+  // What the listing is read from: the pages, the trees, and the view
+  // history the "viewed" sort ranks by. A change is still when each of them
+  // that changed was set by a load (homeReadRef: the listing read again on
+  // coming home or on the window's wake, the server's view history landing
+  // after it), so the person's own change moves even after a load.
+  const homeSources = [homeBlocks, libTree, recentViews];
+  const homeSourcesRef = useRef(homeSources);
+  const homeChanged = homeSources.filter((source, i) => source !== homeSourcesRef.current[i]);
+  const homeStill = homeChanged.length > 0 && homeChanged.every((source) => homeReadRef.current.has(source));
+  useLayoutEffect(() => { homeSourcesRef.current = homeSources; });
+  // A listing that takes another's place (another view, kind filter, folder
+  // or label) comes into focus where it stands, as a pane does: its class is
+  // played again on the listing in place, rather than remounting it, which
+  // would build every card again. Not the listing a load or a page left
+  // brings.
+  const homeListingRef = useRef(null);
+  const homeEmptyRef = useRef(null);
+  const homeListingShownRef = useRef(null);
+  useLayoutEffect(() => {
+    const shown = homeMode && homeLoaded ? `${homeView}|${homeKinds}|${folderFilter}|${labelFilter}` : null;
+    const before = homeListingShownRef.current;
+    homeListingShownRef.current = shown;
+    if (!shown || !before || shown === before) return;
+    for (const el of [homeListingRef.current, homeEmptyRef.current]) {
+      if (!el) continue;
+      el.classList.remove("listingIn");
+      void el.offsetWidth;
+      el.classList.add("listingIn");
+    }
+  }, [homeMode, homeLoaded, homeView, homeKinds, folderFilter, labelFilter]);
   // The filter box matches titles and chips only; past it, the workspace
   // search reads notes and PDF text. With nothing matched a banner hands the
   // query over (Enter in the box does the same); with matches a quiet row
@@ -7927,6 +8063,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       ? (folderFilter ? t("No labels on the pages in this folder yet.") : t("No labels yet — add one from a page’s label field."))
       : folderFilter ? (lib.organize ? t("This folder is empty — start a page here or drag pages onto it from the library.") : t("This folder is empty."))
       : t("No pages yet — start with “New page”, or open a PDF from the + button above.");
+  // The line over the listing: the start panel or what it is empty for, or,
+  // when the read failed, that it could not be read. A failed read empties
+  // the listing, which says nothing of the library: no "No pages yet".
+  const homeEmptyLine = homeFailed ? (
+    <div className="empty homeEmpty" ref={homeEmptyRef} role="alert">
+      {t("Could not load the library.")}{" "}
+      <button type="button" className="uiBtn sm" onClick={() => fetchHomeBlocks({ still: true })}>{t("Try again")}</button>
+    </div>
+  ) : libraryStart || (homeItems.length === 0 && !newFolderOpen ? (
+    <div className="empty homeEmpty" ref={homeEmptyRef}>{homeEmptyText}</div>
+  ) : null);
   // Timestamp shown on a library card and in the list's date column follows
   // the active sort: sorted by view time → viewed (falling back to modified,
   // same as the sort), by added → created; modified otherwise (incl. Title
@@ -8327,7 +8474,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
 
   if (workspaceUnavailable) return <WorkspaceUnavailablePage />;
-  if (authUser === null) return <AuthLoading />;
+  if (authUser === null) return <Splash />;
 
   if (authUser === false) {
     return (
@@ -8478,7 +8625,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       collapsed={appPrefs.backlinksCollapsed} onCollapsedChange={appPrefs.setBacklinksCollapsed} />
   ) : null;
   const notesTail = !homeMode && !readOnly && focusedBlockId ? (
-    <div className={"notesTail" + (blocks.length ? "" : " isEmpty")}
+    <div className={"notesTail" + (blocks.length ? "" : " isEmpty")} data-motion-key="tail"
       onMouseDown={(e) => { e.preventDefault(); editTail(); }}>
       {blocks.length ? null : t("Click to start writing")}
     </div>
@@ -8750,7 +8897,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       onClick={() => setOpenPopover((p) => (p === "attach" ? null : "attach"))}
                     ><PaperclipIcon size={16} /></button>
                     {openPopover === "attach" && pageAttach ? (
-                      <MenuScope className="popover addPopover attachPopover" aria-label={t("Document")}>
+                      <Popover as={MenuScope} className="addPopover attachPopover" aria-label={t("Document")}>
                         <div className="popoverTitle">{t("Document")}</div>
                         <div className="popoverHint attachFileName" title={pageAttach.url}>
                           <PaperclipIcon size={14} /> {pageAttach.name || defaultPageTitle(pageAttach)}
@@ -8766,9 +8913,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         {!readOnly ? (
                           <MenuItem icon={ScissorsIcon} onClick={detachPdfFromPage}>{t("Detach the PDF…")}</MenuItem>
                         ) : null}
-                      </MenuScope>
+                      </Popover>
                     ) : openPopover === "attach" ? (
-                      <div className="popover addPopover attachPopover">
+                      <Popover className="addPopover attachPopover">
                         <div className="popoverTitle">{t("Attach a document")}</div>
                         <input
                           autoFocus
@@ -8789,7 +8936,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           hidden
                           onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) attachPdfToPage({ file: f }); }}
                         />
-                      </div>
+                      </Popover>
                     ) : null}
                   </span>
                 ) : null}
@@ -8820,8 +8967,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       <span className="metaWarnDot" aria-hidden="true">!</span>
                     ) : null}
                     {openPopover === "meta" ? (
-                      <div
-                        className="popover sourcePopover metaPopover"
+                      <Popover
+                        className="sourcePopover metaPopover"
                         style={{
                           position: "fixed",
                           top: metaPopPos.top,
@@ -8895,7 +9042,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                                         aria-label={t("Copy {site} link", { site: site })}
                                         onClick={() => copyFlash(key, url)}
                                       >
-                                        {copiedKey === key ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
+                                        <IconSwap swap={copiedKey === key} from={<CopyIcon size={14} />} to={<CheckIcon size={14} />} />
                                       </button>
                                     </>
                                   );
@@ -9011,13 +9158,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                                   aria-label={t("Copy source URL")}
                                   onClick={() => copyFlash("source", inputUrl)}
                                 >
-                                  {copiedKey === "source" ? <CheckIcon size={14} /> : <CopyIcon size={14} />}
+                                  <IconSwap swap={copiedKey === "source"} from={<CopyIcon size={14} />} to={<CheckIcon size={14} />} />
                                 </button>
                               </span>
                             </div>
                           ) : null}
                           {pdfTextPreview ? (
-                            <div className="reportOverlay" {...backdropPress(() => setPdfTextPreview(null))}>
+                            <DialogOverlay {...backdropPress(() => setPdfTextPreview(null))}>
                               <div className="reportModal" style={{ width: "min(640px, calc(100vw - 32px))" }} onClick={(e) => e.stopPropagation()}>
                                 <div className="reportModalTitle">{t("Extracted PDF text")}</div>
                                 <div className="reportPageList" style={{ maxHeight: "60vh", whiteSpace: "pre-wrap", fontSize: "calc(12px * var(--ui-font-scale, 1))", color: "var(--text-secondary)", padding: 10 }}>
@@ -9028,7 +9175,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                                   <button className="uiBtn" onClick={() => setPdfTextPreview(null)}>{t("Close")}</button>
                                 </div>
                               </div>
-                            </div>
+                            </DialogOverlay>
                           ) : null}
                         </div>
                         {!pageMeta ? (
@@ -9041,11 +9188,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         {metaDirty ? (
                           <div className="reportModalBtns">
                             <button className="uiBtn primary" disabled={metaSaving} onClick={saveMetaEdits}>
-                              {metaSaving ? t("Saving…") : t("Save metadata")}
+                              <MorphText>{metaSaving ? t("Saving…") : t("Save metadata")}</MorphText>
                             </button>
                           </div>
                         ) : null}
-                      </div>
+                      </Popover>
                     ) : null}
                   </span>
                 ) : null}
@@ -9282,19 +9429,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 {lib.organize && !folderFilter && !labelFilter ? (
                   <button type="button" className="ctlBtn" title={t("Recently deleted")} data-guide="home.trash"
                     aria-label={t("Recently deleted")} onClick={() => setTrashOpen(true)}
-                    onPointerEnter={RecentlyDeleted.preload} onFocus={RecentlyDeleted.preload}>
+                    onPointerEnter={preloadTrash} onFocus={preloadTrash}>
                     <Trash2Icon size={16} />
                   </button>
                 ) : null}
               </div>
             ) : null}
             {homeMode && homeMatchCount === 0 ? searchElsewhere(true) : null}
-            {homeMode && homeView === "grid" ? (
+            {/* Until the listing has come back (or its read failed) it is
+                blank: no "empty" line before the rows, and nothing the rows
+                would push down. */}
+            {homeMode && !homeLoaded && !homeFailed ? null : homeMode && homeView === "grid" ? (
                 <>
-                  {libraryStart || (homeItems.length === 0 && !newFolderOpen ? (
-                    <div className="empty homeEmpty">{homeEmptyText}</div>
-                  ) : null)}
-                  <div className="fileGrid" onClick={(e) => { if (e.target.classList.contains("fileGrid")) clearSelection(); }}>
+                  {homeEmptyLine}
+                  <div className="fileGrid" ref={homeListingRef} onClick={(e) => { if (e.target.classList.contains("fileGrid")) clearSelection(); }}>
                     {newPageAllowed ? (
                       <PageCard
                         className="pageCardAdd"
@@ -9336,11 +9484,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         onClick={() => { setNewFolderName(""); setNewFolderOpen(true); }}
                       />
                     )}
+                    <ListMotion keys={homeVisibleKeys} scope={homeListingScope} still={homeStill} enter="card" leave="card">
                     {withSearchMore(homeVisibleItems.map((item) => {
                       const dim = homeQuery && !item._match ? "homeDim" : "";
                       if (item.kind === "label") { const l = item.label; return (
                       <PageCard
                         key={item.key}
+                        data-motion-key={item.key}
                         className={`${dim} ${folderDragOver === l ? "dragOver" : ""} ${selectedLabels.has(l) ? "selected" : ""}`}
                         glyph={<LabelGlyph dashed={l === NO_LABEL} />}
                         title={labelName(libTree, l)}
@@ -9363,6 +9513,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       if (item.kind === "folder") { const f = item.folder; return (
                       <PageCard
                         key={item.key}
+                        data-motion-key={item.key}
                         {...folderCardProps(f)}
                         className={`${dim} ${folderDropClass(f)} ${selectedFolders.has(f) ? "selected" : ""}`}
                         tip={lib.organize ? t("Click to select · double-click to open · drop a page or folder to move it in") : t("Click to select · double-click to open")}
@@ -9391,6 +9542,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       return (
                         <PageCard
                           key={id}
+                          data-motion-key={item.key}
                           className={`${dim} ${selectedPages.has(id) ? "selected" : ""}`}
                           data-guide="home.card"
                           glyph={<FileGlyph isPdf={!!b._attachment} />}
@@ -9430,6 +9582,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         </PageCard>
                       );
                     }))}
+                    </ListMotion>
                   </div>
                   {homeItems.length > homeVisibleItems.length ? (
                     <button ref={loadMoreRef} className="loadMoreBtn" onClick={() => setHomeShowCount((c) => c + HOME_PAGE_CHUNK)}>
@@ -9439,10 +9592,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 </>
             ) : homeMode ? (
                 <>
-                  {libraryStart || (homeItems.length === 0 && !newFolderOpen ? (
-                    <div className="empty homeEmpty">{homeEmptyText}</div>
-                  ) : null)}
-                  <div className="fileList" onClick={(e) => { if (e.target.classList.contains("fileList")) clearSelection(); }}>
+                  {homeEmptyLine}
+                  <div className="fileList" ref={homeListingRef} onClick={(e) => { if (e.target.classList.contains("fileList")) clearSelection(); }}>
                     {newPageAllowed ? (
                       <button className="folderRow folderNewBtn" onClick={() => createPage()} title={t("Start a blank page here")}>
                         <FilePlusIcon size={16} />
@@ -9480,11 +9631,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         {menuSlot}
                       </div>
                     ) : null}
+                    <ListMotion keys={homeVisibleKeys} scope={homeListingScope} still={homeStill} enter="fade" leave="row">
                     {withSearchMore(homeVisibleItems.map((item) => {
                       const dim = homeQuery && !item._match ? "homeDim" : "";
                       if (item.kind === "label") { const l = item.label; const menu = l === NO_LABEL ? null : openTagMenu("label", l); return (
                       <div
                         key={item.key}
+                        data-motion-key={item.key}
                         className={`folderRow labelRow rowMenuHost ${dim} ${folderDragOver === l ? "dragOver" : ""} ${selectedLabels.has(l) ? "selected" : ""}`}
                         onClick={(e) => handleLabelClick(l, e)}
                         onDoubleClick={() => openLabel(l)}
@@ -9504,6 +9657,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       if (item.kind === "folder") { const f = item.folder; const menu = openTagMenu("folder", f); return (
                       <div
                         key={item.key}
+                        data-motion-key={item.key}
                         className={`folderRow rowMenuHost ${dim} ${folderDropClass(f)} ${selectedFolders.has(f) ? "selected" : ""}`}
                         draggable={lib.organize && folderRenaming?.id !== f}
                         onDragStart={(e) => startFolderDrag(e, f)}
@@ -9543,6 +9697,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       return (
                         <div
                           key={id}
+                          data-motion-key={item.key}
                           className={`fileRow rowMenuHost ${dim} ${selectedPages.has(id) ? "selected" : ""}`}
                           data-guide="home.card"
                           draggable={lib.organize && !isEditing}
@@ -9580,6 +9735,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         </div>
                       );
                     }))}
+                    </ListMotion>
                   </div>
                   {homeItems.length > homeVisibleItems.length ? (
                     <button ref={loadMoreRef} className="loadMoreBtn" onClick={() => setHomeShowCount((c) => c + HOME_PAGE_CHUNK)}>
@@ -9604,6 +9760,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   focusedId,
                   setFocusedId,
                   view,
+                  foldMoving: foldMovesRef.current.get(view),
                   flashingId, // a page's landing row flashes once (landingRef)
                   // The AI agent's live footprint (handleAgentEvent); rootId
                   // places a ghost row for a block being created at top level.
@@ -9735,6 +9892,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   },
                   onToggle: (id) => {
                     const next = toggleFold(blocks, view, id);
+                    foldMovesRef.current.set(next.view, id);
                     setBlocks(next.blocks);
                     setView(next.view);
                   },
@@ -9956,13 +10114,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 return (
                   <>
                     {notesInkStrip}
-                    <FileChipContext.Provider value={fileChipCtx}>
-                      <NoteSheetContext.Provider value={noteSheetCtx}>
-                        <BlockTree blocks={blocks} readOnly={readOnly} rowProps={stableRowProps(rowProps)} />
-                      </NoteSheetContext.Provider>
-                    </FileChipContext.Provider>
-                    {backlinksPanel}
-                    {notesTail}
+                    {/* A block added, removed or moved here glides the rows
+                        around it to their new places (docs/dev/ui-design.md,
+                        "Lists that change"): not a page opening or reloading,
+                        another client's or the agent's change, a text box's
+                        measured size, nor while writing on a sheet. */}
+                    <ListMotion shape={blocks} same={sameShape} scope={focusedBlockId}
+                      still={!!treeOriginRef.current.get(blocks)} off={readOnly || inkUi.open}
+                      hold=".slashMenu, .refPopup">
+                      <FileChipContext.Provider value={fileChipCtx}>
+                        <NoteSheetContext.Provider value={noteSheetCtx}>
+                          <BlockTree blocks={blocks} readOnly={readOnly} rowProps={stableRowProps(rowProps)} />
+                        </NoteSheetContext.Provider>
+                      </FileChipContext.Provider>
+                      {backlinksPanel}
+                      {notesTail}
+                    </ListMotion>
                     {notesReplayDock}
                     <BlockDropIndicator target={dropTarget} />
                   </>
@@ -9981,13 +10148,27 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     chat: !chatHidden && (!shareMode || !!focusedBlockId),
     comments: !commentsHidden && !!focusedBlockId && !homeMode && commentsOn,
   };
-  function renderWindow(id) {
+  // A window's frame: its title, the grip's drag and fold, and its close.
+  // The window and its folded bar share it.
+  function windowFrame(id) {
     // Phone: windows are full-screen overlays — no dock dragging or collapsing,
     // and closing just returns to the main view.
     const common = {
       onGrip: isPhone ? undefined : (e) => startWindowDock(e, id),
       onFold: isPhone ? undefined : () => {
         const collapsed = !collapsedWins[id];
+        // Folded, the window keeps the size it has now for what it holds
+        // (--fold-w, --fold-h; app.css), so nothing in it lays out again
+        // while it waits, unseen, in its panel at no size. The focus leaves
+        // it, as a press elsewhere takes it: a finger's taps on the grip
+        // leave it in a note's editor, which then closes.
+        const panel = collapsed ? document.querySelector(`[data-panel-id="${id}"]`) : null;
+        const box = panel?.getBoundingClientRect();
+        if (box?.width && box.height) {
+          panel.style.setProperty("--fold-w", `${box.width}px`);
+          panel.style.setProperty("--fold-h", `${box.height}px`);
+        }
+        if (panel?.contains(document.activeElement)) document.activeElement.blur();
         setCollapsedWins((prev) => ({ ...prev, [id]: collapsed }));
         guideEvents.emit("window.collapsed", { id, collapsed });
       },
@@ -10000,19 +10181,24 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       hide();
       guideEvents.emit("window.closed", { id });
     };
+    if (id === "notes") return { title: t("Notes"), common, onClose: closeWindow(() => setNotesVisible(false)) };
+    if (id === "chat") return { title: t("Chat"), common, onClose: closeWindow(() => setChatHidden(true)) };
+    return { title: t("Comments"), common, onClose: closeWindow(() => setCommentsHidden(true)) };
+  }
+  function renderWindow(id) {
+    const { title, common, onClose } = windowFrame(id);
     if (id === "notes") {
       return (
-        <DockWindow title={t("Notes")} guide="notes.grip" {...common} onClose={closeWindow(() => setNotesVisible(false))}>
+        <DockWindow title={title} guide="notes.grip" {...common} onClose={onClose}>
           {notesWindow}
         </DockWindow>
       );
     }
     if (id === "chat") {
-      const closeChat = closeWindow(() => setChatHidden(true));
       return (
         // Until the chat's module is in, its window frame with an empty body.
         <LazyBoundary fallback={(
-          <DockWindow title={t("Chat")} guide="chat.grip" {...common} onClose={closeChat}>
+          <DockWindow title={title} guide="chat.grip" {...common} onClose={onClose}>
             <div className="chatPanel chatWindow" />
           </DockWindow>
         )}>
@@ -10021,7 +10207,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           session={chatSession}
           readOnly={shareMode}
           canSave={canWriteWorkspace}
-          onClose={closeChat}
+          onClose={onClose}
           docId={docId} pageAttach={pageAttach} focusedBlockId={focusedBlockId} homeBlocks={homeBlocks} libraryTree={libTree} pageTitle={pageTitle}
           openTabs={openTabs} recentViews={recentViews}
           onOpenPage={openPageLink}
@@ -10033,9 +10219,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           chatEffort={chatEffort} setChatEffort={setChatEffort}
           chatSpeed={chatSpeed} setChatSpeed={setChatSpeed}
           dictationModel={dictationModel} dictationLang={dictationLang}
-          chatSystem={chatSystem} aiInfo={aiInfo} aiProvider={aiProvider}
+          chatSystem={chatSystem} aiInfo={aiInfo} aiInfoFailed={aiInfoFailed} aiProvider={aiProvider}
           chatContextChars={chatContextChars} setChatContextChars={setChatContextChars} multiContextChars={multiContextChars}
-          openAiKeysEditor={openAiKeysEditor}
+          openAiKeysEditor={openAiKeysEditor} preloadSettings={SettingsDialog.preload}
+          onSetupInfo={(info) => { chatKeysInfoRef.current = info; }}
           focusSignal={chatFocusSignal}
           openSettings={openSettingsPane}
           isAdmin={!!authUser?.is_admin}
@@ -10062,17 +10249,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       );
     }
     if (id === "comments") {
-      const closeComments = closeWindow(() => setCommentsHidden(true));
       return (
         // Until its module is in, the window's frame with an empty body.
         <LazyBoundary fallback={(
-          <DockWindow title={t("Comments")} guide="comments.grip" {...common} onClose={closeComments}>
+          <DockWindow title={title} guide="comments.grip" {...common} onClose={onClose}>
             <div className="commentsPanel" />
           </DockWindow>
         )}>
           <CommentsPanel
             {...common}
-            onClose={closeComments}
+            onClose={onClose}
             threads={comments.threads}
             pageId={focusedBlockId}
             // what a thread is on: a highlight's quote, else the note's text
@@ -10093,30 +10279,58 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const slotWins = (side) => (isPhone ? [] : layout[side].filter((w) => winVisible[w]));
   function renderSlotGroup(side, direction) {
     const wins = slotWins(side);
-    // Collapsed windows live OUTSIDE the panel group as fixed header bars —
-    // panel sizes are percentage-based, so a collapsed panel could never
-    // shrink to exactly one header height. Bars keep their side of the
-    // expanded group so collapsing doesn't reorder the column.
-    const expanded = wins.filter((w) => !collapsedWins[w]);
-    const firstExpanded = wins.findIndex((w) => !collapsedWins[w]);
-    const bar = (w) => <div key={w} className="collapsedBar">{renderWindow(w)}</div>;
-    const before = wins.filter((w, i) => collapsedWins[w] && (firstExpanded === -1 || i < firstExpanded));
-    const after = wins.filter((w, i) => collapsedWins[w] && firstExpanded !== -1 && i > firstExpanded);
+    // A folded window shows as a bar OUTSIDE the panel group: panel sizes
+    // are percentage-based, so a panel could never be exactly one header
+    // tall. Bars keep their side of the open windows so folding doesn't
+    // reorder the column. The window itself stays in its panel, mounted and
+    // out of sight (DockWindow; .dockPanelFolded in app.css), so a fold
+    // keeps all it holds. While another window of the group is open, a
+    // folded one's panel is pinned at no size (its min, max and default 0),
+    // and the group's sizes are those of the open windows, shared evenly
+    // until a layout is saved; with all of them folded the panels keep
+    // their sizes, unseen.
+    const firstOpen = wins.findIndex((w) => !collapsedWins[w]);
+    const bar = (w) => {
+      const { title, common, onClose } = windowFrame(w);
+      return (
+        <div key={w} className="collapsedBar">
+          <DockBar title={title} guide={w === "notes" ? "notes.grip" : w === "chat" ? "chat.grip" : "comments.grip"}
+            onGrip={common.onGrip} onFold={common.onFold} onClose={onClose} />
+        </div>
+      );
+    };
+    const before = wins.filter((w, i) => collapsedWins[w] && (firstOpen === -1 || i < firstOpen));
+    const after = wins.filter((w, i) => collapsedWins[w] && firstOpen !== -1 && i > firstOpen);
+    // The group keeps a saved layout per set of folded windows, as it kept
+    // one per set of open windows when a fold took a window out of it. A
+    // panel's `order` names the set too, since the group reads its saved
+    // layout as its panels register: a fold registers them again.
+    const folds = wins.filter((w) => collapsedWins[w]);
+    const foldSet = wins.reduce((n, w, i) => (collapsedWins[w] ? n | (1 << i) : n), 0);
     return (
       <div className={`slotStack slotStack-${direction}`}>
         {before.map(bar)}
-        {expanded.length ? (
-          <div className="slotStackGroup">
-            <PanelGroup direction={direction} autoSaveId={`gamma-slot-${side}`} ref={(h) => { panelGroupRefs.current[`slot-${side}`] = h; }}>
-              {expanded.map((w, i) => (
+        <div className="slotStackGroup">
+          <PanelGroup direction={direction} autoSaveId={`gamma-slot-${side}${folds.length ? `:${folds.join("+")}` : ""}`}
+            ref={(h) => { panelGroupRefs.current[`slot-${side}`] = h; }}>
+            {wins.map((w, i) => {
+              const folded = !!collapsedWins[w];
+              const pinned = folded && firstOpen !== -1;
+              // One splitter between two open windows, right after the first:
+              // the group moves it past the pinned panels between them.
+              const sash = i > 0 && !collapsedWins[wins[i - 1]] && wins.slice(i).some((x) => !collapsedWins[x]);
+              return (
                 <React.Fragment key={w}>
-                  {i > 0 ? <PanelResizeHandle className={`sash sash-${direction}`} hitAreaMargins={SASH_MARGINS} /> : null}
-                  <Panel id={w} order={i + 1} minSize={15}>{renderWindow(w)}</Panel>
+                  {i > 0 ? (
+                    <PanelResizeHandle className={sash ? `sash sash-${direction}` : "sashFolded"} disabled={!sash} hitAreaMargins={SASH_MARGINS} />
+                  ) : null}
+                  <Panel id={w} order={foldSet * wins.length + i + 1} minSize={pinned ? 0 : 15} maxSize={pinned ? 0 : 100}
+                    defaultSize={pinned ? 0 : undefined} className={folded ? "dockPanelFolded" : undefined}>{renderWindow(w)}</Panel>
                 </React.Fragment>
-              ))}
-            </PanelGroup>
-          </div>
-        ) : null}
+              );
+            })}
+          </PanelGroup>
+        </div>
         {after.map(bar)}
       </div>
     );
@@ -10214,7 +10428,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         <MenuIcon size={16} />
       </button>
       {openPopover === "menu" ? (
-        <MenuScope className="popover menuPopover" data-guide="view.menu" aria-label={t("View")}>{viewMenuItems(menuReadOnly)}</MenuScope>
+        <Popover as={MenuScope} className="menuPopover" data-guide="view.menu" aria-label={t("View")}>{viewMenuItems(menuReadOnly)}</Popover>
       ) : null}
     </PopoverAnchor>
   );
@@ -10274,7 +10488,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           <span className="barLabel">{t("Add")}</span>
         </button>
         {openPopover === "add" ? (
-          <div className="popover addPopover" data-guide="add.popover">
+          <Popover className="addPopover" data-guide="add.popover">
             <input
               autoFocus
               className="searchInput"
@@ -10320,7 +10534,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               hidden
               onChange={(e) => { const files = Array.from(e.target.files || []); e.target.value = ""; setOpenPopover(null); if (files.length) uploadFiles(files); }}
             />
-          </div>
+          </Popover>
         ) : null}
       </span>
       <span data-popover="downloads" className={`popoverAnchor ${isPhone ? "sheetOnly" : ""}`}>
@@ -10449,7 +10663,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               : notices.tone ? <span className={`noticeDot ${dotTone(notices.tone)}`} data-tone={notices.tone} aria-hidden="true" /> : null}
           </button>
           {openPopover === "user" ? (
-            <MenuScope className="popover userPopover" data-guide="account.menu" aria-label={isPhone ? t("More") : t("Account & settings")}>
+            <Popover as={MenuScope} className="userPopover" data-guide="account.menu" aria-label={isPhone ? t("More") : t("Account & settings")}>
               {/* The card is the way into your account: Settings → Account & sync. */}
               <button type="button" role="menuitem" className="userCard" data-guide="account.card"
                 onClick={() => openSettingsPane("account")} title={t("Account & sync")}>
@@ -10559,7 +10773,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               </MenuItem>
               <MenuDivider />
               <MenuItem icon={LogOutIcon} danger onClick={authUser.is_guest ? confirmGuestLogout : doLogout}>{t("Log out")}</MenuItem>
-            </MenuScope>
+            </Popover>
           ) : null}
         </span>
       )}
@@ -10647,13 +10861,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 aria-label={t("Back")}
               >
                 <ArrowLeftIcon size={16} />
-                <span className="navBackBadge">{Math.min(navStackLen, 30)}</span>
+                <span className="navBackBadge"><span key={Math.min(navStackLen, 30)} className="countIn">{Math.min(navStackLen, 30)}</span></span>
               </button>
             ) : null}
             <OpenTabs
               tabs={openTabs}
-              activeId={focusedBlockId}
-              tabElements={tabElsRef}
+              activeId={tabPick || focusedBlockId}
+              still={tabsReadRef.current.has(openTabs)}
               kindOf={tabKindOf}
               menuOpen={openPopover === "tabs"}
               onMenuOpenChange={(open) => setOpenPopover(open ? "tabs" : null)}
@@ -10668,7 +10882,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 next.splice(to, 0, moved);
                 return next;
               })}
-              onOpen={(id) => openBlock(id, { restoreScroll: true })}
+              onOpen={selectTab}
               onClose={closeTab}
               onTogglePin={toggleTabPinned}
               onContext={(tab, x, y) => { setTabMenu({ id: tab.id, pinned: !!tab.pinned, x, y }); guideEvents.emit("tab.menu"); }}
@@ -10850,7 +11064,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             role="status"
           >
             {pillShown.spinner ? <span className="pillSpin" aria-hidden="true" /> : null}
-            <span className="pillText">{pillShown.msg}</span>
+            {/* A new message morphs out of the one it replaces. An error
+                wraps to be read in full, which a morph (one line while it
+                moves) would cut, so it shows at once. */}
+            <span className="pillText">{pillShown.error ? pillShown.msg : <MorphText>{pillShown.msg}</MorphText>}</span>
             {pillShown.action ? (
               <button type="button" className="pillRetryBtn" onClick={pillShown.action.run}>{pillShown.action.label}</button>
             ) : null}
@@ -10974,7 +11191,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   title={areaSelectMode ? t("Rectangle mode — drag draws an area note (tap to switch to text selection)") : t("Text mode — drag selects text (tap to switch to rectangle drawing)")}
                   aria-label={t("Toggle selection mode")}
                 >
-                  {areaSelectMode ? <RectSelectIcon size={16} /> : <TextCursorIcon size={16} />}
+                  <IconSwap swap={areaSelectMode} from={<TextCursorIcon size={16} />} to={<RectSelectIcon size={16} />} />
                 </button>
               ) : null}
             </div>
@@ -11249,7 +11466,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       ) : null}
       {confirmBox ? (
         // data-popover keeps an open popover (e.g. search) alive while the dialog is up
-        <div className="reportOverlay" data-popover="confirm" {...backdropPress(cancelConfirm)}>
+        <DialogOverlay data-popover="confirm" {...backdropPress(cancelConfirm)}>
           <div
             className="reportModal confirmModal"
             onClick={(e) => e.stopPropagation()}
@@ -11278,10 +11495,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               >{confirmBox.confirmLabel ? t(confirmBox.confirmLabel) : t("OK")}</button>
             </div>
           </div>
-        </div>
+        </DialogOverlay>
       ) : null}
       {labelRenaming ? (
-        <div className="reportOverlay" {...backdropPress(() => setLabelRenaming(null))}>
+        <DialogOverlay {...backdropPress(() => setLabelRenaming(null))}>
           <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}>
             <div className="reportModalTitle">{t("Rename label")}</div>
             <div className="reportModalHint confirmMessage">{t("Renames “{name}” on every page that carries it.", { name: labelName(libTree, labelRenaming.id) })}</div>
@@ -11303,10 +11520,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               >{t("Rename")}</button>
             </div>
           </div>
-        </div>
+        </DialogOverlay>
       ) : null}
       {moveBlockDialog ? (
-        <div className="reportOverlay" {...backdropPress(() => setMoveBlockDialog(null))}>
+        <DialogOverlay {...backdropPress(() => setMoveBlockDialog(null))}>
           <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}
             onKeyDown={(e) => stepList(e, e.currentTarget.querySelector("[data-find]"), [...e.currentTarget.querySelectorAll(".moveBlockList .ctxMenuItem")])}>
             <div className="reportModalTitle">{moveBlockDialog.fragment ? t("Move to page") : t("Move block to page")}</div>
@@ -11339,10 +11556,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               ) : null}
             </div>
           </div>
-        </div>
+        </DialogOverlay>
       ) : null}
       {linkPrompt ? (
-        <div className="reportOverlay" {...backdropPress(() => setLinkPrompt(null))}>
+        <DialogOverlay {...backdropPress(() => setLinkPrompt(null))}>
           <div className="reportModal confirmModal linkPromptModal" onClick={(e) => e.stopPropagation()}>
             <div className="confirmHead">
               <span className="confirmIcon"><LinkIcon size={16} /></span>
@@ -11378,10 +11595,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               ><ExternalLinkIcon size={14} />{t("Open in browser")}</button>
             </div>
           </div>
-        </div>
+        </DialogOverlay>
       ) : null}
       {linkDialog ? (
-        <div className="reportOverlay" {...backdropPress(() => setLinkDialog(null))}>
+        <DialogOverlay {...backdropPress(() => setLinkDialog(null))}>
           <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}>
             <div className="reportModalTitle">{linkDialog.editBlockId ? t("Change reference link") : t("Link reference to a page")}</div>
             {linkDialog.content?.text ? (
@@ -11444,7 +11661,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               <button className="uiBtn" onClick={() => setLinkDialog(null)}>{t("Cancel")}</button>
             </div>
           </div>
-        </div>
+        </DialogOverlay>
       ) : null}
       {/* Mounted once first wanted, then kept, as when they loaded with the
           app (useLatch): closed, they render nothing and run no requests. */}
@@ -11471,7 +11688,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         profileSync={profileSync}
         notices={notices}
         onPaneChange={setSettingsOpen}
-        onClose={() => setSettingsOpen(null)}
+        onClose={() => { aiEditor.close(); setSettingsOpen(null); }}
         papers={{
           theme,
           setTheme,

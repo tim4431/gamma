@@ -15,7 +15,7 @@
 // block's chip, as Transcribe with AI does (the AI stubbed: no provider is
 // called). The window's rules themselves are tests/zoomWindow.test.mjs; the
 // server's side of a selection is backend/tests/test_ai_tools_ink.py.
-import { assertNear as near, fakeAiModels } from "../harness.mjs";
+import { assertNear as near, fakeAiModels, live } from "../harness.mjs";
 import { waitForPdf } from "./pdf.mjs";
 import { decodeStroke, encodeStroke, newInk, strokeBounds } from "../../../src/ink/ink.js";
 import { advance, moveTo, moveWindow, newLine, nextLine, prevLine } from "../../../src/ink/zoomWindow.js";
@@ -92,7 +92,7 @@ export async function inkZoomScenarios({ server, browser, alice, makePdf, step, 
     assertEq(await panel().getAttribute("data-page"), "1");
     assertEq(await panel().getAttribute("data-guide"), "ink.zoom");
     assertEq(await page.locator(".pdfInkBar button[aria-label='Zoom window']").getAttribute("aria-pressed"), "true", "the pressed toggle in the strip");
-    assertEq(await page.locator(".inkStripMenu").count(), 0, "the menu closed");
+    assertEq(await page.locator(live(".inkStripMenu")).count(), 0, "the menu closed");
     // docked under the scroller, which gives up its 200 px
     const scroller = await page.locator(".pdfViewer").boundingBox(), docked = await panel().boundingBox();
     near(docked.height, 200, 1, "the panel's height");

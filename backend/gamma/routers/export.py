@@ -61,8 +61,9 @@ from ..text_box import box_page, is_text_box, normalize_text_box
 from ..obsidian_export import (APP_JSON, Filing, VaultContext, page_dir, referenced_blocks, render_vault_page,
                                unique_name, vault_name)
 from ..pdf_document import render_document
-from ..pdf_export import annotate_pdf, highlight_note_blocks, highlight_note_text, popup_text, still_embedded
-from ..pdf_notes import render_notes
+from ..pdf_export import annotate_pdf, highlight_note_blocks, highlight_note_text, still_embedded
+from ..comments import threads_for as comment_threads
+from ..pdf_notes import NOTES_AT, render_notes
 from ..zotero_export import (
     GAMMA_NOTE_KEY,
     GAMMA_PAGE_KEY,
@@ -137,26 +138,57 @@ def _children_by_id(blocks) -> dict:
 def _collect_marks(blocks) -> list[dict]:
     """Highlight blocks (``kind`` ``highlight``: not the link regions,
     Gamma navigation aids, nor ink) → annotate_pdf marks (position, colour,
-    the popup's note and, for the notes beside the page, the notes as
-    ``highlight_note_blocks``). Skips annotations that came from the PDF
-    itself and are STILL embedded in it (``still_embedded``)."""
+    the popup's note). Skips annotations that came from the PDF itself and
+    are STILL embedded in it (``still_embedded``)."""
     children_by_id = _children_by_id(blocks)
     marks = []
     for b in blocks:
         props = b["properties"]
         if b["kind"] != "highlight" or still_embedded(props):
             continue
-        blocks = highlight_note_blocks(b, children_by_id)
         marks.append({
             "position": props["pdf_position"],
             "color": props.get("color"),
-            "note": popup_text(blocks),
-            "blocks": blocks,
+            "note": highlight_note_text(b, children_by_id),
             # For /Square annotations: the deterministic /NM key Zotero
             # requires before it will import an area annotation.
             "id": b["id"],
         })
     return marks
+
+
+def _collect_cards(blocks, *, notes: bool, threads: dict) -> list[dict]:
+    """Every highlight block → what ``render_notes`` prints for it, from
+    ``threads`` (``{block id: [[comment, …], …]}``, the open ones): with
+    ``notes`` its notes (``highlight_note_blocks``), each with the threads
+    on it, the highlight's own threads with its own note (its text is its
+    note, as the app calls it); the highlight's threads on their own when
+    it has no note shown; and the threads on the blocks under it the cards
+    do not show (all of them with the notes off, an empty note, a text
+    box), each with its block's text to quote, in reading order. Unlike the marks, a highlight still embedded in the PDF
+    has its cards too: its notes and threads are the reader's own, whatever
+    the file already carries."""
+    children_by_id = _children_by_id(blocks)
+
+    def under(bid):
+        for child in children_by_id.get(bid, []):
+            yield child
+            yield from under(child["id"])
+
+    cards = []
+    for b in blocks:
+        if b["kind"] != "highlight":
+            continue
+        shown = highlight_note_blocks(b, children_by_id) if notes else []
+        ids = {bid for _depth, _md, bid in shown}
+        cards.append({
+            "position": b["properties"].get("pdf_position") or {}, "color": b["properties"].get("color"),
+            "blocks": [(depth, md, threads.get(bid, [])) for depth, md, bid in shown],
+            "threads": [] if b["id"] in ids else threads.get(b["id"], []),
+            "note_threads": [(child.get("content") or "", thread) for child in under(b["id"])
+                             if child["id"] not in ids for thread in threads.get(child["id"], [])],
+        })
+    return cards
 
 
 def _collect_ink(blocks, uploads_dir) -> list[dict]:
@@ -231,7 +263,8 @@ def _image_resolver(uploads_dir):
 # builder here; the endpoints, the job and the zip writer stay untouched.
 
 class _Builder:
-    """opts: {"pdf": bool, "highlights": bool, "notes": bool,
+    """opts: {"pdf": bool, "highlights": bool, "notes": bool, "comments":
+    bool, "notes_at": where an annotated PDF's notes go (``NOTES_AT``),
     "folder_scope": the exported folder's id | None (None: one page is
     exported), "author": the account exporting}. ``filing`` (``obsidian_export.Filing``)
     names the pages' folders and labels once ``begin`` has run."""
@@ -745,7 +778,8 @@ class _AnnotatedPdfBuilder(_Builder):
         try:
             data, filename, _, _ = annotated_page_pdf(
                 self.ws, [block_to_dict(r) for r in rows], page["id"], highlights=self.opts["highlights"],
-                notes=self.opts["notes"], author=self.opts.get("author", ""))
+                notes=self.opts["notes"], comments=self.opts["comments"], notes_at=self.opts["notes_at"],
+                author=self.opts.get("author", ""))
         except HTTPException as e:
             self.skip(page, str(e.detail))
             return
@@ -934,9 +968,14 @@ def _run_export(conn, ws, mode: str, root_ids, base: str, opts: dict, progress=j
     return builder
 
 
-def _export_opts(pdf=True, highlights=True, notes=True, folder_scope=None, author="") -> dict:
-    return {"pdf": bool(pdf), "highlights": bool(highlights), "notes": bool(notes),
-            "folder_scope": folder_scope, "author": author}
+def _export_opts(pdf=True, highlights=True, notes=True, folder_scope=None, author="", comments=False,
+                 notes_at="beside") -> dict:
+    """The switches as the builders read them; 400 for a ``notes_at`` that
+    is no place notes go."""
+    if notes_at not in NOTES_AT:
+        raise HTTPException(status_code=400, detail=f"notes_at must be one of: {', '.join(NOTES_AT)}")
+    return {"pdf": bool(pdf), "highlights": bool(highlights), "notes": bool(notes), "comments": bool(comments),
+            "notes_at": notes_at, "folder_scope": folder_scope, "author": author}
 
 
 def page_builder(ws: str, block_id: str, mode: str, opts: dict, scope=None) -> _Builder:
@@ -972,23 +1011,25 @@ def page_notes_pdf(ws: str, page_id: str, *, highlights=True, notes=True) -> tup
     return builder.render(), f"{builder.base}{builder.suffix}"
 
 
-def annotated_pdf(ws: str, block_id: str, *, highlights=True, notes=False, author="",
-                  scope=None) -> tuple[bytes, str, int, int]:
+def annotated_pdf(ws: str, block_id: str, *, highlights=True, notes=False, comments=False, notes_at="beside",
+                  author="", scope=None) -> tuple[bytes, str, int, int]:
     """The page's PDF with its highlights, ink and text boxes as standard
-    annotations and, with ``notes``, its notes in a column beside the pages:
-    ``(pdf bytes, file name, annotations written, notes drawn)``. Both off = the
-    stored PDF as is. Raises HTTPException like the routes."""
+    annotations; with ``notes``, each highlight's notes as a card beside the
+    pages or on them (``notes_at``), and with ``comments`` its open comment
+    threads as cards beside the pages: ``(pdf bytes, file name, annotations
+    written, cards drawn)``. All three off = the stored PDF as is. Raises
+    HTTPException like the routes."""
     with connect_pages_db(ws) as conn:
         assert_block_in_scope(conn, block_id, scope)
         rows = fetch_subtree(conn, block_id) if page_root_id(conn, block_id) else []
     if not rows:
         raise HTTPException(status_code=404, detail="page not found")
-    return annotated_page_pdf(ws, [block_to_dict(r) for r in rows], block_id,
-                              highlights=highlights, notes=notes, author=author)
+    return annotated_page_pdf(ws, [block_to_dict(r) for r in rows], block_id, highlights=highlights,
+                              notes=notes, comments=comments, notes_at=notes_at, author=author)
 
 
 def annotated_page_pdf(ws: str, blocks: list[dict], block_id: str, *, highlights=True, notes=False,
-                       author="") -> tuple[bytes, str, int, int]:
+                       comments=False, notes_at="beside", author="") -> tuple[bytes, str, int, int]:
     """``annotated_pdf`` of a page whose blocks (``block_to_dict``, the root
     among them) are already read — what a folder export feeds it."""
     root = next(b for b in blocks if b["id"] == block_id)
@@ -1024,9 +1065,10 @@ def annotated_page_pdf(ws: str, blocks: list[dict], block_id: str, *, highlights
     written = 0
     pdf_bytes = pdf_path.read_bytes()
     # A text box is part of the annotation layer and it is the user's own
-    # writing on the page, so either switch writes it: the notes-only PDF
-    # keeps the boxes with the notes beside the page. Both off: the stored file.
-    if highlights or (notes and (boxes or replaced)):
+    # writing on the page, so any switch writes it: the notes-only PDF keeps
+    # the boxes with the cards. All off: the stored file.
+    cards = notes or comments
+    if highlights or (cards and (boxes or replaced)):
         try:
             # [[refs]] in a box read as the text they name, as in the notes PDF.
             with connect_pages_db(ws) as conn:
@@ -1038,24 +1080,29 @@ def annotated_page_pdf(ws: str, blocks: list[dict], block_id: str, *, highlights
             raise HTTPException(status_code=400, detail=f"could not annotate PDF: {str(e) or type(e).__name__}") from e
 
     drawn = 0
-    if notes:
+    if cards:
         # Still positioned from the highlight rects, annotation layer or not;
-        # [[refs]] read as the text they name, as in the notes PDF.
+        # [[refs]] read as the text they name, as in the notes PDF. The
+        # threads are the open ones, as the viewer's margin shows them.
         try:
             with connect_pages_db(ws) as conn:
-                pdf_bytes, drawn = render_notes(pdf_bytes, marks, uploads_dir=ws_uploads_dir(ws),
-                                                resolve_ref=block_ref_resolver(conn))
+                threads = {}
+                for thread in comment_threads(conn, [block_id], state="open") if comments else ():
+                    threads.setdefault(thread["block_id"], []).append(thread["comments"])
+                pdf_bytes, drawn = render_notes(
+                    pdf_bytes, _collect_cards(blocks, notes=notes, threads=threads), notes_at=notes_at,
+                    uploads_dir=ws_uploads_dir(ws), resolve_ref=block_ref_resolver(conn))
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"could not render notes: {e}")
 
-    suffix = "-notes" if notes else "-annotated" if highlights else ""
+    suffix = "-notes" if notes else "-comments" if comments else "-annotated" if highlights else ""
     return pdf_bytes, f"{slugify(root.get('content'), block_id)}{suffix}.pdf", written, drawn
 
 
 # Sync on purpose: rendering + zipping runs in FastAPI's threadpool.
 @router.get("/pages/{block_id}/export")
 def export_page(block_id: str, request: Request, mode: str = "readable", pdf: int = 1,
-                highlights: int = 1, notes: int = 1):
+                highlights: int = 1, notes: int = 1, comments: int = 0, notes_at: str = "beside"):
     """One page in any export format (see the _Builder classes): ``readable``
     Markdown (bare .md when it references no local assets, else a .zip with an
     assets/ folder; ``highlights=0``/``notes=0`` — the dialog's switches —
@@ -1064,32 +1111,40 @@ def export_page(block_id: str, request: Request, mode: str = "readable", pdf: in
     the PDF and images under attachments/), ``notes-pdf`` (the
     notes typeset as their own PDF document — the one format a page without a
     PDF can still export as one), ``annotated-pdf`` (the page's PDF with its
-    annotations, what /export-pdf answers), ``logseq-graph`` (a complete
+    annotations, what /export-pdf answers, ``comments`` and ``notes_at``
+    as there), ``logseq-graph`` (a complete
     Logseq file graph, both switches pinned on), ``zotero-rdf`` (a one-item
     Zotero RDF library), ``bibtex`` (the page's citation entry as a .bib
     file), or ``gamma`` (a scoped account backup any Gamma imports via
     /api/import-data?mode=merge)."""
     ws = resolve_ws(request)
-    opts = _export_opts(pdf, highlights, notes, author=request.state.user or "")
+    opts = _export_opts(pdf, highlights, notes, author=request.state.user or "", comments=comments,
+                        notes_at=notes_at)
     return page_builder(ws, block_id, mode, opts, share_scope(request)).response()
 
 
 # Sync on purpose: PyPDF2 rewriting is CPU-bound; the threadpool keeps the loop free.
 @router.get("/pages/{block_id}/export-pdf")
-def export_page_pdf(block_id: str, request: Request, notes: int = 0, highlights: int = 1):
+def export_page_pdf(block_id: str, request: Request, notes: int = 0, highlights: int = 1, comments: int = 0,
+                    notes_at: str = "beside"):
     """The page's PDF with its highlights burned in as standard /Highlight
     annotations (notes become the annotation popup text), so they survive in
     any external PDF viewer. ``notes=1`` also prints every highlight's notes
-    in a column beside each page, a card level with the highlight
-    (``gamma/pdf_notes.py``): readable without opening popups, and
-    printable. ``highlights=0`` skips the annotation layer, so
+    as a card (``gamma/pdf_notes.py``): in a column beside each page, level
+    with the highlight (``notes_at=beside``), or in the page's own free
+    space with a line back to it (``notes_at=page``). Readable without
+    opening popups, and printable. ``comments=1`` prints each highlight's
+    open comment threads as cards beside the page, as the viewer's margin
+    shows them. ``highlights=0`` skips the annotation layer, so
     ``highlights=0&notes=1`` gives a clean PDF carrying only the written
-    notes: the cards beside the pages and the text boxes, the writing
-    already placed on the page."""
+    notes: the cards and the text boxes, the writing already placed on the
+    page."""
     ws = resolve_ws(request)
+    if notes_at not in NOTES_AT:
+        raise HTTPException(status_code=400, detail=f"notes_at must be one of: {', '.join(NOTES_AT)}")
     pdf_bytes, filename, written, drawn = annotated_pdf(
-        ws, block_id, highlights=bool(highlights), notes=bool(notes),
-        author=request.state.user or "", scope=share_scope(request))
+        ws, block_id, highlights=bool(highlights), notes=bool(notes), comments=bool(comments),
+        notes_at=notes_at, author=request.state.user or "", scope=share_scope(request))
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
@@ -1120,7 +1175,7 @@ def _folder_base(path: list[str]) -> str:
 
 @router.get("/folders/{folder_id}/export")
 def export_folder(folder_id: str, request: Request, mode: str = "readable", pdf: int = 1,
-                  highlights: int = 1, notes: int = 1):
+                  highlights: int = 1, notes: int = 1, comments: int = 0, notes_at: str = "beside"):
     """Every page filed in the folder ``folder_id`` (or a folder below it),
     in any export format (see the _Builder classes): ``readable`` (one .md
     per page +
@@ -1139,7 +1194,8 @@ def export_folder(folder_id: str, request: Request, mode: str = "readable", pdf:
     the request's share."""
     scope = share_scope(request)
     ws = resolve_ws(request)
-    opts = _export_opts(pdf, highlights, notes, folder_scope=folder_id, author=request.state.user or "")
+    opts = _export_opts(pdf, highlights, notes, folder_scope=folder_id, author=request.state.user or "",
+                        comments=comments, notes_at=notes_at)
     with connect_pages_db(ws) as conn:
         path = _export_folder(conn, folder_id, scope)
         ids = pages_in_folder(conn, folder_id)
@@ -1180,6 +1236,8 @@ class ExportJob(BaseModel):
     pdf: bool = True
     highlights: bool = True
     notes: bool = True
+    comments: bool = False      # an annotated PDF's open comment threads beside its pages
+    notes_at: str = "beside"    # where an annotated PDF's notes go (NOTES_AT)
 
 
 @router.post("/jobs/export")
@@ -1209,7 +1267,8 @@ def start_export_job(payload: ExportJob, request: Request):
             title, base = (row[0] or "").strip() or "Untitled", slugify(row[0], page_id)
         else:
             raise HTTPException(status_code=400, detail="name a page or a folder to export")
-    opts = _export_opts(payload.pdf, payload.highlights, payload.notes, folder_scope=folder or None, author=user)
+    opts = _export_opts(payload.pdf, payload.highlights, payload.notes, folder_scope=folder or None, author=user,
+                        comments=payload.comments, notes_at=payload.notes_at)
 
     def run(job):
         with connect_pages_db(ws) as conn:
@@ -1226,4 +1285,5 @@ def start_export_job(payload: ExportJob, request: Request):
     return jobs.start("export", owner=request.state.user_id, ws=ws, run=run, artifact=True, title=f"Export of {title}",
                       params={"page_id": page_id if not folder else "", "folder": folder, "name": title,
                               "mode": mode, "pdf": payload.pdf, "highlights": payload.highlights,
-                              "notes": payload.notes})
+                              "notes": payload.notes, "comments": payload.comments,
+                              "notes_at": payload.notes_at})
