@@ -2809,11 +2809,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     ? scopedAiModels[0].id
     : chatModel;
 
+  // The masked key list the chat's setup card read (ChatDock onSetupInfo):
+  // the one Connections shows, so a tile's connect dialog opens on it with
+  // Settings while the pane reads its own.
+  const chatKeysInfoRef = useRef(null);
   async function loadAiKeys() {
     aiEditor.close();
-    setAiKeysInfo(null);
     setAiKeyTests({});
     setAiKeyUsage({});
+    const fromChat = pendingAiFormRef.current?.service ? chatKeysInfoRef.current : null;
+    setAiKeysInfo(fromChat);
+    if (fromChat) {
+      openAiForm(pendingAiFormRef.current, fromChat);
+      pendingAiFormRef.current = null;
+    }
     try {
       const info = await apiJson(`${API}/ai/settings`);
       setAiKeysInfo(info);
@@ -2891,9 +2900,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return () => clearTimeout(timer);
   }, [authUser?.user, shareMode]);
   // Entering the AI panes from elsewhere refetches the masked key list;
-  // moving between them keeps it (their edits refresh it themselves).
+  // moving between them keeps it (their edits refresh it themselves). It
+  // runs before the frame is painted, so a form left open on an earlier
+  // visit never shows again.
   const prevSettingsPaneRef = useRef(null);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const cameFrom = prevSettingsPaneRef.current;
     prevSettingsPaneRef.current = settingsOpen;
     if (isAiPane(settingsOpen) && !isAiPane(cameFrom) && authUser?.user && !shareMode) loadAiKeys();
@@ -2919,7 +2930,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
 
   // The model switchers everywhere feed off /ai/models — refresh after edits.
-  const refreshAiModels = () => apiJson(`${API}/ai/models`).then(setAiInfo).catch(() => {});
+  // A read that fails leaves the last list and says so (`aiInfoFailed`): the
+  // chat, waiting to learn its AI before it shows its tools, stops waiting.
+  const [aiInfoFailed, setAiInfoFailed] = useState(false);
+  const refreshAiModels = () => apiJson(`${API}/ai/models`)
+    .then((info) => { setAiInfo(info); setAiInfoFailed(false); })
+    .catch(() => setAiInfoFailed(true));
 
   // A connection the dialog just made: test it right away, and when the
   // dialog came from the chat's setup card go back to the chat, ready to ask.
@@ -9933,9 +9949,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           chatEffort={chatEffort} setChatEffort={setChatEffort}
           chatSpeed={chatSpeed} setChatSpeed={setChatSpeed}
           dictationModel={dictationModel} dictationLang={dictationLang}
-          chatSystem={chatSystem} aiInfo={aiInfo} aiProvider={aiProvider}
+          chatSystem={chatSystem} aiInfo={aiInfo} aiInfoFailed={aiInfoFailed} aiProvider={aiProvider}
           chatContextChars={chatContextChars} setChatContextChars={setChatContextChars} multiContextChars={multiContextChars}
-          openAiKeysEditor={openAiKeysEditor}
+          openAiKeysEditor={openAiKeysEditor} preloadSettings={SettingsDialog.preload}
+          onSetupInfo={(info) => { chatKeysInfoRef.current = info; }}
           focusSignal={chatFocusSignal}
           openSettings={openSettingsPane}
           isAdmin={!!authUser?.is_admin}
@@ -11377,7 +11394,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         profileSync={profileSync}
         notices={notices}
         onPaneChange={setSettingsOpen}
-        onClose={() => setSettingsOpen(null)}
+        onClose={() => { aiEditor.close(); setSettingsOpen(null); }}
         papers={{
           theme,
           setTheme,

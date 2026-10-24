@@ -64,8 +64,8 @@ export async function chatNavigationScenarios(env) {
             await page.getByRole("button", { name: "View", exact: true }).click();
             await until(async () => (await page.locator(".chatPanel").innerText()).includes("Continued with the panel closed."));
             await page.getByRole("button", { name: "Stop generating", exact: true }).waitFor();
-            // Text after the last report counts as a "~" estimate next to the Responding pill.
-            const live = page.locator(".chatThinking .chatMsgUsage");
+            // Text after the last report counts as a "~" estimate in the Responding pill.
+            const live = page.locator(".chatSteps .chatMsgUsage");
             await live.waitFor();
             assert((await live.innerText()).includes("~"), "the streaming round shows an estimate");
             assert((await live.innerText()).includes("1.2k"), "reported rounds stay exact while streaming");
@@ -582,10 +582,11 @@ export async function chatNavigationScenarios(env) {
       await input.press("Enter");
       await page.waitForFunction(() => !!window.chatStream);
       const pill = page.locator(".chatSteps");
-      // The step running now replaces "Thinking".
+      // One pill from the start: "Thinking", then the step running now.
+      await pill.filter({ hasText: "Thinking" }).waitFor();
       await page.evaluate(() => window.chatStream.push({ step: { id: "c1", tool: "search_library", args: { query: "cavity" } } }));
       await pill.filter({ hasText: "Searching library for “cavity”…" }).waitFor();
-      assertEq(await page.locator(".chatThinking").count(), 0, "the running step stands in for the Thinking pill");
+      assertEq(await pill.count(), 1, "the running step takes the Thinking pill's words");
       await page.evaluate(({ id, title }) => {
         const s = window.chatStream;
         s.push({ action: { kind: "search", tool: "search_library", summary: "Searched library for “cavity” — 1 hit", args: { query: "cavity" }, result: "…" } });
@@ -661,7 +662,7 @@ export async function chatNavigationScenarios(env) {
       await push({ helper: { ...cat, state: "done", steps: 1 } });
       await rows.filter({ hasText: "Cat qubits" }).filter({ hasText: "Done · 1 step" }).waitFor();
       assertEq(await rows.locator(".transferSpin").count(), 0, "nothing spins once both ended");
-      assertEq(await page.locator(".chatThinking").count(), 0, "the running call still stands in for the Thinking pill");
+      assertEq(await pill.count(), 1, "the running call still speaks through the one pill");
       // The call's chips land: the rows go, and the helper's own calls stay under its chip.
       await push({ action: { kind: "helper", tool: "read_paper", summary: "Helper read “Cat qubits”", steps: 2,
         args: { source: "arXiv:1905.00450", question: "what do they measure?" }, result: "A helper read arXiv:1905.00450…",
@@ -1134,7 +1135,7 @@ export async function chatNavigationScenarios(env) {
       assert((await card.innerText()).includes("Approval needed · Edit note blocks"), "the card names the permission");
       assertEq((await card.locator("ins").innerText()).trim(), "The key result.");
       await page.locator(".chatSteps").getByText("Waiting for your approval").waitFor();
-      assertEq(await page.locator(".chatThinking").count(), 0, "no Thinking pill while the card waits");
+      assertEq(await page.locator(".chatSteps .shimmerText").count(), 0, "nothing says work is under way while the card waits");
       if (flags.keep) {
         await card.screenshot({ path: `${server.dir}/approval-card.png`, animations: "disabled" });
         await page.locator(".chatPanel").screenshot({ path: `${server.dir}/approval-panel.png`, animations: "disabled" });
@@ -1385,5 +1386,264 @@ export async function chatNavigationScenarios(env) {
       await ctx.close();
       await alice.api(`/api/blocks/${histPage.id}`, { method: "DELETE" });
     }
+  });
+
+
+  // Motion in the transcript (docs/dev/ui-design.md, "Lists that change"):
+  // a context whose chat stream is faked (window.chatStream push / finish,
+  // a fresh one per question), recording from before the page loads what
+  // comes into the transcript and which status pill folds away.
+  async function streamingContext(options = {}) {
+    const ctx = await alice.context(browser, options);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => {
+      localStorage.setItem("gamma-ai-login-check", "off");
+      window.chatMotion = [];
+      new MutationObserver((records) => {
+        for (const r of records) {
+          const value = r.target.getAttribute(r.attributeName);
+          if (r.attributeName === "data-entering" && value) window.chatMotion.push(`enter ${value} ${r.target.dataset.motionKey}`);
+          if (r.attributeName === "data-phase" && r.target.classList.contains("chatStepsFold")) window.chatMotion.push(`fold ${value}`);
+        }
+      }).observe(document, { subtree: true, attributes: true, attributeFilter: ["data-entering", "data-phase"] });
+      const fetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        if (String(input).endsWith("/api/ai/chat")) {
+          return Promise.resolve(new Response(new ReadableStream({
+            start(controller) {
+              window.chatStream = {
+                push: (event) => controller.enqueue(new TextEncoder().encode(JSON.stringify(event) + "\n")),
+                finish: () => controller.close(),
+              };
+            },
+          }), { headers: { "Content-Type": "application/x-ndjson" } }));
+        }
+        return fetch(input, init);
+      };
+    });
+    return ctx;
+  }
+  const chatMotion = (page) => page.evaluate(() => window.chatMotion.splice(0));
+  async function ask(page, text) {
+    await page.evaluate(() => { window.chatStream = null; });
+    const input = page.getByRole("combobox", { name: "Message AI" });
+    await input.fill(text);
+    await input.press("Enter");
+    await page.waitForFunction(() => !!window.chatStream);
+  }
+  const push = (page, ...events) => page.evaluate((list) => list.forEach((event) => window.chatStream.push(event)), events);
+
+  await step("chat navigation: a question and its reply rise into place under one pill that morphs from Thinking to each step; a loaded conversation shows still", async () => {
+    await alice.api("/api/chats/home", { method: "PUT", body: { messages: [
+      { role: "user", text: "Earlier question" }, { role: "ai", text: "Earlier answer" },
+    ] } });
+    const ctx = await streamingContext();
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    try {
+      await page.locator(".chatBubbleRow.ai", { hasText: "Earlier answer" }).waitFor();
+      await page.waitForLoadState("networkidle");
+      assertEq((await chatMotion(page)).join(), "", "the stored conversation shows still");
+      await ask(page, "Tidy up the library");
+      const came = await chatMotion(page);
+      assertEq(came.filter((m) => m.startsWith("enter")).join(), "enter rise 2,enter rise 3", "the question and its reply rise in");
+      const reply = page.locator(".chatBubbleRow.ai").last();
+      const pill = reply.locator(".chatSteps");
+      await pill.filter({ hasText: "Thinking" }).waitFor();
+      assertEq(await pill.locator(".shimmerText").count(), 1, "the light says work is under way");
+      const morphed = page.waitForSelector(".chatSteps .morph.moving", { state: "attached" });
+      await push(page, { step: { id: "c1", tool: "search_library", args: { query: "cavity" } } });
+      await morphed;
+      await pill.filter({ hasText: "Searching library for “cavity”…" }).waitFor();
+      await push(page, { action: { kind: "search", tool: "search_library", summary: "Searched library for “cavity” — 1 hit", args: { query: "cavity" }, result: "…" } });
+      await pill.filter({ hasText: "Thinking" }).waitFor();
+      await push(page, { delta: "Nothing to tidy." });
+      await pill.filter({ hasText: "Responding" }).waitFor();
+      await page.evaluate(() => window.chatStream.finish());
+      await pill.filter({ hasText: "1 step" }).waitFor();
+      assertEq(await pill.locator(".shimmerText").count(), 0, "a finished reply's pill is still");
+      // A reply that ends without a step folds its pill away.
+      await ask(page, "Thanks");
+      const plain = page.locator(".chatBubbleRow.ai").last();
+      await plain.locator(".chatSteps", { hasText: "Thinking" }).waitFor();
+      await push(page, { delta: "You're welcome." });
+      await plain.locator(".chatSteps", { hasText: "Responding" }).waitFor();
+      await chatMotion(page);
+      await page.evaluate(() => window.chatStream.finish());
+      await until(async () => !(await plain.locator(".chatSteps").count()), { what: "the plain reply's pill goes" });
+      assert((await chatMotion(page)).includes("fold closing"), "it folds away");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("chat navigation: under reduced motion a question and its reply come in still", async () => {
+    await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    const ctx = await streamingContext({ reducedMotion: "reduce" });
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    try {
+      await page.getByRole("combobox", { name: "Message AI" }).waitFor();
+      await page.waitForLoadState("networkidle");
+      await ask(page, "Hello");
+      await push(page, { delta: "Hi." });
+      await page.evaluate(() => window.chatStream.finish());
+      await until(async () => !(await page.locator(".chatSteps").count()), { what: "the pill goes" });
+      assertEq((await chatMotion(page)).filter((m) => m.startsWith("enter")).join(), "", "nothing rises");
+      assertEq(await page.locator(".chatBubbleRow").count(), 2);
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("chat navigation: back on a page, its conversation shows at once while it is read again; the history popover keeps its list, and a quick list never shows Loading…", async () => {
+    const back = await alice.api("/api/pages", { method: "POST", body: { title: "Cached chat page" } });
+    // Archiving clears the bucket's active conversation: it goes first.
+    await alice.api("/api/chat-history/archive", { method: "POST", body: { bucket: back.id, title: "Older talk",
+      messages: [{ role: "user", text: "Older talk" }] } });
+    await alice.api(`/api/chats/${back.id}`, { method: "PUT", body: { messages: [
+      { role: "user", text: "What does it cite?" }, { role: "ai", text: `It cites [Linked paper](/?page=${target.id}).` },
+    ] } });
+    const ctx = await streamingContext();
+    // Reads of this page's conversation and of its history wait while held.
+    const held = { chat: null, history: null };
+    const hold = (what) => { let release; held[what] = new Promise((resolve) => { release = resolve; }); return () => { held[what] = null; release(); }; };
+    await ctx.route((url) => url.pathname === `/api/chats/${back.id}`, async (route) => {
+      if (route.request().method() === "GET" && held.chat) await held.chat;
+      await route.continue();
+    });
+    await ctx.route((url) => url.pathname === "/api/chat-history" && url.searchParams.get("bucket") === back.id, async (route) => {
+      if (held.history) await held.history;
+      await route.continue();
+    });
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&page=${back.id}`);
+    try {
+      const question = page.locator(".chatBubbleRow.user", { hasText: "What does it cite?" });
+      await question.waitFor();
+      await page.waitForLoadState("networkidle");
+      // A first look at the history: "Loading…" stays unseen for a moment.
+      const releaseHistory = hold("history");
+      const historyButton = page.getByRole("button", { name: "Chat history", exact: true });
+      await historyButton.click();
+      const hint = page.locator(".chatHistoryPop .loadingHint");
+      await hint.waitFor();
+      assertEq(await hint.evaluate((el) => getComputedStyle(el).opacity), "0", "an answer that comes quickly never shows Loading…");
+      await until(async () => (await hint.evaluate((el) => getComputedStyle(el).opacity)) === "1", { what: "a slow one shows it" });
+      releaseHistory();
+      const older = page.locator(".chatHistRow:not(.active)", { hasText: "Older talk" });
+      await older.waitFor();
+      await historyButton.click();
+      // Away to the linked page and back, with the conversation's read held.
+      await page.locator(".chatPanel").getByRole("link", { name: "Linked paper" }).click();
+      await until(() => new URL(page.url()).searchParams.get("block") === target.id);
+      await question.waitFor({ state: "detached" });
+      await chatMotion(page);
+      const releaseChat = hold("chat");
+      await page.getByRole("button", { name: "Back", exact: true }).click();
+      await question.waitFor();
+      assert(await page.locator(".chatBubbleRow.ai", { hasText: "It cites" }).isVisible(), "the reply is back too, before the read");
+      // The popover opens on the list it had while that is read again.
+      const releaseAgain = hold("history");
+      await historyButton.click();
+      await older.waitFor();
+      assertEq(await page.locator(".chatHistoryPop .loadingHint").count(), 0, "no Loading… over a list it has");
+      releaseAgain();
+      releaseChat();
+      await page.waitForLoadState("networkidle");
+      assert(await question.isVisible(), "the stored copy replaces it in place");
+      assertEq((await chatMotion(page)).filter((m) => m.startsWith("enter")).join(), "", "a conversation come back to shows still");
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await alice.api(`/api/blocks/${back.id}`, { method: "DELETE" });
+    }
+  });
+
+  await step("chat navigation: the history popover shows an open and a New chat made here at once — the conversation filed leads, the one opened is gone", async () => {
+    const swap = await alice.api("/api/pages", { method: "POST", body: { title: "Swap page" } });
+    await alice.api("/api/chat-history/archive", { method: "POST", body: { bucket: swap.id, title: "Older talk",
+      messages: [{ role: "user", text: "Older talk question" }] } });
+    await alice.api(`/api/chats/${swap.id}`, { method: "PUT", body: { title: "Current talk", messages: [
+      { role: "user", text: "Current talk question" }, { role: "ai", text: "Current answer" },
+    ] } });
+    const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+    // The list's reads wait while held: what shows meanwhile is the list as
+    // this tab changed it.
+    let held = null;
+    await ctx.route((url) => url.pathname === "/api/chat-history" && url.searchParams.get("bucket") === swap.id, async (route) => {
+      if (held) await held.promise;
+      await route.continue();
+    });
+    const hold = () => { let release; held = { promise: new Promise((resolve) => { release = resolve; }) }; return () => { held = null; release(); }; };
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&page=${swap.id}`);
+    const historyButton = page.getByRole("button", { name: "Chat history", exact: true });
+    const listed = () => page.locator(".chatHistoryPop:not([data-leaving]) .chatHistRow:not(.active) .chatHistTitle").allInnerTexts();
+    try {
+      await page.locator(".chatBubbleRow.ai", { hasText: "Current answer" }).waitFor();
+      await page.waitForLoadState("networkidle");
+      await historyButton.click();
+      await page.locator(".chatHistRow:not(.active)", { hasText: "Older talk" }).click();
+      await page.locator(".chatBubbleRow.user", { hasText: "Older talk question" }).waitFor();
+      let release = hold();
+      await historyButton.click();
+      await page.locator(".chatHistoryPop .chatHistRow.active", { hasText: "Older talk" }).waitFor();
+      assertEq((await listed()).join(), "Current talk", "the conversation it replaced is listed, the one opened is not");
+      // The row shown before the read is the server's own: it opens.
+      await page.locator(".chatHistRow:not(.active)", { hasText: "Current talk" }).click();
+      await page.locator(".chatBubbleRow.ai", { hasText: "Current answer" }).waitFor();
+      release();
+      await page.waitForLoadState("networkidle");
+      // New chat files the conversation: it leads the list before the read.
+      await page.getByRole("button", { name: "New chat", exact: true }).click();
+      await page.locator(".chatBubbleRow").first().waitFor({ state: "detached" });
+      release = hold();
+      await historyButton.click();
+      await until(async () => (await listed()).join() === "Current talk,Older talk", { what: "the conversation kept leads the list" });
+      release();
+      await page.waitForLoadState("networkidle");
+      assertEq((await listed()).join(), "Current talk,Older talk", "the read agrees");
+      assertEq((await alice.api(`/api/chat-history?bucket=${swap.id}`)).sessions.map((e) => e.title).join(), "Current talk,Older talk",
+        "the server holds the same");
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await alice.api(`/api/blocks/${swap.id}`, { method: "DELETE" });
+    }
+  });
+
+  await step("chat navigation: until the chat knows its AI it is a plain frame — no header tools, no empty-state text", async () => {
+    await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    const ctx = await alice.context(browser);
+    await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+    let release, answered = false;
+    const held = new Promise((resolve) => { release = resolve; });
+    await ctx.route("**/api/ai/models*", async (route) => { await held; await route.fulfill({ json: FAKE_AI_MODELS }); });
+    ctx.on("response", (res) => { if (new URL(res.url()).pathname === "/api/chats/home") answered = true; });
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    try {
+      await page.locator(".chatPanel").waitFor();
+      await until(() => answered, { what: "the conversation is read" });
+      await page.waitForTimeout(300); // what is absent is looked for once the read has landed
+      assertEq(await page.locator(".chatEmpty").count(), 0, "no empty-state text yet");
+      assertEq(await page.getByRole("button", { name: "Find in this conversation" }).count(), 0, "no header tools yet");
+      release();
+      await page.locator(".chatEmpty", { hasText: "Ask AI anything" }).waitFor();
+      await page.getByRole("button", { name: "Find in this conversation" }).waitFor();
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("chat navigation: when the read of the AI's models fails the chat stops waiting — its tools and empty-state text show", async () => {
+    await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    const ctx = await alice.context(browser);
+    await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+    await ctx.route("**/api/ai/models*", (route) => route.fulfill({ status: 500, json: { detail: "models unavailable" } }));
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    try {
+      await page.locator(".chatEmpty", { hasText: "Ask AI anything" }).waitFor();
+      await page.getByRole("button", { name: "Chat history", exact: true }).waitFor();
+      await page.getByRole("button", { name: "Find in this conversation" }).waitFor();
+      assertEq(await page.locator(".chatSetup").count(), 0, "no setup card: the chat does not know there is no AI");
+      assert(await page.getByRole("combobox", { name: "Message AI" }).isEnabled(), "the message box takes a question");
+      assertNoProblems(page, [/\/api\/ai\/models -> 500/]);
+    } finally { await ctx.close(); }
   });
 }

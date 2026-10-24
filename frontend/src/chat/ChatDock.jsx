@@ -3,7 +3,7 @@
 // pasted figures, the "+" context picker, and the per-message PDF attach.
 // App provides context (open paper, library, selections) and the model/effort/
 // prompt preferences it also needs elsewhere.
-import React, { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { API, apiJson, copyText, downloadFetched, isPdfFile, makeId, readNdjson, withWorkspace } from "../shared/lib/utils";
 import { DEFAULT_PICTURE_BUDGET, addPictures, chipPicture, historyPictures, isPictureFile, pictureAlt, pictureUrl } from "./chatPictures.js";
 import { pictureSrc } from "./pictureSrc.js";
@@ -45,6 +45,7 @@ import { effortFor, providerModels, speedFor } from "./modelPrefs";
 import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, BotIcon, CheckIcon, ChevronDownIcon, ChevronUpIcon, ClockIcon, CopyIcon, DownloadIcon, EyeIcon, FileIcon, FolderIcon, HighlightIcon, HistoryIcon, InfoIcon, MessageSquareIcon, MicIcon, OutlineIcon, PaperclipIcon, PencilIcon, PenIcon, PlusIcon, QuoteIcon, SearchIcon, SettingsIcon, ShieldIcon, SlidersIcon, SparklesIcon, SquareCheckIcon, StopIcon, TextCursorIcon, TrashIcon, XIcon, ZapIcon } from "../shared/ui/Icons";
 import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
 import { DialogOverlay, Popover } from "../shared/ui/Surfaces";
+import ListMotion from "../shared/ui/ListMotion";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 
@@ -60,6 +61,16 @@ function deriveTitle(messages) {
   const first = (messages || []).find((m) => m.role === "user");
   const line = (first?.text || "").split("\n").map((l) => l.trim()).find((l) => l && !l.startsWith(">"));
   return (line || "").replace(/\s+/g, " ").slice(0, 80);
+}
+
+// The History row for a conversation the server just filed under `id` (the
+// archive and the open answer with it), as the list's next read gives it.
+function filedRow(id, { title, messages }) {
+  const first = messages.find((m) => m.role === "user");
+  return {
+    id, title: title || deriveTitle(messages), preview: (first?.text || "").replace(/\s+/g, " ").trim().slice(0, 120),
+    count: messages.length, updated_at: new Date().toISOString(),
+  };
 }
 
 // Compact age for a history row: "now", "5m", "3h", "2d", "4mo", "1y".
@@ -165,30 +176,36 @@ function ChatErrorCard({ message, compact, actions }) {
 // The agent's work in a reply (chat/agentSteps.js): one pill summing up its
 // steps, which expands to every call's chip (arguments and output), and
 // under it the changes — renamed or filed pages, edited or added notes —
-// each old → new with a link to what changed. While the reply streams, the
-// pill names the step running now, each new one morphing in over the last.
-// `waiting`: what the running call waits for — the user's answer on an
-// approval card, or a blocked paper from their browser — so nothing spins.
-// `helpers`: the helpers the running call handed documents to, a row each
-// under the pill, laid out as a chip: the document and what its helper is
-// doing now.
-function AgentSteps({ actions, running, waiting, helpers = [], open, onToggle, titleOf, children }) {
+// each old → new with a link to what changed. While the reply streams
+// (`live`) the same pill says what is under way from the start: "Thinking"
+// (or "Responding" once text arrives, the token count ticking beside it),
+// the step running now, or what that step waits for, each new label
+// morphing in over the last. `waiting`: what the running call waits for —
+// the user's answer on an approval card, or a blocked paper from their
+// browser — so nothing spins. `helpers`: the helpers the running call
+// handed documents to, a row each under the pill, laid out as a chip: the
+// document and what its helper is doing now. A reply that ends without a
+// step folds its pill away (ChatDock); meanwhile it keeps its last words.
+function AgentSteps({ actions, live, running, waiting, helpers = [], usage, text, open, onToggle, titleOf, children }) {
   const { failed, declined } = splitActions(actions);
-  const live = !!running;
+  const done = !live && actions.length > 0;
+  const label = waiting === "paper" ? t("Waiting for the paper from your browser")
+    : waiting ? t("Waiting for your approval")
+      : running ? runningLabel(running, titleOf)
+        : done ? stepsSummary(actions)
+          : text ? t("Responding") : t("Thinking");
   return (
     <div className="chatStepsWrap">
-      <button type="button" className={`chatPill chatSteps${live ? " live" : ""}`} onClick={onToggle} aria-expanded={open}
-        title={open ? t("Hide the steps") : t("Show every step with its arguments and output")}>
-        {waiting ? <ShieldIcon size={14} /> : live ? <span className="transferSpin inline" aria-hidden="true" /> : <CheckIcon size={14} />}
-        <span className="chatPillText">
-          <MorphText>
-            {waiting === "paper" ? t("Waiting for the paper from your browser")
-              : waiting ? t("Waiting for your approval")
-                : live ? runningLabel(running, titleOf) : stepsSummary(actions)}
-          </MorphText>
+      <button type="button" className={`chatPill chatSteps${live ? " live" : ""}`} aria-live="polite"
+        onClick={actions.length ? onToggle : undefined} aria-expanded={actions.length ? open : undefined}
+        title={!actions.length ? undefined : open ? t("Hide the steps") : t("Show every step with its arguments and output")}>
+        {waiting ? <ShieldIcon size={14} /> : done ? <CheckIcon size={14} /> : <span className="transferSpin inline" aria-hidden="true" />}
+        <span className={`chatPillText${live && !waiting ? " shimmerText" : ""}`}>
+          <MorphText>{label}</MorphText>
         </span>
-        {failed && !live ? <span className="chatStepsFailed">{t("{n} failed", { n: failed })}</span> : null}
-        {declined && !live ? <span className="chatStepsDeclined">{t("{n} not allowed", { n: declined })}</span> : null}
+        {live ? <UsageLine usage={usage} className="chatMsgUsage live" /> : null}
+        {failed && done ? <span className="chatStepsFailed">{t("{n} failed", { n: failed })}</span> : null}
+        {declined && done ? <span className="chatStepsDeclined">{t("{n} not allowed", { n: declined })}</span> : null}
         {actions.length ? <Chevron open={open} dir="down" size={14} /> : null}
       </button>
       {live && helpers.length ? (
@@ -370,9 +387,10 @@ function SelChip({ kind, icon, label, note, cut, auto = false, text, title, onRe
 // (settings/providerEditor.js aiServiceTiles over GET /api/ai/settings). A tile
 // opens Settings → Connections with the connect dialog set to that service.
 // An account that can't store keys (a guest) can only ask for a shared one;
-// an admin may also share one with the whole server.
-function ChatSetupCard({ info, isAdmin, onConnect, openSettings }) {
-  const tiles = info && !info.failed ? aiServiceTiles(info, { long: true }) : [];
+// an admin may also share one with the whole server. `intent`: the handlers
+// that fetch Settings as the pointer or the focus reaches what opens it.
+function ChatSetupCard({ info, isAdmin, onConnect, openSettings, intent }) {
+  const tiles = info.failed ? [] : aiServiceTiles(info, { long: true });
   return (
     <div className="chatSetup" data-guide="chat.setup">
       <span className="chatSetupIcon" aria-hidden="true"><SparklesIcon size={20} /></span>
@@ -380,15 +398,15 @@ function ChatSetupCard({ info, isAdmin, onConnect, openSettings }) {
       <p className="chatSetupText">
         {t("Ask about the paper you are reading and get answers that cite the page they come from. The assistant can also search, summarize and organize your library.")}
       </p>
-      {info?.failed ? (
-        <button type="button" className="uiBtn primary chatSetupRetry" onClick={() => onConnect()}>{t("Set up AI…")}</button>
-      ) : info && !info.can_edit ? (
+      {info.failed ? (
+        <button type="button" className="uiBtn primary chatSetupRetry" {...intent} onClick={() => onConnect()}>{t("Set up AI…")}</button>
+      ) : !info.can_edit ? (
         <p className="chatSetupText">{t("No AI service is shared on this server — ask your administrator.")}</p>
-      ) : info ? (
+      ) : (
         <>
           <div className="chatSetupTiles" role="group" aria-label={t("Connect an AI service")}>
             {tiles.map((tile) => (
-              <button key={tile.value} type="button" className="chatSetupTile" onClick={() => onConnect(tile.value)}>
+              <button key={tile.value} type="button" className="chatSetupTile" {...intent} onClick={() => onConnect(tile.value)}>
                 <span className="chatSetupTileName">{tile.label}</span>
                 <span className="chatSetupTileHint">{tile.hint}</span>
               </button>
@@ -396,11 +414,11 @@ function ChatSetupCard({ info, isAdmin, onConnect, openSettings }) {
           </div>
           <p className="chatSetupNote">{t("Keys are stored on this server and never shown again. Pick one to connect — it takes about a minute.")}</p>
         </>
-      ) : null}
+      )}
       {isAdmin && openSettings ? (
         <p className="chatSetupNote">
           {t("Or share one with everyone on this server: {link}", {
-            link: <button type="button" className="chatEmptyLink" onClick={() => openSettings("server")}>{t("Settings › Server › Shared AI provider")}</button>,
+            link: <button type="button" className="chatEmptyLink" {...intent} onClick={() => openSettings("server")}>{t("Settings › Server › Shared AI provider")}</button>,
           })}
         </p>
       ) : null}
@@ -439,7 +457,13 @@ export default function ChatDock({
   // that connection's form (an error card's "Update key", the login check's
   // Fix…). focusSignal: bumped by App when a connection made from the setup
   // card is ready — the message box takes the focus once the chat is enabled.
-  aiInfo, aiProvider, openAiKeysEditor, openSettings, isAdmin = false, focusSignal = 0,
+  // preloadSettings fetches the Settings module ahead, as the pointer or the
+  // focus reaches a button that opens it, so Settings opens with the click;
+  // onSetupInfo hands App the masked key list the setup card read (GET
+  // /api/ai/settings, the one Connections shows), so a tile's connect dialog
+  // can open with Settings instead of a round trip later. aiInfoFailed: App's
+  // read of /api/ai/models failed, so aiInfo may never come.
+  aiInfo, aiInfoFailed = false, aiProvider, openAiKeysEditor, openSettings, preloadSettings, onSetupInfo, isAdmin = false, focusSignal = 0,
   aiHealth, dismissAiHealth,
   openPopover, setOpenPopover,
   setStatus, askConfirm,
@@ -490,17 +514,25 @@ export default function ChatDock({
   // No AI connected (known once /api/ai/models answered): the setup card
   // takes the empty state, the composer is disabled and the header's tools
   // go — a send could only fail. The card's tiles come from the settings
-  // payload, fetched only then.
+  // payload, read alongside /api/ai/models while that is unknown (and again
+  // whenever the AI goes off), so the card lands whole. Until the chat knows
+  // which it is (`aiKnown`), the window is a plain frame: no header tools,
+  // no empty-state text. A failed read counts as known: the chat then shows
+  // as it would with an AI, and a send says what is wrong.
   const aiOff = !readOnly && !!aiInfo && !aiInfo.enabled;
+  const wantsSetup = !readOnly && !aiInfo?.enabled;
   const [setupInfo, setSetupInfo] = useState(null);
   useEffect(() => {
-    if (!aiOff) return undefined;
+    if (!wantsSetup) return undefined;
     let live = true;
     apiJson(`${API}/ai/settings`)
-      .then((info) => { if (live) setSetupInfo(info); })
+      .then((info) => { if (live) { setSetupInfo(info); onSetupInfo?.(info); } })
       .catch(() => { if (live) setSetupInfo({ failed: true }); });
     return () => { live = false; };
-  }, [aiOff]);
+  }, [wantsSetup]);
+  const aiKnown = readOnly || (aiInfo ? aiInfo.enabled || !!setupInfo : aiInfoFailed);
+  const settingsIntent = preloadSettings
+    ? { onPointerEnter: preloadSettings, onPointerDown: preloadSettings, onFocus: preloadSettings } : {};
   const composerRef = useRef(null);
   const focusPendingRef = useRef(false);
   useEffect(() => { if (focusSignal) focusPendingRef.current = true; }, [focusSignal]);
@@ -718,9 +750,11 @@ export default function ChatDock({
   // document. Messages record the doc ids they carried (pdfDocs); older
   // saves only have display names — treat any sent PDF as covering the
   // current one. The composer is left alone: a bucket switch empties it up
-  // front, so a draft typed while the stored copy loads stays.
+  // front, so a draft typed while the stored copy loads stays. The session
+  // keeps what was shown (`remember`), for a return to this bucket.
   function showLoaded(msgs, title) {
     setChatMessages(msgs);
+    session.remember(chatKey, msgs, title || "");
     const lastUser = [...msgs].reverse().find((m) => m.role === "user");
     const references = [...new Set((lastUser?.contextPages || []).map((p) => p.id))].slice(0, MAX_CHAT_REFERENCES);
     setChatDocs(references);
@@ -738,8 +772,12 @@ export default function ChatDock({
   // The bucket whose stored conversation has been read (or failed to): an
   // ask from App waits for it, so it never starts over the history.
   const [loadedFor, setLoadedFor] = useState("");
-  // Load chat from backend whenever the chat bucket changes.
-  useEffect(() => {
+  // Load chat from backend whenever the chat bucket changes. What this tab
+  // holds of it shows at once, before the frame is painted: its own copy
+  // (a reply sent here), else what the dock last showed of it; the stored
+  // copy then replaces it in place. A bucket never seen shows nothing until
+  // it is read.
+  useLayoutEffect(() => {
     let cancelled = false;
     setChatDocs([]);
     setChatIncludeNotes(false);
@@ -747,7 +785,8 @@ export default function ChatDock({
     setDocPicker(false);
     const reply = session.getSnapshot().replies.get(chatKey);
     const reloadSaved = session.isSaved(chatKey);
-    showLoaded(reply?.messages || [], reply?.title);
+    const shown = reply || session.recall(chatKey);
+    showLoaded(shown?.messages || [], shown?.title);
     setLoadError("");
     apiJson(`${API}/chats/${encodeURIComponent(chatKey)}`)
       .then(data => {
@@ -794,9 +833,10 @@ export default function ChatDock({
           || session.getSnapshot().replies.get(key) !== reply || session.version(key) !== version) return;
         session.forget(key);
         session.seen(key, data.messages || [], data.updated_at);
+        session.remember(key, data.messages || [], data.title || "");
         setChatMessages(data.messages || []);
         setChatTitle(data.title || "");
-        setHistory(null);
+        setHistoryRead("");
       }).catch(() => {});
     };
     window.addEventListener("focus", refresh);
@@ -811,16 +851,23 @@ export default function ChatDock({
   // "New chat" archives the current one there instead of deleting it, and
   // opening an entry swaps it with the current one. Both send the client's
   // copy of the conversation, so a reply still sitting in the autosave
-  // debounce is kept. The list loads lazily when the popover opens and is
-  // dropped on any change (bucket switch, archive, open) so it re-fetches.
-  const [history, setHistory] = useState(null); // null = not loaded yet
+  // debounce is kept. The list loads lazily when the popover opens. Each
+  // bucket's list as last read stays (`histories`), and an archive or an
+  // open made here changes it as the server did. After any change (a bucket
+  // switch, an archive, an open) the popover opens on it at once and reads
+  // it again in place (`historyRead`, the bucket read since).
+  const [histories, setHistories] = useState(() => new Map()); // bucket -> its entries
+  const [historyRead, setHistoryRead] = useState("");
+  const history = histories.get(chatKey) ?? null; // null = never read here
+  // A change to the bucket's list as last read; a list never read stays so.
+  const editHistory = (change) => setHistories((all) => (all.has(chatKey) ? new Map(all).set(chatKey, change(all.get(chatKey))) : all));
   const [historyQuery, setHistoryQuery] = useState("");
   const [renaming, setRenaming] = useState(null); // {id: "" = the active chat | entry id, text}
   const [picked, setPicked] = useState(() => new Set()); // history entries ticked for deleting
   const renameCancelRef = useRef(false);
   const [rowMenu, setRowMenu] = useState(null); // {x, y, row}: a history row's menu
   const historyOpen = openPopover === "chathistory";
-  useEffect(() => { setHistory(null); setHistoryQuery(""); setRenaming(null); }, [chatKey]);
+  useEffect(() => { setHistoryRead(""); setHistoryQuery(""); setRenaming(null); }, [chatKey]);
   // The selection belongs to the open popover: closing it drops the ticks.
   useEffect(() => { if (!historyOpen) { setPicked(new Set()); setRowMenu(null); } }, [historyOpen]);
   const togglePicked = (id) => setPicked((prev) => {
@@ -831,13 +878,23 @@ export default function ChatDock({
   const pickOrOpen = (id) => (picked.size ? togglePicked(id) : openHistory(id));
   const openRowMenu = (row) => (e) => { e.preventDefault(); setRowMenu({ x: e.clientX, y: e.clientY, row }); };
   useEffect(() => {
-    if (readOnly || !historyOpen || history != null) return;
+    if (readOnly || !historyOpen || historyRead === chatKey) return;
     let cancelled = false;
-    apiJson(`${API}/chat-history?bucket=${encodeURIComponent(chatKey)}`)
-      .then((data) => { if (!cancelled) setHistory(data.sessions || []); })
-      .catch((err) => { if (!cancelled) { setHistory([]); setStatus(t("Chat history: {message}", { message: err.message })); } });
+    const key = chatKey;
+    apiJson(`${API}/chat-history?bucket=${encodeURIComponent(key)}`)
+      .then((data) => {
+        if (cancelled) return;
+        setHistories((all) => new Map(all).set(key, data.sessions || []));
+        setHistoryRead(key);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setHistories((all) => (all.has(key) ? all : new Map(all).set(key, [])));
+        setHistoryRead(key);
+        setStatus(t("Chat history: {message}", { message: err.message }));
+      });
     return () => { cancelled = true; };
-  }, [historyOpen, history, chatKey, readOnly]);
+  }, [historyOpen, historyRead, chatKey, readOnly]);
   const activeTitle = chatTitle || deriveTitle(chatMessages) || t("Untitled");
   // The page an agent step names (a citation pill gets its paper from
   // GammaNavContext's citeSource).
@@ -847,6 +904,9 @@ export default function ChatDock({
   const visibleMessages = busyHere && (!chatMessages.length || chatMessages.at(-1).role === "user")
     ? [...chatMessages, { role: "ai", text: "", partial: true }]
     : chatMessages;
+  // The messages' keys for ListMotion: their places, as React keys them (a
+  // reply takes its placeholder's place, so it does not come in twice).
+  const motionKeys = useMemo(() => visibleMessages.map((_, i) => String(i)), [visibleMessages.length]);
   // The conversation as this tab holds it — after a flush, which may have
   // merged in what another tab saved — and the version it is based on, so
   // the server archives a newer stored copy instead of dropping it.
@@ -863,7 +923,11 @@ export default function ChatDock({
       const kept = chatMessages.length > 0;
       try {
         await session.flush(chatKey);
-        await apiJson(`${API}/chat-history/archive`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ ...currentPayload(), discard }) });
+        const payload = currentPayload();
+        const { id } = await apiJson(`${API}/chat-history/archive`, { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ ...payload, discard }) });
+        // The conversation kept leads the list (one discarded is not listed;
+        // a newer stored copy filed with it comes with the next read).
+        if (id && !discard) editHistory((rows) => [filedRow(id, payload), ...rows]);
       } catch (err) {
         setStatus(discard ? t("Couldn't discard the conversation: {message}", { message: err.message })
           : t("Couldn't keep the conversation in history: {message}", { message: err.message }));
@@ -882,25 +946,32 @@ export default function ChatDock({
     setChatTitle("");
     attachPdfManualRef.current = false;
     setAttachPdf(nativePdf); // new chat: the full PDF goes again (where the provider takes it)
-    setHistory(null);
+    session.remember(chatKey, [], "");
+    setHistoryRead("");
   }
 
   async function openHistory(id) {
     if (busyHere) return;
     try {
       await session.flush(chatKey);
+      const payload = currentPayload();
       const data = await apiJson(`${API}/chat-history/${id}/open`,
-        { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(currentPayload()) });
+        { method: "POST", headers: JSON_HEADERS, body: JSON.stringify(payload) });
+      // The swap: the entry opened leaves the list, the conversation it
+      // replaced leads it.
+      const filed = data.archived ? [filedRow(data.archived, payload)] : [];
+      editHistory((rows) => [...filed, ...rows.filter((s) => s.id !== id)]);
       session.forget(chatKey);
       session.seen(chatKey, data.messages || [], data.updated_at);
       if (chatKeyRef.current !== chatKey) return;
       showLoaded(data.messages || [], data.title);
       setChatInput("");
-      setHistory(null);
+      setHistoryRead("");
       setOpenPopover(null);
       chatStickRef.current = true;
     } catch (err) {
       setStatus(t("Couldn't open the conversation: {message}", { message: err.message }));
+      setHistoryRead(""); // the list may be out of date (another tab opened or deleted the entry)
     }
   }
 
@@ -919,7 +990,7 @@ export default function ChatDock({
         await apiJson(`${API}/chats/${encodeURIComponent(chatKey)}`,
           { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify({ title }) });
       } else {
-        setHistory((prev) => (prev || []).map((s) => (s.id === edit.id ? { ...s, title } : s)));
+        editHistory((prev) => prev.map((s) => (s.id === edit.id ? { ...s, title } : s)));
         await apiJson(`${API}/chat-history/${edit.id}`,
           { method: "PUT", headers: JSON_HEADERS, body: JSON.stringify({ title }) });
       }
@@ -930,13 +1001,13 @@ export default function ChatDock({
 
   function deleteHistory(entry) {
     const run = async () => {
-      setHistory((prev) => (prev || []).filter((s) => s.id !== entry.id));
+      editHistory((prev) => prev.filter((s) => s.id !== entry.id));
       setPicked((prev) => { const next = new Set(prev); next.delete(entry.id); return next; });
       try {
         await apiJson(`${API}/chat-history/${entry.id}`, { method: "DELETE" });
       } catch (err) {
         setStatus(t("Couldn't delete the conversation: {message}", { message: err.message }));
-        setHistory(null);
+        setHistoryRead("");
       }
     };
     askConfirm({
@@ -952,14 +1023,14 @@ export default function ChatDock({
     const ids = [...picked];
     if (!ids.length) return;
     const run = async () => {
-      setHistory((prev) => (prev || []).filter((s) => !ids.includes(s.id)));
+      editHistory((prev) => prev.filter((s) => !ids.includes(s.id)));
       setPicked(new Set());
       try {
         await apiJson(`${API}/chat-history/delete`,
           { method: "POST", headers: JSON_HEADERS, body: JSON.stringify({ ids }) });
       } catch (err) {
         setStatus(t("Couldn't delete the conversations: {message}", { message: err.message }));
-        setHistory(null);
+        setHistoryRead("");
       }
     };
     askConfirm({
@@ -1593,7 +1664,8 @@ export default function ChatDock({
       connection: openEntry, new_chat: latest ? newChat : null,
     }[copy.fix];
     if (fix && !readOnly) {
-      out.push(<button key="fix" type="button" className="uiBtn sm primary" onClick={() => fix()}>{fixLabel(copy.fix)}</button>);
+      out.push(<button key="fix" type="button" className="uiBtn sm primary" {...(fix === newChat ? {} : settingsIntent)}
+        onClick={() => fix()}>{fixLabel(copy.fix)}</button>);
     }
     if (latest) {
       out.push(<button key="retry" type="button" className="uiBtn sm" onClick={() => retryReply(idx)}>{t("Retry")}</button>);
@@ -1627,16 +1699,16 @@ export default function ChatDock({
     </button>
   );
   // No AI connected: the setup card, alone in the empty transcript or after
-  // an earlier conversation.
-  const setupCard = aiOff ? (
-    <ChatSetupCard info={setupInfo} isAdmin={isAdmin} openSettings={openSettings}
+  // an earlier conversation, once the tiles it offers are known.
+  const setupCard = aiOff && setupInfo ? (
+    <ChatSetupCard info={setupInfo} isAdmin={isAdmin} openSettings={openSettings} intent={settingsIntent}
       onConnect={(service) => openAiKeysEditor({ service })} />
   ) : null;
   // Alt over New chat turns it into Discard: only when there is a saved
   // conversation to lose (a viewer's chat is never kept, an empty one has
   // nothing to drop).
   const discardArmed = newChatAlt && canSave && chatMessages.length > 0;
-  const headerContent = aiOff ? null : (
+  const headerContent = aiOff || !aiKnown ? null : (
     <>
       <div className="ctlBtnRow chatPanelHeaderBtns">
         {/* First in the strip: a button right of ⚙ would push its popover
@@ -1803,7 +1875,7 @@ export default function ChatDock({
                     </>}
                   </ContextMenu>
                 ) : null}
-                {history == null ? <div className="popoverHint">{t("Loading…")}</div>
+                {history == null ? <div className="popoverHint loadingHint">{t("Loading…")}</div>
                   : historyRows.length <= 1 && !historyQuery.trim() ? <div className="popoverHint">{t("No earlier conversations — New chat keeps the current one here.")}</div>
                   : !historyRows.length ? <div className="popoverHint">{t("No conversation matches.")}</div>
                   : null}
@@ -1852,7 +1924,7 @@ export default function ChatDock({
           <span className="chatHealthText">
             {failureCopy(aiHealth.kind, { provider: aiHealth.provider_name, auth: aiHealth.provider_auth }).headline}
           </span>
-          <button className="uiBtn sm" onClick={() => openAiKeysEditor({ entry: aiHealth.provider_id })}>{t("Fix…")}</button>
+          <button className="uiBtn sm" {...settingsIntent} onClick={() => openAiKeysEditor({ entry: aiHealth.provider_id })}>{t("Fix…")}</button>
           <button className="uiClose" onClick={dismissAiHealth} title={t("Dismiss")} aria-label={t("Dismiss")}><XIcon size={14} /></button>
         </div>
       ) : null}
@@ -1907,20 +1979,27 @@ export default function ChatDock({
         }}
       >
         {chatTextScale.badge}
-        {setupCard && !visibleMessages.length && !loadError ? setupCard : visibleMessages.length === 0 ? (
-          <div className="chatEmpty">
-            {loadError || (readOnly ? t("No saved conversation for this page.")
-              : focusedBlockId ? t("Ask AI about this page…") : agentIntro || t("Ask AI anything, or generate a report from your pages…"))}
-          </div>
-        ) : (
-          visibleMessages.map((m, i) => {
+        {/* What stands in for an empty conversation waits until the chat
+            knows its AI and has read the stored conversation. */}
+        {visibleMessages.length || !aiKnown || loadedFor !== chatKey ? null
+          : setupCard && !loadError ? setupCard : (
+            <div className="chatEmpty">
+              {loadError || (readOnly ? t("No saved conversation for this page.")
+                : focusedBlockId ? t("Ask AI about this page…") : agentIntro || t("Ask AI anything, or generate a report from your pages…"))}
+            </div>
+          )}
+        {/* A message sent or answered rises into place; a conversation
+            loaded or switched to shows still (its messages are the ones
+            just loaded). */}
+        <ListMotion scope={chatKey} keys={motionKeys} enter="rise" moves={false} still={chatMessages === loadedMessages}>
+          {visibleMessages.map((m, i) => {
             const isUser = m.role === "user";
             const isResponding = busyHere && !isUser && m.partial && i === visibleMessages.length - 1;
             const isFindHit = chatFindOpen && chatFind.trim() && chatFindMatches[chatFindIdx] === i;
             if (editingMsg?.idx === i) {
               const resend = () => { const text = editingMsg.text; setEditingMsg(null); resendFrom(i, text); };
               return (
-                <div key={i} className="chatBubbleRow user" data-msg-idx={i}>
+                <div key={i} className="chatBubbleRow user" data-msg-idx={i} data-motion-key={i}>
                   <div className="chatMsgCol">
                     <div className="chatBubble user chatEditBubble">
                       <AutoGrowTextarea
@@ -1949,7 +2028,7 @@ export default function ChatDock({
               );
             }
             return (
-              <div key={i} className={`chatBubbleRow ${isUser ? "user" : "ai"}${isFindHit ? " findHit" : ""}`} data-msg-idx={i}>
+              <div key={i} className={`chatBubbleRow ${isUser ? "user" : "ai"}${isFindHit ? " findHit" : ""}`} data-msg-idx={i} data-motion-key={i}>
                 <div className="chatMsgCol">
                   <div className={`chatBubble ${isUser ? "user" : "ai"}${m.error && !m.errorKind ? " error" : ""}`}>
                     {m.images?.length ? (
@@ -1971,9 +2050,12 @@ export default function ChatDock({
                       <ContextCoverage items={m.context} actions={m.actions} tools={!!m.tools}
                         trimmed={m.trimmed} shortened={m.shortened} truncated={m.truncated} />
                     ) : null}
-                    {!isUser && (m.actions?.length || (isResponding && m.step)) ? (
-                      <AgentSteps actions={m.actions || []} running={isResponding ? m.step : null}
-                        helpers={m.helpers}
+                    {/* The reply's one status pill, from the start of the turn; a
+                        reply that ends without a step folds it away. */}
+                    {!isUser ? (
+                      <Collapse open={isResponding || !!m.actions?.length} className="chatStepsFold">
+                      <AgentSteps actions={m.actions || []} live={isResponding} running={isResponding ? m.step : null}
+                        helpers={m.helpers} usage={isResponding ? liveUsage(m.usage, m.live) : null} text={m.text}
                         waiting={!isResponding ? ""
                           : m.approval && !answeredApprovals.has(m.approval.id) ? "approval"
                             : m.handoffs?.length ? "paper" : ""}
@@ -2010,6 +2092,7 @@ export default function ChatDock({
                         })}
                       </div>
                       </AgentSteps>
+                      </Collapse>
                     ) : null}
                     {!isUser && m.actions?.length ? (
                       <AgentChanges actions={m.actions} onOpenPage={onOpenPage} busy={busyHere}
@@ -2042,14 +2125,6 @@ export default function ChatDock({
                     {!isUser && m.errorKind && !isResponding ? (
                       <ChatErrorCard message={m} compact={!m.error} actions={errorActions(m, i)} />
                     ) : null}
-                    {isResponding && !m.step ? (
-                      <div className="chatThinking" role="status" aria-label={m.text ? t("AI is responding") : t("AI is thinking")}>
-                        <span className="shimmerText" aria-hidden="true">
-                          <MorphText>{m.text ? t("Responding") : t("Thinking")}</MorphText>
-                        </span>
-                        <UsageLine usage={liveUsage(m.usage, m.live)} className="chatMsgUsage live" />
-                      </div>
-                    ) : null}
                   </div>
                   {!isResponding ? <div className="chatMsgFoot">
                     {!isUser && m.model ? (
@@ -2075,8 +2150,8 @@ export default function ChatDock({
                 </div>
               </div>
             );
-          })
-        )}
+          })}
+        </ListMotion>
         {/* An earlier conversation stays readable; the card follows it. */}
         {visibleMessages.length ? setupCard : null}
       </div>

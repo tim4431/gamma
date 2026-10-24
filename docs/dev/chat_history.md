@@ -20,7 +20,12 @@ folder and of every folder below it into the library chat's history
 findable. ChatDock's `chatKey` is the open page's id, else the open
 folder's id, else `home`. A bucket switch empties the composer at once and
 then reads the stored conversation; a draft typed while that read is in
-flight stays (opening a history entry still empties it). A remount of the
+flight stays (opening a history entry still empties it). Meanwhile the
+transcript shows what this tab holds of the bucket, before the frame is
+painted: its own copy (a reply sent here), else what the dock last showed
+of it (the session's `remember` / `recall`, the last twenty
+conversations), which the stored copy then replaces in place. A bucket
+never shown stays blank until it is read, rather than saying it is empty. A remount of the
 dock in the same bucket (an iPad turning, the dock closed and opened
 again) brings the draft back, and an ask from App (a handwriting block's
 "Transcribe with AI") is sent once however often the dock mounts: both
@@ -90,7 +95,8 @@ active conversation) and `/api/chat-history` (the archive).
 
 - **New chat** (+ in the header) archives the conversation: it POSTs
   `/chat-history/archive` `{bucket, messages, title, updated_at}`, which
-  files it into history and clears the active row. The title is the user's,
+  files it into history, clears the active row and answers with the entry's
+  `id` (null when nothing was filed). The title is the user's,
   else the first user message's first non-quote line (`derive_title`). The
   client sends its own copy of the messages, so a reply still inside the
   500 ms autosave debounce is kept. An empty conversation archives to
@@ -109,11 +115,20 @@ active conversation) and `/api/chat-history` (the archive).
   conversation first (highlighted, "now") and then the bucket's archived
   ones newest-first (`GET /chat-history?bucket=`; title, age, message count
   in the tooltip), with a search box filtering on title + first message.
+  Each bucket's list as last read stays while the dock is mounted, and an
+  archive or an open made here changes it as the server did: the
+  conversation filed leads it, under the id the call answered with, and an
+  entry opened leaves it. After a page change, an archive or an open the
+  popover opens on that list and reads it again in place, and an open that
+  fails reads it again too (another tab may have opened or deleted the
+  entry). A first read shows "Loading…" only when it is slow
+  (`.loadingHint`, [Motion](ui-design.md#things-that-change-in-place)).
   Clicking an entry POSTs `/chat-history/{id}/open` with the current
   conversation and its version: the current one is archived (a newer stored
   one too, as for New chat), the entry becomes the active row and leaves
-  history, and the answer carries the new version. A conversation is always
-  in exactly one place.
+  history, and the answer carries the new version and `archived`, the id the
+  current one was filed under (null when it was empty). A conversation is
+  always in exactly one place.
   - Each row's menu (its "⋯", a right-click or a held finger) has Rename,
     and on an archived row Select and Delete.
   - Rename: inline `aiKeyInput`; Enter (not one that confirms an input

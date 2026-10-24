@@ -1613,26 +1613,77 @@ export async function settingsScenarios(env) {
   await step("settings: with no AI connected the chat is a setup card; connecting from it comes back to the chat, ready", async () => {
     // The model list the browser sees flips once the connection is saved
     // (the real server stores it; its model listing and test are faked).
-    let connected = false;
+    // The chat's first read of the key list is held, to see the card wait
+    // for its tiles.
+    let connected = false, modelsAnswered = false, releaseKeys;
+    const keysHeld = new Promise((resolve) => { releaseKeys = resolve; });
+    let keysAsked = 0;
     const { ctx, page } = await setup(undefined, async (c) => {
-      await c.route("**/api/ai/models*", (route) => route.fulfill({ json: connected
-        ? { ...FAKE_AI_MODELS, default: "x:claude-e2e", models: [{ id: "x:claude-e2e", provider: "x", provider_name: "Anthropic", model: "claude-e2e" }] }
-        : { enabled: false, models: [], default: "", efforts: ["low", "medium", "high"] } }));
+      await c.route("**/api/ai/models*", async (route) => {
+        await route.fulfill({ json: connected
+          ? { ...FAKE_AI_MODELS, default: "x:claude-e2e", models: [{ id: "x:claude-e2e", provider: "x", provider_name: "Anthropic", model: "claude-e2e" }] }
+          : { enabled: false, models: [], default: "", efforts: ["low", "medium", "high"] } });
+        modelsAnswered = true;
+      });
+      await c.route("**/api/ai/settings", async (route) => {
+        if (++keysAsked === 1) await keysHeld;
+        await route.continue();
+      });
       await c.route("**/api/ai/model-catalog", (route) => route.fulfill({ json: { models: ["claude-e2e", "claude-e2e-mini"] } }));
       await c.route("**/api/ai/providers/*/test", (route) => route.fulfill({ json: { ok: true, model: "claude-e2e", latency_ms: 200 } }));
       await c.route("**/api/ai/providers", (route) => { connected = true; return route.continue(); });
     });
     try {
+      // Known to be off, the chat waits for the tiles: no card, and nothing
+      // in its place, until it can show the card whole.
+      await until(() => modelsAnswered && keysAsked === 1, { what: "the models answered, the key list asked for" });
+      await page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+      assertEq(await page.locator(".chatSetup").count(), 0, "the card waits for its tiles");
+      assertEq(await page.locator(".chatEmpty").count(), 0, "and no empty-state text stands in for it");
       const tiles = page.locator(".chatSetup").getByRole("group", { name: "Connect an AI service" });
-      await tiles.getByRole("button", { name: /^Anthropic/ }).waitFor();
+      releaseKeys();
+      await page.locator(".chatSetup").waitFor();
       assertEq(await tiles.getByRole("button").count(), 4, "ChatGPT, Anthropic, OpenAI API, Other service");
       const input = page.getByRole("combobox", { name: "Message AI" });
       assert(await input.isDisabled(), "a send could only fail");
       assertEq(await input.getAttribute("placeholder"), "Connect an AI service to start chatting");
       assertEq(await page.getByRole("button", { name: "Find in this conversation" }).count(), 0, "no header tools without AI");
       assertEq(await page.getByRole("button", { name: "Start dictation" }).count(), 0, "no mic without AI");
-      await tiles.getByRole("button", { name: /^Anthropic/ }).click();
+      const anthropic = tiles.getByRole("button", { name: /^Anthropic/ });
+      const settings = page.getByRole("dialog", { name: "Settings", exact: true });
       const dialog = page.getByRole("dialog", { name: "Connect an AI service", exact: true });
+      const hasFocus = (locator) => locator.evaluate((el) => el.contains(document.activeElement));
+      // The tile opens Settings with the connect dialog, which takes the
+      // focus; one Escape closes the dialog alone and Settings has it back,
+      // a second closes Settings and the tile has it.
+      await anthropic.click();
+      await dialog.waitFor();
+      await until(() => hasFocus(dialog), { what: "the connect dialog has the focus" });
+      await page.keyboard.press("Escape");
+      await dialog.waitFor({ state: "detached" });
+      assert(await settings.isVisible() && await hasFocus(settings), "Settings stays, with the focus");
+      await page.keyboard.press("Escape");
+      await settings.waitFor({ state: "detached" });
+      assert(await anthropic.evaluate((el) => el === document.activeElement), "the tile has the focus back");
+      // Settings closed while the dialog is up (an Escape Settings itself
+      // takes) leaves no form behind: Connections opens on its list alone.
+      await anthropic.click();
+      await dialog.waitFor();
+      await page.locator(".settingsModal").evaluate((el) => el.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })));
+      await settings.waitFor({ state: "detached" });
+      await openSettings(page);
+      await page.evaluate(() => {
+        window.__subDialogs = 0;
+        new MutationObserver((records) => {
+          for (const r of records) for (const n of r.addedNodes) if (n.nodeType === 1 && n.matches(".subDialog")) window.__subDialogs++;
+        }).observe(document.querySelector(".settingsModal"), { childList: true, subtree: true });
+      });
+      await nav(page, "Connections").click();
+      await page.locator(".settingsPane").getByText("Test connection").first().waitFor();
+      assertEq(await page.evaluate(() => window.__subDialogs), 0, "no connect dialog was drawn on the way");
+      await page.getByRole("button", { name: "Close settings", exact: true }).click();
+      await settings.waitFor({ state: "detached" });
+      await anthropic.click();
       await dialog.waitFor();
       assertEq(await dialog.getByRole("group", { name: "AI service" }).getByRole("button", { name: "Anthropic", exact: true }).getAttribute("aria-pressed"), "true", "the dialog is on the tile's service");
       await dialog.locator('input[autocomplete="new-password"]').fill("sk-ant-e2e-key-4242");

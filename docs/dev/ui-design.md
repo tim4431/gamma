@@ -593,6 +593,14 @@ or raise the unsaved-edits question. Every `reportOverlay` dialog uses it
 move-block dialogs, the chat's page picker); Quick Open closes on its own
 `mousedown` check instead.
 
+A dialog takes the focus as it opens, unless something inside it holds it
+already, and gives it back on close to what had it as it opened. When
+Settings opens with an editor dialog in it (the chat's AI tiles open it on
+the connect dialog), the editor holds the focus, Escape closes the editor
+alone and Settings has the focus back; a second Escape closes Settings and
+the tile has it. Closing Settings closes its editor too, so the next visit
+to the pane never shows the one left open.
+
 Destructive affordances all read from one set of tokens — `--danger`,
 `--danger-bg`, `--danger-border` — so the solid confirm button
 (`.uiBtn.primary.danger`), the outlined one (`.uiBtn.danger`) and a menu's
@@ -1009,6 +1017,9 @@ is plain markup, and a first render never moves.
   label changes faster than a swap takes (a progress count), and when an
   ellipsis cuts the old or the new one. Not inside a surface placed from
   its size (the selection popup): its width would move it every frame.
+  The chat's reply pill is one label from the start of a turn:
+  "Thinking", each step running, "Responding", then its summary, every
+  change a morph.
 - **`Collapse`** `open still`: a body under the header that opens it. Its
   row grows from nothing over `--dur-slow` while it comes into focus, and
   folds over `--dur-base`; shut, nothing is rendered, and while it folds
@@ -1033,6 +1044,12 @@ is plain markup, and a first render never moves.
   place when it changes; the Inbox badge also pops on when it comes.
 - **`FADE_IN`**, spread on an `<img>`: a picture fades in once loaded
   (the library cards' snapshots); one already in the cache shows at once.
+- **`.loadingHint`**: a "Loading…" placeholder that fades in only after
+  `--dur-slow`, so an answer that comes quickly takes the place of a blank,
+  never of the word (the chat's History popover on its first read). What
+  was read before shows instead while it is read again in place: the
+  History popover keeps each page's list, the chat keeps the last twenty
+  conversations it showed. Under reduced motion the word shows at once.
 - A switch's thumb travels with `--ease-pop`, its one overshoot.
 - **`.shakeNo`**, replayed by removing and adding it: a field that
   refused what was typed shakes once, a small no (a wrong password at
@@ -1093,7 +1110,11 @@ and what it holds travels with it.
   a row at rest.
 
 `arriving(el)` counts a glide as an arrival, so the guide's card waits
-for its anchor's row to land. The notes outline is the first list on it.
+for its anchor's row to land. The chat's transcript is one too: a question
+sent and its reply rise in together (`enter="rise"`, `moves={false}`, keyed
+by their places, one scope per conversation), while a conversation loaded,
+switched to or read again shows still: its messages are the ones a load
+just delivered. The notes outline is the first list on it.
 Its rows and their children bodies are the items, with the backlinks and
 the tail under them; it plays only when the tree's shape changed
 (`sameShape`, `shared/model/blockModel.js`), so a keystroke or a fold

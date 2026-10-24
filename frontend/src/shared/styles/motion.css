@@ -325,3 +325,8 @@ img[data-fade] {
   transition: opacity var(--dur-slow);
 }
 img[data-fade="shown"] { opacity: 1; }
+
+/* A placeholder for what is on its way ("Loading…", .loadingHint) shows
+   only when the wait is long: it fades in after --dur-slow, so an answer
+   that comes quickly takes the place of a blank, never of the word. */
+.loadingHint { animation: fade-in var(--dur-base) var(--dur-slow) both; }
