@@ -693,7 +693,9 @@ paints before the bundle, then the same one drawn by `Splash`
 assistant's consent request are read. Its mark is drawn in place, not
 loaded as a picture, and its spinner turns on from where it was, so no
 hand-over shows. The library's listing stays blank until it has come
-back, so it never says it is empty before its rows arrive.
+back, so it never says it is empty before its rows arrive. A read that
+fails ends the wait too: New page and New folder show under "Could not
+load the library." and a Try again button.
 
 `AuthShell` in `auth/LoginPage.jsx` frames every page shown before or
 instead of the app: the login (also a share link's sign-in gate), an
@@ -1129,12 +1131,12 @@ item its sort moves glides the rest. A listing's `scope` is its view, kind
 filter, folder, label, sort, filter text and how many rows Load more has
 shown, so typing in the filter box, opening a folder or Load more moves
 nothing: the rows arrive at once. Its holders (`.fileList`, `.fileGrid`)
-position the copies. The listing mounts once it has loaded, so the first
-one a load or a page left brings is a first render. The reads that are
-loads come still: the listing read again on coming home or on the
-window's wake, and the server's view history landing after it. Each marks
-what it sets, and a change is still when all it changed was read that
-way, so a delete right after a load still moves.
+position the copies. The listing mounts once it has loaded (or its read
+has failed), so the first one a load or a page left brings is a first
+render. The reads that are loads come still: the listing read again on
+coming home or on the window's wake, and the server's view history landing
+after it. Each marks what it sets, and a change is still when all it
+changed was read that way, so a delete right after a load still moves.
 
 ## Block editor interactions
 

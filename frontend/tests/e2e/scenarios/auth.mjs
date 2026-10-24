@@ -190,4 +190,26 @@ export async function authScenarios({ server, browser, alice, step, until, asser
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
+
+  await step("auth: a first listing read that fails ends the wait: New page and New folder show under a line that says so, and Try again brings the rows", async () => {
+    const ctx = await alice.context(browser);
+    try {
+      let failed = false;
+      await ctx.route("**/api/blocks/root/children*", async (route) => {
+        if (failed) return route.continue();
+        failed = true;
+        return route.fulfill({ status: 503, contentType: "application/json", body: JSON.stringify({ detail: "Service unavailable" }) });
+      });
+      const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+      const line = page.locator(".blockList .empty", { hasText: "Could not load the library." });
+      await line.waitFor();
+      assert(await page.locator(".folderNewBtn", { hasText: "New page" }).isVisible(), "New page shows");
+      assert(await page.locator(".folderNewBtn", { hasText: "New folder" }).isVisible(), "New folder shows");
+      assertEq(await page.getByText("No pages yet", { exact: false }).count(), 0, "it never says the library is empty");
+      await line.getByRole("button", { name: "Try again", exact: true }).click();
+      await page.locator(".fileRow").first().waitFor();
+      assertEq(await line.count(), 0, "the line goes as the rows come");
+      assertNoProblems(page, ["GET /api/blocks/root/children -> 503"]);
+    } finally { await ctx.close(); }
+  });
 }

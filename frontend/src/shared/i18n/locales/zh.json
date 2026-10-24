@@ -794,6 +794,7 @@
   "Could not file the page: {message}": "无法归档该页面：{message}",
   "Could not list pages: {message}": "无法列出页面：{message}",
   "Could not load chat: {message}": "无法加载聊天：{message}",
+  "Could not load the library.": "无法加载文库。",
   "Could not load your connections. {loadError}": "无法加载你的连接。{loadError}",
   "Could not make the folder: {message}": "无法创建文件夹：{message}",
   "Could not make the label: {message}": "无法创建标签：{message}",

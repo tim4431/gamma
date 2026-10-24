@@ -1717,6 +1717,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [blocks, setBlocks] = useState([]);
   const [homeBlocks, setHomeBlocks] = useState([]);
   const [homeLoaded, setHomeLoaded] = useState(false); // the library listing has come back once
+  const [homeFailed, setHomeFailed] = useState(false); // its last read failed
   // What the listing's loads set (the pages and trees a read brings back,
   // the view history read from the cache or the server): a change in the
   // listing only they made moves nothing (homeStill).
@@ -3691,7 +3692,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // rather than the person's own change (`still`: the session's first,
   // coming back from a page, the window's wake, a refresh in the
   // background) marks what it sets, so the listing moves nothing for it,
-  // and so does one that fails.
+  // and so does one that fails. A read that fails ends the wait as well:
+  // the listing says so where its empty line would be.
   function fetchHomeBlocks({ still = false } = {}) {
     return apiJson(`${API}/blocks/root/children`)
       .then((data) => {
@@ -3701,6 +3703,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         setHomeBlocks(children);
         setLibTree(libTreeRef.current);
         setHomeLoaded(true);
+        setHomeFailed(false);
         return children;
       })
       .catch(() => {
@@ -3708,6 +3711,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         for (const read of [none, EMPTY_TREE]) homeReadRef.current.add(read);
         setHomeBlocks(none);
         setLibTree(EMPTY_TREE);
+        setHomeFailed(true);
         return [];
       });
   }
@@ -7837,6 +7841,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       ? (folderFilter ? t("No labels on the pages in this folder yet.") : t("No labels yet — add one from a page’s label field."))
       : folderFilter ? (lib.organize ? t("This folder is empty — start a page here or drag pages onto it from the library.") : t("This folder is empty."))
       : t("No pages yet — start with “New page”, or open a PDF from the + button above.");
+  // The line over the listing: the start panel or what it is empty for, or,
+  // when the read failed, that it could not be read. A failed read empties
+  // the listing, which says nothing of the library: no "No pages yet".
+  const homeEmptyLine = homeFailed ? (
+    <div className="empty" ref={homeEmptyRef} role="alert">
+      {t("Could not load the library.")}{" "}
+      <button type="button" className="uiBtn sm" onClick={() => fetchHomeBlocks({ still: true })}>{t("Try again")}</button>
+    </div>
+  ) : libraryStart || (homeItems.length === 0 && !newFolderOpen ? (
+    <div className="empty" ref={homeEmptyRef}>{homeEmptyText}</div>
+  ) : null);
   // Timestamp shown on a library card and in the list's date column follows
   // the active sort: sorted by view time → viewed (falling back to modified,
   // same as the sort), by added → created; modified otherwise (incl. Title
@@ -9199,13 +9214,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               </div>
             ) : null}
             {homeMode && homeMatchCount === 0 ? searchElsewhere(true) : null}
-            {/* Until the listing has come back it is blank: no "empty" line
-                before the rows, and nothing the rows would push down. */}
-            {homeMode && !homeLoaded ? null : homeMode && homeView === "grid" ? (
+            {/* Until the listing has come back (or its read failed) it is
+                blank: no "empty" line before the rows, and nothing the rows
+                would push down. */}
+            {homeMode && !homeLoaded && !homeFailed ? null : homeMode && homeView === "grid" ? (
                 <>
-                  {libraryStart || (homeItems.length === 0 && !newFolderOpen ? (
-                    <div className="empty" ref={homeEmptyRef}>{homeEmptyText}</div>
-                  ) : null)}
+                  {homeEmptyLine}
                   <div className="fileGrid" ref={homeListingRef} onClick={(e) => { if (e.target.classList.contains("fileGrid")) clearSelection(); }}>
                     {newPageAllowed ? (
                       <PageCard
@@ -9356,9 +9370,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 </>
             ) : homeMode ? (
                 <>
-                  {libraryStart || (homeItems.length === 0 && !newFolderOpen ? (
-                    <div className="empty" ref={homeEmptyRef}>{homeEmptyText}</div>
-                  ) : null)}
+                  {homeEmptyLine}
                   <div className="fileList" ref={homeListingRef} onClick={(e) => { if (e.target.classList.contains("fileList")) clearSelection(); }}>
                     {newPageAllowed ? (
                       <button className="folderRow folderNewBtn" onClick={() => createPage()} title={t("Start a blank page here")}>
