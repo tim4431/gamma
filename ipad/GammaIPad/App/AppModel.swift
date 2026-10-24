@@ -29,6 +29,9 @@ final class AppModel: ObservableObject {
     @Published private(set) var reachable: [URL: Bool] = [:]
 
     let local: LocalServer
+    /// The files the system opened in the app, held for the page (the shell
+    /// answers its `files` messages from here, whichever server it shows).
+    let opened: OpenedFiles
     private var probed: [URL: Date] = [:]
     private let defaults: UserDefaults
 
@@ -39,6 +42,7 @@ final class AppModel: ObservableObject {
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
         local = LocalServer(defaults: defaults)
+        opened = OpenedFiles()
         let saved = SavedServers.load(from: defaults)
         current = saved.current
         remotes = saved.remotes

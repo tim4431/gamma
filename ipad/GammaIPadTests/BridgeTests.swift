@@ -107,6 +107,19 @@ final class BridgeTests: XCTestCase {
         XCTAssertEqual(try WebMessage(body: ["type": "servers"]), .servers)
     }
 
+    func testTheOpenedFilesMessagesDecode() throws {
+        XCTAssertEqual(try WebMessage(body: ["type": "files"]), .files)
+        XCTAssertEqual(try WebMessage(body: ["type": "fileData", "id": "F1", "offset": 2_097_152]),
+                       .fileData(id: "F1", offset: 2_097_152))
+        XCTAssertEqual(try WebMessage(body: ["type": "fileDone", "id": "F1"]), .fileDone(id: "F1"))
+        XCTAssertThrowsError(try WebMessage(body: ["type": "fileData", "id": "F1"]), "a read without its offset")
+        XCTAssertThrowsError(try WebMessage(body: ["type": "fileDone"]), "done without the file")
+    }
+
+    func testAnOpenedFileIsAnnouncedByTypeAlone() throws {
+        XCTAssertEqual(try json(.filesOpened) as NSDictionary, ["type": "filesOpened"] as NSDictionary)
+    }
+
     func testAHapticDecodesWithItsPlace() throws {
         let snap: [String: Any] = ["type": "haptic", "kind": "snap", "at": ["x": 300, "y": 412.5]]
         XCTAssertEqual(try WebMessage(body: snap), .haptic(kind: .snap, at: CGPoint(x: 300, y: 412.5)))
@@ -212,7 +225,7 @@ final class BridgeTests: XCTestCase {
     func testTheUserScriptDeclaresTheHost() {
         let script = HostInfo(version: "0.2.0").userScript
         XCTAssertTrue(script.contains(
-            #"{"haptics":true,"hold":true,"ink":true,"inkLooks":["pressure","dash","blend","stabilize","pencil","calligraphy","snap"],"pencil":true,"pencilPhases":true,"pencilRoll":true,"platform":"ipad","servers":true,"version":"0.2.0"}"#
+            #"{"haptics":true,"hold":true,"ink":true,"inkLooks":["pressure","dash","blend","stabilize","pencil","calligraphy","snap"],"openFiles":true,"pencil":true,"pencilPhases":true,"pencilRoll":true,"platform":"ipad","servers":true,"version":"0.2.0"}"#
         ), script)
         XCTAssertTrue(script.contains(#"setAttribute("data-host", "ipad")"#))
         XCTAssertTrue(script.contains("queue.push({ msg, resolve, reject })"), "the stub queues until host.js drains it")

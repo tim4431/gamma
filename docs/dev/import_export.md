@@ -138,6 +138,15 @@ settingsKit's `Step`); with a PDF open, that PDF's own annotations win. Nothing
 is remembered: the switch starts from the Settings preference each time, so the
 setting stays the standing policy.
 
+The iPad app opens the dialog with a `.zip` already chosen, one shared to
+it from another app ([ipad.md "Opened files"](ipad.md#opened-files)). The
+dialog is then titled with the file's name and asks which export it is.
+It offers only the sources that read an archive (`archive` in
+`resolveImport`: Zotero, Markdown, Notability and Gamma). Its button is
+*Import*, and the file goes straight to that source's review with no
+picker. A `.note` or `.ntb` shared to the app skips the dialog and opens
+the Notability review.
+
 Zotero, Markdown (ZIP or one file), Obsidian/Notion ZIPs, Notability notes and
 Gamma exports share one review flow: Upload → Review → Import → Summary.
 

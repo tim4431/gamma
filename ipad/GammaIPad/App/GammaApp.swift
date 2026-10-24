@@ -34,6 +34,16 @@ struct RootView: View {
             .onChange(of: scenePhase) { _, phase in
                 if phase == .active { local.recheck() }
             }
+            // A file the system opens in the app (the share sheet, Files'
+            // Open in, AirDrop: Info.plist's document types) waits in
+            // OpenedFiles until the page takes it, so one opened on the
+            // server picker or while This iPad starts is not lost. Files
+            // only: the gamma-ipad: scheme is the Gamma Cloud sign-in's, and
+            // its browser sheet takes it (CloudSignIn).
+            .onOpenURL { url in
+                guard url.isFileURL else { return }
+                Task { await model.opened.take(url) }
+            }
     }
 
     @ViewBuilder

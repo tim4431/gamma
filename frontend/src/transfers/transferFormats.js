@@ -183,19 +183,21 @@ export function exportSummary({ payload, noPdfCopy }, folder) {
 const IMPORT_SOURCES = [
   { id: "annots", label: T("Annotations in this PDF"), category: "This paper", hint: T("Bring embedded highlights and notes into Gamma"), strip: true, actionLabel: T("Import"),
     instructions: T("Highlights, notes and boxes saved inside this PDF (a Gamma export, SumatraPDF, Acrobat…) become regular blocks. Importing twice adds nothing — each annotation is matched to the block it already made.") },
-  { id: "zotero", label: T("Zotero library"), category: "Library", hint: T("Papers, collections, tags and notes"), strip: true, actionLabel: T("Choose .zip…"), folderLabel: T("Choose folder…") },
-  { id: "markdown", label: T("Markdown notes"), category: "Notes", hint: T("Markdown files, Obsidian vaults or Notion exports"), actionLabel: T("Choose file…"),
+  { id: "zotero", label: T("Zotero library"), category: "Library", hint: T("Papers, collections, tags and notes"), strip: true, archive: true, actionLabel: T("Choose .zip…"), folderLabel: T("Choose folder…") },
+  { id: "markdown", label: T("Markdown notes"), category: "Notes", hint: T("Markdown files, Obsidian vaults or Notion exports"), archive: true, actionLabel: T("Choose file…"),
     instructions: T("A single .md becomes a note page. A .zip of Markdown — a zipped Obsidian vault, Notion's Export → Markdown & CSV (subpages included), a Gamma Markdown export, or any zipped folder of notes — becomes one page per file: folders become folders, links between the notes ([[wikilinks]] included) become mentions, ![[block]] embeds synced blocks, tags labels, and images and files come along. Notes already imported are skipped.") },
-  { id: "notability", label: T("Notability notes"), category: "Notes", hint: T("Handwriting, PDFs, typed text and recordings"), actionLabel: T("Choose files…"),
+  { id: "notability", label: T("Notability notes"), category: "Notes", hint: T("Handwriting, PDFs, typed text and recordings"), archive: true, actionLabel: T("Choose files…"),
     instructions: T("Pick one or more .note or .ntb files, or a .zip of them: Notability's exports with File Format “Note” or “NTB” (in a note, the options icon → Export Options; in the library, press and hold a note → Export Options). Each note becomes a page: a PDF note keeps its PDF, a paper note becomes a notebook, and its handwriting, typed text and pictures come along, and from a “Note” export its recordings. Notes already imported are skipped.") },
   { id: "logseq", label: T("Logseq highlights"), category: "This paper", hint: T("A PDF and its .edn, with optional notes"), actionLabel: T("Choose files…"),
     instructions: T("Pick a Logseq .pdf and its .edn (a .md of notes is optional). The paper and its highlights land in your library as a new page.") },
-  { id: "gamma", label: T("Gamma export (.zip)"), category: "Library", hint: T("Merge pages, files and chats from Gamma"), actionLabel: T("Choose .zip…"),
+  { id: "gamma", label: T("Gamma export (.zip)"), category: "Library", hint: T("Merge pages, files and chats from Gamma"), archive: true, actionLabel: T("Choose .zip…"),
     instructions: T("A zip made by another Gamma's Export → Gamma format (a full backup works too). Its pages, files and chats merge into your library — nothing existing is touched, and re-importing the same zip adds nothing. (A single shared page needs no zip: paste its share link into the + menu.)") },
 ];
 
-export function resolveImport(source, { hasPdf, strip } = {}) {
-  const formats = IMPORT_SOURCES.filter(({ id }) => id !== "annots" || hasPdf);
+// `archive`: a .zip is already chosen (one the iPad app was given), so only
+// the sources that read one (`archive`) are offered.
+export function resolveImport(source, { hasPdf, strip, archive } = {}) {
+  const formats = IMPORT_SOURCES.filter((format) => (format.id !== "annots" || hasPdf) && (!archive || format.archive));
   const definition = formats.find(({ id }) => id === source) || formats.find(({ id }) => id === "zotero");
   return { definition, formats, needsReview: Boolean(definition.strip),
     payload: definition.strip ? { source: definition.id, strip: Boolean(strip) } : { source: definition.id } };

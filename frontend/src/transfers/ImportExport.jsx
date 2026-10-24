@@ -397,21 +397,26 @@ function ExportDrop({ busy, onDrop, children }) {
 // switch that source understands, confirm. Nothing here is remembered — the
 // strip switch starts from the Settings preference every time, so the setting
 // stays the standing policy and the dialog is only ever a one-off override.
-export function ImportDialog({ hasPdf, stripDefault, busy, onCancel, onImport }) {
+// `file`: a .zip already chosen, one the iPad app was given (docs/dev/ipad.md
+// "Opened files"): the dialog asks only which export it is, offers the
+// sources that read an archive, and imports it with no picker.
+export function ImportDialog({ hasPdf, stripDefault, busy, onCancel, onImport, file = null }) {
   const [step, setStep] = React.useState(0);
   // Zotero is the default source; with a PDF open, that PDF's own annotations
   // are the more likely intent and win instead.
-  const [source, setSource] = React.useState(hasPdf ? "annots" : "zotero");
+  const [source, setSource] = React.useState(hasPdf && !file ? "annots" : "zotero");
   const [strip, setStrip] = React.useState(stripDefault);
-  const { definition, formats, needsReview, payload } = resolveImport(source, { hasPdf, strip });
+  const scope = { hasPdf: hasPdf && !file, archive: Boolean(file) };
+  const { definition, formats, needsReview, payload } = resolveImport(source, { ...scope, strip });
   const src = definition.id;
-  const folderFirst = Boolean(definition.folderLabel) && canPickFolder();
+  const folderFirst = !file && Boolean(definition.folderLabel) && canPickFolder();
+  const withFile = (chosen) => (file ? { ...chosen, file } : chosen);
   const advance = (id = src) => {
     if (busy) return;
-    const next = resolveImport(id, { hasPdf, strip });
+    const next = resolveImport(id, { ...scope, strip });
     setSource(next.definition.id);
     if (next.needsReview) setStep(1);
-    else onImport(next.payload);
+    else onImport(withFile(next.payload));
   };
   const review = <>
     <div className="transferReview">
@@ -441,13 +446,15 @@ export function ImportDialog({ hasPdf, stripDefault, busy, onCancel, onImport })
       <div className="reportModalHint">{t(definition.instructions)}</div>
     )}
   </>;
-  return <TransferDialog title={t("Import")} step={step} setStep={setStep} onCancel={onCancel} busy={busy}
+  return <TransferDialog title={file ? t("Import {name}", { name: file.name }) : t("Import")} step={step} setStep={setStep}
+    onCancel={onCancel} busy={busy}
     firstTitle={t("Choose a source")} secondTitle={t(definition.label)} needsReview={needsReview} onContinue={() => advance()}
-    actionLabel={t(folderFirst ? definition.folderLabel : definition.actionLabel)}
-    action={() => onImport(folderFirst ? { ...payload, pick: "folder" } : payload)}
+    actionLabel={file ? t("Import") : t(folderFirst ? definition.folderLabel : definition.actionLabel)}
+    action={() => onImport(file ? withFile(payload) : folderFirst ? { ...payload, pick: "folder" } : payload)}
     secondaryAction={folderFirst
       ? <button type="button" className="uiBtn ghost" disabled={busy} onClick={() => onImport(payload)}>{t("or choose a .zip")}</button> : null}>
     {step === 0 ? <>
+      {file ? <p className="reportModalHint">{t("Which kind of export is this .zip?")}</p> : null}
       <FormatChoices label={t("Import from")} value={src} onChange={setSource} onConfirm={advance} options={formats} />
       {!needsReview ? <p className="reportModalHint">{t(definition.instructions)}</p> : null}
     </> : src === "zotero" ? <ExportDrop busy={busy} onDrop={(file) => onImport({ ...payload, file })}>{review}</ExportDrop> : review}

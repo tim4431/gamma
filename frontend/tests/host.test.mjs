@@ -25,7 +25,7 @@ async function load({ native, standalone = false } = {}) {
 // host.js hands them over as declared, and the web acts on every one but
 // inkLooks, which only says what the shell's live line can draw.
 const FLAGS = { ink: true, inkLooks: ["pressure", "dash", "blend", "stabilize", "pencil", "calligraphy", "snap"], hold: true, pencil: true,
-  pencilPhases: true, pencilRoll: true, haptics: true, servers: true };
+  pencilPhases: true, pencilRoll: true, haptics: true, servers: true, openFiles: true };
 function stub(fields) {
   const native = { platform: "ipad", version: "0.2.0", ...FLAGS, ...fields };
   native.receive = (msg) => new Promise((resolve, reject) => (native.queue ||= []).push({ msg, resolve, reject }));
@@ -105,8 +105,8 @@ test("the host's flags are read as declared, and a flag it leaves out is no capa
   const { host } = await load({ native: stub() });
   const h = host.nativeHost();
   for (const [flag, value] of Object.entries(FLAGS)) assert.deepEqual(h[flag], value, flag);
-  const { host: older } = await load({ native: stub({ inkLooks: undefined, hold: undefined, pencilPhases: undefined, haptics: undefined }) });
-  for (const flag of ["inkLooks", "hold", "pencilPhases", "haptics"]) assert.ok(!older.nativeHost()[flag], `an older shell: no ${flag}`);
+  const { host: older } = await load({ native: stub({ inkLooks: undefined, hold: undefined, pencilPhases: undefined, haptics: undefined, openFiles: undefined }) });
+  for (const flag of ["inkLooks", "hold", "pencilPhases", "haptics", "openFiles"]) assert.ok(!older.nativeHost()[flag], `an older shell: no ${flag}`);
 });
 
 test("hold and squeeze from native: answered by their listeners, and at once with nothing on a page without one", async () => {

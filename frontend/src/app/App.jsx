@@ -55,6 +55,8 @@ import { lastPointer, touchScreen } from "../shared/lib/pointer.js";
 import { appShell, nativeHost, postToHost } from "../shared/lib/host.js";
 import { pickFiles } from "../shared/lib/pickFiles.js";
 import { canPickFolder, filesUpload, folderPick } from "../transfers/folderZip.js";
+import { doneWithOpenedFile, hostOpensFiles, listOpenedFiles, onFilesOpened, openedKind, placeOpenedFiles,
+  readOpenedFile } from "../transfers/openedFiles.js";
 import { bibliographyPreview } from "../transfers/exportApi";
 import { collectEntryFiles } from "../shared/lib/dropEntries.js";
 import { useWheelPan } from "../shared/ui/wheelPan";
@@ -243,6 +245,9 @@ const InboxPanel = lazySurface(() => import("../inbox/InboxPanel"));
 const preloading = (...surfaces) => () => { for (const surface of surfaces) surface.preload(); };
 const preloadAccountMenu = preloading(SettingsDialog, GuideOverlay, ReportProblem, ImportDialog, ChatDock);
 const preloadViewMenu = preloading(ImportDialog, ChatDock, CommentsPanel);
+// Why the iPad app's opened files went to another workspace, kept across
+// the reload the switch is (takeOpenedFiles).
+const OPENED_NOTE = "gamma-opened-note";
 
 // PDF load phases that own a row in the background-transfers popover; every
 // other phase is viewer-local. Allowlist on purpose — the transfer handling's
@@ -3132,7 +3137,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
   }
   // Styled in-app dialogs replacing window.confirm / link decisions.
-  const [confirmBox, setConfirmBox] = useState(null); // {title, message, confirmLabel, danger, onConfirm, altLabel, altDanger, onAlt}
+  const [confirmBox, setConfirmBox] = useState(null); // {title, message, confirmLabel, danger, onConfirm, altLabel, altDanger, onAlt, onCancel}
+  // Cancel, Escape and the backdrop all close it the same way, onCancel told.
+  const cancelConfirm = () => { const fn = confirmBox?.onCancel; setConfirmBox(null); fn?.(); };
   const [moveBlockDialog, setMoveBlockDialog] = useState(null); // {blockId, query, pages}
   const [linkPrompt, setLinkPrompt] = useState(null); // external URL clicked inside the PDF
   const [linkDialog, setLinkDialog] = useState(null); // {position, content} — creating a manual reference link
@@ -4983,13 +4990,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
   }
 
-  async function uploadFiles(fileList) {
+  async function uploadFiles(fileList, base = homeMode && folderFilter ? folderFilter : "") {
     if (shareMode) return;
     // Accepts Files (picker/drop) or {file, folder} pairs (dropped-folder walk,
     // `folder` the directory names); the directory picker's Files carry the
     // path in webkitRelativePath instead. With a folder open in the library
-    // view, uploads land inside it, their directories as folders below it.
-    const base = homeMode && folderFilter ? folderFilter : "";
+    // view, uploads land inside it, their directories as folders below it;
+    // `base` says otherwise (a file the iPad app was given goes to the top).
     const items = Array.from(fileList || [])
       .map((it) => (it instanceof File ? { file: it, folder: folderFromRelPath(it.webkitRelativePath) } : it))
       .filter((it) => it?.file && (isPdfFile(it.file) || isMarkdownFile(it.file)))
@@ -5089,6 +5096,110 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setLoading(false);
     }
   }
+
+  // --- files the iPad app was given (transfers/openedFiles.js) ---------------
+  // The shell holds what the share sheet, Files' Open in or AirDrop gave it
+  // until this page takes it: once signed in to a workspace (the effect by
+  // the import review's preload), and again whenever the shell says another
+  // came. As the desktop does with a PDF it is handed (desktop/lib/
+  // openFiles.js), files go to the workspace shown when the account can
+  // write there, else to the personal one, and a workspace others see asks
+  // first. Then each takes the path a picked file takes: a PDF or a Markdown
+  // note becomes a page, a .note or .ntb opens the Notability import's
+  // review, and a .zip the Import dialog, which asks what export it is.
+  const openedBusy = useRef(false);
+  const openedAgain = useRef(false);
+  async function takeOpenedFiles() {
+    if (openedBusy.current) { openedAgain.current = true; return; }
+    openedBusy.current = true;
+    try {
+      do {
+        openedAgain.current = false;
+        const held = await listOpenedFiles();
+        if (held.length) await placeOpenedHeld(held);
+      } while (openedAgain.current);
+    } finally {
+      openedBusy.current = false;
+    }
+  }
+
+  async function placeOpenedHeld(held) {
+    const what = held.length === 1 ? `“${held[0].name}”` : t("{n} files", { n: held.length });
+    const letGo = () => Promise.all(held.map((f) => doneWithOpenedFile(f.id)));
+    const place = placeOpenedFiles(workspace, workspaces);
+    if (!place) {
+      await letGo();
+      setStatus(t("Your account cannot add files here: {what} was not added.", { what }));
+      return;
+    }
+    // The page reloads on the other workspace with the files still in the
+    // shell, and the page there takes them; `note` says why, after the reload.
+    const goTo = (ws, note) => {
+      try { if (note) sessionStorage.setItem(OPENED_NOTE, note); } catch {}
+      switchWorkspace(ws.id);
+    };
+    if (place.switchTo) {
+      goTo(place.switchTo, t("{what} went into {workspace}: you can only read {readOnly}.",
+        { what, workspace: place.switchTo.name, readOnly: workspace?.name || "" }));
+      return;
+    }
+    if (place.audience) {
+      const answer = await new Promise((resolve) => setConfirmBox({
+        title: t("Add {what} to {workspace}?", { what, workspace: place.ws.name }),
+        message: place.audience === "clone"
+          ? t("{workspace} is a clone: what you add reaches the workspace it follows too.", { workspace: place.ws.name })
+          : t("{workspace} is shared: everyone in it can see what you add.", { workspace: place.ws.name }),
+        confirmLabel: t("Add to {workspace}", { workspace: place.ws.name }),
+        onConfirm: () => resolve("here"),
+        ...(place.mine ? { altLabel: t("Add to {workspace}", { workspace: place.mine.name }), onAlt: () => resolve("mine") } : {}),
+        onCancel: () => resolve("cancel"),
+      }));
+      if (answer === "cancel") {
+        await letGo();
+        setStatus(t("Not added: {what}", { what }));
+        return;
+      }
+      if (answer === "mine") {
+        goTo(place.mine, "");
+        return;
+      }
+    }
+    await openOpenedHeld(held);
+  }
+
+  // Read every held file, let the shell's copy go, then open each the way a
+  // picked one opens. One import dialog at a time: the Notability review
+  // wins over a .zip's, and what neither takes is named in the status.
+  async function openOpenedHeld(held) {
+    const files = [];
+    const failed = [];
+    for (const entry of held) {
+      try { files.push(await readOpenedFile(entry)); }
+      catch (err) { failed.push(`${entry.name} (${err.message})`); }
+      await doneWithOpenedFile(entry.id);
+    }
+    const pages = files.filter((f) => openedKind(f) === "page");
+    const notes = files.filter((f) => openedKind(f) === "notability");
+    const archives = files.filter((f) => openedKind(f) === "archive");
+    const unknown = files.filter((f) => !openedKind(f)).map((f) => f.name);
+    const later = notes.length ? archives : archives.slice(1);
+    if (pages.length) await uploadFiles(pages, "");
+    if (notes.length) {
+      setImportReview({ source: "notability", file: notes.length === 1 ? notes[0] : filesUpload(notes, t("Notability notes")), folder: "" });
+    } else if (archives.length) {
+      setImportOpen({ file: archives[0] });
+    }
+    let note = "";
+    try { note = sessionStorage.getItem(OPENED_NOTE) || ""; sessionStorage.removeItem(OPENED_NOTE); } catch {}
+    const problems = [
+      ...(unknown.length ? [t("Gamma does not open {names}.", { names: unknown.join(", ") })] : []),
+      ...(later.length ? [t("Open {names} again once this import is done.", { names: later.map((f) => f.name).join(", ") })] : []),
+      ...(failed.length ? [t("Could not read {names}.", { names: failed.join(", ") })] : []),
+    ];
+    if (problems.length || note) setStatus([note, ...problems].filter(Boolean).join(" "));
+  }
+  const takeOpenedRef = useRef(takeOpenedFiles);
+  takeOpenedRef.current = takeOpenedFiles;
 
   // Open a PDF by URL: resolve it, find or create its page, open that page.
   async function openPdf(sourceUrl) {
@@ -7401,6 +7512,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // A file picked in the Import dialog opens its review at once, already
   // uploading: fetch the review's module while the dialog is up.
   useEffect(() => { if (importOpen) ImportReviewDialog.preload(); }, [importOpen]);
+  // The iPad app's opened files (takeOpenedFiles), once this page is signed
+  // in to a workspace it can show: at once, then on each `filesOpened`. The
+  // listener returns nothing, so the shell is not kept waiting.
+  const openedReady = !shareMode && Boolean(authUser?.user) && wsReady && !workspaceUnavailable && hostOpensFiles();
+  useEffect(() => {
+    if (!openedReady) return undefined;
+    takeOpenedRef.current();
+    return onFilesOpened(() => { takeOpenedRef.current(); });
+  }, [openedReady]);
   // The props a folder card shares between the pinned strip and the library
   // grid: glyph, title, count, selection/drag/drop behaviour and the context
   // menu. Each site adds its own className, tip, time and extras.
@@ -11086,6 +11206,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       {importOpen ? (
         <LazyBoundary>
         <ImportDialog
+          file={importOpen?.file || null}
           hasPdf={!!docId && !!focusedBlockId}
           stripDefault={embAnnots === "strip"}
           busy={loading}
@@ -11129,11 +11250,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       ) : null}
       {confirmBox ? (
         // data-popover keeps an open popover (e.g. search) alive while the dialog is up
-        <div className="reportOverlay" data-popover="confirm" {...backdropPress(() => setConfirmBox(null))}>
+        <div className="reportOverlay" data-popover="confirm" {...backdropPress(cancelConfirm)}>
           <div
             className="reportModal confirmModal"
             onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); setConfirmBox(null); } }}
+            onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); cancelConfirm(); } }}
           >
             <div className="confirmHead">
               <span className={`confirmIcon ${confirmBox.danger ? "danger" : ""}`}>
@@ -11145,7 +11266,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               </span>
             </div>
             <div className="reportModalBtns">
-              <button className="uiBtn" onClick={() => setConfirmBox(null)} autoFocus>{t("Cancel")}</button>
+              <button className="uiBtn" onClick={cancelConfirm} autoFocus>{t("Cancel")}</button>
               {confirmBox.altLabel ? (
                 <button
                   className={`uiBtn ${confirmBox.altDanger ? "danger" : ""}`}

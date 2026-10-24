@@ -83,6 +83,13 @@ test("imports show options only for embedded annotations and omit inapplicable s
   assert.equal(resolveImport("annots", { hasPdf: false }).definition.id, "zotero");
 });
 
+test("a .zip already chosen is offered only the sources that read an archive", () => {
+  const archive = resolveImport("markdown", { hasPdf: true, archive: true });
+  assert.deepEqual(archive.formats.map(({ id }) => id), ["zotero", "markdown", "notability", "gamma"]);
+  assert.equal(archive.definition.id, "markdown");
+  assert.equal(resolveImport("logseq", { archive: true }).definition.id, "zotero", "a source that reads no archive falls back");
+});
+
 test("BibTeX is offered where there is something to cite, and reviews itself", () => {
   // No switches, but the step is worth showing: it previews the real entries.
   const page = resolveExport({ format: "bibtex", ...allOff }, { ...paper, hasMeta: true });

@@ -46,6 +46,10 @@ ink layer still encodes and saves every stroke.
 5. For work away from the network, a workspace of another server is
    cloned onto This iPad in the web app's settings
    ([Offline use](#offline-use-clones)).
+6. A file shared to Gamma opens in the web app, as the same file picked
+   there would. That covers the share sheet, Files' Open in and AirDrop,
+   for a PDF, a Markdown note, a Notability `.note` or `.ntb` and a
+   `.zip` ([Opened files](#opened-files)).
 
 The Swift side holds no page, stroke, tool or token. The one secret it
 keeps is the local server's seeded password, and the one thing it
@@ -111,12 +115,14 @@ window.gammaNative = {
   pencilRoll: true,   // the samples carry Apple Pencil Pro's barrel roll (`r`)
   haptics: true,      // the host plays `haptic`, in an Apple Pencil Pro
   servers: true,      // the host has a server picker (the web shows "Server…")
+  openFiles: true,    // the host holds the files the system opens in the app (`files`)
 };
 document.documentElement.setAttribute("data-host", "ipad");
 ```
 
 The web app reads `platform` and the flags `ink`, `hold`, `pencil`,
-`pencilPhases`, `pencilRoll`, `haptics` and `servers`, never `version`:
+`pencilPhases`, `pencilRoll`, `haptics`, `servers` and `openFiles`, never
+`version`:
 what a shell does not declare it does not do, and the web leaves it out
 (no `hold` listener, no `haptic`, no Apple Pencil settings). `inkLooks`
 is information only: it says what of the
@@ -150,6 +156,9 @@ takes messages only from the server's own main frame.
 | `{type: "theme", bg: "#rrggbb", scheme: "light"\|"dark"}` | `{}` | Paint the window behind the page and pick the status bar's style |
 | `{type: "servers"}` | `{}` | Show the server picker |
 | `{type: "haptic", kind: "snap"\|"select"\|"tool", at?: {x, y}}` | `{}` | Play the kind's own feedback ([The pen](#the-pen) "Gestures"): `snap`, a held stroke snapped to a shape; `select`, a pen lasso selected strokes; `tool`, a Pencil gesture switched the tool (a kind the shell does not know plays as `tool`). `at` is where, in viewport CSS px, when there is a where. Sent once per event, only under `haptics` and with *Haptics* on |
+| `{type: "files"}` | `{files: [{id, name, size, type}]}` | The files the system opened in the app that the shell still holds, in the order they came; `type` is the MIME type of the name's extension, `""` when it has none ([Opened files](#opened-files)) |
+| `{type: "fileData", id, offset}` | `{data}`, or `{}` | Up to 2 MiB of that file from byte `offset`, in base64; `""` at its end. `{}`: the shell holds no such file, or the offset is past its end |
+| `{type: "fileDone", id}` | `{}` | The page is done with that file (taken, refused or put aside): the shell deletes its copy |
 
 The claim's tool (`InkTool` in `Bridge.swift`, made by `ink/hostInk.js`
 `claimTool`) carries the preset's look beside its four keys. Each look
@@ -182,6 +191,7 @@ the value the page resolved with (`{}` when it resolved with nothing).
 | `{type: "hold", pointerId, samples}` | at once: `{shape: {kind, params}}`, `{cancel: true}` or `{}` | The captured Pencil has stayed within 3 pt of one sample for 600 ms ([The pen](#the-pen), step 6); the samples so far, as `stroke` sends them. `shape`: the stroke snaps; `kind` is `line`, `arrow`, `triangle`, `rect`, `polygon`, `circle` or `ellipse`, and `params` its `shapes.js` parameters in viewport CSS px (points and lengths; `angle` in degrees, `n` a count), which the shell draws and refits. `cancel`: the page took the hold (*Paste here*); the line goes and the touch ends with an empty `stroke`. `{}`: nothing, which is also what a page without a `hold` listener resolves with |
 | `{type: "pencil", gesture: "tap"\|"squeeze", action, phase?: "ended"}` | at once | A double tap, or a squeeze's end. `action` is the system's preferred action: `switchEraser`, `switchPrevious`, `showColorPalette`, `showInkAttributes`, `runSystemShortcut` or `ignore`. `phase: "ended"` comes from a shell with `pencilPhases`; a squeeze without it, from an older shell, is a quick squeeze |
 | `{type: "squeeze", phase: "began"\|"cancelled", action}` | at once | A squeeze's start, and its cancel, which comes instead of its `pencil` when the system cancels it. A type of its own, so a page that predates it ignores both and still acts once per squeeze, on its `pencil` |
+| `{type: "filesOpened"}` | at once | The system opened a file in the app: ask for what is held (`files`). A page that is not signed in to a workspace yet ignores it and asks once it is |
 
 Keeping it small is the point. A message is added in `Bridge.swift` and
 `host.js` together, and a flag in `HostInfo` says what the web may rely
@@ -406,6 +416,66 @@ one-time result. The listener keeps it and redirects the sheet to
 `app-claim` with the verifier, which sets the session cookie where the
 web app runs. The server needs nothing new. A password sign-in is the
 web app's login page.
+
+### Opened files
+
+The app declares the types it opens (`CFBundleDocumentTypes` in
+`project.yml`), so the share sheet, Files' *Open in* and AirDrop offer it.
+The types are PDF, Markdown, Notability's `.note` and `.ntb`, and
+`.zip`. The ones other apps own are at rank *Alternate*, so installing
+Gamma never makes it their default app. Markdown and the `.note` are
+declared as imported types as well, for an iPad where no app declares
+them. The `.note` identifier is the one Notability's own Info.plist
+exports (`com.gingerlabs.notability.notearchive`), and where Notability is
+installed its declaration wins. No app is known to declare the `.ntb`:
+the Info.plist published for Notability's Mac app declares `.note` and
+`.nbn` only. So Gamma claims
+it, as an exported type of its own (`net.gammapdf.ntb`) at rank *Owner*,
+and the system reads an `.ntb` as that type wherever no other app
+exports one.
+
+The system hands the app a file URL (`onOpenURL` in `GammaApp.swift`).
+`OpenedFiles` copies the file into a folder of its own under
+`tmp/Opened`, under the file's security scope and a file coordinator, as a
+file opened in place from another app needs. A copy iOS left in
+`Documents/Inbox`, which Files shows, is moved out instead. A folder is
+refused. The copies of an earlier run go when the app starts. The shell
+then sends `filesOpened`.
+
+Native code still decides nothing about a file. The page asks for the
+list (`files`) once it is signed in to a workspace, and again on each
+`filesOpened`. It reads each file in 2 MiB base64 chunks (`fileData`),
+then says `fileDone`, and only then does the copy go. So a file opened
+at the server picker, on the sign-in page, while This iPad starts or
+before a reload waits until a page can take it. The web half is
+`frontend/src/transfers/openedFiles.js`, wired in `App.jsx`
+(`takeOpenedFiles`):
+
+1. **Where.** As the desktop does with a PDF it is handed
+   ([desktop/docs/architecture.md "Opening PDF files"](../../desktop/docs/architecture.md#opening-pdf-files)),
+   the files go to the workspace shown when the account can edit there,
+   else to its personal workspace. A workspace others see asks first: one
+   with other members, a public one, or a clone. The question offers
+   *Add to <workspace>*, *Add to <personal workspace>* and *Cancel*, which
+   lets the files go. Going to the personal workspace is a workspace
+   switch, so the page reloads on it, takes the files the shell still
+   holds there, and the status says why when the shown workspace was
+   read-only.
+2. **What.** Each file is read, then let go, then takes the path a picked
+   file takes. A PDF or a Markdown note becomes a page at the library's
+   top, as *Upload files…* makes one, and a single one opens. A PDF keeps
+   the upload's rules: an already-known file opens its page, and the
+   annotations another reader saved in it are imported. A `.note` or
+   `.ntb` opens the Notability import's review, several of them as one
+   `.zip`, as the picker sends them. A `.zip` opens the Import dialog with
+   the file already chosen. It asks which export it is, offering the
+   sources that read an archive (Zotero, Markdown, Notability, Gamma),
+   and goes on to that source's review with no picker.
+3. **What it cannot.** One import dialog shows at a time. With
+   Notability notes in the same share, the review takes them, and a
+   `.zip` with them is named in the status, to be opened again. A second
+   `.zip` is named the same way. A file Gamma does not open is let go,
+   and the status names it.
 
 ### The local server
 
@@ -734,8 +804,15 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
     (`BridgeTests`): the claim's look, read leniently (`nib`, `nibRoll`
     and `snap` among it, and a claim without them), `haptic`, `hold` and
     its replies, the `stroke`'s `held`, `squeeze` and the `pencil` phase,
-    the declared flags (`pencilRoll`, and `calligraphy` and `snap` in
-    `inkLooks`)
+    the opened files' `files`, `fileData`, `fileDone` and `filesOpened`,
+    the declared flags (`pencilRoll`, `openFiles`, and `calligraphy` and
+    `snap` in `inkLooks`)
+  - the opened files' store (`OpenedFilesTests`): a file copied and
+    listed with its name, size and type, read back whole over several
+    chunks, an offset past the end and an unknown id refused, the copy
+    gone at `fileDone` and the original kept, a file in the Inbox moved
+    out, a folder, a missing file and a web URL not taken, and an earlier
+    run's copies gone at launch
   - the cloud sign-in's requests and PKCE (`CloudSignInTests`)
   - claim matching and sampling (`PencilTests`): the samples' tilt, the
     roll's seventh value (degrees in [0, 360), clockwise; none without
@@ -796,6 +873,12 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
   and runs a new one without the state ever saying `stopped`.
 - `frontend/tests/host.test.mjs`: `host.js` with a fake `window` (the
   queue delivered, replies, unknown types, no host).
+- `frontend/tests/openedFiles.test.mjs`: `openedFiles.js` against a
+  stand-in shell. It covers the list, a malformed entry left out, a file
+  read whole over several chunks, a file the shell no longer holds, what
+  each kind of file becomes, and where files go: the workspace shown, a
+  shared, public or clone one with the personal one to offer, and a
+  read-only one sending them to the personal one.
 - `frontend/tests/hostInk.test.mjs`: the claim's tool from a preset's
   look (keys left out at their defaults, the dash in CSS px, a
   calligraphy pen's `nib` and `nibRoll`), the host's samples as pointer
@@ -839,14 +922,24 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
   `select` at its lift, none with *Haptics* off. The Apple Pencil
   settings show only under the stand-in (`ink.mjs` checks a browser has
   none). The account menu's Server… row and the sign-in page's Server…
-  link post `servers`, and no install offer shows.
+  link post `servers`, and no install offer shows. The stand-in also
+  holds opened files, read in 1000-byte chunks. A PDF held when the page
+  loads becomes its page at the library's top and opens. Files handed
+  while the page is up, with `filesOpened`, follow: a Markdown note
+  becomes a page, an `.ntb` goes through the Notability review, a `.zip`
+  opens the Import dialog without Logseq and imports as Markdown, and a
+  `.heic` is let go with a status. In a shared workspace the question
+  shows: *Cancel* adds nothing, and the personal workspace's button
+  reloads there and opens the PDF. A workspace the account only reads
+  sends the PDF to the personal workspace, with the status saying why.
+  Every file is let go (`fileDone`).
 
 A change to the bridge (`host.js`, the ink layer's claim, App's theme,
 gesture or Server wiring, the sign-in pages, or anything under `ipad/`)
 runs:
 
 ```bash
-cd frontend && node --test tests/host.test.mjs tests/hostInk.test.mjs tests/shapes.test.mjs tests/pencilActions.test.mjs && npm run e2e -- --group ipad,ink
+cd frontend && node --test tests/host.test.mjs tests/hostInk.test.mjs tests/shapes.test.mjs tests/pencilActions.test.mjs tests/openedFiles.test.mjs && npm run e2e -- --group ipad,ink
 ```
 
 and, for `ipad/**` and for the two fixtures it reads
@@ -949,6 +1042,16 @@ Only an iPad can show these, and none has been run yet:
     as `alignmentOccurred(at:)`), are set in `PencilHaptics.play`. The
     shell calls no `prepare()`, so note a tick that lags its shape or its
     selection.
+22. Opened files ([Opened files](#opened-files)). Gamma should be listed
+    in the share sheet and Files' *Open in* for a PDF, a `.md`, a `.zip`,
+    a `.note` and an `.ntb`, with Notability installed and without it.
+    An `.ntb` not listed with Notability installed would mean Notability
+    exports a type of its own for `.ntb` after all, whose identifier then
+    belongs in the NTB document type in `project.yml`. Check a file shared from
+    Mail (a copy in `Documents/Inbox`, which should not stay in Files), a
+    file opened in place from iCloud Drive (its security scope), a file
+    shared at a cold launch and while the server picker is up, and the
+    time a large PDF takes to cross the bridge.
 
 ### Not built yet
 

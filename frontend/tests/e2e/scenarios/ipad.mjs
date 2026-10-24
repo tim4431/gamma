@@ -8,6 +8,10 @@
 // Pencil gestures with their choices and phases, the haptics, the Apple
 // Pencil settings and the Server row. Chromium in a tablet-sized touch
 // context — emulation, not an iPad.
+import fs from "node:fs";
+import path from "node:path";
+import { execFileSync } from "node:child_process";
+import { Account, ROOT } from "../harness.mjs";
 import { decodeStroke } from "../../../src/ink/ink.js";
 import { newInkStrokes, savedInkStrokes } from "./ink.mjs";
 import { same, tree } from "./notes.mjs";
@@ -16,24 +20,52 @@ import { waitForPdf } from "./pdf.mjs";
 // What the iPad app's user script declares before the bundle runs (HostInfo,
 // every flag this build's shell declares; `flags` overrides them, e.g.
 // {hold: false} for an older shell), with a message handler that records
-// what the page posts, a haptic included, and takes every claim.
-function fakeShell(flags = {}) {
+// what the page posts, a haptic included, and takes every claim. `files`
+// (not a flag: [{id, name, type, b64}]) are what the system opened in the
+// app, held as OpenedFiles.swift holds them: listed, read in chunks (of 1000
+// bytes here, so a file takes several) and let go by `fileDone`. Like the
+// shell, it still holds them after a reload (the init script runs again);
+// `window.e2eHold(file)` adds one later, as a share while the page is up
+// does, and `window.e2eHeld` is what it holds.
+function fakeShell(options = {}) {
+  const { files = [], ...flags } = options;
   const sent = [];
   window.e2eHostSent = sent;
+  const withBytes = (f) => ({ ...f, bytes: Uint8Array.from(atob(f.b64), (c) => c.charCodeAt(0)) });
+  const held = files.map(withBytes);
+  window.e2eHeld = held;
+  window.e2eHold = (f) => { held.push(withBytes(f)); };
   const native = { platform: "ipad", version: "0.2.0", ink: true,
     inkLooks: ["pressure", "dash", "blend", "stabilize", "pencil", "calligraphy", "snap"],
-    hold: true, pencil: true, pencilPhases: true, pencilRoll: true, haptics: true, servers: true, ...flags };
+    hold: true, pencil: true, pencilPhases: true, pencilRoll: true, haptics: true, servers: true, openFiles: true, ...flags };
   native.receive = (msg) => new Promise((resolve, reject) => (native.queue ||= []).push({ msg, resolve, reject }));
   window.gammaNative = native;
+  const answer = (msg) => {
+    if (msg.type === "claim") return { taken: true };
+    if (msg.type === "files") return { files: held.map(({ id, name, type, bytes }) => ({ id, name, type, size: bytes.length })) };
+    if (msg.type === "fileData") {
+      const file = held.find((f) => f.id === msg.id);
+      if (!file) return {};
+      let bin = "";
+      for (const b of file.bytes.subarray(msg.offset, msg.offset + 1000)) bin += String.fromCharCode(b);
+      return { data: btoa(bin) };
+    }
+    if (msg.type === "fileDone") {
+      const i = held.findIndex((f) => f.id === msg.id);
+      if (i >= 0) held.splice(i, 1);
+    }
+    return {};
+  };
   window.webkit = { messageHandlers: { gamma: { postMessage: (msg) => {
-    sent.push(JSON.parse(JSON.stringify(msg)));
-    return Promise.resolve(msg.type === "claim" ? { taken: true } : {});
+    if (msg.type !== "fileData") sent.push(JSON.parse(JSON.stringify(msg)));
+    return Promise.resolve(answer(msg));
   } } } };
 }
 // An iPad's own Safari, which would be offered Add to Home Screen; the shell never is.
 const SHELL_UA = "Mozilla/5.0 (iPad; CPU OS 18_2 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.2 Mobile/15E148 Safari/604.1";
 
 export async function ipadScenarios({ server, browser, alice, makePdf, step, until, sleep, assert, assertEq, assertNoProblems, openPage }) {
+  const python = process.env.GAMMA_E2E_PYTHON || path.join(ROOT, "backend", "venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
   await step("ipad: install manifest, icons, status-bar colour and standalone mode", async () => {
     await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Status bar page" } });
     await alice.api("/api/prefs/open-tabs", { method: "PUT", body: { value: [] } }); // groups before this one leave tabs
@@ -297,6 +329,148 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
       await until(async () => (await page.evaluate(() => window.e2eHostSent.filter((m) => m.type === "servers").length)) === 1,
         { what: "the sign-in page's servers message" });
     } finally { await anon.close(); }
+  });
+
+  // --- the shell: files the system opened in the app (docs/dev/ipad.md "Opened files") ---
+  await step("ipad shell: files the app was given open as picked ones do: a PDF its page, Markdown a note, an .ntb the Notability review, a .zip the Import dialog; a workspace others see asks first, a read-only one sends them to the personal workspace", async () => {
+    // Accounts of its own: the workspaces it shares, and the notices they
+    // bring, stay out of the steps that follow. A server admin makes the
+    // shared workspaces, then stops being one.
+    for (const [name, pw] of [["ip-admin", "ip-admin-pw"], ["ip-ann", "ip-ann-pw"], ["ip-ben", "ip-ben-pw"]]) {
+      await server.manage("create-user", name, pw);
+    }
+    const ann = await new Account(server, "ip-ann", "ip-ann-pw").login();
+    const ben = await new Account(server, "ip-ben", "ip-ben-pw").login();
+    const b64 = (bytes) => Buffer.from(bytes).toString("base64");
+    const pdfFile = (id, name, text) => ({ id, name, type: "application/pdf", b64: b64(makePdf([[text]])) });
+    const pages = async (who = ann) => (await who.api("/api/blocks/root/children")).children;
+    const fileDone = (page, id) => until(async () => (await page.evaluate(() => window.e2eHostSent))
+      .some((m) => m.type === "fileDone" && m.id === id), { what: `the shell lets ${id} go` });
+    const hand = (page, file) => page.evaluate((file) => { window.e2eHold(file); return window.gammaNative.receive({ type: "filesOpened" }); }, file);
+    // An .ntb and a .zip of a Markdown note, as the transfer group makes them.
+    const dir = fs.mkdtempSync(path.join(server.dir, "opened-"));
+    const ntbPath = path.join(dir, "Handed.ntb");
+    const zipPath = path.join(dir, "Handed vault.zip");
+    execFileSync(python, ["-c", `
+import sys, zipfile
+sys.path.insert(0, 'backend/tests')
+import ntb_fixtures as tx
+open(sys.argv[1], 'wb').write(tx.ntb_zip(tx.bundle((1, tx.DOCUMENT, tx.document("Handed NTB note")),
+    (8, (0, 11), tx.text("Typed on the iPad")))))
+with zipfile.ZipFile(sys.argv[2], 'w') as z:
+    z.writestr('Vault/Vault note.md', '# Vault note\\n\\nFrom a zipped vault.\\n')
+`, ntbPath, zipPath], { cwd: ROOT });
+    const personal = (await ann.api("/api/session")).workspaces.find((w) => w.personal);
+
+    // This iPad's own library: a PDF waiting when the page loads becomes its
+    // page at the library's top, opened, and the shell lets it go.
+    let ctx = await ann.context(browser, { hasTouch: true, viewport: { width: 1194, height: 834 }, userAgent: SHELL_UA });
+    await ctx.addInitScript(fakeShell, { files: [pdfFile("F1", "Handed paper.pdf", "A paper the iPad was handed.")] });
+    try {
+      const page = await openPage(ctx, `${server.base}/?ws=${ann.ws}`);
+      await waitForPdf(page, 1);
+      await fileDone(page, "F1");
+      const paper = (await pages()).find((p) => p.content === "Handed paper.pdf");
+      assert(paper, `the PDF is a page titled with its name: ${(await pages()).map((p) => p.content).join(" | ")}`);
+      assertEq((paper.properties?.folders || []).length, 0, "at the library's top");
+      await until(async () => (await page.locator(".titleText").first().innerText().catch(() => "")) === "Handed paper.pdf",
+        { what: "its page is the one open" });
+
+      // Shared while the page is up: the shell says so and the page asks.
+      await hand(page, { id: "F2", name: "Handed note.md", type: "text/markdown", b64: b64("# Handed note\n\nWritten in another app.\n") });
+      await fileDone(page, "F2");
+      await page.getByText("Written in another app.").first().waitFor();
+      assert((await pages()).some((p) => p.content === "Handed note"), `the Markdown is a note page: ${(await pages()).map((p) => p.content).join(" | ")}`);
+
+      // A Notability .ntb: the Notability import's review, as Import → Notability opens it.
+      await hand(page, { id: "F3", name: "Handed.ntb", type: "", b64: b64(fs.readFileSync(ntbPath)) });
+      await fileDone(page, "F3");
+      let review = page.getByRole("dialog", { name: "Review Notability import", exact: true });
+      await review.getByRole("region", { name: "Library after import", exact: true }).getByText("Handed NTB note", { exact: true }).waitFor();
+      await review.getByRole("button", { name: "Import to library", exact: true }).click();
+      let report = page.getByRole("dialog", { name: "Import complete", exact: true });
+      await report.waitFor();
+      await report.getByRole("button", { name: "Done", exact: true }).click();
+      assert((await pages()).some((p) => p.content === "Handed NTB note"), "the note is a page");
+
+      // A .zip: the Import dialog asks which export it is, offering only the
+      // sources that read an archive, and imports it with no picker.
+      await hand(page, { id: "F4", name: "Handed vault.zip", type: "application/zip", b64: b64(fs.readFileSync(zipPath)) });
+      await fileDone(page, "F4");
+      const chooser = page.getByRole("dialog", { name: "Import Handed vault.zip", exact: true });
+      await chooser.waitFor();
+      assertEq(await chooser.getByText("Logseq highlights", { exact: true }).count(), 0, "Logseq reads no archive");
+      await chooser.getByText("Markdown notes", { exact: true }).click();
+      await chooser.getByRole("button", { name: "Import", exact: true }).click();
+      review = page.getByRole("dialog", { name: "Review Markdown import", exact: true });
+      await review.getByRole("region", { name: "Library after import", exact: true }).getByText("Vault note", { exact: true }).first().waitFor();
+      await review.getByRole("button", { name: "Import to library", exact: true }).click();
+      report = page.getByRole("dialog", { name: "Import complete", exact: true });
+      await report.waitFor();
+      await report.getByRole("button", { name: "Done", exact: true }).click();
+      await until(async () => (await pages()).some((p) => p.content === "Vault note"), { what: "the vault's note is a page" });
+
+      // A file Gamma does not open is let go, and the status says so.
+      await hand(page, { id: "F5", name: "photo.heic", type: "image/heic", b64: b64("not a picture") });
+      await fileDone(page, "F5");
+      await page.getByRole("status").filter({ hasText: "Gamma does not open photo.heic." }).waitFor();
+      assertEq(await page.evaluate(() => window.e2eHeld.length), 0, "the shell holds nothing more");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+
+    // A shared workspace asks first, as the desktop does. Cancel lets the
+    // file go and adds nothing; the personal workspace's button takes it
+    // there, the page reloading on that workspace with the file still held.
+    // Ann's lab, which Ben edits, and Ben's reading room, which Ann only reads.
+    await server.manage("set-admin", "ip-admin", "on");
+    const admin = await new Account(server, "ip-admin", "ip-admin-pw").login();
+    const lab = await admin.api("/api/workspaces", { method: "POST", body: { name: "Handed lab", kind: "shared", owner: "ip-ann" } });
+    const reading = await admin.api("/api/workspaces", { method: "POST", body: { name: "Ben's reading room", kind: "shared", owner: "ip-ben" } });
+    await server.manage("set-admin", "ip-admin", "off");
+    await ann.api(`/api/workspaces/${lab.id}/members/ip-ben`, { method: "PUT", body: { role: "editor" } });
+    await ben.api(`/api/workspaces/${reading.id}/members/ip-ann`, { method: "PUT", body: { role: "viewer" } });
+    const asked = async (file) => {
+      const c = await ann.context(browser, { hasTouch: true, viewport: { width: 1194, height: 834 }, userAgent: SHELL_UA });
+      await c.addInitScript(fakeShell, { files: [file] });
+      const page = await openPage(c, `${server.base}/?ws=${lab.id}`);
+      const box = page.locator(".confirmModal");
+      await box.getByText(`Add “${file.name}” to Handed lab?`).waitFor();
+      await box.getByText("Handed lab is shared: everyone in it can see what you add.").waitFor();
+      return { c, page, box };
+    };
+    let shown = await asked(pdfFile("F6", "Lab paper.pdf", "A paper for the lab, then not."));
+    try {
+      const { page, box } = shown;
+      await box.getByRole("button", { name: "Cancel", exact: true }).click();
+      await fileDone(page, "F6");
+      await page.getByRole("status").filter({ hasText: "Not added: “Lab paper.pdf”" }).waitFor();
+      assert(!(await pages()).some((p) => p.content === "Lab paper.pdf"), "nothing added");
+      assertNoProblems(page);
+    } finally { await shown.c.close(); }
+    shown = await asked(pdfFile("F7", "Mine after all.pdf", "A paper that goes to the personal workspace."));
+    try {
+      const { page, box } = shown;
+      await box.getByRole("button", { name: `Add to ${personal.name}`, exact: true }).click();
+      await page.waitForURL((url) => url.searchParams.get("ws") === personal.id);
+      await waitForPdf(page, 1);
+      await fileDone(page, "F7");
+      assert((await pages()).some((p) => p.content === "Mine after all.pdf"), "in the personal workspace");
+      assertNoProblems(page);
+    } finally { await shown.c.close(); }
+
+    // A workspace the account can only read: the files go to the personal
+    // one at once, and the status says why after the reload.
+    ctx = await ann.context(browser, { hasTouch: true, viewport: { width: 1194, height: 834 }, userAgent: SHELL_UA });
+    await ctx.addInitScript(fakeShell, { files: [pdfFile("F8", "Read only.pdf", "A paper handed to a reader.")] });
+    try {
+      const page = await openPage(ctx, `${server.base}/?ws=${reading.id}`);
+      await page.waitForURL((url) => url.searchParams.get("ws") === personal.id);
+      await waitForPdf(page, 1);
+      await fileDone(page, "F8");
+      await page.getByRole("status").filter({ hasText: `“Read only.pdf” went into ${personal.name}: you can only read Ben's reading room.` }).waitFor();
+      assert((await pages()).some((p) => p.content === "Read only.pdf"), "in the personal workspace");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
   });
 
   // --- the shell: the claim's look, the hold, the gestures' choices, the haptics ---
