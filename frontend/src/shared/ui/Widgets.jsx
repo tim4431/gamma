@@ -94,15 +94,17 @@ function fragmentToMarkdown(node, ctx = {}) {
   const kids = (c = ctx) => Array.from(el.childNodes).map((n) => fragmentToMarkdown(n, c)).join("");
   // Inline markers hug the text: whitespace at the edges of <strong>bold </strong>
   // must stay outside the ** or the markdown doesn't parse back.
-  const wrap = (marker) => {
+  const wrap = (marker, close = marker) => {
     const raw = kids();
     const inner = raw.trim();
-    return inner ? `${raw.match(/^\s*/)[0]}${marker}${inner}${marker}${raw.match(/\s*$/)[0]}` : raw;
+    return inner ? `${raw.match(/^\s*/)[0]}${marker}${inner}${close}${raw.match(/\s*$/)[0]}` : raw;
   };
   switch (el.tagName) {
     case "STRONG": case "B": return wrap("**");
     case "EM": case "I": return wrap("*");
     case "DEL": case "S": return wrap("~~");
+    // A note's underline is the tag itself (editor/mdMarks.js).
+    case "U": return wrap("<u>", "</u>");
     case "CODE": return ctx.pre ? el.textContent : `\`${el.textContent}\``;
     case "PRE": return `\n\n\`\`\`\n${el.textContent.replace(/\n$/, "")}\n\`\`\`\n\n`;
     case "A": {

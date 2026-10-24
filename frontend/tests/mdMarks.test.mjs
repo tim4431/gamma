@@ -1,10 +1,11 @@
-// The formatting hotkeys' pure toggle (Ctrl+B / I / E / Shift+X / Shift+H)
-// and the inline-mark scanner both the editor's live rendering and the
-// toggle read. Each case applies the returned changes to the text and
+// The formatting hotkeys' pure toggle (Ctrl+B / I / U / E / Shift+X /
+// Shift+H) and the inline-mark scanner both the editor's live rendering and
+// the toggle read. Each case applies the returned changes to the text and
 // checks the result plus where the selection lands.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { expandBlankLines, insertLink, isUrl, scanMarks, toggleMark } from "../src/editor/mdMarks.js";
+import { expandBlankLines, insertLink, isUrl, markedAt, scanMarks, toggleMark } from "../src/editor/mdMarks.js";
+import { BLOCK_COMMANDS } from "../src/editor/blockCommands.js";
 
 // Apply {from, to, insert} changes addressed to the original text.
 function apply(text, changes) {
@@ -65,6 +66,47 @@ test("openers and closers may not hug whitespace, and a span never crosses a lin
   assert.deepEqual(scanMarks("** a**"), []);
   assert.deepEqual(scanMarks("**a\nb**"), []);
   assert.deepEqual(scanMarks("==hi== ~~x~~").map((s) => s.cls), ["cmHighlight", "cmStrike"]);
+});
+
+test("underline is the <u> tag pair, toggled like any mark", () => {
+  assert.deepEqual(toggled("say word now", 4, 8, "<u>"), { text: "say <u>word</u> now", sel: { anchor: 7, head: 11 } });
+  assert.deepEqual(toggled("say <u>word</u> now", 7, 11, "<u>"), { text: "say word now", sel: { anchor: 4, head: 8 } });
+  assert.deepEqual(toggled("<u>word</u>", 5, 5, "<u>"), { text: "word", sel: { anchor: 2, head: 2 } });
+  // A caret: an empty pair, and a second press takes it away.
+  assert.deepEqual(toggled("a", 1, 1, "<u>"), { text: "a<u></u>", sel: { anchor: 4 } });
+  assert.deepEqual(toggled("a<u></u>", 4, 4, "<u>"), { text: "a", sel: { anchor: 1 } });
+  assert.deepEqual(toggled("a\nb", 0, 3, "<u>"), { text: "<u>a</u>\n<u>b</u>", sel: { anchor: 0, head: 17 } });
+  assert.deepEqual(toggled("<u>a</u>\n<u>b</u>", 0, 17, "<u>"), { text: "a\nb", sel: { anchor: 0, head: 3 } });
+  // Its tags may hug whitespace (HTML draws that), and it nests with the others.
+  assert.deepEqual(scanMarks("<u> a </u>").map((s) => [s.marker, s.openLen, s.closeLen]), [["<u>", 3, 4]]);
+  assert.deepEqual(scanMarks("**<u>x</u>**").map((s) => [s.marker, s.from, s.to]), [["**", 0, 12], ["<u>", 2, 10]]);
+  assert.deepEqual(scanMarks("<u>**x**</u>").map((s) => [s.marker, s.from, s.to]), [["<u>", 0, 12], ["**", 3, 8]]);
+  assert.deepEqual(toggled("**<u>x</u>**", 5, 6, "**"), { text: "<u>x</u>", sel: { anchor: 3, head: 4 } });
+});
+
+test("markedAt is what the toggle takes away", () => {
+  assert.equal(markedAt("**bold** x", 2, 6, "**"), true);
+  assert.equal(markedAt("**bold** x", 9, 10, "**"), false);
+  assert.equal(markedAt("****", 2, 2, "**"), true, "a caret in an empty pair");
+  assert.equal(markedAt("***x***", 3, 4, "*"), true, "one layer of ***");
+  assert.equal(markedAt("**a**\nb", 0, 7, "**"), false, "a multi-line selection needs every line");
+  assert.equal(markedAt("**a**\n**b**", 0, 11, "**"), true);
+  assert.equal(markedAt("<u>x</u>", 3, 4, "<u>"), true);
+});
+
+test("a formatting command's state: on where the selection carries it, blocked where it does nothing", () => {
+  const cmd = (id) => BLOCK_COMMANDS.find((c) => c.id === id);
+  const state = (id, value, from, to) => cmd(id).state({ editor: { value, selectionStart: from, selectionEnd: to } });
+  assert.equal(state("block.bold", "**b** x", 2, 3), "on");
+  assert.equal(state("block.bold", "**b** x", 6, 7), "off");
+  assert.equal(state("block.underline", "<u>b</u>", 3, 4), "on");
+  assert.equal(state("block.bold", "$x+y$", 1, 3), "blocked", "math");
+  assert.equal(state("block.bold", "a `code` b", 3, 6), "blocked", "inline code takes no other mark");
+  assert.equal(state("block.code", "a `code` b", 3, 6), "on", "but code toggles off there");
+  assert.equal(state("block.link", "say word", 4, 8), "off");
+  assert.equal(state("block.link", "```\ncode\n```", 4, 8), "blocked");
+  assert.equal(state("block.math", "two\nlines", 0, 9), "blocked");
+  assert.equal(cmd("block.underline").keys, "Mod-u");
 });
 
 test("insertLink builds the link and parks the caret in the empty slot", () => {

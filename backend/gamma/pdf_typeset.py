@@ -12,8 +12,8 @@ A **span** is ``(kind, payload, level, style)``:
   typeset expression or a CJK glyph);
 * ``level`` is 0, ``SUP`` or ``SUB`` — a genuinely raised/lowered run;
 * ``style`` is a :class:`Style`: emphasis bits plus a link target. Both
-  writers render bold, italic, code, strike-through, ``==marked==`` text
-  and links.
+  writers render bold, italic, underline, code, strike-through,
+  ``==marked==`` text and links.
 
 Everything is laid out in a **y-down frame** (x right, y down, origin at the
 visible top-left) — the frame the viewer stores highlight rects in. Callers map
@@ -50,7 +50,7 @@ from .note_markup import MATH, SUB, SUP, TEXT, latex_spans
 
 # --- styles ------------------------------------------------------------------
 
-BOLD, ITALIC, MONO, STRIKE, MARK, LINK = 1, 2, 4, 8, 16, 32
+BOLD, ITALIC, MONO, STRIKE, MARK, LINK, UNDERLINE = 1, 2, 4, 8, 16, 32, 64
 
 # ``bits`` is the mask above; ``href`` the target of a LINK span (kept in the
 # style so wrapping and merging treat two different links as two different
@@ -564,10 +564,13 @@ def draw_spans(ops, x: float, base: float, spans, size: float,
                     font.encode(), num(fs), num(cursor), num(base + shift), body))
             cursor += span_width(chunk, size, level, style)
         ops.append(b"ET")
-        if drawn and bits & STRIKE:
-            ops.append(b"%s %s %s RG %s w %s %s m %s %s l S" % (
-                num(rgb[0]), num(rgb[1]), num(rgb[2]), num(max(0.4, size * 0.06)),
-                num(x), num(base - size * 0.26), num(x + width), num(base - size * 0.26)))
+        # Strike-through across the x-height, underline just under the
+        # baseline (y down), both in the text's colour.
+        for bit, rise in ((STRIKE, -0.26), (UNDERLINE, 0.12)):
+            if drawn and bits & bit:
+                ops.append(b"%s %s %s RG %s w %s %s m %s %s l S" % (
+                    num(rgb[0]), num(rgb[1]), num(rgb[2]), num(max(0.4, size * 0.06)),
+                    num(x), num(base + size * rise), num(x + width), num(base + size * rise)))
         if drawn and bits & LINK and links is not None and style.href:
             links.append((x, base - ascent, x + width, base + height - ascent, style.href))
         x += width

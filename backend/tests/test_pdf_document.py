@@ -8,7 +8,7 @@ from test_pdf_export import _object_kinds, _open
 
 from gamma.note_markup import MATH, TEXT
 from gamma.pdf_document import PAGE_H, chunks, inline, render_document
-from gamma.pdf_typeset import BOLD, ITALIC, LINK, MARK, MONO, STRIKE
+from gamma.pdf_typeset import BOLD, ITALIC, LINK, MARK, MONO, STRIKE, UNDERLINE
 
 
 def _page(title="Notes", properties=None, children=()):
@@ -56,6 +56,21 @@ def test_inline_carries_the_style_of_each_construct():
     assert by_text["lab"].bits == LINK and by_text["lab"].href == "https://e.dev"
     # Inline math stays LaTeX for the typesetter, never printed as source.
     assert [p for k, p, _lv, _st in spans if k == MATH] == ["x^2"]
+
+
+def test_inline_reads_the_editors_underline_and_colored_runs():
+    # The note editor writes underline and color as inline HTML: underline
+    # takes its bit, a colored run keeps its text without the tags, and both
+    # nest with the Markdown marks either way round.
+    spans = inline('a <u>under</u> b <span style="color:#e5484d">red</span> '
+                   '**<u>both</u>** <span style="background:#e5484d55">**tinted**</span>')
+    by_text = {p: st for k, p, _lv, st in spans if k == TEXT}
+    assert by_text["under"].bits == UNDERLINE
+    assert by_text["both"].bits == BOLD | UNDERLINE
+    assert by_text["tinted"].bits == BOLD
+    # The colored run is plain text, so it merges with the text around it.
+    assert by_text[" b red "].bits == 0
+    assert "".join(p for k, p, _lv, _st in spans if k == TEXT) == "a under b red both tinted"
 
 
 def test_inline_nests_and_leaves_bare_urls_clickable():

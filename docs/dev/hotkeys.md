@@ -3,7 +3,7 @@
 How a key becomes an action, where a shortcut is declared, how the account
 changes it, and what the command palette and the Settings pane read.
 
-## One catalog, five surfaces
+## One catalog, six surfaces
 
 A **command** is declared once, as an object in one of two catalogs:
 
@@ -14,7 +14,7 @@ A **command** is declared once, as an object in one of two catalogs:
 
 - `id` — stable, `scope.name`; the account's overrides are keyed by it.
 - `label` / `group` — what the palette and the pane show (`t()` at module level, like any option list).
-- `keys` — the default chord, an array of them (`["Mod-y", "Mod-Shift-z"]`), or `null`: no keys until the account binds some, a palette entry meanwhile. Defaults are deliberately few: the keys Gamma always had (search, Ctrl+P, back, undo/redo, the formatting marks), plus Ctrl+Shift+P, F2, Delete, Ctrl+Shift+K, Ctrl+Shift+. (Toggle quote, GitHub's chord: it needs the open editor, so the palette cannot offer it), Ctrl+Shift+M (Comment on this note), Ctrl+, (settings, the convention everywhere), the ↑/↓ hop, and Ctrl+C / X / V / D / A on handwriting (the keys every editor gives copy, cut, paste, duplicate and select all; their `when` keeps them to the markup strip's selection and clipboard, so a note's editor and the browser keep theirs). F2 renames the page, or on the home library the one selected page. Delete is the file manager's key: it moves the pages selected on the home library to Recently deleted, after the confirmation, and the page menu shows it. Everything else (move, duplicate, new above, indent, fold, to-do, the view toggles, export, share…) starts unbound.
+- `keys` — the default chord, an array of them (`["Mod-y", "Mod-Shift-z"]`), or `null`: no keys until the account binds some, a palette entry meanwhile. Defaults are deliberately few: the keys Gamma always had (search, Ctrl+P, back, undo/redo, the formatting marks, Ctrl+U for the underline that came with the selection toolbar), plus Ctrl+Shift+P, F2, Delete, Ctrl+Shift+K, Ctrl+Shift+. (Toggle quote, GitHub's chord: it needs the open editor, so the palette cannot offer it), Ctrl+Shift+M (Comment on this note), Ctrl+, (settings, the convention everywhere), the ↑/↓ hop, and Ctrl+C / X / V / D / A on handwriting (the keys every editor gives copy, cut, paste, duplicate and select all; their `when` keeps them to the markup strip's selection and clipboard, so a note's editor and the browser keep theirs). F2 renames the page, or on the home library the one selected page. Delete is the file manager's key: it moves the pages selected on the home library to Recently deleted, after the confirmation, and the page menu shows it. Everything else (move, duplicate, new above, indent, fold, to-do, the view toggles, export, share…) starts unbound.
 - `scope` is the catalog the command sits in:
   - [frontend/src/app/appCommands.js](../../frontend/src/app/appCommands.js) — the app commands, alive wherever focus is: search, the palettes, back, undo / redo, rename, share, metadata, attach, the exports (the Export dialog preset to a format), download, import, new page, delete the selected pages, Recently deleted, show or hide chat / comments / PDF / notes, settings, report a problem, and the Handwriting group — `ink.copy`, `ink.cut`, `ink.paste`, `ink.duplicate`, `ink.selectAll` — alive while the markup strip holds a selection or a tool ([handwriting.md](handwriting.md) "Copy, cut and paste"; their guards under *Widget keys* below).
   - [frontend/src/editor/blockCommands.js](../../frontend/src/editor/blockCommands.js) — the block commands, for a note whose editor is open: VSCode's line shortcuts with the block as the line (move, duplicate, delete line, new above, indent, fold, to-do, select), the hop to the neighbouring block on ↑ / ↓, Obsidian's formatting keys, and Comment on this note (the block's thread popover, [comments.md](comments.md) "In the app").
@@ -24,6 +24,7 @@ A **command** is declared once, as an object in one of two catalogs:
 - `palette: false` — keyboard only (the arrow hops, the formatting marks, the palette command itself).
 - `fixed: true` — shown in the pane but not rebindable (the arrow hops).
 - `inDialog(dialog)` (app scope) — still dispatches while a dialog is open (see *Dialogs* below).
+- `state(ctx)` (the block scope's formatting commands) — what the command is to the open editor's selection: `"on"` (the selection carries its mark, which the command would take away), `"off"`, or `"blocked"` (it does nothing there: math, a code fence, inline code for every mark but code). The selection toolbar presses and greys out its buttons by it. It is no `when`: a blocked mark's key is still taken and does nothing, so Ctrl+B in math never reaches the browser. The readers are `markCommands.js`'s `…StateAt`.
 - `run(ctx, event)` — returning `false` declines the key: the dispatcher tries the next command, and an unhandled key keeps its default (undo in a plain input stays the browser's).
 
 [frontend/src/app/commands.js](../../frontend/src/app/commands.js) joins the
@@ -35,7 +36,7 @@ answers to for this account (its first effective key, `""` when unbound):
 the home library's key hints (the page menu's Rename / Delete, the filter
 box) and the guide's `{key:…}` tokens (`guide/keys.js`) both read it.
 
-The five surfaces read that catalog and nothing else:
+The six surfaces read that catalog and nothing else:
 
 | Surface | Reads | Where |
 |---|---|---|
@@ -43,10 +44,11 @@ The five surfaces read that catalog and nothing else:
 | the command palette (Ctrl+Shift+P, or `>` in Ctrl+P) | `label`, `group`, the effective keys, `run` | [library/QuickOpen.jsx](../../frontend/src/library/QuickOpen.jsx), fed by App's `paletteCommands()` |
 | Settings → Keyboard | everything, plus `fixed` and the conflicts | [settings/SettingsKeyboard.jsx](../../frontend/src/settings/SettingsKeyboard.jsx) |
 | the touch editing bar (block scope; its Undo / Redo call App's `undoBlocks`) | `label`, `when` (a button greys out, or a transient one hides), `run` | [editor/EditBar.jsx](../../frontend/src/editor/EditBar.jsx), given the row's `commandContext` ([ipad.md](ipad.md) "The editing bar") |
+| the selection toolbar (block scope: the formatting commands, over selected text) | `label`, the effective keys (in the titles), `state` (pressed or greyed out), `run` | [editor/SelectionToolbar.jsx](../../frontend/src/editor/SelectionToolbar.jsx), given the row's `commandContext` ([ui-design.md](ui-design.md#the-selection-toolbar)) |
 | a menu row (app scope: the View menu's Undo, Redo, Go to page, Command palette; the markup strip's More menu, `ink.paste` and `ink.selectAll`) | `label`, the effective keys, `when` (the row greys out), `run` | [app/CommandMenuItem.jsx](../../frontend/src/app/CommandMenuItem.jsx), given App's `appCmdRef` context ([ui-design.md](ui-design.md#menus-and-submenus)) |
 
-So a key, a palette entry, a bar button, a menu row and the pane can never
-disagree.
+So a key, a palette entry, a bar or toolbar button, a menu row and the pane
+can never disagree.
 The cheat sheet in [docs/user_guide/user_guide.md](../user_guide/user_guide.md) is checked against
 the catalog by `tests/commands.test.mjs`: a command with a default chord
 whose label is missing there fails the test.
