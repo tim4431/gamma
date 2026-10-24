@@ -1137,7 +1137,10 @@ and what it holds travels with it.
   anchoring absorbs moves nothing, and a scroll the change forces on the
   list's own scroller glides what it carries: a strip scrolled to its end
   that a close narrows scrolls back, and what is left closes up from the
-  left.
+  left. A glide is turned into the item's own pixels, so an item starts
+  from where it stood under a text zoom around the list and under a zoom
+  of its own (the Interface size every button carries, as the Comments
+  window's rows do).
 - **A popup over the window stays put.** An item holding what matches
   `hold`, such as the caret's "/" or `[[` menu, stays still, since a
   moving ancestor would carry it off. Text typed or pasted in the list,

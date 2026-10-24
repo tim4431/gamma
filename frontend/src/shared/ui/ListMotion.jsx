@@ -31,7 +31,8 @@
 // and a press outside it (the editing bar's Insert…) land the glides at
 // once, so a popup they open is placed against a row at rest; a press in
 // the list aims at what is drawn, so it lands nothing. Boxes are the
-// window's.
+// window's, and a glide is turned into its item's own pixels, under any
+// zoom around the list or on the item itself (a button's Interface size).
 import React from "react";
 import { listGlides, longestMs, reducedMotion, sameKeys } from "./motion.js";
 import { standBack, standing, stillCopy } from "./leave.js";
@@ -99,11 +100,15 @@ export default class ListMotion extends React.Component {
     return box.checkVisibility ? box.checkVisibility({ visibilityProperty: true }) : true;
   }
 
-  // The list's own CSS pixels per window pixel's worth: an interface or
-  // text zoom around the list scales the window's boxes, not its lengths.
-  scale() {
+  // Window pixels per CSS pixel of `el`'s own lengths: an interface or text
+  // zoom, or a transform, around the list scales the window's boxes, not its
+  // lengths (the box's rect against its offsetWidth), and a zoom of the
+  // item's own (an Interface size on a control, `zoom` on every button)
+  // scales its translate too.
+  scaleOf(el) {
     const box = this.root.current.parentElement;
-    return box.offsetWidth ? box.getBoundingClientRect().width / box.offsetWidth : 1;
+    const k = box.offsetWidth ? box.getBoundingClientRect().width / box.offsetWidth : 1;
+    return k * (el.currentCSSZoom ?? 1) / (box.currentCSSZoom ?? 1);
   }
 
   // The items in document order, each with its box in the window.
@@ -178,14 +183,16 @@ export default class ListMotion extends React.Component {
       moving: this.props.moves === false ? 0 : MOVING, entering: this.props.most ?? 8,
     });
     if (moves.length) {
-      const k = this.scale();
       const tokens = getComputedStyle(document.documentElement);
       const timing = {
         duration: longestMs(tokens.getPropertyValue("--dur-slow")),
         easing: tokens.getPropertyValue("--ease-out").trim() || "ease-out",
         id: "list-move",
       };
-      for (const { i, x, y } of moves) this.glide(after.list[i].el, x / k, y / k, timing);
+      for (const { i, x, y } of moves) {
+        const el = after.list[i].el, k = this.scaleOf(el);
+        this.glide(el, x / k, y / k, timing);
+      }
     }
     const enter = this.props.enter === undefined ? "fade" : this.props.enter;
     if (enter) {

@@ -15,7 +15,8 @@ import { selectPdfText, waitForPdf } from "./pdf.mjs";
 // day headers leave through copies; In progress goes with the last task
 // running as Finished's header glides up, and a removed task leaves; the
 // PDF margin's cards grow in and shrink away, a reply glides its thread to
-// the top of the Comments window and rises into its thread; the share
+// the top of the Comments window (from where its row stood at any Interface
+// size) and rises into its thread; the share
 // popover and Recently deleted open on their content; a tab opened rises
 // in and one closed sinks out as the next glides over its place; the
 // library's listing glides within one listing and comes into focus when
@@ -517,6 +518,41 @@ export async function motionScenarios(env) {
       seen = await moves(page);
       assert(seen.some((m) => m.startsWith("entering rise ")), `the reply rises in: ${seen}`);
       await page.keyboard.press("Escape");
+      await assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("motion: at an Interface size of 130% the Comments window's rows, zoomed buttons, start their glides from where they stood", async () => {
+    const note = (block_id, body, thread_id) => until(async () => (await user.api(`/api/pages/${pg.id}/comments`, { method: "POST", body: { block_id, body, thread_id } }).catch(() => null))?.thread, { what: `"${body}" stored` });
+    const older = await note("mv0", "Zoomed older");
+    await note("mv1", "Zoomed newer");
+    const ctx = await user.context(browser);
+    await ctx.addInitScript(() => { try { localStorage.setItem("gamma-ui-scale", "1.3"); } catch {} });
+    const page = await openPage(ctx, notes);
+    try {
+      await rowOf(page, "mv3").waitFor();
+      await page.getByRole("button", { name: "View", exact: true }).click();
+      await page.locator(".menuPopover .ctxMenuItem", { hasText: "Comments" }).click();
+      await page.keyboard.press("Escape");
+      const rows = page.locator(".commentsPanel .commentsPanelRow");
+      await until(async () => (await rows.count()) === 2, { what: "the window's two threads" });
+      assert(await rows.first().evaluate((el) => el.currentCSSZoom > 1.25), "the rows carry the Interface size");
+      await sleep(400);
+      // where each row stood, and where it is drawn as its glide starts
+      await page.evaluate(() => {
+        const top = (el) => Math.round(el.getBoundingClientRect().top);
+        window.__stood = Object.fromEntries([...document.querySelectorAll(".commentsPanelRow")].map((el) => [el.dataset.threadId, top(el)]));
+        window.__drawn = {};
+        new MutationObserver((records) => {
+          for (const r of records) if (r.target.hasAttribute("data-moving")) window.__drawn[r.target.dataset.threadId] ??= top(r.target);
+        }).observe(document.querySelector(".commentsPanel"), { subtree: true, attributes: true, attributeFilter: ["data-moving"] });
+      });
+      await note("mv0", "A zoomed reply", older.id);
+      await until(async () => (await rows.first().innerText()).includes("Zoomed older"), { timeout: 8000, what: "the replied thread on top" });
+      const { stood, drawn } = await page.evaluate(() => ({ stood: window.__stood, drawn: window.__drawn }));
+      assertEq(Object.keys(drawn).sort().join(), Object.keys(stood).sort().join(), "both rows glide");
+      for (const id of Object.keys(stood)) assertNear(drawn[id], stood[id], 2, `thread ${id} starts where it stood`);
+      await arrived(rows.first());
       await assertNoProblems(page);
     } finally { await ctx.close(); }
   });
