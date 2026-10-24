@@ -33,7 +33,10 @@ app does not know (one a newer server synced through Gamma Cloud) is not
 applied, as the profile's codecs drop it. The first load then reads the
 profile with the other synced keys (open tabs, recents, reading positions,
 the AI key) in one request, `GET /api/prefs?keys=`, sent right behind the
-library listing (`preloadPrefs`); later reads ask for one key.
+library listing (`preloadPrefs`); later reads ask for one key. An account
+whose profile syncs through Gamma Cloud gets its profile from a read of its
+own, after that answer: reading it may wait on the sync, which would hold
+the open tabs and the reading positions back with it.
 Entries are validated with the same codecs as localStorage, so unknown names
 and bad values are dropped and a partial profile applies what it has.
 A change is pushed one second after it settles (a slider sends one request)

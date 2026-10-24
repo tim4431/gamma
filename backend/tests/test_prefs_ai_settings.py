@@ -115,11 +115,13 @@ def test_prefs_require_session(client):
     assert anon.get("/api/prefs?keys=open-tabs").status_code == 401
 
 
-def test_prefs_read_several_keys_in_one_answer(alice):
+def test_prefs_read_several_keys_in_one_answer(alice, monkeypatch):
     # the web app's first load: each key answered as its one-key read answers it
-    from gamma import db
+    from gamma import cloud_sync, db
     from conftest import account_of
     me = account_of("prefs_alice")
+    synced = []
+    monkeypatch.setattr(cloud_sync, "sync_if_stale", synced.append)
     db.set_profile(me, {"theme": "sepia"})
     assert alice.put("/api/prefs/open-tabs", json={"value": ["t1"]}).status_code == 200
     keys = ["profile", "open-tabs", "read-pos", "ai-provider"]
@@ -131,6 +133,18 @@ def test_prefs_read_several_keys_in_one_answer(alice):
         assert prefs[key] == alice.get(f"/api/prefs/{key}").json()
     assert prefs["profile"]["value"] == {"theme": "sepia"} and prefs["profile"]["cloud_choice"] is False
     assert prefs["read-pos"] == {"key": "read-pos", "value": None, "updated_at": ""}
+    # the answer never waits on Gamma Cloud: for an account whose profile
+    # syncs there, the profile (whose read may sync it first) is left out,
+    # for the caller to read on its own
+    monkeypatch.setattr(cloud_sync, "syncs", lambda user_id: user_id == me)
+    synced.clear()
+    r = alice.get("/api/prefs", params={"keys": ",".join(keys)})
+    assert r.status_code == 200, r.text
+    assert list(r.json()["prefs"]) == ["open-tabs", "read-pos", "ai-provider"]
+    assert synced == []
+    assert alice.get("/api/prefs", params={"keys": "profile"}).json() == {"prefs": {}}
+    assert alice.get("/api/prefs/profile").json()["value"] == {"theme": "sepia"}
+    assert synced == [me]
     # one bad key refuses the whole read, as the one-key read refuses it
     for bad in ("open-tabs,ai-settings", "profile-base", "open-tabs,No Spaces", "", ",",
                 ",".join(f"k{i}" for i in range(17))):

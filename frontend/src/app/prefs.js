@@ -31,10 +31,13 @@ const PROFILE_URL = `${API}/prefs/profile`;
 // reading positions, the AI key) go out as one request, GET /api/prefs?keys=,
 // as soon as the session is known (App.jsx checkSession), right behind the
 // library listing: five requests would queue for the browser's six
-// connections to the server and hold the listing back. Each reader takes
-// its key's answer once, for the account it was read for; any later read
-// asks for its key alone. A guest's preferences stay in its browser, so it
-// reads no profile.
+// connections to the server and hold the listing back. A key the answer
+// leaves out is read on its own: the server leaves out the profile of an
+// account whose profile syncs with Gamma Cloud, since reading it may wait
+// on that sync, a round trip to the account server. Each reader takes its
+// key's answer once, for the account it was read for; any later read asks
+// for its key alone. A guest's preferences stay in its browser, so it reads
+// no profile.
 const FIRST_LOAD_PREFS = ["profile", "open-tabs", "recent-views", "read-pos", "ai-provider"];
 const preloads = new Map(); // key -> {user, read}
 export function preloadPrefs(user, { guest = false } = {}) {
@@ -42,7 +45,7 @@ export function preloadPrefs(user, { guest = false } = {}) {
   preloads.clear();
   const all = apiJson(`${API}/prefs?keys=${keys.map(encodeURIComponent).join(",")}`);
   for (const key of keys) {
-    const read = all.then((d) => d.prefs[key]);
+    const read = all.then((d) => d.prefs[key] || apiJson(`${API}/prefs/${key}`));
     read.catch(() => {}); // its reader sees a failure; a key nobody reads is no error
     preloads.set(key, { user, read });
   }
