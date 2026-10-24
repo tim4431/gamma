@@ -42,8 +42,11 @@ export function MarkedText({ text, query, opts, lead = 0 }) {
   ));
 }
 
+// `button` false: the topbar's Search is off the bar (Settings → Appearance ›
+// Top bar), so only the popover lives here, opened by its shortcut or the
+// account menu's row.
 export default function SearchPanel({
-  open, onOpenChange,
+  open, onOpenChange, button = true,
   focusedBlockId, homeBlocks, tree,
   openBlock,
   pdfSearchRef, scrollToRef, cancelCoarseRestoreRef, setPdfHidden, docNonce,
@@ -374,17 +377,19 @@ export default function SearchPanel({
   const libLabel = focusedBlockId ? t("Other PDFs") : t("Library PDFs");
 
   return (
-    <span data-popover="search" className="popoverAnchor">
-      <button
-        className={`iconBtn ${open ? "activeIcon" : ""}`}
-        onClick={() => onOpenChange(!open)}
-        data-guide="header.search"
-        title={t("Search everything (Ctrl+F)")}
-        aria-label={t("Search")}
-      >
-        <SearchIcon size={16} />
-        <span className="barLabel">{t("Search")}</span>
-      </button>
+    <span data-popover="search" className={`popoverAnchor${button ? "" : " offBar"}`}>
+      {button ? (
+        <button
+          className={`iconBtn ${open ? "activeIcon" : ""}`}
+          onClick={() => onOpenChange(!open)}
+          data-guide="header.search"
+          title={t("Search everything (Ctrl+F)")}
+          aria-label={t("Search")}
+        >
+          <SearchIcon size={16} />
+          <span className="barLabel">{t("Search")}</span>
+        </button>
+      ) : null}
       {open ? (
         <Popover className="searchPopover">
           <div className="searchRow">
