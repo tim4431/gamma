@@ -1186,8 +1186,9 @@ nothing: the rows arrive at once. Its holders (`.fileList`, `.fileGrid`)
 position the copies. The listing mounts once it has loaded (or its read
 has failed), so the first one a load or a page left brings is a first
 render. The reads that are loads come still: the listing read again on
-coming home or on the window's wake, and the server's view history landing
-after it. Each marks what it sets, and a change is still when all it
+coming home, on the window's wake or as a metadata lookup ends, an import
+started elsewhere landing, and the server's view history landing after
+it. Each marks what it sets, and a change is still when all it
 changed was read that way, so a delete right after a load still moves.
 
 The small lists are on it too. An empty state can be an item of its own

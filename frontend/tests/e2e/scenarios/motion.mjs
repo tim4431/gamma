@@ -21,7 +21,8 @@ import { selectPdfText, waitForPdf } from "./pdf.mjs";
 // popover and Recently deleted open on their content; a tab opened rises
 // in and one closed sinks out as the next glides over its place; the
 // library's listing glides within one listing and comes into focus when
-// another takes its place, but not for a read that is a load; under
+// another takes its place, but not for a read that is a load (a metadata
+// lookup's end among them); under
 // reduced motion none of it moves.
 export async function motionScenarios(env) {
   const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until } = env;
@@ -929,6 +930,43 @@ export async function motionScenarios(env) {
       await page.waitForTimeout(200);
       const seen = await glides(page);
       assertEq(seen.length, 0, `the history's order lands at once: ${seen}`);
+      await assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("motion: a metadata lookup ending in the background brings the titles it found without a glide", async () => {
+    const scans = [];
+    for (const title of ["scan_0001.pdf", "scan_0002.pdf", "scan_0003.pdf"]) {
+      scans.push(await user.api("/api/pages", { method: "POST", body: { title } }));
+      await sleep(1100); // a modified time of its own, so the sort tells them apart
+    }
+    const ctx = await user.context(browser);
+    await watch(ctx);
+    // a lookup the server runs (started elsewhere), done once its work is in
+    let phase = "running";
+    const job = (state) => ({ id: "motion-metadata", kind: "metadata", state, workspace: user.ws, title: "Paper metadata lookup",
+      owner: "motion-user", created_at: new Date(Date.now() - 5000).toISOString(), updated_at: new Date().toISOString(),
+      finished_at: state === "done" ? new Date().toISOString() : null, progress: { done: 1, total: 1 }, params: { papers: 1 } });
+    await ctx.route((url) => url.pathname === "/api/jobs", async (route) => {
+      if (route.request().method() !== "GET") return route.continue();
+      const res = await route.fetch();
+      const body = await res.json();
+      return route.fulfill({ response: res, json: { ...body, jobs: [job(phase), ...(body.jobs || [])] } });
+    });
+    const page = await openPage(ctx, home);
+    try {
+      const order = () => page.evaluate(() => [...document.querySelectorAll(".fileList .fileRow")].map((el) => el.innerText.split("\n")[0])
+        .filter((text) => /scan_|found by the lookup/.test(text)));
+      await listRow(page, "scan_0003.pdf").waitFor();
+      await page.waitForTimeout(1600); // the tab has seen the job running
+      // what the lookup does to the oldest scan: its registry title
+      await user.api(`/api/blocks/${scans[0].id}`, { method: "PUT", body: { content: "A title found by the lookup" } });
+      await glides(page);
+      phase = "done";
+      await until(async () => (await order())[0] === "A title found by the lookup", { timeout: 10000, what: "the retitled scan on top" });
+      await page.waitForTimeout(200);
+      const seen = await glides(page);
+      assertEq(seen.length, 0, `the order the lookup brings lands at once: ${seen}`);
       await assertNoProblems(page);
     } finally { await ctx.close(); }
   });

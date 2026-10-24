@@ -165,7 +165,9 @@ export function useAppJobs({
     if (job.kind === "import") {
       if (job.state === "done" && here) {
         refreshQuota?.();
-        fetchHomeBlocks();
+        // this tab's import brings its pages in; one from elsewhere is
+        // another client's change, which lands at once
+        fetchHomeBlocks({ still: !started });
         if (!shownInDialog && started) {
           tasks.fetchJob(job.id).then((full) => full?.result && setStatus(t("Import: {summary}.", { summary: importSummary(full.result) }))).catch(() => {});
         }
@@ -175,8 +177,9 @@ export function useAppJobs({
       return;
     }
     if (job.kind === "metadata") {
-      // Done or stopped part-way, papers may carry their registry titles now.
-      if (here && job.state !== "failed") fetchHomeBlocks();
+      // Done or stopped part-way, papers may carry their registry titles
+      // now: a read that is a load, so the order they bring lands at once.
+      if (here && job.state !== "failed") fetchHomeBlocks({ still: true });
       if (!started) return;
       if (job.state === "done") {
         tasks.fetchJob(job.id).then((full) => {
