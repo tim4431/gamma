@@ -423,6 +423,12 @@
   gap: 1px;
   padding: 2px 4px;
 }
+/* An empty listing's line starts in the rows' column (the list's 4px inset
+   plus a row's 1px border and 10px padding), a size under the rows. */
+.homeEmpty {
+  padding: 4px 15px 6px;
+  font-size: var(--fs-sm);
+}
 .fileRow {
   display: flex;
   align-items: center;

@@ -9169,7 +9169,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             {homeMode && homeView === "grid" ? (
                 <>
                   {libraryStart || (homeItems.length === 0 && !newFolderOpen ? (
-                    <div className="empty">{homeEmptyText}</div>
+                    <div className="empty homeEmpty">{homeEmptyText}</div>
                   ) : null)}
                   <div className="fileGrid" onClick={(e) => { if (e.target.classList.contains("fileGrid")) clearSelection(); }}>
                     {newPageAllowed ? (
@@ -9317,7 +9317,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             ) : homeMode ? (
                 <>
                   {libraryStart || (homeItems.length === 0 && !newFolderOpen ? (
-                    <div className="empty">{homeEmptyText}</div>
+                    <div className="empty homeEmpty">{homeEmptyText}</div>
                   ) : null)}
                   <div className="fileList" onClick={(e) => { if (e.target.classList.contains("fileList")) clearSelection(); }}>
                     {newPageAllowed ? (
