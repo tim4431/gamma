@@ -683,7 +683,7 @@ def test_highlight_note_blocks_and_their_popup_text():
             "a": [{"id": "b", "content": "two\nlines", "properties": {}}],
             "e": [{"id": "c", "content": "under an empty note", "properties": {}}]}
     blocks = highlight_note_blocks({"id": "h", "content": "own"}, kids)
-    assert blocks == [(0, "own"), (1, "first"), (2, "two\nlines"), (2, "under an empty note")]
+    assert blocks == [(0, "own", "h"), (1, "first", "a"), (2, "two\nlines", "b"), (2, "under an empty note", "c")]
     assert popup_text(blocks) == "own\n- first\n  - two\nlines\n  - under an empty note"
 
 
@@ -842,6 +842,44 @@ def test_notes_on_the_page_and_threads_beside_it():
     assert words["onpage"][0] < PAGE_W < words["besidethread"][0]
 
 
+def test_a_notes_threads_go_under_it_beside_the_page():
+    """Notes and comments both beside the page: a thread on a note is drawn
+    under that note in its card, a little past its text, as replies to it."""
+    from gamma.pdf_notes import render_notes
+
+    out, drawn = render_notes(_blank_pdf(), [{"position": _position(y1=300, y2=320), "blocks": [
+        (0, "ownnote", []),
+        (1, "nestednote", [[_comment("alice", "replyone")], [_comment("bob", "replytwo")]]),
+        (1, "laternote"),
+    ]}])
+    assert drawn == 1
+    words = _shown_words(out)
+    assert words["ownnote"][1] < words["nestednote"][1] < words["replyone"][1] < words["replytwo"][1] \
+        < words["laternote"][1]
+    assert words["alice"][0] > words["nestednote"][0]
+
+
+def test_a_notes_threads_apart_from_it_quote_it():
+    """With the notes on the page, a note's threads are cards beside it,
+    each quoting its note's first line; so are the threads on notes no card
+    shows (here the Notes switch off), cut with an ellipsis."""
+    from gamma.pdf_notes import render_notes
+
+    blocks = [(0, "ownnote", []), (1, "nestednote", [[_comment("alice", "replyone")]])]
+    out, drawn = render_notes(_blank_pdf(), [{"position": _position(y1=300, y2=320), "blocks": blocks}],
+                              notes_at="page")
+    assert drawn == 2
+    assert _page_text(out).count("nestednote") == 2
+    words = _shown_words(out)
+    assert words["replyone"][0] > PAGE_W
+
+    out, drawn = render_notes(_blank_pdf(), [{"position": _position(y1=300, y2=320), "blocks": [],
+                                              "note_threads": [("quotedline\nmore of it", [_comment("bob", "answer")])]}])
+    assert drawn == 1
+    text = _page_text(out)
+    assert "quotedline" in text and "\u2026" in text and "more of it" not in text and "answer" in text
+
+
 def test_render_notes_refuses_an_unknown_place():
     from gamma.pdf_notes import render_notes
 
@@ -901,6 +939,29 @@ def test_export_pdf_comments_switch(guest):
 
     assert guest.get(f"/api/pages/{page['id']}/export-pdf?notes=1&notes_at=margin").status_code == 400
     assert guest.get(f"/api/pages/{page['id']}/export?mode=annotated-pdf&notes_at=x").status_code == 400
+
+
+def test_export_pdf_prints_the_threads_on_a_highlights_notes(guest):
+    """A thread on a note under a highlight: under the note when both are
+    beside the page, a card quoting the note when the notes are on the page
+    or off."""
+    up = guest.post("/api/uploads", files={"file": ("p.pdf", _blank_pdf(), "application/pdf")})
+    page = make_page(guest, "Replied",
+                     properties={"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"]})
+    r = guest.put(f"/api/blocks/{page['id']}/children", json={"blocks": [
+        {"id": "rhl1", "content": "my own note", "properties": {
+            "quote": "quoted", "pdf_position": _position(y1=300, y2=320)}, "children": [
+                {"id": "rnote1", "content": "nestednote text", "properties": {}, "children": []}]},
+    ]})
+    assert r.status_code == 200, r.text
+    _comment_on(guest, page["id"], "rnote1", "noted reply")
+    for query, cards, quoted in (("notes=1&comments=1", "1", 1), ("notes=0&comments=1", "1", 1),
+                                 ("notes=1&comments=1&notes_at=page", "2", 2)):
+        r = guest.get(f"/api/pages/{page['id']}/export-pdf?{query}")
+        assert r.status_code == 200, r.text
+        assert r.headers["x-notes-rendered"] == cards, query
+        text = _page_text(r.content)
+        assert "noted reply" in text and text.count("nestednote text") == quoted, query
 
 
 def test_export_pdf_notes_mode(guest):

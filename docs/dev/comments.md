@@ -833,8 +833,9 @@ has notifications; the iPad's WKWebView has none, and the row says so.
 - **Comments in the other readers.** The exports other than the Gamma zip
   and the annotated PDF (Markdown, Obsidian, Logseq, Zotero), the AI's
   context and tools, search and the MCP tools leave comments out. The
-  annotated PDF's Comments switch prints a highlight's open threads as
-  cards beside the page, as the margin draws them
+  annotated PDF's Comments switch prints the open threads on a highlight
+  and on its notes as cards beside the page, as the margin draws them, a
+  note's threads under the note when it is printed beside the page too
   ([pdf_typesetting.md](pdf_typesetting.md#notes-and-comments-as-cards)).
   `comments.threads_for` is the reader they would call. A highlight's
   threads could become PDF reply annotations (`/IRT`), which the import
