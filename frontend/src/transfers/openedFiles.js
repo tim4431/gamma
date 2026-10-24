@@ -4,9 +4,9 @@
 // `files` lists what it holds, `fileData` reads one in base64 chunks,
 // `fileDone` lets it go, and the shell's `filesOpened` says one came. A file
 // waits in the shell until a page signed in to a workspace asks, so one
-// opened at the server picker, the sign-in page or across a reload is not
-// lost. What a file becomes is openedKind's answer: a page, as a picked
-// file is one, or an import's review.
+// opened before a server is chosen, at the sign-in page or across a reload
+// is not lost. What a file becomes is openedKind's answer: a page, as a
+// picked file is one, or an import's review.
 import { nativeHost, onHostMessage, postToHost } from "../shared/lib/host.js";
 import { t } from "../shared/i18n/i18n.js";
 

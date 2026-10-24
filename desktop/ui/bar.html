@@ -2,11 +2,12 @@
 <html>
 <head>
 <meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
 <link rel="stylesheet" href="tokens.css" />
 <link rel="stylesheet" href="theme.css" />
 <style>
   /* The page is transparent: only the strip and the open menu paint. While
-     the menu is open the view is enlarged over the content; a click on the
+     the menu is open the view is enlarged over the content; pressing the
      see-through area closes it. */
   html, body { background: transparent; height: 100%; overflow: hidden; }
   .bar {
@@ -133,11 +134,22 @@
   /* A section label: Gamma's (sentence case, the text keeps its own case). */
   .menuLabel { color: var(--text-secondary); font-size: var(--fs-xs); font-weight: 600; padding: 4px 9px 2px; }
   .menuEmpty { color: var(--text-muted); font-size: var(--fs-xs); padding: 4px 9px; }
+
+  /* The iPad: the view reaches the screen's top edge, so the bar paints the
+     strip under the status bar itself and keeps its 44 px row below it; no
+     window controls to keep clear; touch-sized targets. The menu hangs under
+     the taller bar and stops 16 px short of the bottom, scrolling the rest. */
+  body[data-platform="ipad"] .bar { height: calc(44px + env(safe-area-inset-top)); padding-top: env(safe-area-inset-top); padding-right: 8px; }
+  body[data-platform="ipad"] .mark { padding: 8px; }
+  body[data-platform="ipad"] .wsBtn { height: 36px; }
+  body[data-platform="ipad"] .status { min-width: 0; overflow: hidden; white-space: nowrap; }
+  body[data-platform="ipad"] .item { padding: 9px; }
+  body[data-platform="ipad"] .menu { top: calc(42px + env(safe-area-inset-top)); left: 44px; max-height: calc(100vh - 42px - env(safe-area-inset-top) - 16px); overflow-y: auto; }
 </style>
 </head>
 <body>
 <div class="bar" id="bar">
-  <button class="mark" id="btnHome" title="All servers (Ctrl+Shift+L)">
+  <button class="mark" id="btnHome">
     <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
       <rect width="32" height="32" rx="7" fill="#1e1e1c"/>
       <path d="M 6 16 C 9 10.5 13 10.5 16 16 C 19 21.5 23 21.5 26 16" stroke="#e8a020" stroke-width="1.2" fill="none" opacity="0.6" stroke-linecap="round"/>
@@ -161,7 +173,7 @@
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>
     <span id="updText"></span>
   </button>
-  <button class="ctlBtn" id="btnReload" title="Reload (Ctrl+R)" hidden>
+  <button class="ctlBtn" id="btnReload" hidden>
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
   </button>
 </div>
@@ -203,10 +215,14 @@
   const ROLE = { owner: 'owner', editor: 'can edit', viewer: 'view only' };
   const $ = (id) => document.getElementById(id);
   document.body.dataset.platform = gammaShell.platform;
+  // The shortcuts as each shell writes them: the desktop's menu, the iPad's key commands.
+  const KEYS = gammaShell.platform === 'ipad' ? { launcher: '⌘⇧L', reload: '⌘R' } : { launcher: 'Ctrl+Shift+L', reload: 'Ctrl+R' };
+  $('btnHome').title = `All servers (${KEYS.launcher})`;
+  $('btnReload').title = `Reload (${KEYS.reload})`;
   let state = { servers: [], gamma: null, current: null, busy: null, theme: '' };
   // The bar's two dropdowns, one open at a time: the workspace menu under its
   // button and the sync panel under the sync button. While one is open the
-  // bar view covers the window (barExpand) and a click outside closes it.
+  // bar view covers the window (barExpand) and a press outside closes it.
   const DROPS = { menu: { btn: 'wsBtn', panel: 'menu' }, sync: { btn: 'syncBtn', panel: 'syncPanel' } };
   let openDrop = null;
   // The sync panel's second level: the folders of the open workspace to keep
@@ -265,7 +281,8 @@
   }
 
   // The sync button: the worst state of everything kept, a word or two
-  // (lib/keeping.js summarize). Shown once a server is open or anything is kept.
+  // (lib/keeping.js summarize). Shown once a server is open or anything is
+  // kept; never without state.keeping (the iPad keeps nothing).
   function renderSyncButton() {
     const sum = (state.keeping && state.keeping.summary) || { state: 'none', text: '', title: '' };
     const b = $('syncBtn');
@@ -274,7 +291,7 @@
     $('syncIco').innerHTML = sum.state === 'busy' ? '<span class="spin"></span>'
       : sum.state === 'error' || sum.state === 'conflicts' ? ICONS.alert : ICONS.cloud;
     $('syncText').textContent = sum.text;
-    b.hidden = !state.current && sum.state === 'none';
+    b.hidden = !state.keeping || (!state.current && sum.state === 'none');
   }
 
   // A kept clone or folder in the panel: its name over its state, a dot for
@@ -416,12 +433,13 @@
         b.title = w.mirror_of ? `Clone of ${w.mirror_of} — pulls from and pushes to its origin whenever it is reachable`
           : w.personal ? 'Your personal workspace' : `Shared · ${w.members} member${w.members === 1 ? '' : 's'} · you ${ROLE[w.role] || w.role}`;
         if (w.copy) b.title += ` · has a clone on ${w.copy.serverName}`;
-        // The trailing chip (see .rowAct): open the clone / open the origin / clone.
+        // The trailing chip (see .rowAct): open the clone / open the origin /
+        // clone, the last only with state.keeping (the iPad makes no clones).
         const chip = w.copy
           ? `<span class="rowAct on" role="button" tabindex="0" data-act="copy" title="Open the clone on ${esc(w.copy.serverName)}${w.copy.running ? ' — syncing in the background' : ''}">${ICONS.local}open clone</span>`
           : w.original
           ? `<span class="rowAct on" role="button" tabindex="0" data-act="original" title="Open the origin: ${esc(w.original.name)} on ${esc(w.original.serverName)}">${ICONS.remote}origin</span>`
-          : state.current.type === 'remote' && !w.mirror_of
+          : state.keeping && state.current.type === 'remote' && !w.mirror_of
           ? `<span class="rowAct" role="button" tabindex="0" data-act="keep" title="Clone ${esc(w.name)} onto this computer — opens without a connection, pulls and pushes changes">${ICONS.download}clone</span>`
           : '';
         b.innerHTML = `<span class="badge"></span><span class="label"></span><span class="sub">${w.mirror_of ? 'clone' : w.personal ? 'personal' : (ROLE[w.role] || w.role)}</span>` +
@@ -470,7 +488,7 @@
     const all = document.createElement('button');
     all.className = 'item';
     all.id = 'menuLauncher';
-    all.innerHTML = `<span class="ico">${ICONS.plus}</span><span class="label">All servers…</span><span class="sub">Ctrl+Shift+L</span>`;
+    all.innerHTML = `<span class="ico">${ICONS.plus}</span><span class="label">All servers…</span><span class="sub">${KEYS.launcher}</span>`;
     all.onclick = () => { closeMenu(); gammaShell.launcher(); };
     menu.appendChild(all);
   }
@@ -501,13 +519,13 @@
     $(d.panel).hidden = true;
     gammaShell.barExpand(false);
   }
-  const toggle = (which) => (e) => { e.stopPropagation(); openDrop === which ? closeMenu() : openDropdown(which); };
+  const toggle = (which) => () => { openDrop === which ? closeMenu() : openDropdown(which); };
   $('wsBtn').onclick = toggle('menu');
   $('syncBtn').onclick = toggle('sync');
-  $('menu').onclick = (e) => e.stopPropagation();
-  $('syncPanel').onclick = (e) => e.stopPropagation();
   $('btnHome').onclick = () => { closeMenu(); gammaShell.launcher(); };
-  document.addEventListener('click', closeMenu);
+  // A press outside the open dropdown and its buttons closes it. Not a click:
+  // iOS sends none for a tap on the bare see-through page.
+  document.addEventListener('pointerdown', (e) => { if (openDrop && !e.target.closest('.menu, #wsBtn, #syncBtn')) closeMenu(); });
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
   window.addEventListener('blur', closeMenu);
   $('btnReload').onclick = () => gammaShell.reload();

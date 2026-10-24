@@ -25,7 +25,7 @@ async function load({ native, standalone = false } = {}) {
 // host.js hands them over as declared, and the web acts on every one but
 // inkLooks, which only says what the shell's live line can draw.
 const FLAGS = { ink: true, inkLooks: ["pressure", "dash", "blend", "stabilize", "pencil", "calligraphy", "snap"], hold: true, pencil: true,
-  pencilPhases: true, pencilRoll: true, haptics: true, servers: true, openFiles: true };
+  pencilPhases: true, pencilRoll: true, haptics: true, openFiles: true };
 function stub(fields) {
   const native = { platform: "ipad", version: "0.2.0", ...FLAGS, ...fields };
   native.receive = (msg) => new Promise((resolve, reject) => (native.queue ||= []).push({ msg, resolve, reject }));

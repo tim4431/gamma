@@ -1,7 +1,8 @@
 # Gamma for iPad
 
 The iPad app is a shell over Gamma's web app. It shows a server's own
-interface in one web view and adds what Safari cannot give that web app:
+interface in a web view, under the desktop app's own bar and launcher,
+and adds what Safari cannot give that web app:
 Apple Pencil strokes captured natively, the Pencil's double tap and
 squeeze, a Gamma Cloud sign-in that works with Google, files shared to
 it from other apps, and a Gamma server of its own inside the app ("This
@@ -9,9 +10,12 @@ iPad"), so it works with no connection.
 Every page, tool and setting is the web app's, so a web feature reaches
 the iPad with no work here.
 
-The design, the host contract, the local server and the device checks are
-in [docs/dev/ipad.md](../docs/dev/ipad.md). The survey that chose this
-shape is [docs/research/ipad-web-shell.md](../docs/research/ipad-web-shell.md).
+The design, the host contract, the chrome, the local server and the
+device checks are in [docs/dev/ipad.md](../docs/dev/ipad.md). The survey
+that chose this shape is
+[docs/research/ipad-web-shell.md](../docs/research/ipad-web-shell.md),
+and the one that gave it the desktop's chrome is
+[docs/research/ipad-desktop-chrome.md](../docs/research/ipad-desktop-chrome.md).
 This file covers how the app is put together, building it, and its tests.
 
 ## How it is put together
@@ -26,7 +30,11 @@ There are three parts:
   bundle runs, and the page and the app talk through a small message
   vocabulary (`Bridge.swift` here, `frontend/src/shared/lib/host.js`
   there, changed together). Other sites, downloads and the Gamma Cloud
-  sign-in leave the web view for the system's own sheets.
+  sign-in leave the web view for the system's own sheets. Above it, the
+  desktop app's own bar and launcher (`desktop/ui/`, copied into the
+  bundle) show in web views of their own and call the app through
+  `gammaShell`, answered as the desktop's preload answers it
+  ([docs/dev/ipad.md "The chrome"](../docs/dev/ipad.md#the-chrome)).
 - **The Pencil layer** (`Pencil/`). A recognizer on the web view's
   container records every Pencil touch. The page's ink layer decides what
   a touch is and claims a stroke; the recognizer then takes the touch,
@@ -41,16 +49,17 @@ There are three parts:
 
 | File | What it does |
 |---|---|
-| `App/GammaApp.swift` | The entry: the server picker until a server is chosen, then the shell, covered by a page of its own while the local server starts or when it could not. It checks the local server again when the app is active again, and hands a file the system opens in the app to `OpenedFiles` |
-| `App/AppModel.swift` | The server shown, "This iPad" or another server by address, and the other servers, in `UserDefaults` |
-| `Views/ServersView.swift` | The server picker, at first launch and when the web app asks for it: "This iPad" (status, address, data size, the account, the log's tail after a failed start), the other servers with reachability dots, edit and remove, and an add form; also the page over the shell while the local server starts |
+| `App/GammaApp.swift` | The entry: the shell, full screen. It checks the local server again when the app is active again, and hands a file the system opens in the app to `OpenedFiles` |
+| `App/AppModel.swift` | The server shown, "This iPad" or another server by address, the other servers and their names, in `UserDefaults`; opening one, a failed load or start sent to the launcher, and whether the launcher is up |
+| `App/ShellState.swift` | The state the bar and the launcher read, built as the desktop builds its own, and the failures the launcher shows |
 | `Server/LocalServer.swift` | The local server: the port, the data directory (`Documents/Gamma/local`, visible in Files), the seeded account, the environment, the wait for `/api/health`, and the restart after a failed start or a socket iOS reclaimed |
 | `Server/PythonRuntime.swift` | The embedded CPython: configured and started once on a thread of its own, running `gamma_ios.main()`; `restart` reaches the supervisor in it through the GIL |
 | `Server/Keychain.swift` | The seeded account's password in the Keychain |
 | `Server/GammaIPad-Bridging-Header.h` | Python's C API for Swift |
-| `Shell/ShellView.swift` | The window: the web view, the live stroke over it, the Pencil layer on their container, a page of its own when the server cannot be reached |
-| `Shell/WebShell.swift` | The one `WKWebView`, set up once: desktop content mode, no bounce, no inset adjustment, no keyboard accessory bar, inspectable in Debug builds, reloaded when the system ends its process; the silent sign-in to the local server |
-| `Shell/Bridge.swift` | The message vocabulary as Codable types, the handler the page posts to, and `send` back (`ask` when the shell needs the answer, as for `hold`). The only file that knows the protocol |
+| `Shell/ShellView.swift` | The window: the web view, the live stroke over it, the launcher while it is up and the bar on top, the Pencil layer on their container; the chrome's calls answered, its state pushed, and the ⌘⇧L and ⌘R shortcuts |
+| `Shell/WebShell.swift` | The server's page's `WKWebView`, set up once: desktop content mode, no bounce, no inset adjustment, no keyboard accessory bar, inspectable in Debug builds, reloaded when the system ends its process; the silent sign-in to the local server, the session read for the bar's workspaces, and the theme's name |
+| `Shell/Chrome.swift` | The desktop's bar and launcher in web views of their own: the bundle's `chrome` folder, the `gammaShell` user script and the handler it posts to, the state pushed to the pages, and a page loaded again when the system ends its process |
+| `Shell/Bridge.swift` | The message vocabulary as Codable types, the handler the page posts to, and `send` back (`ask` when the shell needs the answer, as for `hold`). The only file that knows the web app's protocol |
 | `Shell/Navigation.swift` | Other sites and `target=_blank` in a Safari view, downloads to the share sheet, the microphone for recordings, the Gamma Cloud start handed to `CloudSignIn` |
 | `Shell/OpenedFiles.swift` | The files the system opens in the app (the share sheet, Files' Open in, AirDrop), copied into `tmp/Opened` and held until the page has read them through `files`, `fileData` and `fileDone` ([docs/dev/ipad.md "Opened files"](../docs/dev/ipad.md#opened-files)) |
 | `Shell/CloudSignIn.swift` | The desktop app's Gamma Cloud sign-in (`app-start`, a loopback return, `app-claim`) through a system browser sheet |
@@ -64,7 +73,7 @@ There are three parts:
 | `python/gamma_ios.py` | The server's entry on the device: output to the log, then uvicorn on `127.0.0.1` at `GAMMA_PORT` under a supervisor the app can ask to run it again |
 | `python/requirements-ios.txt` | The server's dependencies as the iPad installs them |
 | `scripts/build-python.sh` | Prepares Python, the wheels, the server code and the web app for the bundle (below) |
-| `project.yml` | The XcodeGen project, with the build phases that run the script and install Python into the bundle |
+| `project.yml` | The XcodeGen project, with the build phases that run the script, install Python into the bundle and copy in the desktop's chrome pages |
 
 ## Build and run
 
@@ -93,13 +102,13 @@ Silicon Mac. A build for more than one architecture (a Release build for
 the simulator) needs `ONLY_ACTIVE_ARCH=YES`, because `install_python`
 copies one architecture's standard library.
 
-In the app, open **This iPad**, or enter another server's address and
-sign in on its own page. The account menu's "Server…" row, or the
-"Server…" link on the sign-in page, brings the picker back. A server
-reached over plain `http` must be on the local network, because App
-Transport Security allows local networking only. Use `https` otherwise.
-In a Debug build, Safari's Web Inspector on a Mac opens the page (Develop
-→ your iPad).
+In the app, the launcher shows at the first launch: open **This iPad**, or
+add another server's address, open it and sign in on its own page. The
+bar's mark, *All servers…* in its dropdown, or ⌘⇧L brings the launcher
+back. A server reached over plain `http` must be on the local network,
+because App Transport Security allows local networking only. Use `https`
+otherwise. In a Debug build, Safari's Web Inspector on a Mac opens the
+page, and the bar and the launcher too (Develop → your iPad).
 
 ### Python on the device
 
@@ -152,7 +161,10 @@ PyMuPDF's two MuPDF libraries come as plain
 dylibs, which `install_python` leaves where they are, so a step of our own
 makes them frameworks the same way
 ([docs/research/pymupdf-ios.md](../docs/research/pymupdf-ios.md)).
-Unsigned builds sign all of those ad hoc.
+Unsigned builds sign all of those ad hoc. The same phase also copies the
+desktop app's chrome pages, `desktop/ui/` (the bar, the launcher, their
+stylesheets and fonts), into the bundle's `chrome` folder, so a change to
+them reaches the iPad at its next build.
 
 `python/requirements-ios.txt` is `backend/requirements.txt` with the
 changes an iOS wheel needs, each commented there; why each was made is in
@@ -170,7 +182,8 @@ changes an iOS wheel needs, each commented there; why each was made is in
 
   It covers the pure parts (`BridgeTests`, `CloudSignInTests`,
   `PencilTests`, `InkWidthTests`, `ShellTests`, `ServerTests`,
-  `OpenedFilesTests`; the ink
+  `OpenedFilesTests`, and `ChromeTests.swift` for the chrome's bridge,
+  state and launcher rules; the ink
   fixtures they read, `tests/shared/inkwidth.json` and `inkhold.json`,
   are resources of the test bundle), and `LocalServerStartTests`
   starts the embedded server, waits for `/api/health`, then uploads a
@@ -183,9 +196,12 @@ changes an iOS wheel needs, each commented there; why each was made is in
   fakes the host and checks that a claimed stroke is saved and that each
   kind of opened file goes where a picked one would
   (`cd frontend && npm run e2e -- --group ipad`).
-- How the recognizer lives among WebKit's own recognizers, and how the
-  server fares on a real iPad, need a device. What each test covers and
-  the list of device checks are in [docs/dev/ipad.md](../docs/dev/ipad.md#tests).
+- The bar and the launcher are the desktop's pages, which its own suite
+  drives (`cd desktop && npm run e2e`).
+- How the recognizer lives among WebKit's own recognizers, how the bar
+  and the launcher behave under touch, and how the server fares on a real
+  iPad, need a device. What each test covers and the list of device
+  checks are in [docs/dev/ipad.md](../docs/dev/ipad.md#tests).
 - CI prepares the bundle, generates the project, runs the tests and makes
   an unsigned device build on macOS: `.github/workflows/ipad.yml`
   ([docs/dev/github_actions.md](../docs/dev/github_actions.md#ipadyml)).
