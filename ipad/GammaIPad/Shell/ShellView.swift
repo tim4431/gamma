@@ -16,7 +16,7 @@ struct ShellView: View {
         ZStack {
             // A pick in the server picker counts as a retry too: choosing the
             // server that just failed must load it again.
-            ShellHost(server: server, login: login, attempt: attempt + model.connects,
+            ShellHost(server: server, login: login, attempt: attempt + model.connects, opened: model.opened,
                       onServers: { model.choosingServer = true },
                       onLoad: { failure = $0 })
                 // Full-screen, so the theme's colour paints the strip under the
@@ -46,11 +46,12 @@ private struct ShellHost: UIViewControllerRepresentable {
     let server: URL
     let login: LocalLogin?
     let attempt: Int
+    let opened: OpenedFiles
     let onServers: () -> Void
     let onLoad: (String?) -> Void
 
     func makeUIViewController(context: Context) -> ShellController {
-        let controller = ShellController()
+        let controller = ShellController(opened: opened)
         updateUIViewController(controller, context: context)
         return controller
     }
@@ -74,6 +75,8 @@ final class ShellController: UIViewController {
     private let live: LiveStrokeView
     private let capture: PencilCapture
     private let gestures: PencilGestures
+    /// The files the system opened in the app, until the page takes them.
+    private let opened: OpenedFiles
     private var attempt = 0
     private var scheme: WebMessage.Scheme?
     private var sceneStyle: (any UITraitChangeRegistration)?
@@ -82,11 +85,12 @@ final class ShellController: UIViewController {
     /// goes anyway (a page that never answers leaves nothing behind).
     private static let paintTimeout: UInt64 = 3_000_000_000
 
-    init() {
+    init(opened: OpenedFiles) {
         shell = WebShell()
         live = LiveStrokeView(frame: .zero)
         capture = PencilCapture(target: nil, action: nil)
         gestures = PencilGestures()
+        self.opened = opened
         super.init(nibName: nil, bundle: nil)
         // Wired before the first load starts (`show` can come before the view).
         shell.navigation.presenter = self
@@ -104,6 +108,13 @@ final class ShellController: UIViewController {
         gestures.onGesture = { [weak self] message in
             guard let self else { return }
             Task { await self.shell.bridge.send(message) }
+        }
+        // A file opened while the page is up: the page asks for it when it
+        // can take it. One opened before the page loaded is asked for at
+        // its start, so this may reach no one.
+        opened.onArrival = { [weak self] in
+            guard let self else { return }
+            Task { await self.shell.bridge.send(.filesOpened) }
         }
     }
 
@@ -166,6 +177,13 @@ final class ShellController: UIViewController {
             // A gesture's tick comes without a place: where the Pencil hovered for it.
             let place: CGPoint? = at ?? (kind == .tool ? gestures.recentHover : nil)
             PencilHaptics.play(kind, at: place, in: shell.webView)
+            return [:]
+        case .files:
+            return opened.listing
+        case let .fileData(id, offset):
+            return opened.chunk(id: id, offset: offset) ?? [:]
+        case let .fileDone(id):
+            opened.done(id: id)
             return [:]
         }
     }

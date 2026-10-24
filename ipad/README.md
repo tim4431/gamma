@@ -3,8 +3,9 @@
 The iPad app is a shell over Gamma's web app. It shows a server's own
 interface in one web view and adds what Safari cannot give that web app:
 Apple Pencil strokes captured natively, the Pencil's double tap and
-squeeze, a Gamma Cloud sign-in that works with Google, and a Gamma server
-of its own inside the app ("This iPad"), so it works with no connection.
+squeeze, a Gamma Cloud sign-in that works with Google, files shared to
+it from other apps, and a Gamma server of its own inside the app ("This
+iPad"), so it works with no connection.
 Every page, tool and setting is the web app's, so a web feature reaches
 the iPad with no work here.
 
@@ -40,7 +41,7 @@ There are three parts:
 
 | File | What it does |
 |---|---|
-| `App/GammaApp.swift` | The entry: the server picker until a server is chosen, then the shell, covered by a page of its own while the local server starts or when it could not. It checks the local server again when the app is active again |
+| `App/GammaApp.swift` | The entry: the server picker until a server is chosen, then the shell, covered by a page of its own while the local server starts or when it could not. It checks the local server again when the app is active again, and hands a file the system opens in the app to `OpenedFiles` |
 | `App/AppModel.swift` | The server shown, "This iPad" or another server by address, and the other servers, in `UserDefaults` |
 | `Views/ServersView.swift` | The server picker, at first launch and when the web app asks for it: "This iPad" (status, address, data size, the account, the log's tail after a failed start), the other servers with reachability dots, edit and remove, and an add form; also the page over the shell while the local server starts |
 | `Server/LocalServer.swift` | The local server: the port, the data directory (`Documents/Gamma/local`, visible in Files), the seeded account, the environment, the wait for `/api/health`, and the restart after a failed start or a socket iOS reclaimed |
@@ -51,6 +52,7 @@ There are three parts:
 | `Shell/WebShell.swift` | The one `WKWebView`, set up once: desktop content mode, no bounce, no inset adjustment, no keyboard accessory bar, inspectable in Debug builds, reloaded when the system ends its process; the silent sign-in to the local server |
 | `Shell/Bridge.swift` | The message vocabulary as Codable types, the handler the page posts to, and `send` back (`ask` when the shell needs the answer, as for `hold`). The only file that knows the protocol |
 | `Shell/Navigation.swift` | Other sites and `target=_blank` in a Safari view, downloads to the share sheet, the microphone for recordings, the Gamma Cloud start handed to `CloudSignIn` |
+| `Shell/OpenedFiles.swift` | The files the system opens in the app (the share sheet, Files' Open in, AirDrop), copied into `tmp/Opened` and held until the page has read them through `files`, `fileData` and `fileDone` ([docs/dev/ipad.md "Opened files"](../docs/dev/ipad.md#opened-files)) |
 | `Shell/CloudSignIn.swift` | The desktop app's Gamma Cloud sign-in (`app-start`, a loopback return, `app-claim`) through a system browser sheet |
 | `Pencil/PencilCapture.swift` | The recognizer that takes a Pencil touch once the web claims it, the hold timer, and the pure parts it uses (claim matching, sampling with the tilt and the stillness anchor, when a hold is asked) |
 | `Pencil/LiveStrokeView.swift` | The stroke being drawn, in the claim's look (a ribbon from the force, a calligraphy pen's ribbon from its travel against the nib, a dash, a multiplied highlighter, smoothing through the lazy brush), along the ruler as the line between the samples' outermost projections onto its edge (`RulerSnap`), or as the held shape, until the web has painted it |
@@ -167,7 +169,8 @@ changes an iOS wheel needs, each commented there; why each was made is in
   ```
 
   It covers the pure parts (`BridgeTests`, `CloudSignInTests`,
-  `PencilTests`, `InkWidthTests`, `ShellTests`, `ServerTests`; the ink
+  `PencilTests`, `InkWidthTests`, `ShellTests`, `ServerTests`,
+  `OpenedFilesTests`; the ink
   fixtures they read, `tests/shared/inkwidth.json` and `inkhold.json`,
   are resources of the test bundle), and `LocalServerStartTests`
   starts the embedded server, waits for `/api/health`, then uploads a
@@ -175,9 +178,11 @@ changes an iOS wheel needs, each commented there; why each was made is in
   included, which only PyMuPDF can draw: the bundle's MuPDF frameworks
   are proved there. It needs the Python step to have run.
 - Without a Mac: `backend/tests/test_ios_requirements.py` (the iOS
-  requirements keep up with the server's), a unit test for `host.js`, and
-  the `ipad` browser group. The group fakes the host and checks that a
-  claimed stroke is saved (`cd frontend && npm run e2e -- --group ipad`).
+  requirements keep up with the server's), unit tests for `host.js` and
+  `transfers/openedFiles.js`, and the `ipad` browser group. The group
+  fakes the host and checks that a claimed stroke is saved and that each
+  kind of opened file goes where a picked one would
+  (`cd frontend && npm run e2e -- --group ipad`).
 - How the recognizer lives among WebKit's own recognizers, and how the
   server fares on a real iPad, need a device. What each test covers and
   the list of device checks are in [docs/dev/ipad.md](../docs/dev/ipad.md#tests).

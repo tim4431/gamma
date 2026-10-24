@@ -249,6 +249,60 @@ targets:
         # Server/LocalServer.swift), as the desktop shows its data folder.
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true
+        # The files Gamma opens: the share sheet, Files' Open in and AirDrop
+        # offer Gamma for these, and the app holds what it is given for the
+        # web app to take (Shell/OpenedFiles.swift; docs/dev/ipad.md "Opened
+        # files"). Alternate for the types other apps own, so installing
+        # Gamma never makes it their default app; Owner for the .ntb, the
+        # type Gamma declares itself (below).
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: PDF document
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [com.adobe.pdf]
+          - CFBundleTypeName: Markdown document
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [net.daringfireball.markdown]
+          - CFBundleTypeName: Notability note
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [com.gingerlabs.notability.notearchive]
+          - CFBundleTypeName: Notability NTB note
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Owner
+            LSItemContentTypes: [net.gammapdf.ntb]
+          - CFBundleTypeName: ZIP archive
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [public.zip-archive, com.pkware.zip-archive]
+        # The .ntb, Notability's NTB export: no app is known to declare it
+        # (the Info.plist published for Notability's Mac app declares .note
+        # and .nbn only), so Gamma
+        # claims it, and the system reads a .ntb as this type wherever no
+        # other app exports one.
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: net.gammapdf.ntb
+            UTTypeDescription: Notability NTB note
+            UTTypeConformsTo: [public.data, public.content]
+            UTTypeTagSpecification:
+              public.filename-extension: [ntb]
+        # Types other apps own, declared for a device that has no app
+        # declaring them: Markdown, and Notability's .note (the identifier
+        # its own Info.plist exports). Where Notability is installed its
+        # declaration wins.
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: net.daringfireball.markdown
+            UTTypeDescription: Markdown document
+            UTTypeConformsTo: [public.plain-text]
+            UTTypeTagSpecification:
+              public.filename-extension: [md, markdown]
+              public.mime-type: [text/markdown]
+          - UTTypeIdentifier: com.gingerlabs.notability.notearchive
+            UTTypeDescription: Notability note
+            UTTypeConformsTo: [public.data, public.content]
+            UTTypeTagSpecification:
+              public.filename-extension: [note]
         # The web app's recordings (getUserMedia in the web view).
         NSMicrophoneUsageDescription: Gamma records audio for the recordings you make with your notes.
         # A file picker in the web view offers the camera, and the share
