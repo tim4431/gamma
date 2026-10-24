@@ -1,6 +1,6 @@
 """The typesetting engine both PDF writers draw with: fonts, widths, layout.
 
-``pdf_notes`` paints small note boxes onto an existing page; ``pdf_document``
+``pdf_notes`` sets note cards beside an existing page; ``pdf_document``
 typesets a whole note page as a fresh PDF. Both need the same things — decide
 which built-in font can draw a character, measure it, break spans into lines,
 and emit the content-stream operators — so that machinery lives here once.
@@ -11,9 +11,9 @@ A **span** is ``(kind, payload, level, style)``:
   ``(Drawing, width, height, ascent)`` tuple ``vector_text`` returns for a
   typeset expression or a CJK glyph);
 * ``level`` is 0, ``SUP`` or ``SUB`` — a genuinely raised/lowered run;
-* ``style`` is a :class:`Style`: emphasis bits plus a link target. Notes drawn
-  on a page are all one style (``PLAIN``); a document renders bold, italic,
-  code, strike-through, ``==marked==`` text and links.
+* ``style`` is a :class:`Style`: emphasis bits plus a link target. Both
+  writers render bold, italic, code, strike-through, ``==marked==`` text
+  and links.
 
 Everything is laid out in a **y-down frame** (x right, y down, origin at the
 visible top-left) — the frame the viewer stores highlight rects in. Callers map
@@ -76,8 +76,8 @@ LEADING = 1.22          # × font size, the default line height
 
 # --- fonts -------------------------------------------------------------------
 
-# Content-stream resource names. F1/F2/F3 keep the numbering pdf_notes has
-# always written, so its output is unchanged by this module existing.
+# Content-stream resource names: F1/F2/F3, the three fonts the note boxes
+# drew with first, then the styles.
 HELV, CID, SYM, HELVB, HELVI, HELVBI, COUR = "F1", "F2", "F3", "F4", "F5", "F6", "F7"
 
 _BASE14 = {

@@ -17,8 +17,8 @@ const EXPORT_SWITCH_TEXT = {
       t("Written into the exported PDF copies as standard annotations — Zotero's own “Include Annotations” convention, its reader picks them up on import.")],
   },
   notes: {
-    pdf: [t("Printed onto the page in free space"),
-      t("Printed onto the page in nearby free space, with a line back to the highlight. Off: they stay in the annotation popups.")],
+    pdf: [t("In a column beside each page"),
+      t("Your notes as cards in a column beside each page, level with the passages they belong to, as the viewer shows comments. Off: they stay in the annotation popups.")],
     notespdf: [t("Typeset under their highlights"),
       t("Your own writing, typeset under the highlight it belongs to — headings, lists, code, math and pasted images included.")],
     markdown: [t("Nested under their highlights"),
@@ -159,12 +159,12 @@ export function exportSummary({ payload, noPdfCopy }, folder) {
       // the first (routers/export.py).
       if (folder) {
         return highlights || notes
-          ? t("Every paper's PDF in one .zip, with {annotations}{page}, its subfolders as folders. Pages without a PDF are left out.", { annotations: highlights ? t("highlight annotations") : t("text box annotations only"), page: notes ? t(" and every note printed onto the page") : "" })
+          ? t("Every paper's PDF in one .zip, with {annotations}{page}, its subfolders as folders. Pages without a PDF are left out.", { annotations: highlights ? t("highlight annotations") : t("text box annotations only"), page: notes ? t(" and your notes in a column beside each page") : "" })
           : t("Every paper's PDF in one .zip, exactly as stored, its subfolders as folders. Pages without a PDF are left out.");
       }
       if (noPdfCopy) return t("This PDF isn't stored on the server, so only the file itself can be exported.");
       if (!highlights && !notes) return t("The PDF file exactly as stored, with nothing added.");
-      return t("The PDF with {annotations}{page}.", { annotations: highlights ? t("highlight annotations") : t("text box annotations only"), page: notes ? t(" and every note printed onto the page") : "" });
+      return t("The PDF with {annotations}{page}.", { annotations: highlights ? t("highlight annotations") : t("text box annotations only"), page: notes ? t(" and your notes in a column beside each page") : "" });
     case "notespdf":
       if (!highlights && !notes) return t("A new PDF with the title and metadata only — both switches are off.");
       return t("A new PDF of {page} — title, {quotes}{typeset}.", { page: folder ? t("every page in the folder") : t("this page"), quotes: highlights ? t("quoted highlights") : t("no quotes"), typeset: notes ? t(" and your notes, typeset") : "" });

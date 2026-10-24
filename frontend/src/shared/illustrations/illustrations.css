@@ -22,7 +22,11 @@
 .transferQuote mark { color: #39444b; background: #fff0b6; box-decoration-break: clone; -webkit-box-decoration-break: clone; }
 .transferNote { margin: 12px 0; display: flex; flex-direction: column; gap: 4px; }
 .transferNote strong { font-size: 10px; }
-.transferMarginNote { padding: 8px; border-left: 2px solid #83a6bf; background: #f0f5f8; }
+/* The annotated PDF with its notes: the page beside a column, the note a
+   card in it level with the highlight (absolute, so it keeps the height
+   it has in the flow), as the export prints it. */
+.transferSpread { padding-right: 40%; border-radius: var(--radius-xs); background: #eeeff1; }
+.transferMarginNote { position: absolute; left: calc(100% + 8px); width: calc(66.7% - 14px); margin-top: 14px; padding: 6px 7px; box-sizing: border-box; border: 1px solid #dadde0; border-left: 3px solid #e4bd52; border-radius: 3px; background: #fff; font-size: 10px; line-height: 1.4; }
 .transferPageNumber { position: absolute; bottom: 12px; left: 50%; color: #89949c; font-size: 9px; }
 .transferFiles { display: flex; align-items: flex-start; gap: 8px; margin-top: 10px; color: var(--text-muted); font-size: 10px; line-height: 1.4; }
 .transferFiles > svg { flex-shrink: 0; margin-top: 2px; }

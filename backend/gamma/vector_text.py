@@ -1,6 +1,6 @@
 """Math and CJK → glyph placements plus leftover vector shapes.
 
-Two things the note boxes can't draw with the base-14 fonts:
+Two things the PDF writers can't draw with the base-14 fonts:
 
 * **Math.** Approximating it as unicode (``note_markup.latex_spans``) is fine
   for ``\\phi_j`` and hopeless for a fraction of two sums — which is exactly
@@ -26,7 +26,7 @@ tree gives every glyph's identity and baseline position, which a flattened
 ``<path>`` no longer has. The non-glyph leaves (bars, boxes, strikes) draw
 themselves into a scratch SVG element exactly as ziamath would, and that is
 converted to path ops. SVG's y axis points down — the same direction as
-``pdf_notes``' display frame — so positions drop straight in with only a
+``pdf_typeset``'s y-down frame — so positions drop straight in with only a
 translate. The drawing's top-left is (0, 0); ``ascent`` is where its baseline
 sits below that, which is what inline placement needs to line up with the
 surrounding text.

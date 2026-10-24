@@ -1,7 +1,7 @@
 """A note page typeset as a fresh PDF ("Notes as PDF" export).
 
 ``pdf_export``/``pdf_notes`` write *onto a paper*: highlights become
-annotations, notes get painted into the free space around them. This module is
+annotations, notes go in a column beside its pages. This module is
 the other direction — the notes themselves as a document. It takes the block
 subtrees the export driver walks (a note page, a paper's notes, or a whole
 folder of them) and lays them out as a real PDF: title and metadata, nested
@@ -12,7 +12,7 @@ No font file is embedded and no PDF-generation library is used:
 ``vector_text`` + ``pdf_glyphs`` turn LaTeX and CJK into Type 3 text built
 from glyph outlines, and ``pdf_image`` embeds the pasted uploads as image
 XObjects (Pillow decodes only those that can't go in as they are) — the
-same machinery the note boxes use.
+same machinery the notes beside a paper use.
 
 Blocks carry markdown, so each block's content is parsed twice over: into
 *chunks* (headings, paragraphs, quotes, list items, todos, fenced code, rules,
@@ -76,7 +76,7 @@ BODY_SIZE = 10.0
 CODE_SIZE = 8.8
 SMALL_SIZE = 8.2
 TITLE_SIZE = 19.0
-LEADING = 1.45                           # × font size, roomier than a note box
+LEADING = 1.45                           # × font size, roomier than a note card
 HEADING_SIZES = {1: 15.5, 2: 13.4, 3: 11.8, 4: 11.0, 5: 10.4, 6: 10.0}
 INDENT = 15.0                            # per nesting level
 MAX_INDENT_LEVELS = 8                    # deeper blocks stop marching right

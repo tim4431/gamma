@@ -15,23 +15,30 @@ function HighlightSample() {
   </blockquote>;
 }
 
-function NoteSample({ annotation = false }) {
-  return <div className={`transferNote${annotation ? " transferMarginNote" : ""}`} data-preview="notes">
+// `beside`: a card in the column beside the page, as the annotated PDF
+// prints a highlight's notes (backend/gamma/pdf_notes.py).
+function NoteSample({ beside = false }) {
+  return <div className={`transferNote${beside ? " transferMarginNote" : ""}`} data-preview="notes">
     <strong>{t("Your note")}</strong>
     <span>{t("A connection worth coming back to.")}</span>
   </div>;
 }
 
+// The original paper with notes is drawn beside a column: the card goes
+// just before the highlight, so it stands level with it.
 function Paper({ original = false, highlights, notes }) {
-  return <div className="transferPaper" data-preview={original ? "original" : undefined}>
+  const beside = original && notes;
+  const paper = <div className="transferPaper" data-preview={original ? "original" : undefined}>
     <div className="transferPaperTitle">{t("Patterns in nature")}</div>
     <div className="transferPaperByline">{t("A. Rivera · 2026")}</div>
     {original ? <><PaperLines /><div className="transferPaperFigure" aria-hidden="true"><i /><i /><i /></div></> : null}
+    {beside ? <NoteSample beside /> : null}
     {highlights ? <HighlightSample /> : null}
-    {notes ? <NoteSample annotation={original} /> : null}
+    {notes && !beside ? <NoteSample /> : null}
     {original ? <PaperLines /> : null}
     <span className="transferPageNumber">1</span>
   </div>;
+  return beside ? <div className="transferSpread">{paper}</div> : paper;
 }
 
 export function ExportPreview({ format, highlights, notes, bundle }) {

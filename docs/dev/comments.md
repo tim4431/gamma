@@ -674,7 +674,11 @@ card above when it would overlap it. The active card stays level with its
 highlight: the ones under it are pushed down, the ones over it up, as in
 Notion, but none above `min`; when they would go there, the cards stack
 down from it and the active one comes as near its highlight as they leave
-room for. Cards near a page's foot may run past it.
+room for. Cards near a page's foot may run past it. The annotated-PDF
+export prints a highlight's notes the same way, with no active card and
+the run kept on its page (`gamma/pdf_notes.py` `_stack`,
+[pdf_typesetting.md](pdf_typesetting.md#notes-beside-the-page)): a change
+to this rule belongs there too.
 
 The drawn pages' margins are one column. Each page knows its top in px
 from the first page's top (the viewer sums the page heights and

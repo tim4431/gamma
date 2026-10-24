@@ -562,8 +562,7 @@ so each new one gets an iOS decision.
 With PyMuPDF in the bundle the server on the iPad reads PDFs as every
 other server does: text with its glyph boxes for search, the AI and a
 highlight's quote (`gamma/pdf_text.py`), page and region pictures for the
-AI's `view_pdf_page` and `view_ink` and for MCP, the annotated-PDF
-export's notes placed in the page's free space (`pdf_notes.py`), the
+AI's `view_pdf_page` and `view_ink` and for MCP, the
 Logseq export's area-highlight pictures, and MuPDF's built-in fonts for a
 page whose fonts are not embedded. Before it, with pypdfium2 left out for
 want of an iOS wheel, each of those fell back

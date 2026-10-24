@@ -61,7 +61,7 @@ from ..text_box import box_page, is_text_box, normalize_text_box
 from ..obsidian_export import (APP_JSON, Filing, VaultContext, page_dir, referenced_blocks, render_vault_page,
                                unique_name, vault_name)
 from ..pdf_document import render_document
-from ..pdf_export import annotate_pdf, highlight_note_text, still_embedded
+from ..pdf_export import annotate_pdf, highlight_note_blocks, highlight_note_text, popup_text, still_embedded
 from ..pdf_notes import render_notes
 from ..zotero_export import (
     GAMMA_NOTE_KEY,
@@ -126,8 +126,8 @@ def _graph_page_parts(page, uploads_dir, include_pdf):
 
 
 def _children_by_id(blocks) -> dict:
-    """``{parent_id: [children in sibling order]}`` — what highlight_note_text
-    walks for an annotation's nested notes."""
+    """``{parent_id: [children in sibling order]}`` — what
+    highlight_note_blocks walks for an annotation's nested notes."""
     children_by_id: dict = {}
     for b in sorted(blocks, key=lambda b: b["position"] or ""):
         children_by_id.setdefault(b["parent_id"], []).append(b)
@@ -136,19 +136,22 @@ def _children_by_id(blocks) -> dict:
 
 def _collect_marks(blocks) -> list[dict]:
     """Highlight blocks (``kind`` ``highlight``: not the link regions,
-    Gamma navigation aids, nor ink) → annotate_pdf marks (position/color/popup
-    note). Skips annotations that came from the PDF itself and are STILL
-    embedded in it (``still_embedded``)."""
+    Gamma navigation aids, nor ink) → annotate_pdf marks (position, colour,
+    the popup's note and, for the notes beside the page, the notes as
+    ``highlight_note_blocks``). Skips annotations that came from the PDF
+    itself and are STILL embedded in it (``still_embedded``)."""
     children_by_id = _children_by_id(blocks)
     marks = []
     for b in blocks:
         props = b["properties"]
         if b["kind"] != "highlight" or still_embedded(props):
             continue
+        blocks = highlight_note_blocks(b, children_by_id)
         marks.append({
             "position": props["pdf_position"],
             "color": props.get("color"),
-            "note": highlight_note_text(b, children_by_id),
+            "note": popup_text(blocks),
+            "blocks": blocks,
             # For /Square annotations: the deterministic /NM key Zotero
             # requires before it will import an area annotation.
             "id": b["id"],
@@ -724,8 +727,8 @@ class _NotesPdfBuilder(_Builder):
 
 class _AnnotatedPdfBuilder(_Builder):
     """Each page's PDF with its highlights (and handwriting) as standard
-    annotations and, with the notes switch, its notes printed on the page
-    (``annotated_page_pdf``: what /pages/{id}/export-pdf downloads). One
+    annotations and, with the notes switch, its notes in a column beside
+    each page (``annotated_page_pdf``: what /pages/{id}/export-pdf downloads). One
     page: that PDF itself. A folder: a zip of them, ``<dir>/<Title>.pdf``,
     the directories mirroring the folders below the exported folder
     (``obsidian_export.page_dir``). A page with sheets of paper and no PDF
@@ -972,8 +975,8 @@ def page_notes_pdf(ws: str, page_id: str, *, highlights=True, notes=True) -> tup
 def annotated_pdf(ws: str, block_id: str, *, highlights=True, notes=False, author="",
                   scope=None) -> tuple[bytes, str, int, int]:
     """The page's PDF with its highlights, ink and text boxes as standard
-    annotations and, with ``notes``, its notes painted on the pages: ``(pdf
-    bytes, file name, annotations written, notes drawn)``. Both off = the
+    annotations and, with ``notes``, its notes in a column beside the pages:
+    ``(pdf bytes, file name, annotations written, notes drawn)``. Both off = the
     stored PDF as is. Raises HTTPException like the routes."""
     with connect_pages_db(ws) as conn:
         assert_block_in_scope(conn, block_id, scope)
@@ -1022,7 +1025,7 @@ def annotated_page_pdf(ws: str, blocks: list[dict], block_id: str, *, highlights
     pdf_bytes = pdf_path.read_bytes()
     # A text box is part of the annotation layer and it is the user's own
     # writing on the page, so either switch writes it: the notes-only PDF
-    # keeps the boxes with the painted notes. Both off: the stored file.
+    # keeps the boxes with the notes beside the page. Both off: the stored file.
     if highlights or (notes and (boxes or replaced)):
         try:
             # [[refs]] in a box read as the text they name, as in the notes PDF.
@@ -1036,10 +1039,12 @@ def annotated_page_pdf(ws: str, blocks: list[dict], block_id: str, *, highlights
 
     drawn = 0
     if notes:
-        # Still positioned from the highlight rects, annotation layer or not.
+        # Still positioned from the highlight rects, annotation layer or not;
+        # [[refs]] read as the text they name, as in the notes PDF.
         try:
-            pdf_bytes, drawn = render_notes(pdf_bytes, marks,
-                                            uploads_dir=ws_uploads_dir(ws))
+            with connect_pages_db(ws) as conn:
+                pdf_bytes, drawn = render_notes(pdf_bytes, marks, uploads_dir=ws_uploads_dir(ws),
+                                                resolve_ref=block_ref_resolver(conn))
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"could not render notes: {e}")
 
@@ -1074,12 +1079,13 @@ def export_page(block_id: str, request: Request, mode: str = "readable", pdf: in
 def export_page_pdf(block_id: str, request: Request, notes: int = 0, highlights: int = 1):
     """The page's PDF with its highlights burned in as standard /Highlight
     annotations (notes become the annotation popup text), so they survive in
-    any external PDF viewer. ``notes=1`` additionally paints every non-empty
-    note onto the page itself, in the nearest free space with a leader line
-    back to its highlight — readable without opening popups, and printable.
-    ``highlights=0`` skips the annotation layer, so ``highlights=0&notes=1``
-    gives a clean PDF carrying only the written notes: the notes painted
-    and the text boxes, the writing already placed on the page."""
+    any external PDF viewer. ``notes=1`` also prints every highlight's notes
+    in a column beside each page, a card level with the highlight
+    (``gamma/pdf_notes.py``): readable without opening popups, and
+    printable. ``highlights=0`` skips the annotation layer, so
+    ``highlights=0&notes=1`` gives a clean PDF carrying only the written
+    notes: the cards beside the pages and the text boxes, the writing
+    already placed on the page."""
     ws = resolve_ws(request)
     pdf_bytes, filename, written, drawn = annotated_pdf(
         ws, block_id, highlights=bool(highlights), notes=bool(notes),
