@@ -1430,8 +1430,9 @@ Each block's markdown is parsed twice: into chunks (headings, paragraphs,
 `---` rules, GFM tables, images — honoring the editor's size, Obsidian
 `![alt|300]` or legacy Logseq `{:width N}`, capped at the column —
 `![[embed]]` synced blocks, `$$…$$` math) and each
-chunk's text into styled inline spans (bold, italic, `code`, strike,
-`==mark==`, `[[refs]]`, links, `$…$` math; a backslash before ASCII
+chunk's text into styled inline spans (bold, italic, `<u>underline</u>`,
+`code`, strike, `==mark==`, `[[refs]]`, links, `$…$` math; a colored
+run's `<span style>` tags dropped, its text kept; a backslash before ASCII
 punctuation is that character, as CommonMark and the screen read it, so an
 escaped `*` or `$` prints as typed). Highlights become quoted passages
 with a bar in the highlight's own colour and a `p. N` marker, and the

@@ -1,8 +1,10 @@
 // Note editing: page creation, the block editor's keys (Shift+Enter /
 // Enter-as-new-block pref / Tab / Shift+Tab / Backspace), the op save path +
-// reload, undo, the handle menu, markdown rendering (todos, images) and the
-// workspace on browser-fetched upload URLs. Runs in a NON-default workspace:
-// every request must name it explicitly, which is where plumbing bugs show.
+// reload, undo, the handle menu, the selection toolbar, markdown rendering
+// (todos, images) and the workspace on browser-fetched upload URLs. Runs in
+// a NON-default workspace: every request must name it explicitly, which is
+// where plumbing bugs show.
+import { assertOpensInPlace } from "../harness.mjs";
 
 export const PNG_1PX = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==", "base64");
 
@@ -523,6 +525,72 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     await details.locator("summary").click();
     assertEq(await details.evaluate((el) => el.open), true, "the title toggles it");
     assertEq(await page.locator(".blockEditorCm").count(), 0, "toggling never opens the editor");
+    assertNoProblems(page);
+  });
+
+  await step("notes: the selection toolbar formats selected text — bold, underline, a color — and waits for a mouse selection's release", async () => {
+    await editRow(page, "Proof");
+    await page.keyboard.press("Control+End");
+    await page.keyboard.press("Shift+Enter");
+    await page.keyboard.type("make this bold now");
+    // A keyboard selection shows the bar at once, above the selected line.
+    for (let i = 0; i < 4; i++) await page.keyboard.press("ArrowLeft");
+    for (let i = 0; i < 4; i++) await page.keyboard.press("Shift+ArrowLeft");
+    const bar = page.locator(".selTools");
+    const bold = bar.locator('[data-command="block.bold"]');
+    await bar.waitFor();
+    assertEq(await bold.getAttribute("aria-pressed"), "false", "Bold starts unpressed");
+    assertEq(await bold.getAttribute("title"), "Bold (Ctrl+B)", "the title names the chord");
+    const barBox = await bar.boundingBox();
+    const selTop = await page.evaluate(() => getSelection().getRangeAt(0).getBoundingClientRect().top);
+    assert(barBox.y + barBox.height <= selTop + 1, `the bar (bottom ${barBox.y + barBox.height}) sits above the selection (top ${selTop})`);
+    // Each tool keeps the text selected, so the next one applies to it too.
+    await bold.click();
+    await until(async () => await bold.getAttribute("aria-pressed") === "true", { what: "Bold pressed once applied" });
+    await bar.locator('[data-command="block.underline"]').click();
+    await until(async () => await bar.locator('[data-command="block.underline"]').getAttribute("aria-pressed") === "true", { what: "Underline pressed" });
+    await bar.getByRole("button", { name: "Color", exact: true }).click();
+    await bar.getByRole("button", { name: "Red text" }).click();
+    await bar.getByRole("button", { name: "Color", exact: true }).click();
+    await until(async () => await bar.getByRole("button", { name: "Red text" }).getAttribute("aria-pressed") === "true", { what: "the run's color marked" });
+    // Escape puts the bar away; the selection stays.
+    await page.keyboard.press("Escape");
+    await bar.waitFor({ state: "detached" });
+    assertEq(await page.evaluate(() => getSelection().toString()), "bold", "Escape keeps the selection");
+    // A mouse drag: no bar while the button is down, one in place after.
+    const word = await page.evaluate(() => {
+      const walker = document.createTreeWalker(document.querySelector(".blockEditorCm .cm-content"), NodeFilter.SHOW_TEXT);
+      for (let n; (n = walker.nextNode());) {
+        const i = n.data.indexOf("make this");
+        if (i < 0) continue;
+        const r = document.createRange();
+        r.setStart(n, i);
+        r.setEnd(n, i + 4);
+        const b = r.getBoundingClientRect();
+        return { x1: b.left + 1, x2: b.right - 1, y: b.top + b.height / 2 };
+      }
+      return null;
+    });
+    assert(word, "the typed line is in the editor");
+    await page.mouse.move(word.x1, word.y);
+    await page.mouse.down();
+    await page.mouse.move(word.x2, word.y, { steps: 4 });
+    await sleep(150);
+    assertEq(await bar.count(), 0, "no bar while the button is held");
+    await assertOpensInPlace(page, ".selTools", () => page.mouse.up(), { what: "the selection toolbar" });
+    await bar.waitFor();
+    assertEq(await page.evaluate(() => getSelection().toString()), "make", "the drag selected the word");
+    // Ctrl+U is the toolbar's Underline from the keyboard.
+    await page.keyboard.press("End");
+    for (let i = 0; i < 3; i++) await page.keyboard.press("Shift+ArrowLeft");
+    await page.keyboard.press("Control+u");
+    await closeEditor(page);
+    const want = 'make this **<u><span style="color:#e5484d">bold</span></u>** <u>now</u>';
+    const contents = (nodes) => nodes.flatMap((n) => [n.content, ...contents(n.children)]);
+    await until(async () => contents(await tree(alice2, pageId)).includes(want), { what: `saved as ${want}` });
+    const red = row(page, "make this").locator(".blockRendered strong u span[style*='color']");
+    assertEq(await red.innerText(), "bold", "rendered bold, underlined and red");
+    assertEq(await row(page, "make this").locator(".blockRendered u").last().innerText(), "now", "Ctrl+U underlined");
     assertNoProblems(page);
   });
 

@@ -119,7 +119,9 @@ the parser the notes PDF and text boxes use, and is set in the compact look
 of a rendered note: headings a little larger, lists with their bullets or
 numbers, to-dos with a drawn box, quotes with a bar, fenced code on a tint,
 tables a line per row, pictures (capped at 150 pt tall), display math
-centred; bold, italic, code, marks, links and inline math within a line.
+centred; bold, italic, underline, code, marks, links and inline math
+within a line. A colored run's `<span style>` tags are dropped and its
+text kept, uncolored.
 `[[refs]]` and `![[embeds]]` read as the block they name (the router's
 `block_ref_resolver`). Links become `/Link` annotations over their text. A
 card is white with a hairline border and rounded corners; a note card

@@ -1178,8 +1178,8 @@ while a note's editor is open on a touch screen, a bar sits on top of the
 keyboard (`editor/EditBar.jsx`):
 
 **Insert** (the `/` menu) · Outdent · Indent · Move up · Move down · New
-block · Bold · Italic · Inline code · Strikethrough · Link · Inline
-equation · Next math argument · Undo · Redo … **Done**
+block · Bold · Italic · Underline · Inline code · Strikethrough · Link ·
+Inline equation · Next math argument · Undo · Redo … **Done**
 
 The iPad app shows this same bar, since it is the web app.
 
@@ -1264,11 +1264,16 @@ The iPad app shows this same bar, since it is the web app.
   history (its `onUndo`), so the browser never undoes CodeMirror's DOM
   there. An editor without `onUndo` (a text box's, an embed card's) leaves
   them to the browser.
-- **The keyboard's own formats.** The iPad keyboard's B and I, and the
+- **The keyboard's own formats.** The iPad keyboard's B, I and U, and the
   Format menu over a selection, send `beforeinput` `formatBold`,
-  `formatItalic` and `formatStrikeThrough`. Every `BlockCmEditor` runs
-  `block.bold`, `block.italic` and `block.strike` for them, the commands
-  of Ctrl+B, Ctrl+I and Ctrl+Shift+X.
+  `formatItalic`, `formatUnderline` and `formatStrikeThrough`. Every
+  `BlockCmEditor` runs `block.bold`, `block.italic`, `block.underline` and
+  `block.strike` for them, the commands of Ctrl+B, Ctrl+I, Ctrl+U and
+  Ctrl+Shift+X.
+- **No selection toolbar.** The floating bar over selected text
+  (`editor/SelectionToolbar.jsx`) stays hidden while text is typed on an
+  on-screen keyboard (`touchTyping`): this bar has its tools, and the
+  system's own menu opens over a selection there.
 - **Typing aids.** CodeMirror switches the system's typing aids off. In
   prose the editor turns them back on (`autocorrect`, `autocapitalize`
   sentences, `spellcheck`, `writingsuggestions`); in a code fence or math,

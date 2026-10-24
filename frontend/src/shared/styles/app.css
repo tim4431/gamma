@@ -46,7 +46,7 @@
 
 /* Shared visual primitives. Components keep their layout and sizing rules,
    while these groups own the recurring surface, field, and hover language. */
-:is(.plainTip, .popover, .ctxMenu, .refPopup, .pdfNoteTip, .mathPreviewTip, .latexAcPopup, .slashMenu, .chatMentionPicker, .citePreview) {
+:is(.plainTip, .popover, .ctxMenu, .refPopup, .pdfNoteTip, .mathPreviewTip, .latexAcPopup, .slashMenu, .chatMentionPicker, .citePreview, .selTools) {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -579,6 +579,9 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 .blockEditorCm .cmStrong { font-weight: 700; }
 .blockEditorCm .cmEm { font-style: italic; }
 .blockEditorCm .cmStrike { text-decoration: line-through; }
+/* <u>underline</u>: the same line live in the editor and rendered. */
+.blockEditorCm .cmUnderline,
+.blockRendered u { text-decoration: underline; text-underline-offset: 0.15em; }
 .blockEditorCm .cmInlineCode {
   background: var(--bg-input);
   border-radius: var(--radius-xs);
@@ -3207,6 +3210,44 @@ mark.searchMark {
 .editBarTools::-webkit-scrollbar { display: none; }
 .editBar .ctlBtn { width: 36px; height: 36px; flex-shrink: 0; }
 .editBar .pdfInkSep { flex-shrink: 0; }
+
+/* The selection toolbar (editor/SelectionToolbar.jsx): a row of formatting
+   tools over a note's selected text, placed from its measured size (`left`
+   and `top` inline) and out of sight while the selection is scrolled away
+   (`data-away`). Color opens two rows of choices under the tools, text
+   colors and background tints, each an "A" drawn as it would come out. */
+.selTools {
+  position: fixed;
+  z-index: var(--z-refpopup);
+  display: flex;
+  flex-direction: column;
+  padding: 3px;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.selTools[data-away] { visibility: hidden; }
+.selToolsRow { display: flex; align-items: center; gap: 1px; }
+.selTools .pdfInkSep { flex-shrink: 0; }
+.selTools .ctlBtn.selToolsColorBtn { width: auto; padding: 0 4px 0 6px; gap: 2px; }
+.selToolsGlyph {
+  min-width: 16px;
+  padding: 1px 2px;
+  border-radius: var(--radius-xs);
+  font-size: var(--fs-md);
+  font-weight: 600;
+  line-height: 1.1;
+  text-align: center;
+  color: var(--text-primary);
+}
+.selToolsColors {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 3px;
+  padding-top: 3px;
+  border-top: 1px solid var(--border);
+}
+.selToolsColorRow { display: flex; gap: 1px; }
 
 /* App fullscreen is the fallback when native fullscreen is unavailable.
    Confine overscroll to the app; the viewer's fullscreen button or Esc exits. */

@@ -652,6 +652,12 @@ class _Read:
         return self.data
 
 
+def test_the_editors_underline_and_colored_runs_come_out_as_text():
+    # <u> is underlined as a link is; a colored run's tags go, its text stays.
+    runs = nexp.inline_runs('a <u>under</u> <span style="color:#e5484d">red</span>', nw.Run(text=""))
+    assert [(r.text, r.underline) for r in runs] == [("a ", False), ("under", True), (" red", False)]
+
+
 def test_the_metadata_names_the_note_unfiled():
     created = datetime(2026, 10, 1, 12, 30, tzinfo=UTC)
     draft = nw.Draft(title="Lecture: 7/9", width=612.0, created=created)

@@ -36,6 +36,8 @@ import { BlockCmEditor, OBJECT_DRAG_TYPE } from "./BlockCmEditor";
 import { expandBlankLines } from "./mdMarks";
 import { BLOCK_COMMANDS } from "./blockCommands.js";
 import { EditBarHost, useEditBarRow } from "./EditBar";
+import SelectionToolbar from "./SelectionToolbar";
+import { useSelectionToolbar } from "./useSelectionToolbar.js";
 import { dispatch as dispatchHotkey } from "../shared/lib/hotkeys.js";
 import { blockStartInSource, gapInSource, renderedGaps, sourceOffsetAtPoint } from "./clickToSource";
 import { highlightCode, makeCopyButton } from "./codeHighlight";
@@ -976,6 +978,9 @@ const BlockRow = React.memo(function BlockRow({
       if (row.kind === "invite") onInvite?.();
     },
   });
+  // The formatting bar over selected text (useSelectionToolbar.js decides
+  // when it shows, SelectionToolbar.jsx draws it).
+  const selTools = useSelectionToolbar(!readOnly && editing);
   // Notion-style "Paste as" chooser after pasting a URL: the URL text is
   // already inserted; { start, end, url, items, anchor }. Pasted text also
   // has `text`, as copied (`url` is what went in, placed at the line's
@@ -1561,11 +1566,13 @@ const BlockRow = React.memo(function BlockRow({
                 updateMathUi(e.target, true);
                 slash.update(e.target, true);
                 atPicker.update(e.target, true);
+                selTools.update(e.target);
                 setPasteMenu(null);
               }}
               onSelect={(e) => {
                 onCaret?.(block.id, e.target.selectionStart, e.target.selectionEnd);
                 updateMathUi(e.target, false); slash.update(e.target, false); atPicker.update(e.target, false);
+                selTools.update(e.target);
                 setPasteMenu(null);
               }}
               onBlur={() => {
@@ -1573,6 +1580,7 @@ const BlockRow = React.memo(function BlockRow({
                 setMathUi(null);
                 slash.close();
                 atPicker.close();
+                selTools.close();
                 setPasteMenu(null);
                 setTimeout(refPicker.close, 120);
               }}
@@ -1589,6 +1597,7 @@ const BlockRow = React.memo(function BlockRow({
                 if (refPicker.keyDown(e)) return;
                 if (slash.keyDown(e)) return;
                 if (atPicker.keyDown(e)) return;
+                if (selTools.keyDown(e)) return;
                 // The \command completion's keys (useMathUi.js acKey).
                 if (acKey(e, ref.current)) return;
                 // The block commands (blockCommands.js, docs/dev/hotkeys.md):
@@ -1767,6 +1776,9 @@ const BlockRow = React.memo(function BlockRow({
             <LatexAcPopup items={mathUi.ac.items} selected={mathAcIdx} anchor={mathUi.anchor} onPick={acceptLatexAc} />
           ) : null}
         </>
+      ) : null}
+      {selTools.selection ? (
+        <SelectionToolbar context={commandContext} selection={selTools.selection} keybindings={keybindings} />
       ) : null}
       {!readOnly && editing && slash.popup ? (
         <SlashMenuPopup {...slash.popup} guide="editor.slashMenu" event="slash.opened" />
