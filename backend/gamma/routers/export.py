@@ -161,10 +161,11 @@ def _collect_cards(blocks, *, notes: bool, threads: dict) -> list[dict]:
     """Every highlight block → what ``render_notes`` prints for it, from
     ``threads`` (``{block id: [[comment, …], …]}``, the open ones): with
     ``notes`` its notes (``highlight_note_blocks``), each with the threads
-    on it; the threads on the highlight itself; and the threads on the
-    blocks under it the cards do not show (all of them with the notes off,
-    an empty note, a text box), each with its block's text to quote, in
-    reading order. Unlike the marks, a highlight still embedded in the PDF
+    on it, the highlight's own threads with its own note (its text is its
+    note, as the app calls it); the highlight's threads on their own when
+    it has no note shown; and the threads on the blocks under it the cards
+    do not show (all of them with the notes off, an empty note, a text
+    box), each with its block's text to quote, in reading order. Unlike the marks, a highlight still embedded in the PDF
     has its cards too: its notes and threads are the reader's own, whatever
     the file already carries."""
     children_by_id = _children_by_id(blocks)
@@ -182,8 +183,8 @@ def _collect_cards(blocks, *, notes: bool, threads: dict) -> list[dict]:
         ids = {bid for _depth, _md, bid in shown}
         cards.append({
             "position": b["properties"].get("pdf_position") or {}, "color": b["properties"].get("color"),
-            "blocks": [(depth, md, threads.get(bid, []) if depth else []) for depth, md, bid in shown],
-            "threads": threads.get(b["id"], []),
+            "blocks": [(depth, md, threads.get(bid, [])) for depth, md, bid in shown],
+            "threads": [] if b["id"] in ids else threads.get(b["id"], []),
             "note_threads": [(child.get("content") or "", thread) for child in under(b["id"])
                              if child["id"] not in ids for thread in threads.get(child["id"], [])],
         })
