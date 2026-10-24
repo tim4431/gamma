@@ -1,9 +1,8 @@
 import React from "react";
 import { PasswordInput } from "../settings/SettingsKit";
-import { AlertCircleIcon, ArrowLeftIcon, CheckIcon, MailIcon, ServerIcon } from "../shared/ui/Icons";
+import { AlertCircleIcon, ArrowLeftIcon, CheckIcon, MailIcon } from "../shared/ui/Icons";
 import { BrandMark } from "../shared/ui/BrandMark";
 import { Chevron, Collapse } from "../shared/ui/MotionWidgets";
-import { nativeHost, postToHost } from "../shared/lib/host.js";
 import { T, t, tn } from "../shared/i18n/i18n.js";
 
 // The demo landing's picture: the README hero's paper and notes, cropped by
@@ -15,10 +14,7 @@ const DEMO_SCENE_URL = "/media/gamma-scene-light.svg";
 // still being read the splash shows instead (Splash, shared/ui/BrandMark.jsx).
 // A page that reports a situation (`headline`) leads with it under the mark;
 // the others with the name. `scene` (a demo server's landing) puts a picture
-// beside the content instead, which then brings its own heading. Under the
-// iPad app every one of them also offers the app's server picker (the
-// account menu's "Server…" row needs a signed-in library), so a reachable
-// but wrong server is never a dead end.
+// beside the content instead, which then brings its own heading.
 function AuthShell({ headline, scene, children }) {
   return (
     <div className="app">
@@ -26,7 +22,7 @@ function AuthShell({ headline, scene, children }) {
         {scene ? (
           <div className="loginCard loginLanding">
             <div className="loginScene"><img src={scene} alt="" /></div>
-            <div className="loginLandingBody">{children}<HostServerLink /></div>
+            <div className="loginLandingBody">{children}</div>
           </div>
         ) : (
           <div className="loginCard">
@@ -35,21 +31,10 @@ function AuthShell({ headline, scene, children }) {
               ? <h1 className="loginTitle loginHeadline">{headline}</h1>
               : <div className="loginTitle">{t("Gamma")}</div>}
             {children}
-            <HostServerLink />
           </div>
         )}
       </div>
     </div>
-  );
-}
-
-function HostServerLink() {
-  if (!nativeHost()?.servers) return null;
-  return (
-    <button type="button" className="loginDisclosure" title={t("Connect this app to another Gamma server")}
-      onClick={() => postToHost({ type: "servers" }).catch(() => {})}>
-      <ServerIcon size={14} />{t("Server…")}
-    </button>
   );
 }
 

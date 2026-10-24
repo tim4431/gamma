@@ -65,6 +65,12 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
   const fieldText = (f) => f.evaluate((el) => (el.querySelector(".cm-placeholder") ? "" : el.innerText.trim()));
   // The composer takes the focus a frame after the popover is placed.
   const focused = (f, what) => until(async () => f.evaluate((el) => el === document.activeElement).catch(() => false), { what });
+  // A reply steps in under the thread's first comment: its avatar under that comment's name.
+  const replyStepsIn = (thread, what) => until(async () => thread.evaluate((el) => {
+    const name = el.querySelector(".commentItem:not(.reply) .commentAuthor")?.getBoundingClientRect().left;
+    const avatar = el.querySelector(".commentItem.reply > .peerAvatar")?.getBoundingClientRect().left;
+    return name > 0 && Math.abs(name - avatar) <= 1;
+  }), { what });
   // A thread's reply field shows once the thread is pressed (as in Notion):
   // a press on its first comment's text, then its field.
   const openReply = async (scope) => {
@@ -119,6 +125,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     await B.keyboard.type("appendix");
     await B.keyboard.press("Shift+Enter");
     await until(async () => (await popover(A).innerText()).includes("Yes, see the appendix"), { what: "the reply shows live in the open popover", timeout: 10000 });
+    await replyStepsIn(popover(A).locator(".commentThread").first(), "the reply steps in under the first comment");
     // The emptied field's history starts afresh: an undo brings back none of the sent text.
     await until(async () => (await fieldText(replyB)) === "", { what: "the reply field empties" });
     await B.keyboard.press("Control+Z");
@@ -743,6 +750,7 @@ export async function commentScenarios({ server, browser, makePdf, step, until, 
     await until(async () => (await ann.api(`/api/pages/${reviewed}/comments?state=all`)).threads
       .find((x) => x.id === first.id)?.comments.some((x) => x.body === "Found it: the 2004 review"), { what: "the reply is stored" });
     await active.locator(".commentBody", { hasText: "Found it: the 2004 review" }).waitFor();
+    await replyStepsIn(active.locator(".commentThread"), "in the card, the reply steps in under the first comment");
     await settled("the grown active card pushes the one under it down");
     boxes = await geometry();
     const activeBox = boxes.find((b) => b.active);

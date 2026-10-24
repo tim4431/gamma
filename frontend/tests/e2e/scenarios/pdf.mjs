@@ -32,12 +32,18 @@ export async function selectPdfText(page, pageNo, needle) {
 // The text is measured once two readings agree: a page still moving (cards
 // settling beside it) would put the release off the text's spans, which
 // selects to the end of its line (pdf.js's spans are absolute; only each
-// line's <br> is in the flow).
+// line's <br> is in the flow). The drag also keeps clear of the viewer's
+// edges: one that starts within Chromium's 20 px autoscroll belt scrolls
+// the viewer under it while it runs, so a span left at an edge by "nearest"
+// (the viewer scrolled to show a card) is brought to the middle.
 export async function dragSelectPdfText(page, pageNo, needle) {
   const measure = () => page.evaluate(([pageNo, needle]) => {
     const span = [...document.querySelectorAll(`[data-page="${pageNo}"] .textLayer span`)].find((s) => s.textContent.includes(needle));
     if (!span?.firstChild) return null;
     span.scrollIntoView({ block: "nearest" }); // the drag is made in viewport pixels
+    const view = span.closest(".pdfViewer")?.getBoundingClientRect();
+    const at = span.getBoundingClientRect();
+    if (view && (at.top - view.top < 40 || view.bottom - at.bottom < 40)) span.scrollIntoView({ block: "center" });
     const off = span.textContent.indexOf(needle);
     const range = document.createRange();
     range.setStart(span.firstChild, off);

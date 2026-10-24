@@ -450,7 +450,9 @@ waits for a device (3), and decision 4 went with B. The mechanics are in
   pointer's events and treats fingers as palms until the stroke ends.
 - The server picker is declared by the host (`servers`) and sits on the
   pages shown before the library (the sign-in page, an unavailable
-  workspace, a blocked share link) as well as in the account menu.
+  workspace, a blocked share link) as well as in the account menu. (Since
+  replaced by the desktop app's bar and launcher, with the flag and the
+  message gone: [ipad-desktop-chrome.md](ipad-desktop-chrome.md#decided-and-built-2026-10-23).)
 - `pypdfium2` has no iOS build, so the server on the device read PDF text
   through PyPDF2 and rendered no page images, until the server moved to
   PyMuPDF, which has one ([pymupdf-ios.md](pymupdf-ios.md)). Background

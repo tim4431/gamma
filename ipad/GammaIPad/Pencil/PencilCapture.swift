@@ -133,6 +133,13 @@ final class PencilCapture: UIGestureRecognizer {
                 if capture == nil { ignore(touch, for: event) }
                 continue
             }
+            // A Pencil on the bar or the launcher is theirs: it never enters
+            // the claim queue, where a tap there would stand in the way of a
+            // claim for a stroke begun at the same place just after.
+            if let surface, let touched = touch.view, !touched.isDescendant(of: surface) {
+                ignore(touch, for: event)
+                continue
+            }
             let key = ObjectIdentifier(touch)
             var recorder = StrokeRecorder()
             record(touch, into: &recorder)

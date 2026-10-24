@@ -39,8 +39,6 @@ struct HostInfo: Encodable, Equatable {
     }()
     /// The host plays `haptic` (PencilHaptics).
     var haptics = true
-    /// The host has a server picker (the web shows a "Server…" row).
-    var servers = true
     /// The host holds the files the system opens in the app (OpenedFiles)
     /// for the page to take: `files`, `fileData` and `fileDone`, with
     /// `filesOpened` when one comes.
@@ -206,9 +204,10 @@ enum WebMessage: Equatable {
     /// which tells the shell which touch the page means (ClaimQueue).
     case claim(pointerId: Int, at: CGPoint, tool: InkTool)
     /// Paint the window behind the web view and pick the status bar style.
-    case theme(bg: String, scheme: Scheme)
-    /// Show the server picker.
-    case servers
+    /// `name` is the theme's (`<html data-theme>`), which the chrome paints
+    /// in; a page from before it sends none, and the scheme, "light" or
+    /// "dark", is a theme's name too.
+    case theme(bg: String, scheme: Scheme, name: String?)
     /// Play the kind's feedback (PencilHaptics), sent once per event. `at`
     /// is where, in viewport CSS px, when the page says.
     case haptic(kind: HapticKind, at: CGPoint?)
@@ -226,7 +225,7 @@ enum WebMessage: Equatable {
 }
 
 extension WebMessage: Decodable {
-    private enum Keys: String, CodingKey { case type, pointerId, at, tool, bg, scheme, kind, id, offset }
+    private enum Keys: String, CodingKey { case type, pointerId, at, tool, bg, scheme, name, kind, id, offset }
     private struct Point: Decodable { let x, y: Double }
 
     init(from decoder: Decoder) throws {
@@ -238,9 +237,8 @@ extension WebMessage: Decodable {
             self = .claim(pointerId: try c.decode(Int.self, forKey: .pointerId), at: CGPoint(x: at.x, y: at.y),
                           tool: try c.decode(InkTool.self, forKey: .tool))
         case "theme":
-            self = .theme(bg: try c.decode(String.self, forKey: .bg), scheme: try c.decode(Scheme.self, forKey: .scheme))
-        case "servers":
-            self = .servers
+            self = .theme(bg: try c.decode(String.self, forKey: .bg), scheme: try c.decode(Scheme.self, forKey: .scheme),
+                          name: try? c.decodeIfPresent(String.self, forKey: .name))
         case "haptic":
             let kind = (try? c.decodeIfPresent(String.self, forKey: .kind)).flatMap { HapticKind(rawValue: $0) } ?? .tool
             let at: CGPoint? = (try? c.decodeIfPresent(Point.self, forKey: .at)).map { (p: Point) -> CGPoint in CGPoint(x: p.x, y: p.y) }
