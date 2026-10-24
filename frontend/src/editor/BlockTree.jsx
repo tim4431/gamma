@@ -1984,10 +1984,13 @@ function joinBlockText(existing, addition, mode, find, at) {
 // A block the AI agent is creating right now (a create_block call still
 // streaming): a read-only row at the position the block will take, typing
 // in the markdown as it arrives. Replaced by the real block when the call
-// lands and the tree reloads.
+// lands and the tree reloads. An item of the outline's ListMotion (one
+// call streams at a time, so its key is unique): a change the person makes
+// above it glides it with the rows around it. It comes and goes with the
+// call, which is no change of the tree's shape, so at once.
 function AiGhostRow({ content, depth }) {
   return (
-    <div className="sortableBlockWrap aiGhostWrap" data-depth={depth}>
+    <div className="sortableBlockWrap aiGhostWrap" data-depth={depth} data-motion-key="ai-ghost">
       {/* Inert stand-in for the handle column (hidden in CSS). */}
       <span className="rowHandles" aria-hidden="true"><span className="dragHandle" /></span>
       <div className="blockRowWrap">

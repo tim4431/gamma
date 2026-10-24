@@ -1,5 +1,5 @@
 import { generateNKeysBetween } from "fractional-indexing";
-import { Account, arrived, assertNear, live, makePdf, sleep, wanted } from "../harness.mjs";
+import { Account, arrived, assertNear, fakeAiModels, live, makePdf, sleep, wanted } from "../harness.mjs";
 import { selectPdfText, waitForPdf } from "./pdf.mjs";
 
 // Motion (docs/dev/ui-design.md, "Motion"): a menu grows in from the point
@@ -8,7 +8,8 @@ import { selectPdfText, waitForPdf } from "./pdf.mjs";
 // dialog's copy never counts as an open dialog, so a shortcut works while
 // it fades; under reduced motion nothing lingers; a segmented control's
 // frame slides to the option chosen; in the notes, a block added mid-list
-// fades in while the rows below glide to make room, but nothing moves on a
+// fades in while the rows below glide to make room, the agent's row still
+// being written among them, but nothing moves on a
 // page opening or for another client's block, and a fold closes before
 // its rows go; the Inbox opens a tab on what it showed last, a first
 // listing waits blank in its room and comes into focus, and its rows and
@@ -220,6 +221,64 @@ export async function motionScenarios(env) {
       await until(async () => (await page.locator(".sortableBlockWrap[data-block-id]").count()) === rows + 1, { what: "the new row" });
       await page.waitForTimeout(100);
       assertEq((await glides(page)).length, 0, "no glide, no fade");
+      await page.keyboard.press("Escape");
+      await assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("motion: the agent's row still being written glides with the rows around it when the person adds a block above it", async () => {
+    const ghosted = await user.api("/api/pages", { method: "POST", body: { title: "Ghosted" } });
+    await user.api(`/api/pages/${ghosted.id}/ops`, { method: "POST", body: { client: "e2e", ops:
+      generateNKeysBetween(null, null, 4).map((position, i) => ({ op: "insert", id: `gh${i}`, parent: ghosted.id, position, content: `Ghosted ${i}` })) } });
+    const ctx = await user.context(browser, { viewport: { width: 1500, height: 900 } });
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => {
+      localStorage.setItem("gamma-ai-login-check", "off");
+      window.chatStreams = [];
+      const fetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        if (!String(input).endsWith("/api/ai/chat")) return fetch(input, init);
+        return Promise.resolve(new Response(new ReadableStream({ start(controller) {
+          window.chatStreams.push({ push: (event) => controller.enqueue(new TextEncoder().encode(JSON.stringify(event) + "\n")) });
+          init.signal.addEventListener("abort", () => controller.error(new DOMException("Stopped", "AbortError")));
+        } }), { headers: { "Content-Type": "application/x-ndjson" } }));
+      };
+    });
+    const page = await openPage(ctx, `${server.base}/?ws=${user.ws}&page=${ghosted.id}`);
+    try {
+      await rowOf(page, "gh3").waitFor();
+      const input = page.getByRole("combobox", { name: "Message AI" });
+      await input.waitFor();
+      await page.waitForLoadState("networkidle");
+      await input.fill("Add a note");
+      await input.press("Enter");
+      await page.waitForFunction(() => window.chatStreams.length === 1);
+      await page.evaluate((parent_id) => window.chatStreams[0].push({ progress: { id: "t1", tool: "create_block", parent_id, after_id: "gh2", content: "The agent is writing this" } }), ghosted.id);
+      const ghost = page.locator(".aiGhostWrap");
+      await ghost.waitFor();
+      await rowOf(page, "gh0").locator(".blockRow").click();
+      await page.locator(".blockEditorCm").first().waitFor();
+      await page.keyboard.press("End");
+      await sleep(400);
+      // where the rows below and the ghost stood, and where each is drawn as its glide starts
+      await page.evaluate(() => {
+        const name = (el) => el.dataset.blockId || (el.classList.contains("aiGhostWrap") ? "ghost" : "");
+        const top = (el) => Math.round(el.getBoundingClientRect().top);
+        const rows = ".sortableBlockWrap[data-block-id], .aiGhostWrap";
+        window.__stood = Object.fromEntries([...document.querySelectorAll(rows)].map((el) => [name(el), top(el)]));
+        window.__drawn = {};
+        new MutationObserver((records) => {
+          for (const r of records) if (r.target.matches(rows) && r.target.hasAttribute("data-moving")) window.__drawn[name(r.target)] ??= top(r.target);
+        }).observe(document.querySelector(".blockList") || document.body, { subtree: true, attributes: true, attributeFilter: ["data-moving"] });
+      });
+      await page.keyboard.press("Shift+Enter");
+      await until(async () => (await page.locator(".sortableBlockWrap[data-block-id]").count()) === 5, { what: "the new row" });
+      await arrived(rowOf(page, "gh3"));
+      const { stood, drawn } = await page.evaluate(() => ({ stood: window.__stood, drawn: window.__drawn }));
+      for (const id of ["gh1", "gh2", "ghost", "gh3"]) {
+        assert(drawn[id] !== undefined, `${id} glides: ${JSON.stringify(drawn)}`);
+        assertNear(drawn[id], stood[id], 2, `${id} starts where it stood`);
+      }
       await page.keyboard.press("Escape");
       await assertNoProblems(page);
     } finally { await ctx.close(); }

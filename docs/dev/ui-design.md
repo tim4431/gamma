@@ -1153,7 +1153,9 @@ and what it holds travels with it.
 for its anchor's row to land.
 
 The notes outline is the first list on it. Its rows and their children
-bodies are the items, with the backlinks and the tail under them; it
+bodies are the items, with the agent's row still being written (a
+create_block streaming, which glides with its neighbours when the person
+changes the tree above it) and the backlinks and the tail under them; it
 plays only when the tree's shape changed (`sameShape`,
 `shared/model/blockModel.js`), so a keystroke or a fold moves nothing.
 
