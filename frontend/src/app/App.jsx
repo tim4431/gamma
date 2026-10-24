@@ -668,9 +668,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   // The load's first session is the one main.jsx asked for (app/boot.js).
   // A session that signs this tab in (that one, or a sign-in's) brings the
-  // account's theme, on before the library draws, and its language: one
-  // other than the running one reloads into it now, before the library
-  // shows (main.jsx has already taken it for a browser new to the account).
+  // account's theme, on before the library draws, and its language, each
+  // only if this app knows it (boot.js adoptAccountLook): a language other
+  // than the running one reloads into it now, before the library shows
+  // (main.jsx has already taken it for a browser new to the account).
   // Then the reads the first screen needs go out before the app renders the
   // session, so they lead what its parts ask for as they mount (the browser
   // keeps six requests in flight to the server): the library listing, an
@@ -681,9 +682,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       const data = await (takeBootRead("session") || apiJson(`${API}/session`));
       if (data.user) {
         if (!authUser?.user && data.profile) {
-          const language = adoptAccountLook(data.profile);
+          const { theme, language } = adoptAccountLook(data.profile);
           if (language && resolveLocale(language) !== getLocale()) { window.location.reload(); return; }
-          if (data.profile.theme) setTheme(data.profile.theme);
+          if (theme) setTheme(theme);
         }
         const list = data.workspaces || [];
         const chosen = await chooseWorkspace(data.user, list, data.default_workspace || "");

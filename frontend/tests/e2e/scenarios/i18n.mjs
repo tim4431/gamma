@@ -5,7 +5,8 @@ import { Account, wanted } from "../harness.mjs";
 // reload, the pick outlives the profile pull of the reloaded app and a
 // second reload, and English is back on "System" in an English browser. A
 // browser that has never seen the account comes up in the account's
-// language and theme from the session, with no reload.
+// language and theme from the session, with no reload, and keeps its own
+// for a language or theme this app does not know.
 export async function i18nScenarios(env) {
   const { server, browser, step, openPage, assertEq, assertNoProblems, until } = env;
   if (!wanted("i18n")) return;
@@ -21,6 +22,9 @@ export async function i18nScenarios(env) {
     await page.getByRole("menuitem", { name: item, exact: true }).click();
     await settings(page).waitFor();
   }
+  // A response that reads the profile: on its own, or in the first load's
+  // combined read (prefs.js preloadPrefs).
+  const profileRead = (r) => /\/api\/prefs(\/profile$|\?keys=[^&]*\bprofile\b)/.test(r.url()) && r.request().method() === "GET";
   const pick = async (page, row, option) => {
     await page.locator(`.settingsPane [data-setting="${row}"] .uiSelectBtn`).click();
     await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: option, exact: true }).click();
@@ -39,7 +43,7 @@ export async function i18nScenarios(env) {
       // The reloaded app reads the profile once (useProfileSync), with its
       // other preferences in one request (prefs.js preloadPrefs); that read
       // must not bring the old language back. Wait for it, not for a time.
-      const nextPull = () => page.waitForResponse((r) => /\/api\/prefs(\/profile$|\?keys=[^&]*\bprofile\b)/.test(r.url()) && r.request().method() === "GET");
+      const nextPull = () => page.waitForResponse(profileRead);
       const applied = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 50)))));
       // Observe both promises immediately so a failed picker reports a step
       // failure instead of leaving an unhandled response-wait rejection.
@@ -92,6 +96,34 @@ export async function i18nScenarios(env) {
       assertEq(await page.evaluate(() => [...window.__looks].join(" | ")), "zh-CN dark", "every frame of the app is in the account's language and theme");
       assertEq(await page.evaluate(() => [localStorage.getItem("gamma-language"), localStorage.getItem("gamma-theme")].join(" ")),
         "zh dark", "both kept where the next load starts from");
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await user.api("/api/prefs/profile", { method: "PATCH", body: { set: { language: "system", theme: "light" } } });
+    }
+  });
+
+  await step("i18n: a profile naming a theme and a language this app does not know (one synced from a newer server) leaves the browser's own, before and after the profile's pull and across a reload", async () => {
+    await user.api("/api/prefs/profile", { method: "PATCH", body: { set: { language: "tlh", theme: "nord" } } });
+    const ctx = await user.context(browser, { locale: "en-US", colorScheme: "light" });
+    const page = await openPage(ctx);
+    try {
+      const look = () => page.evaluate(() => {
+        const root = document.documentElement;
+        const coloured = getComputedStyle(root).getPropertyValue("--ground").trim()
+          && getComputedStyle(document.body).backgroundColor !== "rgba(0, 0, 0, 0)";
+        return [root.lang, root.dataset.theme, coloured ? "coloured" : "no colours",
+          localStorage.getItem("gamma-theme") || "system", localStorage.getItem("gamma-language") || "system"].join(" ");
+      });
+      const want = "en light coloured system system";
+      for (const load of ["first load", "reload"]) {
+        const pulled = page.waitForResponse(profileRead);
+        if (load === "first load") await page.goto(server.base); else await page.reload();
+        await page.locator(".folderNewBtn").first().waitFor();
+        await pulled;
+        await page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r))));
+        assertEq(await look(), want, `${load}: the browser's language and the OS's light theme, every colour drawn, and neither unknown value stored`);
+      }
       assertNoProblems(page);
     } finally {
       await ctx.close();

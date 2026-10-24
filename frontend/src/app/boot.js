@@ -42,19 +42,27 @@ function getJson(url) {
   return read;
 }
 
-// The account's theme and language as the session carries them: each
-// stored under its preference's key, where the app's state starts from, and
-// the theme put on the page. Returns the language, or null without one.
+// The account's theme and language as the session carries them: each one
+// this app knows is stored under its preference's key, where the app's
+// state starts from, and the theme put on the page. The profile is opaque
+// to the server, and Gamma Cloud syncs it between servers of other
+// versions, so it may name a theme or language added since. Returns
+// {theme, language}, each the value taken or null, for the caller to use
+// in place of the session's own.
 export function adoptAccountLook(profile) {
-  if (!profile || typeof profile !== "object") return null;
+  const look = { theme: null, language: null };
+  if (!profile || typeof profile !== "object") return look;
   const { theme, language } = profile;
   if (THEMES.includes(theme)) {
     store("gamma-theme", theme);
     applyTheme(resolveTheme(theme));
+    look.theme = theme;
   }
-  if (!LANGUAGES.some(([code]) => code === language)) return null;
-  store("gamma-language", language);
-  return language;
+  if (LANGUAGES.some(([code]) => code === language)) {
+    store("gamma-language", language);
+    look.language = language;
+  }
+  return look;
 }
 
 // Whether the stored language is the one this browser last took from an

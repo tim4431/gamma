@@ -45,7 +45,7 @@ if (navigator.maxTouchPoints > 0) document.documentElement.dataset.touch = "1";
 // disagrees reloads before the library shows: App.jsx checkSession.)
 let stored = "system";
 try { stored = localStorage.getItem("gamma-language") || "system"; } catch {}
-const look = (boot.session || Promise.resolve(null)).then((session) => adoptAccountLook(session?.profile), () => null);
+const look = (boot.session || Promise.resolve(null)).then((session) => adoptAccountLook(session?.profile).language, () => null);
 Promise.all([loadLocale(resolveLocale(stored)).catch(() => ({})), languageSeen(stored) ? null : look])
   .then(async ([catalog, language]) => {
     let locale = resolveLocale(stored);

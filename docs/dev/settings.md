@@ -28,10 +28,12 @@ server copy wins; an account without one is seeded from this browser.
 The first screen does not wait for it: `/api/session` carries the
 profile's `theme` and `language`, which `main.jsx` puts on as the session
 lands (`app/boot.js`), so a browser new to the account draws in its theme
-and language from the start ([i18n.md](i18n.md)). The first load then reads
-the profile with the other synced keys (open tabs, recents, reading
-positions, the AI key) in one request, `GET /api/prefs?keys=`, sent right
-behind the library listing (`preloadPrefs`); later reads ask for one key.
+and language from the start ([i18n.md](i18n.md)); a theme or language this
+app does not know (one a newer server synced through Gamma Cloud) is not
+applied, as the profile's codecs drop it. The first load then reads the
+profile with the other synced keys (open tabs, recents, reading positions,
+the AI key) in one request, `GET /api/prefs?keys=`, sent right behind the
+library listing (`preloadPrefs`); later reads ask for one key.
 Entries are validated with the same codecs as localStorage, so unknown names
 and bad values are dropped and a partial profile applies what it has.
 A change is pushed one second after it settles (a slider sends one request)
