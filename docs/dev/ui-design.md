@@ -1009,7 +1009,7 @@ rest at none, so nothing a surface holds is positioned against it.
 | Flyouts (`SubMenuItem`) | fade in over `--dur-fast`: growing, they would make a pass down the rows feel slow | at once |
 | Dialogs (`DialogOverlay`) and the lightbox | the backdrop fades in over `--dur-base` while the dialog or picture grows from its middle over `--dur-slow` | together, over `--dur-base` |
 | Tips and the citation preview | fade in where they stand over `--dur-base` | at once |
-| The PDF selection popup and the caret's popups ("/", `[[`, `@`, LaTeX) | fade in over `--dur-fast`, so typing never waits on one | at once |
+| The PDF selection popup, a note's selection toolbar and the caret's popups ("/", `[[`, `@`, LaTeX) | fade in over `--dur-fast`, so typing never waits on one | at once |
 | Toasts: the reminder cards, the status pill | rise `--move-md` into place through `--blur-swap` over `--dur-long` | sink back out over `--dur-slow` (the cards; the pill fades) |
 
 React takes a closed surface out of the page at once. `useLeave(kind)`

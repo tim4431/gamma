@@ -71,15 +71,16 @@
 
 /* Tips fade in where they stand: hovering along a row of buttons shows one
    after another, and a tip that grew would trail the pointer. The PDF
-   selection popup (.plainTip) and the caret's popups ("/", [[, @, the
-   LaTeX completion and preview) fade in quickly, so typing never waits
-   on one. */
+   selection popup (.plainTip), a note's selection toolbar (.selTools) and
+   the caret's popups ("/", [[, @, the LaTeX completion and preview) fade
+   in quickly, so typing never waits on one. */
 .inkTooltip,
 .citePreview,
 .pdfNoteTip {
   animation: fade-in var(--dur-base);
 }
 .plainTip,
+.selTools,
 .refPopup,
 .slashMenu,
 .mathPreviewTip,
