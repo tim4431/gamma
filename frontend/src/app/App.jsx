@@ -5737,10 +5737,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       }
     }
   }
-  // A tab pressed: selected at once, its page opened behind it.
+  // A tab pressed: selected at once, its page opened behind it. The tab of
+  // the page on screen, pressed while another's page opens, takes that
+  // press back: the page stays as it is, not read again.
   function selectTab(id) {
+    if (id === focusedBlockId) { dropTabPick(); return undefined; }
     setTabPick(id);
     return openBlock(id, { restoreScroll: true });
+  }
+  // The pending open of a picked tab let go: neither its landing nor its
+  // finally runs, so the page on screen stays, its tab selected again.
+  function dropTabPick() {
+    if (!tabPick) return;
+    ++openSeqRef.current;
+    setTabPick("");
+    postPill("opening", null);
+    setLoading(false);
   }
 
   // --- Global back: one history for every navigation ------------------------
@@ -5987,6 +5999,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     updateTabs(next);
     // Closed tabs must never become a later close's return destination.
     tabHistoryRef.current = tabHistoryRef.current.filter((entry) => entry.blockId !== id);
+    // The tab a press picked, closed before its page lands: the press is
+    // taken back, and what is on screen stays.
+    if (tabPick && id === tabPick && id !== focusedBlockId) { dropTabPick(); return; }
     if (id !== focusedBlockId) return;
     const entry = [...tabHistoryRef.current].reverse().find((entry) =>
       !entry.blockId || next.some((tab) => tab.id === entry.blockId));

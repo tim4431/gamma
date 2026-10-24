@@ -1051,8 +1051,11 @@ leaves stays on screen, whole and in use, until the new page's tree lands
 (`openBlock`), and the new page then takes its place in one frame, its
 threads asked for alongside its tree and a PDF's pages drawn where they
 were left ([pdf_loading.md](pdf_loading.md) "Coming back to a document").
-What an open was asked to land on or do (a `[[ref]]`'s block, the home
-menu's Share…) goes with it when a later open overtakes it.
+Until it lands, a press on the tab of the page on screen, or on the close
+of the tab pressed, takes the press back: the open is let go, and the page
+on screen keeps its tab, not read again. What an open was asked to land
+on or do (a `[[ref]]`'s block, the home menu's Share…) goes with it when
+a later open overtakes it.
 
 ### Things that change in place
 

@@ -337,9 +337,9 @@ export async function quickOpenScenarios(env) {
     }
   });
 
-  await step("tabs: a tab pressed is selected at once while the page it leaves stays whole until its own lands; a quick switch shows no pill, a slow one says Opening… and takes it down as the page lands, never Ready.", async () => {
+  await step("tabs: a tab pressed is selected at once while the page it leaves stays whole until its own lands; a quick switch shows no pill, a slow one says Opening… and takes it down as the page lands, never Ready. Pressing the tab on screen, or closing the one pressed, takes the press back", async () => {
     const made = [];
-    for (const title of ["Switch from", "Switch to"]) {
+    for (const title of ["Switch from", "Switch to", "Switch third"]) {
       const b = await user.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: title } });
       await user.api("/api/blocks", { method: "POST", body: { parent_id: b.id, content: `the body of ${title}` } });
       made.push(b);
@@ -416,22 +416,58 @@ export async function quickOpenScenarios(env) {
       assert(seen.every((f) => !f.pill), `no pill for a quick switch: ${seen.map(said).join(" / ")}`);
       // two presses in quick succession: the later one's page stays, though
       // the earlier one's tree answers after it
+      const selected = async () => (await page.locator(".tabStrip .tab.active:not([data-leaving]) .tabTitle").allInnerTexts()).join();
       gate.delay = 0;
       gate.late = made[1].id;
       await tab("Switch to").click();
-      await tab("Switch from").click();
-      await onPage("Switch from");
+      await tab("Switch third").click();
+      await onPage("Switch third");
       await page.waitForTimeout(1200);
-      assertEq(await page.locator(".pageTitleRow .titleText").innerText(), "Switch from", "the late answer does not take over");
-      assertEq((await page.locator(".tabStrip .tab.active:not([data-leaving]) .tabTitle").allInnerTexts()).join(), "Switch from");
+      assertEq(await page.locator(".pageTitleRow .titleText").innerText(), "Switch third", "the late answer does not take over");
+      assertEq(await selected(), "Switch third");
       assertEq(await page.locator(".statusPill").count(), 0, "and leaves no pill behind");
+      gate.late = "";
+      // The tab of the page on screen, pressed while another's page opens,
+      // takes that press back: the page on screen is not read again, and no
+      // "Opening…" stands over it.
+      const reads = [];
+      page.on("request", (r) => { const m = /\/api\/blocks\/([^/]+)\/subtree/.exec(r.url()); if (m) reads.push(m[1]); });
+      let release2;
+      gate.hold = new Promise((resolve) => { release2 = resolve; });
+      await tab("Switch to").click();
+      await page.locator(".statusPill", { hasText: "Opening" }).waitFor({ timeout: 3000 });
+      await tab("Switch third").click();
+      assertEq(await selected(), "Switch third", "the page on screen's tab is selected again at once");
+      await page.locator(".statusPill").waitFor({ state: "detached", timeout: 3000 });
+      gate.hold = null;
+      release2();
+      await page.waitForTimeout(800);
+      assertEq(await page.locator(".pageTitleRow .titleText").innerText(), "Switch third", "the page on screen stays");
+      assertEq(await selected(), "Switch third");
+      assertEq(reads.filter((id) => id === made[2].id).length, 0, `the page on screen is not read again: ${reads.join(", ")}`);
+      // The tab pressed, closed before its page lands: the press is taken
+      // back, the page on screen keeps its tab selected, and the closed tab
+      // does not come back with its page.
+      let release3;
+      gate.hold = new Promise((resolve) => { release3 = resolve; });
+      await tab("Switch to").click();
+      await until(async () => (await selected()) === "Switch to", { what: "the pressed tab selected" });
+      await tab("Switch to").getByRole("button", { name: "Close Switch to", exact: true }).click();
+      await until(async () => (await selected()) === "Switch third", { what: "the page on screen's tab selected again" });
+      gate.hold = null;
+      release3();
+      await page.waitForTimeout(800);
+      assertEq(await page.locator(".pageTitleRow .titleText").innerText(), "Switch third", "the page on screen stays");
+      assertEq((await page.locator(".tabStrip .tab:not([data-leaving]) .tabTitle").allInnerTexts()).join(), "Switch from,Switch third",
+        "the closed tab stays closed");
+      assertEq(await selected(), "Switch third");
+      assertEq(await page.locator(".statusPill").count(), 0, "and no pill is left");
       assertNoProblems(page);
     } finally {
       await ctx.close();
       await user.api("/api/prefs/open-tabs", { method: "PUT", body: { value: [] } });
     }
   });
-
   // A jump to a block of another page, or the home menu's Share…, belongs
   // to the open it was asked of: a tab pressed before that page lands
   // drops both, and no page after it lands on the block or opens Share.
