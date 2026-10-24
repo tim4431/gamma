@@ -1210,8 +1210,10 @@ header is one, so it goes with its last row.
   Clear finished takes them all at once.
 - **The PDF margin**: a card grows in and shrinks away (`"card"`), and
   `moves={false}`, since stackCards places the cards and their `top`
-  moves them on `--dur-slow`. A new comment stored hands its card to its
-  thread's still.
+  moves them on `--dur-slow`. A new comment sent shows in its card over
+  the emptied field while it is on its way, and stored, the thread's card
+  takes that card's place still, where it stood: the two never stand
+  together.
 - **The Comments window**: a thread rises in (`"rise"`) and one with a
   new reply glides to the top. A list that fills from none (the page's
   threads loading) comes in still.

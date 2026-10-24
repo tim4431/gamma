@@ -565,11 +565,31 @@ export async function motionScenarios(env) {
       await sleep(300);
       await moves(page);
       await page.keyboard.type("On delta");
+      // every card's top, after each change in the margin and each frame, through the hand-over
+      await page.evaluate(() => {
+        const margin = document.querySelector('[data-page="1"] .commentMargin');
+        const tops = () => [...margin.querySelectorAll(".commentCard:not([data-leaving])")]
+          .map((el) => ({ for: el.dataset.cardFor, top: Math.round(el.getBoundingClientRect().top), text: el.innerText }));
+        const handoff = (window.__handoff = { before: tops(), seen: [], done: false });
+        const look = () => handoff.seen.push(tops());
+        new MutationObserver(look).observe(margin, { subtree: true, childList: true, attributes: true });
+        const tick = () => { if (handoff.done) return; look(); requestAnimationFrame(tick); };
+        requestAnimationFrame(tick);
+      });
       await page.keyboard.press("Shift+Enter");
       await page.locator(".commentCard.active .commentField").waitFor();
       await until(async () => !(await page.locator(".commentCard .commentNew").count()), { what: "the new card handed over" });
       seen = await moves(page);
       assert(!seen.some((m) => /^(entering|leaving) card/.test(m)), `neither card comes in nor goes: ${seen}`);
+      await sleep(500); // longer than a card's move
+      const handed = await page.evaluate(() => { window.__handoff.done = true; return window.__handoff; });
+      const stood = new Map(handed.before.map((c) => [c.for, c.top]));
+      for (const cards of handed.seen) {
+        const own = cards.filter((c) => c.for === hl.delta);
+        assertEq(own.length, 1, "the highlight has one card throughout");
+        assert(own[0].text.includes("On delta"), `the comment shows throughout, in the field, on its way and stored: ${JSON.stringify(own[0].text)}`);
+        for (const c of cards) assertNear(c.top, stood.get(c.for), 1.5, `the card for ${c.for === hl.delta ? "delta" : c.for} stays where it stood`);
+      }
       // a reply typed in the active card rises into its thread
       await sleep(300);
       await page.keyboard.type("A reply on delta");

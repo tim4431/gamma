@@ -702,9 +702,14 @@ effect's interleaved, and it looped ("Maximum update depth exceeded"). A
 card moves to its new place through its `top`, on `--dur-slow`; one that
 comes grows in where it stands and one that goes (resolved, a new thread's
 card closed) shrinks away there (`ListMotion`, [ui-design.md](ui-design.md)
-"Lists that change"). A new thread stored is shown as its own card at
-once, and the new card's place goes to it when `add` answers: neither
-comes in nor goes with motion.
+"Lists that change"). A new thread sent shows in the new card, over its
+emptied field, while it is on its way: it has no card of its own then
+(`CommentMargin` leaves out a thread on the highlight that was not shown
+when the new card came), so the two never stand together with the new
+card pushing the other up. When `add` answers, the thread's card takes
+the new card's place as the active one, mounted where it rests, so its
+`top` has nothing to move from, and neither comes in nor goes with
+motion. Refused, the field gets its text back.
 
 **A card.** At rest it is the thread's first comment (avatar, name, time
 and text as comments are drawn, clamped to three lines) and "n replies",

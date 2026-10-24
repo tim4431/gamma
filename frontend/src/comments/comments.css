@@ -212,6 +212,9 @@
 }
 .commentReplies { font-size: var(--fs-xs); font-weight: 600; color: var(--text-muted); padding-left: calc(20px + var(--space-3)); } /* under the text, past the avatar */
 .commentCard .commentSignIn { padding-bottom: 0; }
+/* a new comment sent shows over its emptied field until its thread's card
+   takes the place */
+.commentNewCard { display: flex; flex-direction: column; gap: var(--space-3); }
 
 /* The composer (CommentComposer.jsx): one rounded box holding the note
    editor and, for a new comment or a reply, the round send button at its
