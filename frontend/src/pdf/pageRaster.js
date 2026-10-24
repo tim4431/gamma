@@ -232,6 +232,14 @@ export function keepPixels(doc, wraps) {
 // last left the viewer, not yet a paint of its own.
 export const showsKept = (wrap) => !!RASTERS.get(wrap)?.kept();
 
+// The canvas showing a page box's whole page, once it holds the page's
+// pixels (a paint of its own, or the copy from its last visit); null before
+// that or after they were released. The translated view crops formulas from
+// it (pdf/PdfViewer.jsx TransMath); `onBase` says when it changed. The
+// canvas element itself changes at every repaint (see `pair`), so callers
+// ask again rather than keep it.
+export const basePixels = (wrap) => RASTERS.get(wrap)?.base() || null;
+
 // The copy kept of one page, taken out of the store: the caller owns it.
 export function takePixels(doc, pageNumber) {
   const pages = KEPT.get(doc);
@@ -331,10 +339,13 @@ function pair(front) {
 //       nothing.
 //   kept()   whether it shows the canvas it was primed with, not yet a
 //       paint of its own.
+//   base()   the base canvas on screen while it holds the page (basePixels).
 //   onPainted(page)  fresh pixels of `page` landed.
+//   onBase()  the base canvas changed: a paint of the whole page landed, or
+//       the page was primed. Detail paints don't call it.
 //   isCancel(error)  tells pdf.js's cancellation from a failure; the caller
 //       owns the pdf.js module.
-export function installPageRaster({ wrap, base: baseEl, detail: detailEl, onPainted, isCancel }) {
+export function installPageRaster({ wrap, base: baseEl, detail: detailEl, onPainted, onBase, isCancel }) {
   const scroller = wrap.closest(".pdfViewer");
   const shared = sharedFor(scroller);
   const base = pair(baseEl), detail = pair(detailEl);
@@ -398,6 +409,7 @@ export function installPageRaster({ wrap, base: baseEl, detail: detailEl, onPain
       shown = target;
       primed = false;
       held();
+      onBase?.();
       onPainted?.(target.page);
     } finally {
       if (baseTask === task) baseTask = null;
@@ -525,7 +537,7 @@ export function installPageRaster({ wrap, base: baseEl, detail: detailEl, onPain
       const canvas = base.front;
       canvas.width = 0; canvas.height = kept.height; canvas.width = kept.width;
       const ctx = canvas.getContext("2d");
-      if (ctx) { ctx.drawImage(kept, 0, 0); primed = true; } else release(canvas);
+      if (ctx) { ctx.drawImage(kept, 0, 0); primed = true; onBase?.(); } else release(canvas);
     }
     release(kept);
   }
@@ -549,6 +561,7 @@ export function installPageRaster({ wrap, base: baseEl, detail: detailEl, onPain
   const raster = {
     show, prime, copy,
     kept: () => primed,
+    base: () => ((shown || primed) && base.front.width ? base.front : null),
     dispose: () => { primed = false; show(null); RASTERS.delete(wrap); },
   };
   RASTERS.set(wrap, raster);

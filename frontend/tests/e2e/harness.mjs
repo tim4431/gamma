@@ -451,21 +451,27 @@ export async function assertMenuRoles(menu, what, around = 0) {
 // `padBytes` appends one unreferenced stream of that many bytes, so a small
 // text document can weigh as much as a scanned book (the timing probe's
 // transport case) while every page stays tiny to parse and render. A page is
-// its lines, or `{lines, box: [w, h]}` for a MediaBox other than US Letter.
+// its lines, or `{lines, box: [w, h]}` for a MediaBox other than US Letter,
+// or `{runs: [{x, y, size, font, text}], box}`: text placed where it says
+// (PDF user space, y up: the page's top is y = h), in one of the standard
+// fonts "F1" Helvetica, "F2" Times-Roman, "F3" Times-Italic, "F4" Symbol
+// (its text in the Symbol encoding: "a" draws α, "W" draws Ω).
 export function makePdf(pages, { padBytes = 0 } = {}) {
   const esc = (s) => s.replace(/\\/g, "\\\\").replace(/\(/g, "\\(").replace(/\)/g, "\\)");
   const objs = [];
   const add = (s) => { objs.push(s); return objs.length; };
   const catalog = add("");
   const pagesObj = add("");
-  const font = add("<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>");
+  const fonts = ["Helvetica", "Times-Roman", "Times-Italic", "Symbol"]
+    .map((name, i) => `/F${i + 1} ${add(`<< /Type /Font /Subtype /Type1 /BaseFont /${name} >>`)} 0 R`).join(" ");
   const kids = [];
   for (const pg of pages) {
-    const lines = Array.isArray(pg) ? pg : pg.lines;
     const [w, h] = (Array.isArray(pg) ? null : pg.box) || [612, 792];
-    const content = ["BT", "/F1 20 Tf", `72 ${h - 72} Td`, "26 TL", ...lines.map((l) => `(${esc(l)}) Tj T*`), "ET"].join("\n");
-    const stream = add(`<< /Length ${Buffer.byteLength(content)} >>\nstream\n${content}\nendstream`);
-    kids.push(add(`<< /Type /Page /Parent ${pagesObj} 0 R /MediaBox [0 0 ${w} ${h}] /Resources << /Font << /F1 ${font} 0 R >> >> /Contents ${stream} 0 R >>`));
+    const content = pg.runs
+      ? pg.runs.map((r) => `BT /${r.font || "F2"} ${r.size || 10} Tf 1 0 0 1 ${r.x} ${r.y} Tm (${esc(r.text)}) Tj ET`).join("\n")
+      : ["BT", "/F1 20 Tf", `72 ${h - 72} Td`, "26 TL", ...(Array.isArray(pg) ? pg : pg.lines).map((l) => `(${esc(l)}) Tj T*`), "ET"].join("\n");
+    const stream = add(`<< /Length ${Buffer.byteLength(content, "latin1")} >>\nstream\n${content}\nendstream`);
+    kids.push(add(`<< /Type /Page /Parent ${pagesObj} 0 R /MediaBox [0 0 ${w} ${h}] /Resources << /Font << ${fonts} >> >> /Contents ${stream} 0 R >>`));
   }
   if (padBytes > 0) add(`<< /Length ${padBytes} >>
 stream

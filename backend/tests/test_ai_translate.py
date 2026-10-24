@@ -23,13 +23,19 @@ def carol(client):
     return c
 
 
+def texts_of(messages):
+    """The texts a translation call's user turn carries (a JSON object:
+    texts plus their context, translate_context.user_turn)."""
+    return json.loads(messages[-1]["content"])["texts"]
+
+
 def _fake_call(replies):
     """A _call_ai stand-in: records each batch it was sent, answers from
     `replies` (a callable on the batch) as the model's JSON-array reply."""
     calls = []
 
     def fake(messages, system, entry, rt, **kw):
-        batch = json.loads(messages[-1]["content"])
+        batch = texts_of(messages)
         calls.append(batch)
         return json.dumps(replies(batch), ensure_ascii=False)
 
@@ -105,7 +111,7 @@ def test_translate_forwards_effort(carol, monkeypatch):
 
     def fake(messages, system, entry, rt, **kw):
         seen.update(kw)
-        return json.dumps([f"x:{t}" for t in json.loads(messages[-1]["content"])])
+        return json.dumps([f"x:{t}" for t in texts_of(messages)])
 
     monkeypatch.setattr("gamma.routers.ai._call_ai", fake)
     r = carol.post("/api/ai/translate",
@@ -117,6 +123,45 @@ def test_translate_forwards_effort(carol, monkeypatch):
                    json={"texts": ["a second effort-test paragraph"], "lang": "fr", "effort": "turbo"})
     assert r.status_code == 200
     assert seen.get("effort") == ""
+
+
+def test_translate_prompt_names_the_language_and_the_break_marker(carol, monkeypatch):
+    seen = {}
+
+    def fake(messages, system, entry, rt, **kw):
+        seen["system"] = system
+        return json.dumps(texts_of(messages))
+
+    monkeypatch.setattr("gamma.routers.ai._call_ai", fake)
+    r = carol.post("/api/ai/translate",
+                   json={"texts": ["a column-break {br} paragraph for the prompt test"], "lang": "ja"})
+    assert r.status_code == 200
+    assert "into Japanese" in seen["system"]
+    assert "{br}" in seen["system"] and "{lang}" not in seen["system"]
+
+
+def test_translate_sends_the_context_and_salvages_without_the_neighbours(carol, monkeypatch):
+    bodies = []
+
+    def fake(messages, system, entry, rt, **kw):
+        body = json.loads(messages[-1]["content"])
+        bodies.append(body)
+        # The batch comes back one element short: salvaged per paragraph.
+        return json.dumps([f"c:{t}" for t in body["texts"]][: max(1, len(body["texts"]) - 1)])
+
+    monkeypatch.setattr("gamma.routers.ai._call_ai", fake)
+    r = carol.post("/api/ai/translate", json={
+        "texts": ["a context-test paragraph", "its context-test neighbour"], "lang": "ko",
+        "before": "x" * 2000 + " the end of the paragraph before", "after": "the start of the one after",
+        "section": "  II.   MODEL  "})
+    assert r.status_code == 200
+    first, *salvaged = bodies
+    assert first["section"] == "II. MODEL"
+    assert first["before"].endswith("the end of the paragraph before") and len(first["before"]) == 1500
+    assert first["after"] == "the start of the one after"
+    assert len(salvaged) == 2
+    assert all(b["section"] == "II. MODEL" and "before" not in b and "after" not in b for b in salvaged)
+    assert r.json()["translations"] == ["c:a context-test paragraph", "c:its context-test neighbour"]
 
 
 def test_translate_tolerates_fenced_reply(carol, monkeypatch):
@@ -132,7 +177,7 @@ def test_translate_salvages_miscounted_batch(carol, monkeypatch):
     # "expected 5, got 4") — the endpoint retries per paragraph, where a
     # 1-element array can't misalign.
     def fake(messages, system, entry, rt, **kw):
-        batch = json.loads(messages[-1]["content"])
+        batch = texts_of(messages)
         if len(batch) > 1:
             return json.dumps(["merged!"])  # wrong length
         return json.dumps([f"ok:{batch[0]}"])
@@ -154,7 +199,7 @@ def test_translate_unparseable_reply_degrades_to_original(carol, monkeypatch):
     assert r.json()["translations"] == ["another fresh paragraph"]
 
     def good(messages, system, entry, rt, **kw):
-        return json.dumps([f"besser:{t}" for t in json.loads(messages[-1]["content"])])
+        return json.dumps([f"besser:{t}" for t in texts_of(messages)])
 
     monkeypatch.setattr("gamma.routers.ai._call_ai", good)
     r = carol.post("/api/ai/translate", json={"texts": ["another fresh paragraph"], "lang": "de"})
@@ -185,7 +230,7 @@ def test_translate_streams_partials(carol, monkeypatch):
     opened = []
 
     def fake_open(messages, system, entry, rt, **kw):
-        opened.append(json.loads(messages[-1]["content"]))
+        opened.append(texts_of(messages))
         assert kw.get("stream") is True
         return _StreamResp(['```json\n["第一', '段", "第', '二段"]\n```'])
 
@@ -197,7 +242,7 @@ def test_translate_streams_partials(carol, monkeypatch):
     lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
     assert opened == [["stream one", "stream two"]]  # duplicate collapsed upstream
     assert lines[-1] == {"translations": ["第一段", "第二段", "第一段"],
-                         "model": lines[-1]["model"], "cached": False}
+                         "model": lines[-1]["model"], "cached": False, "redone": 0, "effort": ""}
     partials = lines[:-1]
     assert partials[0] == {"i": [0, 2], "text": "第一"}  # both slots of the shared source
     assert {"i": [0, 2], "text": "第一段"} in partials
@@ -207,7 +252,7 @@ def test_translate_streams_partials(carol, monkeypatch):
         "texts": ["stream two", "stream one"], "lang": "zh-CN", "stream": True})
     assert r.status_code == 200
     lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
-    assert lines == [{"translations": ["第二段", "第一段"], "model": lines[0]["model"], "cached": True}]
+    assert lines == [{"translations": ["第二段", "第一段"], "model": lines[0]["model"], "cached": True, "redone": 0, "effort": ""}]
     assert len(opened) == 1
 
 
@@ -317,7 +362,7 @@ def test_translate_with_google(dave, monkeypatch):
     r = dave.post("/api/ai/translate", json={"texts": texts, "lang": "zh-TW", "model": "engine:google"})
     assert r.status_code == 200, r.text
     assert r.json() == {"translations": ["G:Google one.", "  ", "G:Google two.", "G:Google one."],
-                        "model": "engine:google", "cached": False}
+                        "model": "engine:google", "cached": False, "redone": 0}
     (req,) = calls
     assert req.get_header("X-goog-api-key") == "AIza-secret-key-9876"
     assert "key=" not in req.full_url
@@ -327,7 +372,7 @@ def test_translate_with_google(dave, monkeypatch):
     r = dave.post("/api/ai/translate", json={"texts": ["Google two."], "lang": "zh-TW",
                                              "model": "engine:google", "stream": True})
     assert [json.loads(line) for line in r.text.splitlines() if line.strip()] == [
-        {"translations": ["G:Google two."], "model": "engine:google", "cached": True}]
+        {"translations": ["G:Google two."], "model": "engine:google", "cached": True, "redone": 0}]
     assert len(calls) == 1
 
 
@@ -477,3 +522,95 @@ def test_engine_batches_split_on_limits():
     assert list(_batches(["a" * 3, "b" * 3, "c" * 3], 10, 6)) == [["aaa", "bbb"], ["ccc"]]
     assert list(_batches(["x"] * 5, 2, 100)) == [["x", "x"], ["x", "x"], ["x"]]
     assert list(_batches(["y" * 50], 2, 10)) == [["y" * 50]]  # an oversize text goes alone
+
+
+def test_effort_defaults_to_the_models_lowest_level(carol, monkeypatch):
+    import gamma.routers.ai as ai_mod
+
+    seen = []
+
+    def fake(messages, system, entry, rt, **kw):
+        seen.append(kw["effort"])
+        return json.dumps([f"e:{t}" for t in texts_of(messages)])
+
+    monkeypatch.setattr("gamma.routers.ai._call_ai", fake)
+    for n, levels in enumerate([["low", "medium", "high"], ["none", "low", "high"], None, []]):
+        monkeypatch.setattr(ai_mod.ai_catalog, "reasoning_efforts", lambda *a, levels=levels: (levels, "provider"))
+        r = carol.post("/api/ai/translate", json={"texts": [f"an effort-default paragraph {n}"], "lang": "pt"})
+        assert r.status_code == 200
+    # Anthropic's lowest is "low": its "none" would leave the parameter out
+    # (the model's default). Unknown levels, or none, send nothing.
+    assert seen == ["low", "low", "", ""]
+    monkeypatch.setattr(ai_mod.ai_catalog, "reasoning_efforts", lambda *a: pytest.fail("a pick needs no lookup"))
+    carol.post("/api/ai/translate", json={"texts": ["an effort-pick paragraph"], "lang": "pt", "effort": "high"})
+    assert seen[-1] == "high"
+
+
+def test_default_effort_on_the_openai_wires_is_the_first_level():
+    from gamma.translate_context import default_effort
+
+    assert default_effort(["none", "minimal", "low"], "openai-responses") == "none"
+    assert default_effort(["minimal", "low"], "openai") == "minimal"
+    assert default_effort(["none"], "anthropic") == ""
+
+
+def test_a_paragraph_that_loses_a_formula_token_is_redone_on_its_own(carol, monkeypatch):
+    batches = []
+
+    def fake(messages, system, entry, rt, **kw):
+        batch = texts_of(messages)
+        batches.append(batch)
+        if len(batch) > 1:  # the batch drops {v2} from its second paragraph, writes {v1} spaced in the first
+            return json.dumps(["译 ｛ v1 ｝ 文", "译 {v1} 文"], ensure_ascii=False)
+        return json.dumps([batch[0].replace("where", "其中")], ensure_ascii=False)
+
+    monkeypatch.setattr("gamma.routers.ai._call_ai", fake)
+    texts = ["token test one {v1} here", "where {v1} and {v2} stand"]
+    r = carol.post("/api/ai/translate", json={"texts": texts, "lang": "zh-CN"})
+    assert r.status_code == 200
+    assert r.json()["translations"] == ["译 {v1} 文", "其中 {v1} and {v2} stand"]
+    assert batches == [texts, ["where {v1} and {v2} stand"]]
+
+
+def test_a_paragraph_whose_tokens_stay_lost_comes_back_verbatim(carol, monkeypatch):
+    monkeypatch.setattr("gamma.routers.ai._call_ai", lambda messages, *a, **k: json.dumps(["没有公式"] * len(texts_of(messages))))
+    r = carol.post("/api/ai/translate", json={"texts": ["a lost-token paragraph {v1}"], "lang": "zh-CN"})
+    assert r.json()["translations"] == ["a lost-token paragraph {v1}"]
+
+
+def test_a_service_that_drops_a_token_shows_the_original(dave, monkeypatch):
+    def reply(req):
+        return [{"translations": [{"text": t.replace(" {v1}", ""), "to": "zh-Hans"}]} for t in json.loads(req.data)]
+
+    fake, _ = _fake_urlopen(reply)
+    monkeypatch.setattr("gamma.translate_engines.urlopen", fake)
+    r = dave.post("/api/ai/translate", json={"texts": ["keeps {v1} it", "no token here"],
+                                             "lang": "zh-CN", "model": "engine:microsoft"})
+    assert r.json()["translations"] == ["keeps {v1} it", "no token here"]
+
+
+def test_the_prompt_carries_the_target_languages_conventions():
+    from gamma.translate_context import system_prompt
+
+    assert "full-width punctuation" in system_prompt("zh-CN")
+    assert "である調" in system_prompt("ja")
+    assert "full-width" not in system_prompt("de")
+
+
+def test_paragraphs_that_broke_their_tokens_are_redone_in_one_call(carol, monkeypatch):
+    batches = []
+
+    def fake(messages, system, entry, rt, **kw):
+        batch = texts_of(messages)
+        batches.append(batch)
+        if len(batch) == 4:  # three of four lose their token
+            return json.dumps(["好 {v1}", "坏", "坏", "坏"], ensure_ascii=False)
+        return json.dumps([t.replace("broken", "修好") for t in batch], ensure_ascii=False)
+
+    monkeypatch.setattr("gamma.routers.ai._call_ai", fake)
+    texts = ["fine {v1}", "broken one {v1}", "broken two {v1}", "broken three {v1}"]
+    r = carol.post("/api/ai/translate", json={"texts": texts, "lang": "zh-CN"})
+    body = r.json()
+    assert body["translations"] == ["好 {v1}", "修好 one {v1}", "修好 two {v1}", "修好 three {v1}"]
+    assert body["redone"] == 3
+    assert batches[1] == texts[1:], "one call for the three, not three calls"

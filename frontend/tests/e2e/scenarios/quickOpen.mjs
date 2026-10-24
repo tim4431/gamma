@@ -1,3 +1,4 @@
+import { generateNKeysBetween } from "fractional-indexing";
 import { Account, live, wanted } from "../harness.mjs";
 
 // Ctrl+P: the quick-open page palette (library/QuickOpen.jsx).
@@ -336,9 +337,9 @@ export async function quickOpenScenarios(env) {
     }
   });
 
-  await step("tabs: a tab pressed is selected at once while the page it leaves stays whole until its own lands; a quick switch shows no pill, a slow one says Opening… and takes it down as the page lands, never Ready.", async () => {
+  await step("tabs: a tab pressed is selected at once while the page it leaves stays whole until its own lands; a quick switch shows no pill, a slow one says Opening… and takes it down as the page lands, never Ready. Pressing the tab on screen, or closing the one pressed, takes the press back", async () => {
     const made = [];
-    for (const title of ["Switch from", "Switch to"]) {
+    for (const title of ["Switch from", "Switch to", "Switch third"]) {
       const b = await user.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: title } });
       await user.api("/api/blocks", { method: "POST", body: { parent_id: b.id, content: `the body of ${title}` } });
       made.push(b);
@@ -415,15 +416,140 @@ export async function quickOpenScenarios(env) {
       assert(seen.every((f) => !f.pill), `no pill for a quick switch: ${seen.map(said).join(" / ")}`);
       // two presses in quick succession: the later one's page stays, though
       // the earlier one's tree answers after it
+      const selected = async () => (await page.locator(".tabStrip .tab.active:not([data-leaving]) .tabTitle").allInnerTexts()).join();
       gate.delay = 0;
       gate.late = made[1].id;
       await tab("Switch to").click();
-      await tab("Switch from").click();
-      await onPage("Switch from");
+      await tab("Switch third").click();
+      await onPage("Switch third");
       await page.waitForTimeout(1200);
-      assertEq(await page.locator(".pageTitleRow .titleText").innerText(), "Switch from", "the late answer does not take over");
-      assertEq((await page.locator(".tabStrip .tab.active:not([data-leaving]) .tabTitle").allInnerTexts()).join(), "Switch from");
+      assertEq(await page.locator(".pageTitleRow .titleText").innerText(), "Switch third", "the late answer does not take over");
+      assertEq(await selected(), "Switch third");
       assertEq(await page.locator(".statusPill").count(), 0, "and leaves no pill behind");
+      gate.late = "";
+      // The tab of the page on screen, pressed while another's page opens,
+      // takes that press back: the page on screen is not read again, and no
+      // "Opening…" stands over it.
+      const reads = [];
+      page.on("request", (r) => { const m = /\/api\/blocks\/([^/]+)\/subtree/.exec(r.url()); if (m) reads.push(m[1]); });
+      let release2;
+      gate.hold = new Promise((resolve) => { release2 = resolve; });
+      await tab("Switch to").click();
+      await page.locator(".statusPill", { hasText: "Opening" }).waitFor({ timeout: 3000 });
+      await tab("Switch third").click();
+      assertEq(await selected(), "Switch third", "the page on screen's tab is selected again at once");
+      await page.locator(".statusPill").waitFor({ state: "detached", timeout: 3000 });
+      gate.hold = null;
+      release2();
+      await page.waitForTimeout(800);
+      assertEq(await page.locator(".pageTitleRow .titleText").innerText(), "Switch third", "the page on screen stays");
+      assertEq(await selected(), "Switch third");
+      assertEq(reads.filter((id) => id === made[2].id).length, 0, `the page on screen is not read again: ${reads.join(", ")}`);
+      // The tab pressed, closed before its page lands: the press is taken
+      // back, the page on screen keeps its tab selected, and the closed tab
+      // does not come back with its page.
+      let release3;
+      gate.hold = new Promise((resolve) => { release3 = resolve; });
+      await tab("Switch to").click();
+      await until(async () => (await selected()) === "Switch to", { what: "the pressed tab selected" });
+      await tab("Switch to").getByRole("button", { name: "Close Switch to", exact: true }).click();
+      await until(async () => (await selected()) === "Switch third", { what: "the page on screen's tab selected again" });
+      gate.hold = null;
+      release3();
+      await page.waitForTimeout(800);
+      assertEq(await page.locator(".pageTitleRow .titleText").innerText(), "Switch third", "the page on screen stays");
+      assertEq((await page.locator(".tabStrip .tab:not([data-leaving]) .tabTitle").allInnerTexts()).join(), "Switch from,Switch third",
+        "the closed tab stays closed");
+      assertEq(await selected(), "Switch third");
+      assertEq(await page.locator(".statusPill").count(), 0, "and no pill is left");
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await user.api("/api/prefs/open-tabs", { method: "PUT", body: { value: [] } });
+    }
+  });
+  // A jump to a block of another page, or the home menu's Share…, belongs
+  // to the open it was asked of: a tab pressed before that page lands
+  // drops both, and no page after it lands on the block or opens Share.
+  await step("tabs: a [[ref]] jump or a Share… whose page a tab press overtook is dropped with it: the pages after land at their own place, and that page opens later as any other", async () => {
+    const made = {};
+    for (const name of ["Jump from", "Jump target", "Jump over"]) {
+      const pg = await user.api("/api/pages", { method: "POST", body: { title: name } });
+      const tag = name.split(" ")[1].toLowerCase();
+      const ops = generateNKeysBetween(null, null, 60).map((position, i) => ({ op: "insert", id: `jt${tag}${i}`, parent: pg.id, position,
+        content: tag === "from" && i === 30 ? "jump to [[jttarget40]] here" : `${name} row ${i} with words enough to fill a line` }));
+      await user.api(`/api/pages/${pg.id}/ops`, { method: "POST", body: { client: "seed", ops } });
+      made[tag] = { id: pg.id, title: name };
+    }
+    await user.api("/api/prefs/open-tabs", { method: "PUT", body: { value: [made.from, made.over] } });
+    const ctx = await user.context(browser);
+    const gate = { hold: null };
+    await ctx.route(`**/api/blocks/${made.target.id}/subtree*`, async (route) => {
+      if (gate.hold) await gate.hold;
+      await route.continue();
+    });
+    const page = await openPage(ctx, `${server.base}/?page=${made.from.id}&ws=${user.ws}`);
+    const tab = (title) => page.locator(live(".tabStrip .tab"), { hasText: title });
+    const title = () => page.locator(".pageTitleRow .titleText").innerText();
+    // The notes' scroll and the first row in view.
+    const notesAt = () => page.evaluate(() => {
+      const list = document.querySelector(".sidebar .blockList");
+      const top = list.getBoundingClientRect().top + 4;
+      const first = [...list.querySelectorAll(".blockRowWrap[data-block-id]")].find((r) => r.getBoundingClientRect().bottom > top);
+      return `${Math.round(list.scrollTop)} ${first?.dataset.blockId}`;
+    });
+    try {
+      await page.locator(".blockList .blockRow", { hasText: "Jump from row 59 with" }).waitFor();
+      const chip = page.locator(".blockRefChip").first();
+      // once it names its block (the chip renders again as its title lands)
+      await until(async () => /Jump target row 40/.test(await chip.innerText().catch(() => "")), { what: "the chip names its block" });
+      await page.waitForTimeout(300);
+      await chip.scrollIntoViewIfNeeded();
+      await until(async () => (await notesAt()).split(" ")[0] !== "0", { what: "the notes scrolled to the chip" });
+      let release;
+      gate.hold = new Promise((resolve) => { release = resolve; });
+      await chip.click();
+      await tab("Jump over").click();
+      await until(async () => (await title()) === "Jump over", { what: "the tab pressed after the jump opens" });
+      gate.hold = null;
+      release();
+      await page.waitForTimeout(800);
+      assertEq(await title(), "Jump over", "the jump's page does not take over");
+      assertEq(await notesAt(), "0 jtover0", "the page after lands at its top, not at the scroll the jump left");
+      // The home menu's Share… for the target page, overtaken the same way.
+      await page.locator('[data-guide="header.home"]').click();
+      const row = page.locator(".fileRow, .pageCard", { hasText: "Jump target" }).first();
+      await row.waitFor();
+      gate.hold = new Promise((resolve) => { release = resolve; });
+      await row.click({ button: "right" });
+      await page.locator(".ctxMenuItem", { hasText: "Share…" }).click();
+      await tab("Jump over").click();
+      await until(async () => (await title().catch(() => "")) === "Jump over", { what: "the tab pressed after Share… opens" });
+      gate.hold = null;
+      release();
+      await page.waitForTimeout(800);
+      assertEq(await page.locator(".sharePopover").count(), 0, "no Share popover over the page after");
+      // That page opened later, from a link to its block: it lands on it,
+      // and only on it, with no Share popover.
+      await page.keyboard.press("Control+p");
+      const dialog = page.getByRole("dialog", { name: "Open a page" });
+      await dialog.getByRole("textbox", { name: "Search pages by title or label" }).fill("Jump target");
+      await dialog.getByRole("option", { name: /Jump target/ }).first().click();
+      await until(async () => (await title()) === "Jump target", { what: "the target page open" });
+      await page.waitForTimeout(800);
+      assertEq(await page.locator(".sharePopover").count(), 0, "the dropped Share… does not open with its page later");
+      assertEq((await notesAt()).split(" ")[0], "0", "nor does the dropped jump land it on the block");
+      // The jump with nothing overtaking it lands on its block, focused.
+      await tab("Jump from").click();
+      await until(async () => (await title()) === "Jump from", { what: "back on the page with the chip" });
+      await page.locator(".blockRefChip").first().click();
+      await until(async () => (await title()) === "Jump target", { what: "the jump's page open" });
+      const target = page.locator('.blockRowWrap[data-block-id="jttarget40"] .blockRow');
+      await until(async () => /focused/.test(await target.getAttribute("class")) && await target.isVisible()
+        && await target.evaluate((el) => {
+          const r = el.getBoundingClientRect(), list = el.closest(".blockList").getBoundingClientRect();
+          return r.top >= list.top && r.bottom <= list.bottom;
+        }), { what: "the jump lands on its block, focused and in view" });
       assertNoProblems(page);
     } finally {
       await ctx.close();

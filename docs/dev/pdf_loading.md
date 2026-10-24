@@ -161,7 +161,10 @@ pixels were drawn for, not for the box as it is in that commit. A page
 box of that document mounting again starts from its copy (`takePixels`,
 then the raster's `prime`, before paint), and its own first paint
 replaces it; a primed page keeps the copy through `show(null)` until
-then. The copies of the last two documents left stay, within 96 MB (32 MB
+then. A primed page counts as in view from that commit (`useWithin`'s
+`assume`), so its highlights, note badges, link boxes and margin cards
+are drawn in the frame its pixels are, not one after, when its observers
+first report; they own it from there. The copies of the last two documents left stay, within 96 MB (32 MB
 under the touch and WebKit canvas limits), the oldest going first, and a
 document `DOC_CACHE` evicts takes its copies with it (`forgetPixels`).
 A document back with a copy on a page in view at the restored place
