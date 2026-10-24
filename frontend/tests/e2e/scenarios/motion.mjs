@@ -156,6 +156,23 @@ export async function motionScenarios(env) {
       const indent = await glides(page);
       assertEq(indent.filter((g) => g.startsWith("moving ")).length, 1, `only the indented row moves: ${indent}`);
       assert(!indent.includes("entering under:mv1"), `the body it went into does not fade: ${indent}`);
+      // A press outside the list (the editing bar's Insert…) and text typed in
+      // it land a glide at once, so a popup they open is placed at rest.
+      const landsOn = (how) => page.evaluate(async (how) => {
+        for (let i = 0; i < 20 && !document.querySelector("[data-moving]"); i++) await new Promise(requestAnimationFrame);
+        const gliding = document.querySelectorAll("[data-moving]").length;
+        if (how === "press") document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+        else document.querySelector(".blockList .cm-content").dispatchEvent(new InputEvent("beforeinput", { bubbles: true, inputType: "insertText", data: "x" }));
+        return [gliding, document.querySelectorAll("[data-moving]").length];
+      }, how);
+      const still = () => until(async () => (await page.locator("[data-moving]").count()) === 0, { what: "the glides land" });
+      await still();
+      await page.keyboard.press("Shift+Tab");
+      assertEq((await landsOn("press")).join(), "1,0", "a press outside the list lands the outdent's glide");
+      await still();
+      await page.keyboard.press("Tab");
+      assertEq((await landsOn("input")).join(), "1,0", "text typed in the list lands the indent's glide");
+      await glides(page);
       await page.keyboard.press("Escape");
       await assertNoProblems(page);
     } finally { await ctx.close(); }

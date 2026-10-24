@@ -196,14 +196,20 @@ function AgentSteps({ actions, live, running, waiting, helpers = [], usage, text
           : text ? t("Responding") : t("Thinking");
   return (
     <div className="chatStepsWrap">
-      <button type="button" className={`chatPill chatSteps${live ? " live" : ""}`} aria-live="polite"
+      {/* One element from the turn's start to its end, so its label morphs
+          through every step: until a step lands it opens nothing, so it
+          takes no focus (disabled) and a reply that ends without one can
+          fold it away from under nobody. Only the label is a live region:
+          the token count ticking beside it while the reply streams is
+          not read out. */}
+      <button type="button" className={`chatPill chatSteps${live ? " live" : ""}`} disabled={!actions.length}
         onClick={actions.length ? onToggle : undefined} aria-expanded={actions.length ? open : undefined}
         title={!actions.length ? undefined : open ? t("Hide the steps") : t("Show every step with its arguments and output")}>
         {waiting ? <ShieldIcon size={14} /> : done ? <CheckIcon size={14} /> : <span className="transferSpin inline" aria-hidden="true" />}
-        <span className={`chatPillText${live && !waiting ? " shimmerText" : ""}`}>
+        <span className={`chatPillText${live && !waiting ? " shimmerText" : ""}`} aria-live="polite" aria-atomic="true">
           <MorphText>{label}</MorphText>
         </span>
-        {live ? <UsageLine usage={usage} className="chatMsgUsage live" /> : null}
+        {live ? <span aria-hidden="true"><UsageLine usage={usage} className="chatMsgUsage live" /></span> : null}
         {failed && done ? <span className="chatStepsFailed">{t("{n} failed", { n: failed })}</span> : null}
         {declined && done ? <span className="chatStepsDeclined">{t("{n} not allowed", { n: declined })}</span> : null}
         {actions.length ? <Chevron open={open} dir="down" size={14} /> : null}

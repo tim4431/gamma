@@ -1398,7 +1398,10 @@ the structured fields fall back to their summary. While the reply streams,
 the same pill says what is under way from the start of the turn: "Thinking",
 then the step running now ("Searching library for “…”…"), "Thinking" again
 between steps and "Responding" once text arrives, each change a morph. A
-reply that ends without a step folds its pill away. The step's label comes
+reply that ends without a step folds its pill away. Until a step lands the
+pill opens nothing, so it takes no focus; only its label is a live region,
+so a screen reader hears each label once and not the token count that
+ticks beside it. The step's label comes
 from its arguments (`runningLabel`):
 "Renaming “A” to “B”…", "Moving “A” to ML/Generative…", "Appending to a
 note…", "Reading notes of “A”…" when `read_block` names a page. A call

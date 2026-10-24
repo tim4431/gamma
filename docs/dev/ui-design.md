@@ -1140,9 +1140,11 @@ and what it holds travels with it.
   left.
 - **A popup over the window stays put.** An item holding what matches
   `hold`, such as the caret's "/" or `[[` menu, stays still, since a
-  moving ancestor would carry it off. A key typed or a paste in the list
-  lands every glide at once, so a popup the caret opens is placed against
-  a row at rest.
+  moving ancestor would carry it off. Text typed or pasted in the list,
+  from any keyboard or input method, and a press outside the list (the
+  editing bar's Insert…) land every glide at once, so a popup they open is
+  placed against a row at rest. A press in the list aims at what is drawn
+  and lands nothing.
 
 `arriving(el)` counts a glide as an arrival, so the guide's card waits
 for its anchor's row to land.

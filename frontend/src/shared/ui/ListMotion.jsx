@@ -26,9 +26,12 @@
 // another client's change) or `off`; never under reduced motion or while
 // the list is out of sight. `moves` false leaves the places alone (they
 // transition already). An item holding what matches `hold` (a popup placed
-// against the window, which a moving item would carry off) stays still. A
-// key typed or a paste in the list lands the glides at once, so what the
-// caret opens is placed against a row at rest. Boxes are the window's.
+// against the window, which a moving item would carry off) stays still.
+// Text typed or pasted in the list (any keyboard's, an input method's too)
+// and a press outside it (the editing bar's Insert…) land the glides at
+// once, so a popup they open is placed against a row at rest; a press in
+// the list aims at what is drawn, so it lands nothing. Boxes are the
+// window's.
 import React from "react";
 import { listGlides, longestMs, reducedMotion, sameKeys } from "./motion.js";
 import { standBack, standing, stillCopy } from "./leave.js";
@@ -55,16 +58,16 @@ export default class ListMotion extends React.Component {
 
   componentDidMount() {
     const root = this.root.current;
-    root.addEventListener("keydown", this.onKey, true);
-    root.addEventListener("paste", this.land, true);
+    root.addEventListener("beforeinput", this.onInput, true);
+    document.addEventListener("pointerdown", this.onPress, true);
     root.addEventListener("animationend", this.onEnd);
     root.addEventListener("animationcancel", this.onEnd);
   }
 
   componentWillUnmount() {
     const root = this.root.current;
-    root?.removeEventListener("keydown", this.onKey, true);
-    root?.removeEventListener("paste", this.land, true);
+    root?.removeEventListener("beforeinput", this.onInput, true);
+    document.removeEventListener("pointerdown", this.onPress, true);
     root?.removeEventListener("animationend", this.onEnd);
     root?.removeEventListener("animationcancel", this.onEnd);
     clearTimeout(this.timer);
@@ -208,9 +211,16 @@ export default class ListMotion extends React.Component {
     this.gliding.add(glide);
   }
 
-  // Every glide ends where its item rests.
+  // Every glide ends where its item rests, and its item stops saying it
+  // moves at once (an animation's cancel event comes later).
   settle = () => {
-    for (const glide of [...this.gliding]) glide.cancel();
+    const glides = [...this.gliding];
+    this.gliding.clear();
+    for (const glide of glides) {
+      glide.cancel();
+      const el = glide.effect?.target;
+      if (el) delete el.dataset.moving;
+    }
   };
 
   // Everything under way ends at once.
@@ -222,8 +232,12 @@ export default class ListMotion extends React.Component {
     this.copies.clear();
   };
 
-  onKey = (e) => {
-    if ((this.gliding.size || this.entering.size) && e.key.length === 1 && !e.ctrlKey && !e.metaKey) this.land();
+  busy = () => this.gliding.size > 0 || this.entering.size > 0;
+
+  onInput = () => { if (this.busy()) this.land(); };
+
+  onPress = (e) => {
+    if (this.busy() && !this.root.current?.contains(e.target)) this.land();
   };
 
   onEnd = (e) => {

@@ -1450,14 +1450,21 @@ export async function chatNavigationScenarios(env) {
       const pill = reply.locator(".chatSteps");
       await pill.filter({ hasText: "Thinking" }).waitFor();
       assertEq(await pill.locator(".shimmerText").count(), 1, "the light says work is under way");
+      assert(await pill.isDisabled(), "until a step lands the pill opens nothing and takes no focus");
+      const said = async () => pill.evaluate((el) => [...el.querySelectorAll("[aria-live]")].map((n) => n.className));
+      assertEq((await said()).join(), "chatPillText shimmerText", "only the label is a live region");
       const morphed = page.waitForSelector(".chatSteps .morph.moving", { state: "attached" });
       await push(page, { step: { id: "c1", tool: "search_library", args: { query: "cavity" } } });
       await morphed;
       await pill.filter({ hasText: "Searching library for “cavity”…" }).waitFor();
       await push(page, { action: { kind: "search", tool: "search_library", summary: "Searched library for “cavity” — 1 hit", args: { query: "cavity" }, result: "…" } });
       await pill.filter({ hasText: "Thinking" }).waitFor();
+      assert(!(await pill.isDisabled()), "with a step it opens them");
+      assertEq(await pill.getAttribute("aria-expanded"), "false");
       await push(page, { delta: "Nothing to tidy." });
       await pill.filter({ hasText: "Responding" }).waitFor();
+      assertEq(await pill.evaluate((el) => [...el.querySelectorAll(".chatMsgUsage.live")].every((n) => n.closest("[aria-hidden]"))), true,
+        "the token count ticking beside it is not read out");
       await page.evaluate(() => window.chatStream.finish());
       await pill.filter({ hasText: "1 step" }).waitFor();
       assertEq(await pill.locator(".shimmerText").count(), 0, "a finished reply's pill is still");
