@@ -16,6 +16,17 @@ export const isOpen = (thread) => !thread.resolved_at;
 // A count on a small badge: "9+" past nine.
 export const shortCount = (n) => (n > 9 ? "9+" : String(n));
 
+// The element a block's thread popover hangs from, and Escape gives the
+// focus back to: the one that opened it while it is in the document, else
+// the block's row control (a row that remounted). Never one inert: a folded
+// dock window keeps its rows mounted, out of sight, and a leaving copy is a
+// picture. With none, the popover stands centred near the top.
+export function threadAnchor({ anchor, blockId }) {
+  const usable = (el) => !!el?.isConnected && !el.closest("[inert]");
+  if (usable(anchor)) return anchor;
+  return [...document.querySelectorAll(`[data-comment-for="${CSS.escape(blockId)}"]`)].find(usable) || null;
+}
+
 // What a row reads: `byBlock` maps a block's id to its threads, oldest
 // first; `counts` to how many of them are open (blocks with none are left
 // out, so a row without comments reads 0).

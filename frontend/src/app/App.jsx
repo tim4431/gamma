@@ -213,7 +213,7 @@ import {
 import { createLibraryMatcher } from "../library/librarySearch";
 import { prefetchTrash } from "../library/trashList";
 import { useComments } from "../comments/useComments";
-import { abandonedCommentHighlight, isOpen, shortCount, threadLink } from "../comments/comments.js";
+import { abandonedCommentHighlight, isOpen, shortCount, threadAnchor, threadLink } from "../comments/comments.js";
 import { preloadCommentMargin } from "../comments/marginSlot";
 import { useInbox } from "../inbox/useInbox";
 import { InboxBadge, InboxButton } from "../inbox/InboxButton";
@@ -4289,8 +4289,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const pop = threadPop;
     setThreadPop(null);
     if (!returnFocus || !pop || pop.margin) return;
-    const el = pop.anchor?.isConnected ? pop.anchor : document.querySelector(`[data-comment-for="${CSS.escape(pop.blockId)}"]`);
-    el?.focus();
+    threadAnchor(pop)?.focus();
   }
   // The selection popup's Comment: the highlight it just made ({id,
   // opened}), whose popover opens on it, from the passage once that is

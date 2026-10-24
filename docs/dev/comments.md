@@ -435,7 +435,10 @@ pointer entering it, or the focus, fetches the popover's module.
 
 **The thread popover.** App renders one instance through a portal to
 `body`, keyed by its block. It hangs from the element that opened it, or
-the block's row control (`data-comment-for`), placed from its own measured
+the block's row control (`data-comment-for`), never one inert
+(`threadAnchor`, comments.js: a folded dock window keeps its rows mounted
+and out of sight), and with neither stands centred near the top. It is
+placed from its own measured
 size before it is painted (`useFloatingPosition` with `follow`, `flipY`
 above the anchor when there is no room below; [ui-design.md](ui-design.md)
 "Menus and popups open in place"). It is a `.popover` at `--z-popover`, at
