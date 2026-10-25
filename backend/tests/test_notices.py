@@ -72,6 +72,9 @@ def test_update_notice_until_the_release_is_seen(nadmin, nuser, monkeypatch):
     monkeypatch.setattr(version, "_fetch_latest", lambda: {"version": "0.4.0", "url": "", "published_at": ""})
     version._cache.clear()
     assert _ids(nadmin) == ["update"]
+    # a Microsoft Store install waits for the Store to deliver it
+    monkeypatch.setattr(version, "UPDATES", "store")
+    assert _ids(nadmin) == []
 
 
 def test_log_errors_notice_follows_the_newest_error(nadmin, monkeypatch):

@@ -78,7 +78,6 @@ ADMIN_TAB = (
     "<div class=section id=flim hidden><h2>Limits <span id=flimwho></span></h2><div class=body>"
     "<form id=flimform class=inline autocomplete=off>"
     "<label>Storage, MB<input name=quota_mb type=number min=1 step=1></label>"
-    "<label>Per file, MB<input name=max_upload_mb type=number min=1 step=1></label>"
     "<label>Accounts<input name=max_accounts type=number min=1 step=1></label>"
     "<label>Memory, MB<input name=memory_mb type=number min=1 step=1></label>"
     "<label>CPUs<input name=cpus type=number min=0.25 max=64 step=0.25></label>"
@@ -233,7 +232,7 @@ const QUOTAS = __QUOTAS__;   // the hosted plans, for the Provision form's hint
 const TAB = document.getElementById('tab-servers'), $ = id => document.getElementById(id);
 const SRV_PILL = {running: 'pill pill--ok', grace: 'pill pill--warn', read_only: 'pill pill--warn', stopped: 'pill pill--warn', suspended: 'pill pill--warn'};
 const UPGRADABLE = ['running', 'grace', 'read_only', 'suspended'];   // fleet.UPGRADABLE: the states a run takes
-const LIMITS = ['quota_mb', 'max_upload_mb', 'max_accounts', 'memory_mb', 'cpus'];   // hosted.OVERRIDES
+const LIMITS = ['quota_mb', 'max_accounts', 'memory_mb', 'cpus'];   // hosted.OVERRIDES
 const KIND_WORD = {update: 'environment'};
 let timer = 0, live = false, gen = 0, showDeleted = false, defImage = '', defTag = '', servers = [], autoOn = false;
 let limFor = null, envFor = null, fleetEnv = [];

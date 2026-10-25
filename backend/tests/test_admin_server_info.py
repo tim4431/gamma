@@ -57,6 +57,9 @@ def test_server_info_reports_the_build_and_a_newer_release(infoadmin, monkeypatc
     assert info["uptime_seconds"] >= 0 and info["started_at"].endswith("Z")
     assert info["log_counts"]["warning"] >= 1 and set(info["log_counts"]) == {"info", "warning", "error"}
     assert info["schema_version"] >= 7 and info["image"].startswith("ghcr.io/")
+    assert info["updates"] == ""  # no desktop shell: the admin pulls the image
+    monkeypatch.setattr(version, "UPDATES", "store")
+    assert infoadmin.get("/api/admin/server-info").json()["updates"] == "store"
     # same or older release: no update
     monkeypatch.setattr(version, "_fetch_latest", lambda: {"version": "0.2.1", "url": "", "published_at": ""})
     assert infoadmin.get("/api/admin/server-info", params={"refresh": 1}).json()["update_available"] is False

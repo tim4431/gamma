@@ -20,7 +20,7 @@ import { PublicUrlSettings } from "./SettingsPublicUrl";
 import { CloudSignInSettings } from "./SettingsCloudSignIn";
 import { GuestSettings } from "./SettingsGuests";
 import { SharedAiProviderSettings } from "./SettingsAi";
-import { ActivityIcon, AlertCircleIcon, CloudDownloadIcon, CloudIcon, DatabaseIcon, ExternalLinkIcon, ImportIcon, ServerIcon,
+import { ActivityIcon, AlertCircleIcon, CloudDownloadIcon, CloudIcon, DatabaseIcon, ExternalLinkIcon, ServerIcon,
   UsersIcon } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { fmtDate, t, tn } from "../shared/i18n/i18n.js";
@@ -84,7 +84,12 @@ function updateHint(info) {
 // GET /api/admin/server-info: the build, uptime, log counts by level and the
 // GitHub release check (cached server-side; "Check now" refreshes). A
 // Docker server cannot update itself, so an available update is a hint
-// to pull the image; the desktop app updates on its own.
+// to pull the image. The desktop app's server says who installs it
+// (`updates`): the app itself, or in a Microsoft Store install the Store,
+// which has a release only once Microsoft certifies it — no warning
+// tone there, and Open Store leads to the Store's updates page.
+const STORE_UPDATES_URL = "ms-windows-store://downloadsandupdates";
+
 function ServerDashboard() {
   const { data: info, error: readError, set: setInfo } = useSettingsRead("/admin/server-info", { poll: 30000 });
   const [checkError, setCheckError] = React.useState("");
@@ -107,7 +112,8 @@ function ServerDashboard() {
   }
   const counts = info.log_counts || {};
   const logTone = counts.error ? "error" : counts.warning ? "warn" : "";
-  const updateTone = info.update_available ? "warn" : "";
+  const fromStore = info.updates === "store";
+  const updateTone = info.update_available && !fromStore ? "warn" : "";
   return <>
     <div className="setStats">
       <StatText icon={ServerIcon} label={t("version")} value={info.version ? `v${info.version}` : t("dev build")}
@@ -129,6 +135,9 @@ function ServerDashboard() {
         ) : info.latest?.url ? (
           <button className="uiBtn sm" onClick={() => window.open(info.latest.url, "_blank", "noopener")}>{t("Release notes")}</button>
         ) : null}
+        {fromStore && info.update?.kind === "release" ? (
+          <button className="uiBtn sm" onClick={() => window.open(STORE_UPDATES_URL, "_blank", "noopener")}>{t("Open Store")}</button>
+        ) : null}
         <button className={`uiBtn sm ${updateTone ? "primary" : ""}`} disabled={checking} onClick={checkNow}>
           <MorphText>{checking ? t("Checking…") : t("Check now")}</MorphText>
         </button>
@@ -136,8 +145,12 @@ function ServerDashboard() {
     </Row>
     {info.update?.kind === "release" ? (
       <div className="settingsPaneHint">
-        {t("A server in Docker does not update itself: pull {latest} (or {version}) and restart the container. The desktop app updates on its own.", {
-          latest: <code>{info.image}:latest</code>, version: <code>:{info.update.version}</code> })}
+        {fromStore
+          ? t("Installed from the Microsoft Store: the Store has a release once Microsoft certifies it, one to three days after it is out, and Windows then installs it. To get it sooner, Open Store → Get updates.")
+          : info.updates === "desktop"
+            ? t("The desktop app updates itself: its top bar offers the update when it is ready, and Help → Check for Updates… asks now.")
+            : t("A server in Docker does not update itself: pull {latest} (or {version}) and restart the container.", {
+              latest: <code>{info.image}:latest</code>, version: <code>:{info.update.version}</code> })}
       </div>
     ) : info.update?.kind === "build" ? (
       <div className="settingsPaneHint">
@@ -205,10 +218,9 @@ function HostedPlan({ setStatus, onSynced }) {
             plan.max_accounts ? t("{n} of {max} accounts", { n: pane.accounts, max: plan.max_accounts })
               : tn("{n} account", "{n} accounts", pane.accounts),
             plan.quota_mb ? t("{n} MB per account", { n: plan.quota_mb }) : null,
-            plan.max_upload_mb ? t("{n} MB per file", { n: plan.max_upload_mb }) : null,
             plan.policy ? t("sign-in: {policy}", { policy: POLICY_NAMES[plan.policy] || plan.policy }) : null,
           ].filter(Boolean).join(" · ")}
-          title={t("The storage defaults below may be set lower than the plan's caps, never higher.")} />
+          title={t("The default quota below may be set lower than the plan's cap, never higher.")} />
       ) : null}
       {plan?.status === "grace" ? (
         <p className="settingsPaneHint" role="status">
@@ -237,11 +249,12 @@ function limitHint(saved, key, own) {
   return cap ? t("{own} · the plan allows up to {n} MB", { own, n: cap }) : own;
 }
 
-// Server-wide default storage limits (users.db via /api/admin/settings).
-// Per-account overrides live in the Users pane. On a hosted container the
-// plan caps both (`plan_caps`): a lower value saves, a higher one is refused.
-// Each limit saves when its box commits (Enter / blur), like every other
-// setting; an invalid entry snaps back to the stored value.
+// The server-wide default storage quota (users.db via /api/admin/settings);
+// one file has no size cap of its own. Per-account overrides live in the
+// Users pane. On a hosted container the plan caps it (`plan_caps`): a lower
+// value saves, a higher one is refused. It saves when its box commits
+// (Enter / blur), like every other setting; an invalid entry snaps back to
+// the stored value.
 function ServerLimitRows({ setStatus, refreshQuota }) {
   const { data: saved, error: readError, set: setSaved } = useSettingsRead("/admin/settings");
   const [saveError, setError] = React.useState("");
@@ -254,7 +267,7 @@ function ServerLimitRows({ setStatus, refreshQuota }) {
     if (!Number.isFinite(n) || n < min) return; // the box shows the stored value again once the commit settles
     setError("");
     try {
-      // Only this field: two boxes committing back to back must not overwrite each other.
+      // Only this field: a save of another setting just before must not be overwritten.
       const value = await apiJson(`${API}/admin/settings`, {
         method: "PUT", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ [key]: n }),
@@ -265,11 +278,6 @@ function ServerLimitRows({ setStatus, refreshQuota }) {
   }
   return <>
     {saved ? <>
-      <Row icon={ImportIcon} label={t("Default max upload")}
-        hint={limitHint(saved, "max_upload_mb", t("Largest single file; Users can override per account"))}>
-        <UnitInput unit="MB" min={1} value={String(saved.max_upload_mb)}
-          onCommit={(raw) => commit("max_upload_mb", raw, 1)} />
-      </Row>
       <Row icon={ServerIcon} label={t("Default quota")}
         hint={limitHint(saved, "quota_mb", t("Personal uploads per account; 0 = unlimited"))}>
         <UnitInput unit="MB" min={0} value={String(saved.quota_mb)}

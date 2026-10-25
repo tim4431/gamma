@@ -126,8 +126,8 @@ export function spanBox(runs, base) {
   return {
     x1: Math.min(...runs.map((r) => r.x)),
     x2: Math.max(...runs.map((r) => r.x + r.w)),
-    y1: Math.min(...runs.map((r) => r.y - r.h * (r.asc ?? 0.8))),
-    y2: Math.max(...runs.map((r) => r.y - r.h * (r.desc ?? -0.25))),
+    y1: Math.min(...runs.map((r) => r.y - r.h * r.asc)),
+    y2: Math.max(...runs.map((r) => r.y - r.h * r.desc)),
     base,
   };
 }

@@ -67,17 +67,11 @@ const SCRIPT_SHIFT = 0.1;
 
 // --- lines → fragments -------------------------------------------------------
 
-// A run's glyph box (ascent and descent, em fractions): its font's, unless
-// that is none — pdf.js reports 0/0 for a font it has no metrics for.
-function withMetrics(r) {
-  return r.asc > 0 && r.asc - (r.desc ?? 0) >= 0.3 ? r : { ...r, asc: 0.8, desc: -0.25 };
-}
-
 // The vertical middle of a run's glyphs. Lines group on it rather than on the
 // baseline: a big operator (CMEX's Σ, ascent ~0, descent −0.6) sits on the
 // baseline of the line ABOVE the one it is drawn on.
 function midOf(r) {
-  return r.y - r.h * ((r.asc ?? 0.8) + (r.desc ?? -0.25)) / 2;
+  return r.y - r.h * (r.asc + r.desc) / 2;
 }
 
 // Group runs into visual lines. Only the last few lines are candidates — the
@@ -217,7 +211,7 @@ function weightedMedian(runs, value) {
 // box (not a big operator, not a tall glyph like a drop cap).
 function bodyLine(runs) {
   const h = weightedMedian(runs, (r) => r.h);
-  const body = runs.filter((r) => r.h >= h * SCRIPT_SIZE && r.h <= h * 1.5 && (r.asc ?? 0.8) > 0.3);
+  const body = runs.filter((r) => r.h >= h * SCRIPT_SIZE && r.h <= h * 1.5 && r.asc > 0.3);
   return { y: weightedMedian(body.length ? body : runs, (r) => r.y), h };
 }
 
@@ -235,7 +229,7 @@ function buildFragments(runs) {
   // label) has no place in the horizontal line model: read as horizontal it
   // becomes one long run across the column. It stays as it is on the page.
   const items = runs.filter((r) => r.str && r.str.trim() && r.h > 0 && r.w > 0 && !r.rotated)
-    .map((r) => { const m = withMetrics(r); return { ...m, mid: midOf(m) }; });
+    .map((r) => ({ ...r, mid: midOf(r) }));
   const lines = foldScripts(groupLines(items));
   // Candidate split gaps per line (x-interval of the whitespace).
   for (const L of lines) {
@@ -271,8 +265,8 @@ function buildFragments(runs) {
     f.h = h;
     // Glyph extent, scripts and big operators included: what the line's mask
     // has to cover.
-    f.top = Math.min(y - h, ...f.runs.map((r) => r.y - r.h * (r.asc ?? 0.8)));
-    f.bottom = Math.max(y + h * 0.25, ...f.runs.map((r) => r.y - r.h * (r.desc ?? -0.25)));
+    f.top = Math.min(y - h, ...f.runs.map((r) => r.y - r.h * r.asc));
+    f.bottom = Math.max(y + h * 0.25, ...f.runs.map((r) => r.y - r.h * r.desc));
     let text = "";
     let prevEnd = null;
     const fonts = {};
@@ -309,6 +303,11 @@ function xOverlap(a, b) {
   return Math.min(a.x2, b.x2) - Math.max(a.x1, b.x1);
 }
 
+// A word broken at a line's end: its hyphen, which a lower-case start on the
+// next line rejoins (joinLine here; pdf/translatePlan.js joins the same way
+// across a column or page break).
+export const HYPHENATED = /[A-Za-z]-$/;
+
 // Append `s` to the block text: rejoin hyphenated line breaks and URLs
 // broken after a path separator, no space between CJK, a space otherwise.
 function joinLine(out, s) {
@@ -317,7 +316,7 @@ function joinLine(out, s) {
   // that ends a sentence is followed by the next sentence.
   if (/https?:\/\/\S*[/\-_~#?=&]$/.test(out) && /^[\w%~#/-]/.test(s)) return out + s;
   if (/https?:\/\/\S*\.$/.test(out) && /^[a-z0-9][\w%~#-]*\//i.test(s)) return out + s;
-  if (/[A-Za-z]-$/.test(out) && /^[a-z]/.test(s)) return out.slice(0, -1) + s;
+  if (HYPHENATED.test(out) && /^[a-z]/.test(s)) return out.slice(0, -1) + s;
   if (/[぀-ヿ㐀-鿿]$/.test(out) && /^[぀-ヿ㐀-鿿]/.test(s)) return out + s;
   return out + " " + s;
 }

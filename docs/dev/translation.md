@@ -103,10 +103,10 @@ pdf.js text runs into blocks:
   where a column gutter runs: `isGutter` looks for a stretch of the gap that
   the lines around it leave open (a river), whether or not the columns'
   baselines line up.
-- Lines merge into blocks by step, size, indent and font as before; each
-  block keeps per-line rects, its first line's `indent`, its extracted
-  `text`, and `src`/`spans` ("Formulas"). A block is translatable when its
-  text without formulas is prose.
+- Lines merge into blocks by step, size, indent and font. Each block keeps
+  per-line rects, its first line's `indent`, its extracted `text`, and
+  `src`/`spans` ("Formulas"). A block is translatable when its text without
+  formulas is prose.
 
 `pdf/translatePlan.js` plans what goes to the model, for the viewer and for
 the bench alike:
@@ -125,17 +125,20 @@ the bench alike:
   paragraph never joins across it.
 - **Joins** (`continues`): a paragraph that a column or page break cut in two
   (or three) is ONE unit, its parts joined with `{br}`. A joins B only across
-  a column or page break, when A is running text of two or more lines ending
-  mid-sentence (judged on its words without formula tokens) and B, of the
-  same size, opens no paragraph of its own: no heading or caption, no
-  first-line indent, running text itself. Where the indent tells nothing (a
-  page without indents, a one-line B) B must read on — start in lower case,
-  or follow a word no sentence ends on — and a one-line B must end a
-  sentence, fill the page's measure, or introduce a display equation
-  ("…in the rotating frame the" / "Hamiltonian reads"). A word hyphenated at
-  A's end goes on only in lower case and moves whole into A's part. Joins
-  across a page break happen when both pages are in the job; whichever page
-  is planned first claims the unit, and it fills both.
+  a column or page break, when:
+  - A is running text of two or more lines that ends mid-sentence, judged on
+    its words without formula tokens.
+  - B is body text of the same size that opens no paragraph of its own: no
+    heading or caption, no first-line indent, running text itself.
+  - Where the indent tells nothing (a page without indents, a one-line B), B
+    reads on: it starts in lower case or follows a word no sentence ends on.
+    A one-line B also ends a sentence, fills the page's measure, or
+    introduces a display equation ("…in the rotating frame the" /
+    "Hamiltonian reads").
+  - A word hyphenated at A's end goes on only in lower case, and moves whole
+    into A's part.
+  - A join across a page break needs both pages in the job. Whichever page is
+    planned first claims the unit, and it fills both.
 - **Units and chunks**: one unit per translatable block or chain, in reading
   order; a chunk closes at 10 units or 2,500 characters (`chunkUnits`). Each
   unit renumbers its blocks' formula tokens into one sequence and knows whose
@@ -153,11 +156,11 @@ when the PDF's URL is one of the server's uploads), `before`, `after`,
 `section`, and `build_brief: false` for a one-off text. App's `translateChunk`
 sends them with `texts`, `lang`, `model`, `effort` and `stream`.
 
-A reply comes back per unit; `translatePlan.results` splits a joined unit's
-translation at its `{br}` markers, or — when the model lost or doubled one —
-by the parts' lengths at the nearest sentence or clause boundary (never
-inside a number or after an abbreviation, no space inserted between CJK
-characters), and renumbers each piece's tokens for the block it lands in
+A reply comes back per unit. `translatePlan.results` splits a joined unit's
+translation at its `{br}` markers. When the model lost or doubled one, it
+cuts by the parts' lengths at the nearest sentence or clause boundary, never
+inside a number or after an abbreviation, and inserts no space between CJK
+characters. Each piece's tokens are renumbered for the block it lands in
 (`{v:pn.i.k}` for a formula the model moved across the join).
 
 ## Formulas
@@ -198,15 +201,16 @@ reach the model as text (the context around them, `before`, `after` and
 - The overlay draws a formula token as `TransMath`: a crop of its page's
   whole-page bitmap (`pageRaster.basePixels`) at the span's box, sized in em
   of the paragraph's font so it shrinks with the text, and set on the text's
-  baseline. The raster's `onBase` callback (each base paint or prime) redraws
-  it after a zoom. A formula the model moved across a join into another page's
-  paragraph is drawn from its own page; that page's box announces each paint
-  (a `pdfbasepaint` event) and the crop redraws. Until the page holds pixels
-  the extracted text stands in (`.pdfTransMath.bare`). The page colour
-  treatments (flipped colours, the dark and tinted themes) apply to the crop
-  as to the page. The extracted text lies under the crop, transparent, so a
-  copy of the translation carries it. A citation or URL token is drawn as its
-  text.
+  baseline. A citation or URL token is drawn as its text.
+  - The raster's `onBase` callback (each base paint or prime) redraws the
+    crop after a zoom. A formula moved across a join into another page's
+    paragraph is drawn from its own page, whose box announces each paint (a
+    `pdfbasepaint` event).
+  - Until the page holds pixels the extracted text stands in
+    (`.pdfTransMath.bare`). The extracted text also lies under the crop,
+    transparent, so a copy of the translation carries it.
+  - The page colour treatments (flipped colours, the dark and tinted themes)
+    apply to the crop as to the page.
 
 ## The paper's brief
 
@@ -229,16 +233,26 @@ its brief, once per account, workspace, paper, language and model:
   paper defines, 20–40 recurring terms with their renderings, and names that
   stay as written. `render_brief` turns it into the system prompt's closing
   section (at most 4,000 characters). Its usage counts as `translate`.
-- **Sharing it**: parallel requests for the same key wait for the one making
-  it (`brief_for`, up to 150 s). At most six requests of an account wait at
-  once, the six AI calls it may have open; the rest go on without the brief. A
-  streamed request starts its response first and makes or waits for the brief
-  inside the stream, which keepalive lines hold open; a plain request waits
-  before it answers. A failure or an unusable reply is remembered for two
-  minutes, and the requests translate without a brief meanwhile. A call Gamma
-  refused itself (the account's calls all in use, or its allowance spent) says
-  nothing about the paper and is not remembered. Briefs are kept in memory
-  (LRU of 300), like the paragraph cache.
+- **Sharing it** (`brief_for`): parallel requests for the same key wait for
+  the one making it, up to 150 s. Briefs are kept in memory (LRU of 300),
+  like the paragraph cache.
+  - At most six requests of an account wait at once, the six AI calls it may
+    have open; the rest go on without the brief.
+  - A streamed request starts its response first and makes or waits for the
+    brief inside the stream, which keepalive lines hold open. A plain request
+    waits before it answers.
+  - The brief is why a paper's first requests are slow: the model writes up
+    to 40 terms and 15 symbols before any paragraph is translated, often half
+    a minute. A streamed request that waits for it says so with a `{"stage":
+    "brief"}` line, then `{"stage": "translate"}` once it is made. While any
+    request of a job is at that stage, the status pill says "Reading the paper
+    first, so its terms stay the same throughout…" and the background-tasks
+    row "reading the paper…" (`transReading` in `pdf/PdfViewer.jsx`,
+    `handleTranslateState` in `App.jsx`).
+  - A failure or an unusable reply is remembered for two minutes, and the
+    requests translate without a brief meanwhile. A call Gamma refused itself
+    (the account's calls all in use, or its allowance spent) says nothing
+    about the paper and is not remembered.
 - **`build_brief: false`** (the selection translator) carries the brief only
   when it is made already, never waits for one.
 - **Prompt caching**: the brief sits in the system prompt, which every chunk
@@ -271,13 +285,14 @@ its brief, once per account, workspace, paper, language and model:
   unknown, or that takes none, gets no effort parameter.
 - **Cache**: an **in-memory only** LRU (~5k entries, lock-guarded because
   requests run in the threadpool) per (user, language, bare model name, the
-  brief's key, source text). The brief's key names the paper, not the brief's
-  text, so a translation made with the brief stays cached after the brief
-  leaves its LRU, and one made without a brief stays apart. Nothing goes to
-  disk; the cache makes halts/retries/re-shows free until a restart. Duplicate
-  paragraphs within a request go upstream once. A paragraph that comes back
-  verbatim is not cached, so a retry can improve it. Caps: 200 texts / 60k
-  chars per request.
+  brief's key, source text). Nothing goes to disk; the cache makes
+  halts/retries/re-shows free until a restart.
+  - The brief's key names the paper, not the brief's text, so a translation
+    made with the brief stays cached after the brief leaves its LRU, and one
+    made without a brief stays apart.
+  - Duplicate paragraphs within a request go upstream once. A paragraph that
+    comes back verbatim is not cached, so a retry can improve it.
+  - Caps: 200 texts / 60k chars per request.
 - **Salvage**: the paragraphs whose reply broke a token are redone together in
   one call, aligned by index; a reply array of the wrong length is redone one
   paragraph per call, concurrently. Either way a paragraph goes with the

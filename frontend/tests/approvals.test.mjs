@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  approvalTitle, conversationId, declinedSummary, grantsIn, readGrants, waitsForPapers, withGrant,
+  approvalTitle, conversationId, declinedSummary, deletionNotes, grantsIn, readGrants, waitsForPapers, withGrant,
   withoutGrants, withoutPaperWait, writeGrants,
 } from "../src/chat/approvals.js";
 
@@ -33,6 +33,29 @@ test("the card's headline says what the call would do", () => {
     "Not allowed by you: Add to a note in “N”");
   assert.equal(declinedSummary({ approval: "expired", tool: "move_page", title: "A", args: { folder: "ML" } }),
     "Not answered in time: Move “A” to ML");
+});
+
+test("folder and label cards say what goes", () => {
+  const card = (tool, preview = {}) => approvalTitle({ tool, preview });
+  assert.equal(card("rename_folder", { title: "Physics / QEC" }), "Rename the folder “Physics / QEC”");
+  assert.equal(card("rename_label", { title: "to-read" }), "Rename the label “to-read”");
+  assert.equal(card("create_label", { title: "Qubits" }), "Make the label “Qubits”");
+  assert.equal(card("label_page", { title: "Attention" }), "Change the labels of “Attention”");
+  assert.equal(card("delete_folder", { title: "Physics / QEC" }), "Delete the folder “Physics / QEC”");
+  assert.equal(card("delete_label", { title: "ML" }), "Delete the label “ML”");
+  // A deletion names what it takes besides itself; the rest are counted.
+  assert.deepEqual(deletionNotes("delete_folder", { subfolders: ["A / B"], subfolder_count: 3, pages: ["P"], page_count: 1,
+    chats: 2, chat_folders: ["A / B"], chat_folder_count: 1 }), [
+    "Its 3 subfolders go with it: A / B, and 2 more",
+    "1 page leaves it and stays in your library: P",
+    "2 AI chats of A / B move to the library chat's history and stay there if you revert.",
+  ]);
+  assert.deepEqual(deletionNotes("delete_folder", { page_count: 0 }), ["No pages are filed in it."]);
+  assert.deepEqual(deletionNotes("delete_label", { pages: ["P", "Q"], page_count: 2 }),
+    ["The label comes off 2 pages; no page is deleted: P, Q"]);
+  assert.deepEqual(deletionNotes("delete_label", { page_count: 0 }), ["No page carries it."]);
+  assert.deepEqual(deletionNotes("rename_folder", {}), []);
+  assert.equal(declinedSummary({ approval: "deny", tool: "delete_label", title: "ML" }), "Not allowed by you: Delete the label “ML”");
 });
 
 test("allowing in a chat lasts for that conversation and account only", () => {

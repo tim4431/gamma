@@ -172,7 +172,7 @@ BILLING_EVENTS = """CREATE TABLE IF NOT EXISTS billing_events (
 # wildcard record); a server placed on a host that has one gets a DNS record
 # of its own, kept in ``dns_record_id`` and ``dns_target`` (``dns.py``).
 # ``hosted_servers.overrides`` are the operator's numbers for this server
-# over its plan's (JSON: quota, per-file cap, accounts, memory, CPUs), and
+# over its plan's (JSON: quota, accounts, memory, CPUs), and
 # ``env`` its extra environment variables (JSON). Step 12:
 # ``hosts.containers`` is the last list of every container its agent
 # reported (JSON), hosted ones and the host's own services alike.

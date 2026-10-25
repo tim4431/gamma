@@ -22,7 +22,7 @@ naming and link conventions:
   embeds degrade to mentions (a Gamma embed shows one block), and the
   ``^id`` anchors themselves are removed from the text;
 - links and embeds of bundled images / PDFs / files upload the file
-  (content-hash dedup, storage limits per file) and point at
+  (content-hash dedup, the storage quota) and point at
   ``/api/uploads/…``; an Obsidian image embed's ``|300`` size becomes the
   ``![alt|300](url)`` form the editor renders;
 - Obsidian properties: ``tags`` become labels (made by name where missing),
@@ -71,8 +71,7 @@ from .logbuf import log
 from .markdown_import import (MAX_BLOCKS, MAX_MARKDOWN_BYTES, TooManyBlocks, fm_list, fm_text, md_to_blocks,
                               parse_frontmatter)
 from .ops import after_commit, apply_batches, ensure_filing
-from .server_settings import MB, workspace_quota
-from .storage import IMAGE_MEDIA_TYPES, content_digest, is_pdf, store_file, upload_media_type
+from .storage import IMAGE_MEDIA_TYPES, content_digest, is_pdf, store_file_stream, upload_media_type
 
 # A Notion database's rows, in tables of at most this many rows (and
 # characters): each table one block the editor renders and can save
@@ -597,22 +596,19 @@ def _import_zip(ws, zf, conn, folder, unpacked, *, actor, preview, selected, pro
         return None
 
     stored = {}
-    max_mb = workspace_quota(ws)["max_upload_mb"]
 
     def store_asset(path):
-        """Upload a bundled file once; None when it can't be (type, limits).
-        A file is read whole only to be stored: a preview reads no more
-        than a PDF's header, and one past the per-file cap is never read (a
-        vault's video can be gigabytes)."""
+        """Upload a bundled file once; None when it can't be (type, quota).
+        A file is read only to be stored, streamed into storage (a vault's
+        video can be gigabytes); a preview reads no more than a PDF's
+        header."""
         if path in stored:
             return stored[path]
         url = None
         entry = assets.get(path)
         if entry is not None:
             ext = _split_ext(path)[1]
-            if entry.size > max_mb * MB:
-                warn(path, f"file too large (max {max_mb} MB)")
-            elif ext == ".pdf" and not is_pdf(entry.head(4)):
+            if ext == ".pdf" and not is_pdf(entry.head(4)):
                 warn(path, "not a valid PDF")
             elif preview:
                 url = f"/api/uploads/preview{ext}"
@@ -621,11 +617,14 @@ def _import_zip(ws, zf, conn, folder, unpacked, *, actor, preview, selected, pro
                 warn(path, "the server's disk has no room for this file")
             else:
                 try:
-                    filename, _ = store_file(ws, entry.read(), ext)
+                    with entry.open() as src:
+                        filename, _ = store_file_stream(ws, src, ext)
                     url = f"/api/uploads/{filename}"
                     report["assets_stored"] += 1
                 except HTTPException as exc:
                     warn(path, str(exc.detail))
+                except ValueError as exc:  # not what its extension says (storage.content_refusal)
+                    warn(path, str(exc))
         stored[path] = url
         return url
 

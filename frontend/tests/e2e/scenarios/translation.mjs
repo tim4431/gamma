@@ -80,8 +80,52 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     await waitForPdf(page, 1);
   });
 
-  await step("translation: the cut paragraph goes as one text with its formulas as tokens, and fills both columns", async () => {
+  await step("translation: while the server reads the paper for its brief, the pill says so; leaving the PDF takes it down", async () => {
+    // A held request answers as the server does while it makes the paper's
+    // brief: a "brief" stage line, then nothing until window.__makeBrief().
+    // A route can only answer whole, so the page's fetch is wrapped:
+    // released, the request goes on to the route above. window.__hold arms
+    // it for the next translate request.
+    await page.evaluate(() => {
+      const fetchFirst = window.fetch;
+      window.fetch = function (url, opts) {
+        if (!window.__hold || !String(url).includes("/ai/translate")) return fetchFirst.apply(this, arguments);
+        window.__hold = false;
+        const made = new Promise((resolve) => { window.__makeBrief = resolve; });
+        const line = (s) => new TextEncoder().encode(`${s}\n`);
+        const body = new ReadableStream({
+          async start(out) {
+            opts.signal?.addEventListener("abort", () => out.error(new DOMException("Aborted", "AbortError")));
+            out.enqueue(line('{"stage": "brief"}'));
+            await made;
+            out.enqueue(line('{"stage": "translate"}'));
+            const res = await fetchFirst.call(window, url, opts);
+            out.enqueue(new Uint8Array(await res.arrayBuffer()));
+            out.close();
+          },
+        });
+        return Promise.resolve(new Response(body, { headers: { "Content-Type": "application/x-ndjson" } }));
+      };
+      window.__hold = true;
+    });
+    const pill = page.locator(".statusPill .pillText", { hasText: "Reading the paper first" });
     await page.getByRole("button", { name: "Translate", exact: true }).click();
+    await pill.waitFor({ timeout: 5000 });
+    // Home: the viewer goes, its job stops, and the pill with it.
+    await page.locator('[data-guide="header.home"]').first().click();
+    await pill.waitFor({ state: "detached", timeout: 5000 });
+    // Back on the paper, a new job reads it again; made, the pill goes.
+    await page.locator(".tabStrip .tab", { hasText: "Two columns" }).first().click();
+    await waitForPdf(page, 1);
+    await page.evaluate(() => { window.__hold = true; });
+    await page.getByRole("button", { name: "Translate", exact: true }).click();
+    await pill.waitFor({ timeout: 5000 });
+    await page.evaluate(() => window.__makeBrief());
+    await pill.waitFor({ state: "detached", timeout: 5000 });
+    assertNoProblems(page);
+  });
+
+  await step("translation: the cut paragraph goes as one text with its formulas as tokens, and fills both columns", async () => {
     const boxes = page.locator('[data-page="1"] .pdfTransPara .pdfTransText');
     await until(async () => (await boxes.allTextContents()).some((t) => /^译:\s*continues/.test(t)),
       { what: "the right column's box shows the paragraph's second piece" });

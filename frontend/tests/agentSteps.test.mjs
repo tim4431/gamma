@@ -71,6 +71,39 @@ test("deletions are note changes; a note's pictures and clips are reading and cl
   assert.equal(noteChangeText(deleted, "N"), "Deleted a note in N");
 });
 
+test("folder and label changes are library changes", () => {
+  const made = [
+    { kind: "rename", tool: "rename_folder", summary: "Renamed the folder “ML” → “ML2”", title: "ML", from: "ML", to: "ML2" },
+    { kind: "label", tool: "create_label", summary: "Made the label “Qubits”", title: "Qubits", to: "Qubits" },
+    { kind: "rename", tool: "rename_label", summary: "Renamed the label “A” → “B”", title: "A", from: "A", to: "B" },
+    { kind: "label", tool: "label_page", summary: "Labels of “Attention”: +ML", page_id: "a", title: "Attention",
+      added: ["ML"], removed: [] },
+    { kind: "delete", tool: "delete_folder", summary: "Deleted the folder “Old”", block_id: "f", title: "Old", count: 2,
+      chats: 0, revert: { tree: "folders", blocks: [], pages: {} } },
+    { kind: "delete", tool: "delete_label", summary: "Deleted the label “ML”", block_id: "l", title: "ML", count: 1,
+      revert: { tree: "labels", blocks: [], pages: {} } },
+  ];
+  for (const a of made) {
+    assert.equal(isChange(a), true, `${a.tool} is a change`);
+    assert.equal(changePlace(a), "library", `${a.tool} landed in the library`);
+  }
+  const { library, notes } = splitActions(made);
+  assert.deepEqual(library.map((a) => a.tool), made.map((a) => a.tool));
+  assert.deepEqual(notes, []);
+  // A label call that changed nothing is not a change.
+  assert.equal(isChange({ kind: "label", tool: "label_page", summary: "ok — the page's labels already are that; nothing changed",
+    noop: true }), false);
+  const titleOf = (id) => (id === "a" ? "Attention" : "");
+  assert.equal(runningLabel({ tool: "delete_folder", args: { folder: "ML" } }), "Deleting the folder ML…");
+  assert.equal(runningLabel({ tool: "delete_folder", args: {} }), "Deleting a folder…");
+  assert.equal(runningLabel({ tool: "label_page", args: { page_id: "a" } }, titleOf), "Changing the labels of “Attention”…");
+  assert.equal(runningLabel({ tool: "label_page", args: { page_id: "zz" } }, titleOf), "Changing a page's labels…");
+  assert.equal(runningLabel({ tool: "rename_folder", args: { folder: "ML" } }), "Renaming the folder ML…");
+  assert.equal(runningLabel({ tool: "rename_label", args: { label: "to-read" } }), "Renaming the label “to-read”…");
+  assert.equal(runningLabel({ tool: "create_label", args: { label: "Qubits" } }), "Making the label “Qubits”…");
+  assert.equal(runningLabel({ tool: "delete_label", args: {} }), "Deleting a label…");
+});
+
 test("the running step reads as what the agent is doing", () => {
   const titleOf = (id) => (id === "a" ? "Attention" : "");
   assert.equal(runningLabel({ tool: "search_library", args: { query: "scaled dot-product" } }), "Searching library for “scaled dot-product”…");

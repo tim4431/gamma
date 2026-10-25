@@ -58,7 +58,7 @@ enum CloudWire {
         if (200..<300).contains(status), let url = (json?["url"] as? String).flatMap({ URL(string: $0) }) {
             return url
         }
-        throw CloudSignInError((json?["detail"] as? String) ?? "HTTP \(status)")
+        throw Refusal((json?["detail"] as? String) ?? "HTTP \(status)")
     }
 
     /// The web view's request that redeems a result: a form post, as the
@@ -111,12 +111,6 @@ enum CloudWire {
 enum CloudAnswer: Equatable {
     case result(String)
     case error(String)
-}
-
-struct CloudSignInError: LocalizedError {
-    let message: String
-    init(_ message: String) { self.message = message }
-    var errorDescription: String? { message }
 }
 
 /// RFC 7636's S256: a random verifier only the shell keeps, and its

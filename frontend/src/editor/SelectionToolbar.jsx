@@ -21,7 +21,7 @@ import { commandById, commandChord } from "../app/commands.js";
 import { commandIcon } from "../app/commandIcons.jsx";
 import { t } from "../shared/i18n/i18n.js";
 import { chordLabel } from "../shared/lib/hotkeys.js";
-import { placeFloating, useFloatingPosition } from "../shared/ui/placement.js";
+import { placeFloating, scrollBox, useFloatingPosition } from "../shared/ui/placement.js";
 import { ChevronDownIcon } from "../shared/ui/Icons";
 import { colorStateAt, runRecolor } from "./markCommands.js";
 import { TEXT_COLORS, tint } from "./mdMarks.js";
@@ -38,18 +38,9 @@ const COMMAND_IDS = GROUPS.flat().filter((id) => id !== COLOR);
 // The gap between the bar and the selected line.
 const GAP = 6;
 
-// The box the editor scrolls in (the notes pane), else null for the window.
-function scrollBox(el) {
-  for (let n = el?.parentElement; n && n !== document.body; n = n.parentElement) {
-    const { overflowY } = getComputedStyle(n);
-    if (overflowY === "auto" || overflowY === "scroll") return n;
-  }
-  return null;
-}
-
 // Where the bar goes for the selection [from, to] of `view`: above its first
-// line, or under its last; out of sight (data-away) while the selection is
-// scrolled out of its box.
+// line, or under its last, inside the box the editor scrolls in (the notes
+// pane); out of sight (data-away) while the selection is scrolled out of it.
 function placeBar(el, view, from, to) {
   const start = view.coordsAtPos(from, 1), end = view.coordsAtPos(to, -1);
   const box = scrollBox(view.dom)?.getBoundingClientRect() || { top: 0, bottom: window.innerHeight };
@@ -99,7 +90,7 @@ export default function SelectionToolbar({ context, selection, keybindings }) {
       ? (c ? t("{color} background", { color: name }) : t("Default background"))
       : (c ? t("{color} text", { color: name }) : t("Default text color"));
     return (
-      <button key={c?.name || "default"} type="button" tabIndex={-1} className={"ctlBtn selToolsSwatch" + (on ? " modeActive" : "")}
+      <button key={c?.name || "default"} type="button" tabIndex={-1} className={"ctlBtn" + (on ? " modeActive" : "")}
         title={label} aria-label={label} aria-pressed={on} onClick={() => recolor({ [key]: value })}>
         <span className="selToolsGlyph" style={value ? { [key]: value } : undefined} aria-hidden="true">A</span>
       </button>

@@ -5,9 +5,9 @@
 // note editor brings; and the iPad app's shell over it (shared/lib/host.js),
 // played by a stand-in host: the Pencil's claim in the preset's look and the
 // stroke handed back, the hold and its answer, the theme message, the
-// Pencil gestures with their choices and phases, the haptics and the Apple
-// Pencil settings. Chromium in a tablet-sized touch context — emulation, not
-// an iPad.
+// Pencil gestures with their choices and phases, the haptics, the Apple
+// Pencil settings and the View menu's row for the shell's own bar. Chromium
+// in a tablet-sized touch context — emulation, not an iPad.
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
@@ -26,9 +26,12 @@ import { waitForPdf } from "./pdf.mjs";
 // bytes here, so a file takes several) and let go by `fileDone`. Like the
 // shell, it still holds them after a reload (the init script runs again);
 // `window.e2eHold(file)` adds one later, as a share while the page is up
-// does, and `window.e2eHeld` is what it holds.
+// does, and `window.e2eHeld` is what it holds. `bar` (not a flag either) is
+// the person's choice of the shell's bar as it starts, true for up, which
+// `shellBar` sets and answers as AppModel.barHidden does.
 function fakeShell(options = {}) {
-  const { files = [], ...flags } = options;
+  const { files = [], bar = true, ...flags } = options;
+  let barShown = bar;
   const sent = [];
   window.e2eHostSent = sent;
   const withBytes = (f) => ({ ...f, bytes: Uint8Array.from(atob(f.b64), (c) => c.charCodeAt(0)) });
@@ -37,7 +40,7 @@ function fakeShell(options = {}) {
   window.e2eHold = (f) => { held.push(withBytes(f)); };
   const native = { platform: "ipad", version: "0.2.0", ink: true,
     inkLooks: ["pressure", "dash", "blend", "stabilize", "pencil", "calligraphy", "snap"],
-    hold: true, pencil: true, pencilPhases: true, pencilRoll: true, haptics: true, openFiles: true, ...flags };
+    hold: true, pencil: true, pencilPhases: true, pencilRoll: true, haptics: true, openFiles: true, shellBar: true, ...flags };
   native.receive = (msg) => new Promise((resolve, reject) => (native.queue ||= []).push({ msg, resolve, reject }));
   window.gammaNative = native;
   const answer = (msg) => {
@@ -53,6 +56,10 @@ function fakeShell(options = {}) {
     if (msg.type === "fileDone") {
       const i = held.findIndex((f) => f.id === msg.id);
       if (i >= 0) held.splice(i, 1);
+    }
+    if (msg.type === "shellBar") {
+      if (typeof msg.shown === "boolean") barShown = msg.shown;
+      return { shown: barShown };
     }
     return {};
   };
@@ -722,6 +729,57 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
       assert(!st.shape && st.ch === "xyptazw", `never recognised under it (${st.ch})`);
       assertNoProblems(page);
     } finally { await ctx?.close(); }
+  });
+
+  await step("ipad shell: View › Server bar hides the shell's own bar and brings it back, its check following the shell's word; upright, More lists it as the shell last left it; a shell without shellBar gets no row", async () => {
+    const contexts = [];
+    const open = async (options, viewport) => {
+      const ctx = await alice.context(browser, { hasTouch: true, viewport, userAgent: SHELL_UA });
+      contexts.push(ctx);
+      await ctx.addInitScript(fakeShell, options);
+      const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+      await page.waitForSelector(".folderNewBtn");
+      const sent = () => page.evaluate(() => window.e2eHostSent.filter((m) => m.type === "shellBar"));
+      return { page, sent };
+    };
+    const LANDSCAPE = { width: 1194, height: 834 };
+    try {
+      const { page, sent } = await open({}, LANDSCAPE);
+      await until(async () => (await sent()).length > 0, { what: "the page asks how the bar stands" });
+      assertEq(JSON.stringify((await sent())[0]), JSON.stringify({ type: "shellBar" }), "asked, not set");
+      const view = page.getByRole("button", { name: "View", exact: true });
+      const row = page.locator(".menuPopover").getByRole("menuitemcheckbox", { name: "Server bar", exact: true });
+      await view.click();
+      assertEq(await row.getAttribute("aria-checked"), "true", "the shell's bar is up");
+      await row.click();
+      assertEq(JSON.stringify((await sent()).at(-1)), JSON.stringify({ type: "shellBar", shown: false }), "the row hides it");
+      await until(async () => (await row.getAttribute("aria-checked")) === "false", { what: "the row unchecked" });
+      // The bar's own button or ⌘⇧B, in the shell: it tells the page.
+      await page.evaluate(() => window.gammaNative.receive({ type: "shellBar", shown: true }));
+      await until(async () => (await row.getAttribute("aria-checked")) === "true", { what: "the shell's word checks it" });
+      await view.click();
+      assertNoProblems(page);
+
+      // Upright, the View menu's rows are More's; a bar the shell left
+      // hidden comes unchecked.
+      const upright = await open({ bar: false }, { width: 834, height: 1194 });
+      await upright.page.waitForSelector(".app.phoneUI");
+      await upright.page.getByRole("button", { name: "More", exact: true }).tap();
+      const more = upright.page.locator(".userPopover").getByRole("menuitemcheckbox", { name: "Server bar", exact: true });
+      await more.waitFor();
+      assertEq(await more.getAttribute("aria-checked"), "false", "hidden, as the shell said");
+      await more.tap();
+      assertEq(JSON.stringify((await upright.sent()).at(-1)), JSON.stringify({ type: "shellBar", shown: true }), "the row brings it back");
+      assertNoProblems(upright.page);
+
+      // A shell that cannot hide its bar: no row, and nothing asked.
+      const older = await open({ shellBar: false }, LANDSCAPE);
+      await older.page.getByRole("button", { name: "View", exact: true }).click();
+      await older.page.locator(".menuPopover").waitFor();
+      assertEq(await older.page.locator(".menuPopover").getByRole("menuitemcheckbox", { name: "Server bar", exact: true }).count(), 0, "no row");
+      assertEq((await older.sent()).length, 0, "nothing asked");
+      assertNoProblems(older.page);
+    } finally { for (const ctx of contexts) await ctx.close(); }
   });
 
   await step("ipad shell: Apple Pencil settings under the host; a double tap set to Undo undoes; Eraser while held arms the eraser and gives the tool back, short squeezes toggle it either way, an unknown phase does nothing, an erased selection stays gone; gestures wait for a claim; switches tick unless Haptics is off", async () => {

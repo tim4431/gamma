@@ -43,6 +43,10 @@ struct HostInfo: Encodable, Equatable {
     /// for the page to take: `files`, `fileData` and `fileDone`, with
     /// `filesOpened` when one comes.
     var openFiles = true
+    /// The bar above the page can be hidden, and the page offers it back:
+    /// `shellBar` sets and asks the person's choice, and comes from the
+    /// shell when it changes (the page's View menu, Server bar).
+    var shellBar = true
 
     static var current: HostInfo {
         HostInfo(version: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0")
@@ -220,12 +224,17 @@ enum WebMessage: Equatable {
     case fileData(id: String, offset: Int)
     /// The page is done with a held file: the shell drops its copy.
     case fileDone(id: String)
+    /// The page's View menu: the bar shown or hidden by the person, or
+    /// without `shown` (or with one that is no Bool) only asked how that
+    /// stands. Replied `{shown}`, the person's choice: the bar still shows
+    /// while it is needed (AppModel.barShown).
+    case shellBar(shown: Bool?)
 
     enum Scheme: String, Decodable { case light, dark }
 }
 
 extension WebMessage: Decodable {
-    private enum Keys: String, CodingKey { case type, pointerId, at, tool, bg, scheme, name, kind, id, offset }
+    private enum Keys: String, CodingKey { case type, pointerId, at, tool, bg, scheme, name, kind, id, offset, shown }
     private struct Point: Decodable { let x, y: Double }
 
     init(from decoder: Decoder) throws {
@@ -249,6 +258,8 @@ extension WebMessage: Decodable {
             self = .fileData(id: try c.decode(String.self, forKey: .id), offset: try c.decode(Int.self, forKey: .offset))
         case "fileDone":
             self = .fileDone(id: try c.decode(String.self, forKey: .id))
+        case "shellBar":
+            self = .shellBar(shown: try? c.decodeIfPresent(Bool.self, forKey: .shown))
         default:
             throw DecodingError.dataCorruptedError(forKey: .type, in: c, debugDescription: "unknown message \(type)")
         }
@@ -307,10 +318,13 @@ enum HostMessage: Equatable {
     /// what is held (`files`) when it can take it. A page that is not ready,
     /// or predates it, ignores it, and a ready page asks on its own.
     case filesOpened
+    /// The person's choice of the bar changed (its button, ⌘⇧B, or the
+    /// page itself): the page's View menu checks its Server bar row by it.
+    case shellBar(shown: Bool)
 }
 
 extension HostMessage: Encodable {
-    private enum Keys: String, CodingKey { case type, pointerId, samples, held, gesture, action, phase }
+    private enum Keys: String, CodingKey { case type, pointerId, samples, held, gesture, action, phase, shown }
 
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: Keys.self)
@@ -335,6 +349,9 @@ extension HostMessage: Encodable {
             try c.encode(action, forKey: .action)
         case .filesOpened:
             try c.encode("filesOpened", forKey: .type)
+        case let .shellBar(shown):
+            try c.encode("shellBar", forKey: .type)
+            try c.encode(shown, forKey: .shown)
         }
     }
 }

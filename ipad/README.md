@@ -56,7 +56,7 @@ There are three parts:
 | `Server/PythonRuntime.swift` | The embedded CPython: configured and started once on a thread of its own, running `gamma_ios.main()`; `restart` reaches the supervisor in it through the GIL |
 | `Server/Keychain.swift` | The seeded account's password in the Keychain |
 | `Server/GammaIPad-Bridging-Header.h` | Python's C API for Swift |
-| `Shell/ShellView.swift` | The window: the web view, the live stroke over it, the launcher while it is up and the bar on top, the Pencil layer on their container; the chrome's calls answered, its state pushed, and the ⌘⇧L and ⌘R shortcuts |
+| `Shell/ShellView.swift` | The window: the web view, the live stroke over it, the launcher while it is up and the bar on top unless it is hidden, the Pencil layer on their container; the chrome's calls answered, its state pushed, and the ⌘⇧L, ⌘R and ⌘⇧B shortcuts |
 | `Shell/WebShell.swift` | The server's page's `WKWebView`, set up once: desktop content mode, no bounce, no inset adjustment, no keyboard accessory bar, inspectable in Debug builds, reloaded when the system ends its process; the silent sign-in to the local server, the session read for the bar's workspaces, and the theme's name |
 | `Shell/Chrome.swift` | The desktop's bar and launcher in web views of their own: the bundle's `chrome` folder, the `gammaShell` user script and the handler it posts to, the state pushed to the pages, and a page loaded again when the system ends its process |
 | `Shell/Bridge.swift` | The message vocabulary as Codable types, the handler the page posts to, and `send` back (`ask` when the shell needs the answer, as for `hold`). The only file that knows the web app's protocol |
@@ -105,10 +105,12 @@ copies one architecture's standard library.
 In the app, the launcher shows at the first launch: open **This iPad**, or
 add another server's address, open it and sign in on its own page. The
 bar's mark, *All servers…* in its dropdown, or ⌘⇧L brings the launcher
-back. A server reached over plain `http` must be on the local network,
-because App Transport Security allows local networking only. Use `https`
-otherwise. In a Debug build, Safari's Web Inspector on a Mac opens the
-page, and the bar and the launcher too (Develop → your iPad).
+back. The chevron at the bar's right end, or ⌘⇧B, hides the bar, and the
+web app's View → *Server bar* brings it back. A server reached over plain
+`http` must be on the local network, because App Transport Security
+allows local networking only. Use `https` otherwise. In a Debug build,
+Safari's Web Inspector on a Mac opens the page, and the bar and the
+launcher too (Develop → your iPad).
 
 ### Python on the device
 

@@ -1,8 +1,9 @@
 // The agent's tool calls as the chat shows them: every call counts as a
 // step, summed up in one pill ("6 steps · listed, read 1 page · 1 failed"),
 // and the calls that changed something are listed apart, grouped by where
-// the change landed — the library (renamed, filed, saved or restored pages)
-// or the notes (edited, added or moved blocks). While a reply streams, the
+// the change landed — the library (renamed, filed, saved or restored pages;
+// renamed, made, applied or deleted folders and labels) or the notes
+// (edited, added or moved blocks). While a reply streams, the
 // {"step"} line the server sends before each call names what is running now,
 // and a call that hands a document to a helper lists each helper under the
 // pill with what it is doing ({"helper"} lines).
@@ -10,8 +11,9 @@
 // its own, not as a failure.
 import { t, tn } from "../shared/i18n/i18n.js";
 
-const CHANGE_KINDS = new Set(["rename", "move", "edit", "create", "delete", "save", "restore"]);
-const LIBRARY_TOOLS = new Set(["rename_page", "move_page", "save_paper", "restore_page"]);
+const CHANGE_KINDS = new Set(["rename", "move", "edit", "create", "delete", "save", "restore", "label"]);
+const LIBRARY_TOOLS = new Set(["rename_page", "move_page", "save_paper", "restore_page",
+  "rename_folder", "create_label", "rename_label", "label_page", "delete_folder", "delete_label"]);
 // The note-block mutators: their actions carry the page id(s) they touched,
 // so the open page's block tree can reload and show the change.
 export const BLOCK_TOOLS = ["edit_block", "create_block", "move_block", "delete_block"];
@@ -24,8 +26,8 @@ export function isChange(a) {
 }
 
 // Where a change landed: "library" (a page renamed, filed, saved or
-// restored) or "notes". Actions saved before they named their `tool` can
-// only be renames and moves.
+// restored, or a folder or label changed) or "notes". Actions saved before
+// they named their `tool` can only be renames and moves.
 export function changePlace(a) {
   if (a.tool) return LIBRARY_TOOLS.has(a.tool) ? "library" : "notes";
   return a.kind === "rename" || (a.kind === "move" && !a.block_id) ? "library" : "notes";
@@ -148,6 +150,14 @@ export function runningLabel(step, titleOf = () => "") {
     case "move_page":
       if (folder) return title ? t("Moving “{title}” to {folder}…", { title, folder }) : t("Moving a page to {folder}…", { folder });
       return title ? t("Moving “{title}”…", { title }) : t("Moving a page…");
+    case "rename_folder": return folder ? t("Renaming the folder {folder}…", { folder }) : t("Renaming a folder…");
+    case "rename_label":
+      return args.label ? t("Renaming the label “{label}”…", { label: args.label }) : t("Renaming a label…");
+    case "create_label": return t("Making the label “{label}”…", { label: args.label || "" });
+    case "label_page": return title ? t("Changing the labels of “{title}”…", { title }) : t("Changing a page's labels…");
+    case "delete_folder": return folder ? t("Deleting the folder {folder}…", { folder }) : t("Deleting a folder…");
+    case "delete_label":
+      return args.label ? t("Deleting the label “{label}”…", { label: args.label }) : t("Deleting a label…");
     case "edit_block":
       return {
         append: () => t("Appending to a note…"),

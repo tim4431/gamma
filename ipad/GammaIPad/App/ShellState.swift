@@ -4,9 +4,10 @@ import Foundation
 /// read of the shell, built as the desktop builds its barState and
 /// fullState (desktop/main.js), with only what the iPad has: no `keeping`,
 /// `update` or `settings`, so the pages hide the sync button, the update
-/// pill and the Settings block. Pure, over plain values, so the tests cover
-/// it; every value in it is one JSON can carry, as WebKit hands it to the
-/// page.
+/// pill and the Settings block. One key is the iPad's own, `barHideable`,
+/// which shows the bar's hide button. Pure, over plain values, so the tests
+/// cover it; every value in it is one JSON can carry, as WebKit hands it to
+/// the page.
 enum ShellState {
     /// This iPad's data folder as the Files app shows Documents/Gamma/local.
     static let dataDir = "On My iPad › Gamma › Gamma › local"
@@ -16,14 +17,16 @@ enum ShellState {
 
     /// `session` is what the page's server answered `/api/session` (WebShell),
     /// read only while `page`, the shell's address, is on the chosen server;
-    /// `sizeBytes` is This iPad's data folder, which only the launcher asks for.
+    /// `sizeBytes` is This iPad's data folder, which only the launcher asks for;
+    /// `barHideable` is whether a tap on the bar's hide button would hide it
+    /// now (AppModel.barNeeded).
     static func make(version: String, theme: String, servers: SavedServers, reachable: [URL: Bool],
                      local: LocalServer.State, slowStart: Bool, login: LocalLogin?,
-                     session: [String: Any]?, page: URL?, sizeBytes: Int64? = nil) -> [String: Any] {
+                     session: [String: Any]?, page: URL?, barHideable: Bool, sizeBytes: Int64? = nil) -> [String: Any] {
         var localURL: URL? = nil
         if case let .running(url) = local { localURL = url }
         var state: [String: Any] = ["version": version, "theme": theme, "current": NSNull(), "busy": NSNull(),
-                                    "gamma": NSNull()]
+                                    "gamma": NSNull(), "barHideable": barHideable]
 
         var shown: URL? = nil
         if let current = servers.current {

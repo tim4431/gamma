@@ -19,7 +19,10 @@ admin dashboard through the SSRF guard and cached in memory:
   ``<tag>-dev.<n - behind + ahead>``, the same count the Docker build takes.
 
 A Docker container cannot update itself: the dashboard only says that a newer
-image exists and how to pull it.
+image exists and how to pull it. The desktop shell says who installs the next
+release through ``GAMMA_UPDATES``: ``desktop``, its own updater, or ``store``,
+the Microsoft Store, which has a release only once Microsoft certifies it, one
+to three days after GitHub, so a Store install raises no notice for it.
 """
 
 import json
@@ -41,6 +44,7 @@ VERSION = os.environ.get("GAMMA_VERSION", "").strip().lstrip("v")
 UPDATE_CHECK = os.environ.get("GAMMA_UPDATE_CHECK", "").strip().lower() not in ("0", "off", "false", "no")
 COMMIT = os.environ.get("GAMMA_COMMIT", "").strip()[:12]
 BRANCH = os.environ.get("GAMMA_BRANCH", "").strip()
+UPDATES = os.environ.get("GAMMA_UPDATES", "").strip().lower()  # desktop | store | "" (the admin pulls)
 STARTED_AT = datetime.now(timezone.utc)
 
 REPO = "tim4431/Gamma"
@@ -153,7 +157,7 @@ def server_info(refresh: bool = False) -> dict:
     """Everything the admin dashboard shows: the build, uptime, log counts
     and the update check (``check``)."""
     return {
-        **build_info(), "branch": BRANCH,
+        **build_info(), "branch": BRANCH, "updates": UPDATES,
         "started_at": STARTED_AT.isoformat().replace("+00:00", "Z"),
         "uptime_seconds": int((datetime.now(timezone.utc) - STARTED_AT).total_seconds()),
         "python": platform.python_version(), "platform": f"{platform.system()} {platform.machine()}".strip(),

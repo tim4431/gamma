@@ -71,7 +71,7 @@ from PyPDF2.generic import (
 from . import pdf_cards, pdf_free_space
 from .logbuf import log
 from .pdf_cards import BAR, FONT_SIZE, LEADING, PAD_X, PAD_Y, clip, inner_width
-from .pdf_export import ExportPdfReader, display_size, page_frame, parse_css_color
+from .pdf_export import ExportPdfReader, display_size, page_frame, parse_css_color, pdf_point_to_viewer
 from .pdf_glyphs import GlyphFonts
 from .pdf_image import XObjectStore
 from .pdf_typeset import fill_rect, finalize_cid, font_resources, num
@@ -309,11 +309,11 @@ def _frame(crop, rotation):
     return size, (1, 0, 0, -1, cx0, cy1)
 
 
-def _to_display(matrix):
-    """The frame's inverse: a user-space point → the display frame."""
-    a, b, c, d, e, f = matrix
-    det = a * d - b * c
-    return lambda u, v: ((d * (u - e) - c * (v - f)) / det, (a * (v - f) - b * (u - e)) / det)
+def _to_display(view, rotation: int):
+    """``_frame``'s inverse: a user-space point → the display frame, in
+    points (``pdf_point_to_viewer`` scaled by the page as shown)."""
+    w, h = display_size(view, rotation)
+    return lambda x, y: tuple(c * s for c, s in zip(pdf_point_to_viewer(x, y, rotation, view), (w, h)))
 
 
 def _widen(page, view, rotation: int, extra: float):
@@ -489,7 +489,7 @@ def render_notes(pdf_bytes: bytes, highlights, *, notes_at: str = "beside", uplo
     col_w = _column_width(max(w for w, _h in sizes))
     extra = COLUMN_GAP + col_w + EDGE if beside else 0.0
     spaces = pdf_free_space.occupancy(pdf_bytes, {
-        index: (frames[index][0], _to_display(_frame(*frames[index])[1]), *sizes[index])
+        index: (frames[index][0], _to_display(*frames[index]), *sizes[index])
         for index in on_page}) if on_page else {}
     images = XObjectStore(writer, uploads_dir)
     glyphs = GlyphFonts(writer)

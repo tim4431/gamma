@@ -119,6 +119,36 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     assertNoProblems(page);
   });
 
+  // What tied a registry record to the PDF (meta.match) shows on the Source
+  // row: a title search hit whose title is only a phrase of the PDF warns,
+  // with a hint that says so; one the AI confirmed reads "· confirmed by AI".
+  await step("pdf: the Source row says what tied a registry record to the PDF, and warns for a title phrase", async () => {
+    const pop = page.locator(".metaPopover");
+    const source = pop.locator(".metaRow").filter({ has: page.locator(".metaKey").getByText("Source", { exact: true }) });
+    const show = async (match, unverified) => {
+      const meta = { title: "Quasi-phase-matching", authors: [], source: "doi", kind: "bookSection",
+        doi: "10.1117/3.1002081.ch35", match, unverified };
+      await account.api(`/api/blocks/${pageId}`, { method: "PUT", body: { properties: { meta } } });
+      await page.reload();
+      await waitForPdf(page, 1);
+      await page.click("button[aria-label='Paper metadata']");
+      await source.waitFor();
+    };
+    await show("phrase", true);
+    await page.locator(".metaWarnDot").first().waitFor();
+    assertEq(await source.locator(".metaValWarn").innerText(), "doi.org — unconfirmed");
+    const hint = await source.locator(".metaValWarn").getAttribute("title");
+    assert(/searching for the PDF's title/.test(hint || ""), `the hint says it was a title search: ${hint}`);
+    await page.click("button[aria-label='Paper metadata']");
+    await show("ai", false);
+    await until(async () => (await source.innerText()).includes("doi.org · confirmed by AI"), { what: "the Source row says the AI confirmed it" });
+    assertEq(await page.locator(".metaWarnDot").count(), 0, "no red ! for a confirmed record");
+    await page.click("button[aria-label='Paper metadata']");
+    // The later steps expect a page without metadata.
+    await account.api("/api/metadata/update", { method: "POST", body: { block_id: pageId, meta: {} } });
+    assertNoProblems(page);
+  });
+
   // The item type (meta.kind, Zotero's names) is the popover's first row: a
   // record naming none shows the type its fields imply, another choice
   // swaps the rows (a conference paper's venue is its proceedings), and

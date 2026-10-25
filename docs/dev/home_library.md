@@ -109,7 +109,8 @@ content, a move or a reorder one `move`, a pin a `set` of
 labels. None of these touches a page: no page's `updated_at`, op log or
 change-log row moves, so the "modified" sort, the change feed and the
 mirrors see no edit. Deleting is the one change
-that reaches pages: `DELETE /api/folders/{id}` deletes the folder with its
+that reaches pages: `DELETE /api/folders/{id}` (`ops.delete_tree`, which
+the agent's `delete_folder` runs too) deletes the folder with its
 subfolders and, in the same transaction, takes their ids off every page
 that carried them (one op batch per page); the pages stay, filed elsewhere
 or at the library root. The deleted folders' AI chats are filed into the
@@ -124,7 +125,11 @@ Everything else that names a folder names its id: a folder's AI chat bucket
 (`shares.folder`), the search scope (`?scope=<folder id>`), the clip
 target, an import's destination, a folder export, the home URLs
 (`?folder=<id>`, `?label=<id>`). The agent's tools keep taking and showing
-paths, resolved by name ([ai_tools.md](ai_tools.md)).
+paths, resolved by name ([ai_tools.md](ai_tools.md)). A folder chat's agent
+can also rename folders, make, rename and apply labels, and delete a folder
+(as Keep pages does) or a label. Each deletion asks first, and the reply
+can revert it ([ai_tools.md](ai_tools.md) "Folders and labels" and
+"delete_folder / delete_label").
 
 In the app the trees arrive with the listing. App keeps them as `libTree`
 (`libraryTree` in [libraryUtils.js](../../frontend/src/library/libraryUtils.js):
@@ -427,8 +432,8 @@ strip included:
   `makeLabel`).
 - Share…, Export… and Ask AI act on the page itself, so they open it first
   and run once it is on screen (`openPageThen`, openBlock's `then`). An
-  open another one overtakes (a tab pressed before the page lands) drops
-  its action with it.
+  open that a later one overtakes (a tab pressed before the page lands)
+  drops its action with it.
 - A folder: Open | New page here · New subfolder | Move to ▸ · Move up ·
   Move down | Rename · Pin · Share… · Export… · Keep on this computer…
   (desktop app only, a folder filed once) | Delete.
@@ -519,7 +524,7 @@ directly. Endpoints: [api.md](api.md) "Recently deleted". Editors and owners
 trash and restore; a viewer and a share link cannot. A folder chat's agent
 can list the pages that were filed under its folder and restore one on
 request (`list_deleted`, `restore_page`, [ai_tools.md](ai_tools.md)); it
-cannot trash or delete. A trashed page's files
+cannot trash or delete a page. A trashed page's files
 stay referenced, so they count against the storage quota until the page is
 deleted for good. Then the orphan check takes over
 ([user_db.md](user_db.md) "Stored files").

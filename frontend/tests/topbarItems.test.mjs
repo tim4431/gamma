@@ -4,7 +4,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { PREFS } from "../src/app/prefDefs.js";
 import {
-  DEFAULT_TOPBAR, TOPBAR_ITEM, TOPBAR_ITEMS, TOPBAR_MODES,
+  DEFAULT_TOPBAR, TOPBAR_ITEMS, TOPBAR_MODES,
   barShows, isDefaultTopbar, modeLabel, modeTip, normalizeTopbar, topbarPlaces,
 } from "../src/app/topbarItems.js";
 
@@ -25,7 +25,6 @@ test("every item offers known modes, auto only with its own word, and has the pa
     }
     if (item.modes.includes("auto")) assert.ok(item.labels?.auto, `${item.id} names its auto`);
     assert.ok(modeTip(item, "hidden"), `${item.id}: the hidden choice says where the item goes`);
-    assert.equal(TOPBAR_ITEM[item.id], item);
   }
 });
 

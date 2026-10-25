@@ -42,6 +42,7 @@ import {
 } from "./ruler.js";
 import { toolShape } from "./shapeTool.js";
 import { doublePress } from "../shared/ui/press.js";
+import { scrollBox } from "../shared/ui/placement.js";
 import { makeStabilizer } from "./stabilizer.js";
 import { duplicateOffset, measureSurface } from "./surfaceScale.js";
 import { magForWidth, moveWindow, setMag } from "./zoomWindow.js";
@@ -2486,13 +2487,7 @@ export function InkTooltips({ children, above = false, ...props }) {
 // viewer, else the nearest ancestor that scrolls (a notebook's viewer, the
 // notes), else the window (null).
 function viewportOf(el) {
-  const pdf = el.closest(".inkZoomView, .pdfViewer");
-  if (pdf) return pdf;
-  for (let n = el.parentElement; n && n !== document.body; n = n.parentElement) {
-    const { overflowY } = getComputedStyle(n);
-    if (overflowY === "auto" || overflowY === "scroll") return n;
-  }
-  return null;
+  return el.closest(".inkZoomView, .pdfViewer") || scrollBox(el);
 }
 // That box's screen rect (the window's for null).
 const viewRect = (view) => (view ? view.getBoundingClientRect() : { left: 0, top: 0, right: window.innerWidth, bottom: window.innerHeight });

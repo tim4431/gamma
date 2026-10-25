@@ -385,6 +385,9 @@ export async function motionScenarios(env) {
       assertEq(waiting.shown, "0", "Loading… not shown yet");
       await until(async () => (await box.evaluate((el) => getComputedStyle(el.querySelector(".inboxLoading") || el).opacity)) === "1", { what: "Loading… fades in after a moment" });
       await until(async () => (await inboxRows(page).count()) === 3, { what: "All's rows" });
+      // its animation starts on the frame after the rows land; if it never
+      // does, the assert below lists what came instead
+      await page.waitForFunction(() => window.__moves.includes("anim sharpen-in reveal"), null, { timeout: 2000 }).catch(() => {});
       let seen = await moves(page);
       assert(seen.includes("reveal in") && seen.includes("anim sharpen-in reveal"), `the listing comes into focus: ${seen}`);
       assert(!seen.some((m) => m.startsWith("entering ") || m.startsWith("moving ")), `nothing else moves for a tab's listing: ${seen}`);

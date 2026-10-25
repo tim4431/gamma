@@ -1333,6 +1333,134 @@ export async function chatNavigationScenarios(env) {
     }
   });
 
+  await step("chat navigation: deleting a folder always asks with two answers, and its row puts the folder back with its pages filed", async () => {
+    const name = "E2E doomed folder";
+    const folder = await alice.folder(name);
+    const filed = await alice.api("/api/pages", { method: "POST", body: { title: "Doomed folder page" } });
+    await alice.file(filed.id, { folders: [name] });
+    const { position, properties } = await alice.api(`/api/blocks/${folder}`);
+    await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    const { value: profile } = await alice.api("/api/prefs/profile");
+    // The defaults: Delete folders and labels asks.
+    const { agentPerms: _perms, ...rest } = profile || {};
+    await alice.api("/api/prefs/profile", { method: "PUT", body: { value: rest } });
+    const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => {
+      localStorage.setItem("gamma-ai-login-check", "off");
+      window.chatBodies = [];
+      window.approvalAnswers = [];
+      const fetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        const url = String(input);
+        if (url.endsWith("/api/ai/chat")) {
+          window.chatBodies.push(JSON.parse(init.body));
+          return Promise.resolve(new Response(new ReadableStream({
+            start(controller) {
+              window.chatStream = {
+                push: (event) => controller.enqueue(new TextEncoder().encode(JSON.stringify(event) + "\n")),
+                finish: () => controller.close(),
+              };
+            },
+          }), { headers: { "Content-Type": "application/x-ndjson" } }));
+        }
+        if (url.includes("/api/ai/approvals/")) {
+          window.approvalAnswers.push({ id: decodeURIComponent(url.split("/").pop()), ...JSON.parse(init.body) });
+          return Promise.resolve(new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } }));
+        }
+        return fetch(input, init);
+      };
+    });
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    const push = (event) => page.evaluate((e) => window.chatStream.push(e), event);
+    const input = page.getByRole("combobox", { name: "Message AI" });
+    const card = page.locator(".chatApproval");
+    // The folder as the library listing shows it (list or grid).
+    const listed = page.locator(".fileList, .fileGrid").getByText(name, { exact: true });
+    const gone = async () => { try { await alice.api(`/api/blocks/${folder}`); return false; } catch (e) { return e.status === 404; } };
+    const filedIn = async () => (await alice.api(`/api/blocks/${filed.id}`)).properties?.folders || [];
+    // The deletion as the library chat's saved reply keeps it, once `reverted` is as wanted.
+    const savedAs = (reverted) => until(async () => {
+      const chat = await alice.api("/api/chats/home");
+      const action = chat.messages.find((m) => m.role === "ai")?.actions?.find((a) => a.tool === "delete_folder");
+      return action && !!action.reverted === reverted && action.revert?.tree === "folders";
+    }, { what: `the saved reply marks the deletion ${reverted ? "reverted" : "not reverted"}` });
+    const args = { folder: name };
+    try {
+      await input.waitFor();
+      await page.waitForLoadState("networkidle");
+      await listed.first().waitFor();
+      await input.fill("Delete the doomed folder");
+      await input.press("Enter");
+      await until(() => page.evaluate(() => window.chatBodies.length === 1 && !!window.chatStream), { what: "the message is sent" });
+      const sent = await page.evaluate(() => window.chatBodies[0]);
+      assertEq(sent.permissions.organize_delete, "ask", "deleting folders asks by default");
+      assertEq(sent.permissions.organize, "ask");
+
+      // The card: Allow once, in red, and Don't allow — nothing that stops asking.
+      await push({ step: { id: "c-d1", tool: "delete_folder", args } });
+      await push({ approval: { id: "d1", call_id: "c-d1", tool: "delete_folder", perm: "organize_delete", args, timeout: 600,
+        preview: { title: name, diff: [["del", name]], subfolders: [], subfolder_count: 0, pages: ["Doomed folder page"],
+          page_count: 1, chats: 0, chat_folders: [], chat_folder_count: 0 } } });
+      await card.getByText(`Delete the folder “${name}”`).waitFor();
+      assert((await card.innerText()).includes("Approval needed · Delete folders and labels"), "the card names the permission");
+      assertEq(await card.locator(".chatApprovalNote").innerText(), "1 page leaves it and stays in your library: Doomed folder page");
+      assertEq((await card.locator("del").innerText()).trim(), name);
+      assertEq(await card.getByRole("button", { name: "Allow in this chat", exact: true }).count(), 0);
+      assertEq(await card.getByRole("button", { name: "Always allow", exact: true }).count(), 0);
+      assertEq(await card.getByRole("button", { name: "Don't allow", exact: true }).count(), 1);
+      const once = card.getByRole("button", { name: "Allow once", exact: true });
+      assert((await once.getAttribute("class")).split(" ").includes("danger"), "Allow once is the red button of a deletion");
+      if (flags.keep) await card.screenshot({ path: `${server.dir}/approval-delete-folder.png`, animations: "disabled" });
+      await once.click();
+      await card.getByText("Allowed. The assistant goes on…").waitFor();
+      await page.locator(".chatSteps").getByText(`Deleting the folder ${name}…`).waitFor();
+      assertEq(JSON.stringify(await page.evaluate(() => window.approvalAnswers)), JSON.stringify([{ id: "d1", decision: "once" }]));
+
+      // The deletion the tool made (DELETE /api/folders runs the same ops.delete_tree), and its row.
+      const deleted = await alice.api(`/api/folders/${folder}`, { method: "DELETE" });
+      assertEq(JSON.stringify(deleted.pages), JSON.stringify([filed.id]));
+      await push({ action: { kind: "delete", tool: "delete_folder", block_id: folder, title: name, count: 1, chats: 0,
+        summary: `Deleted the folder “${name}”`, args, approval: "once",
+        result: `ok — deleted the folder "${name}"; its 1 page stays in the library, filed in their other folders or at the library root. The user can revert it from the reply.`,
+        revert: { tree: "folders", blocks: [[folder, "folders", position, name, JSON.stringify(properties || {})]],
+          pages: { [filed.id]: [folder] } } } });
+      await until(async () => !(await card.count()), { what: "the card goes once the call ran" });
+      await push({ delta: "Deleted the folder; its page stays in your library." });
+      await page.evaluate(() => window.chatStream.finish());
+      const changes = page.locator(".chatChanges", { hasText: "Changed in your library · 1" });
+      await changes.waitFor();
+      await until(async () => !(await page.getByRole("button", { name: "Stop generating", exact: true }).count()));
+      const row = changes.locator(".chatChange");
+      assertEq(await row.locator(".chatChangeText").innerText(), `Deleted the folder ${name}; its 1 page stays in your library`);
+      assertEq(await page.getByRole("button", { name: "Revert all" }).count(), 0, "Revert all is the notes' only");
+      await until(async () => !(await listed.count()), { what: "the reply's change reloads the listing" });
+
+      // Revert puts the folder back under its id and files its page again; redo deletes it again.
+      await row.getByRole("button", { name: "Revert this change" }).click();
+      await row.filter({ hasText: "Reverted" }).waitFor();
+      const back = await alice.api(`/api/blocks/${folder}`);
+      assertEq(JSON.stringify([back.content, back.page_id, back.parent_id, back.position]),
+        JSON.stringify([name, "folders", "folders", position]));
+      assertEq(JSON.stringify(await filedIn()), JSON.stringify([folder]));
+      await listed.first().waitFor(); // the library listing reads it again
+      await savedAs(true);
+      await row.getByRole("button", { name: "Redo this change" }).click();
+      await row.getByRole("button", { name: "Revert this change" }).waitFor();
+      assertEq(await row.filter({ hasText: "Reverted" }).count(), 0, "a redone change is not marked");
+      assert(await gone(), "the redo deletes the folder again");
+      assertEq((await filedIn()).length, 0, "and takes it off its page");
+      await until(async () => !(await listed.count()), { what: "the listing loses the folder again" });
+      await savedAs(false);
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await alice.api("/api/prefs/profile", { method: "PUT", body: { value: profile || {} } });
+      await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+      if (!(await gone())) await alice.api(`/api/folders/${folder}`, { method: "DELETE" });
+    }
+  });
+
   await step("chat navigation: the history popover ticks conversations and deletes them in one call", async () => {
     // Its own page: earlier steps left conversations in the other buckets.
     const histPage = await alice.api("/api/pages", { method: "POST", body: { title: "History page" } });

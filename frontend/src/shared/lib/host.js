@@ -8,17 +8,20 @@
 // (it forwards the double tap and the squeeze), pencilPhases (a squeeze's
 // start and cancel come too, as `squeeze`), pencilRoll (its samples carry
 // the Pencil's barrel roll), haptics (it plays `haptic`), openFiles (it
-// holds the files the system opens in the app)} — and a `receive(msg)` stub
+// holds the files the system opens in the app), shellBar (its own bar above
+// the page can be hidden, and `shellBar` sets and reports it)} — and a
+// `receive(msg)` stub
 // that queues what native sends until this module takes over. A flag the
 // host leaves out is a thing it does not do, and the web leaves it out too.
 // The web reads neither `version`, which only names the build, nor
 // `inkLooks`, which only says what the shell's live line can draw: a claim
 // carries its whole look either way.
 // The messages: the web posts `claim` (the ink layer), `theme` (the colour,
-// the scheme and the theme's name) and `haptic` (App), and `files`,
-// `fileData` and `fileDone` (transfers/openedFiles.js); native sends `stroke`
-// and `hold` (the ink layer), `pencil` and `squeeze` (App), and `filesOpened`
-// (openedFiles.js). Feature code asks nativeHost() for a capability, sends
+// the scheme and the theme's name) and `haptic` (App), `files`, `fileData`
+// and `fileDone` (transfers/openedFiles.js), and `shellBar`
+// (app/useShellBar.js); native sends `stroke` and `hold` (the ink layer),
+// `pencil` and `squeeze` (App), `filesOpened` (openedFiles.js) and
+// `shellBar`. Feature code asks nativeHost() for a capability, sends
 // with postToHost and listens with onHostMessage; nothing else in the app
 // knows a host exists. In a browser every answer here is "no host".
 

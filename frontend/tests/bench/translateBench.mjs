@@ -29,7 +29,7 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { segmentPage, textRuns } from "../../src/pdf/pdfTranslate.js";
-import { chunkUnits, createPlanner, requestFields } from "../../src/pdf/translatePlan.js";
+import { BREAK, ENDS_SENTENCE, TOKEN, chunkUnits, createPlanner, requestFields } from "../../src/pdf/translatePlan.js";
 import { pageFaces } from "../../src/pdf/pdfFonts.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -120,12 +120,9 @@ function plan(pages) {
 
 // --- dry metrics ------------------------------------------------------------
 
-const TOKEN = /\{v\d+\}/g;
 const MATHISH = /[\u0370-\u03ff\u1f00-\u1fff\u2190-\u21ff\u2200-\u22ff\u2a00-\u2aff\u27c0-\u27ef\u2980-\u29ff\ue000-\uf8ff\u0300-\u036f]|[\u{1d400}-\u{1d7ff}]/gu;
-const ENDS_SENTENCE = /[.!?:;。！？：；…]["'”’)\]）】」』]*$/;
-
 function plainOf(text) {
-  return text.replace(TOKEN, "").replace(/\{br\}/g, " ").trim();
+  return text.replace(TOKEN, "").replaceAll(BREAK, " ").trim();
 }
 
 function blockOf(paras, t) {
@@ -164,7 +161,7 @@ function dryMetrics(docs) {
         const last = blockOf(d.plan.paras, u.targets[u.targets.length - 1]);
         if (endsMid(u.src, last)) m.endsMid += 1;
         if (startsMid(u.src)) m.startsMid += 1;
-        if (u.src.includes("{br}")) m.joined += 1;
+        if (u.src.includes(BREAK)) m.joined += 1;
         m.tokens += (u.src.match(TOKEN) || []).length;
         m.mathChars += (u.src.replace(TOKEN, "").match(MATHISH) || []).length;
       }
@@ -267,7 +264,7 @@ function liveMetrics(docs, live) {
       c.units.forEach((u, j) => {
         const t = c.translations[j] || "";
         if (t === u.src) m.unchanged += 1;
-        if (u.src.includes("{br}") && !t.includes("{br}")) m.breaksLost += 1;
+        if (u.src.includes(BREAK) && !t.includes(BREAK)) m.breaksLost += 1;
       });
     }
   }
@@ -382,7 +379,7 @@ function html(result, docs) {
       c.units.forEach((u, j) => {
         const last = blockOf(d.plan.paras, u.targets[u.targets.length - 1]);
         const flags = [endsMid(u.src, last) ? "ends mid-sentence" : "", startsMid(u.src) ? "starts mid-sentence" : "",
-                       u.src.includes("{br}") ? "joined" : ""].filter(Boolean).join(", ");
+                       u.src.includes(BREAK) ? "joined" : ""].filter(Boolean).join(", ");
         rows.push(`<tr><td>${mark(u.src)}</td><td>${mark(c.translations?.[j] ?? "")}</td><td class="flags">${esc(flags)}</td></tr>`);
       });
       rows.push("</table>");

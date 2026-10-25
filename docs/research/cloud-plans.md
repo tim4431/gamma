@@ -46,7 +46,6 @@ are in [dev/cloud_accounts.md](../dev/cloud_accounts.md),
 | Accounts on the server | none | 1 (yours) | 1 (yours) | 10 included; more as seats later |
 | Shared workspaces | self-host only | no; share-by-link (view or edit) still works for anyone | no; share-by-link (view or edit) still works for anyone | yes: roles, live cursors, invitations by cloud username |
 | Storage for uploads | the share host's small default | 1 GB | 6 GB | 100 GB pooled, per-workspace quotas |
-| Per-file cap | 50 MB | 50 MB | 100 MB | 250 MB |
 | Published pages | 5 | unlimited | unlimited | unlimited |
 | Devices | against a server you run | desktop offline copies, the iPad app, extension clipping, Codex and Claude Code over MCP | desktop offline copies, the iPad app, extension clipping, Codex and Claude Code over MCP | the same |
 | Off-site copies | none | the shared server's own | the shared server's own | hourly, 30 kept |
@@ -64,7 +63,7 @@ the browser extension clips from any machine, and assistants reach the
 library at a public URL. The storage figure is a cap, not the headline.
 
 **Lite** came after the first three plans: $2 a month or $20 a year for the
-same single-account server with 1 GB, 50 MB per file and daily copies, 3
+same single-account server with 1 GB and daily copies, 3
 kept. It is the entry price for someone who wants a hosted library but
 has a few hundred papers, and it costs the operator the same container
 as Plus.
@@ -113,8 +112,8 @@ container.
 ## What a container enforces, and where it learns it from
 
 Today a Gamma server reads nothing plan-shaped except the publish cap. A
-hosted container needs its owner's plan to decide five things: the default
-upload quota, the per-file cap, how many accounts may exist, which sign-in
+hosted container needs its owner's plan to decide four things: the default
+upload quota, how many accounts may exist, which sign-in
 policy applies, and whether the server is in a read-only state because the
 subscription lapsed. Two ways to get them were weighed.
 
@@ -134,7 +133,7 @@ the answer is its limits:
 ```json
 {"plan": "pro", "status": "active", "read_only": false,
  "policy": "invited", "max_accounts": 10,
- "quota_mb": 102400, "max_upload_mb": 250,
+ "quota_mb": 102400,
  "offsite": {"interval_s": 3600, "keep": 30},
  "grace_until": null, "message": ""}
 ```
@@ -143,11 +142,11 @@ The container keeps the last answer in its `settings` KV, so a blip at the
 account server changes nothing, and a server that never got one runs on its
 environment's defaults. Where each field lands on the Gamma side:
 
-- `quota_mb` and `max_upload_mb` become the server-wide defaults
-  (`server_settings._plan_caps`) when the admin has not set them (a
+- `quota_mb` becomes the server-wide default quota
+  (`server_settings._plan_caps`) when the admin has not set one (a
   hosted admin's own setting may only go lower). No environment variable
-  sets those defaults today, so this is the first way a provisioned
-  container gets them without `manage.py` inside the container.
+  sets that default today, so this is the first way a provisioned
+  container gets it without `manage.py` inside the container.
 - `max_accounts` and `policy` feed `cloud_auth._resolve`. A new policy
   **`invited`** is needed (since built in `cloud_auth.py`): provision only
   a subject that holds a pending invitation on this server
@@ -462,7 +461,11 @@ payments are not refunded; `update` jobs, which rebuild a container with
 the fleet's extra environment, and a server's own limits over its plan's
 ([dev/hosted.md](../dev/hosted.md)). Not built: snapshot jobs, the `sync`
 job, a notice to every hosted admin, Pro seats beyond ten, the Plus
-storage add-on, and the desktop launcher's first-run sign-in.
+storage add-on, and the desktop launcher's first-run sign-in. The
+per-file cap each plan had (50 MB on Free and Lite, 100 MB on Plus,
+250 MB on Pro) was dropped later in October 2026: the quota already
+bounds what an account stores, so a cap per file only turned away large
+scanned books.
 
 **Lite and Plus on the shared server (October 2026).** The first build
 gave every paid plan a container. Two things argued against that for the

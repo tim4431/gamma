@@ -166,7 +166,7 @@ def test_render_brief_drops_what_it_cannot_use():
                                    "stray", {"source": "", "target": "空"}]})
     assert "fidelity → 保真度" in text and "EIT → EIT" not in text and "空" not in text
     brief = parse_brief("Here you go:\n```json\n" + BRIEF + "\n```")
-    assert brief and len(brief.hash) == 16 and brief.text.startswith("The paper's brief")
+    assert brief and brief.startswith("The paper's brief")
 
 
 def _stream_fake(monkeypatch, calls):
@@ -201,8 +201,14 @@ def test_a_streamed_request_makes_the_brief_inside_its_stream(eve, monkeypatch):
     r = c.post("/api/ai/translate", json={"texts": ["a streamed paragraph"], "lang": "pt", "page_id": page, "stream": True})
     assert r.status_code == 200
     lines = [json.loads(l) for l in r.text.splitlines() if l.strip() and "ping" not in l]
+    # The stream says when it is reading the paper, and when that is over.
+    assert lines[:2] == [{"stage": "brief"}, {"stage": "translate"}]
     assert lines[-1]["translations"] == ["S:a streamed paragraph"]
     assert len(calls["brief"]) == 1 and "里德堡阻塞" in calls["translate"][0]["system"]
+    # Once the brief is made, a request has nothing to wait for and says nothing.
+    r = c.post("/api/ai/translate", json={"texts": ["another paragraph"], "lang": "pt", "page_id": page, "stream": True})
+    lines = [json.loads(l) for l in r.text.splitlines() if l.strip() and "ping" not in l]
+    assert not any("stage" in l for l in lines) and lines[-1]["translations"] == ["S:another paragraph"]
 
 
 def test_an_unstored_page_is_named_by_its_id_so_a_selection_finds_the_jobs_brief(eve, monkeypatch):

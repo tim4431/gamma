@@ -102,6 +102,16 @@ def _manages(request: Request) -> bool:
     return can_write(request) and not request.state.is_guest
 
 
+def _manager(request: Request, what: str) -> str:
+    """The caller's account id for an action on the people named by Gamma
+    Cloud (``what``): a session, never a guest's (403) or an integration
+    token's (401)."""
+    user_id = require_user_id(request)
+    if request.state.is_guest:
+        raise HTTPException(status_code=403, detail=f"a guest cannot {what}")
+    return user_id
+
+
 # A share's target is the ShareScope it grants: the page or the folder, the
 # other ''. Everything below takes one and never asks which kind it is.
 
@@ -115,6 +125,14 @@ def _find(ws: str, target: ShareScope) -> dict | None:
             "SELECT token FROM shares WHERE workspace_id = ? AND page_id = ? AND folder = ?",
             (ws, target.page, target.folder)).fetchone()
     return share_lookup(row[0]) if row else None
+
+
+def _shared(ws: str, target: ShareScope, what: str) -> dict:
+    """The target's share, or 404 ("page is not shared")."""
+    share = _find(ws, target)
+    if not share:
+        raise HTTPException(status_code=404, detail=f"{what} is not shared")
+    return share
 
 
 def _require_page(ws: str, page_id: str) -> ShareScope:
@@ -239,9 +257,7 @@ def _get(ws: str, request: Request, target: ShareScope) -> dict:
 
 def _update(ws: str, request: Request, target: ShareScope, payload: ShareSettings, what: str) -> dict:
     """Change who may open the link and what they may do. The token stays."""
-    share = _find(ws, target)
-    if not share:
-        raise HTTPException(status_code=404, detail=f"{what} is not shared")
+    share = _shared(ws, target, what)
     fields = _validated(request.state.user_id, share, payload)
     with connect_users_db() as conn:
         cur = conn.execute("UPDATE shares SET audience = ?, role = ? WHERE token = ?",
@@ -254,13 +270,6 @@ def _update(ws: str, request: Request, target: ShareScope, payload: ShareSetting
     return _settings(share_lookup(share["token"]), _manages(request))
 
 
-def _shared(ws: str, target: ShareScope, what: str) -> dict:
-    share = _find(ws, target)
-    if not share:
-        raise HTTPException(status_code=404, detail=f"{what} is not shared")
-    return share
-
-
 def _cloud_invite(ws: str, request: Request, target: ShareScope, payload: CloudInvite, what: str) -> dict:
     """Invite someone by their Gamma Cloud username, change the role of an
     invitation still waiting, or approve a request to join that came
@@ -268,9 +277,7 @@ def _cloud_invite(ws: str, request: Request, target: ShareScope, payload: CloudI
     Sessions only, never a guest: a lookup spends the caller's own Gamma
     Cloud grant, and counts against the caller's lookups, a workspace's
     invitations' too."""
-    user_id = require_user_id(request)
-    if request.state.is_guest:
-        raise HTTPException(status_code=403, detail="a guest cannot invite people by Gamma Cloud username")
+    user_id = _manager(request, "invite people by Gamma Cloud username")
     share = _shared(ws, target, what)
     if not cloud_auth.settings()["enabled"]:
         raise HTTPException(status_code=400, detail="Gamma Cloud sign-in is not set up on this server")
@@ -301,9 +308,7 @@ def _cancel_invite(ws: str, request: Request, target: ShareScope, subject: str, 
 def _decline(ws: str, request: Request, target: ShareScope, subject: str, what: str) -> dict:
     """Decline a request to join that came through the share: the person's
     sign-ins ask nothing more until an admin removes it."""
-    user_id = require_user_id(request)
-    if request.state.is_guest:
-        raise HTTPException(status_code=403, detail="a guest cannot decide requests to join")
+    user_id = _manager(request, "decide requests to join")
     share = _shared(ws, target, what)
     try:
         join_requests.decline(share["token"], subject, user_id)
@@ -334,6 +339,16 @@ def delete_folder_shares(ws: str, folder_ids) -> int:
     if removed:
         collab.revalidate(ws)
     return removed
+
+
+def shared_folders(ws: str, folder_ids) -> set[str]:
+    """The folders among ``folder_ids`` that have a share link: the agent
+    does not delete those (deleting a folder stops its share for good, and
+    sharing again mints another link)."""
+    with connect_users_db() as conn:
+        return {r[0] for r in conn.execute(
+            "SELECT folder FROM shares WHERE workspace_id = ? AND folder IN (SELECT value FROM json_each(?))",
+            (ws, json.dumps(sorted(folder_ids))))}
 
 
 # ---- folder shares (before the page routes: "folder" is a static segment) ---

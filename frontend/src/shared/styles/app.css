@@ -3009,7 +3009,9 @@ mark.searchMark {
    takes no room and clips, nothing can scroll it, and the window keeps the
    size it had as it folded (--fold-w, --fold-h, set by the fold), unseen
    and inert, so what it holds neither lays out again nor loses its place.
-   Only the splitters between open windows show. */
+   Only the splitters between open windows show. The panel's flex and
+   overflow are inline styles of react-resizable-panels, hence the
+   importance. */
 .dockPanelFolded { flex: 0 0 0px !important; overflow: clip !important; }
 .dockPanelFolded > .dockWindow { flex: none; width: var(--fold-w, 100%); height: var(--fold-h, 100%); visibility: hidden; }
 .dockWindowFolded .dockWindowBody { overflow: clip; }
@@ -5495,8 +5497,9 @@ a.shareBrand:hover { background: var(--bg-hover); }
    baseline; its extracted text lies under it, transparent, so a copy of the
    translation carries it. Until the page has pixels to crop (it has not
    been drawn yet) the extracted text shows instead. The page colour
-   treatments above apply to the crop as to the page. */
-.pdfTransMath { display: inline-block; position: relative; }
+   treatments above apply to the crop as to the page. The box's size rides
+   in --w, --h and --shift on the element, which .bare lets go. */
+.pdfTransMath { display: inline-block; position: relative; width: var(--w); height: var(--h); vertical-align: var(--shift); }
 .pdfTransMath > canvas { display: block; width: 100%; height: 100%; }
 .pdfTransMath > .pdfTransMathText {
   position: absolute;
@@ -5506,7 +5509,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   color: transparent;
   font-size: 0.7em;
 }
-.pdfTransMath.bare { width: auto !important; height: auto !important; vertical-align: baseline !important; }
+.pdfTransMath.bare { width: auto; height: auto; vertical-align: baseline; }
 .pdfTransMath.bare > canvas { display: none; }
 .pdfTransMath.bare > .pdfTransMathText { position: static; color: inherit; font-size: inherit; }
 /* Translation still arriving (pdfViewer TransPending / TransPara

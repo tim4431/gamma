@@ -85,7 +85,7 @@ from . import ink as inkmod
 from .text_box import merge_text_box
 from .blocks_store import (
     BLOCK_COLUMNS, FOLDERS, LABELS, STORED_COLUMNS, TRASH, TREES, block_to_dict, delete_subtree, ensure_reserved,
-    fetch_subtree, filing_ids, folder_inserts, free_position, is_op_page, label_inserts, last_child_position,
+    fetch_subtree, filing, filing_ids, folder_inserts, free_position, is_op_page, label_inserts, last_child_position,
     move_subtree_to_page, subtree_refs, touch_page, trashed_page, valid_block_id, write_lock)
 from .db import connect_pages_db, format_stamp, page_now, parse_stamp, ws_uploads_dir
 from .logbuf import log
@@ -712,20 +712,22 @@ def apply_ops(conn, page_id: str, ops: list[dict], *, actor: str, client: str = 
     return result
 
 
-def apply_batches(conn, batches: list[tuple[str, list[dict]]], *, actor: str) -> list[dict]:
+def apply_batches(conn, batches: list[tuple[str, list[dict]]], *, actor: str, client: str = "") -> list[dict]:
     """Several batches, ``[(page_id, ops), …]`` — each its own page's, each
     logged on its page — in the caller's transaction: what one request
     changes across pages as one step (a folder deleted together with the
     ids it leaves on the pages filed in it). Takes the write lock; the
     caller commits, or rolls back and nothing is written, then hands each
-    result to ``after_commit``. Raises ``OpError`` as ``apply_ops`` does."""
+    result to ``after_commit``. ``client`` names the writer on each
+    batch's log row, as ``apply_ops``'s does. Raises ``OpError`` as
+    ``apply_ops`` does."""
     write_lock(conn)
     results = []
     for page_id, ops in batches:
         ops = _checked(ops)
         if not is_op_page(conn, page_id):
             raise OpError(404, "page not found")
-        results.append(_apply(conn, page_id, ops, actor=actor))
+        results.append(_apply(conn, page_id, ops, actor=actor, client=client))
     return results
 
 
@@ -853,18 +855,19 @@ def commit_ops(ws: str, page_id: str, ops: list[dict], *, actor: str, client: st
 
 
 def ensure_filing(ws: str, conn, *, paths=(), labels=(), under: str = "",
-                  actor: str) -> tuple[dict, dict]:
+                  actor: str, client: str = "") -> tuple[dict, dict]:
     """The folders at ``paths`` (lists of names, from the top or from the
     folder ``under``, "" = the top) and the labels called ``labels``, made where they are
     missing — one batch on each tree that needs one
     (``blocks_store.folder_inserts`` / ``label_inserts``), committed — for a
     writer about to file pages by name (an import, a clip, the agent).
-    Returns ``({tuple(names): folder id}, {name: label id})``."""
+    ``client`` names the writer on each batch's log row, as ``apply_ops``'s
+    does. Returns ``({tuple(names): folder id}, {name: label id})``."""
     folder_ops, folder_ids = folder_inserts(conn, paths, under)
     label_ops, label_ids = label_inserts(conn, labels)
     for tree, tree_ops in ((FOLDERS, folder_ops), (LABELS, label_ops)):
         if tree_ops:
-            after_commit(ws, conn, apply_ops(conn, tree, tree_ops, actor=actor))
+            after_commit(ws, conn, apply_ops(conn, tree, tree_ops, actor=actor, client=client))
     return folder_ids, label_ids
 
 
@@ -974,6 +977,59 @@ def restore_page(ws: str, conn, page_id: str, *, actor: str, client: str = "") -
     notify_commit(ws, client, page_id)
     return block_to_dict(conn.execute(
         f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE id = ?", (page_id,)).fetchone())
+
+
+def tree_deletion(conn, tree: str, block_id: str) -> tuple[list, dict, list]:
+    """What deleting the folder or label ``block_id`` of ``tree`` takes, read
+    and nothing written: ``(rows, carried, batches)`` — the subtree as it is
+    (``fetch_subtree`` rows, parent first), ``{page id: the subtree's ids it
+    carries}`` for every library page filed under it, in library order, and
+    the batches ``delete_tree`` applies: the tree's ``delete``, then one
+    ``set`` per page taking those ids off. The agent's delete tools read it
+    for their card and their revert record. OpError(404) unless
+    ``block_id`` is a block of the tree (the reserved row is none)."""
+    if not conn.execute("SELECT 1 FROM unified_blocks WHERE id = ? AND page_id = ?",
+                        (block_id, tree)).fetchone():
+        raise OpError(404, "folder not found" if tree == FOLDERS else "label not found")
+    rows = fetch_subtree(conn, block_id)
+    ids = {r[0] for r in rows}
+    carried, batches = {}, [(tree, [{"op": "delete", "id": block_id}])]
+    for page_id, raw in conn.execute(
+            f"SELECT id, properties FROM unified_blocks p WHERE parent_id = 'root' AND EXISTS ("
+            f"SELECT 1 FROM json_each(p.properties, '$.{tree}') f WHERE f.value IN "
+            "(SELECT value FROM json_each(?))) ORDER BY position", (json.dumps(sorted(ids)),)).fetchall():
+        filed = filing(json.loads(raw), tree)
+        carried[page_id] = [i for i in filed if i in ids]
+        batches.append((page_id, [{"op": "set", "id": page_id,
+                                   "props": {tree: [i for i in filed if i not in ids] or None}}]))
+    return rows, carried, batches
+
+
+def delete_tree(ws: str, conn, tree: str, block_id: str, *, actor: str,
+                client: str = "") -> tuple[list, dict, list[dict]]:
+    """Delete the folder or label ``block_id`` of ``tree`` with everything
+    below it and take those ids off the library pages that carry them
+    (``tree_deletion``), in one transaction committed here, each batch
+    logged on its page (``apply_batches``). The tree's ``delete`` op files a
+    deleted folder's chats into the library chat's history and
+    ``after_commit`` stops its shares, as for any tree batch that deletes a
+    folder. DELETE /api/folders/{id}, DELETE /api/labels/{id}, the agent's
+    delete_folder / delete_label and a revert's redo run it; a caller that
+    holds the write lock already may (``write_lock`` is a no-op inside a
+    transaction). Returns ``(rows, carried, results)``: ``tree_deletion``'s
+    first two and the batches' results, the tree's first. Raises
+    ``OpError``."""
+    write_lock(conn)
+    try:
+        rows, carried, batches = tree_deletion(conn, tree, block_id)
+        results = apply_batches(conn, batches, actor=actor, client=client)
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    for result in results:
+        after_commit(ws, conn, result)
+    return rows, carried, results
 
 
 def record_ops(ws: str, conn, page_id: str, ops: list[dict], *, actor: str) -> int:

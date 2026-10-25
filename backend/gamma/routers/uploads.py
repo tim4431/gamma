@@ -19,11 +19,11 @@ from ..storage import (
     IMAGE_EXTENSIONS,
     INLINE_EXTENSIONS,
     SANDBOXED_EXTENSIONS,
-    content_refusal,
     display_filename,
     find_upload_file,
     pdf_url,
     store_file,
+    store_file_stream,
     store_pdf_stream,
     upload_extension,
     upload_media_type,
@@ -49,13 +49,13 @@ def get_quota(request: Request):
 
 # The upload endpoints are sync defs: hashing and writing the file (and the
 # quota's walk of the uploads) run in the threadpool, reading the spooled
-# upload through ``file.file``.
+# upload through ``file.file``. A file is spooled to disk and hashed as it is
+# read (storage.store_pdf_stream / store_file_stream), never held in memory
+# (but for a drawing, which /upload-file parses), and the store is a rename.
 @router.post("/uploads")
 def upload_pdf(request: Request, file: UploadFile = File(...)):
     ws = require_ws(request, write=True)
     try:
-        # Spooled to disk and hashed as it is read (storage.store_pdf_stream):
-        # the file is never held in memory, and the store is a rename.
         doc_id, already_existed, size = store_pdf_stream(ws, file.file)
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -82,7 +82,7 @@ class PartsStart(BaseModel):
 @router.post("/uploads/parts")
 def start_upload_parts(request: Request, body: PartsStart):
     """Open an upload in parts → ``{token, part_bytes, received: 0, kind}``:
-    the size and quota checks of ``POST /uploads`` (413 / 507) run here,
+    the quota check of ``POST /uploads`` (507) runs here,
     before a byte travels; 429 past ``upload_parts.MAX_PER_WS`` open at
     once. ``kind`` is echoed, so a client tells a server that stores a
     ``file`` from an older one that takes every upload for a PDF."""
@@ -137,11 +137,10 @@ def upload_image(request: Request, file: UploadFile = File(...)):
     link_ratelimit(request, "upload", LINK_UPLOADS_PER_5_MIN, 300)
     if file.content_type not in ALLOWED_IMAGE_TYPES:
         raise HTTPException(status_code=400, detail=f"unsupported image type: {file.content_type}")
-    contents = file.file.read()
-    filename, already_existed = store_file(ws, contents, IMAGE_EXTENSIONS[file.content_type])
+    filename, already_existed = store_file_stream(ws, file.file, IMAGE_EXTENSIONS[file.content_type])
     return {
         "url": f"/api/uploads/{filename}",
-        "size": len(contents),
+        "size": file.size,
         "already_existed": already_existed,
     }
 
@@ -168,16 +167,18 @@ def upload_file(request: Request, file: UploadFile = File(...)):
             ext = upload_extension(name)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc))
-    contents = file.file.read()
-    refused = content_refusal(ext, contents[:16])
-    if refused:
-        raise HTTPException(status_code=400, detail=refused)
     if ext == ".ink":
         # the path a mirror pushes a drawing by: stored only when it is a
         # version 2 drawing (a version 1 one means the pusher must update)
+        contents = file.file.read()
         parse_upload(contents)
-    filename, already_existed = store_file(ws, contents, ext)
-    return {"url": f"/api/uploads/{filename}", "name": name, "size": len(contents),
+        filename, already_existed = store_file(ws, contents, ext)
+    else:
+        try:  # a file its first bytes contradict (storage.content_refusal) is a ValueError
+            filename, already_existed = store_file_stream(ws, file.file, ext)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+    return {"url": f"/api/uploads/{filename}", "name": name, "size": file.size,
             "already_existed": already_existed}
 
 

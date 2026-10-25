@@ -15,6 +15,8 @@
 // ({v1}… in order); `tokens[n - 1]` says whose token {vn} is. A chunk is one
 // request: {units, texts, context}.
 
+import { HYPHENATED } from "./pdfTranslate.js";
+
 export const CHUNK_UNITS = 10;
 export const CHUNK_CHARS = 2500;
 // The marker at a join. The prompt (backend gamma/translate_context.py) tells
@@ -31,7 +33,7 @@ export const HEAD_CHARS = 12000;
 const SECTION_REACH = 80; // flow blocks searched back for the section heading
 
 const CJK = /[぀-ヿ㐀-鿿가-힯]/;
-const ENDS_SENTENCE = /[.!?:;。！？：；…]["'”’)\]）】」』]*$/;
+export const ENDS_SENTENCE = /[.!?:;。！？：；…]["'”’)\]）】」』]*$/;
 // A caption: "FIG. 1.", "Figure 2:", "TABLE I.", "Fig. S.2.", "Figure A1.",
 // "Extended Data Fig. 3 |". The number is followed by punctuation;
 // "Figure 1 compares…" and "Figs. 2–4 show…" in running text are not.
@@ -41,7 +43,7 @@ const NUMBERED_HEADING = /^((\d+|[IVXLC]+|[A-Z])(\.\d+)*\.?)\s+\S/;
 const NAMED_HEADING = /^(abstract|introduction|background|related work|methods?|materials and methods|results|discussion|conclusions?|summary|acknowledge?ments?|references|bibliography|appendix(\s+[A-Z\d]+)?)\.?$/i;
 // Words a sentence cannot stop on.
 const OPEN_END = /(?:\s[–—]|[,(]|\b(?:the|a|an|of|in|on|at|to|for|and|or|nor|but|with|by|from|as|into|onto|than|that|which|whose|is|are|was|were|be|been|its|their|our|this|these|those|such|via|per))$/i;
-const TOKEN = /\{v(\d+)\}/g;
+export const TOKEN = /\{v(\d+)\}/g;
 
 // --- page structure ---------------------------------------------------------
 
@@ -275,7 +277,7 @@ export function continues(a, b, body, { spaced = false, wide = true, intro = fal
   if (!start || ENDS_SENTENCE.test(end) || !isProse(end)) return false;
   if (isHeading(b, body) || isCaption(b)) return false;
   if (b.indent != null && (b.indent > b.size * 0.6 || !isProse(start))) return false;
-  if (/[A-Za-z]-$/.test(end)) return /^[a-z]/.test(start);
+  if (HYPHENATED.test(end)) return /^[a-z]/.test(start);
   const readsOn = /^\p{Ll}/u.test(start) || OPEN_END.test(end);
   if (b.indent == null) return readsOn && (ENDS_SENTENCE.test(start) || wide || intro);
   return readsOn || !spaced;
@@ -289,7 +291,7 @@ export function continues(a, b, body, { spaced = false, wide = true, intro = fal
 function joinParts(texts) {
   const parts = texts.map((t) => t.trim());
   for (let k = 0; k + 1 < parts.length; k++) {
-    if (/[A-Za-z]-$/.test(parts[k]) && /^[a-z]/.test(parts[k + 1])) {
+    if (HYPHENATED.test(parts[k]) && /^[a-z]/.test(parts[k + 1])) {
       const m = parts[k + 1].match(/^(\S+)\s*([\s\S]*)$/);
       parts[k] = parts[k].slice(0, -1) + m[1];
       parts[k + 1] = m[2];
@@ -419,11 +421,6 @@ export function createPlanner({ paras, inJob = () => true, filled = () => false 
       return units;
     },
   };
-}
-
-// The units of one page planned on its own (no joins into other pages).
-export function pageUnits(pn, paras) {
-  return createPlanner({ paras: (p) => (p === pn ? paras : null) }).planPage(pn);
 }
 
 // Units → requests: a chunk closes once it holds `maxUnits` units or its text

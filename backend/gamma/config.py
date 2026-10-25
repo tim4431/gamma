@@ -179,8 +179,6 @@ def offsite_env() -> dict:
             "keep": env("GAMMA_OFFSITE_KEEP", "").strip()}
 
 
-MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
-
 # --- AI chat -----------------------------------------------------------------
 # AI configuration is per-user, not env: each user adds provider entries in the
 # GUI (Settings → AI → Connections), resolved per request by

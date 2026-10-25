@@ -20,7 +20,7 @@ import { forReplay, markReverted } from "./aiRevert.js";
 import { GRANTS_KEY, conversationId, declinedSummary, grantsIn, readGrants, waitsForPapers, withGrant,
   withoutGrants, withoutPaperWait, writeGrants } from "./approvals.js";
 import { MAX_CHAT_REFERENCES } from "./paperMentions";
-import { READ_TOOLS, WRITE_TOOLS, permState, toolsForKind } from "./chatSettings";
+import { READ_TOOLS, WRITE_TOOLS, permState, permStates, toolsForKind } from "./chatSettings";
 import { addUsage, cachedPercent, contextUsed, conversationUsage, fmtTokens, liveUsage, usageDetail } from "./tokenUsage";
 import { areaPicturesNote, coverageNote, shortenedNote, trimmedNote, truncatedNote } from "./coverage.js";
 import { keptNote, keptTitle, passageShares } from "./passageBudget.js";
@@ -33,7 +33,7 @@ import { useAltVariant } from "../shared/ui/altVariant.js";
 import { touchTyping } from "../shared/lib/pointer.js";
 import { composing, sendsOnEnter } from "./enterKey.js";
 import { chatFailure, failureCopy, failureFields, fixLabel } from "./chatErrors";
-import { BLOCK_TOOLS, chipNote, helperStatus, isChange, runningLabel, splitActions, stepsSummary, withHelper } from "./agentSteps";
+import { BLOCK_TOOLS, changePlace, chipNote, helperStatus, isChange, runningLabel, splitActions, stepsSummary, withHelper } from "./agentSteps";
 import { guideEvents } from "../guide/events.js";
 import { gammaLinksIn } from "../shared/model/gammaLinks.js";
 import { CharSlider, approxPages } from "../settings/SettingsKit";
@@ -481,7 +481,8 @@ export default function ChatDock({
   // Home/folder view: the folder being viewed (its id; "" = library root) —
   // enables the folder-agent tools; null in the paper view. agentPerms is the
   // Settings per-chat-kind permission map ({folder, pdf, notes} → {list,
-  // read, block_read, search, rename, move, block_edit}; setAgentPerms edits
+  // read, block_read, search, rename, move, organize, organize_delete,
+  // block_edit, …}: chat/chatSettings.js has them all); setAgentPerms edits
   // it from the ⚙ popover) and toolRounds the round budget. When the AI applied changes, onLibraryChange
   // refreshes the home feed and onNotesChange reloads touched pages' notes.
   organizeFolder = null, toolRounds, agentReadChars, agentPerms, setAgentPerms, agentSystem,
@@ -584,8 +585,9 @@ export default function ChatDock({
     return () => window.removeEventListener("storage", onStorage);
   }, []);
   const activeUser = () => { try { return localStorage.getItem("gamma-active-user") || ""; } catch { return ""; } };
+  // A permission that only asks (chatSettings.js permStates) is never granted.
   const grantedHere = grantsIn(grantStore, activeUser(), conversationId(chatMessages))
-    .filter((key) => permState(chatToolPerms, key) === "ask");
+    .filter((key) => permState(chatToolPerms, key) === "ask" && permStates(key).includes("allow"));
   const updateGrants = (change) => setGrantStore((store) => {
     const next = change(store);
     writeGrants(next);
@@ -747,7 +749,8 @@ export default function ChatDock({
   // A change under a reply was reverted, or redone (`reverted` false —
   // chat/AgentChanges.jsx): its action is marked or unmarked in the saved
   // conversation, so the model hears of it on the next turn, and the pages
-  // it touched reload where no live socket brought the ops. The
+  // it touched reload where no live socket brought the ops (a folder or
+  // label put back or deleted again: the library listing). The
   // conversation is the one the reply belongs to, even if the dock moved
   // on while a "Revert all" ran.
   const loadedRef = useRef(loadedHere);
@@ -765,6 +768,7 @@ export default function ChatDock({
     const touched = indexes.flatMap((i) => [message?.actions?.[i]?.page_id, message?.actions?.[i]?.src_page_id]);
     const pages = [...new Set([answer?.page_id, ...touched].filter(Boolean))];
     if (pages.length) onNotesChange?.(pages);
+    if (indexes.some((i) => message?.actions?.[i] && changePlace(message.actions[i]) === "library")) onLibraryChange?.();
   };
 
   // Show a conversation that came from the server (bucket switch, or a

@@ -4,7 +4,7 @@
 // tests/slashCommands.test.mjs pins the ranking; editor/SlashMenu.jsx holds
 // the popup and the icons, editor/useSlashMenu.js the trigger, keys and state
 // (a note row's and a comment's field).
-import { TEXT_COLORS, colorSpan } from "./mdMarks.js";
+import { TEXT_COLORS, colorSpan, tint } from "./mdMarks.js";
 import { TEXT_INSERTS, replaceRange } from "./slashInserts.js";
 import { makeBlockId } from "../shared/model/blockModel.js";
 import { t, T } from "../shared/i18n/i18n.js";
@@ -122,7 +122,7 @@ export const SLASH_COMMANDS = [
     group: "style",
     label: `${name[0].toUpperCase()}${name.slice(1)} ${background ? "background" : "text"}`,
     hint: background ? T("Tint the background behind the text") : T("Color the text"),
-    glyph: "A", glyphStyle: background ? { background: `${color}55` } : { color },
+    glyph: "A", glyphStyle: background ? { background: tint(color) } : { color },
     keywords: ["color", "colour", background ? "highlight" : "font", name],
     hidden: true,
     run: (ctx) => {

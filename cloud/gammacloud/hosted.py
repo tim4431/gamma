@@ -47,7 +47,7 @@ STATUS = {"provisioning": "active", "running": "active", "grace": "grace", "read
           "suspended": "read_only", "stopped": "stopped", "deleted": "stopped"}
 DELETE_WARNING_DAYS = 7
 WAITING = "waiting for a host with room"   # the report note of a server no host has room for
-OVERRIDES = ("quota_mb", "max_upload_mb", "max_accounts", "memory_mb", "cpus")   # what set_overrides takes
+OVERRIDES = ("quota_mb", "max_accounts", "memory_mb", "cpus")   # what set_overrides takes
 OVERRIDE_MAX = 10 ** 9
 
 
@@ -187,7 +187,7 @@ def limits_for(row, plan: str, grace_until: str | None) -> dict:
         status = "grace"
     return {"plan": plan, "status": status, "read_only": row["state"] in READ_ONLY_STATES,
             "policy": p["policy"], "max_accounts": p["max_accounts"], "quota_mb": p["quota_mb"],
-            "max_upload_mb": p["max_upload_mb"], "memory_mb": p["memory_mb"], "cpus": p["cpus"],
+            "memory_mb": p["memory_mb"], "cpus": p["cpus"],
             "offsite": {"interval_s": p["offsite_interval_s"], "keep": p["offsite_keep"]},
             "grace_until": grace_until if status == "grace" else None,
             "message": _message("grace" if status == "grace" else row["state"], row, grace_until)}

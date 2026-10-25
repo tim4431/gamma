@@ -1,14 +1,18 @@
-"""Taking back one change the AI chat's agent made to the notes, and
-putting it back again.
+"""Taking back one change the AI chat's agent made to the notes, or a
+folder or label it deleted, and putting it back again.
 
 Each note tool's action records what its change needs to be undone and
 redone (``revert`` on the action, gamma/ai_tools.py): an edit the block's
 text just before and just after the write, a new block the text it was
 made with and where it went, a move the parent and key it left and the
-ones it went to, a deletion every block of the subtree it took. The chat
-keeps the action with the reply, and its "Changed in your notes" row sends
-it back here (``POST /api/ai/revert``) when the user reverts the change, or
-redoes one they reverted.
+ones it went to, a deletion every block of the subtree it took. A folder's
+or label's deletion (``tree`` on its revert) records the blocks it took and
+each library page's ids of them. Its revert puts the blocks back under the
+same ids and refiles those pages, and its redo deletes it again
+(``ops.delete_tree``). The folders' chats stay in the library chat's
+history. The chat keeps the action with the reply, and its row under the
+reply sends it back here (``POST /api/ai/revert``) when the user reverts
+the change, or redoes one they reverted.
 
 Neither direction assumes the note still says what it last said. An edit
 goes as a patch: the change ``after → before`` (redo: ``before → after``)
@@ -27,9 +31,10 @@ import json
 
 from . import textmerge
 from .ai_tools import cross_page_refusal, text_diff
-from .blocks_store import fetch_subtree, free_position, page_root_id, write_lock
+from .blocks_store import (FOLDERS, TREES, fetch_subtree, filing, free_position, load_props, named, page_root_id,
+                           tree_children, write_lock)
 from .db import connect_pages_db
-from .ops import OpError, after_commit, apply_ops, move_across_pages
+from .ops import OpError, after_commit, apply_batches, apply_ops, delete_tree, move_across_pages
 
 CLIENT = "revert"  # the op log's writer for a revert or redo: not the agent's "ai", not any tab
 MALFORMED = "This change can't be reverted."
@@ -144,7 +149,10 @@ def _plan_move(conn, block_id: str, revert: dict, force: bool, redo: bool):
 def _plan_delete(conn, block_id: str, revert: dict, force: bool, redo: bool):
     """A deleted subtree put back as it was (``revert["blocks"]``: every
     block, parent first, with its parent, key, text and properties); a redo
-    deletes it again."""
+    deletes it again. A folder's or label's deletion is
+    ``_plan_tree_delete``'s."""
+    if revert.get("tree") is not None:
+        return _plan_tree_delete(conn, block_id, revert, force, redo)
     rows = revert.get("blocks")
     if not isinstance(rows, list) or not rows or not all(isinstance(r, list) and len(r) == 5 for r in rows) \
             or rows[0][0] != block_id:
@@ -171,6 +179,53 @@ def _plan_delete(conn, block_id: str, revert: dict, force: bool, redo: bool):
     return page_id, ops
 
 
+def _plan_tree_delete(conn, block_id: str, revert: dict, force: bool, redo: bool):
+    """A deleted folder (with its subfolders) or label put back as it was —
+    the same ids, parents, keys (re-keyed if taken), names and properties —
+    and the library pages that carried it filed in it again
+    (``("batches", …)`` for ``apply_batches``); a redo deletes it again as it
+    is then (``("tree", tree)``, ``ops.delete_tree``). Nothing here can be
+    forced."""
+    tree, rows, pages = revert.get("tree"), revert.get("blocks"), revert.get("pages")
+    if tree not in TREES or not isinstance(rows, list) or not rows or not isinstance(pages, dict) \
+            or not all(isinstance(r, list) and len(r) == 5 and isinstance(r[0], str) for r in rows) \
+            or rows[0][0] != block_id:
+        raise RevertError(400, MALFORMED)
+    there = conn.execute("SELECT 1 FROM unified_blocks WHERE id = ? AND page_id = ?", (block_id, tree)).fetchone()
+    if redo:
+        if not there:
+            return "", None  # deleted already
+        if tree == FOLDERS:
+            from .routers.shares import shared_folders  # local: keep gamma.* free of the routers package
+            if shared_folders(conn.ws, {r[0] for r in fetch_subtree(conn, block_id)}):
+                raise RevertError(409, "The folder is shared now. Stop sharing it before deleting it again.", "gone")
+        return "", ("tree", tree)
+    if there:
+        return "", None  # back already (another tab, or by hand)
+    parent, name = rows[0][1], rows[0][3] or ""
+    if parent != tree and not conn.execute(
+            "SELECT 1 FROM unified_blocks WHERE id = ? AND page_id = ?", (parent, tree)).fetchone():
+        raise RevertError(409, "The folder it was in was deleted.", "gone")
+    if name and named(tree_children(conn, tree).get(parent, []), name):
+        raise RevertError(409, f"There is a {'folder' if tree == FOLDERS else 'label'} “{name}” there again.", "gone")
+    inserts = [{"op": "insert", "id": bid, "parent": par, "content": content or "",
+                "position": position if isinstance(position, str) else None, "props": load_props(props)}
+               for bid, par, position, content, props in rows]
+    ids = {r[0] for r in rows}
+    batches = [(tree, inserts)]
+    live = dict(conn.execute(
+        "SELECT id, properties FROM unified_blocks WHERE parent_id = 'root' AND id IN (SELECT value FROM json_each(?))",
+        (json.dumps([p for p in pages if isinstance(p, str)]),)).fetchall())
+    for page_id, carried in pages.items():
+        if page_id not in live or not isinstance(carried, list):
+            continue  # deleted or in Recently deleted since
+        have = filing(load_props(live[page_id]), tree)
+        back = [i for i in carried if i in ids and i not in have]
+        if back:
+            batches.append((page_id, [{"op": "set", "id": page_id, "props": {tree: have + back}}]))
+    return "", ("batches", batches)
+
+
 _PLANS = {"edit": _plan_edit, "create": _plan_create, "move": _plan_move, "delete": _plan_delete}
 
 
@@ -191,6 +246,15 @@ def revert_change(ws: str, kind: str, block_id: str, revert: dict, *, force: boo
             if not plan:
                 conn.rollback()
                 return {"page_id": page_id, "noop": True}
+            if isinstance(plan, tuple) and plan[0] == "tree":
+                delete_tree(ws, conn, plan[1], block_id, actor=actor, client=CLIENT)  # commits
+                return {"page_id": page_id, "noop": False}
+            if isinstance(plan, tuple) and plan[0] == "batches":
+                results = apply_batches(conn, plan[1], actor=actor, client=CLIENT)
+                conn.commit()
+                for result in results:
+                    after_commit(ws, conn, result)
+                return {"page_id": page_id, "noop": False}
             if isinstance(plan, tuple):
                 _, parent, position, src = plan
                 move_across_pages(ws, conn, block_id, parent, position, src, page_id, actor=actor)

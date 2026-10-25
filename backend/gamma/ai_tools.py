@@ -28,13 +28,16 @@ picture; the citation records kept with pages; full-text-search the reachable
 pages' notes and PDF text via the two FTS indexes; search the scholarly record
 and read a document that is not in the library (``ai_web.py`` — read-only,
 nothing stored); list Recently deleted.  Writes: rename pages and
-file them into (sub)folders, restore deleted pages (folder scope only); edit,
-create, move and delete note blocks (a deletion the user can revert); save a
-paper to the library (both scopes, each under its own permission).
-Deliberately NOT offered under any permission: deleting pages, folders or
-files, rewriting flat labels, or touching
-pages outside the scope — and every successful call is streamed back to the
-UI as an ``action`` event so the user sees exactly what the agent did.  The
+file them into (sub)folders, restore deleted pages, rename folders, make,
+rename and apply labels, and delete a folder or a label — never its pages;
+a deletion always asks and the user can revert it (folder scope only);
+edit, create, move and delete note blocks (a deletion the user can
+revert); save a paper to the library (both scopes, each under its own
+permission). Deliberately NOT offered under any permission: deleting pages
+or files, moving folders, deleting a shared folder or the chat's own
+folder, or touching pages outside the scope — and every successful call is
+streamed back to the UI as an ``action`` event so the user sees exactly
+what the agent did.  The
 human-facing description lives in ``docs/dev/ai_tools.md``; the base role
 prompt (AGENT_PROMPT) is user-editable in the prompt editor, the
 scope/permission lines are appended mechanically.  Renamed tools stay
@@ -61,19 +64,19 @@ from fractional_indexing import generate_key_between
 
 from . import bibtex as bibtex_mod
 from . import item_types
-from .ai_permissions import permission_state
+from .ai_permissions import ASK_ONLY, permission_state
 from .ai_pictures import (parts as _parts, ink_picture_url, page_doc_id, parse_box, picture_url_of_page, read_stored,
                           render_region, store_picture, upload_name)
 from .ai_context import (DEPRECATED_TOOLS, MAX_AREA_CROPS, area_highlight, canonical_tool,
                          handwriting_label, page_report_section, paths_text, pdf_path, quoted_paths,
                          render_area_crops, text_box_label, under_sheet)
-from .blocks_store import (FOLDERS, LABELS, PATH_SEP, block_to_dict, descend, existing_in, fetch_subtree, filing,
-                           folder_paths, folder_subtree_ids, label_by_name, label_names,
+from .blocks_store import (FOLDERS, LABELS, PATH_SEP, TRASH, block_to_dict, descend, existing_in, fetch_subtree,
+                           filing, folder_paths, folder_subtree_ids, label_by_name, label_names, load_props, named,
                            page_attachment, page_root_id, refiled, root_pages, tree_children, tree_parents,
                            write_lock)
 from .db import connect_data_db, connect_pages_db
 from .highlights import is_highlight
-from .ops import after_commit, apply_ops, ensure_filing, move_across_pages
+from .ops import MAX_OPS, after_commit, apply_ops, delete_tree, ensure_filing, move_across_pages, tree_deletion
 from .logbuf import log
 from .notebook import is_sheet
 from .pdf_index import pdf_missing, search_pdf
@@ -148,7 +151,7 @@ AGENT_PROMPT = (
     "say when something comes from the user's own notes. When asked to organize, "
     "apply an explicit bulk instruction (e.g. a naming scheme) to every matching "
     "page without asking again; ask first when the request is ambiguous. You "
-    "cannot delete pages or edit labels. After making changes, finish with a "
+    "cannot delete pages. After making changes, finish with a "
     "short summary of what you changed. Your earlier tool calls and their results "
     "stay in this conversation so you remember what you already listed, read and "
     "changed — but they are snapshots from earlier turns: the user edits their "
@@ -292,7 +295,7 @@ def _made(ws: str, conn, scope: dict, target: dict) -> str:
     if not target.get("names"):
         return target["id"]
     made, _ = ensure_filing(ws, conn, paths=[target["names"]], under=target["under"],
-                            actor=scope.get("actor", ""))
+                            actor=scope.get("actor", ""), client="ai")
     return made[tuple(target["names"])]
 
 
@@ -413,7 +416,10 @@ def _sibling_position(conn, parent_id: str, after_id, block_id: str = "") -> tup
 # the summary: rename/move_page carry `title` (the page's title before the
 # call) and `from` / `to` (old and new title, the old folder paths and the
 # new one as they read — "" is the library root); the note tools carry
-# `title` (their page's title).
+# `title` (their page's title); the folder and label tools carry `title`
+# (the folder's path, the label's name, or the labelled page's title),
+# `from` / `to` on a rename, `added` / `removed` on label_page, and `count`
+# (pages refiled), `chats` (a folder's) and `revert` on a deletion.
 
 def _run_list_pages(conn, ws: str, scope: dict, args: dict):
     reach = _reach(conn, scope)
@@ -931,7 +937,8 @@ def _run_clip_region(conn, ws: str, scope: dict, args: dict):
 
 # A deletion's revert record (every block of the subtree, parent first) is
 # saved with the chat; a subtree past this many characters is deleted
-# without one, and the result says so.
+# without one, and the result says so (delete_block); a folder's or label's
+# deletion past it is refused (_tree_revert).
 _DELETE_REVERT_MAX = 200_000
 
 
@@ -1211,6 +1218,21 @@ _CITE_MAX = 50  # pages one cite call formats
 _RECORD_FIELDS = (("authors", "Authors"), ("year", "Year"), ("venue", "Venue"), ("volume", "Volume"),
                   ("pages", "Pages"), ("publisher", "Publisher"), ("isbn", "ISBN"), ("doi", "DOI"),
                   ("arxiv_id", "arXiv"))
+# What tied a record to its page's PDF (meta.match, routers/metadata.py), as
+# the cite tool tells the model: the evidence of a confirmed record, and why
+# an unverified one is.
+_TIED_BY = {"source": "the paper's own link or its web page's tags", "page": "its web page's citation tags",
+            "typed": "an identifier the user typed", "title": "the PDF is its title page (its title, an author by it)",
+            "ai": "an AI check against the PDF"}
+_UNVERIFIED_WHY = {
+    "phrase": "a title search found it, but its title only appears in the PDF as a phrase, so it may be "
+              "another work on the same topic",
+    "id_only": "an identifier printed in the PDF names it, but nothing ties it to the PDF, so it may be a "
+               "work the PDF cites",
+    "title_only": "its title is on the PDF's first page, but no author of it was found by the title or the "
+                  "title is not set as the PDF's title, so check the title and authors",
+    "ai_reading": "an AI read it off the PDF and no registry confirmed it",
+}
 
 
 def _run_cite(conn, ws: str, scope: dict, args: dict):
@@ -1253,8 +1275,12 @@ def _run_cite(conn, ws: str, scope: dict, args: dict):
         if meta.get("title") and meta["title"] != title:
             lines.append(f"Paper title: {meta['title']}")
         if meta.get("unverified"):
-            lines.append("Unverified: nothing tied this record to the page's PDF (it may be a cited "
-                         "work's, or an AI reading) — say so and suggest checking it before it is cited.")
+            why = _UNVERIFIED_WHY.get(meta.get("match"),
+                                      "nothing tied this record to the page's PDF (it may be a cited work's, "
+                                      "or an AI reading)")
+            lines.append(f"Unverified: {why} — say so and suggest checking it before it is cited.")
+        elif meta.get("match") in _TIED_BY:
+            lines.append(f"Matched by: {_TIED_BY[meta['match']]}")
         lines.append(f"```bibtex\n{bibtex_mod.page_entry(props)}\n```")
         if str(props.get("ppt_cite") or "").strip():
             lines.append("Slide citation: " + props["ppt_cite"].strip())
@@ -2367,7 +2393,7 @@ def _plan_rename_page(conn, scope: dict, args: dict):
     if error:
         return None, error
     page_id, title, _, _ = loaded
-    new = re.sub(r"\s+", " ", str(args.get("title") or "")).strip()[:_TITLE_MAX]
+    new = _one_line(args.get("title"))
     if not new:
         return None, "error: empty title"
     if new == title:
@@ -2510,6 +2536,423 @@ def _run_restore_page(conn, ws: str, scope: dict, args: dict):
             {"kind": "restore", "page_id": page["id"], "title": page["title"],
              "to": ", ".join(paths_text(paths, page["folders"])),
              "summary": f"Restored “{page['title'][:60]}”"})
+
+
+_PREVIEW_ITEMS = 20  # subfolders, pages and chat folders a deletion's card names; the rest are counted
+
+
+def _one_line(value) -> str:
+    """A name or title as the model wrote it, on one line: whitespace runs
+    one space, trimmed, at most ``_TITLE_MAX`` characters."""
+    return re.sub(r"\s+", " ", str(value or "")).strip()[:_TITLE_MAX]
+
+
+def _names_arg(value) -> list[str]:
+    """A list-of-names argument (a lone string counts as one): each on one
+    line, blanks and repeats (ignoring case) left out."""
+    items = [value] if isinstance(value, str) else value if isinstance(value, list) else []
+    out: dict[str, str] = {}
+    for item in items:
+        name = _one_line(item) if isinstance(item, str) else ""
+        if name:
+            out.setdefault(name.lower(), name)
+    return list(out.values())
+
+
+def _labels_called(have: list, name) -> list[str]:
+    """The ids of the labels ``have`` (``(id, name)`` pairs) called
+    ``name``, as ``blocks_store.named`` matches but with each name read on
+    one line (``_one_line``) on both sides: the model writes it so, while an
+    imported label may keep a run of spaces, a tab or a newline."""
+    return [c[0] for c in named([(i, _one_line(n)) for i, n in have], _one_line(name))]
+
+
+def _find_label(conn, raw) -> tuple[tuple | None, str | None]:
+    """The label a ``label`` argument names (``_labels_called``: exactly,
+    else ignoring case): ``((id, name), None)``, or ``(None, error)`` for no
+    label of that name or several."""
+    name = _one_line(raw)
+    if not name:
+        return None, "error: name the label"
+    have = tree_children(conn, LABELS).get(LABELS, [])
+    found = _labels_called(have, name)
+    if not found:
+        return None, f'error: there is no label "{name}" — list_pages(list_labels=true) shows the labels'
+    if len(found) > 1:
+        return None, f'error: {len(found)} labels are called "{name}" — the user can tell them apart in the app'
+    return (found[0], dict(have)[found[0]]), None
+
+
+def _label_out_of_reach(conn, scope: dict, label_id: str, name: str) -> str | None:
+    """None when the chat reaches every page carrying the label (``_reach``;
+    the library root reaches all), else the refusal. A label is
+    library-wide: renaming or deleting it changes every page that carries
+    it, so a folder chat may do either only when none of them lies outside
+    its folder — a page in Recently deleted counted by the folders a
+    restore puts it back in. A label on no page passes."""
+    reach = _reach(conn, scope)
+    if reach is None:
+        return None
+    outside = sum(1 for (raw,) in conn.execute(
+        "SELECT p.properties FROM unified_blocks p WHERE p.parent_id IN ('root', ?) AND EXISTS "
+        "(SELECT 1 FROM json_each(p.properties, '$.labels') l WHERE l.value = ?)", (TRASH, label_id))
+        if not _filed_in(reach, filing(load_props(raw), FOLDERS)))
+    if not outside:
+        return None
+    return (f'error: the label "{name}" is also on {outside} page{"s" if outside != 1 else ""} '
+            "outside this chat's folder — only the library chat can rename or delete it")
+
+
+def _titles(conn, page_ids) -> list[str]:
+    """The titles of the pages ``page_ids``, in that order."""
+    page_ids = list(page_ids)
+    found = dict(conn.execute("SELECT id, content FROM unified_blocks WHERE id IN (SELECT value FROM json_each(?))",
+                              (json.dumps(page_ids),)).fetchall())
+    return [found.get(p) or "Untitled" for p in page_ids]
+
+
+def _folder_chats(conn, ids) -> dict[str, int]:
+    """``{folder id: conversations}`` that deleting the folders ``ids`` files
+    into the library chat's history (routers/chats.file_into_home): a
+    folder's active conversation when it holds messages, and its earlier
+    ones."""
+    ids = json.dumps(sorted(ids))
+    return dict(conn.execute(
+        "SELECT bucket, COUNT(*) FROM (SELECT bucket FROM chats WHERE bucket IN (SELECT value FROM json_each(?)) "
+        "AND COALESCE(messages, '') NOT IN ('', '[]') UNION ALL SELECT bucket FROM chat_history "
+        "WHERE bucket IN (SELECT value FROM json_each(?))) GROUP BY bucket", (ids, ids)).fetchall())
+
+
+def _tree_revert(tree: str, rows, carried: dict) -> dict | None:
+    """What reverting a folder's or label's deletion needs
+    (ai_revert._plan_tree_delete): the ``tree``, every block it takes, parent
+    first, as ``[id, parent, position, content, properties]``, and each
+    library page's ids of them (``pages``). None when it would not fit:
+    past ``_DELETE_REVERT_MAX`` characters (the pages cost ~34 each, so
+    some 5,800 pages), or past ``MAX_OPS`` blocks, the most one batch puts
+    back. The delete tools then refuse, so no deletion goes without its
+    revert."""
+    record = {"tree": tree, "blocks": [[r[0], r[1], r[2], r[3] or "", r[4] or "{}"] for r in rows],
+              "pages": carried}
+    return record if len(rows) <= MAX_OPS and len(json.dumps(record)) <= _DELETE_REVERT_MAX else None
+
+
+def _labels_diff(entries) -> list:
+    """A page's labels as the card shows a change to them: ``entries`` of
+    ``(kind, name)`` (``ctx`` kept, ``del`` taken off, ``ins`` put on)
+    joined with ", "."""
+    out = []
+    for kind, name in entries:
+        if out:
+            out.append(["ctx", ", "])
+        out.append([kind, name])
+    return out
+
+
+def _plan_rename_folder(conn, scope: dict, args: dict):
+    """``(plan, None)``: the folder (``id``, ``path``) and its path after the
+    rename (``to``); ``(None, answer)`` for a call that changes nothing. The
+    server does not keep sibling names apart, so this does, the way the
+    app's rename does (``named``: exactly, else ignoring case)."""
+    found, error = _find_folder(conn, scope, args.get("folder"))
+    if error:
+        return None, error
+    folder_id, path = found
+    if not folder_id:
+        return None, "error: the library root has no name to change"
+    new = _one_line(args.get("name"))
+    if not new:
+        return None, "error: empty name"
+    if PATH_SEP in new:
+        return None, (f"error: a folder name cannot hold '{PATH_SEP}', which is how paths read — "
+                      "renaming never moves a folder")
+    paths = folder_paths(conn)
+    if new == paths[folder_id][-1]:
+        return None, "ok — the folder already has that name"
+    parent = tree_parents(conn, FOLDERS)[folder_id]
+    if named([c for c in tree_children(conn, FOLDERS).get(parent, []) if c[0] != folder_id], new):
+        where = PATH_SEP.join(paths.get(parent, [])) or "the top level"
+        return None, f'error: there is already a folder "{new}" in "{where}"'
+    return {"id": folder_id, "path": path, "to": PATH_SEP.join([*paths[folder_id][:-1], new]), "name": new}, None
+
+
+def _preview_rename_folder(conn, scope: dict, args: dict):
+    plan, answer = _plan_rename_folder(conn, scope, args)
+    if not plan:
+        return None, answer
+    return {"title": plan["path"], "diff": text_diff(plan["path"], plan["to"])}, None
+
+
+def _run_rename_folder(conn, ws: str, scope: dict, args: dict):
+    """One ``set`` of the folder's name on the folder tree: its pages,
+    subfolders, chat and share name it by id, so no page is touched."""
+    plan, answer = _plan_rename_folder(conn, scope, args)
+    if not plan:
+        return answer, None
+    after_commit(ws, conn, apply_ops(conn, FOLDERS, [{"op": "set", "id": plan["id"], "content": plan["name"]}],
+                                     actor=scope.get("actor", ""), client="ai"))
+    return (f'ok — the folder is now "{plan["to"]}"',
+            {"kind": "rename", "title": plan["path"], "from": plan["path"], "to": plan["to"],
+             "summary": f"Renamed the folder “{plan['path']}” → “{plan['to']}”"})
+
+
+def _plan_create_label(conn, scope: dict, args: dict):
+    """``(name, None)``, or ``(None, answer)``: an empty name, or a label of
+    that name (ignoring case) exists already."""
+    name = _one_line(args.get("label"))
+    if not name:
+        return None, "error: empty label name"
+    have = tree_children(conn, LABELS).get(LABELS, [])
+    found = _labels_called(have, name)
+    if found:
+        return None, f'ok — the label "{dict(have)[found[0]]}" exists already; nothing changed'
+    return name, None
+
+
+def _preview_create_label(conn, scope: dict, args: dict):
+    name, answer = _plan_create_label(conn, scope, args)
+    return ({"title": name, "diff": [["ins", name]]}, None) if name else (None, answer)
+
+
+def _run_create_label(conn, ws: str, scope: dict, args: dict):
+    name, answer = _plan_create_label(conn, scope, args)
+    if not name:
+        return answer, None
+    ensure_filing(ws, conn, labels=[name], actor=scope.get("actor", ""), client="ai")
+    return (f'ok — made the label "{name}"; label_page puts it on pages',
+            {"kind": "label", "title": name, "to": name, "summary": f"Made the label “{name}”"})
+
+
+def _plan_rename_label(conn, scope: dict, args: dict):
+    """``(plan, None)``: the label (``id``, ``name``) and its new name
+    (``to``); refused when a page carrying it is out of reach or another
+    label has that name (``_labels_called``, as the app's rename checks)."""
+    found, error = _find_label(conn, args.get("label"))
+    if error:
+        return None, error
+    label_id, name = found
+    new = _one_line(args.get("name"))
+    if not new:
+        return None, "error: empty name"
+    if new == name:
+        return None, "ok — the label already has that name"
+    error = _label_out_of_reach(conn, scope, label_id, name)
+    if error:
+        return None, error
+    if _labels_called([c for c in tree_children(conn, LABELS).get(LABELS, []) if c[0] != label_id], new):
+        return None, f'error: there is already a label "{new}"'
+    return {"id": label_id, "name": name, "to": new}, None
+
+
+def _preview_rename_label(conn, scope: dict, args: dict):
+    plan, answer = _plan_rename_label(conn, scope, args)
+    if not plan:
+        return None, answer
+    return {"title": plan["name"], "diff": text_diff(plan["name"], plan["to"])}, None
+
+
+def _run_rename_label(conn, ws: str, scope: dict, args: dict):
+    plan, answer = _plan_rename_label(conn, scope, args)
+    if not plan:
+        return answer, None
+    after_commit(ws, conn, apply_ops(conn, LABELS, [{"op": "set", "id": plan["id"], "content": plan["to"]}],
+                                     actor=scope.get("actor", ""), client="ai"))
+    return (f'ok — the label is now "{plan["to"]}"',
+            {"kind": "rename", "title": plan["name"], "from": plan["name"], "to": plan["to"],
+             "summary": f"Renamed the label “{plan['name']}” → “{plan['to']}”"})
+
+
+def _plan_label_page(conn, scope: dict, args: dict):
+    """``(plan, None)``: the page (``page_id``, ``title``); the label ids it
+    keeps (``keep``) and gets (``put``, labels that exist); the names of the
+    labels still to be made (``make``); the names it gets and loses
+    (``added``, ``removed``); and the card's ``diff``. A label id that is no
+    label any more goes with the write, as with any refiling
+    (``existing_in``). ``(None, answer)`` for a call that changes nothing."""
+    loaded, error = _load_scoped_page(conn, scope, args)
+    if error:
+        return None, error
+    page_id, title, props, _ = loaded
+    add, remove = _names_arg(args.get("add")), _names_arg(args.get("remove"))
+    if not add and not remove:
+        return None, "error: name the labels to `add` or to `remove`"
+    if {n.lower() for n in add} & {n.lower() for n in remove}:
+        return None, "error: a label cannot be added and removed in one call"
+    have = tree_children(conn, LABELS).get(LABELS, [])
+    names = dict(have)
+    current = existing_in(conn, LABELS, filing(props, LABELS))
+    drop = set()
+    for name in remove:
+        found = _labels_called(have, name)
+        if not found:
+            return None, f'error: there is no label "{name}" — list_pages(list_labels=true) shows the labels'
+        drop |= set(found)
+    keep = [i for i in current if i not in drop]
+    put, make = [], []
+    for name in add:
+        found = _labels_called(have, name)
+        if not found:
+            make.append(name)
+        elif found[0] not in keep and found[0] not in put:
+            put.append(found[0])
+    if not put and not make and keep == current:
+        return None, "ok — the page's labels already are that; nothing changed"
+    diff = _labels_diff([("ctx" if i in keep else "del", names[i]) for i in current]
+                        + [("ins", names[i]) for i in put] + [("ins", n) for n in make])
+    return {"page_id": page_id, "title": title, "keep": keep, "put": put, "make": make, "diff": diff,
+            "added": [names[i] for i in put] + make, "removed": [names[i] for i in current if i not in keep],
+            "now": [names[i] for i in keep + put] + make}, None
+
+
+def _preview_label_page(conn, scope: dict, args: dict):
+    plan, answer = _plan_label_page(conn, scope, args)
+    if not plan:
+        return None, answer
+    return {"page_id": plan["page_id"], "title": plan["title"], "diff": plan["diff"]}, None
+
+
+def _run_label_page(conn, ws: str, scope: dict, args: dict):
+    """One ``set`` of the page's ``labels``, the labels it names that do not
+    exist made first (``ensure_filing``, one batch on the label tree)."""
+    plan, answer = _plan_label_page(conn, scope, args)
+    if not plan:
+        return answer, None
+    made = ensure_filing(ws, conn, labels=plan["make"], actor=scope.get("actor", ""),
+                         client="ai")[1] if plan["make"] else {}
+    labels = plan["keep"] + plan["put"] + [made[n] for n in plan["make"]]
+    page_id, title = plan["page_id"], plan["title"]
+    after_commit(ws, conn, apply_ops(conn, page_id, [{"op": "set", "id": page_id, "props": {LABELS: labels or None}}],
+                                     actor=scope.get("actor", ""), client="ai"))
+    now = ", ".join(f'"{n}"' for n in plan["now"]) or "no label"
+    change = ", ".join([f"+{n}" for n in plan["added"]] + [f"−{n}" for n in plan["removed"]])
+    return (f'ok — "{title}" now carries {now}'
+            + (f" ({len(plan['make'])} new label{'s' if len(plan['make']) != 1 else ''})" if plan["make"] else ""),
+            {"kind": "label", "page_id": page_id, "title": title, "added": plan["added"],
+             "removed": plan["removed"], "summary": f"Labels of “{title[:60]}”: {change}"})
+
+
+def _plan_delete_label(conn, scope: dict, args: dict):
+    """``(plan, None)``: the label (``id``, ``name``), the library pages
+    carrying it in library order (``pages``: ids) and the action's
+    ``revert`` (``_tree_revert``). Refused with no card: a label the chat
+    may not delete (``_label_out_of_reach``), and one on too many pages to
+    record for a revert."""
+    found, error = _find_label(conn, args.get("label"))
+    if error:
+        return None, error
+    label_id, name = found
+    error = _label_out_of_reach(conn, scope, label_id, name)
+    if error:
+        return None, error
+    rows, carried, _ = tree_deletion(conn, LABELS, label_id)
+    revert = _tree_revert(LABELS, rows, carried)
+    if not revert:
+        return None, (f'error: the label "{name}" is on {len(carried)} pages — too many to record for a '
+                      "revert, so the assistant does not delete it; the user can, in the app")
+    return {"id": label_id, "name": name, "pages": list(carried), "revert": revert}, None
+
+
+def _preview_delete_label(conn, scope: dict, args: dict):
+    plan, answer = _plan_delete_label(conn, scope, args)
+    if not plan:
+        return None, answer
+    return {"block_id": plan["id"], "title": plan["name"], "diff": [["del", plan["name"]]],
+            "pages": _titles(conn, plan["pages"][:_PREVIEW_ITEMS]), "page_count": len(plan["pages"])}, None
+
+
+def _run_delete_label(conn, ws: str, scope: dict, args: dict):
+    """``ops.delete_tree`` on the label: its checks, its revert record and
+    the deletion under one write lock (``delete_tree`` reads the same
+    subtree and pages again under it)."""
+    write_lock(conn)
+    plan, answer = _plan_delete_label(conn, scope, args)
+    if not plan:
+        conn.rollback()
+        return answer, None
+    delete_tree(ws, conn, LABELS, plan["id"], actor=scope.get("actor", ""), client="ai")
+    n, name = len(plan["pages"]), plan["name"]
+    text = (f'ok — deleted the label "{name}"'
+            + (f"; {n} page{'s' if n != 1 else ''} lost it, and no page was deleted" if n else "")
+            + ". The user can revert it from the reply.")
+    return text, {"kind": "delete", "block_id": plan["id"], "title": name, "count": n,
+                  "summary": f"Deleted the label “{name}”", "revert": plan["revert"]}
+
+
+def _plan_delete_folder(conn, scope: dict, args: dict):
+    """``(plan, None)``: the folder (``id``, ``path``), every folder's path
+    (``paths``), its subfolders in tree order (``subfolders``: ids), the
+    library pages filed in it or below in library order (``pages``: ids —
+    they lose that filing and stay), the conversations that move to the
+    library chat's history by folder (``chats``: ``{folder id: n}``) and
+    the action's ``revert``. Refused with no card: the library root, the
+    chat's own folder (one above it is out of reach already), a folder
+    outside the chat's reach, a folder with a share link anywhere in it —
+    the deletion would stop the link for good, so the user stops sharing
+    first — and one too large to record for a revert."""
+    from .routers.shares import shared_folders  # local: keep gamma.* free of the routers package
+
+    found, error = _find_folder(conn, scope, args.get("folder"))
+    if error:
+        return None, error
+    folder_id, path = found
+    if not folder_id:
+        return None, "error: the library root is no folder to delete"
+    if folder_id == _scope_folder(scope):
+        return None, (f'error: "{path}" is this chat\'s own folder — it can be deleted only from the folder '
+                      "above it or from the library chat")
+    rows, carried, _ = tree_deletion(conn, FOLDERS, folder_id)
+    ids, paths = {r[0] for r in rows}, folder_paths(conn)
+    shared = shared_folders(scope["ws"], ids)
+    if shared:
+        return None, (f"error: {quoted_paths(paths, sorted(shared))} "
+                      f"{'has a share link' if len(shared) == 1 else 'have share links'}, which deleting would "
+                      "stop for good — the user must stop sharing first (Share… → Stop sharing)")
+    subfolders = [f for f in paths if f in ids and f != folder_id]  # tree order
+    revert = _tree_revert(FOLDERS, rows, carried)
+    if not revert:
+        return None, (f'error: "{path}" ({len(subfolders)} subfolders, {len(carried)} pages filed in it) is too '
+                      "large to record for a revert, so the assistant does not delete it; the user can, in the app")
+    return {"id": folder_id, "path": path, "paths": paths, "subfolders": subfolders, "pages": list(carried),
+            "chats": _folder_chats(conn, ids), "revert": revert}, None
+
+
+def _preview_delete_folder(conn, scope: dict, args: dict):
+    plan, answer = _plan_delete_folder(conn, scope, args)
+    if not plan:
+        return None, answer
+    paths, chats = plan["paths"], plan["chats"]
+    chat_folders = [f for f in paths if f in chats]  # tree order
+    return {"block_id": plan["id"], "title": plan["path"], "diff": [["del", plan["path"]]],
+            "subfolders": [PATH_SEP.join(paths[f]) for f in plan["subfolders"][:_PREVIEW_ITEMS]],
+            "subfolder_count": len(plan["subfolders"]),
+            "pages": _titles(conn, plan["pages"][:_PREVIEW_ITEMS]), "page_count": len(plan["pages"]),
+            "chats": sum(chats.values()),
+            "chat_folders": [PATH_SEP.join(paths[f]) for f in chat_folders[:_PREVIEW_ITEMS]],
+            "chat_folder_count": len(chat_folders)}, None
+
+
+def _run_delete_folder(conn, ws: str, scope: dict, args: dict):
+    """The UI's "Keep pages" delete (``ops.delete_tree``): the folder and its
+    subfolders go, their pages stay, filed in their other folders or at the
+    library root, and their AI chats move to the library chat's history —
+    where they stay if the user reverts. The checks, the revert record and
+    the deletion run under one write lock."""
+    write_lock(conn)
+    plan, answer = _plan_delete_folder(conn, scope, args)
+    if not plan:
+        conn.rollback()
+        return answer, None
+    _, _, results = delete_tree(ws, conn, FOLDERS, plan["id"], actor=scope.get("actor", ""), client="ai")
+    path, subs, n, chats = plan["path"], len(plan["subfolders"]), len(plan["pages"]), results[0]["chats_filed"]
+    text = (f'ok — deleted the folder "{path}"'
+            + (f" with its {subs} subfolder{'s' if subs != 1 else ''}" if subs else "")
+            + (f"; its {n} page{'s stay' if n != 1 else ' stays'} in the library, filed in "
+               "their other folders or at the library root" if n else "")
+            + (f"; {chats} AI chat{'s' if chats != 1 else ''} of these folders moved to the library "
+               "chat's history, where a revert leaves them" if chats else "")
+            + ". The user can revert it from the reply.")
+    return text, {"kind": "delete", "block_id": plan["id"], "title": path, "count": n, "chats": chats,
+                  "summary": f"Deleted the folder “{path}”", "revert": plan["revert"]}
 
 
 # --- registry ------------------------------------------------------------------
@@ -3021,6 +3464,118 @@ TOOLS = [
         },
     },
     {
+        "perm": "organize", "kind": "rename", "scopes": ("folder",), "mutating": True,
+        "run": _run_rename_folder, "preview": _preview_rename_folder,
+        "spec": {
+            "name": "rename_folder",
+            "description": (
+                "Rename a folder. `folder` is its id or its path as list_folders shows it, read "
+                "like move_page's (\"\" = the current folder); `name` is its new name — a name, "
+                "never a path: renaming never moves a folder. Its pages, subfolders, chat and "
+                "share link stay with it. A name a folder beside it already has is refused."),
+            "parameters": {
+                "type": "object",
+                "properties": {"folder": {"type": "string"},
+                               "name": {"type": "string", "description": "the new name"}},
+                "required": ["folder", "name"],
+            },
+        },
+    },
+    {
+        "perm": "organize", "kind": "label", "scopes": ("folder",), "mutating": True,
+        "run": _run_create_label, "preview": _preview_create_label,
+        "spec": {
+            "name": "create_label",
+            "description": (
+                "Make a new label, on no page yet. Labels are flat and library-wide. A label of "
+                "that name (ignoring case) is not made twice. To put labels on pages use "
+                "label_page, which makes a label it does not find — so call this only when the "
+                "user wants a label with no pages."),
+            "parameters": {
+                "type": "object",
+                "properties": {"label": {"type": "string", "description": "the new label's name"}},
+                "required": ["label"],
+            },
+        },
+    },
+    {
+        "perm": "organize", "kind": "rename", "scopes": ("folder",), "mutating": True,
+        "run": _run_rename_label, "preview": _preview_rename_label,
+        "spec": {
+            "name": "rename_label",
+            "description": (
+                "Rename a label on every page that carries it. `label` is its current name, as "
+                "list_pages shows it (exact, else ignoring case); `name` the new one. A name "
+                "another label has is refused. In a folder below the library root, only a label "
+                "that no page outside the folder carries."),
+            "parameters": {
+                "type": "object",
+                "properties": {"label": {"type": "string", "description": "the label's current name"},
+                               "name": {"type": "string", "description": "the new name"}},
+                "required": ["label", "name"],
+            },
+        },
+    },
+    {
+        "perm": "organize", "kind": "label", "scopes": ("folder",), "mutating": True,
+        "run": _run_label_page, "preview": _preview_label_page,
+        "spec": {
+            "name": "label_page",
+            "description": (
+                "Put labels on a page and/or take labels off it. `add` and `remove` are lists of "
+                "label names, as list_pages shows them (exact, else ignoring case); a label to add "
+                "that does not exist yet is made. The page's other labels stay. Use exact page "
+                "ids from list_pages."),
+            "parameters": {
+                "type": "object",
+                "properties": {**_PAGE_ID_ARG,
+                               "add": {"type": "array", "items": {"type": "string"},
+                                       "description": "label names to put on the page"},
+                               "remove": {"type": "array", "items": {"type": "string"},
+                                          "description": "label names to take off it"}},
+                "required": ["page_id"],
+            },
+        },
+    },
+    {
+        "perm": "organize_delete", "kind": "delete", "scopes": ("folder",), "mutating": True,
+        "run": _run_delete_folder, "preview": _preview_delete_folder,
+        "spec": {
+            "name": "delete_folder",
+            "description": (
+                "Delete a folder with its subfolders. Its pages are never deleted: they stay in "
+                "the library, in their other folders or at the library root; only this filing "
+                "goes. The folders' AI chats move to the library chat's history. `folder` is an "
+                "id or path, read like move_page's. Refused for the current folder and the ones "
+                "above it, and for a folder with a share link (the user stops sharing it first). "
+                "Each call shows the user what goes and waits for their answer, and they can "
+                "revert it from the reply. Only for a folder the user asked to delete."),
+            "parameters": {
+                "type": "object",
+                "properties": {"folder": {"type": "string"}},
+                "required": ["folder"],
+            },
+        },
+    },
+    {
+        "perm": "organize_delete", "kind": "delete", "scopes": ("folder",), "mutating": True,
+        "run": _run_delete_label, "preview": _preview_delete_label,
+        "spec": {
+            "name": "delete_label",
+            "description": (
+                "Delete a label and take it off every page that carries it; no page is deleted. "
+                "`label` is its name, as list_pages shows it. In a folder below the library root, "
+                "only a label that no page outside the folder carries. Each call waits for the "
+                "user's answer, and they can revert it from the reply. Only for a label the user "
+                "asked to delete."),
+            "parameters": {
+                "type": "object",
+                "properties": {"label": {"type": "string"}},
+                "required": ["label"],
+            },
+        },
+    },
+    {
         "perm": "block_edit", "kind": "edit", "scopes": ("folder", "page"), "mutating": True, "run": _run_edit_block,
         "preview": _preview_edit_block,
         "spec": {
@@ -3204,12 +3759,13 @@ def tool_states(perms, *, granted=(), can_ask: bool = True) -> dict:
     registry, read from a request's map (ai_permissions.permission_state:
     a permission left out allows reading and asks before a change). The
     permissions in ``granted`` (the conversation's "Allow in this chat") are
-    allowed, and a request that cannot ask (``can_ask`` false: no stream to
-    show the card on) arms none of its asking tools."""
+    allowed, except an ask-only one (``ASK_ONLY``), and a request that
+    cannot ask (``can_ask`` false: no stream to show the card on) arms none
+    of its asking tools."""
     states = {}
     for t in TOOLS:
         state = _state_of(perms, t)
-        if state == "ask" and t["perm"] in granted:
+        if state == "ask" and t["perm"] in granted and t["perm"] not in ASK_ONLY:
             state = "allow"
         if state == "ask" and not can_ask:
             state = "off"
@@ -3406,6 +3962,17 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
         text += (
             f"\nDeleted pages stay in Recently deleted for {KEEP_DAYS} days: list_deleted finds "
             "them and restore_page brings one back when the user asks. Deleting pages stays impossible.")
+    if any(n in names for n in ("rename_folder", "create_label", "rename_label", "label_page")):
+        text += (
+            "\nFolders and labels: you can rename folders (rename_folder) and make, rename and "
+            "apply labels (create_label, rename_label, label_page — label_page makes a label it "
+            "does not find). A rename changes the name everywhere it is used. Change only what "
+            "the user asked.")
+    if "delete_folder" in names or "delete_label" in names:
+        text += (
+            "\nYou can delete a folder (with its subfolders) or a label with delete_folder and "
+            "delete_label, never a page: the pages stay in the library. Each call asks the user, "
+            "every time; call them only for what the user asked to delete.")
     web = [n for n in ("search_papers", "related_papers", "search_web", "fetch_paper") if n in names]
     if web:
         text += (

@@ -19,7 +19,9 @@ the first of three ways:
 ``redeem`` hands over the tokens, the code exchanged server-side with the
 PKCE verifier. They are stored in the provider entry (users.db `ai-settings`
 pref, same protection as API keys: never sent back to the browser). Access
-tokens expire; ai_runtime() refreshes them lazily via the refresh token.
+tokens expire; ai_runtime() refreshes them lazily via the refresh token. A
+refresh OpenAI refuses ends the sign-in; one that gets no verdict (no
+connection, a 5xx) raises RefreshUnavailable and the tokens are kept.
 """
 
 import base64
@@ -175,9 +177,38 @@ def needs_refresh(oauth: dict) -> bool:
     return time.time() > exp - REFRESH_MARGIN_S
 
 
+class RefreshUnavailable(Exception):
+    """A refresh that got no verdict on the grant: OpenAI could not be
+    reached, or answered something other than a refusal (a 5xx, a 429, a
+    proxy's 403 page, a body that isn't JSON). The grant may well be good."""
+
+
+# The token endpoint's codes for a grant that is gone, whatever the status:
+# the refresh token expired, was used already (OpenAI rotates them) or was
+# revoked. Codex CLI reads them the same way (auth/manager.rs).
+REFUSED_CODES = ("refresh_token_expired", "refresh_token_reused", "refresh_token_invalidated")
+
+
+def _error_code(error: urllib.error.HTTPError) -> str:
+    """The OAuth error code of a token endpoint's error answer: ``error``,
+    a string or an object's ``code``; "" when the body names none. Reads
+    at most 8 KB."""
+    try:
+        data = json.loads(error.read(8192))
+    except Exception:
+        return ""
+    code = data.get("error") if isinstance(data, dict) else None
+    if isinstance(code, dict):
+        code = code.get("code")
+    return code.strip() if isinstance(code, str) else ""
+
+
 def refresh(oauth: dict) -> dict | None:
-    """Refreshed copy of the oauth dict, or None when refresh fails (expired /
-    revoked grant — the user has to sign in again)."""
+    """Refreshed copy of the oauth dict, or None when OpenAI refuses the
+    grant (a 401, a 400 invalid_grant, or a REFUSED_CODES code: the user
+    has to sign in again). Any other failure raises RefreshUnavailable, and
+    the caller keeps the tokens. The log names the status and OpenAI's code,
+    never a token or the answer's body."""
     token = oauth.get("refresh_token")
     if not token:
         return None
@@ -188,10 +219,22 @@ def refresh(oauth: dict) -> dict | None:
             "client_id": CLIENT_ID,
             "scope": "openid profile email",
         })
-        return _oauth_entry(tokens, previous=oauth)
+        refreshed = _oauth_entry(tokens, previous=oauth)
+    except urllib.error.HTTPError as e:
+        code = _error_code(e)
+        if e.code == 401 or (e.code == 400 and code == "invalid_grant") or code in REFUSED_CODES:
+            log.warning(f"[chatgpt-oauth] refresh refused: {e.code} {code or '(no code)'}")
+            return None
+        reason = f"{e.code} {code}".strip()
+        log.warning(f"[chatgpt-oauth] refresh failed, will retry: {reason}")
+        raise RefreshUnavailable(reason) from e
     except Exception as e:
-        log.warning(f"[chatgpt-oauth] refresh failed: {e}")
-        return None
+        reason = f"{type(e).__name__}: {e}"
+        log.warning(f"[chatgpt-oauth] refresh failed, will retry: {reason}")
+        raise RefreshUnavailable(reason) from e
+    if not tokens.get("refresh_token"):
+        log.warning("[chatgpt-oauth] the refresh answer carried no refresh token; keeping the old one")
+    return refreshed
 
 
 # --- the device code -----------------------------------------------------------

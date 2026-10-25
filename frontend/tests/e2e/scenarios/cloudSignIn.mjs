@@ -183,7 +183,7 @@ export async function cloudSignInScenarios(env) {
     const cloud = new FakeCloud();
     await cloud.start();
     const active = { plan: "pro", status: "active", read_only: false, policy: "invited", max_accounts: 10,
-      quota_mb: 1000, max_upload_mb: 100, offsite: { interval_s: 3600, keep: 7 }, grace_until: null, message: "" };
+      quota_mb: 1000, offsite: { interval_s: 3600, keep: 7 }, grace_until: null, message: "" };
     cloud.hosted = { clientId: "gc_e2e", secret: "e2e-secret", reports: [], answer: active };
     const hosted = new Server({ env: { GAMMA_HOSTED: "1", GAMMA_CLOUD_ISSUER: cloud.issuer, GAMMA_CLOUD_CLIENT_ID: "gc_e2e",
       GAMMA_CLOUD_CLIENT_SECRET: "e2e-secret" } });

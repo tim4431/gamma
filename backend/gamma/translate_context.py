@@ -66,7 +66,7 @@ _LANG_NOTES = {
 
 def system_prompt(lang: str, brief: str = "") -> str:
     """The translation system prompt for a TRANSLATE_LANGS code, with the
-    paper's rendered brief (``Brief.text``) after the rules."""
+    paper's rendered brief (``render_brief``) after the rules."""
     rules = _RULES.replace("{lang}", TRANSLATE_LANGS[lang])
     note = _LANG_NOTES.get(lang)
     if note:
@@ -251,14 +251,7 @@ _BRIEF_WAITERS = 6             # requests of one account waiting at once (ai_cli
 _BRIEF_MAX_CHARS = 4000        # the rendered brief, at most
 
 
-@dataclass
-class Brief:
-    text: str     # rendered for the system prompt
-    hash: str     # names it in the paragraph cache key
-    data: dict    # the parsed reply
-
-
-_briefs: "OrderedDict[str, Brief]" = OrderedDict()   # key -> Brief (LRU)
+_briefs: "OrderedDict[str, str]" = OrderedDict()    # key -> the rendered brief (LRU)
 _failed: dict = {}                                     # key -> when its brief last failed
 _making: dict = {}                                     # key -> threading.Event while one request makes it
 _waiting: dict = {}                                    # account -> its requests waiting for a brief
@@ -338,9 +331,9 @@ def render_brief(data: dict) -> str:
     return text[:_BRIEF_MAX_CHARS]
 
 
-def parse_brief(reply: str) -> Brief | None:
-    """The model's brief reply → a Brief, tolerating code fences and prose
-    around the object; None when nothing usable came back."""
+def parse_brief(reply: str) -> str | None:
+    """The model's brief reply → the rendered brief, tolerating code fences
+    and prose around the object; None when nothing usable came back."""
     s = (reply or "").strip()
     i, j = s.find("{"), s.rfind("}")
     if i < 0 or j <= i:
@@ -349,13 +342,10 @@ def parse_brief(reply: str) -> Brief | None:
         data = json.loads(s[i:j + 1])
     except ValueError:
         return None
-    text = render_brief(data)
-    if not text:
-        return None
-    return Brief(text=text, hash=hashlib.sha256(text.encode()).hexdigest()[:16], data=data)
+    return render_brief(data) or None
 
 
-def brief_known(key: str) -> tuple[Brief | None, bool]:
+def brief_known(key: str) -> tuple[str | None, bool]:
     """``(brief, settled)``: the brief made for ``key``, and whether asking for
     it would come back at once — it is made, or failed within
     _BRIEF_FAILED_TTL — rather than make it or wait for it."""
@@ -367,7 +357,7 @@ def brief_known(key: str) -> tuple[Brief | None, bool]:
         return None, failed is not None and time.monotonic() - failed < _BRIEF_FAILED_TTL
 
 
-def brief_for(key: str, make, user_id: str = "", wait: bool = True) -> Brief | None:
+def brief_for(key: str, make, user_id: str = "", wait: bool = True) -> str | None:
     """The brief cached under ``key``, else ``make()``'s (one request makes
     it while the others asking for the same key wait for it, up to
     _BRIEF_WAIT). ``make`` returns the model's reply text or raises; a

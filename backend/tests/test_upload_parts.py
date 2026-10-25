@@ -125,14 +125,11 @@ def test_a_part_at_the_wrong_offset_says_where_the_upload_stands(cam):
     assert _finish(c, token).json()["doc_id"] == storage.content_digest(PDF)
 
 
-def test_the_limits_are_checked_before_a_byte_travels(cam):
+def test_the_quota_is_checked_before_a_byte_travels(cam):
     c, ws = cam
     make_user("up_admin", "pw-up-2", is_admin=1)
     admin = login("up_admin", "pw-up-2")
-    assert admin.put("/api/admin/users/up_cam", json={"max_upload_mb": 1}).status_code == 200
-    r = _start(c, 2 * MB)
-    assert r.status_code == 413 and "max 1 MB" in r.json()["detail"]
-    assert admin.put("/api/admin/users/up_cam", json={"max_upload_mb": None, "quota_mb": 1}).status_code == 200
+    assert admin.put("/api/admin/users/up_cam", json={"quota_mb": 1}).status_code == 200
     assert _start(c, 2 * MB).status_code == 507
     assert admin.put("/api/admin/users/up_cam", json={"quota_mb": None}).status_code == 200
     assert _start(c, 0).status_code == 400

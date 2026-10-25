@@ -544,6 +544,9 @@ to place it:
   with `anchorBottom`). Pure too (`tests/placement.test.mjs`);
   `useMenuTrigger` places its menus with it, and the browser suite's
   `assertMenuFrom` (harness.mjs) checks each of them there.
+- `scrollBox(el)` is the box an element is seen through: its nearest
+  ancestor that scrolls, else null for the window. A surface that follows
+  the element (the selection toolbar, an ink layer's menus) keeps inside it.
 - `useFloatingPosition(ref, place, deps, {follow})` measures and places it
   in a layout effect, before the browser paints it, and returns null until
   then, while the surface stands hidden. When its size changes later (a row
@@ -561,8 +564,10 @@ handwriting and text box menus give `ContextMenu` the selection's edges
 PDF selection popup (`TipFrame`: from the point where the mouse was
 released, when that is near the selection, else under the selection;
 `pdf/selectionTip.js`) and the caret-anchored popups
-(`useCaretAnchored`: "/", `[[`, `@`, the LaTeX completion and preview) are
-built on it; the guide card's anchor is measured the same way
+(`useCaretAnchored`: "/", `[[`, `@`, the LaTeX completion and preview) and
+a note's selection toolbar (`SelectionToolbar.jsx`: above the selection's
+first line, else under its last, inside the box the note scrolls in,
+`scrollBox`) are built on it; the guide card's anchor is measured the same way
 (`GuideOverlay`). A surface placed in its event handler before it renders
 (the tooltips, the citation preview) or by CSS under its button (the
 popovers) has nothing to correct. The browser suite's
@@ -594,6 +599,16 @@ or raise the unsaved-edits question. Every `reportOverlay` dialog uses it
 (Settings, its `SubDialog` editors, the confirm box, the link, label and
 move-block dialogs, the chat's page picker); Quick Open closes on its own
 `mousedown` check instead.
+
+A dialog that holds work a close would lose asks first on the backdrop,
+Escape and ×. An edited draft asks "Discard your unsaved edits?"; other
+work names itself through `SubDialog`'s `guard` (`{question, keep,
+leave}`). The import review before Import is the example: "Stop uploading
+…?" while the file goes up, "Close without importing?" once the review is
+in. The question goes away when the work ends on its own (the upload
+fails). When it goes, by Keep or on its own, the dialog takes the focus
+back from its button. The footer's Cancel stays direct: it is the labelled way
+to stop. It asks only for a draft.
 
 A dialog takes the focus as it opens, unless something inside it holds it
 already, and gives it back on close to what had it as it opened. When
@@ -1181,7 +1196,7 @@ and what it holds travels with it.
   under reduced motion, or while the list is out of sight. It plays only
   when `shape` changed (by `same`; with neither, the `keys`). Only what is
   near the window moves, and a change that moves more than 60 items or
-  brings or takes more than `most` (8) does that part at once (a paste of
+  brings or takes more than 8 does that part at once (a paste of
   many blocks, Mark all read). `moves={false}` leaves the places alone
   where they transition already (the comment margin's cards).
 - **Boxes are the window's**, so an insert above the view that scroll
@@ -1355,9 +1370,11 @@ editor's other popups.
 | `app/App.jsx` | routing, block-tree editor state, docks, the page's live session glue, AI chat glue (decomposition in progress) |
 | `collaboration/usePageCollab.js`, `shared/model/blockOps.js`, `collaboration/Presence.jsx` | the live session (ops out, ops + presence in), the pure tree diff/apply, the avatar stack / row chips ([collab.md](collab.md)), and `PersonAvatar`, the avatar of someone not on the page by username (a share's owner, a person to mention, a comment's author, an Inbox item's actor) |
 | `collaboration/MirrorPopover.jsx`, `collaboration/MergeResolver.jsx`, `collaboration/conflictKinds.js`, `settings/SettingsMirrors.jsx` | a clone's sync pill with its settings and conflicts views, the conflict card + the row chip, what each kind of conflict row says (pure), Settings → Workspaces → Clones ([mirror.md](mirror.md)) |
+| `app/boot.js`, `app/theme.js` | the first load's reads, sent as `main.jsx` starts and taken once by the code that would ask for them (`startBootReads`, `takeBootRead`: the server's config, the session), and the account's theme and language put on from the session's `profile` (`adoptAccountLook`, `languageSeen`; [settings.md](settings.md), [i18n.md](i18n.md)); the theme list (`THEMES`, `DARK_THEMES`, `themeScheme`) and `applyTheme`, which changes every colour in one frame ([Motion](#motion)) |
 | `app/prefDefs.js`, `app/prefs.js` | every preference's key, default, codec and scope (`PREFS`); the hooks that make them state (`useAppPrefs`) and sync the account-scoped ones (`useProfileSync`) |
 | `app/topbarItems.js` | the topbar's configurable buttons, their modes and where each goes: on the bar, or a row of the account menu with its popover anchored where the button would be (`.offBar`) ([settings.md](settings.md#the-top-bars-buttons)) |
 | `settings/SettingsDialog.jsx` + the `settings/Settings*.jsx` panes | the Settings dialog (`SettingsKit.jsx` holds the shared primitives incl. `AccountPicker`, the search-box-over-account-rows people picker, and `LogBox`) |
+| `settings/settingsReads.js` | what the panes read through one store while the dialog is open: `PANE_READS` (each pane's paths, in order), `useSettingsRead(path, {poll})` for a section, `useSettingsReads` for one whose paths it learns as it goes ([settings.md](settings.md) "What a pane reads") |
 | `settings/sectionPrefs.js`, `settings/syncState.js` | which account preferences each settings section holds (`SECTION_PREFS`), and how their sync reads: a section's scope tag (`profileSyncState`) and the Settings sync row's hint (`cloudSyncHint`) ([settings.md](settings.md)) |
 | `settings/SettingsAppearance.jsx`, `settings/SettingsLibraryDisplay.jsx` | the Appearance pane (theme cards + PDF sample) and its Library section (a live `PageCard` beside its switches) ([settings.md](settings.md)) |
 | `settings/BackupTasks.jsx` | Settings → Backups' task table and its editor `SubDialog` (scope `Segmented`, workspace and weekday `ToggleGroup`s, frequency and retention `MenuSelect`s, the cron preview); each row's `ActionMenu` ([settings.md](settings.md)) |
@@ -1382,8 +1399,8 @@ editor's other popups.
 | `library/QuickOpen.jsx` | quick open (Ctrl+P): a `.reportOverlay` palette over the library ([home_library.md](home_library.md)) — no query: recents, open tabs, the rest; a query: pages, folders and labels in sections, then the search-everywhere and create-page actions; rows are the chat mention picker's `chatMentionOption`; a query starting with `>` (Ctrl+Shift+P) is the command palette over App's `paletteCommands()` ([hotkeys.md](hotkeys.md)) |
 | `library/PageOption.jsx` | a library page as a picker option, for quick open and the chat mention picker: kind glyph, marked title, authors and year, folder/label chips, then a check, "Current" or the time; also the Recent / Open tabs / Everything else headings (`recencySections`) |
 | `chat/PaperMentionInput.jsx`, `chat/paperMentions.js` | chat mention picker (quick open's page list over the composer), mention text edits and `MAX_CHAT_REFERENCES` (six attached pages plus the current page) |
-| `chat/ApprovalCard.jsx`, `chat/approvals.js` | the card a tool call waits on while the user decides ([ai.md](ai.md#asking-before-a-call-approvals)): the fetch handoff card's look (accent border and tint), a caption naming the permission, the change as a word diff (`del` on `--danger-bg`, `ins` on an `--ok` tint), **Allow once** as the one primary button, **Don't allow** ghost; the buttons never take the focus themselves. A permission's state (Allow / Ask / Off) is a `MenuSelect` whose icon is tinted by state (`.agentPermState` in settings.css) |
-| `chat/AgentChanges.jsx`, `chat/aiRevert.js` | what an agent reply changed, under its steps pill ([ai_tools.md](ai_tools.md#reverting-a-note-change)): `.chatChanges` rows behind an accent rule, a note row ending in a frameless `ctlBtn` undo icon, "Revert all" a `uiBtn sm ghost` in the head, a reverted row muted with its "Reverted" tag and a redo icon in the same place; a row that stops shows its reason, the approval card's `WordDiff`, and **Revert anyway** (`uiBtn sm`) beside **Keep it** (ghost) |
+| `chat/ApprovalCard.jsx`, `chat/approvals.js` | the card a tool call waits on while the user decides ([ai.md](ai.md#asking-before-a-call-approvals)): the fetch handoff card's look (accent border and tint), a caption naming the permission, the change as a word diff (`del` on `--danger-bg`, `ins` on an `--ok` tint), **Allow once** as the one primary button, **Don't allow** ghost; the buttons never take the focus themselves. An ask-only permission's card (Delete folders and labels) shows only **Allow once**, as `uiBtn sm primary danger`, and **Don't allow**, and raises no hint. A permission's state (Allow / Ask / Off) is a `MenuSelect` whose icon is tinted by state (`.agentPermState` in settings.css) |
+| `chat/AgentChanges.jsx`, `chat/aiRevert.js` | what an agent reply changed, under its steps pill ([ai_tools.md](ai_tools.md#reverting-a-note-change)): `.chatChanges` rows behind an accent rule, a note row, or a deleted folder's or label's row, ending in a frameless `ctlBtn` undo icon, "Revert all" a `uiBtn sm ghost` in the notes group's head only, a reverted row muted with its "Reverted" tag and a redo icon in the same place; a row that stops shows its reason, the approval card's `WordDiff`, and **Revert anyway** (`uiBtn sm`) beside **Keep it** (ghost) |
 | `chat/chatErrors.js`, `chat/agentSteps.js`, `chat/chipText.js` | pure helpers of the chat panel: the error card's copy per failure kind (also the login check's strip), the agent's steps pill and change list, a context chip's plain-text preview ([ai.md](ai.md); its words through `search/snippets.js` `plainSnippet`, the one markdown-to-words rule) |
 | `editor/BlockTree.jsx`, `editor/refLabels.js`, `shared/model/blockModel.js` | outliner rendering (its rows are memoized), every row's `[[ref]]` and Gamma-link labels resolved once per tree change by the pure `refLabels.js`, and the pure tree ops (`shared/model/highlightColors.js` is the highlight palette both share with the viewer). Line breaks in a rendered note: one Enter is a hard line break (`remark-breaks`), one blank line the paragraph break, and every further blank line a visible empty line (`expandBlankLines` in `editor/mdMarks.js`, applied by `mdPreprocess` outside math and code) — what the editor shows is what the note renders |
 | `transfers/FileChip.jsx` | the file chip an upload link renders as — a small card (kind icon in a tinted square, name, download arrow), inline so it sits in a sentence, identical for every type; a PDF or markdown chip whose page exists gets an accent "open page" button before the arrow; a `ContextMenu` on a right-click or a held finger (`menuPress`) with "Open page" / "Add to library" (fed by `FileChipContext` from App and one batched `POST /pages/by-docs` per render) and download; also the shared `postFile` / `uploadFilesAsLines` upload helpers |
@@ -1406,9 +1423,14 @@ editor's other popups.
 | `editor/callouts.js` | remark plugin for `> [!note] Title` callouts (type aliases → note/tip/warning/danger/important/quote; each type's colour is a `--callout-*` token); Obsidian's `[!note]-` / `+` fold flag makes a native `<details>` with the title as `<summary>` (chevron in app.css) |
 | `editor/codeHighlight.js` | the highlight.js (`lib/common`) wrapper and the code card's copy button, shared by editor + renderer; token colors are theme-aware `.hljs-*` rules in app.css. The fence scanner is `editor/fences.js`: `scanFences` (used by mdPreprocess's exclusions and BlockTree's Enter/Tab-in-fence handling) and `fenceInnerAt` |
 | `editor/LatexEditor.jsx` | LaTeX aids while editing: the live preview docked to the editor column with a caret marker, the `\command` popup, `renderKatex`/`useCaretAnchored` shared helpers; `editor/latexCompletion.js` is the pure catalog (prefix/abbreviation/fuzzy tiers, snippets, Tab-out navigation) it re-exports; `editor/latexInput.js` supplies scalable delimiter pairing. See [LaTeX editing](latex_editing.md) for shortcuts and browser checks |
+| `library/trashList.js` | the Recently deleted list asked for ahead of its dialog, as the pointer or the focus reaches the trash button (`prefetchTrash`, `aheadTrash`, `dropTrash`; [home_library.md](home_library.md) "Recently deleted") |
 | `library/RecentlyDeleted.jsx` | the Recently deleted dialog: a `SubDialog` of `aiProvRow` rows (title, who deleted it and when, days left, folder) with Restore and a delete-for-good icon button behind App's confirm box, Empty in its `DialogButtons` ([home_library.md](home_library.md) "Recently deleted") |
 | `library/libraryUtils.js` | the library's folder and label helpers over the folder and label trees ([home_library.md](home_library.md) "Folders and labels"), and `pageAttachment`, what a page carries |
 | `shared/ui/Widgets.jsx`, `shared/ui/Menus.jsx`, `shared/ui/Icons.jsx` | shared components; `OpenTabs` in Widgets is the topbar's tab strip (a kind icon per tab, pinned tabs first, full width with a pin in place of the close button, the active tab kept in view clear of the right-edge fade, tabs that come, go and move through `ListMotion`, and on overflow a "⌄ n" popover listing every tab with a filter); `useMenuTrigger` in Menus is the menus a toolbar's buttons open on the press ([Menus and submenus](#menus-and-submenus)) |
+| `shared/styles/motion.css`, `shared/ui/motion.js` | how things move ([Motion](#motion)): the recipes, keyed by the surfaces' classes and the widgets' markup, on the motion tokens; and the pure side (`reducedMotion`, `textSplit`, `longestMs`, `arriving`, `listGlides`, `sameKeys`; `tests/motion.test.mjs`) |
+| `shared/ui/Surfaces.jsx`, `shared/ui/leave.js` | the shells of the surfaces that come and go (`DialogOverlay`, `Popover`), and a closed surface's way out through a still copy (`useLeave`, `leave`, `stillCopy`, `standing`, `standBack`; `tests/leave.test.mjs`) |
+| `shared/ui/MotionWidgets.jsx` | what changes in place: `IconSwap`, `MorphText`, `Collapse`, `Chevron`, `useSlidingPill`, `FADE_IN`, `Reveal` ([Things that change in place](#things-that-change-in-place)) |
+| `shared/ui/ListMotion.jsx` | a list whose items glide to their new places, come in where they will rest and leave from where they stood ([Lists that change](#lists-that-change)) |
 | `shared/ui/wheelPan.js` | `useWheelPan`: a plain mouse wheel pans a sideways strip (the card strips, the tab strip) |
 | `shared/ui/listKeys.js` | `stepList`: ↑/↓ between a search box and the results listed under it (Settings search, the move-to-page filter, the chat's page picker) |
 | `shared/ui/DiagramFigure.jsx`, `shared/ui/ResizeGrip.jsx` | the diagram figure (a Mermaid diagram inline, or a sanitized SVG drawing shown as an image) with its toolbar of `ctlBtn`s, ended by a note's object "⋯" (`tools`) ([diagrams.md](diagrams.md)); the two-sided drag grips (`ResizeGrips`) + `useDragResize` hook that size centred note images and diagrams alike, a double-click or double tap on a grip restoring the natural size |

@@ -21,7 +21,7 @@ from gamma.server_settings import _get_raw, _set_raw
 CLIENT_ID, SECRET = "gc_hosted", "hosted-secret"
 
 PRO = {"plan": "pro", "status": "active", "read_only": False, "policy": "invited", "max_accounts": 0,
-       "quota_mb": 1000, "max_upload_mb": 100, "offsite": {"interval_s": 3600, "keep": 30},
+       "quota_mb": 1000, "offsite": {"interval_s": 3600, "keep": 30},
        "grace_until": None, "message": ""}
 
 
@@ -68,13 +68,11 @@ def admin():
 
 @pytest.fixture
 def no_saved_limits():
-    """The suite's saved storage defaults put aside for the test."""
-    before = {key: _get_raw(key) for key in ("max_upload_mb", "quota_mb")}
-    for key in before:
-        _set_raw(key, "")
+    """The suite's saved storage default put aside for the test."""
+    before = _get_raw("quota_mb")
+    _set_raw("quota_mb", "")
     yield
-    for key, value in before.items():
-        _set_raw(key, value)
+    _set_raw("quota_mb", before)
 
 
 def _claims(sub, username):
@@ -148,28 +146,27 @@ def test_a_failed_sync_keeps_the_last_answer(plan, monkeypatch):
 def test_storage_follows_the_plan_and_an_admin_only_tightens(plan, admin, no_saved_limits):
     hosted.sync_now()
     got = admin.get("/api/admin/settings").json()
-    assert (got["max_upload_mb"], got["max_upload_mb_source"]) == (100, "plan")
     assert (got["quota_mb"], got["quota_mb_source"]) == (1000, "plan")
-    assert got["plan_caps"] == {"max_upload_mb": 100, "quota_mb": 1000}
+    assert got["plan_caps"] == {"quota_mb": 1000}
     # lower is the admin's to set; higher (or unlimited) is refused
-    r = admin.put("/api/admin/settings", json={"max_upload_mb": 40, "quota_mb": 500})
-    assert r.status_code == 200 and (r.json()["max_upload_mb"], r.json()["max_upload_mb_source"]) == (40, "saved")
-    for bad in ({"max_upload_mb": 200}, {"quota_mb": 0}, {"quota_mb": 2000}):
+    r = admin.put("/api/admin/settings", json={"quota_mb": 500})
+    assert r.status_code == 200 and (r.json()["quota_mb"], r.json()["quota_mb_source"]) == (500, "saved")
+    for bad in ({"quota_mb": 0}, {"quota_mb": 2000}):
         r = admin.put("/api/admin/settings", json=bad)
         assert r.status_code == 400 and "plan allows at most" in r.json()["detail"], bad
     assert admin.put("/api/admin/users/ho_member", json={"quota_mb": 5000}).status_code == 400
     # a value saved before the plan came is held to the cap
-    _set_raw("max_upload_mb", "500")
-    assert server_settings.get_defaults()["max_upload_mb_source"] == "plan"
+    _set_raw("quota_mb", "5000")
+    assert server_settings.get_defaults()["quota_mb_source"] == "plan"
     member = account_of("ho_member")
     with connect_users_db() as conn:
         conn.execute("UPDATE users SET quota_mb = 0 WHERE id = ?", (member,))  # an unlimited override
         conn.commit()
     try:
-        assert server_settings.user_limits(member) == {"max_upload_mb": 100, "quota_mb": 1000}
+        assert server_settings.user_limits(member) == {"quota_mb": 1000}
         with pytest.raises(Exception) as refused:
-            server_settings.check_upload_allowed(workspaces.default_workspace(member), 101 * server_settings.MB)
-        assert refused.value.status_code == 413
+            server_settings.check_upload_allowed(workspaces.default_workspace(member), 1001 * server_settings.MB)
+        assert refused.value.status_code == 507
     finally:
         with connect_users_db() as conn:
             conn.execute("UPDATE users SET quota_mb = NULL WHERE id = ?", (member,))
@@ -288,7 +285,7 @@ def test_the_server_pane(plan, admin, monkeypatch):
     assert admin.get("/api/admin/settings").json()["hosted"] == {
         "limits": None, "accounts": _accounts(), "last_failure": None, "issuer": ISSUER}
     r = admin.post("/api/admin/hosted/sync")
-    assert r.status_code == 200 and r.json()["ok"] is True and r.json()["max_upload_mb"] <= 100
+    assert r.status_code == 200 and r.json()["ok"] is True and 0 < r.json()["quota_mb"] <= 1000
     pane = admin.get("/api/admin/settings").json()["hosted"]
     assert pane["limits"]["plan"] == "pro" and pane["limits"]["synced_at"]
     plan.offline = True

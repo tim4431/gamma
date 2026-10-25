@@ -33,13 +33,19 @@ the slide citation on the page block (`properties.meta` / `properties.bibtex`
    (its title and first author), then the first page's largest type
    (`pdf_text.title_guess`, below), then the page title (≥3 words; users
    title pages with the paper name, an upload carries its file name), then
-   the normalized text head; a query asked once is not asked again.
-   Deterministic; keeps most publisher PDFs off the AI fallback.
+   the normalized text head; a query asked once is not asked again. A hit
+   is taken when the PDF is its title page; one whose title is only a
+   phrase of the text is a record the text names (below). Deterministic;
+   keeps most publisher PDFs off the AI.
 5. **The web page's record** — what the page the paper was saved from said
-   in its citation tags (`web_meta`, below), when no registry confirmed
-   anything: a thesis in a repository, a report, a conference paper
-   without a DOI. It beats a registry fallback nothing confirmed.
-6. **AI extraction** — last resort, and its output is verified (below).
+   in its citation tags (`web_meta`, below), when no registry record is
+   tied to the PDF: a thesis in a repository, a report, a conference paper
+   without a DOI. It beats the records the text merely names.
+6. **The AI's pick** — when the text names records (steps 1 to 4) but none
+   is tied to it, one AI call shows them with the PDF's opening text and
+   asks which, if any, is this document (`_ai_pick`, below). None: they are
+   dropped and the next step runs. Without AI, the first stands, flagged.
+7. **AI extraction** — last resort, and its output is verified (below).
 
 **What the web page said.** A Connector clip keeps what the tab said about
 its paper on the page as `properties.web_meta` (`metadata.web_record`,
@@ -85,8 +91,9 @@ up to 40 s).
 `SCAN_CHARS` (20k) head window, deliberately decoupled from the AI-context
 pref, **plus the last page** — an issue-clipped Science PDF opens with the
 *previous* article's tail (title 7k+ chars in) and prints its own DOI only in
-the end-of-article trailer. Only the AI call is capped at the pref
-(`context_char_limit`).
+the end-of-article trailer. Only the AI calls are capped at the pref
+(`context_char_limit`); the record check reads the whole first page at
+least (below).
 
 **What a registry record becomes.** Crossref keeps the publisher's markup
 and entities in titles and venues (`<i>Planck</i> 2018 results`,
@@ -152,36 +159,121 @@ report that names no publisher takes its venue as one
 (`item_types.publisher`): the AI was asked for a publisher on books only
 before, so an older thesis record holds the university as its venue.
 
-**Trust rules** (the first DOI on page 1 can belong to a *cited* paper, and
-AI output can be a plausible hallucination):
+**Trust rules** (the first DOI on page 1 can belong to a *cited* paper, a
+short registry title can be a phrase of a longer one, and AI output can be
+a plausible hallucination):
 
 - Identifiers with **URL-level trust** are accepted outright: the stored
   `source_url`, the `web_url` the extension clipped from, the `doi` and
   `arxiv_id` of `web_meta` (what `detect.js` read off the publisher page's
   own meta tags), and a DOI or arXiv id the user types into the popover
   (below). A `web_meta.text_doi` is not: the page may only cite that paper,
-  so its record is confirmed by its title in the PDF like any text DOI, and
-  on a page with no PDF it is stored flagged.
+  so its record is tied to the PDF like any text DOI, and on a page with no
+  PDF it is stored flagged.
 - The web page's citation record is trusted like the DOI its tags carry,
   the same tags' word; it is the record only when no registry confirms one,
   and with it the Crossref title search also accepts a hit whose title is
   near-identical (≥0.92) with a compatible year, as for an AI title, which
   is how a page with no PDF text finds its registry record.
-- A record found via the *text* counts as **confirmed** only when the
-  registry's title appears in the PDF text (`_title_in_text` — normalized
-  for case, ligatures, line-break hyphens; a title with a subtitle also
-  counts when both parts appear, since the PDF sets them on separate
-  lines). Unconfirmed resolutions are kept
-  only as a fallback when nothing confirms; a Crossref search hit is accepted
-  solely on title-in-text evidence.
-- An ISBN record is confirmed by `_record_in_text`: the paper rule, or —
-  book titles are short ("Lasers") — the whole title *and* one author
-  surname in the text head. Unconfirmed → fallback, like a DOI.
+- A record found via the *text* (an arXiv id or a DOI printed in it, a
+  Crossref search hit) counts as **confirmed** only when the PDF is its
+  title page (`_tie` → `"title"`, `_Document`). That rule confirms without
+  the AI, so it fires only on the clear case; anything less goes to the
+  AI or stands flagged, since a record wrongly confirmed is cited
+  unchecked and one wrongly flagged is not.
+  - **Its title is the document's own:** near-identical (≥0.92, `_alike`)
+    to the first page's largest type. Only when there is no largest type
+    (an unreadable layout, the PyPDF2 fallback) does a run of up to three
+    whole lines of the first page count instead, 15 characters at least
+    (`TITLE_MIN`) and not opening with a numbered section heading ("1
+    Introduction", "IV. DISCUSSION"; "C. elegans …" is a title). Beside a
+    largest type, a line of the first page's title block (its first 25
+    lines) only ranks a record as `title_only`: such a line can be a
+    heading naming a cited work, a CV's or a syllabus's entry, with that
+    work's authors under it. Lines of later pages (slides, a table of
+    contents, a reference list) count for nothing. Letter-spaced titles are
+    folded and line-break hyphens joined. Titles that differ in a part
+    number ("… chains. I" / "… II"), or where one is the other with words
+    more around it ("Comment on X", "X: Erratum", "X (Retracted)", "X
+    revisited"; four characters or more, so a glued footnote mark is no
+    such word), are different works, however alike the rest. A title with a subtitle (doi.org joins them, "main:
+    sub") is also the document's where its main title is and its subtitle
+    is a line of its own just after it, as PDFs set them; a main title
+    alone is a series' ("Planck 2018 results"), every volume's, so a
+    Crossref hit is tied on its doi.org record, which carries the subtitle,
+    and a hit whose doi.org fetch fails is a phrase at most.
+  - **One of its authors is printed by it:** a surname in the lines just
+    before and after the title (the largest type's line, where a title
+    wrapped over more lines begins, or the title block when it is not
+    found), not anywhere in the head, whose reference
+    list prints every cited work's authors. A surname matches a capitalized
+    word, as names are printed ("Lee", "LEE", "McDonald"; never "sense" for
+    Sen), with accents folded, pdflatex's old (OT1) accents set as marks of
+    their own ("M¨uller") and letters with no decomposition (ı, ł, ø, ß)
+    included, affiliation marks glued to the name split off ("Ofek1*") or
+    passed over when they are letters ("Johnsona,b": a word opening with a
+    surname of three letters or more, up to two letters more), and suffixes
+    passed over. A preprint's published record counts beside it (arXiv may
+    list a collaboration where the page prints names).
+  - A record whose title is the document's own but with no author found by
+    it, or that is a line of the title block beside a largest type it is
+    not, is stored as `title_only`, unconfirmed: most often the paper's own
+    record under an author list the text mangles or a title the largest
+    type misses (one sharing its size with "Abstract", a two-word title it
+    skips, an Elsevier masthead set larger than the title), sometimes
+    another work under the same title. The AI is shown it first. A record whose authors cannot be matched (none
+    listed: a supplement's component, a front-matter page, a textbook
+    chapter on the topic; another script than Latin) is never more. A
+    subtitle the PDF does not print makes a record `title_only` at most
+    when its main title is the document's (`_named_tie`). Crossref's
+    supplementary components, peer reviews and grants are no candidates at
+    all.
+- An ISBN printed in the PDF is tied by the book's title page like any
+  record, a short title ("Lasers") allowed as a line of the title block
+  since the ISBN vouches for it. A reference list, a syllabus or a review
+  printing a book's ISBN with its title only names the book
+  (`_record_in_text`: the title, or a short title and an author, in the
+  text head).
+- Otherwise the text only **names** a record: a Crossref hit whose title
+  occurs in the text (`_title_in_text`: whole words, normalized for case,
+  ligatures and line-break hyphens, ≥15 characters; a title with a subtitle
+  also counts when both parts appear, the subtitle ≥8 characters) is stored
+  as `phrase`, and the record behind an identifier the text prints that
+  does not tie, as `id_only` (its title may occur in the text too: a cited
+  work's does). A phrase of a longer title, a section heading and a
+  reference list's titles all pass this test, so it confirms nothing. The
+  named records are ranked: a `title_only` record first, then an
+  identifier whose title the text prints, then a title search phrase,
+  then an identifier alone. A DOI found once is fetched and named once (the
+  lookup keeps its doi.org answers), and the title search fetches a few
+  phrase hits, five when the AI can pick among them and three when it
+  cannot. When no record is tied and the web page has no record, the AI
+  picks among the best five (`_ai_pick`): one call with the text AI
+  extraction reads (the pref-sized head), the whole first page at least (an
+  issue-clipped article's title sits after the previous article's tail),
+  and the records numbered (title, authors, year, type, venue, publisher,
+  identifiers), `MATCH_PROMPT` asking which is the same work (this version
+  or another: a preprint, the published article, the paper a supplement
+  belongs to) and not a work the document cites or shares a topic or a
+  title phrase with. The answer is the last JSON object in the reply that
+  names a record (`_answer`), whatever reasoning surrounds it. It runs on
+  the request's metadata model at the model's lowest reasoning effort and
+  is counted as metadata usage. Its pick is stored confirmed (`match:
+  "ai"`); "none" drops them all and the AI reads the document itself; a
+  refused call (a used-up allowance, too many calls) or any failure keeps
+  the best ranked, flagged, and the lookup does not fail. Without AI the
+  best ranked is kept, flagged.
 - AI output goes through `_verify_ai_meta`: an identifier it produced is
-  resolved and, on success, replaced by the registry record; one that
-  resolves nowhere and doesn't occur in the PDF is dropped as fabricated; the
-  AI title is cross-checked against Crossref (≥0.92 title similarity +
-  compatible year upgrades it).
+  resolved, and its registry record replaces the reading only when it is
+  the work the AI read (`_same_work`: ≥0.92 title similarity and a
+  compatible year) or the PDF is its title page; one that names another
+  work is dropped, and so is one that resolves nowhere and doesn't occur in
+  the PDF (fabricated). The AI title is cross-checked against Crossref on
+  the same evidence: each hit whose main title is the AI's is tied on its
+  doi.org record (a few at most, the lookup's own fetches reused, the
+  records the AI's check rejected skipped), so a subtitled paper is found
+  and a series' other volume is not; a hit whose fetch fails is taken only
+  on the AI's own title.
 - **Book search.** When the AI classified the document as a `book` (or a
   `document`, where it files a book it is unsure of) and Crossref has
   nothing, the AI title + first author go to
@@ -189,24 +281,46 @@ AI output can be a plausible hallucination):
   `intitle:/inauthor:`). `_pick_book_match` accepts a hit only when the
   titles are alike (≥0.9, or one is the other plus a subtitle) *and* an
   author surname agrees: both were read off the title page, and the
-  registry confirms they name a real book. The registry supplies the
+  registry confirms they name a real book. Otherwise it takes a hit whose
+  title and an author the text names (`_record_in_text`). The registry supplies the
   canonical title, authors and publisher. The AI-read year stays, since it
   names the edition in hand while the registry's is the first publication.
   An ISBN is adopted only if the PDF text prints it, so books published
   before ISBNs resolve through this path too.
 
-**Source and the unverified flag.** `meta.source` is `arxiv` / `doi` /
+**Source, match and the unverified flag.** `meta.source` is `arxiv` / `doi` /
 `isbn` / `crossref` (search hit whose doi.org fetch failed) / `openlibrary`
-/ `googlebooks` / `page` (the web page's record) / `ai` / `manual`. Every fetched record also stores
-`meta.unverified`: true when nothing tied it to *this* document — an AI
-record of a type a registry could confirm, or a DOI/ISBN fallback whose registry title
-isn't in the text (it may belong to a work the document cites). Unverified
+/ `googlebooks` / `page` (the web page's record) / `ai` / `manual`. It says
+where a record came from, not what tied it to the document: `doi` covers a
+DOI from the paper's own address and a title search hit alike. Every
+fetched record also stores `meta.match`, what tied it (the table above
+`MATCH_CONFIRMED` in `routers/metadata.py`): `source` (an identifier from
+the paper's address, the web page it was saved from or that page's tags),
+`page` (the web page's record, or a registry record whose title and year
+agree with it), `typed` (an identifier the user typed), `title` (the PDF
+is its title page), `ai` (the AI picked it, or the registry holds the
+title the AI read), and unconfirmed `title_only` (its title is the
+PDF's own, no author found by it), `phrase` (a title search hit whose
+title only occurs in the text), `id_only` (the record of an identifier
+printed in the PDF that nothing ties to it) and `ai_reading` (the AI's
+reading, no registry record). `meta.unverified`
+follows from it (`_unconfirmed`): true for `title_only`, `phrase` and `id_only`, and for
+an AI reading of a type a registry could confirm (it may belong to a work
+the document cites, or be a plausible hallucination). Unverified
 records get a red "!" badge on the metadata button, a red Source row in the
 popover, a red "!" + source tag beside the slide citation in the share
-popover, and a red cell in the Settings → Maintenance table. The wording lives
-in one place, `metaSourceInfo` in `frontend/src/shared/lib/utils.js`; the predicate
-`isUnverifiedPaperMeta(source, kind, unverified)` falls back to the
-same type rule for records stored before the flag existed. For AI records
+popover, and a red cell in the Settings → Maintenance table, whose
+Unverified filter and Fetch needed button take them all. The wording lives
+in one place, `metaSourceInfo` in `frontend/src/shared/lib/metaSource.js`
+(re-exported by `utils.js`): a confirmed registry record's Source row says
+what tied it ("doi.org · confirmed by AI", "· title page match", "· via its
+link", "· via its web page", "· from your identifier"), an unconfirmed
+one's hint says why it warns (no author found by its
+title, a title search phrase, or an identifier printed in the PDF), and a
+record from before `match` reads as before (a Zotero import says so). The
+predicate `isUnverifiedPaperMeta(source, kind, unverified)` falls back to
+the same type rule for records stored before the flag existed; records
+stored before `match` keep the flag they were stored with until a refetch. For AI records
 the warning fires only for the types a registry holds
 (`item_types.CHECKABLE`: journal article, conference paper, preprint,
 chapter, book). A thesis, a report, slides and course notes have no registry
@@ -221,7 +335,8 @@ Verify saves them instead. A refetch replaces the record and drops the mark.
 **When.** A lookup that stores a record stamps `meta.at` (UTC, the
 `page_now` shape), and so does a hand edit; Verify keeps the stamp, since
 the record is unchanged. A failed lookup's time is `meta_error.at`, as
-before. The popover shows the stamp in a Fetched row (Edited for a manual
+before. Attaching or replacing a page's PDF drops `meta_error`, since that
+lookup read the old file, so the new one is looked up again. The popover shows the stamp in a Fetched row (Edited for a manual
 record), and the Settings → Maintenance table in its Fetched column: the
 time today, else the day, with the full date and time on hover; for a paper
 whose lookup found nothing, that lookup's time. Records stored before the
@@ -273,7 +388,7 @@ is configured.
 `GET /api/metadata/status` reports library-wide health (per paper: metadata
 present/failed + source/kind, extracted-text chars and index state from the
 FTS tables) — it feeds the Settings → Maintenance pane's status table and its
-adaptive batch retry (selected, else missing + unverified-AI; plus "Refetch
+adaptive batch retry (selected, else missing + unverified; plus "Refetch
 all"/"Refetch shown"). The batch is the `metadata` background job (`POST
 /api/jobs/metadata`, [tasks.md](tasks.md)): the server looks the papers up
 one after the other with `force`, through the same `fetch_page_metadata` as
@@ -299,7 +414,8 @@ the metadata button's state, so a lookup run elsewhere (this job, the
 extension's clip) shows without a reload.
 The page stores an `auto_title` compare-and-swap marker: a successful lookup may
 replace that filename with the paper title only while the page title still
-matches the marker. Any explicit rename clears it, so a slow lookup cannot
+matches the marker, and only with a record that is not unverified: the
+marker waits for a confirmed record, a typed identifier or a hand edit. Any explicit rename clears it, so a slow lookup cannot
 overwrite the user's edit. The fetch response always carries `page_title`,
 the page's title as it stands after the write (`title_updated` says whether
 *this* call did the rename): two lookups can race — the extension's
@@ -307,7 +423,8 @@ background lookup after a clip and the one the app starts when the page is
 opened — and the loser still has to show the winner's rename, so the client
 (`mergeMetaResult` in App.jsx) takes the server's title over its own copy and
 drops the marker once the title has moved off it. The AI fallback model is selected in Settings →
-Providers; arXiv and DOI resolutions do not call that model.
+Providers; an arXiv id or a DOI that ties to the PDF does not call that
+model, one the text only names goes to its check (`_ai_pick`).
 
 ## PDF resolution
 

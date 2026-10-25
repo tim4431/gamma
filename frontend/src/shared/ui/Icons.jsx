@@ -294,6 +294,9 @@ export const ScissorsIcon = (p) => (
 export const CornerDownLeftIcon = (p) => (
   <Icon {...p}><path d="m9 10-5 5 5 5" /><path d="M20 4v7a4 4 0 0 1-4 4H4" /></Icon>
 );
+export const PanelTopIcon = (p) => (
+  <Icon {...p}><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 9h18" /></Icon>
+);
 export const LayoutIcon = (p) => (
   <Icon {...p}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 15h18" /></Icon>
 );

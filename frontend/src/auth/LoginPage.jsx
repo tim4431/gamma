@@ -96,6 +96,7 @@ export function SessionConflictPage({ tabUser, activeUser, onReload }) {
 // instead (the invited policy, gamma/join_requests.py), as `?cloud_join=`
 // `sent` | `waiting` | `declined`: shown once, then dropped from the
 // address bar.
+const OUTCOME_PARAMS = ["cloud_error", "cloud_join"];
 function takeParam(name) {
   try {
     const url = new URL(window.location.href);
@@ -113,15 +114,14 @@ const takeCloudJoin = () => takeParam("cloud_join");
 // show: a share view that opens anyway then shows its sign-in page.
 export function cloudOutcomeInUrl() {
   const q = new URLSearchParams(window.location.search);
-  return q.has("cloud_error") || q.has("cloud_join");
+  return OUTCOME_PARAMS.some((name) => q.has(name));
 }
 
 // This page's address to come back to after a sign-in, without an earlier
 // sign-in's outcome (read before the page drops it from the address bar).
 function hereWithoutOutcome() {
   const q = new URLSearchParams(window.location.search);
-  q.delete("cloud_error");
-  q.delete("cloud_join");
+  for (const name of OUTCOME_PARAMS) q.delete(name);
   const search = q.toString();
   return window.location.pathname + (search ? `?${search}` : "");
 }
