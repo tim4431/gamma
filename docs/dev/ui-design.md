@@ -595,6 +595,16 @@ or raise the unsaved-edits question. Every `reportOverlay` dialog uses it
 move-block dialogs, the chat's page picker); Quick Open closes on its own
 `mousedown` check instead.
 
+A dialog that holds work a close would lose asks first on the backdrop,
+Escape and ×. An edited draft asks "Discard your unsaved edits?"; other
+work names itself through `SubDialog`'s `guard` (`{question, keep,
+leave}`). The import review before Import is the example: "Stop uploading
+…?" while the file goes up, "Close without importing?" once the review is
+in. The question goes away when the work ends on its own (the upload
+fails). When it goes, by Keep or on its own, the dialog takes the focus
+back from its button. The footer's Cancel stays direct: it is the labelled way
+to stop. It asks only for a draft.
+
 A dialog takes the focus as it opens, unless something inside it holds it
 already, and gives it back on close to what had it as it opened. When
 Settings opens with an editor dialog in it (the chat's AI tiles open it on

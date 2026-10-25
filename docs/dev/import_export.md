@@ -190,8 +190,11 @@ Gamma exports share one review flow: Upload → Review → Import → Summary.
   no size cap and is not metered by the account quota; an upload that would
   leave the disk with less than 1 GB free is refused (507,
   `import_staging.MIN_FREE_BYTES`). A review expires two hours after its
-  last activity (a part, a claim), so a long upload in parts does not run
-  out.
+  last activity (a part, a claim, the dialog's keep-alive, the import's
+  start), so a long upload in parts does not run out. Until the next
+  upload's sweep removes it, an expired review comes back on a keep-alive
+  or the import's start (`import_staging.touch`); once swept, both answer
+  404.
 - Selection ids are source ids (`page:<id>` / `chat:<id>` for a Gamma
   export, Zotero item keys, ...); duplicate Zotero records share
   `selection_ids`. `parse_selection` (`gamma/import_review.py`): `None`
@@ -203,8 +206,15 @@ Gamma exports share one review flow: Upload → Review → Import → Summary.
   (`tasks.start("import", …)`) with its progress and Stop. It may close while
   the job runs, and the job's row in Background tasks opens it again on that
   job (`{jobId}`, no file: the summary then shows the library column only).
-  A preview the server refuses (400, 413, 415: a file the source does not
-  read, such as a Supernote `.note`, or one too large) shows its reason
+  Until Import, the upload and the review are the dialog's own, not a
+  task: a close by the backdrop, Escape or × asks first, since it stops
+  the upload or drops the staged review (or the choices of one gone); its
+  Cancel stays direct. While it shows a review, the dialog sends a
+  keep-alive every 10 minutes and when the window regains focus or becomes
+  visible. A review gone anyway (404 once swept, from the keep-alive or
+  from Import) is cleared with a message, and Retry preview uploads the
+  file the dialog still holds again, keeping the selection. A preview the server refuses (400, 413, 415: a file the source
+  does not read, such as a Supernote `.note`, or one too large) shows its reason
   without the retry a lost connection gets. The source column is headed by
   what was uploaded: one file, a ZIP's contents, a folder, or the files
   picked together.

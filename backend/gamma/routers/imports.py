@@ -162,6 +162,15 @@ def discard_import_review(token: str, request: Request):
     return {"ok": True}
 
 
+@router.post("/import/review/{token}/keepalive")
+def keep_import_review(token: str, request: Request):
+    """The dialog still shows the review: its two hours start again, also
+    once past them while no upload's sweep has removed it (404 then)."""
+    ws = require_ws(request, write=True)
+    import_staging.touch(token, request.state.user_id, ws)
+    return {"ok": True}
+
+
 class ImportJob(BaseModel):
     review_id: str
     selected: list[str]
@@ -189,7 +198,7 @@ def start_import_job(payload: ImportJob, request: Request):
     prior = jobs.latest(user_id, "import", token)
     if prior is not None and prior["state"] in ("queued", "running", "done"):
         return same_review(prior)
-    path, metadata = import_staging.get(token, user_id, ws)
+    path, metadata = import_staging.touch(token, user_id, ws)  # pressing Import is activity too
     upload = path / "upload"
     if not upload.exists():
         raise HTTPException(status_code=410, detail="this review was already imported; choose the file again")

@@ -3,12 +3,17 @@
 // itself is a background job (POST /api/jobs/import, tasks/useTasks.js), so
 // the dialog may close while it runs — the job's row in Background tasks
 // opens it again: `jobId` without a file shows that job's import and its
-// summary.
+// summary. Until Import, a close would lose the upload, so the backdrop,
+// Escape and × ask first (SubDialog `guard`); Cancel stays direct. While the
+// dialog shows a review it keeps it on the server (keepReview); a review
+// gone anyway (404: swept after a sleep past its two hours) leaves an
+// error with Retry preview, which uploads the held file again and keeps
+// the choices.
 import React from "react";
 import { Segmented, SubDialog } from "../settings/SettingsKit";
 import { fmtBytes } from "../shared/lib/format.js";
 import ImportTree from "./ImportTree";
-import { dialogSource, discardImport, importFormat, importJobBody, requestImport } from "./importApi";
+import { dialogSource, discardImport, importFormat, importJobBody, keepReview, requestImport } from "./importApi";
 import { IMPORT_FILTERS, allItemIds, buildImportTree, filterImportPages, importSummary,
   importWarnings, itemSelected, resultPages, selectItems } from "./importReview";
 import { TaskProgress } from "../tasks/TasksTray";
@@ -23,6 +28,10 @@ const PHASE_LABEL = { packing: t("Reading the folder"), upload: t("Uploading for
 // such as a Supernote .note; 413: too large; 415: a type it does not take):
 // sending it again cannot help, so the dialog offers no retry.
 const REFUSED = [400, 413, 415];
+// The server holds a review two hours since its last activity: the dialog
+// says it is still open well within that, and when the window comes back.
+const KEEP_ALIVE_MS = 10 * 60 * 1000;
+const GONE = [404, 410]; // the staged review is no longer on the server
 
 // `folder`: the destination folder's id ("" = the library root);
 // `folderPath(id)` names it, for a review opened again from its job too.
@@ -47,6 +56,8 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
   const reviewId = React.useRef(null);
   const takenBy = React.useRef(openedJob); // the job that owns the staged upload: never discard it then
   const starting = React.useRef(false);
+  const closed = React.useRef(false);
+  const keepChoices = React.useRef(false); // the next review keeps the selection (the last one is gone)
   const reportHeading = React.useRef(null);
 
   // Upload and preview (a review of a file just chosen).
@@ -63,14 +74,31 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
     }).then(data => {
       if (ctl.signal.aborted) return;
       reviewId.current = data.review_id;
-      setPlan(data); setSelected(new Set(allItemIds(data.pages))); setReviewPhase("review");
+      const ids = allItemIds(data.pages), keep = keepChoices.current;
+      keepChoices.current = false;
+      setPlan(data); setReviewPhase("review");
+      setSelected(previous => new Set(keep ? ids.filter(id => previous.has(id)) : ids));
     }).catch(err => {
       if (!ctl.signal.aborted) { setError(err.message); setRefused(REFUSED.includes(err.status)); setReviewPhase("review"); }
     });
     return () => ctl.abort();
   }, [reopened, source, file, folder, strip, attempt]);
-  // A review closed before it was imported goes with the dialog.
-  React.useEffect(() => () => { if (!takenBy.current) discardImport(reviewId.current); }, []);
+  // A review closed before it was imported goes with the dialog; one an
+  // import is being started on stays for it (that start discards it if it fails).
+  React.useEffect(() => {
+    closed.current = false; // mounted again (StrictMode)
+    return () => {
+      closed.current = true;
+      if (!takenBy.current && !starting.current) discardImport(reviewId.current);
+    };
+  }, []);
+  // The review is gone from the server: the error offers Retry preview.
+  const gone = id => {
+    if (takenBy.current || reviewId.current !== id) return; // a job's now, or an older review
+    keepChoices.current = true; reviewId.current = null;
+    setPlan(null);
+    setError(t("The server no longer holds this review. Retry preview uploads {name} again and keeps your choices.", { name: fileName }));
+  };
 
   const { watch, fetchJob } = tasks;
   React.useEffect(() => (jobId ? watch() : undefined), [jobId, watch]);
@@ -87,6 +115,23 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
     : !job || isActive(job) || (job.state === "done" && !ended) ? "importing"
       : job.state === "done" ? "complete" : "ended";
   React.useEffect(() => { if (phase === "complete") reportHeading.current?.focus(); }, [phase]);
+  // The review on screen is kept: every KEEP_ALIVE_MS, which a hidden tab
+  // still runs, and when the window comes back (a sleep stops the timer).
+  // While an import starts, its own answer says whether the review is gone.
+  const shownReview = phase === "review" && plan ? plan.review_id : null;
+  React.useEffect(() => {
+    if (!shownReview) return undefined;
+    const ping = () => keepReview(shownReview).catch(err => { if (GONE.includes(err.status) && !starting.current) gone(shownReview); });
+    const onVisible = () => { if (!document.hidden) ping(); };
+    const timer = setInterval(ping, KEEP_ALIVE_MS);
+    window.addEventListener("focus", ping);
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener("focus", ping);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [shownReview]);
 
   const pages = React.useMemo(() => result ? resultPages(result) : plan?.pages || [], [plan, result]);
   const shown = filterImportPages(pages, filter, selected);
@@ -108,9 +153,20 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
       setFilter("all");
       setJobId(started.id);
     } catch (err) {
-      setError(err.message);
+      if (closed.current) discardImport(plan.review_id);
+      else if (GONE.includes(err.status)) gone(plan.review_id);
+      else setError(err.message);
     } finally { starting.current = false; }
   };
+  // What a close before Import would lose: the upload, or the review (or
+  // the choices a review gone from the server left for Retry preview).
+  const guard = reviewBusy ? {
+    question: t("Stop uploading {name}? Importing it later means uploading it again.", { name: fileName }),
+    keep: t("Keep uploading"), leave: t("Stop upload"),
+  } : phase === "review" && (plan || keepChoices.current) ? {
+    question: t("Close without importing? Importing later means uploading {name} again.", { name: fileName }),
+    keep: t("Keep reviewing"), leave: t("Discard upload"),
+  } : null;
   const percent = progress.total ? Math.min(100, Math.floor(progress.loaded / progress.total * 100)) : null;
   const title = result ? t("Import complete") : t("Review {label} import", { label: t(format.label) });
   const destinationFolder = folderPath(plan?.folder || params.folder || "");
@@ -131,7 +187,7 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
       <div className="importTreeScroll"><ImportTree node={sourceTree} /></div>
     </section>
   );
-  return <SubDialog title={title} onClose={onClose} className="importReviewModal">
+  return <SubDialog title={title} onClose={onClose} guard={guard} className="importReviewModal">
     <nav className="importStepsNav" aria-label={t("Import progress")}>
       {STEPS.map((label, index) => <span key={label}
         aria-current={PHASE_STEP[phase] === index ? "step" : undefined}>{index + 1}. {t(label)}</span>)}
@@ -186,10 +242,10 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
     ) : null}
     {phase === "review" && plan ? <p className="reportModalHint">{t(format.instructions)} {source === "zotero" && strip ? t("Embedded annotations will be imported and stripped from the stored PDFs.") : ""}</p> : null}
     <div className="reportModalBtns importReviewFooter">
-      {phase === "upload" || phase === "scanning" || phase === "review"
+      {reviewBusy || phase === "review"
         ? <button type="button" className="uiBtn" onClick={onClose}>{t("Cancel")}</button> : null}
       {error && !plan && !refused && phase === "review" ? <button type="button" className="uiBtn" onClick={() => setAttempt(n => n + 1)}>{t("Retry preview")}</button> : null}
-      {phase === "upload" || phase === "scanning" || phase === "review" ? (
+      {reviewBusy || phase === "review" ? (
         <button type="button" className="uiBtn primary" disabled={!plan || reviewBusy || !chosenCount} onClick={submit}>{t("Import to library")}</button>
       ) : null}
       {phase === "importing" && job?.stoppable ? <button type="button" className="uiBtn" onClick={() => tasks.cancel(job).catch(err => setError(err.message))}>{t("Stop")}</button> : null}
