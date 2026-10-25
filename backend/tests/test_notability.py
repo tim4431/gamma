@@ -459,7 +459,7 @@ def test_the_worked_page_examples():
     assert (pw, height) == (612, 741.5625) and ph == pytest.approx(803.25)
     frames, _ = nm.frames(paper, {}, [835.0])
     assert len(frames) == 2 and frames[1].k == pytest.approx(1.083186, abs=1e-6)
-    i = nm.page_index(frames, 835.0)
+    i = nm._index([f.top for f in frames], 835.0)
     f = frames[i]
     assert i == 1 and ((100 - f.ox) * f.k, (835 - f.oy) * f.k) == (pytest.approx(124.26, abs=0.005),
                                                                    pytest.approx(101.21, abs=0.005))
@@ -493,9 +493,9 @@ def test_implicit_pages_pruning_and_the_title_area():
     assert len(frames) == 1
     frames, _ = nm.frames(note, {}, [])
     assert len(frames) == 1
-    assert nm.page_index(frames, -40.0) == 0
+    assert nm._index([f.top for f in frames], -40.0) == 0
     frames, _ = nm.frames(_note(width=565.0), {}, [5000.0])
-    assert len(frames) == 7 and nm.page_index(frames, 5000.0) == 6
+    assert len(frames) == 7 and nm._index([f.top for f in frames], 5000.0) == 6
 
 
 def test_missing_pdfs_and_pages_become_paper(monkeypatch):

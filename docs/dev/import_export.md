@@ -716,6 +716,10 @@ names:
   box headers only, and are streamed into storage
   (`storage.store_file_stream`). A text box's or a formula's text is cut
   at 200,000 characters, what the editor saves (`ops.MAX_CONTENT`).
+- An `.ntb`'s log is read up to 1,500,000 records (`notability.MAX_RECORDS`;
+  past them the rest is left out, with a warning), and its text styles may
+  touch 20,000,000 characters in all (`notability_ntb.MAX_STYLED`; past them
+  a text keeps its words only).
 - Every file goes through `store_pdf`, `store_file` or
   `store_file_stream` (per-file cap, quota, dedup), its size checked from
   the zip before a byte is read.

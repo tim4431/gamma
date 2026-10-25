@@ -67,6 +67,7 @@ NEWEST_FORMAT = 9               # sessionFormatVersion of Notability 15 and 16
 TITLE_CHARS = 500
 STICKY_COLOR = (1.0, 244 / 255, 142 / 255, 1.0)  # #FFF48E, a sticky without a colour of its own
 STYLE_PEN, STYLE_HIGHLIGHTER, STYLE_PENCIL, STYLE_HIDDEN = 3, 4, 5, 6
+DASH_PATTERNS = {1: "dashed", 2: "dotted"}  # a dashStyles entry's or a shape's ``pattern``
 IDENTITY = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
 PAPER_SIZES = ("letter", "a4", "legal")
 SIZING = ("lockedWidth", "staticWidth", "deviceBasedWidth")
@@ -103,8 +104,8 @@ LEFT_OUT = {
               "{n} objects of a kind this import does not know are left out ({classes})"),
     "rotated box": ("{n} rotated text box is placed upright", "{n} rotated text boxes are placed upright"),
     "polygon fill": ("{n} filled polygon keeps its outline only", "{n} filled polygons keep their outline only"),
-    "page": ("Past {pages:,} pages the rest is left out ({n} item)",
-             "Past {pages:,} pages the rest is left out ({n} items)"),
+    "page": (f"Past {MAX_NOTE_PAGES:,} pages the rest is left out ({{n}} item)",
+             f"Past {MAX_NOTE_PAGES:,} pages the rest is left out ({{n}} items)"),
     "samples": ("The note's handwriting is too long: {n} stroke is left out",
                 "The note's handwriting is too long: {n} strokes are left out"),
     "long text": ("{n} paragraph of typed text was cut short", "{n} paragraphs of typed text were cut short"),
@@ -315,9 +316,16 @@ class Note:
     left_out: Counter = field(default_factory=Counter)  # what was left out, counted by kind (LEFT_OUT)
     classes: Counter = field(default_factory=Counter)   # the classes of the media objects left out
     private: dict | None = None    # Gamma's own copy of what a note its export wrote holds (PRIVATE_KEY), unchecked
+    _named: set = field(default_factory=set, repr=False)  # the files ``missing`` names
+
+    def name_missing(self, path: str) -> None:
+        """Name a file the note lacks, once (``missing``)."""
+        if path not in self._named:
+            self._named.add(path)
+            self.missing.append(path)
 
 
-def left_out_reasons(counts: Counter, classes: Counter | None = None, pages: int = 0) -> list[str]:
+def left_out_reasons(counts: Counter, classes: Counter | None = None) -> list[str]:
     """One warning per kind of content left out (``LEFT_OUT``)."""
     out = []
     for kind, n in counts.items():
@@ -325,8 +333,19 @@ def left_out_reasons(counts: Counter, classes: Counter | None = None, pages: int
             continue
         one, many = LEFT_OUT[kind]
         names = ", ".join(sorted(classes or ())) or "unnamed"
-        out.append((one if n == 1 else many).format(n=n, classes=names, pages=pages))
+        out.append((one if n == 1 else many).format(n=n, classes=names))
     return out
+
+
+def place_drawn(note: Note, drawn: list) -> None:
+    """``drawn``, ``(z key, Curve | Shape)`` pairs, into ``note.curves`` and
+    ``note.shapes`` in the order of the keys (stable: one key's items
+    stay in file order), each item given its place in it (``z``)."""
+    drawn.sort(key=lambda item: item[0])
+    for z, (_key, item) in enumerate(drawn):
+        item.z = z
+    note.curves = [item for _key, item in drawn if isinstance(item, Curve)]
+    note.shapes = [item for _key, item in drawn if isinstance(item, Shape)]
 
 
 def curve_points(curve: Curve) -> list[tuple[float, float]]:
@@ -484,7 +503,6 @@ class _Reader:
         self.inner = MAX_SESSION_BYTES  # bytes the plists inside the note may still take (``_spend``)
         self.text_left = MAX_NOTE_TEXT  # characters of typed text still to read (``_text``)
         self.runs_left = MAX_NOTE_RUNS  # formatting runs still to read (``_runs``)
-        self.named_missing: set[str] = set()
 
     def read(self, ink: bool) -> Note:
         arch, root, note = self.arch, self.arch.root, self.note
@@ -559,12 +577,6 @@ class _Reader:
         characters (no member of a zip has a longer one); None otherwise."""
         name = self.arch.string(value)
         return name if name and len(name) <= MAX_NAME else None
-
-    def _missing(self, path: str) -> None:
-        """Name a file the note lacks, once."""
-        if path not in self.named_missing:
-            self.named_missing.add(path)
-            self.note.missing.append(path)
 
     # --- page width, paper, PDFs, layout ---------------------------------------------
 
@@ -642,7 +654,7 @@ class _Reader:
                 continue
             note.layout.append(LayoutEntry(name, page))
             if name not in note.pdfs:
-                self._missing(f"PDFs/{name}")
+                self.note.name_missing(f"PDFs/{name}")
 
     # --- ink ----------------------------------------------------------------------------
     # A hash's strokes, shapes and ink groups share one z-order: a shape's
@@ -660,11 +672,7 @@ class _Reader:
         spatial = arch.get(overlay, "SpatialHash")
         if isinstance(spatial, dict):
             self._hash(arch, spatial, IDENTITY, 0, ())
-        self.drawn.sort(key=lambda item: item[0])  # stable: one key's items stay in file order
-        for z, (_key, item) in enumerate(self.drawn):
-            item.z = z
-        note.curves = [item for _key, item in self.drawn if isinstance(item, Curve)]
-        note.shapes = [item for _key, item in self.drawn if isinstance(item, Shape)]
+        place_drawn(note, self.drawn)
         self.drawn = []
 
     def _hash(self, arch: Archive, h: dict, transform: tuple, depth: int, zkey: tuple) -> None:
@@ -685,7 +693,7 @@ class _Reader:
         # a stroke is a run of one UUID, unless curvesstyles has a byte for every curve
         by_uuid = uuids is not None and len(uuids) == 16 * n_curves and (styles is None or len(styles) != n_curves)
         fractional = _unpack(arch.data(h.get("curvesfractionalwidths")), "f", n_anchors)
-        scale = (math.hypot(transform[0], transform[1]) + math.hypot(transform[2], transform[3])) / 2
+        scale = _scale(transform)
         ink = InkHash(points, fractional,
                       _unpack(arch.data(h.get("curvesforces")), "f", n_anchors, exact=True),
                       _unpack(arch.data(h.get("curvesaltitudeangles")), "f", n_anchors, exact=True),
@@ -752,7 +760,7 @@ class _Reader:
         out = {}
         for key, value in (patterns.items() if isinstance(patterns, dict) else ()):
             if isinstance(key, str) and key.isascii() and key.isdigit() and len(key) < 10 and isinstance(value, dict):
-                dash = {1: "dashed", 2: "dotted"}.get(whole(value.get("pattern")))
+                dash = DASH_PATTERNS.get(whole(value.get("pattern")))
                 if dash:
                     out[int(key)] = dash
         return out
@@ -788,7 +796,7 @@ class _Reader:
             index = _LAST if index is None else index
             taken.append(index)
             composed = _compose(transform, own)
-            scale = (math.hypot(composed[0], composed[1]) + math.hypot(composed[2], composed[3])) / 2
+            scale = _scale(composed)
             look = group.get("appearance") if isinstance(group.get("appearance"), dict) else {}
             items = group.get("inkGroupObjects")
             for member, item in enumerate(items if isinstance(items, list) else ()):
@@ -894,7 +902,7 @@ class _Reader:
         return [Shape(kind="path" if kind == "partialshape" else kind, points=points, control=control,
                       arrow=kind != "partialshape" and whole(dash_style.get("arrowHead")) == 1, width=width * scale,
                       rgba=color, fill=_rgba(look.get("fillColor")), style=whole(look.get("style")) or STYLE_PEN,
-                      dash={1: "dashed", 2: "dotted"}.get(pattern), grouped=grouped, segments=segments, uuid=uuid)
+                      dash=DASH_PATTERNS.get(pattern), grouped=grouped, segments=segments, uuid=uuid)
                 for points, segments in pieces[:room]]
 
     # --- media ---------------------------------------------------------------------------
@@ -965,7 +973,7 @@ class _Reader:
             return False
         key = None if arch.flag(arch.get(snapshot, "imageIsMissing")) else self.members.resolve(rel)
         if key is None:
-            self._missing(rel)
+            self.note.name_missing(rel)
         media.picture = key
         ident = self._name(obj.get("assetsIdKey")) if arch.flag(obj.get("isGif")) else None
         media.animation = self.members.resolve(f"Assets/{ident}/media.gif") if ident else None
@@ -993,11 +1001,8 @@ class _Reader:
         text = self._text(arch.get(attributed, "stringKey"))
         if not text:
             return []
-        if max(text) <= "\uffff":  # every character one UTF-16 unit: an offset is an index
-            bounds, units = None, len(text)
-        else:  # the UTF-16 offset where each character starts, and the end
-            bounds = array("q", accumulate((2 if ord(ch) > 0xFFFF else 1 for ch in text), initial=0))
-            units = bounds[-1]
+        bounds = utf16_bounds(text)
+        units = len(text) if bounds is None else bounds[-1]
         ranged, read = [], set()
         for order, sub in enumerate(arch.array(arch.get(attributed, "subRangesKey"))[:units + 1]):
             if id(sub) in read:
@@ -1085,7 +1090,7 @@ class _Reader:
         for rel, name, created in refs:
             key = members.resolve(rel)
             if key is None:
-                self._missing(rel)
+                self.note.name_missing(rel)
             elif key in taken:  # a file listed twice is one recording
                 continue
             taken.add(key)
@@ -1120,6 +1125,15 @@ def _hex(text: str) -> str | None:
     if len(text) == 7 and text[0] == "#" and all(c in "0123456789abcdefABCDEF" for c in text[1:]):
         return text.lower()
     return None
+
+
+def utf16_bounds(text: str) -> array | None:
+    """The UTF-16 offset where each character of ``text`` starts, and the
+    end (``char_at``'s ``bounds``); None when every character is one
+    unit, so an offset is an index."""
+    if max(text) <= "\uffff":
+        return None
+    return array("q", accumulate((2 if ord(ch) > 0xFFFF else 1 for ch in text), initial=0))
 
 
 def char_at(bounds: array | None, offset: float, n: int) -> int:
@@ -1157,6 +1171,12 @@ def _transform(value) -> tuple | None:
         return None
     values = [finite(v) for v in value]
     return None if None in values else tuple(values)
+
+
+def _scale(transform: tuple) -> float:
+    """The transform's width scale, (hypot(a, b) + hypot(c, d)) / 2."""
+    a, b, c, d, _tx, _ty = transform
+    return (math.hypot(a, b) + math.hypot(c, d)) / 2
 
 
 def _compose(outer: tuple, inner: tuple) -> tuple:

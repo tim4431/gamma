@@ -85,7 +85,7 @@ class _Stop(Exception):
         self.title = title
 
 
-def open_upload(data, name: str) -> zipfile.ZipFile:
+def open_upload(data) -> zipfile.ZipFile:
     """The upload as a zip: a Supernote ``.note`` (``noteSN_FILE_VER_``)
     and anything that is no zip are refused (400), and so is a zip whose
     central directory is past MAX_DIRECTORY_BYTES (413) before zipfile
@@ -251,7 +251,7 @@ def import_notes(ws: str, data, conn, folder: str = "", *, name: str = "", actor
     file, a bad destination or selection), 413 (a central directory or an
     archive past the limits) or 507 (no disk to unpack)."""
     name = display_filename(name)  # a browser may send a relative path
-    zf = open_upload(data, name)
+    zf = open_upload(data)
     with zf, contextlib.ExitStack() as stack:
         walk = new_walk(stack, max_directory=MAX_DIRECTORY_BYTES)
         entries: list = []
@@ -462,7 +462,7 @@ class _Import:
         return True
 
     def _left_out(self, title: str, counts: Counter, classes: Counter) -> None:
-        for reason in nb.left_out_reasons(counts, classes, nb.MAX_NOTE_PAGES):
+        for reason in nb.left_out_reasons(counts, classes):
             self.warn(title, reason)
 
     # --- the commit ------------------------------------------------------------------------

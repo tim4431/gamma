@@ -221,7 +221,7 @@ def test_damage_is_counted_not_raised(monkeypatch):
     assert note.left_out == Counter({"stroke": 4, "page": 1, "record": 1, "lost text": 1}) and len(note.curves) == 1
     assert {"4 strokes could not be read and were left out", "Past 5,000 pages the rest is left out (1 item)",
             "1 record of a kind this import does not know is left out",
-            "1 text that belongs to no page or box is left out"} == set(nb.left_out_reasons(note.left_out, pages=5000))
+            "1 text that belongs to no page or box is left out"} == set(nb.left_out_reasons(note.left_out))
     monkeypatch.setattr(nb, "MAX_RECORDS", 3)
     capped = read(*[(15, (0, 100 + i), tx.ink(tx.cubic([(0, 0), (1, 0), (2, 0), (3, 0)]))) for i in range(4)])
     assert capped.left_out["records"] == 3 and len(capped.curves) == 1  # the page list and the document come first

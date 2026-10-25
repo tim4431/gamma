@@ -118,13 +118,9 @@ def paper(note: Note) -> dict:
 
 
 def _index(tops: list[float], y: float) -> int:
+    """The page whose slot holds ``y``, by the pages' tops: above the
+    first page → 0, below the last → the last."""
     return min(max(bisect_right(tops, y) - 1, 0), len(tops) - 1)
-
-
-def page_index(frames: list[Frame], y: float) -> int:
-    """The frame whose slot holds ``y``: above the first page → 0, below
-    the last → the last."""
-    return _index([f.top for f in frames], y)
 
 
 def frames(note: Note, pdf_pages: dict, centres: list[float]) -> tuple[list[Frame], list[str]]:
