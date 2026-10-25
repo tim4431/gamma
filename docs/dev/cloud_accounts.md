@@ -1007,11 +1007,12 @@ there and still ends in the system browser.
 Admission comes before the name: a policy that refuses the subject, or
 `invited` asking it to join, does so whatever its username, and the name
 only matters once an account is made. A local name is unique whatever its
-case (a page host finds its account by name, case-insensitively), so a
+case (a page host finds its account by name, case-insensitively). So a
 cloud username some other account here goes by, linked to another cloud
 identity, gives the new account the first variant no account goes by in
 any case (`cloud_auth._free_name`). The link, not the name, signs it in
-again; invitations are keyed by subject, so they land on it all the same.
+again, and invitations are keyed by subject, so they land on it all the
+same.
 An account of that name with no cloud link is left alone: it may be the
 person's own, from before Gamma Cloud, and linking it automatically would
 hand it to anyone with that cloud username, so only `claim` and the admin
@@ -1145,10 +1146,10 @@ with `DELETE /api/me/servers`, then revokes the grant
 (`cloud_sync.release`). If no access token is cached, the release refreshes
 once first. Failures are warnings, never errors to the person.
 
-**The username lookup** (`cloud_auth.lookup_username`) for invitations
-by Gamma Cloud username — to a shared workspace
-([workspaces.md](workspaces.md) "Pending invitations") or to a share
-(below) — runs on the inviter's own grant (`cloud_auth._lookup_token` →
+**The username lookup** (`cloud_auth.lookup_username`) serves both kinds
+of invitation by Gamma Cloud username, to a shared workspace
+([workspaces.md](workspaces.md) "Pending invitations") and to a share
+(below). It runs on the inviter's own grant (`cloud_auth._lookup_token` →
 `access_token_for`). An inviter whose account here is not linked gets
 "Link your own Gamma Cloud account" (503). Both kinds count against one
 budget per inviting account, 30 lookups in 10 minutes
@@ -1162,10 +1163,10 @@ no account here yet, by their Gamma Cloud username
 The twin of a pending membership: the lookup answers the subject, and the
 invitation waits in `pending_share_users` (users.db: the share's token,
 the subject, the cloud username, the role, the inviter, the time; one per
-share and subject) until the person's first cloud sign-in creates, claims
-or links their account, which turns it into a `share_users` row with its
-role and an Inbox item from the inviter (`shares.claim_pending`; an
-invitation the account holds already keeps its own role). Inviting again,
+share and subject). The person's first cloud sign-in creates, claims or
+links their account and turns the invitation into a `share_users` row
+with its role and an Inbox item from the inviter (`shares.claim_pending`;
+an invitation the account holds already keeps its own role). Inviting again,
 by name or by the subject (no lookup), changes the role. Someone whose
 cloud identity is linked here already is invited at once, as by username.
 The rows go with their share (`db.delete_shares`: stopping it, the folder

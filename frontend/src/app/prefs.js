@@ -185,12 +185,10 @@ export function useProfileSync(prefs, user, { onReplaced } = {}) {
     if (keepalive) {
       keepaliveFetch(PROFILE_URL, { ...request, credentials: "same-origin" }, { priority: "normal" })
         .then((r) => { if (r.ok && latest.current.user === u) rememberSeen(sent); }).catch(() => {});
-      syncedRef.current = now;
-      stopTimer();
-      return Promise.resolve();
     }
     syncedRef.current = now;
     stopTimer();
+    if (keepalive) return Promise.resolve();
     const confirmed = confirmedRef.current || {};
     const names = ACCOUNT_PREFS.filter((name) => sent[name] !== confirmed[name]);
     const id = ++pushIdRef.current;
