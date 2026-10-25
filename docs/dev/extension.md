@@ -324,7 +324,8 @@ Server side (`clip.py`, sync `def` — it downloads):
    used to race this one without the detector's identifiers: those are
    trusted like the URL's (they come from the publisher page's own meta
    tags, so the lookup resolves them directly instead of re-mining the PDF
-   text), a `text_doi` must have its title in the PDF, and the citation
+   text), a `text_doi` must be tied to the PDF (it is the record's title
+   page, [paper_metadata.md](paper_metadata.md)), and the citation
    record stands when no registry confirms anything
    ([paper_metadata.md](paper_metadata.md)); arXiv/DOI paths need no AI
    provider. Skipped when `meta` already exists or `fetch_metadata: false`.

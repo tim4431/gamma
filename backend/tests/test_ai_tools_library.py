@@ -82,6 +82,15 @@ def test_cite_prefers_the_stored_entry_and_flags_unverified_records(org):
     text, _ = run_agent_tool(ids["ws"], folder(ids["readout"]), "cite", {"page_ids": page})  # a bare id works too
     assert "@misc{kept," in text and "Slide citation: K. Ept, Nature 1 (2020)" in text
     assert "Unverified:" in text and "Paper title: Kept" in text
+    # Why it is unverified, and what tied a confirmed record, when the lookup kept it.
+    page2 = _page(c, "phrase cite", {"folders": [ids["readout"]],
+                                     "meta": {"title": "Quasi-phase-matching", "match": "phrase", "unverified": True}})
+    text, _ = run_agent_tool(ids["ws"], folder(ids["readout"]), "cite", {"page_ids": [page2]})
+    assert "Unverified: a title search found it" in text
+    page3 = _page(c, "ai cite", {"folders": [ids["readout"]],
+                                 "meta": {"title": "Confirmed", "match": "ai", "unverified": False}})
+    text, _ = run_agent_tool(ids["ws"], folder(ids["readout"]), "cite", {"page_ids": [page3]})
+    assert "Matched by: an AI check against the PDF" in text and "Unverified" not in text
     # Pages outside the chat's folder are refused, and all refused is an error.
     text, action = run_agent_tool(ids["ws"], folder(ids["cooling"]), "cite", {"page_ids": [page]})
     assert text.startswith("error") and "outside" in text and action["error"]

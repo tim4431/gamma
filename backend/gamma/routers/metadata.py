@@ -7,11 +7,16 @@ bibliographic search (the web page's title and author, the PDF's largest
 type, the page title, the text head) → the web page's own citation record →
 AI extraction from the first pages as a last resort, itself cross-checked
 against Crossref and, for books, the book registries.
-A registry record found via the *text* (not the source URL) is only trusted
-outright when its title actually appears in the PDF — the first DOI on page 1
-can belong to a cited paper, and AI output can be a plausible hallucination.
-Whatever is stored carries ``meta.unverified`` so the UI can warn before the
-record ends up in a paper's bibliography. There is deliberately no Google
+A registry record found via the *text* (not the source URL) is trusted
+outright only when the PDF is its title page — its title is the document's
+own and one of its authors is named; one the text merely names (an id
+printed in it, a title search hit whose title is a phrase of the text) goes
+to the AI, which picks the one that is this document, if any. The first DOI
+on page 1 can belong to a cited paper, a short registry title can be a
+phrase of a longer one, and AI output can be a plausible hallucination.
+Whatever is stored carries ``meta.match`` (what tied it to the document) and
+``meta.unverified`` so the UI can warn before the record ends up in a
+paper's bibliography. There is deliberately no Google
 Scholar call — Scholar has no official API and scraping it violates its ToS.
 Results are cached on the page block (properties.meta / properties.bibtex /
 properties.ppt_cite — the slide citation is generated in the same fetch).
@@ -24,6 +29,7 @@ import re
 import sqlite3
 import threading
 import time
+import unicodedata
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -50,7 +56,7 @@ from ..pdf_text import PDF_EXTRACT_FAILED
 from ..pdf_text import page_count as _page_count
 from ..pdf_text import title_guess as _title_guess
 from ..textnorm import INDEX_VERSION, normalize_text, plain_text
-from .ai import CITE_PROMPT, METADATA_PROMPT, _resolve_model
+from .ai import CITE_PROMPT, METADATA_PROMPT, _resolve_model, _translate_effort
 from .pdf import ARXIV_ID, CONTACT_EMAIL
 
 # Guards the doc-id → filename join below (defense in depth: doc ids come from
@@ -127,19 +133,20 @@ def _norm_match(s: str) -> str:
 
 
 def _title_in_text(title: str, text: str) -> bool:
-    """Does this (registry) title literally appear in the PDF's text head?
-    The strongest evidence a looked-up record describes *this* paper. Short
-    titles are too generic to count. A title with a subtitle ("Planck 2018
-    results: VI. Cosmological parameters") also counts when both parts
-    appear — the PDF sets them on separate lines, often with other text
-    between."""
-    head = _norm_match((text or "")[:SCAN_CHARS])
+    """Does this (registry) title appear in the PDF's text head, as whole
+    words? Evidence that the text names the work, not that the text IS the
+    work: a cited title in a reference list, a phrase of a longer title or a
+    section heading pass too (``_tie`` asks for more). Short titles are too
+    generic to count. A title with a subtitle ("Planck 2018 results: VI.
+    Cosmological parameters") also counts when both parts appear — the PDF
+    sets them on separate lines, often with other text between."""
+    head = f" {_norm_match((text or '')[:SCAN_CHARS])} "
     t = _norm_match(title)
-    if len(t) >= 15 and t in head:
+    if len(t) >= 15 and f" {t} " in head:
         return True
     main, _, sub = (title or "").partition(": ")
     main, sub = _norm_match(main), _norm_match(sub)
-    return bool(sub) and len(main) >= 15 and main in head and sub in head
+    return len(main) >= 15 and len(sub) >= 8 and f" {main} " in head and f" {sub} " in head
 
 
 def _years_compatible(a, b) -> bool:
@@ -154,21 +161,293 @@ def _surname(author: str) -> str:
     return parts[-1] if parts and len(parts[-1]) >= 3 else ""
 
 
+def _fold_spaced(norm: str) -> str:
+    """A normalized text with letter-spaced runs folded back into words:
+    title pages letter-space the title ("L A S E R S")."""
+    return re.sub(r"\b(?:[a-z0-9] ){2,}[a-z0-9]\b", lambda m: m.group().replace(" ", ""), norm)
+
+
 def _record_in_text(meta: dict, text: str) -> bool:
-    """Book-strength evidence that a registry record describes this PDF: a
-    long title in the text (the paper rule), or — book titles are short
-    ("Lasers") — the whole title AND one author surname both in the head."""
+    """Whether the text names this book: a long title in it (the paper rule),
+    or — book titles are short ("Lasers") — the whole title AND one author
+    surname both in the head. A sentence citing the book passes too, so this
+    is a phrase-level tie (``_tie`` asks for the title page)."""
     if _title_in_text(meta.get("title", ""), text):
         return True
-    # Title pages letter-space the title ("L A S E R S"); fold runs of
-    # single letters back into a word before matching.
-    head = re.sub(r"\b(?:[a-z0-9] ){2,}[a-z0-9]\b", lambda m: m.group().replace(" ", ""),
-                  _norm_match((text or "")[:SCAN_CHARS]))
-    head = f" {head} "
+    head = f" {_fold_spaced(_norm_match((text or '')[:SCAN_CHARS]))} "
     t = _norm_match(meta.get("title", ""))
     if len(t) < 4 or f" {t} " not in head:
         return False
     return any(f" {s} " in head for s in map(_surname, meta.get("authors") or []) if s)
+
+
+# --- What ties a record to this document ----------------------------------------
+# A looked-up record is stored with ``meta.match``, what tied it to the
+# document, and ``meta.unverified`` follows from it (``_unconfirmed``):
+#   source     an identifier from the paper's own address, the web page it was
+#              saved from, or that page's tags
+#   page       the web page's citation record, or a registry record whose title
+#              and year agree with it
+#   typed      an identifier the user typed into the popover
+#   title      the PDF is the record's title page (``_tie``): its title is the
+#              document's own, and one of its authors is printed by it
+#   ai         the AI tied it to the document: it picked it among the records
+#              the text names, or the registry holds the title it read
+#   title_only its title is the document's own, but none of its authors was
+#              found by it (an author list the text mangles, a record that
+#              lists none, or another work under the same title) — unconfirmed
+#   phrase     a title search hit whose title only occurs in the text (a phrase
+#              of a longer title, a heading, a reference) — unconfirmed
+#   id_only    the record of an identifier printed in the document (its title
+#              may occur there too, as a cited work's) that nothing else ties to
+#              it — unconfirmed
+#   ai_reading the AI read the fields off the document; no registry confirmed
+#              them (flagged for the kinds a registry could hold)
+# The rule that confirms without the AI (``_tie`` → "title") fires only on the
+# clear title page; anything less goes to the AI or stands flagged, since a
+# record wrongly confirmed is cited unchecked and one wrongly flagged is not.
+MATCH_CONFIRMED = frozenset({"source", "page", "typed", "title", "ai"})
+TITLE_ALIKE = 0.92    # how alike two normalized titles must be to be the same
+TITLE_LINES_MAX = 3   # a title wraps over at most this many lines
+TITLE_MIN = 15        # a shorter title ("Introduction") is too generic to be the document's
+SUBTITLE_MIN = 8      # a shorter subtitle is no evidence of anything
+AUTHORS_BEFORE, AUTHORS_AFTER = 6, 14  # lines around a title where its authors are printed
+FRONT_LINES = 80      # the lines that stand for the first page when the text marks no pages
+OPENING_LINES = 25    # the first page's title block: where a title line counts beside the largest type
+LARGEST = "largest type"  # _Document.title_at's place for the first page's largest type
+# A numbered section heading ("1 Introduction", "1.2. Results", "IV. DISCUSSION")
+# opens no title, however alike its words are to a registry title. "C. elegans"
+# and "100 years of …" are titles.
+_HEADING_RE = re.compile(r"^\s*(?:\d+(?:\.\d+)*\.?\s+[A-Z]|[IVX]+\.\s+[A-Z]{2})")
+_PAGE_TWO_RE = re.compile(r"^\[PDF page 2\b")
+_NAME_SUFFIXES = frozenset({"jr", "sr", "ii", "iii", "iv"})
+# pdflatex's old (OT1) fonts set an accent as a mark of its own ("M¨uller",
+# "Garc´ıa"); these letters have no decomposition to fold.
+_SPACING_MARKS = dict.fromkeys(map(ord, "¨´`˜^ˇ˘˚¸˛˙˝"), None)
+_UNDECOMPOSED = str.maketrans({"ı": "i", "ł": "l", "Ł": "L", "ø": "o", "Ø": "O", "đ": "d", "Đ": "D",
+                               "ð": "d", "Ð": "D", "þ": "th", "Þ": "Th", "ß": "ss", "æ": "ae", "Æ": "Ae",
+                               "œ": "oe", "Œ": "Oe"})
+# A title's part number ("… chains. I" / "… II", "Planck 2018 results. VI"):
+# titles that differ in one are different works, however alike the rest.
+_NUMERAL_RE = re.compile(r"^(?:\d+|[ivx]{1,4})$")
+
+
+def _unconfirmed(meta: dict) -> bool:
+    """``meta.unverified`` for a looked-up record: nothing confirmed tied it
+    to the document. An AI reading of a kind no registry holds (notes, a
+    thesis, slides) is not flagged: there is nothing a warning could ask the
+    user to check."""
+    match = meta.get("match")
+    if match == "ai_reading":
+        return item_types.item_type(meta) in item_types.CHECKABLE
+    return match not in MATCH_CONFIRMED
+
+
+def _alike(a: str, b: str) -> bool:
+    """Two normalized titles name the same work: equal, or near-identical
+    with the same part numbers."""
+    if not a or not b:
+        return False
+    if a == b:
+        return True
+    if abs(len(a) - len(b)) > 0.18 * max(len(a), len(b)):  # too far apart to reach TITLE_ALIKE
+        return False
+    if [w for w in a.split() if _NUMERAL_RE.match(w)] != [w for w in b.split() if _NUMERAL_RE.match(w)]:
+        return False
+    # One title inside the other with words more around it ("comment on x",
+    # "x erratum", "x retracted", "x revisited", "x notes") is another work
+    # about x; spaces are dropped for the test, since a hyphen a line break
+    # cut joins words ("nitrogen-\ndoped" → "nitrogendoped"). A footnote
+    # mark glued to the title is a character or two.
+    short, long_ = sorted((a.replace(" ", ""), b.replace(" ", "")), key=len)
+    if short in long_ and len(long_) - len(short) >= 4:
+        return False
+    return SequenceMatcher(None, a, b).ratio() >= TITLE_ALIKE
+
+
+def _fold_name(s: str, keep_case: bool = False) -> str:
+    """Text as author names are matched in it: letters only, accents folded
+    ("García" → "garcia", "M¨uller" → "muller", "Yıldız" → "yildiz"),
+    anything else a space, so an affiliation mark glued to a name ("Ofek1*")
+    comes apart from it."""
+    s = normalize_text((s or "").translate(_SPACING_MARKS).translate(_UNDECOMPOSED))
+    s = "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
+    return " ".join(re.findall(r"[A-Za-z]+", s if keep_case else s.lower()))
+
+
+def _name_key(author: str) -> str:
+    """An author's surname as names are matched: the last word of the folded
+    name, a suffix (Jr., III) passed over; two letters at least (Li, Wu)."""
+    words = [w for w in _fold_name(author).split() if w not in _NAME_SUFFIXES]
+    return words[-1] if words and len(words[-1]) >= 2 else ""
+
+
+def _norm_title(title: str) -> str:
+    return _fold_spaced(_norm_match(title))
+
+
+def _main_title(title: str) -> str:
+    return (title or "").partition(": ")[0]
+
+
+class _Document:
+    """What a lookup ties records to: the PDF's text head, where its own title
+    is — the first page's largest type (``guess``, pdf_text.title_guess),
+    and a run of up to TITLE_LINES_MAX whole lines of the first page's title
+    block that opens with no numbered section heading (the whole first page
+    when there is no largest type) — and the lines around it, where a
+    title's authors are printed. Lines of later pages (slides, a table of
+    contents, a reference list) are no title page. Where there is a largest
+    type, only it confirms (``_tie``): a title-block line can be a heading,
+    a CV's or a syllabus's entry. Built once per lookup."""
+
+    def __init__(self, text: str, guess: str = ""):
+        self.text = text or ""
+        lines = [line for line in self.text[:SCAN_CHARS].splitlines() if line.strip()]
+        page_two = next((i for i, line in enumerate(lines) if _PAGE_TWO_RE.match(line)), None)
+        self.front = lines[:page_two] if page_two is not None else lines[:FRONT_LINES]
+        marker = self.text.find("\n[PDF page 2")
+        # the first page's characters, what the AI's check reads at least
+        self.page_one = marker if marker >= 0 else len(self.text)
+        self.guess = _norm_title(guess)
+        # where a title line counts: the title block, or the whole first page
+        # when there is no largest type to go by (then it can confirm)
+        self.title_lines = OPENING_LINES if self.guess else len(self.front)
+        # (normalized run, its first line, whether that line is a numbered heading)
+        self.runs = []
+        for i, line in enumerate(self.front):
+            heading = bool(_HEADING_RE.match(line))
+            for n in range(1, TITLE_LINES_MAX + 1):
+                if i + n <= len(self.front):
+                    norm = _norm_title("\n".join(self.front[i:i + n]))
+                    if norm:
+                        self.runs.append((norm, i, heading))
+        # the largest type's line: a run alike to it, or where a title wrapped
+        # over more lines than a run holds begins
+        found = [i for norm, i, _ in self.runs if self.guess and (
+            _alike(self.guess, norm) or (len(norm) >= TITLE_MIN and self.guess.startswith(f"{norm} ")))]
+        self.guess_line = found[0] if found else None
+        self._windows: dict = {}
+
+    def _lines(self, t: str, headings: bool = False) -> list[int]:
+        return [i for norm, i, heading in self.runs if (headings or not heading) and _alike(t, norm)]
+
+    def _places(self, t: str, min_len: int) -> list:
+        at = [LARGEST] if self.guess and _alike(t, self.guess) else []
+        if len(t) >= min_len:
+            at += [i for i in self._lines(t) if i < self.title_lines]
+        return at
+
+    def title_at(self, title: str, min_len: int = TITLE_MIN) -> list:
+        """Where this title is the document's own: LARGEST (the first page's
+        largest type) and the first lines of the
+        title block's runs it is, ``min_len`` characters at least (15: a
+        shorter title, "Introduction", is too generic to tell). A title with
+        a subtitle (``"main: sub"``, as doi.org joins them) is also the
+        document's where its main title is and its subtitle is a line of
+        its own just after it, as PDFs set them apart; a main title alone is
+        a series' ("Planck 2018 results"), every volume's."""
+        t = _norm_title(title)
+        if not t:
+            return []
+        at = self._places(t, min_len)
+        main, _, sub = (title or "").partition(": ")
+        main, sub = _norm_title(main), _norm_title(sub)
+        if at or len(sub) < SUBTITLE_MIN:
+            return at
+        subs = self._lines(sub, headings=True)  # a volume's subtitle is numbered ("VI. …")
+        near = TITLE_LINES_MAX + 3
+        found = []
+        for i in self._places(main, max(min_len, TITLE_MIN)):
+            start = self.guess_line if i == LARGEST else i
+            if start is None:
+                ok = any(j < OPENING_LINES for j in subs)
+            else:
+                ok = any(start < j <= start + near for j in subs)
+            if ok:
+                found.append(i)
+        return found
+
+    def names(self, records: list[dict], at: list) -> bool:
+        """One of the records' authors is printed by the title found ``at``:
+        in the lines just before and after it (the largest type's line, or
+        the title block when it is not found) — not anywhere in the head,
+        whose reference list prints every cited work's authors. A surname
+        matches a capitalized word, as names are printed ("Lee", "LEE",
+        "McDonald"; never "sense" for Sen), or a capitalized word it opens
+        with up to two letters more (an affiliation letter glued to it:
+        "Johnsona,b"; surnames of three letters at least)."""
+        keys = {k for r in records for k in map(_name_key, r.get("authors") or []) if k}
+        if not keys:
+            return False
+        for i in at:
+            if i == LARGEST:
+                i = self.guess_line
+            if i not in self._windows:
+                lines = (self.front[max(0, i - AUTHORS_BEFORE):i + TITLE_LINES_MAX + AUTHORS_AFTER]
+                         if i is not None else self.front[:OPENING_LINES])
+                self._windows[i] = [w.lower() for w in _fold_name("\n".join(lines), keep_case=True).split()
+                                    if w[:1].isupper()]
+            for w in self._windows[i]:
+                for k in keys:
+                    if w == k or (len(k) >= 3 and w.startswith(k) and len(w) - len(k) <= 2):
+                        return True
+        return False
+
+
+def _tie(doc: _Document, record: dict, also: dict | None = None, min_len: int = TITLE_MIN) -> str:
+    """How the text ties a registry record to the document:
+    - "title": the PDF is its title page — its title is the first page's
+      largest type (a line of the first page when there is none,
+      ``title_at``) and one of its authors is printed by it;
+    - "title_only": its title is the document's own, no author found by it,
+      or it is a line of the title block beside a largest type it is not (a
+      record that lists no authors, or in another script, never gets
+      further: a supplement's component, a front-matter page and a textbook
+      chapter on the topic list none);
+    - "phrase": its title only occurs in the text;
+    - "": neither.
+    ``also``: another record of the same work (a preprint's published
+    version) whose title and authors count as well. ``min_len``: the
+    shortest title a line of the title block can be (an ISBN printed in
+    the PDF vouches for a short book title, "Lasers")."""
+    records = [r for r in (record, also) if r]
+    at = [i for r in records for i in doc.title_at(r.get("title", ""), min_len)]
+    if at:
+        # Where there is a largest type, a title-block line only ranks the
+        # record: it may be a heading naming a cited work, a CV's or a
+        # syllabus's entry, with that work's authors under it.
+        sure = [i for i in at if i == LARGEST or not doc.guess]
+        return "title" if sure and doc.names(records, sure) else "title_only"
+    if any(_title_in_text(r.get("title", ""), doc.text) for r in records):
+        return "phrase"
+    return ""
+
+
+def _named_tie(doc: _Document, record: dict, also: dict | None = None) -> str:
+    """``_tie`` for a record the lookup found, with its main title tried too
+    when its subtitle ties nothing (a subtitle the PDF does not print): the
+    main title being the document's makes it "title_only" at most — a series'
+    main title is every volume's — and occurring in the text, "phrase"."""
+    how = _tie(doc, record, also)
+    if how in ("title", "title_only") or ": " not in (record.get("title") or ""):
+        return how
+    main = _tie(doc, dict(record, title=_main_title(record["title"])))
+    return "title_only" if main in ("title", "title_only") else how or main
+
+
+def _same_work(record: dict, other: dict | None, main: bool = False) -> bool:
+    """A registry record and a reading of the same work (the web page's
+    record, the AI's): near-identical titles and compatible years. ``main``
+    compares the main titles only (a search hit carries no subtitle), a
+    reason to fetch the full record, not to take it."""
+    if not other:
+        return False
+    a, b = record.get("title", ""), other.get("title", "")
+    if main:
+        a, b = _main_title(a), _main_title(b)
+    t = _norm_match(a)
+    return len(t) >= 15 and _alike(t, _norm_match(b)) and _years_compatible(record.get("year"), other.get("year"))
 
 
 # --- Books ------------------------------------------------------------------
@@ -341,10 +620,10 @@ def _titles_alike(a: str, b: str) -> bool:
 def _pick_book_match(cands: list[dict], text: str, ai_meta: dict | None = None) -> dict | None:
     """Accept a book-registry hit only on strong evidence: its title matches
     the AI-read title AND an author surname agrees (both were read off the
-    PDF, the registry confirms they name a real book), or — without AI — the
-    title and an author appear in the text. The AI-read year wins over the
-    registry's first-publication year: it names the edition in hand. An ISBN
-    is adopted only when the PDF text prints it."""
+    PDF, the registry confirms they name a real book), or the title and an
+    author appear in the text (``_record_in_text``). The AI-read year wins
+    over the registry's first-publication year: it names the edition in
+    hand. An ISBN is adopted only when the PDF text prints it."""
     ai_title = _norm_match((ai_meta or {}).get("title", ""))
     ai_names = {s for s in map(_surname, (ai_meta or {}).get("authors") or []) if s}
     ai_year = str((ai_meta or {}).get("year") or "").strip()
@@ -617,7 +896,8 @@ def _crossref_search(query: str, rows: int = 5, detail: bool = False, from_year:
                      work_type: str = "") -> list[dict]:
     """Bibliographic search against the Crossref REST API, returning candidate
     meta dicts in Crossref's relevance order. Candidates are NOT trusted as-is
-    — _pick_crossref_match decides whether one matches this paper. ``detail``
+    — the lookup ties them to the document (``_tie``, ``_same_work``), on
+    their doi.org record, whose title carries the subtitle. ``detail``
     adds the ``abstract`` and ``cited_by`` count a search result shows;
     ``from_year`` keeps works published that year or later, and ``work_type``
     (a Crossref type such as ``journal-article``) keeps that kind only."""
@@ -640,7 +920,9 @@ def _crossref_search(query: str, rows: int = 5, detail: bool = False, from_year:
     out = []
     for it in items:
         title = _csl_text(it.get("title"))
-        if not title:
+        # A supplement's file, a peer review or a grant shares the work's
+        # title but is never the document's own record.
+        if not title or it.get("type") in ("component", "peer-review", "grant"):
             continue
         out.append({
             "title": title,
@@ -662,55 +944,76 @@ def _crossref_search(query: str, rows: int = 5, detail: bool = False, from_year:
     return out
 
 
-def _pick_crossref_match(cands: list[dict], text: str, ai_meta: dict | None = None) -> dict | None:
-    """Accept a Crossref search hit only on strong evidence: its exact title
-    appears in the PDF text, or it is near-identical to the AI-extracted title
-    with a compatible year. Anything weaker is rejected — wrong-but-plausible
-    metadata is worse than none."""
-    head = _norm_match((text or "")[:SCAN_CHARS])
-    ai_title = _norm_match((ai_meta or {}).get("title", ""))
-    for cand in cands:
-        t = _norm_match(cand["title"])
-        if len(t) < 15:
-            continue  # "Editorial", "Errata" — too generic to trust
-        if head and t in head:
-            return cand
-        if (ai_title and SequenceMatcher(None, t, ai_title).ratio() >= 0.92
-                and _years_compatible(cand.get("year"), (ai_meta or {}).get("year"))):
-            return cand
-    return None
-
-
-def _verify_ai_meta(meta: dict, text: str, hints: str = "") -> tuple[dict, str]:
+def _verify_ai_meta(meta: dict, text: str, hints: str = "", doc: _Document | None = None,
+                    fetch_doi=None, rejected: frozenset = frozenset()) -> tuple[dict, str, str]:
     """AI extraction is a last resort and hallucinates plausible records
     (blended author lists, wrong volumes, fabricated DOIs — the prompt's
     "never invent" is not enforcement). Upgrade to the authoritative registry
-    record when an identifier the AI produced actually resolves; otherwise
-    cross-check the AI title against a Crossref search. An identifier that
-    resolves nowhere and doesn't occur in the PDF text is dropped rather than
-    stored — a missing DOI is recoverable, a fabricated one poisons BibTeX."""
+    record when an identifier the AI produced resolves to the work it read
+    (the registry's title is the AI-read title, or the text is the record's
+    title page); otherwise cross-check the AI title against a Crossref
+    search, accepting a hit on the same evidence. An identifier that resolves
+    to another work is dropped, and so is one that resolves nowhere and
+    doesn't occur in the PDF text — a missing DOI is recoverable, a
+    fabricated or cited one poisons BibTeX. → ``(record, bibtex, match)``,
+    ``match`` as in ``MATCH_CONFIRMED``'s table: "title", "ai", or
+    "ai_reading" when the AI's reading stands. ``doc``: the lookup's
+    document, built from ``text`` when not given; ``fetch_doi``: the
+    lookup's doi.org fetch, which answers what it fetched already;
+    ``rejected``: the DOIs of the records the AI's check said are not this
+    document, which this check does not take back."""
+    doc = doc or _Document(text)
+    fetch_doi = fetch_doi or _fetch_doi
     hay = ((hints or "") + "\n" + (text or "")[:SCAN_CHARS + 4000]).lower()
+
+    def tied(record, also=None) -> str:
+        if _tie(doc, record, also) == "title":
+            return "title"
+        return "ai" if any(_same_work(r, meta) for r in (record, also) if r) else ""
+
     if meta.get("arxiv_id"):
-        better = _fetch_arxiv(meta["arxiv_id"])
-        if better:
-            return _published_record(better)
-        if meta["arxiv_id"].lower() not in hay:
+        found = _fetch_arxiv(meta["arxiv_id"])
+        if found:
+            published, bib = _published_record(found)
+            how = "" if str(published.get("doi") or "").lower() in rejected else tied(found, published)
+            if how:
+                return published, bib, how
+            log.info(f"[metadata] dropping AI arXiv id {meta['arxiv_id']!r}: it names another work")
+            meta["arxiv_id"] = ""
+        elif meta["arxiv_id"].lower() not in hay:
             log.info(f"[metadata] dropping unresolvable AI arXiv id {meta['arxiv_id']!r}")
             meta["arxiv_id"] = ""
     if meta.get("doi"):
+        other = False
         for doi in _doi_variants(meta["doi"]):
-            better, bib = _fetch_doi(doi)
+            better, bib = fetch_doi(doi)
             if better:
-                return better, bib
-        if meta["doi"].lower() not in hay:
+                how = "" if doi.lower() in rejected else tied(better)
+                if how:
+                    return better, bib, how
+                other = True
+        if other:
+            log.info(f"[metadata] dropping AI DOI {meta['doi']!r}: it names another work")
+            meta["doi"] = ""
+        elif meta["doi"].lower() not in hay:
             log.info(f"[metadata] dropping unresolvable AI DOI {meta['doi']!r}")
             meta["doi"] = ""
+    # A search hit carries no subtitle: one whose main title is the AI's
+    # is tied on its doi.org record (a few at most), so a subtitled paper is
+    # found and a series title takes no other volume. Without that record
+    # (doi.org failing) only the AI's own title can tie a hit.
     query = " ".join(filter(None, [meta.get("title"), *(meta.get("authors") or [])[:3],
                                    meta.get("year")]))
-    cand = _pick_crossref_match(_crossref_search(query), text, ai_meta=meta)
-    if cand:
-        better, bib = _fetch_doi(cand["doi"])
-        return (better or cand), bib
+    fetched = 0
+    for cand in _crossref_search(query):
+        doi = str(cand.get("doi") or "")
+        if not doi or doi.lower() in rejected or fetched >= AI_CHECK_FETCHES or not _same_work(cand, meta, main=True):
+            continue
+        fetched += 1
+        better, bib = fetch_doi(doi)
+        how = tied(better) if better else ("ai" if _same_work(cand, meta) else "")
+        if how:
+            return better or cand, bib, how
     if item_types.item_type(meta) in ("book", "document"):
         # Crossref doesn't know most books. The AI read a title and an author
         # off the title page — let the book registries confirm they name a
@@ -721,8 +1024,8 @@ def _verify_ai_meta(meta: dict, text: str, hints: str = "") -> tuple[dict, str]:
         first_author = (meta.get("authors") or [""])[0]
         cand = _pick_book_match(_book_search(meta.get("title", ""), first_author), text, ai_meta=meta)
         if cand:
-            return cand, ""
-    return meta, ""
+            return cand, "", ("title" if _tie(doc, cand) == "title" else "ai")
+    return meta, "", "ai_reading"
 
 
 def _ai_extract_meta(text: str, prompt: str, model: str, rt: dict) -> dict | None:
@@ -747,11 +1050,13 @@ def _ai_extract_meta(text: str, prompt: str, model: str, rt: dict) -> dict | Non
     except Exception as e:
         log.warning(f"[metadata] AI extraction failed: {e}")
         return None
-    if not (data.get("title") or "").strip():
+    if not isinstance(data, dict) or not str(data.get("title") or "").strip():
         return None
     authors = data.get("authors") or []
     if isinstance(authors, str):
         authors = [a.strip() for a in re.split(r",| and ", authors) if a.strip()]
+    elif not isinstance(authors, list):
+        authors = []
     meta = {
         "title": str(data.get("title") or "").strip(),
         "authors": [str(a).strip() for a in authors if str(a).strip()],
@@ -769,6 +1074,109 @@ def _ai_extract_meta(text: str, prompt: str, model: str, rt: dict) -> dict | Non
     # an answer naming no type is read from the record's shape.
     meta["kind"] = item_types.normalize(data.get("kind")) or item_types.infer(meta)
     return meta
+
+
+# The AI's check of the records a document's text names (``_ai_pick``). Not
+# user-editable: the lookup depends on the shape of its answer.
+MATCH_PROMPT = (
+    "You check which bibliographic record, if any, describes the document whose opening text "
+    "you are given. The document may be a published paper, a preprint, a book, a thesis, a "
+    "report, lecture notes or someone's own manuscript. A record describes it only when it is "
+    "the same work: the same title and authors, as this version or another one of it (a "
+    "preprint, the published article, the paper a supplement belongs to). A work the document "
+    "cites or discusses, or one that shares its topic or a phrase of its title, does not. "
+    "The opening text may start with the end of the previous article in the same issue. "
+    'Reply with ONLY a JSON object (no code fences): {"record": the number of the record that '
+    'describes the document, or 0 when none does, "reason": one short sentence}.'
+)
+AI_CHECK_FETCHES = 3     # search hits _verify_ai_meta fetches from doi.org to tie on their full record
+NAMED_MAX = 5            # the records the text names that a lookup gathers and the AI is shown
+AI_PICK_FAILED = -1      # _ai_pick could not ask, or got no answer
+
+
+def _record_lines(n: int, record: dict) -> str:
+    """One record as the AI sees it in ``_ai_pick``."""
+    authors = record.get("authors") or []
+    rows = [f"{n}. Title: {record.get('title', '')}",
+            "   Authors: " + (", ".join(authors[:8]) + (f" and {len(authors) - 8} more" if len(authors) > 8 else "")
+                              if authors else "(none listed)")]
+    for label, key in (("Year", "year"), ("Type", "kind"), ("Published in", "venue"),
+                       ("Publisher", "publisher"), ("DOI", "doi"), ("arXiv", "arxiv_id"), ("ISBN", "isbn")):
+        if str(record.get(key) or "").strip():
+            rows.append(f"   {label}: {record[key]}")
+    return "\n".join(rows)
+
+
+def _lowest_effort(rt: dict, entry) -> str:
+    """The model's lowest reasoning effort ("" when unknown): a yes/no check
+    needs no thinking."""
+    try:
+        return _translate_effort("", rt, entry)
+    except Exception:  # noqa: BLE001 — an unknown model just takes its default
+        return ""
+
+
+def _answer(raw: str):
+    """The JSON object a model's reply carries that names a ``record``: the
+    last one, wherever it sits (reasoning text, braces of its own and code
+    fences around it are passed over); None when there is none."""
+    decoder, found = json.JSONDecoder(), None
+    for m in re.finditer(r"\{", raw or ""):
+        try:
+            value, _ = decoder.raw_decode(raw, m.start())
+        except ValueError:
+            continue
+        if isinstance(value, dict) and "record" in value:
+            found = value
+    return found
+
+
+def _picked(answer) -> int | None:
+    """The record number an ``_ai_pick`` answer names: 0 for none (0, null,
+    "none", ""), None when it names nothing readable."""
+    if not isinstance(answer, dict) or "record" not in answer:
+        return None
+    value = answer["record"]
+    if value is None or str(value).strip().lower() in ("", "0", "none", "null", "no", "false"):
+        return 0
+    try:
+        return int(float(str(value).strip()))
+    except (ValueError, OverflowError):
+        return None
+
+
+def _ai_pick(text: str, records: list[dict], rt: dict, model: str = "") -> int | None:
+    """Ask the AI which of ``records`` — records the document's text names
+    without tying them to it — describes the document, whose opening
+    ``text`` the caller sizes: its index, None when
+    the AI says none does, AI_PICK_FAILED when it could not be asked (a
+    refused call, a used-up allowance, a provider error, no answer). One
+    call, the metadata model at its lowest effort, counted as metadata
+    usage."""
+    listing = "\n".join(_record_lines(i + 1, r) for i, r in enumerate(records))
+    try:
+        entry = _resolve_model(rt, model)
+        raw = _call_ai(
+            [{"role": "user", "content": f"Opening text of the document:\n\n{text}"
+                                         f"\n\nRecords:\n{listing}"}],
+            MATCH_PROMPT, entry, rt, effort=_lowest_effort(rt, entry),
+            # headroom for a reasoning model's invisible tokens before the JSON
+            max_tokens=4000, timeout=60, on_usage=ai_usage.recorder("metadata", entry, rt),
+        )
+        answer = _answer(raw)
+    except Exception as e:  # noqa: BLE001 — CallRefused too: the records stand, flagged
+        log.warning(f"[metadata] AI record check failed: {e}")
+        return AI_PICK_FAILED
+    n = _picked(answer)
+    if n is None:
+        log.warning("[metadata] AI record check gave no answer")
+        return AI_PICK_FAILED
+    reason = str(answer.get("reason") or "")[:200]
+    if 1 <= n <= len(records):
+        log.info(f"[metadata] AI matched record {n} of {len(records)}: {reason}")
+        return n - 1
+    log.info(f"[metadata] AI matched none of {len(records)} records: {reason}")
+    return None
 
 
 def _make_ppt_cite(rt: dict, meta: dict | None, bibtex: str, prompt: str = "", model: str = "") -> str:
@@ -884,6 +1292,9 @@ def metadata_status(request: Request):
             # None for records stored before the flag existed — the client
             # falls back to the source/kind rule (isUnverifiedPaperMeta).
             "meta_unverified": (meta or {}).get("unverified"),
+            # What tied the record to the document ("" for records from
+            # before ``match``, hand edits and imports).
+            "meta_match": (meta or {}).get("match", ""),
             "meta_user_verified": bool((meta or {}).get("user_verified")),
             "meta_error": (props.get("meta_error") or {}).get("detail", ""),
             # When the record was looked up or edited ("" for records from
@@ -1030,15 +1441,16 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
     # The scan window is decoupled from the AI-context pref (see SCAN_CHARS);
     # the AI later gets only the pref-sized head slice.
     text, tail = "", ""
+    path = None
     if doc_id:
         text, next_offset, _ = _pdf_excerpt(ws, doc_id, max(context_char_limit, SCAN_CHARS))
         if text == PDF_EXTRACT_FAILED:  # nothing to read or match against
             text, next_offset = "", None
+        path = _pdf_path(ws, doc_id)
         if next_offset is not None:
             # The document continues past the scan window. The paper's own DOI
             # is often printed only in the end-of-article trailer (Science
             # issue-clipped PDFs), so scan the last page too.
-            path = _pdf_path(ws, doc_id)
             npages = _page_count(str(path)) if path else 0
             if npages > 1:
                 tail = _pdf_excerpt(ws, doc_id, 4000, start_page=npages)[0]
@@ -1049,111 +1461,192 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
         # first search to discover it. After our own head extraction: PyMuPDF
         # is serialized behind one lock and the lookup needs its text now.
         _ensure_indexed(ws, doc_id)
+    # The first page's largest type: the title on most papers, where the
+    # text head can open with a running header, a journal banner or a
+    # "Downloaded from" line. A Crossref query, and a place the document's
+    # own title can be.
+    guess = _title_guess(str(path)) if text and path else ""
+    doc = _Document(text, guess)
 
-    meta, bibtex = None, ""
-    # "confirmed" = the record demonstrably describes THIS paper: its id came
-    # from the source URL, or the registry's title appears in the PDF text.
-    # Unconfirmed records are kept only until something confirmed shows up.
-    confirmed = False
+    # ``match``: what tied the record to the document (MATCH_CONFIRMED's
+    # table). ``named``: records the text names without tying them to this
+    # document, as ``(rank, record, bibtex, match)`` — rank 0 a record whose
+    # title is the document's own (no author found by it), 1 an identifier
+    # printed in it whose record's title the text prints too, 2 a title
+    # search hit whose title is a phrase of the text, 3 an identifier and
+    # nothing more. When nothing ties a record, the AI picks among them,
+    # best ranked first; without it the best stands, flagged. ``seen``: the
+    # DOIs of the records found so far, which a later step skips;
+    # ``fetched``: the doi.org answers, which the AI's verification reuses.
+    meta, bibtex, match = None, "", ""
+    named, seen, fetched = [], set(), {}
+
+    def name(record, bib, how, rank):
+        named.append((rank, record, bib, how))
+        if record.get("doi"):
+            seen.add(record["doi"].lower())
+
+    def fetch_doi(doi):
+        if doi.lower() not in fetched:
+            fetched[doi.lower()] = _fetch_doi(doi)
+        return fetched[doi.lower()]
+
+    def text_named(record, bib, how):
+        """A record behind an identifier the text prints that does not tie."""
+        if how == "title_only":
+            name(record, bib, "title_only", 0)
+        else:
+            name(record, bib, "id_only", 1 if how else 3)
 
     trusted_arxiv = arxiv_id or _find_arxiv_id(hints, "")
     aid = trusted_arxiv or _find_arxiv_id("", text)
     if aid:
-        meta = _fetch_arxiv(aid)
-        confirmed = bool(meta) and (bool(trusted_arxiv) or _title_in_text(meta["title"], text))
-        if meta:
+        found = _fetch_arxiv(aid)
+        if found:
             # Published since: cite the journal's record, keep the arXiv id.
-            meta, bibtex = _published_record(meta)
+            # Its authors count for the tie too (arXiv may list a
+            # collaboration where the page prints the names).
+            published, pub_bib = _published_record(found)
+            how = "source" if trusted_arxiv else _named_tie(doc, found, published)
+            if how in ("source", "title"):
+                meta, bibtex, match = published, pub_bib, how
+            else:
+                text_named(published, pub_bib, how)
 
-    if not confirmed:
+    if not meta:
         # The first DOI in the text can belong to a *cited* paper (footnotes
         # on page 1, a previous article's trailer in an issue-clipped PDF), so
-        # resolve candidates until one's registrar title appears in the text;
-        # an unconfirmed resolution is only a fallback. The tail rides along
-        # so an own-DOI printed only in the end trailer is a candidate too,
-        # and a DOI the web page only printed in its text goes first, under
-        # the same title check (it may be a work the page cites); with no
-        # PDF text to check it against it can only be the fallback.
-        fallback = None
+        # resolve candidates until one ties to the document. The tail rides
+        # along so an own-DOI printed only in the end trailer is a candidate
+        # too, and a DOI the web page only printed in its text goes first,
+        # under the same check (it may be a work the page cites).
         for cand_doi in _find_doi_candidates(hints, "\n".join(filter(None, [text_doi, text, tail]))):
-            m, b = _fetch_doi(cand_doi)
+            if cand_doi.lower() in seen:
+                continue
+            m, b = fetch_doi(cand_doi)
             if not m:
                 continue
-            if cand_doi.lower() in hints.lower() or _title_in_text(m["title"], text):
-                meta, bibtex, confirmed = m, b, True
+            how = "source" if cand_doi.lower() in hints.lower() else _named_tie(doc, m)
+            if how in ("source", "title"):
+                meta, bibtex, match = m, b, how
                 break
-            fallback = fallback or (m, b)
-        if not confirmed and not meta and fallback:
-            meta, bibtex = fallback
+            seen.add(cand_doi.lower())
+            text_named(m, b, how)
 
-    if not confirmed:
-        # Books: an ISBN printed in the PDF (copyright page, back cover) is
-        # the book's own far more often than a page-1 DOI is the paper's, but
-        # it is still confirmed only by the title (+ an author surname, book
-        # titles being short) in the text; otherwise it's a fallback like an
-        # unconfirmed DOI.
-        fallback = None
+    if not meta:
+        # Books: an ISBN printed in the PDF is tied by the book's title page
+        # like any record, a short title ("Lasers") allowed as a line of the
+        # title block, since the ISBN vouches for it. A reference list, a
+        # syllabus or a review printing a book's ISBN with its title only
+        # names it (``_record_in_text``).
         for isbn in _find_isbns(text + "\n" + tail):
             m = _fetch_isbn(isbn)
             if not m:
                 continue
-            if _record_in_text(m, text):
-                meta, bibtex, confirmed = m, "", True
+            how = _tie(doc, m, min_len=1)
+            if how == "title":
+                meta, bibtex, match = m, "", how
                 break
-            fallback = fallback or m
-        if not confirmed and not meta and fallback:
-            meta, bibtex = fallback, ""
+            text_named(m, "", how or ("phrase" if _record_in_text(m, text) else ""))
 
-    if not confirmed:
-        # No trustworthy identifier — Crossref bibliographic search, accepted
-        # only when the hit's exact title appears in the PDF, or, beside the
-        # web page's own record, when the titles are near-identical and the
-        # years agree. Deterministic, and it keeps most publisher PDFs off
-        # the AI fallback. Queried with the web page's title and first
-        # author (its own tags), the first page's largest type (the title on
-        # most papers, where the text head can open with a running header,
-        # a journal banner or a "Downloaded from" line), the page title
-        # (users title pages with the paper name; an upload carries its file
-        # name), then the text head.
+    rt = ai_runtime(actor)
+    can_pick = bool(rt["enabled"] and text)
+    rejected = frozenset()  # the records the AI's check said are not this document
+    if not meta:
+        # No identifier ties a record — Crossref bibliographic search,
+        # queried with the web page's title and first author (its own tags),
+        # the first page's largest type, the page title (users title pages
+        # with the paper name; an upload carries its file name), then the
+        # text head; a query asked once is not asked again. A hit is taken
+        # when the PDF is its title page, or, beside the web page's own
+        # record, when the titles are near-identical and the years agree; a
+        # hit whose title is only a phrase of the text is one more record
+        # the text names — a few, five when the AI can pick among them and
+        # three when it cannot (bounding the doi.org calls, while a later
+        # hit's full record may still be the one that ties). A hit's doi.org
+        # record (its full title, subtitle included) is fetched only for
+        # those and for a hit whose title is the document's own, and a DOI
+        # an earlier step found is not asked again. Only that full record
+        # can tie: a hit whose fetch fails is a phrase at most.
         queries = []
         if record:
             queries.append(f"{record['title']} {record['authors'][0]}"[:300])
         if text:
-            path = _pdf_path(ws, doc_id) if doc_id else None
-            guess = _title_guess(str(path)) if path else ""
             if len(guess.split()) >= 3:
                 queries.append(guess)
             page_title = re.sub(r"\.pdf$", "", (content or "").strip(), flags=re.I)
             if len(page_title.split()) >= 3:
                 queries.append(page_title[:300])
             queries.append(_norm_match(text[:1500])[:500])
-        asked = set()
+        asked, phrases = set(), 0
         for q in queries:
+            if meta:
+                break
             if _norm_match(q) in asked:
                 continue
             asked.add(_norm_match(q))
-            cand = _pick_crossref_match(_crossref_search(q), text, ai_meta=record)
-            if cand:
-                better, bib = _fetch_doi(cand["doi"])
-                meta, bibtex, confirmed = (better or cand), bib, True
-                break
+            for cand in _crossref_search(q):
+                doi = str(cand.get("doi") or "").lower()
+                if not doi or doi in seen:
+                    continue
+                seen.add(doi)
+                near = _same_work(cand, record, main=True)
+                how = _named_tie(doc, cand)
+                if not near and how not in ("title", "title_only") \
+                        and (not how or phrases >= (NAMED_MAX if can_pick else 3)):
+                    continue
+                # Tied on the full record: a search hit's title lacks its
+                # subtitle, and a series title ("Planck 2018 results") is
+                # every volume's.
+                better, bib = fetch_doi(cand["doi"])
+                if better:
+                    found = better
+                    how = "page" if _same_work(better, record) else _named_tie(doc, better)
+                else:
+                    found, how = cand, ("phrase" if near or how else "")
+                if how in ("page", "title"):
+                    meta, bibtex, match = found, bib, how
+                    break
+                if how == "title_only":
+                    name(found, bib, "title_only", 0)
+                elif how:
+                    phrases += 1
+                    name(found, bib, "phrase", 2)
 
-    if not confirmed and record:
+    if not meta and record:
         # The web page's own record of the work: the tags its citation_doi
-        # comes from, so it is trusted like that DOI. It beats a registry
-        # fallback nothing confirmed and spares the AI call for works no
+        # comes from, so it is trusted like that DOI. It beats the records
+        # the text merely names and spares the AI calls for works no
         # registry knows: a thesis in a repository, a report, a conference
         # paper without a DOI.
-        meta, bibtex, confirmed = dict(record), "", True
+        meta, bibtex, match = dict(record), "", "page"
 
-    rt = ai_runtime(actor)
-    if not meta and rt["enabled"] and text:
-        meta = _ai_extract_meta(text[:context_char_limit], prompt, model, rt)
-        if meta:
+    if not meta and named:
+        # The AI tells which of the records the text names is this document
+        # (none: they are dropped, and the AI reads the document itself).
+        # Without it, or when it cannot answer, the best ranked stands,
+        # flagged.
+        named = [entry[1:] for entry in sorted(named, key=lambda entry: entry[0])][:NAMED_MAX]
+        # It reads what AI extraction would (the pref-sized head), the whole
+        # first page at least: an issue-clipped article's title sits after
+        # the previous article's tail.
+        opening = text[:min(SCAN_CHARS, max(context_char_limit, doc.page_one))]
+        pick = _ai_pick(opening, [r for r, _, _ in named], rt, model) if can_pick else AI_PICK_FAILED
+        if pick is None:
+            rejected = frozenset(str(r.get("doi") or "").lower() for r, _, _ in named) - {""}
+            named = []
+        else:
+            meta, bibtex, match = named[max(pick, 0)]
+            if pick != AI_PICK_FAILED:
+                match = "ai"
+    if not meta and not named and rt["enabled"] and text:
+        read = _ai_extract_meta(text[:context_char_limit], prompt, model, rt)
+        if read:
             # Upgrade to a registry record where possible; drop identifiers
-            # that resolve nowhere and aren't in the PDF (fabrications).
-            meta, bibtex = _verify_ai_meta(meta, text + "\n" + tail, hints)
-            confirmed = meta.get("source") != "ai"
+            # that resolve nowhere and aren't in the PDF (fabrications) or
+            # that name another work.
+            meta, bibtex, match = _verify_ai_meta(read, text + "\n" + tail, hints, doc,
+                                                  fetch_doi=fetch_doi, rejected=rejected)
     if not meta:
         # Negative cache: remember the failed attempt on the page so clients
         # stop auto-retrying on every open. Manual ↻ (force) still retries,
@@ -1171,14 +1664,12 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
         bibtex = bibtex_mod.build_entry(meta, cite_key)
     elif cite_key:
         bibtex = bibtex_mod.with_key(bibtex, cite_key)
-    # Stored with the record so every surface can warn before it is cited:
-    # nothing tied the record to THIS document (an unconfirmed DOI/ISBN may
-    # belong to a cited work; AI output may be a plausible hallucination).
-    # AI-read works no registry holds (theses, reports, slides, notes) are
-    # not flagged — there's nothing a warning could ask the user to check.
-    meta["unverified"] = (not confirmed
-                          and not (meta.get("source") == "ai"
-                                   and item_types.item_type(meta) not in item_types.CHECKABLE))
+    # Stored with the record so every surface can say what tied it to the
+    # document, and warn before it is cited when nothing confirmed did (an
+    # id or a title the text only names may be a cited work's; AI output may
+    # be a plausible hallucination).
+    meta["match"] = match
+    meta["unverified"] = _unconfirmed(meta)
     # The slide citation rides along: one AI call now, instead of on first
     # share. A failure here never fails the fetch — /metadata/cite retries.
     ppt_cite = ""
@@ -1194,8 +1685,11 @@ def fetch_page_metadata(ws: str, block_id: str, actor: str, prompt: str = "", mo
         updates["ppt_cite"] = ppt_cite
     title_updated, page_title = _save_props(
         ws, block_id, updates,
-        # a stale citation (generated from the previous record) is dropped
-        remove=("meta_error",) + (() if ppt_cite else ("ppt_cite",)), auto_title=title, actor=actor,
+        # A stale citation (generated from the previous record) is dropped.
+        # An unconfirmed record does not rename the page: the automatic title
+        # waits for a confirmed one, a typed identifier or a hand edit.
+        remove=("meta_error",) + (() if ppt_cite else ("ppt_cite",)),
+        auto_title="" if meta["unverified"] else title, actor=actor,
     )
     # page_title is ALWAYS the page's current title, not only when this call
     # renamed it: a concurrent lookup may have done the rename first, and the
@@ -1396,7 +1890,7 @@ def metadata_update(payload: MetaUpdateRequest, request: Request):
     lookup, record, bibtex = _typed_identifier_record(meta, props.get("meta") or {})
     if record:
         # The user named the paper, so its record needs no title check.
-        meta = {**record, "unverified": False}
+        meta = {**record, "match": "typed", "unverified": False}
     else:
         # The item type survives an edit that leaves it alone (a book stays
         # @book). A hand edit is the user vouching for the record, so it is
