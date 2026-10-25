@@ -1302,8 +1302,7 @@ def _send(ws: str, remote: Remote, page_id: str, seq: int, base: dict, ops: list
         batches = [{"id": secrets.token_urlsafe(12), "ops": sent[i:i + MAX_OPS]} for i in range(0, len(sent), MAX_OPS)]
         with connect_pages_db(ws) as conn:
             _store_state(conn, page_id, seq, base, {"batches": batches, "at": page_now()})
-        # (a wrapped ``_push`` that answers nothing, as test_mirror_edges' does, reads nothing)
-        for batch, answer in zip(batches, _push(remote, page_id, batches) or ()):
+        for batch, answer in zip(batches, _push(remote, page_id, batches)):
             _ink_merged(ws, page_id, batch["ops"], answer)
     return apply(base, ops)
 

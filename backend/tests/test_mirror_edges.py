@@ -41,8 +41,9 @@ def test_typing_while_a_round_pushes_is_kept_and_merged(monkeypatch):
     def push_with_interference(remote_, page_id, ops):
         # the remote edits the same block just before our batch lands, and we keep typing meanwhile
         remote.ops(page_id, [{"op": "set", "id": "b1", "content": "REMOTE alpha beta gamma"}])
-        real_push(remote_, page_id, ops)
+        answers = real_push(remote_, page_id, ops)
         local.ops(page_id, [{"op": "set", "id": "b1", "content": "alpha beta gamma LOCAL more", "base": "alpha beta gamma LOCAL"}])
+        return answers
     monkeypatch.setattr(sync_engine, "_push", push_with_interference)
     _sync(local)
     monkeypatch.setattr(sync_engine, "_push", real_push)
