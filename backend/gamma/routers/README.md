@@ -10,8 +10,8 @@ One module per API area. Mounted under `/api` in `gamma/app.py`.
 | `ws_backups.py` | `/api/workspaces/{id}/backups*`, `/export`, `/export-all`, `/import-data`, `/jobs/workspace-export`, `/jobs/snapshot`, `/jobs/restore*` | workspace backups: snapshots, downloads, restores, and their background jobs |
 | `backup_tasks.py` | `/api/backup-tasks*`              | an account's scheduled backup tasks (`gamma/backup_schedule.py`): list, preview, create, edit, run, delete |
 | `jobs.py`     | `/api/jobs`, `/jobs/{id}*`          | Background tasks: list, read, stop, remove and download jobs (`gamma/jobs.py`; each kind starts in its own router) |
-| `workspaces.py` | `/api/workspaces/*`               | workspaces: list/create/rename/delete, members and roles, invitations by Gamma Cloud username |
-| `admin.py`    | `/api/admin/*`, `/api/jobs/server-backup` | accounts, server settings, shared AI providers, every workspace, server backups and off-site copies, the database check, the server log |
+| `workspaces.py` | `/api/workspaces/*`               | workspaces: list/create/rename/delete, members and roles, invitations by Gamma Cloud username or by e-mail |
+| `admin.py`    | `/api/admin/*`, `/api/jobs/server-backup` | accounts and invitations to this server by e-mail, server settings, shared AI providers, every workspace, server backups and off-site copies, the database check, the server log |
 | `blocks.py`   | `/api/blocks/*`, `/block-search`    | the block tree (CRUD, children, subtree, backlinks, by-doc), block search |
 | `pages.py`    | `/api/pages`, `/pages/by-docs`, `/pages/from-file`, `/pages/{id}/attachment` | page-first endpoints: create a page (also from a stored Markdown file), attach/detach its document, which pages carry which PDFs |
 | `trash.py`    | `/api/trash`, `/trash/{id}/restore` | Recently deleted: list, restore, delete for good, empty |
@@ -38,7 +38,7 @@ One module per API area. Mounted under `/api` in `gamma/app.py`.
 | `links.py`    | `/api/link-preview`                 | a web page's title for link chips (through the SSRF guard, cached in-process) |
 | `clip.py`     | `/api/clip`, `/clip/note`, `/library/*` | the Gamma Connector's endpoints: save a page or a selection, look the library up for the popup |
 | `publisher_sessions.py` | `/api/publisher-sessions*` | publisher sign-in cookies the Connector imports, stored encrypted and write-only |
-| `shares.py`   | `/api/share/*`, `/api/share-settings/*` | share links of a page or a folder (by id) |
+| `shares.py`   | `/api/share/*`, `/api/share-settings/*` | share links of a page or a folder (by id), and their invitations by Gamma Cloud username or by e-mail |
 | `imports.py`  | `/api/import/*`, `/jobs/import`     | Logseq, embedded-PDF-annotation, Markdown and the reviewed library imports — Zotero, Markdown zips, Notability notes, Gamma exports (the import itself a job) |
 | `export.py`   | `/api/pages/{id}/export*`, `/folders/{id}/export`, `/bibliography`, `/jobs/export` | every export format, as a download or a job |
 

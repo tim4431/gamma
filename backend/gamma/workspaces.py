@@ -39,7 +39,8 @@ username → subject (gamma/cloud_auth.py ``lookup_username``), and the
 invitation waits in ``pending_memberships`` keyed by that subject until
 their first cloud sign-in creates or links the local account
 (``claim_pending_memberships``, called by gamma/cloud_auth.py). A share's
-invitations by cloud username are gamma/shares.py's.
+invitations by cloud username are gamma/shares.py's, and invitations by
+e-mail address, to a workspace or a share, gamma/email_invites.py's.
 """
 
 import os
@@ -50,8 +51,8 @@ import time
 
 from . import collab, jobs, storage
 from .config import WORKSPACES_DIR
-from .db import (account_name, close_workspace_connections, connect_users_db, delete_shares, delete_workspace_prefs,
-                 page_now, safe_ws_id, ws_dir)
+from .db import (account_name, close_workspace_connections, connect_users_db, delete_email_invites, delete_shares,
+                 delete_workspace_prefs, page_now, safe_ws_id, ws_dir)
 from .logbuf import log
 from .seed import create_workspace_files, seed_welcome
 
@@ -62,7 +63,7 @@ ACCESS = ("private", "public")
 PUBLIC_ROLES = ("viewer", "editor")  # what a public workspace hands every account
 MAX_NAME_LEN = 80
 MAX_WORKSPACES_PER_USER = 50
-INVITE_ROLES = ("editor", "viewer")  # what a pending (cloud-username) invitation may grant
+INVITE_ROLES = ("editor", "viewer")  # what an invitation by cloud username or by e-mail may grant
 MAX_PENDING_PER_WORKSPACE = 100
 # A deleted workspace's directory is set aside under this prefix, then removed
 # (remove_files); what a file held open keeps goes later (remove_leftovers).
@@ -364,7 +365,12 @@ def update(ws: str, changes: dict, *, default_for: str = "") -> dict:
     Validate against the resulting kind. Any failure rolls back the whole
     edit; callers must authorize all supplied fields before calling this.
     The write lock also keeps the membership/default checks consistent.
+    A workspace made personal loses its invitations, and those by e-mail
+    their mailed links.
     """
+    from . import email_invites  # local: email_invites imports this module
+
+    links = []
     with connect_users_db() as conn:
         conn.execute("BEGIN IMMEDIATE")
         row = _row(conn, ws)
@@ -385,6 +391,7 @@ def update(ws: str, changes: dict, *, default_for: str = "") -> dict:
             _check_account(conn, people[0][0])
             conn.execute("UPDATE workspace_members SET role = 'owner' WHERE workspace_id = ?", (ws,))
             conn.execute("DELETE FROM pending_memberships WHERE workspace_id = ?", (ws,))
+            links = delete_email_invites(conn, "kind = 'workspace' AND workspace_id = ?", (ws,))
             info.update(access="private", public_role="viewer", quota_mb=None)
         elif kind != info["kind"]:
             owner = people[0][0] if people else ""
@@ -413,6 +420,7 @@ def update(ws: str, changes: dict, *, default_for: str = "") -> dict:
             "UPDATE workspaces SET name = ?, kind = ?, access = ?, public_role = ?, quota_mb = ? WHERE id = ?",
             (info["name"], kind, info["access"], info["public_role"], info["quota_mb"], ws))
         conn.commit()
+    email_invites.cancel_links(links)
     return info
 
 
@@ -568,13 +576,22 @@ def pending_invites(ws: str) -> list[dict]:
     return [{"subject": r[0], "username": r[1], "role": r[2], "invited_by": r[3], "created_at": r[4]} for r in rows]
 
 
-def members_with_pending(ws: str) -> list[dict]:
+def members_with_pending(ws: str, *, by_email: bool = False) -> list[dict]:
     """``members`` followed by the pending invitations in the same shape
-    (``added_by`` / ``added_at``), each tagged ``pending: True`` with its
-    ``subject`` — the one list the Manage dialog renders."""
-    return members(ws) + [
-        {"username": p["username"], "role": p["role"], "added_by": p["invited_by"], "added_at": p["created_at"],
-         "subject": p["subject"], "pending": True} for p in pending_invites(ws)]
+    (``added_by`` / ``added_at``), each tagged ``pending: True``: those by
+    Gamma Cloud username with their ``subject``, then, with ``by_email``
+    (for the people who manage them), those by e-mail address
+    (gamma/email_invites.py) with their ``email``, ``id`` and
+    ``expires_at`` and no username — the one list the Manage dialog
+    renders."""
+    from . import email_invites  # local: email_invites imports this module
+
+    by_username = [{"username": p["username"], "role": p["role"], "added_by": p["invited_by"],
+                    "added_at": p["created_at"], "subject": p["subject"], "pending": True} for p in pending_invites(ws)]
+    waiting = email_invites.listing("workspace", ws=ws) if by_email else []
+    mailed = [{"email": e["email"], "id": e["id"], "role": e["role"], "added_by": e["invited_by"],
+               "added_at": e["created_at"], "expires_at": e["expires_at"], "pending": True} for e in waiting]
+    return members(ws) + by_username + mailed
 
 
 def cancel_invite(ws: str, subject: str) -> None:
@@ -661,14 +678,17 @@ def _drop_final_copies(names) -> None:
 
 
 def delete(ws: str, *, by: str = "") -> dict:
-    """Remove the workspace: its rows (memberships, shares, per-workspace
-    prefs, the done marks of its reminders) and its directory, after a
-    final copy of it went to backups/deleted/ (``keep_final_copies``;
-    FinalCopyError and nothing deleted when that fails). An account's last personal workspace is
-    refused; deleting its default moves the default to the oldest other
-    personal one. Returns ``{warning, final_copy}``: a warning when the
-    directory could not be removed (Windows file locks), and the copy's
-    file name."""
+    """Remove the workspace: its rows (memberships, invitations, shares,
+    per-workspace prefs, the done marks of its reminders) and its
+    directory, after a final copy of it went to backups/deleted/
+    (``keep_final_copies``; FinalCopyError and nothing deleted when that
+    fails); the mailed links of its invitations by e-mail are withdrawn.
+    An account's last personal workspace is refused; deleting its default
+    moves the default to the oldest other personal one. Returns
+    ``{warning, final_copy}``: a warning when the directory could not be
+    removed (Windows file locks), and the copy's file name."""
+    from . import email_invites  # local: email_invites imports this module
+
     with connect_users_db() as conn:
         _other_personal(conn, ws)
     final_copy = keep_final_copies([ws], by=by)[0]
@@ -681,12 +701,13 @@ def delete(ws: str, *, by: str = "") -> dict:
             if owner:
                 conn.execute("UPDATE users SET default_workspace = ? WHERE id = ? AND default_workspace = ?",
                              (others[0], owner, ws))
-            _delete_rows(conn, ws)
+            links = _delete_rows(conn, ws)
             conn.commit()
         except Exception:
             # refused after all (or not written): no copy of a delete that never happened
             _drop_final_copies([final_copy])
             raise
+    email_invites.cancel_links(links)
     return {"warning": remove_files(ws), "final_copy": final_copy}
 
 
@@ -701,16 +722,22 @@ def _other_personal(conn, ws: str) -> tuple[str, list[str]]:
     return owner, others
 
 
-def _delete_rows(conn, ws: str) -> None:
+def _delete_rows(conn, ws: str) -> list[tuple[str, str, str]]:
+    """Delete the workspace's rows in the caller's transaction; the
+    ``(link_id, invited_by, server_url)`` of its invitations by e-mail and
+    its shares', whose mailed links the caller withdraws once it
+    committed."""
     conn.execute("DELETE FROM integration_tokens WHERE workspace_id = ?", (ws,))
     conn.execute("DELETE FROM workspace_members WHERE workspace_id = ?", (ws,))
     conn.execute("DELETE FROM pending_memberships WHERE workspace_id = ?", (ws,))
-    delete_shares(conn, "workspace_id = ?", (ws,))
+    links = delete_email_invites(conn, "kind = 'workspace' AND workspace_id = ?", (ws,))
+    links += delete_shares(conn, "workspace_id = ?", (ws,))[1]
     # the prefs from before step 34 (later ones go with the workspace's pages.db)
     conn.execute("DELETE FROM user_prefs WHERE workspace_id = ?", (ws,))
     conn.execute("DELETE FROM reminders_done WHERE workspace_id = ?", (ws,))
     conn.execute("DELETE FROM inbox_items WHERE workspace_id = ?", (ws,))
     conn.execute("DELETE FROM workspaces WHERE id = ?", (ws,))
+    return links
 
 
 def _retrying(fn, *args):
@@ -806,14 +833,20 @@ def _deleted_with(conn, user_id: str) -> list[str]:
     return deleted
 
 
-def delete_account_workspaces(user_id: str) -> list[str]:
+def delete_account_workspaces(user_id: str, *, wait: bool = False) -> list[str]:
     """When an account goes: its personal workspaces are deleted; it leaves
     every shared workspace and every share that invited it, and the
     workspaces where it was the only owner are deleted too (their other
     members lose them — the admin UI says so before). Its prefs go from
     every workspace that stays where it could keep some: those it was a
     member of, and the public ones (a guest has no public access), and so
-    does its Inbox. Returns the deleted workspace ids."""
+    does its Inbox. The mailed links of the deleted workspaces' invitations
+    by e-mail are withdrawn in the background, or before this returns with
+    ``wait`` (``email_invites.cancel_links``). Returns the deleted
+    workspace ids."""
+    from . import email_invites  # local: email_invites imports this module
+
+    links = []
     with connect_users_db() as conn:
         deleted = _deleted_with(conn, user_id)
         kept = [ws for ws, in conn.execute(
@@ -825,11 +858,12 @@ def delete_account_workspaces(user_id: str) -> list[str]:
         conn.execute("DELETE FROM integration_tokens WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM publisher_sessions WHERE user_id = ?", (user_id,))
         for ws in deleted:
-            _delete_rows(conn, ws)
+            links += _delete_rows(conn, ws)
         conn.execute("DELETE FROM user_prefs WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM reminders_done WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM inbox_items WHERE user_id = ?", (user_id,))
         conn.commit()
+    email_invites.cancel_links(links, wait=wait)
     for ws in deleted:
         remove_files(ws)
     for ws in kept:
@@ -840,17 +874,20 @@ def delete_account_workspaces(user_id: str) -> list[str]:
 def delete_account(user_id: str, *, release_now: bool = False, by: str = "") -> list[str]:
     """Delete an account and everything that is only its: sessions, the
     Gamma Cloud identity (its grant released — off the person's server
-    list, refresh token revoked; in the background unless ``release_now``,
-    which a CLI process that exits right after wants), integration tokens,
-    publisher sessions, prefs, done reminders, Inbox items, the workspaces
-    ``delete_account_workspaces`` removes, its background jobs and their
-    files, its AI usage rows and the users row. Each of those workspaces
-    is first copied to backups/deleted/ (``keep_final_copies``; a guest's
-    keep nothing): FinalCopyError, and nothing deleted, when one cannot be.
-    The one account deletion: the admin API, ``manage.py delete-user`` and
-    the guest expiry (gamma/guests.py) all come here. Returns the deleted
-    workspace ids; [] for an unknown account. ``user_id`` the account, ``by``
-    who deletes it. The callers check who may be deleted."""
+    list, refresh token revoked), integration tokens, publisher sessions,
+    prefs, done reminders, Inbox items, the workspaces
+    ``delete_account_workspaces`` removes (the mailed links of their
+    invitations by e-mail withdrawn at the account server), its background
+    jobs and their files, its AI usage rows and the users row. The grant's
+    release and the links' withdrawal run in the background unless
+    ``release_now``, which a CLI process that exits right after wants.
+    Each of those workspaces is first copied to backups/deleted/
+    (``keep_final_copies``; a guest's keep nothing): FinalCopyError, and
+    nothing deleted, when one cannot be. The one account deletion: the
+    admin API, ``manage.py delete-user`` and the guest expiry
+    (gamma/guests.py) all come here. Returns the deleted workspace ids; []
+    for an unknown account. ``user_id`` the account, ``by`` who deletes
+    it. The callers check who may be deleted."""
     from . import cloud_auth, cloud_sync  # local: cloud_auth imports this module
 
     with connect_users_db() as conn:
@@ -865,7 +902,7 @@ def delete_account(user_id: str, *, release_now: bool = False, by: str = "") -> 
         conn.commit()
     if subject:
         (cloud_sync.release if release_now else cloud_sync.release_later)(subject, held)
-    deleted = delete_account_workspaces(user_id)
+    deleted = delete_account_workspaces(user_id, wait=release_now)
     jobs.forget_account(user_id)
     with connect_users_db() as conn:
         conn.execute("DELETE FROM ai_usage WHERE user_id = ?", (user_id,))

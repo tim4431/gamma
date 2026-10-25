@@ -14,8 +14,8 @@ import anyio
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
-from . import backup_schedule, cloud_sync, comments, config, db_maintenance, guests, hosted, inbox, jobs, migrations
-from . import offsite, sync_engine, trash, upload_gc, version, workspaces, ws_backup
+from . import backup_schedule, cloud_auth, cloud_sync, comments, config, db_maintenance, email_invites, guests, hosted
+from . import inbox, jobs, migrations, offsite, sync_engine, trash, upload_gc, version, workspaces, ws_backup
 from .publish import check_config as check_publish_config
 from .auth import session_middleware
 from .compression import JsonGzip
@@ -339,6 +339,7 @@ def create_app() -> FastAPI:
                 every(guests.SWEEP_INTERVAL_S, guests.delete_expired, "[guests] sweep failed"), \
                 every(trash.SWEEP_INTERVAL_S, trash.sweep, "[trash] sweep failed"), \
                 every(comments.SWEEP_INTERVAL_S, comments.sweep, "[comments] sweep failed"), \
+                every(email_invites.SWEEP_INTERVAL_S, email_invites.sweep, "[invites] sweep failed"), \
                 every(inbox.SWEEP_INTERVAL_S, inbox.sweep, "[inbox] sweep failed"), \
                 every(ws_backup.STALE_TEMP_S, ws_backup.sweep_stale_temp, "[backups] temp sweep failed"), \
                 every(jobs.SWEEP_INTERVAL_S, jobs.sweep, "[jobs] sweep failed"), \
@@ -359,6 +360,13 @@ def create_app() -> FastAPI:
         # guidance as a 503, and every other workspace is served.
         return JSONResponse({"error": "workspace_not_upgradable", "build": version.label(),
                              **migrations.guidance(exc)}, status_code=503, headers={"Retry-After": "60"})
+
+    @app.exception_handler(cloud_auth.InvitationError)
+    async def invitation_not_mailed(request: Request, exc: cloud_auth.InvitationError):
+        # The account server did not mail an invitation by e-mail
+        # (gamma/email_invites.py): whichever router sent or resent it
+        # answers the inviter with the status the failure carries.
+        return JSONResponse({"detail": str(exc)}, status_code=exc.status)
 
     app.middleware("http")(read_only_gate)  # added first: runs inside the session middleware
     app.middleware("http")(session_middleware)

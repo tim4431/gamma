@@ -14,7 +14,8 @@ sign-in creates or links their account here (``claim_pending``, called by
 its role. A waiting invitation is also what admits a newcomer under the
 ``invited`` sign-in policy (``waiting``), and approving a request to join
 that came through the share (gamma/join_requests.py) makes one. The rows go
-with their share (``db.delete_shares``).
+with their share (``db.delete_shares``). A share's invitations by e-mail
+address are gamma/email_invites.py's.
 """
 
 import sqlite3
@@ -176,20 +177,26 @@ def claim_pending(user_id: str, subject: str) -> list[str]:
     return [token for token, _ in joined]
 
 
-def tell(ws: str, target: ShareScope, token: str, actor: str, invited) -> None:
-    """A ``shared`` Inbox item for each account of ``invited`` (ids), from
-    ``actor``, with the share's ``token`` as their way in (gamma/inbox.py;
-    never raises). The snippet is the page's title or the folder's name; a
-    name that cannot be read is logged, and the items go out without it."""
-    if not invited:
-        return
-    name = ""
+def target_name(ws: str, target: ShareScope) -> str:
+    """The shared page's title (the first line of its content) or the shared
+    folder's name; "" when it cannot be read, which is logged."""
     try:
         with connect_pages_db(ws) as conn:
             row = conn.execute("SELECT content FROM unified_blocks WHERE id = ?",
                                (target.page or target.folder,)).fetchone()
-        name = (row[0] or "").split("\n", 1)[0] if row else ""
     except (sqlite3.Error, ValueError) as e:
         log.warning(f"[shares] the name of shared {target.page or target.folder} in workspace {ws} "
-                    f"could not be read for the Inbox: {e}")
-    inbox.emit("shared", invited, actor, ws, page_id=target.page, block_id=target.folder, snippet=name, via=token)
+                    f"could not be read: {e}")
+        return ""
+    return (row[0] or "").split("\n", 1)[0] if row else ""
+
+
+def tell(ws: str, target: ShareScope, token: str, actor: str, invited) -> None:
+    """A ``shared`` Inbox item for each account of ``invited`` (ids), from
+    ``actor``, with the share's ``token`` as their way in (gamma/inbox.py;
+    never raises). The snippet is the page's title or the folder's name
+    (``target_name``); the items go out without one that cannot be read."""
+    if not invited:
+        return
+    inbox.emit("shared", invited, actor, ws, page_id=target.page, block_id=target.folder,
+               snippet=target_name(ws, target), via=token)

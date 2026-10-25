@@ -44,7 +44,7 @@ from .textnorm import normalize_text
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 42
+SCHEMA_VERSION = 43
 # A workspace's pages.db keeps a version of its own (its ``PRAGMA
 # user_version``): the newest step whose per-workspace part has run on it
 # (gamma/migrations.py WORKSPACE_STEPS). One stamped 0 is at this version:
@@ -343,6 +343,40 @@ USERS_SCHEMA = [
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL
     )""",
+    # An invitation by e-mail address (gamma/email_invites.py): to this
+    # server (kind "server", from Settings → Users, for someone who has no
+    # account here), to a shared workspace ("workspace", workspace_id) or to
+    # a share ("share", share_token). id = the handle the lists and the people
+    # who manage the invitation name it by; link_id = a secret apart from
+    # it, which the account server is told as its invite_id and the mailed
+    # link carries back through the sign-in, never listed (whoever holds it
+    # is admitted with the invitation's role); email as typed, email_norm
+    # lowercased; role "editor" / "viewer" for a workspace, "view" / "edit"
+    # for a share, '' for the server; invited_by an account id; server_url
+    # this server's address the last mail went out with, under which the
+    # account server keeps its link (the one to drop it at). The account
+    # server mails it (cloud_auth.send_invitation); the person's cloud
+    # sign-in through that link, and nothing else, admits them and turns it
+    # into a membership or a share entry. One per target and address; gone
+    # after expires_at (the sweep), and with its workspace or share.
+    """CREATE TABLE IF NOT EXISTS email_invites (
+        id TEXT PRIMARY KEY,
+        link_id TEXT NOT NULL,
+        email TEXT NOT NULL,
+        email_norm TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        workspace_id TEXT NOT NULL DEFAULT '',
+        share_token TEXT NOT NULL DEFAULT '',
+        role TEXT NOT NULL DEFAULT '',
+        invited_by TEXT NOT NULL DEFAULT '',
+        server_url TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        mailed_at TEXT NOT NULL DEFAULT '',
+        expires_at TEXT NOT NULL
+    )""",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_email_invites_target "
+    "ON email_invites(kind, workspace_id, share_token, email_norm)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_email_invites_link ON email_invites(link_id)",
     # Small JSON values that follow the ACCOUNT (docs/dev/settings.md):
     # workspace_id '' = account-wide (the profile, the AI provider entries:
     # USER_PREF_KEYS). The prefs per account AND workspace (open tabs,
@@ -774,14 +808,31 @@ def account_id(conn: sqlite3.Connection, username: str) -> str:
     return row[0] if row else ""
 
 
-def delete_shares(conn: sqlite3.Connection, where: str, params) -> int:
+def delete_shares(conn: sqlite3.Connection, where: str, params) -> tuple[int, list[tuple[str, str, str]]]:
     """Delete the shares ``WHERE where`` together with their invitations
-    (``share_users`` and ``pending_share_users``, keyed by token): they
-    always go together, or an invitation is left pointing at a token that
-    no longer exists. Returns how many shares went."""
+    (``share_users`` and ``pending_share_users``, keyed by token, and the
+    e-mail invitations, ``email_invites`` of kind share): they always go
+    together, or an invitation is left pointing at a token that no longer
+    exists. Returns how many shares went, and the e-mail invitations'
+    ``(link_id, invited_by, server_url)`` (``delete_email_invites``), whose
+    mailed links the caller withdraws once it committed."""
     for table in ("share_users", "pending_share_users"):
         conn.execute(f"DELETE FROM {table} WHERE token IN (SELECT token FROM shares WHERE {where})", params)
-    return conn.execute(f"DELETE FROM shares WHERE {where}", params).rowcount
+    links = delete_email_invites(conn, f"kind = 'share' AND share_token IN (SELECT token FROM shares WHERE {where})",
+                                 params)
+    return conn.execute(f"DELETE FROM shares WHERE {where}", params).rowcount, links
+
+
+def delete_email_invites(conn: sqlite3.Connection, where: str, params) -> list[tuple[str, str, str]]:
+    """Delete the invitations by e-mail ``WHERE where`` (gamma/email_invites.py)
+    in the caller's transaction, and return their ``(link_id, invited_by,
+    server_url)``: the account server still holds their mailed links, each
+    under the address it went out with, which the caller withdraws once it
+    committed (``email_invites.cancel_links``)."""
+    links = conn.execute(f"SELECT link_id, invited_by, server_url FROM email_invites WHERE {where}",
+                         params).fetchall()
+    conn.execute(f"DELETE FROM email_invites WHERE {where}", params)
+    return links
 
 
 def share_token_workspace(token) -> str | None:

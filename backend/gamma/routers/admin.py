@@ -14,6 +14,12 @@ account creates its personal workspace, deleting one removes the workspaces
 it alone owned, renaming changes its username alone (everything else names
 the account by its id, ``users.id``). The endpoints address an account by
 username, as the people who manage it do.
+
+Someone who has no account here yet is invited by e-mail address
+(``/api/admin/invitations``, gamma/email_invites.py): the account server
+mails them a link to make a Gamma Cloud account or sign in with theirs,
+and their sign-in through it gets them an account here, whatever the
+sign-in policy.
 """
 
 import os
@@ -27,7 +33,8 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel
 from starlette.background import BackgroundTask
 
-from .. import ai_settings, backups, chatgpt_oauth, cloud_auth, guests, hosted, integrity, jobs, offsite, workspaces
+from .. import (ai_settings, backups, chatgpt_oauth, cloud_auth, email_invites, guests, hosted, integrity, jobs,
+                offsite, ratelimit, workspaces)
 from ..auth import require_admin
 from .ai import (AIProviderRequest, ChatGPTAuthComplete, ChatGPTAuthStart, ChatGPTAuthStatus, begin_chatgpt_signin,
                  new_chatgpt_entry, reconnect_chatgpt_entry, redeem_chatgpt_signin, seeded_chatgpt_models)
@@ -530,6 +537,71 @@ def check_databases(request: Request):
     passes (gamma/integrity.py)."""
     require_admin(request)
     return integrity.check_all()
+
+
+# --- invitations by e-mail to this server (gamma/email_invites.py) -----------
+# Settings → Users: an admin invites someone who has no account here. Every
+# answer is the list of server invitations still waiting, with whether they
+# can be sent from here and, when not, why.
+
+class InvitationRequest(BaseModel):
+    email: str
+
+
+def _invitations() -> dict:
+    open_ = email_invites.available()
+    return {"invitations": email_invites.listing("server"), "available": open_["server"],
+            "reason": "" if open_["server"] else open_["reason"]}
+
+
+@router.get("/invitations")
+def list_invitations(request: Request):
+    require_admin(request)
+    return _invitations()
+
+
+@router.post("/invitations")
+def send_invitation(payload: InvitationRequest, request: Request):
+    """Invite an address to this server; ``invited: {pending: entry}``. 400
+    for someone who has an account here already, an address that is none,
+    or when invitations by e-mail cannot go out from here; a mail the
+    account server did not send answers ``cloud_auth.InvitationError``'s
+    status. Sync: the account server is asked to mail it."""
+    require_admin(request)
+    user_id = request.state.user_id
+    ratelimit.check(f"email-invite:{user_id}", email_invites.SENDS_PER_HOUR, 3600)
+    try:
+        invited = email_invites.invite("server", payload.email, user_id, server_url=cloud_auth.callback_base(request))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return {**_invitations(), "invited": invited}
+
+
+@router.delete("/invitations/{invite_id}")
+def withdraw_invitation(invite_id: str, request: Request):
+    """Withdraw a server invitation; its mailed link stops working."""
+    require_admin(request)
+    try:
+        email_invites.withdraw(invite_id, request.state.user_id, server_url=cloud_auth.callback_base(request),
+                               kind="server")
+    except email_invites.NoSuchInvitation as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return _invitations()
+
+
+@router.post("/invitations/{invite_id}/resend")
+def resend_invitation(invite_id: str, request: Request):
+    """Mail a server invitation again: a new link, its 14 days from now."""
+    require_admin(request)
+    user_id = request.state.user_id
+    ratelimit.check(f"email-invite:{user_id}", email_invites.SENDS_PER_HOUR, 3600)
+    try:
+        email_invites.resend(invite_id, user_id, server_url=cloud_auth.callback_base(request), kind="server")
+    except email_invites.NoSuchInvitation as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return _invitations()
 
 
 class UserCreateRequest(BaseModel):

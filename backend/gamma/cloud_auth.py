@@ -25,6 +25,13 @@ and the rules for an identity this server has not seen (``policy``):
   asks to join instead (``NotInvited``, gamma/join_requests.py) — a Pro
   server that invites its members.
 
+An invitation by e-mail address (gamma/email_invites.py) admits the
+sign-in that comes back through its mailed link, and only that one (the
+invitation's link id rides along in the pending sign-in, ``begin``'s
+``invite``): one to this server under every policy, one to a workspace or
+a share under ``provision`` and ``invited``. The account server mails it
+(``send_invitation``); this server never sends mail.
+
 On a hosted container the plan's policy replaces ``GAMMA_CLOUD_POLICY``,
 and the plan's ``max_accounts`` stops provisioning once that many accounts
 exist (gamma/hosted.py).
@@ -88,7 +95,8 @@ password, deleted the account): the token is dropped, the identity marked
 end. Anything else (no network, a 5xx) changes nothing. What the server
 does with the token (the hourly grant check, the preference profile, the
 server list) is gamma/cloud_sync.py; the username lookup an invitation
-by Gamma Cloud username makes (``lookup_username``) is here.
+by Gamma Cloud username makes (``lookup_username``) and the mail of an
+invitation by e-mail (``send_invitation``, ``cancel_invitation``) are here.
 """
 
 import hashlib
@@ -109,7 +117,7 @@ from urllib.parse import parse_qsl, urlsplit
 import jwt
 from cryptography.fernet import InvalidToken
 
-from . import config, join_requests, mcp_oauth, shares, workspaces
+from . import config, email_invites, join_requests, mcp_oauth, shares, workspaces
 from .chatgpt_oauth import _b64url
 from .db import account_id, account_name, connect_users_db, page_now
 from .logbuf import log
@@ -142,6 +150,9 @@ ACCESS_MARGIN = 120   # seconds before its expiry a cached access token is no lo
 # The account server's username rule (cloud/gammacloud/accounts.py USERNAME_RE).
 USERNAME_RE = re.compile(r"^[a-z0-9][a-z0-9-]{1,30}[a-z0-9]$")
 LOOKUP_TIMEOUT = 10
+# The calls that send or withdraw an invitation by e-mail: the account
+# server mails it before it answers, and its mail relay may take a while.
+INVITATION_TIMEOUT = 60
 LOOKUPS_PER_10_MIN = 30  # username lookups per inviting account, a workspace's and a share's together
 _DISCOVERY_TTL = 3600
 _JWKS_TTL = 3600
@@ -171,6 +182,21 @@ class NotInvited(CloudAuthError):
 class CloudLookupError(Exception):
     """The account server could not answer a username lookup (sign-in off,
     unreachable, no access token) — a message safe to show the inviter."""
+
+
+class InvitationError(Exception):
+    """The account server did not mail an invitation by e-mail
+    (``send_invitation``): a message safe to show the inviter, and the HTTP
+    ``status`` to answer it with — 400 for what the inviter can change, 429
+    for too many, 503 for what to try again later. ``unanswered``: no answer
+    came at all (a timeout, a refused connection), so the mail may have
+    gone out all the same, as the account server mails before it
+    answers."""
+
+    def __init__(self, message: str, status: int = 503, *, unanswered: bool = False):
+        super().__init__(message)
+        self.status = status
+        self.unanswered = unanswered
 
 
 def _conn() -> sqlite3.Connection:
@@ -447,11 +473,14 @@ def app_params(return_to: str, challenge: str) -> dict:
     return {"return_to": app_return(return_to), "challenge": challenge}
 
 
-def begin(request, *, link_user: str | None, next_path: str, app: dict | None = None) -> str:
+def begin(request, *, link_user: str | None, next_path: str, app: dict | None = None, invite: str = "") -> str:
     """Store the pending sign-in and return the account server's authorize
     URL to send the browser to. ``link_user``: the id of the signed-in
     account the identity is to be linked to. ``app``: a sign-in the desktop
-    app started (``app_params``); the callback answers it at its address."""
+    app started (``app_params``); the callback answers it at its address.
+    ``invite``: the link id of the invitation by e-mail whose mailed link
+    started it (gamma/email_invites.py), which admits the sign-in; one of
+    another shape is dropped."""
     cfg = settings()
     if not cfg["enabled"]:
         raise CloudAuthError("Cloud sign-in is not set up on this server.")
@@ -464,7 +493,8 @@ def begin(request, *, link_user: str | None, next_path: str, app: dict | None = 
     nonce = secrets.token_urlsafe(16)
     mcp_oauth.store("cloud_login", base, state,
                     {"verifier": verifier, "nonce": nonce, "link_user": link_user or "", "next": next_path,
-                     "redirect_uri": base + CALLBACK_PATH, **({"app": app} if app else {})}, PENDING_TTL)
+                     "redirect_uri": base + CALLBACK_PATH, **({"app": app} if app else {}),
+                     "invite": invite if email_invites.LINK_ID_RE.fullmatch(invite or "") else ""}, PENDING_TTL)
     params = {"response_type": "code", "client_id": cfg["client_id"], "redirect_uri": base + CALLBACK_PATH,
               "scope": SCOPE, "state": state, "nonce": nonce,
               "code_challenge": _b64url(hashlib.sha256(verifier.encode()).digest()), "code_challenge_method": "S256"}
@@ -558,7 +588,10 @@ def take_pending(request, state: str) -> dict | None:
 def exchange(request, *, code: str, pending: dict | None) -> tuple[dict, dict, str]:
     """The callback's first half: (claims, tokens, next path) for a valid
     code and its pending sign-in (``take_pending``), or CloudAuthError. A
-    token set whose ID token fails the checks has its refresh token revoked."""
+    token set whose ID token fails the checks has its refresh token revoked.
+    The claims carry what the sign-in itself adds under internal keys: the
+    account to link (``_link_user``) and the link id of the invitation by
+    e-mail it came through (``_invite``)."""
     cfg = settings()
     base = callback_base(request)
     if not pending:
@@ -578,6 +611,7 @@ def exchange(request, *, code: str, pending: dict | None) -> tuple[dict, dict, s
         revoke_later([tokens.get("refresh_token", "")])
         raise
     claims["_link_user"] = pending["link_user"]
+    claims["_invite"] = pending.get("invite", "")
     return claims, tokens, pending["next"] or "/"
 
 
@@ -888,8 +922,8 @@ def _lookup_token(by: str) -> str:
     (``access_token_for``). CloudLookupError when the inviter has no linked
     identity or the account server hands out no token."""
     if not grant_of(by)[0]:
-        raise CloudLookupError("Link your own Gamma Cloud account (Settings → Account & sync) to invite by "
-                               "Gamma Cloud username.")
+        raise CloudLookupError("Link your own Gamma Cloud account (Settings → Account & sync) to invite people "
+                               "through Gamma Cloud.")
     token = access_token_for(by)
     if not token:
         raise CloudLookupError("Gamma Cloud did not answer for your account. Try again later, or sign in "
@@ -906,6 +940,85 @@ def lookup_username(name: str, by: str = "") -> dict | None:
     if not cfg["enabled"]:
         raise CloudLookupError("Gamma Cloud sign-in is not set up on this server.")
     return lookup_with_token(cfg["issuer"], _lookup_token(by), name)
+
+
+# --- invitations by e-mail --------------------------------------------------------
+# The account server mails an invitation by e-mail (gamma/email_invites.py)
+# on the inviter's own grant: this server never sends mail, and never learns
+# whether the address has a Gamma Cloud account.
+
+def _invitation_call(by: str, path: str, body: dict) -> dict:
+    """``POST <issuer><path>`` with the JSON ``body`` on ``by``'s own grant
+    (``_lookup_token``), or CloudAuthError / CloudLookupError."""
+    cfg = settings()
+    if not cfg["enabled"]:
+        raise CloudLookupError("Gamma Cloud sign-in is off on this server.")
+    token = _lookup_token(by)
+    try:
+        return _http(cfg["issuer"] + path, data=json.dumps(body).encode(), timeout=INVITATION_TIMEOUT,
+                     headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+    except CloudAuthError as e:
+        if e.status == 401:  # the account server no longer takes the cached token
+            forget_access(grant_of(by)[0])
+        raise
+
+
+def _timed_out(e: CloudAuthError) -> bool:
+    """Whether a call ``_http`` got no answer to (``status`` None) ran out
+    of time, rather than finding no one to connect to: a timeout while
+    connecting comes wrapped in a URLError, one while waiting for the
+    answer bare."""
+    cause = e.__cause__
+    if isinstance(cause, urllib.error.URLError):
+        cause = cause.reason
+    return isinstance(cause, TimeoutError)
+
+
+def send_invitation(by: str, *, server_url: str, email: str, kind: str, what: str, invite_id: str,
+                    next: str) -> dict:
+    """Ask the account server to mail an invitation to ``email`` on behalf
+    of the account ``by`` (an id): ``POST <issuer>/api/invitations`` with
+    the invitation's link id (``invite_id``, the account server's name for
+    it), this server's address (``server_url``) and name, the account
+    server's ``kind`` (server, workspace, page, folder), ``what`` it is
+    called and the path here to land on (``next``). Its answer, ``{ok,
+    expires_at}``; InvitationError with the status to answer the inviter,
+    marked ``unanswered`` for a call that got no answer (whether its link
+    is then withdrawn is gamma/email_invites.py's call)."""
+    body = {"email": email, "server_url": server_url, "server_name": server_name(server_url), "kind": kind,
+            "what": what, "invite_id": invite_id, "next": next}
+    try:
+        return _invitation_call(by, "/api/invitations", body)
+    except CloudLookupError as e:  # sign-in off, the inviter's account not linked, no access token
+        raise InvitationError(str(e)) from e
+    except CloudAuthError as e:
+        detail = e.body.get("detail") if isinstance(e.body.get("detail"), str) else str(e)
+        if e.status is None:
+            raise InvitationError("Gamma Cloud did not answer in time. Try again." if _timed_out(e)
+                                  else "Gamma Cloud could not be reached. Try again later.", unanswered=True) from e
+        if e.status == 404:
+            raise InvitationError("The account server does not take e-mail invitations yet.") from e
+        if e.status in (400, 403, 409):  # what the inviter can change, in the account server's words
+            raise InvitationError(detail, 400) from e
+        if e.status == 429:
+            raise InvitationError("Too many invitations for now. Try again later.", 429) from e
+        if e.status == 401:
+            raise InvitationError("Gamma Cloud did not accept your account's grant. Try again, or sign in with "
+                                  "Gamma Cloud again.") from e
+        raise InvitationError(detail if e.status == 503 else f"Gamma Cloud could not send the invitation "
+                                                             f"(it answered {e.status}).") from e
+
+
+def cancel_invitation(by: str, invite_id: str, server_url: str) -> None:
+    """Ask the account server, on ``by``'s grant, to drop the invitation
+    whose link id is ``invite_id``, sent from ``server_url``, and its link.
+    Best effort: a failure is a warning in the log, never an error. It
+    waits on the account server, so gamma/email_invites.py
+    (``cancel_links``) calls it on a background thread."""
+    try:
+        _invitation_call(by, "/api/invitations/cancel", {"server_url": server_url, "invite_id": invite_id})
+    except (CloudAuthError, CloudLookupError) as e:
+        log.warning(f"cloud: could not withdraw an invitation by e-mail at the account server: {e}")
 
 
 # --- this server's address -------------------------------------------------------
@@ -958,27 +1071,33 @@ def revoke_later(tokens) -> None:
         threading.Thread(target=lambda: [revoke_refresh(t) for t in tokens], name="cloud-revoke", daemon=True).start()
 
 
-def resolve_account(claims: dict) -> tuple[str, str]:
+def resolve_account(claims: dict, server_url: str = "") -> tuple[str, str]:
     """The callback's second half: the local account this identity signs in
     as, ``(id, username)`` — linking, claiming or provisioning per the rules
     in the module docstring — or CloudAuthError. Commits, then revokes the
-    refresh token the new one replaced."""
+    refresh token the new one replaced. ``server_url``: the address the
+    sign-in came back on (``callback_base``), where the account server
+    drops the link of an invitation by e-mail it came through if its row
+    recorded no address of its own (``email_invites.claim``)."""
     stale: list[str] = []
     user_id, username = _resolve(claims, stale)
     subject = claims["sub"]
-    # what waited for this cloud account: invitations by its username, its request to join
+    # what waited for this cloud account: invitations by its username, the invitation by e-mail whose
+    # mailed link it came through, and its request to join
     workspaces.claim_pending_memberships(user_id, subject)
     shares.claim_pending(user_id, subject)
+    email_invites.claim(user_id, claims.get("_invite", ""), server_url)
     join_requests.joined(subject)
     revoke_later(stale)
     return user_id, username
 
 
 def _invited(conn, subject: str) -> bool:
-    """Whether the ``invited`` policy admits ``subject``: an invitation to a
-    shared workspace or to a share waits for it (gamma/workspaces.py,
-    gamma/shares.py), or an admin approved its request to join
-    (gamma/join_requests.py)."""
+    """Whether the ``invited`` policy admits ``subject`` by its cloud
+    identity: an invitation by Gamma Cloud username to a shared workspace
+    or to a share waits for it (gamma/workspaces.py, gamma/shares.py), or
+    an admin approved its request to join (gamma/join_requests.py). An
+    invitation by e-mail is ``email_invites.admits``."""
     return (conn.execute(
         "SELECT 1 FROM pending_memberships p JOIN workspaces w ON w.id = p.workspace_id "
         "WHERE p.subject = ? AND w.kind = 'shared' LIMIT 1", (subject,)).fetchone() is not None
@@ -1040,11 +1159,14 @@ def _resolve(claims: dict, stale: list[str]) -> tuple[str, str]:
             return row["id"], local
         if not is_admin_seed:
             # Admission comes before the name: whoever nothing admits is
-            # refused, or asks to join, whatever their username.
+            # refused, or asks to join, whatever their username. The mailed
+            # link of an invitation by e-mail admits too, under the policies
+            # that refuse (email_invites.admits says which kinds under which).
+            mailed = email_invites.admits(conn, claims.get("_invite"), cfg["policy"])
             if cfg["policy"] == "invited":
-                if not _invited(conn, subject):
+                if not (mailed or _invited(conn, subject)):
                     raise NotInvited()
-            elif cfg["policy"] != "provision":
+            elif cfg["policy"] != "provision" and not mailed:
                 raise CloudAuthError("Your Gamma Cloud account is not linked to an account on this server. "
                                      "Ask the admin to create one, or sign in with a password and link it.")
             full = hosted.account_cap(conn) or ("This server is read-only: it takes no new accounts."
