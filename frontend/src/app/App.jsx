@@ -5,6 +5,7 @@ import PdfViewer, { preloadPdfEngine } from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
 import { requestFields } from "../pdf/translatePlan";
 import { docIdOf } from "../pdf/pdfSource";
+import { basePixels } from "../pdf/pageRaster";
 import { DEFAULT_HIGHLIGHT, colorName, highlightColor, normalizeColor, pickerColors, swatchCss } from "../shared/model/palette.js";
 import { PaletteContext } from "../shared/ui/paletteContext.js";
 import { clampZoom } from "../shared/model/zoom.js";
@@ -431,8 +432,10 @@ function captureViewerSnapshot() {
   for (const wrap of scroller.querySelectorAll(".pdfPageWrap")) {
     const r = wrap.getBoundingClientRect();
     if (r.bottom <= vr.top || r.top >= vr.top + capH) continue;
-    const canvas = wrap.querySelector("canvas");
-    if (!canvas || !canvas.width || !canvas.height) continue;
+    // The canvas on screen, not the wrap's first: each page's canvases are
+    // pairs that swap at every paint, the hidden one released.
+    const canvas = basePixels(wrap);
+    if (!canvas) continue;
     // Visible slice of this page in CSS px, mapped to the canvas backing
     // resolution on the source side and to the thumbnail on the dest side.
     const x0 = Math.max(vr.left, r.left), x1 = Math.min(vr.right, r.right);
