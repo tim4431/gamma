@@ -556,7 +556,7 @@ class _Reader:
             store = stores.setdefault(owner, _Store())
             anchors[r.ident] = (owner, store.units)
             store.parts.append(text)
-            store.units += len(text.encode("utf-16-le", "surrogatepass")) // 2
+            store.units += nb.utf16_units(text)
             self.text_left -= len(text)
         for r in live:
             if r.kind == ANCHOR and r.ident is not None:

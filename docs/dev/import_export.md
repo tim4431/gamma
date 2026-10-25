@@ -9,7 +9,7 @@ writer (its internals and the shared typesetting engine are in
 `gamma/zotero_export.py`, `gamma/logseq_import.py`, `gamma/markdown_import.py`,
 `gamma/markdown_zip_import.py`, `gamma/import_zip.py` (the zip walk the library imports share),
 `gamma/notability_import.py`, `gamma/notability.py`, `gamma/notability_archive.py`,
-`gamma/notability_map.py`, `gamma/markdown_export.py`, `gamma/obsidian_export.py`, `gamma/pdf_export.py`,
+`gamma/notability_map.py`, `gamma/notability_export.py`, `gamma/notability_write.py`, `gamma/markdown_export.py`, `gamma/obsidian_export.py`, `gamma/pdf_export.py`,
 `gamma/pdf_notes.py`, `gamma/pdf_document.py`, `gamma/pdf_typeset.py`,
 `gamma/note_markup.py`, `gamma/vector_text.py`, `gamma/pdf_glyphs.py`,
 `gamma/pdf_image.py`, `gamma/text_box.py`, `gamma/bibtex.py`,

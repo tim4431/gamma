@@ -1127,6 +1127,12 @@ def _hex(text: str) -> str | None:
     return None
 
 
+def utf16_units(text: str) -> int:
+    """The text's length in UTF-16 units, which the file's text ranges
+    count (a character past the BMP is two)."""
+    return len(text) + sum(1 for ch in text if ord(ch) > 0xFFFF)
+
+
 def utf16_bounds(text: str) -> array | None:
     """The UTF-16 offset where each character of ``text`` starts, and the
     end (``char_at``'s ``bounds``); None when every character is one
