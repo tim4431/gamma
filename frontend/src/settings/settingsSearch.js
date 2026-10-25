@@ -75,7 +75,7 @@ const entries = [
   e("ai", t("Connections"), null, t("AI providers, keys and ChatGPT sign-in"), "provider credentials API key ChatGPT login service"),
   e("ai", t("Check at login"), t("Connection check"), t("Verify the active provider when Gamma opens"), "connection test credential ping"),
   e("ai", t("Default chat model"), t("Models"), t("Also used by citations and generated titles"), "AI model"),
-  e("ai", t("Metadata model"), t("Models"), t("Used only when identifiers cannot resolve the paper"), "AI extraction identifiers"),
+  e("ai", t("Metadata model"), t("Models"), t("Used when identifiers do not settle which paper the PDF is"), "AI extraction identifiers check"),
   e("ai", t("Dictation model"), t("Models"), t("For the chat mic button; needs an OpenAI key"), "speech voice mic transcription"),
   e("ai", t("Dictation language"), t("Models"), t("Naming the language improves accuracy"), "speech voice mic"),
   e("ai", t("Token usage"), null, t("Tokens in and out, per model"), "tokens statistics consumption cost input output cached reset"),

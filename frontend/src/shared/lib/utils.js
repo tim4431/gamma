@@ -2,10 +2,12 @@
 
 import { useEffect, useState } from "react";
 import { makeBlockId } from "../model/blockModel";
-import { t, T } from "../../shared/i18n/i18n.js";
+import { t } from "../../shared/i18n/i18n.js";
 import { fmtBytes } from "./format.js";
 import { keepaliveFetch } from "./keepalive.js";
-import { isCheckableType, itemTypeLabel, itemTypeOf } from "./itemTypes.js";
+// The paper metadata source wording (re-exported below), a module of its own
+// so the node tests import it without the browser.
+import { isUnverifiedPaperMeta, metaSourceInfo } from "./metaSource.js";
 
 const API = "/api";
 
@@ -258,54 +260,6 @@ async function copyRich(html, plain) {
     } catch {}
   }
   return legacyCopy(plain, html);
-}
-
-// Metadata that nothing tied to THIS document — the UI flags it (red "!" on
-// the metadata button and beside the slide citation, red cell in the
-// Settings → Library maintenance table) so nobody cites it unchecked. The server stores
-// `meta.unverified` (AI paper records; DOIs/ISBNs printed in the text whose
-// registry title isn't); records from before the flag existed fall back to
-// the old rule: AI-extracted and of a type a registry could confirm (a
-// thesis, slides or notes have none to verify against; a missing kind
-// counts as a journal article, the safe default).
-const isUnverifiedPaperMeta = (source, kind, unverified = null) =>
-  unverified == null ? source === "ai" && isCheckableType(itemTypeOf({ kind })) : !!unverified;
-
-// Where a page's metadata came from, worded once for every surface that
-// shows it: the metadata popover's Source row, the share popover's citation
-// header, the Settings → Library maintenance table (`short`). `warn` = cite with care.
-const META_SOURCE_NAMES = {
-  arxiv: "arXiv", doi: "doi.org", crossref: "Crossref search", isbn: "ISBN lookup",
-  openlibrary: "Open Library", googlebooks: "Google Books", page: "web page tags", manual: "edited by hand",
-};
-function metaSourceInfo(meta) {
-  if (!meta?.source) return null;
-  // The user checked the record against the paper (the popover's Verify);
-  // the source still says where it came from.
-  if (meta.user_verified) {
-    const ai = meta.source === "ai";
-    const name = ai ? t("AI-extracted") : META_SOURCE_NAMES[meta.source] || meta.source;
-    return { label: t("{name} — verified by hand", { name: name }), short: t("{name} ✓", { name: ai ? "AI" : name }), warn: false,
-             hint: T("Checked against the paper by hand") };
-  }
-  const unverified = isUnverifiedPaperMeta(meta.source, meta.kind, meta.unverified);
-  if (meta.source === "ai") {
-    const kind = t(itemTypeLabel(itemTypeOf(meta))).toLowerCase();
-    return unverified
-      ? { label: T("AI-extracted — unverified"), short: "AI", warn: true,
-          hint: T("Read by AI from the PDF text and not confirmed by any registry (arXiv, Crossref, Open Library) — fields may be wrong, verify before citing") }
-      : { label: t("AI-extracted ({kind})", { kind: kind }), short: t("AI ({kind})", { kind: kind }), warn: false,
-          hint: T("Not a published paper, so there is no registry record to verify against") };
-  }
-  const name = META_SOURCE_NAMES[meta.source] || meta.source;
-  if (unverified) {
-    return { label: t("{name} — unconfirmed", { name: name }), short: t("{name} ?", { name: name }), warn: true,
-             hint: T("Resolved from an identifier printed in the PDF or on the web page it was saved from, but nothing tied the record to this document — it may belong to a work the document cites. Verify before citing") };
-  }
-  return { label: name, short: name, warn: false,
-           hint: meta.source === "manual" ? "Fields edited by hand"
-             : meta.source === "page" ? T("Read from the citation tags of the web page it was saved from")
-             : `Registry record via ${name}` };
 }
 
 const isPdfFile = (f) => f.type === "application/pdf" || /\.pdf$/i.test(f.name || "");

@@ -1211,6 +1211,21 @@ _CITE_MAX = 50  # pages one cite call formats
 _RECORD_FIELDS = (("authors", "Authors"), ("year", "Year"), ("venue", "Venue"), ("volume", "Volume"),
                   ("pages", "Pages"), ("publisher", "Publisher"), ("isbn", "ISBN"), ("doi", "DOI"),
                   ("arxiv_id", "arXiv"))
+# What tied a record to its page's PDF (meta.match, routers/metadata.py), as
+# the cite tool tells the model: the evidence of a confirmed record, and why
+# an unverified one is.
+_TIED_BY = {"source": "the paper's own link or its web page's tags", "page": "its web page's citation tags",
+            "typed": "an identifier the user typed", "title": "the PDF is its title page (its title, an author by it)",
+            "ai": "an AI check against the PDF"}
+_UNVERIFIED_WHY = {
+    "phrase": "a title search found it, but its title only appears in the PDF as a phrase, so it may be "
+              "another work on the same topic",
+    "id_only": "an identifier printed in the PDF names it, but nothing ties it to the PDF, so it may be a "
+               "work the PDF cites",
+    "title_only": "its title is on the PDF's first page, but no author of it was found by the title or the "
+                  "title is not set as the PDF's title, so check the title and authors",
+    "ai_reading": "an AI read it off the PDF and no registry confirmed it",
+}
 
 
 def _run_cite(conn, ws: str, scope: dict, args: dict):
@@ -1253,8 +1268,12 @@ def _run_cite(conn, ws: str, scope: dict, args: dict):
         if meta.get("title") and meta["title"] != title:
             lines.append(f"Paper title: {meta['title']}")
         if meta.get("unverified"):
-            lines.append("Unverified: nothing tied this record to the page's PDF (it may be a cited "
-                         "work's, or an AI reading) — say so and suggest checking it before it is cited.")
+            why = _UNVERIFIED_WHY.get(meta.get("match"),
+                                      "nothing tied this record to the page's PDF (it may be a cited work's, "
+                                      "or an AI reading)")
+            lines.append(f"Unverified: {why} — say so and suggest checking it before it is cited.")
+        elif meta.get("match") in _TIED_BY:
+            lines.append(f"Matched by: {_TIED_BY[meta['match']]}")
         lines.append(f"```bibtex\n{bibtex_mod.page_entry(props)}\n```")
         if str(props.get("ppt_cite") or "").strip():
             lines.append("Slide citation: " + props["ppt_cite"].strip())

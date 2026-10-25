@@ -366,7 +366,11 @@ result gives:
 - the slide citation when one was made (`ppt_cite`). None is generated,
   since that is an AI call.
 
-A record flagged `unverified` says so. A page without metadata says so
+A record flagged `unverified` says so, with why from its `meta.match`
+(no author found by its title, a title search phrase, an identifier the
+PDF only prints, an AI reading), and a confirmed one says what tied it to
+the PDF ("Matched by: an AI check against the PDF"; [paper_metadata.md](paper_metadata.md)).
+A page without metadata says so
 too, and the model is told not to invent one. Nothing is looked up or
 stored. Pages outside the scope are refused one by one, and a call where
 every page is refused is an error. Its chip is ❝ "Cited N pages" (kind
