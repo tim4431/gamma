@@ -1,16 +1,25 @@
 """What a Gamma server calls with a person's access token: the preference
-profile (``/api/me/prefs``), the server list (``/api/me/servers``) and the
-username lookup (``/api/lookup/username``).
+profile (``/api/me/prefs``), the server list (``/api/me/servers``), the
+username lookup (``/api/lookup/username``) and the e-mail invitations it
+sends (``/api/invitations``, ``invitations.py``).
 
 - The profile takes an access token with the ``prefs`` scope, or the
   portal session. A token without the scope is a 403 with
   ``WWW-Authenticate: Bearer error="insufficient_scope"``.
-- The server list and the lookup take any access token (every one carries
-  ``openid``) and never the portal session: they are what a Gamma server
-  does, not a person in the portal.
+- The server list, the lookup and the invitations take any access token
+  (every one carries ``openid``) and never the portal session: they are
+  what a Gamma server does, not a person in the portal.
 
 Writes are rate limited per account; the lookup, an enumeration surface,
-per token, per account and per IP.
+per token, per account and per IP. The invitations send mail to an address
+the caller chooses: per account and per recipient of that account (each an
+hour and a day). Only a request that will send counts per sign-in client,
+and, for the servers people connected themselves, in one daily circuit
+breaker they share: refused calls cannot use it up, and the operator's
+own servers (the share host, hosted ones) stay outside it. Their per-IP
+limit counts only tokens that fail, since the caller is a server that may
+hold many people's tokens (the share host, hosted servers behind one
+address).
 """
 
 import json
@@ -21,7 +30,8 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from starlette.concurrency import run_in_threadpool
 
-from .. import accounts, db, oidc, prefs, ratelimit, servers, sessions
+from .. import accounts, db, invitations, oidc, prefs, ratelimit, servers, sessions
+from .accounts import send_mail
 
 router = APIRouter(prefix="/api")
 
@@ -198,3 +208,89 @@ def lookup_username(request: Request, u: str = ""):
     if not found or not found["email_verified_at"]:
         raise HTTPException(404, "no such account")
     return {"sub": found["id"], "username": found["username"]}
+
+
+# --- e-mail invitations -------------------------------------------------------
+
+class InvitationBody(BaseModel):
+    email: str
+    server_url: str
+    server_name: str = ""
+    kind: str
+    what: str = ""
+    invite_id: str
+    next: str = "/"
+
+
+class InvitationRef(BaseModel):
+    server_url: str
+    invite_id: str
+
+
+def _inviting_server(conn, row, raw: str) -> tuple[dict, str]:
+    """The token's client and the server it may send invitations for:
+    ``_server_url``'s rule, but never through the desktop client or at a
+    loopback address, since the mailed link has to reach the server from
+    anywhere."""
+    client = oidc.get_client(conn, row["client_id"])
+    if client and client["kind"] == "desktop":
+        raise HTTPException(403, "A server signing in through the desktop app cannot send invitations: the link "
+                                 "has to reach it from anywhere.")
+    url = _server_url(conn, row, raw)
+    if servers.is_local(url):
+        raise HTTPException(403, "That address is not one this server's sign-in client is registered for.")
+    return client, url
+
+
+@router.post("/invitations")
+def send_invitation(body: InvitationBody, request: Request):
+    """A Gamma server mails an invitation to an address: ``{ok,
+    expires_at}``, the same whether the address has an account here.
+    The same ``invite_id`` again, through the same client, replaces the
+    invitation and its link (409 through another). A mail that cannot be
+    sent answers 503 and leaves things as they were: a first invitation is
+    gone, a replaced one works again."""
+    with closing(db.connect()) as conn:
+        try:
+            account, row = bearer(conn, request)
+        except HTTPException:
+            ratelimit.check(f"invitations:ip:{ratelimit.limit_ip(request)}", 60, 3600)
+            raise
+        ratelimit.check(f"invitations:account:{account['id']}", 30, 3600)
+        ratelimit.check(f"invitations:day:{account['id']}", 100, 86400)
+        client, url = _inviting_server(conn, row, body.server_url)
+        fields = invitations.check(email=body.email, kind=body.kind, what=body.what, invite_id=body.invite_id,
+                                   next_path=body.next)
+        # One inbox, from one inviter: no limit across inviters, which would
+        # let anyone keep a person from being invited at all.
+        to = f"{accounts.email_canon(fields['email'])}:{account['id']}"
+        ratelimit.check(f"invitations:to:{to}", 5, 3600)
+        ratelimit.check(f"invitations:to-day:{to}", 20, 86400)
+        ratelimit.check(f"invitations:client:{client['client_id']}", 600, 3600)
+        if invitations.self_connected(client):
+            ratelimit.check("invitations:connected", 3000, 86400)
+        sent, replaced, token, has_account = invitations.send(conn, account, client, url,
+                                                              servers.norm_name(body.server_name, url), **fields)
+        conn.commit()
+    try:
+        send_mail(sent["email"], *invitations.invitation_mail(account, sent, token, has_account))
+    except HTTPException:
+        with closing(db.connect()) as conn:
+            invitations.take_back(conn, sent, replaced)
+            conn.commit()
+        raise
+    return {"ok": True, "expires_at": sent["expires_at"]}
+
+
+@router.post("/invitations/cancel")
+def cancel_invitation(body: InvitationRef, request: Request):
+    """The Gamma server withdrew an invitation: its link stops working, and
+    a code nobody registered with goes with it. ``removed`` is False when
+    there was none; 409 when another client of the server sent it."""
+    with closing(db.connect()) as conn:
+        account, row = bearer(conn, request)
+        ratelimit.check(f"invitations-cancel:{account['id']}", 120, 3600)
+        client, url = _inviting_server(conn, row, body.server_url)
+        removed = invitations.cancel(conn, client, url, body.invite_id, account["id"])
+        conn.commit()
+    return {"ok": True, "removed": removed}

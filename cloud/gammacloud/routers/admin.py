@@ -169,11 +169,10 @@ class InvitePatch(BaseModel):
 
 @router.get("/invites")
 def list_invites(request: Request):
-    """Each row with ``used`` and ``state`` (``accounts.invite_view``)."""
+    """Each row with ``used`` and ``state`` (``accounts.list_invites``)."""
     with closing(db.connect()) as conn:
         require_admin(conn, request)
-        rows = conn.execute("SELECT * FROM invites ORDER BY created_at DESC LIMIT 500").fetchall()
-        return {"invites": [accounts.invite_view(r) for r in rows]}
+        return {"invites": accounts.list_invites(conn, 500)}
 
 
 @router.post("/invites")

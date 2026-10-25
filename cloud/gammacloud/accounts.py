@@ -331,23 +331,40 @@ def invite_view(row) -> dict:
     return {**dict(row), "used": row["uses_total"] - row["uses_left"], "state": invite_state(row)}
 
 
+def list_invites(conn, limit: int = -1) -> list[dict]:
+    """The operator's codes as ``invite_view``, newest first, at most
+    ``limit`` (-1: all): the Admin page's list and ``manage.py invites``. A
+    code minted for an e-mail invitation (``invitations.py``) is left out,
+    spent or not and after its invitation is gone: one is minted per
+    invitation, and they would bury the operator's own."""
+    rows = conn.execute("SELECT * FROM invites WHERE invitation = 0 ORDER BY created_at DESC LIMIT ?",
+                        (limit,)).fetchall()
+    return [invite_view(r) for r in rows]
+
+
+def registers_without_code(email: str) -> bool:
+    """Whether the address may register with no invite code: while the
+    allowed mail domains are set (``settings.allowed_email_domains``), an
+    address at one of them, whatever the mode; otherwise any address, in
+    ``open`` mode only. ``closed`` mode is refused before this matters."""
+    allowed = settings.allowed_email_domains()
+    return email_at(email, allowed) if allowed else settings.registration() == "open"
+
+
 def take_invite(conn, code: str, email: str) -> dict:
     """Consume one use of an invite code and return what ``create`` needs:
     ``{plan, grant_days, invite_code}``. A code that is off, expired or
     spent is refused like an unknown one.
 
-    Without a code: while the allowed mail domains are set
-    (``settings.allowed_email_domains``), an address at one of them registers
-    and any other is refused, whatever the mode; otherwise only ``open`` mode
-    lets it. A valid code passes either way, since it is the operator's own
-    yes. ``closed`` mode is refused before this is reached."""
+    Without a code, ``registers_without_code`` decides. A valid code passes
+    either way, since it is the operator's own yes (an e-mail invitation
+    carries one only where the operator allows it, ``invitations.py``).
+    ``closed`` mode is refused before this is reached."""
     code = (code or "").strip()
     if not code:
-        allowed = settings.allowed_email_domains()
-        if allowed and not email_at(email, allowed):
-            raise Problem(403, "This address cannot register without an invite code.")
-        if not allowed and settings.registration() != "open":
-            raise Problem(403, "Registration needs an invite code right now.")
+        if not registers_without_code(email):
+            raise Problem(403, "This address cannot register without an invite code." if settings.allowed_email_domains()
+                          else "Registration needs an invite code right now.")
         return {"plan": "free", "grant_days": None, "invite_code": ""}
     row = conn.execute("SELECT * FROM invites WHERE code = ?", (code,)).fetchone()
     if not row or invite_state(row) != "active":
@@ -357,11 +374,12 @@ def take_invite(conn, code: str, email: str) -> dict:
 
 
 def make_invite(conn, *, uses: int, plan: str, note: str, created_by: str, expires_days: int | None = None,
-                grant_days: int | None = None) -> dict:
+                grant_days: int | None = None, invitation: bool = False) -> dict:
     """A new invite code; returns its row. ``expires_days``: the code stops
     working that many days from now; ``grant_days``: the plan it grants
     ends that many days after each registration (``create``). None for
-    either means no end."""
+    either means no end. ``invitation``: minted for an e-mail invitation,
+    which keeps it out of the operator's list (``list_invites``)."""
     if plan not in config.PLANS:
         raise Problem(400, "unknown plan")
     if not 1 <= uses <= 10000:
@@ -374,8 +392,8 @@ def make_invite(conn, *, uses: int, plan: str, note: str, created_by: str, expir
     code = new_token(9)
     expires_at = after(expires_days * 86400) if expires_days else None
     conn.execute("INSERT INTO invites (code, uses_left, uses_total, plan, created_by, created_at, note, expires_at, "
-                 "grant_days) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-                 (code, uses, uses, plan, created_by, now(), note[:200], expires_at, grant_days))
+                 "grant_days, invitation) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                 (code, uses, uses, plan, created_by, now(), note[:200], expires_at, grant_days, int(invitation)))
     audit(conn, "invite.create", actor=created_by, detail=f"{code} uses={uses} plan={plan}"
           + (f" expires={expires_at[:10]}" if expires_at else "") + (f" grant_days={grant_days}" if grant_days else ""))
     return invite_view(conn.execute("SELECT * FROM invites WHERE code = ?", (code,)).fetchone())
@@ -644,9 +662,11 @@ def purge(conn, account_id: str, actor: str = "system") -> None:
     hosted server is deleted first (``hosted.purge_account``). The
     subscription copy goes too: only a deleted account is purged, and the
     deletion already cancelled the subscription at Stripe
-    (``billing.cancel_for_deletion``); ``billing_events`` keeps the id."""
-    from . import hosted  # imported here: hosted.py imports this module
+    (``billing.cancel_for_deletion``); ``billing_events`` keeps the id. So
+    do the e-mail invitations it sent (``invitations.purge_account``)."""
+    from . import hosted, invitations  # imported here: both import this module
     hosted.purge_account(conn, account_id, actor)
+    invitations.purge_account(conn, account_id)
     for table in ("subscriptions", "identities", "portal_sessions", "email_tokens", "grants", "access_tokens",
                   "prefs", "servers_linked"):
         conn.execute(f"DELETE FROM {table} WHERE account_id = ?", (account_id,))

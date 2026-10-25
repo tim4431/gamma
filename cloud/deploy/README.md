@@ -113,8 +113,9 @@ proxy's rate limits. A host whose default network predates the pin needs
 ## The sign-up settings
 
 The registration mode (`open` / `invite` / `closed`), the Cloudflare
-Turnstile keys, extra blocked mail domains, the allowed mail domains and
-the paid plans on sale are edited on the **Admin page → Settings**. They
+Turnstile keys, extra blocked mail domains, the allowed mail domains,
+whose e-mail invitations carry an invite code and the paid plans on sale
+are edited on the **Admin page → Settings**. They
 live in `cloud.db` and take effect without a restart.
 `GAMMA_CLOUD_REGISTRATION`, `GAMMA_CLOUD_TURNSTILE_*` and
 `GAMMA_CLOUD_BLOCKED_EMAIL_DOMAINS` in `.env` are not read; the startup
@@ -135,7 +136,23 @@ ended subscription). **Copy link** gives
 code in. A code can be turned off and on, and **Who used it** lists the
 accounts that registered with it. From the shell: `manage.py invite
 --uses 20 --expires-days 30 --grant-days 90 --plan pro`, and `manage.py
-set-plan <username> pro --until 2026-12-31` for a grant that ends.
+set-plan <username> pro --until 2026-12-31` for a grant that ends. The
+one-use codes e-mail invitations carry (below) are not listed, here or by
+`manage.py invites`.
+
+### Invitations from Gamma servers
+
+A Gamma server can invite someone by e-mail; this server mails the link.
+While registration is `invite` and no allowed mail domains are set, such
+an invitation to an address with no account carries a one-use free
+invite code, so the newcomer can register. **Invitations from Gamma
+servers** under Sign-up decides whose
+do: **Servers you run** (the default: the share host, the hosted servers
+and clients made on the Admin page) or **Any connected server** (also the
+servers people connected themselves, which lets anyone who can connect a
+server bring people in). An invitation without a code still works for an
+address that can register without one, or for someone with an account.
+`manage.py settings invitation_signup any` sets it from the shell.
 
 ### Allowed mail domains
 

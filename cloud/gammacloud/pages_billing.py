@@ -77,7 +77,7 @@ def plan_lines(plan: str, username: str) -> list[str]:
         return [f"A Gamma server of your own at <b>{pages.esc(_host(username))}</b>, which you administer",
                 f"{lim['max_accounts']} accounts, shared workspaces with roles and live cursors",
                 f"{_size(lim['quota_mb'])} pooled, {lim['max_upload_mb']} MB per file, per-workspace quotas",
-                "Invite members by their Gamma Cloud username",
+                "Invite members by e-mail",
                 "One shared AI connection the admin adds for the whole server",
                 _copies(lim["offsite_interval_s"], lim["offsite_keep"])]
     return ["The desktop app: your library on your own disk",
@@ -213,8 +213,8 @@ def _server(hosted: dict | None, plan: str) -> str:
         rows += f"<dt>Backups</dt><dd>{_copies(offsite['interval_s'], offsite['keep'])}</dd>"
     if hosted.get("reported_at"):
         rows += f"<dt>Last report</dt><dd>{pages._date(hosted['reported_at'])}</dd>"
-    invite = ("<p class='plantext gap'>Invite people on your server by their Gamma Cloud username; members "
-              "sign in with their own Gamma Cloud account.</p>") if plan == "pro" else ""
+    invite = ("<p class='plantext gap'>Invite people to your server by e-mail; members sign in with their own "
+              "Gamma Cloud account.</p>") if plan == "pro" else ""
     open_btn = (f"<div class=actions><a class='btn btn--primary btn--sm' href='{pages.esc(url)}'>Open</a></div>"
                 if url and state not in ("provisioning", "stopped", "deleted") else "")
     return (f"<section class=section><h2>Your server {_state_pill(hosted)}</h2><div class=body><dl class=kv>{rows}</dl>"
