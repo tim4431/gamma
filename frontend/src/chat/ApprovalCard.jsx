@@ -5,13 +5,15 @@
 // also stops asking for this permission in this conversation. Always allow
 // also sets the permission to Allow for this kind of chat in Settings.
 // Don't allow opens a line for what to do instead (optional) and leaves the
-// call unmade; the assistant gets that line with the decline. The buttons
-// never take the focus by themselves, so a keystroke meant for the message
-// box can't answer.
+// call unmade; the assistant gets that line with the decline. A permission
+// that only asks (Delete folders and labels) offers Allow once (in red) and
+// Don't allow only. The buttons never take the focus by themselves, so a
+// keystroke meant for the message box can't answer.
 import React, { useEffect, useState } from "react";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { ShieldIcon } from "../shared/ui/Icons";
-import { ALLOWING, approvalTitle } from "./approvals.js";
+import { ALLOWING, approvalTitle, deletionNotes } from "./approvals.js";
+import { permStates } from "./chatSettings.js";
 import { pictureSrc } from "./pictureSrc.js";
 import { permissionIcon, permissionLabel } from "../settings/AssistantTools";
 import { guideEvents } from "../guide/events.js";
@@ -26,7 +28,7 @@ export function WordDiff({ diff }) {
   </div>;
 }
 
-function ApprovalPreview({ preview = {}, args = {} }) {
+function ApprovalPreview({ tool, preview = {}, args = {} }) {
   // The pictures a change embeds (a clip's region, a note's new pictures),
   // drawn by the server from the same URLs the notes and the chat use.
   const pictures = preview.pictures?.length ? preview.pictures : preview.picture ? [preview.picture] : [];
@@ -40,6 +42,7 @@ function ApprovalPreview({ preview = {}, args = {} }) {
       {preview.children ? <div className="chatApprovalNote">
         {tn("{n} nested block goes with it.", "{n} nested blocks go with it.", preview.children)}
       </div> : null}
+      {deletionNotes(tool, preview).map((note) => <div key={note} className="chatApprovalNote">{note}</div>)}
       <WordDiff diff={preview.diff} />
       {gallery}
     </>;
@@ -65,9 +68,12 @@ export default function ApprovalCard({ approval, kindLabel, titleOf, onDecide })
   const [note, setNote] = useState("");
   const permission = permissionLabel(approval.perm);
   const Icon = permissionIcon(approval.perm);
+  const askOnly = !permStates(approval.perm).includes("allow");
   // The card is up: the hint that explains the four answers may show
-  // beside it (guide/tours/hints.js). It goes again with the card.
-  useEffect(() => { guideEvents.emit("approval.shown", { tool: approval.tool }); }, [approval.id, approval.tool]);
+  // beside it (guide/tours/hints.js). It goes again with the card. An
+  // ask-only card has two answers, so it raises no hint.
+  useEffect(() => { if (!askOnly) guideEvents.emit("approval.shown", { tool: approval.tool }); },
+    [approval.id, approval.tool, askOnly]);
   const decide = async (decision, said = "") => {
     if (sent) return;
     setSent(decision);
@@ -84,7 +90,7 @@ export default function ApprovalCard({ approval, kindLabel, titleOf, onDecide })
     <div className={`chatApproval${sent ? " sent" : ""}`} role="group" data-guide="chat.approval" aria-label={t("Approval needed")}>
       <div className="chatApprovalCaption"><ShieldIcon size={14} />{t("Approval needed")} · {permission}</div>
       <div className="chatApprovalHead"><Icon size={16} /><span>{approvalTitle(approval, { titleOf, permission })}</span></div>
-      <ApprovalPreview preview={approval.preview} args={approval.args} />
+      <ApprovalPreview tool={approval.tool} preview={approval.preview} args={approval.args} />
       {error ? <div className="chatApprovalError" role="alert">{error}</div> : null}
       {sent ? (
         <div className="chatApprovalStatus" role="status">
@@ -102,15 +108,17 @@ export default function ApprovalCard({ approval, kindLabel, titleOf, onDecide })
         </form>
       ) : (
         <div className="chatApprovalActions">
-          <button type="button" className="uiBtn sm primary" onClick={() => decide("once")}>{t("Allow once")}</button>
-          <button type="button" className="uiBtn sm" onClick={() => decide("chat")}
-            title={t("Don't ask again for “{permission}” in this conversation", { permission })}>
-            {t("Allow in this chat")}
-          </button>
-          <button type="button" className="uiBtn sm" onClick={() => decide("always")}
-            title={t("Set “{permission}” to Allow for all chats of this kind ({kind}). You can change it in Settings → AI → Tool usage.", { permission, kind: kindLabel })}>
-            {t("Always allow")}
-          </button>
+          <button type="button" className={`uiBtn sm primary${askOnly ? " danger" : ""}`} onClick={() => decide("once")}>{t("Allow once")}</button>
+          {askOnly ? null : <>
+            <button type="button" className="uiBtn sm" onClick={() => decide("chat")}
+              title={t("Don't ask again for “{permission}” in this conversation", { permission })}>
+              {t("Allow in this chat")}
+            </button>
+            <button type="button" className="uiBtn sm" onClick={() => decide("always")}
+              title={t("Set “{permission}” to Allow for all chats of this kind ({kind}). You can change it in Settings → AI → Tool usage.", { permission, kind: kindLabel })}>
+              {t("Always allow")}
+            </button>
+          </>}
           <span className="chatApprovalSpacer" />
           <button type="button" className="uiBtn sm ghost" onClick={() => setDeclining(true)}>{t("Don't allow")}</button>
         </div>

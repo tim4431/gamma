@@ -1,21 +1,26 @@
 // Taking back the agent's note changes from the reply that made them. Each
-// edit, new note or move the agent made carries `revert` (what undoing it
-// needs, recorded by its tool — gamma/ai_tools.py); POST /api/ai/revert
-// undoes it as a merge into the note as it is now (gamma/ai_revert.py) and
+// edit, new note, move or deletion the agent made carries `revert` (what
+// undoing it needs, recorded by its tool — gamma/ai_tools.py), and so does
+// a folder or label it deleted; POST /api/ai/revert undoes it as a merge
+// into the notes or the library as they are now (gamma/ai_revert.py) and
 // the action is marked `reverted` in the saved conversation, which tells
 // the model on the next turn (ai_context's replay). The rows that do it are
-// chat/AgentChanges.jsx.
+// chat/AgentChanges.jsx; "Revert all" covers the notes only.
 import { changePlace, isChange } from "./agentSteps.js";
 
 const REVERTIBLE = new Set(["edit", "create", "move", "delete"]);
+// The library changes that record a revert: a deleted folder or label, put
+// back with its pages filed in it again (gamma/ai_revert.py _plan_tree_delete).
+const LIBRARY_REVERTIBLE = new Set(["delete_folder", "delete_label"]);
 
-// A note change recorded for reverting (changes saved by an older version
-// have no `revert`).
+// A change recorded for reverting (changes saved by an older version have
+// no `revert`).
 function recorded(a) {
-  return isChange(a) && changePlace(a) === "notes" && REVERTIBLE.has(a.kind) && !!a.block_id && !!a.revert;
+  if (!isChange(a) || !a.block_id || !a.revert) return false;
+  return changePlace(a) === "notes" ? REVERTIBLE.has(a.kind) : LIBRARY_REVERTIBLE.has(a.tool);
 }
 
-// A note change this reply can still take back.
+// A change this reply can still take back.
 export function canRevert(a) {
   return recorded(a) && !a.reverted;
 }
@@ -37,9 +42,10 @@ export function forReplay(actions) {
 }
 
 // The indexes "Revert all" takes back, newest first: a later change to the
-// same note comes out before the one it was made on top of.
+// same note comes out before the one it was made on top of. It lists the
+// note changes only.
 export function revertOrder(actions = []) {
-  return actions.map((a, i) => (canRevert(a) ? i : -1)).filter((i) => i >= 0).reverse();
+  return actions.map((a, i) => (canRevert(a) && changePlace(a) === "notes" ? i : -1)).filter((i) => i >= 0).reverse();
 }
 
 // `messages` with the actions at `indexes` of the message `id` marked

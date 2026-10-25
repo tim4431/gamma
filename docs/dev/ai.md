@@ -1190,7 +1190,8 @@ What it can reach depends on where the chat is opened — every chat declares an
   tools reach the pages in that folder.
 - `"page"` — the page chat (`page_id` = the focused page, with or without a
   PDF): tools reach only that page — the reading tools plus the note-block
-  editors; the page-level organizers (list/rename/move) don't exist there.
+  editors; the page-level organizers (list/rename/move, folders and labels)
+  don't exist there.
 
 The request also carries `permissions`, the tool map of the chat's KIND with
 one state per permission (see below), and `granted`, the permissions this
@@ -1203,9 +1204,9 @@ scope) = plain chat. Among those mechanical lines: with a reading tool armed,
 the model is asked to link the pages it refers to as `[title](/?page=<id>)`,
 which the chat opens in place (details in [ai_tools.md](ai_tools.md)).
 
-The changing tools (rename, move, the note editors) are armed only when
-`auth.can_write` lets the request write: an editor or owner, and through an
-integration token only a write-scope one. A workspace viewer or a read-scope
+The changing tools (rename, move, folders and labels, the note editors) are
+armed only when `auth.can_write` lets the request write: an editor or
+owner, and through an integration token only a write-scope one. A workspace viewer or a read-scope
 token gets the reading tools only (the prompt then says changes are not
 available here), and `run_agent_tool` refuses a changing tool called anyway.
 
@@ -1239,10 +1240,15 @@ server, `chat/chatSettings.js` in the client):
 - **Off**: its tools are not offered, and a call is refused.
 
 Reading is allowed by default and changes ask: Save papers, Rename pages,
-Move pages, Restore deleted pages and Edit note blocks start at Ask. The server gives a permission the request
+Move pages, Restore deleted pages, Organize folders and labels and Edit
+note blocks start at Ask. The server gives a permission the request
 leaves out the same default, so a changing tool added later asks until the
 user allows it. **Use journal sign-ins** is part of fetching, not a call of
-its own, so it is only Allow or Off.
+its own, so it is only Allow or Off. **Delete folders and labels** is only
+Ask or Off: every deletion shows its card (`ai_permissions.ASK_ONLY`,
+`permStates` in the client). The server reads an Allow sent for it as Ask,
+never takes it from `granted`, and runs a card's `chat` or `always` answer
+as `once`.
 
 Settings → AI → Tool usage → Tools compares permissions in a table: named, explained
 rows grouped into **Read your library**, **Web research**, and **Make changes**,
@@ -1254,13 +1260,15 @@ sit below its description. Each column offers four presets:
 - **Read library**: library reading only.
 - **Read & search**: reading, web search and fetching.
 - **Ask before changes**, the default: also the changing tools, each asking first.
-- **Allow all**: everything, without asking.
+- **Allow all**: everything without asking, except deleting folders and
+  labels, which still asks.
 
 Individual changes show **Custom**. The stored map is account-synced. Its
 localStorage JSON is `gamma-ai-agent-perms` = `{folder, pdf, notes}` →
 `{list, read, block_read, view, search, web_search, web_read,
-publisher_cookies, save, rename, move, restore, block_edit}` → `"allow"` /
-`"ask"` / `"off"`, and a pre-kind flat map is applied to every kind on read.
+publisher_cookies, save, rename, move, restore, organize, organize_delete,
+block_edit}` → `"allow"` / `"ask"` / `"off"`, and a pre-kind flat map is
+applied to every kind on read.
 A stored boolean is the older on / off value (`normalizePerm`): `false` is
 Off, and `true` is the permission's default. So a change that was on asks,
 and reading stays allowed. The server reads a sent boolean as on / off,
@@ -1285,7 +1293,11 @@ still `search`), Search papers online (`web_search` → `search_papers`,
 read-only and described in [ai_tools.md](ai_tools.md), the web engine in its
 "search_web" section), Save papers (`save` → `save_paper`, in every chat
 kind), Rename pages, Move pages, Restore deleted pages (`restore` →
-`restore_page`, folder chats only), and Edit note blocks (one permission
+`restore_page`, folder chats only), Organize folders and labels
+(`organize` → `rename_folder`, `create_label`, `rename_label`,
+`label_page`, folder chats only), Delete folders and labels
+(`organize_delete` → `delete_folder`, `delete_label`, folder chats only, Ask
+or Off), and Edit note blocks (one permission
 for `edit_block`, `create_block`, `move_block`, `delete_block` and
 `clip_region`, which stores a picture for the notes). The "Read & search" preset (`chat/chatSettings.js` `READ_TOOLS`)
 includes the web permissions and the page viewer. **Use journal sign-ins**
@@ -1327,7 +1339,11 @@ A call of a tool whose permission is Ask waits for the user
    block has its `parent`, and `src_title` when it leaves its page. A
    saved paper has the folder it goes `to` and its source as the `diff`,
    plus `existed` and `page_id` when the library holds it already. A
-   restored page has the folders it goes back `to`.
+   restored page has the folders it goes back `to`. A folder or label
+   tool's preview has `title` (the path, the name, or the page's title) and
+   a `diff`. A deletion's preview also has the folder's or label's
+   `block_id`, `pages` / `page_count`, and a folder's `subfolders` /
+   `subfolder_count`, `chats` and `chat_folders` / `chat_folder_count`.
 3. The loop waits (`ai_permissions.wait_for`) for `POST
    /api/ai/approvals/{id}` with a decision: `once`, `chat`, `always` or
    `deny`, the last optionally with a `note` saying what to do instead. The
@@ -1335,9 +1351,14 @@ A call of a tool whose permission is Ask waits for the user
    only that account can answer, and only once.
 4. Allowed, the call runs through `run_agent_tool` like any other, and its
    action carries `approval` (the decision). `chat` and `always` also allow
-   the permission for the rest of this reply. Declined, or unanswered after
-   `APPROVAL_TIMEOUT` (10 minutes), the call is not made. Its action is an
-   error chip with `declined: true` and `approval: "deny"` or `"expired"`,
+   the permission for the rest of this reply, unless it is ask-only. An
+   ask-only call is planned again first, and runs only when it still names
+   the `block_id` its card showed; otherwise its action is an error chip,
+   and the model hears that the folder or label changed while the card
+   waited (`CHANGED_WHILE_ASKING`).
+   Declined, or unanswered after `APPROVAL_TIMEOUT` (10 minutes), the call
+   is not made. Its action is an error chip with `declined: true` and
+   `approval: "deny"` or `"expired"`,
    plus the page `title`, the `mode` and the `note`. The model is told that
    the user declined, and not to retry or work around it. With a note it is
    told to do what the note says instead.
@@ -1373,7 +1394,9 @@ the diff. Its four buttons are **Allow once** (primary), **Allow in this
 chat**, **Always allow** and **Don't allow** (ghost). Don't allow opens one
 line, "What should the assistant do instead? (optional)", with its own Don't
 allow (Enter) and Back (Escape). The buttons never take the focus
-themselves, so typing in the composer cannot answer a card.
+themselves, so typing in the composer cannot answer a card. An ask-only
+permission's card offers Allow once (`primary danger`) and Don't allow
+only, and does not raise the hint.
 
 - **Allow in this chat** is kept per account and conversation in this
   browser: localStorage `gamma-ai-chat-grants`, keyed by the conversation's
@@ -1458,8 +1481,13 @@ list/read/view/search/rename/move/edit/create, plus `error` with `error: true` f
 failed/blocked calls) that the chat saves in the message. A change also says
 what changed: `rename_page` / `move_page` carry `title` (the page's title
 before the call) and `from` / `to` (old and new title, old and new folder
-path, `""` = the library root), and the note tools their page's `title`. A
-change tool that changed nothing carries `noop: true`.
+path, `""` = the library root), and the note tools their page's `title`.
+The folder and label tools carry `title` (the folder's path, the label's
+name, or the labelled page's title), `from` / `to` on a rename, `added` /
+`removed` on `label_page`, and `count` (pages refiled), `chats` (a
+folder's) and `revert` on a deletion ([ai_tools.md](ai_tools.md) "Folders
+and labels" and "delete_folder / delete_label"). A change tool that changed
+nothing carries `noop: true`.
 
 The chat shows a reply's actions as one pill ("6 steps · listed, read 1
 page · 1 failed", `chat/agentSteps.js`). It expands to every call's chip:
@@ -1560,8 +1588,8 @@ call again before quoting or editing. The base prompt says the same, so a
 request to read, show or check something is answered from a fresh call, not
 last turn's outline (the agent's own edits change what `read_block`
 returns). A change the user reverted from its row (`reverted` on the
-action) gets a second note in front, `_REVERTED_NOTE`: the notes no longer
-hold it ([ai_tools.md](ai_tools.md) "Reverting a note change"). Results share `TOOL_REPLAY_BUDGET` chars newest-first
+action) gets a second note in front, `_REVERTED_NOTE`: the change is
+undone ([ai_tools.md](ai_tools.md) "Reverting a note change"). Results share `TOOL_REPLAY_BUDGET` chars newest-first
 (older ones elided), and `_messages` in `ai_protocols/anthropic.py` folds a plain user turn into a
 preceding tool_result turn to keep roles alternating. The client sends
 only what is replayed — each turn's `role`, `text` and `actions`, never

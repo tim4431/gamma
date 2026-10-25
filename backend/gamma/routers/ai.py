@@ -199,7 +199,8 @@ class AIChatRequest(BaseModel):
     # "ask" / "off", gamma/ai_permissions.py; a key left out allows reading
     # and asks before a change) — everything off degrades to a plain chat.
     # `granted` names the permissions this conversation allowed on an
-    # approval card ("Allow in this chat"): they run without asking.
+    # approval card ("Allow in this chat"): they run without asking (not an
+    # ask-only permission, `ai_permissions.ASK_ONLY`).
     # agent_system overrides the base agent prompt (the
     # scope/permission lines are always appended); tool_rounds overrides the
     # agent round budget and read_char_limit the per-read_page-call document
@@ -1922,15 +1923,16 @@ def ai_approval_answer(approval_id: str, payload: AIApprovalAnswer, request: Req
 class AIRevert(BaseModel):
     kind: Literal["edit", "create", "move", "delete"]
     block_id: str = Field(max_length=64)
-    revert: dict   # the action's `revert`, as the note tool recorded it
+    revert: dict   # the action's `revert`, as the tool recorded it
     force: bool = False
     redo: bool = False  # put a reverted change back
 
 
 @router.post("/ai/revert")
 def ai_revert_change(payload: AIRevert, request: Request):
-    """Take back one change the agent made to the notes, or with ``redo``
-    put a reverted one back, from its row under the reply
+    """Take back one change the agent made to the notes, or a folder or
+    label it deleted, or with ``redo`` put a reverted one back, from its
+    row under the reply
     (gamma/ai_revert.py): ``{page_id, noop}``. 409
     ``{detail, conflict, preview?}`` when the note changed since —
     ``preview`` is what ``force`` would do — or can't go there; 404 when it

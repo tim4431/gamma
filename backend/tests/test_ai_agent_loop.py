@@ -562,7 +562,8 @@ def test_chat_permissions_gate_tools_and_execution(org, monkeypatch):
     r = c.post("/api/ai/chat", json={"prompt": "rename stuff", "agent_scope": "folder",
                                      "folder": ids["readout"], "stream": True,
                                      "permissions": {"rename": False, "move": False, "save": False,
-                                                     "restore": False, "block_edit": False}})
+                                                     "restore": False, "organize": False,
+                                                     "organize_delete": False, "block_edit": False}})
     assert r.status_code == 200
     assert [t["name"] for t in seen["tools"]] == [
         "list_pages", "list_folders", "read_page", "read_block", "read_chats", "view_pdf_page",

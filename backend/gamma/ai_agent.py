@@ -83,6 +83,9 @@ DECLINED_SAYING = ('declined: the user did not allow this call, so nothing was c
 UNANSWERED = ("declined: the user did not answer the approval request in time, so nothing "
               "was changed. Do not repeat it; finish your reply and say what you would have "
               "changed.")
+CHANGED_WHILE_ASKING = ("error: while the approval card waited, the folder or label this call names "
+                        "became another one (a rename or a move), so nothing was deleted. Look it up "
+                        "again; call once more only if it should still go, and the user is asked again.")
 
 
 def step_event(name: str, call: dict) -> dict:
@@ -507,10 +510,12 @@ class ApprovalGate:
     (``gamma/ai_permissions.py``).
 
     Once runs the call; for the chat or always also allow that permission's
-    later calls of this reply; a decline, or no answer, leaves the call
+    later calls of this reply (not an ask-only permission's, whose every
+    call asks); a decline, or no answer, leaves the call
     unmade and tells the model why — with what to do instead when the user
     said it. A call that could not change anything is answered from its own
-    plan without asking anybody.
+    plan without asking anybody. An ask-only deletion runs only on the
+    folder or label its card showed.
     """
 
     def __init__(self, ws: str, scope: dict, user_id: str, stopped: threading.Event | None = None):
@@ -540,9 +545,17 @@ class ApprovalGate:
             decision, note = ai_permissions.wait_for(approval_id, self.stopped)
         if decision == "stopped":
             return None
-        if decision in ("chat", "always"):
+        if decision in ("chat", "always") and tool_permission(name) not in ai_permissions.ASK_ONLY:
             self.scope["permissions"][tool_permission(name)] = "allow"
         if decision in ai_permissions.ALLOWING:
+            if tool_permission(name) in ai_permissions.ASK_ONLY:
+                # A deletion goes only on the folder or label its card showed
+                # (``block_id``): while the card waited, the path or name it
+                # was called with may have come to name another one.
+                again, _ = approval_preview(self.ws, self.scope, name, args)
+                if again and again.get("block_id") != preview.get("block_id"):
+                    return CHANGED_WHILE_ASKING, {**settled_action(name, args, CHANGED_WHILE_ASKING),
+                                                  "approval": decision}
             result, action = run_agent_tool(self.ws, self.scope, name, args, allowed_tools=armed)
             return result, {**action, "approval": decision}
         # The chip names the refused change by its page's title (and a note

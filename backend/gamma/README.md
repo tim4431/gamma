@@ -79,7 +79,7 @@ chat_export.py     a chat conversation as Markdown with its pictures (docs/dev/c
 ai_tools.py        the agent's tools: one scope-agnostic registry
 ai_agent.py        the agent tool loop, its two user-facing pauses, and the helper a tool delegates to
 ai_permissions.py  the chat tools' Allow / Ask / Off states and the approvals a reply waits on
-ai_revert.py       taking back one change the agent made to the notes, and putting it back
+ai_revert.py       taking back one change the agent made to the notes, or a folder or label it deleted, and putting it back
 ai_web.py          the agent's scholarly reach: search_papers, related_papers, fetch_paper
 openalex.py        OpenAlex: a registry search_papers asks, the citation graph behind related_papers
 search_services.py the services behind the agent's web search (search_web)

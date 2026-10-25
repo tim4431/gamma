@@ -341,6 +341,16 @@ def delete_folder_shares(ws: str, folder_ids) -> int:
     return removed
 
 
+def shared_folders(ws: str, folder_ids) -> set[str]:
+    """The folders among ``folder_ids`` that have a share link: the agent
+    does not delete those (deleting a folder stops its share for good, and
+    sharing again mints another link)."""
+    with connect_users_db() as conn:
+        return {r[0] for r in conn.execute(
+            "SELECT folder FROM shares WHERE workspace_id = ? AND folder IN (SELECT value FROM json_each(?))",
+            (ws, json.dumps(sorted(folder_ids))))}
+
+
 # ---- folder shares (before the page routes: "folder" is a static segment) ---
 
 @router.post("/share/folder/{folder_id}")

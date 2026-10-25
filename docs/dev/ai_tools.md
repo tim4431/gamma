@@ -47,16 +47,21 @@ then on `/`, each name matched exactly, else ignoring case
 that starts with the folder's own path is read from there, any other as a
 path below it. A page chat reads a path from the top. A path several sibling folders share
 is an error naming each one's id and full path, so the model can pass the
-id. A path no folder has is an error for a read (`_find_folder`) and is
-made for `move_page` and `save_paper` (`_made`, `ops.ensure_filing`, only
-when the call runs: a preview makes nothing). Labels are named by name.
+id. A path no folder has is an error for a read (`_find_folder`), and for
+`rename_folder` and `delete_folder`. It is made for `move_page` and
+`save_paper` (`_made`, `ops.ensure_filing`, only when the call runs: a
+preview makes nothing). Labels are named by name (`_find_label`: exactly,
+else ignoring case; a name several labels share is refused). The folder
+and label tools read a label's name on one line (`_labels_called`), so a
+label an import kept with a run of spaces is found, not made a second time.
 
 Pages in Recently deleted are out of the tools' reach, the MCP adapter's
 included: they are not under `root`, and `_load_scoped_page` and
 `blocks_store.page_root_id` find no page for them or their blocks
 ([home_library.md](home_library.md) "Recently deleted"). Two folder-chat
 tools are the exception: `list_deleted` lists them and `restore_page` brings
-one back. The agent cannot delete pages.
+one back. The agent cannot delete pages, and deleting a folder or a label
+never deletes one.
 
 Attached library pages (`context_pages` in the tool scope) extend reading access
 beyond the current page or folder. `_scope_pages` combines the base scope and
@@ -95,6 +100,12 @@ to pages, PDF pages and blocks (`gamma_link`; the chat's results carry none,
 | `move_page` | Move pages | folder | File a page into a (sub)folder |
 | `list_deleted` | List pages | folder | List Recently deleted as far as the chat's folder reaches |
 | `restore_page` | Restore deleted pages | folder | Bring a page back from Recently deleted, filed where it was |
+| `rename_folder` | Organize folders and labels | folder | Rename a folder; a name a folder beside it has is refused; never a move |
+| `create_label` | Organize folders and labels | folder | Make a label with no pages (an existing name is reused) |
+| `rename_label` | Organize folders and labels | folder | Rename a label, where every page carrying it is in reach |
+| `label_page` | Organize folders and labels | folder | Put labels on a page or take them off, making a missing label |
+| `delete_folder` | Delete folders and labels | folder | Delete a folder and its subfolders, never their pages; always asks; the user can revert it |
+| `delete_label` | Delete folders and labels | folder | Delete a label and take it off its pages; always asks; the user can revert it |
 | `edit_block` | Edit note blocks | folder + page | Change one note block's markdown text: replace it, add to it, patch one passage, or rewrite the user's selection |
 | `create_block` | Edit note blocks | folder + page | Add a note block under a page or block, optionally after a sibling |
 | `move_block` | Edit note blocks | folder + page | Re-parent/reorder a note block (with its subtree) |
@@ -988,6 +999,95 @@ back `to`. The restore's action (kind `restore`) carries `page_id`, `title`
 and `to` (its folders). The chat lists it under "Changed in your library".
 Deleting pages is not offered.
 
+### Folders and labels (folder only)
+
+`rename_folder`, `create_label`, `rename_label` and `label_page` live under
+**Organize folders and labels** (`organize`, Ask by default). Each writes
+with client `ai`.
+
+- `rename_folder` is one `set` of the folder's name on the `folders` tree
+  (`apply_ops`). It touches no page, as the app's rename doesn't. It
+  refuses:
+  - the library root;
+  - a name with ` / `, so a rename is never read as a move;
+  - a name a folder beside it has (`blocks_store.named`, the app's
+    `findNamed` rule, because the server keeps no names apart);
+  - a folder outside reach.
+- `create_label` runs `ensure_filing(labels=…, client="ai")`. A name some
+  label has (ignoring case) is a no-op.
+- `rename_label` is one `set` on the `labels` tree. It refuses a name
+  another label has.
+- `label_page` is one `set` of the page's `labels`. It keeps the other
+  labels, drops ids that are no label any more (`existing_in`), and makes
+  a label it cannot find (`ensure_filing`, only when the call runs).
+
+Labels are library-wide, so reach works differently for them.
+`create_label` and `label_page` (on a page in reach) work in any folder
+chat. `rename_label` and `delete_label` work only when every page carrying
+the label is in reach (`_label_out_of_reach`). That is always true at the
+library root, and for a label on no page. A page in Recently deleted
+counts by the folders a restore puts it back in.
+
+Previews carry `title` (the folder's path, the label's name or the page's
+title) and a `diff`. A rename shows the word diff. `label_page` shows the
+page's labels: kept as `ctx`, removed as `del`, added as `ins`.
+
+Actions:
+
+- the renames: kind `rename`, with `title`, `from`, `to`;
+- `create_label`: kind `label`, with `title`, `to`;
+- `label_page`: kind `label`, with `page_id`, `title`, `added`, `removed`.
+
+Like `rename_page` and `move_page`, these are undone by another call and
+carry no `revert`.
+
+### delete_folder / delete_label (folder only)
+
+Their permission is **Delete folders and labels** (`organize_delete`). It
+is only Ask or Off (`ai_permissions.ASK_ONLY`), so every call shows its
+card. The card offers Allow once (in red) and Don't allow. Its preview
+carries the folder's or label's `block_id`. Once allowed, the gate plans
+the call again, and when its path or name names another block by then (a
+rename or a move while the card waited), nothing is deleted and the model
+is told so (`ai_agent.CHANGED_WHILE_ASKING`).
+
+Both read `ops.tree_deletion` for the card and the revert record, then run
+`ops.delete_tree`, the body of `DELETE /api/folders/{id}` and
+`/labels/{id}` (the app's "Keep pages"). The checks, the record and the
+deletion run under the tool's write lock, with client `ai`. Pages are
+never trashed.
+
+`delete_folder` refuses:
+
+- the library root;
+- the chat's own folder (one above it is out of reach anyway);
+- a folder outside reach;
+- a folder with a share link in its subtree (`routers/shares.shared_folders`),
+  because the deletion would stop the link for good.
+
+Both refuse a deletion whose revert record would not fit (`_tree_revert`:
+more than `_DELETE_REVERT_MAX` characters, some 5,800 pages, or more than
+`MAX_OPS` folders). The user deletes those in the app. So every deletion
+the agent makes can be reverted.
+
+The folder card shows:
+
+- the folder's path (`diff`);
+- its subfolders (`subfolders`, at most 20, in tree order, and
+  `subfolder_count`);
+- the pages that lose the filing and stay (`pages`, at most 20 titles in
+  library order, and `page_count`);
+- the folders whose AI chats move to the library chat's history
+  (`chat_folders`, at most 20, and `chat_folder_count`; `chats` counts the
+  conversations).
+
+`delete_label`'s card shows the name and the pages it comes off.
+
+The action has kind `delete`, with `block_id` (the folder or label),
+`title`, `count` (the pages refiled), `chats` (a folder's) and `revert`
+(`{tree, blocks, pages}`). The chat lists it under "Changed in your
+library", with a revert button ("Reverting a note change" below).
+
 ### edit_block / create_block / move_block (both scopes, one permission)
 
 The note editors, all under the single "Edit note blocks" permission.
@@ -1120,11 +1220,15 @@ embed: the ones in a picture's label line, `clip_region`'s result, and
 
 Deliberately not offered under any permission:
 
-- Deleting pages, folders or files. A note block is deleted only by
-  `delete_block`, which the user can revert.
-- Editing highlight anchors or labels, creating or renaming folders on
-  their own (a folder is made only as `move_page`'s or `save_paper`'s
-  target), and refiling except through `move_page`.
+- Deleting pages or files. A folder or a label is deleted only by
+  `delete_folder` / `delete_label`, which never delete a page, can only
+  Ask or be Off, and which the user can revert. A note block is deleted
+  only by `delete_block`, which the user can revert.
+- Deleting a shared folder (the user stops sharing it first), the chat's
+  own folder or one above it; editing highlight anchors; creating a folder
+  on its own (a folder is made only as `move_page`'s or `save_paper`'s
+  target); moving or reordering folders; and refiling except through
+  `move_page` and `label_page`.
 - Reading library pages outside the base scope and attached references, or
   editing pages outside the base scope. The server checks every call.
 - Reaching uploads other than the pictures a note embeds (`view_image`)
@@ -1148,10 +1252,11 @@ always a visible record of what the agent looked at and changed. One pill
 sums them up ("6 steps · listed, read 1 page · 1 failed") and expands to a
 line per call, its icon naming the action kind (`ACTION_ICONS` in
 `chat/AgentChanges.jsx`: list, book, search, eye, pen, quote, globe, download,
-file-plus, history, pencil, folder, plus). Each line expands to the
+file-plus, history, pencil, folder, plus, label). Each line expands to the
 arguments and the output the model got. Everything that changed is listed
 again under the pill: "Changed in your library" (renamed, filed, saved and
-restored pages) and "Changed in your notes" (edited, added and moved
+restored pages; renamed, made, applied and deleted folders and labels) and
+"Changed in your notes" (edited, added and moved
 blocks), each entry a link to the page or block. The note tools' actions carry their page's `title` for that list; a
 change tool that changed nothing is marked `noop` and not listed.
 
@@ -1171,6 +1276,7 @@ The note tools record what undoing and redoing their change needs, as
 | `create_block` | `after`: the text the block was made with; `parent` and `position`: where it went |
 | `move_block` | `parent` and `position`: where the block was; `to_parent` and `to_position`: where it went |
 | `delete_block` | `blocks`: every block of the subtree, parent first, as `[id, parent, position, content, properties]` |
+| `delete_folder` / `delete_label` | `tree`; `blocks` (as `delete_block`'s: the folder's subtree, or the label); `pages`: `{page id: the ids it carried}` |
 
 The chat saves the action with the reply. A revert sends it to
 `POST /api/ai/revert` (`gamma/ai_revert.py`), which plans and writes under
@@ -1182,6 +1288,17 @@ one write lock:
 | new block | deleting it | `filled`: it was typed in or has notes under it (`preview.children`) |
 | move | moving it back to the old parent at the old key, re-keyed if a sibling took it (across pages: `ops.move_across_pages`) | `moved`: it was moved on since |
 | deletion | inserting the subtree again with the same ids, parents and keys (a no-op when the block is back already); a redo deletes it again | `gone`: the parent it was under was deleted |
+| deleted folder or label | inserting the blocks again with the same ids, parents and keys, then filing the library pages that carried them again; a redo runs `ops.delete_tree` again | `gone`: the folder it was in was deleted, a folder or label of that name is there again, or (redo) the folder is shared now |
+
+A deleted folder's or label's row sits under "Changed in your library". It
+has a revert and a redo button but is not part of "Revert all". The
+folders' chats stay in the library chat's history, and a restored folder's
+creation time is the revert's. A page moved to Recently deleted after the
+deletion is not filed back: it lost the id in the deletion, and a revert
+cannot write to a trashed page. A redo deletes the folder as it is then,
+subfolders added since included (as `delete_block`'s redo deletes the
+notes added since), and a later revert puts back what the first deletion
+took.
 
 Typing elsewhere in an edited block survives the merge. So two edits to
 different parts of one block revert independently. The merge works on
