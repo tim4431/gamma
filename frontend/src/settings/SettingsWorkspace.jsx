@@ -10,22 +10,24 @@
 // The dialog (ManageWorkspaceDialog) is shared with the admin's Server pane
 // (SettingsWorkspacesAdmin.jsx), which adds access, quota, ownership, kind
 // conversion and join-as-owner in `admin` mode. Also exported from here:
-// useAccounts, cloudUsername, useCloudSignIn, useWorkspace (one workspace's
-// state + every call on it, incl. invitations by Gamma Cloud username), AccessRows,
-// StorageRow, MembersList, InviteDialog, NameDialog and the access tables;
-// the role tables and workspaceMeta (the switcher's one-line description)
-// are in workspaceRoles.js.
+// useAccounts, useWorkspace (one workspace's state + every call on it, incl.
+// its invitations by e-mail and by Gamma Cloud username), AccessRows,
+// StorageRow, MembersList, InviteDialog, NameDialog and the access tables,
+// and what every list of e-mail invitations shares (useEmailInvites,
+// looksLikeEmail, inviteExpiry, EmailInviteButtons); the role tables and
+// workspaceMeta (the switcher's one-line description) are in workspaceRoles.js.
 import React from "react";
 import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
-import { PaneHead, Section, Row, SubDialog, Field, DialogButtons, Empty, QuotaMeter, UnitInput, AccountPicker, Segmented, WorkspaceFolder } from "./SettingsKit";
+import { PaneHead, Section, Row, SubDialog, Field, DialogButtons, Empty, QuotaMeter, UnitInput, AccountPicker, PersonRow, Segmented, WorkspaceFolder } from "./SettingsKit";
 import { MirrorsSection, useMirrors } from "./SettingsMirrors";
 import { useSettingsRead } from "./settingsReads.js";
+import { parseStamp } from "../library/libraryUtils";
 import {
-  CheckIcon, DatabaseIcon, ExportIcon, FoldersIcon, GlobeIcon, HardDriveIcon, ImportIcon, LogOutIcon, PenIcon,
-  PlusIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon,
+  CheckIcon, DatabaseIcon, ExportIcon, FoldersIcon, GlobeIcon, HardDriveIcon, ImportIcon, LogOutIcon, MailIcon, PenIcon,
+  PlusIcon, RefreshIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon,
 } from "../shared/ui/Icons";
-import { T, t, tn } from "../shared/i18n/i18n.js";
+import { T, fmtDate, t, tn } from "../shared/i18n/i18n.js";
 import { ROLE_LABEL, ROLE_OPTIONS, workspaceMeta } from "./workspaceRoles.js";
 
 const ROLE_TEXT = { owner: t("you own it"), editor: t("you can edit"), viewer: t("you can view") };
@@ -40,20 +42,45 @@ export function useAccounts() {
   return data ? data.accounts || [] : error ? [] : null;
 }
 
-// A Gamma Cloud username as typed ("@Alice " → "alice"); the server checks
-// the rest (gamma/cloud_auth.py clean_username).
-export const cloudUsername = (text) => String(text || "").trim().replace(/^@/, "").toLowerCase();
+// Whether a workspace owner may invite someone by e-mail (GET
+// /api/server-config `cloud.email_invites.members`): this server
+// signs in through a Gamma Cloud client of its own, so a mailed link reaches
+// it, and lets new cloud accounts in (the provision and invited policies).
+// False on a server that does not say.
+export function useEmailInvites() {
+  return !!useSettingsRead("/server-config").data?.cloud?.email_invites?.members;
+}
 
-// Whether this server signs people in with Gamma Cloud (GET /api/server-config)
-// — what lets an owner invite someone by their cloud username.
-export function useCloudSignIn() {
-  return !!useSettingsRead("/server-config").data?.cloud?.enabled;
+// Whether a typed address is worth sending: no spaces, one @ and a dot in
+// the domain; the server checks the rest (gamma/email_invites.py).
+export const looksLikeEmail = (text) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(text || "").trim());
+
+// When a waiting e-mail invitation's link stops working.
+export const inviteExpiry = (entry) => t("expires {date}", { date: fmtDate(parseStamp(entry.expires_at), { dateStyle: "medium" }) });
+
+// A waiting e-mail invitation's two buttons, wherever it is listed: mail it
+// again (a new link; the one sent before stops working) and withdraw it.
+export function EmailInviteButtons({ email, busy, onResend, onWithdraw }) {
+  return (
+    <>
+      <button type="button" className="uiBtn sm iconSq" disabled={busy} onClick={onResend}
+        title={t("Send the invitation again")} aria-label={t("Send the invitation again")}>
+        <RefreshIcon size={16} />
+      </button>
+      <button type="button" className="uiBtn sm iconSq" disabled={busy} onClick={onWithdraw}
+        title={t("Withdraw the invitation to {who}", { who: email })} aria-label={t("Withdraw the invitation to {who}", { who: email })}>
+        <Trash2Icon size={16} />
+      </button>
+    </>
+  );
 }
 
 // One workspace as the Settings dialogs see it: GET /api/workspaces/{id}
 // (members + quota), plus every call on it. After a successful mutation the
 // workspace is READ AGAIN from the server (not patched from the response),
-// so the dialog always shows what is stored. Calls return the response, or
+// so the dialog always shows what is stored. After a 404 too: what the call
+// named went meanwhile (an invitation accepted or withdrawn elsewhere), so
+// its row leaves while the error says why. Calls return the response, or
 // null after setError.
 export function useWorkspace(wsId) {
   const [info, setInfo] = React.useState(null);
@@ -90,6 +117,7 @@ export function useWorkspace(wsId) {
       return d;
     } catch (err) {
       setError(err.message);
+      if (refresh && err.status === 404) await reload();
       return null;
     } finally {
       setBusy(false);
@@ -101,8 +129,11 @@ export function useWorkspace(wsId) {
     update: (patch) => call("", "PUT", patch),                // {name} | {default} | {kind} | {access, public_role} | {quota_mb}
     setRole: (username, role) => call(`/members/${encodeURIComponent(username)}`, "PUT", { role }),
     removeMember: (username) => call(`/members/${encodeURIComponent(username)}`, "DELETE"),
-    inviteCloud: (username, role) => call("/invites", "POST", { username, role }),   // by Gamma Cloud username
-    cancelInvite: (subject) => call(`/invites/${encodeURIComponent(subject)}`, "DELETE"),
+    cancelInvite: (subject) => call(`/invites/${encodeURIComponent(subject)}`, "DELETE"),   // a waiting one by Gamma Cloud username
+    inviteEmail: (email, role) => call("/invites", "POST", { email, role }),
+    setEmailRole: (id, role) => call("/invites", "POST", { invitation: id, role }),
+    resendEmail: (id) => call(`/email-invites/${encodeURIComponent(id)}/resend`, "POST"),
+    withdrawEmail: (id) => call(`/email-invites/${encodeURIComponent(id)}`, "DELETE"),
     destroy: () => call("", "DELETE", null, { refresh: false }),
   };
 }
@@ -175,16 +206,40 @@ export function StorageRow({ quota, me }) {
   );
 }
 
+// The roles an invitation by e-mail can carry (the server's INVITE_ROLES):
+// ownership goes only to someone already here.
+const EMAIL_ROLE_OPTIONS = ROLE_OPTIONS.filter(([r]) => r !== "owner");
+
 // The explicit members, each with a role menu and a remove button
 // (owners). `me` marks "you"; the last owner cannot go; leaving yourself
 // is an action row of the dialog, not a button on your own row. A member
 // whose Gamma Cloud username is not their name here (a `tim-2`) shows it
-// (`cloud`). Pending invitations by Gamma Cloud username (`pending: true`)
-// follow, tagged, with only a remove button (`onCancel`).
-export function MembersList({ info, me, canManage, busy, onSetRole, onRemove, onCancel }) {
+// (`cloud`). The invitations still waiting (`pending: true`) follow, tagged:
+// by Gamma Cloud username, with only a withdraw button (`onCancel`); by
+// e-mail (an `email`, no `username`), with their role, a resend (`onResend`)
+// and a withdraw (`onCancel` too). Only an owner's or an admin's payload
+// lists those by e-mail: nobody else gets the addresses.
+export function MembersList({ info, me, canManage, busy, onSetRole, onRemove, onCancel, onSetEmailRole, onResend }) {
   const members = info?.members || [];
   const owners = members.filter((m) => m.role === "owner" && !m.pending).length;
   return members.map((m) => {
+    if (m.email) {
+      return (
+        <PersonRow key={`email:${m.id}`} name={m.email} tag={t("invited")} icon={MailIcon}
+          sub={[ROLE_OPTIONS.find(([r]) => r === m.role)?.[1] || m.role,
+            m.added_by ? t("invited by {name}", { name: m.added_by }) : "", inviteExpiry(m)].filter(Boolean).join(" · ")}>
+          {canManage ? (
+            <>
+              <MenuSelect
+                value={m.role} label={t("Role")} options={EMAIL_ROLE_OPTIONS}
+                onChange={(r) => { if (r !== m.role) onSetEmailRole(m.id, r); }}
+              />
+              <EmailInviteButtons email={m.email} busy={busy} onResend={() => onResend(m)} onWithdraw={() => onCancel(m)} />
+            </>
+          ) : null}
+        </PersonRow>
+      );
+    }
     const self = m.username === me && !m.pending;
     const stuck = m.role === "owner" && owners <= 1;
     return (
@@ -215,7 +270,7 @@ export function MembersList({ info, me, canManage, busy, onSetRole, onRemove, on
             <button
               className="uiBtn sm iconSq" disabled={busy}
               title={m.pending
-                ? t("Withdraw the invitation to {username}", { username: m.username })
+                ? t("Withdraw the invitation to {who}", { who: m.username })
                 : t("Remove {username}", { username: m.username })}
               aria-label={t("Remove")}
               onClick={() => (m.pending ? onCancel(m) : onRemove(m.username))}
@@ -229,40 +284,40 @@ export function MembersList({ info, me, canManage, busy, onSetRole, onRemove, on
   });
 }
 
-// Invite: pick an account from the directory, choose a role. With `cloud`
-// (this server signs in with Gamma Cloud) a person can also be named by
-// their cloud username before they have an account here; that invitation
-// waits for their first sign-in and grants edit or view, never ownership.
-// onSubmit(username, role, via) — via is "local" or "cloud".
-const INVITE_VIA = [["local", t("On this server")], ["cloud", t("Gamma Cloud username")]];
-const CLOUD_ROLE_OPTIONS = ROLE_OPTIONS.filter(([r]) => r !== "owner");
+// Invite: pick an account from the directory, choose a role. With `email`
+// (useEmailInvites) a person with no account here can be named by their
+// address instead: a mail's link makes them a Gamma Cloud account or signs
+// them in with theirs, and they join through it as an editor or a viewer,
+// never an owner.
+// onSubmit(who, role, via) — via is "local" (a username) or "email".
+const INVITE_VIA = [["local", t("On this server")], ["email", t("E-mail")]];
 
-export function InviteDialog({ name, accounts, exclude, cloud, busy, error, onSubmit, onClose }) {
+export function InviteDialog({ name, accounts, exclude, email, busy, error, onSubmit, onClose }) {
   const [via, setVia] = React.useState("local");
   const [username, setUsername] = React.useState("");
-  const [cloudName, setCloudName] = React.useState("");
+  const [address, setAddress] = React.useState("");
   const [role, setRole] = React.useState("editor");
-  const byCloud = cloud && via === "cloud";
-  const who = byCloud ? cloudUsername(cloudName) : username;
-  const submit = () => { if (who && !busy) onSubmit(who, role, byCloud ? "cloud" : "local"); };
+  const byEmail = email && via === "email";
+  const who = byEmail ? (looksLikeEmail(address) ? address.trim() : "") : username;
+  const submit = () => { if (who && !busy) onSubmit(who, role, byEmail ? "email" : "local"); };
   function pickVia(next) {
     setVia(next);
-    if (next === "cloud" && role === "owner") setRole("editor");
+    if (next === "email" && role === "owner") setRole("editor");
   }
   return (
-    <SubDialog title={t("Invite to {name}", { name: name })} onClose={onClose} draft={{ username, cloudName, role }}>
+    <SubDialog title={t("Invite to {name}", { name: name })} onClose={onClose} draft={{ username, address, role }}>
       <div className="settingsForm">
-        {cloud ? (
+        {email ? (
           <Field label={t("Find by")}>
             <Segmented value={via} onChange={pickVia} options={INVITE_VIA} disabled={busy} />
           </Field>
         ) : null}
-        {byCloud ? (
-          <Field label={t("Gamma Cloud username")} hint={t("They join on their first sign-in here")}>
+        {byEmail ? (
+          <Field label={t("E-mail address")} hint={t("They get a link to join with a Gamma Cloud account")}>
             <input
-              className="aiKeyInput" type="text" autoFocus spellCheck={false} autoCapitalize="none"
-              placeholder={t("username")} value={cloudName}
-              onChange={(e) => setCloudName(e.target.value)}
+              className="aiKeyInput" type="email" autoFocus spellCheck={false} autoCapitalize="none"
+              placeholder="name@example.org" value={address}
+              onChange={(e) => setAddress(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
             />
           </Field>
@@ -271,11 +326,11 @@ export function InviteDialog({ name, accounts, exclude, cloud, busy, error, onSu
             <AccountPicker accounts={accounts} exclude={exclude} value={username} onChange={setUsername} autoFocus />
           </Field>
         )}
-        <Field label={t("Role")} hint={byCloud ? t("Editors write; viewers read") : t("Owners manage members; editors write; viewers read")}>
-          <MenuSelect value={role} label={t("Role")} options={byCloud ? CLOUD_ROLE_OPTIONS : ROLE_OPTIONS} block onChange={setRole} />
+        <Field label={t("Role")} hint={byEmail ? t("Editors write; viewers read") : t("Owners manage members; editors write; viewers read")}>
+          <MenuSelect value={role} label={t("Role")} options={byEmail ? EMAIL_ROLE_OPTIONS : ROLE_OPTIONS} block onChange={setRole} />
         </Field>
         {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
-        <DialogButtons footnote={who ? null : byCloud ? t("Type their Gamma Cloud username to continue.") : t("Pick an account to continue.")}>
+        <DialogButtons footnote={who ? null : byEmail ? t("Type their e-mail address to continue.") : t("Pick an account to continue.")}>
           <button className="uiBtn" onClick={onClose}>{t("Cancel")}</button>
           <button className="uiBtn primary" disabled={busy || !who} onClick={submit}>{t("Invite")}</button>
         </DialogButtons>
@@ -329,7 +384,7 @@ function WorkspacePage({ title, subtitle, action, onClose, children }) {
 // Elsewhere it is a SubDialog.
 export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setStatus, canOpen, onOpen, onClose, onLeft, personalCount, inline = false }) {
   const ws = useWorkspace(wsId);
-  const cloudSignIn = useCloudSignIn();
+  const emailInvites = useEmailInvites();
   const [renaming, setRenaming] = React.useState(false);
   const [inviting, setInviting] = React.useState(false);
   const info = ws.info;
@@ -348,31 +403,36 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
     if (d) { setRenaming(false); done(t("Renamed to {name}.", { name: d.name })); }
   }
 
-  async function invite(username, role, via) {
+  // `who` is a username, or with `via` "email" an address, which is always
+  // mailed: whoever has it, someone here too, joins through the link.
+  async function invite(who, role, via) {
     const verb = role === "viewer" ? t("view") : role === "editor" ? t("edit") : t("manage");
-    if (via === "cloud") {
-      const d = await ws.inviteCloud(username, role);
-      if (!d) return;
-      setInviting(false);
-      done(d.invited?.member
-        ? t("{member} can now {verb} {name}.", { member: d.invited.member, verb, name: d.name })
-        : t("Invited {username}; they can {verb} {name} once they sign in with Gamma Cloud.", { username, verb, name: d.name }));
+    if (via === "email") {
+      if (await ws.inviteEmail(who, role)) { setInviting(false); done(t("Invitation sent to {email}.", { email: who })); }
       return;
     }
-    const d = await ws.setRole(username, role);
-    if (d) { setInviting(false); done(t("{username} can now {verb} {name}.", { username, verb, name: d.name })); }
+    const d = await ws.setRole(who, role);
+    if (d) { setInviting(false); done(t("{username} can now {verb} {name}.", { username: who, verb, name: d.name })); }
   }
 
+  // A waiting invitation withdrawn: by Gamma Cloud username (its subject),
+  // or by e-mail (its id; the mailed link stops working).
   function cancelInvite(m) {
+    const who = m.email || m.username;
     confirm({
       title: T("Withdraw invitation"),
-      message: t("Withdraw the invitation to {username} for \"{name}\"?", { username: m.username, name: info?.name }),
+      message: t("Withdraw the invitation to {who} for \"{name}\"?", { who, name: info?.name }),
       confirmLabel: t("Withdraw"), danger: true,
       onConfirm: async () => {
-        const d = await ws.cancelInvite(m.subject);
-        if (d) done(t("Withdrew the invitation to {username}.", { username: m.username }));
+        const d = await (m.email ? ws.withdrawEmail(m.id) : ws.cancelInvite(m.subject));
+        if (d) done(t("Withdrew the invitation to {who}.", { who }));
       },
     });
+  }
+
+  async function resendInvite(m) {
+    const d = await ws.resendEmail(m.id);
+    if (d) done(t("Sent the invitation to {email} again.", { email: m.email }));
   }
 
   function remove(username) {
@@ -501,7 +561,8 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
                   </button>
                 ) : null}
               >
-                <MembersList info={info} me={me} canManage={manages} busy={ws.busy} onSetRole={ws.setRole} onRemove={remove} onCancel={cancelInvite} />
+                <MembersList info={info} me={me} canManage={manages} busy={ws.busy} onSetRole={ws.setRole} onRemove={remove}
+                  onCancel={cancelInvite} onSetEmailRole={ws.setEmailRole} onResend={resendInvite} />
                 {info.access === "public" && !explicitMember ? (
                   <div className="settingsPaneHint">{t("You are in because the workspace is public — everyone on this server is.")}</div>
                 ) : manages ? (
@@ -542,7 +603,7 @@ export function ManageWorkspaceDialog({ wsId, me, admin, accounts, confirm, setS
       ) : null}
       {inviting ? (
         <InviteDialog
-          name={title} accounts={accounts} exclude={members.map((m) => m.username)} cloud={cloudSignIn}
+          name={title} accounts={accounts} exclude={members.map((m) => m.username)} email={emailInvites}
           busy={ws.busy} error={ws.error} onSubmit={invite} onClose={() => { setInviting(false); ws.setError(""); }}
         />
       ) : null}

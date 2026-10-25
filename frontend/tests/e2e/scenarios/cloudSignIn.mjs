@@ -22,6 +22,11 @@ export async function cloudSignInScenarios(env) {
   }
 
   const cloudRow = (page) => page.locator('.setRow[data-setting="Gamma Cloud"]');
+  // What the link in an invitation's mail ends in, for an invitation the fake
+  // account server was asked to mail: its continue redirect to the inviting
+  // Gamma's /api/auth/cloud/start with the landing path and the link secret.
+  const accept = (gamma, invitation) =>
+    `${gamma.base}/api/auth/cloud/start?next=${encodeURIComponent(invitation.next)}&invite=${invitation.invite_id}`;
   const BENEFITS = "Publish pages for free and carry your settings to your other servers";
 
   // Off, the account pane still says what Gamma Cloud gives: a member sees it
@@ -136,40 +141,56 @@ export async function cloudSignInScenarios(env) {
     }
   });
 
-  // Invitations by cloud username (docs/dev/workspaces.md): the invite editor
-  // offers the second way only while cloud sign-in is on. The lookup runs on
-  // the inviter's own linked Gamma Cloud grant, and this admin has none, so
-  // the invitation is refused with a message; the lookup through a real
-  // grant, the pending row and its claim on first sign-in are
-  // backend/tests/test_pending_memberships.py.
-  await step("cloud sign-in: a workspace owner can name a Gamma Cloud username", async () => {
+  // Invitations by e-mail (docs/dev/workspaces.md): the invite editor offers
+  // them only where a mailed link reaches this server — cloud sign-in on
+  // through a client of its own, not the desktop app's, under a policy that
+  // lets new cloud accounts in — and no longer offers a Gamma Cloud username.
+  // The account server mails it on the inviter's own linked Gamma Cloud
+  // grant, and this admin has none, so the invitation is refused with a
+  // message; the mail through a real grant, the Manage page's row of one
+  // that waits and the link that redeems it are the last steps below and
+  // backend/tests/test_email_invites.py.
+  await step("cloud sign-in: a workspace owner invites by e-mail only where a mailed link reaches the server", async () => {
     const lab = await admin.api("/api/workspaces", { method: "POST", body: { name: "Cloud invite lab", kind: "shared" } });
     const ctx = await admin.context(browser);
+    const before = (await admin.api("/api/admin/settings")).cloud;
+    const offered = async () => (await (await fetch(`${server.base}/api/server-config`)).json()).cloud.email_invites;
     try {
       const page = await openPage(ctx, server.base);
       const openInvite = async () => {
         await openSettings(page, "Workspaces");
         await page.locator(".aiProvRow").filter({ hasText: "Cloud invite lab" }).getByRole("button", { name: "Manage" }).click();
         await page.getByRole("button", { name: "Invite", exact: true }).click();
-        return page.getByRole("dialog", { name: "Invite to Cloud invite lab", exact: true });
+        const dialog = page.getByRole("dialog", { name: "Invite to Cloud invite lab", exact: true });
+        await dialog.getByText("Anyone with an account on this server", { exact: true }).waitFor();
+        return dialog;
+      };
+      const noOtherWay = async (dialog, when) => {
+        for (const name of ["E-mail", "Gamma Cloud username"]) {
+          assertEq(await dialog.getByRole("button", { name, exact: true }).count(), 0, `no "${name}" choice ${when}`);
+        }
       };
       // off: only accounts on this server
-      let dialog = await openInvite();
-      await dialog.waitFor();
-      assertEq(await dialog.getByRole("button", { name: "Gamma Cloud username", exact: true }).count(), 0, "no cloud choice while sign-in is off");
-      // on: the second way to name a person
-      await admin.api("/api/admin/settings", { method: "PUT", body: { cloud_issuer: "https://account.example" } });
+      await noOtherWay(await openInvite(), "while sign-in is off");
+      // on, through the desktop app's client: a mailed link could not reach this server
+      await admin.api("/api/admin/settings", { method: "PUT", body: { cloud_issuer: "https://account.example", cloud_policy: "invited" } });
+      assertEq(JSON.stringify(await offered()), JSON.stringify({ server: false, members: false }), "the desktop client invites nobody by e-mail");
       await page.reload();
-      dialog = await openInvite();
-      await dialog.getByRole("button", { name: "Gamma Cloud username", exact: true }).click();
-      const field = dialog.getByRole("textbox", { name: /Gamma Cloud username/ });
-      await field.fill("@Alice");
+      await noOtherWay(await openInvite(), "on the desktop client");
+      // a client of its own: the second way to name a person
+      await admin.api("/api/admin/settings", { method: "PUT", body: { cloud_client_id: "gc_e2e", cloud_client_secret: "e2e-secret" } });
+      assertEq(JSON.stringify(await offered()), JSON.stringify({ server: true, members: true }), "its own client invites by e-mail");
+      await page.reload();
+      const dialog = await openInvite();
+      await dialog.getByRole("button", { name: "E-mail", exact: true }).click();
+      await dialog.getByRole("textbox", { name: "E-mail address" }).fill("alice@example.org");
       await dialog.getByRole("button", { name: "Invite", exact: true }).click();
       await dialog.locator(".aiKeysError").filter({ hasText: "Link your own Gamma Cloud account" }).waitFor();
-      assertEq((await admin.api(`/api/workspaces/${lab.id}/invites`)).invites.length, 0, "nothing pending after a refused lookup");
+      assertEq((await admin.api(`/api/workspaces/${lab.id}/invites`)).email_invites.length, 0, "nothing waits after a refused mail");
       await assertNoProblems(page, [/POST \/api\/workspaces\/[^/]+\/invites -> 503/, /Link your own Gamma Cloud account/]);
     } finally {
-      await admin.api("/api/admin/settings", { method: "PUT", body: { cloud_issuer: "" } });
+      await admin.api("/api/admin/settings", { method: "PUT",
+        body: { cloud_issuer: "", cloud_client_id: "", cloud_client_secret: "", cloud_policy: before.policy } });
       await ctx.close();
     }
   });
@@ -242,20 +263,23 @@ export async function cloudSignInScenarios(env) {
     }
   });
 
-  // A page shared by Gamma Cloud username, and requests to join
+  // A page shared by e-mail, and requests to join
   // (docs/dev/cloud_accounts.md "Requests to join"): a second Gamma that
-  // signs people in through the fake account server and admits invited
-  // people only. Its owner links their own Gamma Cloud account (the lookup
-  // runs on it) and names a newcomer in the Share popover's Gamma Cloud box;
-  // the newcomer signs in from the link's gate and lands on the page.
-  // Someone nobody invited asks to join instead: the gate says so, the
-  // request heads the popover's people with Approve, and approved they get
-  // in at their next sign-in. A sign-in from the login page asks the admin,
-  // whose Server pane lists it.
-  await step("cloud sign-in: a page shared by Gamma Cloud username, and requests to join", async () => {
+  // signs people in through the fake account server, with a client of its
+  // own so it may invite by e-mail, and admits invited people only. Its owner
+  // links their own Gamma Cloud account (the mail goes out on it) and invites
+  // a newcomer's address in the Share popover's E-mail box. Only the mailed
+  // link lets her in: signed in from the page link's gate with a Gamma Cloud
+  // account of that very address, she asks to join like anyone, and the
+  // mail's link then lands her on the page. Someone nobody invited asks to
+  // join: the gate says so, the request heads the popover's people with
+  // Approve, and approved they get in at their next sign-in. A sign-in from
+  // the login page asks the admin, whose Server pane lists it.
+  await step("cloud sign-in: a page shared by e-mail, and requests to join", async () => {
     const cloud = new FakeCloud();
     await cloud.start();
-    const lab = new Server({ env: { GAMMA_CLOUD_ISSUER: cloud.issuer, GAMMA_CLOUD_POLICY: "invited" } });
+    const lab = new Server({ env: { GAMMA_CLOUD_ISSUER: cloud.issuer, GAMMA_CLOUD_CLIENT_ID: "gc_e2e",
+      GAMMA_CLOUD_CLIENT_SECRET: "e2e-secret", GAMMA_CLOUD_POLICY: "invited" } });
     const contexts = [];
     const context = async (account) => {
       const ctx = account ? await account.context(browser) : await browser.newContext({ viewport: { width: 1280, height: 860 } });
@@ -272,32 +296,54 @@ export async function cloudSignInScenarios(env) {
       const { token } = await owner.api(`/api/share/${pg.id}`, { method: "POST", body: { audience: "list", role: "view" } });
       const link = `${lab.base}/?share=${token}`;
 
-      // the owner links their Gamma Cloud account on the way to the page, and invites by cloud username
+      // the owner links their Gamma Cloud account on the way to the page, and invites by e-mail
       cloud.person("sub-lab-owner", "lab-owner");
       const page = await openPage(await context(owner),
         `${lab.base}/api/auth/cloud/start?link=1&next=${encodeURIComponent(`/?page=${pg.id}&ws=${owner.ws}`)}`);
       await page.click("button[aria-label='Share']");
       const pop = page.locator(".sharePopover");
       const people = pop.locator(".setSectionGroup", { hasText: "Who has access" });
-      await people.getByRole("button", { name: "Gamma Cloud", exact: true }).click();
-      cloud.person("sub-ann", "ann-cloud");
-      await pop.getByRole("textbox", { name: "Gamma Cloud username" }).fill("@Ann-Cloud");
+      await people.getByRole("button", { name: "E-mail", exact: true }).click();
+      await pop.getByRole("textbox", { name: "E-mail address" }).fill("ann-cloud@example.org");
       await pop.getByRole("button", { name: "Invite", exact: true }).click();
-      const annRow = pop.locator(".aiProvRow", { hasText: "ann-cloud" });
-      await annRow.getByText("pending", { exact: true }).waitFor();
+      const annRow = pop.locator(".aiProvRow", { hasText: "ann-cloud@example.org" });
+      await annRow.getByText("invited", { exact: true }).waitFor();
+      const mailed = cloud.invitations.at(-1);
+      assertEq(`${mailed?.kind} ${mailed?.what} ${mailed?.next}`, `page Cloud shared paper /?share=${token}`,
+        "the mail names the page and lands on its link");
       await annRow.getByRole("button", { name: "Edit", exact: true }).click();
       await until(() => owner.api(`/api/share-settings/${pg.id}`).then((s) => s.pending[0]?.role === "edit"),
         { what: "the waiting invitation's role" });
+      // mailed again: the same invitation, a new mail. A double click mails
+      // once, as a second mail would kill the link in the first: the row's
+      // buttons wait for the first answer.
+      const resends = [];
+      page.on("request", (r) => { if (r.method() === "POST" && r.url().endsWith("/resend")) resends.push(r.url()); });
+      await annRow.getByRole("button", { name: "Send the invitation again", exact: true }).dblclick();
+      await page.getByRole("status").filter({ hasText: "Sent the invitation to ann-cloud@example.org again." }).waitFor();
+      assertEq(resends.length, 1, "a double click mails once");
+      assertEq(cloud.invitations.length, 2, "the invitation mailed again");
+      assertEq(cloud.invitations[1].invite_id, mailed.invite_id, "mailed again under the same link");
       await assertNoProblems(page);
 
-      // the newcomer: the link's gate offers Gamma Cloud, and the sign-in lands on the page
+      // the newcomer: the link's gate offers Gamma Cloud, but a sign-in there
+      // under the invited address only asks to join, as her address admits nothing
+      cloud.person("sub-ann", "ann-cloud");
       const ann = await openPage(await context(), link);
       await ann.getByText("Sign in to open this shared page", { exact: true }).waitFor({ timeout: 15000 });
       await ann.getByText("asks the person who shared this page to let you in", { exact: false }).waitFor();
       await ann.getByRole("link", { name: "Sign in with Gamma Cloud", exact: true }).click();
+      await ann.getByRole("status").filter({ hasText: "Asked to join." }).waitFor();
+      const asked = await owner.api(`/api/share-settings/${pg.id}`);
+      assertEq(`${asked.users.length} ${asked.pending.length}`, "0 1", "her address claimed nothing: the invitation still waits");
+      // the mail's link lands her on the page
+      await ann.goto(accept(lab, mailed));
       await until(async () => (await ann.textContent(".readOnlyTitle").catch(() => "")).includes("Cloud shared paper"),
-        { what: "the page after the cloud sign-in" });
-      assertEq((await owner.api(`/api/share-settings/${pg.id}`)).users[0]?.name, "ann-cloud", "the invitation was claimed");
+        { what: "the page after following the mailed link" });
+      const claimed = await owner.api(`/api/share-settings/${pg.id}`);
+      assertEq(`${claimed.users[0]?.name} ${claimed.users[0]?.role}`, "ann-cloud edit", "the invitation was claimed, with its role");
+      assertEq(claimed.pending.length, 0, "and waits no more");
+      assertEq(claimed.requests.length, 0, "her request to join went with it");
       await assertNoProblems(ann, gate);
 
       // someone nobody invited asks to join: the gate says so
@@ -364,6 +410,169 @@ export async function cloudSignInScenarios(env) {
       await cyd.getByRole("link", { name: "Sign in with Gamma Cloud", exact: true }).click();
       await cyd.waitForSelector(".folderNewBtn", { timeout: 15000 });
       await assertNoProblems(cyd);
+    } finally {
+      for (const ctx of contexts) await ctx.close();
+      await lab.stop();
+      await cloud.stop();
+    }
+  });
+
+  // Invitations by e-mail redeemed through their link (docs/dev/cloud_accounts.md):
+  // a Gamma that signs people in through a client of its own and admits
+  // invited people only. Its admin, linked to Gamma Cloud (the mail goes out
+  // on that grant), invites one address to the server from Settings → Users,
+  // withdraws another there, invites a third to a shared workspace from its
+  // Manage page (its role changed, mailed again, withdrawn), and a fourth to
+  // a page from its Share popover; the fake account server keeps what it
+  // was asked to mail and to cancel. Each newcomer then follows what
+  // the mail's link ends in — the account server's continue redirect to
+  // /api/auth/cloud/start with the landing path and the invitation's link
+  // secret — signed in to Gamma Cloud under another address than the
+  // invited one, since the link alone admits, and lands with access: an
+  // account here, and the page. The popover, still listing the page's
+  // invitation, finds it used up and reads its people again. The newcomer's
+  // own address, invited there, is mailed like anyone's, and its link keeps
+  // the role she has.
+  await step("cloud sign-in: an invitation by e-mail lets a newcomer in through its link", async () => {
+    const cloud = new FakeCloud();
+    await cloud.start();
+    const lab = new Server({ env: { GAMMA_CLOUD_ISSUER: cloud.issuer, GAMMA_CLOUD_CLIENT_ID: "gc_e2e",
+      GAMMA_CLOUD_CLIENT_SECRET: "e2e-secret", GAMMA_CLOUD_POLICY: "invited" } });
+    const contexts = [];
+    const context = async (account) => {
+      const ctx = account ? await account.context(browser) : await browser.newContext({ viewport: { width: 1280, height: 860 } });
+      contexts.push(ctx);
+      return ctx;
+    };
+    try {
+      await lab.start();
+      await lab.manage("create-user", "mail-admin", "mail-admin-pw");
+      await lab.manage("set-admin", "mail-admin", "on");
+      const host = await new Account(lab, "mail-admin", "mail-admin-pw").login();
+      const team = await host.api("/api/workspaces", { method: "POST", body: { name: "Mailed lab", kind: "shared" } });
+      const pg = await host.api("/api/pages", { method: "POST", body: { title: "Mailed paper" } });
+      const { token } = await host.api(`/api/share/${pg.id}`, { method: "POST", body: { audience: "list", role: "view" } });
+      const sent = (email) => cloud.invitations.findLast((i) => i.email === email);
+
+      // the admin links their Gamma Cloud account on the way in, and invites two addresses to the server
+      cloud.person("sub-mail-admin", "mail-admin");
+      const page = await openPage(await context(host),
+        `${lab.base}/api/auth/cloud/start?link=1&next=${encodeURIComponent(`/?ws=${host.ws}`)}`);
+      await openSettings(page, "Users");
+      const dialog = page.getByRole("dialog", { name: "Invite by e-mail", exact: true });
+      for (const email of ["dana@elsewhere.org", "fay@elsewhere.org"]) {
+        await page.getByRole("button", { name: "Invite by e-mail…", exact: true }).click();
+        await dialog.getByRole("textbox", { name: "E-mail address" }).fill(email);
+        await dialog.getByRole("button", { name: "Send", exact: true }).click();
+        await dialog.waitFor({ state: "detached" });
+        await page.locator(".aiProvRow", { hasText: email }).getByText("invited by mail-admin", { exact: false }).waitFor();
+      }
+      const toServer = sent("dana@elsewhere.org");
+      assertEq(`${toServer?.kind} ${toServer?.next} ${toServer?.server_url}`, `server / ${lab.base}`,
+        "an invitation to the server, at this server's address");
+      // one withdrawn: its link is cancelled at the account server
+      const fayRow = page.locator(".aiProvRow", { hasText: "fay@elsewhere.org" });
+      await fayRow.getByRole("button", { name: "Withdraw the invitation to fay@elsewhere.org", exact: true }).click();
+      await page.locator(".confirmModal").getByRole("button", { name: "Withdraw", exact: true }).click();
+      await fayRow.waitFor({ state: "detached" });
+      await until(() => cloud.cancelled.some((c) => c.invite_id === sent("fay@elsewhere.org").invite_id),
+        { what: "the withdrawn invitation cancelled at the account server" });
+      await assertNoProblems(page);
+
+      // a third to a shared workspace, as a viewer, from its Manage page
+      await settingsNav(page, "Workspaces").click();
+      await page.locator(".aiProvRow").filter({ hasText: "Mailed lab" }).getByRole("button", { name: "Manage" }).click();
+      await page.getByRole("button", { name: "Invite", exact: true }).click();
+      const invite = page.getByRole("dialog", { name: "Invite to Mailed lab", exact: true });
+      await invite.getByRole("button", { name: "E-mail", exact: true }).click();
+      await invite.getByRole("textbox", { name: "E-mail address" }).fill("gus@elsewhere.org");
+      await invite.getByRole("button", { name: "Role", exact: true }).click();
+      await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: "View only", exact: true }).click();
+      await invite.getByRole("button", { name: "Invite", exact: true }).click();
+      await invite.waitFor({ state: "detached" });
+      const gusRow = page.locator(".aiProvRow", { hasText: "gus@elsewhere.org" });
+      await gusRow.getByText("invited", { exact: true }).waitFor();
+      await gusRow.locator(".aiProvDesc").filter({ hasText: "View only" }).waitFor();
+      const toTeam = sent("gus@elsewhere.org");
+      assertEq(`${toTeam?.kind} ${toTeam?.what} ${toTeam?.next}`, `workspace Mailed lab /?ws=${team.id}`,
+        "an invitation to the workspace, landing in it");
+      // its role changed: no mail
+      await gusRow.getByRole("button", { name: "Role", exact: true }).click();
+      await page.locator(".uiSelectMenu").getByRole("menuitemradio", { name: "Can edit", exact: true }).click();
+      await gusRow.locator(".aiProvDesc").filter({ hasText: "Can edit" }).waitFor();
+      assertEq((await host.api(`/api/workspaces/${team.id}/invites`)).email_invites[0]?.role, "editor", "the role it waits with");
+      // mailed again under the same link
+      await gusRow.getByRole("button", { name: "Send the invitation again", exact: true }).click();
+      await until(() => cloud.invitations.filter((i) => i.email === "gus@elsewhere.org").length === 2,
+        { what: "the workspace's invitation mailed again" });
+      assertEq(sent("gus@elsewhere.org").invite_id, toTeam.invite_id, "mailed again under the same link");
+      // withdrawn: its link is cancelled at the account server
+      await gusRow.getByRole("button", { name: "Withdraw the invitation to gus@elsewhere.org", exact: true }).click();
+      await page.locator(".confirmModal").getByRole("button", { name: "Withdraw", exact: true }).click();
+      await gusRow.waitFor({ state: "detached" });
+      await until(() => cloud.cancelled.some((c) => c.invite_id === toTeam.invite_id),
+        { what: "the workspace's invitation cancelled at the account server" });
+      assertEq((await host.api(`/api/workspaces/${team.id}/invites`)).email_invites.length, 0, "nothing waits any more");
+      await assertNoProblems(page);
+
+      // and a fourth to the page, from its Share popover
+      await page.goto(`${lab.base}/?page=${pg.id}&ws=${host.ws}`);
+      await page.click("button[aria-label='Share']");
+      const pop = page.locator(".sharePopover");
+      await pop.locator(".setSectionGroup", { hasText: "Who has access" }).getByRole("button", { name: "E-mail", exact: true }).click();
+      await pop.getByRole("textbox", { name: "E-mail address" }).fill("eve@elsewhere.org");
+      await pop.getByRole("button", { name: "Invite", exact: true }).click();
+      await pop.locator(".aiProvRow", { hasText: "eve@elsewhere.org" }).getByText("invited", { exact: true }).waitFor();
+      const toPage = sent("eve@elsewhere.org");
+      assertEq(`${toPage?.kind} ${toPage?.what} ${toPage?.next}`, `page Mailed paper /?share=${token}`,
+        "an invitation to the page, landing on its link");
+      await assertNoProblems(page);
+
+      // each newcomer follows the mail's link
+      cloud.person("sub-dana", "dana-cloud");
+      const dana = await openPage(await context(), accept(lab, toServer));
+      await dana.waitForSelector(".folderNewBtn", { timeout: 15000 });
+      assert((await host.api("/api/admin/users")).users.some((u) => u.username === "dana-cloud"), "the invitation made her an account");
+      assertEq((await host.api("/api/admin/invitations")).invitations.length, 0, "and was used up");
+      await assertNoProblems(dana);
+
+      cloud.person("sub-eve", "eve-cloud");
+      const eve = await openPage(await context(), accept(lab, toPage));
+      await until(async () => (await eve.textContent(".readOnlyTitle").catch(() => "")).includes("Mailed paper"),
+        { what: "the page after following the link" });
+      const shared = await host.api(`/api/share-settings/${pg.id}`);
+      assertEq(shared.users.map((u) => `${u.name} ${u.role}`).join(", "), "eve-cloud view", "the invitation became her access");
+      assertEq(shared.pending.length, 0, "and waits no more");
+      await assertNoProblems(eve);
+
+      // the admin's popover still lists that invitation: mailed again, it is
+      // gone, and the popover reads its people again under the line saying why
+      const eveRow = pop.locator(".aiProvRow", { hasText: "eve@elsewhere.org" });
+      await eveRow.getByRole("button", { name: "Send the invitation again", exact: true }).click();
+      await pop.locator(".aiKeysError").filter({ hasText: "no such invitation" }).waitFor();
+      await eveRow.waitFor({ state: "detached" });
+      const eveUser = pop.locator(".aiProvRow", { hasText: "eve-cloud" });
+      await eveUser.getByRole("button", { name: "View", exact: true, pressed: true }).waitFor();
+      // her own address invited there waits and is mailed like anyone's;
+      // its link keeps the Edit she was given
+      await eveUser.getByRole("button", { name: "Edit", exact: true }).click();
+      await until(() => host.api(`/api/share-settings/${pg.id}`).then((s) => s.users[0]?.role === "edit"), { what: "eve's role" });
+      await pop.getByRole("textbox", { name: "E-mail address" }).fill("eve-cloud@example.org");
+      await pop.getByRole("button", { name: "Invite", exact: true }).click();
+      await page.getByRole("status").filter({ hasText: "Invitation sent to eve-cloud@example.org." }).waitFor();
+      await pop.locator(".aiProvRow", { hasText: "eve-cloud@example.org" }).getByText("invited", { exact: true }).waitFor();
+      const toEve = sent("eve-cloud@example.org");
+      assertEq(`${toEve?.kind} ${toEve?.next}`, `page /?share=${token}`, "her own address is mailed the page's link");
+      const waiting = await host.api(`/api/share-settings/${pg.id}`);
+      assertEq(waiting.users.map((u) => `${u.name} ${u.role}`).join(", "), "eve-cloud edit", "the invitation changes nothing yet");
+      await assertNoProblems(page, [/POST \/api\/share-settings\/[^/]+\/email-invites\/[^/]+\/resend -> 404/]);
+      const eveAgain = await openPage(await context(), accept(lab, toEve));
+      await until(async () => (await eveAgain.textContent(".readOnlyTitle").catch(() => "")).includes("Mailed paper"),
+        { what: "the page after following her own address's link" });
+      const after = await host.api(`/api/share-settings/${pg.id}`);
+      assertEq(after.users.map((u) => `${u.name} ${u.role}`).join(", "), "eve-cloud edit", "an invitation by e-mail lowers no one");
+      assertEq(after.pending.length, 0, "and its link was used up");
+      await assertNoProblems(eveAgain);
     } finally {
       for (const ctx of contexts) await ctx.close();
       await lab.stop();

@@ -3,7 +3,11 @@
 // and, nested under each account row, its personal workspaces (from
 // /api/admin/workspaces) with Open / Manage (the workspace dialog from
 // settingsWorkspace.jsx in admin mode). Shared workspaces are not per
-// account, so they stay in Settings → Server.
+// account, so they stay in Settings → Server. Under the accounts, Invite by
+// e-mail has Gamma Cloud mail someone who is not here yet a link to make a
+// Gamma Cloud account (or sign in with theirs) and join this server, and the
+// Invitations section lists the ones still waiting, each with a resend and a
+// withdraw (/api/admin/invitations; docs/dev/cloud_accounts.md).
 //
 // Non-admins get this pane too, as "You": a single read-only row for
 // themselves. /api/admin/* is admin-only, so their row is built from the
@@ -12,11 +16,12 @@
 // for admins, Settings → Server), not here.
 import React from "react";
 import { API, apiJson, fmtBytes, getExpectedUser, setExpectedUser } from "../shared/lib/utils";
-import { PaneHead, Section, Row, SubDialog, Field, UnitInput, Empty, QuotaMeter, PasswordInput } from "./SettingsKit";
+import { PaneHead, Section, Row, SubDialog, Field, DialogButtons, UnitInput, Empty, QuotaMeter, PasswordInput, PersonRow } from "./SettingsKit";
 import { CloudIdentityRow } from "./SettingsCloudSignIn";
-import { ManageWorkspaceDialog, useAccounts } from "./SettingsWorkspace";
+import { EmailInviteButtons, ManageWorkspaceDialog, inviteExpiry, looksLikeEmail, useAccounts } from "./SettingsWorkspace";
 import { useSettingsRead } from "./settingsReads.js";
-import { BookIcon, HardDriveIcon, PenIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon } from "../shared/ui/Icons";
+import { formatRelativeTime } from "../library/libraryUtils";
+import { BookIcon, HardDriveIcon, MailIcon, PenIcon, ShieldIcon, Trash2Icon, UserIcon, UsersIcon } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { T, t } from "../shared/i18n/i18n.js";
 
@@ -34,6 +39,7 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
   const [busy, setBusy] = React.useState(false);
   const [edit, setEdit] = React.useState(null); // {original, username, password, is_admin, max_upload_mb, quota_mb}
   const [addForm, setAddForm] = React.useState(null); // {username, password, is_admin}
+  const [inviteForm, setInviteForm] = React.useState(null); // {email}
   const [manage, setManage] = React.useState(null); // workspace id being managed
   const listWorkspaces = isAdmin && !selfOnly;
   const defaults = useSettingsRead(isAdmin ? "/admin/settings" : null).data; // {max_upload_mb, quota_mb} server-wide
@@ -41,6 +47,10 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
     if (!isAdmin) refreshQuota?.(); // the self row's storage meter comes from /api/quota
   }, [isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
   const adminWorkspaces = useSettingsRead(listWorkspaces ? "/admin/workspaces" : null);
+  // {invitations, available, reason}: the waiting invitations to this server
+  // by e-mail, and whether one can be sent now (else why not)
+  const invitations = useSettingsRead(isAdmin && !selfOnly ? "/admin/invitations" : null);
+  const invites = invitations.data;
   // /api/admin/workspaces, personal ones only
   const wsRows = adminWorkspaces.data ? (adminWorkspaces.data.workspaces || []).filter((w) => w.personal)
     : adminWorkspaces.error ? [] : null;
@@ -101,6 +111,55 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
     } finally {
       setBusy(false);
     }
+  }
+
+  // The invitations by e-mail: every call answers the list again, with
+  // whether one can be sent now. Returns the answer, or null after setError;
+  // a 404 (the invitation was accepted, withdrawn elsewhere or expired)
+  // reads the list again, so its row leaves while the error says why.
+  async function invitationsCall(path, method, body) {
+    setBusy(true);
+    setError("");
+    try {
+      const d = await apiJson(`${API}/admin/invitations${path}`, {
+        method,
+        ...(body ? { headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) } : {}),
+      });
+      invitations.set(d);
+      return d;
+    } catch (err) {
+      setError(err.message);
+      if (err.status === 404) await invitations.reload().catch(() => {});
+      return null;
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sendInvite() {
+    const email = inviteForm.email.trim();
+    if (!await invitationsCall("", "POST", { email })) return;
+    setStatus(t("Invitation sent to {email}.", { email }));
+    setInviteForm(null);
+  }
+
+  async function resendInvite(e) {
+    if (await invitationsCall(`/${encodeURIComponent(e.id)}/resend`, "POST")) {
+      setStatus(t("Sent the invitation to {email} again.", { email: e.email }));
+    }
+  }
+
+  function withdrawInvite(e) {
+    confirm({
+      title: T("Withdraw invitation"),
+      message: t("Withdraw the invitation to {email}? The link in their mail stops working.", { email: e.email }),
+      confirmLabel: t("Withdraw"), danger: true,
+      onConfirm: async () => {
+        if (await invitationsCall(`/${encodeURIComponent(e.id)}`, "DELETE")) {
+          setStatus(t("Withdrew the invitation to {who}.", { who: e.email }));
+        }
+      },
+    });
   }
 
   // Two separate editors per account: credentials (rename/password/privilege)
@@ -204,6 +263,7 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
   }
 
   const closeEdit = () => { setEdit(null); setError(""); };
+  const closeInvite = () => { setInviteForm(null); setError(""); };
 
   function accountDialog() {
     const u = edit.original;
@@ -404,9 +464,49 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
           <button className="uiBtn" onClick={() => { setError(""); setEdit(null); setAddForm({ username: "", password: "", is_admin: false }); }}>
             {t("+ Add user")}
           </button>
+          {invites ? (
+            <button className="uiBtn" disabled={!invites.available}
+              title={invites.available ? t("Mail someone a link to join this server with a Gamma Cloud account") : invites.reason}
+              onClick={() => { setError(""); setEdit(null); setInviteForm({ email: "" }); }}>
+              {t("Invite by e-mail…")}
+            </button>
+          ) : null}
         </div>
       ) : null}
-      {error && !edit && !addForm ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
+      {inviteForm ? (
+        <SubDialog title={t("Invite by e-mail")} draft={inviteForm} onClose={closeInvite}>
+          <div className="settingsForm">
+            <Field label={t("E-mail address")}
+              hint={t("They get a link to make a Gamma Cloud account, or to sign in with theirs, and then join this server.")}>
+              <input
+                className="aiKeyInput" type="email" spellCheck={false} autoCapitalize="none" autoFocus
+                placeholder="name@example.org" value={inviteForm.email}
+                onChange={(e) => setInviteForm({ email: e.target.value })}
+                onKeyDown={(e) => { if (e.key === "Enter" && looksLikeEmail(inviteForm.email) && !busy) sendInvite(); }}
+              />
+            </Field>
+            {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
+            <DialogButtons footnote={looksLikeEmail(inviteForm.email) ? null : t("Type their e-mail address to continue.")}>
+              <button className="uiBtn" onClick={closeInvite}>{t("Cancel")}</button>
+              <button className="uiBtn primary" disabled={busy || !looksLikeEmail(inviteForm.email)} onClick={sendInvite}>
+                <MorphText>{busy ? t("Sending…") : t("Send")}</MorphText>
+              </button>
+            </DialogButtons>
+          </div>
+        </SubDialog>
+      ) : null}
+      {isAdmin && !selfOnly && invites?.invitations?.length ? (
+        <Section title={t("Invitations")}>
+          {invites.invitations.map((e) => (
+            <PersonRow key={e.id} name={e.email} icon={MailIcon}
+              sub={[e.invited_by ? t("invited by {name}", { name: e.invited_by }) : "",
+                e.mailed_at ? t("sent {time}", { time: formatRelativeTime(e.mailed_at) }) : "", inviteExpiry(e)].filter(Boolean).join(" · ")}>
+              <EmailInviteButtons email={e.email} busy={busy} onResend={() => resendInvite(e)} onWithdraw={() => withdrawInvite(e)} />
+            </PersonRow>
+          ))}
+        </Section>
+      ) : null}
+      {error && !edit && !addForm && !inviteForm ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
     </>
   );
 }

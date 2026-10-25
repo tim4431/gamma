@@ -6363,10 +6363,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function removeShareUser(name) {
     updateShareSettings({ users: (shareSettings?.users || []).filter((u) => u.name !== name) });
   }
-  // People named by Gamma Cloud (docs/dev/api.md "Shares"): an invitation by
-  // cloud username (to view), a waiting one's role changed or withdrawn, a
-  // request to join approved (an invitation by its subject) or declined.
-  // Each answers the share's settings; a refusal shows in the popover.
+  // People with no account here (docs/dev/api.md "Shares"): an invitation by
+  // e-mail (to view; it waits until its mailed link is followed, even when
+  // someone here has that address), a waiting one's role changed, its mail
+  // sent again or withdrawn; a waiting invitation by Gamma Cloud username's
+  // role changed or withdrawn; a request to join approved (an invitation by
+  // its subject) or declined. Each answers the share's settings; a refusal
+  // shows in the popover.
   async function shareCloudCall(path, method, body) {
     if (!shareTarget || !shareSettings?.token) return false;
     try {
@@ -6375,13 +6378,31 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       } : { method }));
       return true;
     } catch (err) {
-      setShareError(err.message); // e.g. "no Gamma Cloud account is named …"
+      setShareError(err.message); // e.g. "That is not an e-mail address."
+      // A 404: what the row names went meanwhile (an invitation accepted,
+      // withdrawn elsewhere or expired), so the row would only fail again.
+      // The people are read again straight into the settings, as
+      // applyShareSettings would also clear the line that says why.
+      if (err.status === 404) {
+        try { setShareSettings(await apiJson(shareApi(shareTarget, "share-settings"))); } catch { /* the line stands */ }
+      }
       return false;
     }
   }
+  const emailInvite = (id) => `/email-invites/${encodeURIComponent(id)}`;
   const shareCloudInvites = {
-    enabled: !!serverConfig?.cloud?.enabled,
-    onInvite: (username) => shareCloudCall("/invites", "POST", { username, role: "view" }),
+    email: !!serverConfig?.cloud?.email_invites?.members,
+    onInviteEmail: async (email) => {
+      const ok = await shareCloudCall("/invites", "POST", { email, role: "view" });
+      if (ok) setStatus(t("Invitation sent to {email}.", { email }));
+      return ok;
+    },
+    onSetEmailRole: (id, role) => shareCloudCall("/invites", "POST", { invitation: id, role }),
+    onResendEmail: async (id) => {
+      const email = shareSettings?.pending?.find((p) => p.id === id)?.email;
+      if (await shareCloudCall(`${emailInvite(id)}/resend`, "POST")) setStatus(t("Sent the invitation to {email} again.", { email }));
+    },
+    onWithdrawEmail: (id) => shareCloudCall(emailInvite(id), "DELETE"),
     onSetRole: (subject, role) => shareCloudCall("/invites", "POST", { subject, role }),
     onWithdraw: (subject) => shareCloudCall(`/invites/${encodeURIComponent(subject)}`, "DELETE"),
     onApprove: (subject) => shareCloudCall("/invites", "POST", { subject, role: "view" }),

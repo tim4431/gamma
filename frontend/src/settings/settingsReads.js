@@ -28,7 +28,7 @@ const LOG_START = "/admin/logs?after=0";
 export const PANE_READS = {
   account: ({ admin, signedIn }) => [admin && "/admin/users", admin && "/admin/settings",
     signedIn && "/auth/cloud/status", signedIn && "/mirrors"],
-  users: () => ["/admin/users", "/admin/settings", "/admin/workspaces"],
+  users: () => ["/admin/users", "/admin/settings", "/admin/workspaces", { path: "/admin/invitations", later: true }],
   workspaces: ({ signedIn }) => ["/workspaces/mine", signedIn && "/mirrors", { path: "/accounts", later: true },
     { path: "/server-config", later: true }],
   backups: ({ admin }) => [{ path: "/workspaces/mine", then: (d) => (d?.workspaces || []).map((w) => backupsOf(w.id)) },
