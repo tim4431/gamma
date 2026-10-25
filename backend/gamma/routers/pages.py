@@ -1,5 +1,6 @@
 """Page-first endpoints (/api/pages*): create a page, look pages up by file,
-make a page from a stored markdown file, attach or detach a page's PDF. A
+make a page from a stored markdown file, attach, replace or detach a
+page's PDF. A
 page is a root block that may CARRY a PDF; the PDF is an action on an
 existing page, not the way pages come into being. (``POST
 /api/blocks/by-doc/{doc_id}`` is the lookup-or-create BY ATTACHMENT path for
@@ -34,7 +35,8 @@ from ..blocks_store import (
 from ..db import connect_pages_db, safe_doc_id
 from ..markdown_zip_import import markdown_page
 from ..storage import find_upload_file
-from ..ops import after_commit, apply_ops, props_patch
+from ..ops import MAX_OPS, OpError, after_commit, apply_batches, apply_ops, props_patch
+from .imports import originals_gone
 
 router = APIRouter(prefix="/api", tags=["pages"])
 
@@ -151,18 +153,11 @@ def page_from_file(payload: FromFile, request: Request):
     return {"page": block_to_dict(row), "created": True, "imported": result["imported"]}
 
 
-@router.post("/pages/{page_id}/attachment")
-def attach_pdf(page_id: str, payload: AttachRequest, request: Request):
-    """Attach a PDF to an existing page that has none. Body: ``doc_id``
-    (validated shape only — like ``by-doc``, a URL-opened PDF's id is the URL
-    hash and the file is fetched lazily by the proxy) and/or ``source_url``,
-    plus an optional ``original_filename``. 409 when the page already carries
-    an attachment, or when another page already carries this ``doc_id``
-    (``{"detail", "page_id"}`` so the client can offer to open it). While the
-    title is still automatic ("Untitled"/empty) it becomes the file name (or
-    URL tail) and is marked ``auto_title`` for the metadata worker.
-    Returns the updated block."""
-    ws = require_ws(request, write=True)
+def _attachment_body(payload: AttachRequest) -> tuple[str, str]:
+    """The checked ``(doc_id, source_url)`` of an attach or replace body:
+    ``doc_id`` is validated in shape only (like ``by-doc``, a URL-opened
+    PDF's id is the URL hash and the proxy fetches the file lazily), and
+    one of the two is required."""
     doc_id = (payload.doc_id or "").strip()
     source_url = (payload.source_url or "").strip()
     if doc_id:
@@ -172,32 +167,126 @@ def attach_pdf(page_id: str, payload: AttachRequest, request: Request):
             raise HTTPException(status_code=400, detail="invalid doc_id")
     if not doc_id and not source_url:
         raise HTTPException(status_code=400, detail="doc_id or source_url required")
+    return doc_id, source_url
+
+
+def _held_elsewhere(conn, doc_id: str):
+    """The 409 for a ``doc_id`` a page carries already (``{"detail",
+    "page_id"}``, so the client can offer to open that page), else None.
+    Callers ask only for a ``doc_id`` the page itself does not carry, so
+    any page found is another."""
+    other = page_for_doc(conn, doc_id) if doc_id else None
+    if other:
+        return JSONResponse(status_code=409, content={
+            "detail": "attachment belongs to another page", "page_id": other[0]})
+    return None
+
+
+def _attachment_op(page: dict, doc_id: str, source_url: str, original_filename: str) -> tuple[dict, str, dict, bool]:
+    """The op that makes ``doc_id`` / ``source_url`` / ``original_filename``
+    the page's attachment, whatever it carried before, with the page's
+    title and properties after it. While the title is still automatic
+    ("Untitled"/empty) it becomes the file name (or URL tail) and is marked
+    ``auto_title``, the marker metadata may replace (same semantics as
+    get_or_create_doc_page; an explicit rename clears it). Any other title
+    stays. When the file changes (another ``doc_id`` or address than the
+    page showed, ``page_attachment``), a failed metadata lookup's
+    ``meta_error`` goes: that lookup read the file the page carried, and
+    the new one is looked up again. → ``(op, title, properties, file
+    changed)``; an op whose ``props`` patch is empty and that has no
+    ``content`` changes nothing."""
+    before = page_attachment(page["properties"])
+    props = {k: v for k, v in page["properties"].items() if k not in ATTACHMENT_KEYS}
+    attachment, auto = attachment_props(doc_id, source_url, original_filename)
+    props.update(attachment)
+    after = page_attachment(props)
+    moved = before is None or (before["id"], before["url"]) != (after["id"], after["url"])
+    if moved:
+        props.pop("meta_error", None)
+    content = page["content"]
+    if not content.strip() or content.strip() == "Untitled":
+        content = auto or content
+        props["auto_title"] = content
+    op = {"op": "set", "id": page["id"], "props": props_patch(page["properties"], props)}
+    if content != page["content"]:
+        op["content"] = content
+    return op, content, props, moved
+
+
+@router.post("/pages/{page_id}/attachment")
+def attach_pdf(page_id: str, payload: AttachRequest, request: Request):
+    """Attach a PDF to an existing page that has none. Body: ``doc_id``
+    and/or ``source_url``, plus an optional ``original_filename``
+    (``_attachment_body``). 409 when the page already carries an attachment
+    (``PUT`` replaces one), or when another page already carries this
+    ``doc_id`` (``_held_elsewhere``). An automatic title becomes the file
+    name (``_attachment_op``). Returns the updated block."""
+    ws = require_ws(request, write=True)
+    doc_id, source_url = _attachment_body(payload)
     with connect_pages_db(ws) as conn:
         # The checks below and the write as one step: two pages attaching the
         # same PDF at once can't both pass "no other page carries it".
         write_lock(conn)
         page = _load_page(conn, page_id)
-        props = dict(page["properties"])
-        if page_attachment(props):
+        if page_attachment(page["properties"]):
             raise HTTPException(status_code=409, detail="page already has an attachment")
-        if doc_id:
-            other = page_for_doc(conn, doc_id)  # this page has none, so any hit is another
-            if other:
-                return JSONResponse(status_code=409, content={
-                    "detail": "attachment belongs to another page", "page_id": other[0]})
-        attachment, auto = attachment_props(doc_id, source_url, payload.original_filename)
-        props.update(attachment)
-        content = page["content"]
-        if not content.strip() or content.strip() == "Untitled":
-            # Same marker semantics as get_or_create_doc_page: metadata may
-            # replace an automatic title, an explicit rename clears the marker.
-            content = auto or content
-            props["auto_title"] = content
-        op = {"op": "set", "id": page_id, "props": props_patch(page["properties"], props)}
-        if content != page["content"]:
-            op["content"] = content
+        conflict = _held_elsewhere(conn, doc_id)
+        if conflict:
+            return conflict
+        op, content, props, _moved = _attachment_op(page, doc_id, source_url, payload.original_filename)
         result = after_commit(ws, conn, apply_ops(conn, page_id, [op], actor=actor_of(request)))
     return {**page, "content": content, "properties": props, "updated_at": result["at"]}
+
+
+@router.put("/pages/{page_id}/attachment")
+def replace_pdf(page_id: str, payload: AttachRequest, request: Request):
+    """Make this PDF the page's attachment, in place of the one it carries
+    (a new version of the file: a paper compiled again from its TeX). Body
+    and 409s as ``POST``'s; a page without an attachment gets this one as
+    ``POST`` would give it. The page keeps its id, title, notes and
+    highlights, and the highlights stay where they were on their pages.
+    The same attachment again changes nothing.
+
+    When the file changes (whatever the page showed it from: a ``doc_id``,
+    or only a ``source_url`` as on a duplicated document page), the blocks
+    imported from the old file's embedded annotations are marked gone from
+    the file in the same transaction (``imports.originals_gone``), so PDF
+    export draws them again, and a failed metadata lookup's marker goes
+    (``_attachment_op``). The old file is no longer the page's: its search
+    rows and manifest go now, and unless something else references it the
+    file is purged after 30 days (gamma/upload_gc.py). Returns the updated
+    block."""
+    ws = require_ws(request, write=True)
+    doc_id, source_url = _attachment_body(payload)
+    with connect_pages_db(ws) as conn:
+        write_lock(conn)  # the checks and the write as one step, like attach_pdf
+        try:
+            page = _load_page(conn, page_id)
+            old = str(page["properties"].get("doc_id") or "")
+            conflict = _held_elsewhere(conn, doc_id) if doc_id != old else None
+            if conflict:
+                conn.rollback()
+                return conflict
+            had = page_attachment(page["properties"]) is not None
+            op, content, props, moved = _attachment_op(page, doc_id, source_url, payload.original_filename)
+            if not op["props"] and "content" not in op:
+                conn.rollback()  # nothing to write: let go of the lock
+                return page
+            marks = originals_gone(conn, page_id) if had and moved else []
+            batches = [(page_id, [op])] + [(page_id, marks[i:i + MAX_OPS]) for i in range(0, len(marks), MAX_OPS)]
+            try:
+                results = apply_batches(conn, batches, actor=actor_of(request))
+            except OpError as e:
+                raise HTTPException(status_code=e.status, detail=e.detail)
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        for result in results:
+            after_commit(ws, conn, result)
+        if old and old != doc_id:
+            pdf_index.purge_unused(ws, conn)
+    return {**page, "content": content, "properties": props, "updated_at": results[0]["at"]}
 
 
 @router.delete("/pages/{page_id}/attachment")

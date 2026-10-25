@@ -298,6 +298,20 @@ def test_export_pdf_endpoint(guest):
     assert str(obj["/T"]) == guest_name()
 
 
+def _annotated_pdf(pages=1):
+    """A PDF carrying one embedded highlight and one area square, the same
+    two (same pages, kinds and rects: the same import keys) whatever
+    ``pages`` makes of the rest of its bytes."""
+    area_pos = _position(x1=50, y1=300, x2=250, y2=400)
+    area_pos["area"] = True
+    annotated, written = annotate_pdf(_blank_pdf(pages=pages), [
+        {"position": _position(), "color": "rgba(170, 235, 170, 0.65)", "note": "kept as block"},
+        {"position": area_pos, "color": "rgba(155, 205, 255, 0.65)", "note": "figure"},
+    ])
+    assert written == 2
+    return annotated
+
+
 def test_import_annotations_strip_rewrites_pdf(guest):
     """strip: true removes the embedded annotations (highlights AND area
     squares) from the stored file after importing them as blocks, so they
@@ -305,15 +319,7 @@ def test_import_annotations_strip_rewrites_pdf(guest):
     export writes them again instead of assuming they're still embedded."""
     from PyPDF2 import PdfReader
 
-    area_pos = _position(x1=50, y1=300, x2=250, y2=400)
-    area_pos["area"] = True
-    annotated, written = annotate_pdf(_blank_pdf(), [
-        {"position": _position(), "color": "rgba(170, 235, 170, 0.65)", "note": "kept as block"},
-        {"position": area_pos, "color": "rgba(155, 205, 255, 0.65)", "note": "figure"},
-    ])
-    assert written == 2
-
-    up = guest.post("/api/uploads", files={"file": ("a.pdf", annotated, "application/pdf")})
+    up = guest.post("/api/uploads", files={"file": ("a.pdf", _annotated_pdf(), "application/pdf")})
     assert up.status_code == 200, up.text
     doc_id, source_url = up.json()["doc_id"], up.json()["source_url"]
     page = make_page(guest, "Strip me", properties={"doc_id": doc_id, "source_url": source_url})
@@ -352,6 +358,113 @@ def test_import_annotations_strip_rewrites_pdf(guest):
     subtypes = sorted(str(a.get_object()["/Subtype"])
                       for a in PdfReader(io.BytesIO(r.content)).pages[0]["/Annots"])
     assert subtypes == ["/Highlight", "/Square"]
+
+
+def _uploaded(guest, data, name="a.pdf"):
+    up = guest.post("/api/uploads", files={"file": (name, data, "application/pdf")})
+    assert up.status_code == 200, up.text
+    return up.json()["doc_id"]
+
+
+def _imported(guest, page_id):
+    return [b for b in guest.get(f"/api/blocks/{page_id}/children").json()["children"]
+            if b["properties"].get("imported_annot")]
+
+
+def test_replacing_the_pdf_marks_imported_annotations_gone(guest):
+    """The blocks imported from the old file's embedded annotations lose
+    their originals with it: replacing the page's PDF marks them
+    annot_stripped, so export writes them into the new file."""
+    old = _uploaded(guest, _annotated_pdf(pages=3))  # bytes of its own: the strip test strips its file
+    page = make_page(guest, "Replace me", properties={"doc_id": old})
+    r = guest.post("/api/import/pdf-annotations", json={"block_id": page["id"], "doc_id": old})
+    assert r.json() == {"ok": True, "found": 2, "imported": 2, "stripped": 0}
+    assert not any(b["properties"].get("annot_stripped") for b in _imported(guest, page["id"]))
+    # the file draws them, so export skips them
+    assert guest.get(f"/api/pages/{page['id']}/export-pdf").headers["x-annotations-written"] == "0"
+
+    new = _uploaded(guest, _blank_pdf(pages=2), "b.pdf")
+    r = guest.put(f"/api/pages/{page['id']}/attachment", json={"doc_id": new})
+    assert r.status_code == 200, r.text
+    assert all(b["properties"].get("annot_stripped") is True for b in _imported(guest, page["id"]))
+    r = guest.get(f"/api/pages/{page['id']}/export-pdf")
+    assert r.status_code == 200, r.text
+    assert r.headers["x-annotations-written"] == "2"
+
+
+def test_import_of_the_new_file_takes_the_mark_off_what_it_holds_again(guest):
+    """A replacement file that carries the same annotations draws them again:
+    its import adds no block and takes annot_stripped off, so export does
+    not write them twice; a stripping import marks them again."""
+    old = _uploaded(guest, _annotated_pdf(pages=4))
+    page = make_page(guest, "Same marks", properties={"doc_id": old})
+    guest.post("/api/import/pdf-annotations", json={"block_id": page["id"], "doc_id": old})
+    new = _uploaded(guest, _annotated_pdf(pages=5), "b.pdf")
+    guest.put(f"/api/pages/{page['id']}/attachment", json={"doc_id": new})
+    assert all(b["properties"].get("annot_stripped") for b in _imported(guest, page["id"]))
+
+    r = guest.post("/api/import/pdf-annotations", json={"block_id": page["id"], "doc_id": new})
+    assert r.json() == {"ok": True, "found": 2, "imported": 0, "stripped": 0}
+    blocks = _imported(guest, page["id"])
+    assert len(blocks) == 2 and not any("annot_stripped" in b["properties"] for b in blocks)
+    assert guest.get(f"/api/pages/{page['id']}/export-pdf").headers["x-annotations-written"] == "0"
+
+    r = guest.post("/api/import/pdf-annotations", json={"block_id": page["id"], "doc_id": new, "strip": True})
+    assert r.json() == {"ok": True, "found": 2, "imported": 0, "stripped": 2}
+    assert all(b["properties"].get("annot_stripped") is True for b in _imported(guest, page["id"]))
+    assert guest.get(f"/api/pages/{page['id']}/export-pdf").headers["x-annotations-written"] == "2"
+
+
+def test_replacing_a_pdf_shown_by_address_marks_its_imported_annotations(guest):
+    """A duplicated document page shows the original's file by address
+    (``source_url`` alone, no ``doc_id``) and holds copies of its imported
+    blocks: replacing that file marks them too."""
+    original = _uploaded(guest, _annotated_pdf(pages=6))
+    page = make_page(guest, "Original", properties={"doc_id": original})
+    guest.post("/api/import/pdf-annotations", json={"block_id": page["id"], "doc_id": original})
+    copy = make_page(guest, "Copy", properties={"source_url": f"/api/uploads/{original}.pdf"})
+    kids = [{"id": f"copy{i}", "content": b["content"], "properties": b["properties"], "children": []}
+            for i, b in enumerate(_imported(guest, page["id"]))]
+    assert guest.put(f"/api/blocks/{copy['id']}/children", json={"blocks": kids}).status_code == 200
+    new = _uploaded(guest, _blank_pdf(pages=6), "b.pdf")
+    r = guest.put(f"/api/pages/{copy['id']}/attachment", json={"doc_id": new})
+    assert r.status_code == 200, r.text
+    marks = [b["properties"].get("annot_stripped") for b in _imported(guest, copy["id"])]
+    assert marks == [True, True]
+    assert guest.get(f"/api/pages/{copy['id']}/export-pdf").headers["x-annotations-written"] == "2"
+
+
+def test_an_import_of_the_old_file_leaves_the_marks(guest):
+    """Only the page's own file says what it holds: an import naming the
+    file the page carried before (a tab that has not caught up, an import
+    still running) takes no mark off."""
+    old = _uploaded(guest, _annotated_pdf(pages=7))
+    page = make_page(guest, "Old import", properties={"doc_id": old})
+    guest.post("/api/import/pdf-annotations", json={"block_id": page["id"], "doc_id": old})
+    new = _uploaded(guest, _blank_pdf(pages=7), "b.pdf")
+    guest.put(f"/api/pages/{page['id']}/attachment", json={"doc_id": new})
+    r = guest.post("/api/import/pdf-annotations", json={"block_id": page["id"], "doc_id": old})
+    assert r.json() == {"ok": True, "found": 2, "imported": 0, "stripped": 0}
+    assert all(b["properties"].get("annot_stripped") is True for b in _imported(guest, page["id"]))
+    assert guest.get(f"/api/pages/{page['id']}/export-pdf").headers["x-annotations-written"] == "2"
+
+
+def test_a_file_rewritten_since_the_import_read_it_takes_no_mark_off(guest, monkeypatch):
+    """Another import's strip may rewrite the file between this import's
+    read and its marks: what this import found no longer says what the file
+    holds, so it takes no mark off."""
+    from gamma.routers import imports
+
+    old = _uploaded(guest, _annotated_pdf(pages=8))
+    page = make_page(guest, "Raced", properties={"doc_id": old})
+    guest.post("/api/import/pdf-annotations", json={"block_id": page["id"], "doc_id": old})
+    new = _uploaded(guest, _annotated_pdf(pages=9), "b.pdf")
+    guest.put(f"/api/pages/{page['id']}/attachment", json={"doc_id": new})
+    seen = iter([(1, 1.0), (2, 2.0)])  # the file's (size, mtime) at the read, then at the marks
+    monkeypatch.setattr(imports, "stored_stat", lambda ws, name: next(seen))
+    r = guest.post("/api/import/pdf-annotations", json={"block_id": page["id"], "doc_id": new})
+    assert r.json() == {"ok": True, "found": 2, "imported": 0, "stripped": 0}
+    assert all(b["properties"].get("annot_stripped") is True for b in _imported(guest, page["id"]))
 
 
 def _open(pdf_bytes):

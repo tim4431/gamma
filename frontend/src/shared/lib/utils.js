@@ -399,6 +399,15 @@ function pdfProxyUrl(sourceUrl, { save = false, share = "" } = {}) {
     + (share ? `&share=${encodeURIComponent(share)}` : "");
 }
 
+// Where the viewer loads a page's PDF from, given its attachment's `url`
+// (pageAttachment): a stored copy as it is, anything else through the
+// proxy; a share visitor's requests carry the read token. "" for none.
+function attachmentViewerUrl(src, { share = "" } = {}) {
+  if (!src) return "";
+  if (!src.startsWith("/api/")) return pdfProxyUrl(src, { share });
+  return share ? `${src}${src.includes("?") ? "&" : "?"}share=${encodeURIComponent(share)}` : src;
+}
+
 // Headers-only check that the proxy can really deliver this PDF: resolution
 // only picks a candidate URL, and the download behind it still fails on
 // paywalls, blocked server-side fetches, or HTML pretending to be a paper.
@@ -452,4 +461,4 @@ async function readNdjson(res, onBatch) {
   }
 }
 
-export { API, makeId, fmtBytes, sha256, getDocIdForUrl, isPdfFile, isMarkdownFile, PAGE_FILE_ACCEPT, isUnverifiedPaperMeta, metaSourceInfo, apiJson, proxyRefusal, setShareView, getShareToken, withShare, withWorkspace, assetUrl, setCurrentWorkspace, getCurrentWorkspace, setLinkName, getLinkName, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson, downloadFetched };
+export { API, makeId, fmtBytes, sha256, getDocIdForUrl, isPdfFile, isMarkdownFile, PAGE_FILE_ACCEPT, isUnverifiedPaperMeta, metaSourceInfo, apiJson, proxyRefusal, setShareView, getShareToken, withShare, withWorkspace, assetUrl, setCurrentWorkspace, getCurrentWorkspace, setLinkName, getLinkName, resolvePdfUrl, pdfProxyUrl, attachmentViewerUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson, downloadFetched };

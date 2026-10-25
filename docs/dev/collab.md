@@ -159,7 +159,7 @@ of them `ws` is the workspace id and `actor` who makes the change
 (`auth.actor_of`: the account's id, or a label for a writer that is no
 account). Every server-side writer
 goes through them — the single-block endpoints in `routers/blocks.py` are thin
-wrappers, page attach/detach, the metadata write, the clip endpoints, the
+wrappers, page attach/replace/detach, the metadata write, the clip endpoints, the
 attachment-marker backfill of `get_or_create_doc_page`, the `annot_stripped`
 marks after an embedded-annotation strip, and the AI
 tools (`edit_block`, `create_block`, `move_block`, `rename_page`, `move_page`)

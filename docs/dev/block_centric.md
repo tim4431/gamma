@@ -159,9 +159,10 @@ Frontend (all cleared 2026-09-02 except the search panel)
   attachment; only the "Source file" rows need the attachment.
 - The PDF ingest is ONE path: `resolvePdfSource({file|url})` → either
   `by-doc` (open/upload as a new page, dedup by attachment) or
-  `POST /pages/{id}/attachment`; both then `openBlock()` the page. The
-  paperclip popover lists the attachment (show/hide the viewer, detach via
-  `DELETE /pages/{id}/attachment`).
+  `POST /pages/{id}/attachment` (`PUT` to replace the page's PDF); both then
+  `openBlock()` the page. The paperclip popover lists the attachment
+  (show/hide the viewer, download it, replace it with a new version via
+  `PUT /pages/{id}/attachment`, detach via `DELETE /pages/{id}/attachment`).
 - The home library only renders cards (grid/list); the block tree is only
   ever a page's notes — the old "page rows in the block tree" path is gone.
 
@@ -273,7 +274,10 @@ read-position map as `{page: 0, block}`.)*
   `POST/DELETE /api/pages/{id}/attachment` (409s for "already has one" and
   "another page carries this doc_id" with that page's id; automatic title +
   `auto_title` marker; a detached file nothing else uses goes to the orphan
-  bookkeeping, kept 30 days).
+  bookkeeping, kept 30 days). `PUT` replaces the attachment with a new
+  version of the file: the page, its notes and its highlights stay, the
+  highlights where they were on their pages, and the old file goes the way
+  of a detached one.
 - Generic file uploads: `POST /uploads` accepts an allowlist beyond PDF
   (md/txt/csv/json/office/zip …) and blocks reference them as
   `[name](/api/uploads/<hash>.<ext>)` chips (the image path already works

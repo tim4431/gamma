@@ -536,7 +536,8 @@ track of the ones nothing uses.
   as well: `/api/uploads/<name>` in the `chats` and `chat_history`
   messages ([ai.md](ai.md#pictures)); `upload_gc.referenced` reads both.
 - **Unreferenced files are kept for 30 days.** When the last reference to a
-  file goes, the file stays on disk and is served as before. Its name is
+  file goes (its block deleted, a page's PDF detached or replaced by a new
+  version), the file stays on disk and is served as before. Its name is
   recorded in `upload_orphans` with the time. An undo, a cut pasted in a
   later batch, a block moved to another page, an AI edit or a re-attached
   PDF brings a reference back. The writer then clears the record in its own
