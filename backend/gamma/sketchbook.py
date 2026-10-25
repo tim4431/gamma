@@ -315,10 +315,6 @@ class Sheet:
             self._add(poly, {"tool": "highlighter", "color": color, "size": size, "opacity": 0.6}, pressure=False)
         self.clock += PAUSE - GAP
 
-    def dot(self, x: float, y: float, size: float = 5.0, color: str = INK):
-        """A dot: a tap of the pen."""
-        self._add([(x, y), (x + 0.2, y + 0.2)], {"color": color, "size": size, "pen": False}, pressure=False)
-
     def letters(self, text: str, x: float, y: float, cap: float, color: str = INK, size: float = 3.0):
         """``text`` in the capital alphabet, top-left at (x, y), each glyph
         a little turned and lifted off the line, as by hand."""

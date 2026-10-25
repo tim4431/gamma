@@ -9,7 +9,7 @@ writer (its internals and the shared typesetting engine are in
 `gamma/zotero_export.py`, `gamma/logseq_import.py`, `gamma/markdown_import.py`,
 `gamma/markdown_zip_import.py`, `gamma/import_zip.py` (the zip walk the library imports share),
 `gamma/notability_import.py`, `gamma/notability.py`, `gamma/notability_archive.py`,
-`gamma/notability_map.py`, `gamma/markdown_export.py`, `gamma/obsidian_export.py`, `gamma/pdf_export.py`,
+`gamma/notability_map.py`, `gamma/notability_export.py`, `gamma/notability_write.py`, `gamma/markdown_export.py`, `gamma/obsidian_export.py`, `gamma/pdf_export.py`,
 `gamma/pdf_notes.py`, `gamma/pdf_document.py`, `gamma/pdf_typeset.py`,
 `gamma/note_markup.py`, `gamma/vector_text.py`, `gamma/pdf_glyphs.py`,
 `gamma/pdf_image.py`, `gamma/text_box.py`, `gamma/bibtex.py`,
@@ -740,6 +740,10 @@ names:
   box headers only, and are streamed into storage
   (`storage.store_file_stream`). A text box's or a formula's text is cut
   at 200,000 characters, what the editor saves (`ops.MAX_CONTENT`).
+- An `.ntb`'s log is read up to 1,500,000 records (`notability.MAX_RECORDS`;
+  past them the rest is left out, with a warning), and its text styles may
+  touch 20,000,000 characters in all (`notability_ntb.MAX_STYLED`; past them
+  a text keeps its words only).
 - Every file goes through `store_pdf`, `store_file` or
   `store_file_stream` (quota, dedup), its size checked from the zip before a
   byte is read: a PDF or picture, held whole in memory, up to
@@ -1472,7 +1476,7 @@ proportionally into the column when too wide), wrapped cells, `:---:`
 alignment honored, the header bold on a tint and repeated when a page break
 falls inside the table. Fenced code is a bordered tinted card, one card
 segment per page it spans. `[[refs]]` and `![[embeds]]` resolve through a
-`resolve_ref` callback (`_block_ref_resolver` in `routers/export.py` — its own
+`resolve_ref` callback (`markdown_export.block_ref_resolver` — its own
 sqlite connection, since the request's closes before `response()` runs): a ref
 reads as its target's first line in link colour, an embed renders the synced
 block's content as a card with a soft bar and a muted `from <page>` source

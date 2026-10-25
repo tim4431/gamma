@@ -35,17 +35,15 @@
 // zoom around the list or on the item itself (a button's Interface size).
 import React from "react";
 import { listGlides, longestMs, reducedMotion, sameKeys } from "./motion.js";
-import { standBack, standing, stillCopy } from "./leave.js";
+import { LONGEST_MS, standBack, standing, stillCopy } from "./leave.js";
 
 // How far beyond the window's edges a box still moves, in px: past it
 // nobody sees the move.
 const BAND = 150;
-// A change that moves more items than this, or brings or takes more than
-// `most`, does that part at once (a paste of many blocks, Mark all read).
+// A change that moves more items than MOVING, or brings or takes more than
+// MOST, does that part at once (a paste of many blocks, Mark all read).
 const MOVING = 60;
-// Longer than any glide, entry or way out: whatever an event missed ends
-// by then.
-const LONGEST_MS = 1000;
+const MOST = 8;
 
 const shapeOf = (props) => (props.shape !== undefined ? props.shape : props.keys);
 const sameOf = (props) => props.same || (props.shape === undefined && props.keys ? sameKeys : Object.is);
@@ -129,13 +127,13 @@ export default class ListMotion extends React.Component {
   }
 
   // Copies of the items the coming change takes away, made while they
-  // stand: those near the window, unless more than `most` go.
+  // stand: those near the window, unless more than MOST go.
   goneCopies(prev, before) {
     const { leave, keys, strip = [] } = this.props;
     if (!leave || !prev.keys || !keys) return [];
     const staying = new Set(keys);
     const gone = prev.keys.filter((key) => !staying.has(key));
-    if (!gone.length || gone.length > (this.props.most ?? 8)) return [];
+    if (!gone.length || gone.length > MOST) return [];
     const bottom = window.innerHeight + BAND;
     const out = [];
     for (const key of gone) {
@@ -180,7 +178,7 @@ export default class ListMotion extends React.Component {
     }
     const { moves, enters } = listGlides(items, {
       top: -BAND, bottom: window.innerHeight + BAND, far: window.innerHeight,
-      moving: this.props.moves === false ? 0 : MOVING, entering: this.props.most ?? 8,
+      moving: this.props.moves === false ? 0 : MOVING, entering: MOST,
     });
     if (moves.length) {
       const tokens = getComputedStyle(document.documentElement);

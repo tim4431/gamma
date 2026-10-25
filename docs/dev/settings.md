@@ -766,10 +766,10 @@ again to refresh it in place: a second visit is instant. Settings opened
 straight onto a pane (a notice, the chat's AI tiles) shows it at once, its
 reads starting together as it mounts. A test checks that every path a
 section reads is named in `PANE_READS` (`tests/settingsReads.test.mjs`).
-Measured at 150 ms of latency, the Server pane went from 12 requests in five
-waves, its sections jumping down four times as the ones above them filled,
-to 8 requests in two waves and one switch at 208 ms with every section in
-place (at once after a hover).
+At 150 ms of latency the Server pane makes 8 requests in two waves and
+switches once, at 208 ms, with every section in place (at once after a
+hover); read section by section it made 12 in five waves, the sections
+jumping down four times as the ones above them filled.
 
 ## The top bar's buttons
 

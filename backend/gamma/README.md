@@ -21,6 +21,8 @@ workspaces.py      workspaces + memberships (roles, billing, personal workspace)
 auth.py            session middleware → request.state.user_id / user (read in a worker thread); request → workspace / share
 guests.py          guest accounts: throwaway accounts that keep nothing (docs/dev/guests.md)
 cloud_auth.py      Sign in with Gamma Cloud: an OpenID Connect client of cloud/, a verified identity → a session
+shares.py          a share's invitations by Gamma Cloud username, and the Inbox item a share sends (docs/dev/cloud_accounts.md)
+join_requests.py   Gamma Cloud accounts asking to join under the `invited` policy (docs/dev/cloud_accounts.md "Requests to join")
 cloud_sync.py      what a linked account's cloud grant does: the hourly grant check, the profile sync, the server list
 hosted.py          a hosted container (GAMMA_HOSTED=1) learns its plan's limits from the account server
 integrations.py    revocable read / write tokens per account and workspace (MCP, the HTTP API, mirrors)
@@ -34,7 +36,7 @@ ops.py             block operations: THE write path for a page's blocks
 textmerge.py       three-way merge of one block's text (ops.py `set` with `base`)
 collab.py          live rooms: who is on a page, the fan-out of applied operations
 comments.py        comments: threads on a note, a page or a highlight, following their blocks (docs/dev/comments.md)
-inbox.py           each account's Inbox: mentions, replies, resolves, shares and invitations, settled when read (docs/dev/comments.md)
+inbox.py           each account's Inbox: mentions, replies, resolves, shares, invitations and requests to join, settled when read (docs/dev/comments.md)
 sync_tree.py       a page's tree as a flat snapshot, and the ops between two (the mirror's pure half)
 sync_engine.py     mirrors: a local workspace kept in step with one on another Gamma server (docs/dev/mirror.md)
 publish.py         publishing a page to the free share host (docs/dev/mirror.md "Publishing")
@@ -94,7 +96,7 @@ mcp_oauth*.py      browser consent for MCP clients; mcp_lazy.py loads the option
 logseq_*.py        Logseq: PDF-highlight importers (EDN / Markdown), a page as a Logseq file graph
 markdown_*.py      Markdown import (one document, or a zip: Notion, Obsidian, Gamma's own) and export
 zotero_*.py        Zotero RDF library import and export
-notability*.py     Notability notes: the plists read behind guards, a note's model, its place in Gamma, the import
+notability*.py     Notability notes: the plists and the .ntb's FlatBuffers log read behind guards, a note's model, its place in Gamma, the import and the export
 obsidian_export.py an Obsidian vault export
 import_*.py        the reviewed library imports: staged uploads, preview and selection, the guarded zip walk
 bibtex.py          BibTeX entries and bibliographies, every printed entry valid BibTeX

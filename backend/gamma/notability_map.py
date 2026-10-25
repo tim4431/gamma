@@ -33,6 +33,7 @@ DECIMATE_PT = 0.1                # finishStroke.js DECIMATE_PT
 MAX_STROKE_SAMPLES = 50_000
 MAX_FORCE = 25 / 6               # UIKit's maximumPossibleForce for the Apple Pencil: raw force → p
 STICKY_EDGE = 0.5                # pt: a sticky's outline, in its own colour
+LINE_SEPARATOR = "\u2028"         # a line break inside one paragraph of the typed text (a note of several lines)
 CREAM = "#fbf7ec"                # the paper menu's cream (notebook.js PAPER_COLORS), Notability's 2014 paper
 GRID_PT = 18                     # a legacy small grid's spacing
 TEXT_COLOR = "#1f1f1f"
@@ -118,13 +119,9 @@ def paper(note: Note) -> dict:
 
 
 def _index(tops: list[float], y: float) -> int:
+    """The page whose slot holds ``y``, by the pages' tops: above the
+    first page → 0, below the last → the last."""
     return min(max(bisect_right(tops, y) - 1, 0), len(tops) - 1)
-
-
-def page_index(frames: list[Frame], y: float) -> int:
-    """The frame whose slot holds ``y``: above the first page → 0, below
-    the last → the last."""
-    return _index([f.top for f in frames], y)
 
 
 def frames(note: Note, pdf_pages: dict, centres: list[float]) -> tuple[list[Frame], list[str]]:
@@ -959,7 +956,7 @@ def flow_blocks(runs: list[Run], left_out: Counter | None = None) -> list[dict]:
     count = 0
     for para in _paragraphs(runs):
         # a line separator breaks a line inside the paragraph: a note of several lines
-        text = _inline([replace(r, text=r.text.replace("\u2028", "\n")) for r in para])
+        text = _inline([replace(r, text=r.text.replace(LINE_SEPARATOR, "\n")) for r in para])
         if not text:
             continue
         if count >= MAX_BLOCKS:

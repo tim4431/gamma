@@ -25,6 +25,13 @@ export const PYTHON = process.env.GAMMA_E2E_PYTHON || (process.platform === "win
 export const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const execFileAsync = promisify(execFile);
 
+// The value after a command-line flag, unless the next word is another
+// flag; `fallback` when the flag is absent.
+export const argValue = (name, fallback) => {
+  const i = process.argv.indexOf(name);
+  return i > 0 && process.argv[i + 1] && !process.argv[i + 1].startsWith("--") ? process.argv[i + 1] : fallback;
+};
+
 export const flags = {
   keep: process.argv.includes("--keep"),
   headed: process.argv.includes("--headed"),

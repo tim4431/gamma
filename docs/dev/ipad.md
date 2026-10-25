@@ -978,21 +978,21 @@ module (`.so`) into a framework of its own, signed, since iOS loads an
 app's native code only from frameworks.
 
 Two of the standard library's modules, `_ssl` and `_hashlib`, link OpenSSL
-statically, and Apple requires a privacy manifest in every framework that
+statically. Apple requires a privacy manifest in every framework that
 carries OpenSSL
-([third-party SDK requirements](https://developer.apple.com/support/third-party-SDK-requirements)):
-App Store Connect refused TestFlight build 9 for both (ITMS-91061).
-`install_python` moves a `<module>.xcprivacy` lying beside a module's `.so`
-into the framework as `PrivacyInfo.xcprivacy`, and the support package
-means to ship one for each of the two, but the 3.13-b16 tarball has none
-(its Makefile copies `lib-dynload` into the package before it writes
-them). So `build-python.sh` puts OpenSSL's own manifest beside each of the
-two modules, in every slice of the framework, on every run:
-`ipad/python/OpenSSL.xcprivacy`, the file OpenSSL ships for its macOS
-framework, which declares one accessed API (file timestamps, reason
-C617.1), no collected data and no tracking. The post-build phase fails a
-build whose two frameworks end up without it. Build 9's report named only
-these two: the wheels' frameworks drew no complaint and carry none.
+([third-party SDK requirements](https://developer.apple.com/support/third-party-SDK-requirements)),
+and App Store Connect refuses a build whose two frameworks have none
+(ITMS-91061, TestFlight build 9). `install_python` moves a
+`<module>.xcprivacy` lying beside a module's `.so` into the framework as
+`PrivacyInfo.xcprivacy`. The support package means to ship one for each of
+the two, but the 3.13-b16 tarball has none: its Makefile copies
+`lib-dynload` into the package before it writes them. So `build-python.sh`
+puts OpenSSL's own manifest, `ipad/python/OpenSSL.xcprivacy`, beside each
+of the two modules in every slice of the framework, on every run. That is
+the file OpenSSL ships for its macOS framework: one accessed API (file
+timestamps, reason C617.1), no collected data, no tracking. The post-build
+phase fails a build whose two frameworks end up without it. The wheels'
+frameworks carry none: build 9's report named only these two.
 
 `install_python` converts `.so` files only, and PyMuPDF's wheel carries
 MuPDF as two plain dylibs beside its extension modules
