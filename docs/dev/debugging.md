@@ -846,7 +846,9 @@ The scenarios live in `tests/e2e/scenarios/`:
   committed from the host's samples (with tilt, and a calligraphy nib
   turned by the roll). The host's `hold` snaps and refits a still line
   or opens Paste here. Then come a claim along the ruler, a shell
-  without `hold`, and the Apple Pencil gestures, settings and haptics.
+  without `hold`, the View menu's *Server bar* row (landscape, under More
+  upright, and none without `shellBar`), and the Apple Pencil gestures,
+  settings and haptics.
   `--group ipad`.
 - `touch.mjs`: one behaviour for mouse and finger
   ([ui-design.md](ui-design.md#one-behaviour-for-mouse-and-finger)), in

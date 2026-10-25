@@ -43,6 +43,8 @@ answered by a `gammaShell` in Swift ([ipad.md](ipad.md#the-chrome)), so a
 change to either page is a change to both shells. The iPad hides what
 only the desktop does by its state (no `keeping`, `update` or `settings`)
 and by one rule in `ui/theme.css` (`body[data-platform="ipad"]
-.desktopOnly`), and both shells close the bar's menu on a press outside
-it, since iOS sends no click for a tap on its see-through page
+.desktopOnly`). The bar's hide chevron is the iPad's alone, shown by a
+key only its state has (`barHideable`). Both shells close the bar's menu
+on a press outside it, since iOS sends no click for a tap on its
+see-through page
 ([architecture.md "Window"](../../desktop/docs/architecture.md#window)).

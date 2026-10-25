@@ -176,6 +176,10 @@
   <button class="ctlBtn" id="btnReload" hidden>
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/></svg>
   </button>
+  <!-- The iPad's: hides the bar, which View › Server bar in Gamma brings back. -->
+  <button class="ctlBtn" id="btnHideBar" title="Hide this bar (⌘⇧B)" hidden>
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>
+  </button>
 </div>
 <div class="menu" id="menu" hidden></div>
 <div class="menu right" id="syncPanel" hidden></div>
@@ -246,6 +250,9 @@
     $('wsWorkspace').textContent = ws && cur ? `· ${ws.name}` : '';
     $('wsKind').innerHTML = cur ? ICONS[cur.type] || '' : ICONS.grid;
     $('btnReload').hidden = !cur;
+    // Only the iPad's state has it, and only while a tap would hide the bar
+    // (not while the launcher is up or This iPad starts).
+    $('btnHideBar').hidden = !state.barHideable;
     const upd = state.update || {};
     const pill = $('btnUpdate');
     if (upd.status === 'downloaded') {
@@ -529,6 +536,7 @@
   document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeMenu(); });
   window.addEventListener('blur', closeMenu);
   $('btnReload').onclick = () => gammaShell.reload();
+  $('btnHideBar').onclick = () => { closeMenu(); gammaShell.hideBar(); };
   $('btnUpdate').onclick = () => gammaShell.updateInstall();
 
   gammaShell.onState((s) => { state = s; render(); });

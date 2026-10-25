@@ -71,6 +71,7 @@ import {
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon,
   RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
   ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon, MicIcon, MessageSquareIcon, BellIcon,
+  PanelTopIcon,
 } from "../shared/ui/Icons";
 
 
@@ -147,6 +148,7 @@ import { useInkRuler } from "../ink/useInkRuler.js";
 import { useInkZoom } from "../ink/useInkZoom.js";
 import { useStripKeys } from "../ink/useStripKeys.js";
 import { usePencil } from "../ink/usePencil.js";
+import { useShellBar } from "./useShellBar.js";
 import { inkCommandContext } from "../ink/inkCommands.js";
 import { NotebookViewer, PaperMenu, readPlace, showPlace } from "../notebook/NotebookViewer";
 import { NoteSheetContext } from "../notebook/NoteSheet";
@@ -6878,6 +6880,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     takesInk: ((!!pdfUrl || notebook) && !viewerHidden) || nbSheets.length > 0,
     inkUi, inkVisible, previousTool, pickInkTool, applyPencilUi, inkSelection, selectionStill, restoreInkSelection,
     stripUndo, inkPencilTap, inkPencilSqueeze, inkHaptics });
+  // The iPad app's own bar above the page (app/useShellBar.js): the View
+  // menu's Server bar row, the way back once it is hidden; null elsewhere.
+  const shellBar = useShellBar();
   // The eraser tool lifted (never the pen's eraser end or barrel, whose
   // lift is the switch): a held E (noteInkEraseHold) learns a pass was made; with
   // "Eraser returns to the last tool" on, back to the tool armed before it,
@@ -10413,7 +10418,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     };
     return menuGroups(
       [
-        (!isPhone || pdfRow) && <div key="windows" className="popoverSection">{t("Windows")}</div>,
+        (!isPhone || pdfRow || shellBar) && <div key="windows" className="popoverSection">{t("Windows")}</div>,
         pdfRow && (pageAttach ? (
           <MenuItem key="pdf" icon={FileIcon} {...shown(!pdfHidden)} onClick={toggleWindow("pdf", !pdfHidden, () => setPdfHidden((v) => !v))}>PDF</MenuItem>
         ) : (
@@ -10429,6 +10434,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           <MenuItem key="comments" icon={MessageSquareIcon} {...shown(!commentsHidden)}
             onPointerEnter={CommentsPanel.preload}
             onClick={toggleWindow("comments", !commentsHidden, () => setCommentsHidden((v) => !v))}>{t("Comments")}</MenuItem>
+        ),
+        shellBar && (
+          <MenuItem key="shellBar" icon={PanelTopIcon} {...shown(shellBar.shown)}
+            onClick={() => shellBar.set(!shellBar.shown)}>{t("Server bar")}</MenuItem>
         ),
       ],
       focusedBlockId && !readOnly ? ["app.undo", "app.redo"].map(commandRow) : [],

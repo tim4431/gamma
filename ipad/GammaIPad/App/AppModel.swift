@@ -28,8 +28,8 @@ enum Server: Hashable, Codable {
 
 /// The app's one piece of state: which server the shell shows, the servers
 /// the chrome lists (Chrome: the desktop's bar and launcher), as the
-/// desktop's registry has them (desktop/lib/registry.js), and whether the
-/// launcher is up. The session is the web view's cookie and the library is
+/// desktop's registry has them (desktop/lib/registry.js), whether the
+/// launcher is up, and whether the bar is. The session is the web view's cookie and the library is
 /// the server's: the shell never holds a token (docs/dev/ipad.md).
 @MainActor
 final class AppModel: ObservableObject {
@@ -61,6 +61,10 @@ final class AppModel: ObservableObject {
     @Published private(set) var loadError: String? = nil
     /// The launcher over the page, nil when it is closed.
     @Published private(set) var launcher: Launcher? = nil
+    /// The bar hidden by the person (its button, ⌘⇧B, the page's View
+    /// menu), kept between launches. It still shows while it is needed
+    /// (`barShown`).
+    @Published private(set) var barHidden: Bool
 
     let local: LocalServer
     /// The files the system opened in the app, held for the page (the shell
@@ -72,6 +76,8 @@ final class AppModel: ObservableObject {
     /// A dot stays as it is this long before the chrome asks again, as the
     /// desktop caches its remotes' health.
     private static let probeInterval: TimeInterval = 30
+    /// Where `barHidden` is kept, beside the servers (SavedServers.key).
+    static let barHiddenKey = "gamma.barHidden"
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
@@ -81,6 +87,7 @@ final class AppModel: ObservableObject {
         current = saved.current
         remotes = saved.remotes
         names = saved.names ?? [:]
+        barHidden = defaults.bool(forKey: Self.barHiddenKey)
         if case let .remote(url) = saved.current { shellURL = url }
         // The first launch: the launcher, over an empty shell.
         if saved.current == nil { launcher = Launcher() }
@@ -115,6 +122,21 @@ final class AppModel: ObservableObject {
                 local.restart()
             }
         }
+    }
+
+    /// The bar shows unless the person hid it, and while it is needed.
+    var barShown: Bool { !barHidden || barNeeded }
+
+    /// The bar is needed while the launcher is up, which its mark closes,
+    /// and while This iPad starts, which its status says: the page under it
+    /// is empty meanwhile. Its hide button is offered only when it is not.
+    var barNeeded: Bool { launcher != nil || (current == .local && local.state == .starting) }
+
+    /// The bar's hide button, ⌘⇧B and the page's View menu.
+    func setBarHidden(_ hidden: Bool) {
+        guard hidden != barHidden else { return }
+        barHidden = hidden
+        defaults.set(hidden, forKey: Self.barHiddenKey)
     }
 
     /// The mark, *All servers…* and ⌘⇧L: a launcher that is up without an
