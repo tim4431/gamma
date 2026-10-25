@@ -797,7 +797,7 @@ def notify_commit(ws: str, client: str = "", page_id: str = "") -> None:
             log.warning(f"[ops] commit listener: {e}")
 
 
-def after_commit(ws: str, conn, result: dict, *, via: str = "") -> dict:
+def after_commit(ws: str, conn, result: dict, *, via: str = "", shares: bool = True) -> dict:
     """After a committed batch: the fan-out to the page's room first, so
     batches committed one after the other by several worker threads reach
     the room in seq order as a rule (the client's ordered inbox copes with
@@ -812,9 +812,11 @@ def after_commit(ws: str, conn, result: dict, *, via: str = "") -> dict:
     result), whichever path deleted them. Then the people the batch
     mentioned hear of it in their Inbox (``inbox.from_ops``, which never
     raises; ``via``: the share token the writer came through, the one way
-    in such an item may hand a non-member beside a share that names them)."""
+    in such an item may hand a non-member beside a share that names them).
+    ``shares`` False leaves the folder-share check to the caller
+    (``after_commits``)."""
     collab.publish_ops(ws, result)
-    if _refiles(result):
+    if shares and _refiles(result):
         collab.revalidate_shares(ws)
     if result["page_id"] == FOLDERS and result["deleted_ids"]:
         from .routers.shares import delete_folder_shares  # local: the router imports ops' neighbours
@@ -834,6 +836,18 @@ def _refiles(result: dict) -> bool:
         return any(op["op"] in ("move", "delete") for op in result["ops"])
     return any(op["op"] == "set" and op["id"] == result["page_id"] and FOLDERS in (op.get("props") or {})
                for op in result["ops"])
+
+
+def after_commits(ws: str, conn, results: list[dict]) -> None:
+    """``after_commit`` for the batches one transaction committed, in order,
+    with the folder-share check run once for all of them: a call that
+    refiles a hundred pages re-checks a share's peers once, not a hundred
+    times (``collab.revalidate_shares`` schedules a pass per call when a
+    peer came through a share link)."""
+    for result in results:
+        after_commit(ws, conn, result, shares=False)
+    if any(_refiles(result) for result in results):
+        collab.revalidate_shares(ws)
 
 
 def commit_ops(ws: str, page_id: str, ops: list[dict], *, actor: str, client: str = "",
@@ -1027,8 +1041,7 @@ def delete_tree(ws: str, conn, tree: str, block_id: str, *, actor: str,
     except BaseException:
         conn.rollback()
         raise
-    for result in results:
-        after_commit(ws, conn, result)
+    after_commits(ws, conn, results)
     return rows, carried, results
 
 

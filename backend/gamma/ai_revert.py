@@ -14,6 +14,17 @@ history. The chat keeps the action with the reply, and its row under the
 reply sends it back here (``POST /api/ai/revert``) when the user reverts
 the change, or redoes one they reverted.
 
+A rename_page, move_page or label_page call records each page's title,
+folders or labels before and after it (``pages``). Its revert puts back
+what the call changed, every page in one step: a title only while it
+reads as the call left it, folders and labels by what the call put on
+and took off, so a filing made since stays. Its redo makes the call's
+change again the same way. A page changed since, deleted or in Recently
+deleted — or one it would leave in no folder, the folders to go back to
+deleted since — is left as it is and counted (``kept``); nothing there
+is forced. When every page is such a page, nothing is written and the
+revert stops (409 ``kept``), so the change is not marked reverted.
+
 Neither direction assumes the note still says what it last said. An edit
 goes as a patch: the change ``after → before`` (redo: ``before → after``)
 is merged into the text stored now (gamma/textmerge.py, the merge the
@@ -30,11 +41,11 @@ like any other.
 import json
 
 from . import textmerge
-from .ai_tools import cross_page_refusal, text_diff
-from .blocks_store import (FOLDERS, TREES, fetch_subtree, filing, free_position, load_props, named, page_root_id,
-                           tree_children, write_lock)
+from .ai_tools import BATCH_MAX, cross_page_refusal, text_diff
+from .blocks_store import (FOLDERS, LABELS, TREES, existing_in, fetch_subtree, filing, free_position, load_props,
+                           named, page_root_id, tree_children, write_lock)
 from .db import connect_pages_db
-from .ops import OpError, after_commit, apply_batches, apply_ops, delete_tree, move_across_pages
+from .ops import OpError, after_commit, after_commits, apply_batches, apply_ops, delete_tree, move_across_pages
 
 CLIENT = "revert"  # the op log's writer for a revert or redo: not the agent's "ai", not any tab
 MALFORMED = "This change can't be reverted."
@@ -226,17 +237,86 @@ def _plan_tree_delete(conn, block_id: str, revert: dict, force: bool, redo: bool
     return "", ("batches", batches)
 
 
-_PLANS = {"edit": _plan_edit, "create": _plan_create, "move": _plan_move, "delete": _plan_delete}
+# What a page tool's revert record names (``revert["pages"]``): the field
+# each change wrote, and the tree a folders or labels change files by.
+_PAGE_FIELDS = {"title": "", "folders": FOLDERS, "labels": LABELS}
+KEPT = "The pages changed since, or were deleted, and were left as they are."
+
+
+def _page_item(item) -> bool:
+    """Whether ``item`` is ``[page id, field, before, after]`` as the page
+    tools record it: titles as text, folders and labels as id lists."""
+    if not (isinstance(item, list) and len(item) == 4 and isinstance(item[0], str)
+            and isinstance(item[1], str) and item[1] in _PAGE_FIELDS):
+        return False
+    if item[1] == "title":
+        return isinstance(item[2], str) and isinstance(item[3], str)
+    return all(isinstance(v, list) and all(isinstance(i, str) for i in v) for v in item[2:])
+
+
+def _plan_pages(conn, block_id: str, revert: dict, force: bool, redo: bool):
+    """The pages a rename_page, move_page or label_page call changed, put
+    back as they were — with ``redo`` as the call left them — in one step
+    (``("batches", [(page id, ops), …], kept)``). A title goes back only
+    while the page reads as the call (or its revert) left it. Folders and
+    labels go by set delta: the ids the change put on come off, the ones it
+    took off go back where they still exist, and whatever was filed since
+    stays. A page renamed since, deleted or in Recently deleted — or one
+    whose folders to go back to were all deleted since, which would leave
+    it in no folder — is left as it is and counted (``kept``); when every
+    page is, there is nothing to put back (409 ``kept``). Nothing here is
+    forced."""
+    items = revert.get("pages")
+    if not isinstance(items, list) or not items or len(items) > BATCH_MAX or not all(map(_page_item, items)):
+        raise RevertError(400, MALFORMED)
+    live = {r[0]: (r[1] or "", load_props(r[2])) for r in conn.execute(
+        "SELECT id, content, properties FROM unified_blocks WHERE parent_id = 'root' "
+        "AND id IN (SELECT value FROM json_each(?))", (json.dumps([i[0] for i in items]),))}
+    batches, kept = [], 0
+    for page_id, field, before, after in items:
+        src, dst = (before, after) if redo else (after, before)
+        if page_id not in live:
+            kept += 1  # deleted, or in Recently deleted, since
+            continue
+        title, props = live[page_id]
+        if field == "title":
+            if title == dst:
+                continue  # back already
+            if title != src:
+                kept += 1  # renamed since: the user's title stays
+                continue
+            batches.append((page_id, [{"op": "set", "id": page_id, "content": dst}]))
+            continue
+        tree = _PAGE_FIELDS[field]
+        now = filing(props, tree)
+        take = [i for i in src if i not in dst]
+        give = existing_in(conn, tree, [i for i in dst if i not in src and i not in now])
+        want = [i for i in now if i not in take] + give
+        if want == now:
+            continue
+        if tree == FOLDERS and dst and not want:
+            kept += 1  # the folders it goes back to were deleted since: it would be filed in none
+            continue
+        batches.append((page_id, [{"op": "set", "id": page_id, "props": {tree: want or None}}]))
+    if kept == len(items):
+        raise RevertError(409, KEPT, "kept", {"kept": kept})
+    return "", ("batches", batches, kept)
+
+
+_PLANS = {"edit": _plan_edit, "create": _plan_create, "move": _plan_move, "delete": _plan_delete,
+          "pages": _plan_pages}
 
 
 def revert_change(ws: str, kind: str, block_id: str, revert: dict, *, force: bool = False,
                   redo: bool = False, actor: str = "") -> dict:
     """Take back one recorded change, or with ``redo`` put a reverted one
-    back: ``{page_id, noop}`` — ``noop`` when the note already reads that
-    way (nothing written). Planned and written under one write lock, so
-    nobody's edit lands in between. ``kind`` is one of ``_PLANS`` (the
-    endpoint's model says so). Raises ``RevertError``."""
-    if not block_id:
+    back: ``{page_id, noop, kept?}`` — ``noop`` when the note already reads
+    that way (nothing written), ``kept``: the pages a page tool's revert
+    left as they are (409 ``kept`` when that is all of them). Planned and
+    written under one write lock, so nobody's edit lands in between.
+    ``kind`` is one of ``_PLANS`` (the endpoint's model says so). Raises
+    ``RevertError``."""
+    if not block_id and kind != "pages":
         raise RevertError(400, MALFORMED)
     with connect_pages_db(ws) as conn:
         write_lock(conn)
@@ -250,11 +330,14 @@ def revert_change(ws: str, kind: str, block_id: str, revert: dict, *, force: boo
                 delete_tree(ws, conn, plan[1], block_id, actor=actor, client=CLIENT)  # commits
                 return {"page_id": page_id, "noop": False}
             if isinstance(plan, tuple) and plan[0] == "batches":
+                kept = {"kept": plan[2]} if len(plan) > 2 and plan[2] else {}
+                if not plan[1]:
+                    conn.rollback()
+                    return {"page_id": page_id, "noop": True, **kept}
                 results = apply_batches(conn, plan[1], actor=actor, client=CLIENT)
                 conn.commit()
-                for result in results:
-                    after_commit(ws, conn, result)
-                return {"page_id": page_id, "noop": False}
+                after_commits(ws, conn, results)
+                return {"page_id": page_id, "noop": False, **kept}
             if isinstance(plan, tuple):
                 _, parent, position, src = plan
                 move_across_pages(ws, conn, block_id, parent, position, src, page_id, actor=actor)

@@ -48,19 +48,24 @@ that starts with the folder's own path is read from there, any other as a
 path below it. A page chat reads a path from the top. A path several sibling folders share
 is an error naming each one's id and full path, so the model can pass the
 id. A path no folder has is an error for a read (`_find_folder`), and for
-`rename_folder` and `delete_folder`. It is made for `move_page` and
-`save_paper` (`_made`, `ops.ensure_filing`, only when the call runs: a
-preview makes nothing). Labels are named by name (`_find_label`: exactly,
-else ignoring case; a name several labels share is refused). The folder
-and label tools read a label's name on one line (`_labels_called`), so a
-label an import kept with a run of spaces is found, not made a second time.
+`rename_folder` and `delete_folder`. It is made for `move_page`
+(`blocks_store.folder_inserts`, in the call's own transaction) and
+`save_paper` (`_made`, `ops.ensure_filing`), only when the call runs: a
+preview makes nothing. A one-word argument that is an id but no folder's —
+a page's, a note's, a label's, or a folder's deleted in the last day (the
+folder tree's op log) — is refused, not made (`_not_a_folder`); an id
+deleted longer ago still reads as a name. Labels are named by name
+(`_find_label`: exactly, else ignoring case; a name several labels share
+is refused). The folder and label tools read a label's name on one line
+(`_labels_called`), so a label an import kept with a run of spaces is
+found, not made a second time.
 
 Pages in Recently deleted are out of the tools' reach, the MCP adapter's
 included: they are not under `root`, and `_load_scoped_page` and
 `blocks_store.page_root_id` find no page for them or their blocks
 ([home_library.md](home_library.md) "Recently deleted"). Two folder-chat
 tools are the exception: `list_deleted` lists them and `restore_page` brings
-one back. The agent cannot delete pages, and deleting a folder or a label
+them back. The agent cannot delete pages, and deleting a folder or a label
 never deletes one.
 
 Attached library pages (`context_pages` in the tool scope) extend reading access
@@ -96,14 +101,14 @@ to pages, PDF pages and blocks (`gamma_link`; the chat's results carry none,
 | `search_web` | Search papers online | folder + page | General web search through the account's engine (the chat's own AI connection, Brave Search or SearXNG): titles, URLs and snippets as leads for `fetch_paper`. Offered only when an engine is available |
 | `fetch_paper` | Fetch documents | folder + page | Read a document that is not in the library by DOI, arXiv id or URL: the PDF behind it (same resolver as opening a link, several open-access copies tried) in `read_page`-style windows, else the web page's readable text with its PDF links; nothing is stored. The result names the PDF's version and checks it against the paper's title when given. A sign-in, bot check or paywall hands the fetch to the user's browser through a card in the reply |
 | `save_paper` | Save papers | folder + page | Add a paper to the library by DOI, arXiv id or URL, through the ingest the reply's Save to library and the Connector use |
-| `rename_page` | Rename pages | folder | Change a page's title |
-| `move_page` | Move pages | folder | File a page into a (sub)folder |
+| `rename_page` | Rename pages | folder | Change pages' titles, up to 50 in one call |
+| `move_page` | Move pages | folder | File pages into a (sub)folder, up to 100 in one call |
 | `list_deleted` | List pages | folder | List Recently deleted as far as the chat's folder reaches |
-| `restore_page` | Restore deleted pages | folder | Bring a page back from Recently deleted, filed where it was |
+| `restore_page` | Restore deleted pages | folder | Bring pages back from Recently deleted, filed where they were, up to 100 in one call |
 | `rename_folder` | Organize folders and labels | folder | Rename a folder; a name a folder beside it has is refused; never a move |
 | `create_label` | Organize folders and labels | folder | Make a label with no pages (an existing name is reused) |
 | `rename_label` | Organize folders and labels | folder | Rename a label, where every page carrying it is in reach |
-| `label_page` | Organize folders and labels | folder | Put labels on a page or take them off, making a missing label |
+| `label_page` | Organize folders and labels | folder | Put labels on pages or take them off, up to 100 in one call, making a missing label |
 | `delete_folder` | Delete folders and labels | folder | Delete a folder and its subfolders, never their pages; always asks; the user can revert it |
 | `delete_label` | Delete folders and labels | folder | Delete a label and take it off its pages; always asks; the user can revert it |
 | `edit_block` | Edit note blocks | folder + page | Change one note block's markdown text: replace it, add to it, patch one passage, or rewrite the user's selection |
@@ -1001,17 +1006,18 @@ permission in every chat kind, Ask by default.
 
 ### rename_page / move_page (folder only)
 
-`rename_page` changes a page's title. `move_page` files a page into a
-(sub)folder named by path or id (`_resolve_folder`). A path no folder has
-is created on the `folders` tree before the page's batch. The move is one
-`set` of the page's `folders`: ids outside the chat's folder that still
-exist are kept (`existing_in`), the in-scope ones are replaced by the
-target, and a folder above the target gives way (`blocks_store.refiled`).
-Both are reversible with another call. Their actions name the change for
-the chat's change list: `title` (the page's title before the call), `from` /
-`to` (the old and new title; the old folder paths, comma-joined, and the new
-one, `""` for the library root). The result text adds "(a new folder)" when
-the call made the folder.
+`rename_page` changes pages' titles (`renames`). `move_page` files pages
+(`page_ids`) into a (sub)folder named by path or id (`_resolve_folder`). A
+path no folder has is made on the `folders` tree in the same transaction
+as the pages' batches. The move is one `set` of each page's `folders`: ids
+outside the chat's folder that still exist are kept (`existing_in`), the
+in-scope ones are replaced by the target, and a folder above the target
+gives way (`blocks_store.refiled`'s rule). The user can revert either from
+its row (below). Their actions name the change for the chat's change list:
+`title` (the page's title before the call), `from` / `to` (the old and new
+title; the old folder paths, comma-joined, and the new one, `""` for the
+library root). The result text adds "(a new folder)" when the call made
+the folder. Several pages in one call: below.
 
 ### list_deleted / restore_page (folder only)
 
@@ -1026,10 +1032,13 @@ so the two tools have one each:
   by whom it was deleted, and when it goes for good (`trash.list_trash`).
   `title_contains` filters by title. Its chip is a `list` one.
 - `restore_page`, under **Restore deleted pages** (`restore`, Ask by
-  default), runs `ops.restore_page`, the route's restore. The page goes
+  default), takes `page_ids` and runs `ops.restore_page`, the route's
+  restore, for each; a page that fails is left out and named, and one that
+  came back before the failure counts as restored. The page goes
   back under the library root in its folders, with its notes, highlights,
-  files and chats. `_plan_restore_page` answers a page that is not deleted
-  (a no-op) or was filed outside the chat's folder (refused) without a card.
+  files and chats. `_plan_restore_one` finds a page that is not deleted
+  (a no-op) or was filed outside the chat's folder (refused). Named alone,
+  it is answered without a card; in a list, it is left out of the card.
 
 The approval card's preview has the page's `title` and the folders it goes
 back `to`. The restore's action (kind `restore`) carries `page_id`, `title`
@@ -1054,9 +1063,11 @@ with client `ai`.
   label has (ignoring case) is a no-op.
 - `rename_label` is one `set` on the `labels` tree. It refuses a name
   another label has.
-- `label_page` is one `set` of the page's `labels`. It keeps the other
-  labels, drops ids that are no label any more (`existing_in`), and makes
-  a label it cannot find (`ensure_filing`, only when the call runs).
+- `label_page` is one `set` of each page's `labels` (`page_ids`, with
+  `add` / `remove` for all of them). It keeps the other labels, drops ids
+  that are no label any more (`existing_in`), and makes a label it cannot
+  find (`label_inserts`, in the call's transaction, only when the call
+  runs).
 
 Labels are library-wide, so reach works differently for them.
 `create_label` and `label_page` (on a page in reach) work in any folder
@@ -1075,8 +1086,65 @@ Actions:
 - `create_label`: kind `label`, with `title`, `to`;
 - `label_page`: kind `label`, with `page_id`, `title`, `added`, `removed`.
 
-Like `rename_page` and `move_page`, these are undone by another call and
-carry no `revert`.
+`rename_folder`, `create_label` and `rename_label` are undone by another
+call and carry no `revert`; `label_page` carries one, like `rename_page`
+and `move_page`.
+
+### Several pages in one call (rename_page, move_page, label_page, restore_page)
+
+- **Arguments.** `rename_page` takes `renames` (`[{page_id, title}]`, at
+  most 50: each title is written out, and a turn the output cap cuts off is
+  lost whole). The others take `page_ids`, at most 100 (`BATCH_MAX`, a
+  `list_pages(limit=100)` batch). The one-page form (`page_id`, plus
+  `title` for a rename) is still accepted, for replayed chats, and so are a
+  list's whole JSON text and one bare id. A cut-off list or ids in prose
+  are refused, never read in part (`_listed`, `_page_ids_arg`). The same
+  holds for `add` / `remove`: a list's JSON text is that list, `"[]"`
+  included, and a cut-off one is refused (`_names_arg`). An id over 64
+  characters is cut and answered "no such page" without a lookup.
+- **Per page.** Every page goes through the one-page planner
+  (`_plan_*_one`). What the call shares (`folder`; `add` / `remove`) is
+  read once and refuses the whole call when bad, with no card. A page that
+  cannot change is left out: the card names it, the result gives the
+  reason, and the others change. A call whose every page is already so is
+  a no-op; one whose pages all fail is an error.
+- **Writes.** One transaction under the write lock: a folder
+  (`folder_inserts`) or labels (`label_inserts`) the call makes, then one
+  `set` per page (`apply_batches`, client `ai`), one commit, then
+  `ops.after_commits` (the folder-share check once). A restore runs
+  `ops.restore_page` per page.
+- **Move.** A page keeps the folders outside the chat's folder that are
+  not above the target (`stays`). Its card line strikes the folders it
+  leaves and shows the ones it stays in.
+- **The card** for two or more pages: `count`, `diff` (one word-diff line
+  per page, every page), `left_out` (at most 20 page titles cut to a line,
+  else the ids as given) and `left_out_count`, `same_count`, `to` /
+  `new_folder` (move), `new_labels` (label) and `digest`. A one-page
+  call's preview is unchanged and has no digest.
+- **After Allow** a rename, move or label call is planned again under the
+  write lock. A restore is planned again, then restores one page at a
+  time. The digest holds each page as it was (`before`) and as it ends
+  (`after`). When it differs (a page or the target changed while the card
+  waited, even where the page would end the same — for a folder still to
+  be made, the folder it goes under and its names), nothing is written and
+  the model hears `BATCH_CHANGED`.
+- **The result**: "ok — renamed 35 of 37 pages." then "Already so, not
+  changed: …" and "Left out — fix these and send only them again:" with the
+  pages grouped by reason, then `Changed:` with the page ids (a restore
+  adds links to the first 20). The parts the next call needs come first,
+  so a saved chat's 4,000-character cut never takes them.
+- **The action** for two or more pages: one per call, kind as the tool's,
+  `summary` ("Renamed 37 pages"), `changes` (pages changed), `items` (each
+  page as the one-page action names it) and `revert`; move adds `to`,
+  label `added` / `removed`. The chat lists it as one row that unfolds to
+  its pages.
+- **The change limit** counts each changed page. A call that would change
+  more pages than the message may still change (`changes_left`) is refused
+  whole, before any card, with a refusal that starts like the loop's own
+  (`CHANGE_LIMIT_PREFIX`), so the reply ends on Continue. Under Unlimited
+  rounds there is no limit.
+- **Permissions** are one per tool, as before: Allow or "Allow in this
+  chat" lets a list run without a card, as many one-page calls would.
 
 ### delete_folder / delete_label (folder only)
 
@@ -1282,8 +1350,9 @@ the user allows it. Output/argument sizes are capped
 (`_LIST_CAP` on listings; `_DETAIL_CAP` and `_ARG_CAP` cap the saved chip
 only — the model gets the full result, under the live budget
 `ai_context.LIVE_RESULT_BUDGET`), and the loop itself is bounded —
-rounds and a ≤200-change guard, both lifted when the user chooses
-Unlimited rounds, detailed in [ai.md](ai.md).
+rounds and a ≤200-change guard (a call that changes several pages counts
+each), both lifted when the user chooses Unlimited rounds, detailed in
+[ai.md](ai.md).
 
 **Every tool call is shown in the reply**, reads included, so there is
 always a visible record of what the agent looked at and changed. One pill
@@ -1295,7 +1364,8 @@ arguments and the output the model got. Everything that changed is listed
 again under the pill: "Changed in your library" (renamed, filed, saved and
 restored pages; renamed, made, applied and deleted folders and labels) and
 "Changed in your notes" (edited, added and moved
-blocks), each entry a link to the page or block. The note tools' actions carry their page's `title` for that list; a
+blocks), each entry a link to the page or block. A call that changed
+several pages is one entry that unfolds to them. The note tools' actions carry their page's `title` for that list; a
 change tool that changed nothing is marked `noop` and not listed.
 
 ### Reverting a note change
@@ -1303,7 +1373,9 @@ change tool that changed nothing is marked `noop` and not listed.
 Each row under "Changed in your notes" has a revert button, and the list a
 "Revert all" when it holds more than one change. The user takes back one
 change at a time, in any order, and whatever anyone wrote since stays. A
-reverted row has a redo button that puts the change back.
+reverted row has a redo button that puts the change back. A page renamed,
+moved or labelled by the agent — one or many in one call — has one under
+"Changed in your library".
 
 The note tools record what undoing and redoing their change needs, as
 `revert` on the action:
@@ -1315,6 +1387,7 @@ The note tools record what undoing and redoing their change needs, as
 | `move_block` | `parent` and `position`: where the block was; `to_parent` and `to_position`: where it went |
 | `delete_block` | `blocks`: every block of the subtree, parent first, as `[id, parent, position, content, properties]` |
 | `delete_folder` / `delete_label` | `tree`; `blocks` (as `delete_block`'s: the folder's subtree, or the label); `pages`: `{page id: the ids it carried}` |
+| `rename_page` / `move_page` / `label_page` | `pages`: `[page id, field, before, after]` per page — `title` (text, as stored: `""` for an untitled page), `folders` or `labels` (id lists, as read and as written) |
 
 The chat saves the action with the reply. A revert sends it to
 `POST /api/ai/revert` (`gamma/ai_revert.py`), which plans and writes under
@@ -1327,6 +1400,7 @@ one write lock:
 | move | moving it back to the old parent at the old key, re-keyed if a sibling took it (across pages: `ops.move_across_pages`) | `moved`: it was moved on since |
 | deletion | inserting the subtree again with the same ids, parents and keys (a no-op when the block is back already); a redo deletes it again | `gone`: the parent it was under was deleted |
 | deleted folder or label | inserting the blocks again with the same ids, parents and keys, then filing the library pages that carried them again; a redo runs `ops.delete_tree` again | `gone`: the folder it was in was deleted, a folder or label of that name is there again, or (redo) the folder is shared now |
+| renamed, moved or relabelled pages | in one step, `kind: "pages"`, no `block_id`: a title set back where the page still reads as the call left it; folders and labels by set delta — the ids the call put on come off, the ones it took off go back where they exist, a filing made since stays | never forced: a page changed since, deleted or in Recently deleted is left and counted (`kept`), and so is a page whose folders to go back to were all deleted, which would be filed in none; when that is every page, nothing is written and it answers 409 `kept`, so the row is not marked; a redo is the same the other way |
 
 A deleted folder's or label's row sits under "Changed in your library". It
 has a revert and a redo button but is not part of "Revert all". The
@@ -1364,7 +1438,9 @@ refuses the move back across pages. A deleted note answers 404.
 A revert is the user's own write: `actor` is the account and the op log's
 `client` is `"revert"`. It fans out like any edit, so the open page and
 collaborators see it live. A redo is the same. The chat then marks the
-action `reverted` (a redo drops the mark), saves the conversation
+action `reverted`, with `kept` when a page tool's revert left pages as
+they were (a redo drops the mark, and keeps `kept` only when it too left
+pages as they were), saves the conversation
 (`chatSession.edit`), and reloads the touched pages when no socket brought
 the ops.
 
@@ -1373,10 +1449,16 @@ row says why, shows the diff, and offers "Revert anyway", "Delete anyway"
 or "Move back anyway" (for a redo, "Redo anyway" or "Move anyway") beside
 "Keep it". "Revert all" goes newest first and stops at the first row
 that asks. The buttons wait while a reply streams. A viewer and the share
-view get none.
+view get none. A page tool's row whose every page changed since says so,
+with Dismiss; one that left some says how many under the row.
 
-The request's history leaves `revert` out of the actions it sends
-(`chat/aiRevert.js` `forReplay`). The replay puts "the user reverted this
+A page tool's row is not part of "Revert all". A folder or label the call
+made stays after a revert, maybe empty. The folders a page comes back to
+go last in its list, and a page filed again below a folder the move took
+it out of can end up in both levels.
+
+The request's history leaves `revert`, and a batch's per-page `items`, out
+of the actions it sends (`chat/aiRevert.js` `forReplay`). The replay puts "the user reverted this
 change afterwards" before a reverted action's result, so the model does not
 build on it ([ai.md](ai.md) "Replay across turns"). An action without
 `revert`, saved by an older version, shows no button. Ctrl+Z does not

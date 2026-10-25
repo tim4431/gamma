@@ -4995,6 +4995,12 @@ a.shareBrand:hover { background: var(--bg-hover); }
   cursor: pointer;
 }
 .chatChangeLink:hover { text-decoration: underline; }
+/* A call that changed several pages (chat/AgentChanges.jsx): its row folds
+   out to one line per page, in a box that scrolls past 16 lines. */
+.chatChangeItems { margin-top: 2px; }
+.chatChangeItems summary { width: fit-content; color: var(--text-muted); font-size: calc(var(--fs-xs) * var(--text-scale, 1)); cursor: pointer; }
+.chatChangeItems[open] { max-height: 16em; overflow-y: auto; overscroll-behavior: contain; }
+.chatChangeItems > div { margin-top: 2px; }
 /* Agent tool calls (folder/paper chat): one row per call, click to expand the
    arguments and the output the model got back. */
 .chatToolActions { display: flex; flex-direction: column; gap: 3px; }
