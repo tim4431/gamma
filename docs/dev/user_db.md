@@ -776,8 +776,13 @@ rather than a release is `v<tag>-dev.<n>` (`n` commits after the newest
 there that this build lacks are an update to `v<tag>-dev.<m>`, the version
 that branch's next image carries, with a "What's new" link to GitHub's
 comparison. A Docker server cannot update itself, so an
-available update only says which image to pull; the desktop app updates
-on its own. Things worth an admin's eye are logged at WARNING — a
+available update only says which image to pull. The desktop app's server
+says who installs it instead (`GAMMA_UPDATES` from the shell): `desktop`,
+the app's own updater, or `store`, the Microsoft Store, which has a
+release only once Microsoft certifies it, one to three days after GitHub;
+a Store install shows the release without the warning tone, with an Open
+Store button (`ms-windows-store://downloadsandupdates`), and raises no
+notice. Things worth an admin's eye are logged at WARNING — a
 share-link visitor over the write throttle, an address probing unknown
 share links ([api.md](api.md) "Link visitors") — so the tile turns amber
 and the log's "Warnings" filter shows them. An admin who never opens the

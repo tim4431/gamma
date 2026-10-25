@@ -127,7 +127,8 @@ async function start(ws, settings, appInfo, { avoid = [] } = {}) {
   fs.mkdirSync(ws.dataDir, { recursive: true });
 
   // GAMMA_VERSION: the shell's own version, so the server's admin dashboard
-  // (gamma/version.py) reports the app it ships in. GAMMA_CLOUD_DEFAULT_ISSUER:
+  // (gamma/version.py) reports the app it ships in; GAMMA_UPDATES: who installs
+  // a newer one, the shell's updater or the Microsoft Store. GAMMA_CLOUD_DEFAULT_ISSUER:
   // Gamma Cloud sign-in is on until the admin saves another account server
   // or none (gamma/cloud_auth.py); the shell's own environment may name another.
   const env = {
@@ -135,6 +136,7 @@ async function start(ws, settings, appInfo, { avoid = [] } = {}) {
     ...process.env,
     GAMMA_DATA_DIR: ws.dataDir,
     GAMMA_VERSION: appInfo?.version || '',
+    GAMMA_UPDATES: appInfo?.updates || '',
     // This server keeps the folders on disk, anywhere the user picks: it
     // runs as the user, on the user's own machine.
     GAMMA_FOLDER_LINKS: '1',

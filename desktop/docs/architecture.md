@@ -601,6 +601,8 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   public HTTP API + env config (`GAMMA_DATA_DIR`, `GAMMA_STATIC_DIR`,
   `GAMMA_ADMIN_USER`, `GAMMA_ADMIN_PASSWORD`, `GAMMA_VERSION` = the shell's
   own version, so the server's admin dashboard names the app,
+  `GAMMA_UPDATES` = `desktop`, or `store` in a Store install, so it says
+  who installs a newer one,
   `GAMMA_CLOUD_DEFAULT_ISSUER` = Gamma Cloud, the account server until the
   admin saves another, `GAMMA_FOLDER_LINKS` = this server keeps folders on
   disk, anywhere the user picks, since the sidecar runs as the user), `/api/health` and

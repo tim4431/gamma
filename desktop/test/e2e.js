@@ -891,12 +891,16 @@ async function main() {
       await waitLoggedIn(content);
       await content.evaluate(() => {
         window.open('https://example.org/popup');
+        window.open('ms-windows-store://downloadsandupdates'); // Settings → Server's Open Store
+        window.open('ms-windows-store://pdp/?productid=X'); // any other Store link stays shut
         setTimeout(() => { location.href = 'https://example.com/leave'; }, 0);
       });
       await sleep(1200);
       assert.equal(new URL(content.url()).origin, urls.alpha, 'still on the server');
       const opened = await hook(app, (s) => s.externalOpens.slice());
       assert(opened.includes('https://example.org/popup'), 'window.open went external: ' + opened);
+      assert(opened.includes('ms-windows-store://downloadsandupdates'), 'the Store updates page opened: ' + opened);
+      assert(!opened.some((u) => u.startsWith('ms-windows-store://pdp')), 'no other Store link: ' + opened);
       assert(opened.includes('https://example.com/leave'), 'location change went external: ' + opened);
       return opened.join(', ');
     });
