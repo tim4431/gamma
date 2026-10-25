@@ -884,8 +884,10 @@ The scenarios live in `tests/e2e/scenarios/`:
   cannot), a PDF chip's right-click "Add to library" makes the document page
   in the project's folder and the chip gets an open-page button, a markdown
   chip's "Add to library" imports a note page and leaves the file untouched,
-  the upload endpoint's lab-file / executable rule, and a slow upload
-  stopped from Background tasks.
+  the upload endpoint's lab-file / executable rule, a slow upload
+  stopped from Background tasks, and the Document popover's "Replace the
+  PDF…" swapping a document page's file while its title and highlights
+  stay.
 - `collab.mjs`: two accounts in a shared workspace: presence, live ops, edits
   to different blocks, same-block last-writer-wins, undo after a remote edit,
   rename propagation, edits made offline replaying, remote delete, a
