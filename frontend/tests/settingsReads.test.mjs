@@ -92,7 +92,8 @@ test("a pane's reads go out together with what they lead to; a prefetch reads on
 test("every path a section reads through the store is one of a pane's reads", async () => {
   const fs = await import("node:fs");
   const path = await import("node:path");
-  const dir = path.join(path.dirname(new URL(import.meta.url).pathname), "../src/settings");
+  const { fileURLToPath } = await import("node:url");
+  const dir = path.join(path.dirname(fileURLToPath(import.meta.url)), "../src/settings");
   const who = { admin: true, signedIn: true };
   const listed = new Set(Object.values(PANE_READS).flatMap((reads) => reads(who)).filter(Boolean)
     .map((read) => (typeof read === "string" ? read : read.path)));
