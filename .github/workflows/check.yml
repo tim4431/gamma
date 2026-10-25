@@ -98,7 +98,7 @@ jobs:
   # failure the harness's screenshots + log tails are uploaded as the
   # `e2e-failures-<shard>` artifact (docs/dev/debugging.md).
   e2e:
-    name: e2e (${{ matrix.shard }}/2)
+    name: e2e (${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
     strategy:
@@ -135,7 +135,7 @@ jobs:
         run: |
           mkdir -p "$TMPDIR"
           # 3 workers on the runner's 4 cores, measured no flakier than 2: ~3 min a shard
-          npm run e2e -- --continue --jobs 3 --shard ${{ matrix.shard }}/2
+          npm run e2e -- --continue --jobs 3 --shard ${{ matrix.shard }}/${{ strategy.job-total }}
       - if: failure()
         uses: actions/upload-artifact@v7
         with:

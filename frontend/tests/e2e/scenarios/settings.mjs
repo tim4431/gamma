@@ -1,4 +1,4 @@
-import { Account, FAKE_AI_MODELS, ROOT, Server, arrived, fakeAiModels, wanted } from "../harness.mjs";
+import { Account, FAKE_AI_MODELS, PYTHON, Server, arrived, fakeAiModels, wanted } from "../harness.mjs";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
@@ -1412,8 +1412,7 @@ export async function settingsScenarios(env) {
     const file = path.join(server.dir, "big-donor.zip");
     fs.writeFileSync(file, Buffer.from(await (await user.api(`/api/export?ws=${donor.id}&uploads=0`, { raw: true })).arrayBuffer()));
     // 40 MB the restore passes over: it reads pages.db, data.db and uploads/
-    const python = process.env.GAMMA_E2E_PYTHON || path.join(ROOT, "backend", "venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
-    execFileSync(python, ["-c", "import os, sys, zipfile; zipfile.ZipFile(sys.argv[1], 'a').writestr('padding.bin', os.urandom(40 << 20))", file]);
+    execFileSync(PYTHON, ["-c", "import os, sys, zipfile; zipfile.ZipFile(sys.argv[1], 'a').writestr('padding.bin', os.urandom(40 << 20))", file]);
     const { ctx, page } = await setup();
     try {
       const posts = [];

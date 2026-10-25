@@ -518,7 +518,7 @@ and the ones running finish. The wall time is bounded by the longest group
 (settings, about two and a half minutes in CI), so split it before adding
 workers or shards.
 
-`--shard k/n` runs the k-th of n shares of the selection: each group,
+`--shard k/n` runs the k-th of n shares of the selection. Each group,
 longest first by its `s`, goes to the share with the least time so far
 (`shardOf` in `select.mjs`), so the shares take about as long. CI runs the
 two halves (`--shard 1/2`, `--shard 2/2`) on two runners, about three
@@ -528,11 +528,10 @@ each group's seconds as `── <group>  (N s`), update it.
 A group that throws outside its steps (its own setup: accounts, seeded
 pages) runs none of them. The summary counts it as a failure,
 `<group> (group aborted)`, and prints the error with its cause.
-`server.manage()` runs manage.py asynchronously: run synchronously, a few
-calls in a row (about a second each) blocked Node past uvicorn's 5 s
-keep-alive timeout, and the next request went down a socket the backend had
-closed (`fetch failed`, "other side closed", on Linux). The inbox group
-aborted that way in CI.
+`server.manage()` runs manage.py asynchronously: a synchronous run of a
+few calls in a row (about a second each) blocks Node past uvicorn's 5 s
+keep-alive timeout, and the next request goes down a socket the backend
+has closed (`fetch failed`, "other side closed", on Linux).
 
 `--changed [ref]` picks the groups from what changed: the working tree
 (staged, unstaged, untracked) against `HEAD`, or everything since the branch
