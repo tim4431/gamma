@@ -354,8 +354,8 @@ def _store_with(ws: str, filename: str, nbytes: int, head, write) -> bool:
     (``touch``): the upload→reference window gets its grace again and an
     unreferenced file's retention starts over (gamma/upload_gc.py). A copy
     an earlier, non-atomic write left short is rewritten. The storage
-    limits gate new bytes only (check_upload_allowed raises 413/507 past
-    them)."""
+    quota gates new bytes only (check_upload_allowed raises 507 past
+    it)."""
     stored = size(ws, filename)
     if stored is not None and stored != nbytes and _cut_short(ws, filename, nbytes, head):
         log.warning(f"[uploads] {filename} in workspace {ws} held {stored} of {nbytes} bytes — rewritten")
@@ -486,9 +486,9 @@ class Spool:
 
 def _spool_stream(ws: str, stream) -> Spool:
     """``stream`` (``.read(n)``) spooled into ``partial_dir(ws)`` and hashed
-    as it is read, the limits asked every SPOOL_CHECK_BYTES
-    (``check_upload_allowed``: 413 / 507), so a file past the per-file cap
-    is refused a few MB in, not after it was written whole. The spool is
+    as it is read, the quota asked every SPOOL_CHECK_BYTES
+    (``check_upload_allowed``: 507), so a file past it is refused a few MB
+    in, not after it was written whole. The spool is
     discarded on any exception; the caller stores or discards the one it
     gets."""
     spool = Spool(ws)
@@ -535,11 +535,11 @@ def store_file_path(ws: str, path: Path, size: int, digest: str, ext: str) -> tu
 
 
 def store_file_stream(ws: str, stream, ext: str) -> tuple[str, bool]:
-    """:func:`store_file` for a file read from ``stream`` (``.read(n)``, a
-    zip member). The file is spooled to disk and hashed as it is read
-    (``Spool``), and the limits are asked every SPOOL_CHECK_BYTES
-    (``check_upload_allowed``: 413/507). A file ``content_refusal`` refuses
-    is a ValueError. The file is then stored by a rename
+    """:func:`store_file` for a file read from ``stream`` (``.read(n)``: an
+    upload's spooled body or a zip member). The file is spooled to disk and
+    hashed as it is read (``Spool``), and the quota is asked every
+    SPOOL_CHECK_BYTES (``check_upload_allowed``: 507). A file
+    ``content_refusal`` refuses is a ValueError. The file is then stored by a rename
     (``store_file_path``) → ``(filename, already_existed)``. Nothing is
     left on disk either way."""
     spool = _spool_stream(ws, stream)

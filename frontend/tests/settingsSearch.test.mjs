@@ -66,7 +66,7 @@ test("labels that hold the query come first; hints and synonyms find the rest", 
   const all = Object.keys(PANE_FILES);
   const storage = searchSettings("storage", all).map((r) => r.label);
   assert.deepEqual(storage.slice(0, 1), ["Your storage"]);
-  for (const label of ["Uploaded files", "Default quota", "Default max upload", "Save external PDFs"]) {
+  for (const label of ["Uploaded files", "Default quota", "Save external PDFs"]) {
     assert.ok(storage.includes(label), `"storage" finds ${label}`);
   }
   assert.equal(searchSettings("enter key", all)[0].label, "Enter makes");

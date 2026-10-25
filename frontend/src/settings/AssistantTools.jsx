@@ -2,8 +2,8 @@ import React from "react";
 import { t } from "../shared/i18n/i18n.js";
 import { MenuSelect } from "../shared/ui/Menus";
 import { BanIcon, BookIcon, CheckIcon, CloudDownloadIcon, EyeIcon, FilePlusIcon, FileTextIcon, FolderIcon,
-  GlobeIcon, HelpCircleIcon, HistoryIcon, ListIcon, OutlineIcon, PenIcon, PencilIcon, SearchIcon,
-  ShieldIcon } from "../shared/ui/Icons";
+  FoldersIcon, GlobeIcon, HelpCircleIcon, HistoryIcon, ListIcon, OutlineIcon, PenIcon, PencilIcon, SearchIcon,
+  ShieldIcon, TrashIcon } from "../shared/ui/Icons";
 import { permGroup, permState, permStates, permissionPreset, presetPermissions, toolsForKind } from "../chat/chatSettings.js";
 
 // One catalog for the comparison table, the current chat's quick settings
@@ -26,6 +26,8 @@ const PERMISSIONS = [
   ["rename", PenIcon, t("Rename pages"), t("Change page titles on request")],
   ["move", FolderIcon, t("Move pages"), t("Organize pages into folders")],
   ["restore", HistoryIcon, t("Restore deleted pages"), t("Bring pages back from Recently deleted on request")],
+  ["organize", FoldersIcon, t("Organize folders and labels"), t("Rename folders, and make, rename and apply labels, on request")],
+  ["organize_delete", TrashIcon, t("Delete folders and labels"), t("Delete a folder or a label on request, never its pages. Always asks first.")],
   ["block_edit", PencilIcon, t("Edit note blocks"), t("Create, edit and move notes, and transcribe handwriting, on request")],
 ];
 export const permissionLabel = (key) => PERMISSIONS.find((row) => row[0] === key)?.[2] || key;

@@ -5,60 +5,34 @@ Folders and labels are blocks of the pseudo-pages ``folders`` / ``labels``
 is one op on the tree (``POST /api/pages/folders/ops``), touching no page.
 A delete is the one change that reaches the pages, so it has its endpoint:
 the subtree goes, and in the same transaction every page filed under it
-loses those ids — one op batch per page (``ops.apply_batches``), so its
-viewers and a mirror see the refiling like any edit. A deleted folder's AI
-chats (its bucket and its subfolders') are filed into the library chat's
-history, and its share links stop. Workspace editors; never through a share
-link.
+loses those ids (``ops.delete_tree``, which the agent's delete tools and a
+revert's redo run too; one op batch per page), so its viewers and a mirror
+see the refiling like any edit. A deleted folder's AI chats (its bucket and
+its subfolders') are filed into the library chat's history, and its share
+links stop. Workspace editors; never through a share link.
 """
-
-import json
 
 from fastapi import APIRouter, HTTPException, Request
 
 from ..auth import actor_of, require_ws
-from ..blocks_store import FOLDERS, LABELS, fetch_subtree, filing, write_lock
+from ..blocks_store import FOLDERS, LABELS
 from ..db import connect_pages_db
-from ..ops import OpError, after_commit, apply_batches
+from ..ops import OpError, delete_tree
 
 router = APIRouter(prefix="/api", tags=["folders"])
 
 
 def delete_tree_block(ws: str, tree: str, block_id: str, *, actor: str) -> dict:
-    """Delete the folder or label ``block_id`` of ``tree`` with everything
-    below it and take the ids off the pages that carry them, in one
-    transaction. The folder chats are filed into the library's history by
-    the tree's ``delete`` op and the folder's shares stop after the commit
-    (``ops.after_commit``), as for any tree batch that deletes a folder.
-    Returns ``{ids, pages, chats, shares}`` — the blocks deleted, the pages
-    refiled, the conversations filed into the library's history, the share
-    links stopped. 404 unless it is a block of the tree (the reserved row
-    is none)."""
+    """``ops.delete_tree`` for the two endpoints: ``{ids, pages, chats,
+    shares}`` — the blocks deleted, the pages refiled, the conversations
+    filed into the library's history, the share links stopped. 404 unless
+    it is a block of the tree."""
     with connect_pages_db(ws) as conn:
-        write_lock(conn)
         try:
-            if not conn.execute("SELECT 1 FROM unified_blocks WHERE id = ? AND page_id = ?",
-                                (block_id, tree)).fetchone():
-                raise HTTPException(status_code=404, detail="folder not found" if tree == FOLDERS else "label not found")
-            ids = {r[0] for r in fetch_subtree(conn, block_id)}
-            refiled = []
-            for page_id, raw in conn.execute(
-                    f"SELECT id, properties FROM unified_blocks p WHERE parent_id = 'root' AND EXISTS ("
-                    f"SELECT 1 FROM json_each(p.properties, '$.{tree}') f WHERE f.value IN "
-                    "(SELECT value FROM json_each(?)))", (json.dumps(sorted(ids)),)).fetchall():
-                kept = [i for i in filing(json.loads(raw), tree) if i not in ids]
-                refiled.append((page_id, [{"op": "set", "id": page_id, "props": {tree: kept or None}}]))
-            try:
-                results = apply_batches(conn, [(tree, [{"op": "delete", "id": block_id}]), *refiled], actor=actor)
-            except OpError as e:
-                raise HTTPException(status_code=e.status, detail=e.detail)
-            conn.commit()
-        except BaseException:
-            conn.rollback()
-            raise
-        for result in results:
-            after_commit(ws, conn, result)
-    return {"ids": sorted(ids), "pages": [p for p, _ in refiled],
+            rows, carried, results = delete_tree(ws, conn, tree, block_id, actor=actor)
+        except OpError as e:
+            raise HTTPException(status_code=e.status, detail=e.detail)
+    return {"ids": sorted(r[0] for r in rows), "pages": list(carried),
             "chats": results[0]["chats_filed"], "shares": results[0].get("shares_stopped", 0)}
 
 

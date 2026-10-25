@@ -1,7 +1,13 @@
 """The agent's tool registry: which tools each scope offers, how the
 permission map prunes them, and what the system prompt tells the model."""
 
-from gamma.ai_tools import agent_system, agent_tools
+import re
+from pathlib import Path
+
+import pytest
+
+from gamma import ai_permissions
+from gamma.ai_tools import AGENT_PROMPT, TOOLS, agent_system, agent_tools
 
 from ai_fixtures import ALL_PERMS, ALL_TOOLS, folder
 
@@ -10,7 +16,8 @@ def test_registry_scopes_and_permissions():
     assert [t["name"] for t in agent_tools("folder")] == [
         "list_pages", "list_folders", "read_page", "read_block", "read_chats", "view_pdf_page", "view_ink",
         "view_image", "cite", "search_library", "search_papers", "related_papers", "fetch_paper", "save_paper",
-        "rename_page", "move_page", "list_deleted", "restore_page", "edit_block", "create_block", "move_block",
+        "rename_page", "move_page", "list_deleted", "restore_page", "rename_folder", "create_label", "rename_label",
+        "label_page", "delete_folder", "delete_label", "edit_block", "create_block", "move_block",
         "delete_block", "clip_region"]
     # Paper chats never list, rename, move or restore pages; the note-block
     # tools and save_paper exist there.
@@ -20,7 +27,8 @@ def test_registry_scopes_and_permissions():
         "move_block", "delete_block", "clip_region"]
     assert agent_tools("") == []  # plain chat
     assert [t["name"] for t in agent_tools(
-        "folder", {"rename": False, "move": False, "block_edit": False, "save": False, "restore": False})] == [
+        "folder", {"rename": False, "move": False, "block_edit": False, "save": False, "restore": False,
+                   "organize": False, "organize_delete": False})] == [
         "list_pages", "list_folders", "read_page", "read_block", "read_chats", "view_pdf_page", "view_ink", "view_image",
         "cite", "search_library", "search_papers", "related_papers", "fetch_paper", "list_deleted"]
     names = [t["name"] for t in agent_tools("folder", {"search": False})]
@@ -42,6 +50,35 @@ def test_registry_scopes_and_permissions():
     assert "search_papers" not in names and "fetch_paper" not in names and "read_page" in names
     assert agent_tools("folder", {k: False for k in ALL_PERMS}) == []
     assert agent_tools("folder", None) == ALL_TOOLS  # missing map = everything on
+
+
+def test_organize_permissions_gate_their_tools_and_the_prompt():
+    names = [t["name"] for t in agent_tools("folder", {"organize": "off"})]
+    assert "rename_folder" not in names and "label_page" not in names and "delete_folder" in names
+    names = [t["name"] for t in agent_tools("folder", {"organize_delete": "off"})]
+    assert "delete_folder" not in names and "delete_label" not in names and "rename_folder" in names
+    text = agent_system(folder(""))
+    assert "Folders and labels: you can rename folders" in text and "never a page" in text
+    page_text = agent_system({"type": "page", "page_id": "p1"})
+    assert "Folders and labels" not in page_text and "never a page" not in page_text
+    assert "edit labels" not in AGENT_PROMPT
+
+
+def test_the_settings_catalog_names_every_permission():
+    """The client's permission list (chat/chatSettings.js) has a row for
+    every permission of the registry, and offers Ask and Off only for the
+    server's ask-only ones."""
+    source = Path(__file__).resolve().parents[2] / "frontend" / "src" / "chat" / "chatSettings.js"
+    if not source.exists():
+        pytest.skip("no frontend checkout beside the backend")
+    text = source.read_text(encoding="utf-8")
+    assert {key for key in re.findall(r'\["(\w+)", "(?:library|web|edit)"', text)} == (
+        {t["perm"] for t in TOOLS} | {"publisher_cookies"})
+    states_of = re.search(r"const STATES_OF = \{(.*?)\};", text, re.S)
+    assert states_of, "STATES_OF is no longer in chatSettings.js"
+    ask_only = {key for key, states in re.findall(r'(\w+): \[([^\]]*)\]', states_of.group(1))
+                if '"allow"' not in states}
+    assert ask_only == ai_permissions.ASK_ONLY
 
 
 def test_agent_system_mentions_scope_and_armed_tools():

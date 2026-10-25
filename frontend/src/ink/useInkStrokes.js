@@ -28,6 +28,30 @@ export function useInkStrokes({ focusedBlockId, readOnly, inkStale, blocksRef, n
   const inkActiveRef = useRef(null);
   // Leaving a page: the next stroke starts a fresh group.
   useEffect(() => () => { inkActiveRef.current = null; }, [focusedBlockId]);
+  // The group `count` strokes of `bytes` join on `page` (`size` its
+  // {width, height} in points), with its strokes so far: the surface's
+  // current group while its block is on the page, else a new one. Its
+  // strokes are its draft, else its file (loaded first — a stroke must
+  // never replace strokes that just have not arrived yet), else a fresh
+  // file. A group past the split budget (or full of strokes) is left as it
+  // is: the strokes start the page's next group, invisibly (inkEdits.js
+  // splitsGroup). → {id, before}.
+  async function groupFor(page, size, bytes, count) {
+    let id = inkActiveRef.current?.page === page ? inkActiveRef.current.id : null;
+    const existing = id ? flattenBlocks(blocksRef.current).find((b) => b.id === id && b.properties?.ink_url !== undefined) : null;
+    if (!existing) id = makeId();
+    inkActiveRef.current = { page, id };
+    const loaded = !inkStore.draft(id) && existing?.properties.ink_url
+      ? await inkStore.loadInk(existing.properties.ink_url) : null;
+    const fresh = () => freshInk(page, size);
+    let before = inkStore.draft(id)?.ink || loaded || fresh();
+    if (splitsGroup(before, bytes, count)) {
+      id = makeId();
+      inkActiveRef.current = { page, id };
+      before = fresh();
+    }
+    return { id, before };
+  }
   // `page`: a PDF page number, or a notebook sheet's id; `label` the
   // history entry's (the layer's finishStroke names a straight line or a
   // shape, "Undone: ink shape").
@@ -35,26 +59,9 @@ export function useInkStrokes({ focusedBlockId, readOnly, inkStale, blocksRef, n
     if (readOnly || !focusedBlockId || inkStale) return;
     // a stroke drawn while a squeeze holds its tool makes that squeeze no toggle
     noteSqueezeUse();
-    let id = inkActiveRef.current?.page === page ? inkActiveRef.current.id : null;
-    const existing = id ? flattenBlocks(blocksRef.current).find((b) => b.id === id && b.properties?.ink_url !== undefined) : null;
-    if (!existing) id = makeId();
-    inkActiveRef.current = { page, id };
-    // The group's strokes so far: the draft, else its file (loaded first —
-    // a stroke must never replace strokes that just have not arrived yet).
-    const loaded = !inkStore.draft(id) && existing?.properties.ink_url
-      ? await inkStore.loadInk(existing.properties.ink_url) : null;
-    const onSheet = typeof page === "string";
-    const fresh = () => freshInk(page, size);
-    let before = inkStore.draft(id)?.ink || loaded || fresh();
-    // A group past the split budget (or full of strokes) is left as it is:
-    // the stroke starts the page's next group, invisibly.
-    if (splitsGroup(before, strokeBytes(stroke), 1)) {
-      id = makeId();
-      inkActiveRef.current = { page, id };
-      before = fresh();
-    }
+    const { id, before } = await groupFor(page, size, strokeBytes(stroke), 1);
     applyInk([{ id, page, before, after: appendStroke(before, stroke) }], { label });
-    if (onSheet) {
+    if (typeof page === "string") {
       // Writing into the last quarter of the page's last sheet adds the next
       // one right after it, so there is always paper below (Notability's
       // continuous page) — once: a page after it already there is the one.
@@ -69,23 +76,11 @@ export function useInkStrokes({ focusedBlockId, readOnly, inkStale, blocksRef, n
   // group could hold them.
   async function handleInkStrokes(page, strokes, size) {
     if (readOnly || !focusedBlockId || inkStale || !strokes.length || !size) return null;
-    const fresh = () => freshInk(page, size);
-    const bytes = strokes.reduce((n, s) => n + strokeBytes(s), 0);
     if (pasteTooBig(page, strokes, size)) {
       setStatus(t("Too much handwriting to paste into one note."));
       return null;
     }
-    let id = inkActiveRef.current?.page === page ? inkActiveRef.current.id : null;
-    const existing = id ? flattenBlocks(blocksRef.current).find((b) => b.id === id && b.properties?.ink_url !== undefined) : null;
-    if (!existing) id = makeId();
-    const loaded = existing && !inkStore.draft(id) && existing.properties.ink_url
-      ? await inkStore.loadInk(existing.properties.ink_url) : null;
-    let before = inkStore.draft(id)?.ink || loaded || fresh();
-    if (splitsGroup(before, bytes, strokes.length)) {
-      id = makeId();
-      before = fresh();
-    }
-    inkActiveRef.current = { page, id };
+    const { id, before } = await groupFor(page, size, strokes.reduce((n, s) => n + strokeBytes(s), 0), strokes.length);
     const { ink: after, ids } = appendStrokes(before, strokes);
     applyInk([{ id, page, before, after }], { label: T("ink paste") });
     return { id, ids };

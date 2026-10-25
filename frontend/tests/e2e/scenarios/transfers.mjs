@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { ROOT } from "../harness.mjs";
+import { ROOT, arrived } from "../harness.mjs";
 import { newPageViaUi } from "./notes.mjs";
 import { waitForPdf } from "./pdf.mjs";
 
@@ -299,6 +299,191 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       assert(await report.getByText("Reviewed Markdown", { exact: true }).isVisible());
       await choice(report, "Done").click();
       assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  // Before Import the upload and its review are the dialog's own: the
+  // backdrop, Escape and × ask first, and only a confirmed close drops them.
+  await step("transfer: closing the review before Import asks first, and a failed upload takes the question away", async () => {
+    const { ctx, page } = await setup();
+    try {
+      await page.waitForSelector(".folderNewBtn");
+      const deletes = [];
+      page.on("request", request => {
+        const { pathname } = new URL(request.url());
+        if (request.method() === "DELETE" && pathname.startsWith("/api/import/review/")) deletes.push(pathname);
+      });
+      // The upload's answer is held until released (`*`: its URL carries ?ws=…).
+      let release;
+      const gate = new Promise(resolve => { release = resolve; });
+      await page.route("**/api/import/review*", async route => {
+        const response = await route.fetch();
+        await gate;
+        await route.fulfill({ response });
+      });
+      const pick = async (name, body) => {
+        const dialog = await openDialog(page, "Import");
+        await choice(dialog, "Markdown notes").click();
+        const chooser = page.waitForEvent("filechooser");
+        await choice(dialog, "Choose file…").click();
+        await (await chooser).setFiles({ name, mimeType: "text/markdown", buffer: Buffer.from(body) });
+        const review = page.getByRole("dialog", { name: "Review Markdown import", exact: true });
+        await review.getByRole("progressbar").waitFor();
+        return review;
+      };
+      let review = await pick("guarded.md", "# Guarded Markdown\nA note whose upload is held.");
+      const question = review.getByRole("alertdialog");
+      await arrived(review); // its edge, once it has grown in
+      const box = await review.boundingBox();
+      await page.mouse.click(box.x - 20, box.y + box.height / 2); // the backdrop
+      await question.waitFor();
+      assert((await question.innerText()).includes("Stop uploading guarded.md?"), await question.innerText());
+      await choice(review, "Keep uploading").click();
+      await question.waitFor({ state: "detached" });
+      assert(await review.getByRole("progressbar").isVisible(), "the upload goes on");
+      await page.keyboard.press("Escape"); // the dialog took the focus back from the question
+      await question.waitFor();
+      await page.keyboard.press("Escape"); // a second Escape answers "keep"
+      await question.waitFor({ state: "detached" });
+      assert(await review.isVisible(), "the dialog stays");
+      assertEq(deletes.length, 0, "nothing is dropped while the dialog stays");
+
+      release();
+      await review.getByRole("checkbox", { name: "Import Guarded Markdown", exact: true }).waitFor();
+      await choice(review, "Deselect all").click();
+      await review.getByRole("button", { name: "Close Review Markdown import", exact: true }).click();
+      await question.waitFor();
+      assert((await question.innerText()).includes("Close without importing?"), await question.innerText());
+      await choice(review, "Keep reviewing").click();
+      await question.waitFor({ state: "detached" });
+      assert((await review.innerText()).includes("0 of 1 items selected"), "the review keeps its selection");
+      assert(await choice(review, "Import to library").isDisabled());
+      await page.keyboard.press("Escape");
+      await choice(review, "Discard upload").click();
+      await review.waitFor({ state: "detached" });
+      await until(() => deletes.length === 1, { what: "the discarded review's DELETE" });
+
+      // An upload that fails while the question is open takes the question
+      // away, so one Escape then closes the dialog.
+      await page.unroute("**/api/import/review*");
+      let fail;
+      const failing = new Promise(resolve => { fail = resolve; });
+      await page.route("**/api/import/review*", async route => { await failing; await route.abort(); });
+      review = await pick("failing.md", "# Failing Markdown\nAn upload the network loses.");
+      await review.press("Escape");
+      await question.waitFor();
+      fail();
+      await question.waitFor({ state: "detached" });
+      await choice(review, "Retry preview").waitFor();
+      await page.keyboard.press("Escape"); // the focus left with the question, and came back
+      await review.waitFor({ state: "detached" });
+      assertEq(deletes.length, 1, "a failed upload leaves nothing to drop");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  // A review the server no longer holds (the machine slept past its two
+  // hours, then an upload swept it): the dialog clears it, and Retry preview
+  // uploads the file it still holds again, keeping the choices.
+  await step("transfer: a review the server no longer holds is uploaded again with its choices kept", async () => {
+    const { ctx, page } = await setup();
+    try {
+      const fixture = path.join(server.dir, "gone-review.zip");
+      execFileSync(python, ["-c", `
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], 'w') as z:
+    z.writestr('Gone review/Kept review note.md', '# Kept review note\\ntext')
+    z.writestr('Gone review/Dropped review note.md', '# Dropped review note\\ntext')
+`, fixture], { cwd: ROOT });
+      await page.waitForSelector(".folderNewBtn");
+      let uploads = 0;
+      let keepalives = 0;
+      page.on("request", request => {
+        const { pathname } = new URL(request.url());
+        if (request.method() !== "POST") return;
+        if (pathname === "/api/import/review") uploads++;
+        if (/^\/api\/import\/review\/[0-9a-f]{40}\/keepalive$/.test(pathname)) keepalives++;
+      });
+      const dialog = await openDialog(page, "Import");
+      await choice(dialog, "Markdown notes").click();
+      const chooser = page.waitForEvent("filechooser");
+      await choice(dialog, "Choose file…").click();
+      await (await chooser).setFiles(fixture);
+      const review = page.getByRole("dialog", { name: "Review Markdown import", exact: true });
+      await review.getByRole("checkbox", { name: "Import Dropped review note", exact: true }).uncheck();
+      assert((await review.innerText()).includes("1 of 2 items selected"));
+
+      // The open review is kept: on a timer, and when the window comes back.
+      const before = keepalives;
+      const kept = page.waitForResponse(r => new URL(r.url()).pathname.endsWith("/keepalive"));
+      await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+      assertEq((await kept).status(), 200);
+      assertEq(keepalives - before, 1, "the window's focus sends one keep-alive");
+
+      await page.route("**/api/jobs/import", route => route.fulfill({ status: 404, contentType: "application/json",
+        body: JSON.stringify({ detail: "import review not found" }) }), { times: 1 });
+      await choice(review, "Import to library").click();
+      await review.getByRole("alert").filter({ hasText: "The server no longer holds this review." }).waitFor();
+      assert(await choice(review, "Retry preview").isVisible(), "Retry preview is offered");
+      assert(await choice(review, "Import to library").isDisabled(), "the gone review is not posted again");
+      assertEq(uploads, 1);
+      // The choices it keeps for Retry preview are asked about before a close.
+      await review.press("Escape");
+      await review.getByRole("alertdialog").filter({ hasText: "Close without importing?" }).waitFor();
+      await choice(review, "Keep reviewing").click();
+      await choice(review, "Retry preview").click();
+      await review.getByRole("checkbox", { name: "Import Kept review note", exact: true }).waitFor();
+      assertEq(uploads, 2, "Retry preview uploads the file again");
+      assert((await review.innerText()).includes("1 of 2 items selected"), "the choices are kept");
+      assert(!(await review.getByRole("checkbox", { name: "Import Dropped review note", exact: true }).isChecked()));
+      await choice(review, "Import to library").click();
+      const report = page.getByRole("dialog", { name: "Import complete", exact: true });
+      await report.waitFor();
+      assert((await report.innerText()).includes("1 new page"));
+      await choice(report, "Done").click();
+      assertNoProblems(page, [/^POST \/api\/jobs\/import\S* -> 404$/]);
+    } finally { await ctx.close(); }
+  });
+
+  // A close confirmed while Import is being started: the review is the
+  // starting job's, so it stays for it; a start that then fails drops it.
+  await step("transfer: a review closed while its import starts is left to the import, and dropped when the start fails", async () => {
+    const { ctx, page } = await setup();
+    try {
+      await page.waitForSelector(".folderNewBtn");
+      const deletes = [];
+      page.on("request", request => {
+        const { pathname } = new URL(request.url());
+        if (request.method() === "DELETE" && pathname.startsWith("/api/import/review/")) deletes.push(pathname);
+      });
+      // Import pressed and its start held; the dialog closes, then the start is answered.
+      const closeWhileStarting = async (name, answer) => {
+        let release;
+        const gate = new Promise(resolve => { release = resolve; });
+        await page.route("**/api/jobs/import", async route => { await gate; await answer(route); }, { times: 1 });
+        const dialog = await openDialog(page, "Import");
+        await choice(dialog, "Markdown notes").click();
+        const chooser = page.waitForEvent("filechooser");
+        await choice(dialog, "Choose file…").click();
+        await (await chooser).setFiles({ name: `${name}.md`, mimeType: "text/markdown", buffer: Buffer.from(`# ${name}\nA note closed while its import starts.`) });
+        const review = page.getByRole("dialog", { name: "Review Markdown import", exact: true });
+        await review.getByRole("checkbox", { name: `Import ${name}`, exact: true }).waitFor();
+        const starting = page.waitForRequest(r => r.method() === "POST" && new URL(r.url()).pathname === "/api/jobs/import");
+        await choice(review, "Import to library").click();
+        await starting;
+        await review.press("Escape");
+        await choice(review, "Discard upload").click();
+        await review.waitFor({ state: "detached" });
+        release();
+      };
+      await closeWhileStarting("Refused start", route => route.fulfill({ status: 500, contentType: "application/json",
+        body: JSON.stringify({ detail: "e2e: the start failed" }) }));
+      await until(() => deletes.length === 1, { what: "the DELETE of the review whose start failed" });
+      await closeWhileStarting("Racing start", route => route.continue());
+      await page.click("button[aria-label='Background tasks']");
+      await page.locator(".taskRow.done", { hasText: "Import Racing start.md" }).waitFor();
+      assertEq(deletes.length, 1, "the review left to its import is not dropped");
+      assertNoProblems(page, [/^POST \/api\/jobs\/import\S* -> 500$/]);
     } finally { await ctx.close(); }
   });
 

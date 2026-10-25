@@ -1,4 +1,4 @@
-import { Account, FAKE_AI_MODELS, ROOT, Server, arrived, fakeAiModels, wanted } from "../harness.mjs";
+import { Account, FAKE_AI_MODELS, PYTHON, Server, arrived, fakeAiModels, wanted } from "../harness.mjs";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
@@ -1412,8 +1412,7 @@ export async function settingsScenarios(env) {
     const file = path.join(server.dir, "big-donor.zip");
     fs.writeFileSync(file, Buffer.from(await (await user.api(`/api/export?ws=${donor.id}&uploads=0`, { raw: true })).arrayBuffer()));
     // 40 MB the restore passes over: it reads pages.db, data.db and uploads/
-    const python = process.env.GAMMA_E2E_PYTHON || path.join(ROOT, "backend", "venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
-    execFileSync(python, ["-c", "import os, sys, zipfile; zipfile.ZipFile(sys.argv[1], 'a').writestr('padding.bin', os.urandom(40 << 20))", file]);
+    execFileSync(PYTHON, ["-c", "import os, sys, zipfile; zipfile.ZipFile(sys.argv[1], 'a').writestr('padding.bin', os.urandom(40 << 20))", file]);
     const { ctx, page } = await setup();
     try {
       const posts = [];
@@ -1586,6 +1585,15 @@ export async function settingsScenarios(env) {
         for (const kind of ["Folder chat", "PDF chat", "Notes chat"]) await choosePreset(kind, "Allow all");
         assertEq(await stateOf("Rename pages"), "Allow");
         assertEq(await permission("Rename pages", "PDF chat").count(), 0);
+        // Deleting folders and labels only asks or is off, and a folder chat's alone.
+        assertEq(await stateOf("Organize folders and labels"), "Allow");
+        assertEq(await stateOf("Delete folders and labels"), "Ask", "deleting still asks under Allow all");
+        assertEq(await preset("Folder chat").innerText(), "Allow all");
+        assertEq(await permission("Delete folders and labels", "PDF chat").count(), 0);
+        await permission("Delete folders and labels").click();
+        assertEq(JSON.stringify(await menu.locator(".ctxMenuItem").allInnerTexts()), JSON.stringify(["Ask", "Off"]));
+        await page.keyboard.press("Escape");
+        await menu.waitFor({ state: "detached" });
         assertEq(await permission("List pages", "Notes chat").count(), 0);
         await choosePreset("Folder chat", "Ask before changes");
         for (const tool of ["Rename pages", "Move pages", "Edit note blocks"]) {
@@ -1901,21 +1909,20 @@ export async function settingsScenarios(env) {
       await page.locator(".settingsPane .aiProvRow").waitFor();
       assertEq(await page.locator(".settingsPane .aiProvRow").count(), 1);
       await nav(page, "Server").click();
-      const limit = row(page, "Default max upload").locator("input");
-      await limit.waitFor();
-      const originalLimit = await limit.inputValue();
-      // limits save on commit, like every other setting
-      await limit.fill("77");
-      await limit.press("Enter");
-      await until(() => user.api("/api/admin/settings").then((s) => s.max_upload_mb === 77), { what: "limit saved on Enter" });
-      await limit.fill(originalLimit);
-      await limit.press("Enter");
-      await until(() => user.api("/api/admin/settings").then((s) => String(s.max_upload_mb) === originalLimit), { what: "limit restored" });
-      await limit.fill("77");
-      await limit.press("Enter");
-      await row(page, "Default quota").locator("input").fill("1200");
-      await row(page, "Default quota").locator("input").press("Enter");
-      await until(() => user.api("/api/admin/settings").then((v) => v.max_upload_mb === 77 && v.quota_mb === 1200));
+      const quota = row(page, "Default quota").locator("input");
+      await quota.waitFor();
+      assertEq(await page.locator('.settingsPane [data-setting="Default max upload"]').count(), 0); // no per-file cap
+      const originalQuota = await quota.inputValue();
+      // the quota saves on commit, like every other setting
+      await quota.fill("1200");
+      await quota.press("Enter");
+      await until(() => user.api("/api/admin/settings").then((s) => s.quota_mb === 1200), { what: "quota saved on Enter" });
+      await quota.fill(originalQuota);
+      await quota.press("Enter");
+      await until(() => user.api("/api/admin/settings").then((s) => String(s.quota_mb) === originalQuota), { what: "quota restored" });
+      await quota.fill("1200");
+      await quota.press("Enter");
+      await until(() => user.api("/api/admin/settings").then((v) => v.quota_mb === 1200));
       await nav(page, "Users").click();
       await until(() => page.locator(".settingsPane .aiProvRow").count().then((n) => n > 1));
       // Each account row nests its personal workspaces; Manage opens the

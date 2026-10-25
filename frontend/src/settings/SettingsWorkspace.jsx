@@ -140,7 +140,7 @@ export function AccessRows({ info, canEdit, onUpdate }) {
       ) : null}
       {canEdit && info.quota != null ? (
         <Row icon={HardDriveIcon} label={t("Workspace quota")} hint={t("total uploads · blank or 0 = unlimited")}
-          title={t("A shared workspace's own storage cap. It counts against nobody's personal quota; the per-file limit is the server default.")}>
+          title={t("A shared workspace's own storage cap. It counts against nobody's personal quota.")}>
           <UnitInput
             unit="MB" min={0} placeholder={t("unlimited")} value={info.quota_mb ?? ""}
             onCommit={(raw) => {
@@ -677,7 +677,7 @@ export function WorkspacesSettings({ value, onServer }) {
       {data ? (
         <>
           <Section title={t("Storage")}>
-            <Row icon={DatabaseIcon} label={t("Your storage")} hint={data.account.max_upload_mb ? t("all personal workspaces · max {mb} MB per file", { mb: data.account.max_upload_mb }) : t("all personal workspaces")}
+            <Row icon={DatabaseIcon} label={t("Your storage")} hint={t("all personal workspaces")}
               title={t("Uploads into your personal workspaces count against your account's quota. Shared workspaces carry their own.")}>
               <QuotaMeter usedBytes={data.account.used_bytes} quotaMb={data.account.quota_mb} />
             </Row>

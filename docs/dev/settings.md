@@ -14,7 +14,7 @@ Where every setting lives, and how the Settings dialog is built.
 | Per account, done reminders | `users.db` `reminders_done`, a row per dismissed reminder (its key, the workspace it was last found in, when), written by `POST /api/reminders/done` and kept while the reminder exists ([mentions.md](mentions.md) "Reminders"); no pref, as there may be thousands (the `reminders-done` prefs key held them before migration step 39) | which of the account's reminders it has dismissed, in every browser |
 | Per account, server-only | AI provider entries (keys/OAuth tokens) under the reserved `ai-settings` prefs key (account-wide), managed via `/api/ai/providers*`; the browser only ever sees a masked hint. The server's shared entries (next row) are listed after them read-only. Machine-translation keys live the same way under the reserved `translate-engines` key (`/api/translate/engines*`, [translation.md](translation.md)), and the online search settings under the reserved `search-services` key (`/api/ai/search-services*`, [ai_tools.md](ai_tools.md) "search_web") | API keys, ChatGPT OAuth, Google / Youdao translation keys, the web search engine with Brave / SearXNG / OpenAlex settings |
 | Per workspace | `workspaces` / `workspace_members` in `users.db`, via `/api/workspaces*` ([workspaces.md](workspaces.md)) | name, kind (personal / shared), members and roles, access (private / public + the public role) and a shared workspace's own quota (admins), the account's default workspace, which workspace this tab works in (`?ws=` in the URL, `gamma-last-ws:<user>` remembers the last one) |
-| Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns; the shared AI entries under the `ai_providers` key via `/api/admin/ai-providers*` (keys encrypted with the data directory's key, like the cloud client secret) | default max upload size, default storage quota, public URL, cloud sign-in (and whether this server is the share host), how long guest workspaces last (`guest_ttl_hours`) and demo mode (`demo_mode`, [guests.md](guests.md)), shared AI provider entries, whether guests may use them and the shared AI allowance per account / per guest, the off-site copies (the `offsite` key via `/api/admin/offsite`, its secret key encrypted the same way), a hosted container's last plan answer (`hosted_limits`, written only by the sync, [cloud_accounts.md](cloud_accounts.md) "Hosted containers") and the time of its last write (`hosted_last_write`, saved by the sync) |
+| Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns; the shared AI entries under the `ai_providers` key via `/api/admin/ai-providers*` (keys encrypted with the data directory's key, like the cloud client secret) | default storage quota, public URL, cloud sign-in (and whether this server is the share host), how long guest workspaces last (`guest_ttl_hours`) and demo mode (`demo_mode`, [guests.md](guests.md)), shared AI provider entries, whether guests may use them and the shared AI allowance per account / per guest, the off-site copies (the `offsite` key via `/api/admin/offsite`, its secret key encrypted the same way), a hosted container's last plan answer (`hosted_limits`, written only by the sync, [cloud_accounts.md](cloud_accounts.md) "Hosted containers") and the time of its last write (`hosted_last_write`, saved by the sync) |
 
 Adding a preference = one entry in `PREFS` (key, scope, default, and a codec
 if the value needs validation) plus a control in the matching settings pane;
@@ -766,10 +766,10 @@ again to refresh it in place: a second visit is instant. Settings opened
 straight onto a pane (a notice, the chat's AI tiles) shows it at once, its
 reads starting together as it mounts. A test checks that every path a
 section reads is named in `PANE_READS` (`tests/settingsReads.test.mjs`).
-Measured at 150 ms of latency, the Server pane went from 12 requests in five
-waves, its sections jumping down four times as the ones above them filled,
-to 8 requests in two waves and one switch at 208 ms with every section in
-place (at once after a hover).
+At 150 ms of latency the Server pane makes 8 requests in two waves and
+switches once, at 208 ms, with every section in place (at once after a
+hover); read section by section it made 12 in five waves, the sections
+jumping down four times as the ones above them filled.
 
 ## The top bar's buttons
 
@@ -887,17 +887,19 @@ another build cannot replace the assets while the suite runs.
 
 ## Storage limits
 
-Two limits per account: max upload size per file (`max_upload_mb`, default
-50) and total uploads quota (`quota_mb`, 0 = unlimited). Server-wide defaults
-are admin-editable in Settings → Server; per-account overrides (NULL =
-inherit) in the Users pane. They apply to the account's personal workspaces
-together; a shared workspace has its own optional quota (admins, Settings →
-Workspaces / Members & sharing — [workspaces.md](workspaces.md)). On a
-hosted container the plan caps all of them, and the storage rows name the
-cap ([cloud_accounts.md](cloud_accounts.md) "Hosted containers"). `GET
-/api/quota` reports the limits that apply to the current workspace and its
-usage — it feeds the pre-upload size check and the shared `QuotaMeter` bar
+One limit per account: the total uploads quota (`quota_mb`, 0 =
+unlimited). One file has no size cap of its own: the quota already bounds
+what an account stores, and an upload is spooled to disk as it arrives
+(the per-file cap, `max_upload_mb`, went in October 2026). The server-wide
+default is admin-editable in Settings → Server; per-account overrides
+(NULL = inherit) in the Users pane. It applies to the account's personal
+workspaces together; a shared workspace has its own optional quota
+(admins, Settings → Workspaces / Members & sharing —
+[workspaces.md](workspaces.md)). On a hosted container the plan caps all of
+them, and the storage row names the cap ([cloud_accounts.md](cloud_accounts.md)
+"Hosted containers"). `GET /api/quota` reports the quota that applies to
+the current workspace and its usage — it feeds the shared `QuotaMeter` bar
 (account popover, Library maintenance, Users rows, the workspace manager).
-Uploads are hard-gated (413 over per-file, 507 over quota); best-effort
-caches (proxy save, AI re-download) just skip saving when full. Dedup'd
-files (same hash) are always allowed.
+Uploads are hard-gated (507 over quota); best-effort caches (proxy save,
+AI re-download) just skip saving when full. Dedup'd files (same hash) are
+always allowed.

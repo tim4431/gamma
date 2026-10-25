@@ -234,5 +234,5 @@ def test_export_all_and_mine(owner, other, guest):
     ids = {w["id"]: w for w in mine["workspaces"]}
     assert ids[ws]["used_bytes"] > 0 and ids[play]["used_bytes"] == 0 and ids[ws]["default"] is True
     assert mine["account"]["used_bytes"] == ids[ws]["used_bytes"] + ids[play]["used_bytes"]
-    assert "quota_mb" in mine["account"] and "max_upload_mb" in mine["account"]
+    assert "quota_mb" in mine["account"] and "max_upload_mb" not in mine["account"]
     assert owner.delete(f"/api/workspaces/{play}").status_code == 200

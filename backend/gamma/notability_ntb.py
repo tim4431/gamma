@@ -36,7 +36,6 @@ import unicodedata
 from array import array
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from itertools import accumulate
 
 from . import notability as nb
 from . import notability_map as nmap
@@ -231,7 +230,6 @@ class _Reader:
         self.pages = None                   # _Pages, once the document's paper is read
         self.drawn: list = []               # (z key, Curve | Shape), as gamma/notability.py's
         self.assets: dict | None = None     # members by their name's stem, once a picture asks
-        self.named_missing: set[str] = set()
 
     def read(self, ink: bool) -> nb.Note:
         flat, note = self.flat, self.note
@@ -266,11 +264,6 @@ class _Reader:
         if lost:
             note.left_out["lost text"] += lost
         return note
-
-    def _missing(self, path: str) -> None:
-        if path not in self.named_missing:
-            self.named_missing.add(path)
-            self.note.missing.append(path)
 
     # --- the document: its page, paper and PDF ------------------------------------
 
@@ -376,11 +369,7 @@ class _Reader:
                 self._stroke(r.payload, key)
             else:
                 self._shape(r.payload, key, grouped=group is not None)
-        self.drawn.sort(key=lambda item: item[0])  # stable: one record's curves stay in order
-        for z, (_key, item) in enumerate(self.drawn):
-            item.z = z
-        note.curves = [item for _key, item in self.drawn if isinstance(item, nb.Curve)]
-        note.shapes = [item for _key, item in self.drawn if isinstance(item, nb.Shape)]
+        nb.place_drawn(note, self.drawn)  # stable: one record's curves stay in order
         self.drawn = []
 
     def _stroke(self, payload: int, key: tuple) -> None:
@@ -463,9 +452,8 @@ class _Reader:
         if points is None or (bend is not None and control is None):
             note.left_out["stroke"] += 1
             return
-        r, g, b, a = flat.rgba(flat.field(payload, 9)) or (0, 0, 0, 255)
         shape = nb.Shape(kind=name, points=points, control=control, arrow=False, width=width,
-                         rgba=(r / 255, g / 255, b / 255, a / 255), fill=None,
+                         rgba=_unit(flat.rgba(flat.field(payload, 9)) or (0, 0, 0, 255)), fill=None,
                          style=_TOOLS.get(flat.number("B", flat.field(payload, 6)), nb.STYLE_PEN),
                          dash=_DASHES.get(flat.number("B", flat.field(payload, 7))), grouped=grouped)
         self.drawn.append((key, shape))
@@ -483,7 +471,7 @@ class _Reader:
         name = digest.hex()
         key = self.assets.get(name) or self.assets.get(name[:64])
         if key is None:
-            self._missing(f"assets/{name}.{mime.rsplit('/', 1)[-1]}")
+            self.note.name_missing(f"assets/{name}.{mime.rsplit('/', 1)[-1]}")
         return key
 
     def _media(self, live: list, stores: dict) -> set:
@@ -536,7 +524,7 @@ class _Reader:
             elif paper is not None:
                 color = flat.rgba(flat.field(paper, 4))
                 media.kind = "sticky"
-                media.background = tuple(v / 255 for v in color) if color else nb.STICKY_COLOR
+                media.background = _unit(color) if color else nb.STICKY_COLOR
             else:
                 note.left_out["media"] += 1
                 note.classes["unknown"] += 1
@@ -568,7 +556,7 @@ class _Reader:
             store = stores.setdefault(owner, _Store())
             anchors[r.ident] = (owner, store.units)
             store.parts.append(text)
-            store.units += len(text.encode("utf-16-le", "surrogatepass")) // 2
+            store.units += nb.utf16_units(text)
             self.text_left -= len(text)
         for r in live:
             if r.kind == ANCHOR and r.ident is not None:
@@ -610,8 +598,7 @@ class _Reader:
         if not text:
             return []
         n = len(text)
-        bounds = None if max(text) <= "￿" else array(  # where each character starts, in UTF-16 units
-            "q", accumulate((2 if ord(ch) > 0xFFFF else 1 for ch in text), initial=0))
+        bounds = nb.utf16_bounds(text)
         at = lambda units: nb.char_at(bounds, min(units, store.units), n)  # noqa: E731
         base = (False, False, False, self.font_size, None, 0, 0)
         looks, index = [base], {base: 0}
@@ -654,6 +641,11 @@ class _Reader:
         return [run for run in runs if run.text]
 
 
+def _unit(color: tuple) -> tuple:
+    """Four colour bytes as 0..1, a .note's floats."""
+    return tuple(v / 255 for v in color)
+
+
 def _style(flat: _Flat, payload: int) -> dict:
     """A character style record's patch: what it sets, each in a table of
     one value (a flag whose table holds none is off)."""
@@ -667,7 +659,7 @@ def _style(flat: _Flat, payload: int) -> dict:
         patch["size"] = size
     color = flat.rgba(flat.field(flat.sub(payload, 9), 0))
     if color is not None:
-        patch["rgba"] = tuple(v / 255 for v in color)
+        patch["rgba"] = _unit(color)
     return patch
 
 

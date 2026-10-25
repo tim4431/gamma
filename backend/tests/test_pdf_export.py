@@ -846,7 +846,8 @@ def test_bbox_log_is_in_points_on_a_user_unit_page():
     unscaled page's would, and marks the grid there, not twice as far out
     (off the page, where nothing would have been marked)."""
     from gamma.pdf_free_space import bbox_log, page_space
-    from gamma.pdf_notes import _frame, _to_display
+    from gamma.pdf_export import display_size
+    from gamma.pdf_notes import _to_display
 
     doc = _open(_page_drawing(b"50 60 100 30 re f", user_unit=2))
     try:
@@ -855,8 +856,8 @@ def test_bbox_log_is_in_points_on_a_user_unit_page():
         doc.close()
     assert kind == "fill-path" and _near(box, (50, 702, 150, 732))
     crop = (0, 0, PAGE_W, PAGE_H)
-    (disp_w, disp_h), matrix = _frame(crop, 0)
-    space = page_space([(kind, box)], crop, _to_display(matrix), disp_w, disp_h)
+    disp_w, disp_h = display_size(crop, 0)
+    space = page_space([(kind, box)], crop, _to_display(crop, 0), disp_w, disp_h)
     assert space.occupied(50, 702, 150, 732) > 0
     assert space.occupied(400, 100, 500, 200) == 0
 

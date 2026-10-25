@@ -38,8 +38,6 @@ from ..seed import create_account
 from ..server_settings import (
     QUOTA_MB_MAX,
     QUOTA_MB_MIN,
-    UPLOAD_MB_MAX,
-    UPLOAD_MB_MIN,
     GUEST_TTL_MAX,
     GUEST_TTL_MIN,
     check_within_plan,
@@ -52,11 +50,9 @@ from ..server_settings import (
     validate_guest_ttl_hours,
     set_public_url,
     validate_public_url,
-    set_default_max_upload_mb,
     set_default_quota_mb,
     usage_bytes,
     validate_quota_mb,
-    validate_upload_mb,
 )
 
 router = APIRouter(prefix="/api/admin", tags=["admin"])
@@ -72,14 +68,14 @@ def _user_list(conn: sqlite3.Connection, with_usage: bool = False) -> list:
     the GET listing pays for it; mutation responses omit used_bytes and the
     client keeps its last known values."""
     rows = conn.execute(
-        "SELECT username, is_guest, is_admin, created_at, max_upload_mb, quota_mb, default_workspace, id "
+        "SELECT username, is_guest, is_admin, created_at, quota_mb, default_workspace, id "
         "FROM users ORDER BY created_at"
     ).fetchall()
     return [{"username": u, "is_guest": bool(g), "is_admin": bool(a), "created_at": c,
-             "max_upload_mb": mu, "quota_mb": q,  # overrides; null = server default
+             "quota_mb": q,  # override; null = server default
              "default_workspace": dw,
              **({"used_bytes": usage_bytes(i)} if with_usage else {})}
-            for u, g, a, c, mu, q, dw, i in rows]
+            for u, g, a, c, q, dw, i in rows]
 
 
 def _get_user(conn: sqlite3.Connection, username: str):
@@ -122,8 +118,8 @@ async def get_logs(request: Request, after: int = 0):
 
 @router.get("/settings")
 def get_settings(request: Request):
-    """Server-wide default storage limits (per-user overrides live on the
-    users list), the public URL, the cloud sign-in and the guest settings
+    """The server-wide default storage quota (per-user overrides live on
+    the users list), the public URL, the cloud sign-in and the guest settings
     (the sign-in switch, the lifetime and demo mode — each with its source —
     and ``guest_logins_available``) for the admin rows in the Settings
     dialog; on a hosted container ``hosted`` (``hosted.pane``: the plan's
@@ -131,14 +127,12 @@ def get_settings(request: Request):
     require_admin(request)
     return {**get_defaults(), **public_url_settings(), **_guests(), "cloud": _cloud(),
             "hosted": hosted.pane(),
-            "max_upload_mb_range": [UPLOAD_MB_MIN, UPLOAD_MB_MAX],
             "quota_mb_range": [QUOTA_MB_MIN, QUOTA_MB_MAX],
             "guest_ttl_hours_range": [GUEST_TTL_MIN, GUEST_TTL_MAX]}
 
 
 class SettingsUpdateRequest(BaseModel):
     public_url: str | None = None
-    max_upload_mb: int | None = None
     quota_mb: int | None = None  # 0 = unlimited
     # Sign in with Gamma Cloud (gamma/cloud_auth.py); the secret is write-only.
     cloud_issuer: str | None = None
@@ -164,18 +158,14 @@ def update_settings(payload: SettingsUpdateRequest, request: Request):
                 raise HTTPException(403, "Cross-origin server settings changes are not allowed.")
             validate_public_url(payload.public_url)
         # Validate the complete request before persisting any setting.
-        if payload.max_upload_mb is not None:
-            check_within_plan("max_upload_mb", validate_upload_mb(payload.max_upload_mb))
         if payload.quota_mb is not None:
-            check_within_plan("quota_mb", validate_quota_mb(payload.quota_mb))
+            check_within_plan(validate_quota_mb(payload.quota_mb))
         if payload.guest_ttl_hours is not None:
             validate_guest_ttl_hours(payload.guest_ttl_hours)
         if payload.guest_logins is not None and not guests.logins_possible():
             raise ValueError("This server takes no guest logins.")
         if payload.public_url is not None:
             set_public_url(payload.public_url)
-        if payload.max_upload_mb is not None:
-            set_default_max_upload_mb(payload.max_upload_mb)
         if payload.quota_mb is not None:
             set_default_quota_mb(payload.quota_mb)
         if payload.guest_logins is not None:
@@ -563,9 +553,8 @@ def create_user(payload: UserCreateRequest, request: Request):
 class UserUpdateRequest(BaseModel):
     password: str | None = None   # set a new password (revokes the user's sessions)
     is_admin: bool | None = None  # grant/revoke the admin privilege
-    # storage-limit overrides: omitted = unchanged, explicit null = inherit the
+    # storage-quota override: omitted = unchanged, explicit null = inherit the
     # server default again (model_fields_set tells the two apart)
-    max_upload_mb: int | None = None
     quota_mb: int | None = None   # 0 = unlimited
 
 
@@ -577,7 +566,7 @@ def update_user(username: str, payload: UserUpdateRequest, request: Request):
         if not row:
             raise HTTPException(status_code=404, detail="user not found")
         if row[1] and (payload.password is not None or payload.is_admin is not None):
-            # storage limits ARE settable on a guest (a public account is
+            # a storage quota IS settable on a guest (a public account is
             # exactly where a quota matters); credentials/privileges are not
             raise HTTPException(status_code=400, detail="a guest account has no password or privileges")
         if payload.password is not None:
@@ -598,15 +587,10 @@ def update_user(username: str, payload: UserUpdateRequest, request: Request):
             conn.execute("UPDATE users SET is_admin = ? WHERE id = ?",
                          (1 if payload.is_admin else 0, row[0]))
         try:
-            if "max_upload_mb" in payload.model_fields_set:
-                value = None if payload.max_upload_mb is None else validate_upload_mb(payload.max_upload_mb)
-                if value is not None:
-                    check_within_plan("max_upload_mb", value)
-                conn.execute("UPDATE users SET max_upload_mb = ? WHERE id = ?", (value, row[0]))
             if "quota_mb" in payload.model_fields_set:
                 value = None if payload.quota_mb is None else validate_quota_mb(payload.quota_mb)
                 if value is not None:
-                    check_within_plan("quota_mb", value)
+                    check_within_plan(value)
                 conn.execute("UPDATE users SET quota_mb = ? WHERE id = ?", (value, row[0]))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))

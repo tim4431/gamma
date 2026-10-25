@@ -75,9 +75,9 @@ block of a tree never moves into a page or a page's block into a tree (403
 tree, not a rewrite of every page filed below the folder. Deleting a folder
 or a label is the one change that reaches pages, so it has its own
 endpoint: `DELETE /folders/{id}` / `DELETE /labels/{id}`
-(`routers/folders.py`, [api.md](api.md) "Folders and labels"). One
-transaction runs the subtree's `delete` on the tree and one `set` per page
-that carried an id of it (`ops.apply_batches`). The tree's `delete` op
+(`routers/folders.py` over `ops.delete_tree`, [api.md](api.md) "Folders
+and labels"). One transaction runs the subtree's `delete` on the tree and
+one `set` per page that carried an id of it (`ops.apply_batches`). The tree's `delete` op
 itself files the folder chats into the library chat's history and
 `ops.after_commit` stops the folder's shares, so a folder deleted by a
 plain tree batch (a mirror round or the iPad relaying one) is cleaned up
@@ -150,11 +150,14 @@ short").
 `apply_ops(conn, page_id, ops, actor=, client=, share_scoped=, cursor=, batch_id=)` applies and
 commits; `after_commit(ws, conn, result)` does the derived-data work and
 publishes; `commit_ops(ws, page_id, ops, actor=)` is both on a fresh
-connection; `apply_batches(conn, [(page_id, ops), …], actor=)` applies
-several pages' batches in the caller's transaction, each logged on its page
-(the caller commits, then `after_commit`s each); `ensure_filing(ws, conn,
-paths=, labels=, under=, actor=)` makes the folders and labels a writer
-files by name where they are missing (one committed batch per tree). In all
+connection; `apply_batches(conn, [(page_id, ops), …], actor=, client=)`
+applies several pages' batches in the caller's transaction, each logged on
+its page (the caller commits, then `after_commit`s each); `ensure_filing(ws,
+conn, paths=, labels=, under=, actor=, client=)` makes the folders and
+labels a writer files by name where they are missing (one committed batch
+per tree); `tree_deletion(conn, tree, id)` / `delete_tree(ws, conn, tree,
+id, actor=, client=)` read and run a folder's or label's deletion (the
+endpoints, the agent, a revert's redo). In all
 of them `ws` is the workspace id and `actor` who makes the change
 (`auth.actor_of`: the account's id, or a label for a writer that is no
 account). Every server-side writer
@@ -162,7 +165,9 @@ goes through them — the single-block endpoints in `routers/blocks.py` are thin
 wrappers, page attach/replace/detach, the metadata write, the clip endpoints, the
 attachment-marker backfill of `get_or_create_doc_page`, the `annot_stripped`
 marks after an embedded-annotation strip, and the AI
-tools (`edit_block`, `create_block`, `move_block`, `rename_page`, `move_page`)
+tools (`edit_block`, `create_block`, `move_block`, `rename_page`, `move_page`,
+`rename_folder`, `rename_label`, `create_label`, `label_page`, and
+`delete_folder` / `delete_label` through `ops.delete_tree`)
 call them directly — so everything a page's viewers see comes from one path
 and one log. Reads never write: a stored shape that needs repairing is a
 `normalize.py` step ([migrations.md](migrations.md)), not a fix-up on a

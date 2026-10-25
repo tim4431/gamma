@@ -5,7 +5,7 @@
 // and waits for POST /api/ai/approvals/<id> with a decision: "once" runs the
 // call, "chat" also stops asking in this conversation, "always" also stops
 // asking in Settings (this kind of chat), "deny" leaves it unmade.
-import { t } from "../shared/i18n/i18n.js";
+import { t, tn } from "../shared/i18n/i18n.js";
 
 export const ALLOWING = new Set(["once", "chat", "always"]);
 
@@ -44,6 +44,12 @@ export function approvalTitle(approval, { titleOf = () => "", permission = "" } 
       return preview.to ? t("Save “{title}” to {folder}", { title, folder: preview.to })
         : t("Save “{title}” to the library root", { title });
     case "restore_page": return t("Restore “{title}” from Recently deleted", { title });
+    case "rename_folder": return t("Rename the folder “{title}”", { title });
+    case "rename_label": return t("Rename the label “{title}”", { title });
+    case "create_label": return t("Make the label “{title}”", { title });
+    case "label_page": return t("Change the labels of “{title}”", { title });
+    case "delete_folder": return t("Delete the folder “{title}”", { title });
+    case "delete_label": return t("Delete the label “{title}”", { title });
     case "list_pages": case "list_folders": return t("List your pages and folders");
     case "list_deleted": return t("List Recently deleted");
     case "read_page": return t("Read “{title}”", { title });
@@ -69,6 +75,37 @@ export function deletedKind(what) {
     highlight: () => t("highlight"), handwriting: () => t("handwriting"), "text box": () => t("text box"),
     "page of paper": () => t("page of paper"),
   }[what]?.() || t("note");
+}
+
+// What a folder's or a label's deletion takes besides itself, one line each,
+// from its card's preview (gamma/ai_tools.py _preview_delete_folder /
+// _preview_delete_label): the subfolders, the pages that lose the filing and
+// stay, and the folders whose AI chats move to the library chat's history.
+export function deletionNotes(tool, preview = {}) {
+  const list = (items = [], total = 0) => items.join(", ")
+    + (total > items.length ? t(", and {n} more", { n: total - items.length }) : "");
+  const notes = [];
+  if (tool === "delete_folder") {
+    if (preview.subfolder_count) {
+      notes.push(tn("Its subfolder goes with it: {list}", "Its {n} subfolders go with it: {list}",
+        preview.subfolder_count, { list: list(preview.subfolders, preview.subfolder_count) }));
+    }
+    notes.push(preview.page_count
+      ? tn("{n} page leaves it and stays in your library: {list}", "{n} pages leave it and stay in your library: {list}",
+        preview.page_count, { list: list(preview.pages, preview.page_count) })
+      : t("No pages are filed in it."));
+    if (preview.chats) {
+      notes.push(tn("{n} AI chat of {list} moves to the library chat's history and stays there if you revert.",
+        "{n} AI chats of {list} move to the library chat's history and stay there if you revert.",
+        preview.chats, { list: list(preview.chat_folders, preview.chat_folder_count) }));
+    }
+  } else if (tool === "delete_label") {
+    notes.push(preview.page_count
+      ? tn("The label comes off {n} page; no page is deleted: {list}", "The label comes off {n} pages; no page is deleted: {list}",
+        preview.page_count, { list: list(preview.pages, preview.page_count) })
+      : t("No page carries it."));
+  }
+  return notes;
 }
 
 // What the chip of a call the user did not allow says: why, and the change

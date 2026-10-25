@@ -14,8 +14,9 @@ its own conversation, and switching folders re-scopes the next message. A
 bucket is always a block id or `home`, so a rename or a move of the folder
 changes nothing about its chat. No conversation is ever dropped with a
 folder: deleting one (`DELETE /api/folders/{id}`, "Keep pages" and "Delete
-pages too" alike) files the active conversation and the history of the
-folder and of every folder below it into the library chat's history
+pages too" alike, or the agent's `delete_folder`) files the active
+conversation and the history of the folder and of every folder below it
+into the library chat's history
 (`home`, `file_into_home` in `routers/chats.py`), where they stay
 findable. ChatDock's `chatKey` is the open page's id, else the open
 folder's id, else `home`. A bucket switch empties the composer at once and

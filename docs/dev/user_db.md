@@ -733,18 +733,19 @@ account stays (507).
 
 ## Storage limits
 
-`gamma/server_settings.py`: per-account max upload size (`max_upload_mb`) and
-total quota (`quota_mb`, 0 = unlimited); server-wide defaults in the users.db
-`settings` KV, per-user overrides as nullable `users` columns (NULL = inherit,
-explicit JSON null clears). An account's limits apply to uploads into its
-PERSONAL workspaces, and its usage is their stored files together
+`gamma/server_settings.py`: the per-account total quota (`quota_mb`, 0 =
+unlimited); the server-wide default in the users.db `settings` KV, per-user
+overrides in the nullable `users.quota_mb` column (NULL = inherit, explicit
+JSON null clears). One file has no size cap: `users.max_upload_mb` and the
+`max_upload_mb` settings key, the per-file cap until October 2026, are no
+longer read. An account's quota applies to uploads into its PERSONAL
+workspaces, and its usage is their stored files together
 (`storage.usage`) — nothing anyone uploads into a shared workspace counts
-against a person. A
-shared workspace is checked against the server-wide per-file cap and its
-own `workspaces.quota_mb` (NULL = unlimited; admins set it in Settings →
-Workspaces or Members & sharing). `workspace_quota(ws)` resolves the pair
+against a person. A shared workspace is checked against its own
+`workspaces.quota_mb` (NULL = unlimited; admins set it in Settings →
+Workspaces or Members & sharing). `workspace_quota(ws)` resolves the quota
 that applies. `check_upload_allowed(ws, n)` hard-gates `/api/uploads`, `/api/upload-image`,
-`/api/upload-file` and the imports (413 over per-file, 507 over quota;
+`/api/upload-file` and the imports (507 over quota;
 already-stored hashes always pass — dedup adds no bytes); `can_store`
 soft-gates best-effort caches (proxy `save=1`, ai_context re-download).
 A check reads the usage without walking the files. `storage.usage` lists
