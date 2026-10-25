@@ -6,8 +6,8 @@ page. It covers the backend, the web client, the browser extension and the
 desktop app; the account server and the website are left out. The
 deliberate settings are named once and not listed again: the per-file
 cap `max_upload_mb` (50 MB by default, at most 2048,
-`server_settings.py`), the storage quota (unlimited by default, 200 MB
-for a guest) and the plans' caps.
+`server_settings.py`; dropped since, below), the storage quota
+(unlimited by default, 200 MB for a guest) and the plans' caps.
 
 ## What changed with this survey
 
@@ -59,10 +59,14 @@ works now is in the dev docs named.
   screenshot in about 0.65 s, keeping transparency as a soft mask
   ([dev/pdf_typesetting.md](../dev/pdf_typesetting.md)).
 
-What stays: each PDF inside a Zotero export passes the per-file cap like
-any upload, so at the default 50 MB a larger PDF is skipped, with "file
-too large (max 50 MB)" in the import report. An admin raises the cap in
-Settings → Server.
+Later in October 2026 the per-file cap went too
+([dev/user_db.md](../dev/user_db.md) "Storage limits"). The quota already
+bounds what an account stores, and PDFs went up spooled to disk and in
+parts, so the cap's one effect was to refuse scanned books and skip a
+Zotero export's larger PDFs. `/upload-image`, `/upload-file` and the
+Logseq import now spool to disk as `/uploads` does. A Notability note's
+PDF or picture is read whole to be parsed and composed, so the importer
+keeps a ceiling of its own on it (`MAX_HELD_BYTES`, 256 MB).
 
 ## Uploads still sent as one request
 
@@ -71,7 +75,7 @@ client names that refusal (`utils.proxyRefusal`).
 
 | Path | Can it pass 100 MB | Notes |
 |---|---|---|
-| An attachment or a picture (`/upload-file`, `/upload-image`, `transfers/FileChip.jsx`) | Only after an admin raises `max_upload_mb` past 100 | The server reads it whole into memory. `/uploads/parts` takes any file now, but not from a share link's editors, who upload through `require_ws_writer` |
+| An attachment or a picture (`/upload-file`, `/upload-image`, `transfers/FileChip.jsx`) | From a share link's editors | A member's file past 32 MiB goes in parts (`/uploads/parts`); a share link's editors upload through `require_ws_writer`, in one request. The server spools it to disk |
 | The Logseq import (`/import/logseq`) | Rarely | Plain `fetch`, so the status is lost from the message |
 
 ## Silent truncation and tight caps still there

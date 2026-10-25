@@ -163,8 +163,9 @@ the next pass without a resize, and their containers keep the agent's
 default size until the plan changes.
 
 **A server's own limits.** `hosted_servers.overrides` holds the
-operator's numbers for one server: any of `quota_mb`, `max_upload_mb`,
-`max_accounts`, `memory_mb` and `cpus` (`hosted.OVERRIDES`).
+operator's numbers for one server: any of `quota_mb`, `max_accounts`,
+`memory_mb` and `cpus` (`hosted.OVERRIDES`; a `max_upload_mb` stored
+before the per-file cap went is ignored).
 `hosted.limits_for` merges them over the plan's, so the sync answer, the
 container's size (`fleet.size_of` reads `limits`), placement's committed
 memory and a `create` payload all follow them. A plan change and a lapse
@@ -287,7 +288,7 @@ computed fresh and stored as `limits`:
 
 ```json
 {"plan": "plus", "status": "grace", "read_only": false, "policy": "refuse",
- "max_accounts": 1, "quota_mb": 6144, "max_upload_mb": 100,
+ "max_accounts": 1, "quota_mb": 6144,
  "memory_mb": 768, "cpus": 1.0,
  "offsite": {"interval_s": 86400, "keep": 7},
  "grace_until": "2026-10-10T09:00:00.000Z",
@@ -1035,7 +1036,7 @@ The **Servers** tab (`pages_fleet.py`), top to bottom:
   accounts, accounts active this week, server errors and restarts, each a
   plain line from 0 to its highest with its min, max and last value;
 - **limits**: *Limits…* opens a form for that server under the servers,
-  like the log viewer: storage, per-file size, accounts, memory and CPUs,
+  like the log viewer: storage, accounts, memory and CPUs,
   each blank for the plan's number (the placeholder), with *Save*, *Back
   to the plan's* and *Close*;
 - **environment**: the fleet's variable names, each with *Remove*, a form

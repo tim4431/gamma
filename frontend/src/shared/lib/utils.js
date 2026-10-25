@@ -334,10 +334,9 @@ async function apiError(r) {
 
 // A 413 whose body is not Gamma's JSON came from a proxy in front of the
 // server (Cloudflare's or nginx's HTML page), whose request-body limit is
-// smaller than the file; Gamma's own 413 carries {detail: "file too large
-// (max N MB)"}. Named, since the bare status reads as Gamma's limit — the
-// reader would raise max_upload_mb and get the same answer. Big PDFs go up
-// in parts for this reason (shared/lib/uploadParts.js).
+// smaller than the file; Gamma's own 413s carry a {detail}, and Gamma caps
+// no file's size. Named, since the bare status reads as Gamma's refusal.
+// Big PDFs go up in parts for this reason (shared/lib/uploadParts.js).
 function proxyRefusal(status, data) {
   if (status !== 413 || typeof data?.detail === "string") return "";
   return t("refused as too large by a proxy in front of the server, not by Gamma (HTTP 413)");

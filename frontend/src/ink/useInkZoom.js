@@ -7,7 +7,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { t } from "../shared/i18n/i18n.js";
 import { visiblePart } from "./useInkSurfaces.js";
-import { ZOOM_CHROME, moveTo, moveWindow as moveZoomWindow, newLine, openWindow, setMag } from "./zoomWindow.js";   // the zoom window's rules (moveWindow as moveZoomWindow, the name handleInkZoom calls it by)
+import { ZOOM_CHROME, moveTo, moveWindow, newLine, openWindow, setMag } from "./zoomWindow.js";   // the zoom window's rules
 
 // focusedBlockId: the open page; another one closes the window.
 // readOnly: no window opens. isPhone: a phone's layout, where it never
@@ -65,7 +65,7 @@ export function useInkZoom({ focusedBlockId, readOnly, isPhone, pdfHidden, noteb
       if (!win || !size) return win;
       if (patch.at) return moveTo(win, page, patch.at, size);
       if (page !== win.page) return win;
-      return "mag" in patch ? setMag(win, patch.mag, null, size) : moveZoomWindow(win, patch, size);
+      return "mag" in patch ? setMag(win, patch.mag, null, size) : moveWindow(win, patch, size);
     });
   }
   return { inkZoom, toggleInkZoom, inkZoomNewLine, changeInkZoom, handleInkZoom, clearInkZoom };

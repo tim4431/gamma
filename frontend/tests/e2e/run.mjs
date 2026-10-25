@@ -27,7 +27,7 @@ import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { inspect } from "node:util";
 import {
-  Account, Server, assert, assertEq, assertNoProblems, flags, launchBrowser, makePdf,
+  Account, Server, argValue, assert, assertEq, assertNoProblems, flags, launchBrowser, makePdf,
   openPage, results, sleep, step, until,
 } from "./harness.mjs";
 import { noteScenarios } from "./scenarios/notes.mjs";
@@ -115,12 +115,6 @@ const RUNNERS = {
 
 const missing = GROUPS.filter((g) => !RUNNERS[g.id]).map((g) => g.id);
 if (missing.length || Object.keys(RUNNERS).length !== GROUPS.length) throw new Error(`select.mjs GROUPS and RUNNERS differ (${missing.join(", ")})`);
-
-// The value after a flag, unless the next word is another flag.
-const argValue = (name) => {
-  const i = process.argv.indexOf(name);
-  return i > 0 && process.argv[i + 1] && !process.argv[i + 1].startsWith("--") ? process.argv[i + 1] : undefined;
-};
 
 if (process.argv.includes("--worker")) await worker();
 else {

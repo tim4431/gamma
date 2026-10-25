@@ -13,7 +13,7 @@ Every tool belongs to one permission (the ``perm`` of its entry in
 
 A permission the request leaves out takes its default: reading is allowed,
 changing asks. ``true`` / ``false``, the values an older tab sends, mean
-allow / off.
+allow / off. A permission in ``ASK_ONLY`` is ask or off.
 
 This is the user's guard over their own chat, not access control. What a
 request may change at all is decided before any of this: by the workspace
@@ -34,6 +34,14 @@ STATES = ("allow", "ask", "off")
 # asking in Settings too (the client stores that); do not run it.
 DECISIONS = ("once", "chat", "always", "deny")
 ALLOWING = frozenset({"once", "chat", "always"})
+# Permissions whose every call asks: Allow is never theirs. Deleting a
+# folder or a label can't be taken back whole (a folder's chats move to the
+# library chat's history for good), so each deletion shows its card. An Allow
+# a request sends for one (an older tab, a hand-made map) asks, "Allow in
+# this chat" grants it nothing, and a card's "chat" / "always" answer runs
+# that one call only. The client offers Ask and Off only
+# (chat/chatSettings.js permStates).
+ASK_ONLY = frozenset({"organize_delete"})
 APPROVAL_TIMEOUT = 600.0   # seconds a card waits before its call counts as declined
 MAX_PENDING_PER_USER = 20  # approvals waiting at once per account (one per chat stream)
 MAX_NOTE = 2000            # chars of what the user says to do instead, with a decline
@@ -47,15 +55,12 @@ def permission_state(perms, key: str, changes: bool) -> str:
     """The state of permission ``key`` in a request's map ``perms``: its value
     when it is a state (or a pre-Ask boolean), else the default, which is
     ask for a permission whose tools change something (``changes``) and
-    allow for a reading one."""
+    allow for a reading one; an ask-only permission (``ASK_ONLY``) never
+    allows."""
     value = perms.get(key) if isinstance(perms, dict) else None
-    if value is True:
-        return "allow"
-    if value is False:
-        return "off"
-    if value in STATES:
-        return value
-    return "ask" if changes else "allow"
+    state = ("allow" if value is True else "off" if value is False
+             else value if value in STATES else "ask" if changes else "allow")
+    return "ask" if state == "allow" and key in ASK_ONLY else state
 
 
 def open_approval(user_id: str) -> str | None:

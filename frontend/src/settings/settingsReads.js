@@ -24,7 +24,7 @@ const NONE = Object.freeze({ data: undefined, error: "", at: 0 });
 // marked `later` goes out with the others but is not waited for: what is
 // far down the pane (the server log) or shows only in a dialog (the
 // account pickers). `who`: {admin, signedIn}.
-const LOG_START = "/admin/logs?after=0";
+export const LOG_START = "/admin/logs?after=0";
 export const PANE_READS = {
   account: ({ admin, signedIn }) => [admin && "/admin/users", admin && "/admin/settings",
     signedIn && "/auth/cloud/status", signedIn && "/mirrors"],
@@ -40,7 +40,6 @@ export const PANE_READS = {
   maintenance: () => ["/quota", "/metadata/status"],
 };
 export const backupsOf = (id) => `/workspaces/${encodeURIComponent(id)}/backups`;
-export { LOG_START };
 
 // A pane's reads as [{path, then, later}].
 function readsOf(pane, who) {

@@ -356,7 +356,7 @@ def decode_stroke(stroke: Stroke) -> list[dict]:
             elif c == "y":
                 rec["y"] = v / COORD_UNIT
             elif c == "p":
-                rec["p"] = max(0.0, min(1.0, v / PRESSURE_UNIT))
+                rec["p"] = _clamp(v / PRESSURE_UNIT, 0.0, 1.0)
             elif c == "t":
                 rec["t"] = v
             elif c in ("a", "z"):
@@ -990,10 +990,10 @@ def grain_rgb(color) -> tuple[int, int, int]:
     if m := _GRAIN_RGB.match(s):
         def channel(v):
             try:
-                n = float(v)        # Number(v); a NaN reaches the PNG as 0
+                n = float(v)        # Number(v); what it cannot read reaches the PNG as 0
             except ValueError:
                 return 0
-            return js_round(_clamp(n, 0, 255)) if n == n else 0
+            return js_round(_clamp(n, 0, 255))
         return tuple(channel(v) for v in m.groups())
     return (0, 0, 0)
 
@@ -1072,11 +1072,9 @@ def _band_outlines(stroke: Stroke, samples: list[dict]) -> list[tuple[float, lis
 def _fixed(v: float) -> str:
     """``v.toFixed(2)``, as the screen writes a nib's path: the double's
     exact value to the nearest hundredth, a half away from zero; ``-0``
-    is ``0.00`` and a negative that rounds to nothing ``-0.00``."""
-    if not math.isfinite(v):
-        return "NaN" if v != v else "Infinity" if v > 0 else "-Infinity"
-    if abs(v) >= 1e21:
-        return _js_number(v)
+    is ``0.00`` and a negative that rounds to nothing ``-0.00``. (A nib's
+    numbers are finite and under 1e21: ``MAX_XY`` bounds the samples and
+    the schema the size.)"""
     return "0.00" if v == 0 else f"{Decimal(v).quantize(Decimal('0.01'), rounding=ROUND_HALF_UP):f}"
 
 
@@ -1219,7 +1217,7 @@ def _gs(alpha: float, multiply: bool = False) -> bytes:
     state is in its name — ``/GSink<α × 1000>`` (``/CA`` and ``/ca``) and
     ``/GSinkM<α × 1000>`` (also ``/BM /Multiply``) — so
     ``pdf_path_resources`` declares it from the ops alone."""
-    return b"/GSink%s%d gs" % (b"M" if multiply else b"", max(0, min(1000, round(alpha * 1000))))
+    return b"/GSink%s%d gs" % (b"M" if multiply else b"", _clamp(round(alpha * 1000), 0, 1000))
 
 
 _GS_RE = re.compile(rb"/GSink(M?)(\d{1,4}) gs")
@@ -1516,7 +1514,7 @@ def from_pdf_ink(ink_list, width_pt: float, color: str, opacity: float, page: in
         if not all(abs(s[k] * COORD_UNIT) <= MAX_XY for s in samples for k in ("x", "y")):
             raise InkError(f"/InkList path {n}: a coordinate out of ±{MAX_XY // COORD_UNIT} pt")
         strokes.append({"id": f"i{n}", "tool": "pen", "pen": False, "color": color,
-                        "size": max(0.2, min(100.0, width_pt or 1.0)), "opacity": max(0.05, min(1.0, opacity)),
+                        "size": _clamp(width_pt or 1.0, 0.2, 100.0), "opacity": _clamp(opacity, 0.05, 1.0),
                         **({"dash": dash} if dash in DASH else {}),
                         "ch": "xy", "pts": encode_points(samples, "xy")})
     return {"format": FORMAT, "version": VERSION,
@@ -1818,7 +1816,7 @@ def _upgrade_stroke(s):
     for i in range(0, len(pts), n):
         row = pts[i:i + n]
         p = row[pi]   # (an int is clamped as it is: one past the largest double has no float to test)
-        w = 500 + max(0, min(1000, int(p) if isinstance(p, int) or (isinstance(p, float) and math.isfinite(p)) else 0))
+        w = 500 + _clamp(int(p) if isinstance(p, int) or (isinstance(p, float) and math.isfinite(p)) else 0, 0, 1000)
         new.extend(row)
         new.append(w if prev is None else w - prev)
         prev = w

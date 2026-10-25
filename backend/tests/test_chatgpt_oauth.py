@@ -6,6 +6,8 @@ external calls are faked — no network beyond a loopback listener."""
 import base64
 import io
 import json
+import logging
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -13,8 +15,9 @@ import urllib.request
 import pytest
 
 import gamma.chatgpt_oauth as co
+from ai_fixtures import FakeResp
 from conftest import account_of
-from gamma import ai_catalog
+from gamma import ai_catalog, ai_client
 from gamma.ai_protocols import WIRES, chatgpt as chatgpt_proto
 from gamma.routers.ai import _sse_deltas
 
@@ -748,3 +751,314 @@ def test_a_named_service_reads_its_own_model_facts(monkeypatch):
     assert ai_catalog._catalog_window("qwen3.7-max", custom) == 262_144
     assert ai_catalog.image_input("p", custom, "qwen3.7-max") == (True, "models.dev")
     assert ai_catalog.reply_cap(custom, "qwen3.7-max") == 8_192
+
+
+# --- Renewing a sign-in: refused, unreachable, rejected -----------------------
+
+def _http_error(status, body):
+    data = body if isinstance(body, bytes) else json.dumps(body).encode()
+    return urllib.error.HTTPError("https://openai.test", status, "error", {}, io.BytesIO(data))
+
+
+class _OpenAI:
+    """auth.openai.com's token endpoint and chatgpt.com, faked. A refresh
+    token works once and is replaced (OpenAI rotates them), and a spent one
+    revokes the grant; chatgpt.com takes only the access token issued last.
+    ``failure``, when set, makes the endpoint raise what it returns."""
+
+    def __init__(self, monkeypatch):
+        self.valid = {"rt-1"}
+        self.access = ""
+        self.calls = []
+        self.issued = 1
+        self.failure = None
+        monkeypatch.setattr(co, "_token_request", self.token)
+        monkeypatch.setattr(ai_catalog, "fetch_json", self.backend)
+
+    def token(self, form):
+        self.calls.append(form["refresh_token"])
+        if self.failure:
+            raise self.failure()
+        if form["refresh_token"] not in self.valid:
+            self.valid.clear()
+            raise _http_error(401, {"error": {"code": "refresh_token_reused"}})
+        self.issued += 1
+        self.valid = {f"rt-{self.issued}"}
+        self.access = _fake_jwt({"exp": int(time.time()) + 7200, "n": self.issued,
+                                 "https://api.openai.com/auth": {"chatgpt_account_id": "acct-123"}})
+        return {"access_token": self.access, "refresh_token": f"rt-{self.issued}"}
+
+    def backend(self, req):
+        if req.get_header("Authorization") != f"Bearer {self.access}":
+            raise _http_error(401, {"detail": "Could not validate your token"})
+        return {"plan_type": "plus", "rate_limit": {"primary_window": {
+            "used_percent": 10, "limit_window_seconds": 18000, "reset_at": 1_900_000_000}}}
+
+
+@pytest.fixture(scope="module")
+def renewer(client):
+    from conftest import login, make_user
+    make_user("renewer", "pw")
+    return login("renewer", "pw")
+
+
+def _sign_in(expires_in=-10):
+    """The account's one connection: a ChatGPT sign-in whose access token
+    "at-1" expires in ``expires_in`` seconds (expired, by default)."""
+    from gamma.ai_settings import save_provider_entries
+    save_provider_entries(account_of("renewer"), [{
+        "id": "gpt", "protocol": "chatgpt", "name": "ChatGPT", "models": "gpt-x",
+        "oauth": {"access_token": "at-1", "refresh_token": "rt-1", "account_id": "acct-123",
+                  "email": "renewer@example.com", "expires_at": int(time.time()) + expires_in}}])
+
+
+def _stored():
+    from gamma.ai_settings import load_provider_entries
+    return load_provider_entries(account_of("renewer"))[0]["oauth"]
+
+
+def _upstream(monkeypatch, accepts):
+    """The chat's provider below ai_client.open_ai: a short reply to a
+    token ``accepts`` takes, a 401 to the others. Returns the requests."""
+    sent = []
+
+    def urlopen(req, timeout=None):
+        sent.append(req)
+        if not accepts(req.get_header("Authorization").removeprefix("Bearer ")):
+            raise _http_error(401, {"detail": "Your authentication token has expired."})
+        return FakeResp([{"type": "response.output_text.delta", "delta": "ok"},
+                         {"type": "response.completed", "response": {"status": "completed"}}])
+    monkeypatch.setattr(urllib.request, "urlopen", urlopen)
+    return sent
+
+
+def _check(c):
+    return c.post("/api/ai/health", json={"provider_id": "gpt"}).json()
+
+
+NO_VERDICT = {
+    "offline": lambda: urllib.error.URLError(TimeoutError("timed out")),
+    "5xx": lambda: _http_error(503, b"upstream connect error"),
+    "proxy page": lambda: _http_error(403, b"<!doctype html><title>Just a moment...</title>"),
+}
+
+
+@pytest.mark.parametrize("failure", NO_VERDICT.values(), ids=NO_VERDICT.keys())
+def test_a_refresh_without_a_verdict_keeps_the_sign_in(renewer, monkeypatch, failure):
+    """auth.openai.com out of reach, failing, or behind a proxy's page: the
+    login check, Test, usage and the chat say so instead of "sign in
+    again", the tokens stay, and once it answers the sign-in renews with no
+    reconnect, after the short retry window."""
+    from gamma import ai_settings
+    openai = _OpenAI(monkeypatch)
+    _sign_in()
+    openai.failure = failure
+    _upstream(monkeypatch, lambda token: token == openai.access)
+    health = _check(renewer)
+    assert (health["ok"], health["auth"], health["kind"]) == (False, False, "unreachable"), health
+    oauth = _stored()
+    assert (oauth["access_token"], oauth["refresh_token"], oauth["refresh_unreachable"]) == ("at-1", "rt-1", True)
+    test = renewer.post("/api/ai/providers/gpt/test").json()
+    assert (test["ok"], test["auth"], test["kind"]) == (False, False, "unreachable"), test
+    usage = renewer.post("/api/ai/providers/gpt/usage").json()
+    assert usage["available"] is False and usage["auth"] is False
+    assert "sign in again" not in usage["reason"].lower()
+
+    # Inside the retry window nothing asks again, and a chat's 401 (every
+    # call goes through open_ai) is unreachable too.
+    asked = len(openai.calls)
+    rt = ai_settings.ai_runtime(account_of("renewer"))
+    assert rt["providers"]["gpt"]["refresh_unreachable"] is True and len(openai.calls) == asked
+    with pytest.raises(urllib.error.URLError) as failed:
+        ai_client.open_ai([{"role": "user", "content": "hi"}], "", rt["models"][0], rt)
+    assert ai_client.failure_kind(failed.value) == "unreachable"
+
+    # Answering again: renewed by the next request once the window is over.
+    openai.failure = None
+    ai_settings.update_provider_entries(account_of("renewer"), lambda entries: entries[0]["oauth"].update(
+        refresh_failed_at=int(time.time()) - ai_settings.REFRESH_RETRY_S - 1))
+    conf = ai_settings.ai_runtime(account_of("renewer"))["providers"]["gpt"]
+    assert conf["api_key"] == openai.access and "refresh_unreachable" not in conf
+    oauth = _stored()
+    assert oauth["refresh_token"] == "rt-2"
+    assert "refresh_failed_at" not in oauth and "refresh_unreachable" not in oauth
+    assert _check(renewer)["ok"] is True
+
+
+@pytest.mark.parametrize("status, body, logged", [
+    (400, {"error": "invalid_grant", "error_description": "rt-1 is not a valid refresh token"}, "400 invalid_grant"),
+    (401, {"error": {"code": "refresh_token_reused", "message": "Already used"}}, "401 refresh_token_reused"),
+    (403, {"error": {"code": "refresh_token_invalidated"}}, "403 refresh_token_invalidated"),
+])
+def test_a_refused_refresh_asks_to_sign_in_again(renewer, monkeypatch, caplog, status, body, logged):
+    """OpenAI refusing the grant is the one case that says "sign in again",
+    and the log names OpenAI's code, never a token."""
+    openai = _OpenAI(monkeypatch)
+    _sign_in()
+    openai.failure = lambda: _http_error(status, body)
+    _upstream(monkeypatch, lambda token: token == openai.access)
+    with caplog.at_level(logging.WARNING, logger="gamma"):
+        health = _check(renewer)
+    assert (health["ok"], health["auth"], health["kind"]) == (False, True, "auth"), health
+    assert [r.getMessage() for r in caplog.records if "[chatgpt-oauth]" in r.getMessage()] == [
+        f"[chatgpt-oauth] refresh refused: {logged}"]
+    assert not any("rt-1" in r.getMessage() or "at-1" in r.getMessage() for r in caplog.records)
+    oauth = _stored()
+    assert oauth["refresh_failed_at"] and "refresh_unreachable" not in oauth
+    test = renewer.post("/api/ai/providers/gpt/test").json()
+    assert (test["auth"], test["kind"]) == (True, "auth"), test
+    usage = renewer.post("/api/ai/providers/gpt/usage").json()
+    assert usage["auth"] is True and "sign in again" in usage["reason"]
+
+
+def test_a_token_inside_the_margin_works_while_renewal_is_unreachable(renewer, monkeypatch):
+    """No call is refused up front: inside the 5-minute refresh margin the
+    stored token still works, though its renewal can't reach OpenAI."""
+    openai = _OpenAI(monkeypatch)
+    _sign_in(expires_in=120)
+    openai.access = "at-1"
+    openai.failure = NO_VERDICT["offline"]
+    sent = _upstream(monkeypatch, lambda token: token == "at-1")
+    assert _check(renewer)["ok"] is True
+    test = renewer.post("/api/ai/providers/gpt/test").json()
+    assert test["ok"] is True, test
+    assert sent[-1].get_header("Authorization") == "Bearer at-1"
+    assert _stored()["refresh_unreachable"] is True
+
+
+def test_a_401_on_a_token_that_looks_valid_renews_it_once(renewer, monkeypatch):
+    """chatgpt.com refuses a token that has not expired by the server's
+    clock (a clock behind, an early revocation): the check renews it, once
+    however many requests it was refused to, and reports "auth" when the
+    renewed token is refused too, without renewing that one again."""
+    openai = _OpenAI(monkeypatch)
+    _sign_in(expires_in=3600)
+    assert _check(renewer)["ok"] is True
+    assert openai.calls == ["rt-1"] and _stored()["access_token"] == openai.access
+
+    openai = _OpenAI(monkeypatch)
+    _sign_in(expires_in=3600)
+    token = openai.token
+
+    def slow(form):
+        time.sleep(0.2)
+        return token(form)
+    monkeypatch.setattr(co, "_token_request", slow)
+    results = []
+    threads = [threading.Thread(target=lambda: results.append(_check(renewer))) for _ in range(5)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert [r["ok"] for r in results] == [True] * 5, results
+    assert openai.calls == ["rt-1"]
+
+    # Refused whatever the token: one renewal, then the 401 stands, and the
+    # next check doesn't rotate the grant again for a token got just now.
+    openai = _OpenAI(monkeypatch)
+    _sign_in(expires_in=3600)
+
+    def refused(req):
+        raise _http_error(401, {"detail": "nope"})
+    monkeypatch.setattr(ai_catalog, "fetch_json", refused)
+    for _ in range(2):
+        health = _check(renewer)
+        assert (health["auth"], health["kind"]) == (True, "auth"), health
+    assert openai.calls == ["rt-1"] and _stored()["refresh_token"] == "rt-2"
+
+
+def test_a_401_whose_renewal_cant_reach_openai_is_unreachable(renewer, monkeypatch):
+    """chatgpt.com refuses a token that looks valid while auth.openai.com is
+    out of reach: the check, Test and usage say they couldn't reach it, and
+    the tokens stay."""
+    openai = _OpenAI(monkeypatch)
+    _sign_in(expires_in=3600)
+    openai.failure = NO_VERDICT["offline"]
+    _upstream(monkeypatch, lambda token: token == openai.access)
+    health = _check(renewer)
+    assert (health["ok"], health["auth"], health["kind"]) == (False, False, "unreachable"), health
+    test = renewer.post("/api/ai/providers/gpt/test").json()
+    assert (test["ok"], test["auth"], test["kind"]) == (False, False, "unreachable"), test
+    usage = renewer.post("/api/ai/providers/gpt/usage").json()
+    assert (usage["available"], usage["auth"]) == (False, False)
+    assert "sign in again" not in usage["reason"].lower()
+    assert openai.calls == ["rt-1"] * 3
+    oauth = _stored()
+    assert (oauth["access_token"], oauth["refresh_token"], oauth["refresh_unreachable"]) == ("at-1", "rt-1", True)
+
+
+@pytest.mark.parametrize("failure", [NO_VERDICT["offline"], lambda: _http_error(400, {"error": "invalid_grant"})],
+                         ids=["unreachable", "refused"])
+def test_a_failing_refresh_never_overwrites_a_reconnect(renewer, monkeypatch, failure):
+    """A sign-in made again while a slow refresh fails keeps its tokens:
+    the refresh writes only over the refresh token it started from."""
+    from gamma.ai_settings import ai_runtime
+    _sign_in()
+    started, release = threading.Event(), threading.Event()
+    fresh = {**_fake_tokens(email="renewer@example.com"), "refresh_token": "rt-new"}
+
+    def token(form):
+        if form["grant_type"] == "authorization_code":
+            return fresh
+        started.set()
+        release.wait(5)
+        raise failure()
+    monkeypatch.setattr(co, "_token_request", token)
+    refresh = threading.Thread(target=ai_runtime, args=(account_of("renewer"),))
+    refresh.start()
+    try:
+        assert started.wait(5)
+        state = renewer.post("/api/ai/oauth/chatgpt/start").json()["state"]
+        r = renewer.post("/api/ai/oauth/chatgpt/complete", json={
+            "state": state, "provider_id": "gpt",
+            "callback": f"http://localhost:1455/auth/callback?code=abc&state={state}"})
+        assert r.status_code == 200, r.text
+    finally:
+        release.set()
+        refresh.join()
+    oauth = _stored()
+    assert (oauth["access_token"], oauth["refresh_token"]) == (fresh["access_token"], "rt-new")
+    assert "refresh_failed_at" not in oauth
+
+
+def test_a_failed_save_after_a_refresh_is_retried(renewer, monkeypatch, caplog):
+    """OpenAI has spent the old refresh token once it answers: a save that
+    fails (users.db locked) is tried again, so the next refresh doesn't
+    present the spent token and lose the grant."""
+    import sqlite3
+    from gamma import ai_settings
+    real = ai_settings.update_provider_entries
+    failures = []
+
+    def flaky(user_id, change):
+        if failures:
+            raise failures.pop()
+        return real(user_id, change)
+    monkeypatch.setattr(ai_settings, "update_provider_entries", flaky)
+
+    openai = _OpenAI(monkeypatch)
+    _sign_in()
+    failures[:] = [sqlite3.OperationalError("database is locked")]
+    conf = ai_settings.ai_runtime(account_of("renewer"))["providers"]["gpt"]
+    assert conf["api_key"] == openai.access
+    assert _stored()["refresh_token"] == "rt-2" and openai.valid == {"rt-2"}
+
+    # Never saved: the request still has its token, and the log says why
+    # the sign-in will have to be made again.
+    openai = _OpenAI(monkeypatch)
+    _sign_in()
+    failures[:] = [sqlite3.OperationalError("database is locked")] * 3
+    with caplog.at_level(logging.ERROR, logger="gamma"):
+        conf = ai_settings.ai_runtime(account_of("renewer"))["providers"]["gpt"]
+    assert conf["api_key"] == openai.access and _stored()["refresh_token"] == "rt-1"
+    assert any("could not be saved" in r.getMessage() for r in caplog.records)
+
+
+def test_a_refresh_answer_without_a_refresh_token_is_logged(monkeypatch, caplog):
+    tokens = _fake_tokens()
+    del tokens["refresh_token"]
+    monkeypatch.setattr(co, "_token_request", lambda form: tokens)
+    with caplog.at_level(logging.WARNING, logger="gamma"):
+        refreshed = co.refresh({"access_token": "at-1", "refresh_token": "rt-1"})
+    assert refreshed["refresh_token"] == "rt-1"  # the old one kept, as Codex CLI does
+    assert any("no refresh token" in r.getMessage() for r in caplog.records)

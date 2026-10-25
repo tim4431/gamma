@@ -553,7 +553,7 @@ def test_plan_page_for_a_library_on_the_shared_server(client, stripe, monkeypatc
     completed(client, stripe, alice["id"])
     page = client.get("/plan?checkout=success").text
     assert "Setting up your server" not in page and "Thank you" in page and "<h2>Your server" not in page
-    assert "Your library" in page and "6 GB, 100 MB per file" in page
+    assert "Your library" in page and "<dd>6 GB</dd>" in page
     assert "href='https://share.gammapdf.test/api/auth/cloud/start?next=/'" in page   # Open signs in afresh
     assert "data-switch=pro>Upgrade to Pro" in page
     assert "share.gammapdf.test" in client.get("/").text                               # the Overview's plan card

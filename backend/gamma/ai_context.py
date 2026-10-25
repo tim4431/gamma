@@ -555,7 +555,7 @@ _ELIDED_RESULT = "(older result elided to save space — call the tool again if 
 _REPLAYED_NOTE = "[result from an earlier turn — notes may have changed since; call again before quoting or editing]\n"
 # A change the user took back from its row under the reply (`reverted` on
 # the saved action, gamma/ai_revert.py): the model must not build on it.
-_REVERTED_NOTE = "[the user reverted this change afterwards — the notes no longer hold it]\n"
+_REVERTED_NOTE = "[the user reverted this change afterwards — it is undone]\n"
 
 
 def _replayable(history_item: dict) -> list[dict]:

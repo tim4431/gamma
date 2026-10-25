@@ -706,8 +706,9 @@ trace.
 and carries `iss`, `sub` (the account id), `aud` (the client id), `exp`
 (10 min), `iat`, `auth_time`, `nonce`, and the identity claims:
 `preferred_username` and `plan` always (a Gamma server needs the
-username), `limits` on a paid plan (`{quota_mb, max_upload_mb}`, the
-storage it gives the account on the shared server, `config.shared_limits`),
+username), `limits` on a paid plan (`{quota_mb}`, the storage it gives
+the account on the shared server, `config.shared_limits`; a Gamma server
+ignores the `max_upload_mb` an older account server sent beside it),
 `email` + `email_verified` for the `email` scope, `name` for `profile`.
 `/userinfo` answers the same claims for an access token. Keys are Ed25519
 in `signing_keys`; `manage.py rotate-key` retires the active one, which
@@ -1007,11 +1008,12 @@ there and still ends in the system browser.
 Admission comes before the name: a policy that refuses the subject, or
 `invited` asking it to join, does so whatever its username, and the name
 only matters once an account is made. A local name is unique whatever its
-case (a page host finds its account by name, case-insensitively), so a
+case (a page host finds its account by name, case-insensitively). So a
 cloud username some other account here goes by, linked to another cloud
 identity, gives the new account the first variant no account goes by in
 any case (`cloud_auth._free_name`). The link, not the name, signs it in
-again; invitations are keyed by subject, so they land on it all the same.
+again, and invitations are keyed by subject, so they land on it all the
+same.
 An account of that name with no cloud link is left alone: it may be the
 person's own, from before Gamma Cloud, and linking it automatically would
 hand it to anyone with that cloud username, so only `claim` and the admin
@@ -1145,10 +1147,10 @@ with `DELETE /api/me/servers`, then revokes the grant
 (`cloud_sync.release`). If no access token is cached, the release refreshes
 once first. Failures are warnings, never errors to the person.
 
-**The username lookup** (`cloud_auth.lookup_username`) for invitations
-by Gamma Cloud username — to a shared workspace
-([workspaces.md](workspaces.md) "Pending invitations") or to a share
-(below) — runs on the inviter's own grant (`cloud_auth._lookup_token` →
+**The username lookup** (`cloud_auth.lookup_username`) serves both kinds
+of invitation by Gamma Cloud username, to a shared workspace
+([workspaces.md](workspaces.md) "Pending invitations") and to a share
+(below). It runs on the inviter's own grant (`cloud_auth._lookup_token` →
 `access_token_for`). An inviter whose account here is not linked gets
 "Link your own Gamma Cloud account" (503). Both kinds count against one
 budget per inviting account, 30 lookups in 10 minutes
@@ -1162,10 +1164,10 @@ no account here yet, by their Gamma Cloud username
 The twin of a pending membership: the lookup answers the subject, and the
 invitation waits in `pending_share_users` (users.db: the share's token,
 the subject, the cloud username, the role, the inviter, the time; one per
-share and subject) until the person's first cloud sign-in creates, claims
-or links their account, which turns it into a `share_users` row with its
-role and an Inbox item from the inviter (`shares.claim_pending`; an
-invitation the account holds already keeps its own role). Inviting again,
+share and subject). The person's first cloud sign-in creates, claims or
+links their account and turns the invitation into a `share_users` row
+with its role and an Inbox item from the inviter (`shares.claim_pending`;
+an invitation the account holds already keeps its own role). Inviting again,
 by name or by the subject (no lookup), changes the role. Someone whose
 cloud identity is linked here already is invited at once, as by username.
 The rows go with their share (`db.delete_shares`: stopping it, the folder
@@ -1280,9 +1282,8 @@ library lives: the person signs in there and is an ordinary account, not
 an admin. Only an account on a plan is signed in ("The entrance", "Who
 the shared server takes"). What the plan adds is storage. The account
 server sends it as the `limits` claim, and
-`server_settings.user_limits` uses it as the account's default quota and
-per-file cap in place of the server's defaults
-(`cloud_auth.plan_limits`). An admin's override for the account still wins.
+`server_settings.user_limits` uses it as the account's default quota in
+place of the server's default (`cloud_auth.plan_limits`). An admin's override for the account still wins.
 Three rules keep it honest:
 
 - only a share host reads the claim. On any other server a cloud plan
@@ -1428,14 +1429,14 @@ The answer is the plan's limits:
 ```json
 {"plan": "pro", "status": "active", "read_only": false,
  "policy": "invited", "max_accounts": 10,
- "quota_mb": 102400, "max_upload_mb": 250,
+ "quota_mb": 102400,
  "offsite": {"interval_s": 3600, "keep": 30},
  "grace_until": null, "message": ""}
 ```
 
 `status` is `active`, `grace`, `read_only` or `stopped`; `policy` one of
 the policies above ("" leaves the environment's); `max_accounts`,
-`quota_mb` and `max_upload_mb` 0 for no limit. Each field is checked; an
+`quota_mb` 0 for no limit. Each field is checked; an
 answer that is not a plan's limits counts as a failed call. The answer is
 kept with the time in the users.db `settings` KV under `hosted_limits`
 (with `status_since`, when the status took its value), so it survives a
@@ -1453,7 +1454,7 @@ beside a running server reaches it at the server's next sync.
 
 | field | effect |
 |---|---|
-| `quota_mb`, `max_upload_mb` | the server-wide default quota and per-file cap (`server_settings._plan_caps`). With no saved default the plan's value is the default; a saved default, a per-account override or a shared workspace's quota counts only where it is lower. Saving a higher value (or an unlimited quota) is refused with 400: a hosted admin may tighten, never loosen. `GET /api/admin/settings` reports each default's source as `saved`, `default` or `plan`, and `plan_caps` |
+| `quota_mb` | the server-wide default quota (`server_settings._plan_caps`). With no saved default the plan's value is the default; a saved default, a per-account override or a shared workspace's quota counts only where it is lower. Saving a higher value (or an unlimited quota) is refused with 400: a hosted admin may tighten, never loosen. `GET /api/admin/settings` reports the default's source as `saved`, `default` or `plan`, and `plan_caps` |
 | `policy` | replaces `GAMMA_CLOUD_POLICY` (`cloud_auth.settings`, `policy_source: "plan"`), so a plan change switches it with the next sync |
 | `max_accounts` | once that many non-guest accounts exist, a cloud sign-in that would provision one is refused with "This server has reached its plan's N accounts.", and so is `POST /api/admin/users`. The admin subject is exempt |
 | `read_only` | the gate below; a `read_only` or `stopped` status sets it whatever the flag says |
@@ -1510,7 +1511,7 @@ sync); the login page shows a read-only banner. The `hosted` notice
 Settings → Server → Plan reads the `hosted` block of `GET
 /api/admin/settings` (`hosted.pane()`: the cached answer, the account
 count, the last failure, the issuer). It shows the plan with its status
-and when it last synced, and the accounts, quota, per-file cap and sign-in
+and when it last synced, and the accounts, quota and sign-in
 policy the plan allows. Its buttons are a Manage plan link to the account
 server's `/plan` and Sync now. The storage rows under it name the plan's
 cap when it decides, and the Sign-in pane's policy row says the plan sets

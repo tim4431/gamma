@@ -41,8 +41,8 @@ from ..pdf_text import GlyphPages, quote_under
 from ..pdf_export import (TEXT_BOX_TYPES, _resolve, annotation_key, annotation_shown, display_size,
                           drop_annotations, first_rect, page_frame, pdf_point_to_viewer, reply_parent)
 from ..text_box import escape_markdown, keep_on_surface, markdown_of, measure, normalize_text_box, plain_text
-from ..storage import (display_filename, find_upload_file, is_pdf, pdf_url, put_upload, store_file, store_file_stream,
-                       store_pdf, stat as stored_stat)
+from ..storage import (display_filename, find_upload_file, pdf_url, put_upload, store_file, store_file_stream,
+                       store_pdf_stream, stat as stored_stat)
 from ..logseq_import import (
     edn_highlight_position,
     edn_highlight_to_block,
@@ -162,6 +162,15 @@ def discard_import_review(token: str, request: Request):
     return {"ok": True}
 
 
+@router.post("/import/review/{token}/keepalive")
+def keep_import_review(token: str, request: Request):
+    """The dialog still shows the review: its two hours start again, also
+    once past them while no upload's sweep has removed it (404 then)."""
+    ws = require_ws(request, write=True)
+    import_staging.touch(token, request.state.user_id, ws)
+    return {"ok": True}
+
+
 class ImportJob(BaseModel):
     review_id: str
     selected: list[str]
@@ -189,7 +198,7 @@ def start_import_job(payload: ImportJob, request: Request):
     prior = jobs.latest(user_id, "import", token)
     if prior is not None and prior["state"] in ("queued", "running", "done"):
         return same_review(prior)
-    path, metadata = import_staging.get(token, user_id, ws)
+    path, metadata = import_staging.touch(token, user_id, ws)  # pressing Import is activity too
     upload = path / "upload"
     if not upload.exists():
         raise HTTPException(status_code=410, detail="this review was already imported; choose the file again")
@@ -226,10 +235,10 @@ def import_logseq(
     # 1. Validate and store PDF (a sync def: the parsing and the writes run
     #    in the threadpool, the uploads read through ``.file``)
     ws = require_ws(request, write=True)
-    pdf_bytes = pdf.file.read()
-    if not is_pdf(pdf_bytes):
+    try:  # spooled to disk and hashed as it is read, like POST /uploads
+        digest, _, _ = store_pdf_stream(ws, pdf.file)
+    except ValueError:
         raise HTTPException(status_code=400, detail="not a valid PDF")
-    digest, _ = store_pdf(ws, pdf_bytes)
 
     # 2. Parse EDN → build quote→highlight lookup
     edn_text = edn.file.read().decode("utf-8")
@@ -1109,7 +1118,7 @@ def _zotero_store_file(ws, zf, extra) -> str:
     its content hash and its name's extension, with the same refusals),
     streamed from the zip so a large one is never in memory. → the stored
     name. Raises ValueError for a file that is not what its extension says
-    and HTTPException (413/507) past the storage limits."""
+    and HTTPException (507) past the storage quota."""
     with zf.open(extra["entry"]) as src:
         return store_file_stream(ws, src, extra["ext"])[0]
 
@@ -1196,7 +1205,8 @@ def _zotero_prepare(conn, ws, zf, item, dest, report) -> dict:
     # Attach the file only when the page doesn't already have one — a page
     # found by zotero_key keeps its existing PDF (and the highlights tied to it).
     if digest and not props.get("doc_id"):
-        _, already_existed = store_pdf(ws, zf.read(item["pdf_entry"]))
+        with zf.open(item["pdf_entry"]) as src:  # streamed, like its other files
+            _, already_existed, _ = store_pdf_stream(ws, src)
         if not already_existed:
             report["pdfs_stored"] += 1
         props["doc_id"] = digest
@@ -1486,7 +1496,7 @@ def _commit_zotero(ws, actor, data, meta, selection, progress=jobs.no_progress):
                     job = _zotero_merge(conn, ws, prep, report, uploads, actor)
                     if job:
                         annot_jobs.append(job)
-                except HTTPException as e:  # per-file quota (413/507) skips the item
+                except HTTPException as e:  # the quota (507) skips the item
                     skip(item, str(e.detail))
                 except Exception as e:
                     log.warning(f"[zotero] item '{item['title'][:80]}' failed: {e}")

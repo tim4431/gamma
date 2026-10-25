@@ -49,7 +49,11 @@ model — the cheap utility model), else the entry's first model. A failed probe
 carries the failure's `kind` (see "Chat endpoint"; `no_model` when the entry
 has none picked) and an `auth` flag on 401/403, so the row renders the chat
 error card's headline and fix ("OpenAI rejected the API key — Update key"),
-the upstream body only on hover. Upstream error
+the upstream body only on hover. For a ChatGPT sign-in a 401 first renews the
+token once, so `auth` means OpenAI refused the grant or the renewed token was
+refused too; a 403 (a challenge page included) still reads as `auth`. While
+OpenAI can't be reached to renew it, the kind is `unreachable` (see "The
+chatgpt protocol (OAuth)"). Upstream error
 details are summarized before display everywhere (`upstream_detail` in
 `ai_client.py`): JSON bodies reduce to their message field, HTML error pages
 (a proxy's 502 page) to their `<title>`.
@@ -60,7 +64,10 @@ account pref `gamma-ai-login-check`, default `ping`): mode `"ping"` verifies the
 credential for free — OAuth entries hit the usage endpoint, API keys list
 `/v1/models`, both 401 on a dead credential (404/405 = gateway without a
 listing → ok-but-unverified, no false alarm) — and `"test"` runs the same tiny
-completion as the Test button. The answer is always in-body
+completion as the Test button. In both modes a sign-in's 401 is answered as
+the Test probe's is: renewed once, `auth` when OpenAI refuses the grant or
+the renewed token is refused too, `unreachable` while OpenAI can't be
+reached. The answer is always in-body
 (`{configured, ok, auth?, kind?, error?}`); a failure renders as a warning
 strip in the chat window with the chat error card's headline for its `kind`
 ("OpenAI rejected the API key"; see "Chat endpoint") and a Fix… button that
@@ -112,7 +119,10 @@ where models can be fetched, added, or removed.
 API-key protocols return an explicit unavailable result because OpenAI-
 compatible and Anthropic-style providers do not share a portable quota API.
 An expired ChatGPT sign-in answers in-body (`{available: false, auth: true}`
-with a "sign in again" reason) rather than dumping the upstream 401.
+with a "sign in again" reason) rather than dumping the upstream 401 or 403. A
+401 first renews the token once: it reads as expired when OpenAI refuses the
+grant or the renewed token is refused too, and a renewal that can't reach
+OpenAI answers `auth: false` with a "couldn't reach OpenAI" reason.
 The account request deliberately uses the administrator-controlled ChatGPT
 protocol URL, not an entry field, and OAuth entries cannot edit their API key
 or base URL; this prevents a settings request from redirecting a bearer token.
@@ -255,7 +265,10 @@ own dialog). The same helpers validate both lists
   every account's requests refresh the same tokens, and OpenAI rotates the
   refresh token. Only the tokens are written back. The refresh backoff is
   reset only by an admin's Test, usage query or login check, so a dead
-  shared grant is not retried on every account's login.
+  shared grant is not retried on every account's login. A member's login
+  check still renews a token chatgpt.com refuses, once and within that
+  backoff, and reports `auth` when the grant is refused or the renewed
+  token is too.
 - **Masked**: the last-4 key hint and the signed-in e-mail (`account`) are
   for admins only.
 
@@ -359,6 +372,57 @@ entries first (`_refreshed_oauth` in `ai_settings.py`): OpenAI rotates refresh
 tokens, so of two parallel refreshes the second would fail and save stale
 tokens over the fresh ones.
 
+**How a sign-in is kept.** The tokens live in the entry: an account's own as
+plain JSON in its users.db `ai-settings` pref, a shared one sealed in the
+`settings` KV. Both are in the data directory, so an update or a restart
+keeps them. `ai_runtime` refreshes the access token from 5 minutes before it
+expires (`needs_refresh`), and `chatgpt_oauth.refresh` reads a failure the
+way Codex CLI does:
+
+- **Refused.** A 401, a 400 `invalid_grant`, or the code
+  `refresh_token_expired`, `refresh_token_reused` or
+  `refresh_token_invalidated` at any status. The grant is gone. The entry
+  keeps its stale token with `refresh_failed_at`, and the refresh waits
+  `REFRESH_BACKOFF_S` (5 minutes) before it is tried again. The provider's
+  401 on that token reads as `auth`: "The ChatGPT sign-in has expired — Sign
+  in again".
+- **No verdict.** Anything else: no connection, a timeout, a 5xx, a 429, a
+  proxy's 403 page, a body that isn't JSON. `refresh` raises
+  `RefreshUnavailable`. The tokens stay, the entry stamps
+  `refresh_failed_at` and `refresh_unreachable`, and the next request tries
+  again after `REFRESH_RETRY_S` (60 s). Calls still send the old token,
+  which works until it really expires. `ai_runtime` marks the conf `refresh_unreachable`,
+  and `open_ai` turns a 401 on it into a `URLError`, so the chat, translation,
+  metadata and Test say `unreachable` ("Couldn't reach ChatGPT").
+- The log says which: `[chatgpt-oauth] refresh refused: 401
+  refresh_token_reused`, or `refresh failed, will retry: <status or error>`.
+  It never holds a token or the answer's body. An answer without a new
+  refresh token keeps the old one, with a warning.
+
+A refresh writes its result only while the stored refresh token is still the
+one it started from (`_swap_oauth`, a compare-and-set). A refresh that fails
+or lands late therefore never overwrites a sign-in made again meanwhile;
+`complete` stores that one without the refresh lock. A successful refresh
+has spent the old refresh token at OpenAI, so its save is tried 3 times
+while users.db is locked. A save that still fails is logged as an error, and
+that sign-in will have to be made again.
+
+The provider may refuse a token that has not expired by the server's clock
+(a clock behind, a token revoked early). The login check, the Test probe and
+the usage query then renew it once and ask again (`_renewing` in
+`routers/ai.py`, over `ai_settings.renew_rejected`). The renewal runs under
+the refresh lock, within the backoff, and only while the stored token is
+still the refused one, so any number of requests refused one token cause one
+refresh. A token a refresh got less than `REFRESH_BACKOFF_S` ago
+(`refreshed_at`) is not renewed again: a provider that refuses every token
+then costs one refresh per 5 minutes, not one per check, and its 401 reads
+as `auth`. A 403 is never renewed and reads as `auth`. A chat's 401 is not
+renewed; the next check, Test or usage query renews it.
+
+Restoring users.db from a snapshot or an off-site copy brings back a refresh
+token OpenAI has since rotated. That sign-in must be made again: its first
+refresh is refused with `refresh_token_reused`.
+
 **How a sign-in reaches the server.** Codex CLI's client id has one
 registered redirect, `http://localhost:1455/auth/callback`, which only works
 where something listens on the browser's own machine. `chatgpt_oauth.begin`
@@ -421,14 +485,16 @@ Clients skip `ping`. A consumer that leaves before the source
 ends (Stop, or the connection dropped anyway) stops the source at its next
 yield and logs a warning with the elapsed time.
 
-A failure says what kind it is. `ai_client.failure_kind` classifies it in
-one place, from the upstream status and, for an error event inside a
-stream, the provider's wording:
+A failure says what kind it is. `ai_client.failure_kind` classifies it from
+the upstream status and, for an error event inside a stream, the provider's
+wording:
 
 - `not_configured`: no usable connection (the 503).
 - `allowance`: the shared allowance is used up.
 - `auth`: 401/403. `rate`: 429 or a quota. `overloaded`: 5xx or 529.
-- `unreachable`: no connection, a timeout, a cut-off stream.
+- `unreachable`: no connection, a timeout, a cut-off stream. Also a
+  sign-in's 401 while its renewal can't reach OpenAI: `open_ai` turns that
+  401 into a `URLError` first (see "The chatgpt protocol (OAuth)").
 - `bad_endpoint`: a 404 page, a reply that isn't JSON, or a stream without
   a single server-sent event (`ai_protocols.base.NotAnAIStream`).
 - `too_long`: the prompt exceeds the context. Anything else is `other`.
@@ -1124,7 +1190,8 @@ What it can reach depends on where the chat is opened — every chat declares an
   tools reach the pages in that folder.
 - `"page"` — the page chat (`page_id` = the focused page, with or without a
   PDF): tools reach only that page — the reading tools plus the note-block
-  editors; the page-level organizers (list/rename/move) don't exist there.
+  editors; the page-level organizers (list/rename/move, folders and labels)
+  don't exist there.
 
 The request also carries `permissions`, the tool map of the chat's KIND with
 one state per permission (see below), and `granted`, the permissions this
@@ -1137,9 +1204,9 @@ scope) = plain chat. Among those mechanical lines: with a reading tool armed,
 the model is asked to link the pages it refers to as `[title](/?page=<id>)`,
 which the chat opens in place (details in [ai_tools.md](ai_tools.md)).
 
-The changing tools (rename, move, the note editors) are armed only when
-`auth.can_write` lets the request write: an editor or owner, and through an
-integration token only a write-scope one. A workspace viewer or a read-scope
+The changing tools (rename, move, folders and labels, the note editors) are
+armed only when `auth.can_write` lets the request write: an editor or
+owner, and through an integration token only a write-scope one. A workspace viewer or a read-scope
 token gets the reading tools only (the prompt then says changes are not
 available here), and `run_agent_tool` refuses a changing tool called anyway.
 
@@ -1173,10 +1240,15 @@ server, `chat/chatSettings.js` in the client):
 - **Off**: its tools are not offered, and a call is refused.
 
 Reading is allowed by default and changes ask: Save papers, Rename pages,
-Move pages, Restore deleted pages and Edit note blocks start at Ask. The server gives a permission the request
+Move pages, Restore deleted pages, Organize folders and labels and Edit
+note blocks start at Ask. The server gives a permission the request
 leaves out the same default, so a changing tool added later asks until the
 user allows it. **Use journal sign-ins** is part of fetching, not a call of
-its own, so it is only Allow or Off.
+its own, so it is only Allow or Off. **Delete folders and labels** is only
+Ask or Off: every deletion shows its card (`ai_permissions.ASK_ONLY`,
+`permStates` in the client). The server reads an Allow sent for it as Ask,
+never takes it from `granted`, and runs a card's `chat` or `always` answer
+as `once`.
 
 Settings → AI → Tool usage → Tools compares permissions in a table: named, explained
 rows grouped into **Read your library**, **Web research**, and **Make changes**,
@@ -1188,13 +1260,15 @@ sit below its description. Each column offers four presets:
 - **Read library**: library reading only.
 - **Read & search**: reading, web search and fetching.
 - **Ask before changes**, the default: also the changing tools, each asking first.
-- **Allow all**: everything, without asking.
+- **Allow all**: everything without asking, except deleting folders and
+  labels, which still asks.
 
 Individual changes show **Custom**. The stored map is account-synced. Its
 localStorage JSON is `gamma-ai-agent-perms` = `{folder, pdf, notes}` →
 `{list, read, block_read, view, search, web_search, web_read,
-publisher_cookies, save, rename, move, restore, block_edit}` → `"allow"` /
-`"ask"` / `"off"`, and a pre-kind flat map is applied to every kind on read.
+publisher_cookies, save, rename, move, restore, organize, organize_delete,
+block_edit}` → `"allow"` / `"ask"` / `"off"`, and a pre-kind flat map is
+applied to every kind on read.
 A stored boolean is the older on / off value (`normalizePerm`): `false` is
 Off, and `true` is the permission's default. So a change that was on asks,
 and reading stays allowed. The server reads a sent boolean as on / off,
@@ -1219,7 +1293,11 @@ still `search`), Search papers online (`web_search` → `search_papers`,
 read-only and described in [ai_tools.md](ai_tools.md), the web engine in its
 "search_web" section), Save papers (`save` → `save_paper`, in every chat
 kind), Rename pages, Move pages, Restore deleted pages (`restore` →
-`restore_page`, folder chats only), and Edit note blocks (one permission
+`restore_page`, folder chats only), Organize folders and labels
+(`organize` → `rename_folder`, `create_label`, `rename_label`,
+`label_page`, folder chats only), Delete folders and labels
+(`organize_delete` → `delete_folder`, `delete_label`, folder chats only, Ask
+or Off), and Edit note blocks (one permission
 for `edit_block`, `create_block`, `move_block`, `delete_block` and
 `clip_region`, which stores a picture for the notes). The "Read & search" preset (`chat/chatSettings.js` `READ_TOOLS`)
 includes the web permissions and the page viewer. **Use journal sign-ins**
@@ -1261,7 +1339,11 @@ A call of a tool whose permission is Ask waits for the user
    block has its `parent`, and `src_title` when it leaves its page. A
    saved paper has the folder it goes `to` and its source as the `diff`,
    plus `existed` and `page_id` when the library holds it already. A
-   restored page has the folders it goes back `to`.
+   restored page has the folders it goes back `to`. A folder or label
+   tool's preview has `title` (the path, the name, or the page's title) and
+   a `diff`. A deletion's preview also has the folder's or label's
+   `block_id`, `pages` / `page_count`, and a folder's `subfolders` /
+   `subfolder_count`, `chats` and `chat_folders` / `chat_folder_count`.
 3. The loop waits (`ai_permissions.wait_for`) for `POST
    /api/ai/approvals/{id}` with a decision: `once`, `chat`, `always` or
    `deny`, the last optionally with a `note` saying what to do instead. The
@@ -1269,9 +1351,14 @@ A call of a tool whose permission is Ask waits for the user
    only that account can answer, and only once.
 4. Allowed, the call runs through `run_agent_tool` like any other, and its
    action carries `approval` (the decision). `chat` and `always` also allow
-   the permission for the rest of this reply. Declined, or unanswered after
-   `APPROVAL_TIMEOUT` (10 minutes), the call is not made. Its action is an
-   error chip with `declined: true` and `approval: "deny"` or `"expired"`,
+   the permission for the rest of this reply, unless it is ask-only. An
+   ask-only call is planned again first, and runs only when it still names
+   the `block_id` its card showed; otherwise its action is an error chip,
+   and the model hears that the folder or label changed while the card
+   waited (`CHANGED_WHILE_ASKING`).
+   Declined, or unanswered after `APPROVAL_TIMEOUT` (10 minutes), the call
+   is not made. Its action is an error chip with `declined: true` and
+   `approval: "deny"` or `"expired"`,
    plus the page `title`, the `mode` and the `note`. The model is told that
    the user declined, and not to retry or work around it. With a note it is
    told to do what the note says instead.
@@ -1307,7 +1394,9 @@ the diff. Its four buttons are **Allow once** (primary), **Allow in this
 chat**, **Always allow** and **Don't allow** (ghost). Don't allow opens one
 line, "What should the assistant do instead? (optional)", with its own Don't
 allow (Enter) and Back (Escape). The buttons never take the focus
-themselves, so typing in the composer cannot answer a card.
+themselves, so typing in the composer cannot answer a card. An ask-only
+permission's card offers Allow once (`primary danger`) and Don't allow
+only, and does not raise the hint.
 
 - **Allow in this chat** is kept per account and conversation in this
   browser: localStorage `gamma-ai-chat-grants`, keyed by the conversation's
@@ -1392,8 +1481,13 @@ list/read/view/search/rename/move/edit/create, plus `error` with `error: true` f
 failed/blocked calls) that the chat saves in the message. A change also says
 what changed: `rename_page` / `move_page` carry `title` (the page's title
 before the call) and `from` / `to` (old and new title, old and new folder
-path, `""` = the library root), and the note tools their page's `title`. A
-change tool that changed nothing carries `noop: true`.
+path, `""` = the library root), and the note tools their page's `title`.
+The folder and label tools carry `title` (the folder's path, the label's
+name, or the labelled page's title), `from` / `to` on a rename, `added` /
+`removed` on `label_page`, and `count` (pages refiled), `chats` (a
+folder's) and `revert` on a deletion ([ai_tools.md](ai_tools.md) "Folders
+and labels" and "delete_folder / delete_label"). A change tool that changed
+nothing carries `noop: true`.
 
 The chat shows a reply's actions as one pill ("6 steps · listed, read 1
 page · 1 failed", `chat/agentSteps.js`). It expands to every call's chip:
@@ -1494,8 +1588,8 @@ call again before quoting or editing. The base prompt says the same, so a
 request to read, show or check something is answered from a fresh call, not
 last turn's outline (the agent's own edits change what `read_block`
 returns). A change the user reverted from its row (`reverted` on the
-action) gets a second note in front, `_REVERTED_NOTE`: the notes no longer
-hold it ([ai_tools.md](ai_tools.md) "Reverting a note change"). Results share `TOOL_REPLAY_BUDGET` chars newest-first
+action) gets a second note in front, `_REVERTED_NOTE`: the change is
+undone ([ai_tools.md](ai_tools.md) "Reverting a note change"). Results share `TOOL_REPLAY_BUDGET` chars newest-first
 (older ones elided), and `_messages` in `ai_protocols/anthropic.py` folds a plain user turn into a
 preceding tool_result turn to keep roles alternating. The client sends
 only what is replayed — each turn's `role`, `text` and `actions`, never

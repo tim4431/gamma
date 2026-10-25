@@ -13,19 +13,21 @@ then a commit run as a background job. The upload is untrusted:
   a time, in a stack of its own, so the temporary disk a note takes is
   given back before the next and a library of thousands of notes imports
   whole;
-- every member is read only after its size is checked, recordings are
-  streamed, and the ink is made and stored one page at a time;
+- every member is read only after its size is checked (a PDF or picture,
+  held whole in memory, up to MAX_HELD_BYTES), recordings are streamed,
+  and the ink is made and stored one page at a time;
 - every file goes through ``store_pdf``, ``store_file`` or
-  ``store_file_stream``, so the per-file cap, the quota and dedup apply,
-  and the disk keeps ``import_staging.MIN_FREE_BYTES`` free.
+  ``store_file_stream``, so the quota and dedup apply, and the disk keeps
+  ``import_staging.MIN_FREE_BYTES`` free.
 
 Files are stored first, outside any transaction; each note's folder and
 page are then written in one short transaction under the write lock, the
 digest of the note's Session.plist or noteBundle checked again there
 (``notability_import``, the re-import key), so an import that finds the
 note there writes neither. A stopped job keeps the notes it finished. A
-413 on one of a note's files skips that note; a 507 (the quota, or the
-disk) stops the import, since every later note would meet it too.
+507 on one of a note's files (the quota, or the disk) stops the import,
+since every later note would meet it too; any other refusal skips that
+note.
 """
 
 import contextlib
@@ -57,11 +59,11 @@ from .notebook import paper_ops
 from .ops import after_commit, apply_batches
 from .pdf_export import ExportPdfReader, display_size, page_frame
 from .recording import mp4_duration_ms
-from .server_settings import MB, workspace_quota
 from .storage import content_digest, display_filename, is_pdf, store_file, store_file_stream, store_pdf
 from .text_box import escape_markdown
 
 MAX_DIRECTORY_BYTES = 16 << 20   # a zip's central directory (the upload's, each .note's): about 100,000 files
+MAX_HELD_BYTES = 256 << 20       # a note's PDF or picture: read whole into memory, parsed and composed
 MAX_NOTE_SAMPLES = 20_000_000    # flattened samples in one note (a thousand pages of dense writing)
 MAX_PICTURE_PIXELS = 40_000_000  # a picture decoded to be cropped or turned
 MAX_PICTURE_USES = 4             # pictures of one note one image file is read for
@@ -85,7 +87,7 @@ class _Stop(Exception):
         self.title = title
 
 
-def open_upload(data, name: str) -> zipfile.ZipFile:
+def open_upload(data) -> zipfile.ZipFile:
     """The upload as a zip: a Supernote ``.note`` (``noteSN_FILE_VER_``)
     and anything that is no zip are refused (400), and so is a zip whose
     central directory is past MAX_DIRECTORY_BYTES (413) before zipfile
@@ -251,7 +253,7 @@ def import_notes(ws: str, data, conn, folder: str = "", *, name: str = "", actor
     file, a bad destination or selection), 413 (a central directory or an
     archive past the limits) or 507 (no disk to unpack)."""
     name = display_filename(name)  # a browser may send a relative path
-    zf = open_upload(data, name)
+    zf = open_upload(data)
     with zf, contextlib.ExitStack() as stack:
         walk = new_walk(stack, max_directory=MAX_DIRECTORY_BYTES)
         entries: list = []
@@ -275,7 +277,6 @@ class _Import:
                        "text_boxes_imported": 0, "pictures_imported": 0, "recordings_imported": 0,
                        "pages": [], "skipped": [], "warnings": [], "entries": [], "folder": folder}
         self.selection = None  # the note at hand: its warnings name it
-        self.max_mb = workspace_quota(ws)["max_upload_mb"]
         self.library = {}  # digest → (page id, title, properties) of the notes imported before
         self.seen = {}     # digest → the page entry of a note earlier in this upload
         self.paths = {}    # folder id → its names from the top
@@ -358,8 +359,8 @@ class _Import:
         if self.preview:
             self._left_out(title, note.left_out, note.classes)
             for name in dict.fromkeys(e.pdf for e in note.layout if e.pdf in note.pdfs):
-                if members.find(note.pdfs[name].path).size > self.max_mb * MB:
-                    self.warn(title, f"Not imported: its PDF {name} is over the {self.max_mb} MB per-file limit")
+                if members.find(note.pdfs[name].path).size > MAX_HELD_BYTES:
+                    self.warn(title, f"Not imported: its PDF {name} is over {MAX_HELD_BYTES >> 20} MB")
             entry["warnings"] = self.report["warnings"][start:]
             self.report["pages"].append(entry)
             self.seen[note.digest] = entry
@@ -430,9 +431,9 @@ class _Import:
         """The display sizes of an .ntb's PDF's pages, which place the items
         on them: the PDF opened once for the note (``_pdf_sources`` takes it
         from ``self.opened``). Empty when the note has several, or its one is
-        past the per-file cap (``_pdf_sources`` then skips the note)."""
+        past MAX_HELD_BYTES (``_pdf_sources`` then skips the note)."""
         found = ntb.pdf_assets(members)
-        if len(found) != 1 or members.find(found[0]).size > self.max_mb * MB:
+        if len(found) != 1 or members.find(found[0]).size > MAX_HELD_BYTES:
             return {}
         key = found[0]
         if key not in self.opened:
@@ -462,7 +463,7 @@ class _Import:
         return True
 
     def _left_out(self, title: str, counts: Counter, classes: Counter) -> None:
-        for reason in nb.left_out_reasons(counts, classes, nb.MAX_NOTE_PAGES):
+        for reason in nb.left_out_reasons(counts, classes):
             self.warn(title, reason)
 
     # --- the commit ------------------------------------------------------------------------
@@ -558,7 +559,7 @@ class _Import:
             raise HTTPException(status_code=507, detail="the server's disk has no room for this note")
 
     def _pdf_sources(self, members, note: nb.Note) -> tuple[dict, dict, dict]:
-        """The PDFs the layout names, each checked against the per-file cap
+        """The PDFs the layout names, each checked against MAX_HELD_BYTES
         before it is read (one past it skips the note), read whole and
         opened once however many names lead to it (an .ntb's before it was
         read, ``_ntb_pages``): ``(display sizes of their pages, readers,
@@ -576,10 +577,10 @@ class _Import:
 
     def _open_pdf(self, entry, name: str) -> tuple | None:
         """``(display sizes of its pages, reader, bytes)`` of a bundled PDF;
-        None when it does not open or has no page. _Skip past the per-file
-        cap, checked before a byte is read."""
-        if entry.size > self.max_mb * MB:
-            raise _Skip(f"its PDF {name} is over the {self.max_mb} MB per-file limit")
+        None when it does not open or has no page. _Skip past
+        MAX_HELD_BYTES, checked before a byte is read."""
+        if entry.size > MAX_HELD_BYTES:
+            raise _Skip(f"its PDF {name} is over {MAX_HELD_BYTES >> 20} MB")
         try:
             data = entry.read()
             if not is_pdf(data):
@@ -622,8 +623,8 @@ class _Import:
     def _store_picture(self, members, media: nb.Media, frame, title: str, uses: Counter) -> dict | None:
         """A picture as a fixed-width text box holding its image; None, with
         a warning, when it cannot be stored. An animated GIF's animation is
-        read beside its still frame when the note has it within the
-        per-file cap (``picture_bytes`` chooses). ``uses`` counts the note's
+        read beside its still frame when the note has it within
+        MAX_HELD_BYTES (``picture_bytes`` chooses). ``uses`` counts the note's
         pictures by image file: one file is read for MAX_PICTURE_USES of
         them at most, so a note that names one file over and over is not
         read and decoded each time."""
@@ -632,8 +633,8 @@ class _Import:
         if entry is None:
             self.warn(title, _missing(media.picture))
             return None
-        if entry.size > self.max_mb * MB:
-            self.warn(title, f"Picture {name} is over the {self.max_mb} MB per-file limit: left out")
+        if entry.size > MAX_HELD_BYTES:
+            self.warn(title, f"Picture {name} is over {MAX_HELD_BYTES >> 20} MB: left out")
             return None
         uses[media.picture] += 1
         if uses[media.picture] > MAX_PICTURE_USES:
@@ -641,7 +642,7 @@ class _Import:
                 self.warn(title, f"Picture {name} is shown more than {MAX_PICTURE_USES} times: the rest are left out")
             return None
         moving, animation = members.find(media.animation) if media.animation else None, None
-        if moving is not None and moving.size <= self.max_mb * MB:
+        if moving is not None and moving.size <= MAX_HELD_BYTES:
             with contextlib.suppress(*READ_ERRORS):  # one that does not read leaves the still frame
                 animation = moving.read()
         try:
@@ -698,9 +699,6 @@ class _Import:
             self.warn(title, f"Recording {ref.name} is not an .m4a file: left out")
             return None
         entry = members.find(ref.path)
-        if entry.size > self.max_mb * MB:
-            self.warn(title, f"Recording {ref.name} is over the {self.max_mb} MB per-file limit: left out")
-            return None
         try:
             with entry.open() as f:
                 duration = mp4_duration_ms(f)

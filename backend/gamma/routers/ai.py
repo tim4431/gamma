@@ -84,6 +84,7 @@ from ..ai_settings import (
     own_entries,
     protocol_choices,
     provider_label,
+    renew_rejected,
     require_ai_runtime,
     resolve_model as _resolve_model,
     server_entries_for,
@@ -198,7 +199,8 @@ class AIChatRequest(BaseModel):
     # "ask" / "off", gamma/ai_permissions.py; a key left out allows reading
     # and asks before a change) — everything off degrades to a plain chat.
     # `granted` names the permissions this conversation allowed on an
-    # approval card ("Allow in this chat"): they run without asking.
+    # approval card ("Allow in this chat"): they run without asking (not an
+    # ask-only permission, `ai_permissions.ASK_ONLY`).
     # agent_system overrides the base agent prompt (the
     # scope/permission lines are always appended); tool_rounds overrides the
     # agent round budget and read_char_limit the per-read_page-call document
@@ -661,6 +663,30 @@ def _no_credential(entry: dict) -> dict:
             else "entry has no usable credential — set an API key or sign in again"}
 
 
+# The in-body failure of a sign-in whose token the provider refused while
+# its renewal can't reach the identity provider: no verdict on the sign-in.
+_RENEWAL_UNREACHABLE = {"ok": False, "auth": False, "kind": "unreachable",
+                        "error": "couldn't reach the sign-in service to renew the token — try again"}
+
+
+def _renewing(user_id: str, provider_id: str, conf: dict, call):
+    """``call(conf)``, and once more when the provider answers a sign-in's
+    token with a 401 and renewing it (ai_settings.renew_rejected) gives a
+    new one, which is set on ``conf`` itself. Raises
+    chatgpt_oauth.RefreshUnavailable when the renewal can't reach the
+    identity provider: the sign-in may well be fine."""
+    try:
+        return call(conf)
+    except (urllib.error.HTTPError, UpstreamError) as e:
+        if e.status != 401 or ai_protocols.of(conf).auth != "oauth":
+            raise
+        token = renew_rejected(user_id, provider_id, conf["api_key"])
+        if not token:
+            raise
+    conf["api_key"] = token
+    return call(conf)
+
+
 def _probe_model(entry: dict, fallback: str = "") -> str:
     """The model probes go through: the entry's configured test model, else
     the caller's fallback (the client sends its effective metadata model — the
@@ -694,9 +720,13 @@ def _probe_entry(user_id: str, entry: dict, fallback_model: str = "", retry: boo
     try:
         # Generous cap: reasoning models burn invisible tokens even on "ok".
         probe_entry = {"provider": provider_id, "model": model}
-        _call_ai([{"role": "user", "content": 'Reply with the single word "ok".'}],
-                 "", probe_entry, rt, max_tokens=2048, timeout=45,
-                 on_usage=ai_usage.recorder("test", probe_entry, rt))
+        # rt's own conf: _call_ai reads a renewed token from rt.
+        _renewing(user_id, provider_id, rt["providers"][provider_id], lambda conf: _call_ai(
+            [{"role": "user", "content": 'Reply with the single word "ok".'}],
+            "", probe_entry, rt, max_tokens=2048, timeout=45,
+            on_usage=ai_usage.recorder("test", probe_entry, rt)))
+    except chatgpt_oauth.RefreshUnavailable:
+        return {**_RENEWAL_UNREACHABLE, "model": model}
     except Exception as e:
         auth = isinstance(e, UpstreamError) and e.status in (401, 403)
         return {"ok": False, "model": model, "error": str(e), "auth": auth, "kind": failure_kind(e)}
@@ -745,7 +775,10 @@ def ai_provider_usage(provider_id: str, request: Request):
     if not conf:
         return {"available": False, "auth": True, "reason": "Sign in again to query usage."}
     try:
-        data = ai_catalog.fetch_json(proto.account_usage_request(conf))
+        data = _renewing(user_id, provider_id, conf, lambda c: ai_catalog.fetch_json(proto.account_usage_request(c)))
+    except chatgpt_oauth.RefreshUnavailable:
+        return {"available": False, "auth": False,
+                "reason": "Couldn't reach OpenAI to renew the sign-in — try again."}
     except urllib.error.HTTPError as e:
         if e.code in (401, 403):
             # Expired/revoked sign-in: an expected state, not a server error —
@@ -863,8 +896,9 @@ def ai_health(payload: AIHealthRequest, request: Request):
     """Startup connection check for one provider entry, so a broken credential
     surfaces at login instead of as a failed chat later. "ping" spends no
     tokens (Protocol.ping_request: API keys list the models, sign-ins ask the
-    quota endpoint) — it 401s on a dead credential. "test" runs the same tiny
-    completion as the Test button (through the entry's test model). Always
+    quota endpoint) — it 401s on a dead credential, after a sign-in's token
+    was renewed once (_renewing). "test" runs the same tiny completion as
+    the Test button (through the entry's test model). Always
     answers in-body: {configured, ok, auth?, error?, ...}. The entries are
     the ones the account can use: its own, then the server's shared ones."""
     user_id = require_user_id(request)
@@ -888,7 +922,9 @@ def ai_health(payload: AIHealthRequest, request: Request):
     if not conf:
         return {**result, **_no_credential(entry)}
     try:
-        ai_catalog.fetch_json(ai_protocols.of(conf).ping_request(conf))
+        _renewing(user_id, entry.get("id"), conf, lambda c: ai_catalog.fetch_json(ai_protocols.of(c).ping_request(c)))
+    except chatgpt_oauth.RefreshUnavailable:
+        return {**result, **_RENEWAL_UNREACHABLE}
     except urllib.error.HTTPError as e:
         if e.code in (401, 403):
             return {**result, "ok": False, "auth": True, "kind": "auth", "error": _upstream_detail(e, 200)}
@@ -1887,15 +1923,16 @@ def ai_approval_answer(approval_id: str, payload: AIApprovalAnswer, request: Req
 class AIRevert(BaseModel):
     kind: Literal["edit", "create", "move", "delete"]
     block_id: str = Field(max_length=64)
-    revert: dict   # the action's `revert`, as the note tool recorded it
+    revert: dict   # the action's `revert`, as the tool recorded it
     force: bool = False
     redo: bool = False  # put a reverted change back
 
 
 @router.post("/ai/revert")
 def ai_revert_change(payload: AIRevert, request: Request):
-    """Take back one change the agent made to the notes, or with ``redo``
-    put a reverted one back, from its row under the reply
+    """Take back one change the agent made to the notes, or a folder or
+    label it deleted, or with ``redo`` put a reverted one back, from its
+    row under the reply
     (gamma/ai_revert.py): ``{page_id, noop}``. 409
     ``{detail, conflict, preview?}`` when the note changed since —
     ``preview`` is what ``force`` would do — or can't go there; 404 when it

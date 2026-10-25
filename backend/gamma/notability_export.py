@@ -43,8 +43,8 @@ from .text_box import PAD, box_page, normalize_text_box
 PRIVATE_FORMAT = "gamma-notability"
 PRIVATE_VERSION = 1
 MARK_RGBA = (1.0, 0.93, 0.55, 1.0)       # a ==mark==, as the notes PDF paints one
-LINE_SEPARATOR = "\u2028"            # a line break inside one paragraph (a note of several lines)
 STICKY_EDGE = nmap.STICKY_EDGE
+_DASH_CODES = {name: code for code, name in nb.DASH_PATTERNS.items()}
 _PICTURE = re.compile(r"^!\[(?P<alt>[^\]]*)\]\(\s*/api/uploads/(?P<name>[0-9A-Za-z_-]+\.(?:png|jpe?g|gif|webp))\s*\)$",
                       re.I)
 _LIST_ITEM = re.compile(r"^(?P<lead>[ \t]*)(?P<marker>[-*+]|\d{1,9}[.)])[ \t]+"
@@ -96,16 +96,18 @@ def reasons(counts: Counter, **names) -> list[str]:
 # import makes it (nmap.paper_page): the size, orientation and sizing, and
 # the page in points. A sheet of one of them comes back as itself.
 
-_SIZES = [
-    (("a4", False, "lockedWidth"), nmap.A4_PT, 841.89),
-    (("letter", False, "lockedWidth"), nmap.LETTER_PT, 803.25),
-    (("letter", False, "staticWidth"), nmap.LETTER_PT, 792.0),
-    (("legal", False, "lockedWidth"), nmap.LETTER_PT, 1008.0),
-    (("a4", True, "lockedWidth"), nmap.A4_PT, nmap.A4_PT * nmap.A4_PT / 841.89),
-    (("letter", True, "lockedWidth"), nmap.LETTER_PT, nmap.LETTER_PT * 612 / 803.25),
-    (("letter", True, "staticWidth"), nmap.LETTER_PT, 472.0),
-    (("legal", True, "lockedWidth"), nmap.LETTER_PT, nmap.LETTER_PT * 8.5 / 14),
-]
+def _page_of(size: str, landscape: bool, sizing: str) -> tuple[float, float]:
+    """The page in points of a paper of that kind, as the import sizes it."""
+    width = nmap.A4_PT if size == "a4" else nmap.LETTER_PT
+    stub = nb.Note(title="", width=width, paper=nb.PaperSpec(size=size, sizing=sizing, landscape=landscape))
+    pw, ph, _height = nmap.paper_page(stub)
+    return pw, ph
+
+
+_SIZES = [(spec, *_page_of(*spec)) for spec in (
+    ("a4", False, "lockedWidth"), ("letter", False, "lockedWidth"), ("letter", False, "staticWidth"),
+    ("legal", False, "lockedWidth"), ("a4", True, "lockedWidth"), ("letter", True, "lockedWidth"),
+    ("letter", True, "staticWidth"), ("legal", True, "lockedWidth"))]
 
 
 def paper_size(width: float, height: float) -> tuple[tuple, float, float, bool]:
@@ -129,14 +131,12 @@ def _paper(sheet: dict) -> nw.Paper:
     reads back (nmap.paper)."""
     (size, landscape, sizing), pw, _ph, _exact = paper_size(sheet["width"], sheet["height"])
     lines = sheet["spacing"] * nmap.LETTER_PT / (72 * pw) if sheet["pattern"] == "ruled" else None
-    return nw.Paper(size=size, landscape=landscape, sizing=sizing, identifier="Color:" + sheet["color"][1:].upper(),
-                    lines=lines)
+    return nw.Paper(size=size, landscape=landscape, sizing=sizing, color=sheet["color"], lines=lines)
 
 
 def _spec(paper: nw.Paper) -> nb.PaperSpec:
     """The reader's view of a written paper, for ``nmap.frames``."""
-    color = paper.identifier[len("Color:"):].lower() if paper.identifier.startswith("Color:") else None
-    return nb.PaperSpec(size=paper.size, sizing=paper.sizing, landscape=paper.landscape, color=color,
+    return nb.PaperSpec(size=paper.size, sizing=paper.sizing, landscape=paper.landscape, color=paper.color,
                         lines=paper.lines)
 
 
@@ -381,11 +381,11 @@ class _Page:
         if picture and self._picture(picture, box, frame, uuid):
             return
         size = box["size"] / k
-        rgba = _rgba(box["color"])
+        rgba = inkmod.parse_color(box["color"])
         runs = box_runs(content, size, rgba, self.resolve_ref)
         self.draft.media.append(nw.TextBox(
             x=box["x"] / k + frame.ox, y=box["y"] / k + frame.oy, w=box["w"] / k, h=box["h"] / k, runs=runs,
-            background=_rgba(box["bg"]) if box["bg"] else None, z=len(self.draft.media), uuid=uuid))
+            background=inkmod.parse_color(box["bg"]) if box["bg"] else None, z=len(self.draft.media), uuid=uuid))
         self.private["boxes"][uuid.hex()] = {"content": content, "text_box": box,
                                              "text": "".join(r.text for r in runs)}
 
@@ -434,7 +434,7 @@ class _Page:
 
     def _flow(self, notes: list) -> None:
         """The notes, in order, as the text typed on the pages: a paragraph
-        per block, its lines kept apart by LINE_SEPARATOR; a top-level
+        per block, its lines kept apart by nmap.LINE_SEPARATOR; a top-level
         note a plain paragraph, a deeper one a bullet at its depth, a note
         that reads "n. …" a numbered item and "- [ ] …" a checklist item, as
         the import reads them back (nmap.flow_blocks)."""
@@ -510,8 +510,8 @@ def _sticky(stroke: inkmod.Stroke) -> bool:
 
 def _style(stroke: inkmod.Stroke) -> int:
     if stroke.tool == "highlighter":
-        return nw.STYLE_HIGHLIGHTER
-    return nw.STYLE_PENCIL if stroke.tool == "pen" and stroke.brush == "pencil" else nw.STYLE_PEN
+        return nb.STYLE_HIGHLIGHTER
+    return nb.STYLE_PENCIL if stroke.tool == "pen" and stroke.brush == "pencil" else nb.STYLE_PEN
 
 
 def _alpha(stroke: inkmod.Stroke) -> float:
@@ -526,7 +526,7 @@ def _rgb_bytes(stroke: inkmod.Stroke) -> tuple:
 
 
 def _dash(stroke: inkmod.Stroke) -> int:
-    return {"dashed": 1, "dotted": 2}.get(stroke.dash or "", 0)
+    return _DASH_CODES.get(stroke.dash or "", 0)
 
 
 def _stroke_of(stroke: inkmod.Stroke, frame) -> nw.Stroke:
@@ -585,16 +585,11 @@ def _shape_of(stroke: inkmod.Stroke, frame) -> nw.Shape | None:
     fill = stroke.fill if kind in ("rect", "ellipse", "triangle", "polygon") else None
     return nw.Shape(kind=out, points=[(x / k + ox, y / k + oy) for x, y in points], width=stroke.size / k,
                     rgba=(r, g, b, _alpha(stroke)), arrow=kind == "arrow",
-                    fill=(*_rgba(fill.color)[:3], fill.opacity) if fill is not None else None,
+                    fill=(*inkmod.parse_color(fill.color)[:3], fill.opacity) if fill is not None else None,
                     style=_style(stroke), dash=_dash(stroke))
 
 
 # --- text ------------------------------------------------------------------------------------
-
-def _rgba(color: str) -> tuple:
-    r, g, b, a = inkmod.parse_color(color)
-    return (r, g, b, a)
-
 
 def _font(bits: int) -> str:
     face = "Menlo" if bits & MONO else nw.FONT
@@ -622,11 +617,13 @@ def inline_runs(text: str, base: nw.Run, resolve_ref=None) -> list[nw.Run]:
     return out
 
 
-def _levels():
-    """A list's levels from its items' indents, as Markdown nests them: a
-    deeper indent one level deeper, a shallower one back to the level it
-    matches."""
-    indents: list[int] = []
+def box_runs(md: str, size: float, rgba: tuple, resolve_ref=None) -> list[nw.Run]:
+    """A text box's Markdown as runs: a paragraph per line (a box shows a
+    line per source line), list items as Notability's lists at the level
+    their indent nests them, a heading bold, a quote's text as it reads;
+    as the import's ``box_markdown`` reads them back."""
+    base = nw.Run("", size=size, rgba=rgba)
+    indents: list[int] = []  # the open list levels' indents: a deeper indent nests, a shallower one closes
 
     def level(indent: int) -> int:
         while indents and indents[-1] > indent:
@@ -635,19 +632,6 @@ def _levels():
             indents.append(indent)
         return len(indents) - 1
 
-    def reset():
-        indents.clear()
-
-    return level, reset
-
-
-def box_runs(md: str, size: float, rgba: tuple, resolve_ref=None) -> list[nw.Run]:
-    """A text box's Markdown as runs: a paragraph per line (a box shows a
-    line per source line), list items as Notability's lists at the level
-    their indent nests them, a heading bold, a quote's text as it reads;
-    as the import's ``box_markdown`` reads them back."""
-    base = nw.Run("", size=size, rgba=rgba)
-    level, reset = _levels()
     runs: list[nw.Run] = []
     list_id, listing = 0, False  # a list's paragraphs share an id, which Notability groups them by
     lines = md.split("\n")
@@ -666,7 +650,7 @@ def box_runs(md: str, size: float, rgba: tuple, resolve_ref=None) -> list[nw.Run
                            list_id=list_id)
             text = item.group("text")
         else:
-            reset()
+            indents.clear()
             listing = False
             heading, quote = _HEADING.match(line), _QUOTE.match(line)
             if heading:
@@ -686,7 +670,7 @@ def box_runs(md: str, size: float, rgba: tuple, resolve_ref=None) -> list[nw.Run
 
 def flow_runs(content: str, depth: int, resolve_ref=None) -> list[nw.Run]:
     """One note as one paragraph of the typed text: its lines joined by
-    LINE_SEPARATOR; a bullet at ``depth`` below the top, a numbered item
+    nmap.LINE_SEPARATOR; a bullet at ``depth`` below the top, a numbered item
     or a checklist item when it reads as one (the import's markers),
     else plain; a heading bold."""
     base = nw.Run("")
@@ -705,7 +689,7 @@ def flow_runs(content: str, depth: int, resolve_ref=None) -> list[nw.Run]:
     runs: list[nw.Run] = []
     for i, line in enumerate(content.split("\n")):
         if i:
-            runs.append(replace(base, text=LINE_SEPARATOR))
+            runs.append(replace(base, text=nmap.LINE_SEPARATOR))
         runs += inline_runs(line, base, resolve_ref)
     return runs or [replace(base, text="")]
 

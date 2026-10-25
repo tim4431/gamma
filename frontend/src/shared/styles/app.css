@@ -3009,7 +3009,9 @@ mark.searchMark {
    takes no room and clips, nothing can scroll it, and the window keeps the
    size it had as it folded (--fold-w, --fold-h, set by the fold), unseen
    and inert, so what it holds neither lays out again nor loses its place.
-   Only the splitters between open windows show. */
+   Only the splitters between open windows show. The panel's flex and
+   overflow are inline styles of react-resizable-panels, hence the
+   importance. */
 .dockPanelFolded { flex: 0 0 0px !important; overflow: clip !important; }
 .dockPanelFolded > .dockWindow { flex: none; width: var(--fold-w, 100%); height: var(--fold-h, 100%); visibility: hidden; }
 .dockWindowFolded .dockWindowBody { overflow: clip; }

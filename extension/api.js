@@ -198,7 +198,7 @@ async function readError(res) {
     } catch {}
   }
   // A 413 without Gamma's {detail} is a proxy's (Cloudflare's HTML page):
-  // its request-body limit refused the bytes, not Gamma's max_upload_mb.
+  // its request-body limit refused the bytes, not Gamma.
   if (res.status === 413 && !detail) message = "refused as too large by a proxy in front of the server, not by Gamma (HTTP 413)";
   return new ApiError(res.status, message);
 }

@@ -47,11 +47,15 @@ export function failureCopy(kind, { provider = "", auth = "key" } = {}) {
         switchModel: true,
       };
     case "unreachable":
-      return {
-        headline: t("Couldn't reach {provider}", { provider: name }),
-        text: t("The Gamma server got no answer from the service. Check its address, or try again."),
-        fix: "connection", switchModel: true,
-      };
+      // A sign-in has no address to check, and an unreachable renewal
+      // leaves it as it was (ai_settings: "refresh_unreachable").
+      return auth === "oauth"
+        ? { headline: t("Couldn't reach {provider}", { provider: name }),
+            text: t("The Gamma server got no answer from {provider}; the sign-in is kept. Check the server's network or proxy, then try again.", { provider: name }),
+            switchModel: true }
+        : { headline: t("Couldn't reach {provider}", { provider: name }),
+            text: t("The Gamma server got no answer from the service. Check its address, or try again."),
+            fix: "connection", switchModel: true };
     case "bad_endpoint":
       return {
         headline: t("The endpoint didn't answer like an AI API — check its base URL"),

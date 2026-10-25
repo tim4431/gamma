@@ -545,9 +545,9 @@ def test_zip_bombs(accounts):
     assert r.status_code == 413 and "like a zip bomb" in r.json()["detail"]
 
 
-def test_a_pdf_over_the_file_cap_skips_its_note(accounts, monkeypatch):
+def test_a_pdf_too_big_to_hold_skips_its_note(accounts, monkeypatch):
     owner = accounts["nbi_owner"]
-    monkeypatch.setattr(ni, "workspace_quota", lambda ws: {"max_upload_mb": 1})
+    monkeypatch.setattr(ni, "MAX_HELD_BYTES", 1 << 20)
     heavy = fx.pdf() + bytes(1 << 20)
     upload = fx.zip_of({"Heavy.note": note("Heavy PDF", layout=[(PDF, 1)], pdfs={PDF: 2},
                                            files={f"PDFs/{PDF}": heavy}),
@@ -555,10 +555,10 @@ def test_a_pdf_over_the_file_cap_skips_its_note(accounts, monkeypatch):
     plan = imported(owner, upload, preview=True)
     heavy_entry = next(p for p in plan["pages"] if p["title"] == "Heavy PDF")
     assert [w["reason"] for w in heavy_entry["warnings"]] == [
-        f"Not imported: its PDF {PDF} is over the 1 MB per-file limit"]
+        f"Not imported: its PDF {PDF} is over 1 MB"]
     result = imported(owner, upload)
     assert [p["title"] for p in result["pages"]] == ["Light note"]
-    assert result["skipped"] == [{"title": "Heavy PDF", "reason": f"its PDF {PDF} is over the 1 MB per-file limit"}]
+    assert result["skipped"] == [{"title": "Heavy PDF", "reason": f"its PDF {PDF} is over 1 MB"}]
 
 
 def test_a_full_quota_stops_the_import(accounts, monkeypatch):

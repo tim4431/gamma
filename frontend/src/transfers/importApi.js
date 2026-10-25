@@ -45,6 +45,10 @@ export async function requestImport({ source, file, folder = "", strip }, { sign
 
 // The import itself is a background job: tasks.start("import", importJobBody(…)).
 export const importJobBody = (reviewId, selected) => ({ review_id: reviewId, selected: [...selected] });
+// The server keeps a review two hours from its last activity; the open
+// dialog's keep-alive is activity (404 once the review is gone).
+export const keepReview = (reviewId) =>
+  apiJson(`${API}/import/review/${encodeURIComponent(reviewId)}/keepalive`, { method: "POST" });
 export function discardImport(reviewId) {
   if (reviewId) return apiJson(`${API}/import/review/${encodeURIComponent(reviewId)}`, { method: "DELETE" }).catch(() => {});
 }

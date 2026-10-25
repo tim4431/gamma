@@ -257,17 +257,18 @@ def test_a_zip_bomb_is_not_read(guest):
     assert "like a zip bomb" in r.json()["detail"]
 
 
-def test_big_files_are_checked_before_they_are_read(guest, monkeypatch):
-    """No total size cap: a bundled file past the per-file upload cap is
-    named without being read, and storing one needs the free disk a staged
-    upload needs; a nested zip that would fill the disk is refused (507)."""
-    monkeypatch.setattr(mzi, "workspace_quota", lambda ws: {"max_upload_mb": 1})
-    buf = _zip({"sized/pic note.md": "![[big.png]] and ![[small.png]]\n",
-                "sized/big.png": PNG + os.urandom(1 << 20), "sized/small.png": PNG + b"sized"})
+def test_big_files_are_streamed_and_need_free_disk(guest, monkeypatch):
+    """No size cap, total or per file: a big bundled file is streamed into
+    storage, one its first bytes contradict is named, and storing one
+    needs the free disk a staged upload needs; a nested zip that would fill
+    the disk is refused (507)."""
+    buf = _zip({"sized/pic note.md": "![[big.png]] and ![[small.png]] and [[fake.m4a]]\n",
+                "sized/big.png": PNG + os.urandom(1 << 20), "sized/small.png": PNG + b"sized",
+                "sized/fake.m4a": b"not a recording"})
     report = _import(guest, buf)
-    assert _reasons(report) == {"big.png": "file too large (max 1 MB)"}
+    assert _reasons(report) == {"fake.m4a": "not a valid audio file"}
     text = _subtree(guest, report["pages"][0]["id"])["children"][0]["content"]
-    assert text.startswith("![[big.png]] and ![](/api/uploads/")
+    assert text.startswith("![](/api/uploads/") and text.count("/api/uploads/") == 2
 
     real = shutil.disk_usage(mzi.config.DATA_DIR)
     monkeypatch.setattr(mzi.shutil, "disk_usage", lambda path: real._replace(free=mzi.MIN_FREE_BYTES))

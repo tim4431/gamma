@@ -14,9 +14,11 @@ from gamma import ai_permissions
 from gamma.ai_permissions import permission_state
 from gamma.ai_tools import (MUTATING_TOOLS, TOOLS, agent_system, agent_tools, approval_preview,
                             text_diff, tool_states)
+from gamma.db import connect_pages_db
+from gamma.ops import apply_ops
 from gamma.routers.ai import WatchedStream, keepalive_lines
 
-from conftest import account_of, login, make_user
+from conftest import account_of, folder_names, label_names, login, make_folder, make_label, make_user
 from ai_fixtures import ALLOW_ALL, FakeResp, ai_provider, folder, notes, org, props  # noqa: F401  (fixtures)
 
 
@@ -68,12 +70,25 @@ def test_the_prompt_names_the_tools_that_ask():
     asking = agent_system(scope, tool_states({**ALLOW_ALL, "rename": "ask"}))
     assert "ask the user first" in asking and "rename_page before" not in asking  # no names: they would change
     assert "never ask for permission in your reply first" in asking
-    assert "ask the user first" not in agent_system(scope, tool_states(ALLOW_ALL))
+    assert "ask the user first" not in agent_system(scope, tool_states({**ALLOW_ALL, "organize_delete": "off"}))
+    assert "ask the user first" in agent_system(scope, tool_states(ALLOW_ALL))  # deletions ask under Allow
     # "Allow in this chat" leaves the prompt as it was, for the prompt cache —
     # even when it allowed the only tool that asked.
     granted = agent_system({**scope, "granted": ["rename"]},
                            tool_states({**ALLOW_ALL, "rename": "ask"}, granted=["rename"]))
     assert granted == asking
+
+
+def test_deleting_folders_and_labels_can_only_ask_or_be_off():
+    for value in ("allow", True, None):
+        perms = {} if value is None else {"organize_delete": value}
+        assert permission_state(perms, "organize_delete", True) == "ask", value
+    assert permission_state({"organize_delete": "off"}, "organize_delete", True) == "off"
+    # "Allow in this chat" grants it nothing; a reply that cannot ask arms it off.
+    assert tool_states({"organize_delete": "allow"}, granted=["organize_delete"])["organize_delete"] == "ask"
+    assert tool_states({"organize_delete": "allow"}, can_ask=False)["organize_delete"] == "off"
+    # Organizing is a change like any other.
+    assert permission_state({"organize": "allow"}, "organize", True) == "allow"
 
 
 def test_every_change_tool_previews_its_approval():
@@ -375,6 +390,50 @@ def test_allowing_for_the_chat_stops_asking_for_that_permission(org, monkeypatch
     assert len(asked) == 1 and _kinds(lines) == ["step", "approval", "action", "step", "action"]
     assert [a.get("approval") for a in actions] == ["chat", None]
     assert [props(c, ids[k])["content"] for k in ("a", "b")] == ["Chat title one", "Chat title two"]
+
+
+def test_a_deletion_asks_every_time_whatever_the_card_answered(org, monkeypatch):
+    """Deleting a folder or a label is ask-only: an Allow the request sends,
+    a grant of the conversation and a card's "chat" / "always" answer each
+    leave the next deletion asking."""
+    c, ids = org
+    make_label(c, "Ask only one")
+    make_label(c, "Ask only two")
+    _agent(monkeypatch, ("t1", "delete_label", {"label": "Ask only one"}),
+           ("t2", "delete_label", {"label": "Ask only two"}))
+    asked = _answers(monkeypatch, ids["user"], "chat", "always")
+    lines, actions = _chat(c, permissions={"organize_delete": "allow"}, granted=["organize_delete"])
+    assert len(asked) == 2
+    assert _kinds(lines) == ["step", "approval", "action", "step", "approval", "action"]
+    cards = [line["approval"] for line in lines if "approval" in line]
+    assert [card["perm"] for card in cards] == ["organize_delete", "organize_delete"]
+    assert [a["approval"] for a in actions] == ["chat", "always"]
+    assert not {"Ask only one", "Ask only two"} & set(label_names(c).values())
+
+
+def test_a_deletion_goes_only_on_the_folder_its_card_showed(org, monkeypatch):
+    """While a deletion's card waits, the path it was called with may come
+    to name another folder: the approved call then deletes nothing."""
+    c, ids = org
+    shown, other = make_folder(c, "Card shown"), make_folder(c, "Card other")
+    _agent(monkeypatch, ("t1", "delete_folder", {"folder": "Card shown"}))
+    real, user = ai_permissions.wait_for, account_of(ids["user"])
+
+    def wait_for(approval_id, stopped=None, timeout=None):
+        # Another tab swaps the two names while the card is up.
+        with connect_pages_db(ids["ws"]) as conn:
+            apply_ops(conn, "folders", [{"op": "set", "id": shown, "content": "Card shown before"},
+                                        {"op": "set", "id": other, "content": "Card shown"}], actor="")
+        assert ai_permissions.answer(approval_id, user, "once")
+        return real(approval_id, stopped, timeout)
+
+    monkeypatch.setattr(ai_permissions, "wait_for", wait_for)
+    lines, actions = _chat(c, permissions={"organize_delete": "ask"})
+    card = next(line["approval"] for line in lines if "approval" in line)
+    assert card["preview"]["block_id"] == shown
+    assert (actions[0]["error"], actions[0]["approval"]) == (True, "once")
+    assert "while the approval card waited" in actions[0]["result"]
+    assert {shown, other} <= set(folder_names(c)), "neither folder was deleted"
 
 
 def test_a_permission_the_conversation_granted_runs_without_a_card(org, monkeypatch):

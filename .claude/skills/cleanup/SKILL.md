@@ -15,7 +15,9 @@ Rules that hold throughout:
 - **Behavior-preserving.** Refactor, dedupe, delete dead things, reword
   docs. Anything that changes what the user sees or what an endpoint
   returns is a *proposal* in the report, not an edit.
-- **Never commit.** Leave the changes in the working tree.
+- **Never commit.** Leave the changes in the working tree. The report
+  suggests a commit subject that starts with `Cleanup of …`, which is how
+  the next pass finds where this one ended.
 - **Don't touch unrelated dirty files.** Other sessions may be editing the
   same tree. Only edit files that the scoped commits touched, plus files a
   fix genuinely has to reach (a shared helper, a doc).
@@ -25,17 +27,37 @@ Rules that hold throughout:
 
 ## Step 1 — scope
 
+The scope is every change on the branch that no cleanup pass has read
+yet. Never narrow it on your own: a large range is split among agents
+(Step 1b), not cut down. Before reading anything, tell the user the range
+in one line — first and last commit, the number of commits, files and
+lines, and the areas it holds — and name anything you leave out and why.
+A range the user did not ask for is the most common way this skill fails.
+
 Argument forms (`/cleanup <arg>`):
 
 | arg          | scope                                              |
 |--------------|----------------------------------------------------|
-| *(none)*     | commits on this branch not on `main` (`main..HEAD`); if that is empty, the last 5 commits; if it is more than ~15 commits, the commits since the newest one whose message contains "cleanup" (long-lived `dev` accumulates) |
+| *(none)*     | `main..HEAD`, less what the newest commit whose subject starts with `Cleanup` already covered (long-lived `dev` accumulates; see below). With no such commit, all of `main..HEAD`; with an empty `main..HEAD`, the last 5 commits |
 | `N`          | the last N commits (`HEAD~N..HEAD`)                |
 | `<a>..<b>`   | that range                                         |
 | `tree`       | uncommitted changes only (`git diff HEAD`)         |
+| other words  | a description, not a range: the default range, with the words as emphasis (`/cleanup the import dialogs`) |
+
+Finding the uncleaned part of a long branch:
 
 ```bash
-git log --oneline main..HEAD          # or the chosen range
+git log --oneline main..HEAD | grep -i "^[0-9a-f]* cleanup"   # previous passes
+git log --first-parent --merges --format='%h %s' --reverse main..HEAD   # one line per feature
+git diff --shortstat <merge>^1..<merge>                                  # its size
+```
+
+A previous pass's commit says in its subject which areas it covered;
+every merge and direct commit after the commit it cleaned, and every area
+it names as left out, is in scope. Its own hunks are not. A merge is the
+unit of work: its diff is `<merge>^1..<merge>`.
+
+```bash
 git diff --stat <range>
 git diff <range>                       # read all of it; it is the input
 ```
@@ -44,6 +66,33 @@ Read the diff in full before judging anything. Note every file touched and
 which `docs/dev/*.md` covers each area (the topic table is in
 `docs/dev/README.md`); read those docs too — they define what "the existing
 way" is.
+
+### Step 1b — a range too large for one reader
+
+More than about 8,000 changed lines is more than one pass reads with care.
+Split the range by feature, not by folder: each first-parent merge is one
+unit, small merges of one area are grouped, and a 7,000-line merge stands
+alone. Then start one agent per area — a fresh general-purpose agent told
+to read this file first; a fork would carry the coordinator's whole
+context, large by then — and give each:
+
+- its merge ranges and the files they touch (`git diff --stat`), which
+  are the files it owns;
+- the `docs/dev/*.md` of its area;
+- the five checks and Step 3 as its brief, with the rule that it edits
+  only its own files. Shared files — `App.jsx`, `app.css`, the i18n
+  catalogs, `docs/dev/README.md`, `frontend/src/README.md`,
+  `docs/dev/api.md`, `settings.md` — belong to no one: an agent edits only
+  the hunks of its own area in them, with the Edit tool, never a rewrite;
+- the report shape of Step 5, so the reports merge.
+
+Run at most two agents at a time, at medium effort (the user's quota),
+and start the next as one finishes; the biggest areas go first.
+
+The coordinator does not clean in parallel with the agents. It waits,
+merges the reports, runs Step 4 once over the whole tree, and writes one
+report whose Scope section lists every area with its range. An area no
+agent could finish is listed under "Left out", never dropped quietly.
 
 ## Step 2 — the five checks
 
@@ -196,11 +245,14 @@ look at the result.
 
 One message, structured as:
 
-1. **Scope**: the commits covered.
+1. **Scope**: the commits covered, by area with its range, and what was
+   left out and why (also when nothing was).
 2. **Applied**: bullets grouped by check (1–5), each `file — what changed`.
 3. **Proposals**: behavior-affecting or uncertain items, each with the
    one-line reason it was not applied.
 4. **Unfinished**: the check-5 list, as concrete next tasks.
 5. **Verification**: test and build results, verbatim on failure.
+6. **Suggested commit subject**: `Cleanup of <the areas>: <what changed>`,
+   so the next pass finds where this one ended.
 
 Do not commit. Do not pad the report with things that were already fine.

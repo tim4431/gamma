@@ -20,7 +20,7 @@ import { PublicUrlSettings } from "./SettingsPublicUrl";
 import { CloudSignInSettings } from "./SettingsCloudSignIn";
 import { GuestSettings } from "./SettingsGuests";
 import { SharedAiProviderSettings } from "./SettingsAi";
-import { ActivityIcon, AlertCircleIcon, CloudDownloadIcon, CloudIcon, DatabaseIcon, ExternalLinkIcon, ImportIcon, ServerIcon,
+import { ActivityIcon, AlertCircleIcon, CloudDownloadIcon, CloudIcon, DatabaseIcon, ExternalLinkIcon, ServerIcon,
   UsersIcon } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { fmtDate, t, tn } from "../shared/i18n/i18n.js";
@@ -218,10 +218,9 @@ function HostedPlan({ setStatus, onSynced }) {
             plan.max_accounts ? t("{n} of {max} accounts", { n: pane.accounts, max: plan.max_accounts })
               : tn("{n} account", "{n} accounts", pane.accounts),
             plan.quota_mb ? t("{n} MB per account", { n: plan.quota_mb }) : null,
-            plan.max_upload_mb ? t("{n} MB per file", { n: plan.max_upload_mb }) : null,
             plan.policy ? t("sign-in: {policy}", { policy: POLICY_NAMES[plan.policy] || plan.policy }) : null,
           ].filter(Boolean).join(" · ")}
-          title={t("The storage defaults below may be set lower than the plan's caps, never higher.")} />
+          title={t("The default quota below may be set lower than the plan's cap, never higher.")} />
       ) : null}
       {plan?.status === "grace" ? (
         <p className="settingsPaneHint" role="status">
@@ -250,11 +249,12 @@ function limitHint(saved, key, own) {
   return cap ? t("{own} · the plan allows up to {n} MB", { own, n: cap }) : own;
 }
 
-// Server-wide default storage limits (users.db via /api/admin/settings).
-// Per-account overrides live in the Users pane. On a hosted container the
-// plan caps both (`plan_caps`): a lower value saves, a higher one is refused.
-// Each limit saves when its box commits (Enter / blur), like every other
-// setting; an invalid entry snaps back to the stored value.
+// The server-wide default storage quota (users.db via /api/admin/settings);
+// one file has no size cap of its own. Per-account overrides live in the
+// Users pane. On a hosted container the plan caps it (`plan_caps`): a lower
+// value saves, a higher one is refused. It saves when its box commits
+// (Enter / blur), like every other setting; an invalid entry snaps back to
+// the stored value.
 function ServerLimitRows({ setStatus, refreshQuota }) {
   const { data: saved, error: readError, set: setSaved } = useSettingsRead("/admin/settings");
   const [saveError, setError] = React.useState("");
@@ -267,7 +267,7 @@ function ServerLimitRows({ setStatus, refreshQuota }) {
     if (!Number.isFinite(n) || n < min) return; // the box shows the stored value again once the commit settles
     setError("");
     try {
-      // Only this field: two boxes committing back to back must not overwrite each other.
+      // Only this field: a save of another setting just before must not be overwritten.
       const value = await apiJson(`${API}/admin/settings`, {
         method: "PUT", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ [key]: n }),
@@ -278,11 +278,6 @@ function ServerLimitRows({ setStatus, refreshQuota }) {
   }
   return <>
     {saved ? <>
-      <Row icon={ImportIcon} label={t("Default max upload")}
-        hint={limitHint(saved, "max_upload_mb", t("Largest single file; Users can override per account"))}>
-        <UnitInput unit="MB" min={1} value={String(saved.max_upload_mb)}
-          onCommit={(raw) => commit("max_upload_mb", raw, 1)} />
-      </Row>
       <Row icon={ServerIcon} label={t("Default quota")}
         hint={limitHint(saved, "quota_mb", t("Personal uploads per account; 0 = unlimited"))}>
         <UnitInput unit="MB" min={0} value={String(saved.quota_mb)}

@@ -172,11 +172,11 @@ DeepSeek, Kimi, Qwen, GLM, OpenRouter and the custom endpoint sit under the **Ot
 
 <img alt="In a folder chat, rename these AuthorYear is sent; a card shows the rename with the old title struck through; Allow once is clicked and the four cards are renamed, with an undo pill" src="assets/agent.svg" width="100%">
 
-On the home page or in a folder, the chat can act on your library: list, read and search the papers in view, rename them, file them into folders, search the web for papers and save them, build BibTeX, and edit your notes. On a paper, the same chat reads, searches and edits that paper and its notes.
+On the home page or in a folder, the chat can act on your library: list, read and search the papers in view, rename them, file them into folders, rename folders, make and apply labels, delete a folder or a label (never its pages), search the web for papers and save them, build BibTeX, and edit your notes. On a paper, the same chat reads, searches and edits that paper and its notes.
 
-- **It asks first.** A change shows as a card. **Allow once**, **Allow in this chat**, **Always allow**, or **Don't allow** (with a line on what to do instead).
-- Everything it changed is listed under the reply, each with an undo.
-- Settings → AI → Tool usage sets each permission below to Allow, Ask or Off, for folder, PDF and notes chats separately, with presets from *Read library* to *Allow all*. Reading is allowed by default; anything that changes your library asks.
+- **It asks first.** A change shows as a card. **Allow once**, **Allow in this chat**, **Always allow**, or **Don't allow** (with a line on what to do instead). Deleting a folder or a label asks every time: **Allow once** or **Don't allow**.
+- Everything it changed is listed under the reply. A note change, or a deleted folder or label, can be undone there.
+- Settings → AI → Tool usage sets each permission below to Allow, Ask or Off (Delete folders and labels: Ask or Off only), for folder, PDF and notes chats separately, with presets from *Read library* to *Allow all*. Reading is allowed by default; anything that changes your library asks.
 - A journal that blocks the server shows a card: open the page in your browser and Gamma Connector sends the PDF back.
 
 ### What the chat's tools can do
@@ -198,9 +198,11 @@ On the home page or in a folder, the chat can act on your library: list, read an
 | Rename pages | `rename_page` | Change a page's title (folder chats) |
 | Move pages | `move_page` | File a page into a folder (folder chats) |
 | Restore deleted pages | `restore_page` | Bring a page back from Recently deleted (folder chats) |
+| Organize folders and labels | `rename_folder`, `create_label`, `rename_label`, `label_page` | Rename folders, and make, rename and apply labels (folder chats) |
+| Delete folders and labels | `delete_folder`, `delete_label` | Delete a folder or a label, never its pages; always asks, and you can revert it from the reply (folder chats) |
 | Edit note blocks | `edit_block`, `create_block`, `move_block`, `delete_block`, `clip_region` | Create, edit, move and delete notes, transcribe handwriting, and clip a region of a PDF page into a note |
 
-The agent cannot delete pages, and an assistant connected from outside ([Assistants](#assistants)) gets the reading tools only.
+The agent cannot delete pages: deleting a folder or a label leaves its pages in your library. An assistant connected from outside ([Assistants](#assistants)) gets the reading tools only.
 
 ## Library
 

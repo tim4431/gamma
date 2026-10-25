@@ -9,7 +9,7 @@ writer (its internals and the shared typesetting engine are in
 `gamma/zotero_export.py`, `gamma/logseq_import.py`, `gamma/markdown_import.py`,
 `gamma/markdown_zip_import.py`, `gamma/import_zip.py` (the zip walk the library imports share),
 `gamma/notability_import.py`, `gamma/notability.py`, `gamma/notability_archive.py`,
-`gamma/notability_map.py`, `gamma/markdown_export.py`, `gamma/obsidian_export.py`, `gamma/pdf_export.py`,
+`gamma/notability_map.py`, `gamma/notability_export.py`, `gamma/notability_write.py`, `gamma/markdown_export.py`, `gamma/obsidian_export.py`, `gamma/pdf_export.py`,
 `gamma/pdf_notes.py`, `gamma/pdf_document.py`, `gamma/pdf_typeset.py`,
 `gamma/note_markup.py`, `gamma/vector_text.py`, `gamma/pdf_glyphs.py`,
 `gamma/pdf_image.py`, `gamma/text_box.py`, `gamma/bibtex.py`,
@@ -190,8 +190,11 @@ Gamma exports share one review flow: Upload → Review → Import → Summary.
   no size cap and is not metered by the account quota; an upload that would
   leave the disk with less than 1 GB free is refused (507,
   `import_staging.MIN_FREE_BYTES`). A review expires two hours after its
-  last activity (a part, a claim), so a long upload in parts does not run
-  out.
+  last activity (a part, a claim, the dialog's keep-alive, the import's
+  start), so a long upload in parts does not run out. Until the next
+  upload's sweep removes it, an expired review comes back on a keep-alive
+  or the import's start (`import_staging.touch`); once swept, both answer
+  404.
 - Selection ids are source ids (`page:<id>` / `chat:<id>` for a Gamma
   export, Zotero item keys, ...); duplicate Zotero records share
   `selection_ids`. `parse_selection` (`gamma/import_review.py`): `None`
@@ -203,8 +206,15 @@ Gamma exports share one review flow: Upload → Review → Import → Summary.
   (`tasks.start("import", …)`) with its progress and Stop. It may close while
   the job runs, and the job's row in Background tasks opens it again on that
   job (`{jobId}`, no file: the summary then shows the library column only).
-  A preview the server refuses (400, 413, 415: a file the source does not
-  read, such as a Supernote `.note`, or one too large) shows its reason
+  Until Import, the upload and the review are the dialog's own, not a
+  task: a close by the backdrop, Escape or × asks first, since it stops
+  the upload or drops the staged review (or the choices of one gone); its
+  Cancel stays direct. While it shows a review, the dialog sends a
+  keep-alive every 10 minutes and when the window regains focus or becomes
+  visible. A review gone anyway (404 once swept, from the keep-alive or
+  from Import) is cleared with a message, and Retry preview uploads the
+  file the dialog still holds again, keeping the selection. A preview the server refuses (400, 413, 415: a file the source
+  does not read, such as a Supernote `.note`, or one too large) shows its reason
   without the retry a lost connection gets. The source column is headed by
   what was uploaded: one file, a ZIP's contents, a folder, or the files
   picked together.
@@ -299,8 +309,8 @@ folder of notes, because they only differ in naming and link conventions
   `![[Note#^id]]` becomes a Gamma synced block `![[id]]`, while `![[Note]]`
   and `![[Note#Heading]]` degrade to mentions (a Gamma embed shows one
   block). A link or image pointing at a bundled file uploads it
-  (`store_file`, content-hash dedup, storage limits per file — an over-limit
-  file is a warning and the link stays as typed) and points at
+  (`store_file_stream`, content-hash dedup, the storage quota — a file over
+  it is a warning and the link stays as typed) and points at
   `/api/uploads/…`; `![[img.png|300]]` / `|300x200` becomes the editor's
   `![|300](url)` size form, other pipe text the alt. Links that resolve to
   nothing stay as typed (so a Gamma `[[id]]` is never touched).
@@ -347,7 +357,8 @@ folder of notes, because they only differ in naming and link conventions
   that unpacks to over 100 times its packed size (`MAX_RATIO`) is not read,
   with a warning, and an archive that does so as a whole is refused (413).
   Notes pack about 4:1 and photos or PDFs 1:1, a zip bomb about 1000:1. A
-  bundled file past the per-file upload cap is a warning and is not read.
+  bundled file has no size cap: it is streamed into storage, never read
+  whole.
   A nested zip is spooled, and a bundled file stored, only while the disk
   keeps `import_staging.MIN_FREE_BYTES` free (507 for the zip, a warning
   for the file), as a staged upload must.
@@ -649,8 +660,9 @@ and never sits on disk twice. For each chosen note, in path order:
 1. Its Session.plist is read and hashed. A note whose digest a page of the
    library carries (`properties.notability_import`), or that came earlier in
    the upload, is skipped and shown where it is.
-2. The PDFs its pages name are checked against the per-file cap and opened.
-   One past the cap skips the note; one that does not open becomes paper.
+2. The PDFs its pages name are checked against `MAX_HELD_BYTES` (256 MB: a
+   PDF is read whole into memory, parsed and composed) and opened. One past
+   it skips the note; one that does not open becomes paper.
 3. Its PDF (the original or the composed one), its ink page by page, its
    pictures and its recordings are stored, outside any transaction.
 4. Its folder and its page are written in one short transaction under the
@@ -728,9 +740,14 @@ names:
   box headers only, and are streamed into storage
   (`storage.store_file_stream`). A text box's or a formula's text is cut
   at 200,000 characters, what the editor saves (`ops.MAX_CONTENT`).
+- An `.ntb`'s log is read up to 1,500,000 records (`notability.MAX_RECORDS`;
+  past them the rest is left out, with a warning), and its text styles may
+  touch 20,000,000 characters in all (`notability_ntb.MAX_STYLED`; past them
+  a text keeps its words only).
 - Every file goes through `store_pdf`, `store_file` or
-  `store_file_stream` (per-file cap, quota, dedup), its size checked from
-  the zip before a byte is read.
+  `store_file_stream` (quota, dedup), its size checked from the zip before a
+  byte is read: a PDF or picture, held whole in memory, up to
+  `MAX_HELD_BYTES`.
 
 **The report**: `pages_created`, `pages_skipped`, `pdfs_stored`,
 `strokes_imported`, `text_boxes_imported`, `pictures_imported`,
@@ -1459,7 +1476,7 @@ proportionally into the column when too wide), wrapped cells, `:---:`
 alignment honored, the header bold on a tint and repeated when a page break
 falls inside the table. Fenced code is a bordered tinted card, one card
 segment per page it spans. `[[refs]]` and `![[embeds]]` resolve through a
-`resolve_ref` callback (`_block_ref_resolver` in `routers/export.py` — its own
+`resolve_ref` callback (`markdown_export.block_ref_resolver` — its own
 sqlite connection, since the request's closes before `response()` runs): a ref
 reads as its target's first line in link colour, an embed renders the synced
 block's content as a card with a soft bar and a muted `from <page>` source

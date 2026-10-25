@@ -293,7 +293,10 @@ class Protocol:
     id = ""
     label = ""
     auth = "key"         # "oauth": the entry holds sign-in tokens, refreshed by ``oauth``
-    oauth = None         # the sign-in module (needs_refresh / refresh) of an "oauth" protocol
+    # The sign-in module of an "oauth" protocol: needs_refresh(oauth), and
+    # refresh(oauth) -> the new oauth dict, None when the grant is refused,
+    # or raises chatgpt_oauth.RefreshUnavailable when there was no verdict.
+    oauth = None
     entry = True         # an entry may name it (False: a variant another protocol switches to)
     native_pdf = True    # the provider takes the PDF file itself, not only extracted text
     streams_only = False # the reply always arrives as SSE, even for a caller that wants it whole
