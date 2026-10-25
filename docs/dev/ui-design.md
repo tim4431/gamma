@@ -544,6 +544,9 @@ to place it:
   with `anchorBottom`). Pure too (`tests/placement.test.mjs`);
   `useMenuTrigger` places its menus with it, and the browser suite's
   `assertMenuFrom` (harness.mjs) checks each of them there.
+- `scrollBox(el)` is the box an element is seen through: its nearest
+  ancestor that scrolls, else null for the window. A surface that follows
+  the element (the selection toolbar, an ink layer's menus) keeps inside it.
 - `useFloatingPosition(ref, place, deps, {follow})` measures and places it
   in a layout effect, before the browser paints it, and returns null until
   then, while the surface stands hidden. When its size changes later (a row
@@ -561,8 +564,10 @@ handwriting and text box menus give `ContextMenu` the selection's edges
 PDF selection popup (`TipFrame`: from the point where the mouse was
 released, when that is near the selection, else under the selection;
 `pdf/selectionTip.js`) and the caret-anchored popups
-(`useCaretAnchored`: "/", `[[`, `@`, the LaTeX completion and preview) are
-built on it; the guide card's anchor is measured the same way
+(`useCaretAnchored`: "/", `[[`, `@`, the LaTeX completion and preview) and
+a note's selection toolbar (`SelectionToolbar.jsx`: above the selection's
+first line, else under its last, inside the box the note scrolls in,
+`scrollBox`) are built on it; the guide card's anchor is measured the same way
 (`GuideOverlay`). A surface placed in its event handler before it renders
 (the tooltips, the citation preview) or by CSS under its button (the
 popovers) has nothing to correct. The browser suite's

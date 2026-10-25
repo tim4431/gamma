@@ -71,6 +71,16 @@ export function menuAnchor(r, { side = "below" } = {}) {
   };
 }
 
+// The box `el` is seen through: its nearest ancestor that scrolls, else
+// null for the window. A surface that follows `el` is kept inside it.
+export function scrollBox(el) {
+  for (let n = el?.parentElement; n && n !== document.body; n = n.parentElement) {
+    const { overflowY } = getComputedStyle(n);
+    if (overflowY === "auto" || overflowY === "scroll") return n;
+  }
+  return null;
+}
+
 // The {left, top} of the element `ref` holds, from place(element) — which
 // measures it (surfaceSize) — again whenever `deps` change, its size or the
 // window's does, and with `follow` whenever anything scrolls (an anchor
