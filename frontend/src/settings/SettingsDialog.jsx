@@ -933,13 +933,17 @@ function ToolUsageSettings({ value }) {
       <Section title={t("Tool limits")} scope="account" prefs={SECTION_PREFS.tools["Tool limits"]}>
         <Row icon={RefreshIcon} label={t("Tool rounds")}
           hint={t("AI ↔ tool round-trips per message")}
-          title={t("Each round-trip lets the model issue more tool calls. This is a runaway guard — actual work is separately capped at 200 changes per message.")}>
-          <UnitInput value={value.toolRounds} unit={t("rounds")} min={1}
+          title={t("Each round-trip lets the model issue more tool calls. This is a runaway guard — actual work is separately capped at 200 changes per message. Unlimited rounds lifts both.")}>
+          <UnitInput value={value.toolRounds} unit={t("rounds")} min={1} disabled={value.toolRoundsUnlimited}
             onCommit={(raw) => {
               const n = Number.parseInt(raw, 10);
               if (Number.isFinite(n)) value.setToolRounds(Math.max(1, Math.min(100, n)));
             }} />
         </Row>
+        <Toggle icon={ZapIcon} label={t("Unlimited rounds")}
+          hint={t("Run until the reply is done or you stop it")}
+          title={t("No limit on tool rounds, nor on the 200 changes a message may make: the assistant keeps going until it is done or you press Stop (in its chat, or in Background tasks). Every round sends the conversation again, so a long job spends more tokens with each round. A shared AI connection keeps the usual limits unless its admin set a daily allowance or you are an administrator.")}
+          checked={value.toolRoundsUnlimited} onChange={value.setToolRoundsUnlimited} />
         <Row icon={BookIcon} label={t("Read window")}
           hint={t("Document text per read tool call · {pages}", { pages: approxPages(value.agentReadChars) })}
           title={t("The most extracted PDF text one read_page tool call may return. The agent reads a long paper in windows of this size, continuing where the last call stopped — a larger window means fewer calls but more tokens per message.")}>

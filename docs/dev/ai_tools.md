@@ -81,7 +81,7 @@ to pages, PDF pages and blocks (`gamma_link`; the chat's results carry none,
 
 | Tool | Permission | Scope | What it does |
 |---|---|---|---|
-| `list_pages` | List pages | folder | List the folder's pages: id, title, attachments (`[pdf]` when the page carries a PDF, `[]` for text-only), folder paths, labels, cached metadata (first author, year, venue), last-update date |
+| `list_pages` | List pages | folder | List the folder's pages: id, title, attachments (`[pdf]` when the page carries a PDF, `[]` for text-only), folder paths, labels, cached metadata (first author, year, venue), last-update date, most recently added first (library order), in batches (`limit`, `after`) |
 | `list_folders` | List pages | folder | The folder tree below the chat's folder: every path with its implied parents, subfolders indented, pages filed directly and in total; the pages in no folder at the root |
 | `read_page` | Read pages | folder + page | Read one page: title, properties, the user's highlights and notes, and — when it carries a PDF — a windowed excerpt of the attachment's extracted text |
 | `read_block` | Read note blocks | folder + page | Read a page's notes as an id-prefixed outline — the ids the editing tools take |
@@ -121,6 +121,35 @@ its pages carry). Each line shows the page's `folders=["A / B", …]` paths
 and `labels=[…]` names. A `folder` filter (a path or an id,
 `_resolve_folder`) lists that folder's pages and its subfolders'; `label`
 matches a name exactly, else ignoring case.
+
+Pages come most recently added first: library order backwards
+(`position`). No op moves a page, so renaming, filing, labelling or
+editing one never changes its place. A new page goes last in the
+library, and so first here, unless it was synced in or placed by hand,
+which takes its own place. A restored page comes back last too. A call
+shows at most `limit` pages (default and most `_LIST_CAP`, 400). When
+more match, the header names the batch and the next call ("7, most
+recently added first; 4–6 shown; next: list_pages(…)"), and the result
+ends with the same call: `[… N more pages — call list_pages(<the same
+filters>, after="<last id>") to continue]`. The header copy survives the
+saved chip's `_DETAIL_CAP`, which a long listing's tail does not.
+
+`after` is a page id. The listing goes on after that page's place
+whatever the filters match now, so a batch the agent renamed or
+refiled away is neither repeated nor skipped. A page that left the
+library (Recently deleted, or gone) is an error. A page restored
+meanwhile starts the walk over: pass the id of a page listed before
+it. `after` is not checked against the chat's reach. After Continue the
+replayed call keeps its `after`, so at most one batch repeats, and a
+change already made answers as already done.
+
+`list_labels` lists the busiest `limit` labels and names how many more
+there are. It does not page: its counts move as pages are labelled, and
+every label is found by name.
+
+With `list_pages` and a page-changing tool armed, the prompt asks for a
+batch at a time (`list_pages(limit=100)`): a full 400-line listing
+outgrows `LIVE_RESULT_BUDGET` and is a stub two rounds later.
 
 ### list_folders (folder only)
 
@@ -525,7 +554,8 @@ papers, to be read with `fetch_paper(source=URL, title=…)`. Titles are capped
 at 300 characters and snippets at 400, HTML is stripped, non-http(s) and
 credentialed URLs are dropped, and duplicates are removed. One message may run
 `MAX_WEB_SEARCHES` (10) searches, since each is a paid query or a call on the
-chat's connection; the tool rounds cap everything else.
+chat's connection; the tool rounds cap everything else, unless the user chose
+Unlimited rounds ([ai.md](ai.md) "The tool loop").
 
 The engines (`gamma/search_services.py`):
 
@@ -872,7 +902,10 @@ and the tool's description use in place of `READ_CHARS_DEFAULT` (6 000). A
 gets before its last round ends with `LAST_ROUND`, which tells it to
 answer. A helper that still asks for another read has no answer: the call
 fails with "the helper did not get to an answer", and the loop's own line
-about the round limit is not passed on.
+about the round limit is not passed on. A helper whose conversation
+outgrew the model's window has no answer either. Once the chat is
+stopped, a helper opens no further turn and answers nothing
+([ai.md](ai.md) "Stop").
 
 The parent's chip has its own kind, `helper`, and its summary names the
 helper ("Helper read “…”"). It carries the document the helper actually
@@ -1249,7 +1282,8 @@ the user allows it. Output/argument sizes are capped
 (`_LIST_CAP` on listings; `_DETAIL_CAP` and `_ARG_CAP` cap the saved chip
 only — the model gets the full result, under the live budget
 `ai_context.LIVE_RESULT_BUDGET`), and the loop itself is bounded —
-rounds and a ≤200-mutation guard, detailed in [ai.md](ai.md).
+rounds and a ≤200-change guard, both lifted when the user chooses
+Unlimited rounds, detailed in [ai.md](ai.md).
 
 **Every tool call is shown in the reply**, reads included, so there is
 always a visible record of what the agent looked at and changed. One pill

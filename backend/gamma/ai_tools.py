@@ -88,10 +88,18 @@ from .trash import KEEP_DAYS, list_trash
 # Runaway guards for the tool loop, not workload caps: MAX_TOOL_ACTIONS bounds
 # the real work (mutations only), while the round limit stops a loop that
 # never converges. Rounds are generous because some models issue one call per
-# round-trip even with parallel tool calls enabled.
+# round-trip even with parallel tool calls enabled. Unlimited rounds (the
+# chat's tool_rounds_unlimited, a streamed reply only) lifts both.
 MAX_TOOL_ROUNDS = 32    # provider round-trips per user message
 MAX_TOOL_ACTIONS = 200  # mutations per user message (bulk renames are legit)
-_LIST_CAP = 400         # pages listed per list_pages call
+# What the model hears for a change past the message's change limit. A
+# refusal at that limit starts with the prefix: the loop reads it as the
+# reply stopping short there (ai_agent.AgentLoop), and ends it on Continue.
+CHANGE_LIMIT_PREFIX = "error: the change limit for one message"
+CHANGE_LIMIT = (CHANGE_LIMIT_PREFIX + " ({n} changes) is reached, so nothing was changed — stop, and tell "
+                "the user what is done and what is left: they can continue in their next message")
+_LIST_CAP = 400         # lines one listing call shows: list_pages' `limit` at most (pages, or labels
+                        # with list_labels), list_folders', list_deleted's and read_chats' conversations
 _TITLE_MAX = 300
 # read_page's document-text window: what one call returns when the model
 # doesn't ask (default) and the most it may ask for (cap). The cap is the
@@ -421,7 +429,55 @@ def _sibling_position(conn, parent_id: str, after_id, block_id: str = "") -> tup
 # `from` / `to` on a rename, `added` / `removed` on label_page, and `count`
 # (pages refiled), `chats` (a folder's) and `revert` on a deletion.
 
+def _list_limit(value) -> int:
+    """list_pages' ``limit``: the lines one call shows, 1 to ``_LIST_CAP``;
+    ``_LIST_CAP`` when it is left out, 0 or no number."""
+    try:
+        n = int(value)
+    except (TypeError, ValueError, OverflowError):
+        return _LIST_CAP
+    return min(n, _LIST_CAP) if n > 0 else _LIST_CAP
+
+
+def _call_text(name: str, args: dict) -> str:
+    """A call as the model writes one, for a result that names the call to
+    make next: ``list_pages(label="ml", after="x1")``."""
+    return f"{name}(" + ", ".join(f"{k}={json.dumps(v, ensure_ascii=False)}" for k, v in args.items()) + ")"
+
+
+def _page_line(paths: dict, names: dict, page_id: str, content, props: dict, folders: list,
+               page_labels: list, updated) -> str:
+    """One list_pages line: the page's id, title, attachments, folder
+    paths, labels, cached paper metadata and last-update date."""
+    attachment = page_attachment(props)
+    bits = [f"id={page_id}",
+            f'title="{(content or "Untitled")[:120]}"',
+            f"attachments=[{attachment['kind']}]" if attachment else "attachments=[]"]
+    if folders:
+        bits.append("folders=" + json.dumps(paths_text(paths, folders), ensure_ascii=False))
+    if page_labels:
+        bits.append("labels=" + json.dumps([names[lab] for lab in page_labels], ensure_ascii=False))
+    meta = props.get("meta") or {}
+    authors = [a for a in (meta.get("authors") or []) if str(a).strip()]
+    if authors or meta.get("year") or meta.get("venue"):
+        first = str(authors[0]).split()[-1] if authors else ""
+        who = f"{first} et al." if len(authors) > 1 else first
+        bits.append("meta: " + ", ".join(
+            x for x in (who, str(meta.get("year") or ""), str(meta.get("venue") or "")[:40]) if x))
+    if updated:
+        bits.append(f"updated {str(updated)[:10]}")
+    return "- " + " | ".join(bits)
+
+
 def _run_list_pages(conn, ws: str, scope: dict, args: dict):
+    """The pages the chat reaches, one line each, most recently added first:
+    library order backwards (``position``, which renaming, refiling,
+    labelling or editing a page never changes). A call shows at most
+    ``limit`` of them, and ``after`` (a page id) goes on after that page's
+    place whatever the filters match now — so a long listing reads in
+    batches that neither skip nor repeat a page while the agent changes
+    them. Filters by label, folder and title; ``list_labels`` lists the
+    labels with their page counts instead, the busiest ``limit`` of them."""
     reach = _reach(conn, scope)
     paths, names = folder_paths(conn), label_names(conn)
     path = PATH_SEP.join(paths.get(_scope_folder(scope), []))
@@ -429,23 +485,40 @@ def _run_list_pages(conn, ws: str, scope: dict, args: dict):
     # full dump the model has to sift by eye.
     label = str(args.get("label") or "").strip()
     wanted = set(label_by_name(conn, label)) if label else None
-    title_q = str(args.get("title_contains") or "").strip().lower()
+    title_raw = str(args.get("title_contains") or "").strip()
+    title_q = title_raw.lower()
+    folder_raw = str(args.get("folder") or "").strip()
     sub, below = "", None
-    if str(args.get("folder") or "").strip():
-        found, error = _find_folder(conn, scope, args["folder"])
+    if folder_raw:
+        found, error = _find_folder(conn, scope, folder_raw)
         if error:
             return error, None
         if found[0]:
             sub, below = found[1], folder_subtree_ids(conn, found[0])
     want_labels = bool(args.get("list_labels"))
+    limit = _list_limit(args.get("limit"))
+    after = str(args.get("after") or "").strip()
+    cursor = None
+    if after:
+        if want_labels:
+            return ("error: `after` goes on through pages, not labels — list_labels shows the labels on "
+                    'the most pages first, and list_pages(label="…") finds any label by its name'), None
+        # The page's place, not its line: it may no longer match the
+        # filters (the agent renamed or refiled it), and it still marks
+        # where the last batch stopped.
+        row = conn.execute("SELECT parent_id, position FROM unified_blocks WHERE id = ?", (after,)).fetchone()
+        if not row or row[0] != "root":
+            return (f'error: "{after}" is no page in the library now — pass `after` the id of the last '
+                    "page listed that still is, or list again without it"), None
+        cursor = (row[1], after)
     # Labels exist on their own: the library's every label counts, a
     # folder's only those its pages carry.
     label_counts: dict[str, int] = dict.fromkeys(names, 0) if reach is None else {}
     context = scope.get("context_pages") or []
-    lines = []
-    for page_id, content, props_raw, updated in conn.execute(
-            "SELECT id, content, properties, updated_at FROM unified_blocks "
-            "WHERE parent_id = 'root' ORDER BY updated_at DESC"):
+    matches, earlier = [], 0
+    for page_id, content, props_raw, updated, position in conn.execute(
+            "SELECT id, content, properties, updated_at, position FROM unified_blocks "
+            "WHERE parent_id = 'root' ORDER BY position DESC, id DESC"):
         try:
             props = json.loads(props_raw or "{}")
         except ValueError:
@@ -464,44 +537,56 @@ def _run_list_pages(conn, ws: str, scope: dict, args: dict):
             continue
         if title_q and title_q not in (content or "Untitled").lower():
             continue
-        attachment = page_attachment(props)
-        bits = [f"id={page_id}",
-                f'title="{(content or "Untitled")[:120]}"',
-                f"attachments=[{attachment['kind']}]" if attachment else "attachments=[]"]
-        if folders:
-            bits.append("folders=" + json.dumps(paths_text(paths, folders), ensure_ascii=False))
-        if page_labels:
-            bits.append("labels=" + json.dumps([names[lab] for lab in page_labels], ensure_ascii=False))
-        meta = props.get("meta") or {}
-        authors = [a for a in (meta.get("authors") or []) if str(a).strip()]
-        if authors or meta.get("year") or meta.get("venue"):
-            first = str(authors[0]).split()[-1] if authors else ""
-            who = f"{first} et al." if len(authors) > 1 else first
-            bits.append("meta: " + ", ".join(
-                x for x in (who, str(meta.get("year") or ""), str(meta.get("venue") or "")[:40]) if x))
-        if updated:
-            bits.append(f"updated {str(updated)[:10]}")
-        lines.append("- " + " | ".join(bits))
+        if cursor and (position, page_id) >= cursor:
+            earlier += 1  # listed already: at or before the page `after` names
+            continue
+        matches.append((page_id, content, props, folders, page_labels, updated))
     where = f"“{path}”" if path else "the library"
     if want_labels:
-        out_lines = [f'- label "{names[lab]}": {n} page{"s" if n != 1 else ""}'
-                     for lab, n in sorted(label_counts.items(), key=lambda kv: (-kv[1], names[kv[0]]))]
-        action = {"kind": "list", "summary": f"Listed {len(label_counts)} labels in {where}"}
+        ranked = sorted(label_counts.items(), key=lambda kv: (-kv[1], names[kv[0]]))
+        out_lines = [f'- label "{names[lab]}": {n} page{"s" if n != 1 else ""}' for lab, n in ranked[:limit]]
+        rest = len(ranked) - len(out_lines)
+        action = {"kind": "list", "summary": (f"Listed {len(out_lines)} of {len(ranked)} labels in {where}"
+                                              if rest else f"Listed {len(ranked)} labels in {where}")}
         if not out_lines:
             return "No labels in scope (folders: list_folders).", action
-        return "Labels in scope (with page counts):\n" + "\n".join(out_lines), action
+        fewest = ranked[len(out_lines)][1] if rest else 0
+        more = (f'\n[… {rest} more label{"s" if rest != 1 else ""}, on {fewest} page{"s" if fewest != 1 else ""} '
+                'or fewer each — list_pages(label="…") finds any label by its name]') if rest else ""
+        return "Labels in scope (with page counts):\n" + "\n".join(out_lines) + more, action
     filters = "".join([f' labeled "{label}"' if label else "",
                        f' titled ~"{title_q}"' if title_q else ""])
     where_full = (f"“{sub}”" if sub else where) + filters
+    total, shown = earlier + len(matches), matches[:limit]
+    rest = len(matches) - len(shown)
+    partial = bool(earlier or rest)
     action = {"kind": "list",
-              "summary": f"Listed {len(lines)} page{'s' if len(lines) != 1 else ''} in {where_full}"}
-    if not lines:
-        no = "No pages match those filters." if (label or title_q or sub) else (
-            "The folder is empty." if path else "The library is empty.")
+              "summary": (f"Listed {len(shown)} of {total} pages in {where_full}" if partial
+                          else f"Listed {total} page{'s' if total != 1 else ''} in {where_full}")}
+    if not total:
+        no = ("No pages match those filters." if (label or title_q)
+              else "The folder is empty." if (sub or path) else "The library is empty.")
         return no, action
-    header = f"Pages in {where_full}"
-    tail = f"\n(+{len(lines) - _LIST_CAP} more not shown)" if len(lines) > _LIST_CAP else ""
-    return f"{header} ({len(lines)}):\n" + "\n".join(lines[:_LIST_CAP]) + tail, action
+    if not shown:
+        return f"No pages come after that one in {where_full} — it was the last of {total}.", action
+    nxt = ""
+    if rest:
+        # The call for the next batch, with this call's own filters as the
+        # model wrote them (a relative folder path stays relative).
+        again = {k: v for k, v in (("label", label), ("folder", folder_raw), ("title_contains", title_raw)) if v}
+        if limit != _LIST_CAP:
+            again["limit"] = limit
+        again["after"] = shown[-1][0]
+        nxt = _call_text("list_pages", again)
+    # The next call goes in the header too: a saved chip keeps only the
+    # first _DETAIL_CAP characters, and Continue replays the saved chat.
+    span = f"; {earlier + 1}–{earlier + len(shown)} shown" if partial else ""
+    text = (f"Pages in {where_full} ({total}, most recently added first{span}"
+            + (f"; next: {nxt}" if nxt else "") + "):\n"
+            + "\n".join(_page_line(paths, names, *m) for m in shown))
+    if nxt:
+        text += f"\n[… {rest} more page{'s' if rest != 1 else ''} — call {nxt} to continue]"
+    return text, action
 
 
 def _run_list_folders(conn, ws: str, scope: dict, args: dict):
@@ -2976,11 +3061,17 @@ TOOLS = [
                 "before any other tool — never guess page ids. Prefer the filters over "
                 "listing everything: `label` (a label's name — exact, else ignoring "
                 "case), `folder` (a folder's path or id — its pages and its "
-                "subfolders'), `title_contains` (title substring). `list_labels: true` "
-                "instead returns the labels with page counts (at the library root every "
-                "label, unused ones too; in a folder those its pages carry) — use it to "
-                "answer questions about the labels themselves or to find a label's exact "
-                "spelling; the folders are list_folders'."),
+                "subfolders'), `title_contains` (title substring). Pages come most "
+                "recently added first (library order, which renaming, filing, "
+                "labelling or editing a page never changes), at most `limit` a call "
+                "(default and most 400). When more match, the result names the call "
+                "that lists the next batch: `after` is the id of the last page listed, "
+                "and the listing goes on from there whatever changed since. "
+                "`list_labels: true` instead returns the labels with page counts, the "
+                "most used first (at the library root every label, unused ones too; in "
+                "a folder those its pages carry) — use it to answer questions about the "
+                "labels themselves or to find a label's exact spelling; the folders are "
+                "list_folders'."),
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -2988,6 +3079,11 @@ TOOLS = [
                     "folder": {"type": "string"},
                     "title_contains": {"type": "string"},
                     "list_labels": {"type": "boolean"},
+                    "limit": {"type": "integer",
+                              "description": "lines per call, 1–400 (default 400): pages, or labels with "
+                                             "list_labels"},
+                    "after": {"type": "string",
+                              "description": "a page id from an earlier listing: list the pages after it"},
                 },
                 "required": [],
             },
@@ -3879,6 +3975,12 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
             "needs them, never ask for permission in your reply first. A call the user declined "
             "was not made: do not repeat it or make the same change another way; carry on "
             "without it, and say what you would have changed.")
+    if "list_pages" in names and any(n in names for n in ("rename_page", "move_page", "label_page")):
+        # A full listing (400 lines, ~80,000 characters) outgrows the reply's
+        # live results (ai_context.LIVE_RESULT_BUDGET) and is a stub two
+        # rounds later; a batch of 100 outlives the rounds that work through it.
+        text += ("\nTo change many pages, take them a batch at a time: list_pages(limit=100), change "
+                 "those pages, then make the call the listing names for the next batch.")
     if any(n in names for n in ("list_pages", "read_page", "read_block", "search_library")):
         # The chat renders /?page=<id> links as open-in-place; the ids come
         # from the tool results (list_pages, search hits, read_* headers).

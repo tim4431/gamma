@@ -1648,6 +1648,37 @@ export async function settingsScenarios(env) {
     }
   });
 
+  await step("settings: Unlimited rounds greys out the round limit and keeps the number for when it is off", async () => {
+    const { ctx, page } = await setup();
+    const rounds = row(page, "Tool rounds").locator('input[type="number"]');
+    const unlimited = page.getByRole("checkbox", { name: "Unlimited rounds", exact: true });
+    const saved = (want) => until(async () => {
+      const { value } = await user.api("/api/prefs/profile");
+      return Object.entries(want).every(([name, v]) => value?.[name] === v);
+    }, { what: `the profile holds ${JSON.stringify(want)}` });
+    try {
+      await openSettings(page);
+      await nav(page, "Tool usage").click();
+      await rounds.fill("12");
+      await rounds.press("Tab");
+      await saved({ toolRounds: 12 });
+      await unlimited.check();
+      assertEq(await rounds.isDisabled(), true, "the number waits while Unlimited is on");
+      await saved({ toolRoundsUnlimited: true });
+      await page.getByRole("button", { name: "Close settings", exact: true }).click();
+      await openSettings(page);
+      await nav(page, "Tool usage").click();
+      assertEq(await unlimited.isChecked(), true, "Unlimited stays on");
+      await unlimited.uncheck();
+      assertEq(await rounds.isDisabled(), false);
+      assertEq(await rounds.inputValue(), "12", "the number comes back");
+      await rounds.fill("32");
+      await rounds.press("Tab");
+      await saved({ toolRounds: 32, toolRoundsUnlimited: false });
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("settings: the composer's mic shows only when a connection can transcribe; the PDF switch only with a PDF in context", async () => {
     for (const transcribe of [false, true]) {
       const { ctx, page } = await setup(undefined, (c) => fakeAiModels(c, { ...FAKE_AI_MODELS, transcribe }));

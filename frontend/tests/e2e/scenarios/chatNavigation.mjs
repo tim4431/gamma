@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { FAKE_AI_MODELS, fakeAiModels, wanted } from "../harness.mjs";
+import { FAKE_AI_MODELS, fakeAiModels, live, wanted } from "../harness.mjs";
 export async function chatNavigationScenarios(env) {
   const { server, browser, alice, bob, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags } = env;
   if (!wanted("chat navigation")) return;
@@ -978,6 +978,124 @@ export async function chatNavigationScenarios(env) {
       await ctx.close();
       await alice.api("/api/prefs/profile", { method: "PUT", body: { value: profile || {} } });
       await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    }
+  });
+
+  // A reply a limit stopped (the stream's last {"limit"} line, saved on the
+  // message) or the output cap cut off ({"truncated"}) gets a pill saying
+  // why and a Continue under it while it is the conversation's last reply
+  // (chat/coverage.js). Continue sends a message in the user's name, as the
+  // handoff card's does. Under Unlimited rounds a running reply has a row in
+  // Background tasks whose Stop ends it. The server side (the limit lines,
+  // Unlimited, Stop ending the loop) is backend/tests/test_ai_tool_limits.py's.
+  await step("chat navigation: a reply that stopped short says why and offers Continue, which carries on as the user's message; an Unlimited reply shows in Background tasks, whose Stop ends it", async () => {
+    // No title, so the tray's row is named from the first question (a save
+    // without one keeps the title an earlier step gave the conversation).
+    const { title: homeTitle } = await alice.api("/api/chats/home");
+    await alice.api("/api/chats/home", { method: "PUT", body: { title: "", messages: [
+      { id: "limit-q", role: "user", text: "Rename every page to AuthorYear" },
+      { id: "limit-a", role: "ai", text: "Renamed 40 pages so far.\n\n*(stopped: tool-round limit reached)*",
+        limit: { kind: "rounds", rounds: 32, changes: 40 } },
+    ] } });
+    const { value: profile } = await alice.api("/api/prefs/profile");
+    const bodies = [];
+    const answers = [
+      '{"delta":"Renamed the rest."}\n{"limit":{"kind":"changes","rounds":3,"changes":200}}\n',
+      '{"delta":"Renamed some more"}\n{"truncated":true}\n',
+    ];
+    let release;
+    const held = new Promise((resolve) => { release = resolve; });
+    const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+    await ctx.route("**/api/ai/chat", async (route) => {
+      const n = bodies.push(route.request().postDataJSON());
+      if (n <= answers.length) return route.fulfill({ contentType: "application/x-ndjson", body: answers[n - 1] });
+      // The Unlimited reply runs until it is stopped.
+      await held;
+      try { await route.fulfill({ contentType: "application/x-ndjson", body: '{"delta":"Too late."}\n' }); } catch { /* the page stopped it */ }
+    });
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    try {
+      const chat = page.locator(".chatPanel");
+      const reply = (i) => chat.locator(`.chatBubbleRow[data-msg-idx="${i}"]`);
+      const pill = (text) => chat.locator(".chatCoverage .chatPill", { hasText: text });
+      const note = (text) => chat.locator(".chatCoverageNote", { hasText: text });
+      const goOn = chat.locator(".chatLimitActions").getByRole("button", { name: "Continue", exact: true });
+      const input = page.getByRole("combobox", { name: "Message AI" });
+      // The one Continue there is sits under the conversation's last reply.
+      const onlyUnderLast = async (last, what) => {
+        await until(async () => (await goOn.count()) === 1, { what: `one Continue, ${what}` });
+        assertEq(await reply(last).locator(".chatLimitActions").count(), 1, `Continue is under the last reply, ${what}`);
+      };
+
+      // The pill says which limit and where to lift it.
+      await pill("Stopped at the tool-round limit").click();
+      await note("used its 32 tool rounds").waitFor();
+      assert((await note("used its 32 tool rounds").innerText()).includes("Settings / AI / Tool usage / Tool limits"),
+        "the pill names where the limit is set");
+
+      // The chat never speaks in the user's name by itself, nor over a draft.
+      await goOn.waitFor();
+      assertEq(bodies.length, 0, "nothing was sent for the user");
+      await input.fill("x");
+      await until(async () => (await goOn.count()) === 0, { what: "a draft hides Continue" });
+      await input.fill("");
+      await goOn.waitFor();
+
+      // Continue after a limit: a new message, with a fresh budget.
+      await goOn.click();
+      await until(() => bodies.length === 1, { what: "Continue sends a message" });
+      assertEq(bodies[0].prompt, "Please continue where you stopped.");
+      assertEq(bodies[0].tool_rounds, 32);
+      assertEq(bodies[0].tool_rounds_unlimited, undefined, "Unlimited is off");
+      await reply(3).getByText("Renamed the rest.").waitFor();
+      await pill("Stopped at the change limit").click();
+      await note("after 200 changes").waitFor();
+      await onlyUnderLast(3, "after the change limit");
+
+      // Continue after the output cap.
+      await goOn.click();
+      await until(() => bodies.length === 2, { what: "Continue after the output cap" });
+      await reply(5).getByText("Renamed some more").waitFor();
+      await reply(5).locator(".chatCoverage .chatPill", { hasText: "Reply cut off at the output limit" }).waitFor();
+      await onlyUnderLast(5, "after the output cap");
+
+      // A reload keeps both from the saved conversation.
+      await until(async () => (await alice.api("/api/chats/home")).messages?.[5]?.truncated === true,
+        { what: "the cut-off reply is saved" });
+      await page.reload();
+      await reply(5).getByText("Renamed some more").waitFor();
+      await onlyUnderLast(5, "after a reload");
+      await reply(1).locator(".chatCoverage .chatPill", { hasText: "Stopped at the tool-round limit" }).waitFor();
+      assertEq(await reply(1).locator(".chatLimitActions").count(), 0, "an earlier reply offers no Continue");
+
+      // Unlimited rounds: the request says so, and the running reply has a
+      // row in Background tasks whose Stop ends it.
+      await alice.api("/api/prefs/profile", { method: "PATCH", body: { set: { toolRoundsUnlimited: true } } });
+      await page.reload();
+      await until(async () => (await page.evaluate(() => localStorage.getItem("gamma-ai-tool-rounds-unlimited"))) === "1",
+        { what: "the profile's Unlimited rounds reaches the page" });
+      await goOn.click();
+      await until(() => bodies.length === 3, { what: "Continue under Unlimited" });
+      assertEq(bodies[2].tool_rounds_unlimited, true);
+      assertEq(bodies[2].tool_rounds, 32, "the number is kept for when Unlimited is off");
+      await page.click("button[aria-label='Background tasks']");
+      const tray = page.locator(live(".tasksPopover"));
+      const task = tray.locator(live(".taskRow"), { hasText: "AI reply — Rename every page to AuthorYear" });
+      await task.waitFor();
+      assert((await task.innerText()).includes("Unlimited rounds"), "the row says why it is there");
+      await task.locator('button[aria-label^="Stop AI reply"]').click();
+      await until(async () => (await reply(7).innerText()).includes("(stopped)"), { what: "the reply ends stopped" });
+      await task.waitFor({ state: "detached" });
+      await page.waitForTimeout(300);
+      assertEq(await goOn.count(), 0, "Stop is no limit: no Continue");
+      assertNoProblems(page);
+    } finally {
+      release();
+      await ctx.close();
+      await alice.api("/api/prefs/profile", { method: "PUT", body: { value: profile || {} } });
+      await alice.api("/api/chats/home", { method: "PUT", body: { title: homeTitle || "", messages: [] } });
     }
   });
 

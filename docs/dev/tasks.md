@@ -11,7 +11,8 @@ of work meet there:
   that started it closes, and every tab and device of the account sees it.
 - **This tab's own work**: a PDF loading in the viewer, a file uploading,
   an AI lookup (the open page's metadata, a title, a slide citation), a
-  translation. These
+  translation, a chat reply running under Unlimited rounds (its Stop stops
+  the reply). These
   rows exist in this tab only; they stop with the tab.
 
 The **Background tasks** tour says the part a spinner cannot — that the job

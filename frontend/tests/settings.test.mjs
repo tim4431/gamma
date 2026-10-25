@@ -100,7 +100,8 @@ test("every preference declares one scope; the profile carries exactly the accou
   const account = new Set(ACCOUNT_PREFS);
   // Appearance, reading, library, chat behaviour, budgets and prompts follow the account…
   for (const name of ["theme", "pdfDarkPage", "embAnnots", "translateLang", "enterNewNote", "searchDetailsHome",
-    "fileLabels", "recentThumbs", "agentEnabled", "agentPerms", "chatEffort", "chatContextChars", "toolRounds", "chatSystem", "inkTools"]) {
+    "fileLabels", "recentThumbs", "agentEnabled", "agentPerms", "chatEffort", "chatContextChars", "toolRounds",
+    "toolRoundsUnlimited", "chatSystem", "inkTools"]) {
     assert.ok(account.has(name), `${name} is account-scoped`);
   }
   // …what describes this device, or names this server's provider entries, stays here.
@@ -143,6 +144,9 @@ test("the profile codec keeps valid entries and drops the rest", async () => {
   const legacy = readProfile({ agentPerms: { folder: { rename: true, read: true, move: "allow" } } });
   assert.deepEqual([legacy.agentPerms.folder.rename, legacy.agentPerms.folder.read, legacy.agentPerms.folder.move],
     ["ask", "allow", "allow"], "a change stored as on from before Ask asks; an explicit Allow stays");
+  // Unlimited rounds is a flag beside the number, which it leaves alone.
+  assert.equal(readProfile({ toolRoundsUnlimited: true }).toolRoundsUnlimited, true);
+  assert.ok(!("toolRoundsUnlimited" in readProfile({ toolRoundsUnlimited: "yes" })), "a flag that is no boolean is dropped");
   for (const bad of [null, "x", [], 3]) assert.deepEqual(readProfile(bad), {});
   const bytes = JSON.stringify({ value: profileOf({ ...defaults, chatSystem: "p".repeat(12000), agentSystem: "p".repeat(12000) }) }).length;
   assert.ok(bytes < 64 * 1024, "fits the prefs size cap");

@@ -129,6 +129,14 @@ def test_agent_system_explains_the_new_tools_only_when_armed():
         assert phrase not in off
 
 
+def test_the_prompt_takes_many_pages_a_batch_at_a_time():
+    # Only where the chat can both list pages and change them.
+    assert "list_pages(limit=100)" in agent_system(folder(""))
+    assert "list_pages(limit=100)" not in agent_system(folder(""), {"rename": "off", "move": "off",
+                                                                    "organize": "off"})
+    assert "list_pages(limit=100)" not in agent_system({"type": "page", "page_id": "p1"})
+
+
 def test_agent_system_tells_the_model_how_to_link_pages():
     # The chat renders /?page=<id> links as open-in-place, so the prompt
     # asks for that form wherever a reading tool hands the model page ids.

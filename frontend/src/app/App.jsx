@@ -2663,7 +2663,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     metaPrompt, setMetaPrompt, citePrompt, setCitePrompt,
     chatContextChars, setChatContextChars, metaContextChars, setMetaContextChars,
     multiContextChars, setMultiContextChars,
-    toolRounds, setToolRounds, agentReadChars, setAgentReadChars, agentPerms, setAgentPerms,
+    toolRounds, setToolRounds, toolRoundsUnlimited, setToolRoundsUnlimited,
+    agentReadChars, setAgentReadChars, agentPerms, setAgentPerms,
     agentEnabled, setAgentEnabled,
     chatImgAutoClear, setChatImgAutoClear, chatPictures, setChatPictures,
     fetchInBackground, setFetchInBackground, delegateReads, setDelegateReads,
@@ -10311,7 +10312,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           openPopover={openPopover} setOpenPopover={setOpenPopover}
           setStatus={setStatus} askConfirm={setConfirmBox}
           organizeFolder={!focusedBlockId && !shareMode ? folderFilter : null}
-          toolRounds={toolRounds} agentReadChars={agentReadChars} agentPerms={agentPerms} setAgentPerms={setAgentPerms} agentSystem={agentSystem}
+          toolRounds={toolRounds} toolRoundsUnlimited={toolRoundsUnlimited} addTask={addTask} removeTask={tasks.removeLocal}
+          agentReadChars={agentReadChars} agentPerms={agentPerms} setAgentPerms={setAgentPerms} agentSystem={agentSystem}
           agentEnabled={agentEnabled} setAgentEnabled={setAgentEnabled}
           fetchInBackground={fetchInBackground} delegateReads={delegateReads}
           paperSave={{ allowOa: oaFallback, saveCopy: pdfSaveLocal, fetchMetadata: metaAutoFetch }}
@@ -11980,6 +11982,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setMultiContextChars,
           toolRounds,
           setToolRounds,
+          toolRoundsUnlimited,
+          setToolRoundsUnlimited,
           agentReadChars,
           setAgentReadChars,
           agentPerms,

@@ -176,6 +176,7 @@ On the home page or in a folder, the chat can act on your library: list, read an
 
 - **It asks first.** A change shows as a card. **Allow once**, **Allow in this chat**, **Always allow**, or **Don't allow** (with a line on what to do instead). Deleting a folder or a label asks every time: **Allow once** or **Don't allow**.
 - Everything it changed is listed under the reply. A note change, or a deleted folder or label, can be undone there.
+- A reply stops after 32 tool rounds or 200 changes (Settings → AI → Tool usage → Tool limits), or when the conversation is too long for the model; **Continue** under it carries on, as it does under a reply cut off at the output limit. With **Unlimited rounds** it runs until it is done or you press Stop, in its chat or in Background tasks; longer jobs cost more tokens. On a shared AI connection without a daily allowance the usual limits stay, unless you are an administrator.
 - Settings → AI → Tool usage sets each permission below to Allow, Ask or Off (Delete folders and labels: Ask or Off only), for folder, PDF and notes chats separately, with presets from *Read library* to *Allow all*. Reading is allowed by default; anything that changes your library asks.
 - A journal that blocks the server shows a card: open the page in your browser and Gamma Connector sends the PDF back.
 
@@ -184,7 +185,7 @@ On the home page or in a folder, the chat can act on your library: list, read an
 | Permission | Tools | What they do |
 |---|---|---|
 | **Read your library** | | |
-| List pages | `list_pages`, `list_folders`, `list_deleted` | Browse page titles, folders, metadata and Recently deleted (folder chats) |
+| List pages | `list_pages`, `list_folders`, `list_deleted` | Browse page titles, folders, metadata and Recently deleted; a long library in batches (folder chats) |
 | Read pages | `read_page`, `read_chats`, `cite` | Read PDF text, highlights, notes, earlier chats and citation records (metadata, BibTeX) |
 | Read note blocks | `read_block` | Read individual notes and their outline |
 | View pages and handwriting | `view_pdf_page`, `view_ink`, `view_image` | Look at figures, tables, scanned pages, your handwriting and the pictures in your notes |

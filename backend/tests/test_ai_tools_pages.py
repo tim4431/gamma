@@ -1,11 +1,13 @@
-"""The page tools' executors — list_pages (filters, labels mode), rename_page,
+"""The page tools' executors — list_pages (filters, labels mode, batches), rename_page,
 move_page, read_page (windows through a long PDF, page anchors, the tunable
 read cap) — and the folder-scope rules they share: folders named by path or
 id, read inside the chat's folder."""
 
+import re
 import secrets
 
 from conftest import make_folder, make_label
+from gamma import ai_tools
 from gamma.ai_tools import agent_tools, run_agent_tool
 
 from ai_fixtures import folder, org, props  # noqa: F401  (org is a fixture)
@@ -533,6 +535,109 @@ def test_list_pages_filters_and_labels_mode(org):
     assert jeff1 not in text and "unused" not in text
     text, _ = run_agent_tool(ids["ws"], folder(""), "list_pages", {"list_labels": True})
     assert '- label "unused": 0 pages' in text and '- label "Yb": 1 page' in text
+
+
+def _listed_ids(text):
+    """The page ids a list_pages result lists, in its order."""
+    return re.findall(r"^- id=([^ |]+)", text, flags=re.M)
+
+
+def _new_page(c, title, folders):
+    r = c.post("/api/blocks", json={"parent_id": "root", "content": title, "properties": {"folders": folders}})
+    assert r.status_code == 200, r.text
+    return r.json()["id"]
+
+
+def test_list_pages_goes_through_in_an_order_edits_never_move(org):
+    """list_pages lists most recently added first, in batches: `after` goes
+    on after a page's place in library order, which renaming, labelling and
+    refiling never change, so a walk neither skips nor repeats a page the
+    agent changed between calls."""
+    c, ids = org
+    ws = ids["ws"]
+    where = make_folder(c, "paging")
+    made = [_new_page(c, f"draft {n}", [where]) for n in range(7)]
+    newest = made[::-1]
+
+    def listing(args, scope=None):
+        return run_agent_tool(ws, scope or folder(where), "list_pages", args)
+
+    # The first batch names the call for the next, in its header and at its end.
+    text, action = listing({"limit": 3})
+    assert _listed_ids(text) == newest[:3]
+    nxt = f'list_pages(limit=3, after="{newest[2]}")'
+    assert text.splitlines()[0] == f"Pages in “paging” (7, most recently added first; 1–3 shown; next: {nxt}):"
+    assert text.endswith(f"[… 4 more pages — call {nxt} to continue]")
+    assert action["summary"] == "Listed 3 of 7 pages in “paging”"
+    # Edits between calls stamp updated_at, and move nothing in the listing.
+    assert run_agent_tool(ws, folder(where), "rename_page",
+                          {"page_id": newest[0], "title": "renamed"})[0].startswith("ok")
+    assert not run_agent_tool(ws, folder(where), "label_page",
+                              {"page_id": newest[1], "add": ["paged"]})[1].get("error")
+    assert run_agent_tool(ws, folder(where), "move_page",
+                          {"page_id": newest[2], "folder": "sub"})[0].startswith("ok")
+    text, _ = listing({"limit": 3, "after": newest[2]})
+    assert _listed_ids(text) == newest[3:6]
+    assert text.startswith("Pages in “paging” (7, most recently added first; 4–6 shown; next: ")
+    text, _ = listing({"limit": 3, "after": newest[5]})
+    assert _listed_ids(text) == [newest[6]] and "next:" not in text and "to continue]" not in text
+    text, _ = listing({"after": newest[6]})
+    assert text.startswith("No pages come after that one")
+    # A filter the agent changes pages away from keeps its place.
+    text, _ = listing({"title_contains": "draft", "limit": 2})
+    assert _listed_ids(text) == [newest[1], newest[2]]  # newest[0] was renamed
+    for page_id in newest[1:3]:
+        run_agent_tool(ws, folder(where), "rename_page", {"page_id": page_id, "title": f"done {page_id}"})
+    text, _ = listing({"title_contains": "draft", "limit": 2, "after": newest[2]})
+    assert _listed_ids(text) == [newest[3], newest[4]]
+    assert f'list_pages(title_contains="draft", limit=2, after="{newest[4]}")' in text
+    # `after` must name a page in the library: not one in Recently deleted.
+    text, _ = listing({"after": "nope"})
+    assert text.startswith('error: "nope" is no page in the library now')
+    assert c.delete(f"/api/blocks/{newest[6]}").status_code == 200
+    text, _ = listing({"after": newest[6]})
+    assert text.startswith(f'error: "{newest[6]}" is no page in the library now')
+    # `limit` is clamped to 1–400; anything else lists the default.
+    for limit in (999, "x", 0):
+        text, _ = listing({"limit": limit})
+        assert _listed_ids(text) == newest[:6] and "to continue]" not in text, limit
+    # An empty folder says so, and a filter that matches nothing says that.
+    make_folder(c, "paging/empty")
+    text, _ = listing({"folder": "paging / empty"}, folder(""))
+    assert text == "The folder is empty."
+    text, _ = listing({"folder": "paging / empty", "label": "paged"}, folder(""))
+    assert text == "No pages match those filters."
+
+
+def test_new_pages_come_first_and_a_walk_does_not_revisit_them(org):
+    c, ids = org
+    where = make_folder(c, "paging2")
+    first, second, third = [_new_page(c, f"walk {n}", [where]) for n in range(3)][::-1]
+    text, _ = run_agent_tool(ids["ws"], folder(where), "list_pages", {"limit": 2})
+    assert _listed_ids(text) == [first, second]
+    added = _new_page(c, "walk new", [where])
+    text, _ = run_agent_tool(ids["ws"], folder(where), "list_pages", {"limit": 2, "after": second})
+    assert _listed_ids(text) == [third]
+    text, _ = run_agent_tool(ids["ws"], folder(where), "list_pages", {})
+    assert _listed_ids(text) == [added, first, second, third]
+
+
+def test_list_labels_shows_the_busiest_and_points_at_the_name_lookup(org, monkeypatch):
+    c, ids = org
+    monkeypatch.setattr(ai_tools, "_LIST_CAP", 2)
+    where = make_folder(c, "labcap")
+    l1, l2, l3 = (make_label(c, name) for name in ("L1", "L2", "L3"))
+    for labels in ([l1, l2, l3], [l1, l2], [l1]):
+        r = c.post("/api/blocks", json={"parent_id": "root", "content": "labelled",
+                                        "properties": {"folders": [where], "labels": labels}})
+        assert r.status_code == 200, r.text
+    text, action = run_agent_tool(ids["ws"], folder(where), "list_pages", {"list_labels": True})
+    assert '- label "L1": 3 pages' in text and '- label "L2": 2 pages' in text and '"L3"' not in text
+    assert text.endswith('[… 1 more label, on 1 page or fewer each — list_pages(label="…") finds any '
+                         "label by its name]")
+    assert "Listed 2 of 3 labels" in action["summary"]
+    text, _ = run_agent_tool(ids["ws"], folder(where), "list_pages", {"list_labels": True, "after": "x"})
+    assert text.startswith("error") and "not labels" in text
 
 
 def test_list_folders_shows_the_tree_with_counts(org):

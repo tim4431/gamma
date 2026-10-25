@@ -204,7 +204,11 @@ class AIChatRequest(BaseModel):
     # agent_system overrides the base agent prompt (the
     # scope/permission lines are always appended); tool_rounds overrides the
     # agent round budget and read_char_limit the per-read_page-call document
-    # text cap (both 0 = server default).
+    # text cap (both 0 = server default). tool_rounds_unlimited (Settings →
+    # AI → Tool usage → Tool limits → Unlimited rounds) lifts the round limit
+    # and the per-message change limit (ai_agent.AgentLoop ``unbounded``), for
+    # a streamed reply only — Stop is what ends it — and on a shared AI
+    # connection only under a daily allowance or for an administrator.
     agent_scope: str = ""
     folder: str = ""
     page_id: str = ""
@@ -212,6 +216,7 @@ class AIChatRequest(BaseModel):
     granted: list[str] = Field(default_factory=list, max_length=32)
     agent_system: str = ""
     tool_rounds: int = Field(default=0, ge=0, le=100)
+    tool_rounds_unlimited: bool = False
     read_char_limit: int = Field(default=0, ge=0, le=READ_CHARS_MAX)
     # How save_paper stores a paper — the Reading choices the reply's Save to
     # library also uses: {allow_oa, save_copy, fetch_metadata}, missing = on.
@@ -2005,6 +2010,15 @@ def ai_chat(payload: AIChatRequest, request: Request):
     cache_key = _cache_key(user_id, ws, payload)
     history_len = len([h for h in payload.history if isinstance(h, dict) and not h.get("error")])
     conf = rt["providers"].get(entry["provider"]) or {}
+    # Unlimited rounds lifts the round and change limits — only where Stop can
+    # end the loop (a streamed reply: WatchedStream), and on a shared AI
+    # connection only under the admin's daily allowance, which the transport
+    # checks before every turn (ai_client.check_allowance), or for an
+    # administrator. With no allowance the per-message limits are all that
+    # bound a member's or a guest's reply on the admin's key.
+    asked_unlimited = payload.tool_rounds_unlimited and payload.stream
+    unbounded = asked_unlimited and (not is_server_id(entry["provider"]) or bool(conf.get("allowance"))
+                                     or request.state.is_admin)
     window = ai_catalog.context_window(entry["provider"], conf, entry["model"])[0] if conf else 0
     # What else the model takes: pictures (one that reads text only gets
     # none, nor a tool that answers with one) and how long a reply, its
@@ -2045,6 +2059,7 @@ def ai_chat(payload: AIChatRequest, request: Request):
         open_call=lambda talk, htools: open_upstream(talk.messages, talk.system, talk.files,
                                                      True, htools, []),
         read_events=lambda resp: _sse_events(resp, proto),
+        stopped=stopped,
     ) if tools and scope["delegates"] else None
     # Which model answers, at what effort and speed, with tools or not — the
     # reply's footer names them, and the coverage chip's advice depends on
@@ -2144,9 +2159,11 @@ def ai_chat(payload: AIChatRequest, request: Request):
             read_events=lambda resp: _sse_events(resp, proto),
             on_usage=count_usage,
             max_rounds=payload.tool_rounds,
+            unbounded=unbounded,
             gate=ApprovalGate(ws, scope, user_id, stopped),
             settle=PaperWait(ws, scope, scope["handoff_user"], stopped) if scope["paper_wait"] else None,
             pictures=pictures,
+            stopped=stopped,
         )
         return loop.run(first_resp)
 
@@ -2178,6 +2195,8 @@ def ai_chat(payload: AIChatRequest, request: Request):
                         for kind, data in agent_events(resp):
                             if kind == "usage" and _served_speed(answered, data):
                                 yield json.dumps({"model": answered}) + "\n"
+                            if kind == "limit" and asked_unlimited and not unbounded:
+                                data = {**data, "withheld": True}  # Unlimited asked for, not given here
                             yield json.dumps({kind: data}) + "\n"
                     except Exception as e:
                         log.warning(f"[ai_chat] agent stream error: {e}")
@@ -2221,7 +2240,7 @@ def ai_chat(payload: AIChatRequest, request: Request):
         if tools:
             # The tool loop is SSE-based on every protocol; join it for
             # non-stream callers and return the actions alongside the text.
-            parts, actions, usage, truncated = [], [], None, False
+            parts, actions, usage, truncated, limit = [], [], None, False, None
             for kind, data in agent_events(open_with_fallback(True)):
                 if kind == "delta":
                     parts.append(data)
@@ -2232,12 +2251,15 @@ def ai_chat(payload: AIChatRequest, request: Request):
                     usage = _add_usage(usage, data)
                 elif kind == "truncated":
                     truncated = True
+                elif kind == "limit":
+                    limit = data
                 # "progress" previews only matter to a live UI
             shortened = _shortened(payload, scope)
             return {"response": "".join(parts), "actions": actions, "model": answered,
                     "context": state.get("coverage") or [],
                     **({"usage": usage} if usage else {}),
                     **({"truncated": True} if truncated else {}),
+                    **({"limit": limit} if limit else {}),
                     **({"trimmed": {"turns": state["drop"]}} if state["drop"] else {}),
                     **({"shortened": shortened} if shortened else {})}
         usage = []

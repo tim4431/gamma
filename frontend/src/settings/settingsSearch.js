@@ -101,6 +101,7 @@ const entries = [
   e("tools", t("Search the web with"), t("Online search"), t("Lab pages, repositories and copies the registries miss"), "web internet search engine Brave SearXNG ChatGPT OpenAI Anthropic Google"),
   e("tools", t("Online search services"), t("Online search"), t("Brave Search, SearXNG and an OpenAlex key"), "API key Brave SearXNG OpenAlex budget"),
   e("tools", t("Tool rounds"), t("Tool limits"), t("AI ↔ tool round-trips per message"), "advanced tool requests limits"),
+  e("tools", t("Unlimited rounds"), t("Tool limits"), t("Run until the reply is done or you stop it"), "advanced tool rounds limit unlimited no limit changes continue"),
   e("tools", t("Read window"), t("Tool limits"), t("Document text per read tool call"), "advanced context characters"),
   e("integrations", t("Integrations"), null, t("Read-only access for Codex, Claude Code, DeepSeek Harness, or any MCP assistant."), "external assistants Codex Claude Code plugins MCP tokens read-only revoke connections"),
   e("account", t("Account & sync"), null, t("Your account, Gamma Cloud link and settings sync"), "profile account user"),

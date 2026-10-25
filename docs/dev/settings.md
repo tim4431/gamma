@@ -507,7 +507,9 @@ AI:
   goes through (Automatic, your AI connection, Brave Search, SearXNG or Off)
   and the Brave, SearXNG and optional OpenAlex settings, stored on the server
   like the translation keys ([ai_tools.md](ai_tools.md) "search_web"). Last,
-  **Tool limits**: tool rounds per message and the read window.
+  **Tool limits**: tool rounds per message, **Unlimited rounds**
+  (`toolRoundsUnlimited`, which also lifts the 200-change limit and keeps
+  the number for when it is off) and the read window.
 - **Integrations** ([SettingsIntegrations.jsx](../../frontend/src/settings/SettingsIntegrations.jsx)):
   the workspace's assistant connections, the MCP URL, Claude Code connection,
   plugin setup and address-change commands, the Codex setup

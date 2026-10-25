@@ -11,8 +11,8 @@ cap `max_upload_mb` (50 MB by default, at most 2048,
 
 ## What changed with this survey
 
-The survey ranked the caps below; the first seven were removed. How each
-works now is in the dev docs named.
+The survey ranked the caps it found; the ones below were removed since.
+How each works now is in the dev docs named.
 
 - **The import review's upload** (Zotero, Markdown, Gamma exports;
   [dev/import_export.md](../dev/import_export.md)). Staging refused an
@@ -58,6 +58,10 @@ works now is in the dev docs named.
   16-bit, interlaced, GIF, WebP) decode with Pillow up to 40 MP, a 25 MP
   screenshot in about 0.65 s, keeping transparency as a soft mask
   ([dev/pdf_typesetting.md](../dev/pdf_typesetting.md)).
+- **The library as the AI lists it** (`ai_tools.py`). `list_pages`
+  stopped at 400 pages with no way to page. It now lists in library
+  order, which edits never change, in batches (`limit`, `after`,
+  [dev/ai_tools.md](../dev/ai_tools.md)).
 
 Later in October 2026 the per-file cap went too
 ([dev/user_db.md](../dev/user_db.md) "Storage limits"). The quota already
@@ -91,7 +95,6 @@ Ranked by how likely a user meets them.
 | Uploads in parts | 8 open per workspace, dropped after an hour idle | `upload_parts.py` | 429 for up to an hour after tabs closed mid-upload |
 | AI calls at once | 6 per account | `ai_client.py` | Page translation (4 at once) beside an agent chat (4 at once) reaches it |
 | PDFs the AI fetches or a tab hands off | 40 MB; 60 MB through the extension's in-page relay | `ai_web.py`, `routers/ai_handoffs.py`, `extension/detect.js` | Books and theses refused |
-| The library as the AI lists it | 400 pages, no offset | `ai_tools.py` | "(+N more not shown)", with no way to page |
 | Reading positions | 200 pages remembered | `App.jsx` | An older paper opens at page 1 |
 | PDFs attached to a chat message | 15 MB each, 4 a message | `chat/ChatDock.jsx`, `ai_context.py` | A fifth is ignored without a word |
 | SVG and Mermaid fences | 50,000 characters; 500 Mermaid edges | `shared/lib/svgSanitize.js`, `shared/lib/mermaidRenderer.js` | An exported matplotlib or draw.io SVG is refused |
@@ -107,7 +110,8 @@ Ranked by how likely a user meets them.
 dictation and of an AI picture; 20 active jobs an account and 20 manual
 snapshots a workspace; 50 workspaces a user; the block search's 2 s
 budget, which says it stopped early and now goes on from where it
-stopped; 32 AI tool rounds (up to 100) and 200 actions a message; 5,000
+stopped; 32 AI tool rounds (up to 100, or unlimited, which lifts the 200
+actions too) and 200 actions a message; 5,000
 characters of a translated selection, with a message; 1 GB of free disk
 before an export, a snapshot or a staged upload.
 

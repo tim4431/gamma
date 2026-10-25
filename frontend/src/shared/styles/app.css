@@ -3638,7 +3638,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatErrorHead { display: flex; align-items: flex-start; gap: 6px; font-weight: 600; color: var(--danger); }
 .chatErrorHead svg { flex: none; margin-top: 0.15em; }
 .chatErrorText { margin-top: 2px; }
-.chatErrorActions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chatErrorActions, .chatLimitActions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .chatErrorDetails { margin-top: 8px; color: var(--text-muted); font-size: calc(var(--fs-xs) * var(--text-scale, 1)); }
 .chatErrorDetails summary { cursor: pointer; width: fit-content; }
 .chatErrorDetails pre {
