@@ -10,9 +10,10 @@
 import { useCallback, useRef } from "react";
 import { reducedMotion } from "./motion.js";
 
-// The longest a copy stays when its animation never reports its end (a
-// tab in the background, a kind without a recipe).
-const LONGEST_MS = 1000;
+// Longer than any way out, glide or entry (motion.css): a copy whose
+// animation never reports its end (a tab in the background, a kind without
+// a recipe) goes by then, and ListMotion lands whatever an event missed.
+export const LONGEST_MS = 1000;
 
 // A surface that arrives takes the place of any copy of its kind still on
 // its way out, as a native menu does: a menu opened as another closes, the

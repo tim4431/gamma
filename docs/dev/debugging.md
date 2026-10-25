@@ -893,6 +893,16 @@ The scenarios live in `tests/e2e/scenarios/`:
 - `auth.mjs`: refusing an inaccessible explicit workspace without opening a
   different library, the login page, guest login (a new throwaway account
   each time) and demo mode ([guests.md](guests.md)).
+- `motion.mjs` ([ui-design.md](ui-design.md) "Motion"): a menu grows from
+  the cursor and leaves through an inert copy the next menu takes the
+  place of; a closed dialog fading out is not open; the outline's, the
+  library's, the tab strip's, the Inbox's, Background tasks', the Comments
+  window's and the PDF margin's lists glide, come in and leave as the doc
+  says, and loads, another client's edits and Load more move nothing; a
+  segmented control's frame slides; the share popover and Recently deleted
+  open on what they had; a theme change draws every colour in one frame;
+  and under reduced motion each of them moves nothing and leaves no copy.
+  `npm run e2e -- --only motion`.
 - `i18n.mjs`: Settings → Appearance → Language switches the interface to
   Chinese and back through the reload ([i18n.md](i18n.md)). `--only i18n`.
 - `share.mjs`: the share dialog, the anonymous share view (PDF, highlight,
