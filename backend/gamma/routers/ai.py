@@ -1005,7 +1005,7 @@ class WatchedStream(StreamingResponse):
 # Backs the viewer's translated view: the frontend segments a page into
 # paragraph blocks (frontend/src/pdf/pdfTranslate.js) and sends their TEXT here;
 # geometry never leaves the client. Translations are cached per (user_id, target
-# language, model, source text) — IN MEMORY only, deliberately: nothing is
+# language, model, the paper's brief key, source text) — IN MEMORY only, deliberately: nothing is
 # persisted to disk, the cache just makes retries, re-shows and halted-job
 # resumes free until the server restarts.
 
@@ -1049,10 +1049,11 @@ class AITranslateRequest(BaseModel):
     texts: list = Field(default_factory=list)  # source paragraphs, viewer order
     lang: str = "zh-CN"   # target language code (TRANSLATE_LANGS key)
     model: str = ""       # model registry id, or "engine:<id>" (a translation service); "" = the user's default
-    effort: str = ""      # reasoning effort; "" = provider default (param omitted)
+    effort: str = ""      # reasoning effort; "" = the model's lowest level (_translate_effort)
     # NDJSON stream: {"i": [indices], "text": partial} lines as the model
     # writes each paragraph (the viewer types them into the page), then the
-    # same final {"translations", "model", "cached"} object as the plain reply.
+    # same final {"translations", "model", "cached", "redone", "effort"}
+    # object as the plain reply.
     stream: bool = False
     # The page whose PDF is being translated: its paper's brief
     # (translate_context) is made from the stored file and carried in the
@@ -1231,7 +1232,7 @@ def ai_translate(payload: AITranslateRequest, request: Request):
         # neighbours: they are the chunk's, not its own.
         context = ("", "", payload.section) if alone else (payload.before, payload.after, payload.section)
         return (translate_context.user_turn(batch_texts, *context),
-                translate_context.system_prompt(lang, brief.text if brief else ""))
+                translate_context.system_prompt(lang, brief or ""))
 
     def call(brief, batch_texts, alone=False):
         messages, system = request_parts(brief, batch_texts, alone)

@@ -84,8 +84,6 @@ export const TOPBAR_ITEMS = Object.freeze([
   },
 ]);
 
-export const TOPBAR_ITEM = Object.freeze(Object.fromEntries(TOPBAR_ITEMS.map((item) => [item.id, item])));
-
 export const DEFAULT_TOPBAR = Object.freeze(Object.fromEntries(TOPBAR_ITEMS.map((item) => [item.id, item.modes[0]])));
 
 const MODE_LABELS = { always: T("Shown"), hidden: T("Hidden") };

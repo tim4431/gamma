@@ -216,9 +216,9 @@ ignored, so a newer page's claim still draws under an older shell.
 The bar and the launcher are the desktop app's own pages,
 `desktop/ui/bar.html` and `launcher.html`, with the `theme.css`,
 `tokens.css` and fonts they share. The build copies `desktop/ui/` into the
-bundle's `chrome` folder ([How the bundle is made](#how-the-bundle-is-made)),
-so the same two files serve both shells, and a change to them is a change
-to both ([desktop/docs/architecture.md "Window"](../../desktop/docs/architecture.md#window)).
+bundle's `chrome` folder ([How the bundle is made](#how-the-bundle-is-made)).
+The same two files serve both shells, so a change to them is a change to
+both ([desktop/docs/architecture.md "Window"](../../desktop/docs/architecture.md#window)).
 Each page shows in a `WKWebView` of its own, loaded with
 `loadFileURL(_:allowingReadAccessTo:)` of that folder, through one
 configuration that loads nothing else (`Shell/Chrome.swift`). The page's
@@ -245,14 +245,14 @@ web view never gets any of it, and keeps loading server pages only
   mark, *All servers…* and ⌘⇧L toggle it (`AppModel.toggleLauncher`): a
   launcher that is up without an error closes, and otherwise a fresh one
   opens. *Open* on the server shown closes it too.
-- **Keyboard.** `UIKeyCommand`s on the controller, which becomes first
-  responder when it appears, so they work before any web view has focus,
-  and takes it back when a launcher that had it closes, so they keep
-  working after a tap in the launcher: ⌘⇧L toggles the launcher, and ⌘R
-  reloads the page (`reload`, below). ⌘⇧L first closes an open dropdown
-  through the bar's page (an Escape keydown, which `bar.html` closes it
-  on), so the next tap on the switcher opens it again, and puts the bar's
-  view back to its strip.
+- **Keyboard.** ⌘⇧L toggles the launcher, and ⌘R reloads the page
+  (`reload`, below). They are `UIKeyCommand`s on the controller. It
+  becomes first responder when it appears, so they work before any web
+  view has focus, and takes the focus back when a launcher that had it
+  closes, so they keep working after a tap in the launcher. ⌘⇧L first
+  closes an open dropdown through the bar's page (an Escape keydown,
+  which `bar.html` closes it on), so the next tap on the switcher opens
+  it again, and puts the bar's view back to its strip.
 - **What the iPad leaves out.** There are no capability flags: the pages
   ship in the same bundle as the Swift that answers them. What only the
   desktop does is hidden in two ways:
@@ -266,8 +266,8 @@ web view never gets any of it, and keeps loading server pages only
     (This iPad cannot be removed).
 
   The same attribute gives touch sizes. `theme.css` makes `.ctlBtn` 36 px
-  square, and `bar.html`'s own iPad block makes the row 44 px and the
-  mark, the switcher and the menu rows about 36 px, keeps the status on
+  square. `bar.html`'s own iPad block makes the row 44 px and the mark,
+  the switcher and the menu rows about 36 px. It also keeps the status on
   one line, clipped where it does not fit, leaves out the 146 px kept for
   the desktop's window controls, and stops the menu 16 px above the
   screen's bottom. The launcher's footer reads "Gamma for iPad
@@ -353,11 +353,11 @@ listener, and asks for the state itself once it runs.
   own cookie goes along and nothing is put into the page's world: the
   desktop's `refreshGamma`. It reads after every finished main-frame load,
   on every change of the web view's `url` (the web app writes `?ws=` with
-  `replaceState`, and signs in without a load) and on the `state` call;
-  only while the page is on the shown server's origin and not loading,
-  one read at a time. A load's new address comes before its document, so
-  a read then would run in the old one; it reads once the load finishes
-  instead. Opening another server clears it.
+  `replaceState`, and signs in without a load) and on the `state` call.
+  It reads only while the page is on the shown server's origin and not
+  loading, one read at a time: a load's new address comes before its
+  document, so a read then would run in the old one, and it reads once
+  the load finishes instead. Opening another server clears it.
 - **`gamma`** is null with no one signed in, and while the page is not on
   the chosen server's origin (a remote's page still showing while This
   iPad starts). Otherwise `user` and `list` are the session's, as the
@@ -389,7 +389,7 @@ again* call:
 
 `open` never adds a server: an address is listed with the launcher's *Add
 remote server…*. `AppModel.loadError` is set when the page's main-frame
-load fails and cleared when a page commits (`Navigation.onLoad`); a commit
+load fails and cleared when a page commits (`Navigation.onLoad`). A commit
 while it was set also closes a launcher that shows an error.
 
 Failures reach the launcher as the desktop sends them: it loads with
@@ -1025,21 +1025,21 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
     string), a `servers` message refused, the declared flags
     (`pencilRoll`, `openFiles`, and `calligraphy` and `snap` in
     `inkLooks`)
-  - the chrome without a web view (`ChromeTests.swift`): who may call
-    (`Chrome.accepts`: a `file:` main frame, not a frame inside it, a
+  - the chrome's bridge (`ChromeTests`, in `ChromeTests.swift`): who may
+    call (`Chrome.accepts`: a `file:` main frame, not a frame inside it, a
     server's page or none), the launcher's URL with a failure that
-    survives the round trip (a `+` included), both failures' JSON
-    (`ChromeTests`); the state (`ShellStateTests`): This iPad first, the
-    ids, kept and default names, `busy` while starting and when slow,
-    `gamma` from a session with and without `?ws=` and not from another
-    origin, no `keeping`, `update` or `settings`, and a full state valid
-    JSON; and `AppModel`'s rules (`LauncherTests`): the launcher at the
-    first launch only, its toggle, opening the server shown closing it
-    without a reload, a load error sent to the launcher and opening
-    retrying, a page arriving closing a launcher with an error and not one
-    opened by hand, servers added at the end, names moved and dropped
-    with their server, `open` never listing a server, and removing the
-    server chosen unchoosing it
+    survives the round trip (a `+` included), and both failures' JSON
+  - the chrome's state (`ShellStateTests`): This iPad first, the ids, kept
+    and default names, `busy` while starting and when slow, `gamma` from a
+    session with and without `?ws=` and not from another origin, no
+    `keeping`, `update` or `settings`, and a full state valid JSON
+  - opening and the launcher (`LauncherTests`, `AppModel`'s rules): the
+    launcher at the first launch only, its toggle, opening the server
+    shown closing it without a reload, a load error sent to the launcher
+    and opening retrying, a page arriving closing a launcher with an error
+    and not one opened by hand, servers added at the end, names moved and
+    dropped with their server, `open` never listing a server, and removing
+    the server chosen unchoosing it
   - the opened files' store (`OpenedFilesTests`): a file copied and
     listed with its name, size and type, read back whole over several
     chunks, an offset past the end and an unknown id refused, the copy

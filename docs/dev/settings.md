@@ -811,9 +811,8 @@ and `tests/topbarItems.test.mjs` covers it.
 Home, Back, the tabs and Account & settings are not configurable: the
 account menu is where hidden buttons go, and the way back to this setting.
 
-The preference replaced `syncPillScope` (`gamma-sync-pill`), the sync
-pill's Synced pages / Every page choice. The old value is not carried
-over, so an account that chose Every page is back on Synced pages once.
+A `syncPillScope` (`gamma-sync-pill`) left in a profile from before this
+preference is not read: such an account starts on Synced pages.
 
 ## Chat settings are global
 

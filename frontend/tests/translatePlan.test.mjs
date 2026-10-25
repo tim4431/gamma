@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { segmentPage } from "../src/pdf/pdfTranslate.js";
 import {
-  BREAK, chunkUnits, continues, createPlanner, isCaption, isHeading, pageLayout, pageUnits, partials,
+  BREAK, chunkUnits, continues, createPlanner, isCaption, isHeading, pageLayout, partials,
   readingOrder, requestFields, results,
 } from "../src/pdf/translatePlan.js";
 
@@ -166,7 +166,7 @@ test("walking back to a long paragraph's start never drops the block being plann
 test("a page outside the job is never joined into; filled blocks are skipped", () => {
   const alone = createPlanner({ paras: (pn) => PAGES.get(pn) || null, inJob: (pn) => pn === 1 }).planPage(1);
   assert.ok(alone.every((u) => u.targets.every((t) => t.pn === 1)));
-  const own = pageUnits(1, PAGES.get(1));
+  const own = createPlanner({ paras: (pn) => (pn === 1 ? PAGES.get(1) : null) }).planPage(1);
   assert.equal(own.filter((u) => u.targets.length > 1).length, 1, "the column join stays");
   const skip = at(1, "Ensembles of neutral atoms");
   const units = createPlanner({ paras: (pn) => PAGES.get(pn) || null, filled: (pn, i) => pn === 1 && i === skip }).planPage(1);

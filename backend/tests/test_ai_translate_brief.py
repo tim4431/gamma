@@ -166,7 +166,7 @@ def test_render_brief_drops_what_it_cannot_use():
                                    "stray", {"source": "", "target": "空"}]})
     assert "fidelity → 保真度" in text and "EIT → EIT" not in text and "空" not in text
     brief = parse_brief("Here you go:\n```json\n" + BRIEF + "\n```")
-    assert brief and len(brief.hash) == 16 and brief.text.startswith("The paper's brief")
+    assert brief and brief.startswith("The paper's brief")
 
 
 def _stream_fake(monkeypatch, calls):

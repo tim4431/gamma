@@ -119,7 +119,8 @@ final class Chrome: NSObject, WKScriptMessageHandlerWithReply, WKNavigationDeleg
     }
 }
 
-/// A chrome call refused, with the sentence the page shows.
+/// A refusal with the sentence shown for it: a chrome call's, which the
+/// page's promise rejects with, or the Gamma Cloud sign-in's (CloudSignIn).
 struct Refusal: LocalizedError {
     let message: String
 

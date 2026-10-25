@@ -427,8 +427,8 @@ strip included:
   `makeLabel`).
 - Share…, Export… and Ask AI act on the page itself, so they open it first
   and run once it is on screen (`openPageThen`, openBlock's `then`). An
-  open another one overtakes (a tab pressed before the page lands) drops
-  its action with it.
+  open that a later one overtakes (a tab pressed before the page lands)
+  drops its action with it.
 - A folder: Open | New page here · New subfolder | Move to ▸ · Move up ·
   Move down | Rename · Pin · Share… · Export… · Keep on this computer…
   (desktop app only, a folder filed once) | Delete.

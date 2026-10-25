@@ -310,8 +310,8 @@ stroke glyphs as `frontend/src/shared/ui/Icons.jsx`.
 
 **The iPad app shows these pages too.** It copies `ui/` into its bundle
 and shows `bar.html` above its web view and `launcher.html` over it, with
-a `gammaShell` of its own in Swift ([docs/dev/ipad.md "The chrome"](../../docs/dev/ipad.md#the-chrome)),
-so a change to the bar or the launcher is a change to both shells. Its
+a `gammaShell` of its own in Swift ([docs/dev/ipad.md "The chrome"](../../docs/dev/ipad.md#the-chrome)).
+A change to the bar or the launcher is a change to both shells. Its
 `gammaShell.platform` is `ipad`, which each page puts on
 `body[data-platform]`. What only the desktop does is hidden there in two
 ways, neither of which changes the desktop. Its state has no `keeping`,
@@ -319,8 +319,8 @@ ways, neither of which changes the desktop. Its state has no `keeping`,
 update pill, and the launcher no Settings block. And one rule in
 `theme.css`, `body[data-platform="ipad"] .desktopOnly`, hides *New local
 server* and a local card's Remove. Under the same attribute `theme.css`
-and `bar.html` take touch sizes (a 44 px bar below the status bar's inset,
-36 px targets, no 146 px reserve), the bar's status stays on one line, and
+and `bar.html` take touch sizes: a 44 px bar below the status bar's inset,
+36 px targets, no 146 px reserve. The bar's status stays on one line, and
 the shortcut hints read ⌘⇧L and ⌘R.
 
 ### Gamma Cloud sign-in

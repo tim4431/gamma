@@ -15,12 +15,11 @@ import { MarkupLayers, NO_MARKS } from "../markup/MarkupLayers";
 import { armedClasses, usePageTools } from "../markup/PageTools";
 import { ZoomWindow } from "../ink/ZoomWindow.jsx";
 import { revealDelta } from "../ink/zoomWindow.js";
-import { KEEP_MARGIN, RENDER_MARGIN, ZOOM_SETTLE_MS, cropPage, forgetPixels, installPageRaster, keepPixels, showsKept, takePixels } from "./pageRaster.js";
+import { KEEP_MARGIN, RENDER_MARGIN, ZOOM_SETTLE_MS, basePixels, cropPage, forgetPixels, installPageRaster, keepPixels, showsKept, takePixels } from "./pageRaster.js";
 import { installVerticalScrollSnap } from "./verticalScrollSnap.js";
 import { segmentPage, selectionParagraphs, textRuns } from "./pdfTranslate";
 import { HEAD_CHARS, chunkUnits, createPlanner, partials, readingOrder, results } from "./translatePlan";
 import { pageFaces } from "./pdfFonts";
-import { basePixels } from "./pageRaster";
 import { BACKFILL_DELAY_MS, chooseTransport, docIdOf, layoutFromManifest, rangeOpenOptions, typicalPageIndex } from "./pdfSource";
 import { normalizeChars } from "../shared/lib/textnorm";
 import { apiJson, copyText, withShare, withWorkspace } from "../shared/lib/utils";
@@ -1445,8 +1444,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     for (let pn = 1; pn <= Math.min(3, numPagesRef.current) && text.length < HEAD_CHARS; pn++) {
       let paras = [];
       try { paras = await ensureParas(pn); } catch {}
-      for (const i of readingOrder(paras)) text += `${paras[i].text}
-`;
+      for (const i of readingOrder(paras)) text += `${paras[i].text}\n`;
     }
     return text.slice(0, HEAD_CHARS);
   }
@@ -1481,13 +1479,12 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     // block index (translatePlan.results): text, null for a block that came
     // back untranslated (the original shows; "Translate this page" asks
     // again), or "" for a block whose words went to the part before it
-    // (masked). It is
-    // seeded from the page's entry under this job's key, so a re-run keeps
-    // what an earlier job finished and requests only the rest — its
-    // untranslated blocks included, which go back to pending. `pending`:
-    // blocks still without a result; `busy`: blocks whose request is in
-    // flight (the page shimmers those lines); `partial`: text streamed so
-    // far per block (typed onto the page ahead of the final text).
+    // (masked). It is seeded from the page's entry under this job's key, so
+    // a re-run keeps what an earlier job finished and requests only the
+    // rest — its untranslated blocks included, which go back to pending.
+    // `pending`: blocks still without a result; `busy`: blocks whose request
+    // is in flight (the page shimmers those lines); `partial`: text streamed
+    // so far per block (typed onto the page ahead of the final text).
     const states = new Map();
     const stateOf = (pn) => {
       let st = states.get(pn);
@@ -2206,7 +2203,8 @@ function TransPara({ box, lines, baseSize, text, streaming, block, page, scale, 
 // that page holds no pixels (not drawn yet, or let go far from the view)
 // the formula's extracted text stands in; the next paint of the page's
 // whole bitmap (`basePaints`) draws it. The bare class is set here, in the
-// layout phase before the paragraph measures its fit, not through state.
+// layout phase before the paragraph measures its fit, not through state; the
+// box's size rides in custom properties so that class can let it go.
 function TransMath({ span, page, em, scale, basePaints }) {
   const ref = useRef(null);
   // A formula from another page (moved across a page join) redraws when that
@@ -2238,9 +2236,9 @@ function TransMath({ span, page, em, scale, basePaints }) {
   }, [span, page, scale, basePaints, elsewhere]);
   return (
     <span ref={ref} className="pdfTransMath" style={{
-      width: `${(span.x2 - span.x1) / em}em`,
-      height: `${(span.y2 - span.y1) / em}em`,
-      verticalAlign: `${-(span.y2 - span.base) / em}em`,
+      "--w": `${(span.x2 - span.x1) / em}em`,
+      "--h": `${(span.y2 - span.y1) / em}em`,
+      "--shift": `${-(span.y2 - span.base) / em}em`,
     }}>
       <canvas aria-hidden="true" />
       <span className="pdfTransMathText">{span.str}</span>
