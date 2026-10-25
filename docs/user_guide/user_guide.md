@@ -260,7 +260,7 @@ The **link button** in the top bar shares the open page.
 
 - **Share** makes the link. **Copy link** carries the workspace, so a teammate lands in the right library.
 - **Who has access**: invite people by name, each with **View** or **Edit**. They find the page in their Inbox.
-- **Gamma Cloud**: on a server with Gamma Cloud sign-in, the switch beside Who has access invites someone by their Gamma Cloud username, even without an account here yet. They show as **pending** until they sign in with Gamma Cloud, then the page is theirs to open. If someone here already goes by their username, they get a name like *tim-2*, with their Gamma Cloud name shown beside it.
+- **E-mail**: on a server whose Gamma Cloud sign-in allows it, the **This server / E-mail** switch beside Who has access invites someone by their e-mail address, even without an account here yet. Gamma Cloud mails them a link to create a free Gamma Cloud account or sign in with theirs. They show as **invited**, with **View** or **Edit**, a resend and a withdraw button, until they accept; then the page is theirs to open. Only the mailed link lets anyone in, so someone who already has an account here gets the mail too and accepts the same way. If someone here already goes by their Gamma Cloud username, they get a name like *tim-2*, with their Gamma Cloud name shown beside it.
 - **Requests to join**: on a server that admits invited people only, someone who signs in from your link without an invitation asks to join instead. The request heads Who has access with **Approve** and **Decline**, and comes to your Inbox; they sign in again once you approve.
 - **General access**: anyone with the link, signed-in users, or invited people only, with View or Edit for that audience.
 - Editors edit alongside you with live cursors. **Stop sharing** ends the link.
@@ -273,7 +273,7 @@ The **link button** in the top bar shares the open page.
 A workspace is a separate library. The account menu lists yours and switches between them.
 
 - **Personal** workspaces are yours alone; make more for separate projects.
-- **Shared** workspaces are created by an administrator, with **owners**, **editors** and **viewers**.
+- **Shared** workspaces are created by an administrator, with **owners**, **editors** and **viewers**. An owner invites people from the workspace's **Manage** page: an account on this server or, where Gamma Cloud sign-in allows it, an e-mail address, which gets a link to join as an editor or a viewer.
 - Edits and cursors appear live; two people in the same block merge by span.
 - Open tabs, pinned folders and reading positions follow your account across devices.
 
@@ -405,10 +405,12 @@ Account menu → **Settings**, or **Ctrl+,**; the card with your name at the top
 | Keyboard | Every shortcut, rebindable; what Enter makes |
 | AI → Connections, Chat, Tool usage, Integrations | Providers and keys, defaults, agent permissions, assistants |
 | Workspaces, Backups, Maintenance | Workspaces and clones, snapshots, storage and index health |
-| Users, Server (administrators) | Accounts, public URL, Gamma Cloud sign-in and requests to join, shared workspaces, server backups, the log |
+| Users, Server (administrators) | Accounts and invitations by e-mail, public URL, Gamma Cloud sign-in and requests to join, shared workspaces, server backups, the log |
 | Help & diagnostics | Session log, **Report a problem…** (adds what a maintainer needs, never your notes) |
 
 **Top bar** in Appearance hides a button you never use, or shows Background tasks and the Inbox only when they have news. A hidden button becomes a row of the account menu, and its shortcut still works.
+
+**Invite by e-mail…** in Users mails someone who has no account yet a link to make a free Gamma Cloud account, or sign in with theirs, and join this server. The **Invitations** list under the accounts sends one again or withdraws it.
 
 ## Shortcut cheat sheet
 

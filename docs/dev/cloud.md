@@ -87,6 +87,13 @@ account per inbox, a throwaway-domain list, an allowed-domain list (a
 university only), rate limits and Cloudflare's rules bound an open
 sign-up. An invite code can carry a plan, a number of uses, an expiry
 and a grant that ends after so many days, and it remembers who used it.
+A Gamma server can also invite someone by e-mail: the account server
+mails the link, and the person makes an account or signs in, then lands
+on that server. While sign-up needs a code, such an invitation carries a
+one-use code only from a server the operator runs (the shared server, a
+hosted container, a client made on the Admin page), or from any
+connected server once the operator allows it, and never while the
+allowed-domain list is set. Those codes stay out of the Invites tab.
 
 **Buying a plan.** The Plan page sends the browser to Stripe Checkout
 with a price the server looked up; the browser never names a plan. The
@@ -165,7 +172,7 @@ override) reserves.
 
 | kind | examples | changed by |
 |---|---|---|
-| **settings** in `cloud.db`, effect at once | registration mode, Turnstile, blocked and allowed mail domains, plans on sale, alerts and their address, the default image tag, automatic upgrades, fleet-wide environment | Admin → Settings and Servers, or `manage.py settings` |
+| **settings** in `cloud.db`, effect at once | registration mode, Turnstile, blocked and allowed mail domains, whose e-mail invitations carry an invite code (`invitation_signup`), plans on sale, alerts and their address, the default image tag, automatic upgrades, fleet-wide environment | Admin → Settings and Servers, or `manage.py settings` |
 | **environment** of the account server | the public URL, mail, Stripe keys and price ids, the shared server's addresses, the hosting domain and suffix, the fleet image, Google/GitHub, the Cloudflare DNS token | `.env` on the VPS and a restart; the Settings tab shows each as set, missing or off |
 | **code** | what a plan contains and costs, the container size per plan, the grace, read-only and deletion periods, the alert kinds and their delays | `config.py`, `alerts.py`; a new image |
 | **per server** | its own quota, seats and size, its own environment variables, suspend | the Servers tab's Actions |
@@ -179,7 +186,7 @@ that deep-link by hash:
 |---|---|
 | Overview | what needs attention, then the numbers: accounts, paying and monthly revenue, servers by state, hosts, failed jobs |
 | Accounts | search; the granted plan and when it ends; verify, rename, admin, delete, restore, purge |
-| Invites | codes with uses, plan, expiry, grant length, who used them; on/off; a copyable sign-up link |
+| Invites | codes with uses, plan, expiry, grant length, who used them; on/off; a copyable sign-up link (not the codes e-mail invitations carry) |
 | Clients | the OIDC clients of hosted servers and the share host, and the ones people connected themselves |
 | Machines | a card per host with its capacity and containers; for the one selected, every container on it (the account server, the share host, Caddy, the demo, the agent, the hosted servers) with its image, state, use and actions (logs, restart, stop, start, update, rollback, *Update all*), the host's placement, public IP, name, token and removal, and its recent jobs |
 | Servers | every hosted server with its state, version, data, trends and actions (restart, stop, suspend, limits, environment, logs, history, upgrade, rollback, delete); the default image and upgrade runs; fleet-wide environment; the job queue |

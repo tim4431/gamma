@@ -34,17 +34,85 @@ make another member an owner before removing or demoting the current owner.
 account (a `SELECT 1` under its `BEGIN IMMEDIATE`) rather than changing a
 member's role. A new member gets an `invited` item in their Inbox from
 `by`, after the commit ([comments.md](comments.md) "The inbox"); so do the
-members `invite_cloud` and `claim_pending_memberships` add (below). A role
-change tells no one. `remove_member` (removed, or leaving) deletes the
-member's Inbox items from that workspace with the membership.
+members `invite_cloud`, `claim_pending_memberships` and `email_invites`
+add (below). A role change tells no one. `remove_member` (removed, or
+leaving) deletes the member's Inbox items from that workspace with the
+membership.
 
-### Pending invitations (Gamma Cloud usernames)
+### Pending invitations
 
 When this server signs people in with Gamma Cloud
 ([cloud_accounts.md](cloud_accounts.md)), an owner or an administrator can
-also invite a person who has no account here yet by their **Gamma Cloud
-username**. The invite editor then offers "On this server" or "Gamma Cloud
-username". Such an invitation grants edit or view access, never ownership:
+also invite a person by their **e-mail address**, whether or not they have
+an account here, or someone with no account here yet by their **Gamma
+Cloud username**. Either invitation grants edit or view access, never
+ownership, and waits for the person's cloud sign-in. The Manage page's
+invite dialog offers "On this server" or "E-mail" (below). The username
+is left to the API (`POST /workspaces/{id}/invites {username, role}`),
+and invitations made that way still list with their withdraw button.
+
+**By e-mail** (`gamma/email_invites.py`; the Gamma side in
+[cloud_accounts.md](cloud_accounts.md) "Invitations by e-mail"):
+
+1. The dialog offers "E-mail" only where a mailed link can reach this
+   server and new cloud accounts are let in: cloud sign-in on, the server
+   connected, a sign-in client of its own rather than the desktop app's
+   public one, and the `provision` or `invited` policy
+   (`email_invites.available`, `server-config`'s
+   `cloud.email_invites.members`). Elsewhere the API refuses with the
+   reason.
+2. The server asks the account server, on the inviter's own Gamma Cloud
+   grant, to mail the address a link, whoever the address belongs to; the
+   Gamma server never sends mail itself, and never looks the address up
+   among its accounts. The answer is the same for every address
+   (`invited: {pending: entry}`), so it tells the inviter nothing about
+   who has it. Then the server records a row in `email_invites` (users.db,
+   step 43): an `id`, a separate secret `link_id`, the address as typed and
+   lowercased, kind `workspace`, the workspace, the role, the inviter, the
+   server address the mail went out with, when it was made and last
+   mailed, and when it expires. There is one row per workspace and
+   address. Inviting the address again keeps the row's `id` and `link_id`,
+   changes the role and mails it again.
+3. The mail's link leads to the account server's invitation page. There
+   the person creates a Gamma Cloud account or signs in, and *Continue*
+   sends them to this server's `/api/auth/cloud/start` with `next`
+   `/?ws=<id>` and `invite` the `link_id`.
+4. **Admission and the claim.** Only that link lets anyone in. The
+   `link_id` rides along in the pending sign-in, and the unexpired row it
+   names admits a new account under `provision` and `invited` while the
+   workspace is still shared (`email_invites.admits`); under `refuse` and
+   `claim` only an admin's invitation to the server admits. A sign-in
+   without the link, even under the invited address, gets nothing from
+   the invitation. The sign-in then calls `email_invites.claim` from
+   `cloud_auth.resolve_account`, after `claim_pending_memberships`: the row
+   becomes a `workspace_members` row with its role, the new member gets an
+   `invited` Inbox item from the inviter, and the row is deleted, its link
+   dropped at the account server so it works once. Someone already here,
+   or already a member, accepts the same way, and a membership they have
+   keeps its own role.
+
+Only owners and administrators see these invitations, since the addresses
+are personal data. For them the workspace's `members` lists the e-mail ones
+after the username ones as `{email, id, role, added_by, added_at,
+expires_at, pending: true}`, with no username, and `GET
+/workspaces/{id}/invites` adds them as `email_invites`. Nothing a list
+returns carries the `link_id`, which admits whoever holds it. The Manage
+page shows each one with the address, an *invited* tag, its role, inviter
+and expiry, a role menu, *Send the invitation again* (a new mail under the
+same `link_id`, whose link replaces the one mailed before, and 14 days
+from now) and a withdraw button behind a confirm (the row goes, and the
+account server is asked in the background to drop the link, on the first
+Gamma Cloud grant this server holds among the withdrawer, the inviter and
+an admin: `email_invites.cancel_links`). A workspace
+holds at most 100 waiting (`email_invites.MAX_PER_TARGET`), and each
+account sends or resends at most 20 an hour, shares and Settings → Users
+included (`SENDS_PER_HOUR`). An invitation expires after 14 days, and an
+hourly sweep deletes it. Deleting the workspace or converting it to
+personal deletes its rows too and drops their links at the account server,
+each at the address its mail went out with, which the row records. Tests:
+`backend/tests/test_email_invites.py`.
+
+**By Gamma Cloud username:**
 
 1. The server asks the account server for the account with exactly that
    username (`GET <issuer>/api/lookup/username?u=`, bearer access token).
@@ -67,12 +135,13 @@ username". Such an invitation grants edit or view access, never ownership:
 
 Under the `invited` sign-in policy a pending row is also what admits a
 newcomer: a cloud account with no account here is provisioned only when an
-invitation waits for its subject (this one, or a share's), or an admin
-approved its request to join, and the claim then makes it a member
-([cloud_accounts.md](cloud_accounts.md) "Which local account"). A page or
-folder share invites by Gamma Cloud username the same way, for that page
-or folder alone ([cloud_accounts.md](cloud_accounts.md) "A share's
-invitations by cloud username").
+invitation waits for its subject (this one, or a share's), its sign-in
+came through the mailed link of an invitation by e-mail (above), or an
+admin approved its request to join, and the claim then makes it a member ([cloud_accounts.md](cloud_accounts.md)
+"Which local account"). A page or folder share invites by e-mail and by
+Gamma Cloud username the same way, for that page or folder alone
+([cloud_accounts.md](cloud_accounts.md) "A share's invitations by cloud
+username", "Invitations by e-mail").
 
 Pending rows are keyed by subject, not by username, so a later rename on
 either side does not redirect an invitation. `GET /workspaces/{id}` lists
@@ -80,9 +149,9 @@ pending rows after the members, tagged `pending: true` with their `subject`.
 The Manage page shows them with a *pending* tag and a remove button that
 withdraws the invitation. Deleting a workspace removes its pending rows, and
 so does converting it to personal. Counts of `members` include explicit
-members only. Invitations require cloud sign-in on this server, and the
-lookup is rate limited per inviting account, a share's invitations
-counting too. Code: `backend/gamma/workspaces.py`
+members only. Invitations by username require cloud sign-in on this
+server, and the lookup is rate limited per inviting account, a share's
+invitations counting too. Code: `backend/gamma/workspaces.py`
 (`invite_cloud`, `claim_pending_memberships`; the lookup is
 `cloud_auth.lookup_username`); tests:
 `backend/tests/test_pending_memberships.py`.
@@ -235,18 +304,22 @@ in the [API reference](api.md).
 | `DELETE /workspaces/{id}` | Delete the workspace, its content and its saved workspace backups, after one final copy went to `backups/deleted/` |
 | `PUT /workspaces/{id}/members/{user}` | Invite or change a membership role |
 | `DELETE /workspaces/{id}/members/{user}` | Remove a member, or leave your own explicit membership |
-| `POST /workspaces/{id}/invites` | Invite by Gamma Cloud username (`{username, role}`): a membership now, or a pending one |
-| `GET /workspaces/{id}/invites` | Pending invitations waiting for a first cloud sign-in |
-| `DELETE /workspaces/{id}/invites/{subject}` | Withdraw a pending invitation |
+| `POST /workspaces/{id}/invites` | Invite someone who may have no account here: `{email, role}` mails an invitation whoever the address belongs to, `{username, role}` invites by Gamma Cloud username, `{invitation, role}` changes a waiting e-mail invitation's role |
+| `GET /workspaces/{id}/invites` | Pending invitations: by username (`invites`) and, for owners and administrators, by e-mail (`email_invites`) |
+| `DELETE /workspaces/{id}/invites/{subject}` | Withdraw a pending invitation by username |
+| `DELETE /workspaces/{id}/email-invites/{invite_id}` | Withdraw an invitation by e-mail; its link stops working |
+| `POST /workspaces/{id}/email-invites/{invite_id}/resend` | Mail an invitation by e-mail again |
 | `GET /workspaces/find-page/{id}` | Locate a page or block among accessible workspaces |
 | `GET /accounts` | `{accounts: [{username, is_admin}]}` for invite and owner pickers; non-guest accounts only |
 | `GET /admin/workspaces` | Administrator's inventory, including orphaned directories |
 
 `GET /session` and `/workspaces/mine` use `members` as a count. Workspace
 details use `members` as an array, with pending invitations last
-(`pending: true`), and a member's Gamma Cloud username as `cloud` where it
-differs from the name here. Details report `personal_of` as the owner's username; the
-session list instead has a boolean `personal`.
+(`pending: true`; an invitation by e-mail carries `email` and `id` instead
+of a username, for owners and administrators only), and a member's Gamma
+Cloud username as `cloud` where it differs from the name here. Details
+report `personal_of` as the owner's username; the session list instead has
+a boolean `personal`.
 
 ## Browser startup and switching
 
@@ -470,4 +543,5 @@ the links and the client that does the same without the app are
 The historical reasoning is in [research/workspaces.md](../research/workspaces.md).
 Executable coverage is in `backend/tests/test_workspaces.py`,
 `backend/tests/test_pending_memberships.py`,
+`backend/tests/test_email_invites.py`,
 `frontend/tests/sessionState.test.mjs` and `frontend/tests/e2e/`.

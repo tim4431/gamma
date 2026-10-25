@@ -13,16 +13,19 @@ it shares with Gamma are copies, so the account server can move to its own
 repository without a change: the fixed-window rate limiter, the PKCE rules
 and the public-URL rules (`servers.norm_url`, from
 `server_settings.validate_public_url`). The rate limiter has drifted from
-`backend/`'s: it drops `on_first_exceed` and prunes stale keys.
+`backend/`'s: it drops `on_first_exceed` and prunes stale keys, each
+bucket by its own window length, so a full table drops an hour's count
+after its hour and a day's only after its day.
 
-Status: **v0**, plus the preference profile, the linked-server list and
-the username lookup (the account server's half of steps 7 and 8 of the
-plan). Paid plans are sold through Stripe ([billing.md](billing.md)). The
-effective plan is the higher of a grant (an admin's or an invite's) and a
-live subscription. A Lite or Plus account's library is an account on the
-shared server ("Plans on the share host"); a Pro account gets a hosted
-container ([hosted.md](hosted.md)). The consumer side, "Sign in with Gamma Cloud" on
-every Gamma server, is under "The Gamma side" below.
+Status: **v0**, plus the preference profile, the linked-server list, the
+username lookup (the account server's half of steps 7 and 8 of the plan)
+and the e-mail invitations Gamma servers send. Paid plans are sold through
+Stripe ([billing.md](billing.md)). The effective plan is the higher of a
+grant (an admin's or an invite's) and a live subscription. A Lite or Plus
+account's library is an account on the shared server ("Plans on the share
+host"); a Pro account gets a hosted container ([hosted.md](hosted.md)).
+The consumer side, "Sign in with Gamma Cloud" on every Gamma server, is
+under "The Gamma side" below.
 
 ## What it owns
 
@@ -34,6 +37,7 @@ every Gamma server, is under "The Gamma side" below.
 | identity for Gamma servers | an OIDC provider: authorize (PKCE), token, userinfo, JWKS, revoke, discovery; a self-hosted server connects itself for a client of its own |
 | preference profile | a person's settings as a few JSON values the Gamma servers they sign in to pull and push |
 | server list | the Gamma servers a person linked their identity on |
+| e-mail invitations | the mail a Gamma server has sent to someone who is not on it yet, the invitation's page, and a one-use invite code where the operator allows one |
 | hosted servers | one Gamma container per account on a hosted plan, the hosts the fleet agents run on, and their job queue ([hosted.md](hosted.md)) |
 | admin | accounts, invites, OIDC clients, the audit log — API and `manage.py` |
 
@@ -89,6 +93,10 @@ Admin page's Settings tab, with effect at once:
 - allowed mail domains: while the list is not empty, only an address at
   one of them (or a subdomain) registers without an invite code, in
   `open` and `invite` mode alike ("Registration and the portal");
+- whose e-mail invitations carry an invite code (`invitation_signup`):
+  `operator` (default), the servers the operator runs, or `any` connected
+  server ("E-mail invitations from Gamma servers"). A bad row reads as
+  `operator`;
 - the paid plans on sale (`plans_on_sale`, default all three), the
   operator's switch for each plan ([billing.md](billing.md) "Plans on
   sale");
@@ -136,10 +144,11 @@ the signing keys and every token hash.
 | `external_logins` | one Google/GitHub sign-in in flight (15 min): `redirect` while at the provider, `signup` while the username form waits; keyed by the hash of the `gc_ext` cookie (step 2) |
 | `portal_sessions` | the portal cookie's hash; sliding 30 days, newest 20 per account |
 | `email_tokens` | verify / reset / change-email links: hash, kind, expiry, `used_at`; one live link per (account, kind) |
-| `invites` | codes with the uses they were made with (`uses_total`) and the uses left, the plan they grant, `expires_at` (NULL: no end), `disabled` (an admin's off switch) and `grant_days` (the granted plan ends that many days after the registration; NULL: it does not) (step 11) |
+| `invites` | codes with the uses they were made with (`uses_total`) and the uses left, the plan they grant, `expires_at` (NULL: no end), `disabled` (an admin's off switch) and `grant_days` (the granted plan ends that many days after the registration; NULL: it does not) (step 11); `invitation` (1: minted for an e-mail invitation, not by an admin, and kept out of the operator's list; step 13) |
 | `settings` | what an admin edits on the Settings and Servers tabs (`settings.DEFAULTS`): the sign-up gate, the plans on sale, the alerts, the fleet's default tag and automatic upgrades; and two rows read on their own, the fleet's extra environment (`settings.FLEET_ENV_KEY`) and billing's last reconcile time (`billing.RECONCILED_KEY`). A row for any other key is ignored, so a rollback leaves nothing behind |
 | `oauth_clients` | confidential OIDC clients with exact redirect URIs: share-host and container ones an admin made, and `server` ones a person connected (`owner_account_id`, step 5); the desktop client is built in, not a row |
 | `server_connects` | a server connection a person approved, waiting for the server to fetch its client: the code's hash, the account, the server's address, the PKCE challenge (2 min, single use; step 5) |
+| `server_invitations` | an e-mail invitation a Gamma server asked this server to send: the hash of the mailed link's token, the server's address (`server_url`) and name, its own id for the invitation (`invite_id`; one row per server and id), the sign-in client it came through (`client_id`), the kind (`server` / `workspace` / `page` / `folder`), what it is to (`what`), the path there to land on (`next`), the address as typed and its inbox (`email_canon`), the inviter, the invite code minted for it ('' for none), `created_at`, `expires_at` (14 days on) and `accepted_at` (step 13) |
 | `oauth_requests` | a sign-in in progress on the authorize page (10 min) |
 | `oauth_codes` | authorization codes (2 min, single use) and what the exchange issued (`grant_id`, `access_hash`), so a replay revokes exactly that |
 | `grants` | one per device: the rotating refresh token's hash, 90 days from the last rotation, `revoked_at`, the client's `device_id` and `device_name` (a new sign-in with the same `device_id` replaces the grant) |
@@ -187,12 +196,17 @@ message line) and the button comes back; a lost session goes to
 `/login?next=` and returns to the page. The pages never use the browser's
 `alert`, `confirm` or `prompt`: `ask(text, {ok, danger, input})` opens a
 `<dialog>` and answers true or false, or the text typed, and `toast(text)`
-shows a line at the foot that leaves by itself.
+shows a line at the foot that leaves by itself. A `next` the pages carry
+is always a local path (`identities.safe_next`): it starts with one `/`,
+not two, is at most 512 characters, and holds no whitespace, control
+character or backslash, since a browser drops a tab or a line break from
+a URL and reads a backslash as a slash. Anything else lands on `/`.
 
 Two shells in the gammapdf.com palette (`sites/site/styles.css`), light
 and dark, in the quiet bordered look of a workspace tool: the **auth**
 shell (a centred card: sign in, register, verify, reset, the authorize
-page) and the **app** shell (a sidebar and a content column):
+page, an e-mail invitation's page) and the **app** shell (a sidebar and a
+content column):
 
 - **Overview** (`/`): a greeting with username, plan and admin tags, and
   *Open Gamma* (`/open`, "The entrance") while the account has a Gamma to
@@ -281,7 +295,9 @@ page) and the **app** shell (a sidebar and a content column):
     day it was made, with *Turn off* / *Turn on*, *Who used it* (the
     accounts that registered with it, in a row under the code) and
     *Delete*. Spent and expired codes wait behind a "show N spent or
-    expired" toggle.
+    expired" toggle. The codes e-mail invitations carry are not listed,
+    spent or not (`accounts.list_invites`, "E-mail invitations from Gamma
+    servers").
   - Clients: the OIDC clients of hosted servers — create (the secret is
     shown once as the two env lines a container needs) and delete. A
     `server` client shows the account id that owns it.
@@ -298,9 +314,11 @@ page) and the **app** shell (a sidebar and a content column):
     status, each with a Refresh from Stripe and a link into Stripe's
     dashboard, and the newest webhook events ([billing.md](billing.md)).
   - **Settings**, in sections: *Sign-up* (the mode, Turnstile, the blocked
-    and the allowed mail domains), *Plans* (an *On sale* checkbox per paid
-    plan with a pill: `on sale`, `held back`, or `cannot be sold` and the
-    reason, [billing.md](billing.md) "Plans on sale"), *Alerts* (on or off,
+    and the allowed mail domains, and *Invitations from Gamma servers*:
+    Servers you run or Any connected server, `invitation_signup`), *Plans*
+    (an *On sale* checkbox per paid plan with a pill: `on sale`,
+    `held back`, or `cannot be sold` and the reason, [billing.md](billing.md)
+    "Plans on sale"), *Alerts* (on or off,
     the address they go to with "blank = every admin", and *Send test
     alert*, which mails that address now whatever the switch;
     [hosted.md](hosted.md) "Alerts") and *Configuration*
@@ -334,12 +352,20 @@ page) and the **app** shell (a sidebar and a content column):
   code is needed, optional where it only grants a plan, and absent in
   `open` mode with no allowed domains unless a link brought a code. The account starts unverified,
   the verify mail goes out, and the browser is signed in so the account page
-  can resend the mail. Taken e-mail or username answers 409 with a message —
-  a deleted account keeps both through the grace period. Every mail goes
-  out after the commit, so a slow mail server never holds cloud.db's write
+  can resend the mail. An account registered from an e-mail invitation's
+  page starts the same way, whatever its address ("E-mail invitations
+  from Gamma servers"). Taken e-mail or username answers 409 with a message — a
+  deleted account keeps both through the grace period. Every mail goes out
+  after the commit, so a slow mail server never holds cloud.db's write
   lock; a registration whose mail fails still succeeds, answering
-  `mailed: false`, and the page lands on `/?mail=failed`. The other mails
-  (resend, reset, e-mail change) answer 503 when they fail.
+  `mailed: false`. The answer's `redirect` is where the page goes: the
+  body's `next` (a local path; the Overview without one) once the verify
+  mail went, else `/?mail=failed`. The other mails (resend, reset, e-mail
+  change) answer 503 when they fail. A verify link
+  can carry a page to go on to: `verify_message(conn, account, next)`
+  keeps it as the token's payload, `POST /api/verify` answers `{account,
+  next}`, and the verify page goes there (the Overview without one).
+  `POST /api/verify/resend` takes an optional `{next}`.
 - **Verified e-mail is the gate.** An unverified account can use the
   portal but the authorize page refuses to sign it in to any Gamma server
   and shows the verify notice instead. That is the one abuse control a
@@ -379,7 +405,8 @@ page) and the **app** shell (a sidebar and a content column):
   now** (`POST /api/admin/accounts/{id}/purge`, `manage.py purge-account`)
   takes only a deleted account and frees its name and e-mail at once.
   A purge deletes the account's hosted server first
-  (`hosted.purge_account`, [hosted.md](hosted.md)).
+  (`hosted.purge_account`, [hosted.md](hosted.md)) and the e-mail
+  invitations it sent (`invitations.purge_account`).
 - `PATCH /api/admin/accounts/{id}` takes `plan`, `granted_until`,
   `is_admin`, `verified` and `username`. `plan` is a new grant, with no end
   unless `granted_until` comes with it; `granted_until` alone dates the
@@ -401,9 +428,10 @@ page) and the **app** shell (a sidebar and a content column):
 
 ### What Gamma servers call with a token
 
-`routers/profile.py`, over `prefs.py` and `servers.py`. A state change
-here from a browser still has to pass `app.same_origin`; a Gamma server's
-own call carries neither `Sec-Fetch-Site` nor `Origin` and passes.
+`routers/profile.py`, over `prefs.py`, `servers.py` and `invitations.py`.
+A state change here from a browser still has to pass `app.same_origin`; a
+Gamma server's own call carries neither `Sec-Fetch-Site` nor `Origin` and
+passes.
 
 | method | path | auth | answer |
 |---|---|---|---|
@@ -414,6 +442,8 @@ own call carries neither `Sec-Fetch-Site` nor `Origin` and passes.
 | POST | `/api/me/servers` | any access token | body `{url, name, version?, schema?}` → `{server}` |
 | DELETE | `/api/me/servers` | any access token | body `{url}` (or `?url=`) → `{ok, removed}` |
 | GET | `/api/lookup/username?u=` | any access token | `{sub, username}`; 404 otherwise |
+| POST | `/api/invitations` | any access token | body `{email, server_url, server_name, kind, what, invite_id, next}` → `{ok, expires_at}` |
+| POST | `/api/invitations/cancel` | any access token | body `{server_url, invite_id}` → `{ok, removed}` |
 
 **The preference profile** is one JSON value per key: at most 64 KB
 serialized (413 past it), 20 keys per account (a 21st is a 400), keys of
@@ -473,6 +503,167 @@ paid container's hostname. So the limits are tight: 30 per 10 minutes per
 IP (counted before the token is checked), 20 per 10 minutes per token and
 60 an hour per account. The answer carries only the id and the name, never
 the e-mail, display name or plan.
+
+**E-mail invitations** (`POST /api/invitations` and `/cancel`, over
+`invitations.py`) are how a Gamma server has someone who is not on it yet
+mailed a link; what the person sees is the next section. A send is
+checked in this order:
+
+- **The token.** A request whose token fails counts against a per-IP
+  limit, 60 an hour. A valid one does not: the caller is a server that may
+  hold many people's tokens, and the share host and the hosted servers
+  reach this server through one address.
+- **The account.** 30 an hour and 100 a day per account. A cancel has its
+  own, 120 an hour per account.
+- **The client and the address.** A token of the desktop client is a 403:
+  the link has to reach the server from anywhere. The address is
+  normalized like the server list's (a 400 for a bad one), and it must be
+  the origin of one of the client's redirect URIs (`servers.allowed_for`)
+  and not a loopback one, else a 403.
+- **The fields**, a 400 for the first that is wrong: the address
+  (`accounts.norm_email`); `kind`, one of `server`, `workspace`, `page`,
+  `folder`; `invite_id`, 16 to 64 letters, digits, `-` and `_`; `next`, a
+  path on that server (one leading `/`, no whitespace, control character
+  or backslash, at most 2048 characters). `what` is cut to 200 printable
+  characters ('' for the server itself), and `server_name` like a
+  server-list name. A Gamma server with no name of its own sends its
+  hostname, without the port (`cloud_auth.server_name` there), and that
+  counts as no name: either is stored as the host with its port
+  (`invitations.send`).
+- **The limits of a send that will go out**, counted only now, so a call
+  refused above uses none of them up:
+  - per recipient and inviter (`invitations:to:<inbox>:<account>`), 5 an
+    hour and 20 a day. There is no limit across inviters, which would let
+    anyone keep a person from being invited at all; it depends only on
+    earlier sends, so it says nothing about accounts;
+  - per sign-in client, 600 an hour;
+  - for a server someone connected themselves (a `server` client with an
+    owner, `invitations.self_connected`), 3000 a day shared by all such
+    servers (`invitations:connected`), a circuit breaker. The servers the
+    operator runs (the share host, hosted servers, clients made on the
+    Admin page) are bounded by their per-client limit alone, so a few
+    self-connected accounts cannot switch the operator's invitations off.
+
+An invitation belongs to the client that sent it. The same `invite_id`
+from another client of the same server is a 409 ("This invitation was
+sent through another sign-in client of this server."), on a send and on a
+cancel alike. A send answers `{ok, expires_at}` whether or not the address
+has an account here, so the Gamma server never learns which. A mail that
+cannot go out is a 503 that leaves things as they were (next section). A
+cancel deletes the row and an unused code with it; `removed` is false
+when there was none.
+
+### E-mail invitations from Gamma servers
+
+`invitations.py` owns `server_invitations` (step 13); the pages are in
+`pages.py` and `routers/portal.py`. One row per server and `invite_id`,
+which is the Gamma server's secret for the invitation (its link id,
+[workspaces.md](workspaces.md) "Pending invitations"). An invitation lasts
+14 days (`config.INVITATION_TTL`).
+
+- **Sending again** through the same client replaces the row with a new
+  link token, so the link mailed before stops working. The invite code
+  goes on only to the same inbox (`email_canon`), while it can still
+  register an account and the invitation may still carry one (below), and
+  its expiry moves with the new row. Otherwise the old code is released
+  (deleted unless someone registered with it) and the new row decides
+  afresh. A code carried to another address would tell whoever sent both
+  whether the first one has an account here.
+- **The code.** An invitation carries a one-use free invite code only
+  where the code is the operator's to give (`invitations._carries_code`).
+  The address has no account here, registration is `invite` (`open` needs
+  no code, `closed` makes no account), and no allowed mail domains are set
+  (an address at one of them registers without a code; any other is one
+  the operator kept out). Then a server the operator runs mints one: a
+  client with no owner, such as the share host, a hosted server or a
+  client made on the Admin page. A server someone connected themselves (a
+  `server` client with an owner) mints one only while `invitation_signup`
+  is `any`. The code is made with `invitation = 1`, the note "invitation to
+  <host>" and the invitation's expiry. One nobody registered with goes
+  with its invitation (withdrawn or taken up on the Gamma server, expired,
+  its mail failed, its inviter purged); a spent one stays, naming the account that came in through it.
+  These codes stay out of the operator's list (`accounts.list_invites`:
+  the Admin page, `GET /api/admin/invites`, `manage.py invites`), spent or
+  not, before and after their invitation is purged.
+- **The mail** (`invitation_mail`, through `mail.compose`). The subject is
+  "<inviter> invited you to join <place>" for the server, and "… to join
+  the workspace “<what>”" for a workspace, likewise a page or a folder. The
+  inviter reads "Display Name (@username)", or "@username" without a
+  display name; the place is the server's name with its host, or the host
+  alone. The body says who invited whom to what on which Gamma server,
+  then how to accept (`way_in`): sign in, for an address with an account
+  here; create an account with this address or another, when the code
+  still works or the address registers without one; while registration is
+  closed, that Gamma Cloud takes no new accounts; otherwise, that new
+  accounts need an invite code right now. Then the button *Accept the
+  invitation* (`/invite?token=`) and a foot: the invitation works for 14
+  days, and whoever does not know the inviter can ignore the mail.
+  The words the inviter or their server chose (the display name, `what`
+  and the name the server gives itself) lose every link-like word to
+  "[link]" (`invitations.unlinked`): a URL with a scheme, a `www.` name, a
+  dotted name with a path, and any dotted name whose last part is two or
+  more letters, as every top-level domain's is. New top-level domains
+  keep coming, so there is no list of them; instead a name ending in a
+  file extension common in page titles stays (`attention.pdf`,
+  `notes.md`, `Node.js`; `invitations.FILE_EXTENSIONS`), even where the
+  extension is a top-level domain too (`.md`, `.zip`). The mail comes from
+  this domain, and a link in it would borrow that trust. The server's
+  host stays, since it names where the invitation leads. A name stored as
+  the host (no name, or the hostname alone: the fields above) is the
+  host, named once and never "[link]"; on another port the hostname alone
+  would otherwise read "[link] (lab.example.org:8443)".
+  The audit log gets `invitation.send` and `invitation.cancel` with the
+  kind and the host, never the address.
+- **A mail that fails** answers 503 ("We could not send the e-mail right
+  now. Try again in a few minutes.") and takes the send back
+  (`invitations.take_back`). The new row goes, the row it replaced comes
+  back unchanged (the link already in the person's inbox works again,
+  with the code the send kept and that code's expiry), and only a code
+  this send minted is released. A code the send released, for another
+  inbox or no longer usable, does not come back.
+- **The page** (`GET /invite?token=`, a card in the authorize page's
+  style). A link that is unknown, replaced, withdrawn or expired is a 404
+  page, "This invitation is not valid any more". Otherwise the card reads
+  "<inviter> invited you to join <what>" and "on <place>", with "The
+  invitation works until <date>." under it, and then depends on who looks:
+  - signed in and confirmed: the account's avatar row, *Continue as
+    @name* and *Use another account*;
+  - signed in but unconfirmed, as everyone is right after registering
+    from here: "Confirm <address> first", and *Send the link again*,
+    whose new verify link comes back to this page;
+  - signed out, by `way_in`: *Create an account* and *Sign in* where the
+    person can register; the mail's line and *Sign in* for an address
+    with an account; the line, *Sign in* and *Create an account* (the
+    register page judges) where a new account needs a code the invitation
+    does not carry; the line and *Sign in* alone while registration is
+    closed. *Create an account* opens
+    `/register?invite=<code>&email=<address>&next=/invite?token=<token>`
+    (without `invite` when no live code goes with it); *Sign in* opens
+    `/login?next=/invite?token=<token>`.
+- **Continue** (`GET /invite/continue?token=`). Signed out goes to the
+  login page and back to the invitation; an unconfirmed account, or a
+  link no longer valid, goes back to the page, which says what to do.
+  Otherwise `accepted_at` is set the first time, and the browser goes to
+  `<server>/api/auth/cloud/start?next=<next>&invite=<invite_id>`, whose
+  sign-in the invitation admits ("Invitations by e-mail" under "The Gamma
+  side" below).
+- **Registering from it.** The register page fills the E-mail field with
+  the invited address (still editable, marked "we mail it a link to
+  confirm it"), keeps `next` in a hidden field, hands it to the Google
+  and GitHub tiles, and links *Sign in* to `/login?next=`.
+  `POST /api/register` takes `next`. The account starts unconfirmed
+  whatever its address and gets the verify mail, whose link goes on to
+  `next`; its `redirect` is `next`, the invitation's page, which asks to
+  confirm first. The invitation does not confirm the address: its link
+  gets forwarded and shared, so opening it proves nothing about who reads
+  the inbox ([research/email-invitations.md](../research/email-invitations.md)).
+  A verify mail that fails lands on the Overview (`/?mail=failed`), whose
+  resend does not carry `next`; the invitation mail's link leads back. A
+  Google or GitHub sign-up from that page comes back to `next` as well.
+- **The purge.** The hourly pass (`app.purge`) drops the rows past their
+  expiry with their unused codes; a link past its expiry is refused
+  before that. A purged account's invitations go with it
+  (`invitations.purge_account`).
 
 ### Sign in with Google and GitHub
 
@@ -741,9 +932,13 @@ and secret by hand:
    is spent by its first try, right or wrong; an expired code, another
    address or a verifier that does not match is a 400.
 
-The code only ever travels to the address being connected, so finishing
-the flow proves control of that address, which is what an admin checked
-when making a client by hand. Any verified account may connect a server.
+The code goes to the approving browser in the answer to *Connect*, which
+carries it on to the address being connected. Whoever approves can also
+open the page with a challenge of their own and redeem the code
+themselves, so finishing the flow does not prove control of that
+address, which is what an admin checked when making a client by hand
+(open, [research/email-invitations.md](../research/email-invitations.md)).
+Any verified account may connect a server.
 The client is kind `server`, named after the host, registered for
 `<origin>/api/auth/cloud/callback` and owned by the approving account
 (`owner_account_id`), whose Devices page lists it with *Disconnect*.
@@ -768,7 +963,8 @@ fleet's `hosts`, `add-host`, `servers`, `provision`, `jobs`
 `migrate` refuses an outdated `cloud.db`. `set-plan` takes `--until
 YYYY-MM-DD` for a grant that ends; `invite` takes `--expires-days N` and
 `--grant-days N`, and `invites` lists each code's uses taken of its total,
-plan and grant length, state and expiry. `/api/admin/*`
+plan and grant length, state and expiry (an e-mail invitation's code left
+out, as on the Admin page). `/api/admin/*`
 (`routers/admin.py`, admins through a portal session only): search and
 patch accounts (plan, the day the grant ends, admin, verified), resend a
 verify mail, delete, restore, purge; invites (`GET`, `POST` with
@@ -794,14 +990,16 @@ and the CLI call the same functions.
   `invite`, admin-only access, the secret kept out of the browser and the
   audit log, blank keeping it and `null` clearing it, Turnstile needing
   both keys, a rejected write changing nothing, the sign-up forms following
-  a mode change, the Plans section's reasons, the allowed domains, and the
-  upgrade importing the old variables once.
+  a mode change, the Plans section's reasons, the allowed domains,
+  `invitation_signup` (its values, its Admin row, a bad row reading as
+  `operator`), and the upgrade importing the old variables once.
 - `test_signup_abuse.py`: what bounds open registration — the canonical
   form of an address and the aliases it folds, one Gmail inbox refused a
   second account, an unlisted domain keeping its tagged addresses apart,
   the throwaway-domain list and the admin's additions, the allowed domains
   in both modes with and without a code, the IPv6 /64 bucket,
-  the login and reset windows counted per inbox across aliases, and the
+  the login and reset windows counted per inbox across aliases, a full
+  limiter table dropping each window by its own length, and the
   upgrade's backfill.
 - `test_oidc.py`: discovery and JWKS, the full desktop PKCE flow with a
   decoded ID token, refresh rotation, code replay, redirect and PKCE
@@ -811,8 +1009,27 @@ and the CLI call the same functions.
   off and on to spent with the accounts that used it, the configuration
   never carrying a secret, the test mail and its limit, that a bearer
   token never reaches the admin API.
-- `test_manage.py`: the CLI including `settings`, invites that end and a
-  dated grant, purge by hand and hourly, the newer-file refusal.
+- `test_manage.py`: the CLI including `settings` (`invitation_signup`
+  too), invites that end and a dated grant, purge by hand and hourly, the
+  newer-file refusal.
+- `test_invitations.py`: e-mail invitations — the mail per kind, no link
+  from the inviter or the server's name in it (any top-level domain
+  becomes "[link]", file names stay), what a server cannot send (the
+  desktop client, another origin, loopback, a bad address, id or `next`),
+  the per-IP, account, day, recipient, client and cancel limits, refused
+  calls spending no client or shared budget, only self-connected servers
+  sharing the breaker, the code minted only for an address without an
+  account, only through a client the operator made (or any under `any`)
+  and never while allowed domains are set, a re-send replacing the link
+  and moving the code along for the same inbox only, one client unable to
+  replace or cancel another's invitation, cancel, a failed mail taking the
+  send back, the page signed out, for an address with an account and
+  signed in, continue's redirect, registering from the page with the
+  invited address or another (unconfirmed, Continue held back until the
+  verify link, which goes on to `next`, is opened), a `next` with a tab or
+  a line break going home, a provider sign-up and the sign-in page coming
+  back, the Admin list leaving the codes out, the purge, and the step-13
+  upgrade.
 - `test_external.py`: Google/GitHub with the provider stubbed — signup,
   linking by a trusted address, claiming an unconfirmed account, the
   authorize page's path, state and `next` checks, one tap with a real
@@ -866,7 +1083,8 @@ endpoints), `frontend/src/settings/SettingsCloudSignIn.jsx` (the Server
 pane's Sign-in section and the Account pane's row), the login page's
 button. Tests: `backend/tests/test_cloud_auth.py` (a fake account server
 signing real Ed25519 tokens, rotating refresh tokens and answering the
-profile, server-list and lookup endpoints) and the `cloudSignIn` browser
+profile, server-list, lookup and invitation endpoints),
+`backend/tests/test_email_invites.py` and the `cloudSignIn` browser
 scenario.
 
 **Nothing downstream changes.** The callback mints the same `sessions` row
@@ -1001,26 +1219,29 @@ there and still ends in the system browser.
 |---|---|---|---|---|
 | linked already | that account | that account | that account | that account |
 | unknown, username = username exists, unlinked (exact, else one case-insensitive match — usernames are lowercase, usernames need not be) | refused: "if it is yours, sign in with its password and link it; if it is someone else's, ask the admin" | linked to it | refused, as under `refuse` | refused, as under `refuse` |
-| unknown, username in use otherwise (an account linked to another subject, a guest, or several case variants) | refused, as for no such username | refused | a new account under the first free variant of the username, `name-2`, `name-3`, … | as for no such username, the account under that variant |
-| unknown, no such username | refused | refused | a new account under the username, empty password hash, personal workspace | a new account as under `provision` when something here admits the subject — an invitation waiting for it, to a shared workspace or to a share, or its request to join an admin approved —, else refused (`NotInvited`, "This server admits invited people only"), and the sign-in asks to join ("Requests to join" below) |
+| unknown, username in use otherwise (an account linked to another subject, a guest, or several case variants) | as for no such username, the account under that variant | as under `refuse` | a new account under the first free variant of the username, `name-2`, `name-3`, … | as for no such username, the account under that variant |
+| unknown, no such username | refused, unless the sign-in came through the mailed link of an admin's invitation by e-mail to this server: then a new account as under `provision` | as under `refuse` | a new account under the username, empty password hash, personal workspace | a new account as under `provision` when something here admits the subject — an invitation by cloud username waiting for it, to a shared workspace or to a share, the mailed link of an invitation by e-mail the sign-in came through, or its request to join an admin approved —, else refused (`NotInvited`, "This server admits invited people only"), and the sign-in asks to join ("Requests to join" below) |
 
 Admission comes before the name: a policy that refuses the subject, or
 `invited` asking it to join, does so whatever its username, and the name
-only matters once an account is made. A local name is unique whatever its
-case (a page host finds its account by name, case-insensitively), so a
-cloud username some other account here goes by, linked to another cloud
-identity, gives the new account the first variant no account goes by in
-any case (`cloud_auth._free_name`). The link, not the name, signs it in
-again; invitations are keyed by subject, so they land on it all the same.
-An account of that name with no cloud link is left alone: it may be the
+only matters once an account is made. An invitation by e-mail admits only
+the sign-in that came back through its mailed link (an identity linked
+here signs in anyway), and never links an existing unlinked account: the
+second row's refusal comes first ("Invitations by e-mail" below). A local name is unique whatever its case (a page host
+finds its account by name, case-insensitively), so a cloud username some
+other account here goes by, linked to another cloud identity, gives the
+new account the first variant no account goes by in any case
+(`cloud_auth._free_name`). The link, not the name, signs it in again;
+invitations are keyed by subject, so they land on it all the same. An
+account of that name with no cloud link is left alone: it may be the
 person's own, from before Gamma Cloud, and linking it automatically would
 hand it to anyone with that cloud username, so only `claim` and the admin
 subject link it. Not built: the choice for that case on the sign-in page
-(sign in to it with its password and link it, or continue as a new
-account under a variant); the refusal says what to do. Lists of people
-show an account's Gamma Cloud username beside a name here that differs
-from it in more than case (`cloud_auth.cloud_names`): the share popover's
-invited people and a workspace's members, as `cloud`.
+(sign in to it with its password and link it, or continue as a new account
+under a variant); the refusal says what to do. Lists of people show an
+account's Gamma Cloud username beside a name here that differs from it in
+more than case (`cloud_auth.cloud_names`): the share popover's invited
+people and a workspace's members, as `cloud`.
 
 On a hosted container a new account is also refused once the plan's
 account cap is reached ("Hosted containers" below).
@@ -1040,7 +1261,9 @@ Once the account is known, every sign-in claims what waits for its
 subject: the shared-workspace invitations
 (`workspaces.claim_pending_memberships`, [workspaces.md](workspaces.md)
 "Pending invitations") and the share invitations (`shares.claim_pending`,
-"Requests to join" below), and drops its request to join, answered
+"Requests to join" below), then the invitation by e-mail whose mailed
+link the sign-in came through (`email_invites.claim`, "Invitations by
+e-mail" below), and drops its request to join, answered
 (`join_requests.joined`).
 
 **Access tokens.** `cloud_auth.access_token_for(user_id)` turns the
@@ -1156,8 +1379,8 @@ budget per inviting account, 30 lookups in 10 minutes
 
 **A share's invitations by cloud username** (`gamma/shares.py`). A page
 or folder share invites the accounts here by username (`share_users`); on
-a server with cloud sign-in its Share popover also names someone who has
-no account here yet, by their Gamma Cloud username
+a server with cloud sign-in the API also names someone who has no account
+here yet, by their Gamma Cloud username
 (`POST /api/share-settings/{page}/invites`, [api.md](api.md) "Shares").
 The twin of a pending membership: the lookup answers the subject, and the
 invitation waits in `pending_share_users` (users.db: the share's token,
@@ -1173,7 +1396,207 @@ or the workspace going), and a share takes at most 100 waiting
 (`shares.MAX_PENDING_PER_SHARE`). A waiting invitation is also what the
 `invited` policy admits a newcomer on (`shares.waiting`), so a server that
 admits invited people only can open one page to one person. Never a guest
-or an integration token: the lookup spends the caller's own grant.
+or an integration token: the lookup spends the caller's own grant. The
+Share popover no longer offers the username (its invite box takes an
+e-mail address, below), but the API keeps it: Approve on a request to
+join is an invitation by subject, and the waiting ones still list with
+their withdraw button.
+
+**Invitations by e-mail** (`gamma/email_invites.py`). Someone is invited
+by their address: to this server by an admin (Settings → Users,
+`/api/admin/invitations`), to a shared workspace by its owners
+([workspaces.md](workspaces.md) "Pending invitations"), to a page or
+folder share by its managers (the Share popover's E-mail box,
+[api.md](api.md) "Shares"). This server never sends mail. It keeps the
+invitation in `email_invites` (users.db, migration step 43) and asks the
+account server, on the inviter's own grant, to mail it
+(`cloud_auth.send_invitation`; "E-mail invitations from Gamma servers"
+above). It never learns whether the address has a Gamma Cloud account.
+
+**Only the mailed link admits.** The person's own click on the link they
+were mailed is the one way an invitation turns into access. A sign-in's
+e-mail is never matched against the invitations, and a workspace's or a
+share's invitation never looks the address up among the accounts here:
+an answer that differed for a known address would tell an editor, and on
+the share host anyone, which account owns it, and a confirmed address
+says nothing about who received this mail
+([research/email-invitations.md](../research/email-invitations.md)).
+
+- **The row.** One per target and address: an `id`, a `link_id`, the
+  address as typed (`email`) and lowercased (`email_norm`), the kind
+  (`server`, `workspace`, `share`), the workspace id or the share's token,
+  the role (`editor` / `viewer` for a workspace, `view` / `edit` for a
+  share, '' for the server), the inviter's id, `server_url` (the address
+  its last mail went out with, `callback_base`, under which the account
+  server keeps its link), `created_at`, `mailed_at` and `expires_at` (14
+  days on, `TTL_DAYS`).
+- **Two ids.** The `link_id` (`secrets.token_urlsafe(24)`) is the
+  invitation's secret: it goes to the account server as `invite_id`, the
+  mailed link carries it back through the sign-in, and whoever holds it
+  is admitted with the invitation's role. No entry, list, answer or log
+  line carries it. The `id` is the handle the lists show and the people
+  who manage the invitation withdraw, resend and change it by, and it
+  admits nothing.
+- **Where it can go out** (`email_invites.available`, no network; the
+  `cloud.email_invites` flags of `GET /api/server-config`). `server`, an
+  admin's invitation to this server, needs cloud sign-in on, the server
+  connected (`needs_connect` false) and a client of its own: a server
+  signing in through the desktop app's public client sits on one
+  computer, where a mailed link could not reach it, and the account
+  server refuses that client's tokens too. `members`, a workspace's or a
+  share's, needs that and the `provision` or `invited` policy. Under
+  `refuse` and `claim` only an admin brings someone new in, and the two
+  member UIs hide the E-mail choice. Where it cannot go, the API answers
+  400 with the reason, the first failing condition in words a person can
+  act on.
+- **Sending.** A workspace's or a share's invitation is mailed whoever
+  the address belongs to: someone with an account here, a member, the
+  inviter themselves. The answer is always `{pending: entry}`, so it
+  tells the inviter nothing about the address. Only an admin's invitation
+  to this server is refused for an address an account here is linked
+  under ("… already has an account here: <name>."; `identities.email`,
+  case-insensitive, not a guest), since that person signs in already. The
+  account server gets the link id, this server's address
+  (`callback_base`: the confirmed public URL, else the request's origin)
+  and name, its kind (`server`, `workspace`, `page` or `folder`), what it
+  is called (the workspace's name, the page's title, the folder's name,
+  '' for the server) and the path here to land on (`/`, `/?ws=<id>`,
+  `/?share=<token>`). Only then is the row written, under
+  `BEGIN IMMEDIATE`, with the target checked again: a share stopped or a
+  workspace no longer shared meanwhile, or a target filled by other
+  requests, drops the link just mailed and is a 400. If another request
+  mailed the same address meanwhile, the newest link stands and the other
+  is dropped.
+- **Again.** Inviting an address to the same target again keeps its `id`
+  and `link_id`, changes the role and mails it again (the account server
+  replaces its link, so the one mailed before stops working). Resend
+  mails the same link id again, makes the sender its inviter and starts
+  its 14 days over. Both record the address the new mail went out with.
+  The account server replaces a link only under the same address, so
+  when that changed (a server with no confirmed public URL, reached on
+  another origin) the link at the earlier one is dropped
+  (`_superseded`). A role change mails nothing. Withdrawing deletes the
+  row and drops its link (below).
+- **Limits.** 100 waiting per workspace or share (`MAX_PER_TARGET`), 200
+  for the server (`MAX_SERVER`), counting the unexpired ones for other
+  addresses. 20 sends and resends an hour per inviting account
+  (`SENDS_PER_HOUR`, the routers' `email-invite:<id>` limit), a
+  workspace's, a share's and the server's together. Never a guest or an
+  integration token.
+- **The call** (`cloud_auth.send_invitation`) uses the inviter's access
+  token (`_lookup_token`) and waits up to 60 seconds
+  (`INVITATION_TIMEOUT`, cancels too), since the account server mails
+  before it answers and a mail relay can be slow. The account server's
+  answer becomes an `InvitationError`, which an app-wide handler answers
+  with its status:
+
+  | the account server, or the call | the inviter gets |
+  |---|---|
+  | sign-in off, the inviter's account not linked, no access token | 503, "Link your own Gamma Cloud account (Settings → Account & sync) to invite people through Gamma Cloud." and the like |
+  | no answer in time / no connection | 503, "Gamma Cloud did not answer in time. Try again." / "Gamma Cloud could not be reached. Try again later." |
+  | 400, 403, 409 | 400 with its `detail` |
+  | 404 (an account server without the endpoint) | 503, "The account server does not take e-mail invitations yet." |
+  | 429 | 429, "Too many invitations for now. Try again later." |
+  | 401 | the cached access token dropped; 503 |
+  | 503 | 503 with its `detail` |
+  | anything else | 503, naming the status |
+
+  A call that got no answer (a timeout, a refused connection) is marked
+  `unanswered`, since the mail may have gone out all the same. `invite`
+  and `resend` (`_mail`) then drop the link at that address unless a row
+  here carries the link id there (or records no address). A first send
+  stored nothing, and a row withdrawn while the call hung is gone, so the
+  mail leads to the account server's "not valid any more" page rather
+  than to a sign-in nothing admits. A row whose mail went out at another
+  address would never drop this copy later, so it goes now. A re-invite
+  or a resend at the row's own address drops nothing: the row keeps its
+  role, `mailed_at` and expiry, and still admits through the same link
+  id, whichever of the account server's rows for it survived.
+- **Dropping links** (`email_invites.cancel_links`). A row that goes for
+  any reason but its expiry has its mailed link dropped at the account
+  server, so the mail leads to the "not valid any more" page and an
+  invite code nobody used goes with it: withdrawn, claimed (a used link
+  stops working), gone with its target (below), or never kept (the
+  target gone or full while the mail went, a newer link for the same
+  address, a first send with no answer, a copy at an address the row no
+  longer records). `cancel_links([(link_id, invited_by, server_url)],
+  by=, server_url=, wait=)` asks on one background thread, each link on
+  the first Gamma Cloud grant this server holds among whoever acts
+  (`by`), the row's inviter and the admin who last signed in with Gamma
+  Cloud (`_grantee`). The account server checks only that the token is
+  this server's client's, so a withdrawer with no Gamma Cloud link of
+  their own, or a row whose inviter is gone, still has its link dropped.
+  With no grant at all it logs a warning, and the row goes here all the
+  same.
+
+  Each link goes at its row's own `server_url`, the address its mail
+  went out with, which the account server keeps it under. Without a
+  confirmed public URL that is the inviter's request origin (a proxy's
+  https address, say): a later request may come in on another, the
+  cascades have none, and `cloud_auth.server_url()` gives the remembered
+  loopback origin, which the account server refuses. A row that recorded
+  no address (one written outside `invite`) goes at the caller's
+  `server_url`, else `cloud_auth.server_url()`; with neither it skips
+  the account server, whose link then expires on its own. With `wait`
+  the calls run before `cancel_links` returns: `delete_account` passes
+  its `release_now`, since `manage.py delete-user` exits right after and
+  would end the thread first. Nothing while cloud sign-in is off.
+  `cloud_auth.cancel_invitation` is the call itself (synchronous; a
+  failure is a warning in the log).
+- **Admission.** The account server's *Continue* opens
+  `GET /api/auth/cloud/start?next=&invite=<link id>`; the desktop app's
+  `app-start` takes `invite` too. `begin` keeps a link id of the right
+  shape (16 to 64 of `[A-Za-z0-9_-]`, `email_invites.LINK_ID_RE`; any
+  other is dropped) in the pending sign-in, and `exchange` hands it on as
+  the internal claim `_invite`, beside `_link_user`. The publish
+  exchange strips every `_` key from the claims it gets, so a token cannot
+  bring one. `_resolve` asks `email_invites.admits(conn, link_id,
+  policy)`: an unexpired row named by that link id, whose target is still
+  there (a shared workspace, a share not stopped). A server invitation
+  admits under every policy; a workspace's or a share's under `provision`
+  and `invited` (`MEMBER_POLICIES`). Under `invited` the sign-in is
+  admitted when an invitation by e-mail or `_invited` admits it; under
+  `refuse` and `claim` a new account is made only when an invitation by
+  e-mail admits it. A hosted plan's account cap and the read-only check
+  still apply. A sign-in without the link, under the invited address or
+  not, is admitted or refused as if no invitation by e-mail waited.
+- **The claim** (`email_invites.claim(user_id, link_id, server_url)`,
+  from `resolve_account` after the two claims by subject, on every cloud
+  sign-in; the callback passes `callback_base(request)`, the address for
+  a row that recorded none). The unexpired row the link id names becomes
+  a membership of its workspace (still shared) or an entry of its share
+  (not stopped), with its role. Someone who has an account here already
+  accepts like anyone else: the mail's *Continue as @name* signs them in
+  through the link, and a membership or an entry they have keeps its own
+  role (`ON CONFLICT DO NOTHING`). A server invitation did its work when
+  it admitted the sign-in. The row goes, and its link at the account
+  server, at the row's address and on the claimer's grant first, so the
+  mail's link opens the "not valid any more" page once used. A new
+  membership or entry gets its `invited` or `shared` Inbox item from the
+  inviter. Nothing for a guest; nothing without a link id, so it costs
+  nothing on an ordinary sign-in.
+- **Who sees them.** The addresses are personal data, so the entries go
+  only to the people who manage them: a workspace's owners and the
+  admins (the workspace's `members`, `GET /workspaces/{id}/invites`), a
+  share's managers signed in with a session (the settings' `pending`;
+  not a viewer, a guest or an integration token), and the admins for the
+  server's (`GET /api/admin/invitations`). An entry is `{id, email, role,
+  invited_by, created_at, mailed_at, expires_at}`, `invited_by` being the
+  inviter's username ('' once that account is gone).
+- **Expiry and cascades.** An hourly sweep (`email_invites.sweep`, the app
+  lifespan) deletes the rows past their expiry; it drops no links, as the
+  account server's own purge expires them on the same 14 days. Stopping a
+  share (`db.delete_shares`: stop sharing, and the shares of a deleted
+  folder), deleting a workspace (`workspaces._delete_rows`, also an
+  account's personal ones when the account goes) and converting a shared
+  workspace to personal delete theirs. Each reads the rows' `link_id`,
+  `invited_by` and `server_url` before the delete
+  (`db.delete_email_invites`) and drops their links once it committed,
+  each at its own address; `manage.py delete-user` waits for those of
+  the workspaces it deletes before it exits. An account deleted here
+  leaves the invitations it sent to targets that remain, with an inviter
+  that no longer exists; dropping their links later falls back to an
+  admin's grant.
 
 **Requests to join** (`gamma/join_requests.py`). Under the `invited`
 policy a cloud account that nothing admits is refused (`NotInvited`), and
@@ -1464,13 +1887,15 @@ beside a running server reaches it at the server's next sync.
 something here admits: an invitation to a shared workspace (a
 `pending_memberships` row, [workspaces.md](workspaces.md) "Pending
 invitations") or to a share (a `pending_share_users` row) waiting for it,
-or its request to join an admin approved; the sign-in then claims what
-waits as every sign-in does. Anyone else is refused with "This server
-admits invited people only. Ask its admin for an invitation.", and the
-refused sign-in asks to join ("Requests to join" above). An existing
-unlinked account is not claimed, as under `refuse`. It is a policy like the
-others: the environment, the Sign-in pane and the admin API take it on any
-server.
+an invitation by e-mail to this server, a shared workspace or a share
+whose mailed link the sign-in came through (an `email_invites` row,
+"Invitations by e-mail" above), or its request to join an admin approved;
+the sign-in then claims what waits as every sign-in does. Anyone else is
+refused with "This server admits invited people only. Ask its admin for an
+invitation.", and the refused sign-in asks to join ("Requests to join"
+above). An existing unlinked account is not claimed, as under `refuse`. It
+is a policy like the others: the environment, the Sign-in pane and the
+admin API take it on any server.
 
 **Read-only.** While the cached answer says `read_only`, every POST, PUT,
 PATCH and DELETE under `/api/` is answered 423 with `{detail, read_only:
