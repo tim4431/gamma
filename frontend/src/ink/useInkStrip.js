@@ -57,9 +57,9 @@ export function useInkStrip({ focusedBlockId, readOnly, inkStale, inkTools, setI
   const pickInkTool = useCallback((id, { keepOptions = false, open = false, kind } = {}) => {
     setInkUi((s) => picked(s, id, inkTools, { keepOptions, open, kind }));
   }, [inkTools]);
-  // Opening the strip arms the stylus pen (stylusPen: the last pen armed,
-  // else the first pen on the row), never a highlighter put before it.
-  const openInkStrip = () => pickInkTool(stylusPen(inkVisible, inkUi.pen).id);
+  // Opening the strip arms the stylus pen (the last pen armed, else the
+  // first pen on the row), never a highlighter put before it.
+  const openInkStrip = () => pickInkTool(inkPenPreset.id);
   // A removed or hidden preset leaves the strip's hand armed.
   useEffect(() => {
     if (inkUi.tool && !RESERVED_TOOLS.includes(inkUi.tool) && !inkVisible.some((t) => t.id === inkUi.tool)) {

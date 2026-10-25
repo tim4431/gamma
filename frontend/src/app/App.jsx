@@ -154,7 +154,6 @@ import {
   sheetsOf, withAllSheetsPaper, withSheetPaper,
 } from "../notebook/notebook";
 import { generateKeyBetween } from "fractional-indexing";
-import * as inkStore from "../ink/inkStore";
 import * as inkLive from "../ink/inkLive";
 import { keepaliveFetch } from "../shared/lib/keepalive.js";
 import * as playback from "../replay/playback.js";
