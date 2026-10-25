@@ -117,6 +117,18 @@ highlights and ink only while the original is embedded
 writes either way, replacing the embedded original
 ([pdf_typesetting.md](pdf_typesetting.md#annotated-pdf-export)).
 
+Replacing the page's PDF with another file (`PUT /pages/{id}/attachment`)
+marks every block imported from the old one the same way
+(`imports.originals_gone`), since the originals left with that file. An
+import then keeps the mark in step with the file. It sets the mark where
+its strip removed the original. It takes the mark off where the file holds
+the original again, so a replacement that carries the same annotations
+draws them once. Only the page's own PDF counts for that, read by an
+import that does not strip it, and unchanged since the read: an import of
+the page's previous file, or one whose file another import stripped
+meanwhile, takes no mark off. The check and the marks run under the write
+lock.
+
 ## The Import dialog
 
 The View menu's single "Import…" entry → `ImportDialog` in `transfers/ImportExport.jsx`, the

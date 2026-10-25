@@ -32,7 +32,7 @@ from ..blocks_store import (FOLDERS, LABELS, STORED_COLUMNS, create_page, existi
 from ..colors import DEFAULT_HIGHLIGHT, normalize_color
 from ..highlights import position as highlight_position
 from ..logbuf import log
-from ..ops import MAX_OPS, after_commit, apply_ops, commit_ops, ensure_filing, note_reload, props_patch
+from ..ops import MAX_OPS, after_commit, apply_batches, apply_ops, ensure_filing, note_reload, props_patch
 from ..markdown_import import MAX_MARKDOWN_BYTES, TooManyBlocks, md_to_blocks
 from ..markdown_zip_import import import_markdown_zip, markdown_page
 from ..notability_import import import_notes
@@ -42,7 +42,7 @@ from ..pdf_export import (TEXT_BOX_TYPES, _resolve, annotation_key, annotation_s
                           drop_annotations, first_rect, page_frame, pdf_point_to_viewer, reply_parent)
 from ..text_box import escape_markdown, keep_on_surface, markdown_of, measure, normalize_text_box, plain_text
 from ..storage import (display_filename, find_upload_file, is_pdf, pdf_url, put_upload, store_file, store_file_stream,
-                       store_pdf)
+                       store_pdf, stat as stored_stat)
 from ..logseq_import import (
     edn_highlight_position,
     edn_highlight_to_block,
@@ -881,6 +881,27 @@ def _imported_blocks(conn, block_id: str) -> list:
         "WHERE json_extract(b.properties, '$.imported_annot') IS NOT NULL", (block_id,)).fetchall()
 
 
+def originals_gone(conn, page_id: str) -> list[dict]:
+    """The ops marking the page's blocks imported from embedded annotations
+    ``annot_stripped``, for when the page's PDF is replaced by another file
+    (PUT /pages/{id}/attachment): the originals left with the old file, so
+    PDF export draws these blocks again (``pdf_export.still_embedded``). An
+    import of the new file takes the mark off the ones that file holds
+    again (``import_embedded_annotations``)."""
+    return [{"op": "set", "id": bid, "props": {"annot_stripped": True}}
+            for bid, _key, done in _imported_blocks(conn, page_id) if not done]
+
+
+def _record_keys(records) -> set:
+    """The ``imported_annot`` keys of these annotation records and of their
+    replies, a reply's legacy key too."""
+    keys = set()
+    for record in records:
+        keys.update(k for k in (record["key"], record.get("legacy")) if k)
+        keys |= _record_keys(record.get("replies") or ())
+    return keys
+
+
 class PdfAnnotsRequest(BaseModel):
     block_id: str
     doc_id: str
@@ -895,11 +916,16 @@ def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, a
     each reply a note under the block of the annotation it answers
     (idempotent via the stable ``imported_annot`` key: a reply is there
     under its own key or the legacy one, from before replies were notes),
-    then optionally strip the originals from the file. ``found`` counts the
+    then optionally strip the originals from the file. ``annot_stripped``
+    then follows the file on every block an import made: set where this
+    import's strip removed the original, cleared where the page's own file,
+    as this import read it, holds the original again (a replacement file
+    carrying the old one's annotations, ``originals_gone``). ``found`` counts the
     annotations that make blocks, replies included. Shared by the per-paper
     endpoint below and the Zotero library import. ``pdf_path``: the stored
     file's path (``storage.find_upload_file``)."""
     from PyPDF2 import PdfReader
+    read_as = stored_stat(ws, pdf_path.name)  # the file ``found`` describes; a strip rewrites it
     reader = PdfReader(os.fspath(pdf_path))
     with GlyphPages(os.fspath(pdf_path)) as glyphs:
         found = _extract_pdf_annotations(reader, glyphs)
@@ -974,22 +1000,38 @@ def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, a
 
     # Strip AFTER the blocks are committed: if the rewrite fails the file is
     # untouched and the import still stands; a re-run can strip again.
-    stripped = 0
+    stripped, gone = 0, set()
     if strip:
-        keys = set()
         try:
-            stripped, keys = _strip_embedded_annotations(ws, pdf_path)
+            stripped, gone = _strip_embedded_annotations(ws, pdf_path)
         except Exception as e:
             log.warning(f"[pdf-annots] could not strip annotations from {pdf_path.name}: {e}")
-        if stripped:
-            # The embedded originals are gone from the file, so PDF export must
-            # start writing these blocks again (it skips imported ones only
-            # while the original annotation still lives in the PDF).
-            with connect_pages_db(ws) as conn:
-                ids = [bid for bid, key, done in _imported_blocks(conn, block_id) if key in keys and not done]
-            for i in range(0, len(ids), MAX_OPS):
-                commit_ops(ws, page_id, [{"op": "set", "id": bid, "props": {"annot_stripped": True}}
-                                         for bid in ids[i:i + MAX_OPS]], actor=actor)
+    # PDF export skips an imported block while its original is in the file
+    # (``pdf_export.still_embedded``), so the mark follows the file: on where
+    # this strip removed the original, off where the file holds it. What the
+    # file holds counts only when the import did not strip it, the file is
+    # the page's own PDF (an older one of the page holds what the page's
+    # file no longer does) and nothing rewrote it since it was read (another
+    # import's strip). The check and the marks are one step under the write
+    # lock, so a strip committing its marks lands after them, not between.
+    with connect_pages_db(ws) as conn:
+        write_lock(conn)
+        try:
+            row = conn.execute("SELECT doc_id FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
+            as_read = (not strip and row is not None and row[0] == pdf_path.stem
+                       and stored_stat(ws, pdf_path.name) == read_as)
+            held = _record_keys(found) if as_read else set()
+            marks = [{"op": "set", "id": bid, "props": {"annot_stripped": True if key in gone else None}}
+                     for bid, key, done in _imported_blocks(conn, block_id)
+                     if (key in gone and not done) or (key in held and done)]
+            results = apply_batches(conn, [(page_id, marks[i:i + MAX_OPS])
+                                           for i in range(0, len(marks), MAX_OPS)], actor=actor)
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        for result in results:
+            after_commit(ws, conn, result)
     return {"found": count(found), "imported": inserted, "stripped": stripped}
 
 

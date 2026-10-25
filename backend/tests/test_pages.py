@@ -1,5 +1,5 @@
-"""Stage-1 page endpoints (routers/pages.py): create a page, attach / detach a
-PDF, generic file uploads + serving, and the root listing's text preview."""
+"""Stage-1 page endpoints (routers/pages.py): create a page, attach / replace /
+detach a PDF, generic file uploads + serving, and the root listing's text preview."""
 
 import io
 from contextlib import closing
@@ -8,8 +8,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from conftest import account_of, login, make_folder, make_page, make_user, workspace_of, guest_name
-from gamma import upload_gc
-from gamma.db import connect_pages_db, ws_uploads_dir
+from gamma import pdf_index, pdf_meta, upload_gc
+from gamma.db import connect_data_db, connect_pages_db, ws_uploads_dir
 
 PDF_BYTES = b"%PDF-1.4 pages test\n" + b"z" * 2000
 
@@ -179,6 +179,124 @@ def test_detach_keeps_a_file_another_page_still_uses(guest, no_grace):
     assert (ws_uploads_dir(ws) / f"{doc_id}.pdf").is_file()
 
 
+# --- PUT /api/pages/{id}/attachment: replace the PDF --------------------------------
+
+def _indexed(ws):
+    """The papers data.db holds search rows for."""
+    with closing(connect_data_db(ws)) as conn:
+        pdf_index.ensure_schema(conn)
+        return {r[0] for r in conn.execute("SELECT doc_id FROM pdf_fts_docs")}
+
+
+def test_replace_swaps_the_pdf_and_keeps_the_page(guest, no_grace):
+    # a new version of the file: the page keeps its id, title and highlights,
+    # the old file is left to the orphan bookkeeping and its derived data goes
+    ws = workspace_of(guest_name())
+    old = _upload_pdf(guest, PDF_BYTES + b"r1")
+    page = guest.post("/api/pages", json={"title": "My paper"}).json()
+    guest.post(f"/api/pages/{page['id']}/attachment", json={"doc_id": old, "original_filename": "main.pdf"})
+    rect = {"x1": 1, "y1": 2, "x2": 3, "y2": 4}
+    position = {"pageNumber": 2, "width": 612, "height": 792, "boundingRect": rect, "rects": [rect]}
+    hl = guest.post("/api/blocks", json={
+        "parent_id": page["id"], "content": "quoted", "properties": {"pdf_position": position}}).json()
+    assert pdf_meta.ensure(ws, old)["doc_id"] == old  # the old file's manifest...
+    with closing(connect_data_db(ws)) as conn:
+        pdf_index.store_doc(conn, old, [(1, "old text")])  # ...and search rows
+    assert old in _indexed(ws)
+
+    new = _upload_pdf(guest, PDF_BYTES + b"r2")
+    r = guest.put(f"/api/pages/{page['id']}/attachment",
+                  json={"doc_id": new, "source_url": f"/api/uploads/{new}.pdf", "original_filename": "main-v2.pdf"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["id"] == page["id"] and body["content"] == "My paper"
+    props = body["properties"]
+    # the stored copy's URL is derived, never stored (page_attachment)
+    assert props["doc_id"] == new and "source_url" not in props and props["original_filename"] == "main-v2.pdf"
+    assert guest.get(f"/api/blocks/{page['id']}").json()["properties"] == props
+    assert guest.get(f"/api/blocks/{hl['id']}").json()["properties"]["pdf_position"] == position
+    # by attachment, the page is the new file's and no longer the old one's
+    assert guest.get(f"/api/blocks/by-doc/{new}").json()["id"] == page["id"]
+    assert guest.get(f"/api/blocks/by-doc/{old}").status_code == 404
+    # the old file stays stored, recorded as unreferenced; the new one is in use
+    orphans = _orphans(ws)
+    assert f"{old}.pdf" in orphans and f"{new}.pdf" not in orphans
+    assert (ws_uploads_dir(ws) / f"{old}.pdf").is_file()
+    # nothing carries the old paper, so its search rows and manifest went
+    assert old not in _indexed(ws) and pdf_meta.get(ws, old) is None
+
+
+def test_replace_a_proxied_pdf_with_an_upload_drops_its_source_url(guest):
+    page = guest.post("/api/pages", json={"title": "Linked"}).json()
+    r = guest.post(f"/api/pages/{page['id']}/attachment",
+                   json={"doc_id": "c" * 24, "source_url": "https://example.org/paper.pdf"})
+    assert r.json()["properties"]["source_url"] == "https://example.org/paper.pdf"
+    new = _upload_pdf(guest, PDF_BYTES + b"r3")
+    props = guest.put(f"/api/pages/{page['id']}/attachment", json={"doc_id": new}).json()["properties"]
+    assert props["doc_id"] == new and "source_url" not in props
+
+
+def test_replace_refuses_a_pdf_another_page_carries(guest):
+    owner = guest.post("/api/pages", json={"title": "Owner"}).json()
+    taken = _upload_pdf(guest, PDF_BYTES + b"r4")
+    guest.post(f"/api/pages/{owner['id']}/attachment", json={"doc_id": taken})
+    page = guest.post("/api/pages", json={"title": "Mine"}).json()
+    mine = _upload_pdf(guest, PDF_BYTES + b"r5")
+    guest.post(f"/api/pages/{page['id']}/attachment", json={"doc_id": mine})
+    r = guest.put(f"/api/pages/{page['id']}/attachment", json={"doc_id": taken})
+    assert r.status_code == 409
+    assert r.json() == {"detail": "attachment belongs to another page", "page_id": owner["id"]}
+    assert guest.get(f"/api/blocks/{page['id']}").json()["properties"]["doc_id"] == mine
+
+
+def test_replace_with_the_same_pdf_changes_nothing(guest):
+    page = guest.post("/api/pages", json={"title": "Same"}).json()
+    doc_id = _upload_pdf(guest, PDF_BYTES + b"r6")
+    body = {"doc_id": doc_id, "original_filename": "main.pdf"}
+    attached = guest.post(f"/api/pages/{page['id']}/attachment", json=body).json()
+    seq = guest.get(f"/api/blocks/{page['id']}/subtree").json()["seq"]
+    r = guest.put(f"/api/pages/{page['id']}/attachment", json=body)
+    assert r.status_code == 200, r.text
+    assert r.json()["properties"] == attached["properties"]
+    assert r.json()["updated_at"] == attached["updated_at"]
+    assert guest.get(f"/api/blocks/{page['id']}/subtree").json()["seq"] == seq  # no batch logged
+
+
+def test_replace_drops_a_failed_lookup_of_the_old_file(guest):
+    # the failed lookup read the old file; the new one is looked up again
+    page = guest.post("/api/pages", json={"title": "Lookup"}).json()
+    old = _upload_pdf(guest, PDF_BYTES + b"r8")
+    guest.post(f"/api/pages/{page['id']}/attachment", json={"doc_id": old})
+    failed = {"at": "2026-10-01T00:00:00Z", "detail": "no arXiv id, DOI, Crossref, or AI match"}
+    assert guest.put(f"/api/blocks/{page['id']}", json={"properties": {"meta_error": failed}}).status_code == 200
+    # the same file again keeps it
+    assert guest.put(f"/api/pages/{page['id']}/attachment", json={"doc_id": old}).json()["properties"]["meta_error"] == failed
+    new = _upload_pdf(guest, PDF_BYTES + b"r9")
+    props = guest.put(f"/api/pages/{page['id']}/attachment", json={"doc_id": new}).json()["properties"]
+    assert "meta_error" not in props
+    assert "meta_error" not in guest.get(f"/api/blocks/{page['id']}").json()["properties"]
+
+
+def test_replace_on_a_page_without_a_pdf_attaches_it(guest):
+    # as POST would: the automatic title becomes the file name
+    page = guest.post("/api/pages", json={}).json()
+    doc_id = _upload_pdf(guest, PDF_BYTES + b"r7")
+    r = guest.put(f"/api/pages/{page['id']}/attachment", json={"doc_id": doc_id, "original_filename": "notes.pdf"})
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert body["content"] == "notes.pdf" and body["properties"]["auto_title"] == "notes.pdf"
+    assert body["properties"]["doc_id"] == doc_id
+
+
+def test_replace_rejects_bad_input(guest):
+    page = guest.post("/api/pages", json={"title": "x"}).json()
+    assert guest.put(f"/api/pages/{page['id']}/attachment", json={}).status_code == 400
+    assert guest.put(f"/api/pages/{page['id']}/attachment", json={"doc_id": "../etc"}).status_code == 400
+    assert guest.put("/api/pages/nope/attachment", json={"doc_id": "a" * 24}).status_code == 404
+    child = guest.post("/api/blocks", json={"parent_id": page["id"], "content": "c"}).json()
+    assert guest.put(f"/api/pages/{child['id']}/attachment", json={"doc_id": "a" * 24}).status_code == 400
+
+
 @pytest.fixture
 def bob_page():
     make_user("pages_bob", "pw")
@@ -204,6 +322,11 @@ def test_share_token_never_attaches(bob_page, guest):
     carol = login("pages_carol", "pw")
     r = carol.post(f"/api/pages/{page['id']}/attachment", params={"share": token}, json={"doc_id": "a" * 24})
     assert r.status_code == 404
+    # nor replaces
+    assert anon.put(f"/api/pages/{page['id']}/attachment", params={"share": token},
+                    json={"doc_id": "a" * 24}).status_code == 401
+    assert carol.put(f"/api/pages/{page['id']}/attachment", params={"share": token},
+                     json={"doc_id": "a" * 24}).status_code == 404
     assert "doc_id" not in bob.get(f"/api/blocks/{page['id']}").json()["properties"]
     assert anon.post("/api/pages", params={"share": token}, json={"title": "x"}).status_code == 401
 
