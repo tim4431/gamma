@@ -84,7 +84,12 @@ function updateHint(info) {
 // GET /api/admin/server-info: the build, uptime, log counts by level and the
 // GitHub release check (cached server-side; "Check now" refreshes). A
 // Docker server cannot update itself, so an available update is a hint
-// to pull the image; the desktop app updates on its own.
+// to pull the image. The desktop app's server says who installs it
+// (`updates`): the app itself, or in a Microsoft Store install the Store,
+// which has a release only once Microsoft certifies it — no warning
+// tone there, and Open Store leads to the Store's updates page.
+const STORE_UPDATES_URL = "ms-windows-store://downloadsandupdates";
+
 function ServerDashboard() {
   const { data: info, error: readError, set: setInfo } = useSettingsRead("/admin/server-info", { poll: 30000 });
   const [checkError, setCheckError] = React.useState("");
@@ -107,7 +112,8 @@ function ServerDashboard() {
   }
   const counts = info.log_counts || {};
   const logTone = counts.error ? "error" : counts.warning ? "warn" : "";
-  const updateTone = info.update_available ? "warn" : "";
+  const fromStore = info.updates === "store";
+  const updateTone = info.update_available && !fromStore ? "warn" : "";
   return <>
     <div className="setStats">
       <StatText icon={ServerIcon} label={t("version")} value={info.version ? `v${info.version}` : t("dev build")}
@@ -129,6 +135,9 @@ function ServerDashboard() {
         ) : info.latest?.url ? (
           <button className="uiBtn sm" onClick={() => window.open(info.latest.url, "_blank", "noopener")}>{t("Release notes")}</button>
         ) : null}
+        {fromStore && info.update?.kind === "release" ? (
+          <button className="uiBtn sm" onClick={() => window.open(STORE_UPDATES_URL, "_blank", "noopener")}>{t("Open Store")}</button>
+        ) : null}
         <button className={`uiBtn sm ${updateTone ? "primary" : ""}`} disabled={checking} onClick={checkNow}>
           <MorphText>{checking ? t("Checking…") : t("Check now")}</MorphText>
         </button>
@@ -136,8 +145,12 @@ function ServerDashboard() {
     </Row>
     {info.update?.kind === "release" ? (
       <div className="settingsPaneHint">
-        {t("A server in Docker does not update itself: pull {latest} (or {version}) and restart the container. The desktop app updates on its own.", {
-          latest: <code>{info.image}:latest</code>, version: <code>:{info.update.version}</code> })}
+        {fromStore
+          ? t("Installed from the Microsoft Store: the Store has a release once Microsoft certifies it, one to three days after it is out, and Windows then installs it. To get it sooner, Open Store → Get updates.")
+          : info.updates === "desktop"
+            ? t("The desktop app updates itself: its top bar offers the update when it is ready, and Help → Check for Updates… asks now.")
+            : t("A server in Docker does not update itself: pull {latest} (or {version}) and restart the container.", {
+              latest: <code>{info.image}:latest</code>, version: <code>:{info.update.version}</code> })}
       </div>
     ) : info.update?.kind === "build" ? (
       <div className="settingsPaneHint">

@@ -38,6 +38,8 @@ const { hostPath } = require('./lib/hostPath');
 
 const SMOKE = process.argv.includes('--smoke');
 const BAR_H = 38;
+// The Store's own updates page (Library → Get updates); needs no product id.
+const STORE_UPDATES_URL = 'ms-windows-store://downloadsandupdates';
 
 // Tests point the shell at a throwaway profile so the real registry, cookies
 // and sidecars are never touched.
@@ -131,6 +133,7 @@ function appInfo() {
     resourcesPath: process.resourcesPath,
     userDataDir: app.getPath('userData'),
     version: app.getVersion(), // the sidecar reports it as its build (GAMMA_VERSION)
+    updates: process.windowsStore ? 'store' : 'desktop', // who installs the next release (GAMMA_UPDATES)
   };
 }
 
@@ -241,9 +244,10 @@ function createWindow() {
   cwc.on('will-navigate', guard);
   cwc.on('will-redirect', guard);
   // target=_blank (external link chips, share links, papers opened in a new
-  // tab) goes to the system browser.
+  // tab) goes to the system browser; the Store's updates page (Settings →
+  // Server in a Store install) to the Store.
   cwc.setWindowOpenHandler(({ url }) => {
-    if (/^https?:/.test(url)) openExternal(url);
+    if (/^https?:/.test(url) || url === STORE_UPDATES_URL) openExternal(url);
     return { action: 'deny' };
   });
   cwc.on('page-title-updated', (_e, title) => {

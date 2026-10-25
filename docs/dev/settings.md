@@ -213,7 +213,7 @@ and integration tokens get an empty list. The sources:
 
 | id | who | pane | tone | fires when | fingerprint |
 |---|---|---|---|---|---|
-| `update` | admins | Server | warn | a newer GitHub release than this build, or for a `-dev` Docker build a newer build of its branch (`version.check`, six-hour cache; the endpoint is sync on purpose) | the newer version |
+| `update` | admins | Server | warn | a newer GitHub release than this build, or for a `-dev` Docker build a newer build of its branch (`version.check`, six-hour cache; the endpoint is sync on purpose); never in a Microsoft Store install (`GAMMA_UPDATES=store`), where the Store delivers it days later | the newer version |
 | `log-errors` | admins | Server | error | an error was logged since the last look (`logbuf.last_seq("error")`) | server start time + the newest error's seq |
 | `db-damage` | admins | Server | error | the latest integrity check of a database file failed — a snapshot's copy, or Server → Databases → Check now (`integrity.failures()`, one small JSON file) | a digest of the damaged files and when each was found; a file that passes a later check drops out |
 | `backup-failed` | everyone | Backups | error | a backup task of the account is in state `failed` (`backup_schedule.list_tasks`) | each failed task's id + its last run |

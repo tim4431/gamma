@@ -75,9 +75,10 @@ def source(*, admin_only=False):
 def update_available(_user_id):
     """A newer GitHub release than this build, or for a ``-dev`` build a
     newer build of its branch (nothing for a checkout, an air-gapped server
-    or an unreachable GitHub)."""
+    or an unreachable GitHub, nor in a Microsoft Store install: the Store
+    has the release only days later and installs it itself)."""
     update = version.check()["update"]
-    if not update:
+    if not update or version.UPDATES == "store":
         return None
     return notice("update", update["version"], "warn", "server",
                   "Gamma v{version} is available — this server runs v{current}",
