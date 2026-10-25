@@ -241,6 +241,14 @@ its brief, once per account, workspace, paper, language and model:
   - A streamed request starts its response first and makes or waits for the
     brief inside the stream, which keepalive lines hold open. A plain request
     waits before it answers.
+  - The brief is why a paper's first requests are slow: the model writes up
+    to 40 terms and 15 symbols before any paragraph is translated, often half
+    a minute. A streamed request that waits for it says so with a `{"stage":
+    "brief"}` line, then `{"stage": "translate"}` once it is made. While any
+    request of a job is at that stage, the status pill says "Reading the paper
+    first, so its terms stay the same throughout…" and the background-tasks
+    row "reading the paper…" (`transReading` in `pdf/PdfViewer.jsx`,
+    `handleTranslateState` in `App.jsx`).
   - A failure or an unusable reply is remembered for two minutes, and the
     requests translate without a brief meanwhile. A call Gamma refused itself
     (the account's calls all in use, or its allowance spent) says nothing

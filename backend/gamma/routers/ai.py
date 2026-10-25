@@ -1335,7 +1335,14 @@ def ai_translate(payload: AITranslateRequest, request: Request):
         last = 0.0
         reply = ""
         try:
-            b, bt = (brief, batch) if inline else resolve(True)
+            if inline:
+                b, bt = brief, batch
+            else:
+                # The paper's brief comes first, one model call that can take
+                # half a minute: the viewer says so until "translate".
+                yield json.dumps({"stage": "brief"}) + "\n"
+                b, bt = resolve(True)
+                yield json.dumps({"stage": "translate"}) + "\n"
             if not bt.miss:
                 yield json.dumps(cached(bt), ensure_ascii=False) + "\n"
                 return

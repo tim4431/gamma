@@ -201,8 +201,14 @@ def test_a_streamed_request_makes_the_brief_inside_its_stream(eve, monkeypatch):
     r = c.post("/api/ai/translate", json={"texts": ["a streamed paragraph"], "lang": "pt", "page_id": page, "stream": True})
     assert r.status_code == 200
     lines = [json.loads(l) for l in r.text.splitlines() if l.strip() and "ping" not in l]
+    # The stream says when it is reading the paper, and when that is over.
+    assert lines[:2] == [{"stage": "brief"}, {"stage": "translate"}]
     assert lines[-1]["translations"] == ["S:a streamed paragraph"]
     assert len(calls["brief"]) == 1 and "里德堡阻塞" in calls["translate"][0]["system"]
+    # Once the brief is made, a request has nothing to wait for and says nothing.
+    r = c.post("/api/ai/translate", json={"texts": ["another paragraph"], "lang": "pt", "page_id": page, "stream": True})
+    lines = [json.loads(l) for l in r.text.splitlines() if l.strip() and "ping" not in l]
+    assert not any("stage" in l for l in lines) and lines[-1]["translations"] == ["S:another paragraph"]
 
 
 def test_an_unstored_page_is_named_by_its_id_so_a_selection_finds_the_jobs_brief(eve, monkeypatch):

@@ -3390,12 +3390,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [pdfTransState, setPdfTransState] = useState({ running: false, progress: 0, shown: true, pages: 0, current: false });
   const [transMenu, setTransMenu] = useState(null); // {x, y} while the button's option menu is open
   const transTaskRef = useRef(null); // background-tasks row for the running job
+  const transReadingRef = useRef(false); // the "Reading the paper" pill is up
   function openTransMenu(el) {
     const r = el.getBoundingClientRect();
     setTransMenu({ x: r.right + 8, y: r.top - 4 });
   }
   function handleTranslateState(st) {
     setPdfTransState(st);
+    // A paper's first requests wait while the server reads it for the brief
+    // (its terms and notation): the pill says why nothing lands yet.
+    const reading = !!(st.running && st.reading);
+    if (reading !== transReadingRef.current) {
+      transReadingRef.current = reading;
+      postPill("translate", reading
+        ? { msg: t("Reading the paper first, so its terms stay the same throughout…"), spinner: true }
+        : null);
+    }
     if (st.running && !transTaskRef.current) {
       transTaskRef.current = addTask({
         name: `Translate ${st.label} → ${translateLangLabel}`, kind: "ai", info: "0%", fraction: 0,
@@ -3404,7 +3414,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
     if (transTaskRef.current) {
       if (st.running) {
-        updateTask(transTaskRef.current, { info: `${Math.round(st.progress * 100)}%`, fraction: st.progress });
+        updateTask(transTaskRef.current, {
+          info: reading ? t("reading the paper…") : `${Math.round(st.progress * 100)}%`, fraction: st.progress,
+        });
       } else {
         const full = st.progress >= 0.999;
         updateTask(transTaskRef.current, { state: "done", info: full ? "100%" : t("stopped at {progress}%", { progress: Math.round(st.progress * 100) }) });
@@ -3426,7 +3438,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // `context` is the viewer's for this request (pdf/translatePlan.js
   // requestFields): the page and, for a page without a stored PDF, the
   // document's opening text, from which the server makes the paper's brief.
-  async function translateChunk(texts, signal, onPartial, context) {
+  // `onStage("brief")` while the request waits for that brief, then
+  // `onStage("translate")`.
+  async function translateChunk(texts, signal, onPartial, context, onStage) {
     try {
       const res = await fetch(`${API}/ai/translate`, {
         method: "POST",
@@ -3449,6 +3463,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         for (const ev of events) {
           if (ev.error) throw new Error(ev.error);
           else if (ev.translations) final = ev;
+          else if (ev.stage) onStage?.(ev.stage);
           else if (ev.i && onPartial) for (const i of ev.i) onPartial(i, ev.text);
         }
       });

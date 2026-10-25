@@ -1365,6 +1365,9 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   const [transMap, setTransMap] = useState(() => new Map()); // pageNo -> {key, paras, texts, done, queued, busy, partial}
   const [transShown, setTransShown] = useState(true); // show/hide applies to ALL pages at once
   const [transStatus, setTransStatus] = useState({ running: false, progress: 0, label: "" });
+  // A request is waiting while the server reads the paper for its brief (a
+  // paper's first requests; the stream's "stage" lines): the host says so.
+  const [transReading, setTransReading] = useState(false);
   const transJobRef = useRef(null); // {aborted} while a job runs
   const parasCacheRef = useRef(new Map()); // pageNo -> segmented paragraph blocks
   const transMapRef = useRef(transMap);
@@ -1399,8 +1402,8 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     }
     const cur = transMap.get(curPage);
     const current = !!(cur && cur.key === translateKey && cur.done);
-    cbRef.current.onTranslateState?.({ ...transStatus, shown: transShown, pages, current });
-  }, [transStatus, transShown, transMap, translateKey, curPage]);
+    cbRef.current.onTranslateState?.({ ...transStatus, reading: transReading, shown: transShown, pages, current });
+  }, [transStatus, transReading, transShown, transMap, translateKey, curPage]);
 
   // A document swap invalidates geometry and translations wholesale.
   useEffect(() => {
@@ -1411,7 +1414,17 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     setTransShown(true);
     setTransStatus({ running: false, progress: 0, label: "" });
   }, [docSeq]);
-  useEffect(() => () => haltTransJob(), []);
+  // Unmounted mid-job (a text page opened), the viewer reports nothing
+  // more: the host hears here that the job stopped, so its pill and
+  // background-tasks row end with it.
+  const transStatusRef = useRef(transStatus);
+  transStatusRef.current = transStatus;
+  useEffect(() => () => {
+    if (!transJobRef.current) return;
+    haltTransJob();
+    cbRef.current.onTranslateState?.({ ...transStatusRef.current, running: false, reading: false,
+                                       shown: true, pages: 0, current: false });
+  }, []);
 
   async function ensureParas(pn) {
     const cache = parasCacheRef.current;
@@ -1474,6 +1487,14 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     const scope = translateScopeRef.current || {};
     const context = { pageId: scope.pageId || "" };
     if (!scope.stored) context.head = await documentHead();
+    // The chunks whose request is waiting on the paper's brief.
+    const reading = new Set();
+    const readingFor = (c, on) => {
+      const was = reading.size > 0;
+      if (on) reading.add(c);
+      else reading.delete(c);
+      if (was !== reading.size > 0) setTransReading(reading.size > 0);
+    };
     // Per-page state, made on first use (a page's own turn, or a unit from a
     // neighbouring page that a paragraph runs into). `out` holds results by
     // block index (translatePlan.results): text, null for a block that came
@@ -1571,12 +1592,14 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           for (const r of partials(u, text)) stateOf(r.pn).partial[r.i] = r.text;
           paint(pns);
         };
+        const onStage = (stage) => { if (!job.aborted) readingFor(c, stage === "brief"); };
         // One client-side retry per chunk (transient network/provider blips);
         // the server separately salvages miscounted model replies.
         for (let attempt = 0; attempt < 2 && !res && !job.aborted; attempt++) {
-          res = await Promise.resolve(cbRef.current.onTranslate?.(c.texts, job.ctl.signal, onPartial, { ...context, ...c.context }))
+          res = await Promise.resolve(cbRef.current.onTranslate?.(c.texts, job.ctl.signal, onPartial, { ...context, ...c.context }, onStage))
             .catch(() => null);
         }
+        readingFor(c, false);
         for (const t of targets) { const st = stateOf(t.pn); st.busy.delete(t.i); delete st.partial[t.i]; }
         if (job.aborted) return;
         if (!Array.isArray(res) || res.length !== c.units.length) { failed = true; return; }
@@ -1609,6 +1632,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       }
       return m;
     });
+    setTransReading(false);
     setTransStatus({ running: false, label, progress: totalChars ? doneChars / totalChars : 1 });
   }
 
