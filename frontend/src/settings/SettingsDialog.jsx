@@ -385,7 +385,7 @@ function StorageCard() {
         <span className="setIcon"><HardDriveIcon size={16} /></span>
         <span className="settingText">
           <span className="settingLabel">{t("Uploaded files")}</span>
-          <span className="settingDesc">{t("PDFs and images on the server · up to {max_upload_mb} MB each", { max_upload_mb: q.max_upload_mb })}</span>
+          <span className="settingDesc">{t("PDFs and images on the server")}</span>
         </span>
         <span className="setCardVal">
           {fmtBytes(q.used_bytes)}

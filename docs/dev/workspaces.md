@@ -143,8 +143,8 @@ kind. The model and CLI helpers share this transaction in
 An account's upload quota covers all its personal workspaces together. Shared
 workspace uploads count against nobody's personal allowance; administrators
 can give each shared workspace its own quota. `0` or `null` means unlimited.
-`GET /api/quota` reports the selected workspace's limits. See
-[storage limits](user_db.md) for per-file limits and quota accounting.
+`GET /api/quota` reports the selected workspace's quota. See
+[storage limits](user_db.md) for quota accounting.
 
 ## Data ownership
 

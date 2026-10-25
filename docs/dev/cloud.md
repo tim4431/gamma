@@ -113,7 +113,7 @@ same way. Deleting an account cancels at Stripe first and purges the row
 At startup and every hour it posts a short report to the account server
 (build, schema, accounts, active accounts, bytes, last write, errors,
 uptime) and gets back its limits: plan, status, read-only, sign-in
-policy, account cap, quota, per-file cap, off-site schedule, and one
+policy, account cap, quota, off-site schedule, and one
 sentence to show. The operator can give one server numbers of its own
 over its plan's. Everything else about the container is its owner's:
 the operator is not an admin inside it and, under the `invited` policy,

@@ -1901,21 +1901,20 @@ export async function settingsScenarios(env) {
       await page.locator(".settingsPane .aiProvRow").waitFor();
       assertEq(await page.locator(".settingsPane .aiProvRow").count(), 1);
       await nav(page, "Server").click();
-      const limit = row(page, "Default max upload").locator("input");
-      await limit.waitFor();
-      const originalLimit = await limit.inputValue();
-      // limits save on commit, like every other setting
-      await limit.fill("77");
-      await limit.press("Enter");
-      await until(() => user.api("/api/admin/settings").then((s) => s.max_upload_mb === 77), { what: "limit saved on Enter" });
-      await limit.fill(originalLimit);
-      await limit.press("Enter");
-      await until(() => user.api("/api/admin/settings").then((s) => String(s.max_upload_mb) === originalLimit), { what: "limit restored" });
-      await limit.fill("77");
-      await limit.press("Enter");
-      await row(page, "Default quota").locator("input").fill("1200");
-      await row(page, "Default quota").locator("input").press("Enter");
-      await until(() => user.api("/api/admin/settings").then((v) => v.max_upload_mb === 77 && v.quota_mb === 1200));
+      const quota = row(page, "Default quota").locator("input");
+      await quota.waitFor();
+      assertEq(await page.locator('.settingsPane [data-setting="Default max upload"]').count(), 0); // no per-file cap
+      const originalQuota = await quota.inputValue();
+      // the quota saves on commit, like every other setting
+      await quota.fill("1200");
+      await quota.press("Enter");
+      await until(() => user.api("/api/admin/settings").then((s) => s.quota_mb === 1200), { what: "quota saved on Enter" });
+      await quota.fill(originalQuota);
+      await quota.press("Enter");
+      await until(() => user.api("/api/admin/settings").then((s) => String(s.quota_mb) === originalQuota), { what: "quota restored" });
+      await quota.fill("1200");
+      await quota.press("Enter");
+      await until(() => user.api("/api/admin/settings").then((v) => v.quota_mb === 1200));
       await nav(page, "Users").click();
       await until(() => page.locator(".settingsPane .aiProvRow").count().then((n) => n > 1));
       // Each account row nests its personal workspaces; Manage opens the

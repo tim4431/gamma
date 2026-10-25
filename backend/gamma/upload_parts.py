@@ -67,11 +67,11 @@ _lock = threading.Lock()
 
 
 def start(ws: str, size: int, name: str = "", kind: str = "pdf") -> Session:
-    """Open an upload of ``size`` bytes into the workspace: the per-file
-    limit and the quota (413 / 507, ``check_upload_allowed``) are checked
-    here, before a byte travels, and a ``file``'s extension (400 for an
-    executable, or a drawing, which always fits one request). 400 for no
-    size at all, 429 past MAX_PER_WS open sessions in the workspace."""
+    """Open an upload of ``size`` bytes into the workspace: the quota (507,
+    ``check_upload_allowed``) is checked here, before a byte travels, and a
+    ``file``'s extension (400 for an executable, or a drawing, which always
+    fits one request). 400 for no size at all, 429 past MAX_PER_WS open
+    sessions in the workspace."""
     if size <= 0:
         raise HTTPException(status_code=400, detail="an upload needs a size")
     if kind not in ("pdf", "file"):

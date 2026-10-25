@@ -32,11 +32,11 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
   const [ownError, setError] = React.useState("");
   const error = ownError || (!info ? listing.error : "");
   const [busy, setBusy] = React.useState(false);
-  const [edit, setEdit] = React.useState(null); // {original, username, password, is_admin, max_upload_mb, quota_mb}
+  const [edit, setEdit] = React.useState(null); // {original, username, password, is_admin, quota_mb}
   const [addForm, setAddForm] = React.useState(null); // {username, password, is_admin}
   const [manage, setManage] = React.useState(null); // workspace id being managed
   const listWorkspaces = isAdmin && !selfOnly;
-  const defaults = useSettingsRead(isAdmin ? "/admin/settings" : null).data; // {max_upload_mb, quota_mb} server-wide
+  const defaults = useSettingsRead(isAdmin ? "/admin/settings" : null).data; // {quota_mb} server-wide
   React.useEffect(() => {
     if (!isAdmin) refreshQuota?.(); // the self row's storage meter comes from /api/quota
   }, [isAdmin]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -64,7 +64,6 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
     is_admin: false,
     created_at: null,
     used_bytes: quotaInfo?.used_bytes,
-    max_upload_mb: quotaInfo?.max_upload_mb ?? null,
     quota_mb: quotaInfo?.quota_mb ?? null,
   }];
   const lastAdmin = (u) => u.is_admin && (info?.users || []).filter((x) => x.is_admin && !x.is_guest).length <= 1;
@@ -106,7 +105,7 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
   // Two separate editors per account: credentials (rename/password/privilege)
   // and storage limits — each its own button and dialog.
   // edit = {kind: "account", original, username, password, is_admin}
-  //      | {kind: "storage", original, max_upload_mb, quota_mb}
+  //      | {kind: "storage", original, quota_mb}
   function openAccount(u) {
     setError("");
     setAddForm(null);
@@ -116,7 +115,7 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
   function openStorage(u) {
     setError("");
     setAddForm(null);
-    setEdit({ kind: "storage", original: u, max_upload_mb: u.max_upload_mb ?? "", quota_mb: u.quota_mb ?? "" });
+    setEdit({ kind: "storage", original: u, quota_mb: u.quota_mb ?? "" });
   }
 
   // "" = inherit the server default (sent as explicit null), digits = override
@@ -157,17 +156,13 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
 
   async function saveStorage() {
     const u = edit.original;
-    const maxMb = parseLimit(edit.max_upload_mb);
     const quotaMb = parseLimit(edit.quota_mb);
-    if (Number.isNaN(maxMb) || Number.isNaN(quotaMb)) {
+    if (Number.isNaN(quotaMb)) {
       setError(t("Storage limits must be whole numbers of MB, or blank for the server default."));
       return;
     }
-    const payload = {};
-    if (maxMb !== (u.max_upload_mb ?? null)) payload.max_upload_mb = maxMb;
-    if (quotaMb !== (u.quota_mb ?? null)) payload.quota_mb = quotaMb;
-    if (Object.keys(payload).length) {
-      if (!await usersCall(`/${encodeURIComponent(u.username)}`, "PUT", payload)) return;
+    if (quotaMb !== (u.quota_mb ?? null)) {
+      if (!await usersCall(`/${encodeURIComponent(u.username)}`, "PUT", { quota_mb: quotaMb })) return;
       setStatus(t("Storage limits updated for {username}.", { username: u.username }));
       if (u.username === myName) refreshQuota?.();
     }
@@ -253,7 +248,6 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
     const u = edit.original;
     // effective quota = this account's override, else the server default
     const effQuota = u.quota_mb ?? defaults?.quota_mb;
-    const defUpload = defaults ? t("server default ({max_upload_mb})", { max_upload_mb: defaults.max_upload_mb }) : t("server default");
     const defQuota = defaults
       ? t("server default ({unlimited})", { unlimited: defaults.quota_mb || t("unlimited") })
       : t("server default");
@@ -261,13 +255,6 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
       <SubDialog title={t("Storage limits — {username}", { username: u.username })} onClose={closeEdit} draft={edit}>
         <div className="settingsForm">
           <QuotaMeter usedBytes={u.used_bytes} quotaMb={effQuota} />
-          <Field label={t("Max upload size")} hint={t("Largest single PDF or image · blank inherits")}>
-            <UnitInput
-              unit="MB" min={1} placeholder={defUpload}
-              value={edit.max_upload_mb}
-              onChange={(max_upload_mb) => setEdit((f) => ({ ...f, max_upload_mb }))}
-            />
-          </Field>
           <Field label={t("Storage quota")} hint={t("Total for all uploads · blank inherits · 0 = unlimited")}>
             <UnitInput
               unit="MB" min={0} placeholder={defQuota}
@@ -299,12 +286,7 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
             {u.is_admin ? <span className="uiTag admin">{t("admin")}</span> : null}
             {u.is_guest ? <span className="uiTag">{t("guest")}</span> : null}
           </span>
-          {u.is_guest || u.max_upload_mb != null ? (
-            <span className="aiProvDesc">
-              {[u.is_guest ? t("shared demo workspace, resets daily") : "",
-                u.max_upload_mb != null ? t("max file {mb} MB", { mb: u.max_upload_mb }) : ""].filter(Boolean).join(" · ")}
-            </span>
-          ) : null}
+          {u.is_guest ? <span className="aiProvDesc">{t("shared demo workspace, resets daily")}</span> : null}
           <QuotaMeter usedBytes={u.used_bytes} quotaMb={u.quota_mb ?? defaults?.quota_mb} />
         </span>
         <span className="aiProvActions">

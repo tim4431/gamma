@@ -735,10 +735,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     window.location.href = `${window.location.pathname}?ws=${encodeURIComponent(id)}`;
   }
 
-  // Effective storage limits + usage for the session user (GET /api/quota):
-  // feeds the client-side pre-upload size check. Refreshed on login and after
-  // uploads; the Settings displays fetch their own fresh copy.
-  const [quotaInfo, setQuotaInfo] = useState(null); // {max_upload_mb, quota_mb, used_bytes}
+  // Effective storage quota + usage for the session user (GET /api/quota):
+  // feeds the storage meters. Refreshed on login and after uploads; the
+  // Settings displays fetch their own fresh copy.
+  const [quotaInfo, setQuotaInfo] = useState(null); // {quota_mb, used_bytes}
   const refreshQuota = useCallback(() => {
     if (shareMode) return;
     apiJson(`${API}/quota`).then(setQuotaInfo).catch(() => {});
@@ -5109,13 +5109,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       }
       for (const { file, filename, path } of items) {
         const folder = folderOf(path);
-        // Pre-check only with the quota info loaded — otherwise let the
-        // server's check_upload_allowed decide (its 413 detail is surfaced
-        // per file below).
-        if (isPdfFile(file) && quotaInfo && file.size > quotaInfo.max_upload_mb * 1024 * 1024) {
-          failed.push(t("{filename} (max {max_upload_mb} MB)", { filename, max_upload_mb: quotaInfo.max_upload_mb }));
-          continue;
-        }
         setStatus(`${isPdfFile(file) ? "Uploading" : "Importing"} ${filename}...`);
         try {
           done.push(isPdfFile(file)
@@ -11895,7 +11888,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           hasInbox: !!authUser?.user && !authUser.is_guest, // a guest has none
           isAdmin: !!authUser?.is_admin,
           setStatus,
-          refreshQuota, // keep the client-side pre-upload size check in sync without a re-login
+          refreshQuota, // keep the storage meters in sync without a re-login
         }}
         keyboard={{ keybindings, setKeybindings, enterNewNote, setEnterNewNote }}
         library={{

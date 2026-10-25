@@ -299,8 +299,8 @@ folder of notes, because they only differ in naming and link conventions
   `![[Note#^id]]` becomes a Gamma synced block `![[id]]`, while `![[Note]]`
   and `![[Note#Heading]]` degrade to mentions (a Gamma embed shows one
   block). A link or image pointing at a bundled file uploads it
-  (`store_file`, content-hash dedup, storage limits per file — an over-limit
-  file is a warning and the link stays as typed) and points at
+  (`store_file_stream`, content-hash dedup, the storage quota — a file over
+  it is a warning and the link stays as typed) and points at
   `/api/uploads/…`; `![[img.png|300]]` / `|300x200` becomes the editor's
   `![|300](url)` size form, other pipe text the alt. Links that resolve to
   nothing stay as typed (so a Gamma `[[id]]` is never touched).
@@ -347,7 +347,8 @@ folder of notes, because they only differ in naming and link conventions
   that unpacks to over 100 times its packed size (`MAX_RATIO`) is not read,
   with a warning, and an archive that does so as a whole is refused (413).
   Notes pack about 4:1 and photos or PDFs 1:1, a zip bomb about 1000:1. A
-  bundled file past the per-file upload cap is a warning and is not read.
+  bundled file has no size cap: it is streamed into storage, never read
+  whole.
   A nested zip is spooled, and a bundled file stored, only while the disk
   keeps `import_staging.MIN_FREE_BYTES` free (507 for the zip, a warning
   for the file), as a staged upload must.
@@ -649,8 +650,9 @@ and never sits on disk twice. For each chosen note, in path order:
 1. Its Session.plist is read and hashed. A note whose digest a page of the
    library carries (`properties.notability_import`), or that came earlier in
    the upload, is skipped and shown where it is.
-2. The PDFs its pages name are checked against the per-file cap and opened.
-   One past the cap skips the note; one that does not open becomes paper.
+2. The PDFs its pages name are checked against `MAX_HELD_BYTES` (256 MB: a
+   PDF is read whole into memory, parsed and composed) and opened. One past
+   it skips the note; one that does not open becomes paper.
 3. Its PDF (the original or the composed one), its ink page by page, its
    pictures and its recordings are stored, outside any transaction.
 4. Its folder and its page are written in one short transaction under the
@@ -729,8 +731,9 @@ names:
   (`storage.store_file_stream`). A text box's or a formula's text is cut
   at 200,000 characters, what the editor saves (`ops.MAX_CONTENT`).
 - Every file goes through `store_pdf`, `store_file` or
-  `store_file_stream` (per-file cap, quota, dedup), its size checked from
-  the zip before a byte is read.
+  `store_file_stream` (quota, dedup), its size checked from the zip before a
+  byte is read: a PDF or picture, held whole in memory, up to
+  `MAX_HELD_BYTES`.
 
 **The report**: `pages_created`, `pages_skipped`, `pdfs_stored`,
 `strokes_imported`, `text_boxes_imported`, `pictures_imported`,
