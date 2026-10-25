@@ -968,12 +968,17 @@ def _run_export(conn, ws, mode: str, root_ids, base: str, opts: dict, progress=j
     return builder
 
 
-def _export_opts(pdf=True, highlights=True, notes=True, folder_scope=None, author="", comments=False,
-                 notes_at="beside") -> dict:
-    """The switches as the builders read them; 400 for a ``notes_at`` that
-    is no place notes go."""
+def _notes_place(notes_at: str) -> str:
+    """``notes_at`` as given; 400 when it is no place notes go."""
     if notes_at not in NOTES_AT:
         raise HTTPException(status_code=400, detail=f"notes_at must be one of: {', '.join(NOTES_AT)}")
+    return notes_at
+
+
+def _export_opts(pdf=True, highlights=True, notes=True, folder_scope=None, author="", comments=False,
+                 notes_at="beside") -> dict:
+    """The switches as the builders read them."""
+    notes_at = _notes_place(notes_at)
     return {"pdf": bool(pdf), "highlights": bool(highlights), "notes": bool(notes), "comments": bool(comments),
             "notes_at": notes_at, "folder_scope": folder_scope, "author": author}
 
@@ -1140,11 +1145,9 @@ def export_page_pdf(block_id: str, request: Request, notes: int = 0, highlights:
     notes: the cards and the text boxes, the writing already placed on the
     page."""
     ws = resolve_ws(request)
-    if notes_at not in NOTES_AT:
-        raise HTTPException(status_code=400, detail=f"notes_at must be one of: {', '.join(NOTES_AT)}")
     pdf_bytes, filename, written, drawn = annotated_pdf(
         ws, block_id, highlights=bool(highlights), notes=bool(notes), comments=bool(comments),
-        notes_at=notes_at, author=request.state.user or "", scope=share_scope(request))
+        notes_at=_notes_place(notes_at), author=request.state.user or "", scope=share_scope(request))
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",

@@ -1451,7 +1451,7 @@ proportionally into the column when too wide), wrapped cells, `:---:`
 alignment honored, the header bold on a tint and repeated when a page break
 falls inside the table. Fenced code is a bordered tinted card, one card
 segment per page it spans. `[[refs]]` and `![[embeds]]` resolve through a
-`resolve_ref` callback (`_block_ref_resolver` in `routers/export.py` — its own
+`resolve_ref` callback (`markdown_export.block_ref_resolver` — its own
 sqlite connection, since the request's closes before `response()` runs): a ref
 reads as its target's first line in link colour, an embed renders the synced
 block's content as a card with a soft bar and a muted `from <page>` source
