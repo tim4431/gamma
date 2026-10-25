@@ -44,9 +44,13 @@ def derive(token: str, purpose: str) -> str:
 
 
 def safe_next(raw: str) -> str:
-    """A local path to land on after signing in; anything else is ``/``."""
+    """A local path to land on after signing in; anything else is ``/``.
+    Whitespace, a control character or a backslash inside refuses it too:
+    a browser drops a tab or a line break from a URL and reads a backslash
+    as a slash, so ``/<tab>/evil.example`` would land on another host."""
     raw = (raw or "").strip()
-    if not raw.startswith("/") or raw.startswith("//") or "\\" in raw or len(raw) > 512:
+    if (not raw.startswith("/") or raw.startswith("//") or len(raw) > 512
+            or re.search(r"[\x00-\x20\x7f\\]", raw)):
         return "/"
     return raw
 

@@ -152,7 +152,8 @@ export const RULES = [
   ["frontend/src/library/RecentlyDeleted.jsx", ["trash"]],
   ["frontend/src/library/**", ALL], // the home view every scenario opens on
   ["frontend/src/search/**", ["notes-pdf-share", "quick-open"]],
-  ["frontend/src/sharing/**", ["notes-pdf-share", "publish", "collab"]],
+  // cloud-sign-in: the people invited by e-mail and the requests to join
+  ["frontend/src/sharing/**", ["notes-pdf-share", "publish", "collab", "cloud-sign-in"]],
   ["frontend/src/transfers/**", EXPORTS],
   ["frontend/src/tasks/**", [...EXPORTS, "settings", "ipad"]], // the Background tasks tray and its store
   ["frontend/src/support/**", ["settings"]],

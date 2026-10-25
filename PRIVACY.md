@@ -1,6 +1,6 @@
 # Gamma privacy policy
 
-_Last updated: 2026-10-06._
+_Last updated: 2026-10-25._
 
 Gamma is an open-source PDF annotation and note-taking application
 ([github.com/tim4431/Gamma](https://github.com/tim4431/Gamma)). This
@@ -145,7 +145,10 @@ and shows them on your account's Devices page, where you can sign a server
 out. It also keeps the preference profile the Gamma app syncs between
 your servers: settings only, never notes, highlights or files. A Gamma
 server you run yourself holds your library as before; nothing of it
-reaches us.
+reaches us, except, when someone there invites a person by e-mail, the
+name of the page, folder or workspace the invitation is to, which its
+mail names, and where on that server its link leads (for a page or
+folder, its share link).
 
 **Plans and payment.** Payments are handled by Stripe. We never see or
 store card numbers. We store your Stripe customer id, the plan, billing
@@ -186,14 +189,20 @@ message.
 
 **What we keep, and for how long.** Usage samples of our hosts and
 servers (memory, disk, storage, counts) and resolved operator alerts are
-kept for 30 days. The audit log is kept. Deleting your account, on its
-Settings page, cancels any subscription at Stripe, removes the password,
-the Google or GitHub links, the preference profile and the server list at
-once and signs out every server; 30 days later the account's remaining
-records are removed, and a Pro server still running then is deleted with
-its files and backups. A library on the shared server is closed when the
-account's sign-in ends and is then handled as the terms describe for a
-plan that ended.
+kept for 30 days. When a Gamma server invites someone by e-mail, the
+account server keeps the address the invitation was sent to, with the
+server's address and name, the name of what the invitation is to (a
+page's title, a folder's or a workspace's name) and where its link leads
+there, for at most 14 days from when it was last sent. The Gamma server
+asks us to delete it sooner once the invitation is accepted or
+withdrawn, or what it is to stops being shared. The audit log is kept.
+Deleting your account, on its Settings page, cancels any subscription at
+Stripe, removes the password, the Google or GitHub links, the preference
+profile and the server list at once and signs out every server; 30 days
+later the account's remaining records are removed, and a Pro server
+still running then is deleted with its files and backups. A library on
+the shared server is closed when the account's sign-in ends and is then
+handled as the terms describe for a plan that ended.
 
 **Third parties.** Stripe (payments), Cloudflare (DNS, the proxy and
 certificate in front of every request to our servers, and the Turnstile

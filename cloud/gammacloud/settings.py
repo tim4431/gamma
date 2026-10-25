@@ -2,8 +2,9 @@
 effect at once and no restart:
 
 - the sign-up gate: the registration mode, the Cloudflare Turnstile pair,
-  extra blocked mail domains, and the mail domains that may register
-  without an invite code;
+  extra blocked mail domains, the mail domains that may register without
+  an invite code, and which Gamma servers' e-mail invitations may carry
+  one;
 - which paid plans are on sale;
 - the operator's alerts: on or off, and the address they go to;
 - the fleet: the image tag a new hosted server runs, and whether outdated
@@ -24,11 +25,12 @@ from contextlib import closing
 from . import config, db
 
 REGISTRATION_MODES = ("open", "invite", "closed")
+INVITATION_SIGNUP = ("operator", "any")  # whose e-mail invitations may carry an invite code (``invitations.py``)
 PAID_PLANS = tuple(p for p in config.PLANS if p != "free")
 ON_OFF = ("on", "off")
 DEFAULTS = {"registration": "invite", "turnstile_sitekey": "", "turnstile_secret": "", "blocked_email_domains": "",
-            "allowed_email_domains": "", "plans_on_sale": " ".join(PAID_PLANS), "alerts": "on", "alert_email": "",
-            "fleet_image_tag": "", "fleet_auto_upgrade": "off"}
+            "allowed_email_domains": "", "invitation_signup": "operator", "plans_on_sale": " ".join(PAID_PLANS),
+            "alerts": "on", "alert_email": "", "fleet_image_tag": "", "fleet_auto_upgrade": "off"}
 SECRETS = {"turnstile_secret"}  # never sent to a browser or written to the audit log
 SWITCHES = {"alerts", "fleet_auto_upgrade"}  # stored as ``on`` / ``off``
 
@@ -96,6 +98,17 @@ def allowed_email_domains() -> frozenset[str]:
     return frozenset(_values()["allowed_email_domains"].split())
 
 
+def invitation_signup() -> str:
+    """Whose e-mail invitations may carry an invite code, so a newcomer can
+    register while sign-up needs one (``invitations.py``): ``operator``,
+    the servers the operator runs (the share host, hosted servers, clients
+    made on the Admin page), or ``any`` connected server, one a person
+    connected themselves too. A value ``update`` would refuse reads as
+    ``operator``: a bad row must never widen the gate."""
+    value = _values()["invitation_signup"]
+    return value if value in INVITATION_SIGNUP else "operator"
+
+
 def unguarded_registration() -> bool:
     """Open registration with Turnstile off, so only the rate limits stop a
     script. The Admin page and the startup log warn about it."""
@@ -139,7 +152,7 @@ def admin_view() -> dict:
     return {"registration": registration(), "turnstile_sitekey": v["turnstile_sitekey"],
             "turnstile_secret_set": bool(v["turnstile_secret"]), "turnstile_on": _turnstile_on(),
             "blocked_email_domains": v["blocked_email_domains"], "unguarded": unguarded_registration(),
-            "allowed_email_domains": v["allowed_email_domains"],
+            "allowed_email_domains": v["allowed_email_domains"], "invitation_signup": invitation_signup(),
             "plans_on_sale": [p for p in PAID_PLANS if p in plans_on_sale()],
             "alerts": alerts_on(), "alert_email": v["alert_email"],
             "fleet_image_tag": v["fleet_image_tag"], "fleet_image_tag_default": config.FLEET_IMAGE_TAG,
@@ -177,6 +190,9 @@ def clean(key: str, raw) -> str:
     if key == "registration":
         if value not in REGISTRATION_MODES:
             raise ValueError("Registration must be open, invite or closed.")
+    elif key == "invitation_signup":
+        if value not in INVITATION_SIGNUP:
+            raise ValueError("invitation_signup must be operator or any.")
     elif key in ("blocked_email_domains", "allowed_email_domains"):
         return _clean_domains(value)
     elif key == "plans_on_sale":

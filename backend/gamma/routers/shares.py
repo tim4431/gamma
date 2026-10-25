@@ -10,12 +10,16 @@ manages it. Settings:
 - ``users``: the people invited — ``[{"name", "role"}]`` by username, each
   with their own ``view``/``edit`` (stored as ``share_users`` rows by
   account id); they get in whatever the general access says. On a server
-  with Gamma Cloud sign-in a person can also be invited by their Gamma
-  Cloud username before they have an account here (``/invites``,
-  gamma/shares.py): the settings list those as ``pending`` until their
-  first sign-in, and show the share's managers the requests to join that
-  came through its link (``requests``, gamma/join_requests.py), which they
-  approve (an invitation by subject) or decline.
+  with Gamma Cloud sign-in a person can also be invited through Gamma
+  Cloud (``/invites``): by their Gamma Cloud username before they have an
+  account here (gamma/shares.py), or by e-mail address, whoever it belongs
+  to (gamma/email_invites.py: the account server mails the link,
+  ``/email-invites/{id}`` withdraws or resends it). The settings list
+  those as ``pending`` until the person's first sign-in, or their sign-in
+  through the mailed link (those by e-mail only for the managers signed in
+  with a session), and show the share's managers the requests to join
+  that came through its link (``requests``, gamma/join_requests.py), which
+  they approve (an invitation by subject) or decline.
 - ``audience`` (general access): ``anyone`` (the link alone, no login),
   ``users`` (any signed-in non-guest account on this server), ``list`` (only
   the invited people).
@@ -52,9 +56,9 @@ import sqlite3
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from .. import cloud_auth, collab, join_requests, ratelimit, shares
-from ..auth import (SHARE_AUDIENCES, SHARE_ROLES, ShareScope, can_write, note_share_miss, require_user_id, require_ws,
-                    share_access, share_lookup)
+from .. import cloud_auth, collab, email_invites, join_requests, ratelimit, shares
+from ..auth import (SHARE_AUDIENCES, SHARE_ROLES, ShareScope, can_write, is_token, note_share_miss, require_user_id,
+                    require_ws, share_access, share_lookup)
 from ..blocks_store import FOLDERS, TRASH, page_attachment
 from ..db import account_name, account_names, connect_pages_db, connect_users_db, delete_shares, page_now
 
@@ -68,18 +72,24 @@ class ShareSettings(BaseModel):
 
 
 class CloudInvite(BaseModel):
-    username: str = ""  # a Gamma Cloud username, looked up at the account server
-    subject: str = ""   # or a cloud account the share knows: its waiting invitation, its request to join
+    # exactly one of the four
+    username: str = ""    # a Gamma Cloud username, looked up at the account server
+    subject: str = ""     # or a cloud account the share knows: its waiting invitation, its request to join
+    email: str = ""       # or an e-mail address, which the account server mails an invitation to
+    invitation: str = ""  # or an invitation by e-mail still waiting: its role changes
     role: str = "view"
 
 
-def _settings(share: dict, manager: bool = False) -> dict:
-    """A share as its dialog shows it: the people (the invited and who
-    created it) by username, an invited account's Gamma Cloud username
-    beside it (``cloud``) where the two differ; then the invitations by
-    Gamma Cloud username still waiting (``pending``), and for a ``manager``
-    (who may change the share) the requests to join that came through it
-    (``requests``)."""
+def _settings(share: dict, request: Request) -> dict:
+    """A share as its dialog shows it to the caller: the people (the invited
+    and who created it) by username, an invited account's Gamma Cloud
+    username beside it (``cloud``) where the two differ; then the
+    invitations still waiting (``pending``), by Gamma Cloud username (with
+    their ``subject``) followed, for the people who manage them
+    (``_sees_email_invites``), by those by e-mail (with their ``id`` and
+    ``email``); and for a manager (``_manages``: who may change the share)
+    the requests to join that came through it (``requests``)."""
+    mailed = email_invites.listing("share", token=share["token"]) if _sees_email_invites(request) else []
     with connect_users_db() as conn:
         names = account_names(conn, [share["created_by"], *(u["user_id"] for u in share["users"])])
         clouds = cloud_auth.cloud_names(conn, [u["user_id"] for u in share["users"]])
@@ -89,8 +99,8 @@ def _settings(share: dict, manager: bool = False) -> dict:
                for u in share["users"] if u["user_id"] in names]
     out = {"token": share["token"], "page_id": share["page_id"], "folder": share["folder"],
            "audience": share["audience"], "role": share["role"], "users": invited,
-           "pending": shares.pending(share["token"]), "created_by": names.get(share["created_by"], "")}
-    if manager:
+           "pending": shares.pending(share["token"]) + mailed, "created_by": names.get(share["created_by"], "")}
+    if _manages(request):
         out["requests"] = join_requests.for_share(share["token"])
     return out
 
@@ -102,10 +112,18 @@ def _manages(request: Request) -> bool:
     return can_write(request) and not request.state.is_guest
 
 
+def _sees_email_invites(request: Request) -> bool:
+    """Whether the caller sees a share's invitations by e-mail: a manager
+    signed in with a session, who can withdraw and resend them. An
+    integration token can do neither, and their addresses are personal
+    data."""
+    return _manages(request) and not is_token(request)
+
+
 def _manager(request: Request, what: str) -> str:
-    """The caller's account id for an action on the people named by Gamma
-    Cloud (``what``): a session, never a guest's (403) or an integration
-    token's (401)."""
+    """The caller's account id for an action on the people invited through
+    Gamma Cloud, by username or by e-mail (``what``): a session, never a
+    guest's (403) or an integration token's (401)."""
     user_id = require_user_id(request)
     if request.state.is_guest:
         raise HTTPException(status_code=403, detail=f"a guest cannot {what}")
@@ -232,7 +250,7 @@ def _create(ws: str, request: Request, target: ShareScope, payload: ShareSetting
     sent around. An optional body applies settings to a NEW link only."""
     existing = _find(ws, target)
     if existing:
-        return _settings(existing, _manages(request))
+        return _settings(existing, request)
     fields = _validated(request.state.user_id, {"audience": "anyone", "role": "view", "users": []},
                         payload or ShareSettings())
     token = f"{ws}.{secrets.token_urlsafe(12)}"  # <workspace id>.<secret>: db.share_token_workspace
@@ -247,12 +265,12 @@ def _create(ws: str, request: Request, target: ShareScope, payload: ShareSetting
         )
         invited = _invite(conn, token, fields["users"]) if cur.rowcount else []
     shares.tell(ws, target, token, request.state.user_id, invited)
-    return _settings(_find(ws, target), _manages(request))
+    return _settings(_find(ws, target), request)
 
 
 def _get(ws: str, request: Request, target: ShareScope) -> dict:
     share = _find(ws, target)
-    return _settings(share, _manages(request)) if share else _unshared(target)
+    return _settings(share, request) if share else _unshared(target)
 
 
 def _update(ws: str, request: Request, target: ShareScope, payload: ShareSettings, what: str) -> dict:
@@ -267,18 +285,42 @@ def _update(ws: str, request: Request, target: ShareScope, payload: ShareSetting
         raise HTTPException(status_code=404, detail=f"{what} is not shared")
     collab.revalidate(ws)
     shares.tell(ws, target, share["token"], request.state.user_id, invited)
-    return _settings(share_lookup(share["token"]), _manages(request))
+    return _settings(share_lookup(share["token"]), request)
 
 
 def _cloud_invite(ws: str, request: Request, target: ShareScope, payload: CloudInvite, what: str) -> dict:
-    """Invite someone by their Gamma Cloud username, change the role of an
-    invitation still waiting, or approve a request to join that came
-    through the share (``subject``; gamma/shares.py ``invite_cloud``).
-    Sessions only, never a guest: a lookup spends the caller's own Gamma
-    Cloud grant, and counts against the caller's lookups, a workspace's
-    invitations' too."""
-    user_id = _manager(request, "invite people by Gamma Cloud username")
+    """Invite someone who may have no account here yet, named by exactly one
+    of: ``username``, their Gamma Cloud username, or ``subject``, a cloud
+    account the share knows — the role of an invitation still waiting
+    changes, a request to join that came through the share is approved
+    (gamma/shares.py ``invite_cloud``); ``email``, an address the account
+    server mails an invitation to (gamma/email_invites.py), whoever it
+    belongs to; ``invitation``, an invitation by e-mail still waiting,
+    whose role changes. A lookup counts against the caller's lookups, a
+    workspace's invitations' too; a mail against the caller's invitations
+    by e-mail."""
+    user_id = _manager(request, "invite people")
+    if sum(bool(name) for name in (payload.username, payload.subject, payload.email, payload.invitation)) != 1:
+        raise HTTPException(status_code=400,
+                            detail="name one person: a username, a subject, an e-mail address or an invitation")
     share = _shared(ws, target, what)
+    if payload.invitation:
+        try:
+            email_invites.set_role(payload.invitation, payload.role, kind="share", token=share["token"])
+        except email_invites.NoSuchInvitation as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return _settings(share_lookup(share["token"]), request)
+    if payload.email:
+        ratelimit.check(f"email-invite:{user_id}", email_invites.SENDS_PER_HOUR, 3600)
+        try:
+            invited = email_invites.invite("share", payload.email, user_id,
+                                           server_url=cloud_auth.callback_base(request), share=share,
+                                           role=payload.role)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {**_settings(share_lookup(share["token"]), request), "invited": invited}
     if not cloud_auth.settings()["enabled"]:
         raise HTTPException(status_code=400, detail="Gamma Cloud sign-in is not set up on this server")
     if not payload.subject:
@@ -292,7 +334,7 @@ def _cloud_invite(ws: str, request: Request, target: ShareScope, payload: CloudI
         raise HTTPException(status_code=400, detail=str(e))
     if "user" in invited:
         collab.revalidate(ws)  # an account's role may have dropped to view
-    return {**_settings(share_lookup(share["token"]), True), "invited": invited}
+    return {**_settings(share_lookup(share["token"]), request), "invited": invited}
 
 
 def _cancel_invite(ws: str, request: Request, target: ShareScope, subject: str, what: str) -> dict:
@@ -302,7 +344,35 @@ def _cancel_invite(ws: str, request: Request, target: ShareScope, subject: str, 
         shares.cancel(share["token"], subject)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    return _settings(share, _manages(request))
+    return _settings(share, request)
+
+
+def _withdraw_email(ws: str, request: Request, target: ShareScope, invite_id: str, what: str) -> dict:
+    """Withdraw an invitation by e-mail still waiting: its mailed link stops
+    working."""
+    user_id = _manager(request, "invite people")
+    share = _shared(ws, target, what)
+    try:
+        email_invites.withdraw(invite_id, user_id, server_url=cloud_auth.callback_base(request), kind="share",
+                               token=share["token"])
+    except email_invites.NoSuchInvitation as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return _settings(share, request)
+
+
+def _resend_email(ws: str, request: Request, target: ShareScope, invite_id: str, what: str) -> dict:
+    """Mail an invitation by e-mail again: a new link, its 14 days from now."""
+    user_id = _manager(request, "invite people")
+    share = _shared(ws, target, what)
+    ratelimit.check(f"email-invite:{user_id}", email_invites.SENDS_PER_HOUR, 3600)
+    try:
+        email_invites.resend(invite_id, user_id, server_url=cloud_auth.callback_base(request), kind="share",
+                             share=share)
+    except email_invites.NoSuchInvitation as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return _settings(share, request)
 
 
 def _decline(ws: str, request: Request, target: ShareScope, subject: str, what: str) -> dict:
@@ -314,15 +384,17 @@ def _decline(ws: str, request: Request, target: ShareScope, subject: str, what: 
         join_requests.decline(share["token"], subject, user_id)
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
-    return _settings(share, True)
+    return _settings(share, request)
 
 
 def _delete(ws: str, target: ShareScope) -> dict:
-    """Stop sharing: the token dies; sharing again mints a new one."""
+    """Stop sharing: the token dies, and the mailed links of its invitations
+    by e-mail; sharing again mints a new one."""
     with connect_users_db() as conn:
-        removed = delete_shares(conn, "workspace_id = ? AND page_id = ? AND folder = ?",
-                                (ws, target.page, target.folder))
+        removed, links = delete_shares(conn, "workspace_id = ? AND page_id = ? AND folder = ?",
+                                       (ws, target.page, target.folder))
         conn.commit()
+    email_invites.cancel_links(links)
     collab.revalidate(ws)
     return {"ok": True, "removed": removed}
 
@@ -330,12 +402,13 @@ def _delete(ws: str, target: ShareScope) -> dict:
 def delete_folder_shares(ws: str, folder_ids) -> int:
     """The shares of folders that are gone (the folder and the folders below
     it; ``ops.after_commit`` runs this for the tree batch that deleted them,
-    DELETE /folders/{id}'s or a mirror's) die with them. Returns how many
-    went."""
+    DELETE /folders/{id}'s or a mirror's) die with them, and the mailed
+    links of their invitations by e-mail. Returns how many went."""
     with connect_users_db() as conn:
-        removed = delete_shares(conn, "workspace_id = ? AND folder IN (SELECT value FROM json_each(?))",
-                                (ws, json.dumps(sorted(folder_ids))))
+        removed, links = delete_shares(conn, "workspace_id = ? AND folder IN (SELECT value FROM json_each(?))",
+                                       (ws, json.dumps(sorted(folder_ids))))
         conn.commit()
+    email_invites.cancel_links(links)
     if removed:
         collab.revalidate(ws)
     return removed
@@ -382,9 +455,9 @@ def delete_folder_share(folder_id: str, request: Request):
 
 @router.post("/share-settings/folder/{folder_id}/invites")
 def invite_to_folder_share(folder_id: str, payload: CloudInvite, request: Request):
-    """Invite by Gamma Cloud username, change a waiting invitation's role,
-    or approve a request to join (``subject``) — sync: a lookup goes to the
-    account server."""
+    """Invite by Gamma Cloud username or by e-mail, change a waiting
+    invitation's role, or approve a request to join (``subject``) — sync:
+    the account server is asked."""
     ws = require_ws(request, write=True)
     return _cloud_invite(ws, request, ShareScope(folder=folder_id), payload, "folder")
 
@@ -393,6 +466,18 @@ def invite_to_folder_share(folder_id: str, payload: CloudInvite, request: Reques
 def cancel_folder_share_invite(folder_id: str, subject: str, request: Request):
     ws = require_ws(request, write=True)
     return _cancel_invite(ws, request, ShareScope(folder=folder_id), subject, "folder")
+
+
+@router.delete("/share-settings/folder/{folder_id}/email-invites/{invite_id}")
+def withdraw_folder_share_email_invite(folder_id: str, invite_id: str, request: Request):
+    ws = require_ws(request, write=True)
+    return _withdraw_email(ws, request, ShareScope(folder=folder_id), invite_id, "folder")
+
+
+@router.post("/share-settings/folder/{folder_id}/email-invites/{invite_id}/resend")
+def resend_folder_share_email_invite(folder_id: str, invite_id: str, request: Request):
+    ws = require_ws(request, write=True)
+    return _resend_email(ws, request, ShareScope(folder=folder_id), invite_id, "folder")
 
 
 @router.delete("/share-settings/folder/{folder_id}/requests/{subject}")
@@ -433,9 +518,9 @@ def delete_share(page_id: str, request: Request):
 
 @router.post("/share-settings/{page_id}/invites")
 def invite_to_share(page_id: str, payload: CloudInvite, request: Request):
-    """Invite by Gamma Cloud username, change a waiting invitation's role,
-    or approve a request to join (``subject``) — sync: a lookup goes to the
-    account server."""
+    """Invite by Gamma Cloud username or by e-mail, change a waiting
+    invitation's role, or approve a request to join (``subject``) — sync:
+    the account server is asked."""
     ws = require_ws(request, write=True)
     return _cloud_invite(ws, request, ShareScope(page=page_id), payload, "page")
 
@@ -444,6 +529,18 @@ def invite_to_share(page_id: str, payload: CloudInvite, request: Request):
 def cancel_share_invite(page_id: str, subject: str, request: Request):
     ws = require_ws(request, write=True)
     return _cancel_invite(ws, request, ShareScope(page=page_id), subject, "page")
+
+
+@router.delete("/share-settings/{page_id}/email-invites/{invite_id}")
+def withdraw_share_email_invite(page_id: str, invite_id: str, request: Request):
+    ws = require_ws(request, write=True)
+    return _withdraw_email(ws, request, ShareScope(page=page_id), invite_id, "page")
+
+
+@router.post("/share-settings/{page_id}/email-invites/{invite_id}/resend")
+def resend_share_email_invite(page_id: str, invite_id: str, request: Request):
+    ws = require_ws(request, write=True)
+    return _resend_email(ws, request, ShareScope(page=page_id), invite_id, "page")
 
 
 @router.delete("/share-settings/{page_id}/requests/{subject}")

@@ -5,11 +5,10 @@ server; this one stops trivial guessing from a single host."""
 
 import ipaddress
 import time
-from collections import defaultdict
 
 from fastapi import HTTPException, Request
 
-_buckets: dict[str, list] = defaultdict(lambda: [0.0, 0])
+_buckets: dict[str, list] = {}  # key -> [window start, hits, window length]
 
 
 def client_ip(request: Request) -> str:
@@ -58,12 +57,13 @@ def check(key: str, max_hits: int, window_seconds: int) -> None:
     now = time.monotonic()
     if len(_buckets) > _MAX_KEYS:
         # Keys are per IP and per e-mail, so a scan can grow the dict: drop
-        # every window that is over (an hour is the longest one used).
-        for k in [k for k, b in _buckets.items() if now - b[0] >= 3600]:
+        # every window that is over. Each bucket keeps its own length, so a
+        # day's count lasts its day while an hour's clears after the hour.
+        for k in [k for k, b in _buckets.items() if now - b[0] >= b[2]]:
             del _buckets[k]
-    bucket = _buckets[key]
-    if now - bucket[0] >= window_seconds:
-        bucket[0], bucket[1] = now, 0
+    bucket = _buckets.get(key)
+    if bucket is None or now - bucket[0] >= window_seconds:
+        bucket = _buckets[key] = [now, 0, window_seconds]
     bucket[1] += 1
     if bucket[1] > max_hits:
         retry = max(1, int(window_seconds - (now - bucket[0])))

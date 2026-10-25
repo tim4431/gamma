@@ -2574,7 +2574,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
    under the box) beside the Invite button. */
 .shareInvite { display: flex; align-items: flex-start; gap: 8px; padding: 4px 8px 6px; }
 .shareInvite .setPick { flex: 1; min-width: 0; }
-.shareInvite > .aiKeyInput { flex: 1; min-width: 0; margin-bottom: 0; } /* the Gamma Cloud username field */
+.shareInvite > .aiKeyInput { flex: 1; min-width: 0; margin-bottom: 0; } /* the e-mail field */
 .shareInvite > .uiBtn.sm { flex-shrink: 0; min-height: 32px; }
 /* ...its field and match rows keep the settings kit's look, not the
    topbar's own input and pill button. */

@@ -181,8 +181,8 @@ def cmd_invite(args):
 
 def cmd_invites(args):
     with closing(db.connect()) as conn:
-        rows = [accounts.invite_view(r) for r in conn.execute("SELECT * FROM invites ORDER BY created_at").fetchall()]
-    for r in rows:
+        rows = accounts.list_invites(conn)
+    for r in reversed(rows):
         plan = r["plan"] + (f" for {r['grant_days']}d" if r["grant_days"] else "")
         print(f"{r['code']:<14} used={r['used']}/{r['uses_total']:<5} plan={plan:<12} {r['state']:<7} "
               f"expires={(r['expires_at'] or 'never')[:10]:<10} {r['note']}")

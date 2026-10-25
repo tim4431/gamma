@@ -528,7 +528,14 @@ Library:
   and Manage. Manage opens an inline page under one breadcrumb head,
   "Workspaces › <name>", with Open workspace at its right end: General,
   Access, Members and the Danger zone, every row saving at once, no footer.
-  Rename and invite are small editor dialogs. A row's on-disk folder
+  Rename and invite are small editor dialogs. The invite dialog's *Find
+  by* switch, On this server / E-mail, shows while `server-config`'s
+  `cloud.email_invites.members` is true; E-mail takes an address and an
+  editor or viewer role. Members lists the invitations by e-mail still
+  waiting (owners and admins only) as `PersonRow`s: the address, an
+  *invited* tag, the role, inviter and expiry, a role menu, *Send the
+  invitation again* and a withdraw button
+  ([workspaces.md](workspaces.md) "Pending invitations"). A row's on-disk folder
   (`workspaces/<id>`) shows to admins only. The empty Shared section offers
   admins "New shared workspace" (a jump to Server). The account popover's
   "Workspaces…" opens this pane. Last, for everyone but the guest, come
@@ -591,7 +598,18 @@ Library:
 Administration (admins only):
 
 - **Users**: accounts, each with its personal workspaces and
-  labelled Storage / Edit buttons.
+  labelled Storage / Edit buttons. *Invite by e-mail…* sits beside
+  *+ Add user*, disabled with the reason as its hover while
+  `GET /api/admin/invitations` says none can go out. Its `SubDialog` takes
+  an e-mail address ("They get a link to make a Gamma Cloud account, or to
+  sign in with theirs, and then join this server.") and sends it. Under
+  the accounts, an **Invitations** section, shown while any wait, lists
+  the invitations to this server by e-mail: the address, who invited and
+  when it was sent and expires, *Send the invitation again* and a
+  withdraw button behind a confirm. A call that finds an invitation gone
+  (404: accepted, withdrawn elsewhere, expired) reads the list again under
+  its error ([cloud_accounts.md](cloud_accounts.md) "Invitations by
+  e-mail").
 - **Server**: the dashboard (build, uptime, warnings, the update
   check), the public server URL, on a hosted container the **Plan**
   (`HostedPlan`, [cloud_accounts.md](cloud_accounts.md) "Hosted
@@ -667,7 +685,13 @@ server. Empty on a local machine (the built-in public desktop client); a
 hosted server enters the client id and write-only secret it was given. The
 secret field shows once an id is typed; the inputs refuse browser autofill.
 Unknown cloud accounts: a `Segmented` policy, Refuse / Claim / Provision /
-Invited. On a hosted container the plan sets it (`policy_source: "plan"`)
+Invited. Its hover says what each admits: Refuse only linked accounts and
+people an admin invites by e-mail; Claim the same, and a cloud username
+equal to an unlinked username here takes that account over; Provision
+every verified cloud account; Invited only a cloud account someone here
+invited (to this server, a shared workspace, or a shared page or folder)
+or one an admin approved, anyone else's sign-in asking to join. On a
+hosted container the plan sets it (`policy_source: "plan"`)
 and the row's hint says so. Under Invited (and under another policy while
 some are left) the section lists the **Requests to join**
 (`JoinRequests`, `GET /api/admin/join-requests`): a Row counting the
@@ -756,7 +780,8 @@ again, unless it was edited since.
 top of the pane shows first, since the browser keeps six requests in
 flight to the server. A read may lead to others once it lands (Backups: each
 workspace's snapshots), and one marked `later` (the server log, the account
-pickers' directory) goes out with the rest without being waited for. They
+pickers' directory, the Users pane's invitations) goes out with the rest
+without being waited for. They
 start together from the pointer or the focus reaching a pane's sidebar
 button, so a click mostly finds them in, and from the click itself. A
 pane asked for from the sidebar or a search result keeps the one before on

@@ -684,15 +684,22 @@ primary button and Stop sharing beside it as a `uiBtn sm iconSq danger` —
 the cloud link's Copy / Unpublish pair — opening the same inline
 `mirrorConfirm`, naming how many invited people lose access), Who has access
 (the invite box on top — a compact `AccountPicker` beside a primary Invite,
-no modal in a popover; on a server with Gamma Cloud sign-in the section's
-action is a This server / Gamma Cloud `Segmented`, and Gamma Cloud makes
-the box a plain field for a Gamma Cloud username; then `aiProvRow` rows:
+no modal in a popover; on a server that invites by e-mail
+(`cloud.email_invites.members`) the section's action is a This server /
+E-mail `Segmented`, and E-mail makes the box an e-mail field (`type=email`,
+"name@example.org", invited to view); then `PersonRow`s (`aiProvRow`, from
+the settings kit):
 the requests to join that came through the link, tagged *asks to join*
 with the e-mail address, an Approve `uiBtn sm` and a Decline
 `uiBtn sm iconSq`; you, a shared workspace's members as one row tagged
 *workspace*, each invited account with its own View / Edit `Segmented` and
 a `uiBtn sm iconSq` remove (its sub line names its Gamma Cloud account
-where that differs from its name here), and each invitation by cloud username still
+where that differs from its name here), each invitation by e-mail still
+waiting (a manager's view only), named by its address with a mail icon,
+tagged *invited*, "Invitation sent · joins once they accept" under it, its
+View / Edit toggle, a resend `uiBtn sm iconSq` and a withdraw — the three
+wait on one another, so a double click mails once — and each invitation
+by cloud username still
 waiting, tagged *pending*, with the same toggle and a withdraw), General access
 (pictured, not described: three `IconChoices` tiles — Anyone / Signed in /
 Invited only — and, as the section's action, one View / Edit `Segmented`,
@@ -1373,7 +1380,7 @@ editor's other popups.
 | `app/boot.js`, `app/theme.js` | the first load's reads, sent as `main.jsx` starts and taken once by the code that would ask for them (`startBootReads`, `takeBootRead`: the server's config, the session), and the account's theme and language put on from the session's `profile` (`adoptAccountLook`, `languageSeen`; [settings.md](settings.md), [i18n.md](i18n.md)); the theme list (`THEMES`, `DARK_THEMES`, `themeScheme`) and `applyTheme`, which changes every colour in one frame ([Motion](#motion)) |
 | `app/prefDefs.js`, `app/prefs.js` | every preference's key, default, codec and scope (`PREFS`); the hooks that make them state (`useAppPrefs`) and sync the account-scoped ones (`useProfileSync`) |
 | `app/topbarItems.js` | the topbar's configurable buttons, their modes and where each goes: on the bar, or a row of the account menu with its popover anchored where the button would be (`.offBar`) ([settings.md](settings.md#the-top-bars-buttons)) |
-| `settings/SettingsDialog.jsx` + the `settings/Settings*.jsx` panes | the Settings dialog (`SettingsKit.jsx` holds the shared primitives incl. `AccountPicker`, the search-box-over-account-rows people picker, and `LogBox`) |
+| `settings/SettingsDialog.jsx` + the `settings/Settings*.jsx` panes | the Settings dialog (`SettingsKit.jsx` holds the shared primitives incl. `AccountPicker`, the search-box-over-account-rows people picker, `PersonRow` (one person in a list of who has access or who is invited: the share popover, a workspace's members, Settings → Users' invitations), and `LogBox`) |
 | `settings/settingsReads.js` | what the panes read through one store while the dialog is open: `PANE_READS` (each pane's paths, in order), `useSettingsRead(path, {poll})` for a section, `useSettingsReads` for one whose paths it learns as it goes ([settings.md](settings.md) "What a pane reads") |
 | `settings/sectionPrefs.js`, `settings/syncState.js` | which account preferences each settings section holds (`SECTION_PREFS`), and how their sync reads: a section's scope tag (`profileSyncState`) and the Settings sync row's hint (`cloudSyncHint`) ([settings.md](settings.md)) |
 | `settings/SettingsAppearance.jsx`, `settings/SettingsLibraryDisplay.jsx` | the Appearance pane (theme cards + PDF sample) and its Library section (a live `PageCard` beside its switches) ([settings.md](settings.md)) |

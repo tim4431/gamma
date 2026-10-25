@@ -917,12 +917,28 @@ The scenarios live in `tests/e2e/scenarios/`:
   the page it leaves stays whole, and "Opening…" only for an open that
   keeps the reader waiting. The headers of
   `folders.mjs`, `trash.mjs` and `cloudSignIn.mjs` name the doc each
-  covers. `cloudSignIn.mjs`'s last step starts a Gamma under the `invited`
-  policy against `fakeCloud.mjs`: a page shared by Gamma Cloud username,
-  a newcomer signing in from the link's gate, a request to join approved
-  in the Share popover, a namesake of the owner who asks to join and lands
-  as `lab-owner-2`, and a request from the login page approved under
-  Server → Sign-in. `--only "cloud sign-in: a page shared"`.
+  covers. In `cloudSignIn.mjs` a workspace's invite dialog offers E-mail
+  only once the server signs in through a client of its own. Two of its
+  steps start a Gamma under the `invited` policy, with a client of its
+  own, against `fakeCloud.mjs`, which keeps the invitations it is asked to
+  mail and to cancel. What the mail's link ends in,
+  `start?next=&invite=<link id>`, is one helper (`accept`). One step
+  shares a page by e-mail: the row's role changed and a double-clicked
+  resend mailing once; a newcomer whose sign-in from the link's gate,
+  under the invited address, only asks to join (her address claims
+  nothing) until the mail's link lands her on the page with the
+  invitation's role; a request to join approved in the Share popover; a
+  namesake of the owner who asks to join and lands as `lab-owner-2`; and
+  a request from the login page approved under Server → Sign-in
+  (`--only "cloud sign-in: a page shared"`). The other invites by e-mail
+  from Settings → Users (one sent, one withdrawn), from a shared
+  workspace's Manage page (its role changed, mailed again, withdrawn) and
+  from the Share popover. The newcomers follow the mail's link under
+  another address than the invited one and land with access; a resend of
+  the used invitation finds it gone. The address of someone with access
+  already is mailed like anyone's ("Invitation sent to …", a pending
+  row), and its link keeps the role she has (`--only "cloud sign-in: an
+  invitation by e-mail"`).
 
 Every step also asserts that no API call failed (4xx/5xx), no console error
 and no page error happened meanwhile (`openPage` records them;
