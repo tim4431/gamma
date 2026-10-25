@@ -54,11 +54,11 @@ final class ShellStateTests: XCTestCase {
     private func state(current: Server? = .local, remotes: [URL] = [], names: [String: String]? = nil,
                        reachable: [URL: Bool] = [:], local: LocalServer.State = .stopped, slowStart: Bool = false,
                        login: LocalLogin? = nil, session: [String: Any]? = nil, page: URL? = nil,
-                       sizeBytes: Int64? = nil) -> [String: Any] {
+                       barHideable: Bool = true, sizeBytes: Int64? = nil) -> [String: Any] {
         ShellState.make(version: "0.2.0", theme: "gamma-dark",
                         servers: SavedServers(current: current, remotes: remotes, names: names), reachable: reachable,
                         local: local, slowStart: slowStart, login: login, session: session, page: page,
-                        sizeBytes: sizeBytes)
+                        barHideable: barHideable, sizeBytes: sizeBytes)
     }
 
     private func servers(_ state: [String: Any]) throws -> [[String: Any]] {
@@ -141,8 +141,10 @@ final class ShellStateTests: XCTestCase {
 
     func testOnlyWhatTheIPadHasAndAllOfItJSON() throws {
         let keys = Set(state().keys)
-        XCTAssertEqual(keys, ["version", "theme", "current", "busy", "gamma", "servers", "lastOpened"],
+        XCTAssertEqual(keys, ["version", "theme", "current", "busy", "gamma", "servers", "lastOpened", "barHideable"],
                        "no keeping, update or settings: the pages hide what reads them")
+        XCTAssertEqual(state()["barHideable"] as? Bool, true, "the bar shows its hide button")
+        XCTAssertEqual(state(barHideable: false)["barHideable"] as? Bool, false, "not while the bar is needed")
         let full = state(current: .local, remotes: [a, nas], names: ["local": "Studio"], reachable: [a: true],
                          local: .running(address), login: LocalLogin(username: LocalLogin.account, password: "abcdefghijkl"),
                          session: session, page: address, sizeBytes: 9_876_543_210)
@@ -249,6 +251,26 @@ final class LauncherTests: XCTestCase {
         XCTAssertNil(SavedServers.load(from: defaults).names)
         model.open(.remote(b))
         XCTAssertEqual(model.remotes, [a], "opening never lists a server")
+    }
+
+    @MainActor
+    func testTheHiddenBarIsKeptAndComesBackWhileItIsNeeded() throws {
+        let (model, defaults) = try makeModel(SavedServers(current: .remote(a), remotes: [a]))
+        XCTAssertFalse(model.barHidden, "up at first")
+        XCTAssertTrue(model.barShown)
+        XCTAssertFalse(model.barNeeded, "so its hide button shows")
+        model.setBarHidden(true)
+        XCTAssertFalse(model.barShown)
+        XCTAssertTrue(AppModel(defaults: defaults).barHidden, "kept for the next launch")
+        model.toggleLauncher()
+        XCTAssertTrue(model.barNeeded)
+        XCTAssertTrue(model.barShown, "up with the launcher, whose mark closes it")
+        model.toggleLauncher()
+        XCTAssertFalse(model.barShown, "and away again once it closes")
+        model.loadFailed("The Internet connection appears to be offline.")
+        XCTAssertTrue(model.barShown, "a failure in the launcher too")
+        model.setBarHidden(false)
+        XCTAssertFalse(AppModel(defaults: defaults).barHidden)
     }
 
     @MainActor

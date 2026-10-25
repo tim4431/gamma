@@ -245,6 +245,35 @@ def test_agent_loop_stops_at_the_limit_mid_stream(admin, member, shared, upstrea
     assert len(upstream) == 1  # the second round never went out
 
 
+def test_unlimited_rounds_need_an_allowance_on_a_shared_connection(admin, member, shared, upstream):
+    """Unlimited rounds on the admin's key: only under a daily allowance,
+    which the transport checks before every turn, or for the admin. Without
+    one, a member's reply keeps its limits and its limit line says why."""
+
+    def chat(who):
+        upstream.queue.append(FakeResp([
+            {"type": "message_start", "message": {"usage": {"input_tokens": 10, "output_tokens": 1}}},
+            {"type": "content_block_start", "content_block": {"type": "tool_use", "id": "t1", "name": "list_pages"}},
+            {"type": "content_block_delta", "delta": {"type": "input_json_delta", "partial_json": "{}"}},
+            {"type": "content_block_stop"},
+            {"type": "message_delta", "delta": {"stop_reason": "tool_use"}, "usage": {"output_tokens": 5}},
+        ]))
+        r = who.post("/api/ai/chat", json={"prompt": "list", "model": f"{shared}:lab-model", "agent_scope": "folder",
+                                           "folder": "", "stream": True, "tool_rounds": 1,
+                                           "tool_rounds_unlimited": True})
+        assert r.status_code == 200, r.text
+        return lines(r)
+
+    out = chat(member)
+    assert out[-1] == {"limit": {"kind": "rounds", "rounds": 1, "changes": 0, "withheld": True}}
+    assert len(upstream) == 1
+    out = chat(admin)
+    assert not [l for l in out if "limit" in l] and len(upstream) == 3
+    set_allowance(admin, accounts=LIMIT)
+    out = chat(member)
+    assert not [l for l in out if "limit" in l] and len(upstream) == 5
+
+
 def test_own_entries_are_never_metered(admin, member, shared, upstream):
     set_allowance(admin, accounts=LIMIT)
     spend("allow_member", shared, 2 * LIMIT)

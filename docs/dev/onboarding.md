@@ -239,7 +239,7 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 | hint: conflict | a clone conflict's versions show (`conflict.shown`) | the versions: nothing was lost, both are kept; pick one, then Apply |
 | hint: folders | the library has 10+ pages and no folder or label (state) | the listing bar |
 | hint: install | iPhone/iPad Safari, not yet the home-screen app (state) | no anchor: a bottom-left card |
-| hint: approvals | the assistant asks before a change (`approval.shown`, from `ApprovalCard`) | the card: allow once or for the whole chat, and that Don't allow can say what to do instead |
+| hint: approvals | the assistant asks before a change (`approval.shown`, from `ApprovalCard`), on the first card that offers all four answers | the card: allow once or for the whole chat, and that Don't allow can say what to do instead |
 | hint: export | the View menu opens (`popover.opened {name: "menu"}`) on a page with 5+ highlights (`annotatedPage`) — the Export row is on screen only while that menu is | Export…: the PDF with the highlights drawn on it, or Markdown |
 | hint: clone sync | the workspace has an offline copy or a publication (`clonedWorkspace`, state) | the sync pill: what is still to go, and its log |
 | hint: Gamma Connector | the first paper fetched from an address (`paper.fetched`, from App's `openPdf`) in a browser with no Connector (`connectorHere: false` — `shared/lib/connector.js` asks it through the extension's `bridge.js`; unknown in the desktop app, whose Connector would be in the system browser, so nothing is suggested there) | Add: what the extension does for papers a publisher won't hand over, and where to get it |
@@ -787,7 +787,7 @@ where the thing happens:
 | `table.shown` | MdTableWrap, when an editable table mounts |
 | `sheet.created` `{id}` | App's three ways to make a sheet of paper: `addSheetAfter` (**+**, Add page, writing low on the last sheet), `insertSheetAt` (`/note` in an empty block) and `createNotebook` |
 | `job.started` `{kind}` | the tasks store's `adopt` — the one place both `start()` and `upload()` hand this tab a server job, so every kind counts once ([tasks.md](tasks.md)) |
-| `approval.shown` `{tool}` | `chat/ApprovalCard`, while it is up ([ai.md](ai.md) "Asking before a call") |
+| `approval.shown` `{tool}` | `chat/ApprovalCard`, while it is up — not a card of an ask-only permission, which has two answers ([ai.md](ai.md) "Asking before a call") |
 | `paper.fetched` | App's `openPdf`, once a paper fetched from an address (a URL, a DOI, an arXiv id) is open — not for a page the library already had |
 | `table.created`, `table.edited` | MdTableWrap: the first render of a table made with /table or a paste, and a cell editor's commit. BlockTree notes the block and where in it the table went (`noteTableMade`); the table that renders there takes `data-guide-recent`, so the table anchors (`pick: "recent"`) point at it and not at an older table on the page |
 | `conflict.shown` | MergeResolver's versions |
@@ -942,37 +942,40 @@ drawings with the real tools, and deletes it like any page. Drawing on it
 raises the Handwriting tour (`ink.stroke`) like any first stroke.
 
 - **What it holds.** Four A4 sheets, titled in the notes "Hi there",
-  "Oops? No problem", "Make it yours" and "Keep going", each on a paper of
-  its own (cream dots, ruled, grid, cream dots) so the paper menu has
-  something to show. Eleven numbered steps: pick up the pen (and write
-  your name on a dotted line), the five pen styles (a lane each), the
-  highlighter (over hand-lettered words), the eraser (a scribble), the
-  lasso (a star to carry into a box), undo, draw and hold (a shaky circle
-  and a neat one), the Text tool, the paper, replay, the two views, and
-  new pages and notebooks. "Have fun!" rounds it off.
+  "Oops? No problem", "Make it yours" and "Keep going". Each is on a paper
+  of its own (cream dots, ruled, grid, cream dots), so the paper menu has
+  something to show.
+  - Eleven numbered steps: pick up the pen (and write your name on a
+    dotted line), the five pen styles (a lane each), the highlighter (over
+    hand-lettered words), the eraser (a scribble), the lasso (a star to
+    carry into a box), undo, draw and hold (a shaky circle and a neat
+    one), the Text tool, the paper, replay, the two views, and new pages
+    and notebooks. "Have fun!" rounds it off.
 - **Where to press.** Each step that has a control draws it as the app
   shows it, at about the size the notes view shows it (`K` points to a
-  CSS pixel), and circles the one to press in red, with a lettered label:
-  the markup strip (`_strip`, its pens and highlighters over their colour
-  bars, and the armed pen's Style row under it for the styles), the
-  notebook view's column of controls (`_column`), a page among the notes
-  with its own buttons (`_page_in_notes`), the Notebook button beside a
-  page's title (`_title_row`) and the top bar's + with the Add menu
-  (`_add_menu`). The icons are the app's: `ICONS` copies the markup of
-  each one from `frontend/src/shared/ui/Icons.jsx`, and
-  `test_sketchbook.py` fails when an icon there changes. Moving a control
-  means moving its drawing here too (the strip's order is `STRIP`).
-  Words a control shows ("Style", "Pen", "Notebook", "New notebook") are
-  small text boxes; the rest of a menu or row is grey bars.
+  CSS pixel), and circles the one to press in red, with a lettered label.
+  - The controls drawn: the markup strip (`_strip`, its pens and
+    highlighters over their colour bars, and the armed pen's Style row
+    under it for the styles), the notebook view's column of controls
+    (`_column`), a page among the notes with its own buttons
+    (`_page_in_notes`), the Notebook button beside a page's title
+    (`_title_row`) and the top bar's + with the Add menu (`_add_menu`).
+  - The icons are the app's: `ICONS` copies the markup of each one from
+    `frontend/src/shared/ui/Icons.jsx`, and `test_sketchbook.py` fails
+    when an icon there changes. Moving a control means moving its drawing
+    here too (the strip's order is `STRIP`).
+  - Words a control shows ("Style", "Pen", "Notebook", "New notebook") are
+    small text boxes; the rest of a menu or row is grey bars.
 - **How it is made.** `gamma/sketchbook.py` draws it as code; there is no
-  asset in the repo. Each line is SVG path data (`M L H V C S Q A Z`, as
-  the icons use it) sampled every 2 pt as drawn (`flatten`, given the
-  step in the drawing's own units when it is scaled); the headings are a
-  single-line capital alphabet of the same path data (`GLYPHS`), each
-  letter a little turned and lifted. The controls are Ballpoint lines,
-  their pressed grounds one opaque zigzag each, drawn before what stands
-  on them. The step texts are text boxes, measured with
-  `text_box.measure`.
+  asset in the repo.
+  - Each line is SVG path data (`M L H V C S Q A Z`, as the icons use it)
+    sampled every 2 pt as drawn (`flatten`, given the step in the
+    drawing's own units when it is scaled).
+  - The headings are a single-line capital alphabet of the same path data
+    (`GLYPHS`), each letter a little turned and lifted.
+  - The controls are Ballpoint lines, their pressed grounds one opaque
+    zigzag each, drawn before what stands on them.
+  - The step texts are text boxes, measured with `text_box.measure`.
 - **The strokes are ordinary.** A pen line presses in and lifts off (`p`),
   with the plain Pen's `w = 1 + (p − 0.5)` from the brush table
   ([handwriting.md](handwriting.md) "The brush table"), so a restyle bakes

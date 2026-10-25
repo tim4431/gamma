@@ -155,10 +155,11 @@ prefix each.
 - **What is not copied.** The job artifacts, the server snapshots and the
   workspace snapshot zips stay on the node's disk. `publisher-sessions.key`
   in the data directory (or `GAMMA_PUBLISHER_SESSION_KEY`) is not copied.
-  It encrypts the saved AI keys, the Gamma Cloud grants, the mirrors'
-  tokens, the publisher sessions and the off-site secret key in users.db,
-  so keep it somewhere else, or a restored server cannot read those (the
-  secret key can be typed in again).
+  It encrypts the shared AI entries' keys and sign-ins (an account's own
+  are stored unencrypted), the Gamma Cloud grants, the mirrors' tokens, the
+  publisher sessions and the off-site secret key in users.db, so keep it
+  somewhere else, or a restored server cannot read those (the secret key
+  can be typed in again).
 
 **Restore**, with the server stopped. The command uses the bucket the
 settings name. After a lost disk the saved settings went with users.db, so
@@ -518,7 +519,7 @@ and the ones running finish. The wall time is bounded by the longest group
 (settings, about two and a half minutes in CI), so split it before adding
 workers or shards.
 
-`--shard k/n` runs the k-th of n shares of the selection: each group,
+`--shard k/n` runs the k-th of n shares of the selection. Each group,
 longest first by its `s`, goes to the share with the least time so far
 (`shardOf` in `select.mjs`), so the shares take about as long. CI runs the
 two halves (`--shard 1/2`, `--shard 2/2`) on two runners, about three
@@ -528,11 +529,10 @@ each group's seconds as `── <group>  (N s`), update it.
 A group that throws outside its steps (its own setup: accounts, seeded
 pages) runs none of them. The summary counts it as a failure,
 `<group> (group aborted)`, and prints the error with its cause.
-`server.manage()` runs manage.py asynchronously: run synchronously, a few
-calls in a row (about a second each) blocked Node past uvicorn's 5 s
-keep-alive timeout, and the next request went down a socket the backend had
-closed (`fetch failed`, "other side closed", on Linux). The inbox group
-aborted that way in CI.
+`server.manage()` runs manage.py asynchronously: a synchronous run of a
+few calls in a row (about a second each) blocks Node past uvicorn's 5 s
+keep-alive timeout, and the next request goes down a socket the backend
+has closed (`fetch failed`, "other side closed", on Linux).
 
 `--changed [ref]` picks the groups from what changed: the working tree
 (staged, unstaged, untracked) against `HEAD`, or everything since the branch
@@ -846,7 +846,9 @@ The scenarios live in `tests/e2e/scenarios/`:
   committed from the host's samples (with tilt, and a calligraphy nib
   turned by the roll). The host's `hold` snaps and refits a still line
   or opens Paste here. Then come a claim along the ruler, a shell
-  without `hold`, and the Apple Pencil gestures, settings and haptics.
+  without `hold`, the View menu's *Server bar* row (landscape, under More
+  upright, and none without `shellBar`), and the Apple Pencil gestures,
+  settings and haptics.
   `--group ipad`.
 - `touch.mjs`: one behaviour for mouse and finger
   ([ui-design.md](ui-design.md#one-behaviour-for-mouse-and-finger)), in
@@ -882,8 +884,10 @@ The scenarios live in `tests/e2e/scenarios/`:
   cannot), a PDF chip's right-click "Add to library" makes the document page
   in the project's folder and the chip gets an open-page button, a markdown
   chip's "Add to library" imports a note page and leaves the file untouched,
-  the upload endpoint's lab-file / executable rule, and a slow upload
-  stopped from Background tasks.
+  the upload endpoint's lab-file / executable rule, a slow upload
+  stopped from Background tasks, and the Document popover's "Replace the
+  PDF…" swapping a document page's file while its title and highlights
+  stay.
 - `collab.mjs`: two accounts in a shared workspace: presence, live ops, edits
   to different blocks, same-block last-writer-wins, undo after a remote edit,
   rename propagation, edits made offline replaying, remote delete, a
@@ -893,6 +897,16 @@ The scenarios live in `tests/e2e/scenarios/`:
 - `auth.mjs`: refusing an inaccessible explicit workspace without opening a
   different library, the login page, guest login (a new throwaway account
   each time) and demo mode ([guests.md](guests.md)).
+- `motion.mjs` ([ui-design.md](ui-design.md) "Motion"): a menu grows from
+  the cursor and leaves through an inert copy the next menu takes the
+  place of; a closed dialog fading out is not open; the outline's, the
+  library's, the tab strip's, the Inbox's, Background tasks', the Comments
+  window's and the PDF margin's lists glide, come in and leave as the doc
+  says, and loads, another client's edits and Load more move nothing; a
+  segmented control's frame slides; the share popover and Recently deleted
+  open on what they had; a theme change draws every colour in one frame;
+  and under reduced motion each of them moves nothing and leaves no copy.
+  `npm run e2e -- --only motion`.
 - `i18n.mjs`: Settings → Appearance → Language switches the interface to
   Chinese and back through the reload ([i18n.md](i18n.md)). `--only i18n`.
 - `share.mjs`: the share dialog, the anonymous share view (PDF, highlight,

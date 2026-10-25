@@ -1,8 +1,9 @@
 // Files and documents (docs/dev/block_centric.md, stage 4): any file dropped
 // on a block row or on the page body becomes a file chip; a PDF chip promotes
 // to a DOCUMENT page (right-click → "Add to library" → by-doc, no re-upload)
-// filed in the project's folder, and offers "Open page" afterwards; the
-// upload endpoint takes lab files and refuses executables.
+// filed in the project's folder, and offers "Open page" afterwards; a
+// document page's PDF is replaced by a new version; the upload endpoint takes
+// lab files and refuses executables.
 import { editRow, tree } from "./notes.mjs";
 import { waitForPdf } from "./pdf.mjs";
 
@@ -284,6 +285,50 @@ export async function fileScenarios({ server, browser, alice, makePdf, step, unt
     const job = (await account.api("/api/jobs")).jobs.find((j) => j.kind === "metadata");
     assertEq(JSON.stringify((await account.api(`/api/jobs/${job.id}`)).result), JSON.stringify({ papers: 2, fetched: 0, failed: 2 }));
     assertNoProblems(page);
+    await ctx.close();
+  });
+
+  // A new version of a document page's PDF (a paper compiled again from its
+  // TeX): the Document popover's "Replace the PDF…" swaps the file; the page
+  // keeps its id, title and highlights, the highlights where they were, and
+  // another tab on the page follows.
+  await step("files: 'Replace the PDF…' swaps a document page's file and keeps its title and highlights", async () => {
+    const up = await account.upload("/api/uploads", makePdf([["Draft one of the thesis"]]), "thesis.pdf", "application/pdf");
+    const doc = await account.api(`/api/blocks/by-doc/${up.doc_id}`, {
+      method: "POST", body: { default_title: "", source_url: up.source_url, original_filename: "thesis.pdf" } });
+    const rect = { x1: 72, y1: 60, x2: 300, y2: 80 };
+    const position = { pageNumber: 1, width: 612, height: 792, boundingRect: rect, rects: [rect] };
+    const hl = await account.api("/api/blocks", { method: "POST", body: {
+      parent_id: doc.id, content: "a note on draft one", properties: { quote: "Draft one", pdf_position: position } } });
+    ctx = await account.context(browser);
+    page = await openPage(ctx, `${server.base}/?page=${doc.id}&ws=${account.ws}`);
+    await waitForPdf(page, 1);
+    await page.locator(`[data-page="1"] [data-hl-id="${hl.id}"]`).first().waitFor();
+    const other = await openPage(ctx, `${server.base}/?page=${doc.id}&ws=${account.ws}`); // a second tab
+    await waitForPdf(other, 1);
+
+    await page.click("button[aria-label='Document']");
+    const chooser = page.waitForEvent("filechooser");
+    await page.locator(".attachPopover .ctxMenuItem", { hasText: "Replace the PDF…" }).click();
+    await (await chooser).setFiles({ name: "thesis-v2.pdf", mimeType: "application/pdf",
+      buffer: Buffer.from(makePdf([["Draft two of the thesis"], ["A second page"]])) });
+    await waitForPdf(page, 2);
+    await until(async () => (await page.textContent('[data-page="1"] .textLayer')).includes("Draft two"),
+      { what: "the viewer shows the new file" });
+
+    const after = await account.api(`/api/blocks/${doc.id}`);
+    assert(after.properties.doc_id && after.properties.doc_id !== up.doc_id, "the page carries the new file");
+    assertEq(after.content, "thesis.pdf", "the title stays the first file's name");
+    assertEq(after.properties.original_filename, "thesis-v2.pdf", "the file name is the new file's");
+    assertEq(JSON.stringify((await account.api(`/api/blocks/${hl.id}`)).properties.pdf_position), JSON.stringify(position),
+      "the highlight keeps its place");
+    await page.locator(`[data-page="1"] [data-hl-id="${hl.id}"]`).first().waitFor(); // drawn over the new file
+    // the other tab hears of it over the page's socket and shows the new file
+    await waitForPdf(other, 2);
+    await until(async () => (await other.textContent('[data-page="1"] .textLayer')).includes("Draft two"),
+      { what: "the other tab shows the new file" });
+    assertNoProblems(page);
+    assertNoProblems(other);
     await ctx.close();
   });
 }

@@ -661,19 +661,20 @@ def _public_claims(claims: dict) -> dict:
 
 
 def _claimed_limits(value) -> dict:
-    """The ``limits`` claim, ``{quota_mb, max_upload_mb}`` in positive whole
-    numbers: the storage a paid Gamma Cloud plan gives the account on the
-    shared server. {} for anything else (a free plan sends none)."""
+    """The ``limits`` claim, ``{quota_mb}`` in a positive whole number: the
+    storage a paid Gamma Cloud plan gives the account on the shared server.
+    {} for anything else (a free plan sends none). The ``max_upload_mb`` an
+    older account server sends beside it is ignored."""
     if not isinstance(value, dict):
         return {}
-    out = {key: value.get(key) for key in ("quota_mb", "max_upload_mb")}
-    ok = all(isinstance(n, int) and not isinstance(n, bool) and n > 0 for n in out.values())
-    return out if ok else {}
+    quota = value.get("quota_mb")
+    ok = isinstance(quota, int) and not isinstance(quota, bool) and quota > 0
+    return {"quota_mb": quota} if ok else {}
 
 
 def plan_limits(conn, user_id: str) -> dict:
     """The storage a Gamma Cloud plan gives the account on a share host
-    (``{quota_mb, max_upload_mb}``, gamma/server_settings.py
+    (``{quota_mb}``, gamma/server_settings.py
     ``user_limits``), {} on any other server and for an account without a
     paid plan. It is the ``limits`` claim of an identity that holds a live
     grant (a refresh token, not revoked): the hourly grant check keeps that

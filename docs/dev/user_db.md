@@ -546,7 +546,8 @@ track of the ones nothing uses.
   as well: `/api/uploads/<name>` in the `chats` and `chat_history`
   messages ([ai.md](ai.md#pictures)); `upload_gc.referenced` reads both.
 - **Unreferenced files are kept for 30 days.** When the last reference to a
-  file goes, the file stays on disk and is served as before. Its name is
+  file goes (its block deleted, a page's PDF detached or replaced by a new
+  version), the file stays on disk and is served as before. Its name is
   recorded in `upload_orphans` with the time. An undo, a cut pasted in a
   later batch, a block moved to another page, an AI edit or a re-attached
   PDF brings a reference back. The writer then clears the record in its own
@@ -742,18 +743,19 @@ account stays (507).
 
 ## Storage limits
 
-`gamma/server_settings.py`: per-account max upload size (`max_upload_mb`) and
-total quota (`quota_mb`, 0 = unlimited); server-wide defaults in the users.db
-`settings` KV, per-user overrides as nullable `users` columns (NULL = inherit,
-explicit JSON null clears). An account's limits apply to uploads into its
-PERSONAL workspaces, and its usage is their stored files together
+`gamma/server_settings.py`: the per-account total quota (`quota_mb`, 0 =
+unlimited); the server-wide default in the users.db `settings` KV, per-user
+overrides in the nullable `users.quota_mb` column (NULL = inherit, explicit
+JSON null clears). One file has no size cap: `users.max_upload_mb` and the
+`max_upload_mb` settings key, the per-file cap until October 2026, are no
+longer read. An account's quota applies to uploads into its PERSONAL
+workspaces, and its usage is their stored files together
 (`storage.usage`) — nothing anyone uploads into a shared workspace counts
-against a person. A
-shared workspace is checked against the server-wide per-file cap and its
-own `workspaces.quota_mb` (NULL = unlimited; admins set it in Settings →
-Workspaces or Members & sharing). `workspace_quota(ws)` resolves the pair
+against a person. A shared workspace is checked against its own
+`workspaces.quota_mb` (NULL = unlimited; admins set it in Settings →
+Workspaces or Members & sharing). `workspace_quota(ws)` resolves the quota
 that applies. `check_upload_allowed(ws, n)` hard-gates `/api/uploads`, `/api/upload-image`,
-`/api/upload-file` and the imports (413 over per-file, 507 over quota;
+`/api/upload-file` and the imports (507 over quota;
 already-stored hashes always pass — dedup adds no bytes); `can_store`
 soft-gates best-effort caches (proxy `save=1`, ai_context re-download).
 A check reads the usage without walking the files. `storage.usage` lists
@@ -784,8 +786,13 @@ rather than a release is `v<tag>-dev.<n>` (`n` commits after the newest
 there that this build lacks are an update to `v<tag>-dev.<m>`, the version
 that branch's next image carries, with a "What's new" link to GitHub's
 comparison. A Docker server cannot update itself, so an
-available update only says which image to pull; the desktop app updates
-on its own. Things worth an admin's eye are logged at WARNING — a
+available update only says which image to pull. The desktop app's server
+says who installs it instead (`GAMMA_UPDATES` from the shell): `desktop`,
+the app's own updater, or `store`, the Microsoft Store, which has a
+release only once Microsoft certifies it, one to three days after GitHub;
+a Store install shows the release without the warning tone, with an Open
+Store button (`ms-windows-store://downloadsandupdates`), and raises no
+notice. Things worth an admin's eye are logged at WARNING — a
 share-link visitor over the write throttle, an address probing unknown
 share links ([api.md](api.md) "Link visitors") — so the tile turns amber
 and the log's "Warnings" filter shows them. An admin who never opens the

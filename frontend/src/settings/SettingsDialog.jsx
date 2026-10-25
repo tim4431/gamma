@@ -385,7 +385,7 @@ function StorageCard() {
         <span className="setIcon"><HardDriveIcon size={16} /></span>
         <span className="settingText">
           <span className="settingLabel">{t("Uploaded files")}</span>
-          <span className="settingDesc">{t("PDFs and images on the server · up to {max_upload_mb} MB each", { max_upload_mb: q.max_upload_mb })}</span>
+          <span className="settingDesc">{t("PDFs and images on the server")}</span>
         </span>
         <span className="setCardVal">
           {fmtBytes(q.used_bytes)}
@@ -568,7 +568,7 @@ function MetaStatusSection({ value }) {
   const allSelected = shown.length > 0 && shown.every((p) => selected.has(p.id));
   // One adaptive primary action instead of three near-identical buttons: a
   // selection wins, otherwise it offers exactly the papers a fetch can fix
-  // (missing metadata + unverified AI records).
+  // (missing metadata + unverified records).
   const targets = selected.size ? list.filter((p) => selected.has(p.id)) : needsWork;
   // Same rule for the index button: the selection's indexable papers, else
   // everything the index is missing or holds stale.
@@ -583,7 +583,7 @@ function MetaStatusSection({ value }) {
       return p.meta_error ? cell("bad", t("failed"), p.meta_error) : cell("muted", t("none"), t("No metadata yet"));
     }
     const src = metaSourceInfo({ source: p.meta_source, kind: p.meta_kind, unverified: p.meta_unverified,
-      user_verified: p.meta_user_verified });
+      user_verified: p.meta_user_verified, match: p.meta_match });
     if (!src) return cell("ok", t("yes"), t("Metadata resolved"));
     return cell(src.warn ? "bad" : p.meta_source === "ai" && !p.meta_user_verified ? "muted" : "ok", src.short, t(src.hint));
   };
@@ -625,7 +625,7 @@ function MetaStatusSection({ value }) {
             options={[
               ["all", t("All ({n})", { n: list.length })],
               ["attention", t("Needs attention")],
-              ["unverified", t("Unverified AI ({n})", { n: unverified.length })],
+              ["unverified", t("Unverified ({n})", { n: unverified.length })],
               ["missing", t("Missing metadata ({n})", { n: missing.length })],
               ["notext", t("No text layer")],
             ]}
@@ -656,7 +656,7 @@ function MetaStatusSection({ value }) {
         <>
           <div className="setStats">
             <Stat icon={PaperIcon} label={t("verified")} value={counts.verified} total={list.length}
-              title={t("Metadata from a registry (arXiv/DOI/Crossref), edited or verified by hand, or a non-paper document — nothing left to verify. Missing and unverified AI records count against this.")} />
+              title={t("Metadata from a registry (arXiv/DOI/Crossref), edited or verified by hand, or a non-paper document — nothing left to verify. Missing and unverified records count against this.")} />
             <Stat icon={FileTextIcon} label={t("text layer")} value={counts.text} total={list.length}
               title={t("Papers whose PDF yielded extractable text")} />
             <Stat icon={SearchIcon} label={t("indexed")} value={counts.indexed} total={list.length}
@@ -730,13 +730,13 @@ function MetaStatusSection({ value }) {
                   ? t("{n} selected", { n: selected.size })
                   : needsWork.length || toIndex.length
                     ? [missing.length && t("{n} missing metadata", { n: missing.length }),
-                       unverified.length && t("{n} unverified (AI)", { n: unverified.length }),
+                       unverified.length && t("{n} unverified", { n: unverified.length }),
                        toIndex.length && t("{n} to index", { n: toIndex.length })]
                         .filter(Boolean).join(" · ")
                     : t("Everything is verified and indexed")}
               </span>
               <button className="uiBtn sm primary" disabled={!targets.length} onClick={() => retry(targets)}
-                title={selected.size ? t("Fetch metadata for the selected papers") : t("Fetch metadata for papers that are missing it or have an unverified AI record")}>
+                title={selected.size ? t("Fetch metadata for the selected papers") : t("Fetch metadata for papers that are missing it or have an unverified record")}>
                 <SparklesIcon size={14} />{selected.size ? t("Fetch selected") : t("Fetch needed")}
               </button>
               <button className="uiBtn sm" disabled={!shown.length} onClick={() => retry(shown)}
@@ -933,13 +933,17 @@ function ToolUsageSettings({ value }) {
       <Section title={t("Tool limits")} scope="account" prefs={SECTION_PREFS.tools["Tool limits"]}>
         <Row icon={RefreshIcon} label={t("Tool rounds")}
           hint={t("AI ↔ tool round-trips per message")}
-          title={t("Each round-trip lets the model issue more tool calls. This is a runaway guard — actual work is separately capped at 200 changes per message.")}>
-          <UnitInput value={value.toolRounds} unit={t("rounds")} min={1}
+          title={t("Each round-trip lets the model issue more tool calls. This is a runaway guard — actual work is separately capped at 200 changes per message. Unlimited rounds lifts both.")}>
+          <UnitInput value={value.toolRounds} unit={t("rounds")} min={1} disabled={value.toolRoundsUnlimited}
             onCommit={(raw) => {
               const n = Number.parseInt(raw, 10);
               if (Number.isFinite(n)) value.setToolRounds(Math.max(1, Math.min(100, n)));
             }} />
         </Row>
+        <Toggle icon={ZapIcon} label={t("Unlimited rounds")}
+          hint={t("Run until the reply is done or you stop it")}
+          title={t("No limit on tool rounds, nor on the 200 changes a message may make: the assistant keeps going until it is done or you press Stop (in its chat, or in Background tasks). Every round sends the conversation again, so a long job spends more tokens with each round. A shared AI connection keeps the usual limits unless its admin set a daily allowance or you are an administrator.")}
+          checked={value.toolRoundsUnlimited} onChange={value.setToolRoundsUnlimited} />
         <Row icon={BookIcon} label={t("Read window")}
           hint={t("Document text per read tool call · {pages}", { pages: approxPages(value.agentReadChars) })}
           title={t("The most extracted PDF text one read_page tool call may return. The agent reads a long paper in windows of this size, continuing where the last call stopped — a larger window means fewer calls but more tokens per message.")}>

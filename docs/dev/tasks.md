@@ -11,7 +11,8 @@ of work meet there:
   that started it closes, and every tab and device of the account sees it.
 - **This tab's own work**: a PDF loading in the viewer, a file uploading,
   an AI lookup (the open page's metadata, a title, a slide citation), a
-  translation. These
+  translation, a chat reply running under Unlimited rounds (its Stop stops
+  the reply). These
   rows exist in this tab only; they stop with the tab.
 
 The **Background tasks** tour says the part a spinner cannot — that the job
@@ -228,7 +229,9 @@ The Export dialog's last step follows the export job
 progress and Stop while the job runs. Once the file is ready, the dialog
 downloads it, lists the pages left out and says what to do next. It may
 close any time, and the job's row opens it again. The import review
-follows its import job the same way.
+follows its import job the same way. Before Import, its upload and review
+belong to the dialog and have no row, so a close by the backdrop, Escape
+or × asks first.
 
 A share view has no background tasks. Its exports download directly
 through the synchronous endpoints.

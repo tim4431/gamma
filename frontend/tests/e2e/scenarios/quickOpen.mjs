@@ -390,7 +390,11 @@ export async function quickOpenScenarios(env) {
       gate.hold = new Promise((resolve) => { release = resolve; });
       await watch();
       await tab("Switch to").click();
-      await page.locator(".statusPill", { hasText: "Opening" }).waitFor({ timeout: 3000 });
+      // held until a painted frame has shown it: a pill found in the DOM may
+      // not have been painted yet, and a busy machine can land the released
+      // tree before the next frame
+      await until(() => page.evaluate(() => window.__seen.some((f) => f.title === "Switch from" && f.pill.startsWith("Opening"))),
+        { timeout: 3000, every: 50, what: "the slow open to say Opening… over the page it leaves" });
       gate.hold = null;
       release();
       await onPage("Switch to");
@@ -402,7 +406,6 @@ export async function quickOpenScenarios(env) {
       assert(seen.every((f) => f.tabs.length === 1), `one tab selected in every frame: ${seen.map(said).join(" / ")}`);
       assert(seen.every((f) => f.row.includes(`the body of ${f.title}`)),
         `every frame shows one page whole: ${seen.map((f) => `${f.title}: ${f.row}`).join(" / ")}`);
-      assert(seen.some((f) => f.title === "Switch from" && f.pill.startsWith("Opening")), "the slow open said Opening… over the page it leaves");
       assert(!seen.some((f) => /Ready/.test(f.pill)), `no Ready. for a switch: ${seen.map(said).join(" / ")}`);
       // quick: under the threshold, nothing but the switch itself
       gate.delay = 150;

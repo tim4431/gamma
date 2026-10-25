@@ -7,7 +7,7 @@ import json
 
 from gamma.ai_client import sse_events, wire_protocol
 from gamma.ai_protocols import WIRES
-from gamma.ai_context import TOOL_REPLAY_BUDGET, build_messages
+from gamma.ai_context import REPLAY_CALLS, TOOL_REPLAY_BUDGET, build_messages
 
 from ai_fixtures import ALL_TOOLS, CONF, TURNS, payload, sse
 
@@ -360,6 +360,29 @@ def test_build_messages_elides_old_results_over_budget():
     assert len(tool_turns) == 2
     assert "elided" in tool_turns[0]["content"]  # older result dropped…
     assert tool_turns[1]["content"].endswith(big)  # …newest kept in full (after the snapshot note)
+
+
+def test_build_messages_replays_a_long_replys_newest_calls_and_counts_the_rest():
+    """A reply that ran until the window was full (Unlimited rounds) made
+    thousands of calls: the next message, Continue's, replays its newest
+    REPLAY_CALLS and counts the rest, so the task still fits beside it."""
+    actions = ([{"kind": "list", "tool": "list_pages", "args": {}, "result": "Pages (9): …"}]
+               + [{"kind": "rename", "tool": "rename_page", "args": {"page_id": f"p{n}", "title": "T"},
+                   "result": "ok — renamed"} for n in range(REPLAY_CALLS + 10)])
+    history = [{"role": "user", "text": "rename every page"},
+               {"role": "ai", "text": "*(stopped)*", "actions": actions}]
+    messages = build_messages(payload(history), "", with_tools=True)
+    assert messages[0] == {"role": "user", "content": "rename every page"}
+    calls = messages[1]["tool_calls"]
+    assert [c["arguments"]["page_id"] for c in calls] == [f"p{n}" for n in range(10, REPLAY_CALLS + 10)]
+    assert messages[1]["content"].startswith("[11 earlier calls of this reply are not replayed")
+    assert "rename_page ×10, list_pages ×1." in messages[1]["content"]
+    results = [m for m in messages if m["role"] == "tool"]
+    assert [m["call_id"] for m in results] == [c["id"] for c in calls]
+    # A reply within the limit replays every call, with nothing said in front.
+    history[1]["actions"] = actions[:REPLAY_CALLS]
+    messages = build_messages(payload(history), "", with_tools=True)
+    assert len(messages[1]["tool_calls"]) == REPLAY_CALLS and messages[1]["content"] == ""
 
 
 def test_build_messages_keeps_the_document_context_stable_across_turns():

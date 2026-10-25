@@ -20,7 +20,9 @@ nothing in `backend/` or `frontend/` needs to know about it:
 The only contract Gamma keeps for the shell: the env variables
 `GAMMA_DATA_DIR`, `GAMMA_STATIC_DIR`, `GAMMA_ADMIN_USER`,
 `GAMMA_ADMIN_PASSWORD`, `GAMMA_VERSION` (the shell's version, shown as the
-server's build), `GAMMA_CLOUD_DEFAULT_ISSUER` (Gamma Cloud, so sign-in with
+server's build), `GAMMA_UPDATES` (`desktop` or, in a Microsoft Store
+install, `store`: who installs a newer release, for the Server dashboard,
+[user_db.md](user_db.md) "Server dashboard and log"), `GAMMA_CLOUD_DEFAULT_ISSUER` (Gamma Cloud, so sign-in with
 it is on until the admin saves another account server or none,
 [cloud_accounts.md](cloud_accounts.md)), `GAMMA_FOLDER_LINKS` (this server keeps
 folders on disk, anywhere the user picks,
@@ -43,6 +45,8 @@ answered by a `gammaShell` in Swift ([ipad.md](ipad.md#the-chrome)), so a
 change to either page is a change to both shells. The iPad hides what
 only the desktop does by its state (no `keeping`, `update` or `settings`)
 and by one rule in `ui/theme.css` (`body[data-platform="ipad"]
-.desktopOnly`), and both shells close the bar's menu on a press outside
-it, since iOS sends no click for a tap on its see-through page
+.desktopOnly`). The bar's hide chevron is the iPad's alone, shown by a
+key only its state has (`barHideable`). Both shells close the bar's menu
+on a press outside it, since iOS sends no click for a tap on its
+see-through page
 ([architecture.md "Window"](../../desktop/docs/architecture.md#window)).

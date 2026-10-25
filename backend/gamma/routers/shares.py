@@ -120,6 +120,16 @@ def _sees_email_invites(request: Request) -> bool:
     return _manages(request) and not is_token(request)
 
 
+def _manager(request: Request, what: str) -> str:
+    """The caller's account id for an action on the people invited through
+    Gamma Cloud, by username or by e-mail (``what``): a session, never a
+    guest's (403) or an integration token's (401)."""
+    user_id = require_user_id(request)
+    if request.state.is_guest:
+        raise HTTPException(status_code=403, detail=f"a guest cannot {what}")
+    return user_id
+
+
 # A share's target is the ShareScope it grants: the page or the folder, the
 # other ''. Everything below takes one and never asks which kind it is.
 
@@ -133,6 +143,14 @@ def _find(ws: str, target: ShareScope) -> dict | None:
             "SELECT token FROM shares WHERE workspace_id = ? AND page_id = ? AND folder = ?",
             (ws, target.page, target.folder)).fetchone()
     return share_lookup(row[0]) if row else None
+
+
+def _shared(ws: str, target: ShareScope, what: str) -> dict:
+    """The target's share, or 404 ("page is not shared")."""
+    share = _find(ws, target)
+    if not share:
+        raise HTTPException(status_code=404, detail=f"{what} is not shared")
+    return share
 
 
 def _require_page(ws: str, page_id: str) -> ShareScope:
@@ -257,9 +275,7 @@ def _get(ws: str, request: Request, target: ShareScope) -> dict:
 
 def _update(ws: str, request: Request, target: ShareScope, payload: ShareSettings, what: str) -> dict:
     """Change who may open the link and what they may do. The token stays."""
-    share = _find(ws, target)
-    if not share:
-        raise HTTPException(status_code=404, detail=f"{what} is not shared")
+    share = _shared(ws, target, what)
     fields = _validated(request.state.user_id, share, payload)
     with connect_users_db() as conn:
         cur = conn.execute("UPDATE shares SET audience = ?, role = ? WHERE token = ?",
@@ -270,23 +286,6 @@ def _update(ws: str, request: Request, target: ShareScope, payload: ShareSetting
     collab.revalidate(ws)
     shares.tell(ws, target, share["token"], request.state.user_id, invited)
     return _settings(share_lookup(share["token"]), request)
-
-
-def _shared(ws: str, target: ShareScope, what: str) -> dict:
-    share = _find(ws, target)
-    if not share:
-        raise HTTPException(status_code=404, detail=f"{what} is not shared")
-    return share
-
-
-def _inviter(request: Request) -> str:
-    """The id of the account inviting people to a share: a session, never an
-    integration token or a guest, since the account server is asked on the
-    caller's own Gamma Cloud grant."""
-    user_id = require_user_id(request)
-    if request.state.is_guest:
-        raise HTTPException(status_code=403, detail="a guest cannot invite people")
-    return user_id
 
 
 def _cloud_invite(ws: str, request: Request, target: ShareScope, payload: CloudInvite, what: str) -> dict:
@@ -300,7 +299,7 @@ def _cloud_invite(ws: str, request: Request, target: ShareScope, payload: CloudI
     whose role changes. A lookup counts against the caller's lookups, a
     workspace's invitations' too; a mail against the caller's invitations
     by e-mail."""
-    user_id = _inviter(request)
+    user_id = _manager(request, "invite people")
     if sum(bool(name) for name in (payload.username, payload.subject, payload.email, payload.invitation)) != 1:
         raise HTTPException(status_code=400,
                             detail="name one person: a username, a subject, an e-mail address or an invitation")
@@ -351,7 +350,7 @@ def _cancel_invite(ws: str, request: Request, target: ShareScope, subject: str, 
 def _withdraw_email(ws: str, request: Request, target: ShareScope, invite_id: str, what: str) -> dict:
     """Withdraw an invitation by e-mail still waiting: its mailed link stops
     working."""
-    user_id = _inviter(request)
+    user_id = _manager(request, "invite people")
     share = _shared(ws, target, what)
     try:
         email_invites.withdraw(invite_id, user_id, server_url=cloud_auth.callback_base(request), kind="share",
@@ -363,7 +362,7 @@ def _withdraw_email(ws: str, request: Request, target: ShareScope, invite_id: st
 
 def _resend_email(ws: str, request: Request, target: ShareScope, invite_id: str, what: str) -> dict:
     """Mail an invitation by e-mail again: a new link, its 14 days from now."""
-    user_id = _inviter(request)
+    user_id = _manager(request, "invite people")
     share = _shared(ws, target, what)
     ratelimit.check(f"email-invite:{user_id}", email_invites.SENDS_PER_HOUR, 3600)
     try:
@@ -379,9 +378,7 @@ def _resend_email(ws: str, request: Request, target: ShareScope, invite_id: str,
 def _decline(ws: str, request: Request, target: ShareScope, subject: str, what: str) -> dict:
     """Decline a request to join that came through the share: the person's
     sign-ins ask nothing more until an admin removes it."""
-    user_id = require_user_id(request)
-    if request.state.is_guest:
-        raise HTTPException(status_code=403, detail="a guest cannot decide requests to join")
+    user_id = _manager(request, "decide requests to join")
     share = _shared(ws, target, what)
     try:
         join_requests.decline(share["token"], subject, user_id)
@@ -415,6 +412,16 @@ def delete_folder_shares(ws: str, folder_ids) -> int:
     if removed:
         collab.revalidate(ws)
     return removed
+
+
+def shared_folders(ws: str, folder_ids) -> set[str]:
+    """The folders among ``folder_ids`` that have a share link: the agent
+    does not delete those (deleting a folder stops its share for good, and
+    sharing again mints another link)."""
+    with connect_users_db() as conn:
+        return {r[0] for r in conn.execute(
+            "SELECT folder FROM shares WHERE workspace_id = ? AND folder IN (SELECT value FROM json_each(?))",
+            (ws, json.dumps(sorted(folder_ids))))}
 
 
 # ---- folder shares (before the page routes: "folder" is a static segment) ---

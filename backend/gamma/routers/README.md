@@ -29,7 +29,7 @@ One module per API area. Mounted under `/api` in `gamma/app.py`.
 | `mirrors.py`  | `/api/mirrors*`                     | mirrors of a workspace on another Gamma server (gamma/sync_engine.py): create, run a round, status, log, conflicts; the owner only |
 | `folder_links.py` | `/api/folder-links*`               | folders kept as directories on this computer (gamma/folder_links.py) — of the server's workspaces, or of another Gamma server read with a token of it: list, make, change, a round now, remove; the desktop app's own server only (404 elsewhere), session only, editors (a remote source's link: its account) |
 | `publish.py`  | `/api/pages/{id}/publish`, `/publish/limit`, `/pages/resolve-public`, `/auth/cloud/exchange` | publishing a page to the free share host (gamma/publish.py): the publishing server's half and the share host's |
-| `folders.py`  | `/api/folders/{id}`, `/api/labels/{id}` (DELETE) | deleting a folder or a label: the subtree, the ids on the pages, the folder chats and shares |
+| `folders.py`  | `/api/folders/{id}`, `/api/labels/{id}` (DELETE) | deleting a folder or a label (`ops.delete_tree`): the subtree, the ids on the pages, the folder chats and shares |
 | `prefs.py`    | `/api/prefs/*`, `/api/page-snaps*`  | per-account (and per-workspace) synced prefs, cover snapshots |
 | `notices.py`  | `/api/notices*`                     | the red dot's feed (gamma/notices.py) and the ack when a notice is seen |
 | `inbox.py`    | `/api/inbox*`                       | the account's Inbox (gamma/inbox.py): its items, the unread count, marks read and archived; a signed-in session only |

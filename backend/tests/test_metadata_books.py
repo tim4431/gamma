@@ -159,6 +159,7 @@ def test_isbn_in_pdf_resolves_a_book(guest, monkeypatch):
     assert looked_up == ["0935702113"]
     assert body["source"] == "isbn" and body["meta"]["kind"] == "book"
     assert body["meta"]["unverified"] is False       # title + author are in the text
+    assert body["meta"]["match"] == "title"           # the title page: its title, its author by it
     assert body["bibtex"].startswith("@book{")
     assert body["ppt_cite"] == ""                    # AI off → no citation, no error
 

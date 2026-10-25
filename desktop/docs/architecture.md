@@ -321,7 +321,10 @@ update pill, and the launcher no Settings block. And one rule in
 server* and a local card's Remove. Under the same attribute `theme.css`
 and `bar.html` take touch sizes: a 44 px bar below the status bar's inset,
 36 px targets, no 146 px reserve. The bar's status stays on one line, and
-the shortcut hints read ⌘⇧L and ⌘R.
+the shortcut hints read ⌘⇧L and ⌘R. One control is the iPad's own: a
+chevron after reload that hides the bar (`gammaShell.hideBar`), shown only
+while the state's `barHideable` is true, a key the desktop's state never
+has.
 
 ### Gamma Cloud sign-in
 
@@ -598,6 +601,8 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   public HTTP API + env config (`GAMMA_DATA_DIR`, `GAMMA_STATIC_DIR`,
   `GAMMA_ADMIN_USER`, `GAMMA_ADMIN_PASSWORD`, `GAMMA_VERSION` = the shell's
   own version, so the server's admin dashboard names the app,
+  `GAMMA_UPDATES` = `desktop`, or `store` in a Store install, so it says
+  who installs a newer one,
   `GAMMA_CLOUD_DEFAULT_ISSUER` = Gamma Cloud, the account server until the
   admin saves another, `GAMMA_FOLDER_LINKS` = this server keeps folders on
   disk, anywhere the user picks, since the sidecar runs as the user), `/api/health` and
@@ -610,7 +615,8 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   under the iPad's `gammaShell`, which has only the calls the iPad answers
   and no `keeping`, `update` or `settings` in its state: a control only
   the desktop answers either reads one of those keys or carries
-  `.desktopOnly`.
+  `.desktopOnly`. The one only the iPad answers, the bar's hide chevron,
+  reads `barHideable`, which only the iPad's state has.
 - Local sidecars bind `127.0.0.1` only (the LAN-exposed use case is the
   existing server/Docker deployment, not the desktop app).
 - Navigation allowlist: only registered server origins render in the

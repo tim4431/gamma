@@ -19,16 +19,18 @@ struct ShellView: UIViewControllerRepresentable {
         let server = model.shellURL
         controller.show(server, login: server.flatMap { model.login(for: $0) }, attempt: model.connects)
         controller.showLauncher(model.launcher)
+        controller.placeBar(shown: model.barShown, hidden: model.barHidden)
         controller.pushState()
     }
 }
 
 /// The container, bottom to top: the web app's web view with the live
-/// stroke over it, the launcher while it is up, and the bar (Chrome), with
-/// the Pencil capture and gestures on the container itself, so they see
-/// every touch the web view gets. It answers the web's messages and the
-/// chrome's calls; none of it knows what the page shows. Safari views,
-/// alerts and the share sheet are presented from here.
+/// stroke over it, the launcher while it is up, and the bar (Chrome) unless
+/// the person hid it (AppModel.barShown), with the Pencil capture and
+/// gestures on the container itself, so they see every touch the web view
+/// gets. It answers the web's messages and the chrome's calls; none of it
+/// knows what the page shows. Safari views, alerts and the share sheet are
+/// presented from here.
 final class ShellController: UIViewController {
     private let model: AppModel
     private let shell: WebShell
@@ -40,6 +42,16 @@ final class ShellController: UIViewController {
     /// while a dropdown is open (`expandBar`). Made with the view.
     private var barStrip: NSLayoutConstraint?
     private var barFull: NSLayoutConstraint?
+    /// The frame the page's web view, the live stroke and the launcher
+    /// share: from under the bar's strip, or from under the status bar while
+    /// the bar is away (`placeBar`), to the window's bottom. Its top is made
+    /// with the view.
+    private let content = UILayoutGuide()
+    private var contentTop: NSLayoutConstraint?
+    /// The bar as it is placed, and the person's choice as the page was last
+    /// told it (`shellBar`).
+    private var barShown: Bool
+    private var barHidden: Bool
     private let live: LiveStrokeView
     private let capture: PencilCapture
     private let gestures: PencilGestures
@@ -50,12 +62,16 @@ final class ShellController: UIViewController {
     /// The bar's strip below the status bar: bar.html's `.bar` on the iPad,
     /// 44 px under its env(safe-area-inset-top) padding.
     private static let barHeight: CGFloat = 44
+    /// How long the bar takes to fade away or back.
+    private static let barFade: TimeInterval = 0.2
     /// How long a finished stroke's line waits for the web's paint before it
     /// goes anyway (a page that never answers leaves nothing behind).
     private static let paintTimeout: UInt64 = 3_000_000_000
 
     init(model: AppModel) {
         self.model = model
+        barShown = model.barShown
+        barHidden = model.barHidden
         shell = WebShell()
         let chrome = Chrome()
         self.chrome = chrome
@@ -106,17 +122,32 @@ final class ShellController: UIViewController {
     override func loadView() {
         let container = UIView()
         container.backgroundColor = WebShell.savedBackground ?? .systemBackground
-        // The web view starts below the bar's strip, as the page expects (it
-        // pads only the bottom: app.css `html[data-shell]`), and runs under
-        // the home indicator. The live stroke keeps exactly the web view's
-        // frame: the samples and the preview are both in its points.
+        // The web view starts below the bar's strip, or below the status bar
+        // while the bar is away, as the page expects (it pads only the
+        // bottom: app.css `html[data-shell]`), and runs under the home
+        // indicator. The strip above it is then the window's own colour, the
+        // page's topbar's (the `theme` message). The live stroke keeps
+        // exactly the web view's frame: the samples and the preview are both
+        // in its points.
+        container.addLayoutGuide(content)
+        let top = content.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor,
+                                               constant: barShown ? Self.barHeight : 0)
+        contentTop = top
+        NSLayoutConstraint.activate([
+            top,
+            content.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            content.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            content.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
         for child in [shell.webView, live] as [UIView] {
             container.addSubview(child)
-            fillContent(child, in: container)
+            fillContent(child)
         }
         // The bar from the window's top: it paints the strip under the
         // status bar itself.
         bar.translatesAutoresizingMaskIntoConstraints = false
+        bar.isHidden = !barShown
+        bar.alpha = barShown ? 1 : 0
         container.addSubview(bar)
         let strip = bar.bottomAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor, constant: Self.barHeight)
         barStrip = strip
@@ -135,13 +166,13 @@ final class ShellController: UIViewController {
     }
 
     /// The web view's frame, which the live stroke and the launcher share.
-    private func fillContent(_ child: UIView, in container: UIView) {
+    private func fillContent(_ child: UIView) {
         child.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([
-            child.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor, constant: Self.barHeight),
-            child.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            child.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            child.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            child.topAnchor.constraint(equalTo: content.topAnchor),
+            child.leadingAnchor.constraint(equalTo: content.leadingAnchor),
+            child.trailingAnchor.constraint(equalTo: content.trailingAnchor),
+            child.bottomAnchor.constraint(equalTo: content.bottomAnchor),
         ])
     }
 
@@ -155,7 +186,9 @@ final class ShellController: UIViewController {
 
     override var keyCommands: [UIKeyCommand]? {
         [UIKeyCommand(title: "All Servers", action: #selector(toggleLauncher), input: "l", modifierFlags: [.command, .shift]),
-         UIKeyCommand(title: "Reload", action: #selector(reloadPage), input: "r", modifierFlags: .command)]
+         UIKeyCommand(title: "Reload", action: #selector(reloadPage), input: "r", modifierFlags: .command),
+         UIKeyCommand(title: model.barHidden ? "Show Server Bar" : "Hide Server Bar", action: #selector(toggleBar),
+                      input: "b", modifierFlags: [.command, .shift])]
     }
 
     func show(_ server: URL?, login: LocalLogin?, attempt: Int) {
@@ -188,7 +221,10 @@ final class ShellController: UIViewController {
     private func addLauncherView() -> WKWebView {
         let page = chrome.makeView(bar: false)
         view.insertSubview(page, belowSubview: bar)
-        fillContent(page, in: view)
+        fillContent(page)
+        // Laid out at once, so a bar coming back with it (`placeBar`) moves
+        // it down with the page rather than growing it from nothing.
+        view.layoutIfNeeded()
         launcherView = page
         return page
     }
@@ -204,7 +240,8 @@ final class ShellController: UIViewController {
     private func state(sizeBytes: Int64? = nil) -> [String: Any] {
         ShellState.make(version: HostInfo.current.version, theme: shell.themeName, servers: model.saved,
                         reachable: model.reachable, local: model.local.state, slowStart: model.local.slowStart,
-                        login: model.local.login, session: shell.session, page: shell.webView.url, sizeBytes: sizeBytes)
+                        login: model.local.login, session: shell.session, page: shell.webView.url,
+                        barHideable: !model.barNeeded, sizeBytes: sizeBytes)
     }
 
     /// The bar over the whole window while a dropdown is open, so its menu
@@ -216,12 +253,52 @@ final class ShellController: UIViewController {
         new.isActive = true
     }
 
-    @objc private func toggleLauncher() {
-        // An open dropdown closes in the page too (bar.html's Escape), so
-        // its next tap opens it again; the strip itself for a bar not loaded.
+    /// An open dropdown closes in the bar's page too (bar.html's Escape), so
+    /// its next tap opens it again, and the view goes back to its strip,
+    /// also for a bar whose page has not loaded.
+    private func closeBarMenu() {
         bar.evaluateJavaScript("document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape'}))", completionHandler: nil)
         expandBar(false)
+    }
+
+    /// The bar up or away (AppModel.barShown): the content's top moves with
+    /// it as the bar fades, after an open dropdown closes. The person's
+    /// choice goes to the page when it changes (`shellBar`), for its View
+    /// menu's check; a page that loads asks for it itself.
+    func placeBar(shown: Bool, hidden: Bool) {
+        if hidden != barHidden {
+            barHidden = hidden
+            Task { await shell.bridge.send(.shellBar(shown: !hidden)) }
+        }
+        guard shown != barShown else { return }
+        barShown = shown
+        guard let contentTop else { return } // the view is not made yet: loadView places it
+        if !shown { closeBarMenu() }
+        contentTop.constant = shown ? Self.barHeight : 0
+        guard view.window != nil, !UIAccessibility.isReduceMotionEnabled else {
+            bar.alpha = shown ? 1 : 0
+            bar.isHidden = !shown
+            view.layoutIfNeeded()
+            return
+        }
+        bar.isHidden = false
+        UIView.animate(withDuration: Self.barFade, delay: 0, options: [.beginFromCurrentState]) {
+            self.bar.alpha = shown ? 1 : 0
+            self.view.layoutIfNeeded()
+        } completion: { _ in
+            // Hidden once faded, so the page takes every touch; the latest
+            // placing decides when two cross.
+            self.bar.isHidden = !self.barShown
+        }
+    }
+
+    @objc private func toggleLauncher() {
+        closeBarMenu()
         model.toggleLauncher()
+    }
+
+    @objc private func toggleBar() {
+        model.setBarHidden(!model.barHidden)
     }
 
     @objc private func reloadPage() {
@@ -271,6 +348,8 @@ final class ShellController: UIViewController {
             reloadPage()
         case "barExpand":
             try expandBar(arg(0))
+        case "hideBar":
+            model.setBarHidden(true)
         case "addRemote":
             let name: String = try arg(0)
             guard let url = try ServerAddress.parse(arg(1)) else { throw Refusal("That is not a web address.") }
@@ -331,6 +410,9 @@ final class ShellController: UIViewController {
         case let .fileDone(id):
             model.opened.done(id: id)
             return [:]
+        case let .shellBar(shown):
+            if let shown { model.setBarHidden(!shown) }
+            return ["shown": !model.barHidden]
         }
     }
 

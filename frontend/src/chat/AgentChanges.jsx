@@ -1,27 +1,29 @@
 // What an agent reply changed, listed under its steps pill (grouped by
-// chat/agentSteps.js): renamed, filed, saved or restored pages, and edited,
-// added or moved notes, each with a link to what changed. A note change has
-// a revert button, and the list a "Revert all" when it holds more than one
-// (chat/aiRevert.js, gamma/ai_revert.py). A revert keeps what anyone wrote
-// since. When the note changed where the agent wrote, was filled in or moved
-// on, the row asks first: it says so, shows what reverting anyway would do
-// as a word diff, and offers to do it. "Revert all" goes newest first and
-// stops at the first row that asks. A reverted change stays listed, marked,
-// with a redo button that puts it back the same way (and asks the same way).
+// chat/agentSteps.js): renamed, filed, saved or restored pages, renamed,
+// made, applied or deleted folders and labels, and edited, added or moved
+// notes, each with a link to what changed. A note change, and a deleted
+// folder or label, has a revert button, and the notes' list a "Revert all"
+// when it holds more than one (chat/aiRevert.js, gamma/ai_revert.py). A
+// revert keeps what anyone wrote since. When the note changed where the
+// agent wrote, was filled in or moved on, the row asks first: it says so,
+// shows what reverting anyway would do as a word diff, and offers to do it.
+// "Revert all" goes newest first and stops at the first row that asks. A
+// reverted change stays listed, marked, with a redo button that puts it
+// back the same way (and asks the same way).
 import React, { useContext, useState } from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { GammaNavContext } from "../shared/ui/Widgets";
-import { t } from "../shared/i18n/i18n.js";
+import { t, tn } from "../shared/i18n/i18n.js";
 import { BookIcon, BotIcon, CloudDownloadIcon, EyeIcon, FilePlusIcon, FolderIcon, GlobeIcon, HistoryIcon, ImageIcon,
-  ListIcon, PenIcon, PencilIcon, PlusIcon, QuoteIcon, RedoIcon, ScissorsIcon, SearchIcon, TrashIcon, UndoIcon,
-  XIcon } from "../shared/ui/Icons";
+  LabelIcon, ListIcon, PenIcon, PencilIcon, PlusIcon, QuoteIcon, RedoIcon, ScissorsIcon, SearchIcon, TrashIcon,
+  UndoIcon, XIcon } from "../shared/ui/Icons";
 import { changePlace, isChange, noteChangeText } from "./agentSteps";
 import { canRedo, canRevert, revertOrder, revertRefusal } from "./aiRevert.js";
 import { WordDiff } from "./ApprovalCard";
 
 // The icon of each action kind, in this list and on the tool chips under the
 // pill (ChatDock), each chip expanding to the raw call the server ran.
-export const ACTION_ICONS = { rename: PencilIcon, move: FolderIcon, search: SearchIcon, read: BookIcon, view: EyeIcon, ink: PenIcon, image: ImageIcon, cite: QuoteIcon, list: ListIcon, edit: PencilIcon, create: PlusIcon, delete: TrashIcon, clip: ScissorsIcon, websearch: GlobeIcon, fetch: CloudDownloadIcon, helper: BotIcon, save: FilePlusIcon, restore: HistoryIcon, error: XIcon };
+export const ACTION_ICONS = { rename: PencilIcon, move: FolderIcon, search: SearchIcon, read: BookIcon, view: EyeIcon, ink: PenIcon, image: ImageIcon, cite: QuoteIcon, list: ListIcon, edit: PencilIcon, create: PlusIcon, delete: TrashIcon, clip: ScissorsIcon, websearch: GlobeIcon, fetch: CloudDownloadIcon, helper: BotIcon, save: FilePlusIcon, restore: HistoryIcon, label: LabelIcon, error: XIcon };
 
 // What a row that stopped says, and the button that reverts (or redoes)
 // anyway — none when it can't be forced.
@@ -97,6 +99,23 @@ export default function AgentChanges({ actions, onOpenPage, onReverted, busy = f
     ? <button type="button" className="chatChangeLink" onClick={() => nav.openBlock(a.block_id, a.page_id)}>{label}</button>
     : pageLink(a.page_id, label);
   const libraryRow = (a) => {
+    const old = (text) => <s className="chatChangeOld">{text}</s>;
+    const bold = (text) => <strong>{text}</strong>;
+    switch (a.tool) {
+      case "rename_folder": return t("Folder {from} renamed to {to}", { from: old(a.from), to: bold(a.to) });
+      case "rename_label": return t("Label {from} renamed to {to}", { from: old(a.from), to: bold(a.to) });
+      case "create_label": return t("Made the label {label}", { label: bold(a.to) });
+      case "label_page": return t("Labels of {page}: {change}", { page: pageLink(a.page_id, a.title),
+        change: [...(a.added || []).map((n) => `+${n}`), ...(a.removed || []).map((n) => `−${n}`)].join(", ") });
+      case "delete_folder": return a.count
+        ? tn("Deleted the folder {folder}; its {n} page stays in your library",
+          "Deleted the folder {folder}; its {n} pages stay in your library", a.count, { folder: bold(a.title) })
+        : t("Deleted the folder {folder}", { folder: bold(a.title) });
+      case "delete_label": return a.count
+        ? tn("Deleted the label {label} from {n} page", "Deleted the label {label} from {n} pages", a.count, { label: bold(a.title) })
+        : t("Deleted the label {label}", { label: bold(a.title) });
+      default: break;
+    }
     if (a.kind === "rename" && a.to) {
       return <><s className="chatChangeOld">{a.from}</s> → {pageLink(a.page_id, a.to)}</>;
     }

@@ -123,16 +123,16 @@ installed by `main.jsx` as soon as the styles are in. `warmKatexFonts` asks
 for the faces most formulas use (Main in three styles, Math italic, Size1 to
 Size4, AMS) once, at startup, so they load beside the app's own code and a
 formula shown the moment its page has drawn still draws whole.
-`holdMathForFonts` makes that so whatever the timing: a `MutationObserver`
-catches every `.katex` added to the page before its frame paints, forces a
-layout there (which makes the browser start the loads the formula needs and
-turns those faces' status to `loading`) and, while any KaTeX face loads,
-marks the new formulas `data-fonts="loading"`, which `app.css` hides whole;
-the mark comes off once no face is loading (`document.fonts.ready`, checked
-again each frame), or after 3 s, the block period after which the browser
-would draw a fallback anyway. The browser suite's comments scenario opens a
-fresh browser at a thread with `\mathcal` and `\mathfrak` (faces outside the
-warmed set) and checks the formula was held and then released.
+`holdMathForFonts` makes that so whatever the timing. A `MutationObserver`
+catches every `.katex` added to the page before its frame paints and forces
+a layout there, which makes the browser start the loads the formula needs
+and turns those faces' status to `loading`. While any KaTeX face loads, the
+new formulas are marked `data-fonts="loading"`, which `app.css` hides
+whole. The mark comes off once no face is loading (`document.fonts.ready`,
+checked again each frame), or after 3 s, the block period after which the
+browser draws a fallback anyway. The comments browser scenario checks the
+hold and the release on a thread with `\mathcal` and `\mathfrak`, faces
+outside the warmed set.
 
 Validation (from `frontend`):
 

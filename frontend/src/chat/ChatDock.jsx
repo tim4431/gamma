@@ -20,9 +20,12 @@ import { forReplay, markReverted } from "./aiRevert.js";
 import { GRANTS_KEY, conversationId, declinedSummary, grantsIn, readGrants, waitsForPapers, withGrant,
   withoutGrants, withoutPaperWait, writeGrants } from "./approvals.js";
 import { MAX_CHAT_REFERENCES } from "./paperMentions";
-import { READ_TOOLS, WRITE_TOOLS, permState, toolsForKind } from "./chatSettings";
+import { READ_TOOLS, WRITE_TOOLS, permState, permStates, toolsForKind } from "./chatSettings";
 import { addUsage, cachedPercent, contextUsed, conversationUsage, fmtTokens, liveUsage, usageDetail } from "./tokenUsage";
-import { areaPicturesNote, coverageNote, shortenedNote, trimmedNote, truncatedNote } from "./coverage.js";
+import {
+  areaPicturesNote, canContinueAfterLimit, continueAfterLimitPrompt, coverageNote, limitNote, shortenedNote, trimmedNote,
+  truncatedNote,
+} from "./coverage.js";
 import { keptNote, keptTitle, passageShares } from "./passageBudget.js";
 import { recencySections } from "../library/PageOption";
 import { rankLibraryPages } from "../library/librarySearch";
@@ -33,7 +36,7 @@ import { useAltVariant } from "../shared/ui/altVariant.js";
 import { touchTyping } from "../shared/lib/pointer.js";
 import { composing, sendsOnEnter } from "./enterKey.js";
 import { chatFailure, failureCopy, failureFields, fixLabel } from "./chatErrors";
-import { BLOCK_TOOLS, chipNote, helperStatus, isChange, runningLabel, splitActions, stepsSummary, withHelper } from "./agentSteps";
+import { BLOCK_TOOLS, changePlace, chipNote, helperStatus, isChange, runningLabel, splitActions, stepsSummary, withHelper } from "./agentSteps";
 import { guideEvents } from "../guide/events.js";
 import { gammaLinksIn } from "../shared/model/gammaLinks.js";
 import { CharSlider, approxPages } from "../settings/SettingsKit";
@@ -97,11 +100,12 @@ function relAge(iso) {
 // tools read on their own ("pages 1–2 of 7 · read 3–5 with tools") and
 // which pages nobody saw; a selection says where the server placed it
 // ("p. 7 · Methods › Noise model") and whether a picture of it went along
-// (its text layer looked like a formula or table). Three more pills, per
+// (its text layer looked like a formula or table). Four more pills, per
 // reply: the oldest messages left out of a conversation the model can't
 // hold any more, the selected passages and attached blocks that went short,
-// and a reply cut off at the output limit (chat/coverage.js).
-function ContextCoverage({ items, actions, tools, trimmed, shortened, truncated }) {
+// a reply cut off at the output limit, and a reply a tool limit or the
+// window stopped (chat/coverage.js).
+function ContextCoverage({ items, actions, tools, trimmed, shortened, truncated, limit }) {
   const [open, setOpen] = useState(-1); // the pill whose explanation is unfolded
   const [shown, setShown] = useState(-1); // the explanation under them, kept while it folds away
   const notes = (items || []).flatMap((c) => {
@@ -125,7 +129,7 @@ function ContextCoverage({ items, actions, tools, trimmed, shortened, truncated 
     }
     return out;
   });
-  for (const extra of [trimmedNote(trimmed), shortenedNote(shortened), truncatedNote(truncated)]) if (extra) notes.push(extra);
+  for (const extra of [trimmedNote(trimmed), shortenedNote(shortened), truncatedNote(truncated), limitNote(limit)]) if (extra) notes.push(extra);
   if (!notes.length) return null;
   // Pills like the agent's steps: a click unfolds the explanation under them.
   const unfold = (i) => {
@@ -481,10 +485,14 @@ export default function ChatDock({
   // Home/folder view: the folder being viewed (its id; "" = library root) —
   // enables the folder-agent tools; null in the paper view. agentPerms is the
   // Settings per-chat-kind permission map ({folder, pdf, notes} → {list,
-  // read, block_read, search, rename, move, block_edit}; setAgentPerms edits
-  // it from the ⚙ popover) and toolRounds the round budget. When the AI applied changes, onLibraryChange
+  // read, block_read, search, rename, move, organize, organize_delete,
+  // block_edit, …}: chat/chatSettings.js has them all); setAgentPerms edits
+  // it from the ⚙ popover), toolRounds the round budget and toolRoundsUnlimited whether it is lifted
+  // (Settings → Tool limits); addTask / removeTask put a running Unlimited reply in Background tasks
+  // (tasks/useTasks.js addLocal / removeLocal). When the AI applied changes, onLibraryChange
   // refreshes the home feed and onNotesChange reloads touched pages' notes.
-  organizeFolder = null, toolRounds, agentReadChars, agentPerms, setAgentPerms, agentSystem,
+  organizeFolder = null, toolRounds, toolRoundsUnlimited = false, addTask, removeTask,
+  agentReadChars, agentPerms, setAgentPerms, agentSystem,
   agentEnabled, setAgentEnabled, onLibraryChange, onNotesChange, onAgentEvent,
   // Opens a page the reply links to (/?page=<id>) in place.
   onOpenPage,
@@ -584,8 +592,9 @@ export default function ChatDock({
     return () => window.removeEventListener("storage", onStorage);
   }, []);
   const activeUser = () => { try { return localStorage.getItem("gamma-active-user") || ""; } catch { return ""; } };
+  // A permission that only asks (chatSettings.js permStates) is never granted.
   const grantedHere = grantsIn(grantStore, activeUser(), conversationId(chatMessages))
-    .filter((key) => permState(chatToolPerms, key) === "ask");
+    .filter((key) => permState(chatToolPerms, key) === "ask" && permStates(key).includes("allow"));
   const updateGrants = (change) => setGrantStore((store) => {
     const next = change(store);
     writeGrants(next);
@@ -610,6 +619,7 @@ export default function ChatDock({
         : null;
     return scope
       ? { ...scope, tool_rounds: toolRounds || 0, read_char_limit: agentReadChars || 0,
+          ...(toolRoundsUnlimited ? { tool_rounds_unlimited: true } : {}),
           permissions: chatToolPerms, agent_system: agentSystem || "",
           granted: grantsIn(readGrants(), activeUser(), conversationId(prevMessages)),
           // Whether a blocked paper holds the reply open on its card, or
@@ -747,7 +757,8 @@ export default function ChatDock({
   // A change under a reply was reverted, or redone (`reverted` false —
   // chat/AgentChanges.jsx): its action is marked or unmarked in the saved
   // conversation, so the model hears of it on the next turn, and the pages
-  // it touched reload where no live socket brought the ops. The
+  // it touched reload where no live socket brought the ops (a folder or
+  // label put back or deleted again: the library listing). The
   // conversation is the one the reply belongs to, even if the dock moved
   // on while a "Revert all" ran.
   const loadedRef = useRef(loadedHere);
@@ -765,6 +776,7 @@ export default function ChatDock({
     const touched = indexes.flatMap((i) => [message?.actions?.[i]?.page_id, message?.actions?.[i]?.src_page_id]);
     const pages = [...new Set([answer?.page_id, ...touched].filter(Boolean))];
     if (pages.length) onNotesChange?.(pages);
+    if (indexes.some((i) => message?.actions?.[i] && changePlace(message.actions[i]) === "library")) onLibraryChange?.();
   };
 
   // Show a conversation that came from the server (bucket switch, or a
@@ -1340,6 +1352,15 @@ export default function ChatDock({
     chatStickRef.current = true; // sending always snaps back to the bottom
     const ctrl = new AbortController();
     if (!session.start(sendKey, [...prevMessages, userMsg], chatTitle, ctrl)) return;
+    // Under Unlimited a reply runs until it is done or stopped. A row in
+    // Background tasks shows it, and its Stop reaches it from any folder or
+    // page (stopChat only stops the conversation on screen). The row follows
+    // what the request asks: a chat with no tools in scope sends a plain chat.
+    const taskId = agentPayload(prevMessages).tool_rounds_unlimited ? addTask?.({
+      kind: "ai", info: t("Unlimited rounds"), cancel: () => session.stop(sendKey),
+      name: t("AI reply — {title}", {
+        title: (chatTitle || deriveTitle([...prevMessages, userMsg]) || t("Untitled")).slice(0, 48) }),
+    }) : null;
     let acc = ""; // streamed reply so far — kept on Stop
     const actions = []; // organizer mutations streamed for this reply
     let coverage = null; // {"context": [...]} — what the model was given, per document
@@ -1354,6 +1375,7 @@ export default function ChatDock({
     let trimmed = null; // {"trimmed": {turns}} — oldest messages left out to fit the window
     let shortened = null; // {"shortened": {items, budget, asked}} — passages that went short
     let truncated = false; // {"truncated": true} — the reply hit the output limit
+    let limit = null; // {"limit": {kind, rounds, changes, withheld?}} — a limit stopped the reply
     let reasoning = null; // {"reasoning"} lines — the model's thinking, sent back on later turns
     const liveArgs = new Map(); // tool call id -> argument chars previewed so far (cumulative)
     const replyId = makeId(); // every version of this reply, partial or final, is one message
@@ -1369,6 +1391,7 @@ export default function ChatDock({
       ...(trimmed ? { trimmed } : {}),
       ...(shortened ? { shortened } : {}),
       ...(truncated ? { truncated: true } : {}),
+      ...(limit ? { limit } : {}),
       ...(reasoning ? { reasoning } : {}),
       ...extra,
     });
@@ -1431,6 +1454,8 @@ export default function ChatDock({
             shortened = ev.shortened;
           } else if (ev.truncated) {
             truncated = true;
+          } else if (ev.limit) {
+            limit = ev.limit;
           } else if (ev.reasoning) {
             reasoning = addReasoning(reasoning, ev.reasoning);
           } else if (ev.usage) {
@@ -1472,6 +1497,7 @@ export default function ChatDock({
         ? { text: acc ? `${acc}\n\n*(stopped)*` : "*(stopped)*" }
         : { text: acc || `Error: ${reason}`, ...(acc ? {} : { error: true }), ...failureFields(err) }), true);
     } finally {
+      if (taskId) removeTask?.(taskId);
       session.finish(sendKey);
       onAgentEvent?.({ type: "done", key: sendKey });
       // Agent tools changed the library — reload the home feed. Read-only
@@ -2076,9 +2102,9 @@ export default function ChatDock({
                         ))}
                       </div>
                     ) : null}
-                    {!isUser && (m.context?.length || m.trimmed || m.shortened || m.truncated) ? (
+                    {!isUser && (m.context?.length || m.trimmed || m.shortened || m.truncated || m.limit) ? (
                       <ContextCoverage items={m.context} actions={m.actions} tools={!!m.tools}
-                        trimmed={m.trimmed} shortened={m.shortened} truncated={m.truncated} />
+                        trimmed={m.trimmed} shortened={m.shortened} truncated={m.truncated} limit={m.limit} />
                     ) : null}
                     {/* The reply's one status pill, from the start of the turn; a
                         reply that ends without a step folds it away. */}
@@ -2146,6 +2172,15 @@ export default function ChatDock({
                       <FetchHandoffCards actions={m.actions} isLast={i === chatMessages.length - 1}
                         busy={busyHere} draft={composerHasDraft} readOnly={readOnly || aiOff}
                         autoOpen={fetchInBackground} onContinue={(text) => sendChat(text)} />
+                    ) : null}
+                    {!isUser && !isResponding && canContinueAfterLimit({ limit: m.limit, truncated: m.truncated,
+                      isLast: i === chatMessages.length - 1, idle: !busyHere && !composerHasDraft,
+                      readOnly: readOnly || aiOff }) ? (
+                      <div className="chatLimitActions">
+                        <button type="button" className="uiBtn sm primary"
+                          title={t("Carry on where the reply stopped, in a new message with a fresh budget")}
+                          onClick={() => sendChat(continueAfterLimitPrompt())}>{t("Continue")}</button>
+                      </div>
                     ) : null}
                     {!isUser && !isResponding && !readOnly && canSave && !m.error ? (
                       <ReplyPapers actions={m.actions} text={m.text} folder={paperFolder}

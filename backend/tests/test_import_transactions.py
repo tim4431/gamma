@@ -117,13 +117,13 @@ def test_zotero_import_stores_files_outside_its_transactions(monkeypatch):
     ws = make_user("it_zotero", "it-password-1")
     c = login("it_zotero", "it-password-1")
     seen = []
-    real = imports.store_pdf
+    real = imports.store_pdf_stream
 
-    def watching_store(ws_, data):
+    def watching_store(ws_, stream):
         # every item's PDF is stored while no transaction of the import is open
         seen.append((_other_writer_gets_in(ws_), _newest(ws_)))
-        return real(ws_, data)
-    monkeypatch.setattr(imports, "store_pdf", watching_store)
+        return real(ws_, stream)
+    monkeypatch.setattr(imports, "store_pdf_stream", watching_store)
     data = _zotero_zip([(f"https://example.org/it-{i}", f"Paper {i}", _pdf(b"paper %d" % i), [], [])
                         for i in range(3)])
     r = c.post("/api/import/zotero", files={"file": ("lib.zip", data, "application/zip")})
@@ -176,12 +176,12 @@ def test_markdown_zip_import_commits_in_batches(monkeypatch):
     ws = make_user("it_mdzip", "it-password-1")
     c = login("it_mdzip", "it-password-1")
     seen = []
-    real = markdown_zip_import.store_file
+    real = markdown_zip_import.store_file_stream
 
-    def watching_store(ws_, data, ext):
+    def watching_store(ws_, stream, ext):
         seen.append((_other_writer_gets_in(ws_), _newest(ws_)))
-        return real(ws_, data, ext)
-    monkeypatch.setattr(markdown_zip_import, "store_file", watching_store)
+        return real(ws_, stream, ext)
+    monkeypatch.setattr(markdown_zip_import, "store_file_stream", watching_store)
     buf = io.BytesIO()
     with zipfile.ZipFile(buf, "w") as zf:
         for i in range(3):

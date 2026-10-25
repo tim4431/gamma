@@ -10,8 +10,8 @@ the confirmed public URL, and whether the server is used and failing (the
 accounts active in the last week, the last write, the 5xx answers since
 the last sync and the uptime; the read-only gate notes the answers through
 ``answered``). The answer is the limits (``plan``, ``status``,
-``read_only``, ``policy``, ``max_accounts``, ``quota_mb``,
-``max_upload_mb``, ``offsite``, ``grace_until``, ``message``), checked
+``read_only``, ``policy``, ``max_accounts``, ``quota_mb``, ``offsite``,
+``grace_until``, ``message``), checked
 field by field and kept with the time in the users.db ``settings`` KV
 under ``hosted_limits``: the last answer survives a restart, and a call
 that fails changes nothing (a warning in the log). The app's ``every()``
@@ -27,7 +27,7 @@ server at the server's own next sync.
 
 Where the limits land:
 
-- ``quota_mb`` / ``max_upload_mb``: the storage defaults and caps
+- ``quota_mb``: the storage quota's default and cap
   (gamma/server_settings.py ``_plan_caps``): an admin may set lower ones,
   never higher.
 - ``policy`` replaces ``GAMMA_CLOUD_POLICY`` (``cloud_auth.settings``),
@@ -59,7 +59,7 @@ from . import cloud_auth, cloud_sync, config, db, version
 from .cloud_auth import CloudAuthError
 from .db import connect_pages_db, connect_users_db, format_stamp, workspace_ids, ws_dir
 from .logbuf import log
-from .server_settings import (QUOTA_MB_MAX, UPLOAD_MB_MAX, _get_raw, _set_raw, public_url_settings,
+from .server_settings import (QUOTA_MB_MAX, _get_raw, _set_raw, public_url_settings,
                               workspace_bytes)
 
 SYNC_INTERVAL = 3600          # seconds between syncs (the app lifespan runs tick)
@@ -234,7 +234,6 @@ def _normalized(answer) -> dict:
         "policy": policy_,
         "max_accounts": _int(answer.get("max_accounts") or 0, 0, 1_000_000),
         "quota_mb": _int(answer.get("quota_mb") or 0, 0, QUOTA_MB_MAX),
-        "max_upload_mb": _int(answer.get("max_upload_mb") or 0, 0, UPLOAD_MB_MAX),
         # What the off-site copies are held to (offsite._held_to_plan); 0 = no plan value.
         "offsite": {"interval_s": _int(offsite.get("interval_s") or 0, 0, 7 * 86400),
                     "keep": _int(offsite.get("keep") or 0, 0, 10_000)},

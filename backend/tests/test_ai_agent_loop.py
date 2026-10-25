@@ -129,9 +129,11 @@ def test_chat_agent_round_budget_and_folder_switch(org, monkeypatch):
     r = c.post("/api/ai/chat", json={"prompt": "tidy", "agent_scope": "folder",
                                      "folder": ids["cooling"], "stream": True, "tool_rounds": 1})
     assert r.status_code == 200
-    text = "".join(json.loads(l).get("delta", "") for l in r.text.splitlines() if l.strip())
+    lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
+    text = "".join(l.get("delta", "") for l in lines)
     assert len(systems) == 1  # budget of 1: no second round opened
     assert "tool-round limit" in text
+    assert lines[-1] == {"limit": {"kind": "rounds", "rounds": 1, "changes": 0}}
     assert f'the folder "cooling" (id {ids["cooling"]})' in systems[0]  # same conversation, new folder → new scope
     # A folder id that is no folder (deleted meanwhile) is refused before any round.
     r = c.post("/api/ai/chat", json={"prompt": "tidy", "agent_scope": "folder", "folder": "gone-folder",
@@ -562,7 +564,8 @@ def test_chat_permissions_gate_tools_and_execution(org, monkeypatch):
     r = c.post("/api/ai/chat", json={"prompt": "rename stuff", "agent_scope": "folder",
                                      "folder": ids["readout"], "stream": True,
                                      "permissions": {"rename": False, "move": False, "save": False,
-                                                     "restore": False, "block_edit": False}})
+                                                     "restore": False, "organize": False,
+                                                     "organize_delete": False, "block_edit": False}})
     assert r.status_code == 200
     assert [t["name"] for t in seen["tools"]] == [
         "list_pages", "list_folders", "read_page", "read_block", "read_chats", "view_pdf_page",

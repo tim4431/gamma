@@ -22,14 +22,10 @@
 // page.close(). `--stop pagehide` keeps every pagehide listener the app adds
 // from running, as Firefox stops a closing page's first one: what the close
 // keeps then went from visibilitychange alone. Exit 1 on any loss.
-import { Account, Server, flags, launchBrowser, makePdf, openPage, results, sleep, step, until } from "./harness.mjs";
+import { Account, Server, argValue, flags, launchBrowser, makePdf, openPage, results, sleep, step, until } from "./harness.mjs";
 import { editRow } from "./scenarios/notes.mjs";
 import { waitForPdf } from "./scenarios/pdf.mjs";
 
-const argValue = (name, fallback) => {
-  const i = process.argv.indexOf(name);
-  return i > 0 && process.argv[i + 1] && !process.argv[i + 1].startsWith("--") ? process.argv[i + 1] : fallback;
-};
 const runs = Math.max(1, Number(argValue("--runs", "1")) || 1);
 const closes = argValue("--close", "page").split(",").map((s) => s.trim()).filter(Boolean);
 if (!closes.length || closes.some((how) => !["page", "context"].includes(how))) {

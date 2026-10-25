@@ -2,9 +2,10 @@
 // stream's {"context"} line, saved on the message) combined with the pages
 // its tools read (the read_page actions' `pdf_pages`), the turns left out
 // of a conversation too long for the model, the selected passages that
-// went short, and a reply cut off at the output limit. Pure functions, so
+// went short, a reply cut off at the output limit, and one a tool limit or
+// the window stopped (with the Continue both offer). Pure functions, so
 // the chat's component and the test share them.
-import { t } from "../shared/i18n/i18n.js";
+import { t, tn } from "../shared/i18n/i18n.js";
 import { estimateTokens, fmtTokens } from "./tokenUsage.js";
 
 // The PDF page spans one reply's read_page calls covered on a page, merged
@@ -174,7 +175,55 @@ export function truncatedNote(truncated) {
   if (!truncated) return null;
   return {
     short: t("Reply cut off at the output limit"),
-    long: t("The model reached its output limit before it finished. Ask it to continue where it stopped."),
+    long: t("The model reached its output limit before it finished. Continue carries on where it stopped."),
     refused: true,
   };
+}
+
+const TOOL_LIMITS_PATH = () => t("Settings / AI / Tool usage / Tool limits");
+
+// The pill for a reply a limit stopped ({"limit": {kind, rounds, changes,
+// withheld?}}, saved on the message as `limit`): the round limit, the change
+// limit or the model's window (gamma/ai_agent.py AgentLoop). `withheld`:
+// Unlimited rounds was on, but this shared AI connection keeps the limits
+// (routers/ai.py). Null for anything else.
+export function limitNote(limit) {
+  const kind = limit?.kind;
+  if (!["rounds", "changes", "window"].includes(kind)) return null;
+  const what = kind === "rounds"
+    ? tn("This reply used its {n} tool round before it finished.",
+      "This reply used its {n} tool rounds before it finished.", limit.rounds || 0)
+    : kind === "changes"
+      ? tn("This reply reached the change limit for one message after {n} change.",
+        "This reply reached the change limit for one message after {n} changes.", limit.changes || 0)
+      : t("This reply grew past what the model can hold.");
+  const next = kind === "window"
+    ? t("Continue carries on in a new message, which sends the work so far in short form.")
+    : limit.withheld
+      ? t("Continue carries on where it stopped, with a fresh budget. Unlimited rounds does not apply on a shared AI connection without a daily allowance.")
+      : kind === "rounds"
+        ? t("Continue carries on where it stopped, with a fresh budget; to go further in one reply, raise the limit or choose Unlimited rounds in {path}.", { path: TOOL_LIMITS_PATH() })
+        : t("Continue carries on where it stopped, with a fresh budget; Unlimited rounds in {path} lifts the limit.", { path: TOOL_LIMITS_PATH() });
+  return {
+    short: kind === "rounds" ? t("Stopped at the tool-round limit")
+      : kind === "changes" ? t("Stopped at the change limit") : t("Stopped: the conversation is full"),
+    long: `${what} ${next}`,
+    refused: true,
+  };
+}
+
+// Whether a reply that stopped short offers Continue: a limit stopped it or
+// the output cap cut it off, it is the conversation's last, nothing runs,
+// the composer holds nothing of the user's (the message would carry what is
+// attached there), and the chat can send. The chat never sends it by itself
+// — a message in the user's name is the user's to send (as
+// chat/fetchHandoff.js canContinue).
+export function canContinueAfterLimit({ limit, truncated, isLast, idle, readOnly }) {
+  return (!!limitNote(limit) || !!truncated) && !!isLast && !!idle && !readOnly;
+}
+
+// What Continue sends, as the user's message: a new message, so the loop
+// starts with fresh budgets and the stopped reply's calls replayed.
+export function continueAfterLimitPrompt() {
+  return t("Please continue where you stopped.");
 }

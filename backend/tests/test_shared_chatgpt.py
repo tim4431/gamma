@@ -9,6 +9,7 @@ calls are faked — no network."""
 import json
 import threading
 import time
+import urllib.error
 
 import pytest
 
@@ -17,7 +18,7 @@ from conftest import account_of
 from gamma import ai_catalog
 from gamma.ai_protocols import chatgpt as chatgpt_proto
 
-from test_chatgpt_oauth import _FakeResp, _fake_tokens
+from test_chatgpt_oauth import _FakeResp, _fake_tokens, _http_error
 
 
 @pytest.fixture(scope="module")
@@ -181,6 +182,93 @@ def test_only_an_admin_resets_a_shared_backoff(shared, admin, member, monkeypatc
     r = admin.post(f"/api/ai/providers/{shared['id']}/test")
     assert r.status_code == 200 and r.json()["ok"] is True, r.text
     assert len(calls) == 1 and "refresh_failed_at" not in _stored_oauth(shared["id"])
+
+
+def _backend(monkeypatch, takes: str):
+    """chatgpt.com, faked: it takes the access token ``takes`` alone."""
+    def fetch(req):
+        if req.get_header("Authorization") != f"Bearer {takes}":
+            raise _http_error(401, {"detail": "Could not validate your token"})
+        return {}
+    monkeypatch.setattr(ai_catalog, "fetch_json", fetch)
+
+
+def test_an_unreachable_refresh_keeps_the_shared_sign_in(shared, member, monkeypatch):
+    """auth.openai.com out of reach: the sealed tokens stay, and a member's
+    login check says it couldn't reach it, not that the sign-in expired."""
+    _expire(shared["id"])
+    before = _stored_oauth(shared["id"])
+
+    def offline(form):
+        raise urllib.error.URLError(TimeoutError("timed out"))
+    monkeypatch.setattr(co, "_token_request", offline)
+    _backend(monkeypatch, "a token issued later")
+    body = member.post("/api/ai/health", json={"provider_id": shared["id"]}).json()
+    assert (body["ok"], body["auth"], body["kind"]) == (False, False, "unreachable"), body
+    after = _stored_oauth(shared["id"])
+    assert (after["access_token"], after["refresh_token"]) == (before["access_token"], before["refresh_token"])
+    assert after["refresh_unreachable"] is True
+
+
+def test_a_members_401_renews_the_shared_sign_in_once(shared, member, monkeypatch):
+    """chatgpt.com refuses a shared token that looks valid: a member's check
+    renews it, once, under the entry's own lock and for everyone."""
+    fresh = _fake_tokens(exp=int(time.time()) + 7200)
+    calls = []
+    monkeypatch.setattr(co, "_token_request", lambda form: calls.append(form) or fresh)
+    _backend(monkeypatch, fresh["access_token"])
+    body = member.post("/api/ai/health", json={"provider_id": shared["id"]}).json()
+    assert body["ok"] is True, body
+    assert len(calls) == 1 and _stored_oauth(shared["id"])["access_token"] == fresh["access_token"]
+
+
+def test_a_refused_shared_refresh_waits_for_an_admin(shared, admin, member, monkeypatch):
+    """A refused refresh's backoff holds for a member's 401 renewal too:
+    only an admin's check asks OpenAI again."""
+    from gamma import ai_settings
+
+    def refused_now(config):
+        next(e for e in config["providers"] if e["id"] == shared["id"])["oauth"]["refresh_failed_at"] = int(time.time())
+    ai_settings.edit_server_ai(refused_now)
+    fresh = _fake_tokens(exp=int(time.time()) + 7200)
+    calls = []
+    monkeypatch.setattr(co, "_token_request", lambda form: calls.append(form) or fresh)
+    _backend(monkeypatch, fresh["access_token"])
+    body = member.post("/api/ai/health", json={"provider_id": shared["id"]}).json()
+    assert (body["auth"], body["kind"]) == (True, "auth") and calls == []
+    assert "refresh_failed_at" in _stored_oauth(shared["id"])
+    body = admin.post("/api/ai/health", json={"provider_id": shared["id"]}).json()
+    assert body["ok"] is True and len(calls) == 1, body
+
+
+def test_a_failing_refresh_never_overwrites_an_admin_reconnect(shared, admin, monkeypatch):
+    from gamma.ai_settings import ai_runtime
+    _expire(shared["id"])
+    started, release = threading.Event(), threading.Event()
+    fresh = {**_fake_tokens(email="other@example.com"), "refresh_token": "rt-new"}
+
+    def token(form):
+        if form["grant_type"] == "authorization_code":
+            return fresh
+        started.set()
+        release.wait(5)
+        raise urllib.error.URLError(TimeoutError("timed out"))
+    monkeypatch.setattr(co, "_token_request", token)
+    refresh = threading.Thread(target=ai_runtime, args=(account_of("gpt_member"),))
+    refresh.start()
+    try:
+        assert started.wait(5)
+        state = admin.post("/api/admin/ai-providers/chatgpt/start").json()["state"]
+        r = admin.post("/api/admin/ai-providers/chatgpt/complete", json={
+            "state": state, "provider_id": shared["id"],
+            "callback": f"http://localhost:1455/auth/callback?code=abc&state={state}"})
+        assert r.status_code == 200, r.text
+    finally:
+        release.set()
+        refresh.join()
+    oauth = _stored_oauth(shared["id"])
+    assert (oauth["access_token"], oauth["refresh_token"]) == (fresh["access_token"], "rt-new")
+    assert "refresh_failed_at" not in oauth
 
 
 def test_subscription_usage_is_the_admins_to_see(shared, admin, member, monkeypatch):

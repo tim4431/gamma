@@ -835,8 +835,8 @@ export function AiSettings({ value, confirm, setStatus }) {
             options={(value.aiModels || []).map((model) => [model.id, model.model])} />
         </Row> : <p className="setNotice">{t("Pick models on the connection (Manage) to choose one here.")}</p>}
         <Row icon={PaperIcon} label={t("Metadata model")}
-          hint={t("Used only when identifiers cannot resolve the paper")}
-          title={t("Metadata first tries arXiv and DOI records. This model is used only when metadata has to be AI-extracted from PDF text; a fast, cheap model is usually enough.")}>
+          hint={t("Used when identifiers do not settle which paper the PDF is")}
+          title={t("Metadata first tries arXiv and DOI records. This model checks which of the records the PDF's text names is this document, and reads the metadata off the PDF when no registry has it; a fast, cheap model is usually enough.")}>
           <MenuSelect
             label={t("Metadata model")}
             value={value.metaModel && (value.aiModels || []).some((model) => model.id === value.metaModel)

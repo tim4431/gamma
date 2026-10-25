@@ -64,7 +64,7 @@ They are written before the ink and the highlights, so they sit under
 them, as on screen. The appearance (`/AP /N`) typesets the box's Markdown
 with the shared engine (`text_box.pdf_ops`), upright on a turned page.
 `/Contents` is the plain text, references read through the notes PDF's
-`_block_ref_resolver`. A private `/GammaTextBox` holds the Markdown and the
+resolver (`markdown_export.block_ref_resolver`). A private `/GammaTextBox` holds the Markdown and the
 box for a lossless re-import. Each key, and why, is in
 [text_boxes.md](text_boxes.md#server-and-interchange).
 
@@ -96,42 +96,47 @@ room for them ([comments.md](comments.md) "The PDF margin"). Comments work
 with the Notes switch off. The full text of the notes stays in the popup
 either way.
 
-**A card** (`gamma/pdf_cards.py`) is laid out once into rows, each measured
-from the content's top-left, at 8 pt. A note card is the highlight's own
-note and the notes under it (`pdf_export.highlight_note_blocks`:
-`(depth, markdown)` in reading order, the same walk the popup text is made
-from), each deeper one a bullet indented by its depth. A thread card is its
-comments oldest first, each as the viewer's margin draws it: the author's
-avatar (their initial on their colour, `person_color`, the app's
-`personColor` with the same eight colours, held to it by a test), their
-name, the day, and the comment under them past the avatar. The replies
-step in to the first comment's text, as the viewer draws them, so a
-thread reads as one comment and its answers, and two threads under one
-note stay apart. A deleted root
-reads "Comment deleted". A thread on a note is drawn under that note in
-the note card, a little past its text, when the note card is beside the
-page too: a reply then stays next to what it answers. That includes the
-highlight's own threads, under its own note, since a highlight's own text
-is its note ([comments.md](comments.md) "Vocabulary"). When the note is on
-the page, or not printed (the Notes switch off, an empty note, a text
-box), the thread is a card of its own in the column. A thread on one of
-the notes under the highlight then opens with that note's first line,
-quoted (italic, behind a bar, cut with an ellipsis); the highlight's own
-need no quote, as the viewer's margin shows them. The Markdown goes through `pdf_document.chunks`,
-the parser the notes PDF and text boxes use, and is set in the compact look
-of a rendered note: headings a little larger, lists with their bullets or
-numbers, to-dos with a drawn box, quotes with a bar, fenced code on a tint,
-tables a line per row, pictures (capped at 150 pt tall), display math
-centred; bold, italic, underline, code, marks, links and inline math
-within a line. A colored run's `<span style>` tags are dropped and its
-text kept, uncolored.
-`[[refs]]` and `![[embeds]]` read as the block they name (the router's
-`block_ref_resolver`). Links become `/Link` annotations over their text. A
-card is white with a hairline border and rounded corners; a note card
-carries its highlight's colour down its left edge, a thread card none, as
-in the viewer. `clip` shortens a card to a height, ending it in an
-ellipsis (a picture or equation the cut falls in shrinks to the room left,
-down to 16 pt).
+**A card** (`gamma/pdf_cards.py`, `Layout`) is laid out once into rows,
+each measured from the content's top-left, at 8 pt. A card is white with a
+hairline border and rounded corners. `clip` shortens one to a height,
+ending it in an ellipsis; a picture or equation the cut falls in shrinks
+to the room left, down to 16 pt.
+
+A **note card** (`Layout.notes`) is the highlight's own note and the notes
+under it (`pdf_export.highlight_note_blocks`: `(depth, markdown, block id)`
+in reading order, the walk the popup text is made from), each deeper one a
+bullet indented by its depth. It carries the highlight's colour down its
+left edge. The Markdown goes through `pdf_document.chunks`, the parser the
+notes PDF and text boxes use, and is set in the compact look of a rendered
+note: headings a little larger, lists with their bullets or numbers,
+to-dos with a drawn box, quotes with a bar, fenced code on a tint, tables
+a line per row, pictures (capped at 150 pt tall), display math centred;
+bold, italic, underline, code, marks, links and inline math within a line.
+A colored run's `<span style>` tags are dropped and its text kept,
+uncolored. `[[refs]]` and `![[embeds]]` read as the block they name
+(`markdown_export.block_ref_resolver`). Links become `/Link` annotations
+over their text.
+
+A **thread card** (`Layout.thread`) is its comments oldest first, each as
+the viewer's margin draws it: the author's avatar (their initial on their
+colour), their name, the day, and the comment under them past the avatar.
+The colour is `person_color`, the app's `personColor` with the same eight
+colours, held to it by `test_person_colours_match_the_app`. The replies
+step in to the first comment's text, as the viewer draws them, so a thread
+reads as one comment and its answers. A deleted root reads "Comment
+deleted". A thread card has no colour bar, as in the viewer.
+
+**A thread on a note** is drawn under that note in the note card, a little
+past its text, when the note card is beside the page too: the reply stays
+next to what it answers, and two threads under one note stay apart. That
+includes the highlight's own threads, under its own note, since a
+highlight's own text is its note ([comments.md](comments.md)
+"Vocabulary"). When the note is on the page, or not printed (the Notes
+switch off, an empty note, a text box), the thread is a card of its own in
+the column. A thread on one of the notes under the highlight then opens
+with that note's first line, quoted (italic, behind a bar, cut with an
+ellipsis); the highlight's own need no quote, as the viewer's margin shows
+them.
 
 **Every card of a highlight** is collected by the router's `_collect_cards`
 from every highlight block, the ones still embedded in the PDF included

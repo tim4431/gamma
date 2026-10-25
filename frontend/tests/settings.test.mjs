@@ -49,6 +49,24 @@ test("a stored permission reads as a state", () => {
   assert.deepEqual(permStates("rename"), ["allow", "ask", "off"]);
 });
 
+test("deleting folders and labels only asks or is off; organizing them is a folder chat's change", () => {
+  assert.deepEqual(permStates("organize_delete"), ["ask", "off"]);
+  assert.equal(normalizePerm("organize_delete", "allow"), "ask", "an Allow stored for it asks");
+  assert.equal(normalizePerm("organize_delete", true), "ask");
+  assert.equal(normalizePerm("organize_delete", "off"), "off");
+  assert.equal(normalizePerm("organize", undefined), "ask");
+  assert.equal(normalizePerm("organize", "allow"), "allow");
+  const all = presetPermissions("folder", "all");
+  assert.equal(all.organize, "allow");
+  assert.equal(all.organize_delete, "ask", "Allow all still asks before a deletion");
+  assert.equal(permissionPreset("folder", all), "all");
+  assert.equal(presetPermissions("folder", "read").organize_delete, "off");
+  assert.equal(presetPermissions("pdf", "all").organize, undefined);
+  for (const kind of ["pdf", "notes"]) {
+    assert.deepEqual(toolsForKind(kind).filter((key) => key.startsWith("organize")), [], `a ${kind} chat has no organize*`);
+  }
+});
+
 test("settings search finds controls on nested AI pages without exposing inaccessible management pages", () => {
   const allowed = ["appearance", "reading", "translation", "ai", "assistant", "tools", "account", "maintenance", "diagnostics"];
   assert.equal(searchSettings("translation concurrency", allowed)[0].label, "Parallel requests");
@@ -82,7 +100,8 @@ test("every preference declares one scope; the profile carries exactly the accou
   const account = new Set(ACCOUNT_PREFS);
   // Appearance, reading, library, chat behaviour, budgets and prompts follow the account…
   for (const name of ["theme", "pdfDarkPage", "embAnnots", "translateLang", "enterNewNote", "searchDetailsHome",
-    "fileLabels", "recentThumbs", "agentEnabled", "agentPerms", "chatEffort", "chatContextChars", "toolRounds", "chatSystem", "inkTools"]) {
+    "fileLabels", "recentThumbs", "agentEnabled", "agentPerms", "chatEffort", "chatContextChars", "toolRounds",
+    "toolRoundsUnlimited", "chatSystem", "inkTools"]) {
     assert.ok(account.has(name), `${name} is account-scoped`);
   }
   // …what describes this device, or names this server's provider entries, stays here.
@@ -125,6 +144,9 @@ test("the profile codec keeps valid entries and drops the rest", async () => {
   const legacy = readProfile({ agentPerms: { folder: { rename: true, read: true, move: "allow" } } });
   assert.deepEqual([legacy.agentPerms.folder.rename, legacy.agentPerms.folder.read, legacy.agentPerms.folder.move],
     ["ask", "allow", "allow"], "a change stored as on from before Ask asks; an explicit Allow stays");
+  // Unlimited rounds is a flag beside the number, which it leaves alone.
+  assert.equal(readProfile({ toolRoundsUnlimited: true }).toolRoundsUnlimited, true);
+  assert.ok(!("toolRoundsUnlimited" in readProfile({ toolRoundsUnlimited: "yes" })), "a flag that is no boolean is dropped");
   for (const bad of [null, "x", [], 3]) assert.deepEqual(readProfile(bad), {});
   const bytes = JSON.stringify({ value: profileOf({ ...defaults, chatSystem: "p".repeat(12000), agentSystem: "p".repeat(12000) }) }).length;
   assert.ok(bytes < 64 * 1024, "fits the prefs size cap");

@@ -207,6 +207,12 @@ the launcher with no server configured.
 - `process.windowsStore` is true; `lib/updater.js` reports `unsupported`
   (reason `store`) and the launcher / *Help → Check for Updates…* say the
   Store delivers updates. `electron-updater` is never initialized.
+- The local servers get `GAMMA_UPDATES=store`: Settings → Server still
+  shows a newer GitHub release, which the Store has only after
+  certification, but without the warning tone or a notice, and its Open
+  Store button opens the Store's updates page
+  (`ms-windows-store://downloadsandupdates`, the one non-web link the
+  window lets out).
 - MSIX virtualizes AppData: Electron's userData (the registry and every
   local server's data dir under it, see
   [architecture.md](architecture.md#shell-state)) lands in

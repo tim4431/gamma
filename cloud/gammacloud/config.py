@@ -102,8 +102,8 @@ PLAN_RANK = {p: i for i, p in enumerate(PLANS)}
 # its library lives:
 #
 # - ``shared``: an account on the shared server (``APP_URL``), not its
-#   admin. The plan's ``quota_mb`` and ``max_upload_mb`` travel to that
-#   server in the ``limits`` claim (``shared_limits``).
+#   admin. The plan's ``quota_mb`` travels to that server in the
+#   ``limits`` claim (``shared_limits``).
 # - ``hosted``: a container of its own (``hosted.py``), which the account
 #   administers. ``policy`` is the Gamma sign-in policy it runs
 #   (``invited`` admits only subjects holding a pending invitation there).
@@ -112,9 +112,9 @@ PLAN_RANK = {p: i for i, p in enumerate(PLANS)}
 #   placement counts the memory against the host.
 PLAN_LIMITS = {
     "free": {},
-    "lite": {"shared": True, "quota_mb": 1024, "max_upload_mb": 50},
-    "plus": {"shared": True, "quota_mb": 6 * 1024, "max_upload_mb": 100},
-    "pro": {"hosted": True, "quota_mb": 100 * 1024, "max_upload_mb": 250, "max_accounts": 10,
+    "lite": {"shared": True, "quota_mb": 1024},
+    "plus": {"shared": True, "quota_mb": 6 * 1024},
+    "pro": {"hosted": True, "quota_mb": 100 * 1024, "max_accounts": 10,
             "policy": "invited", "offsite_interval_s": 3600, "offsite_keep": 30, "memory_mb": 1536, "cpus": 2.0},
 }
 # The limits a plan without ``shared`` gets on the shared server, where its
@@ -124,10 +124,10 @@ SHARED_FALLBACK = {"pro": "plus"}
 
 
 def shared_limits(plan: str) -> dict | None:
-    """``{quota_mb, max_upload_mb}`` of an account on the shared server,
-    None for a plan that gets the server's own defaults (free)."""
+    """``{quota_mb}`` of an account on the shared server, None for a plan
+    that gets the server's own defaults (free)."""
     limits = PLAN_LIMITS.get(SHARED_FALLBACK.get(plan, plan), {})
-    return {"quota_mb": limits["quota_mb"], "max_upload_mb": limits["max_upload_mb"]} if limits.get("shared") else None
+    return {"quota_mb": limits["quota_mb"]} if limits.get("shared") else None
 # Days. A failed payment keeps its plan for GRACE_DAYS. A container whose
 # plan ended is read-only, stopped after READ_ONLY_DAYS and deleted
 # DELETE_DAYS after the end.

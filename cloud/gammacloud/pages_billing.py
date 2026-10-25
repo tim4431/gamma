@@ -63,27 +63,26 @@ def _host(username: str) -> str:
 
 
 def plan_lines(plan: str, username: str) -> list[str]:
-    """The six lines a card lists (HTML), from ``config.PLAN_LIMITS``."""
+    """The lines a card lists (HTML), from ``config.PLAN_LIMITS``."""
     lim = config.PLAN_LIMITS[plan]
     if lim.get("shared"):
         where = f" at <b>{pages.esc(pages._bare(config.APP_URL))}</b>" if config.APP_URL else ""
         return [f"Your library on Gamma Cloud, always on{where}",
                 "One account; share links (view or edit) still work for anyone",
-                f"{_size(lim['quota_mb'])} for uploads, {lim['max_upload_mb']} MB per file",
+                f"{_size(lim['quota_mb'])} for uploads",
                 "Unlimited published pages",
                 "Desktop offline copies, iPad, the browser extension, Codex and Claude Code over MCP",
                 "An account on our shared server; Pro is a server of your own"]
     if plan == "pro":
         return [f"A Gamma server of your own at <b>{pages.esc(_host(username))}</b>, which you administer",
                 f"{lim['max_accounts']} accounts, shared workspaces with roles and live cursors",
-                f"{_size(lim['quota_mb'])} pooled, {lim['max_upload_mb']} MB per file, per-workspace quotas",
+                f"{_size(lim['quota_mb'])} pooled, per-workspace quotas",
                 "Invite members by e-mail",
                 "One shared AI connection the admin adds for the whole server",
                 _copies(lim["offsite_interval_s"], lim["offsite_keep"])]
     return ["The desktop app: your library on your own disk",
             "Self-host a Gamma server for your group, free",
             "5 published pages on the share host",
-            "50 MB per file",
             "AI with your own key or a ChatGPT sign-in",
             "No hosted library"]
 
@@ -230,7 +229,7 @@ def _library(summary: dict, plan: str) -> str:
     if not url or not limits:
         return ""
     rows = (f"<dt>Address</dt><dd><a href='{pages.esc(url)}'>{pages.esc(pages._bare(url))}</a></dd>"
-            f"<dt>Storage</dt><dd>{_size(limits['quota_mb'])}, {limits['max_upload_mb']} MB per file</dd>")
+            f"<dt>Storage</dt><dd>{_size(limits['quota_mb'])}</dd>")
     return ("<section class=section><h2>Your library</h2><div class=body>"
             f"<dl class=kv>{rows}</dl><p class='plantext gap'>An account on Gamma Cloud's shared server. Sign in "
             "there with this account; the desktop app, the extension and your assistants connect to that address.</p>"

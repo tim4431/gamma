@@ -5,6 +5,7 @@ import PdfViewer, { preloadPdfEngine } from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
 import { requestFields } from "../pdf/translatePlan";
 import { docIdOf } from "../pdf/pdfSource";
+import { basePixels } from "../pdf/pageRaster";
 import { DEFAULT_HIGHLIGHT, colorName, highlightColor, normalizeColor, pickerColors, swatchCss } from "../shared/model/palette.js";
 import { PaletteContext } from "../shared/ui/paletteContext.js";
 import { clampZoom } from "../shared/model/zoom.js";
@@ -17,7 +18,7 @@ import { progressText, taskTitle } from "../tasks/taskKinds.js";
 import { isActive } from "../tasks/taskModel.js";
 import { parseGammaLink } from "../shared/model/gammaLinks.js";
 import { pageHostUser, publicPath } from "../shared/lib/slug.js";
-import { API, apiJson, getShareToken, setShareView, withShare, withWorkspace, setCurrentWorkspace, getCurrentWorkspace, setLinkName, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, PAGE_FILE_ACCEPT, metaSourceInfo, resolvePdfUrl, pdfProxyUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson } from "../shared/lib/utils";
+import { API, apiJson, getShareToken, setShareView, withShare, withWorkspace, setCurrentWorkspace, getCurrentWorkspace, setLinkName, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, PAGE_FILE_ACCEPT, metaSourceInfo, resolvePdfUrl, pdfProxyUrl, attachmentViewerUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson } from "../shared/lib/utils";
 import { ITEM_TYPES, itemTypeFields, itemTypeOf } from "../shared/lib/itemTypes.js";
 import {
   AutoGrowTextarea,
@@ -70,6 +71,7 @@ import {
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon,
   RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
   ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon, MicIcon, MessageSquareIcon, BellIcon,
+  PanelTopIcon,
 } from "../shared/ui/Icons";
 
 
@@ -146,6 +148,7 @@ import { useInkRuler } from "../ink/useInkRuler.js";
 import { useInkZoom } from "../ink/useInkZoom.js";
 import { useStripKeys } from "../ink/useStripKeys.js";
 import { usePencil } from "../ink/usePencil.js";
+import { useShellBar } from "./useShellBar.js";
 import { inkCommandContext } from "../ink/inkCommands.js";
 import { NotebookViewer, PaperMenu, readPlace, showPlace } from "../notebook/NotebookViewer";
 import { NoteSheetContext } from "../notebook/NoteSheet";
@@ -154,7 +157,6 @@ import {
   sheetsOf, withAllSheetsPaper, withSheetPaper,
 } from "../notebook/notebook";
 import { generateKeyBetween } from "fractional-indexing";
-import * as inkStore from "../ink/inkStore";
 import * as inkLive from "../ink/inkLive";
 import { keepaliveFetch } from "../shared/lib/keepalive.js";
 import * as playback from "../replay/playback.js";
@@ -431,8 +433,10 @@ function captureViewerSnapshot() {
   for (const wrap of scroller.querySelectorAll(".pdfPageWrap")) {
     const r = wrap.getBoundingClientRect();
     if (r.bottom <= vr.top || r.top >= vr.top + capH) continue;
-    const canvas = wrap.querySelector("canvas");
-    if (!canvas || !canvas.width || !canvas.height) continue;
+    // The canvas on screen, not the wrap's first: each page's canvases are
+    // pairs that swap at every paint, the hidden one released.
+    const canvas = basePixels(wrap);
+    if (!canvas) continue;
     // Visible slice of this page in CSS px, mapped to the canvas backing
     // resolution on the source side and to the thumbnail on the dest side.
     const x0 = Math.max(vr.left, r.left), x1 = Math.min(vr.right, r.right);
@@ -732,10 +736,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     window.location.href = `${window.location.pathname}?ws=${encodeURIComponent(id)}`;
   }
 
-  // Effective storage limits + usage for the session user (GET /api/quota):
-  // feeds the client-side pre-upload size check. Refreshed on login and after
-  // uploads; the Settings displays fetch their own fresh copy.
-  const [quotaInfo, setQuotaInfo] = useState(null); // {max_upload_mb, quota_mb, used_bytes}
+  // Effective storage quota + usage for the session user (GET /api/quota):
+  // feeds the storage meters. Refreshed on login and after uploads; the
+  // Settings displays fetch their own fresh copy.
+  const [quotaInfo, setQuotaInfo] = useState(null); // {quota_mb, used_bytes}
   const refreshQuota = useCallback(() => {
     if (shareMode) return;
     apiJson(`${API}/quota`).then(setQuotaInfo).catch(() => {});
@@ -2659,7 +2663,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     metaPrompt, setMetaPrompt, citePrompt, setCitePrompt,
     chatContextChars, setChatContextChars, metaContextChars, setMetaContextChars,
     multiContextChars, setMultiContextChars,
-    toolRounds, setToolRounds, agentReadChars, setAgentReadChars, agentPerms, setAgentPerms,
+    toolRounds, setToolRounds, toolRoundsUnlimited, setToolRoundsUnlimited,
+    agentReadChars, setAgentReadChars, agentPerms, setAgentPerms,
     agentEnabled, setAgentEnabled,
     chatImgAutoClear, setChatImgAutoClear, chatPictures, setChatPictures,
     fetchInBackground, setFetchInBackground, delegateReads, setDelegateReads,
@@ -3390,12 +3395,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [pdfTransState, setPdfTransState] = useState({ running: false, progress: 0, shown: true, pages: 0, current: false });
   const [transMenu, setTransMenu] = useState(null); // {x, y} while the button's option menu is open
   const transTaskRef = useRef(null); // background-tasks row for the running job
+  const transReadingRef = useRef(false); // the "Reading the paper" pill is up
   function openTransMenu(el) {
     const r = el.getBoundingClientRect();
     setTransMenu({ x: r.right + 8, y: r.top - 4 });
   }
   function handleTranslateState(st) {
     setPdfTransState(st);
+    // A paper's first requests wait while the server reads it for the brief
+    // (its terms and notation): the pill says why nothing lands yet.
+    const reading = !!(st.running && st.reading);
+    if (reading !== transReadingRef.current) {
+      transReadingRef.current = reading;
+      postPill("translate", reading
+        ? { msg: t("Reading the paper first, so its terms stay the same throughout…"), spinner: true }
+        : null);
+    }
     if (st.running && !transTaskRef.current) {
       transTaskRef.current = addTask({
         name: `Translate ${st.label} → ${translateLangLabel}`, kind: "ai", info: "0%", fraction: 0,
@@ -3404,7 +3419,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
     if (transTaskRef.current) {
       if (st.running) {
-        updateTask(transTaskRef.current, { info: `${Math.round(st.progress * 100)}%`, fraction: st.progress });
+        updateTask(transTaskRef.current, {
+          info: reading ? t("reading the paper…") : `${Math.round(st.progress * 100)}%`, fraction: st.progress,
+        });
       } else {
         const full = st.progress >= 0.999;
         updateTask(transTaskRef.current, { state: "done", info: full ? "100%" : t("stopped at {progress}%", { progress: Math.round(st.progress * 100) }) });
@@ -3426,7 +3443,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // `context` is the viewer's for this request (pdf/translatePlan.js
   // requestFields): the page and, for a page without a stored PDF, the
   // document's opening text, from which the server makes the paper's brief.
-  async function translateChunk(texts, signal, onPartial, context) {
+  // `onStage("brief")` while the request waits for that brief, then
+  // `onStage("translate")`.
+  async function translateChunk(texts, signal, onPartial, context, onStage) {
     try {
       const res = await fetch(`${API}/ai/translate`, {
         method: "POST",
@@ -3449,6 +3468,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         for (const ev of events) {
           if (ev.error) throw new Error(ev.error);
           else if (ev.translations) final = ev;
+          else if (ev.stage) onStage?.(ev.stage);
           else if (ev.i && onPartial) for (const i of ev.i) onPartial(i, ev.text);
         }
       });
@@ -4438,6 +4458,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           if ("meta" in op.props) setPageMeta(props.meta || null);
           if ("bibtex" in op.props) setPageBibtex(props.bibtex || "");
           if ("ppt_cite" in op.props) setPptCite(props.ppt_cite || "");
+          // The page's PDF replaced (attached, detached) in another tab or
+          // by another person: the viewer follows, as openBlock shows it.
+          const now = pageAttachment({ properties: props });
+          if ((pageAttachment(b)?.url || "") !== (now?.url || "")) {
+            setDocId(props.doc_id || "");
+            setInputUrl(now?.url || "");
+            setPdfUrl(attachmentViewerUrl(now?.url, { share: shareMode ? initialShare : "" }));
+          }
         }
         return { ...b, ...(op.content !== undefined ? { content: op.content } : {}), properties: props };
       });
@@ -5083,13 +5111,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       }
       for (const { file, filename, path } of items) {
         const folder = folderOf(path);
-        // Pre-check only with the quota info loaded — otherwise let the
-        // server's check_upload_allowed decide (its 413 detail is surfaced
-        // per file below).
-        if (isPdfFile(file) && quotaInfo && file.size > quotaInfo.max_upload_mb * 1024 * 1024) {
-          failed.push(t("{filename} (max {max_upload_mb} MB)", { filename, max_upload_mb: quotaInfo.max_upload_mb }));
-          continue;
-        }
         setStatus(`${isPdfFile(file) ? "Uploading" : "Importing"} ${filename}...`);
         try {
           done.push(isPdfFile(file)
@@ -5381,11 +5402,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
   }
 
-  // Attach a PDF to the open page (one that carries none): the same ingest
-  // as opening a new PDF, then bound to THIS page via POST
-  // /pages/{id}/attachment — no new page is created.
+  // Attach a PDF to the open page (one that carries none), or replace the
+  // one it carries: the same ingest as opening a new PDF, then bound to THIS
+  // page via POST (attach) or PUT (replace) /pages/{id}/attachment — no new
+  // page is created.
   const [attachUrl, setAttachUrl] = useState("");
   const attachFileRef = useRef(null); // its "Upload a PDF…" row's hidden picker
+  const replaceFileRef = useRef(null); // the "Replace the PDF…" row's hidden picker
   // The metadata popover under its header button. Fixed positioning so it
   // floats above the window stack instead of being clipped by the notes
   // window / drawn under the chat below it.
@@ -5398,9 +5421,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
     setOpenPopover(opening ? "meta" : null);
   }
-  async function attachPdfToPage({ file, url }) {
+  // `replace`: a new version of the page's PDF (a paper compiled again from
+  // its TeX). The page keeps its title, notes and highlights, the highlights
+  // where they were on their pages; the old file goes unless another page
+  // uses it.
+  async function attachPdfToPage({ file, url, replace = false }) {
     const pageId = focusedBlockId;
-    if (!pageId || shareMode || pageAttach || notebook || (!file && !url)) return;
+    if (!pageId || shareMode || notebook || (!file && !url) || (replace ? !pageAttach || readOnly : pageAttach)) return;
     if (file && !isPdfFile(file)) { setStatus(t("Only PDF files can be attached — other files go into a block.")); return; }
     setOpenPopover(null);
     setAttachUrl("");
@@ -5411,11 +5438,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     try {
       const { viewerUrl, note, ...src } = await resolvePdfSource({ file, url }, taskId);
       await apiJson(`${API}/pages/${encodeURIComponent(pageId)}/attachment`, {
-        method: "POST",
+        method: replace ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(src),
       });
-      updateTask(taskId, { state: "done", info: "attached" });
+      updateTask(taskId, { state: "done", info: replace ? t("replaced") : t("attached") });
+      if (replace) attemptedMetaRef.current.delete(pageId); // its lookup was the old file's
       if (file) {
         refreshQuota();
         importEmbeddedAnnots(pageId, src.doc_id, true);
@@ -5424,7 +5452,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (focusedBlockIdRef.current !== pageId) return; // navigated away meanwhile
       await openBlock(pageId, { viewerUrl });
       setPdfHidden(false);
-      setStatus(note || t("PDF attached."));
+      setStatus(note || (replace ? t("PDF replaced.") : t("PDF attached.")));
     } catch (err) {
       if (err.status === 409 && err.data?.page_id) {
         // The library already holds this PDF on another page — the page is
@@ -5436,7 +5464,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         return;
       }
       updateTask(taskId, { state: "failed", info: (err.message || "failed") });
-      setStatus(t("Attach failed: {message}", { message: err.message }));
+      setStatus(replace
+        ? t("Replace failed: {message}", { message: err.message })
+        : t("Attach failed: {message}", { message: err.message }));
     } finally {
       setLoading(false);
     }
@@ -5647,10 +5677,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
     const props = block?.properties || {};
     const src = pageAttachment(block)?.url || "";
-    const isLocal = src.startsWith("/api/");
-    const proxiedUrl = isLocal
-      ? `${src}${src.includes("?") ? "&" : "?"}share=${encodeURIComponent(token)}`
-      : src ? pdfProxyUrl(src, { share: token }) : "";
+    const proxiedUrl = attachmentViewerUrl(src, { share: token });
 
     setFocusedBlockId(block?.id || "");
     setFocusedBlock(block || null);
@@ -5766,7 +5793,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       const attachment = pageAttachment(block);
       if (attachment) {
         const src = attachment.url;
-        openedPdfUrl = opts?.viewerUrl || (src.startsWith("/api/") ? src : pdfProxyUrl(src));
+        openedPdfUrl = opts?.viewerUrl || attachmentViewerUrl(src);
         setInputUrl(src);
         setPdfUrl(openedPdfUrl);
         setBlocks(loaded(childBlocks));
@@ -6881,6 +6908,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     takesInk: ((!!pdfUrl || notebook) && !viewerHidden) || nbSheets.length > 0,
     inkUi, inkVisible, previousTool, pickInkTool, applyPencilUi, inkSelection, selectionStill, restoreInkSelection,
     stripUndo, inkPencilTap, inkPencilSqueeze, inkHaptics });
+  // The iPad app's own bar above the page (app/useShellBar.js): the View
+  // menu's Server bar row, the way back once it is hidden; null elsewhere.
+  const shellBar = useShellBar();
   // The eraser tool lifted (never the pen's eraser end or barrel, whose
   // lift is the switch): a held E (noteInkEraseHold) learns a pass was made; with
   // "Eraser returns to the last tool" on, back to the tool armed before it,
@@ -8971,7 +9001,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           </MenuItem>
                         ) : null}
                         {!readOnly ? (
-                          <MenuItem icon={ScissorsIcon} onClick={detachPdfFromPage}>{t("Detach the PDF…")}</MenuItem>
+                          <>
+                            <MenuItem icon={UploadIcon} disabled={loading} onClick={() => replaceFileRef.current?.click()}
+                              title={t("Upload a new version of this PDF: the notes and highlights stay, where they were on their pages")}>
+                              {t("Replace the PDF…")}
+                            </MenuItem>
+                            <input
+                              ref={replaceFileRef}
+                              type="file"
+                              accept=".pdf,application/pdf"
+                              hidden
+                              onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) attachPdfToPage({ file: f, replace: true }); }}
+                            />
+                            <MenuItem icon={ScissorsIcon} onClick={detachPdfFromPage}>{t("Detach the PDF…")}</MenuItem>
+                          </>
                         ) : null}
                       </Popover>
                     ) : openPopover === "attach" ? (
@@ -10290,7 +10333,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           openPopover={openPopover} setOpenPopover={setOpenPopover}
           setStatus={setStatus} askConfirm={setConfirmBox}
           organizeFolder={!focusedBlockId && !shareMode ? folderFilter : null}
-          toolRounds={toolRounds} agentReadChars={agentReadChars} agentPerms={agentPerms} setAgentPerms={setAgentPerms} agentSystem={agentSystem}
+          toolRounds={toolRounds} toolRoundsUnlimited={toolRoundsUnlimited} addTask={addTask} removeTask={tasks.removeLocal}
+          agentReadChars={agentReadChars} agentPerms={agentPerms} setAgentPerms={setAgentPerms} agentSystem={agentSystem}
           agentEnabled={agentEnabled} setAgentEnabled={setAgentEnabled}
           fetchInBackground={fetchInBackground} delegateReads={delegateReads}
           paperSave={{ allowOa: oaFallback, saveCopy: pdfSaveLocal, fetchMetadata: metaAutoFetch }}
@@ -10416,7 +10460,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     };
     return menuGroups(
       [
-        (!isPhone || pdfRow) && <div key="windows" className="popoverSection">{t("Windows")}</div>,
+        (!isPhone || pdfRow || shellBar) && <div key="windows" className="popoverSection">{t("Windows")}</div>,
         pdfRow && (pageAttach ? (
           <MenuItem key="pdf" icon={FileIcon} {...shown(!pdfHidden)} onClick={toggleWindow("pdf", !pdfHidden, () => setPdfHidden((v) => !v))}>PDF</MenuItem>
         ) : (
@@ -10432,6 +10476,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           <MenuItem key="comments" icon={MessageSquareIcon} {...shown(!commentsHidden)}
             onPointerEnter={CommentsPanel.preload}
             onClick={toggleWindow("comments", !commentsHidden, () => setCommentsHidden((v) => !v))}>{t("Comments")}</MenuItem>
+        ),
+        shellBar && (
+          <MenuItem key="shellBar" icon={PanelTopIcon} {...shown(shellBar.shown)}
+            onClick={() => shellBar.set(!shellBar.shown)}>{t("Server bar")}</MenuItem>
         ),
       ],
       focusedBlockId && !readOnly ? ["app.undo", "app.redo"].map(commandRow) : [],
@@ -11871,7 +11919,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           hasInbox: !!authUser?.user && !authUser.is_guest, // a guest has none
           isAdmin: !!authUser?.is_admin,
           setStatus,
-          refreshQuota, // keep the client-side pre-upload size check in sync without a re-login
+          refreshQuota, // keep the storage meters in sync without a re-login
         }}
         keyboard={{ keybindings, setKeybindings, enterNewNote, setEnterNewNote }}
         library={{
@@ -11955,6 +12003,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setMultiContextChars,
           toolRounds,
           setToolRounds,
+          toolRoundsUnlimited,
+          setToolRoundsUnlimited,
           agentReadChars,
           setAgentReadChars,
           agentPerms,

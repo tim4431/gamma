@@ -20,9 +20,9 @@ DOMAIN = "gammapdf.test"
 # table does is at the end of this file.
 CONTAINER_PLANS = {
     "free": {},
-    "lite": {"hosted": True, "quota_mb": 1024, "max_upload_mb": 50, "max_accounts": 1,
+    "lite": {"hosted": True, "quota_mb": 1024, "max_accounts": 1,
              "policy": "refuse", "offsite_interval_s": 86400, "offsite_keep": 3, "memory_mb": 512, "cpus": 1.0},
-    "plus": {"hosted": True, "quota_mb": 6 * 1024, "max_upload_mb": 100, "max_accounts": 1,
+    "plus": {"hosted": True, "quota_mb": 6 * 1024, "max_accounts": 1,
              "policy": "refuse", "offsite_interval_s": 86400, "offsite_keep": 7, "memory_mb": 768, "cpus": 1.0},
     "pro": config.PLAN_LIMITS["pro"],
 }
@@ -143,7 +143,7 @@ def test_sync_needs_the_containers_own_client(client, hosting):
     r = client.post("/api/hosted/sync", json=REPORT, headers=basic(client_id, secret))
     assert r.status_code == 200, r.text
     assert r.json() == {"plan": "plus", "status": "active", "read_only": False, "policy": "refuse",
-                        "max_accounts": 1, "quota_mb": 6144, "max_upload_mb": 100, "memory_mb": 768, "cpus": 1.0,
+                        "max_accounts": 1, "quota_mb": 6144, "memory_mb": 768, "cpus": 1.0,
                         "offsite": {"interval_s": 86400, "keep": 7}, "grace_until": None, "message": ""}
     row = server(alice)
     assert json.loads(row["limits"]) == r.json()          # what is stored is exactly the answer
@@ -246,7 +246,7 @@ def test_pro_relimits_and_cancel_turns_read_only(client, hosting):
     set_plan(alice, "plus", status="active")
     set_plan(alice, "pro", status="active")
     limits = json.loads(server(alice)["limits"])
-    assert limits["plan"] == "pro" and limits["policy"] == "invited" and limits["max_upload_mb"] == 250
+    assert limits["plan"] == "pro" and limits["policy"] == "invited" and limits["quota_mb"] == 100 * 1024
     n = len(mail.outbox)
     set_plan(alice, "free", status="canceled", ended_at=db.now())
     row = server(alice)
@@ -480,17 +480,19 @@ def test_a_servers_own_limits_go_over_its_plan(client, hosting):
     _running(alice)
     sid = server(alice)["id"]
     with closing(db.connect()) as conn:
-        for bad in ({"disk_mb": 1}, {"quota_mb": 0}, {"quota_mb": 1.5}, {"memory_mb": True}, {"max_accounts": "3"},
-                    {"cpus": 0.1}, {"cpus": 65}, {"cpus": float("nan")}, ["quota_mb"]):
+        conn.execute("UPDATE hosted_servers SET overrides = ? WHERE id = ?", ('{"max_upload_mb": 500}', sid))
+        conn.commit()
+        assert hosted.admin_view(conn, server(alice))["overrides"] == {}   # a per-file cap stored before 2026-10
+        for bad in ({"disk_mb": 1}, {"max_upload_mb": 100}, {"quota_mb": 0}, {"quota_mb": 1.5}, {"memory_mb": True},
+                    {"max_accounts": "3"}, {"cpus": 0.1}, {"cpus": 65}, {"cpus": float("nan")}, ["quota_mb"]):
             with pytest.raises(accounts.Problem):
                 hosted.set_overrides(conn, sid, bad, "admin")
     view = overrides(sid, {"quota_mb": 20480, "max_accounts": 3, "memory_mb": 1024, "cpus": 1.5})
     assert view["overrides"] == {"quota_mb": 20480, "max_accounts": 3, "memory_mb": 1024, "cpus": 1.5}
-    assert view["plan_limits"] == {"quota_mb": 6144, "max_upload_mb": 100, "max_accounts": 1, "memory_mb": 768,
-                                   "cpus": 1.0}
+    assert view["plan_limits"] == {"quota_mb": 6144, "max_accounts": 1, "memory_mb": 768, "cpus": 1.0}
     assert (view["quota_mb"], view["memory_mb"], view["cpus"]) == (20480, 1024, 1.5)
     limits = json.loads(server(alice)["limits"])
-    assert [limits[k] for k in hosted.OVERRIDES] == [20480, 100, 3, 1024, 1.5]
+    assert [limits[k] for k in hosted.OVERRIDES] == [20480, 3, 1024, 1.5] and "max_upload_mb" not in limits
     [resize] = [j for j in jobs_of(alice) if j["kind"] == "upgrade"]          # the new size, in place
     assert json.loads(resize["payload"]) == {"label": "alice", "memory_mb": 1024, "cpus": 1.5}
     with closing(db.connect()) as conn:
@@ -501,7 +503,7 @@ def test_a_servers_own_limits_go_over_its_plan(client, hosting):
     # a plan change keeps them; the plan's other numbers follow it, and the size did not move
     set_plan(alice, "pro", status="active")
     limits = json.loads(server(alice)["limits"])
-    assert (limits["plan"], limits["quota_mb"], limits["max_upload_mb"], limits["memory_mb"]) == ("pro", 20480, 250, 1024)
+    assert (limits["plan"], limits["quota_mb"], limits["max_accounts"], limits["memory_mb"]) == ("pro", 20480, 3, 1024)
     assert len([j for j in jobs_of(alice) if j["kind"] == "upgrade"]) == 1
     # so does a lapse, and the operator still resizes a lapsed server
     set_plan(alice, "free", status="canceled", ended_at=db.now())
@@ -593,8 +595,8 @@ def test_lite_and_plus_have_no_container_and_carry_their_storage_as_a_claim(clie
                   (("lite", lite), ("plus", plus), ("pro", pro))}
         free = accounts.create(conn, email="fred@example.org", username="fred", password=None, verified=True)
         assert "limits" not in oidc.claims_for(accounts.by_id(conn, free["id"]), "openid")
-    assert claims["lite"]["limits"] == {"quota_mb": 1024, "max_upload_mb": 50}
-    assert claims["plus"]["limits"] == claims["pro"]["limits"] == {"quota_mb": 6144, "max_upload_mb": 100}
+    assert claims["lite"]["limits"] == {"quota_mb": 1024}
+    assert claims["plus"]["limits"] == claims["pro"]["limits"] == {"quota_mb": 6144}
     # the admin cannot provision a container for a plan without one
     with closing(db.connect()) as conn:
         with pytest.raises(accounts.Problem):

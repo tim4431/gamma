@@ -1159,7 +1159,7 @@ def test_a_share_host_gives_a_paid_plan_its_storage(cloud, monkeypatch):
     gives it (the ``limits`` claim), while its identity holds a live grant;
     the hourly check follows a lapse, and a grant signed out loses it."""
     monkeypatch.setenv("GAMMA_CLOUD_POLICY", "provision")
-    paid = {"quota_mb": 6144, "max_upload_mb": 100}
+    paid = {"quota_mb": 6144}
     cloud.person = {"sub": "sub-ca_paid", "preferred_username": "ca_paid", "email": "ca_paid@example.org",
                     "email_verified": True, "name": "Paid", "plan": "plus", "limits": paid}
     c = browser()
@@ -1172,7 +1172,7 @@ def test_a_share_host_gives_a_paid_plan_its_storage(cloud, monkeypatch):
     assert server_settings.user_limits(user) == paid
     with connect_users_db() as conn:                      # an admin's override for the account still wins
         conn.execute("UPDATE users SET quota_mb = 500 WHERE id = ?", (user,))
-    assert server_settings.user_limits(user) == {"quota_mb": 500, "max_upload_mb": 100}
+    assert server_settings.user_limits(user) == {"quota_mb": 500}
     with connect_users_db() as conn:
         conn.execute("UPDATE users SET quota_mb = NULL WHERE id = ?", (user,))
     # the plan lapses: the next grant check reads the claims again
@@ -1180,17 +1180,17 @@ def test_a_share_host_gives_a_paid_plan_its_storage(cloud, monkeypatch):
     assert cloud_sync.check_all() == {user: "ok"}
     assert server_settings.user_limits(user) == default
     assert c.get("/api/auth/cloud/status").json()["identity"]["plan"] == "free"
-    # paid again; a claim that is not two whole numbers is no claim
-    cloud.person = {**cloud.person, "plan": "lite", "limits": {"quota_mb": "lots", "max_upload_mb": 50}}
+    # paid again; a claim whose quota is no whole number is no claim
+    cloud.person = {**cloud.person, "plan": "lite", "limits": {"quota_mb": "lots"}}
     cloud_sync.check_all()
     assert server_settings.user_limits(user) == default
-    cloud.person["limits"] = {"quota_mb": 1024, "max_upload_mb": 50}
+    cloud.person["limits"] = {"quota_mb": 1024, "max_upload_mb": 50}  # an older account server's per-file cap
     cloud.offline = True                                   # unreachable: the stored claims stand
     cloud_sync.check_all()
     assert server_settings.user_limits(user) == default
     cloud.offline = False
     cloud_sync.check_all()
-    assert server_settings.user_limits(user) == {"quota_mb": 1024, "max_upload_mb": 50}
+    assert server_settings.user_limits(user) == {"quota_mb": 1024}
     # the grant is signed out on the account server: the allowance goes with it
     cloud.live.clear()
     cloud_sync.check_all()

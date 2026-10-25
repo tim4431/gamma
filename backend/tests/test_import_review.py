@@ -1,9 +1,12 @@
 """The shared upload/review/selection/import contract and its isolation
 boundary. The import itself is a background job (POST /api/jobs/import)."""
 import io
+import os
+import time
 import zipfile
 
 import pytest
+from fastapi import HTTPException
 
 from conftest import (account_of, folder_names, label_names, login, make_folder, make_label, make_page, make_user,
                       workspace_of, guest_name)
@@ -167,6 +170,54 @@ def test_staged_upload_is_bound_to_user_and_workspace_and_cancelled(accounts):
     assert owner.delete(f"/api/import/review/{plan['review_id']}").status_code == 200
     assert not path.exists()
     assert start(owner, plan, ids).status_code == 404
+
+
+def test_an_open_review_is_kept_and_a_swept_one_is_gone(accounts):
+    """The dialog's keep-alive and the import's start restart a review's two
+    hours, and bring back one past them that no upload has swept yet; once
+    swept, both answer 404."""
+    from gamma import import_staging
+    owner, other = accounts["review-owner"], accounts["review-other"]
+    me, ws = account_of("review-owner"), workspace_of("review-owner")
+
+    def staged(title):
+        plan = review(owner, archive({"one.md": f"# {title}\ntext"}), "markdown-zip")
+        return plan, plan["pages"][0]["selection_ids"], import_staging.get(plan["review_id"], me, ws)[0]
+
+    def age(path, seconds):
+        then = time.time() - seconds
+        os.utime(path, (then, then))
+
+    def keep(plan, client=owner):
+        return client.post(f"/api/import/review/{plan['review_id']}/keepalive")
+
+    plan, ids, path = staged("Kept review")
+    age(path, import_staging.TTL - 60)
+    assert keep(plan).json() == {"ok": True}
+    assert time.time() - path.stat().st_mtime < 60
+    assert keep(plan, other).status_code == 404  # not the other account's
+
+    age(path, import_staging.TTL + 5)  # past its TTL, not swept yet
+    with pytest.raises(HTTPException) as gone:
+        import_staging.get(plan["review_id"], me, ws)
+    assert gone.value.status_code == 410
+    assert keep(plan).status_code == 200
+    assert report(commit(owner, plan, ids))["pages_created"] == 1
+
+    plan, ids, path = staged("Review imported after its TTL")
+    age(path, import_staging.TTL + 5)
+    assert report(commit(owner, plan, ids))["pages_created"] == 1  # the start alone brings it back
+
+    plan, ids, path = staged("Swept review")
+    age(path, import_staging.TTL + 5)
+    owner.delete(f"/api/import/review/{staged('Next upload')[0]['review_id']}")  # its upload sweeps
+    assert not path.exists()
+    assert keep(plan).status_code == 404 and start(owner, plan, ids).status_code == 404
+
+    data = archive({"one.md": "# Still arriving\ntext"})
+    token = owner.post("/api/import/review/parts", json={"source": "markdown-zip", "size": len(data)}).json()["token"]
+    assert owner.post(f"/api/import/review/{token}/keepalive").status_code == 409
+    owner.delete(f"/api/import/review/{token}")
 
 
 def test_upload_in_parts_reviews_and_imports_like_one_request(accounts):

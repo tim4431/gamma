@@ -58,9 +58,10 @@ export function doneWithOpenedFile(id) {
 }
 
 // What an opened file becomes: "page" (a PDF or a Markdown note, as the
-// Add menu's upload makes one), "notability" (a .note or .ntb, to the
-// Notability import's review), "archive" (a .zip, whose kind the import
-// dialog asks), or "" (nothing Gamma opens).
+// Add menu's upload makes one: the same test as utils.js's isPdfFile and
+// isMarkdownFile, kept apart so this stays a leaf module), "notability" (a
+// .note or .ntb, to the Notability import's review), "archive" (a .zip,
+// whose kind the import dialog asks), or "" (nothing Gamma opens).
 export function openedKind(file) {
   const name = file?.name || "";
   const type = file?.type || "";
@@ -75,7 +76,7 @@ export function openedKind(file) {
 // desktop's openFiles.js asks before it adds a file there: "clone" (it
 // reaches the workspace the clone follows), "shared" (other members, or every
 // account of a public workspace), "" (only you).
-export function audienceOf(w) {
+function audienceOf(w) {
   if (!w) return "";
   if (w.mirror_of) return "clone";
   return w.access === "public" || w.members > 1 ? "shared" : "";

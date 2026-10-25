@@ -1,27 +1,30 @@
 """Storage limits admins edit at runtime, and their enforcement.
 
 Two layers, both in users.db:
-  - server-wide defaults in the `settings` KV: per-file upload cap and total
-    storage quota per account;
-  - per-user overrides in nullable `users` columns (NULL = inherit default).
+  - the server-wide default storage quota per account in the `settings` KV;
+  - per-user overrides in the nullable `users.quota_mb` column (NULL =
+    inherit the default).
 
-`user_limits()` resolves the effective pair for an account; a missing or
+`user_limits()` resolves the effective quota for an account; a missing or
 corrupt value can never break request handling — it falls back to the
-default. Quota 0 means unlimited.
+default. Quota 0 means unlimited. One file has no size cap of its own: the
+quota bounds what an account stores, and an upload is spooled to disk as it
+arrives. (`users.max_upload_mb`, a per-file cap until October 2026, is no
+longer read.)
 
 What a workspace's uploads are checked against (`workspace_quota`):
-  - a PERSONAL workspace: its account's limits, and the account's usage is
+  - a PERSONAL workspace: its account's quota, and the account's usage is
     the stored files of all its personal workspaces together
     (``storage.usage``: their uploads/) — nothing anyone puts into a shared
     workspace counts against a person;
-  - a SHARED workspace: the server-wide per-file cap and the workspace's own
-    `workspaces.quota_mb` (NULL = unlimited), which admins set.
+  - a SHARED workspace: the workspace's own `workspaces.quota_mb` (NULL =
+    unlimited), which admins set.
 The databases are not metered.
 
-On a hosted container (gamma/hosted.py) the plan's ``quota_mb`` and
-``max_upload_mb`` cap all of these: a default nobody saved is the plan's,
-and a saved default, a per-user override or a workspace quota counts only
-where it is lower (``_plan_caps``; an admin may tighten, never loosen).
+On a hosted container (gamma/hosted.py) the plan's ``quota_mb`` caps all of
+these: a default nobody saved is the plan's, and a saved default, a per-user
+override or a workspace quota counts only where it is lower (``_plan_caps``;
+an admin may tighten, never loosen).
 
 The module also owns the admin-confirmed public server URL (`settings` key
 `public_url`, or the `GAMMA_PUBLIC_URL` override) and the MCP host allowlist
@@ -43,11 +46,9 @@ from urllib.parse import urlsplit
 from fastapi import HTTPException
 
 from . import config
-from .config import MAX_UPLOAD_BYTES
 from .db import account_name, connect_users_db, page_now
 
 MB = 1024 * 1024
-DEFAULT_MAX_UPLOAD_MB = MAX_UPLOAD_BYTES // MB
 DEFAULT_QUOTA_MB = 0  # unlimited
 # Guest accounts are minted by anyone on the internet, so each gets a bounded
 # default quota (an admin can still override it per account). Applied only
@@ -56,15 +57,7 @@ GUEST_DEFAULT_QUOTA_MB = 200
 # How long a guest account lives after it was created (gamma/guests.py).
 DEFAULT_GUEST_TTL_HOURS = 24
 GUEST_TTL_MIN, GUEST_TTL_MAX = 1, 720
-UPLOAD_MB_MIN, UPLOAD_MB_MAX = 1, 2048
 QUOTA_MB_MIN, QUOTA_MB_MAX = 0, 1024 * 1024  # 0 = unlimited, cap 1 TB
-
-
-def validate_upload_mb(mb) -> int:
-    mb = int(mb)
-    if not UPLOAD_MB_MIN <= mb <= UPLOAD_MB_MAX:
-        raise ValueError(f"upload limit must be {UPLOAD_MB_MIN}-{UPLOAD_MB_MAX} MB")
-    return mb
 
 
 def validate_quota_mb(mb) -> int:
@@ -250,13 +243,13 @@ def guest_settings() -> dict:
 
 
 def _plan_caps(conn) -> dict:
-    """The hosted plan's caps (gamma/hosted.py): ``{max_upload_mb,
-    quota_mb}``, 0 where the plan sets none; {} when this is no hosted
-    server or it never synced."""
+    """The hosted plan's caps (gamma/hosted.py): ``{quota_mb}``, 0 where
+    the plan sets none; {} when this is no hosted server or it never
+    synced."""
     from . import hosted  # local: hosted imports this module
 
     found = hosted.limits(conn)
-    return {"max_upload_mb": found["max_upload_mb"], "quota_mb": found["quota_mb"]} if found else {}
+    return {"quota_mb": found["quota_mb"]} if found else {}
 
 
 def _within(value: int, cap: int) -> int:
@@ -268,25 +261,21 @@ def _within(value: int, cap: int) -> int:
 
 
 def _limit_settings(conn) -> dict:
-    """The server-wide defaults with where each comes from:
-    ``{max_upload_mb, quota_mb, max_upload_mb_source, quota_mb_source,
-    plan_caps}`` — ``saved`` (the admin's value), ``default`` (none saved)
-    or ``plan`` (a hosted plan's cap: there is no saved value, or it is
-    higher); ``plan_caps`` the plan's caps, {} off a hosted server."""
-    rows = dict(conn.execute("SELECT key, value FROM settings WHERE key IN ('max_upload_mb', 'quota_mb')"))
+    """The server-wide default quota with where it comes from:
+    ``{quota_mb, quota_mb_source, plan_caps}`` — ``saved`` (the admin's
+    value), ``default`` (none saved) or ``plan`` (a hosted plan's cap: there
+    is no saved value, or it is higher); ``plan_caps`` the plan's caps, {}
+    off a hosted server."""
+    row = conn.execute("SELECT value FROM settings WHERE key = 'quota_mb'").fetchone()
     caps = _plan_caps(conn)
-    out = {"plan_caps": caps}
-    for key, default, lo, hi in (("max_upload_mb", DEFAULT_MAX_UPLOAD_MB, UPLOAD_MB_MIN, UPLOAD_MB_MAX),
-                                 ("quota_mb", DEFAULT_QUOTA_MB, QUOTA_MB_MIN, QUOTA_MB_MAX)):
-        saved = _parse(rows.get(key), None, lo, hi)
-        cap = caps.get(key, 0)
-        if saved is None:
-            value, source = (cap, "plan") if cap else (default, "default")
-        else:
-            value = _within(saved, cap)
-            source = "saved" if value == saved else "plan"
-        out[key], out[f"{key}_source"] = value, source
-    return out
+    saved = _parse(row[0] if row else None, None, QUOTA_MB_MIN, QUOTA_MB_MAX)
+    cap = caps.get("quota_mb", 0)
+    if saved is None:
+        value, source = (cap, "plan") if cap else (DEFAULT_QUOTA_MB, "default")
+    else:
+        value = _within(saved, cap)
+        source = "saved" if value == saved else "plan"
+    return {"quota_mb": value, "quota_mb_source": source, "plan_caps": caps}
 
 
 def get_defaults() -> dict:
@@ -294,56 +283,41 @@ def get_defaults() -> dict:
         return _limit_settings(conn)
 
 
-def check_within_plan(key: str, mb: int) -> None:
-    """ValueError when ``mb`` for ``key`` (``max_upload_mb`` / ``quota_mb``,
-    a default or one account's override) would go past the hosted plan's
-    cap: a hosted admin may tighten a limit, never loosen it."""
+def check_within_plan(mb: int) -> None:
+    """ValueError when the quota ``mb`` (the default or one account's
+    override) would go past the hosted plan's cap: a hosted admin may
+    tighten it, never loosen it."""
     with connect_users_db() as conn:
-        cap = _plan_caps(conn).get(key, 0)
+        cap = _plan_caps(conn).get("quota_mb", 0)
     if cap and _within(mb, cap) != mb:
-        what = "per file" if key == "max_upload_mb" else "of storage per account"
-        raise ValueError(f"This server's plan allows at most {cap} MB {what}.")
-
-
-def set_default_max_upload_mb(mb: int) -> None:
-    mb = validate_upload_mb(mb)
-    check_within_plan("max_upload_mb", mb)
-    _set_raw("max_upload_mb", str(mb))
+        raise ValueError(f"This server's plan allows at most {cap} MB of storage per account.")
 
 
 def set_default_quota_mb(mb: int) -> None:
     mb = validate_quota_mb(mb)
-    check_within_plan("quota_mb", mb)
+    check_within_plan(mb)
     _set_raw("quota_mb", str(mb))
 
 
 def user_limits(user_id: str) -> dict:
-    """Effective limits for an account (its id): per-user override, else
-    on a share host what the account's Gamma Cloud plan gives it
-    (``cloud_auth.plan_limits``), else the server default, each held to a
-    hosted plan's cap."""
+    """Effective limits for an account (its id): ``{quota_mb}``, the
+    per-user override, else on a share host what the account's Gamma Cloud
+    plan gives it (``cloud_auth.plan_limits``), else the server default,
+    held to a hosted plan's cap."""
     from . import cloud_auth  # local: cloud_auth imports this module
 
     with connect_users_db() as conn:
         found = _limit_settings(conn)
-        row = conn.execute("SELECT max_upload_mb, quota_mb, is_guest FROM users WHERE id = ?",
-                           (user_id,)).fetchone()
+        row = conn.execute("SELECT quota_mb, is_guest FROM users WHERE id = ?", (user_id,)).fetchone()
         plan = cloud_auth.plan_limits(conn, user_id)
-    caps = found["plan_caps"]
-    default_upload = plan.get("max_upload_mb") or found["max_upload_mb"]
     default_quota = plan.get("quota_mb") or found["quota_mb"]
-    upload_override = row[0] if row else None
-    quota_override = row[1] if row else None
+    quota_override = row[0] if row else None
     # A guest account falls back to a bounded quota rather than the (often
     # unlimited) server default, unless an admin has set an explicit override.
-    if row and row[2] and quota_override is None and default_quota == 0:
+    if row and row[1] and quota_override is None and default_quota == 0:
         default_quota = GUEST_DEFAULT_QUOTA_MB
-    return {
-        "max_upload_mb": _within(_parse(upload_override, default_upload, UPLOAD_MB_MIN, UPLOAD_MB_MAX),
-                                 caps.get("max_upload_mb", 0)),
-        "quota_mb": _within(_parse(quota_override, default_quota, QUOTA_MB_MIN, QUOTA_MB_MAX),
-                            caps.get("quota_mb", 0)),
-    }
+    return {"quota_mb": _within(_parse(quota_override, default_quota, QUOTA_MB_MIN, QUOTA_MB_MAX),
+                                found["plan_caps"].get("quota_mb", 0))}
 
 
 def workspace_bytes(ws: str) -> int:
@@ -365,7 +339,7 @@ def usage_bytes(user_id: str) -> int:
 
 def workspace_quota(ws: str) -> dict:
     """The limits and usage that apply to uploads into ``ws``:
-    ``{max_upload_mb, quota_mb, used_bytes, workspace_bytes, account}`` —
+    ``{quota_mb, used_bytes, workspace_bytes, account}`` —
     ``account`` is the username of the person whose limits these are (a
     personal workspace), "" for a shared workspace under its own quota."""
     from . import workspaces
@@ -379,22 +353,19 @@ def workspace_quota(ws: str) -> dict:
     info = workspaces.get(ws) or {}
     with connect_users_db() as conn:
         found = _limit_settings(conn)
-    return {"max_upload_mb": found["max_upload_mb"],
-            "quota_mb": _within(_parse(info.get("quota_mb"), 0, QUOTA_MB_MIN, QUOTA_MB_MAX),
+    return {"quota_mb": _within(_parse(info.get("quota_mb"), 0, QUOTA_MB_MIN, QUOTA_MB_MAX),
                                 found["plan_caps"].get("quota_mb", 0)),
             "used_bytes": used, "workspace_bytes": used, "account": ""}
 
 
 def check_upload_allowed(ws: str, nbytes: int) -> None:
-    """Hard gate for explicit uploads into a workspace: 413 over the
-    per-file cap, 507 over the quota that applies (``workspace_quota``).
+    """Hard gate for explicit uploads into a workspace: 507 over the quota
+    that applies (``workspace_quota``).
 
     Callers should skip this when the content hash is stored already —
     re-uploading a stored file costs nothing, so it is always allowed.
     """
     limits = workspace_quota(ws)
-    if nbytes > limits["max_upload_mb"] * MB:
-        raise HTTPException(status_code=413, detail=f"file too large (max {limits['max_upload_mb']} MB)")
     quota = limits["quota_mb"]
     if quota:
         used = limits["used_bytes"]

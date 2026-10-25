@@ -17,6 +17,18 @@ test("only the agent's recorded note changes can be reverted, once", () => {
   assert.equal(canRevert({ kind: "rename", tool: "rename_page", page_id: "p", summary: "Renamed", revert: {} }), false);
 });
 
+test("a deleted folder or label reverts from its library row, outside Revert all", () => {
+  const folderDelete = { kind: "delete", tool: "delete_folder", block_id: "f", title: "X", count: 1,
+    summary: "Deleted the folder “X”", revert: { tree: "folders", blocks: [], pages: {} } };
+  assert.equal(canRevert(folderDelete), true);
+  assert.equal(canRedo({ ...folderDelete, reverted: true }), true);
+  assert.equal(canRevert({ ...folderDelete, tool: "delete_label", summary: "Deleted the label “X”" }), true);
+  // A rename is undone by another call, whatever it carries.
+  assert.equal(canRevert({ kind: "rename", tool: "rename_folder", block_id: "f", summary: "Renamed the folder “X” → “Y”",
+    from: "X", to: "Y", revert: { tree: "folders" } }), false);
+  assert.deepEqual(revertOrder([edit("b1"), folderDelete]), [0]);
+});
+
 test("the replay leaves the reverting texts out and keeps the mark", () => {
   const sent = forReplay([edit("b1", { reverted: true }), { kind: "read", tool: "read_block" }]);
   assert.deepEqual(sent[0], { kind: "edit", tool: "edit_block", block_id: "b1", page_id: "p",

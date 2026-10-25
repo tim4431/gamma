@@ -56,6 +56,6 @@ export const SECTION_PREFS = Object.freeze({
   }),
   tools: sections({
     Tools: ["agentEnabled", "agentPerms", "fetchInBackground", "delegateReads"],
-    "Tool limits": ["toolRounds", "agentReadChars"],
+    "Tool limits": ["toolRounds", "toolRoundsUnlimited", "agentReadChars"],
   }),
 });

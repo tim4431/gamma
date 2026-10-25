@@ -259,20 +259,34 @@ export function ToggleGroup({ selected, onToggle, options, disabled }) {
 // then SubDialog › .settingsForm › Step (numbered stages, for flows) or
 // Field (label, hint, one control), closed by a DialogButtons footer.
 // `closeButton={false}` drops the × (while a step must not be interrupted).
-export function SubDialog({ title, onClose, children, draft, className = "", closeButton = true }) {
+// A close by the backdrop, Escape or × asks first while the draft is edited,
+// or while `guard` ({question, keep, leave}) names other work it would lose
+// (an upload under way); the footer's Cancel asks only for a draft.
+export function SubDialog({ title, onClose, children, draft, guard = null, className = "", closeButton = true }) {
   const key = React.useId();
   const [initial] = React.useState(() => JSON.stringify(draft));
   const dirty = draft !== undefined && JSON.stringify(draft) !== initial;
+  const ask = guard || (dirty ? { label: t("Unsaved changes"), question: t("Discard your unsaved edits?"),
+    keep: t("Keep editing"), leave: t("Discard changes") } : null);
   const [confirmClose, setConfirmClose] = React.useState(false);
+  if (confirmClose && !ask) setConfirmClose(false); // what it asked about is over (the upload failed)
+  const asking = confirmClose && ask;
   const ref = React.useRef(null);
   useSettingsDraft(key, dirty, onClose);
-  const close = () => dirty ? setConfirmClose(true) : onClose();
+  const close = () => ask ? setConfirmClose(true) : onClose();
   const backdrop = backdropPress(close);
   React.useEffect(() => {
     const previous = document.activeElement;
     if (!ref.current?.contains(document.activeElement)) ref.current?.focus();
     return () => previous?.focus?.();
   }, []);
+  // The question gone (answered, or what it asked about over) took the
+  // focused button with it: the dialog takes the focus back, so Escape
+  // and Tab stay its own.
+  const asked = Boolean(asking);
+  React.useEffect(() => {
+    if (!asked && !ref.current?.contains(document.activeElement)) ref.current?.focus();
+  }, [asked]);
   return (
     <DialogOverlay className="subDialog" {...backdrop} onClick={(event) => { event.stopPropagation(); backdrop.onClick(event); }}>
       <div className={`reportModal ${className}`} role="dialog" aria-modal="true" aria-label={title}
@@ -296,16 +310,16 @@ export function SubDialog({ title, onClose, children, draft, className = "", clo
             else if (!event.shiftKey && (document.activeElement === last || document.activeElement === ref.current)) { event.preventDefault(); first?.focus(); }
           }
         }}>
-        {closeButton ? <div className="settingsDialogHeader" inert={confirmClose ? "" : undefined}>
+        {closeButton ? <div className="settingsDialogHeader" inert={asking ? "" : undefined}>
           <div className="reportModalTitle">{title}</div>
           <button type="button" className="uiClose uiCloseLg" onClick={close} aria-label={t("Close {title}", { title: title })} title={t("Close")}><XIcon size={16} /></button>
         </div> : <div className="reportModalTitle">{title}</div>}
-        <div className="settingsDialogContent" inert={confirmClose ? "" : undefined}>{children}</div>
-        {confirmClose ? <div className="settingsUnsaved" role="alertdialog" aria-label={t("Unsaved changes")}>
-          <span>{t("Discard your unsaved edits?")}</span>
+        <div className="settingsDialogContent" inert={asking ? "" : undefined}>{children}</div>
+        {asking ? <div className="settingsUnsaved" role="alertdialog" aria-label={ask.label || ask.question}>
+          <span>{ask.question}</span>
           <span className="settingsUnsavedBtns">
-            <button className="uiBtn" autoFocus onClick={() => setConfirmClose(false)}>{t("Keep editing")}</button>
-            <button className="uiBtn danger" onClick={onClose}>{t("Discard changes")}</button>
+            <button className="uiBtn" autoFocus onClick={() => setConfirmClose(false)}>{ask.keep}</button>
+            <button className="uiBtn danger" onClick={onClose}>{ask.leave}</button>
           </span>
         </div> : null}
       </div>

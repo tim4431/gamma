@@ -223,6 +223,28 @@ export async function pdfLoadScenarios({ server, browser, alice, makePdf, step, 
     await c.close();
   });
 
+  await step("pdf load: a paper opened and left without scrolling gets its cover on the recents card", async () => {
+    // The cover is read off the canvas each page shows. Those come in pairs
+    // that swap at every paint (pageRaster.js `pair`), so after one paint a
+    // page's first canvas is the released spare and a capture from it found
+    // nothing.
+    const pdf = makePdf(Array.from({ length: 3 }, (_, i) => [`Cover sample page ${i + 1}`, "Lorem ipsum dolor sit amet"]));
+    const up = await account.upload("/api/uploads", pdf, "cover.pdf", "application/pdf");
+    const created = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Cover sample", source_url: up.source_url } });
+    const c = await account.context(browser);
+    try {
+      const p = await openPage(c, `${server.base}/?page=${created.id}&ws=${account.ws}`);
+      await waitPainted(p, 0);
+      await until(async () => !!(await account.api("/api/page-snaps")).snaps?.[created.id]?.img,
+        { timeout: 30000, every: 500, what: "the cover stored on the server" });
+      await p.click("button[aria-label='Home']");
+      await p.locator(".pageCard", { hasText: /Cover sample/ }).first().locator(".pageCardCover img").waitFor({ timeout: 10000 });
+      assertNoProblems(p);
+    } finally {
+      await c.close();
+    }
+  });
+
   await step("pdf load: fit to width fits the text pages, not a cover of another size — from the manifest and measured", async () => {
     // A scanned book's shape: a small cover image, then text pages 1.76×
     // wider. Fit-width used to size to page 1, which put every text page past

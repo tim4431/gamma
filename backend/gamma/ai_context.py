@@ -7,6 +7,7 @@ import json
 import re
 import sqlite3
 import sys
+from collections import Counter
 from urllib.request import Request as URLRequest
 
 from . import ink as inkmod
@@ -545,17 +546,24 @@ def notes_focus_section(ws: str, payload, notes_seen: dict | None = None,
 
 # Replayed tool results across the whole history share this char budget
 # (newest first); older results are elided so long agent sessions don't grow
-# each request without bound. The calls themselves are always kept — they are
-# what stops the model from repeating work it already did.
+# each request without bound. The calls themselves are kept — they are what
+# stops the model from repeating work it already did.
 TOOL_REPLAY_BUDGET = 8000
 _ELIDED_RESULT = "(older result elided to save space — call the tool again if needed)"
+# The calls one saved reply replays at most, its newest. An Unlimited reply
+# that ran until the model's window was full made thousands, and replaying
+# them all would fill the next message's window the same way, leaving
+# Continue no room for the task. The older ones go as one line of counts.
+REPLAY_CALLS = 200
+_OMITTED_CALLS = ("[{n} earlier calls of this reply are not replayed, to save space: {tools}. "
+                  "What they changed is in the library; check there before redoing any of it.]")
 # Replayed results are snapshots: the notes may have been edited since (by
 # the user, or by the agent's own later calls). Saying so on every replayed
 # result stops the model from answering "read X" from a stale outline.
 _REPLAYED_NOTE = "[result from an earlier turn — notes may have changed since; call again before quoting or editing]\n"
 # A change the user took back from its row under the reply (`reverted` on
 # the saved action, gamma/ai_revert.py): the model must not build on it.
-_REVERTED_NOTE = "[the user reverted this change afterwards — the notes no longer hold it]\n"
+_REVERTED_NOTE = "[the user reverted this change afterwards — it is undone]\n"
 
 
 def _replayable(history_item: dict) -> list[dict]:
@@ -567,6 +575,23 @@ def _replayable(history_item: dict) -> list[dict]:
             if isinstance(a, dict) and a.get("tool")]
 
 
+def _first_replayed(actions: list) -> int:
+    """The index of the first of a reply's ``actions`` its replay keeps
+    (REPLAY_CALLS)."""
+    return max(0, len(actions) - REPLAY_CALLS)
+
+
+def _omitted_calls(actions: list) -> str:
+    """What a replay says in place of the calls before a reply's newest
+    REPLAY_CALLS: how many, by tool. "" when it keeps them all."""
+    first = _first_replayed(actions)
+    if not first:
+        return ""
+    counts = Counter(canonical_tool(a["tool"]) for a in actions[:first])
+    return _OMITTED_CALLS.format(n=f"{first:,}", tools=", ".join(
+        f"{name} ×{count:,}" for name, count in counts.most_common()))
+
+
 def _elide_old_results(history: list) -> dict[int, set]:
     """Pick which replayed tool results keep their text: walk newest-first
     under TOOL_REPLAY_BUDGET; everything older is elided. Returns
@@ -574,7 +599,8 @@ def _elide_old_results(history: list) -> dict[int, set]:
     elided: dict[int, set] = {}
     budget = TOOL_REPLAY_BUDGET
     for i in range(len(history) - 1, -1, -1):
-        for j, action in reversed(list(enumerate(_replayable(history[i])))):
+        actions = _replayable(history[i])
+        for j, action in reversed(list(enumerate(actions))[_first_replayed(actions):]):
             budget -= len(str(action.get("result") or ""))
             if budget < 0:
                 elided.setdefault(i, set()).add(j)
@@ -711,13 +737,16 @@ def build_messages(payload, context: str, with_tools: bool = False,
                 # Calls first, then their results, then the reply prose — the
                 # order the turn actually happened in. Synthetic call ids only
                 # need to pair within this one request. The thinking led to
-                # the calls, so it rides on them.
-                messages.append({"role": "assistant", "content": "", "tool_calls": [
+                # the calls, so it rides on them. A reply past REPLAY_CALLS
+                # replays its newest and counts the rest.
+                first = _first_replayed(actions)
+                messages.append({"role": "assistant", "content": _omitted_calls(actions), "tool_calls": [
                     {"id": f"call_h{i}_{j}", "name": canonical_tool(a["tool"]),
                      "arguments": a.get("args") or {}}
-                    for j, a in enumerate(actions)], **({"reasoning": thinking} if thinking else {})})
+                    for j, a in enumerate(actions[first:], start=first)],
+                    **({"reasoning": thinking} if thinking else {})})
                 thinking = {}
-                for j, a in enumerate(actions):
+                for j, a in enumerate(actions[first:], start=first):
                     result = (_ELIDED_RESULT if j in elided.get(i, ())
                               else _REPLAYED_NOTE + str(a.get("result") or "(empty result)"))
                     if a.get("reverted"):

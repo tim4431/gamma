@@ -4,7 +4,9 @@ Tokens are bound to an account and workspace. No library content is written
 until the import, which runs as a background job (``POST /api/jobs/import``,
 routers/imports.py): the job holds a filesystem claim while it reads the
 upload, keeps the report as its result and removes the upload once done.
-Cancelled and expired uploads are removed.
+Cancelled and expired uploads are removed. The dialog that shows a review
+keeps it (``touch``), and one past its TTL that no upload has swept yet
+comes back.
 
 An upload arrives in one request (``create``) or, when it is larger than a
 proxy in front of the server lets one request carry, in parts
@@ -17,6 +19,7 @@ upload (an import's source, folder and strip; a restore's mode and target).
 """
 import hashlib
 import json
+import os
 import re
 import secrets
 import shutil
@@ -29,7 +32,7 @@ from fastapi import HTTPException
 
 from . import config, upload_parts
 
-TTL = 2 * 60 * 60  # since the review's last activity: a part, a claim
+TTL = 2 * 60 * 60  # since the review's last activity: a part, a claim, a keep-alive
 MIN_FREE_BYTES = 1 << 30
 TOKEN_RE = re.compile(r"^[a-f0-9]{40}$")
 
@@ -133,6 +136,22 @@ def get(token, user_id, ws, pending=False):
     if metadata.get("pending") and not pending:
         raise HTTPException(status_code=409, detail="this upload has not finished arriving")
     return path, metadata
+
+
+def touch(token, user_id, ws):
+    """Restart the review's TTL → ``get``'s answer: its dialog still shows
+    it, or its import starts. One past its TTL comes back until an upload's
+    sweep removes it (404 then)."""
+    try:
+        get(token, user_id, ws, pending=True)  # the caller's, and still here
+    except HTTPException as e:
+        if e.status_code != 410:
+            raise
+    try:
+        os.utime(_root() / token)
+    except FileNotFoundError:  # swept meanwhile
+        raise HTTPException(status_code=404, detail="import review not found") from None
+    return get(token, user_id, ws)
 
 
 @contextmanager

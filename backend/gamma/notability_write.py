@@ -23,6 +23,7 @@ one UUID, each starting where the last ended.
 
 import datetime
 import io
+import json
 import math
 import plistlib
 import posixpath
@@ -35,7 +36,7 @@ import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .notability import PRIVATE_KEY
+from .notability import PRIVATE_KEY, STYLE_HIGHLIGHTER, STYLE_PEN, STYLE_PENCIL, utf16_units
 from .notability_archive import APPLE_EPOCH
 
 APP_VERSION = "16.1.5"           # the version whose files this writer copies
@@ -45,7 +46,6 @@ INT64_MAX = 9223372036854775807  # a layout entry's page number for a blank page
 FONT = "HelveticaNeue"
 BLACK = (0.0, 0.0, 0.0, 1.0)
 THUMB_SIZE = (576, 756)          # thumb12x.png, as 16.1.5 writes it
-STYLE_PEN, STYLE_HIGHLIGHTER, STYLE_PENCIL = 3, 4, 5
 _HALF_PI = math.pi / 2
 
 
@@ -167,12 +167,12 @@ class Recording:
 class Paper:
     """The note's paper: its size (``letter``, ``a4``, ``legal``) and
     orientation, how its width is held (``lockedWidth`` at the note's W,
-    or ``staticWidth``), its identifier (``Color:#RRGGBB``) and, for ruled
-    paper, the inches between lines."""
+    or ``staticWidth``), its colour (``#rrggbb``, the file's identifier
+    ``Color:#RRGGBB``) and, for ruled paper, the inches between lines."""
     size: str = "letter"
     landscape: bool = False
     sizing: str = "lockedWidth"
-    identifier: str = "Color:#FFFFFF"
+    color: str = "#ffffff"
     lines: float | None = None
 
 
@@ -191,7 +191,6 @@ class Draft:
     flow: list = field(default_factory=list)       # [Run]: the text typed on the pages
     recordings: list = field(default_factory=list)  # [Recording]
     files: dict = field(default_factory=dict)      # path below the note's folder → bytes, or a Path to copy
-    thumbnail: bytes | None = None                 # thumb12x.png; None writes a blank page of the paper
     private: dict | None = None                    # Gamma's own copy of what the note holds (PRIVATE_KEY)
 
 
@@ -379,7 +378,8 @@ class _Session:
             "name": a.string(d.title),
         }
         if d.private is not None:
-            root[PRIVATE_KEY] = a.value(zlib.compress(_private_json(d.private), 6))
+            copy = json.dumps(d.private, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
+            root[PRIVATE_KEY] = a.value(zlib.compress(copy.encode("utf-8"), 6))
         return a.dumps(root, "NoteTakingSession")
 
     # --- the paper and the pages ---------------------------------------------------------
@@ -389,7 +389,7 @@ class _Session:
         sizing = f"lockedWidth:{float(width)!r}:iPad" if paper.sizing == "lockedWidth" else paper.sizing
         lines = f"Lines:false:false:{paper.lines!r}" if paper.lines else "No Lines"
         return a.obj("GLModel.PaperAttributes", {
-            "paperIdentifier": a.string(paper.identifier),
+            "paperIdentifier": a.string("Color:" + paper.color[1:].upper()),
             "drawRotatedForOrientation": True,
             "paperOrientation": a.string("landscape" if paper.landscape else "portrait"),
             "paperSize": a.string(paper.size),
@@ -437,7 +437,7 @@ class _Session:
             "NBAttributedLayoutStringCodingKey": self._attributed(runs, mutable=True)})
         stamps = a.dictionary([("stringKey", a.mutable_string(text)), ("subRangesKey", a.array(
             [a.dictionary([("subRangeOtherAttributesKey", a.dictionary([])),
-                           ("subRangeRangeKey", a.string("{0, %d}" % _units(text)))])] if text else []))])
+                           ("subRangeRangeKey", a.string("{0, %d}" % utf16_units(text)))])] if text else []))])
         if main:
             reflow = a.obj("NBReflowStateLocked", {"pageWidthInDocumentCoordsKey": float(d.width),
                                                    "nativeLayoutDeviceStringKey": a.string("iPad")},
@@ -470,7 +470,7 @@ class _Session:
         text = "".join(r.text for r in runs)
         subs, at = [], 0
         for run in runs:
-            n = _units(run.text)
+            n = utf16_units(run.text)
             if not n:
                 continue
             other = [("NSStrikethrough", int(run.strike)), ("line-spacing", 1.0), ("NSUnderline", int(run.underline)),
@@ -616,12 +616,6 @@ class _Session:
         return a.obj("TextBlockMediaObject", fields, ("CanvasMediaObject", "GenericMediaObject"))
 
 
-def _units(text: str) -> int:
-    """The text's length in UTF-16 units, which an attributed string's
-    ranges count."""
-    return len(text) + sum(1 for c in text if ord(c) > 0xFFFF)
-
-
 def _pieces(n: int) -> list[tuple[int, int]]:
     """A stroke of ``n`` anchors cut into curves of at most MAX_ANCHORS,
     each starting at the anchor the last ended on: ``[(lo, hi)]``."""
@@ -668,11 +662,6 @@ def _shape_dict(shape: Shape) -> dict:
     else:
         out.update(points=pts, isClosed=True)
     return out
-
-
-def _private_json(private: dict) -> bytes:
-    import json
-    return json.dumps(private, ensure_ascii=False, separators=(",", ":"), allow_nan=False).encode("utf-8")
 
 
 # --- the other files ---------------------------------------------------------------------------
@@ -734,7 +723,7 @@ def write_note(draft: Draft, out) -> None:
     not ASCII). ``draft.files`` are copied in as they are."""
     folder = note_folder(draft.title)
     members = {"Session.plist": session_plist(draft), "metadata.plist": metadata_plist(draft),
-               "thumb12x.png": draft.thumbnail or blank_png(*THUMB_SIZE, _paper_rgb(draft.paper)),
+               "thumb12x.png": blank_png(*THUMB_SIZE, _paper_rgb(draft.paper)),
                "Recordings/library.plist": library_plist(draft.recordings), **draft.files}
     dirs = {"", "Images", "PDFs", "Recordings", "HandwritingIndex", "Assets"}
     for path in members:
@@ -757,13 +746,7 @@ def write_note(draft: Draft, out) -> None:
 
 
 def _paper_rgb(paper: Paper) -> tuple[int, int, int]:
-    ident = paper.identifier
-    if ident.startswith("Color:#") and len(ident) == 13:
-        try:
-            return tuple(int(ident[7 + 2 * i:9 + 2 * i], 16) for i in range(3))
-        except ValueError:
-            pass
-    return 255, 255, 255
+    return tuple(int(paper.color[i:i + 2], 16) for i in (1, 3, 5))
 
 
 def note_bytes(draft: Draft) -> bytes:

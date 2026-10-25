@@ -6,13 +6,13 @@ page. It covers the backend, the web client, the browser extension and the
 desktop app; the account server and the website are left out. The
 deliberate settings are named once and not listed again: the per-file
 cap `max_upload_mb` (50 MB by default, at most 2048,
-`server_settings.py`), the storage quota (unlimited by default, 200 MB
-for a guest) and the plans' caps.
+`server_settings.py`; dropped since, below), the storage quota
+(unlimited by default, 200 MB for a guest) and the plans' caps.
 
 ## What changed with this survey
 
-The survey ranked the caps below; the first seven were removed. How each
-works now is in the dev docs named.
+The survey ranked the caps it found; the ones below were removed since.
+How each works now is in the dev docs named.
 
 - **The import review's upload** (Zotero, Markdown, Gamma exports;
   [dev/import_export.md](../dev/import_export.md)). Staging refused an
@@ -58,11 +58,19 @@ works now is in the dev docs named.
   16-bit, interlaced, GIF, WebP) decode with Pillow up to 40 MP, a 25 MP
   screenshot in about 0.65 s, keeping transparency as a soft mask
   ([dev/pdf_typesetting.md](../dev/pdf_typesetting.md)).
+- **The library as the AI lists it** (`ai_tools.py`). `list_pages`
+  stopped at 400 pages with no way to page. It now lists in library
+  order, which edits never change, in batches (`limit`, `after`,
+  [dev/ai_tools.md](../dev/ai_tools.md)).
 
-What stays: each PDF inside a Zotero export passes the per-file cap like
-any upload, so at the default 50 MB a larger PDF is skipped, with "file
-too large (max 50 MB)" in the import report. An admin raises the cap in
-Settings → Server.
+Later in October 2026 the per-file cap went too
+([dev/user_db.md](../dev/user_db.md) "Storage limits"). The quota already
+bounds what an account stores, and PDFs went up spooled to disk and in
+parts, so the cap's one effect was to refuse scanned books and skip a
+Zotero export's larger PDFs. `/upload-image`, `/upload-file` and the
+Logseq import now spool to disk as `/uploads` does. A Notability note's
+PDF or picture is read whole to be parsed and composed, so the importer
+keeps a ceiling of its own on it (`MAX_HELD_BYTES`, 256 MB).
 
 ## Uploads still sent as one request
 
@@ -71,7 +79,7 @@ client names that refusal (`utils.proxyRefusal`).
 
 | Path | Can it pass 100 MB | Notes |
 |---|---|---|
-| An attachment or a picture (`/upload-file`, `/upload-image`, `transfers/FileChip.jsx`) | Only after an admin raises `max_upload_mb` past 100 | The server reads it whole into memory. `/uploads/parts` takes any file now, but not from a share link's editors, who upload through `require_ws_writer` |
+| An attachment or a picture (`/upload-file`, `/upload-image`, `transfers/FileChip.jsx`) | From a share link's editors | A member's file past 32 MiB goes in parts (`/uploads/parts`); a share link's editors upload through `require_ws_writer`, in one request. The server spools it to disk |
 | The Logseq import (`/import/logseq`) | Rarely | Plain `fetch`, so the status is lost from the message |
 
 ## Silent truncation and tight caps still there
@@ -87,7 +95,6 @@ Ranked by how likely a user meets them.
 | Uploads in parts | 8 open per workspace, dropped after an hour idle | `upload_parts.py` | 429 for up to an hour after tabs closed mid-upload |
 | AI calls at once | 6 per account | `ai_client.py` | Page translation (4 at once) beside an agent chat (4 at once) reaches it |
 | PDFs the AI fetches or a tab hands off | 40 MB; 60 MB through the extension's in-page relay | `ai_web.py`, `routers/ai_handoffs.py`, `extension/detect.js` | Books and theses refused |
-| The library as the AI lists it | 400 pages, no offset | `ai_tools.py` | "(+N more not shown)", with no way to page |
 | Reading positions | 200 pages remembered | `App.jsx` | An older paper opens at page 1 |
 | PDFs attached to a chat message | 15 MB each, 4 a message | `chat/ChatDock.jsx`, `ai_context.py` | A fifth is ignored without a word |
 | SVG and Mermaid fences | 50,000 characters; 500 Mermaid edges | `shared/lib/svgSanitize.js`, `shared/lib/mermaidRenderer.js` | An exported matplotlib or draw.io SVG is refused |
@@ -103,7 +110,8 @@ Ranked by how likely a user meets them.
 dictation and of an AI picture; 20 active jobs an account and 20 manual
 snapshots a workspace; 50 workspaces a user; the block search's 2 s
 budget, which says it stopped early and now goes on from where it
-stopped; 32 AI tool rounds (up to 100) and 200 actions a message; 5,000
+stopped; 32 AI tool rounds (up to 100, or unlimited, which lifts the 200
+actions too) and 200 actions a message; 5,000
 characters of a translated selection, with a message; 1 GB of free disk
 before an export, a snapshot or a staged upload.
 
