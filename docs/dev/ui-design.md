@@ -839,8 +839,8 @@ the layout, which follows the screen (`PHONE_MQ`,
 `shared/lib/pickFiles.js` opens the system file picker from code. iOS
 Safari may not open it for an `<input>` outside the document, or may drop
 that input before its `change`, so the input joins the page, hidden, for
-the pick and leaves after it. The backup restore and the imports pick
-through it.
+the pick and leaves after it. The backup restore, the imports and the
+markup strip's Picture button pick through it.
 
 ### Sizes and reveals: CSS asks capability
 
@@ -850,6 +850,8 @@ through it.
   grip's `::before`, a splitter's `hitAreaMargins`). Two sizes stay apart:
   the editing bar's 36 px buttons, which only a touch screen shows, and
   the text box's handles under `(pointer: coarse)` ([text_boxes.md](text_boxes.md)).
+  `tests/designTokens.test.mjs` fails on any other `(pointer: coarse)`
+  rule that sets a width or a height.
 - **Hover is a capability.** A rule that reveals a control on hover sits
   under `@media (hover: hover)`, or pairs its `opacity: 0` with
   `pointer-events: none`: a hidden control takes no press, so a stray tap

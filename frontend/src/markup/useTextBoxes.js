@@ -14,9 +14,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { BLOCK_COMMANDS, GROUP_FORMAT } from "../editor/blockCommands.js";
 import { dispatch } from "../shared/lib/hotkeys.js";
-import {
-  findBlock, insertSibling, makeBlockId, removeBlockTree, setBlockText, updateBlockTree,
-} from "../shared/model/blockModel.js";
+import { findBlock, insertSibling, makeBlockId, removeBlockTree, setBlockText } from "../shared/model/blockModel.js";
+import { addPlaced, withPlaced } from "./placed.js";
 import { normalizeTextBox, refitBox, textBoxesBySurface, textStyle } from "./textBox.js";
 import { wallNow } from "../shared/model/wallClock.js";
 
@@ -25,13 +24,8 @@ import { wallNow } from "../shared/model/wallClock.js";
 const FORMAT_COMMANDS = BLOCK_COMMANDS.filter((c) => c.group === GROUP_FORMAT);
 
 // `tree` with box `id` replaced by fn(its box), the same tree when that
-// changes nothing.
-function withBox(tree, id, fn) {
-  const box = normalizeTextBox(findBlock(tree, id)?.properties?.text_box);
-  const next = box && fn(box);
-  if (!next || JSON.stringify(next) === JSON.stringify(box)) return tree;
-  return updateBlockTree(tree, id, (b) => ({ ...b, properties: { ...b.properties, text_box: next } }));
-}
+// changes nothing (markup/placed.js).
+const withBox = (tree, id, fn) => withPlaced(tree, id, "text_box", fn);
 
 // blocks, blocksRef, setBlocks: the open page's tree; foldBlocks(fn) is
 // setBlocks for a write that belongs to the edit before it. pageId: the
@@ -129,17 +123,13 @@ export function useTextBoxes({ blocks, blocksRef, setBlocks, foldBlocks, readOnl
     // placed by the layer, open in its editor. The layer left the box
     // being edited at the press before, so that box's removal is an edit
     // of its own. A PDF page's box sits at the page's top level with its
-    // pdf_page, a sheet's is the sheet's last child, as ink groups do.
+    // pdf_page, a sheet's is the sheet's last child (markup/placed.js
+    // addPlaced), as ink groups do.
     onBoxCreate(surface, textBox) {
       if (readOnly || !pageId) return;
       const id = makeBlockId();
-      const onSheet = typeof surface === "string";
-      const node = { id, parentId: onSheet ? surface : null, children: [], content: "",
-        properties: { t0: wallNow(), text_box: textBox, ...(onSheet ? {} : { pdf_page: surface }) } };
-      setBlocks((prev) => {
-        if (!onSheet) return [...prev, node];
-        return findBlock(prev, surface) ? updateBlockTree(prev, surface, (s) => ({ ...s, children: [...(s.children || []), node] })) : prev;
-      });
+      const properties = { t0: wallNow(), text_box: textBox };
+      setBlocks((prev) => addPlaced(prev, surface, id, properties));
       freshRef.current = id;
       measureRef.current.add(id);
       closeRowEditor();

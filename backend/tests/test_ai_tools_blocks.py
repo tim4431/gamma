@@ -52,6 +52,32 @@ def test_edit_block(notes):
     assert text.startswith("ok") and not action.get("error")
 
 
+def test_edit_block_on_a_picture_edits_its_caption(notes):
+    """read_block shows a picture as its ![caption](url) line, but its text
+    is the caption alone: an edit carrying that line is refused with the
+    rule, so the image Markdown never lands in the caption; the caption
+    itself is edited as any text."""
+    c, ids = notes
+    scope = folder(ids["sandbox"])
+    url = "/api/uploads/" + "a" * 64 + ".png"
+    r = c.post("/api/blocks", json={"parent_id": ids["page"], "content": "old caption",
+                                    "properties": {"pdf_page": 1, "picture": {"url": url, "x": 10, "y": 10,
+                                                                             "w": 100, "h": 80}}})
+    assert r.status_code == 200, r.text
+    pid = r.json()["id"]
+    text, _ = run_agent_tool(ids["ws"], scope, "read_block", {"block_id": pid})
+    assert f"![old caption]({url})" in text
+    for mode in ("replace", "append"):
+        text, _ = run_agent_tool(ids["ws"], scope, "edit_block",
+                                 {"block_id": pid, "mode": mode, "content": f"![new caption]({url})"})
+        assert text.startswith("error") and "caption alone" in text, text
+        assert props(c, pid)["content"] == "old caption"
+    text, _ = run_agent_tool(ids["ws"], scope, "edit_block", {"block_id": pid, "content": "new caption"})
+    assert text.startswith("ok"), text
+    assert props(c, pid)["content"] == "new caption"
+    assert props(c, pid)["properties"]["picture"]["url"] == url
+
+
 def test_create_block_placement(notes):
     c, ids = notes
     scope = folder(ids["sandbox"])

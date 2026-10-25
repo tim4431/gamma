@@ -30,7 +30,6 @@ disk) stops the import, since every later note would meet it too.
 
 import contextlib
 import io
-import math
 import posixpath
 import shutil
 import zipfile
@@ -38,7 +37,6 @@ from collections import Counter
 from datetime import UTC, datetime
 
 from fastapi import HTTPException
-from PIL import Image, ImageOps
 
 from . import config, jobs
 from . import ink as inkmod
@@ -56,18 +54,14 @@ from .logbuf import log
 from .notebook import paper_ops
 from .ops import after_commit, apply_batches
 from .pdf_export import ExportPdfReader, display_size, page_frame
+from .picture import image_size
 from .recording import mp4_duration_ms
 from .server_settings import MB, workspace_quota
 from .storage import content_digest, display_filename, is_pdf, store_file, store_file_stream, store_pdf
-from .text_box import escape_markdown
 
 MAX_DIRECTORY_BYTES = 16 << 20   # a zip's central directory (the upload's, each .note's): about 100,000 files
 MAX_NOTE_SAMPLES = 20_000_000    # flattened samples in one note (a thousand pages of dense writing)
-MAX_PICTURE_PIXELS = 40_000_000  # a picture decoded to be cropped or turned
-MAX_PICTURE_USES = 4             # pictures of one note one image file is read for
-MAX_TURNED_SIDE = 2048           # px: a turned picture's longer side
 MAX_WARNINGS = 200
-JPEG_QUALITY = 90
 _PICTURE_EXTS = {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp"}
 _FOUND = ("SELECT id, properties, content FROM unified_blocks WHERE parent_id = 'root' "
           "AND json_extract(properties, '$.notability_import') IS NOT NULL")
@@ -129,107 +123,6 @@ def compose_pdf(frames: list, paper: dict, readers: dict) -> bytes:
     out = io.BytesIO()
     writer.write(out)
     return out.getvalue()
-
-
-def picture_bytes(data: bytes, media: nb.Media, animation: bytes | None = None) -> tuple[bytes, str]:
-    """The picture as stored, ``(bytes, ext)``: the bytes as they came when
-    nothing is to be done to them, else Pillow's. ``data`` is the picture's
-    image, an animated GIF's still frame; its ``animation`` comes in its
-    place when nothing is to be done and it is a GIF that opens. Something
-    is to be done when the picture is cropped (FigureCropRectKey short of
-    the whole image; an .ntb's crop is in ``media.crop_size`` units, scaled
-    to the image's pixels), flipped, turned, or shown at an aspect over 1 %
-    off the cropped image's: then the EXIF orientation is applied, the crop
-    (clamped to the image), the flips, the stretch to the shown aspect and
-    the turn (corners transparent), in that order. A turned picture is a PNG, the
-    one format the server writes that keeps its transparent corners, its
-    longer side at most MAX_TURNED_SIDE; any other keeps its pixels as PNG
-    when it came as PNG, GIF or WebP or is translucent, else JPEG.
-    ValueError for a file that is no PNG, JPEG, GIF or WebP, one past
-    MAX_PICTURE_PIXELS that would need decoding, a stretch so long and thin
-    that a side would round to no pixel, and any error Pillow raises
-    decoding it."""
-    ext = _PICTURE_EXTS.get(sniff(data))
-    if not ext:
-        raise ValueError("not a PNG, JPEG, GIF or WebP picture")
-    angle = media.rotation if abs(media.rotation) > 1e-6 else 0.0
-    try:
-        with Image.open(io.BytesIO(data)) as opened:
-            width, height = opened.size
-            if (opened.getexif() or {}).get(0x0112, 1) in (5, 6, 7, 8):  # EXIF orientation: a quarter turn
-                width, height = height, width
-            crop = _crop_box(_in_pixels(media.crop, media.crop_size, width, height), width, height)
-            cw, ch = crop[2] - crop[0], crop[3] - crop[1]
-            stretch = abs((media.w / media.h) / (cw / ch) - 1) > 0.01
-            if not (angle or media.flip_h or media.flip_v or stretch or crop != (0, 0, width, height)):
-                if animation is not None and sniff(animation) == "image/gif" and _opens(animation):
-                    return animation, ".gif"
-                return data, ext
-            if width * height > MAX_PICTURE_PIXELS:
-                raise ValueError("too large to crop or turn")
-            image = ImageOps.exif_transpose(opened) or opened
-            image = image.crop(crop)
-            if media.flip_h:
-                image = image.transpose(Image.Transpose.FLIP_LEFT_RIGHT)
-            if media.flip_v:
-                image = image.transpose(Image.Transpose.FLIP_TOP_BOTTOM)
-            if stretch:
-                aspect = media.w / media.h
-                size = (max(1, round(ch * aspect)), ch) if ch * aspect >= cw else (cw, max(1, round(cw / aspect)))
-                fit = min(1.0, (MAX_PICTURE_PIXELS / (size[0] * size[1])) ** 0.5)
-                if min(size) * fit < 0.5:  # held at one pixel, the other side would be past the cap
-                    raise ValueError("shown too long and thin to stretch")
-                image = image.resize((max(1, round(size[0] * fit)), max(1, round(size[1] * fit))), Image.BICUBIC)
-            out = io.BytesIO()
-            if angle:
-                c, s = abs(math.cos(angle)), abs(math.sin(angle))
-                # Pillow's expanded size rounds the turned corners outward: up to 2 px past their extent
-                fit = min(1.0, (MAX_TURNED_SIDE - 2) / max(image.width * c + image.height * s,
-                                                           image.width * s + image.height * c))
-                if fit < 1:  # the turned picture's longer side at most MAX_TURNED_SIDE
-                    image = image.resize((max(1, math.floor(image.width * fit)), max(1, math.floor(image.height * fit))),
-                                         Image.LANCZOS)
-                image = image.convert("RGBA").rotate(-math.degrees(angle), expand=True, resample=Image.BICUBIC)
-                image.save(out, "PNG", optimize=True)
-                return out.getvalue(), ".png"
-            translucent = "A" in image.getbands() or (image.mode == "P" and "transparency" in image.info)
-            if translucent or ext != ".jpg":
-                (image.convert("RGBA") if translucent else image.convert("RGB")).save(out, "PNG", optimize=True)
-                return out.getvalue(), ".png"
-            image.convert("RGB").save(out, "JPEG", quality=JPEG_QUALITY, optimize=True)
-            return out.getvalue(), ".jpg"
-    except ValueError:
-        raise
-    except Exception as exc:  # noqa: BLE001 — a decompression bomb, or any file Pillow cannot decode
-        raise ValueError(f"not a readable picture ({exc.__class__.__name__})") from None
-
-
-def _opens(data: bytes) -> bool:
-    """Whether Pillow reads the image's header."""
-    try:
-        with Image.open(io.BytesIO(data)):
-            return True
-    except Exception:  # noqa: BLE001 — any file Pillow cannot open
-        return False
-
-
-def _in_pixels(crop, size, width: int, height: int):
-    """A crop given in ``size`` units (an .ntb's logical asset size, not
-    always the image's pixels) as the image's pixels."""
-    if crop is None or size is None or not (size[0] > 0 and size[1] > 0):
-        return crop
-    sx, sy = width / size[0], height / size[1]
-    return crop[0] * sx, crop[1] * sy, crop[2] * sx, crop[3] * sy
-
-
-def _crop_box(crop, width: int, height: int) -> tuple[int, int, int, int]:
-    """FigureCropRectKey (x, y, w, h in source pixels) as a box clamped to
-    the image; the whole image when there is none or it holds nothing."""
-    if crop is None:
-        return 0, 0, width, height
-    x0, y0 = max(0, round(crop[0])), max(0, round(crop[1]))
-    x1, y1 = min(width, round(crop[0] + crop[2])), min(height, round(crop[1] + crop[3]))
-    return (x0, y0, x1, y1) if x1 > x0 and y1 > y0 else (0, 0, width, height)
 
 
 def import_notes(ws: str, data, conn, folder: str = "", *, name: str = "", actor: str = "",
@@ -490,16 +383,18 @@ class _Import:
             props.update(attachment_props(doc_id, "", f"{title}.pdf")[0])
             self.progress(item=title)
         groups = self._store_ink(note, plan) if plan.kind != "note" else []
-        boxes, counts, uses = [], Counter(), Counter()
+        boxes, counts, files = [], Counter(), {}
         for page in plan.pages:
             found = []
             for i in page.boxes:
                 media = note.media[i]
-                box = (self._store_picture(members, media, page.frame, title, uses) if media.kind == "picture"
-                       else nmap.text_box(media, page.frame, plan.left_out))
-                box = nmap.copied_box(note, media, box, page.frame)
-                if box is not None:
-                    found.append(box)
+                if media.kind == "picture":
+                    made = self._store_picture(members, media, page.frame, title, plan.left_out, files)
+                    made = nmap.copied_picture(note, media, made, page.frame)
+                else:
+                    made = nmap.copied_box(note, media, nmap.text_box(media, page.frame, plan.left_out), page.frame)
+                if made is not None:
+                    found.append(made)
                     counts["pictures" if media.kind == "picture" else "boxes"] += 1
             boxes.append(found)
         recordings = self._recordings(members, note)
@@ -619,48 +514,102 @@ class _Import:
             out.append(groups)
         return out
 
-    def _store_picture(self, members, media: nb.Media, frame, title: str, uses: Counter) -> dict | None:
-        """A picture as a fixed-width text box holding its image; None, with
-        a warning, when it cannot be stored. An animated GIF's animation is
-        read beside its still frame when the note has it within the
-        per-file cap (``picture_bytes`` chooses). ``uses`` counts the note's
-        pictures by image file: one file is read for MAX_PICTURE_USES of
-        them at most, so a note that names one file over and over is not
-        read and decoded each time."""
-        entry = members.find(media.picture)
-        name = posixpath.basename(media.picture)
-        if entry is None:
-            self.warn(title, _missing(media.picture))
+    def _store_picture(self, members, media: nb.Media, frame, title: str, left_out: Counter,
+                       files: dict) -> dict | None:
+        """A picture as a picture block's ``{content, picture}``
+        (``nmap.picture_block``); None, with a warning, when its file cannot
+        be stored. The file is stored as it came, never decoded: an animated
+        GIF's animation in place of its still frame when the note has it
+        within the per-file cap, it is a GIF and it stores
+        (``_animation``). Only the still's size is read, from its header
+        (``picture.image_size``), for the crop. ``files`` holds, by member,
+        what the note's files were found to be and stored as (a still apart
+        from an animation), so each is read and stored once however many
+        pictures show it, whatever animations they name: a still is read
+        again at most once, to be stored for a picture shown without the
+        animation an earlier one showed."""
+        key, data = ("still", media.picture), None
+        if key not in files:
+            data, pixels = self._read_still(members, media.picture, title)
+            files[key] = None if data is None else {"pixels": pixels, "url": None}
+        still = files[key]
+        if still is None:
             return None
+        url = self._animation(members, media.animation, files) if media.animation else None
+        if url is None and still["url"] is None:
+            if data is None:  # read before, for a picture shown with its animation
+                data, _ = self._read_still(members, media.picture, title)
+            still["url"] = None if data is None else self._stored_still(data, media.picture, title)
+            if still["url"] is None:
+                files[key] = None  # nor tried again for the note's later pictures
+                return None
+        return nmap.picture_block(media, frame, url or still["url"], still["pixels"], left_out)
+
+    def _read_still(self, members, path: str, title: str) -> tuple:
+        """``(bytes, pixel size as shown)`` of a picture's file; ``(None,
+        None)``, with a warning, when it is missing, past the per-file cap,
+        does not read, or is no PNG, JPEG, GIF or WebP whose size reads."""
+        entry = members.find(path)
+        name = posixpath.basename(path)
+        if entry is None:
+            self.warn(title, _missing(path))
+            return None, None
         if entry.size > self.max_mb * MB:
             self.warn(title, f"Picture {name} is over the {self.max_mb} MB per-file limit: left out")
-            return None
-        uses[media.picture] += 1
-        if uses[media.picture] > MAX_PICTURE_USES:
-            if uses[media.picture] == MAX_PICTURE_USES + 1:
-                self.warn(title, f"Picture {name} is shown more than {MAX_PICTURE_USES} times: the rest are left out")
-            return None
-        moving, animation = members.find(media.animation) if media.animation else None, None
-        if moving is not None and moving.size <= self.max_mb * MB:
-            with contextlib.suppress(*READ_ERRORS):  # one that does not read leaves the still frame
-                animation = moving.read()
+            return None, None
         try:
-            data, ext = picture_bytes(entry.read(), media, animation)
-        except (ValueError, *READ_ERRORS) as exc:
-            self.warn(title, f"Picture {name} is left out: {exc}")
-            return None
-        self._room(len(data))
+            data = entry.read()
+        except READ_ERRORS:
+            self.warn(title, f"Picture {name} could not be read: left out")
+            return None, None
+        pixels = image_size(data)
+        if pixels is None or not all(pixels):
+            self.warn(title, f"Picture {name} is left out: not a readable PNG, JPEG, GIF or WebP picture")
+            return None, None
+        return data, pixels
+
+    def _stored_still(self, data: bytes, path: str, title: str) -> str | None:
+        """The upload url of a picture's file once stored; None, with a
+        warning, when it is refused."""
         try:
-            stored, _ = store_file(self.ws, data, ext)
+            return self._upload(data, path)
         except HTTPException as exc:
             if exc.status_code == 507:
                 raise
-            self.warn(title, f"Picture {name} is left out: {exc.detail}")
+            self.warn(title, f"Picture {posixpath.basename(path)} is left out: {exc.detail}")
             return None
-        self.progress(item=name)
-        caption = " ".join(media.caption.translate({ord(c): None for c in "[]|"}).split())
-        return {"content": f"![{escape_markdown(caption)}](/api/uploads/{stored})",
-                "text_box": nmap.picture_box(media, frame)}
+
+    def _animation(self, members, path: str, files: dict) -> str | None:
+        """The upload url of an animated GIF's animation, read and stored
+        once however many of the note's pictures show it (``files``, by its
+        member); None when the note does not have it within the per-file
+        cap, it does not read, is no GIF whose size reads or is refused,
+        and the still frame is shown."""
+        key = ("animation", path)
+        if key in files:
+            return files[key]
+        files[key] = None
+        moving = members.find(path)
+        if moving is None or moving.size > self.max_mb * MB:
+            return None
+        try:
+            data = moving.read()
+            if sniff(data) == "image/gif" and image_size(data) is not None:
+                files[key] = self._upload(data, path)
+        except READ_ERRORS:
+            pass
+        except HTTPException as exc:
+            if exc.status_code == 507:
+                raise
+        return files[key]
+
+    def _upload(self, data: bytes, path: str) -> str:
+        """The upload url of a picture's checked bytes, stored
+        (``store_file``: its HTTPException, 507 when the disk has no room)."""
+        self._room(len(data))
+        stored, _ = store_file(self.ws, data, _PICTURE_EXTS[sniff(data)])
+        self.progress(item=posixpath.basename(path))
+        return f"/api/uploads/{stored}"
 
     def _recordings(self, members, note: nb.Note) -> list[dict]:
         """The note's recordings as recording blocks, each stored
@@ -761,20 +710,20 @@ def _missing(path: str) -> str:
 
 
 def _markup(plan: nmap.NotePlan, groups: list, boxes: list) -> list[dict]:
-    """The pages' ink groups and boxes as blocks: on a PDF page at the
-    page's top level (``pdf_page`` on a box), page by page; in a notebook
-    under each page's sheet, which starts folded."""
+    """The pages' ink groups, boxes and pictures as blocks: on a PDF page at
+    the page's top level (``pdf_page`` on a box or a picture), page by
+    page; in a notebook under each page's sheet, which starts folded."""
     tree = []
     for k, page in enumerate(plan.pages, 1):
         inks = [{"content": "", "properties": group} for group in (groups[k - 1] if groups else [])]
+        placed = [{"content": box["content"], "properties": {key: v for key, v in box.items() if key != "content"}}
+                  for box in boxes[k - 1]]
         if plan.kind == "notebook":
-            placed = [{"content": box["content"], "properties": {"text_box": box["text_box"]}} for box in boxes[k - 1]]
             sheet = plan.papers[k - 1] if plan.papers else plan.paper
             tree.append({"id": new_block_id(), "content": "", "properties": {"sheet": sheet, "collapsed": True},
                          "children": inks + placed})
         elif plan.kind in ("original", "composed"):
-            tree += inks + [{"content": box["content"], "properties": {"text_box": box["text_box"], "pdf_page": k}}
-                            for box in boxes[k - 1]]
+            tree += inks + [{**block, "properties": {**block["properties"], "pdf_page": k}} for block in placed]
     return tree
 
 

@@ -86,14 +86,14 @@ from .auth import MIRROR_ACTOR
 from .blocks_store import FOLDERS, LABELS, TREES, create_page, fetch_subtree, last_child_position, page_root_id
 from .db import connect_pages_db, connect_users_db, page_now, ws_uploads_dir
 from .logbuf import log
-from .ops import MAX_OPS, OpError, commit_ops, latest_seq, props_patch, trash_page
+from .ops import MAX_OPS, PLACED_KEYS, OpError, commit_ops, latest_seq, props_patch, trash_page
+from .picture import resend_picture
 from .publisher_sessions import seal, unseal
 from .routers.sync import changes as local_changes
 from .storage import find_upload_file, matches_name, put_upload
 from .upload_parts import PART_BYTES
 from .sync_tree import (ancestors, apply, children_of, diff, moved, snapshot_from_rows, snapshot_from_tree,
                         subtree_ids, tree_order, upload_refs)
-from .text_box import normalize_text_box
 
 SYNC_LOG_KEEP = 500        # rows of sync_log kept per mirror
 CLIENT = "sync"            # the op-log client of every local write the engine makes
@@ -1363,9 +1363,9 @@ def _unlanded(op: dict, base: dict, remote: dict) -> tuple[dict | None, dict | N
     """One op of a push whose answer was lost, against the remote's tree
     now: ``(the part the remote shows, the part to send again)``. A change
     the remote shows counts as landed, and so does one it overrode since (it
-    moved the block elsewhere, set that property; for a text box merged key
-    by key, each key of the box). Neither part (the op
-    waits for the merge that follows, where an edit beats a delete): a
+    moved the block elsewhere, set that property; for a text box, each key
+    of it, and for a picture, each part merge_picture merges). Neither part
+    (the op waits for the merge that follows, where an edit beats a delete): a
     delete of a subtree the remote changed since, a change to a block the
     remote no longer holds."""
     bid, kind = op["id"], op["op"]
@@ -1399,19 +1399,24 @@ def _unlanded(op: dict, base: dict, remote: dict) -> tuple[dict | None, dict | N
     # do its base's stroke ids (``_with_base_ids``).
     base_props = op.get("base_props") or {}
     ink = "ink_url" in props and "ink_url" in base_props and now["props"].get("ink_url") != props["ink_url"]
-    # A text box merged key by key (ops.py) is judged key by key: the keys
-    # of ours the remote still shows as they were go again, onto its box.
-    box = _box_again(props["text_box"], base_props["text_box"], now["props"].get("text_box")) \
-        if "text_box" in props and "text_box" in base_props else False
+    # A text box or a picture merged key by key (ops.py PLACED_KEYS) is
+    # judged so: the keys of ours the remote still shows as they were go
+    # again, onto its value (a picture's frame as its size and its centre).
+    placed = {}
+    for k in PLACED_KEYS:
+        if k in props and k in base_props:
+            again = _placed_again(k, props[k], base_props[k], now["props"].get(k))
+            if again is not False:
+                placed[k] = again
     for k, v in props.items():
         if ink and k in INK_KEYS:
             rest.setdefault("props", {})[k] = v
             continue
-        if k == "text_box" and box is not False:
-            if box is None:
+        if k in placed:
+            if placed[k] is None:
                 landed.setdefault("props", {})[k] = v
             else:
-                rest.setdefault("props", {})[k] = box
+                rest.setdefault("props", {})[k] = placed[k]
             continue
         unchanged = now["props"].get(k) == (was.get("props") or {}).get(k) and now["props"].get(k) != v
         (rest if unchanged else landed).setdefault("props", {})[k] = v
@@ -1419,17 +1424,25 @@ def _unlanded(op: dict, base: dict, remote: dict) -> tuple[dict | None, dict | N
         rest["base_props"] = op["base_props"]
         if "base_ids" in op:
             rest["base_ids"] = op["base_ids"]
-    if box:
-        rest["base_props"] = {**rest.get("base_props", {}), "text_box": now["props"]["text_box"]}
+    for k, again in placed.items():
+        if again:
+            rest["base_props"] = {**rest.get("base_props", {}), k: now["props"][k]}
     return (landed if len(landed) > 2 else None), (rest if len(rest) > 2 + ("base_props" in rest) else None)
 
 
-def _box_again(mine, base, now):
-    """A text box change ``base`` → ``mine`` against the remote's box
-    ``now``: the box to send again (the remote's, with the keys of ours it
-    still shows as they were), None when it shows each of them as ours or
-    changed since, False when one of them is no box (the plain rule)."""
-    m, b, n = normalize_text_box(mine), normalize_text_box(base), normalize_text_box(now)
+def _placed_again(key, mine, base, now):
+    """A change ``base`` → ``mine`` of a placed object (a text box's
+    ``text_box``, a picture's ``picture``, the property ``key``) against
+    the remote's value ``now``: the value to send again (the remote's, with
+    the keys of ours it still shows as they were), None when it shows each
+    of them as ours or changed since, False when one of them is no such
+    object (the plain rule). A picture's frame goes again as merge_picture
+    merges it, its size key by key and its centre as one
+    (picture.py ``resend_picture``)."""
+    if key == "picture":
+        return resend_picture(mine, base, now)
+    normalize, _merge = PLACED_KEYS[key]
+    m, b, n = normalize(mine), normalize(base), normalize(now)
     if m is None or b is None or n is None:
         return False
     pending = {k: v for k, v in m.items() if v != b[k] and n[k] == b[k]}

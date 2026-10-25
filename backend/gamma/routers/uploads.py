@@ -139,6 +139,7 @@ def upload_image(request: Request, file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail=f"unsupported image type: {file.content_type}")
     contents = file.file.read()
     filename, already_existed = store_file(ws, contents, IMAGE_EXTENSIONS[file.content_type])
+    _share_reads_own_upload(request, ws, filename)
     return {
         "url": f"/api/uploads/{filename}",
         "size": len(contents),
@@ -177,6 +178,7 @@ def upload_file(request: Request, file: UploadFile = File(...)):
         # version 2 drawing (a version 1 one means the pusher must update)
         parse_upload(contents)
     filename, already_existed = store_file(ws, contents, ext)
+    _share_reads_own_upload(request, ws, filename)
     return {"url": f"/api/uploads/{filename}", "name": name, "size": len(contents),
             "already_existed": already_existed}
 
@@ -205,12 +207,26 @@ def _share_can_read_upload(ws: str, scope, filename: str) -> bool:
     with connect_pages_db(ws) as conn:
         found = _pages_reference(conn, scope.pages(conn), filename)
     if found:
-        with _share_reads_lock:
-            _share_reads[key] = now + SHARE_READ_TTL_S
-            _share_reads.move_to_end(key)
-            while len(_share_reads) > SHARE_READ_MAX:
-                _share_reads.popitem(last=False)
+        _remember_share_read(key, now)
     return found
+
+
+def _remember_share_read(key: tuple, now: float) -> None:
+    with _share_reads_lock:
+        _share_reads[key] = now + SHARE_READ_TTL_S
+        _share_reads.move_to_end(key)
+        while len(_share_reads) > SHARE_READ_MAX:
+            _share_reads.popitem(last=False)
+
+
+def _share_reads_own_upload(request: Request, ws: str, filename: str) -> None:
+    """A share editor reads back the file it just stored: the yes is
+    remembered before any saved block names it, so a picture dropped on a
+    shared page shows at once rather than after a reload. The visitor sent
+    those bytes, so the yes shows it nothing it did not have."""
+    scope = share_scope(request)
+    if scope is not None:
+        _remember_share_read((ws, scope.page, scope.folder, filename), time.monotonic())
 
 
 def _pages_reference(conn, pages: list[str], filename: str) -> bool:

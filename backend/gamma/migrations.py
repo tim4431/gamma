@@ -1697,6 +1697,17 @@ def _v42_cloud_invitations(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _v43_picture_kind(ws: str, pages: sqlite3.Connection, data) -> None:
+    """The generated ``kind`` gains its ``picture`` case (a ``picture``
+    object, gamma/picture.py), after ``text_box``: ``block_columns`` finds
+    the column's stored definition outdated and adds it again, with its
+    index and the generated columns after it. It commits what it rebuilt
+    itself, ahead of the stamp; a rerun finds the current definition and
+    changes nothing. Nothing is stamped or touched: the column is derived."""
+    if _columns(pages, "unified_blocks"):  # an old copy without the table gets it from the schema statements
+        block_columns(pages)
+
+
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
@@ -1729,4 +1740,5 @@ WORKSPACE_STEPS = [
     (37, "highlight_colors", _v37_highlight_colors),
     (38, "recording_kind", _v38_recording_kind),
     (41, "ink_v2", _v41_ink_v2),
+    (43, "picture_kind", _v43_picture_kind),
 ]

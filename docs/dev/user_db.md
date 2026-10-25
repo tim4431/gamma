@@ -172,9 +172,11 @@ All state is SQLite + files on disk under a data directory (env
   - `kind` — generated (VIRTUAL: computed when read, never written): NULL on
     the reserved rows, `page` under `root` or `trash`, `folder` / `label`
     in the trees (from `page_id`), else `ink` (an
-    `ink_url` key), `text_box`, `sheet`, `recording` (an object there), `link` (a
-    non-empty `link_url` or `link_page_id`), `highlight` (a
-    `pdf_position` object), `note`. The filters read the column (its
+    `ink_url` key), `text_box`, `picture`, `sheet`, `recording` (an object
+    there), `link` (a non-empty `link_url` or `link_page_id`), `highlight`
+    (a `pdf_position` object), `note`, tested in that order
+    (`db.BLOCK_HOT_COLUMNS`; `picture` since step 43,
+    [migrations.md](migrations.md)). The filters read the column (its
     index); the block dict computes the same rule in Python from the
     properties it has parsed anyway (`blocks_store.block_kind`, checked
     against the column by `tests/test_block_columns.py`), so a tree read
@@ -530,11 +532,12 @@ track of the ones nothing uses.
   remote announced is refused before the check ([mirror.md](mirror.md)).
 - **What counts as a reference.** `storage.upload_refs`, the one grammar:
   `/api/uploads/<name>` anywhere in a block's content or properties (images,
-  file chips, `ink_url`, `source_url`) and a block's `doc_id` (its PDF,
-  `<doc_id>.pdf`). A mirror's file transfer and a page export's file list
-  read references through it too. A saved AI conversation's pictures count
-  as well: `/api/uploads/<name>` in the `chats` and `chat_history`
-  messages ([ai.md](ai.md#pictures)); `upload_gc.referenced` reads both.
+  file chips, `ink_url`, a picture's `picture.url`, `source_url`) and a
+  block's `doc_id` (its PDF, `<doc_id>.pdf`). A mirror's file transfer and
+  a page export's file list read references through it too. A saved AI
+  conversation's pictures count as well: `/api/uploads/<name>` in the
+  `chats` and `chat_history` messages ([ai.md](ai.md#pictures));
+  `upload_gc.referenced` reads both.
 - **Unreferenced files are kept for 30 days.** When the last reference to a
   file goes (its block deleted, a page's PDF detached or replaced by a new
   version), the file stays on disk and is served as before. Its name is
@@ -627,7 +630,12 @@ pages filed in ONE folder or below it (by the folder's id), of one workspace for
 chose: endpoints that support shared views resolve the workspace from the
 share token (`resolve_ws` — the token wins over the visitor's own session
 for choosing whose data is read) and confine reads to the pages in reach
-(`share_scope` + `assert_block_in_scope`); write endpoints require a member
+(`share_scope` + `assert_block_in_scope`). A stored file is in reach when
+a block of those pages names it, or when an edit share's visitor has just
+stored it through that share (`routers/uploads.py`
+`_share_reads_own_upload`, remembered for `SHARE_READ_TTL_S`, 5 min), so a
+picture dropped on a shared page shows before its block is saved. Write
+endpoints require a member
 with the editor or owner role (`require_ws(write=True)`), except the block
 writers, which accept an `edit` share through `require_ws_writer` under the
 same scope, and the comment writers, which take any member and any signed-in

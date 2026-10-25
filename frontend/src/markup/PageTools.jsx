@@ -1,7 +1,7 @@
 // The page tools every surface's layers read (markup/MarkupLayers.jsx): a
 // PDF page, a sheet in the notebook view and a sheet among the notes all
 // take the same tools from here. App builds them from the owners it
-// composes (ink/'s, the text boxes') and provides PageToolsContext
+// composes (ink/'s, the text boxes', the pictures') and provides PageToolsContext
 // around the viewer and the notes (docs/dev/handwriting.md).
 import { createContext, useContext } from "react";
 
@@ -38,8 +38,9 @@ import { createContext, useContext } from "react";
 // stretched or put away, onZoom(page, {x, y} | {mag} | {at, size}): the
 // zoom window dragged, resized, or sent to a tapped point of a page whose
 // size in points rides along),
-// onJump (show a mark's block in the notes) and the text boxes'
-// (markup/useTextBoxes.js) — one object for App's life whose functions call
+// onJump (show a mark's block in the notes), the text boxes'
+// (markup/useTextBoxes.js) and the pictures' (onPicture…,
+// markup/usePictures.js) — one object for App's life whose functions call
 // the latest handlers (shared/lib/stableActions.js), so the context value
 // changes only with the tools and a memoized page never re-renders for a
 // new closure.

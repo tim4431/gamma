@@ -398,7 +398,8 @@ def ai_picture_upload(request: Request, file: UploadFile = File(...)):
 def page_image(page_id: str, request: Request, page: int, box: str = "", ink: int = 0):
     """A PDF page of the page ``page_id`` as a picture, or its region
     ``box`` (``x0,y0,x1,y1`` page fractions), with the user's handwriting
-    written on it when ``ink=1`` — what a reply's view chip expands to, what
+    written on it when ``ink=1``, over the pictures and text boxes placed on
+    it, as the page shows them — what a reply's view chip expands to, what
     a region attached to a message shows in the composer and the bubble,
     and what the model embeds (``![p. N](/api/ai/page-image/…)``) to show
     the user a page it looked at. Any workspace member."""

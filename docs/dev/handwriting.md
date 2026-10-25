@@ -30,9 +30,10 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   - the owners' pure parts, `ink/stripState.js`, `ink/inkSurfaces.js`,
     `ink/inkHistory.js`, `ink/inkEdits.js`, `ink/selectionEdits.js` and
     `ink/inkCommands.js`;
-  - the tool strip and the page plumbing it shares with text boxes,
-    `markup/MarkupToolbar.jsx`, `markup/MarkupLayers.jsx` and
-    `markup/PageTools.jsx`.
+  - the tool strip and the page plumbing it shares with text boxes and
+    pictures, `markup/MarkupToolbar.jsx`, `markup/MarkupLayers.jsx` and
+    `markup/PageTools.jsx`, and the lasso's resize and rotate handles,
+    which a picture shares, `markup/TransformHandles.jsx`.
 - Tests: `backend/tests/test_ink.py`, and in `frontend/tests/`:
   - `ink.test.mjs`, `inkErase.test.mjs`, `finishStroke.test.mjs`,
     `shapes.test.mjs`, `shapeTool.test.mjs`, `ruler.test.mjs`,
@@ -85,9 +86,12 @@ app ([ipad.md](ipad.md)). Typed text on a page is
     - the **tool presets**, each a pen or a highlighter with its own colour
       and width, shown as the icon over a colour bar (four pens and three
       highlighters to start);
-    - the eraser, the lasso and the Text tool (typed text boxes,
-      [text_boxes.md](text_boxes.md)), then a pressed *Ruler*, *Shapes* and
-      *Zoom window* button, each only while it is on (below);
+    - the eraser, the lasso, the Text tool (typed text boxes,
+      [text_boxes.md](text_boxes.md)) and the Picture button (a photo or an
+      image placed on the page, [pictures.md](pictures.md): a button that
+      opens the file picker, not a tool that stays armed, and none on a
+      read-only page), then a pressed *Ruler*, *Shapes* and *Zoom window*
+      button, each only while it is on (below);
     - a hand (nothing armed: scroll and select text);
     - **More** (⋯, "More handwriting tools") and close;
     - Undo / Redo, pinned at the right end as the last two buttons.
@@ -520,7 +524,7 @@ app ([ipad.md](ipad.md)). Typed text on a page is
     the notebook view, or the notes for a sheet among them), and below the
     strip when the strip floats over the top of that scroller.
   - Its tallest state (two rows and a colour row) fits a 740 × 620
-    viewport. A text box's menu is placed the same way
+    viewport. A text box's menu and a picture's are placed the same way
     (`useSelectionMenuAnchor`).
 - **Copy, cut and paste.** Copy (Ctrl+C, or the menu) keeps the selected
   strokes on a handwriting clipboard: in memory for this tab, and as a
@@ -578,6 +582,8 @@ app ([ipad.md](ipad.md)). Typed text on a page is
     (10% / 15°).
   - The handles keep their screen size and follow the live preview.
     Pressure, timing, tilt and stroke ids are untouched.
+  - A selected picture has the same two handles, with its own rules for
+    the value they make ([pictures.md](pictures.md#the-handles)).
 - **Editable shapes.** A selection of exactly one stroke that carries a
   shape record (a held shape, a Shapes stroke, a ruler line or a stamped
   one) also shows the shape's own handles, 28 px on the screen.
@@ -691,8 +697,9 @@ app ([ipad.md](ipad.md)). Typed text on a page is
 - **Undo / Redo buttons** on the strip (*Undo ink* / *Redo ink*) step the
   stroke history. Their disabled state follows it and resets on leaving
   the page, and selecting alone is not an entry.
-  - While the Text tool is armed or a text box is selected or edited, they
-    read *Undo* / *Redo* and step the page's block history. They stay
+  - While the Text tool is armed, a text box is selected or edited, or a
+    picture is selected, they read *Undo* / *Redo* and step the page's
+    block history. They stay
     enabled, since the block history keeps no count, and a step with
     nothing to undo says "Nothing to undo in notes."
   - A press on them never takes the focus from an open editor, a box's or
@@ -702,7 +709,7 @@ app ([ipad.md](ipad.md)). Typed text on a page is
     Double tap; Double tap by default on a touch screen, Off elsewhere):
     two fingers tapped together undo, three redo. They are routed exactly
     as the strip's buttons are (the stroke history, or the block history
-    while the Text tool or a text box has it).
+    while the Text tool, a text box or a picture has it).
     - A chord is two or three touches that land within 80 ms, move under
       10 css px and all lift within 250 ms.
     - A pinch or a scroll cancels its touches rather than lifting them, so
@@ -2100,7 +2107,9 @@ reach.
       `Z`.
     - `{kind: "newLine", prevent: true}` for Enter (and the keypad's)
       while `zoom` and neither `onControl` nor `hasBox`.
-    - Escape, in order: `hasBox` leaves it to the box (null),
+    - `{kind: "picture"}` for `I`: the strip's Picture button. `P` stays
+      the next pen.
+    - Escape, in order: `hasBox` leaves it to the box or the picture (null),
       `hasSelection` → `deselect`, `optionsOpen` → `closeOptions`, the
       Shapes tool armed (`tool === "shape"`) → `{kind: "off", what:
       "shape"}`, `ruler` → `{kind: "off", what: "ruler"}`, `zoom` →
@@ -2393,7 +2402,7 @@ reach.
       it stays in, and the menu, from its own measured height, picks above
       or below before it is painted
       ([ui-design.md](ui-design.md#menus-and-popups-open-in-place)). A
-      text box's menu is placed the same way.
+      text box's menu and a picture's are placed the same way.
     - Its first row is fixed: Color, Width, Style (`ctlBtn`, `BrushIcon`,
       aria-label and title "Style", `aria-expanded`, `modeActive` while
       its row shows), Copy, Duplicate, More (`ctlBtn`, `MoreIcon`,
@@ -2462,7 +2471,25 @@ reach.
     - The buttons dispatch `onAction(kind, value)` with `copy`, `cut`,
       `flip` `{axis: 'h' | 'v'}`, `split`, `merge`, `transcribe` and, from
       the shape handles, `reshape` `{id, params}`, beside the other kinds.
-  - `InkTransformHandles` are the resize/rotate buttons.
+  - `InkTransformHandles` are the resize/rotate buttons. It renders
+    `markup/TransformHandles.jsx` `TransformHandles` with the lasso's
+    props, and `InkShapeHandles` beside them. A selected picture uses
+    `TransformHandles` too ([pictures.md](pictures.md#client)). `pct` and
+    `arrowSign`, which `InkLayer` reads for its other controls, live there.
+    - The lasso passes `{wrapRef, box, width, height, positions,
+      maxScale, onPreview, onCommit}`. For it a drag previews `{cx, cy,
+      angle, scale}` and the release commits it, Shift snaps the turn to
+      15°, the scale stays within 0.1 … `maxScale`, and a focused handle's
+      arrow keys scale by 1.1 or turn by 15°.
+    - A picture adds `turn` (both buttons turned with its frame, each
+      about its corner), `labels` (each button's name and title),
+      `className` (`pictureHandle`), `valueFor(raw)` (the picture reads
+      the press itself) and `onStep(mode, sign)` (its own arrow keys).
+    - Escape during a drag is taken on the window in the capture phase
+      and goes no further: it takes back the drag, and a picture stays
+      selected (its own Escape, a listener on the document, never sees the
+      key). A blur ends the drag the same way, and handles unmounted
+      mid-drag call `onPreview(null)`.
   - `InkTooltips` shows a button's title on hover or focus for the strip
     and the menus, since native titles are unreliable under Pencil hover.
     - A press takes the tooltip away and keeps it away while the pointer
@@ -2505,6 +2532,19 @@ reach.
       to whatever lies beneath.
     - Lost capture, `pointercancel` and window blur discard the unfinished
       stroke.
+    - A press on what `NOT_INK` names never starts ink, a stylus's
+      included: the menus, the lasso's handles (a picture's are the same
+      `.inkTransformHandle`), the ruler's knob and ends, the zoom window's
+      band and corner, a text box's width handle, band and open editor, a
+      selected picture and its crop (`.pagePicture.selected`,
+      `.pictureCrop`), and the comment cards beside a PDF page. So a
+      picture placed while a pen is armed moves before the pen writes over
+      it. With an ink tool armed, an unselected picture takes no pointer
+      (`markup.css`), and ink draws over it.
+    - On a read-only page the strokes take no pointer, and a tap near one
+      shows its note. The page's own clickable marks come first
+      (`ABOVE_PASSIVE_INK`): a highlight, a note badge, a link box, a text
+      box and a picture.
   - Touch: non-passive capture `touchstart`/`touchmove` listeners cancel
     the Pencil's touch gesture on iPad Safari (cancelling the pointer events
     alone does not stop native panning).
@@ -2871,7 +2911,7 @@ reach.
       `onZoom(page, {at: {x, y}, size})`, `size` that page's in points. The
       tap is a finger's tap, or a mouse click with the hand or the lasso,
       that selects no stroke and dismisses no selection, on no highlight,
-      link or text box.
+      link, text box or picture (`ABOVE_PASSIVE_INK`).
     - Only the page's layers do, never the panel's: MarkupLayers passes
       `onZoom` only to a `chrome` layer, and only while a window is open.
   - Finger chords: `wireChords` installs one module-level
@@ -3515,13 +3555,14 @@ reach.
   - The lasso selection (`inkSelection`, `{page, items: [{id, ids}]}`).
     - `handleInkSelect(page, items)` (the layers' `onSelect`) sets it.
       When it holds strokes, it shows the strip with its options row
-      closed, lets go of a selected text box (`onBoxDeselect()`) and emits
-      `ink.selected`.
+      closed, lets go of a selected text box or picture (`onBoxDeselect()`,
+      which App points at both) and emits `ink.selected`.
     - The selection belongs to the lasso: arming another tool drops it,
       and so does leaving the page.
     - `clearInkSelection()` and `restoreInkSelection(selection)`, stable
       for App's life, are its commands for App and the other owners (an
-      undo, a selected box, Play, Esc; the end of a held E or squeeze).
+      undo, a selected box or picture, Play, Esc; the end of a held E or
+      squeeze).
     - `selectionStill(selection)` is a selection kept aside as it stands,
       without the strokes erased meanwhile, or null when none is left.
   - Each edit of the selection is one `applyInk` across its groups
@@ -3688,11 +3729,13 @@ reach.
 - `ink/useStripKeys.js`: the strip's keys, `useStripKeys({inkUi,
   inkSelection, inkVisible, inkTools, setInkTools, pickInkTool,
   toggleInkShape, closeInkOptions, toggleInkOptions, closeInkStrip,
-  inkUndo, boxUndo, hasBox, deleteInkSelection, selectionStill,
+  inkUndo, boxUndo, hasBox, onPicture, deleteInkSelection, selectionStill,
   clearInkSelection, restoreInkSelection, inkRuler, toggleInkRuler,
   inkZoom, toggleInkZoom, inkZoomNewLine, setStatus}) →
-  {noteInkEraseHold}`, which App calls after the zoom window, `hasBox`
-  being whether a text box is selected.
+  {noteInkEraseHold}`, which App calls after the zoom window. `hasBox` is
+  whether a text box or a picture is selected, and `onPicture` the Picture
+  button's `pictures.pick` (null on a read-only page, where `I` does
+  nothing).
   - While the strip is open (`inkUi.open`), a capture-phase `keydown` and
     `keyup` listener on the window hands each key to `stripKey` and does
     what it answers ([hotkeys.md](hotkeys.md) "Widget keys"). It passes
@@ -3766,8 +3809,13 @@ reach.
 - `markup/` ([text_boxes.md](text_boxes.md) "Client"):
   - `MarkupToolbar.jsx` `MarkupToolbar` is the strip. Its first row
     (`.pdfInkRow`) is five groups split by `.pdfInkSep`: the presets; the
-    eraser, the lasso and the Text tool; the hand; **More** and close; and
-    the history buttons last, whose labels follow its `blockHistory` flag.
+    eraser, the lasso, the Text tool and the Picture button; the hand;
+    **More** and close; and the history buttons last, whose labels follow
+    its `blockHistory` flag.
+    - The Picture button (`ImageIcon`, aria-label "Picture", title
+      "Picture (I): add a photo or an image to the page") calls
+      `onPicture()`, App's `pictures.pick`. Without `onPicture` (a
+      read-only page) the strip draws no button.
     - More, the Tool menu and the Style picker's menu are one
       `useMenuTrigger()` (`"more"`, `"tool"`, `"style"`, one open at a
       time, below their buttons;
@@ -3958,18 +4006,23 @@ reach.
       mounts no layer unless peers are writing on it (`useHasWet`, "Wet
       strokes").
     - While the Text tool is armed the layer only draws.
+    - The picture layer and the text-box layer mount before the ink
+      layer, so they lie under it ([text_boxes.md](text_boxes.md)
+      "Client").
     - It passes the layer `ruler` (`ink.ruler` when its `surface` is this
       surface, else null), `rulerUnits`, `zoom` (`ink.zoom` when its `page`
       is this surface, else null) and the actions `onRuler` and `onZoom`
       (the latter only while a window is open).
     - It takes `chrome` (true by default) and `onZoomStroke` for
-      `InkLayer`. The zoom window's `false` mounts no text boxes and passes
+      `InkLayer`. The zoom window's `false` mounts no text boxes or
+      pictures and passes
       the layer no ruler, window box, `onZoom`, *Paste here*, finger
       chords, finger-scroll hint or `onInkFeatures`.
   - `useMarks` (same file) builds App's marks per surface: its ink groups,
-    and the lasso selection and the flash when they are on it. A surface's
-    slice is kept while its parts are unchanged, so a memoized page
-    re-renders only for its own ink.
+    and the lasso selection and the flash when they are on it. Its text
+    boxes and its pictures come with their selections and flashes the same
+    way. A surface's slice is kept while its parts are unchanged, so a
+    memoized page re-renders only for its own marks.
   - `PageTools.jsx` `PageToolsContext` carries the tools to every layer:
     `{readOnly, ink: {tool, penTool, penOnly, pressure, eraserMode,
     eraserSize, eraserFilter, drawHold, scribble, fingerUndo, lassoMode,
@@ -3989,7 +4042,7 @@ reach.
     - The actions are ref-backed through `useStableActions`, so their
       identity never changes. They are:
       - the stroke, erase, select, action, move, jump and finger-scroll
-        handlers (and the text boxes');
+        handlers (and the text boxes' and the pictures');
       - `onEraseAlong(page, path, r, {mode, pass})`, the eraser's path
         since its last flush ("Erasing" above);
       - `onEraseEnd()` (the tool eraser lifted);
@@ -4012,8 +4065,8 @@ reach.
       classes (`inkArmed`, `inkTouchDraw`, `textArmed`).
 - `app/App.jsx` composes the owners above and owns the rest of the state:
   - The glue between the owners:
-    - `boxUndo`, the Text tool armed or a text box selected: Undo is the
-      block history's;
+    - `boxUndo`, the Text tool armed, a text box selected or a picture
+      selected: Undo is the block history's;
     - `closeInkStrip()`, which the strip's three closers (its ✕, Esc, the
       viewer's pen button) call: the strip's `closeInkStripUi()`, then the
       ruler's `clearInkRuler()` and the zoom window's `clearInkZoom()`;
@@ -4099,10 +4152,11 @@ reach.
   handler, `useStripKeys`'s, so the page's block undo never sees it). With
   it closed, Ctrl+Z is the page's block history, which knows the group's
   block but not its strokes.
-  - Text boxes are blocks: while the Text tool is armed or a box is
-    selected or edited (App's `boxUndo`), the handler leaves Ctrl+Z to the
-    block history. The strip's buttons step it (`undoBlocks`).
-  - Escape goes to a selected or edited box.
+  - Text boxes and pictures are blocks: while the Text tool is armed, a
+    box is selected or edited, or a picture is selected (App's `boxUndo`),
+    the handler leaves Ctrl+Z to the block history. The strip's buttons
+    step it (`undoBlocks`).
+  - Escape goes to a selected or edited box, or to a selected picture.
   - An undo or redo applies its entry onto the group as it stands, by
     stroke id (`mergeInk`), so strokes someone else drew meanwhile stay.
     Two clients drawing into one group keep both drawings (see "Two

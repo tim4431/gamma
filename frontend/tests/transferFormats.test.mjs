@@ -40,11 +40,11 @@ test("a folder exports its papers' annotated PDFs as one zip, with the same swit
   assert.match(exportSummary(folder, "Reading"), /Pages without a PDF are left out/);
 });
 
-test("an annotated PDF with only the notes switch still carries its text boxes as annotations", () => {
+test("an annotated PDF with only the notes switch still carries its text boxes and pictures as annotations", () => {
   const notesOnly = resolveExport({ format: "pdf", highlights: false, notes: true, bundle: false }, paper);
-  assert.equal(exportSummary(notesOnly), "The PDF with text box annotations only and your notes in a column beside each page.");
+  assert.equal(exportSummary(notesOnly), "The PDF with text box and picture annotations only and your notes in a column beside each page.");
   const folder = resolveExport({ format: "pdf", highlights: false, notes: true, bundle: false }, { folder: "Reading" });
-  assert.match(exportSummary(folder, "Reading"), /with text box annotations only and your notes in a column beside each page/);
+  assert.match(exportSummary(folder, "Reading"), /with text box and picture annotations only and your notes in a column beside each page/);
   const both = resolveExport({ format: "pdf", highlights: true, notes: true, bundle: false }, paper);
   assert.equal(exportSummary(both), "The PDF with highlight annotations and your notes in a column beside each page.");
   const none = resolveExport({ format: "pdf", ...allOff }, paper);
@@ -63,7 +63,7 @@ test("an annotated PDF's notes go beside the page or on it, and its comment thre
   const commentsOnly = resolveExport({ format: "pdf", highlights: false, notes: false, comments: true }, paper);
   assert.equal(commentsOnly.controls.find(({ key }) => key === "notesAt").disabled, true);
   assert.equal(commentsOnly.payload.comments, true);
-  assert.equal(exportSummary(commentsOnly), "The PDF with text box annotations only and the comment threads in a column beside each page.");
+  assert.equal(exportSummary(commentsOnly), "The PDF with text box and picture annotations only and the comment threads in a column beside each page.");
   assert.equal(exportSummary(resolveExport({ format: "pdf", highlights: true, notes: true, comments: true }, paper)),
     "The PDF with highlight annotations and your notes and comment threads in a column beside each page.");
   assert.equal(exportSummary(resolveExport({ format: "pdf", highlights: true, notes: true, notesAt: "page", comments: true }, paper)),

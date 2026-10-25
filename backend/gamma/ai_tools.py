@@ -65,8 +65,8 @@ from .ai_permissions import permission_state
 from .ai_pictures import (parts as _parts, ink_picture_url, page_doc_id, parse_box, picture_url_of_page, read_stored,
                           render_region, store_picture, upload_name)
 from .ai_context import (DEPRECATED_TOOLS, MAX_AREA_CROPS, area_highlight, canonical_tool,
-                         handwriting_label, page_report_section, paths_text, pdf_path, quoted_paths,
-                         render_area_crops, text_box_label, under_sheet)
+                         handwriting_label, page_report_section, paths_text, pdf_path, picture_text, placed_label,
+                         quoted_paths, render_area_crops, under_sheet)
 from .blocks_store import (FOLDERS, LABELS, PATH_SEP, block_to_dict, descend, existing_in, fetch_subtree, filing,
                            folder_paths, folder_subtree_ids, label_by_name, label_names,
                            page_attachment, page_root_id, refiled, root_pages, tree_children, tree_parents,
@@ -78,6 +78,7 @@ from .logbuf import log
 from .notebook import is_sheet
 from .pdf_index import pdf_missing, search_pdf
 from .pdf_text import RENDER_MAX_SIDE, image_part, render_page
+from .picture import caption_text, is_picture, normalize_picture
 from .storage import exists as _upload_exists, upload_refs
 from .text_box import is_text_box
 from .trash import KEEP_DAYS, list_trash
@@ -796,21 +797,39 @@ def note_pictures(content: str) -> list[tuple[str, str]]:
     return out
 
 
+def _placed_as(pic: dict) -> str:
+    """How a picture placed on a page differs from its file, in words: the
+    crop as the part of the image it keeps, the turn, the flips; "" for
+    one shown whole, upright and unflipped."""
+    crop, bits = pic["crop"], []
+    if (crop["x"], crop["y"], crop["w"], crop["h"]) != (0, 0, 1, 1):
+        bits.append("cropped to {:.0%}–{:.0%} across and {:.0%}–{:.0%} down".format(
+            crop["x"], crop["x"] + crop["w"], crop["y"], crop["y"] + crop["h"]))
+    if pic["angle"]:
+        bits.append(f"turned {abs(pic['angle']):g}° {'clockwise' if pic['angle'] > 0 else 'anticlockwise'}")
+    bits += [f"flipped {axis}" for axis, on in (("left to right", pic["flip_h"]), ("top to bottom", pic["flip_v"]))
+             if on]
+    return ", ".join(bits)
+
+
 def _run_view_image(conn, ws: str, scope: dict, args: dict):
     """The pictures a note block embeds, for a vision model: read_block
     shows them as ``![alt](/api/uploads/…)`` lines, which say nothing of
-    what the picture holds. Up to MAX_VIEW_IMAGES of the block's own
-    pictures, or the one ``index`` names (1-based). Like view_pdf_page's
-    page they ride on the chip's ``images`` and never reach the saved chat."""
+    what the picture holds. A picture block's own picture comes first (its
+    caption the alt text), the whole file, with how the page shows it
+    otherwise. Up to MAX_VIEW_IMAGES of the block's pictures, or the one
+    ``index`` names (1-based). Like view_pdf_page's page they ride on the
+    chip's ``images`` and never reach the saved chat."""
     loaded, error = _load_scoped_block(conn, scope, args.get("block_id"))
     if error:
         return error, None
     block, page_id, page_title = loaded
-    found = note_pictures(block["content"])
+    placed = normalize_picture(block["properties"]["picture"]) if is_picture(block["properties"]) else None
+    found = ([(caption_text(block["content"]), placed["url"])] if placed else []) + note_pictures(block["content"])
     if not found:
         return (f'error: block [{block["id"]}] embeds no picture — a note\'s pictures are '
-                "![alt](/api/uploads/…) lines in its markdown (read_block shows them); pass the id "
-                "of a block that has one", None)
+                "![alt](/api/uploads/…) lines in its markdown, and a picture placed on a page is a "
+                "block of its own (read_block shows both); pass the id of a block that has one", None)
     try:
         index = int(args.get("index") or 0)
     except (TypeError, ValueError):
@@ -828,8 +847,10 @@ def _run_view_image(conn, ws: str, scope: dict, args: dict):
             lines.append(f"Picture {n} ({url}): its file is missing on this server.")
             continue
         images.append(image_part(shown))
+        on_page = _placed_as(placed) if placed and n == 1 else ""
         lines.append(f"Picture {n} of {len(found)}" + (f', alt text "{alt[:120]}"' if alt else "")
-                     + f", {shown[2]}×{shown[3]} px, {url}: attached.")
+                     + f", {shown[2]}×{shown[3]} px, {url}: attached."
+                     + (f" This is the whole file; the page shows it {on_page}." if on_page else ""))
     if not images:
         return "error: " + " ".join(lines), None
     more = len(found) - len(chosen) if not index else 0
@@ -958,6 +979,8 @@ def _deleted_kind(props: dict) -> str:
         return "highlight"
     if is_text_box(props):
         return "text box"
+    if is_picture(props):
+        return "picture"
     return "note"
 
 
@@ -1017,9 +1040,10 @@ def _run_read_block(conn, ws: str, scope: dict, args: dict):
 
     def line(block_id, content, props, depth, on_sheet, full=False):
         quote = (props.get("quote") or "").strip()
-        text = (content or "").strip()
+        text, more = (content or "").strip(), ""
         if not full and len(text) > _NOTE_SNIPPET:
-            text = text[:_NOTE_SNIPPET] + f'… {_TRUNCATED_MARK}block_id="{block_id}") for the full text]'
+            text, more = text[:_NOTE_SNIPPET], f'… {_TRUNCATED_MARK}block_id="{block_id}") for the full text]'
+        text = (picture_text(props, text) or text) + more
         bits = [f"[{block_id}]"]
         if quote:
             bits.append(f'(highlight: "{quote[:200]}")')
@@ -1032,7 +1056,7 @@ def _run_read_block(conn, ws: str, scope: dict, args: dict):
             else:
                 bits.append(f"(area highlight: a rectangle on PDF page {page}; no picture: more than "
                             "the limit on this page)")
-        if label := text_box_label(props, on_sheet, above=True) or handwriting_label(props):
+        if label := placed_label(props, on_sheet, above=True) or handwriting_label(props):
             bits.append(label)
         bits.append(text or "(empty)")
         pad = "  " * depth
@@ -1375,6 +1399,13 @@ def _plan_edit_block(conn, scope: dict, args: dict):
     content = args.get("content")
     if not isinstance(content, str):
         return None, "error: content must be a string (the block's markdown)"
+    # read_block shows a picture as its ![caption](url) line, but the block's
+    # text is the caption alone: that line written back would put the image
+    # Markdown into the caption.
+    placed = normalize_picture(block["properties"].get("picture")) if is_picture(block["properties"]) else None
+    if placed and f"]({placed['url']})" in content:
+        return None, ("error: a picture block's text is its caption alone, not its ![caption](url) line — "
+                      "write just the caption (read_block shows the line so you know which file it is)")
     if mode not in EDIT_MODES:
         return None, f"error: mode must be one of {', '.join(EDIT_MODES)}"
     # A replace is the model's rewrite of the text it read: the base of the
@@ -1640,18 +1671,19 @@ def cross_page_refusal(conn, block_id: str) -> str:
     # paper; on another page that anchor points into the wrong document.
     if any(block_to_dict(row)["kind"] in ("highlight", "link") for row in rows):
         return "highlight blocks are anchored to their paper — they can only move within the same page"
-    # So is a text box's place, on its PDF page or its sheet, unless the
-    # sheet it is on moves along.
-    if _loose_text_box(rows, block_id):
-        return ("text boxes are placed on their page — they can only move "
+    # So is a text box's or a picture's place, on its PDF page or its
+    # sheet, unless the sheet it is on moves along.
+    if loose := _loose_placed(rows, block_id):
+        return (f"{loose} are placed on their page — they can only move "
                 "within the same page, or with the page of paper they are on")
     return ""
 
 
-def _loose_text_box(rows, root_id: str) -> bool:
-    """Whether a subtree (``fetch_subtree`` rows) holds a text box that no
-    sheet within it carries: moved to another page, its place would name a
-    spot on the wrong paper."""
+def _loose_placed(rows, root_id: str) -> str:
+    """What a subtree (``fetch_subtree`` rows) holds that is placed on its
+    page and that no sheet within it carries: "text boxes" or "pictures"
+    (moved to another page, its place would name a spot on the wrong
+    paper), "" for nothing."""
     parent_of, props_of = {}, {}
     for row in rows:
         parent_of[row[0]] = row[1]
@@ -1660,7 +1692,8 @@ def _loose_text_box(rows, root_id: str) -> bool:
         except ValueError:
             props_of[row[0]] = {}
     for bid, props in props_of.items():
-        if not is_text_box(props):
+        kind = "text boxes" if is_text_box(props) else "pictures" if is_picture(props) else ""
+        if not kind:
             continue
         cur = parent_of[bid] if bid != root_id else None
         carried = False
@@ -1670,8 +1703,8 @@ def _loose_text_box(rows, root_id: str) -> bool:
                 break
             cur = parent_of[cur] if cur != root_id else None
         if not carried:
-            return True
-    return False
+            return kind
+    return ""
 
 
 def _preview_move_block(conn, scope: dict, args: dict):
@@ -2701,7 +2734,8 @@ TOOLS = [
         "spec": {
             "name": "view_image",
             "description": (
-                "Look at the pictures a note block embeds. read_block shows a picture only as "
+                "Look at the pictures a note block embeds, or a picture placed on a page (read_block "
+                "labels it \"(picture on …)\"). read_block shows a picture only as "
                 "its markdown, `![alt](/api/uploads/…)`, which says nothing of what it holds; "
                 "this shows you the pictures of `block_id` (up to " + str(MAX_VIEW_IMAGES) + ", or the one "
                 "`index` names, 1-based). Use it when a question is about a figure, screenshot or "
@@ -3364,7 +3398,8 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
             "you looked at.")
     if "view_image" in names:
         text += (
-            "\nA note's own pictures appear in read_block as ![alt](/api/uploads/…) lines; "
+            "\nA note's own pictures appear in read_block as ![alt](/api/uploads/…) lines, and so "
+            "does a picture placed on a page, labelled \"(picture on …)\", whose text is its caption; "
             "view_image shows them to you when a question is about one.")
     if "clip_region" in names:
         text += (

@@ -9,6 +9,7 @@ import hashlib
 import html
 import io
 import json
+import math
 import os
 import re
 import shutil
@@ -23,7 +24,7 @@ from pydantic import BaseModel
 from fractional_indexing import generate_key_between, generate_n_keys_between
 
 from .. import bibtex as bibtex_mod
-from .. import import_staging, jobs, upload_parts
+from .. import import_staging, jobs, picture, upload_parts
 from ..auth import actor_of, require_user_id, require_ws
 from ..db import connect_pages_db, page_now, safe_doc_id, ws_uploads_dir
 from ..blocks_store import (FOLDERS, LABELS, STORED_COLUMNS, create_page, existing_in, filing, folder_paths,
@@ -40,9 +41,10 @@ from ..ink import InkError, dumps as ink_dumps, from_pdf_ink, parse_ink, pdf_pos
 from ..pdf_text import GlyphPages, quote_under
 from ..pdf_export import (TEXT_BOX_TYPES, _resolve, annotation_key, annotation_shown, display_size,
                           drop_annotations, first_rect, page_frame, pdf_point_to_viewer, reply_parent)
+from ..pdf_image import DecodeBudget, image_file, stream_data
 from ..text_box import escape_markdown, keep_on_surface, markdown_of, measure, normalize_text_box, plain_text
-from ..storage import (display_filename, find_upload_file, is_pdf, pdf_url, put_upload, store_file, store_file_stream,
-                       store_pdf, stat as stored_stat)
+from ..storage import (content_digest, display_filename, find_upload_file, is_pdf, pdf_url, put_upload, store_file,
+                       store_file_stream, store_pdf, stat as stored_stat)
 from ..logseq_import import (
     edn_highlight_position,
     edn_highlight_to_block,
@@ -526,7 +528,10 @@ _AREA_TYPES = {"/Square", "/Circle"}
 # Freehand drawings → handwriting groups (gamma/ink.py), the inverse of the
 # /Ink annotations pdf_export.py writes.
 _INK_TYPES = {"/Ink"}
-_IMPORT_TYPES = _MARKUP_TYPES | _NOTE_TYPES | _AREA_TYPES | _INK_TYPES
+# Image stamps → pictures (gamma/picture.py), the inverse of the /Stamp
+# pdf_export.py writes; a rubber stamp of text or vectors makes nothing.
+_PICTURE_TYPES = {"/Stamp"}
+_IMPORT_TYPES = _MARKUP_TYPES | _NOTE_TYPES | _AREA_TYPES | _INK_TYPES | _PICTURE_TYPES
 
 
 def _ink_from_annotation(obj, pnum: int, pw: float, ph: float, contents: str):
@@ -715,6 +720,297 @@ def _text_box_from_annotation(obj, subtype: str, pnum: int, page, contents: str)
             "box": keep_on_surface(normalize_text_box(box), disp_w, disp_h)}
 
 
+def _gamma_picture(value):
+    """``(picture, caption, text)`` from a Gamma export's /GammaPicture, the
+    picture normalized, or None: ``text`` the /Contents that export wrote
+    (the caption's plain text on one line, its references read as their
+    labels), else the caption's plain text."""
+    if value is None:
+        return None
+    try:
+        data = json.loads(str(_resolve(value)))
+    except ValueError:
+        return None
+    if not isinstance(data, dict) or data.get("v") != 1 or not isinstance(data.get("caption"), str):
+        return None
+    placed = picture.normalize_picture(data.get("picture"))
+    text = data["text"] if isinstance(data.get("text"), str) else picture.caption_text(plain_text(data["caption"]))
+    return (placed, data["caption"], text) if placed else None
+
+
+def _appearance(obj):
+    """An annotation's normal appearance (/AP /N), the form a viewer draws:
+    the one /AS names when /N holds several states; None without one."""
+    ap = _resolve(obj.get("/AP"))
+    shown = _resolve(ap.get("/N")) if hasattr(ap, "get") else None
+    if shown is not None and not hasattr(shown, "get_data") and hasattr(shown, "get"):
+        shown = _resolve(shown.get(str(_resolve(obj.get("/AS")) or "")))
+    return shown if hasattr(shown, "get_data") else None
+
+
+def _appearance_images(form) -> tuple[list, bool]:
+    """The image XObjects an appearance's resources name, each once, with
+    the orientation a Gamma export drew it through (the
+    ``/GammaOrientation`` of the form holding it, else 1), its nested forms
+    walked; and whether any of them names a font, so draws text."""
+    images, text, seen, todo = {}, False, set(), [(form, 1)]
+    while todo and len(seen) < 64:
+        held, turn = todo.pop()
+        if id(held) in seen:
+            continue
+        seen.add(id(held))
+        turn = int(_resolve(held.get("/GammaOrientation")) or turn)
+        resources = _resolve(held.get("/Resources")) or {}
+        text = text or bool(_resolve(resources.get("/Font")))
+        for ref in (_resolve(resources.get("/XObject")) or {}).values():
+            xobject = _resolve(ref)
+            kind = str(xobject.get("/Subtype", ""))
+            if kind == "/Image" and not xobject.get("/ImageMask"):
+                images.setdefault(id(xobject), (xobject, turn))
+            elif kind == "/Form":
+                todo.append((xobject, turn))
+    return list(images.values()), text
+
+
+# --- where an appearance draws its image ------------------------------------------
+# Matrices are PDF's six numbers (a b c d e f): a point (x, y) maps to
+# (a x + c y + e, b x + d y + f).
+
+_IDENTITY = (1.0, 0.0, 0.0, 1.0, 0.0, 0.0)
+_APPEARANCE_BYTES = 1 << 20  # the most appearance content one PDF's walk reads for where its images are
+_NO_ROTATE = 16              # /F: the annotation stays upright when the page turns
+
+
+def _times(m, n):
+    """The matrix that maps a point through ``m``, then through ``n``."""
+    a, b, c, d, e, f = m
+    p, q, r, s, t, u = n
+    return (a * p + b * r, a * q + b * s, c * p + d * r, c * q + d * s, e * p + f * r + t, e * q + f * s + u)
+
+
+def _apply(m, x: float, y: float) -> tuple[float, float]:
+    return m[0] * x + m[2] * y + m[4], m[1] * x + m[3] * y + m[5]
+
+
+def _matrix(value):
+    """A /Matrix, or a cm's operands, as six floats; the identity for none
+    or a bad one."""
+    try:
+        found = tuple(float(_resolve(v)) for v in _resolve(value) or ())
+    except (TypeError, ValueError):
+        return _IDENTITY
+    return found if len(found) == 6 and all(map(math.isfinite, found)) else _IDENTITY
+
+
+class _Drawn:
+    """Where the appearances of one PDF draw their images: ``matrix(form,
+    image)`` is the matrix ``form``'s content draws ``image`` through (the
+    image fills the unit square of its space), from the content's q, Q, cm
+    and Do, a nested form followed through its /Matrix; None when the
+    content does not draw it, or cannot be read. A nested form a Gamma
+    export marked ``/GammaOrientation`` counts as the image: its unit
+    square shows the image as the file ``image_file`` reads back shows it.
+    Each answer is worked out once, however many stamps share the form,
+    and ``_APPEARANCE_BYTES`` of content are read for them all: past that,
+    an image is taken to fill its form's /BBox."""
+
+    def __init__(self):
+        self.found, self.left = {}, _APPEARANCE_BYTES
+
+    def matrix(self, form, image):
+        at = (id(form), id(image))
+        if at not in self.found:
+            try:
+                found = self._walk(form, image, set())
+            except Exception:  # content PyPDF2 cannot parse, or a filter not undone
+                found = None
+            self.found[at] = (form, image, found)  # the objects kept with it, so their ids name them
+        return self.found[at][2]
+
+    def _walk(self, form, image, searched):
+        from PyPDF2.generic import ContentStream, DecodedStreamObject
+
+        searched.add(id(form))
+        if self.left <= 0:
+            return None
+        content = DecodedStreamObject()
+        content.set_data(stream_data(form, self.left))
+        self.left -= len(content.get_data())
+        xobjects = _resolve((_resolve(form.get("/Resources")) or {}).get("/XObject")) or {}
+        ctm, saved = _IDENTITY, []
+        for operands, op in ContentStream(content, None).operations:
+            if op == b"q":
+                saved.append(ctm)
+            elif op == b"Q" and saved:
+                ctm = saved.pop()
+            elif op == b"cm":
+                ctm = _times(_matrix(operands), ctm)
+            elif op == b"Do" and operands:
+                held = _resolve(xobjects.get(str(operands[0])))
+                if held is image:
+                    return ctm
+                if (hasattr(held, "get") and str(held.get("/Subtype", "")) == "/Form" and id(held) not in searched
+                        and len(searched) < 64):
+                    inner = self._walk(held, image, searched)
+                    if inner is not None:
+                        here = _times(_matrix(held.get("/Matrix")), ctm)
+                        return here if held.get("/GammaOrientation") is not None else _times(inner, here)
+        return None
+
+
+def _image_corners(obj, form, image, rect, crop, rotation, drawn):
+    """Where a stamp shows the top-left, top-right and bottom-left corners
+    of ``image``, in points of the page as shown: as a viewer draws an
+    annotation (PDF 32000 12.5.5), the form's /BBox through its /Matrix
+    fitted to /Rect, the image where the form's content draws it
+    (``drawn``, a ``_Drawn``; over the whole /BBox when it cannot tell),
+    then the page's turn, which the annotation takes unless it is NoRotate
+    (then it stays upright, pinned at its /Rect's top-left)."""
+    disp_w, disp_h = display_size(crop, rotation)
+    matrix = _matrix(form.get("/Matrix"))
+    try:
+        bx0, by0, bx1, by1 = (float(_resolve(v)) for v in _resolve(form.get("/BBox")) or ())
+    except (TypeError, ValueError):
+        bx0, by0, bx1, by1 = 0, 0, 1, 1
+    bx0, bx1, by0, by1 = min(bx0, bx1), max(bx0, bx1), min(by0, by1), max(by0, by1)
+    xs, ys = zip(*(_apply(matrix, x, y) for x in (bx0, bx1) for y in (by0, by1)))
+    sx = (rect[2] - rect[0]) / (max(xs) - min(xs)) if max(xs) > min(xs) else 1
+    sy = (rect[3] - rect[1]) / (max(ys) - min(ys)) if max(ys) > min(ys) else 1
+    shown = _times(matrix, (sx, 0, 0, sy, rect[0] - min(xs) * sx, rect[1] - min(ys) * sy))
+    shown = _times(drawn.matrix(form, image) or (bx1 - bx0, 0, 0, by1 - by0, bx0, by0), shown)
+    upright = rotation and int(_resolve(obj.get("/F")) or 0) & _NO_ROTATE
+    pin = pdf_point_to_viewer(rect[0], rect[3], rotation, crop)
+
+    def on_page(x, y):
+        px, py = _apply(shown, x, y)
+        if upright:
+            return pin[0] * disp_w + px - rect[0], pin[1] * disp_h + rect[3] - py
+        u, v = pdf_point_to_viewer(px, py, rotation, crop)
+        return u * disp_w, v * disp_h
+
+    return on_page(0, 1), on_page(1, 1), on_page(0, 0)
+
+
+def _frame_of(corners) -> dict:
+    """The picture whose frame shows an image with these corners (top-left,
+    top-right, bottom-left, points of the page as shown): the frame's sides
+    from the image's, its turn from the top side, mirrored (``flip_h``)
+    when the corners run the other way round. A skew is lost."""
+    (ax, ay), (bx, by), (cx, cy) = corners
+    rx, ry, dx, dy = bx - ax, by - ay, cx - ax, cy - ay
+    flip = rx * dy - ry * dx < 0
+    if flip:  # the image's top-left shows at the frame's top-right
+        rx, ry = -rx, -ry
+    w, h = math.hypot(rx, ry), math.hypot(dx, dy)
+    mx, my = (bx + cx) / 2, (by + cy) / 2  # the centre: midway between two opposite corners
+    return {"x": mx - w / 2, "y": my - h / 2, "w": w, "h": h, "angle": math.degrees(math.atan2(ry, rx)),
+            "flip_h": flip}
+
+
+# A url for normalizing a picture whose file is not read yet (``_PictureFiles``).
+_UNREAD = "/api/uploads/unread.png"
+
+
+def _picture_from_annotation(obj, pnum: int, page, contents: str, drawn):
+    """An image stamp → an importer record carrying a picture (``kind:
+    "picture"``), or None for a stamp whose appearance draws anything but
+    one image and no text (a rubber stamp's words and vectors). That image
+    is the picture's file, read only for the records an import adds
+    (``_PictureFiles``): ``image`` holds it and the orientation it is drawn
+    through, and ``picture`` has no ``url`` until then. A Gamma export's
+    /GammaPicture restores the picture (its size, crop, turn and flips) and
+    its Markdown caption, and names the file it was drawn from in
+    ``original``; its place comes from the centre of /Rect through the
+    page's view box and rotation, the inverse of the export's mapping, so a
+    move in another viewer holds, and /Contents wins when another viewer
+    changed the text that export wrote. Any other image stamp is the whole
+    image where its appearance shows it (``_image_corners`` through
+    ``drawn``, the PDF's ``_Drawn``: on a turned page it turns with the
+    page, as viewers draw it), its /Contents the caption. Either is kept on
+    the page (``picture.keep_on_surface``)."""
+    rect = first_rect(obj)
+    form = _appearance(obj)
+    if not rect or form is None:
+        return None
+    images, text = _appearance_images(form)
+    if len(images) != 1 or text:
+        return None
+    crop, rotation = page_frame(page)
+    disp_w, disp_h = display_size(crop, rotation)
+    private, original = _gamma_picture(obj.get("/GammaPicture")), None
+    if private:
+        placed, caption, written = private
+        if written != picture.caption_text(contents):
+            caption = markdown_of(contents)
+        original = placed["url"]
+        corners = [pdf_point_to_viewer(px, py, rotation, crop) for px, py in ((rect[0], rect[1]), (rect[2], rect[3]))]
+        mx, my = (sum(u for u, _v in corners) * disp_w / 2, sum(v for _u, v in corners) * disp_h / 2)
+        placed = {**placed, "x": mx - placed["w"] / 2, "y": my - placed["h"] / 2}
+    else:
+        placed = _frame_of(_image_corners(obj, form, images[0][0], rect, crop, rotation, drawn))
+        caption = markdown_of(contents) if contents else ""
+    shown = picture.keep_on_surface(picture.normalize_picture({**placed, "url": _UNREAD}), disp_w, disp_h)
+    del shown["url"]
+    return {"key": annotation_key(pnum, "/Stamp", rect), "page": pnum, "content": caption, "kind": "picture",
+            "picture": shown, "image": images[0], "original": original}
+
+
+class _PictureFiles:
+    """The files of a PDF's image stamps (``pdf_image.image_file``), read
+    for the records an import adds and for no others: once per image
+    however many stamps draw it, and within one ``DecodeBudget`` for them
+    all, so a small file with thousands of stamps cannot hold the import
+    for minutes. A stamp whose image cannot be read, or is past the
+    budget, makes no block (logged), and its annotation stays in the file
+    for a later import to try again."""
+
+    def __init__(self):
+        self.budget, self.by_image = DecodeBudget(), {}
+
+    def read(self, record) -> bool:
+        """Whether ``record``'s picture has its file now: ``file`` as
+        ``(bytes, extension)`` (None for one that cannot be read), and the
+        picture's ``url`` named by its content hash, as ``store_file`` will
+        store it."""
+        if "file" not in record:
+            image, orientation = record["image"]
+            at = (id(image), orientation)
+            if at not in self.by_image:  # the image is kept with it, so its id names it while this lives
+                self.by_image[at] = (image, image_file(image, orientation, self.budget))
+            record["file"] = found = self.by_image[at][1]
+            if found:
+                record["picture"]["url"] = f"/api/uploads/{content_digest(found[0])}{found[1]}"
+            else:
+                log.info(f"[pdf-annots] the picture of the stamp {record['key']} is left out: its image did not read")
+        return record["file"] is not None
+
+
+def _picture_url(ws: str, record) -> str | None:
+    """The file an imported picture shows: the one a Gamma export drew it
+    from when this workspace has it and it is the size of the image read
+    back (a round trip keeps the file as it was, a GIF's animation with
+    it), else that image, stored. None, logged, when the image is past the
+    per-file cap (413): the picture is left out and the import goes on; a
+    full workspace (507) stops it, as it stops the handwriting's files."""
+    name = (record.get("original") or "").rsplit("/", 1)[-1]
+    path = find_upload_file(name, ws) if name else None
+    data, ext = record["file"]
+    if path is not None:
+        try:
+            if picture.image_size(path.read_bytes()) == picture.image_size(data):
+                return record["original"]
+        except OSError:
+            pass
+    try:
+        filename, _ = store_file(ws, data, ext)
+    except HTTPException as exc:
+        if exc.status_code == 507:
+            raise
+        log.info(f"[pdf-annots] the picture of the stamp {record['key']} is left out: {exc.detail}")
+        return None
+    return f"/api/uploads/{filename}"
+
+
 def _extract_pdf_annotations(reader, glyphs=None):
     """The annotations of ``reader``'s pages that become blocks, as records
     in page order: ``key`` (the ``imported_annot``), ``page``, ``content``
@@ -729,7 +1025,7 @@ def _extract_pdf_annotations(reader, glyphs=None):
     is left out. ``glyphs`` is a ``pdf_text.GlyphPages`` over the same
     file, read for the text under each highlight; None (a caller that only
     needs which annotations make blocks) leaves the quotes empty."""
-    found, replies, records = [], [], {}
+    found, replies, records, drawn = [], [], {}, _Drawn()
     for pnum, page in enumerate(reader.pages, start=1):
         try:
             annots = _resolve(page.get("/Annots")) or []
@@ -762,6 +1058,8 @@ def _extract_pdf_annotations(reader, glyphs=None):
                     record = _ink_from_annotation(obj, pnum, pw, ph, contents)
                 elif subtype in _NOTE_TYPES:
                     record = _text_box_from_annotation(obj, subtype, pnum, page, contents)
+                elif subtype in _PICTURE_TYPES:
+                    record = _picture_from_annotation(obj, pnum, page, contents, drawn)
                 else:
                     record = _mark_from_annotation(obj, subtype, pnum, pw, ph, contents, glyphs)
                 if record:
@@ -830,14 +1128,17 @@ def _mark_from_annotation(obj, subtype, pnum, pw, ph, contents, glyphs):
             "quote": quote, "color": color, "position": position}
 
 
-def _strip_embedded_annotations(ws: str, pdf_path) -> tuple[int, set]:
+def _strip_embedded_annotations(ws: str, pdf_path, keep=frozenset()) -> tuple[int, set]:
     """Rewrite the stored PDF without the annotations the import turns into
     blocks (``_extract_pdf_annotations``, folded replies included), with
     their threads and /Popup windows (``pdf_export.drop_annotations``), so
     the viewer's canvas doesn't paint them under Gamma's own. Everything
-    else stays: links, kinds not imported, hidden ones, and those that make
-    no block (a note with no text). Returns the number of annotations
-    removed and the keys of the blocks they make (a reply's legacy key too).
+    else stays: links, kinds not imported, hidden ones, those that make
+    no block (a note with no text), and the annotations whose keys are in
+    ``keep`` (a picture the import left out: its image did not read, or was
+    too large to store). No picture's image is read here. Returns the
+    number of annotations removed and the keys of the blocks they make (a
+    reply's legacy key too).
 
     Note the file keeps its content-hash name even though its bytes change —
     the name is only a key (``doc_id`` property), never re-derived.
@@ -854,7 +1155,8 @@ def _strip_embedded_annotations(ws: str, pdf_path) -> tuple[int, set]:
             take(reply)
 
     for record in _extract_pdf_annotations(reader):
-        take(record)
+        if record["key"] not in keep:
+            take(record)
     # Off the reader's pages, before the copy: PdfWriter.append clones each
     # page's /Annots as the reader holds them.
     removed = sum(drop_annotations(page, doomed) for page in reader.pages) if doomed else 0
@@ -912,7 +1214,7 @@ class PdfAnnotsRequest(BaseModel):
 
 def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, actor: str = "") -> dict:
     """Extract the annotations embedded in the stored PDF and add the missing
-    ones as highlight, handwriting and text-box blocks under ``block_id``,
+    ones as highlight, handwriting, text-box and picture blocks under ``block_id``,
     each reply a note under the block of the annotation it answers
     (idempotent via the stable ``imported_annot`` key: a reply is there
     under its own key or the legacy one, from before replies were notes),
@@ -929,6 +1231,17 @@ def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, a
     reader = PdfReader(os.fspath(pdf_path))
     with GlyphPages(os.fspath(pdf_path)) as glyphs:
         found = _extract_pdf_annotations(reader, glyphs)
+    # The pictures' files are read before the write lock, and only for the
+    # stamps this import adds (``_PictureFiles``); one that does not read
+    # makes no block, and its annotation stays in the file (``left``).
+    files, left = _PictureFiles(), set()
+    if any(f.get("kind") == "picture" for f in found):
+        with connect_pages_db(ws) as conn:
+            known = {key for _bid, key, _stripped in _imported_blocks(conn, block_id)}
+        for f in found:
+            if f.get("kind") == "picture" and f["key"] not in known and not files.read(f):
+                left.add(f["key"])
+        found = [f for f in found if f["key"] not in left]
     if not found:
         return {"found": 0, "imported": 0, "stripped": 0}
 
@@ -976,7 +1289,15 @@ def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, a
         if todo:
             positions = generate_n_keys_between(last_child_position(conn, block_id), None, n=len(todo))
             for f, pos in zip(todo, positions):
-                if f.get("kind") == "ink":
+                if f.get("kind") == "picture":
+                    # One whose block went since the files were read is read now.
+                    url = _picture_url(ws, f) if files.read(f) else None
+                    if url is None:
+                        left.add(f["key"])
+                        continue
+                    props = {"picture": {**f["picture"], "url": url}, "pdf_page": f["page"],
+                             "imported_annot": f["key"]}
+                elif f.get("kind") == "ink":
                     # The strokes live in an .ink upload like any drawn group.
                     filename, _ = store_file(ws, ink_dumps(f["ink"]), ".ink")
                     props = {
@@ -993,8 +1314,9 @@ def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, a
                     }
                 insert(f, block_id, pos, props)
         for f in found:
-            if f.get("replies"):
-                add_replies(made.get(id(f)) or existing[f["key"]], f["replies"])
+            parent = made.get(id(f)) or existing.get(f["key"])
+            if f.get("replies") and parent:  # none for a picture left out
+                add_replies(parent, f["replies"])
         if inserted:
             note_reload(ws, conn, page_id, actor)  # logs the reload, touches the page, commits: one transaction
 
@@ -1003,7 +1325,7 @@ def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, a
     stripped, gone = 0, set()
     if strip:
         try:
-            stripped, gone = _strip_embedded_annotations(ws, pdf_path)
+            stripped, gone = _strip_embedded_annotations(ws, pdf_path, keep=left)
         except Exception as e:
             log.warning(f"[pdf-annots] could not strip annotations from {pdf_path.name}: {e}")
     # PDF export skips an imported block while its original is in the file

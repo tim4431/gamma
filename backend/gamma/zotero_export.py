@@ -31,7 +31,8 @@ endpoint burns them in with ``pdf_export.annotate_pdf``): highlights, area
 notes, handwriting and text boxes, which Zotero reads as its highlight,
 image, ink and text annotations. A text box with no PDF copy to carry it is
 a note: one placed on a PDF page opens with its page, as a highlight's memo
-does.
+does. So is a picture, its image embedded in the note with its caption
+under it: the copy draws it, but Zotero keeps no annotation of a stamp.
 
 Keys: an item's ``rdf:about`` is the page's Zotero key or ``GAMMA_PAGE_KEY``
 + the page id; a note's is ``GAMMA_NOTE_KEY`` + the block id. Both stay the
@@ -44,6 +45,7 @@ import xml.etree.ElementTree as ET
 
 from . import item_types
 from .highlights import page_of
+from .picture import is_picture, markdown_of, picture_page
 from .text_box import box_page
 
 _NS = {
@@ -127,17 +129,27 @@ def _content_html(text: str, resolve_image) -> str:
     return "".join(parts)
 
 
+def _block_text(node) -> str:
+    """A block's Markdown as its note shows it: a picture block's image line
+    (``picture.markdown_of``), with its caption under it since the embedded
+    image keeps no alt text; any other block's content."""
+    content = (node.get("content") or "").strip()
+    props = node.get("properties") or {}
+    line = markdown_of(content, props["picture"]) if is_picture(props) else ""
+    return "\n".join(part for part in (line, content) if part) if line else content
+
+
 def note_html(node, resolve_image=None) -> str:
     """One block subtree (a ``build_tree`` node) → one Zotero note's HTML:
-    the block itself as a paragraph (after its page, for a text box on a
-    PDF page), children as nested lists.
+    the block itself as a paragraph (after its page, for a text box or a
+    picture on a PDF page), children as nested lists.
     ``resolve_image(filename) -> (mime, base64) | None`` embeds pasted images
-    into the note."""
+    into the note, and a picture block's own."""
 
     def items(children):
         out = ""
         for child in children:
-            content = (child.get("content") or "").strip()
+            content = _block_text(child)
             inner = items(child.get("children") or [])
             if not content and not inner:
                 continue
@@ -146,11 +158,12 @@ def note_html(node, resolve_image=None) -> str:
         return out
 
     parts = ""
-    content = (node.get("content") or "").strip()
+    content = _block_text(node)
     if content:
-        page_no = box_page(node.get("properties"))
-        if page_no:
+        if page_no := box_page(node.get("properties")):
             parts += f"<p><strong>Text box on p.{page_no}</strong></p>"
+        elif page_no := picture_page(node.get("properties")):
+            parts += f"<p><strong>Picture on p.{page_no}</strong></p>"
         parts += f"<p>{_content_html(content, resolve_image)}</p>"
     kids = items(node.get("children") or [])
     if kids:

@@ -13,6 +13,8 @@ import pytest
 from conftest import login, make_folder, make_label, make_user, page_id_drift, workspace_of
 from gamma.blocks_store import BLOCK_COLUMNS, block_kind, fetch_subtree, page_for_doc, page_root_id, trash_entry
 from gamma.db import connect_pages_db
+from gamma.highlights import is_highlight
+from gamma.picture import is_picture
 from gamma.routers import blocks as blocks_router
 
 USER, PASSWORD = "bcol_owner", "pw-bcol-1"
@@ -66,8 +68,9 @@ def test_kind_and_doc_id_follow_the_properties(owner):
     rect = {"x1": 10, "y1": 20, "x2": 110, "y2": 32}
     pos = {"pageNumber": 1, "width": 612, "height": 792, "boundingRect": rect, "rects": [rect]}
     # A highlight is a block with a pdf_position, tested after the ink,
-    # text-box, sheet and link cases: an ink group and a link region carry
-    # one too.
+    # text-box, picture, sheet and link cases: an ink group and a link
+    # region carry one too.
+    pic = {"url": "/api/uploads/3f2a9c.png", "x": 10, "y": 20, "w": 144, "h": 96}
     cases = {
         "bcNote": ({}, "note"),
         "bcHl": ({"pdf_position": pos, "quote": "q"}, "highlight"),
@@ -76,6 +79,11 @@ def test_kind_and_doc_id_follow_the_properties(owner):
         "bcInk": ({"ink_url": "", "pdf_position": pos}, "ink"),
         "bcBox": ({"text_box": {"x": 1}, "pdf_page": 1}, "text_box"),
         "bcBoxPlaced": ({"text_box": {"x": 1}, "pdf_position": pos}, "text_box"),
+        # a picture is tested after the text box and before the sheet
+        "bcPic": ({"picture": pic, "pdf_page": 1}, "picture"),
+        "bcPicPlaced": ({"picture": pic, "pdf_position": pos, "sheet": {"size": "a4"}}, "picture"),
+        "bcPicBox": ({"picture": pic, "text_box": {"x": 1}}, "text_box"),
+        "bcPicGone": ({"picture": {"url": "/api/uploads/gone.svg"}}, "picture"),  # still a picture, drawn nowhere
         "bcSheet": ({"sheet": {"size": "a4"}, "pdf_position": pos}, "sheet"),
         # a recording is tested after the sheet and before the link
         "bcRec": ({"recording": {"started": 1, "segments": [], "state": "done"}, "link_page_id": page["id"]},
@@ -98,7 +106,7 @@ def test_kind_and_doc_id_follow_the_properties(owner):
     # the notes search reports the stored kind
     kinds = {b["id"]: b["kind"] for b in owner.get("/api/block-search", params={"ids": ",".join(cases)}).json()["blocks"]}
     assert kinds["bcBox"] == "text_box" and kinds["bcLink"] == "link" and kinds["bcInk"] == "ink"
-    assert kinds["bcRec"] == "recording"
+    assert kinds["bcRec"] == "recording" and kinds["bcPic"] == "picture"
 
 
 def test_folders_and_labels_are_kinds_of_their_trees(owner):
@@ -208,6 +216,15 @@ _KIND_SHAPES = [
     ({"pdf_position": {"pageNumber": 1}}, "highlight"),
     ({"pdf_position": "1"}, "note"),
     ({"text_box": {}, "pdf_position": {}}, "text_box"),   # the first rule wins, in the column's order
+    ({"picture": {"url": "/api/uploads/3f2a9c.png"}}, "picture"),
+    ({"picture": {}}, "picture"),                      # an object, whatever it holds (gamma/picture.py is_picture)
+    ({"picture": []}, "note"),
+    ({"picture": "/api/uploads/3f2a9c.png"}, "note"),
+    ({"picture": None, "pdf_position": {}}, "highlight"),
+    ({"ink_url": "", "picture": {}}, "ink"),
+    ({"text_box": {}, "picture": {}}, "text_box"),
+    ({"picture": {}, "sheet": {}, "recording": {}}, "picture"),
+    ({"picture": {}, "link_url": "u", "pdf_position": {}}, "picture"),
     ({"link_url": "u", "pdf_position": {}}, "link"),
 ]
 
@@ -223,6 +240,9 @@ def test_the_python_kind_agrees_with_the_generated_column(owner):
             stored = conn.execute("SELECT kind FROM unified_blocks WHERE id = ?", (block_id,)).fetchone()[0]
             assert stored == expected, (props, stored)
             assert block_kind(page["id"], page["id"], props) == expected, props
+            # the picture's own test agrees with the column, and a picture is no highlight
+            assert is_picture(props) == (expected == "picture"), props
+            assert not (expected == "picture" and is_highlight(props)), props
         conn.commit()
     assert block_kind(None, "", {}) is None
     assert block_kind("root", "p", {}) == "page" and block_kind("trash", "p", {}) == "page"

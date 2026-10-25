@@ -6649,9 +6649,10 @@ a.shareBrand:hover { background: var(--bg-hover); }
 }
 
 /* The notes: a rounded-square pen marker in the dot slot (a text box's is
-   a T), the strokes as a picture above the caption (on white: the card is
-   a piece of the page, the same rule as .pdfAreaMarquee). */
-.inkMarker, .textBoxMarker {
+   a T, a picture's a picture), the strokes as a picture above the caption
+   (on white: the card is a piece of the page, the same rule as
+   .pdfAreaMarquee). */
+.inkMarker, .textBoxMarker, .pictureMarker {
   display: inline-flex;
   align-items: center;
   justify-content: center;

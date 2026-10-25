@@ -58,6 +58,13 @@ test("Enter is the zoom window's New line, unless a button, a link, a menu row o
   assert.equal(stripKey(key("Enter", { ctrlKey: true }), state({ zoom: true })), null, "a chord is someone else's");
 });
 
+test("I presses the Picture button (P is the pens'); a chord is left alone", () => {
+  assert.deepEqual(stripKey(key("KeyI"), state()), { kind: "picture" });
+  assert.deepEqual(stripKey(key("KeyI", { shiftKey: true }), state({ tool: "text" })), { kind: "picture" });
+  assert.equal(stripKey(key("KeyI", { ctrlKey: true }), state()), null, "Ctrl+I is italic in an editor's");
+  assert.equal(stripKey(key("Escape"), state({ hasBox: true })), null, "a selected picture keeps Escape, as a box does");
+});
+
 test("Delete and Backspace remove the selection only while there is one", () => {
   assert.deepEqual(stripKey(key("Delete"), state({ hasSelection: true })), { kind: "delete", prevent: true });
   assert.deepEqual(stripKey(key("Backspace"), state({ hasSelection: true })), { kind: "delete", prevent: true });

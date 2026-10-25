@@ -7,7 +7,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { BASELINE, KINDS, counts, declarations, offences, scan } from "../tools/designTokens.mjs";
+import { BASELINE, KINDS, counts, cssFiles, declarations, offences, scan } from "../tools/designTokens.mjs";
 
 const FRONTEND = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const read = (p) => fs.readFileSync(path.join(FRONTEND, p), "utf8");
@@ -74,6 +74,31 @@ test("no stylesheet gains raw design values", () => {
     }
   }
   assert.deepEqual(worse, [], "use a token from tokens.css, or mark a justified value with /* ds-allow: why */ (node tools/designTokens.mjs --list)");
+});
+
+// One size set (docs/dev/ui-design.md, "Sizes and reveals"): no (pointer:
+// coarse) rule sizes a control; a thin target takes a larger hit area
+// instead (a ::before, an inset). The text box's handles are the stated
+// exception.
+test("a (pointer: coarse) rule sizes no control but the text box's handles", () => {
+  const SIZE = /^(?:min-|max-)?(?:width|height)$/;
+  const EXCEPT = new Set([".textBoxWidth"]);
+  const sized = [];
+  for (const file of cssFiles()) {
+    const css = fs.readFileSync(file, "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+    const media = /@media[^{]*\(\s*pointer\s*:\s*coarse\s*\)[^{]*\{/g;
+    while (media.exec(css)) {
+      let depth = 1, end = media.lastIndex;
+      for (; end < css.length && depth; end++) depth += css[end] === "{" ? 1 : css[end] === "}" ? -1 : 0;
+      for (const [, selectors, body] of css.slice(media.lastIndex, end - 1).matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+        const props = body.split(";").map((d) => d.split(":")[0].trim()).filter((p) => SIZE.test(p));
+        for (const s of props.length ? selectors.split(",").map((x) => x.trim()) : []) {
+          if (!EXCEPT.has(s)) sized.push(`${path.relative(FRONTEND, file)}: ${s} { ${props.join(", ")} }`);
+        }
+      }
+    }
+  }
+  assert.deepEqual(sized, [], "give the target a larger hit area (a ::before) instead of a larger look");
 });
 
 // The type sizes are declared again on the control reset, so a zoomed

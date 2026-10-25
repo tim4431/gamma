@@ -88,9 +88,10 @@ def block_kind(parent_id, page_id, props: dict) -> str | None:
     tests/test_block_columns.py checks): NULL on the reserved rows,
     ``page`` under root or the trash, ``folder`` / ``label`` in the trees,
     else by the properties — ``ink`` (an ``ink_url`` key, whatever its
-    value), ``text_box`` / ``sheet`` / ``recording`` (an object there),
-    ``link`` (a ``link_url`` or ``link_page_id`` that is neither missing,
-    null nor empty), ``highlight`` (a ``pdf_position`` object), ``note``."""
+    value), ``text_box`` / ``picture`` / ``sheet`` / ``recording`` (an
+    object there), ``link`` (a ``link_url`` or ``link_page_id`` that is
+    neither missing, null nor empty), ``highlight`` (a ``pdf_position``
+    object), ``note``."""
     if parent_id is None:
         return None
     if parent_id in ("root", TRASH):
@@ -105,6 +106,8 @@ def block_kind(parent_id, page_id, props: dict) -> str | None:
         return "ink"
     if isinstance(props.get("text_box"), dict):
         return "text_box"
+    if isinstance(props.get("picture"), dict):
+        return "picture"
     if isinstance(props.get("sheet"), dict):
         return "sheet"
     if isinstance(props.get("recording"), dict):

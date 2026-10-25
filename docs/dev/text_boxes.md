@@ -6,12 +6,18 @@ its text, Markdown like any note. So search, the text merge, the exports
 and the AI tools read it as a note. One property, `text_box`, places it.
 
 Code: `frontend/src/markup/` (`textBox.js`, `useTextBoxes.js`,
-`TextBoxLayer.jsx`, `markup.css`, and the parts shared with handwriting:
-`PageTools.jsx`, `MarkupLayers.jsx`, `MarkupToolbar.jsx`), `gamma/text_box.py`
+`TextBoxLayer.jsx`, `markup.css`, the parts shared with handwriting:
+`PageTools.jsx`, `MarkupLayers.jsx`, `MarkupToolbar.jsx`, and the part
+shared with pictures: `placed.js`), `gamma/text_box.py`
 (the server's rules and the PDF layout), the `/FreeText` writer in
 `gamma/pdf_export.py`, the reader in `gamma/routers/imports.py`, the boxes
 the Notability import makes in `gamma/notability_map.py`, and
 `gamma/notebook.py` `notebook_pdf`. Tests are listed [below](#tests).
+
+A picture ([pictures.md](pictures.md)) is the other object placed on a
+surface. It is placed by a box's rule, and it shares the box's
+selection, merge table and tree edits. The sections below name it where
+it does what a box does.
 
 ## What the user sees
 
@@ -22,6 +28,9 @@ These are the rules the code keeps.
   ([handwriting.md](handwriting.md)); `T` arms it. Armed, the page takes
   every press, a finger's too, before a link or the text layer, and the ink
   layer only draws.
+  - A press on a selected picture, its handles or its crop stays the
+    picture's. A picture placed while the tool is armed lands selected, so
+    it can be moved before a box is typed over it.
 - **Placing.** A tap makes an auto-width box with its first line centred
   on the pointer. A drag over 6 CSS px makes a fixed-width box as wide as
   the drag.
@@ -30,24 +39,25 @@ These are the rules the code keeps.
 - **An empty box** with no notes under it goes when its editor closes. A
   box made and left empty leaves no undo entry and keeps the redo steps.
 - **Selecting.** With the hand armed or the strip closed, a click selects a
-  box, over a link too, and a second click opens its editor. At most one
-  box is selected or edited in the app, and never beside a lasso selection.
+  box, over a link too, and a second click opens its editor. The app has
+  one selection: one box selected or edited, one picture selected, or the
+  lasso's strokes. Selecting one lets go of the others.
 - **Moving.** A drag over 6 CSS px moves a box. Without the Text tool, a
   finger drags only the selected box, the only one with `touch-action: none`.
 - A second contact makes any press a pinch, which moves nothing.
-- **Undo.** While the Text tool is armed or a box is selected or edited,
-  Ctrl+Z and the strip's buttons step the block history, not the strokes
-  ([handwriting.md](handwriting.md)). Changes to one box less than a second
-  apart are one step.
+- **Undo.** While the Text tool is armed, a box is selected or edited, or
+  a picture is selected, Ctrl+Z and the strip's buttons step the block
+  history, not the strokes ([handwriting.md](handwriting.md)). Changes to
+  one box less than a second apart are one step, and so are a picture's.
 - **In the notes** a box is a row whose "T" marker shows it on its page. A
   box's editor and its row's are never open at once.
 
 ## Model
 
 No schema change, no migration, no new endpoint: a text box is a block
-with `text_box`, plus `pdf_page` (the 1-based page) on a PDF page. The
-box is the one block with a `pdf_page`: a highlight, a link region and an
-ink group are on the page their `pdf_position` names
+with `text_box`, plus `pdf_page` (the 1-based page) on a PDF page. A box
+and a picture are the blocks with a `pdf_page`: a highlight, a link region
+and an ink group are on the page their `pdf_position` names
 ([api.md](api.md) "The highlight shape"). A box
 imported from the PDF's own `/FreeText` or `/Text` also carries
 `imported_annot` and `annot_stripped`, as highlights do.
@@ -101,7 +111,10 @@ Every reader places a box by one rule:
 
 The client's `textBoxesBySurface(tree)` keeps the tree's own objects, so an
 unchanged box keeps its identity. The server's `text_box.box_page(props,
-on_sheet)` takes `on_sheet` from the writer's own walk of the tree.
+on_sheet)` takes `on_sheet` from the writer's own walk of the tree. A
+picture is placed by the same rule (`picture.js` `picturesBySurface`,
+`picture.picture_page`), and a new one goes where a new box goes: one
+function, `markup/placed.js` `addPlaced`, makes both.
 
 **Measurement.** `w` (of an auto box) and `h` are what the box measured at
 on this screen. The client writes them only right after a local edit of the
@@ -122,9 +135,10 @@ another's move. So a `set` of `text_box` whose `base_props` names the box
 it was changed from merges key by key.
 
 - `merge_text_box(stored, mine, base)` (`gamma/text_box.py`, called in
-  `ops.py` beside the ink merge) is the stored box with the keys the writer
-  changed from its base. Keys compare normalized, so a default spelled out
-  is no change. The later writer wins a key both changed.
+  `ops.py` beside the ink merge, through `PLACED_KEYS`) is the stored box
+  with the keys the writer changed from its base. Keys compare normalized,
+  so a default spelled out is no change. The later writer wins a key both
+  changed.
 - A writer that names no base box replaces it: an import, the agent's
   tools, a `PUT /blocks/{id}` without `base_properties`.
 - `mergeTextBox` (`markup/textBox.js`) is the twin;
@@ -132,6 +146,15 @@ it was changed from merges key by key.
 - The browser names the base on every change ([collab.md](collab.md)
   "same-box merge"). So does the mirror, which
   also judges a lost push key by key ([mirror.md](mirror.md)).
+- **The table it shares with pictures.** `ops.PLACED_KEYS` on the server
+  and `blockOps.PLACED` on the client map each key that places an object,
+  `text_box` and `picture`, to its normalizer and its merge. Every reader
+  of the merge goes through the table: `ops.py`, the mirror's diff
+  (`sync_tree._set_op`) and resend (`sync_engine._placed_again`),
+  `diffTrees`, the live session (`ahead`, `storedPlaced`) and the undo
+  history (`boxChange`, `rebaseHistory`). A picture's merge differs in one
+  way: its frame merges as its size and its centre, not `x` and `y` key by
+  key ([pictures.md](pictures.md#model) "Merge").
 
 ## Client
 
@@ -142,21 +165,33 @@ ink are in [handwriting.md](handwriting.md#client).
 - `PageTools.jsx`: `PageToolsContext` carries `text: {armed, style}` beside
   the ink tools, and the text-box actions among its `actions`. `ink.tool`
   and `ink.penTool` are null while the Text tool is armed.
-- `MarkupLayers.jsx`: the text-box layer comes first and the ink layer over
-  it, both at z-index 6, above a PDF page's highlights (2), note badges (4)
-  and link boxes (5). A box takes its own clicks, and ink draws over
-  everything. On a read-only page a tap on a box is not a tap on a stroke
-  (`ABOVE_PASSIVE_INK`).
+- `MarkupLayers.jsx`: the picture layer comes first, then the text-box
+  layer and the ink layer over them, all at z-index 6, above a PDF page's
+  highlights (2), note badges (4) and link boxes (5). A box takes its own
+  clicks, and ink draws over everything. On a read-only page a tap on a
+  box or a picture is not a tap on a stroke (`ABOVE_PASSIVE_INK`).
 - `MarkupToolbar.jsx`: a press on the Text tool, its options row or Undo /
   Redo keeps an open editor focused.
 - `textBox.js`: the pure rules and the geometry (`placeBox`, `refitBox`,
   `moveBox`, `resizeBox`). Its relative imports carry `.js`, so node loads it.
+- `placed.js` (pure): the two tree edits a box and a picture share.
+  - `withPlaced(tree, id, key, fn)` replaces a block's `text_box` or
+    `picture` with `fn` of its normalized value. It gives the same tree
+    back when that changes nothing or the block holds no such value.
+    `useTextBoxes`' `withBox` is `withPlaced` with `"text_box"`.
+  - `addPlaced(tree, surface, id, properties)` adds a new block where the
+    nearest-sheet rule puts it: on a PDF page at the top level with its
+    `pdf_page`, on a sheet as the sheet's last child, nowhere when the
+    sheet is gone. `onBoxCreate` makes a box through it.
 - `TextBoxLayer.jsx`: one surface's boxes.
   - The layer is a size container whose `--tb-pt` is one point of the
     surface (`calc(100cqw / width)`), so a zoom needs no re-render.
   - With the Text tool armed, a capture-phase `pointerdown` listener on the
     page wrapper claims a press, as `InkLayer` claims a stroke.
     `swallowClick` eats the click that ends it.
+  - The claim leaves alone a press on a box, the ruler, a selected picture
+    and its controls (`.pagePicture.selected`, `.pictureHandle`,
+    `.pictureCrop`) and a comment card.
   - A press on a box (`begin`) takes the pointer at once on the band and the
     handle. On the text it waits for a move, so Ctrl+click reaches a link.
   - Another contact marks the press `dead`, a pinch, until its pointer lifts.
@@ -183,7 +218,7 @@ ink are in [handwriting.md](handwriting.md#client).
   rule in `app.css`, extended to `.textBoxBody`. In a fixed-width box a
   picture without a width of its own (`![alt](…)`, not `![alt|300](…)`)
   fills the box's text width, its frames too, so it zooms with the page
-  as the text does; the Notability import makes a picture's box the
+  as the text does; an older Notability import made a picture's box the
   picture's size ([import_export.md](import_export.md#notability-notes)).
   In an auto-width box, or sized in its Markdown, a picture keeps its own
   size.
@@ -191,14 +226,18 @@ ink are in [handwriting.md](handwriting.md#client).
   (`textArmed`); `inkPenTool` is null meanwhile, so a stylus places boxes
   too.
 - `app/App.jsx`:
-  - `boxUndo` (the Text tool armed, or a box selected or edited) sends the
-    strip's buttons to `undoBlocks` and leaves Ctrl+Z to the block undo.
-    Escape goes to a selected or edited box.
+  - `boxUndo` (the Text tool armed, a box selected or edited, or a picture
+    selected) sends the strip's buttons to `undoBlocks` and leaves Ctrl+Z
+    to the block undo. Escape goes to a selected or edited box, or to the
+    selected picture: `useStripKeys`' `hasBox` is true for either.
+  - One selection: a box selected or opened lets go of the lasso's strokes
+    and of the picture (`pictures.deselect()`). A picture selected lets go
+    of the box and the strokes, and the lasso's selection lets go of both.
   - `foldBlocks(fn)` is `setBlocks` for a write that belongs to the edit
     before it, marked `"fold"`: the block history records no entry. A fold
     back to the newest entry's tree takes that entry back.
-  - `showOnPage(id)` shows an ink group or a box where it is drawn and
-    flashes it; `showInNotes(id)` is the reverse.
+  - `showOnPage(id)` shows an ink group, a box or a picture where it is
+    drawn and flashes it; `showInNotes(id)` is the reverse.
 - `editor/BlockTree.jsx`: a box's row draws its "T" marker in the branch
   that draws ink's pen marker. `onSheet` goes down the recursion, so a box
   under a sheet shows no `p.N`. App's `onChangeText` calls
@@ -206,8 +245,9 @@ ink are in [handwriting.md](handwriting.md#client).
 - `editor/blockHistory.js`: `describeTransition` names a box's creation,
   deletion and text edit, and `textBoxChange` a move, style change or
   resize. `observeTree` merges changes of one box's `text_box` alone
-  (`boxChange`) within `EDIT_MERGE_MS`. `rebaseHistory` carries another
-  client's box onto each entry key by key.
+  (`boxChange`, which a picture's `picture` passes too) within
+  `EDIT_MERGE_MS`. `rebaseHistory` carries another client's box onto each
+  entry key by key, and a picture through its own merge (`blockOps.PLACED`).
 - `collaboration/collabSession.js` and `shared/model/blockOps.js` are the
   browser's half of the merge ([collab.md](collab.md) "same-box merge").
   `ink/InkLayer.jsx`'s `NOT_INK` keeps a press on a box's handle, band or
@@ -247,25 +287,36 @@ and mark yellow are the export's. A change to one side needs the other.
     and `vector_text.header`, so math and CJK take it too.
 
 **The annotated PDF.** `routers/export.py` `_collect_text_boxes` keeps each
-box with text whose `box_page` is set and that no sheet holds.
-`pdf_export.annotate_pdf` writes each as a `/FreeText` before the ink and
-the highlights, so under them, as on the page.
+box with text whose `box_page` is set and that no sheet holds
+(`_on_sheets`). It walks the page in document order
+(`notebook.document_order`), the order the boxes stack in.
+`_collect_pictures` beside it gathers the pictures by the same rules
+([pictures.md](pictures.md#server-and-interchange)).
+`pdf_export.annotate_pdf` writes the highlights and area notes first,
+then the pictures (`/Stamp`), the boxes (`/FreeText`) and the ink.
+Annotations paint in the order they are written, so the PDF stacks them
+as the page does: a highlight under everything, a box over a picture, ink
+over both.
 
 - **An embedded original is replaced.** Highlights and ink still embedded
   in the file are skipped, since the original stands for them. A box
   imported from the file is written anyway, and its `imported_annot` goes
   to `annotate_pdf`'s `replaced`.
-- `_drop_replaced` removes each shown, non-reply `/FreeText` or `/Text`
-  (`TEXT_BOX_TYPES`) with a replaced `annotation_key`, with its popup and
-  thread. The reason: the viewer hides the file's own annotations by
-  default, so the page shows Gamma's box, and an edit made here must reach
-  the export.
+- `_drop_replaced(page, pnum, keys)` removes from one page each shown,
+  non-reply `/FreeText`, `/Text` or `/Stamp` (`REPLACED_TYPES`:
+  `TEXT_BOX_TYPES` and a picture's stamp) with a replaced
+  `annotation_key`, with its popup and thread. `annotate_pdf` runs it on
+  every page before it writes anything, and `page_with_ink` on the one
+  page it draws. The reason: the viewer hides the file's own annotations
+  by default, so the page shows Gamma's box, and an edit made here must
+  reach the export.
 - `highlight_note_text`, a highlight's or ink group's popup, follows sheet
   ancestry. It leaves out a box on a PDF page with the notes under it,
   since that box is its own `/FreeText`. A box under a sheet stays a line.
 - **The switches.** A box is in the annotation layer and it is the user's
   writing, so either switch writes it. Only both off, the stored file,
-  leaves the boxes out; ink and highlights need `highlights=1`.
+  leaves the boxes out; ink and highlights need `highlights=1`. A picture
+  follows the box's switches.
 
 **The `/FreeText` keys, and why:**
 
@@ -331,17 +382,20 @@ replies and hidden annotations are in
   wherever the view box is the media box.
 
 **The Notability import** ([import_export.md](import_export.md#notability-notes);
-`notability_map.text_box`, `picture_box`) makes three kinds of box, each
-fixed-width, as large as Notability drew it and kept on its surface
-(`keep_on_surface`): a text box (a line per paragraph, list items as
-Markdown, the size and colour of most of its characters, its paper colour
-as `bg`), a formula (display math in its colour), and a picture (its image
-as `![caption](/api/uploads/…)`, the box the picture's turned bounding box).
-A turned text box stands upright on its centre.
+`notability_map.text_box`) makes two kinds of box, each fixed-width, as
+large as Notability drew it and kept on its surface (`keep_on_surface`):
+a text box (a line per paragraph, list items as Markdown, the size and
+colour of most of its characters, its paper colour as `bg`) and a formula
+(display math in its colour). A turned box stands upright on its centre.
+A Notability picture is a picture block (`notability_map.picture_block`),
+not a box. A box holding one picture that an older import made stays a
+box; the Notability export still writes it as a picture.
 
 **Notebook PDF** (`notebook.notebook_pdf`, [notebooks.md](notebooks.md)):
 each sheet's boxes with text are page content, selectable text, after the
-paper and before the ink.
+paper and its pictures and before the ink. `notebook.placed_ops` draws the
+pictures and boxes. The AI's picture of a PDF page draws them through it
+too (`pdf_export.page_with_ink`), under the ink.
 
 **The other readers** treat a box as a note and never as an area
 highlight, placed by the nearest-sheet rule.
@@ -351,12 +405,12 @@ highlight, placed by the nearest-sheet rule.
   annotated PDF `notes=0`, the default, means "don't paint the notes", not
   "leave out my writing".
 - The agent's `read_block` and the chat context label a box by where it is
-  (`ai_context.text_box_label`; [ai_tools.md](ai_tools.md),
-  [ai_context.md](ai_context.md)). A walk that starts at a block asks
-  `ai_context.under_sheet` once.
+  (`ai_context.placed_label`, which labels a picture the same way;
+  [ai_tools.md](ai_tools.md), [ai_context.md](ai_context.md)). A walk that
+  starts at a block asks `ai_context.under_sheet` once.
 - `ai_context.area_highlight` never answers for a box. `move_block` refuses
-  to move a box to another page unless its sheet moves too
-  (`ai_tools._loose_text_box`). A search hit on a box has `kind:
+  to move a box or a picture to another page unless its sheet moves too
+  (`ai_tools._loose_placed`). A search hit on a box has `kind:
   "text_box"` (the block table's generated `kind`); the search panel lists
   it with the notes.
 
@@ -366,7 +420,8 @@ highlight, placed by the nearest-sheet rule.
   (nested sheets, a stale `pdf_page`, identity), `textStyle`, the geometry.
   `blockHistory.test.mjs`: the labels, folds, runs and the key-by-key
   rebase. Also `blockOps.test.mjs` and `collabSession.test.mjs`
-  ([collab.md](collab.md#testing)).
+  ([collab.md](collab.md#testing)). `placed.test.mjs`: `withPlaced` and
+  `addPlaced`, which a box and a picture share.
 - `backend/tests/test_text_box_merge.py`: the merge through `/ops` and
   `PUT /blocks/{id}`, a writer with no base box, removal, the mirror's diff.
 - `backend/tests/test_text_box.py`: the `/FreeText` keys and their
@@ -388,9 +443,9 @@ highlight, placed by the nearest-sheet rule.
 - Nothing drops `pdf_page` when a box moves under a sheet in the notes, or
   sets it when a box moves back to a PDF page's top level. A box moved to
   another page keeps its `pdf_page` and shows on that page of the new paper.
-- Undo: after a selected box is deleted with the hand armed and the strip
-  open, Ctrl+Z steps the strokes. A run of differing changes (a move, then
-  a restyle) is one step, named for the first.
+- Undo: after a selected box or picture is deleted with the hand armed and
+  the strip open, Ctrl+Z steps the strokes. A run of differing changes (a
+  move, then a restyle) is one step, named for the first.
 - A press on an empty new box's own row keeps the box even when it opens no
   editor (its marker, a drag of the row).
 - On a read-only page a stroke shows no pointer cursor, since the strokes

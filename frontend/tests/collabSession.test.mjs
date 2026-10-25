@@ -8,6 +8,7 @@ import { test } from "node:test";
 import { applyOps } from "../src/shared/model/blockOps.js";
 import { MAX_OPS, MAX_RETRY_MS, RETRY_MS, createCollabSession } from "../src/collaboration/collabSession.js";
 import { mergeTextBox } from "../src/markup/textBox.js";
+import { mergePicture } from "../src/markup/picture.js";
 
 const ME = "this-client";
 const block = (id, content = id, properties = {}) => ({ id, content, properties, children: [], position: "a0" });
@@ -608,6 +609,84 @@ test("a text box: an older batch acked while its page was away, read from the lo
   h.message({ t: "hello", client: ME, seq: 2, peers: [] });
   await settle();
   assert.deepEqual(h.tree[0].properties.text_box, { ...BOX, x: 50, bg: "#fff4b8" });
+});
+
+// --- a picture: two writers, one picture ---------------------------------------------
+// Every change of a picture sends it whole too; the server merges it key by
+// key as it merges a box (gamma/picture.py merge_picture, gamma/ops.py
+// PLACED_KEYS).
+
+const PIC = { url: "/api/uploads/3f2a9c.png", x: 10, y: 10, w: 100, h: 80, angle: 0,
+  crop: { x: 0, y: 0, w: 1, h: 1 }, flip_h: false, flip_v: false };
+const CROPPED = { x: 30, y: 25, w: 60, h: 40, crop: { x: 0.2, y: 0.25, w: 0.6, h: 0.5 } };
+const picBlock = (picture, content = "A figure") => block("i", content, { picture, pdf_page: 1 });
+// A server holding `srv.pic`: each set of ours merged into it, the echo naming the result.
+function picServer(srv, seq = 2) {
+  return async (url, init) => {
+    const { ops } = JSON.parse(init.body);
+    const echo = ops.map((op) => {
+      srv.pic = op.base_props?.picture ? mergePicture(srv.pic, op.props.picture, op.base_props.picture) : op.props.picture;
+      return { op: "set", id: op.id, props: { picture: srv.pic } };
+    });
+    return batch(seq, echo, ME);
+  };
+}
+
+test("a picture: a turn arriving while our crop is queued keeps both, here and on the server", async (t) => {
+  const srv = { pic: PIC };
+  const h = setup(t, picServer(srv));
+  h.load("page-a", [picBlock(PIC)]);
+  h.edit([picBlock({ ...PIC, ...CROPPED })]); // we crop it
+  srv.pic = { ...PIC, angle: 90 };
+  h.ops(batch(1, [{ op: "set", id: "i", props: { picture: srv.pic } }])); // their turn, ordered first
+  assert.deepEqual(h.tree[0].properties.picture, { ...PIC, ...CROPPED, angle: 90 }, "their turn, and our crop on top");
+  h.edit([picBlock({ ...PIC, ...CROPPED, angle: 90, flip_h: true })]); // a flip on top, before the flush
+  await h.session.flush();
+  const [op] = h.calls[0].body.ops;
+  assert.deepEqual(op.base_props, { picture: PIC }, "the run names the picture it began from");
+  assert.deepEqual(srv.pic, { ...PIC, ...CROPPED, angle: 90, flip_h: true }, "the server keeps the turn");
+  assert.deepEqual(h.tree[0].properties.picture, srv.pic);
+  assert.equal(h.session.hasPending(), false);
+});
+
+test("a picture: a change arriving while ours is out lands with ours on top", async (t) => {
+  const ack = deferred();
+  const h = setup(t, () => ack.promise);
+  h.load("page-a", [picBlock(PIC)]);
+  h.edit([picBlock({ ...PIC, x: 50 })]); // we move it
+  h.fire(); // out
+  h.ops(batch(1, [{ op: "set", id: "i", props: { picture: { ...PIC, flip_v: true } } }])); // their flip, ordered before ours
+  assert.deepEqual(h.tree[0].properties.picture, { ...PIC, x: 50, flip_v: true });
+  ack.resolve(batch(2, [{ op: "set", id: "i", props: { picture: { ...PIC, x: 50, flip_v: true } } }], ME));
+  await settle();
+  assert.deepEqual(h.tree[0].properties.picture, { ...PIC, x: 50, flip_v: true });
+  assert.equal(h.session.hasPending(), false);
+});
+
+test("a picture: our batch in its place in the order brings the picture as the server stored it", async (t) => {
+  // (merged onto a change this tab has not seen: what it holds gives way)
+  const stored = { ...PIC, x: 50, angle: -45 };
+  const h = setup(t, async () => batch(1, [{ op: "set", id: "i", props: { picture: stored } }], ME));
+  h.load("page-a", [picBlock(PIC)]);
+  h.edit([picBlock({ ...PIC, x: 50 })]);
+  await h.session.flush();
+  assert.deepEqual(h.tree[0].properties.picture, stored);
+});
+
+test("a picture and a text box in one remote batch each meet our changes on their way", async (t) => {
+  const ack = deferred();
+  const h = setup(t, () => ack.promise);
+  h.load("page-a", [picBlock(PIC), { ...boxBlock("Hello", BOX), position: "a1" }]);
+  h.edit([picBlock({ ...PIC, x: 50 }), { ...boxBlock("Hello", { ...BOX, x: 50 }), position: "a1" }]); // we move both
+  h.fire(); // out
+  h.ops(batch(1, [{ op: "set", id: "i", props: { picture: { ...PIC, angle: 30 } } },
+    { op: "set", id: "t", props: { text_box: { ...BOX, size: 24, h: 38 } } }]));
+  assert.deepEqual(h.tree[0].properties.picture, { ...PIC, x: 50, angle: 30 });
+  assert.deepEqual(h.tree[1].properties.text_box, { ...BOX, x: 50, size: 24, h: 38 });
+  ack.resolve(batch(2, [{ op: "set", id: "i", props: { picture: { ...PIC, x: 50, angle: 30 } } },
+    { op: "set", id: "t", props: { text_box: { ...BOX, x: 50, size: 24, h: 38 } } }], ME));
+  await settle();
+  assert.equal(h.session.hasPending(), false);
 });
 
 test("the room's comments nudge and every hello refetch the page's threads; an inbox nudge is the account's, on any page", async (t) => {

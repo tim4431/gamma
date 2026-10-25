@@ -1,13 +1,12 @@
 // Logseq-style block model: each block has id, content, properties, children.
 // Highlights (link regions too) are blocks with a properties.pdf_position
-// that are no ink group, text box or sheet; the block id is the highlight's
-// id. Free notes are
-// the blocks without one. A pdf_position (gamma/highlights.py) is
-// {pageNumber, width, height, boundingRect: {x1, y1, x2, y2}, rects: [{x1,
-// y1, x2, y2}, …]} (area: true on an area highlight): the 1-based page,
-// the page as measured when the place was taken, and the rectangles in
-// that frame, top-left origin. A highlight whose place on its page is not
-// known carries pageNumber alone.
+// that are no ink group, text box, picture or sheet; the block id is the
+// highlight's id. Free notes are the blocks without one. A pdf_position
+// (gamma/highlights.py) is {pageNumber, width, height, boundingRect: {x1,
+// y1, x2, y2}, rects: [{x1, y1, x2, y2}, …]} (area: true on an area
+// highlight): the 1-based page, the page as measured when the place was
+// taken, and the rectangles in that frame, top-left origin. A highlight
+// whose place on its page is not known carries pageNumber alone.
 //
 // The tree is the DOCUMENT and nothing else: every change to it is an edit
 // the live session sends and the undo history records. What only this
@@ -32,13 +31,20 @@ export function makeBlockId() {
 // --- shape helpers ---
 
 const isObject = (v) => Boolean(v) && typeof v === "object";
+const isRecord = (v) => isObject(v) && !Array.isArray(v);
+
+// A picture's properties: no ink, no text box, a `picture` object
+// (markup/picture.js isPicture, which this module cannot import: that would
+// be a cycle through notebook/notebook.js).
+const placesPicture = (p) => p.ink_url === undefined && !isRecord(p.text_box) && isRecord(p.picture);
 
 // A highlight or a link region: a block with a pdf_position that is no ink
-// group, text box or sheet (the server's `kind` highlight, and link on the
-// page; gamma/highlights.py is_highlight).
+// group, text box, picture or sheet (the server's `kind` highlight, and
+// link on the page; gamma/highlights.py is_highlight).
 export function isHighlightBlock(b) {
   const p = b?.properties;
-  return Boolean(p && isObject(p.pdf_position) && p.ink_url === undefined && !isObject(p.text_box) && !isObject(p.sheet));
+  return Boolean(p && isObject(p.pdf_position) && p.ink_url === undefined && !isObject(p.text_box)
+    && !isRecord(p.picture) && !isObject(p.sheet));
 }
 
 // A highlight's colour as stored (#rrggbbaa, palette.js), the default for
@@ -48,11 +54,12 @@ export function blockColor(b) {
 }
 
 // The PDF page a block is placed on: its position's (a highlight, a link
-// region, an ink group), a text box's pdf_page (a box stores no position,
-// markup/textBox.js); null for any other block.
+// region, an ink group), a text box's or a picture's pdf_page (neither
+// stores a position: markup/textBox.js, markup/picture.js); null for any
+// other block.
 export function blockPage(b) {
   const p = b?.properties || {};
-  if (isObject(p.text_box)) return p.pdf_page ?? null;
+  if (isObject(p.text_box) || placesPicture(p)) return p.pdf_page ?? null;
   return p.pdf_position?.pageNumber ?? null;
 }
 

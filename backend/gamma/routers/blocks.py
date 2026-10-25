@@ -530,12 +530,13 @@ def ub_update_block(block_id: str, payload: UBUpdateRequest, request: Request):
     edit is merged into a block that changed meanwhile instead of replacing
     it — the answer's ``content`` is the text actually stored. Likewise
     ``base_properties``: an ink group's ``ink_url`` whose base is not the
-    stored one is merged by stroke, a text box's ``text_box`` key by key,
-    and the answer's ``properties`` is the patch actually applied (it names
-    the merged file or box). An ink merge may carry ``base_ids`` (the base
-    file's stroke ids) and answers ``ink_conflict: {clean, lost_ours,
-    returned}`` ([handwriting.md](../../docs/dev/handwriting.md) "Two
-    writers, one group")."""
+    stored one is merged by stroke, a text box's ``text_box`` and a
+    picture's ``picture`` key by key, and the answer's ``properties`` is the
+    patch actually applied (it names the merged file, box or picture). An
+    ink merge may carry ``base_ids`` (the base file's stroke ids) and
+    answers ``ink_conflict: {clean, lost_ours, returned}``
+    ([handwriting.md](../../docs/dev/handwriting.md) "Two writers, one
+    group")."""
     ws = require_ws_writer(request)
     scope = share_scope(request)
     with connect_pages_db(ws) as conn:

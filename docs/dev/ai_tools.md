@@ -83,7 +83,7 @@ to pages, PDF pages and blocks (`gamma_link`; the chat's results carry none,
 | `read_chats` | Read pages | folder + page | Read the AI chat kept with a page or folder: the current conversation as a numbered transcript, the earlier ones by `chat_id` |
 | `view_pdf_page` | View pages and handwriting | folder + page | Look at one page of the page's PDF as a picture — a scan with no usable text layer, a figure, a table's layout |
 | `view_ink` | View pages and handwriting | folder + page | Look at the user's handwriting as a picture: a group's strokes on their PDF page or page of paper, cropped to them, or the whole page with all its handwriting |
-| `view_image` | View pages and handwriting | folder + page | Look at the pictures a note block embeds (`![alt](/api/uploads/…)` in its markdown), all of them or one by index |
+| `view_image` | View pages and handwriting | folder + page | Look at the pictures a note block embeds (`![alt](/api/uploads/…)` in its markdown), or a picture block's own, all of them or one by index |
 | `cite` | Read pages | folder + page | The citation records kept with pages: the paper metadata, its BibTeX and the slide citation, for up to 50 pages |
 | `search_library` | Search library | folder + page | Full-text search over the reachable pages' notes AND PDF text; hits carry a `source` (note hits: block id + page, PDF hits: page number). `search_pdfs` is its deprecated alias (replay only) |
 | `search_papers` | Search papers online | folder + page | Scholarly search outside the library — Crossref, arXiv and OpenAlex at once, or a direct DOI / arXiv-id lookup — returning merged registry records (citation count, the start of the abstract) with the `doi:` / `arXiv:` string `fetch_paper` takes; an optional year filter and citation or recency order |
@@ -207,8 +207,20 @@ full text" marker, and the listing stops at the read-window budget naming how
 many blocks were left out. A text box ([text_boxes.md](text_boxes.md)) shows
 "(text box on p. N)", "(text box on the page of paper above)" or "(text
 box, not placed on a page)" before its text. The nearest sheet above a box
-wins over its `pdf_page`. (`read_page` shows the same notes without ids —
-context for answering; `read_block` is the editing view.)
+wins over its `pdf_page`.
+
+A picture block ([pictures.md](pictures.md)) is labelled by the same rule
+(`ai_context.placed_label`): "(picture on p. N)", "(picture on the page of
+paper above)" or "(picture, not placed on a page)". Its text is its
+`![caption](url)` line (`ai_context.picture_text`, `picture.markdown_of`):
+the caption as a reader sees it, on one line, and the URL `view_image`
+opens. A long caption is snipped before the line is made. The block's
+stored text, the one `edit_block` changes, is the caption alone, and an
+edit whose text carries the picture's own `](url)` is refused with that
+rule, so the line read never lands in the caption. A picture
+whose value names no file reads as its caption. (`read_page` shows the
+same notes without ids — context for answering; `read_block` is the
+editing view.)
 
 ### read_chats (both scopes)
 
@@ -262,7 +274,12 @@ Its chip is 👁 "Looked at p. N of …", carrying `page_id` + `pdf_page` and
 `picture`, the `GET /api/ai/page-image/{page_id}?page=N` URL the expanded
 chip shows; the result names the same URL for the model to embed in its
 reply as a markdown image when the user should see the page ("Pictures" in
-[ai.md](ai.md#pictures)).
+[ai.md](ai.md#pictures)). The page is the file as stored: the pictures,
+text boxes and handwriting placed on it are not drawn. The route's `ink=1`
+draws the page as the user sees it, its pictures and text boxes with the
+handwriting over them (`ink_view.page_with_handwriting`). A region
+attached with its handwriting and `clip_region`'s `ink` use the same
+drawing (`ai_pictures.render_region`).
 
 ### view_ink (both scopes)
 
@@ -280,15 +297,22 @@ Nothing is drawn by hand. Both paths reuse an export
 (`gamma/ink_view.py`):
 
 - **A sheet** (a `canvas` group, or the sheet itself) is the notebook
-  export's one-page PDF, `notebook.notebook_pdf`: the paper painted and the
-  strokes as vectors.
-- **A PDF page** is that page on its own with the groups stamped on it
-  (`pdf_export.page_with_ink`). Every stroke is drawn as vectors into the
-  copied page's content through `ink.pdf_path_ops`, as the notes-as-PDF
-  export draws it. So the model sees the looks as drawn (baked widths and
-  tapers, dashes, the pencil's three shades in the screen's grain, the
-  calligraphy nib; a dashed or dotted pencil as one dashed line at its
-  mean shade), every group's highlighters under every group's pens.
+  export's one-page PDF, `notebook.notebook_pdf` (`ink_view._sheet_pdf`):
+  the paper painted, its pictures drawn and its text boxes typeset, and the
+  strokes over them as vectors.
+- **A PDF page** is that page on its own (`pdf_export.page_with_ink`). Its
+  pictures and text boxes are drawn into its content as the annotated
+  export picks them (`ink_view._placed`: `routers/export.py`
+  `_collect_pictures`, `_collect_text_boxes`; `notebook.placed_ops`), and
+  the groups are stamped over them. A box or a picture imported from the
+  file and still embedded in it is drawn as Gamma has it, its original
+  taken out of the copy first, so it shows once. Every stroke is drawn as
+  vectors into the copied page's content through `ink.pdf_path_ops`, as
+  the notes-as-PDF export draws it. So the model sees the looks as drawn
+  (baked widths and tapers, dashes, the pencil's three shades in the
+  screen's grain, the calligraphy nib; a dashed or dotted pencil as one
+  dashed line at its mean shade), every group's highlighters under every
+  group's pens.
   A highlighter is
   multiplied onto the page through a graphics state, so the text under
   it stays as dark as it was. `/Ink` annotations could not do this: a
@@ -343,7 +367,17 @@ are read from the workspace's store, sized like every picture
 `view_pdf_page`'s page. The result lists them with their alt text and size
 and names each URL, which the model may embed in its reply. A block without
 a picture, an index past the end and a file gone from the store are
-refused in text. Its chip is "Looked at N pictures in a note of …" (kind
+refused in text.
+
+A picture block's own picture comes first, its caption the alt text. It is
+the whole file, so the result says how the page shows it otherwise
+(`_placed_as`): "This is the whole file; the page shows it cropped to
+10%–70% across and 25%–75% down, turned 30° clockwise, flipped left to
+right." The agent prompt says a picture placed on a page appears in
+read_block as such a line, labelled "(picture on …)", its text the
+caption.
+
+The tool's chip is "Looked at N pictures in a note of …" (kind
 `image`, with `block_id` and `picture`, the first one's URL). Shares the
 View permission and `PICTURE_TOOLS` with the other two.
 
@@ -1046,8 +1080,11 @@ under a page or block, after the sibling named by `after_id` (default: last).
 `move_block` re-parents/reorders a block with its subtree — cycle-checked, and
 cross-page moves (allowed when both pages are in scope) refuse subtrees
 containing highlight blocks, whose PDF anchors are tied to their own paper.
-They also refuse a text box, placed on its own page's PDF or sheet, unless
-the sheet it is on moves with it (`_loose_text_box`).
+They also refuse a text box or a picture, placed on its own page's PDF or
+sheet, unless the sheet it is on moves with it (`_loose_placed`). The
+refusal names the kind: "pictures are placed on their page — they can
+only move within the same page, or with the page of paper they are on",
+and "text boxes …" for a box.
 `delete_block` removes a block with its subtree (below).
 All four go through the op path (`ops.apply_ops`, [collab.md](collab.md)):
 logged, fanned out to anyone on the page, and the page root's `updated_at`
@@ -1078,8 +1115,8 @@ Removes a note block with everything nested under it, in the Edit note
 blocks permission. A page id is refused (the agent never deletes pages).
 Deleting a highlight removes its mark from the PDF; deleting a handwriting
 block removes the handwriting. The approval card names the kind (`what`,
-from `_deleted_kind`: note, highlight, handwriting, text box, page of
-paper), counts the nested blocks (`children`) and shows the text struck
+from `_deleted_kind`: note, highlight, handwriting, text box, picture,
+page of paper), counts the nested blocks (`children`) and shows the text struck
 out. The action (kind `delete`, with `page_id`, `block_id`,
 `title`) records every block of the subtree, parent first, as `revert`
 (`{"blocks": [[id, parent, position, content, properties], …]}`), so the
@@ -1094,7 +1131,8 @@ instead when only part of a block should go.
 Stores a picture for the notes to embed, in the Edit note blocks
 permission, and answers with its URL: a PDF page of `page_id` (`pdf_page`,
 1-based) or its region `box` (`[x0, y0, x1, y1]` as page fractions), with
-the user's handwriting on it when `ink` is true (`ai_pictures.render_region`);
+its pictures and text boxes and the user's handwriting over them when `ink`
+is true, else the page as stored (`ai_pictures.render_region`);
 or a handwriting block's or a page of paper's picture (`block_id`, `area`
 "page" for the whole page — what `view_ink` shows). The picture is sized
 like every other and stored under its content hash (`ai_pictures.store_picture`,

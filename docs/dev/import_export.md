@@ -12,7 +12,7 @@ writer (its internals and the shared typesetting engine are in
 `gamma/notability_map.py`, `gamma/notability_export.py`, `gamma/notability_write.py`, `gamma/markdown_export.py`, `gamma/obsidian_export.py`, `gamma/pdf_export.py`,
 `gamma/pdf_notes.py`, `gamma/pdf_document.py`, `gamma/pdf_typeset.py`,
 `gamma/note_markup.py`, `gamma/vector_text.py`, `gamma/pdf_glyphs.py`,
-`gamma/pdf_image.py`, `gamma/text_box.py`, `gamma/bibtex.py`,
+`gamma/pdf_image.py`, `gamma/text_box.py`, `gamma/picture.py`, `gamma/bibtex.py`,
 `gamma/routers/export.py`; frontend dialogs in
 [ImportExport.jsx](../../frontend/src/transfers/ImportExport.jsx), imported directly by
 [App.jsx](../../frontend/src/app/App.jsx). Exports and library imports run as
@@ -51,6 +51,79 @@ media-box flip. A text box's `imported_annot` key
 (`pdf_export.annotation_key`) is the one a highlight block made from the
 same annotation carries, so such a block counts as there and nothing comes
 twice.
+
+**Image stamps.** A `/Stamp` becomes a picture block (`picture`,
+`pdf_page`; [pictures.md](pictures.md#server-and-interchange)) when its
+appearance draws one image and no text (`_picture_from_annotation`). The
+appearance is `/AP /N`, or the state `/AS` names when `/N` holds several.
+Its resources, nested forms included, must name exactly one image XObject
+that is no image mask, and no font. A rubber stamp of words or of
+vectors alone makes nothing. The key is `annotation_key` with the `/Stamp`
+subtype, and replies come in under the picture as under any imported
+annotation.
+
+- **A Gamma export's stamp** carries `/GammaPicture`
+  (`{v, picture, caption, text}`), which restores the picture: its size,
+  crop, turn, flips and Markdown caption. Its place is the centre of
+  `/Rect` through the page's view box and rotation, the inverse of the
+  export's mapping, so a move in another viewer holds. When `/Contents` on
+  one line differs from the `text` written, `/Contents` wins, escaped as
+  plain text, as a text box's does.
+- **A foreign stamp** is the whole image, where its appearance draws it,
+  as a viewer draws an annotation (ISO 32000-1, 12.5.5): the form's
+  `/BBox` through its `/Matrix` fitted to `/Rect`, then the `cm` its
+  content draws the image through (`_Drawn`, nested forms followed), then
+  the page's turn. A NoRotate stamp stays upright, pinned at its `/Rect`'s
+  top-left. The frame comes from where the image's corners land
+  (`_frame_of`): its sides, its turn from the top side, and `flip_h` when
+  the corners run the other way round. A skew is lost. Its `/Contents` is
+  the caption, escaped as plain text.
+- Either is kept on the page (`picture.keep_on_surface`).
+
+**A stamp's file** is read only for the stamps the import adds, once per
+image however many stamps draw it, and before the write lock
+(`_PictureFiles`, `pdf_image.image_file`). The PDF is untrusted, so every
+read is bounded:
+
+- `pdf_image.stream_data` inflates a `/FlateDecode` by hand, never past the
+  size the image needs. PyPDF2's `get_data` would inflate it whole and keep
+  the result on the reader.
+- An image is opened only as the format its filter names (JPEG, JPEG 2000,
+  or a rebuilt PNG). It is refused when its header's size is not its
+  `/Width` and `/Height`, before anything is decoded.
+- What is decoded counts against `MAX_DECODED_PIXELS` (40 MP an image) and
+  one `DecodeBudget` for the whole import (`MAX_IMPORT_PIXELS`, 200 MP), so
+  a small PDF that draws thousands of large images cannot hold the import
+  for minutes.
+- At most 1 MB of appearance content is read per PDF to find where its
+  images are drawn. Past that, an image is taken to fill its form's
+  `/BBox`.
+
+What a stamp's image is stored as:
+
+- **A `/DCTDecode` image** without a soft mask is the JPEG it holds. Its
+  bytes stay as they are when their EXIF orientation is the one the PDF
+  draws it through: the `/GammaOrientation` of the form a Gamma export
+  draws it in, else 1, since PDF viewers draw an image as stored.
+  Otherwise the orientation tag is set to that one in place, or, with no
+  tag to set, the image is decoded.
+- **A Flate image with PNG row filters** (`/Predictor` 10 to 15), gray,
+  RGB or a palette, without a soft mask and drawn as stored, is the PNG it
+  was made from, its compressed rows as they are.
+- **Anything else**, a JPEG with a soft mask among them, is decoded with
+  Pillow and stored as a PNG, its `/SMask` the alpha channel, turned as
+  the PDF draws it. Gray, RGB, CMYK, ICC-based and indexed spaces read. An
+  image mask, a Lab, Separation or DeviceN space, a filter other than
+  Flate, DCT and JPX, and a predictor it cannot rebuild do not.
+
+The stored file (`_picture_url`) is the one a Gamma export drew the
+picture from when the workspace has it at the size of the image read back.
+So a round trip keeps the file, a GIF's animation with it. Otherwise the
+image is stored under its content hash. A stamp whose image does not read,
+is past the budget, or is over the per-file cap (413) makes no block, and
+its replies none either. It is logged, and its annotation stays in the file
+for a later import. A full workspace (507) stops the import, as it does for
+the handwriting's files.
 
 A text highlight's quote is the text under its quads, read through MuPDF
 (`pdf_text.GlyphPages`, each page once, under the extraction lock;
@@ -109,12 +182,13 @@ preference). The strip (`_strip_embedded_annotations`) removes the
 annotations the import makes blocks of, with their threads (the replies
 and review states that answer them) and their `/Popup` windows
 (`pdf_export.drop_annotations`). Links, kinds not imported, hidden ones
-and those that make no block (a note with no text) stay. The blocks whose
-originals it removed get `properties.annot_stripped`, which tells
+and those that make no block (a note with no text) stay, and so does a
+stamp the import left out (`keep`). The strip reads no image. The blocks
+whose originals it removed get `properties.annot_stripped`, which tells
 `/export-pdf` to write them again. The export skips `imported_annot`
 highlights and ink only while the original is embedded
-(`pdf_export.still_embedded`). A text box it
-writes either way, replacing the embedded original
+(`pdf_export.still_embedded`). A text box or a picture
+it writes either way, replacing the embedded original
 ([pdf_typesetting.md](pdf_typesetting.md#annotated-pdf-export)).
 
 Replacing the page's PDF with another file (`PUT /pages/{id}/attachment`)
@@ -624,14 +698,27 @@ curve becomes one gamma-ink v2 stroke ([handwriting.md](handwriting.md)
   its centre, since a box cannot turn ([text_boxes.md](text_boxes.md)).
 - A formula (Notability stores its LaTeX alone) becomes a box of display
   math in its colour.
-- A picture becomes a fixed-width box holding `![caption](/api/uploads/…)`,
-  as large as the picture as turned. Its bytes are stored as they came
-  unless it is cropped, flipped, turned or stretched; then Pillow applies
-  the EXIF orientation, the crop, the flips, the stretch and the turn, and a
-  turned picture is a PNG with transparent corners, at most 2,048 px on its
-  longer side (`picture_bytes`). An animated GIF's image is its still
-  frame: shown whole, the GIF itself comes in its place, so it moves; a
-  cropped, flipped or turned one stays its still frame, so done.
+- A picture becomes a picture block
+  ([pictures.md](pictures.md#the-notability-import-and-export),
+  `notability_map.picture_block`): `pdf_page` on a PDF page, under its
+  sheet on paper. Its file is stored as it came, never decoded. Its frame
+  (`documentOrigin`, `unscaledContentSize`) goes through the page's frame
+  and is kept on the page (`picture.keep_on_surface`). The turn
+  (`rotationDegrees`, in radians) is `angle` in degrees, and the flips are
+  `flip_h` and `flip_v`. The crop (`FigureCropRectKey`, in the file's
+  pixels; an `.ntb`'s in the asset's logical size, `crop_size`) is
+  fractions of the image as the browser shows it, cut to the image; one
+  that holds nothing is the whole image. A stretch needs nothing: the
+  frame's aspect is not the crop's. The caption (`captionFieldText`), on
+  one line and escaped, is the block's content. A picture whose file is
+  missing, past the per-file cap, or not a PNG, JPEG, GIF or WebP whose
+  size reads is left out with a warning.
+- An animated GIF is its animation whenever the note has it within the
+  per-file cap and it stores, cropped, flipped or turned alike: the browser
+  animates it so. Otherwise it is its still frame.
+- Pictures an older import made stay text boxes holding an image. Their
+  pixels were transformed and their crop is gone, so no migration makes
+  them picture blocks.
 - Each recording (`.m4a`, listed by `Recordings/library.plist`) becomes a
   recording block after everything else ([recording.md](recording.md)): one
   segment, its length from the file's movie header
@@ -719,15 +806,19 @@ names:
   points, so only a page many times as many points wide as W gets there:
   a letter page of a note a few dozen units wide, or a PDF page far wider
   than its note. Finding the notes of an upload is linear in its files.
-- Pictures are PNG, JPEG, GIF or WebP by their first bytes, decoded only to
-  be transformed and only up to 40 MP; a stretch so long and thin that a
-  side would round to no pixel is refused. One image file is read for at
-  most 4 pictures of a note. A bundled PDF is read and opened once however
-  many names lead to it, and a recording file listed twice is one
-  recording. Recordings are `.m4a` by their `ftyp`, their length read from
-  box headers only, and are streamed into storage
-  (`storage.store_file_stream`). A text box's or a formula's text is cut
-  at 200,000 characters, what the editor saves (`ops.MAX_CONTENT`).
+- Pictures are PNG, JPEG, GIF or WebP by their first bytes, and nothing
+  decodes them: only their size is read, from the header
+  (`picture.image_size`, the EXIF orientation applied as browsers apply
+  it), so a picture of any declared size costs no more. A file is read and
+  stored once per note however many pictures show it (`_store_picture`'s
+  `files`). A still is read again at most once, to be stored for a picture
+  shown without the animation an earlier one showed. A bundled PDF is read
+  and opened once however many names lead to it, and a recording file
+  listed twice is one recording. Recordings are `.m4a` by their `ftyp`,
+  their length read from box headers only, and are streamed into storage
+  (`storage.store_file_stream`). A text box's, a formula's or a caption's
+  text is cut at 200,000 characters, what the editor saves
+  (`ops.MAX_CONTENT`).
 - An `.ntb`'s log is read up to 1,500,000 records (`notability.MAX_RECORDS`;
   past them the rest is left out, with a warning), and its text styles may
   touch 20,000,000 characters in all (`notability_ntb.MAX_STYLED`; past them
@@ -758,9 +849,8 @@ lists the upload's notes and, not imported, its other files.
   template paper comes in as plain paper of its colour.
 - Not kept: a text box's turn, alignment, fonts, per-run colours and
   underline; a sticky's lines; Notability's pencil shading and dash
-  lengths (Gamma draws its own); the animation of a GIF cropped, flipped
-  or turned (its still frame comes in); where a caption is drawn; note
-  links and tags; the
+  lengths (Gamma draws its own); where a caption is drawn; note links and
+  tags; the
   handwriting Notability recognised (`HandwritingIndex`).
 - A text box or picture that overlaps a sticky is drawn under it, since
   boxes lie under the ink layer.
@@ -785,17 +875,27 @@ as any other, but for three things the export put there for it:
   only where the note still holds what it describes: a stroke whose
   samples are the curve's (as many, each within 0.05 pt, the float32 the
   note stores), a shape whose samples span the same box (both
-  `copied_stroke`), a text box or picture at the same place and width and
-  a text box with the same text (`copied_box`), the notes when the typed
-  text is the one written (`copied_flow`), the sheets' papers when the
-  pages are as many (`copied_papers`), and a recording file's place among
-  its recording's segments. What the copy holds is checked as the import's
-  own output is (`ink.Stroke`, `normalize_text_box`, `normalize_paper`,
-  `MAX_CONTENT`, `MAX_BLOCKS`), so it can only say what a note could.
+  `copied_stroke`), a text box at the same place and width with the same
+  text (`copied_box`), a picture the note shows as the copy has it
+  (`copied_picture`, below), the notes when the typed text is the one written
+  (`copied_flow`), the sheets' papers when the pages are as many
+  (`copied_papers`), and a recording file's place among its recording's
+  segments. What the copy holds is checked as the import's own output is
+  (`ink.Stroke`, `normalize_text_box`, `normalize_picture`,
+  `normalize_paper`, `MAX_CONTENT`, `MAX_BLOCKS`), so it can only say what
+  a note could.
   The copy's order of the page's notes, sheets and recordings (a PDF's
-  handwriting and boxes counted as one) orders the page when the note
+  handwriting, boxes and pictures counted as one) orders the page when the note
   brings as many of each (`notability_import._ordered`); else the page is
   its notes, its sheets or markup, then its recordings.
+  - A picture's copy is `{caption, picture}`. It is used while the note
+    shows the picture at the same place and size (within `COPY_TOLERANCE`,
+    0.05 pt), turn (within `COPY_TURN`, 0.05°, the short way round), crop
+    (within `COPY_CROP`, 0.001 of a side) and flips. Then the caption's
+    Markdown and every number are the copy's, and the file is the note's.
+  - The copy an older export wrote of the box it drew a picture in
+    (`{alt, text_box}`) gives its alt text as the caption, while the
+    picture is still where that box's padding put it.
 - A line separator (U+2028) in the typed text is a line break inside one
   note: the export joins a note's lines with it.
 
@@ -881,10 +981,25 @@ computed by the same function on the note's own layout:
   strikes and marks as Notability keeps them, a link underlined, a
   `[[ref]]` as the text of the block it names, math as its TeX), as the
   import's `box_markdown` reads them back.
-- A box holding one picture is a picture in the box less its padding, as
-  tall as the picture shown that wide (`picture_box` grows it back), its
-  file as it is; an animated GIF is its still frame under `Images/` and
-  the GIF under `Assets/`, as Notability keeps one.
+- A picture block is an `ImageMediaObject` (`_picture`). Its frame goes
+  through the note's. `rotationDegrees` is the turn in radians,
+  `FigureCropRectKey` the crop × the file's pixel size as shown
+  (`picture.image_size`), and `isFlippedHorizontal` and
+  `isFlippedVertical` the flips. `captionFieldText` is the caption's plain
+  text on one line, references read as their labels, and
+  `isCaptionEnabled` is set when there is one.
+- Its file goes under `Images/` as it is. An animated GIF is its still
+  frame under `Images/` and the GIF under `Assets/<id>/media.gif`, as
+  Notability keeps one. Two pictures that show one file are written as
+  two files.
+- A surface's pictures come before its boxes in `zIndex`, so they lie
+  under them, as on screen.
+- A box holding one picture, as imports made one before a picture was a
+  block of its own, is still a picture (`_boxed_picture`): in the box less
+  its padding, as tall as the picture shown that wide. Its alt text is the
+  caption, less an Obsidian size that ends it (`_ALT_WIDTH`:
+  `![Figure 2|300x200](…)` gives "Figure 2"). It comes back a picture
+  block.
 - The page's notes (each block that is on no surface, in document order)
   are the typed text (`flow_runs`): a paragraph per note at its depth, a
   top-level note plain and a deeper one a bullet, "n. …" a numbered item,
@@ -897,9 +1012,10 @@ computed by the same function on the note's own layout:
 note as Gamma's own copy, which Notability does not decode and drops once
 it saves the note (`Draft.private`, the root's `GammaNoteKey`): every
 stroke verbatim by its UUID (its time, a pencil's `o`, a brush and nib
-Notability lacks, its band and keys), each box's Markdown and box, a
-picture's alt text, the notes as blocks, each sheet's paper, which
-recording each file is a segment of, and the order of the page's notes,
+Notability lacks, its band and keys), each box's Markdown and box, each
+picture's Markdown caption and `picture` (`{caption, picture}`), the notes
+as blocks, each sheet's paper, which recording each file is a segment of,
+and the order of the page's notes,
 sheets and recordings. The import uses each item of it only
 while the note still holds what it describes ([above](#notability-notes)).
 So a note out and back in is the page it was, stroke for stroke and key
@@ -912,18 +1028,22 @@ import gives a page.
 **Left out, and said:** highlights on a PDF's text (Notability keeps none;
 the Annotated PDF does), a PDF page's sheets of paper, a recording that is
 no `.m4a` (a browser's WebM or Ogg) or is still being made, the notes under
-a recording, handwriting on no page and a file missing on the server.
+a recording, handwriting or a picture on no page, a file missing on the
+server, and a picture's file that does not read.
 Changed, and said: a sheet of a size Notability lacks, grid and dot paper,
 a sheet of another paper than the first.
 
 **Tests.** `test_notability_export.py` round-trips a notebook with a stroke
 of every kind (pressure, tilt, time, a pencil's opacity, a calligraphy nib,
 dashes, band 0, an `rgba()` colour, an extra key, 4,000 samples), shapes,
-boxes, pictures, an animated GIF, notes and a recording of two segments; a
+boxes, pictures (cropped, stretched, turned, flipped, captioned, an animated
+GIF), notes and a recording of two segments; a
 PDF page of three page sizes; and the sample's Note export, each the same
 page after. With the copy stripped it holds every stroke to what Notability
 keeps of it; with an item edited, that item comes as the note has it; and
-the file is held to the sample's classes and keys. The browser suite
+the file is held to the sample's classes and keys. An old box holding a
+picture comes back a picture block, its Obsidian size no part of its
+caption. The browser suite
 exports a page from the dialog and imports it back
 (`transfer: a page out as a Notability note and back in is the page it
 was`).
@@ -972,8 +1092,9 @@ live Zotero. Zotero cannot read the .zip itself — its wizard reports
 extract and pick the .rdf, and the export dialog shows a numbered step guide
 for the format. Pasted note images: embedded in the Memo HTML as data URIs
 (Zotero's note import keeps them — verified live; `_EMBED_IMAGE_CAP` guards
-size), attached to the item as image `z:Attachment`s when bundling, and
-replaced by a plain `(image: … — see item notes)` placeholder in annotation
+size), attached to the item as image `z:Attachment`s when bundling (the
+pictures placed on a page too), and replaced by a plain
+`(image: … — see item notes)` placeholder in annotation
 comments (`strip_image_md`) — comments come from the PDF's `/Contents` and can
 never render a picture, so a highlight whose notes carry images ALSO becomes
 its own Memo with a page+quote header (`highlight_memo_html`). An export job
@@ -981,25 +1102,29 @@ its own Memo with a page+quote header (`highlight_memo_html`). An export job
 — like Zotero's "Include Annotations" they're burned into the exported PDF
 copies with `pdf_export.annotate_pdf` (`_ZoteroBuilder._annotated_copy`),
 as the annotated PDF writes them: highlights, area notes and handwriting
-with `highlights=1`, text boxes with either switch (`pdf=0` omits the files
-entirely, `notes=0` the Memos). An ink group's caption and notes are its
-`/Ink` comment, not a Memo too; a text box is its `/FreeText` alone, and a
-Memo as well only when notes sit under it, which a Zotero text annotation
-cannot hold ([below](#text-boxes-in-the-exports)). Without a copy (`pdf=0`,
-no stored PDF, `highlights=0` for ink) they stay Memos.
+with `highlights=1`, text boxes and pictures with either switch (`pdf=0`
+omits the files entirely, `notes=0` the Memos). An ink group's caption and
+notes are its `/Ink` comment, not a Memo too; a text box is its `/FreeText`
+alone, and a Memo as well only when notes sit under it, which a Zotero text
+annotation cannot hold ([below](#text-boxes-in-the-exports)). A picture is
+its `/Stamp` alone by the same rule ([below](#pictures-in-the-exports)).
+Without a copy (`pdf=0`, no stored PDF, `highlights=0` for ink) they stay
+Memos.
 
 What Zotero takes from the copies, by its pdf-worker's `readRawAnnotation`
 (Zotero 9.0.6; [research/zotero-annotations.md](../research/zotero-annotations.md)):
 `/Highlight` → highlight, `/Square` → image, `/Ink` → ink, `/FreeText` →
-text (Zotero 7+). An `/Ink`, `/Square` or `/FreeText` without a Zotero id
-(`/NM` `Zotero-<key>`) is dropped, so each carries one from its block id
-(`zotero_annot_key`); a `/FreeText` also needs `/Zotero:Rect`,
-`/Zotero:Rotation` and `/Zotero:FontSize` ([text_boxes.md](text_boxes.md#server-and-interchange)).
+text (Zotero 7+). A `/Stamp` is drawn from its appearance and imported as
+nothing, so a picture stays part of the PDF. An `/Ink`, `/Square` or
+`/FreeText` without a Zotero id (`/NM` `Zotero-<key>`) is dropped, so each
+carries one from its block id (`zotero_annot_key`); a `/FreeText` also needs
+`/Zotero:Rect`, `/Zotero:Rotation` and `/Zotero:FontSize` ([text_boxes.md](text_boxes.md#server-and-interchange)).
 Zotero shows them once the PDF is open, locked (external), and its reader's
 File → Import Annotations… makes them its own and takes them out of the
-file; the zip's README.txt says so. A colour arrives blended with white by
-the annotation's `/CA` (Zotero's rule), so Gamma's 0.65 washes look paler
-there than here.
+file; the zip's README.txt says so, and says once that Zotero shows the
+pictures but imports no annotation for them. A colour arrives blended with
+white by the annotation's `/CA` (Zotero's rule), so Gamma's 0.65 washes
+look paler there than here.
 
 ## The export framework
 
@@ -1029,8 +1154,8 @@ for one page with no local files, `_AnnotatedPdfBuilder` one page's PDF,
 `_NotabilityBuilder` one page's `.note`.
 
 `annotated-pdf` (`_AnnotatedPdfBuilder`) is each page's PDF with its
-highlights, handwriting and text boxes as standard annotations and, with
-the Notes switch, its notes as cards beside each page or on it, and
+highlights, handwriting, text boxes and pictures as standard annotations
+and, with the Notes switch, its notes as cards beside each page or on it, and
 with the Comments switch its open comment threads as cards beside it
 ([pdf_typesetting.md](pdf_typesetting.md#notes-and-comments-as-cards);
 `annotated_page_pdf`, what `/pages/{id}/export-pdf` runs). For one page it is that PDF. For a folder it
@@ -1454,7 +1579,9 @@ escaped `*` or `$` prints as typed). Highlights become quoted passages
 with a bar in the highlight's own colour and a `p. N` marker, and the
 Highlights/Notes switches mean exactly what they do in the Markdown export
 (drop highlights and a highlight block keeps its own writing as a plain
-bullet). Links become real `/Link` annotations, page titles and headings
+bullet). A text box and a picture placed on a page have rules of their own
+([text boxes](#text-boxes-in-the-exports), [pictures](#pictures-in-the-exports)).
+Links become real `/Link` annotations, page titles and headings
 become PDF bookmarks. Layout constants (A4, margins, sizes) live at the top of
 the module.
 
@@ -1502,6 +1629,7 @@ names no page whatever its `pdf_page` says. The Highlights switch leaves
 boxes in, the Notes switch takes them out with the other notes. The
 annotated PDF, and the Zotero export's PDF copies, write them with either
 switch on ([pdf_typesetting.md](pdf_typesetting.md#annotated-pdf-export)).
+Pictures follow the same rules ([below](#pictures-in-the-exports)).
 
 - **Markdown** (`markdown_export.py`): a note bullet, then the page line a
   highlight carries (two-space indent, `` `p.N` ``).
@@ -1528,6 +1656,74 @@ switch on ([pdf_typesetting.md](pdf_typesetting.md#annotated-pdf-export)).
 - **Annotated PDF**: a `/FreeText`, with either switch on, since
   `notes=0`, that format's default, means "don't paint the notes on the
   page". The sheet export draws a sheet's boxes as page content.
+
+## Pictures in the exports
+
+A picture ([pictures.md](pictures.md)) is placed on a page as a text box
+is, and the exports treat it as they treat a box. It is a note and never a
+highlight (`highlights.is_highlight` refuses one). The nearest sheet wins,
+and only a picture on a PDF page names its page (`picture.picture_page`).
+Its caption is the block's content. The Highlights switch leaves pictures
+in, and the Notes switch takes them out with the other notes. The
+annotated PDF and the Zotero export's PDF copies draw them with either
+switch on ([pdf_typesetting.md](pdf_typesetting.md#annotated-pdf-export)).
+
+The text exports write a picture as one line, `picture.markdown_of`:
+`![caption](url)`. The caption is the one a reader sees: its Markdown read
+as text (`text_box.plain_text`), on one line, without `[`, `]` and `|`
+(which would end the alt text or read as an Obsidian size), and escaped
+once. The url is the picture's upload, so the Bundle switch bundles it as
+it bundles any image of a note. In the Markdown, Obsidian, Logseq and
+Zotero exports, a picture whose value names no file has no line: its
+caption is written as a note's text.
+
+- **Markdown** (`markdown_export.py`): the line as a bullet, then the page
+  line a text box carries (`` `p.N` ``) on a PDF page.
+- **Obsidian** (`obsidian_export.py`): the line as a paragraph at the top
+  level and as a bullet in a list, then the page link
+  `[[Paper.pdf#page=N|p. N]]` on a PDF page, as for a box.
+- **Logseq graph** (`logseq_graph_export.py`): the line as a plain block,
+  its file bundled into `assets/`, and no page, as a box has none.
+- **Zotero RDF** (`zotero_export.py`, `routers/export.py`
+  `_ZoteroBuilder`):
+  - With a PDF copy, a picture on a PDF page is drawn in it as the
+    annotated PDF's `/Stamp`. Zotero shows the stamp but imports no
+    annotation for it, which the README says once. The picture is no
+    note, unless notes sit under it.
+  - When bundling, the picture's file also rides as an item attachment,
+    as a note's images do.
+  - A picture no copy carries is a note (`note_html`). One on a PDF page
+    opens with a bold "Picture on p.N" line. Then come the image, embedded
+    as a data URI like any note image, and the caption's Markdown under it,
+    since the embedded image keeps no alt text.
+- **Notes as PDF** (`pdf_document.py`, `_Canvas.picture`): the picture as
+  placed, cropped, flipped and turned. Its turned frame is fitted to the
+  column (never enlarged) and to a page's text height. Then come a small
+  grey "picture, p. N" line on a PDF page, as handwriting has, and the
+  caption as a bullet. A picture whose file is missing or cannot be
+  embedded is a grey "picture" line, with its page when it has one.
+- **Annotated PDF**: a `/Stamp`, with either switch on. Among a highlight's
+  notes in its popup, a picture on the PDF page is left out with the notes
+  under it, since it is its own `/Stamp`. One under a sheet stays a line,
+  its `![caption](url)`. The sheet export draws a sheet's pictures as page
+  content, under its boxes.
+- **Notability**: an `ImageMediaObject` with its crop, turn, flips and
+  caption ([Notability export](#notability-export)).
+- **Gamma export and backups**: the file rides by the reference in the
+  `picture` property (`storage.upload_refs` reads properties too).
+
+**Not built yet:**
+
+- The Markdown, Obsidian and Logseq exports and a Zotero note show the
+  whole file, upright: the line carries no crop, turn, flip or size.
+- Zotero keeps no picture. It draws the stamp, and its Import Annotations
+  leaves it in the PDF.
+- A foreign stamp's skew is lost, and so is whatever its appearance draws
+  beside its one image (a border, vectors).
+- The Notability export writes two pictures that show one file as two
+  files: whether Notability takes two media sharing one is unknown. How
+  Notability itself shows a turned, cropped, flipped or captioned picture
+  Gamma wrote is untested, and so is the order of its flips and turn.
 
 ## The PDF writers
 

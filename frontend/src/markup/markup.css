@@ -118,3 +118,104 @@
    ink tool armed, boxes are inert and ink draws over them. */
 :is(.pdfViewer, .nbViewer, .noteSheet).textArmed :is(.pdfPageWrap, .nbSheet) { cursor: text; touch-action: none; }
 :is(.pdfViewer, .nbViewer, .noteSheet).inkArmed .textBox { pointer-events: none; }
+
+/* --- Pictures (markup/PictureLayer.jsx, docs/dev/pictures.md) ------------- */
+/* A surface's pictures sit under its text boxes and its ink: the layer comes
+   before theirs at the same z-index, over the page's own marks. It is a size
+   container as the text boxes' is (--tb-pt is one point of the surface). A
+   picture's frame is placed in the surface's percentages and turned about
+   its centre; its inner box clips the image to the frame and mirrors it, so
+   the frame's outline (turned with it) and its flash are not clipped. The
+   selected picture's handles (the lasso's .inkTransformHandle, app.css, in
+   screen pixels) and its crop sit outside the layer, in the surface's
+   wrapper at z-index 7 as the lasso's handles do: over the text boxes and
+   the ink, which never take their presses. A picture is never inverted on
+   a dark page: the filter in app.css takes the ink and a box's body only. */
+.pictureLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  container-type: inline-size;
+  pointer-events: none;
+}
+.pagePicture { position: absolute; box-sizing: border-box; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.pagePictureFlip { position: absolute; inset: 0; overflow: hidden; }
+.pagePictureFlip img { position: absolute; display: block; max-width: none; pointer-events: none; }
+.pictureLayer .pagePicture { pointer-events: auto; }
+.pictureLayer .pagePicture:not(.selected):hover { outline: 1px dashed var(--border-hover); }
+/* Selected, a drag moves it and a finger drags it rather than scrolling the page. */
+.pictureLayer .pagePicture.selected { outline: 1.5px solid var(--accent); cursor: move; touch-action: none; }
+/* In crop mode the crop draws the picture (.pictureCrop). */
+.pictureLayer .pagePicture.cropping { visibility: hidden; }
+.pagePicture.replayPending { opacity: 0.4; }
+/* The outline after a jump from the notes. */
+.pictureFlash {
+  position: absolute;
+  inset: -4px;
+  border: 1.5px dashed var(--accent);
+  border-radius: 2px;
+  pointer-events: none;
+  animation: inkFlashFade 1.8s ease-out forwards;
+}
+/* With an ink tool armed, pictures are inert and ink draws over them; the
+   one just placed (selected) still moves. */
+:is(.pdfViewer, .nbViewer, .noteSheet).inkArmed .pagePicture:not(.selected) { pointer-events: none; }
+/* A dark page leaves the photo as it is, a little dimmed. */
+:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) .pagePicture img { filter: brightness(0.88); }
+/* The menu's crop bar: two buttons. */
+.inkEditMenu.pictureCropBar { width: auto; }
+
+/* Crop mode: the whole image dimmed, placed, flipped and turned as the
+   picture is, the part kept bright (a second copy clipped to it) inside a
+   frame with a handle at each corner and side, which keep their screen
+   size, 12 px on every device, each taking presses 28 px across as the
+   picture's other handles do. The frame moves the crop, its handles move
+   its edges. */
+.pictureCrop { position: absolute; z-index: 7; pointer-events: auto; touch-action: none; user-select: none; -webkit-user-select: none; }
+.pictureCropFlip { position: absolute; inset: 0; }
+.pictureCropImage { position: absolute; }
+.pictureCropImage img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; max-width: none; pointer-events: none; }
+.pictureCropDim { filter: brightness(0.45); }
+.pictureCropBox { position: absolute; box-sizing: border-box; outline: 1.5px solid var(--accent); cursor: move; touch-action: none; }
+.pictureCropHandle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  background: var(--bg-elevated);
+  transform: translate(-50%, -50%);
+  touch-action: none;
+}
+/* the hit area: 28 px across the 9 px inside the border */
+.pictureCropHandle::before { content: ""; position: absolute; inset: -9.5px; }
+.pictureCrop-nw { left: 0; top: 0; cursor: nwse-resize; }
+.pictureCrop-n { left: 50%; top: 0; cursor: ns-resize; }
+.pictureCrop-ne { left: 100%; top: 0; cursor: nesw-resize; }
+.pictureCrop-e { left: 100%; top: 50%; cursor: ew-resize; }
+.pictureCrop-se { left: 100%; top: 100%; cursor: nwse-resize; }
+.pictureCrop-s { left: 50%; top: 100%; cursor: ns-resize; }
+.pictureCrop-sw { left: 0; top: 100%; cursor: nesw-resize; }
+.pictureCrop-w { left: 0; top: 50%; cursor: ew-resize; }
+
+/* The picture in the notes (PictureCard): drawn as placed in its turned
+   frame's box, under the row's caption; a click shows it on its page. */
+.blockPictureCard {
+  position: relative;
+  display: block;
+  max-width: 100%;
+  margin: 4px 0 2px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  cursor: pointer;
+}
+.blockPictureCard .pagePicture { pointer-events: none; }
+.blockPictureMissing {
+  width: fit-content;
+  padding: 6px 10px;
+  color: var(--text-tertiary);
+  font-size: var(--fs-xs);
+  cursor: default;
+}

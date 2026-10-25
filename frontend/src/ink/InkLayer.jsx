@@ -18,7 +18,7 @@ import { IconSwap } from "../shared/ui/MotionWidgets";
 import { getStroke } from "perfect-freehand";
 import {
   ClipboardIcon, CopyIcon, DuplicateIcon, FileTextIcon, FlipHIcon, FlipVIcon, HighlightIcon, LineWidthIcon, MergeIcon, MoreIcon, NotebookPenIcon,
-  PaletteIcon, PenIcon, PlayIcon, RectSelectIcon, RedoIcon, ResizeIcon, ScissorsIcon, StopIcon, TrashIcon, BrushIcon, SparklesIcon,
+  PaletteIcon, PenIcon, PlayIcon, RectSelectIcon, ScissorsIcon, StopIcon, TrashIcon, BrushIcon, SparklesIcon,
   PaintBucketIcon,
 } from "../shared/ui/Icons";
 import {
@@ -43,6 +43,7 @@ import {
 import { toolShape } from "./shapeTool.js";
 import { doublePress } from "../shared/ui/press.js";
 import { scrollBox } from "../shared/ui/placement.js";
+import { TransformHandles, arrowSign, pct } from "../markup/TransformHandles.jsx";
 import { makeStabilizer } from "./stabilizer.js";
 import { duplicateOffset, measureSurface } from "./surfaceScale.js";
 import { magForWidth, moveWindow, setMag } from "./zoomWindow.js";
@@ -77,12 +78,14 @@ export const ERASER_SIZES = [5, 9, 16];
 // What a press on never starts ink, even from a stylus that writes right
 // away: the menus (portalled), the lasso's handles, the ruler's knob and
 // ends, the zoom window's band and corner, a text box's width handle, its
-// move band and its open editor (markup/TextBoxLayer.jsx), and the comment
-// cards beside a PDF page (comments/CommentMargin.jsx). The ruler's band is
-// the pointer's kind's: a pen about to write writes along it, any other
-// pointer moves it (writesOnBand).
+// move band and its open editor (markup/TextBoxLayer.jsx), a selected
+// picture, its handles and its crop (markup/PictureLayer.jsx: a picture
+// placed while a pen is armed moves before the pen writes over it), and the
+// comment cards beside a PDF page (comments/CommentMargin.jsx). The ruler's
+// band is the pointer's kind's: a pen about to write writes along it, any
+// other pointer moves it (writesOnBand).
 const BESIDE_PAGE = ".commentMargin";
-const NOT_INK = `.inkEditMenu, .inkTransformHandle, .inkRulerKnob, .inkRulerEnd, .inkZoomBand, .inkZoomResize, .textBoxWidth, .textBoxBand, .textBox.editing, ${BESIDE_PAGE}`;
+const NOT_INK = `.inkEditMenu, .inkTransformHandle, .inkRulerKnob, .inkRulerEnd, .inkZoomBand, .inkZoomResize, .textBoxWidth, .textBoxBand, .textBox.editing, .pagePicture.selected, .pictureCrop, ${BESIDE_PAGE}`;
 // The tools that write a stroke: a pen or a highlighter preset (the
 // stylus's pen with nothing armed included).
 const strokeTool = (use) => use?.tool === "pen" || use?.tool === "highlighter";
@@ -98,8 +101,9 @@ const coalesced = (e) => {
 };
 // What takes a click above a stroke of a read-only page (whose tap shows
 // the stroke's note): the page's own clickable marks. The strokes are drawn
-// above them all, text boxes included (app.css), but take no pointer.
-const ABOVE_PASSIVE_INK = "[data-hl-id], .pdfNoteAnchor, .pdfLinkBox, .textBox";
+// above them all, text boxes and pictures included (app.css), but take no
+// pointer.
+const ABOVE_PASSIVE_INK = "[data-hl-id], .pdfNoteAnchor, .pdfLinkBox, .textBox, .pagePicture";
 // Under a native host that captures the Pencil (shared/lib/host.js), a pen
 // stroke is claimed at its down: the host takes the touch and draws the live
 // line itself, then hands the finished samples back, and they commit here as
@@ -1969,73 +1973,19 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
   );
 }
 
-// A length as a percentage of `of`: the controls laid over a page and its
-// canvases are placed in the page's percentages, so they follow it through
-// the viewer's zoom. A focused control's arrow keys: the step each one
-// moves (ARROWS, y down) and its sign (arrowSign: right and up are 1, left
-// and down -1).
-const pct = (v, of) => `${(v / of) * 100}%`;
+// A focused control's arrow keys: the step each one moves (y down). The
+// percentages the controls are laid in and the arrow keys' signs are
+// markup/TransformHandles.jsx's pct and arrowSign.
 const ARROWS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
-const arrowSign = (key) => (key === "ArrowRight" || key === "ArrowUp" ? 1 : key === "ArrowLeft" || key === "ArrowDown" ? -1 : 0);
 
-// The selection's resize and rotate buttons, and, for a shape held alone
-// in the selection (`shape`, a stroke with a shape record), its own
-// handles (InkShapeHandles).
+// The selection's resize and rotate buttons (markup/TransformHandles.jsx),
+// and, for a shape held alone in the selection (`shape`, a stroke with a
+// shape record), its own handles (InkShapeHandles).
 function InkTransformHandles({ wrapRef, box, width, height, positions, maxScale, onPreview, onCommit, shape, place,
   onShapePreview, onShapeCommit }) {
-  const drag = useRef(null);
-  const cancel = () => { drag.current = null; onPreview(null); };
-  useEffect(() => {
-    const escape = (e) => { if (e.key === "Escape") cancel(); };
-    window.addEventListener("blur", cancel);
-    window.addEventListener("keydown", escape);
-    return () => { drag.current = null; window.removeEventListener("blur", cancel); window.removeEventListener("keydown", escape); };
-  }, []);
-  const valueAt = (e) => {
-    const d = drag.current;
-    const x = (e.clientX - d.rect.left) / d.k - d.cx, y = (e.clientY - d.rect.top) / d.k - d.cy;
-    let angle = Math.atan2(y, x) - d.startAngle;
-    angle = Math.atan2(Math.sin(angle), Math.cos(angle));
-    if (e.shiftKey) angle = Math.round(angle / (Math.PI / 12)) * Math.PI / 12;
-    return { cx: d.cx, cy: d.cy, angle: d.mode === "rotate" ? angle : 0,
-      scale: d.mode === "resize" ? Math.max(0.1, Math.min(d.maxScale, Math.hypot(x, y) / d.radius)) : 1 };
-  };
-  const begin = (e, mode) => {
-    if (e.button !== 0 || drag.current) return;
-    e.preventDefault(); e.stopPropagation();
-    const rect = wrapRef.current.getBoundingClientRect(), k = rect.width / width;
-    const cx = (box[0] + box[2]) / 2, cy = (box[1] + box[3]) / 2;
-    const x = (e.clientX - rect.left) / k - cx, y = (e.clientY - rect.top) / k - cy;
-    drag.current = { id: e.pointerId, mode, rect, k, cx, cy, radius: Math.max(0.01, Math.hypot(x, y)), startAngle: Math.atan2(y, x), maxScale };
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const move = (e) => {
-    if (drag.current?.id !== e.pointerId) return;
-    e.preventDefault(); e.stopPropagation(); onPreview(valueAt(e));
-  };
-  const finish = (e) => {
-    if (drag.current?.id !== e.pointerId) return;
-    e.preventDefault(); e.stopPropagation();
-    const value = valueAt(e);
-    cancel();
-    e.currentTarget.releasePointerCapture(e.pointerId);
-    if (Math.abs(value.scale - 1) > 0.001 || Math.abs(value.angle) > 0.001) onCommit(value);
-  };
   return <>
-    {["resize", "rotate"].map((mode) => <button key={mode} type="button" className={`inkTransformHandle inkTransform-${mode}`}
-      aria-label={mode === "resize" ? t("Resize selected handwriting") : t("Rotate selected handwriting")}
-      title={mode === "resize" ? t("Drag to resize; arrow keys change size") : t("Drag to rotate; hold Shift to snap to 15°; arrow keys rotate")}
-      style={{ left: pct(positions[mode][0], width), top: pct(positions[mode][1], height) }}
-      onPointerDown={(e) => begin(e, mode)} onPointerMove={move} onPointerUp={finish}
-      onPointerCancel={cancel} onLostPointerCapture={cancel} onClick={(e) => e.stopPropagation()}
-      onKeyDown={(e) => {
-        const sign = arrowSign(e.key);
-        if (!sign) return;
-        e.preventDefault(); e.stopPropagation();
-        onCommit({ cx: (box[0] + box[2]) / 2, cy: (box[1] + box[3]) / 2,
-          scale: mode === "resize" ? Math.min(maxScale, sign > 0 ? 1.1 : 1 / 1.1) : 1,
-          angle: mode === "rotate" ? sign * Math.PI / 12 : 0 });
-      }}>{mode === "resize" ? <ResizeIcon /> : <RedoIcon />}</button>)}
+    <TransformHandles wrapRef={wrapRef} box={box} width={width} height={height} positions={positions} maxScale={maxScale}
+      onPreview={onPreview} onCommit={onCommit} />
     {shape ? <InkShapeHandles wrapRef={wrapRef} stroke={shape} width={width} height={height}
       place={place} onPreview={onShapePreview} onCommit={onShapeCommit} /> : null}
   </>;
