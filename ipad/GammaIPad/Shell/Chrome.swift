@@ -31,7 +31,8 @@ final class Chrome: NSObject, WKScriptMessageHandlerWithReply, WKNavigationDeleg
     }()
 
     /// The calls the pages make on the iPad (ShellController.call): the
-    /// desktop's gammaShell without what the iPad does not have.
+    /// desktop's gammaShell without what the iPad does not have, and with
+    /// `hideBar`, the bar's own hide button, which only the iPad offers.
     static let script = """
     (() => {
       const listeners = new Set();
@@ -41,8 +42,8 @@ final class Chrome: NSObject, WKScriptMessageHandlerWithReply, WKNavigationDeleg
         onState(cb) { listeners.add(cb); return () => listeners.delete(cb); },
         _state(s) { for (const cb of listeners) cb(s); },
       };
-      for (const m of ["state", "list", "open", "openWorkspace", "launcher", "reload", "barExpand", "addRemote",
-                       "rename", "setUrl", "remove", "revealData", "revealLog", "copyAddress"]) {
+      for (const m of ["state", "list", "open", "openWorkspace", "launcher", "reload", "barExpand", "hideBar",
+                       "addRemote", "rename", "setUrl", "remove", "revealData", "revealLog", "copyAddress"]) {
         shell[m] = (...args) => post(m, args);
       }
       window.gammaShell = shell;

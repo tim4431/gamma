@@ -3005,6 +3005,7 @@
   "Server AI: {used} of {limit} tokens in the last 24 h": "服务器 AI：过去 24 小时 {used} / {limit} token",
   "Server AI: {used} tokens in the last 24 h": "服务器 AI：过去 24 小时 {used} token",
   "Server backups": "服务器备份",
+  "Server bar": "服务器栏",
   "Server client": "服务器客户端",
   "Server log": "服务器日志",
   "Server log copied.": "服务器日志已复制。",

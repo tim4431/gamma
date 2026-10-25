@@ -43,9 +43,12 @@ ink layer still encodes and saves every stroke.
    ([The chrome](#the-chrome)): the mark, which brings the launcher back,
    the "server · workspace" switcher, whose dropdown lists the open
    server's workspaces, then every server with its dot, then *All
-   servers…*, and the reload button. With a keyboard, ⌘⇧L is the
-   launcher and ⌘R reloads. When a server cannot be reached, or This iPad
-   could not start, the launcher shows why, with *Try again*.
+   servers…*, the reload button and a chevron that hides the bar. Hidden,
+   the bar gives its 44 pt to the page, and the web app's View → *Server
+   bar* (in More, upright) brings it back. With a keyboard, ⌘⇧L is the
+   launcher, ⌘R reloads and ⌘⇧B hides or shows the bar. When a server
+   cannot be reached, or This iPad could not start, the launcher shows
+   why, with *Try again*.
 5. For work away from the network, a workspace of another server is
    cloned onto This iPad in the web app's settings
    ([Offline use](#offline-use-clones)).
@@ -78,12 +81,14 @@ listed in [ipad/README.md](../../ipad/README.md).
   theme's background. Bottom to top it holds:
   - the page's web view and the live stroke view, with identical frames,
     from the safe area's top plus 44 pt (`ShellController.barHeight`,
-    the height of `bar.html`'s row on the iPad) to the screen's bottom.
-    So the page runs under the home indicator, as its CSS expects
+    the height of `bar.html`'s row on the iPad), or from the safe area's
+    top while the bar is hidden, to the screen's bottom. So the page runs
+    under the home indicator, as its CSS expects
     (`html[data-shell] .app` pads only the bottom, [below](#what-the-install-adds-and-where-it-lives));
   - the launcher's web view while it is up, in the same frame;
   - the bar's web view from the screen's top edge, which paints the strip
-    under the status bar itself.
+    under the status bar itself. While the bar is hidden, that strip is
+    the container's, in the page's colour.
 - **One CSS pixel is one point.** The viewport is at scale 1
   (`width=device-width, initial-scale=1`), the document never scrolls
   (`html, body, #root` fill the viewport; the panes scroll), and the web
@@ -127,16 +132,17 @@ window.gammaNative = {
   pencilRoll: true,   // the samples carry Apple Pencil Pro's barrel roll (`r`)
   haptics: true,      // the host plays `haptic`, in an Apple Pencil Pro
   openFiles: true,    // the host holds the files the system opens in the app (`files`)
+  shellBar: true,     // the host's bar can be hidden, and `shellBar` sets and reports it
 };
 document.documentElement.setAttribute("data-host", "ipad");
 ```
 
 The web app reads `platform` and the flags `ink`, `hold`, `pencil`,
-`pencilPhases`, `pencilRoll`, `haptics` and `openFiles`, never
-`version`:
+`pencilPhases`, `pencilRoll`, `haptics`, `openFiles` and `shellBar`,
+never `version`:
 what a shell does not declare it does not do, and the web leaves it out
-(no `hold` listener, no `haptic`, no Apple Pencil settings). `inkLooks`
-is information only: it says what of the
+(no `hold` listener, no `haptic`, no Apple Pencil settings, no *Server
+bar* row). `inkLooks` is information only: it says what of the
 claim's look the shell's live line can draw (below), and the page sends
 the whole look in every claim whatever a shell lists. The looks:
 `pressure`, the width from the Pencil's force by the brush; `dash`;
@@ -169,6 +175,7 @@ takes messages only from the server's own main frame.
 | `{type: "files"}` | `{files: [{id, name, size, type}]}` | The files the system opened in the app that the shell still holds, in the order they came; `type` is the MIME type of the name's extension, `""` when it has none ([Opened files](#opened-files)) |
 | `{type: "fileData", id, offset}` | `{data}`, or `{}` | Up to 2 MiB of that file from byte `offset`, in base64; `""` at its end. `{}`: the shell holds no such file, or the offset is past its end |
 | `{type: "fileDone", id}` | `{}` | The page is done with that file (taken, refused or put aside): the shell deletes its copy |
+| `{type: "shellBar", shown?}` | `{shown}` | The View menu's *Server bar* row (`app/useShellBar.js`): `shown` hides or shows the shell's bar ([The chrome](#the-chrome)). Without it, as the page loads, it only asks, and so does a `shown` that is no Bool. The reply is the person's choice; the bar still shows while it is needed |
 
 The claim's tool (`InkTool` in `Bridge.swift`, made by `ink/hostInk.js`
 `claimTool`) carries the preset's look beside its four keys. Each look
@@ -202,6 +209,7 @@ the value the page resolved with (`{}` when it resolved with nothing).
 | `{type: "pencil", gesture: "tap"\|"squeeze", action, phase?: "ended"}` | at once | A double tap, or a squeeze's end. `action` is the system's preferred action: `switchEraser`, `switchPrevious`, `showColorPalette`, `showInkAttributes`, `runSystemShortcut` or `ignore`. `phase: "ended"` comes from a shell with `pencilPhases`; a squeeze without it, from an older shell, is a quick squeeze |
 | `{type: "squeeze", phase: "began"\|"cancelled", action}` | at once | A squeeze's start, and its cancel, which comes instead of its `pencil` when the system cancels it. A type of its own, so a page that predates it ignores both and still acts once per squeeze, on its `pencil` |
 | `{type: "filesOpened"}` | at once | The system opened a file in the app: ask for what is held (`files`). A page that is not signed in to a workspace yet ignores it and asks once it is |
+| `{type: "shellBar", shown}` | at once | The person's choice of the bar changed: its chevron, ⌘⇧B, or the page's own row. The page checks its row by it |
 
 Keeping it small is the point. A message is added in `Bridge.swift` and
 `host.js` together, and a flag in `HostInfo` says what the web may rely
@@ -225,8 +233,9 @@ configuration that loads nothing else (`Shell/Chrome.swift`). The page's
 web view never gets any of it, and keeps loading server pages only
 (`Route`).
 
-- **The bar** is always up. Its view runs from the screen's top edge and
-  is see-through outside its strip and its open menu. `bar.html` pads by
+- **The bar** is up unless the person hid it (below). Its view runs
+  from the screen's top edge and is see-through outside its strip and
+  its open menu. `bar.html` pads by
   `env(safe-area-inset-top)` (`viewport-fit=cover`, and no inset
   adjustment on the view), so it paints the strip under the status bar
   itself, with its 44 pt row below. While a dropdown is open
@@ -236,6 +245,24 @@ web view never gets any of it, and keeps loading server pages only
   When the system ends the bar's web content process, the view goes back
   to its strip, since the page that loads again has no dropdown open
   (`Chrome.onTerminate`); a launcher whose process ends loads again too.
+- **Hiding the bar** gives the page its 44 pt.
+  - Three controls set `AppModel.barHidden`, kept in `UserDefaults`
+    (`gamma.barHidden`): the bar's chevron (`hideBar`), ⌘⇧B, and the web
+    app's View → *Server bar* (`shellBar`, [The host contract](#the-host-contract)).
+  - The bar still shows while it is needed (`AppModel.barNeeded`): while
+    the launcher is up, which its mark closes, and while This iPad
+    starts, which its status says. So a launch on This iPad shows the bar
+    until the server runs.
+  - `ShellController.placeBar` moves the content's top. One layout guide,
+    which the page's web view, the live stroke and the launcher share,
+    starts under the strip or under the status bar. The bar fades over
+    0.2 s, or at once with Reduce Motion, after an open dropdown closes.
+    A faded bar is `isHidden`, so the page takes every touch.
+  - With the bar away, the strip under the status bar is the container,
+    painted in the page's `theme` colour, which continues its topbar.
+  - The chevron shows only while the state's `barHideable` is true, that
+    is while a tap would hide the bar now. The page asks for the choice
+    as it loads and hears every change, for its row's check.
 - **The launcher** shows over the page, between the page's web view and
   the bar, in the page's frame, so the page beneath stays loaded and the
   bar stays above. Its view is made when the launcher shows and dropped
@@ -245,9 +272,10 @@ web view never gets any of it, and keeps loading server pages only
   mark, *All servers…* and ⌘⇧L toggle it (`AppModel.toggleLauncher`): a
   launcher that is up without an error closes, and otherwise a fresh one
   opens. *Open* on the server shown closes it too.
-- **Keyboard.** ⌘⇧L toggles the launcher, and ⌘R reloads the page
-  (`reload`, below). They are `UIKeyCommand`s on the controller. It
-  becomes first responder when it appears, so they work before any web
+- **Keyboard.** ⌘⇧L toggles the launcher, ⌘R reloads the page
+  (`reload`, below), and ⌘⇧B hides or shows the bar, its title in the
+  shortcuts overlay saying which. They are `UIKeyCommand`s on the
+  controller. It becomes first responder when it appears, so they work before any web
   view has focus, and takes the focus back when a launcher that had it
   closes, so they keep working after a tap in the launcher. ⌘⇧L first
   closes an open dropdown through the bar's page (an Escape keydown,
@@ -273,6 +301,9 @@ web view never gets any of it, and keeps loading server pages only
   screen's bottom. The launcher's footer reads "Gamma for iPad
   <version>", its intro says "this iPad", and the shortcut hints read
   "⌘⇧L" and "⌘R". Nothing of it changes the desktop.
+  - One control goes the other way: the bar's hide chevron reads
+    `barHideable`, which only the iPad's state has, so the desktop never
+    shows it.
 
 #### The bridge
 
@@ -298,6 +329,7 @@ sentence. The calls, answered as `desktop/main.js` answers them:
 | `launcher` | | The bar collapses and the launcher toggles |
 | `reload` | | The page again while it is on the shown server's origin, else the server's address (none has loaded, or a switch to it failed) |
 | `barExpand` | `on` | The bar's view over the whole screen, or back to its strip |
+| `hideBar` | | The bar hides (`AppModel.setBarHidden`). Only the iPad's bar has the button |
 | `addRemote` | `name, url` | `ServerAddress.parse` (a bare host means `https`, and a page link keeps only its origin), then the server at the end of the list, not opened, with the name when it is not blank. Refuses "That is not a web address." and "<origin> is already listed" |
 | `rename` | `id, name` | The server's name; a blank one gives it back its own |
 | `setUrl` | `id, url` | `AppModel.replace`: the shown server loads its new address, and the name goes with it. Refuses This iPad and an address that is none |
@@ -336,6 +368,7 @@ listener, and asks for the state itself once it runs.
     {id: <origin>, name, type: "remote", url, reachable?},
   ],
   lastOpened,                          // the current server's id; absent before the first
+  barHideable,                         // the bar's hide chevron shows: the bar is not needed (AppModel.barNeeded)
 }
 ```
 
@@ -1022,9 +1055,9 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
     its replies, the `stroke`'s `held`, `squeeze` and the `pencil` phase,
     the opened files' `files`, `fileData`, `fileDone` and `filesOpened`,
     `theme` with its `name` and without it (and with one that is no
-    string), a `servers` message refused, the declared flags
-    (`pencilRoll`, `openFiles`, and `calligraphy` and `snap` in
-    `inkLooks`)
+    string), `shellBar` both ways (a `shown` that is no Bool only asks),
+    a `servers` message refused, the declared flags (`pencilRoll`,
+    `openFiles`, `shellBar`, and `calligraphy` and `snap` in `inkLooks`)
   - the chrome's bridge (`ChromeTests`, in `ChromeTests.swift`): who may
     call (`Chrome.accepts`: a `file:` main frame, not a frame inside it, a
     server's page or none), the launcher's URL with a failure that
@@ -1032,14 +1065,16 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
   - the chrome's state (`ShellStateTests`): This iPad first, the ids, kept
     and default names, `busy` while starting and when slow, `gamma` from a
     session with and without `?ws=` and not from another origin, no
-    `keeping`, `update` or `settings`, and a full state valid JSON
+    `keeping`, `update` or `settings`, `barHideable` as given, and a full
+    state valid JSON
   - opening and the launcher (`LauncherTests`, `AppModel`'s rules): the
     launcher at the first launch only, its toggle, opening the server
     shown closing it without a reload, a load error sent to the launcher
     and opening retrying, a page arriving closing a launcher with an error
     and not one opened by hand, servers added at the end, names moved and
-    dropped with their server, `open` never listing a server, and removing
-    the server chosen unchoosing it
+    dropped with their server, `open` never listing a server, removing
+    the server chosen unchoosing it, and a hidden bar kept across
+    launches and up while the launcher is
   - the opened files' store (`OpenedFilesTests`): a file copied and
     listed with its name, size and type, read back whole over several
     chunks, an offset past the end and an unknown id refused, the copy
@@ -1317,6 +1352,14 @@ Only an iPad can show these, and none has been run yet:
     while a text field in the page has it, and after a tap in a launcher
     that then closed; and ⌘⇧L with the bar's dropdown open, which closes
     it, the next tap on the switcher opening it again.
+30. The bar hidden and shown ([The chrome](#the-chrome)): the page's web
+    view resized under the fade without a blank frame; the strip under
+    the status bar in the topbar's colour in every theme, and in the
+    library's on a portrait library with no tab open; both orientations,
+    Split View and Stage Manager; the pen's places after the move (check
+    25); ⌘⇧B with the same focus cases as check 29, and its title in the
+    shortcuts overlay; and a launch on This iPad with the bar hidden,
+    which shows it until the server runs.
 
 ### Not built yet
 
@@ -1425,8 +1468,8 @@ screen, not the device (`PHONE_MQ` / `useIsPhone` in App.jsx):
   its sheet is the account menu with the rest of the topbar on top —
   Background tasks, the open folder's Share this folder, and the View
   menu's rows (`viewMenuItems`; of the window toggles only PDF, since the
-  tabs switch Notes and Chat, then Undo, Redo, Go to page and Command
-  palette). The tasks, folder-share and View buttons are
+  tabs switch Notes and Chat, and in the iPad app *Server bar*, then Undo,
+  Redo, Go to page and Command palette). The tasks, folder-share and View buttons are
   not rendered; their popovers open from those rows in the sheet's place.
   A flyout (the account menu's Tours) opens inline under its row, since
   beside it the sheet's own scroll box would clip it. While something

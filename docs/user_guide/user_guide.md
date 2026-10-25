@@ -390,7 +390,7 @@ Both are in the **View menu (≡)**, on a page or on the home library (with a fo
 - **iPad / iPhone**: open your Gamma in Safari, Share → **Add to Home Screen**. The Apple Pencil writes right away.
 - **Android**: Chrome → ⋮ → **Install app**. **Desktop browsers**: the install icon in the address bar.
 - **Desktop app** (Windows, macOS, Linux): a self-contained Gamma with local libraries, which also opens your servers and keeps [offline copies](#offline-copies). From the [Microsoft Store](https://apps.microsoft.com/detail/9N8WGWR2J2MV) or the [releases](https://github.com/tim4431/Gamma/releases/latest). A PDF opened with Gamma (**Open with → Gamma**, or Gamma chosen as your default PDF app) goes into the library the app shows and opens there, with any annotations another reader saved in it; a library other people see asks first.
-- **The Gamma iPad app** keeps a copy of one workspace on the iPad for handwriting with no connection.
+- **The Gamma iPad app** keeps a copy of one workspace on the iPad for handwriting with no connection. The chevron at the right end of its server bar hides the bar (⌘⇧B with a keyboard), and **View → Server bar** brings it back (**More** when the iPad is upright).
 
 On a phone everything becomes full-screen views behind one bottom bar: Library, PDF, Notes, Chat, Add, Search, Share and More. On a desktop the Notes and Chat windows dock left, right or bottom by dragging their grip, and tabs sync to your account.
 
