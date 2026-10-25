@@ -155,10 +155,11 @@ prefix each.
 - **What is not copied.** The job artifacts, the server snapshots and the
   workspace snapshot zips stay on the node's disk. `publisher-sessions.key`
   in the data directory (or `GAMMA_PUBLISHER_SESSION_KEY`) is not copied.
-  It encrypts the saved AI keys, the Gamma Cloud grants, the mirrors'
-  tokens, the publisher sessions and the off-site secret key in users.db,
-  so keep it somewhere else, or a restored server cannot read those (the
-  secret key can be typed in again).
+  It encrypts the shared AI entries' keys and sign-ins (an account's own
+  are stored unencrypted), the Gamma Cloud grants, the mirrors' tokens, the
+  publisher sessions and the off-site secret key in users.db, so keep it
+  somewhere else, or a restored server cannot read those (the secret key
+  can be typed in again).
 
 **Restore**, with the server stopped. The command uses the bucket the
 settings name. After a lost disk the saved settings went with users.db, so

@@ -3298,6 +3298,7 @@
   "The Data menu on a workspace's row; Export all for every one": "工作区行上的“数据”菜单；“全部导出”导出每一个",
   "The Gamma Cloud address people sign in through; empty turns it off": "用户登录所用的 Gamma Cloud 地址；留空则关闭",
   "The Gamma server got no answer from the service. Check its address, or try again.": "Gamma 服务器没有收到该服务的响应。请检查它的地址，或重试。",
+  "The Gamma server got no answer from {provider}; the sign-in is kept. Check the server's network or proxy, then try again.": "Gamma 服务器没有收到 {provider} 的响应；登录仍然保留。请检查服务器的网络或代理，然后重试。",
   "The MCP connection above is all Claude Code needs to read your library. The plugin (optional) adds the /gamma:gamma workflow and the Gamma identity.": "上面的 MCP 连接已足够让 Claude Code 读取你的文库。插件（可选）增加 /gamma:gamma 工作流和 Gamma 身份。",
   "The PDF arrived": "PDF 已送达",
   "The PDF file exactly as stored, with nothing added.": "按存储原样的 PDF 文件，不添加任何内容。",

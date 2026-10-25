@@ -17,6 +17,9 @@ test("a rejected credential names the connection and asks for the right fix", ()
   assert.equal(failureCopy("auth", { provider: "ChatGPT", auth: "oauth" }).fix, "signin");
   assert.equal(failureCopy("auth").headline, "The AI service rejected the API key");
   assert.equal(failureCopy("network").switchModel, undefined, "another model can't fix a lost connection");
+  // A sign-in has no address to edit: an unreachable one offers no connection fix.
+  assert.equal(failureCopy("unreachable", { provider: "OpenAI" }).fix, "connection");
+  assert.equal(failureCopy("unreachable", { provider: "ChatGPT", auth: "oauth" }).fix, undefined);
 });
 
 test("the server's classification rides on the thrown error and is saved on the reply", () => {

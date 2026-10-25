@@ -264,6 +264,10 @@ def open_ai(
         if isinstance(error, urllib.error.HTTPError):
             detail = upstream_detail(error)
             log.warning(f"[ai] {detail}")
+            if error.code == 401 and conf.get("refresh_unreachable"):
+                # A sign-in due for renewal whose identity provider couldn't
+                # be reached (ai_settings.ai_runtime): unreachable, not dead.
+                raise urllib.error.URLError(f"couldn't reach the sign-in service to renew the token ({detail})")
             raise UpstreamError(error.code, detail)
         raise
     return _OpenCall(response, user_id)

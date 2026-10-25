@@ -42,6 +42,7 @@ from cryptography.fernet import InvalidToken
 from fastapi import HTTPException
 
 from . import ai_protocols, ai_usage
+from .chatgpt_oauth import RefreshUnavailable
 from .db import connect_users_db, get_pref, page_now, set_pref, update_pref
 from .logbuf import log
 from .publisher_sessions import cipher
@@ -462,10 +463,21 @@ def entry_models(entry: dict) -> list:
     return [m.strip() for m in (entry.get("models") or "").split(",") if m.strip()]
 
 
-# A failed sign-in token refresh isn't retried for this long: ai_runtime runs
-# on every AI request, and retrying a dead grant each time would add a full
-# round trip to the identity provider to chat/metadata/model calls.
+# A refused sign-in token refresh isn't retried for this long: ai_runtime
+# runs on every AI request, and retrying a dead grant each time would add a
+# full round trip to the identity provider to chat/metadata/model calls.
 REFRESH_BACKOFF_S = 300
+# One that got no verdict (RefreshUnavailable: no connection, a 5xx) is
+# retried sooner, since the grant is likely fine. Not much sooner: each try
+# may hold a request for the token request's 30 s timeout.
+REFRESH_RETRY_S = 60
+
+
+def _backed_off(oauth: dict) -> bool:
+    """Whether the sign-in's last refresh failed too recently to try again."""
+    window = REFRESH_RETRY_S if oauth.get("refresh_unreachable") else REFRESH_BACKOFF_S
+    return time.time() - (oauth.get("refresh_failed_at") or 0) <= window
+
 
 # One refresh at a time per sign-in: per account for its own entries, per
 # entry for a shared one (every account's requests refresh the same tokens).
@@ -483,27 +495,49 @@ def _refresh_lock(key) -> threading.Lock:
         return _refresh_locks.setdefault(key, threading.Lock())
 
 
-def _refresh_tokens(lock_key, read, write, flow) -> dict | None:
+def _refresh_tokens(lock_key, read, write, flow, rejected: str = "") -> dict | None:
     """Refresh one sign-in's tokens through its protocol's OAuth ``flow``
     under ``lock_key``'s lock. ``read()`` gives the stored oauth dict fresh
     (so a refresh another request just did is reused, not repeated),
-    ``write(oauth)`` stores the result. Returns the current oauth dict."""
+    ``write(oauth, expected)`` stores the result while the stored refresh
+    token is still ``expected`` and returns the stored dict. ``rejected``:
+    an access token the provider answered 401 to, refreshed although it
+    does not look expired, unless the stored one is another by now or a
+    refresh got it less than REFRESH_BACKOFF_S ago (``refreshed_at``): a
+    provider refusing every token then costs one refresh per window, not
+    one per check. Returns the current oauth dict."""
     with _refresh_lock(lock_key):
         oauth = read()
         if not oauth or not oauth.get("access_token"):
             return None
-        failed_at = oauth.get("refresh_failed_at") or 0
-        if not flow.needs_refresh(oauth) or time.time() - failed_at <= REFRESH_BACKOFF_S:
-            return oauth
-        refreshed = flow.refresh(oauth)
-        if refreshed:
-            oauth = refreshed
+        if rejected:
+            due = (oauth["access_token"] == rejected
+                   and time.time() - (oauth.get("refreshed_at") or 0) > REFRESH_BACKOFF_S)
         else:
-            # Keep the stale token: the call will fail with a clear upstream
-            # 401 → someone reconnects in Settings.
-            oauth["refresh_failed_at"] = int(time.time())
-        write(oauth)
-        return oauth
+            due = flow.needs_refresh(oauth)
+        if not due or _backed_off(oauth):
+            return oauth
+        expected = oauth.get("refresh_token")
+        try:
+            refreshed = flow.refresh(oauth)
+        except RefreshUnavailable:
+            # No verdict on the grant: keep the tokens, try again soon.
+            return write({**oauth, "refresh_failed_at": int(time.time()), "refresh_unreachable": True}, expected)
+        if not refreshed:
+            # Refused: keep the stale token, so the call fails with a clear
+            # upstream 401 and someone signs in again in Settings.
+            oauth = {k: v for k, v in oauth.items() if k != "refresh_unreachable"}
+            return write({**oauth, "refresh_failed_at": int(time.time())}, expected)
+        refreshed = {**refreshed, "refreshed_at": int(time.time())}
+        # OpenAI has spent the old refresh token: a lost save loses the grant.
+        for attempt in range(3):
+            try:
+                return write(refreshed, expected)
+            except sqlite3.OperationalError as e:
+                if attempt == 2:
+                    log.error(f"[ai] a refreshed sign-in could not be saved ({e}): the stored refresh "
+                              "token is spent, so the sign-in will have to be made again")
+        return refreshed
 
 
 def _entry_oauth(entries: list, provider_id: str) -> dict | None:
@@ -511,31 +545,35 @@ def _entry_oauth(entries: list, provider_id: str) -> dict | None:
     return e.get("oauth") if e and isinstance(e.get("oauth"), dict) else None
 
 
-def _refreshed_oauth(user_id: str, provider_id: str, flow) -> dict | None:
+def _swap_oauth(entries: list, provider_id: str, oauth: dict, expected) -> None:
+    """Put ``oauth`` on the entry while its stored refresh token is still
+    ``expected``, the one the refresh started from: a refresh, failed or
+    late, never overwrites a sign-in made again meanwhile."""
+    stored = _entry_oauth(entries, provider_id)
+    if stored is not None and stored.get("refresh_token") == expected:
+        next(e for e in entries if e.get("id") == provider_id)["oauth"] = oauth
+
+
+def _refreshed_oauth(user_id: str, provider_id: str, flow, rejected: str = "") -> dict | None:
     """An account's own sign-in entry, refreshed under the account's lock
     and written back as only its tokens (an edit of the list meanwhile —
     another tab adding a key — stays)."""
-    def write(oauth):
-        def change(entries):
-            for e in entries:
-                if e.get("id") == provider_id:
-                    e["oauth"] = oauth
-        update_provider_entries(user_id, change)
-    return _refresh_tokens(user_id, lambda: _entry_oauth(load_provider_entries(user_id), provider_id), write, flow)
+    def write(oauth, expected):
+        return _entry_oauth(update_provider_entries(
+            user_id, lambda entries: _swap_oauth(entries, provider_id, oauth, expected)), provider_id)
+    return _refresh_tokens(user_id, lambda: _entry_oauth(load_provider_entries(user_id), provider_id),
+                           write, flow, rejected)
 
 
-def _refreshed_server_oauth(provider_id: str, flow) -> dict | None:
+def _refreshed_server_oauth(provider_id: str, flow, rejected: str = "") -> dict | None:
     """A shared sign-in entry, refreshed under the entry's own lock and
     written back to the server's config (only its tokens: an admin's edit
     of the other fields meanwhile stays)."""
-    def write(oauth):
-        def change(config):
-            for e in config["providers"]:
-                if e.get("id") == provider_id:
-                    e["oauth"] = oauth
-        edit_server_ai(change)
+    def write(oauth, expected):
+        return _entry_oauth(edit_server_ai(
+            lambda config: _swap_oauth(config["providers"], provider_id, oauth, expected))["providers"], provider_id)
     return _refresh_tokens(("server", provider_id),
-                           lambda: _entry_oauth(load_server_ai()["providers"], provider_id), write, flow)
+                           lambda: _entry_oauth(load_server_ai()["providers"], provider_id), write, flow, rejected)
 
 
 def ai_runtime(user_id: str) -> dict:
@@ -573,13 +611,17 @@ def ai_runtime(user_id: str) -> dict:
             oauth = e.get("oauth") if isinstance(e.get("oauth"), dict) else None
             if not oauth or not oauth.get("access_token"):
                 continue
-            failed_at = oauth.get("refresh_failed_at") or 0
-            if proto.oauth.needs_refresh(oauth) and time.time() - failed_at > REFRESH_BACKOFF_S:
+            if proto.oauth.needs_refresh(oauth) and not _backed_off(oauth):
                 refreshed = (_refreshed_server_oauth(pid, proto.oauth) if is_server_id(pid)
                              else _refreshed_oauth(user_id, pid, proto.oauth))
                 oauth = refreshed or oauth
             conf["api_key"] = oauth["access_token"]
             conf["account_id"] = oauth.get("account_id") or ""
+            if oauth.get("refresh_unreachable") and proto.oauth.needs_refresh(oauth):
+                # Due for renewal, and the identity provider could not be
+                # reached: a 401 then says so, not "sign in again"
+                # (ai_client.open_ai). The token may still work meanwhile.
+                conf["refresh_unreachable"] = True
         else:
             key = (e.get("api_key") or "").strip()
             if not key:
@@ -615,28 +657,52 @@ def ai_runtime(user_id: str) -> dict:
 
 
 def clear_refresh_backoff(user_id: str, provider_id: str) -> None:
-    """Forget a sign-in entry's failed-refresh timestamp so the next
-    ai_runtime() re-attempts the token refresh immediately (an explicit
-    retry, e.g. the settings Test button). A ``server:<id>`` names a shared
-    entry; the caller has checked the account may touch it."""
+    """Forget a sign-in entry's failed refresh so the next ai_runtime()
+    re-attempts the token refresh immediately (an explicit retry, e.g. the
+    settings Test button). A ``server:<id>`` names a shared entry; the
+    caller has checked the account may touch it."""
+    def forget(entries):
+        oauth = _entry_oauth(entries, provider_id)
+        if oauth:
+            oauth.pop("refresh_failed_at", None)
+            oauth.pop("refresh_unreachable", None)
+
     if is_server_id(provider_id):
         with _refresh_lock(("server", provider_id)):
             oauth = _entry_oauth(load_server_ai()["providers"], provider_id)
             if oauth and "refresh_failed_at" in oauth:
-                def change(config):
-                    for e in config["providers"]:
-                        if e.get("id") == provider_id and isinstance(e.get("oauth"), dict):
-                            e["oauth"].pop("refresh_failed_at", None)
-                edit_server_ai(change)
+                edit_server_ai(lambda config: forget(config["providers"]))
         return
     with _refresh_lock(user_id):
         oauth = _entry_oauth(load_provider_entries(user_id), provider_id)
         if oauth and "refresh_failed_at" in oauth:
-            def change(entries):
-                for e in entries:
-                    if e.get("id") == provider_id and isinstance(e.get("oauth"), dict):
-                        e["oauth"].pop("refresh_failed_at", None)
-            update_provider_entries(user_id, change)
+            update_provider_entries(user_id, forget)
+
+
+def renew_rejected(user_id: str, provider_id: str, rejected: str) -> str:
+    """Renew a sign-in whose access token ``rejected`` the provider answered
+    401 to although it did not look expired (a clock behind, a token
+    revoked early). Under the refresh lock and within the backoff, like
+    ai_runtime's renewal: of the requests the token was refused to, one
+    refreshes and the others get its result. Returns the access token to
+    try again with, "" when there is none (the grant was refused, a
+    refusal is still backed off, or a refresh got the refused token only
+    just now); raises RefreshUnavailable while the identity provider can't
+    be reached. A shared entry's backoff is never reset here: that is an
+    admin's."""
+    shared = is_server_id(provider_id)
+    entries = load_server_ai()["providers"] if shared else load_provider_entries(user_id)
+    proto = ai_protocols.PROTOCOLS.get(next((e.get("protocol") for e in entries if e.get("id") == provider_id), None))
+    if not rejected or not proto or proto.auth != "oauth":
+        return ""
+    oauth = (_refreshed_server_oauth(provider_id, proto.oauth, rejected) if shared
+             else _refreshed_oauth(user_id, provider_id, proto.oauth, rejected)) or {}
+    token = oauth.get("access_token") or ""
+    if token and token != rejected:
+        return token
+    if oauth.get("refresh_unreachable"):
+        raise RefreshUnavailable("the identity provider could not be reached to renew the sign-in")
+    return ""
 
 
 def require_ai_runtime(user_id: str) -> dict:

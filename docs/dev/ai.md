@@ -49,7 +49,11 @@ model — the cheap utility model), else the entry's first model. A failed probe
 carries the failure's `kind` (see "Chat endpoint"; `no_model` when the entry
 has none picked) and an `auth` flag on 401/403, so the row renders the chat
 error card's headline and fix ("OpenAI rejected the API key — Update key"),
-the upstream body only on hover. Upstream error
+the upstream body only on hover. For a ChatGPT sign-in a 401 first renews the
+token once, so `auth` means OpenAI refused the grant or the renewed token was
+refused too; a 403 (a challenge page included) still reads as `auth`. While
+OpenAI can't be reached to renew it, the kind is `unreachable` (see "The
+chatgpt protocol (OAuth)"). Upstream error
 details are summarized before display everywhere (`upstream_detail` in
 `ai_client.py`): JSON bodies reduce to their message field, HTML error pages
 (a proxy's 502 page) to their `<title>`.
@@ -60,7 +64,10 @@ account pref `gamma-ai-login-check`, default `ping`): mode `"ping"` verifies the
 credential for free — OAuth entries hit the usage endpoint, API keys list
 `/v1/models`, both 401 on a dead credential (404/405 = gateway without a
 listing → ok-but-unverified, no false alarm) — and `"test"` runs the same tiny
-completion as the Test button. The answer is always in-body
+completion as the Test button. In both modes a sign-in's 401 is answered as
+the Test probe's is: renewed once, `auth` when OpenAI refuses the grant or
+the renewed token is refused too, `unreachable` while OpenAI can't be
+reached. The answer is always in-body
 (`{configured, ok, auth?, kind?, error?}`); a failure renders as a warning
 strip in the chat window with the chat error card's headline for its `kind`
 ("OpenAI rejected the API key"; see "Chat endpoint") and a Fix… button that
@@ -112,7 +119,10 @@ where models can be fetched, added, or removed.
 API-key protocols return an explicit unavailable result because OpenAI-
 compatible and Anthropic-style providers do not share a portable quota API.
 An expired ChatGPT sign-in answers in-body (`{available: false, auth: true}`
-with a "sign in again" reason) rather than dumping the upstream 401.
+with a "sign in again" reason) rather than dumping the upstream 401 or 403. A
+401 first renews the token once: it reads as expired when OpenAI refuses the
+grant or the renewed token is refused too, and a renewal that can't reach
+OpenAI answers `auth: false` with a "couldn't reach OpenAI" reason.
 The account request deliberately uses the administrator-controlled ChatGPT
 protocol URL, not an entry field, and OAuth entries cannot edit their API key
 or base URL; this prevents a settings request from redirecting a bearer token.
@@ -255,7 +265,10 @@ own dialog). The same helpers validate both lists
   every account's requests refresh the same tokens, and OpenAI rotates the
   refresh token. Only the tokens are written back. The refresh backoff is
   reset only by an admin's Test, usage query or login check, so a dead
-  shared grant is not retried on every account's login.
+  shared grant is not retried on every account's login. A member's login
+  check still renews a token chatgpt.com refuses, once and within that
+  backoff, and reports `auth` when the grant is refused or the renewed
+  token is too.
 - **Masked**: the last-4 key hint and the signed-in e-mail (`account`) are
   for admins only.
 
@@ -359,6 +372,57 @@ entries first (`_refreshed_oauth` in `ai_settings.py`): OpenAI rotates refresh
 tokens, so of two parallel refreshes the second would fail and save stale
 tokens over the fresh ones.
 
+**How a sign-in is kept.** The tokens live in the entry: an account's own as
+plain JSON in its users.db `ai-settings` pref, a shared one sealed in the
+`settings` KV. Both are in the data directory, so an update or a restart
+keeps them. `ai_runtime` refreshes the access token from 5 minutes before it
+expires (`needs_refresh`), and `chatgpt_oauth.refresh` reads a failure the
+way Codex CLI does:
+
+- **Refused.** A 401, a 400 `invalid_grant`, or the code
+  `refresh_token_expired`, `refresh_token_reused` or
+  `refresh_token_invalidated` at any status. The grant is gone. The entry
+  keeps its stale token with `refresh_failed_at`, and the refresh waits
+  `REFRESH_BACKOFF_S` (5 minutes) before it is tried again. The provider's
+  401 on that token reads as `auth`: "The ChatGPT sign-in has expired — Sign
+  in again".
+- **No verdict.** Anything else: no connection, a timeout, a 5xx, a 429, a
+  proxy's 403 page, a body that isn't JSON. `refresh` raises
+  `RefreshUnavailable`. The tokens stay, the entry stamps
+  `refresh_failed_at` and `refresh_unreachable`, and the next request tries
+  again after `REFRESH_RETRY_S` (60 s). Calls still send the old token,
+  which works until it really expires. `ai_runtime` marks the conf `refresh_unreachable`,
+  and `open_ai` turns a 401 on it into a `URLError`, so the chat, translation,
+  metadata and Test say `unreachable` ("Couldn't reach ChatGPT").
+- The log says which: `[chatgpt-oauth] refresh refused: 401
+  refresh_token_reused`, or `refresh failed, will retry: <status or error>`.
+  It never holds a token or the answer's body. An answer without a new
+  refresh token keeps the old one, with a warning.
+
+A refresh writes its result only while the stored refresh token is still the
+one it started from (`_swap_oauth`, a compare-and-set). A refresh that fails
+or lands late therefore never overwrites a sign-in made again meanwhile;
+`complete` stores that one without the refresh lock. A successful refresh
+has spent the old refresh token at OpenAI, so its save is tried 3 times
+while users.db is locked. A save that still fails is logged as an error, and
+that sign-in will have to be made again.
+
+The provider may refuse a token that has not expired by the server's clock
+(a clock behind, a token revoked early). The login check, the Test probe and
+the usage query then renew it once and ask again (`_renewing` in
+`routers/ai.py`, over `ai_settings.renew_rejected`). The renewal runs under
+the refresh lock, within the backoff, and only while the stored token is
+still the refused one, so any number of requests refused one token cause one
+refresh. A token a refresh got less than `REFRESH_BACKOFF_S` ago
+(`refreshed_at`) is not renewed again: a provider that refuses every token
+then costs one refresh per 5 minutes, not one per check, and its 401 reads
+as `auth`. A 403 is never renewed and reads as `auth`. A chat's 401 is not
+renewed; the next check, Test or usage query renews it.
+
+Restoring users.db from a snapshot or an off-site copy brings back a refresh
+token OpenAI has since rotated. That sign-in must be made again: its first
+refresh is refused with `refresh_token_reused`.
+
 **How a sign-in reaches the server.** Codex CLI's client id has one
 registered redirect, `http://localhost:1455/auth/callback`, which only works
 where something listens on the browser's own machine. `chatgpt_oauth.begin`
@@ -421,14 +485,16 @@ Clients skip `ping`. A consumer that leaves before the source
 ends (Stop, or the connection dropped anyway) stops the source at its next
 yield and logs a warning with the elapsed time.
 
-A failure says what kind it is. `ai_client.failure_kind` classifies it in
-one place, from the upstream status and, for an error event inside a
-stream, the provider's wording:
+A failure says what kind it is. `ai_client.failure_kind` classifies it from
+the upstream status and, for an error event inside a stream, the provider's
+wording:
 
 - `not_configured`: no usable connection (the 503).
 - `allowance`: the shared allowance is used up.
 - `auth`: 401/403. `rate`: 429 or a quota. `overloaded`: 5xx or 529.
-- `unreachable`: no connection, a timeout, a cut-off stream.
+- `unreachable`: no connection, a timeout, a cut-off stream. Also a
+  sign-in's 401 while its renewal can't reach OpenAI: `open_ai` turns that
+  401 into a `URLError` first (see "The chatgpt protocol (OAuth)").
 - `bad_endpoint`: a 404 page, a reply that isn't JSON, or a stream without
   a single server-sent event (`ai_protocols.base.NotAnAIStream`).
 - `too_long`: the prompt exceeds the context. Anything else is `other`.
