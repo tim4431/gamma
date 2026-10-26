@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { canRedo, canRevert, forReplay, markReverted, revertOrder, revertRefusal } from "../src/chat/aiRevert.js";
+import { canRedo, canRevert, forReplay, markReverted, revertKind, revertOrder, revertRefusal } from "../src/chat/aiRevert.js";
 import { createChatSession } from "../src/chat/chatSession.js";
 
 const edit = (id, extra = {}) => ({ kind: "edit", tool: "edit_block", block_id: id, page_id: "p",
@@ -27,6 +27,62 @@ test("a deleted folder or label reverts from its library row, outside Revert all
   assert.equal(canRevert({ kind: "rename", tool: "rename_folder", block_id: "f", summary: "Renamed the folder “X” → “Y”",
     from: "X", to: "Y", revert: { tree: "folders" } }), false);
   assert.deepEqual(revertOrder([edit("b1"), folderDelete]), [0]);
+});
+
+test("a page tool's change reverts from its library row, one page or many, without a block id", () => {
+  const renamed = { kind: "rename", tool: "rename_page", summary: "Renamed 2 pages", changes: 2,
+    items: [{ page_id: "a", title: "x", from: "x", to: "y" }, { page_id: "b", title: "u", from: "u", to: "v" }],
+    revert: { pages: [["a", "title", "x", "y"], ["b", "title", "u", "v"]] } };
+  assert.equal(canRevert(renamed), true);
+  assert.equal(canRedo(renamed), false);
+  assert.equal(canRedo({ ...renamed, reverted: true }), true);
+  assert.equal(canRevert({ ...renamed, reverted: true }), false);
+  // One page's move records the same; an empty or missing list is nothing to revert.
+  const moved = { kind: "move", tool: "move_page", page_id: "a", title: "A", from: "", to: "QEC", summary: "Moved “A” → QEC",
+    revert: { pages: [["a", "folders", [], ["f1"]]] } };
+  assert.equal(canRevert(moved), true);
+  assert.equal(canRevert({ ...moved, revert: { pages: [] } }), false);
+  assert.equal(canRevert({ ...moved, revert: { pages: {} } }), false);
+  // A restore records none.
+  assert.equal(canRevert({ kind: "restore", tool: "restore_page", summary: "Restored 2 pages", changes: 2, items: [] }), false);
+  assert.equal(canRevert({ kind: "rename", tool: "rename_folder", block_id: "f", summary: "Renamed the folder “X” → “Y”",
+    revert: { pages: [["a", "title", "x", "y"]] } }), false);
+  // The endpoint's kind: "pages" for a page tool, the action's own otherwise.
+  assert.equal(revertKind(renamed), "pages");
+  assert.equal(revertKind(moved), "pages");
+  assert.equal(revertKind(edit("b1")), "edit");
+  assert.equal(revertKind({ kind: "delete", tool: "delete_folder", block_id: "f", revert: { tree: "folders", pages: { a: ["f"] } } }),
+    "delete");
+  // Revert all is the notes' only.
+  assert.deepEqual(revertOrder([edit("b1"), renamed]), [0]);
+});
+
+test("a revert or redo that left pages as they were keeps how many; a clean one drops the count", () => {
+  const renamed = { kind: "rename", tool: "rename_page", summary: "Renamed 3 pages", revert: { pages: [["a", "title", "x", "y"]] } };
+  const messages = [{ id: "r1", role: "ai", text: "Done", actions: [renamed] }];
+  const reverted = markReverted(messages, "r1", [0], true, { kept: 2 });
+  assert.equal(reverted[0].actions[0].reverted, true);
+  assert.equal(reverted[0].actions[0].kept, 2);
+  const redone = markReverted(reverted, "r1", [0], false);
+  assert.equal("reverted" in redone[0].actions[0], false);
+  assert.equal("kept" in redone[0].actions[0], false);
+  // A redo that left pages keeps its own count, unmarked; the next revert
+  // replaces it, or drops it when it left none.
+  const redoneKept = markReverted(reverted, "r1", [0], false, { kept: 1 });
+  assert.equal("reverted" in redoneKept[0].actions[0], false);
+  assert.equal(redoneKept[0].actions[0].kept, 1);
+  assert.equal(markReverted(redoneKept, "r1", [0], true, { kept: 3 })[0].actions[0].kept, 3);
+  assert.equal("kept" in markReverted(redoneKept, "r1", [0], true)[0].actions[0], false);
+  // Without fields a revert saves the mark alone.
+  assert.equal("kept" in markReverted(messages, "r1", [0])[0].actions[0], false);
+  // Every page changed since: a 409 the row shows, and cannot force.
+  const kept = Object.assign(new Error("The pages changed since, or were deleted, and were left as they are."), {
+    status: 409, data: { detail: "…", conflict: "kept", preview: { kept: 3 } } });
+  assert.deepEqual(revertRefusal(kept), { detail: "The pages changed since, or were deleted, and were left as they are.",
+    status: 409, conflict: "kept", preview: { kept: 3 } });
+  // The replay leaves out the per-page lists and keeps the counts.
+  const [sent] = forReplay([{ ...renamed, changes: 3, kept: 1, reverted: true, items: [{ page_id: "a" }] }]);
+  assert.deepEqual(sent, { kind: "rename", tool: "rename_page", summary: "Renamed 3 pages", changes: 3, kept: 1, reverted: true });
 });
 
 test("the replay leaves the reverting texts out and keeps the mark", () => {

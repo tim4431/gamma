@@ -1324,8 +1324,10 @@ interactive PDF saves. Plus:
   cap on the notes it shows; long papers are read in windows of this size.
 
 Rounds and the ≤200-mutation ceiling are runaway guards, not workload caps.
-The user may lift both (Unlimited rounds), except on a shared AI connection
-without a daily allowance, unless the user is an administrator.
+A call that changes several pages counts each one ([ai_tools.md](ai_tools.md)
+"Several pages in one call"). The user may lift both (Unlimited rounds),
+except on a shared AI connection without a daily allowance, unless the
+user is an administrator.
 
 ### Asking before a call (approvals)
 
@@ -1353,7 +1355,10 @@ A call of a tool whose permission is Ask waits for the user
    tool's preview has `title` (the path, the name, or the page's title) and
    a `diff`. A deletion's preview also has the folder's or label's
    `block_id`, `pages` / `page_count`, and a folder's `subfolders` /
-   `subfolder_count`, `chats` and `chat_folders` / `chat_folder_count`.
+   `subfolder_count`, `chats` and `chat_folders` / `chat_folder_count`. A
+   card for a call naming two or more pages has `count`, one `diff` line
+   per page, `left_out` / `left_out_count`, `same_count`, `to` /
+   `new_folder` or `new_labels`, and a `digest`.
 3. The loop waits (`ai_permissions.wait_for`) for `POST
    /api/ai/approvals/{id}` with a decision: `once`, `chat`, `always` or
    `deny`, the last optionally with a `note` saying what to do instead. The
@@ -1365,11 +1370,16 @@ A call of a tool whose permission is Ask waits for the user
    ask-only call is planned again first, and runs only when it still names
    the `block_id` its card showed; otherwise its action is an error chip,
    and the model hears that the folder or label changed while the card
-   waited (`CHANGED_WHILE_ASKING`).
+   waited (`CHANGED_WHILE_ASKING`). A call naming several pages runs with
+   its card's `digest` (`run_agent_tool(…, approved=)`): planned again (a
+   rename, move or label under the write lock), it writes nothing when a
+   listed page or the target changed while the card waited
+   (`ai_tools.BATCH_CHANGED`).
    Declined, or unanswered after `APPROVAL_TIMEOUT` (10 minutes), the call
    is not made. Its action is an error chip with `declined: true` and
    `approval: "deny"` or `"expired"`,
-   plus the page `title`, the `mode` and the `note`. The model is told that
+   plus the page `title`, the `mode`, the `count` (a call naming several
+   pages) and the `note`. The model is told that
    the user declined, and not to retry or work around it. With a note it is
    told to do what the note says instead.
 
@@ -1477,14 +1487,17 @@ cannot take the same last unit of a budget.
 **Limits and Continue.** A reply has `tool_rounds` provider turns (0 =
 `MAX_TOOL_ROUNDS`, 32) and may make `MAX_TOOL_ACTIONS` (200) changes. A
 change past that is refused (`ai_tools.CHANGE_LIMIT`: the model is told
-to stop and say what is left). Three stops end the reply with a
+to stop and say what is left), and so is a call that would change more
+pages than are left, whole and before any card. Three stops end the reply with a
 `{"limit": {kind, rounds, changes}}` line:
 
 - `rounds`: the round limit cut the loop. The reply's text then ends
   "*(stopped: tool-round limit reached)*". The last round's calls ran,
   but their results reach the model only on the next turn's replay.
-- `changes`: a call was refused at the change limit (its result starts
-  with `CHANGE_LIMIT_PREFIX`) and the model answered.
+- `changes`: a call was refused at the change limit, or a call naming
+  more pages than the message may still change was refused whole, before
+  any card (its result starts with `CHANGE_LIMIT_PREFIX`), and the model
+  answered.
 - `window`: the provider still called the conversation too long after
   `_reopen`'s fully elided retry. The text ends "*(stopped: the
   conversation grew past the model's window)*", and the reply is saved
@@ -1543,6 +1556,9 @@ helper's state changes ([ai_tools.md](ai_tools.md#read_paper)).
 The step's `args` are only the short ones the running label reads
 (`ai_agent.STEP_ARGS`: `page_id`, `block_id`, `query`, `title`, `folder`,
 `label`, `source`, `pdf_page`, `mode`, `question`), never a note's content.
+A call naming several pages adds `items` (how many) to its step, and one
+naming a single page lifts that page's `page_id` / `title` into `args`;
+the label reads "Renaming 37 pages…".
 Once it ran, the call streams back as an
 `{"action": {kind, summary, tool, args, result}}` NDJSON line (kinds
 list/read/view/search/rename/move/edit/create, plus `error` with `error: true` for
@@ -1554,7 +1570,10 @@ The folder and label tools carry `title` (the folder's path, the label's
 name, or the labelled page's title), `from` / `to` on a rename, `added` /
 `removed` on `label_page`, and `count` (pages refiled), `chats` (a
 folder's) and `revert` on a deletion ([ai_tools.md](ai_tools.md) "Folders
-and labels" and "delete_folder / delete_label"). A change tool that changed
+and labels" and "delete_folder / delete_label"). A call naming several
+pages carries `changes`, `items` and (rename, move, label) `revert`
+instead of one page's fields; rename_page, move_page and label_page carry
+`revert` for one page too. A change tool that changed
 nothing carries `noop: true`. A reply a limit stopped ends with a
 `{"limit"}` line (see above).
 
@@ -1582,7 +1601,9 @@ the document, then what its helper is doing now (`helperStatus`, from the
 of kind `helper`: it has its own icon, counts the helper's calls beside
 its summary, adds "used 1 helper" to the pill, and expands to those calls
 (`children`). Only
-applied mutations count against `MAX_TOOL_ACTIONS` and trigger the
+applied mutations count against `MAX_TOOL_ACTIONS` — each page of a call
+that changed several; the loop puts what is left on the scope
+(`changes_left`) for the call and its card — and trigger the
 home-feed refresh (`onLibraryChange`), and
 the note-block tools' actions carry `page_id`/`src_page_id` so the frontend
 reloads the open page's block tree when the AI touched it (`onNotesChange`;
@@ -1658,7 +1679,11 @@ request to read, show or check something is answered from a fresh call, not
 last turn's outline (the agent's own edits change what `read_block`
 returns). A change the user reverted from its row (`reverted` on the
 action) gets a second note in front, `_REVERTED_NOTE`: the change is
-undone ([ai_tools.md](ai_tools.md) "Reverting a note change"). Results share `TOOL_REPLAY_BUDGET` chars newest-first
+undone — or, with `kept` on the action (a page tool's revert that left
+pages changed since), undone except on that many pages
+(`_REVERTED_KEPT_NOTE`). A redo that left pages as they were keeps
+`kept` without the mark, and the note says it was redone except on those
+(`_REDONE_KEPT_NOTE`) ([ai_tools.md](ai_tools.md) "Reverting a note change"). Results share `TOOL_REPLAY_BUDGET` chars newest-first
 (older ones elided). A reply replays at most its newest `REPLAY_CALLS`
 (200) calls. The older ones become one line in front of them, how many
 by tool (`_OMITTED_CALLS`): an Unlimited reply that filled the window
@@ -1667,7 +1692,7 @@ window too. `_messages` in `ai_protocols/anthropic.py` folds a plain user turn i
 preceding tool_result turn to keep roles alternating. The client sends
 only what is replayed — each turn's `role`, `text` and `actions`, never
 the pictures, coverage and counts saved with it, nor the texts an action
-keeps for reverting (`revert`). Plain chats never replay
+keeps for reverting (`revert`), nor a batch's per-page `items`. Plain chats never replay
 (providers reject tool blocks without tool defs). Renamed tools replay under
 their current name (`ai_context.DEPRECATED_TOOLS`, e.g. the saved
 `search_pdfs` chips of old chats become `search_library` calls), and a model

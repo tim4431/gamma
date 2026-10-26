@@ -27,9 +27,11 @@ with a page or folder; look at a PDF page or the user's handwriting as a
 picture; the citation records kept with pages; full-text-search the reachable
 pages' notes and PDF text via the two FTS indexes; search the scholarly record
 and read a document that is not in the library (``ai_web.py`` — read-only,
-nothing stored); list Recently deleted.  Writes: rename pages and
-file them into (sub)folders, restore deleted pages, rename folders, make,
-rename and apply labels, and delete a folder or a label — never its pages;
+nothing stored); list Recently deleted.  Writes: rename pages, file them
+into (sub)folders, label them and restore deleted ones — each of those
+tools takes a list of pages, one card and one step for the lot, and the
+user can revert a rename, move or label change; rename folders, make and
+rename labels, and delete a folder or a label — never its pages;
 a deletion always asks and the user can revert it (folder scope only);
 edit, create, move and delete note blocks (a deletion the user can
 revert); save a paper to the library (both scopes, each under its own
@@ -52,11 +54,13 @@ with ``PATH_SEP``, "Physics / QEC" — with its id beside it where it may pass
 one back, and a label as its name.
 """
 
+import hashlib
 import json
 import re
 import secrets
 import threading
 import time
+from collections import Counter
 from difflib import SequenceMatcher
 from urllib.parse import urlencode, urlsplit
 
@@ -70,13 +74,14 @@ from .ai_pictures import (parts as _parts, ink_picture_url, page_doc_id, parse_b
 from .ai_context import (DEPRECATED_TOOLS, MAX_AREA_CROPS, area_highlight, canonical_tool,
                          handwriting_label, page_report_section, paths_text, pdf_path, quoted_paths,
                          render_area_crops, text_box_label, under_sheet)
-from .blocks_store import (FOLDERS, LABELS, PATH_SEP, TRASH, block_to_dict, descend, existing_in, fetch_subtree,
-                           filing, folder_paths, folder_subtree_ids, label_by_name, label_names, load_props, named,
-                           page_attachment, page_root_id, refiled, root_pages, tree_children, tree_parents,
-                           write_lock)
+from .blocks_store import (BLOCK_ID_RE, FOLDERS, LABELS, PATH_SEP, TRASH, block_to_dict, descend, existing_in,
+                           fetch_subtree, filing, folder_chain, folder_inserts, folder_paths, folder_subtree_ids,
+                           label_by_name, label_inserts, label_names, load_props, named, page_attachment,
+                           page_root_id, root_pages, tree_children, tree_parents, valid_block_id, write_lock)
 from .db import connect_data_db, connect_pages_db
 from .highlights import is_highlight
-from .ops import MAX_OPS, after_commit, apply_ops, delete_tree, ensure_filing, move_across_pages, tree_deletion
+from .ops import (MAX_OPS, after_commit, after_commits, apply_batches, apply_ops, delete_tree, ensure_filing,
+                  move_across_pages, tree_deletion)
 from .logbuf import log
 from .notebook import is_sheet
 from .pdf_index import pdf_missing, search_pdf
@@ -245,6 +250,29 @@ def _filed_in(reach: set[str] | None, folders: list[str]) -> bool:
     return reach is None or any(f in reach for f in folders)
 
 
+# A reach not worked out yet (``_page_in_scope``); None is the library root's.
+_NO_REACH = object()
+
+
+def _not_a_folder(conn, text: str) -> str | None:
+    """The refusal for a ``folder`` argument that is an id but no folder's:
+    another block's (a page's, a note's, a label's), or a folder's deleted
+    lately — the folder tree's op log names it (it keeps a day,
+    ``ops.KEEP_OPS_HOURS``, at most ``KEEP_OPS`` rows). None for anything
+    else: a name, which a path that names no folder makes."""
+    if not valid_block_id(text):
+        return None
+    row = conn.execute("SELECT page_id, parent_id FROM unified_blocks WHERE id = ?", (text,)).fetchone()
+    if row:
+        what = "label" if row[0] == LABELS else "page" if row[1] in ("root", TRASH) else "note"
+        return f'error: "{text}" is the id of a {what}, not of a folder — list_folders shows the folders and their ids'
+    if conn.execute("SELECT 1 FROM page_ops p, json_each(p.ops) o WHERE p.page_id = ? AND instr(p.ops, ?) > 0 "
+                    "AND json_extract(o.value, '$.id') = ? LIMIT 1", (FOLDERS, json.dumps(text), text)).fetchone():
+        return (f'error: no folder has the id "{text}" now — it was deleted; list_folders shows the folders '
+                "and their ids")
+    return None
+
+
 def _resolve_folder(conn, scope: dict, raw) -> tuple[dict | None, str | None]:
     """The folder a tool's ``folder`` argument names: a folder id, or a path
     as the tools show it ("Physics / QEC"; "Physics/QEC" too, where that is
@@ -258,7 +286,8 @@ def _resolve_folder(conn, scope: dict, raw) -> tuple[dict | None, str | None]:
     (id "" = the library root), ``{"id": "", "path", "under", "names"}``
     for one that does not — ``names`` below the folder ``under``, what
     ``_made`` makes. ``error`` refuses a folder outside the chat's folder
-    and a path several folders share, naming their ids."""
+    and a path several folders share, naming their ids, and an id that is
+    no folder's (``_not_a_folder``)."""
     base = _scope_folder(scope)
     kids, paths = tree_children(conn, FOLDERS), folder_paths(conn)
     text = str(raw or "").strip()
@@ -283,7 +312,11 @@ def _resolve_folder(conn, scope: dict, raw) -> tuple[dict | None, str | None]:
                     "path": PATH_SEP.join(paths.get(level[0], []))}, None
         missing.append({"id": "", "under": level[0], "names": rest,
                         "path": PATH_SEP.join([*paths.get(level[0], []), *rest])})
-    # Nothing there: a spaced path makes its names, a bare "a/b" nests.
+    # Nothing there. An id that names no folder is no name to make.
+    gone = _not_a_folder(conn, text)
+    if gone:
+        return None, gone
+    # A spaced path makes its names, a bare "a/b" nests.
     return missing[0 if PATH_SEP in text else -1], None
 
 
@@ -307,28 +340,32 @@ def _made(ws: str, conn, scope: dict, target: dict) -> str:
     return made[tuple(target["names"])]
 
 
-def _page_in_scope(conn, scope: dict, page_id: str, folders: list[str]) -> bool:
+def _page_in_scope(conn, scope: dict, page_id: str, folders: list[str], reach=_NO_REACH) -> bool:
     if page_id in (scope.get("context_pages") or []):
         return True
     if scope.get("type") == "page":
         return page_id == scope.get("page_id")
-    return _filed_in(_reach(conn, scope), folders)
+    return _filed_in(_reach(conn, scope) if reach is _NO_REACH else reach, folders)
 
 
-def _load_scoped_page(conn, scope: dict, args: dict):
+_NO_PAGE = "error: no such page — use exact page ids"  # a batch's id of no id's shape too (_batch)
+
+
+def _load_scoped_page(conn, scope: dict, args: dict, reach=_NO_REACH):
     """Fetch the target page and enforce the scope. Returns
     ``((page_id, title, props, folders), error)`` — ``folders`` the ids it
-    is filed in; exactly one side is set."""
+    is filed in; exactly one side is set. ``reach``: the chat's
+    (``_reach``) when the caller worked it out already."""
     page_id = str(args.get("page_id") or "").strip()
     row = conn.execute(
         "SELECT parent_id, content, properties FROM unified_blocks WHERE id = ?",
         (page_id,),
     ).fetchone()
     if not row or row[0] != "root":
-        return None, "error: no such page — use exact page ids"
+        return None, _NO_PAGE
     props = json.loads(row[2] or "{}")
     folders = filing(props, FOLDERS)
-    if not _page_in_scope(conn, scope, page_id, folders):
+    if not _page_in_scope(conn, scope, page_id, folders, reach):
         return None, "error: page is outside this chat's scope"
     return (page_id, row[1] or "Untitled", props, folders), None
 
@@ -428,6 +465,12 @@ def _sibling_position(conn, parent_id: str, after_id, block_id: str = "") -> tup
 # (the folder's path, the label's name, or the labelled page's title),
 # `from` / `to` on a rename, `added` / `removed` on label_page, and `count`
 # (pages refiled), `chats` (a folder's) and `revert` on a deletion.
+# A call that names several pages (rename_page, move_page, label_page,
+# restore_page) carries `changes` (the pages it changed, which the
+# message's change limit counts) and `items` (each page as the one-page
+# action names it) instead of one page's fields; rename_page, move_page and
+# label_page carry `revert` (`{pages: [[page id, field, before, after],
+# …]}`), for one page or many.
 
 def _list_limit(value) -> int:
     """list_pages' ``limit``: the lines one call shows, 1 to ``_LIST_CAP``;
@@ -2471,87 +2514,419 @@ def _run_save_paper(conn, ws: str, scope: dict, args: dict):
                         "summary": f"Saved “{name[:60]}” to {path if folder else 'the library root'}"}
 
 
-def _plan_rename_page(conn, scope: dict, args: dict):
-    """``((page_id, title, new), None)``, or ``(None, answer)`` for a call
-    that changes nothing."""
-    loaded, error = _load_scoped_page(conn, scope, args)
+# --- several pages in one call ----------------------------------------------------
+# rename_page, move_page, label_page and restore_page take a list of pages.
+# Every page goes through the one-page planner, so it meets the checks a call
+# naming it alone meets; what the call shares (the folder, the labels) is
+# read once. A page that cannot change is left out and named, the others
+# change — in one transaction, a folder or label the call makes included (a
+# restore: one per page). A call that names one page answers, previews and
+# acts as the one-page tool always has.
+
+BATCH_MAX = 100    # pages one move_page, label_page or restore_page call names: a list_pages(limit=100)
+                   # batch (ai_revert reads it as the most one revert record holds)
+_RENAME_MAX = 50   # renames one rename_page call holds: each title is written out, and a turn the
+                   # provider's output cap cuts off is lost whole
+BATCH_CHANGED = ("error: while the approval card waited, some of these pages changed — or the folder or "
+                 "labels the call names did — so nothing was changed. Look at them again and send the call "
+                 "once more; the user is asked again.")
+
+
+def _listed(value) -> list:
+    """A list argument as the model sent it: a list, or the whole JSON text
+    of one (a saved chat keeps a list argument as its text,
+    ``tool_action``, and a model reading its earlier calls back may send it
+    so); [] for anything else — a list cut off where a saved chat trimmed
+    it is no list."""
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return []
+    return value if isinstance(value, list) else []
+
+
+def listed_pages(args: dict) -> list:
+    """The list a call names its pages in, read as the executors read it —
+    ``renames``, else ``page_ids`` (a list, its whole JSON text, or one bare
+    id) — for the loop's running step; [] for the one-page form."""
+    raw = args.get("page_ids")
+    if isinstance(raw, str) and BLOCK_ID_RE.match(raw.strip()):
+        return [raw.strip()]
+    return _listed(args.get("renames")) or _listed(raw)
+
+
+def _cut_id(value) -> str:
+    """A page id as the model sent it, at most 64 characters (then "…"): a
+    long bogus one is answered "no such page" without being looked up, and
+    never shown whole."""
+    text = str(value).strip()
+    return text if len(text) <= 64 else text[:64] + "…"
+
+
+def _page_ids_arg(args: dict, source: str = "list_pages") -> tuple[list | None, str | None]:
+    """The pages a move_page, label_page or restore_page call names, in
+    order, repeats dropped: ``page_ids`` — a list, its whole JSON text, or
+    one bare id — else the one-page form's ``page_id``. ``(None, error)``
+    for none (text that is neither, a cut-off list or ids in prose, is
+    refused, never read in part) or more than ``BATCH_MAX``."""
+    raw = args.get("page_ids")
+    if raw in (None, "", []) and args.get("page_id"):
+        raw = [args["page_id"]]
+    elif isinstance(raw, str) and BLOCK_ID_RE.match(raw.strip()):
+        raw = [raw.strip()]
+    ids = list(dict.fromkeys(_cut_id(i) for i in _listed(raw) if isinstance(i, (str, int)) and str(i).strip()))
+    if not ids:
+        return None, (f"error: `page_ids` must be a list of page ids from {source} — the list itself, "
+                      "not its text")
+    if len(ids) > BATCH_MAX:
+        return None, (f"error: {len(ids)} pages — at most {BATCH_MAX} in one call; send the first "
+                      f"{BATCH_MAX} and the rest in further calls")
+    return ids, None
+
+
+def _renames_arg(args: dict) -> tuple[list | None, str | None]:
+    """rename_page's ``renames`` as ``[(page id, title)]`` in order — each
+    title on one line, a pair named twice kept once — else the one-page
+    form's ``page_id`` and ``title``. ``(None, error)`` for none, a value
+    that is no list of ``{page_id, title}``, or more than ``_RENAME_MAX``."""
+    raw = args.get("renames")
+    items = _listed(raw)
+    if not items and raw in (None, "", []) and args.get("page_id"):
+        items = [{"page_id": args.get("page_id"), "title": args.get("title")}]
+    pairs = list(dict.fromkeys((_cut_id(r.get("page_id") or ""), _one_line(r.get("title")))
+                               for r in items if isinstance(r, dict)))
+    if not pairs:
+        return None, ("error: `renames` must be a list of {page_id, title} — the list itself, not its "
+                      "text — with ids from list_pages")
+    if len(pairs) > _RENAME_MAX:
+        return None, (f"error: {len(pairs)} renames — at most {_RENAME_MAX} in one call; send the first "
+                      f"{_RENAME_MAX} and the rest in further calls")
+    return pairs, None
+
+
+def _batch(keys: list, plan_one) -> dict:
+    """The pages a call names, each planned by ``plan_one(key)`` — the
+    one-page planner's ``(plan, None)`` or ``(None, answer)``:
+    ``{"plans", "same", "refused", "asked"}`` — the pages that change (in
+    call order), the ones already so (an "ok — …" answer) and the ones it
+    cannot change (an error), both as ``(key, answer)``, and how many it
+    named. A key with no id's shape (blank, or cut by ``_cut_id``) is
+    refused without being looked up."""
+    out = {"plans": [], "same": [], "refused": [], "asked": len(keys)}
+    for key in keys:
+        plan, answer = plan_one(key) if BLOCK_ID_RE.match(_key_id(key)) else (None, _NO_PAGE)
+        if plan:
+            out["plans"].append(plan)
+        else:
+            out["same" if answer.startswith("ok") else "refused"].append((key, answer))
+    return out
+
+
+def _key_id(key) -> str:
+    """The page id in a ``_batch`` key: an id, or rename_page's ``(id, title)``."""
+    return key[0] if isinstance(key, tuple) else key
+
+
+def _of(n: int, asked: int) -> str:
+    """"35 of 37 pages" when a call changed fewer pages than it named, else "37 pages"."""
+    return f"{n} of {asked} pages" if n < asked else f"{n} page{'s' if n != 1 else ''}"
+
+
+def _left_out_lines(batch: dict) -> str:
+    """What a batch did not change, for the model: one line naming the pages
+    already so, then the pages it left out grouped by reason — a reason is
+    one of a few planner answers, so a hundred pages read in a few lines."""
+    lines = []
+    if batch["same"]:
+        lines.append("Already so, not changed: " + ", ".join(_key_id(k) for k, _ in batch["same"]))
+    if batch["refused"]:
+        why: dict[str, list] = {}
+        for key, answer in batch["refused"]:
+            why.setdefault(answer.removeprefix("error: "), []).append(_key_id(key))
+        lines.append("Left out — fix these and send only them again:")
+        lines += [f"- {reason}: {', '.join(ids)}" for reason, ids in why.items()]
+    return "\n".join(lines)
+
+
+def _batch_answer(scope: dict, batch: dict, verb: str) -> str | None:
+    """What a call answers without a card or a write, or None when it has
+    pages to change: a one-page call its page's answer, as the one-page tool
+    always has; a call whose pages are all already so, or none of which can
+    change, says so; one that would change more pages than this message may
+    still change (``scope["changes_left"]``, set by the loop; None: no
+    limit) is refused whole, before any card."""
+    plans = batch["plans"]
+    if batch["asked"] == 1 and not plans:
+        return (batch["same"] or batch["refused"])[0][1]
+    if not plans:
+        if not batch["refused"]:
+            return f"ok — all {batch['asked']} pages already are so; nothing changed"
+        return f"error: none of these pages can be {verb}:\n" + _left_out_lines(batch)
+    left = scope.get("changes_left")
+    if left is not None and len(plans) > left:
+        return (f"{CHANGE_LIMIT_PREFIX} is near: this call would change {len(plans)} pages and the message "
+                f"may make only {left} more change{'s' if left != 1 else ''}, so nothing was changed. Send "
+                f"at most {left}, or stop and tell the user what is done and what is left: they can continue "
+                "in their next message")
+    return None
+
+
+def _digest(tool: str, shared, plans: list) -> str:
+    """What a batch's card shows, as the run must find it again: the tool,
+    what the call shares (the folder, the labels) and each page with what it
+    is now (``before``) and ends as (``after``) — a page changed while the
+    card waited voids the call, even where it would end the same. ASCII
+    JSON, so a lone surrogate the model sent hashes too."""
+    text = json.dumps([tool, shared, [[p["page_id"], p["before"], p["after"]] for p in plans]], sort_keys=True)
+    return hashlib.sha1(text.encode()).hexdigest()[:16]
+
+
+def _changed_since(scope: dict, digest: str) -> str | None:
+    """``BATCH_CHANGED`` when the user allowed a batch's card
+    (``scope["approved"]``, its digest — ``run_agent_tool``'s ``approved``)
+    and the call, planned again under the write lock, would no longer do
+    what the card showed; None otherwise (no card, or the same change)."""
+    approved = scope.get("approved")
+    return BATCH_CHANGED if approved and approved != digest else None
+
+
+def _batch_preview(conn, batch: dict, lines: list, digest: str, **shared) -> dict:
+    """A card for a call naming two or more pages: how many pages change
+    (``count``), one line per page (``diff``: word-diff lines joined by line
+    breaks, every page — the call's cap bounds them), the pages it leaves
+    out by title (a library or Recently deleted page's, cut to one line),
+    else by the id the model gave (``left_out``, the first
+    ``_PREVIEW_ITEMS``, and ``left_out_count``; the reasons are for the
+    model, in its result), the pages already so (``same_count``), what the
+    call shares (``to``, ``new_folder``, ``new_labels``) and the ``digest``
+    the run must find again."""
+    diff = []
+    for line in lines:
+        diff += ([["ctx", "\n"]] if diff else []) + line
+    refused = [_key_id(k) for k, _ in batch["refused"]][:_PREVIEW_ITEMS]
+    # Pages only: a note's id the model passed would put the note's text here.
+    titles = dict(conn.execute("SELECT id, content FROM unified_blocks WHERE parent_id IN ('root', ?) "
+                               "AND id IN (SELECT value FROM json_each(?))", (TRASH, json.dumps(refused))).fetchall())
+    return {"count": len(batch["plans"]), "diff": diff,
+            "left_out": [f"“{_excerpt(titles[i])}”" if titles.get(i) else i for i in refused],
+            "left_out_count": len(batch["refused"]), "same_count": len(batch["same"]),
+            **shared, "digest": digest}
+
+
+def _batch_text(head: str, plans: list, batch: dict, *, links: bool = False) -> str:
+    """A batch's result for the model: what it did (``head``), then what it
+    left out and why (``_left_out_lines``) — what the next call needs, so it
+    comes before the list a saved chat may cut (``tool_action`` keeps
+    ``_DETAIL_CAP`` characters) — then the ids it changed, which tell it in
+    a later turn which pages are done, and for a restore links to the first
+    ``_PREVIEW_ITEMS``, which the reply points the user to."""
+    tail = _left_out_lines(batch)
+    text = f"ok — {head}." + (f"\n{tail}" if tail else "") + "\nChanged: " + ", ".join(p["page_id"] for p in plans)
+    if links:
+        shown = plans[:_PREVIEW_ITEMS]
+        text += ("\nLinks: " + ", ".join(f"[{p['title'][:60]}](/?page={p['page_id']})" for p in shown)
+                 + (f" (and {len(plans) - len(shown)} more)" if len(plans) > len(shown) else ""))
+    return text
+
+
+def _plan_rename_one(conn, scope: dict, page_id: str, title: str, reach) -> tuple:
+    """One page of a rename_page call: ``({page_id, title, before, to,
+    after}, None)`` — its title now as it reads, as it is stored
+    (``before``: "" for an untitled page, which a revert gives back) and
+    the new one — or ``(None, answer)`` for a page it does not change."""
+    loaded, error = _load_scoped_page(conn, scope, {"page_id": page_id}, reach)
     if error:
         return None, error
-    page_id, title, _, _ = loaded
-    new = _one_line(args.get("title"))
+    page_id, old, _, _ = loaded
+    new = _one_line(title)
     if not new:
         return None, "error: empty title"
-    if new == title:
+    if new == old:
         return None, "ok — title already is that"
-    return (page_id, title, new), None
+    raw = old if old != "Untitled" else (conn.execute(
+        "SELECT content FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()[0] or "")
+    return {"page_id": page_id, "title": old, "before": raw, "to": new, "after": new}, None
+
+
+def _plan_rename_page(conn, scope: dict, args: dict):
+    """``(batch, None)``: the pages a rename_page call names (``_batch``) —
+    a page named twice with two titles is refused both times — or ``(None,
+    error)`` for a call refused whole (``_renames_arg``)."""
+    pairs, error = _renames_arg(args)
+    if error:
+        return None, error
+    reach, times = _reach(conn, scope), Counter(page_id for page_id, _ in pairs)
+
+    def one(pair):
+        if times[pair[0]] > 1:
+            return None, "error: named twice with different titles — send it once"
+        return _plan_rename_one(conn, scope, pair[0], pair[1], reach)
+    return _batch(pairs, one), None
 
 
 def _preview_rename_page(conn, scope: dict, args: dict):
-    plan, answer = _plan_rename_page(conn, scope, args)
-    if not plan:
+    batch, error = _plan_rename_page(conn, scope, args)
+    answer = error or _batch_answer(scope, batch, "renamed")
+    if answer:
         return None, answer
-    page_id, title, new = plan
-    return {"page_id": page_id, "title": title, "diff": text_diff(title, new)}, None
+    plans = batch["plans"]
+    if batch["asked"] == 1:
+        p = plans[0]
+        return {"page_id": p["page_id"], "title": p["title"], "diff": text_diff(p["title"], p["to"])}, None
+    return _batch_preview(conn, batch, [text_diff(p["title"], p["to"]) for p in plans],
+                          _digest("rename_page", "", plans)), None
 
 
 def _run_rename_page(conn, ws: str, scope: dict, args: dict):
-    plan, answer = _plan_rename_page(conn, scope, args)
-    if not plan:
-        return answer, None
-    page_id, title, new = plan
-    after_commit(ws, conn, apply_ops(
-        conn, page_id, [{"op": "set", "id": page_id, "content": new}], actor=scope.get("actor", ""), client="ai"))
-    return (f'ok — renamed to "{new}"',
-            {"kind": "rename", "page_id": page_id, "title": title, "from": title, "to": new,
-             "summary": f"Renamed “{title}” → “{new}”"})
+    """Each page's title, one ``set`` of its content per page, in one
+    transaction — planned under the write lock too, so an allowed card is
+    the change made (``_changed_since``)."""
+    write_lock(conn)
+    try:
+        batch, error = _plan_rename_page(conn, scope, args)
+        answer = error or _batch_answer(scope, batch, "renamed") or _changed_since(
+            scope, _digest("rename_page", "", batch["plans"]))
+        if answer:
+            conn.rollback()
+            return answer, None
+        plans = batch["plans"]
+        results = apply_batches(conn, [(p["page_id"], [{"op": "set", "id": p["page_id"], "content": p["to"]}])
+                                       for p in plans], actor=scope.get("actor", ""), client="ai")
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    after_commits(ws, conn, results)
+    revert = {"pages": [[p["page_id"], "title", p["before"], p["to"]] for p in plans]}
+    if batch["asked"] == 1:
+        p = plans[0]
+        return (f'ok — renamed to "{p["to"]}"',
+                {"kind": "rename", "page_id": p["page_id"], "title": p["title"], "from": p["title"],
+                 "to": p["to"], "summary": f"Renamed “{p['title']}” → “{p['to']}”", "revert": revert})
+    n = len(plans)
+    return (_batch_text(f"renamed {_of(n, batch['asked'])}", plans, batch),
+            {"kind": "rename", "summary": f"Renamed {n} page{'s' if n != 1 else ''}", "changes": n,
+             "items": [{"page_id": p["page_id"], "title": p["title"], "from": p["title"], "to": p["to"]}
+                       for p in plans],
+             "revert": revert})
 
 
-def _plan_move_page(conn, scope: dict, args: dict):
-    """``((page_id, title, folders, target, kept), None)``: the folders
-    the page is in now (ids), the folder it goes to (``_resolve_folder``'s
-    target; id "" = the library root) and the folders it keeps — those
-    outside the chat's folder. ``(None, answer)`` for a call that changes
-    nothing."""
-    loaded, error = _load_scoped_page(conn, scope, args)
+def _plan_move_one(conn, scope: dict, page_id: str, target: dict, reach, chain: set) -> tuple:
+    """One page of a move_page call: ``({page_id, title, folders, stays,
+    before, after}, None)`` — the folders it is in now (ids that still are
+    folders; ``before`` too) and the ones it stays in beside the target:
+    those outside the chat's folder, less any above the target (``chain``:
+    the target's folders from the top), which give way as ``refiled`` has
+    them — or ``(None, answer)`` for a page already there."""
+    loaded, error = _load_scoped_page(conn, scope, {"page_id": page_id}, reach)
     if error:
         return None, error
     page_id, title, _, folders = loaded
+    folders = existing_in(conn, FOLDERS, folders)
+    stays = [f for f in folders if reach is not None and f not in reach and f not in chain]
+    if not target.get("names") and set(stays + ([target["id"]] if target["id"] else [])) == set(folders):
+        return None, "ok — page is already there"
+    return {"page_id": page_id, "title": title, "folders": folders, "stays": stays, "before": folders,
+            "after": stays}, None
+
+
+def _plan_move_page(conn, scope: dict, args: dict):
+    """``((target, batch), None)``: the folder a move_page call files its
+    pages into (``_resolve_folder``'s target: id "" = the library root,
+    ``names`` for one to make below ``under``) and its pages (``_batch``);
+    ``(None, error)`` for a call refused whole — no pages or too many, a
+    folder outside the chat's, a path several folders share, an id that is
+    no folder's."""
+    ids, error = _page_ids_arg(args)
+    if error:
+        return None, error
     target, error = _resolve_folder(conn, scope, args.get("folder"))
     if error:
         return None, error
-    folders = existing_in(conn, FOLDERS, folders)
     reach = _reach(conn, scope)
-    kept = [f for f in folders if reach is not None and f not in reach]
-    if not target.get("names") and set(refiled(conn, kept, target["id"])) == set(folders):
-        return None, "ok — page is already there"
-    return (page_id, title, folders, target, kept), None
+    # A folder to make sits below `under`: its chain is under's, plus itself (no page is in it yet).
+    chain = set(folder_chain(conn, target["id"] or target.get("under") or ""))
+    return (target, _batch(ids, lambda page_id: _plan_move_one(conn, scope, page_id, target, reach, chain))), None
+
+
+def _move_digest(target: dict, plans: list) -> str:
+    """A move's digest: the folder by id; for one the call makes, the folder
+    it goes under and the names it makes — its path alone reads the same
+    after that folder is renamed (``_resolve_folder`` then walks from the
+    top and would make it elsewhere)."""
+    shared = ["+", target["under"], target["names"]] if target.get("names") else target["id"]
+    return _digest("move_page", shared, plans)
+
+
+def _move_line(paths: dict, p: dict, target_id: str) -> list:
+    """A move card's line for one page: its title, the folders it leaves
+    struck out, then the ones it stays in (the target is the headline's)."""
+    gone = [f for f in p["folders"] if f not in p["stays"] and f != target_id]
+    line = [["ctx", p["title"]]]
+    if gone:
+        line += [["ctx", " · "], ["del", ", ".join(paths_text(paths, gone))]]
+    if p["stays"]:
+        line += [["ctx", (", " if gone else " · ") + ", ".join(paths_text(paths, p["stays"]))]]
+    return line
 
 
 def _preview_move_page(conn, scope: dict, args: dict):
-    plan, answer = _plan_move_page(conn, scope, args)
-    if not plan:
+    planned, error = _plan_move_page(conn, scope, args)
+    target, batch = planned or (None, None)
+    answer = error or _batch_answer(scope, batch, "moved")
+    if answer:
         return None, answer
-    page_id, title, folders, target, _ = plan
-    return {"page_id": page_id, "title": title,
-            "from": ", ".join(paths_text(folder_paths(conn), folders)), "to": target["path"]}, None
+    paths, plans = folder_paths(conn), batch["plans"]
+    if batch["asked"] == 1:
+        p = plans[0]
+        return {"page_id": p["page_id"], "title": p["title"],
+                "from": ", ".join(paths_text(paths, p["folders"])), "to": target["path"]}, None
+    return _batch_preview(conn, batch, [_move_line(paths, p, target["id"]) for p in plans],
+                          _move_digest(target, plans), to=target["path"],
+                          **({"new_folder": True} if target.get("names") else {})), None
 
 
 def _run_move_page(conn, ws: str, scope: dict, args: dict):
-    """File the page into the target folder — made first when it is
-    missing — as one ``set`` of the page's ``folders``."""
-    plan, answer = _plan_move_page(conn, scope, args)
-    if not plan:
-        return answer, None
-    page_id, title, folders, target, kept = plan
-    was = ", ".join(paths_text(folder_paths(conn), folders))
-    folder_id = _made(ws, conn, scope, target)
-    after_commit(ws, conn, apply_ops(
-        conn, page_id, [{"op": "set", "id": page_id, "props": {FOLDERS: refiled(conn, kept, folder_id)}}],
-        actor=scope.get("actor", ""), client="ai"))
+    """File the pages into the target folder — made first when it is
+    missing — as one transaction: the folder tree's batch, then one ``set``
+    of each page's ``folders``: the ones it stays in, then the target."""
+    write_lock(conn)
+    try:
+        planned, error = _plan_move_page(conn, scope, args)
+        target, batch = planned or (None, None)
+        answer = error or _batch_answer(scope, batch, "moved") or _changed_since(
+            scope, _move_digest(target, batch["plans"]))
+        if answer:
+            conn.rollback()
+            return answer, None
+        paths, plans, actor = folder_paths(conn), batch["plans"], scope.get("actor", "")
+        results, folder_id = [], target["id"]
+        if target.get("names"):
+            tree_ops, made = folder_inserts(conn, [target["names"]], target["under"])
+            if tree_ops:
+                results += apply_batches(conn, [(FOLDERS, tree_ops)], actor=actor, client="ai")
+            folder_id = made[tuple(target["names"])]
+        afters = [p["stays"] + ([folder_id] if folder_id else []) for p in plans]  # = refiled(kept, folder_id)
+        results += apply_batches(conn, [(p["page_id"], [{"op": "set", "id": p["page_id"], "props": {FOLDERS: after}}])
+                                        for p, after in zip(plans, afters)], actor=actor, client="ai")
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    after_commits(ws, conn, results)
     where = target["path"] or "the library root"
-    return (f'ok — moved to "{where}"' + (" (a new folder)" if target.get("names") else ""),
-            {"kind": "move", "page_id": page_id, "title": title, "from": was, "to": target["path"],
-             "summary": f"Moved “{title}” → {where}"})
+    new = " (a new folder)" if target.get("names") else ""
+    revert = {"pages": [[p["page_id"], "folders", p["folders"], after] for p, after in zip(plans, afters)]}
+    items = [{"page_id": p["page_id"], "title": p["title"], "from": ", ".join(paths_text(paths, p["folders"])),
+              "to": target["path"]} for p in plans]
+    if batch["asked"] == 1:
+        return (f'ok — moved to "{where}"{new}',
+                {"kind": "move", **items[0], "summary": f"Moved “{items[0]['title']}” → {where}", "revert": revert})
+    n = len(plans)
+    return (_batch_text(f'moved {_of(n, batch["asked"])} to "{where}"{new}', plans, batch),
+            {"kind": "move", "to": target["path"], "summary": f"Moved {n} page{'s' if n != 1 else ''} → {where}",
+             "changes": n, "items": items, "revert": revert})
 
 
 def _run_list_deleted(conn, ws: str, scope: dict, args: dict):
@@ -2575,55 +2950,96 @@ def _run_list_deleted(conn, ws: str, scope: dict, args: dict):
              + f' | gone for good after {p["purge_at"][:10]}' for p in pages[:_LIST_CAP]]
     more = f"\n(+{len(pages) - _LIST_CAP} more not shown)" if len(pages) > _LIST_CAP else ""
     return (f"Recently deleted{where} ({len(pages)}, the last deleted first; a page is deleted for "
-            f"good {KEEP_DAYS} days after it went) — restore_page(page_id) puts one back in the "
-            "folders it was in:\n" + "\n".join(lines) + more), action
+            f"good {KEEP_DAYS} days after it went) — restore_page(page_ids) puts them back in the "
+            "folders they were in:\n" + "\n".join(lines) + more), action
+
+
+def _plan_restore_one(conn, trash: dict, reach, page_id: str) -> tuple:
+    """One page of a restore_page call: ``(entry, None)`` — its Recently
+    deleted entry (``trash.list_trash``'s) with ``page_id``, ``before``
+    (when it was deleted) and ``after`` (the folders it goes back to) — or
+    ``(None, answer)`` for a page it cannot restore."""
+    page = trash.get(page_id)
+    if page is None:
+        if conn.execute("SELECT 1 FROM unified_blocks WHERE id = ? AND parent_id = 'root'", (page_id,)).fetchone():
+            return None, "ok — that page is not deleted; it is in the library"
+        return None, "error: no such page in Recently deleted — use ids from list_deleted"
+    if not _filed_in(reach, page["folders"]):
+        return None, "error: that page was not filed in this chat's folder — restore it from the library root"
+    return {**page, "page_id": page["id"], "before": page["deleted_at"], "after": page["folders"]}, None
 
 
 def _plan_restore_page(conn, scope: dict, args: dict):
-    """``(page, None)``: the Recently deleted entry to bring back
-    (``trash.list_trash``'s), or ``(None, answer)`` for a call that cannot
-    restore anything."""
-    page_id = str(args.get("page_id") or "").strip()
-    page = next((p for p in list_trash(conn) if p["id"] == page_id), None)
-    if page is None:
-        if conn.execute("SELECT 1 FROM unified_blocks WHERE id = ? AND parent_id = 'root'",
-                        (page_id,)).fetchone():
-            return None, "ok — that page is not deleted; it is in the library"
-        return None, "error: no such page in Recently deleted — use ids from list_deleted"
-    if not _filed_in(_reach(conn, scope), page["folders"]):
-        return None, "error: that page was not filed in this chat's folder — restore it from the library root"
-    return page, None
+    """``(batch, None)``: the pages a restore_page call names (``_batch``;
+    Recently deleted read once), or ``(None, error)``."""
+    ids, error = _page_ids_arg(args, "list_deleted")
+    if error:
+        return None, error
+    trash, reach = {p["id"]: p for p in list_trash(conn)}, _reach(conn, scope)
+    return _batch(ids, lambda page_id: _plan_restore_one(conn, trash, reach, page_id)), None
 
 
 def _preview_restore_page(conn, scope: dict, args: dict):
-    page, answer = _plan_restore_page(conn, scope, args)
-    if not page:
+    batch, error = _plan_restore_page(conn, scope, args)
+    answer = error or _batch_answer(scope, batch, "restored")
+    if answer:
         return None, answer
-    return {"title": page["title"], "to": ", ".join(paths_text(folder_paths(conn), page["folders"]))}, None
+    paths, plans = folder_paths(conn), batch["plans"]
+    if batch["asked"] == 1:
+        return {"title": plans[0]["title"], "to": ", ".join(paths_text(paths, plans[0]["folders"]))}, None
+    lines = [[["ctx", p["title"]]] + ([["ctx", " → "], ["ins", ", ".join(paths_text(paths, p["folders"]))]]
+                                      if p["folders"] else []) for p in plans]
+    return _batch_preview(conn, batch, lines, _digest("restore_page", "", plans)), None
 
 
 def _run_restore_page(conn, ws: str, scope: dict, args: dict):
-    """Bring a page back from Recently deleted (``ops.restore_page``): under
-    the library root again, in the folders it was in, with its notes,
-    highlights, files and chats."""
+    """Bring the pages back from Recently deleted (``ops.restore_page``, one
+    each: a restore commits on its own and reloads the page's room): under
+    the library root again, in the folders each was in, with its notes,
+    highlights, files and chats. A page that fails is reported, the others
+    restored — every page that came back is in the result and the action."""
     from .ops import OpError, restore_page
 
-    page, answer = _plan_restore_page(conn, scope, args)
-    if not page:
+    batch, error = _plan_restore_page(conn, scope, args)
+    answer = error or _batch_answer(scope, batch, "restored") or _changed_since(
+        scope, _digest("restore_page", "", batch["plans"]))
+    if answer:
         return answer, None
-    try:
-        restore_page(ws, conn, page["id"], actor=scope.get("actor", ""), client="ai")
-    except OpError as e:
-        return f"error: {e.detail}", None
+    done = []
+    for p in batch["plans"]:
+        try:
+            restore_page(ws, conn, p["page_id"], actor=scope.get("actor", ""), client="ai")
+        except Exception as e:  # one page's failure leaves the others' restores standing
+            # A restore commits before it fans out (ops.restore_page): a page
+            # back in the library came back, whatever failed after that.
+            if not conn.execute("SELECT 1 FROM unified_blocks WHERE id = ? AND parent_id = 'root'",
+                                (p["page_id"],)).fetchone():
+                if not isinstance(e, OpError):
+                    log.warning(f"[ai_tools] restore_page {p['page_id']} failed: {e}")
+                batch["refused"].append((p["page_id"], f"error: {e.detail if isinstance(e, OpError) else e}"))
+                continue
+        done.append(p)
+    if not done:
+        return (batch["refused"][-1][1] if batch["asked"] == 1
+                else "error: none of these pages could be restored:\n" + _left_out_lines(batch)), None
     paths = folder_paths(conn)
-    where = quoted_paths(paths, page["folders"]) or "the library root"
-    return (f'ok — restored [{page["title"]}](/?page={page["id"]}) (page_id {page["id"]}) to {where}',
-            {"kind": "restore", "page_id": page["id"], "title": page["title"],
-             "to": ", ".join(paths_text(paths, page["folders"])),
-             "summary": f"Restored “{page['title'][:60]}”"})
+    items = [{"page_id": p["page_id"], "title": p["title"], "to": ", ".join(paths_text(paths, p["folders"]))}
+             for p in done]
+    if batch["asked"] == 1:
+        p = done[0]
+        where = quoted_paths(paths, p["folders"]) or "the library root"
+        return (f'ok — restored [{p["title"]}](/?page={p["page_id"]}) (page_id {p["page_id"]}) to {where}',
+                {"kind": "restore", **items[0], "summary": f"Restored “{p['title'][:60]}”"})
+    n = len(done)
+    return (_batch_text(f"restored {_of(n, batch['asked'])}", done, batch, links=True),
+            {"kind": "restore", "summary": f"Restored {n} page{'s' if n != 1 else ''}", "changes": n,
+             "items": items})
 
 
-_PREVIEW_ITEMS = 20  # subfolders, pages and chat folders a deletion's card names; the rest are counted
+# The names a card or result shows before it counts the rest: a deletion's
+# subfolders, pages and chat folders, the pages a batch's card leaves out,
+# the restored pages a batch's result links.
+_PREVIEW_ITEMS = 20
 
 
 def _one_line(value) -> str:
@@ -2632,9 +3048,17 @@ def _one_line(value) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()[:_TITLE_MAX]
 
 
-def _names_arg(value) -> list[str]:
-    """A list-of-names argument (a lone string counts as one): each on one
-    line, blanks and repeats (ignoring case) left out."""
+def _names_arg(value) -> list[str] | None:
+    """A list-of-names argument (a lone string counts as one, and the JSON
+    text of a list as that list, an empty one too — a saved chat keeps a
+    list argument as its text, ``tool_action``): each on one line, blanks
+    and repeats (ignoring case) left out. None for text that opens a list
+    but is none (one cut off where a saved chat trimmed it): no name."""
+    if isinstance(value, str) and value.lstrip().startswith("["):
+        try:
+            value = json.loads(value)
+        except ValueError:
+            return None
     items = [value] if isinstance(value, str) else value if isinstance(value, list) else []
     out: dict[str, str] = {}
     for item in items:
@@ -2847,73 +3271,136 @@ def _run_rename_label(conn, ws: str, scope: dict, args: dict):
              "summary": f"Renamed the label “{plan['name']}” → “{plan['to']}”"})
 
 
-def _plan_label_page(conn, scope: dict, args: dict):
-    """``(plan, None)``: the page (``page_id``, ``title``); the label ids it
-    keeps (``keep``) and gets (``put``, labels that exist); the names of the
-    labels still to be made (``make``); the names it gets and loses
-    (``added``, ``removed``); and the card's ``diff``. A label id that is no
-    label any more goes with the write, as with any refiling
-    (``existing_in``). ``(None, answer)`` for a call that changes nothing."""
-    loaded, error = _load_scoped_page(conn, scope, args)
+def _plan_label_one(conn, scope: dict, page_id: str, labels: dict, reach) -> tuple:
+    """One page of a label_page call: ``({page_id, title, current, keep, put,
+    diff, added, removed, now, before, after}, None)`` — the label ids it
+    carries (``current``: ids that still are labels; ``before`` too), keeps
+    and gets (``put``:
+    labels that exist; ``labels["make"]`` names the ones still to be made),
+    the names it gets and loses, the card's ``diff`` — or ``(None,
+    answer)`` for a page already so."""
+    loaded, error = _load_scoped_page(conn, scope, {"page_id": page_id}, reach)
     if error:
         return None, error
     page_id, title, props, _ = loaded
+    names, make = labels["names"], labels["make"]
+    current = existing_in(conn, LABELS, filing(props, LABELS))
+    keep = [i for i in current if i not in labels["drop"]]
+    put = [i for i in labels["put"] if i not in keep]
+    if not put and not make and keep == current:
+        return None, "ok — the page's labels already are that; nothing changed"
+    diff = _labels_diff([("ctx" if i in keep else "del", names[i]) for i in current]
+                        + [("ins", names[i]) for i in put] + [("ins", n) for n in make])
+    return {"page_id": page_id, "title": title, "current": current, "keep": keep, "put": put, "diff": diff,
+            "added": [names[i] for i in put] + make, "removed": [names[i] for i in current if i not in keep],
+            "now": [names[i] for i in keep + put] + make, "before": current, "after": keep + put + make}, None
+
+
+def _plan_label_page(conn, scope: dict, args: dict):
+    """``((labels, batch), None)``: what a label_page call puts on and takes
+    off every page it names — ``labels``: ``names`` ({id: name} of every
+    label), ``drop`` (ids to take off), ``put`` (ids to put on) and
+    ``make`` (names to make) — and its pages (``_batch``); ``(None,
+    error)`` for a call refused whole: no pages or too many, a list of names
+    cut off, no label named, one both added and removed, a label to remove
+    that does not exist."""
+    ids, error = _page_ids_arg(args)
+    if error:
+        return None, error
     add, remove = _names_arg(args.get("add")), _names_arg(args.get("remove"))
+    for key, names in (("add", add), ("remove", remove)):
+        if names is None:
+            return None, f"error: `{key}` must be a list of label names — the list itself, not its text"
     if not add and not remove:
         return None, "error: name the labels to `add` or to `remove`"
     if {n.lower() for n in add} & {n.lower() for n in remove}:
         return None, "error: a label cannot be added and removed in one call"
     have = tree_children(conn, LABELS).get(LABELS, [])
-    names = dict(have)
-    current = existing_in(conn, LABELS, filing(props, LABELS))
     drop = set()
     for name in remove:
         found = _labels_called(have, name)
         if not found:
             return None, f'error: there is no label "{name}" — list_pages(list_labels=true) shows the labels'
         drop |= set(found)
-    keep = [i for i in current if i not in drop]
     put, make = [], []
     for name in add:
         found = _labels_called(have, name)
         if not found:
             make.append(name)
-        elif found[0] not in keep and found[0] not in put:
+        elif found[0] not in put:
             put.append(found[0])
-    if not put and not make and keep == current:
-        return None, "ok — the page's labels already are that; nothing changed"
-    diff = _labels_diff([("ctx" if i in keep else "del", names[i]) for i in current]
-                        + [("ins", names[i]) for i in put] + [("ins", n) for n in make])
-    return {"page_id": page_id, "title": title, "keep": keep, "put": put, "make": make, "diff": diff,
-            "added": [names[i] for i in put] + make, "removed": [names[i] for i in current if i not in keep],
-            "now": [names[i] for i in keep + put] + make}, None
+    labels = {"names": dict(have), "drop": drop, "put": put, "make": make}
+    reach = _reach(conn, scope)
+    return (labels, _batch(ids, lambda page_id: _plan_label_one(conn, scope, page_id, labels, reach))), None
+
+
+def _label_digest(labels: dict, plans: list) -> str:
+    return _digest("label_page", [labels["put"], labels["make"], sorted(labels["drop"])], plans)
 
 
 def _preview_label_page(conn, scope: dict, args: dict):
-    plan, answer = _plan_label_page(conn, scope, args)
-    if not plan:
+    planned, error = _plan_label_page(conn, scope, args)
+    labels, batch = planned or (None, None)
+    answer = error or _batch_answer(scope, batch, "changed")
+    if answer:
         return None, answer
-    return {"page_id": plan["page_id"], "title": plan["title"], "diff": plan["diff"]}, None
+    plans = batch["plans"]
+    if batch["asked"] == 1:
+        p = plans[0]
+        return {"page_id": p["page_id"], "title": p["title"], "diff": p["diff"]}, None
+    return _batch_preview(conn, batch, [[["ctx", f"{p['title']}: "]] + p["diff"] for p in plans],
+                          _label_digest(labels, plans),
+                          **({"new_labels": labels["make"]} if labels["make"] else {})), None
 
 
 def _run_label_page(conn, ws: str, scope: dict, args: dict):
-    """One ``set`` of the page's ``labels``, the labels it names that do not
-    exist made first (``ensure_filing``, one batch on the label tree)."""
-    plan, answer = _plan_label_page(conn, scope, args)
-    if not plan:
-        return answer, None
-    made = ensure_filing(ws, conn, labels=plan["make"], actor=scope.get("actor", ""),
-                         client="ai")[1] if plan["make"] else {}
-    labels = plan["keep"] + plan["put"] + [made[n] for n in plan["make"]]
-    page_id, title = plan["page_id"], plan["title"]
-    after_commit(ws, conn, apply_ops(conn, page_id, [{"op": "set", "id": page_id, "props": {LABELS: labels or None}}],
-                                     actor=scope.get("actor", ""), client="ai"))
-    now = ", ".join(f'"{n}"' for n in plan["now"]) or "no label"
-    change = ", ".join([f"+{n}" for n in plan["added"]] + [f"−{n}" for n in plan["removed"]])
-    return (f'ok — "{title}" now carries {now}'
-            + (f" ({len(plan['make'])} new label{'s' if len(plan['make']) != 1 else ''})" if plan["make"] else ""),
-            {"kind": "label", "page_id": page_id, "title": title, "added": plan["added"],
-             "removed": plan["removed"], "summary": f"Labels of “{title[:60]}”: {change}"})
+    """One ``set`` of each page's ``labels`` — the labels the call names
+    that do not exist made first, once (one batch on the label tree) — in
+    one transaction planned under the write lock."""
+    write_lock(conn)
+    try:
+        planned, error = _plan_label_page(conn, scope, args)
+        labels, batch = planned or (None, None)
+        answer = error or _batch_answer(scope, batch, "changed") or _changed_since(
+            scope, _label_digest(labels, batch["plans"]))
+        if answer:
+            conn.rollback()
+            return answer, None
+        plans, actor, results, made = batch["plans"], scope.get("actor", ""), [], {}
+        if labels["make"]:
+            tree_ops, made = label_inserts(conn, labels["make"])
+            if tree_ops:
+                results += apply_batches(conn, [(LABELS, tree_ops)], actor=actor, client="ai")
+        afters = [p["keep"] + p["put"] + [made[n] for n in labels["make"]] for p in plans]
+        results += apply_batches(conn, [(p["page_id"], [{"op": "set", "id": p["page_id"],
+                                                         "props": {LABELS: after or None}}])
+                                        for p, after in zip(plans, afters)], actor=actor, client="ai")
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    after_commits(ws, conn, results)
+    revert = {"pages": [[p["page_id"], "labels", p["current"], after] for p, after in zip(plans, afters)]}
+    k = len(labels["make"])
+    made_note = f" ({k} new label{'s' if k != 1 else ''})" if k else ""
+    if batch["asked"] == 1:
+        p = plans[0]
+        now = ", ".join(f'"{n}"' for n in p["now"]) or "no label"
+        change = ", ".join([f"+{n}" for n in p["added"]] + [f"−{n}" for n in p["removed"]])
+        return (f'ok — "{p["title"]}" now carries {now}{made_note}',
+                {"kind": "label", "page_id": p["page_id"], "title": p["title"], "added": p["added"],
+                 "removed": p["removed"], "summary": f"Labels of “{p['title'][:60]}”: {change}", "revert": revert})
+    names = labels["names"]
+    added = [names[i] for i in labels["put"]] + labels["make"]
+    removed = [names[i] for i in names if i in labels["drop"]]
+    change = ", ".join([f"+{n}" for n in added] + [f"−{n}" for n in removed])
+    n = len(plans)
+    return (_batch_text(f"changed the labels of {_of(n, batch['asked'])}: {change}{made_note}", plans, batch),
+            {"kind": "label", "added": added, "removed": removed,
+             "summary": f"Labels of {n} page{'s' if n != 1 else ''}: {change}", "changes": n,
+             "items": [{"page_id": p["page_id"], "title": p["title"], "added": p["added"], "removed": p["removed"]}
+                       for p in plans],
+             "revert": revert})
 
 
 def _plan_delete_label(conn, scope: dict, args: dict):
@@ -3496,12 +3983,20 @@ TOOLS = [
         "preview": _preview_rename_page,
         "spec": {
             "name": "rename_page",
-            "description": "Set a page's title. Use exact page ids from list_pages.",
+            "description": (
+                f"Set the titles of pages. `renames` lists each page with its new title, up to {_RENAME_MAX} "
+                "in one call: put a task's renames in as few calls as you can — the user approves a whole "
+                "call at once — and send one such call per turn, since a long list takes much of a turn. "
+                "A page that cannot be renamed is left out and named in the result with the reason; the "
+                "others are renamed. Use exact page ids from list_pages."),
             "parameters": {
                 "type": "object",
-                "properties": {**_PAGE_ID_ARG,
-                               "title": {"type": "string", "description": "the new title"}},
-                "required": ["page_id", "title"],
+                "properties": {"renames": {"type": "array", "items": {
+                    "type": "object",
+                    "properties": {"page_id": {"type": "string"},
+                                   "title": {"type": "string", "description": "the new title"}},
+                    "required": ["page_id", "title"]}}},
+                "required": ["renames"],
             },
         },
     },
@@ -3511,19 +4006,21 @@ TOOLS = [
         "spec": {
             "name": "move_page",
             "description": (
-                "File a page into a folder. `folder` is the folder's id or its path as "
-                'list_folders shows it ("readout / nondestructive"; "readout/nondestructive" '
-                "works too where no name holds a '/'); a path that names no folder makes "
-                "it. A path is read inside the current folder: one that does not start with "
-                'the current folder\'s path is taken as a subfolder of it, and "" files the '
-                "page in the current folder itself (at the library root: out of every "
-                "folder). Folder memberships outside the current folder are kept — a page "
-                "can be in several folders. When several folders share the path the call "
-                "fails naming their ids: pass the id."),
+                f"File pages into a folder. `page_ids`: the pages, up to {BATCH_MAX} in one call (exact ids "
+                "from list_pages); to sort pages into several folders, make one call per folder. `folder` "
+                "is the folder's id or its path as list_folders shows it (\"readout / nondestructive\"; "
+                "\"readout/nondestructive\" works too where no name holds a '/'); a path that names no "
+                "folder makes it. A path is read inside the current folder: one that does not start with "
+                "the current folder's path is taken as a subfolder of it, and \"\" files the pages in the "
+                "current folder itself (at the library root: out of every folder). Folder memberships "
+                "outside the current folder are kept — a page can be in several folders. When several "
+                "folders share the path the call fails naming their ids: pass the id. A page that cannot "
+                "be moved is left out and named in the result; the others are moved."),
             "parameters": {
                 "type": "object",
-                "properties": {**_PAGE_ID_ARG, "folder": {"type": "string"}},
-                "required": ["page_id", "folder"],
+                "properties": {"page_ids": {"type": "array", "items": {"type": "string"}},
+                               "folder": {"type": "string"}},
+                "required": ["page_ids", "folder"],
             },
         },
     },
@@ -3536,7 +4033,7 @@ TOOLS = [
                 f"List Recently deleted: the pages deleted in the last {KEEP_DAYS} days that were "
                 "filed under the current folder — id, title, the folders they were in, when and by "
                 "whom they were deleted. `title_contains` filters by title. Deleted pages are in no "
-                "other tool's results; restore_page brings one back."),
+                "other tool's results; restore_page brings them back."),
             "parameters": {
                 "type": "object",
                 "properties": {"title_contains": {"type": "string"}},
@@ -3550,12 +4047,13 @@ TOOLS = [
         "spec": {
             "name": "restore_page",
             "description": (
-                "Bring a page back from Recently deleted — with its notes, highlights, files and "
-                "chats — filed in the folders it was in. Use an id from list_deleted."),
+                "Bring pages back from Recently deleted — with their notes, highlights, files and chats — "
+                f"each filed in the folders it was in. `page_ids`: ids from list_deleted, up to {BATCH_MAX} "
+                "in one call."),
             "parameters": {
                 "type": "object",
-                "properties": {**_PAGE_ID_ARG},
-                "required": ["page_id"],
+                "properties": {"page_ids": {"type": "array", "items": {"type": "string"}}},
+                "required": ["page_ids"],
             },
         },
     },
@@ -3618,18 +4116,20 @@ TOOLS = [
         "spec": {
             "name": "label_page",
             "description": (
-                "Put labels on a page and/or take labels off it. `add` and `remove` are lists of "
-                "label names, as list_pages shows them (exact, else ignoring case); a label to add "
-                "that does not exist yet is made. The page's other labels stay. Use exact page "
-                "ids from list_pages."),
+                f"Put labels on pages and/or take labels off them. `page_ids`: the pages, up to {BATCH_MAX} "
+                "in one call (exact ids from list_pages). `add` and `remove` are lists of label names, as "
+                "list_pages shows them (exact, else ignoring case), and apply to every page of the call; a "
+                "label to add that does not exist yet is made. To give pages different labels, make one "
+                "call per set of labels. Each page's other labels stay. A page that cannot be changed is "
+                "left out and named in the result."),
             "parameters": {
                 "type": "object",
-                "properties": {**_PAGE_ID_ARG,
+                "properties": {"page_ids": {"type": "array", "items": {"type": "string"}},
                                "add": {"type": "array", "items": {"type": "string"},
-                                       "description": "label names to put on the page"},
+                                       "description": "label names to put on the pages"},
                                "remove": {"type": "array", "items": {"type": "string"},
-                                          "description": "label names to take off it"}},
-                "required": ["page_id"],
+                                          "description": "label names to take off them"}},
+                "required": ["page_ids"],
             },
         },
     },
@@ -4063,7 +4563,15 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
     if "restore_page" in names:
         text += (
             f"\nDeleted pages stay in Recently deleted for {KEEP_DAYS} days: list_deleted finds "
-            "them and restore_page brings one back when the user asks. Deleting pages stays impossible.")
+            "them and restore_page brings them back when the user asks. Deleting pages stays impossible.")
+    batched = [n for n in ("rename_page", "move_page", "label_page", "restore_page") if n in names]
+    if batched:
+        tools = ", ".join(batched[:-1]) + " and " + batched[-1] if len(batched) > 1 else batched[0]
+        text += (
+            f"\nSeveral pages at once: {tools} {'each take' if len(batched) > 1 else 'takes'} a list of "
+            "pages, so change many pages in a few calls, never one call per page; the user approves each "
+            "call once. A result names the pages it left out and why: deal with those, and never send "
+            "again the pages it changed.")
     if any(n in names for n in ("rename_folder", "create_label", "rename_label", "label_page")):
         text += (
             "\nFolders and labels: you can rename folders (rename_folder) and make, rename and "
@@ -4220,12 +4728,15 @@ def approval_preview(ws: str, scope: dict, name: str, args: dict) -> tuple:
 
 
 def run_agent_tool(ws: str, scope: dict, name: str, args: dict,
-                   *, allowed_tools=None) -> tuple[str, dict]:
+                   *, allowed_tools=None, approved: str = "") -> tuple[str, dict]:
     """Execute one tool call against a trusted, caller-resolved workspace/scope.
 
     Chat and MCP share this dispatcher; each passes the tool names it armed
     (`allowed_tools`, None = every tool of the scope). The caller
-    authenticates the workspace before invoking this layer.
+    authenticates the workspace before invoking this layer. ``approved`` is
+    the digest of the approval card the user allowed for this call
+    (``ApprovalGate``): a call naming several pages runs only as that card
+    showed it.
 
     Returns ``(result_text, action)`` — result_text goes back to the model;
     action is the ``{kind, summary, tool, args, result}`` UI event for EVERY
@@ -4257,7 +4768,8 @@ def run_agent_tool(ws: str, scope: dict, name: str, args: dict,
     ensure_tally(scope)
     notes_seen(scope)  # made on the caller's scope, so the reads of one turn carry over to its edits
     # The planners check stored files against the workspace (missing_uploads).
-    scope = {**scope, "ws": ws, **({"context_pages": []} if tool["mutating"] else {})}
+    scope = {**scope, "ws": ws, "approved": approved,
+             **({"context_pages": []} if tool["mutating"] else {})}
     started = time.monotonic()
     try:
         with connect_pages_db(ws) as conn:
