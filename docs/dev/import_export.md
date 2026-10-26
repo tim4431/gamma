@@ -199,6 +199,14 @@ Gamma exports share one review flow: Upload → Review → Import → Summary.
   export, Zotero item keys, ...); duplicate Zotero records share
   `selection_ids`. `parse_selection` (`gamma/import_review.py`): `None`
   (no field) imports everything, `[]` imports nothing.
+- The two columns answer each other: each page names the upload's members
+  it comes from in `source_paths`, exactly as `entries` names them, its own
+  file first. That is a Zotero item's PDF and then its other attachments,
+  a note, a Notability note, or a Gamma export's `pages.db` and uploads.
+  A note found in a zip inside the upload names that zip
+  (`import_zip.ZipEntry.outer`), and `archive_entries` names members as
+  the zip walk decodes them (`import_zip.entry_name`). A Zotero job's
+  report keeps the paths too, so the summary's columns still link.
 - A stopped import keeps what it wrote: the Zotero and Markdown imports
   write the new pages whose files they already stored, then stop.
 - Frontend (`src/transfers/`): `ImportReviewDialog.jsx` owns the steps and
@@ -222,8 +230,24 @@ Gamma exports share one review flow: Upload → Review → Import → Summary.
   its descendants). A tree of more than 300 files (a vault) starts with its
   folders closed, a closed folder's rows are made only once it opens, and
   a list shows 300 files at a time, so 20,000 notes open and click as fast
-  as a few. `importReview.js` owns selection, filters and tree
-  construction (filters only hide rows; hidden selections stay selected);
+  as a few. A row with a match in the other column has its name as a
+  button. Choosing it lights the match in both columns and shows the first
+  match in the other. The folders on the way open at once, since a folder
+  still growing open would leave the row short of where the scroll must
+  reach; the reader's own folds keep their motion. A long list grows to
+  hold the match, and unless it is already in view it scrolls to the
+  middle of its column. With the columns stacked (a phone), that column is
+  brought into the dialog's view, clear of the sticky footer. The other
+  matches are lit too, and a second click lets go. A match the filter
+  hides brings the filter back to All, and a hidden status line reads out
+  the row chosen and how many matches it has. Within each of its folders,
+  the library column lists its pages in the source column's order, each by
+  the first of its files listed there, so the columns line up. Both sort
+  folders by name with numbers by value (`files/999` before
+  `files/1000`).
+  `importReview.js` owns selection, filters, tree construction and the
+  links and order (`importLinks`, `orderLikeSource`, `firstRow`; filters
+  only hide rows, and hidden selections stay selected);
   `importApi.js` the upload, the job's body and the discard;
   `shared/lib/xhrUpload.js` the upload progress.
 

@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { allItemIds, filterImportPages, selectItems, buildImportTree, treeItemIds, treeSize, resultPages, importSummary } from "../src/transfers/importReview.js";
+import { allItemIds, filterImportPages, selectItems, buildImportTree, treeItemIds, treeSize, resultPages, importSummary,
+  firstRow, importLinks, orderLikeSource, pageKey } from "../src/transfers/importReview.js";
 
 test("filters preserve hidden selections; folder selection deduplicates items in multiple locations", () => {
   const pages = [
@@ -47,4 +48,40 @@ test("the summary counts what a Notability import brought, one of a kind in the 
   "1 new page · 1 file stored · 1 stroke · 1 text box · 1 picture · 1 recording · 1 warning");
   // what a source does not report, or reports as 0, is left out; the new pages never are
   assert.equal(importSummary({ pages_created: 0, pages_skipped: 3, strokes_imported: 0 }), "0 new pages · 3 already in library");
+});
+
+test("the library column follows the source column's order, and each side finds its match on the other", () => {
+  const entries = [
+    { path: "Export/files/1000/b.pdf", size: 1 }, { path: "Export/files/999/a.pdf", size: 1 },
+    { path: "Export/files/999/a.html", size: 1 }, { path: "Export/library.rdf", size: 1 }, { path: "Export/files/", directory: true },
+  ];
+  const pages = [
+    { title: "B", folders: [["ML"]], selection_ids: ["zotero:0"], source_paths: ["Export/files/1000/b.pdf"] },
+    { title: "No file", folders: [], selection_ids: ["zotero:1"], source_paths: [] },
+    { title: "A", folders: [["ML"], []], selection_ids: ["zotero:2"],
+      source_paths: ["Export/files/999/a.pdf", "Export/files/999/a.html", "not/listed.pdf"] },
+  ];
+  const source = buildImportTree(entries);
+  // numbers by value (files/999 before files/1000); a page with no listed file last
+  assert.deepEqual(orderLikeSource(pages, source).map(page => page.title), ["A", "B", "No file"]);
+  const links = importLinks(entries, pages);
+  assert.deepEqual([...links.toFiles.get("zotero:2")], ["Export/files/999/a.pdf", "Export/files/999/a.html"]);
+  assert.deepEqual([...links.toPages.get("Export/files/999/a.html")], ["zotero:2"]);
+  assert.equal(links.toFiles.has("zotero:1"), false);
+  assert.equal(links.toPages.has("Export/library.rdf"), false);
+  // where ImportTree shows a row first: each folder's folders before its own files
+  const destination = buildImportTree(orderLikeSource(pages, source), true);
+  assert.deepEqual(firstRow(destination, new Set(["zotero:2"]), pageKey), { key: "zotero:2", path: ["ML"], index: 0 });
+  assert.deepEqual(firstRow(destination, new Set(["zotero:0"]), pageKey), { key: "zotero:0", path: ["ML"], index: 1 });
+  assert.deepEqual(firstRow(source, new Set(["Export/files/1000/b.pdf"]), file => file.path),
+    { key: "Export/files/1000/b.pdf", path: ["Export", "files", "1000"], index: 0 });
+  assert.equal(firstRow(source, new Set(["nowhere"]), file => file.path), null);
+});
+
+test("a report's rows are keyed by page and keep the files of every item merged into them", () => {
+  const [page] = resultPages({ pages: [{ id: "same", kind: "pdf", created: true, source_paths: ["a.pdf"] },
+    { id: "same", kind: "pdf", created: false, source_paths: ["b.pdf", "a.pdf"] }] });
+  assert.deepEqual(page.source_paths, ["a.pdf", "b.pdf"]);
+  assert.equal(pageKey(page), "pdf:same");
+  assert.equal(pageKey({ id: "x", selection_ids: ["page:x"] }), "page:x");
 });
