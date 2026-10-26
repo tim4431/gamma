@@ -674,7 +674,8 @@ The scenarios live in `tests/e2e/scenarios/`:
   to the requests on real papers is the translation bench's
   ([translation.md](translation.md) "The bench").
 - `transfers.mjs`: the Import and Export dialogs — format/source cards,
-  the review step and its switches, direct export for fixed formats, the
+  the review step and its switches, its two columns lined up and finding
+  each other's rows, direct export for fixed formats, the
   export job's finished step, and a folder's annotated PDFs exported in the
   background: the dialog closed mid-way, reopened from Background tasks and
   its zip downloaded ([tasks.md](tasks.md)). The job's listing is held at

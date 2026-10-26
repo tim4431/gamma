@@ -95,6 +95,10 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       const report = page.getByRole("dialog", { name: "Import complete", exact: true });
       await report.waitFor();
       assertEq(imports, 1);
+      // the summary's columns still find each other's rows
+      await report.getByRole("region", { name: "ZIP contents", exact: true })
+        .getByRole("button", { name: "Vaswani - 2017 - Attention.pdf", exact: true }).click();
+      assert((await report.locator(".importTreeFile.linked").allInnerTexts()).some(text => text.includes("Attention is all you need")));
       assertEq(uploads, 2, "each review uploads once; committing reuses the upload");
       assert((await report.locator(".importWarnings").innerText()).includes("PDF missing from ZIP"));
       await choice(report, "Done").click();
@@ -259,6 +263,157 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       assert(await page.getByRole("heading", { name: "Attachments", exact: true }).isVisible());
       assert(await page.locator(".blockRow a", { hasText: "Publisher page" }).isVisible());
       if (flags.keep) await page.screenshot({ path: `${server.dir}/zotero-attachments.png` });
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("transfer: a Zotero review lines both columns up and finds each row's match on the other side", async () => {
+    const { ctx, page } = await setup();
+    try {
+      // Thirty items, the RDF listing the last attachment folder first.
+      const fixture = path.join(server.dir, "linked.zip");
+      execFileSync(python, ["-c", `
+import sys, zipfile
+sys.path.insert(0, 'backend/tests')
+from test_zotero_import import RDF, _annotated_pdf
+head = RDF.split('<bib:Article')[0]
+items = ''.join(
+    f'<bib:Article rdf:about="https://example.org/e2e-linked/{i}"><z:itemType>journalArticle</z:itemType>'
+    f'<link:link rdf:resource="#linked_{i}"/><dc:title>Linked paper {i:02d}</dc:title></bib:Article>'
+    f'<z:Attachment rdf:about="#linked_{i}"><z:itemType>attachment</z:itemType>'
+    f'<z:path rdf:resource="files/{i}/Linked {i}.pdf"/><dc:title>PDF</dc:title><link:type>application/pdf</link:type></z:Attachment>'
+    for i in range(30, 0, -1))
+with zipfile.ZipFile(sys.argv[1], 'w') as z:
+    z.writestr('Linked/library.rdf', head + items + '</rdf:RDF>')
+    for i in range(1, 31):
+        z.writestr(f'Linked/files/{i}/Linked {i}.pdf', _annotated_pdf(f'E2E linked paper {i}'.encode()))
+`, fixture], { cwd: ROOT });
+      await page.waitForSelector(".folderNewBtn");
+      const dialog = await openDialog(page, "Import");
+      await choice(dialog, "Zotero library").click();
+      await choice(dialog, "Next").click();
+      const chooser = page.waitForEvent("filechooser");
+      await choice(dialog, "or choose a .zip").click();
+      await (await chooser).setFiles(fixture);
+      const review = page.getByRole("dialog", { name: "Review Zotero import", exact: true });
+      const source = review.getByRole("region", { name: "ZIP contents", exact: true });
+      const target = review.getByRole("region", { name: "Library after import", exact: true });
+      await target.waitFor();
+      // The library column follows the ZIP's folders, files/9 before files/10.
+      const titles = Array.from({ length: 30 }, (_, i) => `Linked paper ${String(i + 1).padStart(2, "0")}`);
+      assertEq((await target.locator(".importRowLink").allTextContents()).join("|"), titles.join("|"));
+      assertEq(await source.getByRole("button", { name: "library.rdf", exact: true }).count(), 0, "a file no page comes from is no link");
+      const status = review.locator("p.srOnly[role=status]");
+      const lit = column => column.locator(".importTreeFile.linked");
+      const box = column => column.locator(".importTreeScroll");
+      const inView = (row, column) => until(async () => {
+        const [at, view] = await Promise.all([row.boundingBox(), box(column).boundingBox()]);
+        return at && at.y >= view.y - 1 && at.y + at.height <= view.y + view.height + 1;
+      }, { what: "the match scrolled into its column" });
+      // a match that can be is scrolled to the middle of its column
+      const centred = (row, column) => until(async () => {
+        const [at, view] = await Promise.all([row.boundingBox(), box(column).boundingBox()]);
+        return at && Math.abs(at.y + at.height / 2 - (view.y + view.height / 2)) <= at.height;
+      }, { what: "the match in the middle of its column" });
+      // what shows at the match's middle is the match: the dialog's sticky footer does not cover it
+      const uncovered = row => until(() => row.evaluate(el => {
+        const at = el.getBoundingClientRect();
+        const hit = document.elementFromPoint(at.left + at.width / 2, at.top + at.height / 2);
+        return Boolean(hit && el.contains(hit));
+      }), { what: "the match uncovered in the window" });
+
+      // a name that is a button is as large as one that is not, at any interface size
+      await page.evaluate(() => document.documentElement.style.setProperty("--ui-scale", "1.3"));
+      // (the height of the text itself, not of the boxes: a button's box is its line's)
+      const named = await Promise.all([source.getByRole("button", { name: "Linked 1.pdf", exact: true }),
+        source.locator(".importFileText > span", { hasText: "library.rdf" })].map(name => name.evaluate(el => {
+        const text = document.createRange();
+        text.selectNodeContents(el);
+        return text.getBoundingClientRect().height;
+      })));
+      assert(Math.abs(named[0] - named[1]) <= 1, `a linked name's text ${named[0]}px tall, a plain one's ${named[1]}px`);
+      await page.evaluate(() => document.documentElement.style.setProperty("--ui-scale", "1"));
+
+      const last = source.getByRole("button", { name: "Linked 30.pdf", exact: true });
+      await last.click();
+      assertEq(await last.getAttribute("aria-pressed"), "true");
+      assertEq(await lit(target).count(), 1);
+      assert((await lit(target).innerText()).includes("Linked paper 30"));
+      await inView(lit(target), target);
+      assertEq(await status.textContent(), "Linked 30.pdf: 1 matching page in the library");
+
+      // the lit match chosen goes back the other way, its button keeping the focus
+      const back = target.getByRole("button", { name: "Linked paper 30", exact: true });
+      await back.click();
+      assert(await back.evaluate(el => el === document.activeElement), "the pressed name keeps the focus");
+      assertEq(await back.getAttribute("aria-pressed"), "true");
+      assertEq(await last.getAttribute("aria-pressed"), "false");
+      assert((await lit(source).innerText()).includes("Linked 30.pdf"));
+      assertEq(await status.textContent(), "Linked paper 30: 1 matching file in the upload");
+
+      const first = target.getByRole("button", { name: "Linked paper 01", exact: true });
+      await first.click();
+      assertEq(await lit(source).count(), 1);
+      assert((await lit(source).innerText()).includes("Linked 1.pdf"));
+      await inView(lit(source), source);
+      assertEq(await status.textContent(), "Linked paper 01: 1 matching file in the upload");
+      await first.click(); // a second click lets go
+      assertEq(await review.locator(".importTreeFile.linked").count(), 0);
+      assertEq(await status.textContent(), "");
+
+      // a match the filter hides brings the filter back to All
+      await choice(review, "Missing").click();
+      assert(await review.getByText("No items match this filter.", { exact: true }).isVisible());
+      await source.getByRole("button", { name: "Linked 15.pdf", exact: true }).click();
+      assertEq(await choice(review, "All").getAttribute("aria-pressed"), "true");
+      assert((await lit(target).innerText()).includes("Linked paper 15"));
+      await centred(lit(target), target);
+
+      // with the columns stacked on a phone, the match's column comes into view clear of the
+      // footer, the column's last row (which cannot be centred) too
+      await page.setViewportSize({ width: 390, height: 844 });
+      for (const n of [22, 30]) {
+        await source.getByRole("button", { name: `Linked ${n}.pdf`, exact: true }).click();
+        assert((await lit(target).innerText()).includes(`Linked paper ${n}`));
+        await inView(lit(target), target);
+        await uncovered(lit(target));
+      }
+      if (flags.keep) await page.screenshot({ path: `${server.dir}/zotero-linked.png` });
+      await choice(review, "Cancel").click();
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("transfer: a match past a long list's first 300 rows grows the list to it", async () => {
+    const { ctx, page } = await setup();
+    try {
+      const notes = path.join(server.dir, "Long list.zip");
+      execFileSync(python, ["-c", `
+import sys, zipfile
+with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as z:
+    for i in range(320):
+        z.writestr(f'Long list/Long note {i}.md', f'- point of long note {i}\\n')
+`, notes], { cwd: ROOT });
+      await page.waitForSelector(".folderNewBtn");
+      const dialog = await openDialog(page, "Import");
+      await choice(dialog, "Markdown notes").click();
+      const chooser = page.waitForEvent("filechooser");
+      await choice(dialog, "Choose file…").click();
+      await (await chooser).setFiles(notes);
+      const review = page.getByRole("dialog", { name: "Review Markdown import", exact: true });
+      const source = review.getByRole("region", { name: "ZIP contents", exact: true });
+      const target = review.getByRole("region", { name: "Library after import", exact: true });
+      await source.getByText("Long list", { exact: true }).click();
+      await source.getByRole("button", { name: "Showing 300 of 320 — load more", exact: true }).click();
+      await source.getByRole("button", { name: "Long note 310.md", exact: true }).click();
+      const match = target.locator(".importTreeFile.linked");
+      await until(async () => (await match.count()) === 1, { what: "the library's list grows to the match" });
+      assert((await match.innerText()).includes("Long note 310"));
+      await until(async () => {
+        const [at, view] = await Promise.all([match.boundingBox(), target.locator(".importTreeScroll").boundingBox()]);
+        return at && Math.abs(at.y + at.height / 2 - (view.y + view.height / 2)) <= at.height;
+      }, { what: "the match in the middle of its column" });
+      await choice(review, "Cancel").click();
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
@@ -515,6 +670,21 @@ with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as z:
       await until(async () => (await target.locator(".importTreeFile").count()) === 100, { what: "an opened folder shows its notes" });
       await target.getByRole("checkbox", { name: "Select folder Topic 2", exact: true }).uncheck();
       assert((await review.innerText()).includes("300 of 400 items selected"));
+      // a match inside a closed folder: the way to it opens and it comes into view
+      const source = review.getByRole("region", { name: "ZIP contents", exact: true });
+      await source.getByText("Big vault", { exact: true }).click();
+      await source.getByText("Topic 3", { exact: true }).click();
+      await source.getByRole("button", { name: "Vault note 399.md", exact: true }).click();
+      const match = target.locator(".importTreeFile.linked");
+      await until(async () => (await match.count()) === 1, { what: "the closed Topic 3 opens to the match" });
+      assert((await match.innerText()).includes("Vault note 399"));
+      await until(async () => {
+        const [row, box] = await Promise.all([match.boundingBox(), target.locator(".importTreeScroll").boundingBox()]);
+        return row && row.y >= box.y - 1 && row.y + row.height <= box.y + box.height + 1;
+      }, { what: "the match scrolled into its column" });
+      // only that jump opened Topic 3 at once: the reader's own folds of it move again
+      await until(() => match.locator("xpath=ancestor::details[1]")
+        .evaluate(el => getComputedStyle(el, "::details-content").transitionDuration !== "0s"), { what: "the folder's own motion back" });
       await choice(review, "Import to library").click();
       const report = page.getByRole("dialog", { name: "Import complete", exact: true });
       await report.waitFor();

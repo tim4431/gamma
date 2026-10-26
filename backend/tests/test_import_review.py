@@ -3,6 +3,7 @@ boundary. The import itself is a background job (POST /api/jobs/import)."""
 import io
 import os
 import time
+import unicodedata
 import zipfile
 
 import pytest
@@ -72,9 +73,13 @@ def test_zotero_selection_upload_once_and_commit_retry(accounts):
     assert rows(ws) == before and uploads(ws) == before_files
     paper = next(p for p in plan["pages"] if p["kind"] == "pdf")
     assert any(p["missing"] for p in plan["pages"])
+    # the review's columns answer each other: the page names the listed file it comes from
+    assert paper["source_paths"] == ["files/3/unique.pdf"]
+    assert "files/3/unique.pdf" in {e["path"] for e in plan["entries"]}
     job = commit(owner, plan, paper["selection_ids"])
     data = report(job)
     assert data["items"] == 1 and data["pages_created"] == 1
+    assert data["pages"][0]["source_paths"] == ["files/3/unique.pdf"]  # and so does the summary's
     assert all(w["title"] != "Proximal Policy Optimization" for w in data["warnings"])
     again = start(owner, plan, paper["selection_ids"])  # a retried request answers the same job
     assert again.status_code == 200 and again.json()["id"] == job["id"]
@@ -108,6 +113,41 @@ def test_markdown_selection_preserves_links_and_only_stores_selected_assets(gues
     assert any("Two" in w["reason"] for w in data["warnings"])
     children = guest.get(f"/api/blocks/{data['pages'][0]['id']}/children").json()["children"]
     assert any("[[Two]]" in child["content"] for child in children)
+
+
+def test_markdown_pages_name_the_listed_member_they_come_from(guest):
+    """A page's ``source_paths`` are paths the source column lists: a note
+    inside a zip inside the upload names that zip, however deep, and a
+    name stored decomposed (as macOS writes it) is listed as the walk
+    reads it."""
+    composed = unicodedata.normalize("NFC", "notes/Café notes.md")
+    decomposed = unicodedata.normalize("NFD", composed)
+    part = archive({"inner.md": "# Inner reviewed note\nhello",
+                    "deeper.zip": archive({"deep.md": "# Deep reviewed note\nhello"})})
+    plan = review(guest, archive({"notes/Part-1.zip": part, decomposed: "# Accented reviewed note\nhello"}), "markdown-zip")
+    listed = {e["path"] for e in plan["entries"]}
+    assert composed in listed and decomposed not in listed
+    sources = {p["title"]: p["source_paths"] for p in plan["pages"]}
+    assert sources == {"Inner reviewed note": ["notes/Part-1.zip"], "Deep reviewed note": ["notes/Part-1.zip"],
+                       "Accented reviewed note": [composed]}
+    data = report(commit(guest, plan, [i for p in plan["pages"] for i in p["selection_ids"]]))
+    assert {p["title"]: p["source_paths"] for p in data["pages"]} == sources
+
+
+def test_archive_entries_names_members_as_the_walk_reads_them():
+    """The source column's names are the walk's: a UTF-8 name stored
+    without the UTF-8 flag (zipfile reads it as cp437) is decoded, and a
+    leading slash or a backslash gives the walk's path, a backslash-ended
+    directory listed as one."""
+    from gamma.import_review import archive_entries
+    with zipfile.ZipFile(io.BytesIO(archive({"a": "x", "b": "y", "c": "z"}))) as zf:
+        flagless, slashed, folder = zf.infolist()
+        flagless.filename = "Café.md".encode("utf-8").decode("cp437")
+        flagless.flag_bits &= ~0x800
+        slashed.filename = "/notes\\lead.md"
+        folder.filename = "notes\\"
+        assert [(e["path"], e["directory"]) for e in archive_entries(zf)] == [
+            ("Café.md", False), ("notes/lead.md", False), ("notes/", True)]
 
 
 def test_single_markdown_uses_same_review_contract(guest):
