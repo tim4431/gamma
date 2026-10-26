@@ -221,8 +221,10 @@ by hand) followed by a manifest parse + zip of the extension. No installers. A P
 `update-share-host` skill or [cloud_accounts.md](cloud_accounts.md) — or only `sites/`, `site.yml`, the
 `build-site` skill, `PRIVACY.md` or `TERMS.md` — skips it (`paths-ignore`); `cloud.yml`
 and `site.yml` check those. (A PR touching the brand artwork the site
-copies still runs `check`: its `branding` job owns those files.) The `merge` skill waits for it before merging; a
-red check is fixed on the branch as normal work.
+copies still runs `check`: its `branding` job owns those files.) The `merge` skill runs the same suites
+locally first and waits for this before merging; a red check, a flaky test
+or a real bug, is fixed on the branch in a commit of its own, pushed, and
+watched again.
 
 ## `ipad.yml`
 
