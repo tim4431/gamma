@@ -9,6 +9,27 @@ import { t, tn } from "../shared/i18n/i18n.js";
 
 export const ALLOWING = new Set(["once", "chat", "always"]);
 
+// Up to the names a preview carries, then how many more there are.
+const listOf = (items = [], total = 0) => items.join(", ")
+  + (total > items.length ? t(", and {n} more", { n: total - items.length }) : "");
+
+// The page tools that take a list of pages (gamma/ai_tools.py): a card for
+// two or more pages carries `count`, and one line per page in its `diff`.
+const BATCH_TOOLS = new Set(["rename_page", "move_page", "label_page", "restore_page"]);
+export const isBatchPreview = (tool, preview) => BATCH_TOOLS.has(tool) && typeof preview?.count === "number";
+
+function batchTitle(tool, preview) {
+  const n = preview.count;
+  switch (tool) {
+    case "rename_page": return tn("Rename {n} page", "Rename {n} pages", n);
+    case "move_page":
+      return preview.to ? tn("Move {n} page to {folder}", "Move {n} pages to {folder}", n, { folder: preview.to })
+        : tn("Move {n} page to the library root", "Move {n} pages to the library root", n);
+    case "label_page": return tn("Change the labels of {n} page", "Change the labels of {n} pages", n);
+    default: return tn("Restore {n} page from Recently deleted", "Restore {n} pages from Recently deleted", n);
+  }
+}
+
 // The card's headline: what the call would do, in words. `titleOf` names a
 // page the library knows; `permission` is the permission's label, for a
 // tool the user asked to approve that has no sentence here.
@@ -16,6 +37,7 @@ export function approvalTitle(approval, { titleOf = () => "", permission = "" } 
   const preview = approval?.preview || {};
   const args = approval?.args || {};
   const title = preview.title || (args.page_id ? titleOf(args.page_id) : "") || t("Untitled");
+  if (isBatchPreview(approval?.tool, preview)) return batchTitle(approval.tool, preview);
   switch (approval?.tool) {
     case "rename_page": return t("Rename “{title}”", { title });
     case "move_page":
@@ -82,28 +104,47 @@ export function deletedKind(what) {
 // _preview_delete_label): the subfolders, the pages that lose the filing and
 // stay, and the folders whose AI chats move to the library chat's history.
 export function deletionNotes(tool, preview = {}) {
-  const list = (items = [], total = 0) => items.join(", ")
-    + (total > items.length ? t(", and {n} more", { n: total - items.length }) : "");
   const notes = [];
   if (tool === "delete_folder") {
     if (preview.subfolder_count) {
       notes.push(tn("Its subfolder goes with it: {list}", "Its {n} subfolders go with it: {list}",
-        preview.subfolder_count, { list: list(preview.subfolders, preview.subfolder_count) }));
+        preview.subfolder_count, { list: listOf(preview.subfolders, preview.subfolder_count) }));
     }
     notes.push(preview.page_count
       ? tn("{n} page leaves it and stays in your library: {list}", "{n} pages leave it and stay in your library: {list}",
-        preview.page_count, { list: list(preview.pages, preview.page_count) })
+        preview.page_count, { list: listOf(preview.pages, preview.page_count) })
       : t("No pages are filed in it."));
     if (preview.chats) {
       notes.push(tn("{n} AI chat of {list} moves to the library chat's history and stays there if you revert.",
         "{n} AI chats of {list} move to the library chat's history and stay there if you revert.",
-        preview.chats, { list: list(preview.chat_folders, preview.chat_folder_count) }));
+        preview.chats, { list: listOf(preview.chat_folders, preview.chat_folder_count) }));
     }
   } else if (tool === "delete_label") {
     notes.push(preview.page_count
       ? tn("The label comes off {n} page; no page is deleted: {list}", "The label comes off {n} pages; no page is deleted: {list}",
-        preview.page_count, { list: list(preview.pages, preview.page_count) })
+        preview.page_count, { list: listOf(preview.pages, preview.page_count) })
       : t("No page carries it."));
+  }
+  return notes;
+}
+
+// What a card for several pages says besides its lines (gamma/ai_tools.py
+// _batch_preview): the folder or labels the call makes first, the pages it
+// leaves out (the assistant hears why) and the ones already so.
+export function batchNotes(preview = {}) {
+  const notes = [];
+  if (preview.new_folder) notes.push(t("The folder {folder} does not exist yet: it is made first.", { folder: preview.to }));
+  if (preview.new_labels?.length) {
+    notes.push(tn("A new label is made first: {list}", "{n} new labels are made first: {list}",
+      preview.new_labels.length, { list: preview.new_labels.join(", ") }));
+  }
+  if (preview.left_out_count) {
+    notes.push(tn("{n} page is left out: {list}", "{n} pages are left out: {list}",
+      preview.left_out_count, { list: listOf(preview.left_out, preview.left_out_count) }));
+  }
+  if (preview.same_count) {
+    notes.push(tn("{n} page already is so and stays as it is.", "{n} pages already are so and stay as they are.",
+      preview.same_count));
   }
   return notes;
 }
@@ -113,7 +154,7 @@ export function deletionNotes(tool, preview = {}) {
 export function declinedSummary(action, titleOf = () => "") {
   const why = action?.approval === "expired" ? t("Not answered in time") : t("Not allowed by you");
   const change = approvalTitle({ tool: action?.tool, args: action?.args,
-    preview: { title: action?.title, mode: action?.mode, to: action?.args?.folder } },
+    preview: { title: action?.title, mode: action?.mode, to: action?.args?.folder, count: action?.count } },
   { titleOf, permission: action?.tool });
   return `${why}: ${change}`;
 }

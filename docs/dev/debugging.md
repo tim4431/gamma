@@ -971,6 +971,15 @@ save path, workspaces, auth or rendering of URLs should add a step here; the
   `FORWARDED_ALLOW_IPS` lists, so anyone on that port can choose the client
   address rate limits count by. Close the remote port to everything but the
   reverse proxy.
+- **"WebSocket from <peer> dropped: [WinError 121] …"** is an info line for
+  a page socket whose peer stopped answering: a laptop asleep, Wi-Fi gone.
+  The websockets library logs it as the error "data transfer failed" with a
+  traceback, because Windows reports it as a plain `OSError` where the
+  library looks for a `ConnectionError` or `TimeoutError`;
+  `logbuf._DroppedWebSocket` makes it one line, so it raises no
+  `log-errors` notice. The connection is closed either way and the page
+  reconnects. A "data transfer failed" error that remains is some other
+  exception and worth a look.
 - **Two request lines, on purpose.** The console carries uvicorn's access
   log for every request (`INFO: 127.0.0.1:… "GET /api/… HTTP/1.1" 200 OK`)
   except the Background tasks tray's answered `GET /api/jobs`, which comes

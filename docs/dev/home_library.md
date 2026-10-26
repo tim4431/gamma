@@ -522,7 +522,7 @@ Delete permanently and Empty take the same path at once. On a share host,
 whose pages are published copies, `DELETE /api/blocks/{id}` deletes for good
 directly. Endpoints: [api.md](api.md) "Recently deleted". Editors and owners
 trash and restore; a viewer and a share link cannot. A folder chat's agent
-can list the pages that were filed under its folder and restore one on
+can list the pages that were filed under its folder and restore them on
 request (`list_deleted`, `restore_page`, [ai_tools.md](ai_tools.md)); it
 cannot trash or delete a page. A trashed page's files
 stay referenced, so they count against the storage quota until the page is

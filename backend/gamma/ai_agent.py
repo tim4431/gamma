@@ -54,8 +54,8 @@ from .ai_client import UpstreamError, failure_kind, partial_json_object
 from .ai_context import canonical_tool, elide_live_results
 from .ai_protocols.base import reasoning_text, truncated_stop
 from .ai_tools import (CHANGE_LIMIT, CHANGE_LIMIT_PREFIX, MAX_TOOL_ACTIONS, MAX_TOOL_ROUNDS, MUTATING_TOOLS,
-                       approval_preview, ensure_tally, find_selection, run_agent_tool, settled_action,
-                       skipped_fetch, tool_action, tool_permission, unanswered_fetch)
+                       approval_preview, ensure_tally, find_selection, listed_pages, run_agent_tool,
+                       settled_action, skipped_fetch, tool_action, tool_permission, unanswered_fetch)
 from .logbuf import log
 
 # Tool calls of one round that run at the same time. Reads are network- or
@@ -102,10 +102,24 @@ WINDOW_NOTE = "\n\n*(stopped: the conversation grew past the model's window)*"
 
 def step_event(name: str, call: dict) -> dict:
     """The ``{"step"}`` payload of one call: its tool and the short arguments
-    the running label reads."""
+    the running label reads — for a call naming several pages (``renames``,
+    ``page_ids``, read as its executor reads them: ai_tools.listed_pages)
+    how many (``items``), and for one naming a single page that page as the
+    one-page form's ``page_id`` / ``title``."""
     args = call.get("arguments") if isinstance(call.get("arguments"), dict) else {}
-    return {"id": call.get("id") or "", "tool": name,
-            "args": {k: str(args[k])[:120] for k in STEP_ARGS if args.get(k) not in (None, "")}}
+    short = {k: str(args[k])[:120] for k in STEP_ARGS if args.get(k) not in (None, "")}
+    listed = listed_pages(args)
+    if len(listed) == 1:
+        one = listed[0]
+        page_id = (one.get("page_id") if isinstance(one, dict) else one) or ""
+        if page_id:
+            short.setdefault("page_id", str(page_id)[:120])
+        if isinstance(one, dict) and one.get("title"):
+            short.setdefault("title", str(one["title"])[:120])
+    event = {"id": call.get("id") or "", "tool": name, "args": short}
+    if len(listed) > 1:
+        event["items"] = len(listed)
+    return event
 
 
 def batch_step(items: list) -> dict:
@@ -385,12 +399,18 @@ class AgentLoop:
     def _run_one(self, item: ToolCall):
         """One call on its own: the change budget, then the gate (which may
         ask the user), then the tool. Returns None once the client left."""
-        if (item.name in self.armed and item.name in MUTATING_TOOLS and self.max_changes is not None
-                and self.mutations >= self.max_changes):
+        changes = item.name in self.armed and item.name in MUTATING_TOOLS
+        if changes and self.max_changes is not None and self.mutations >= self.max_changes:
             item.result = CHANGE_LIMIT.format(n=self.max_changes)
             item.action = tool_action("error", f"{item.name} — change limit reached",
                                       item.name, item.args, item.result, error=True)
         else:
+            if changes:
+                # What this message may still change: a call naming several
+                # pages changes at most that many, or is refused whole before
+                # any card (ai_tools._batch_answer). The gate's preview reads
+                # the same scope.
+                self.scope["changes_left"] = None if self.max_changes is None else self.max_changes - self.mutations
             if self.gate:
                 outcome = yield from self.gate.run(item.name, item.call, self.armed)
             else:
@@ -399,11 +419,13 @@ class AgentLoop:
                 return None
             item.result, item.action = outcome
         # Reads and failures render as chips too, but only applied mutations
-        # count against the change budget. A refusal at the change limit
-        # (CHANGE_LIMIT_PREFIX) means the reply stopped short there: it ends
-        # on a {"limit"} line, and the chat offers Continue.
+        # count against the change budget — a call that changed several
+        # pages counts each (``changes``). A refusal at the change limit
+        # (CHANGE_LIMIT_PREFIX, a batch past what was left included) means
+        # the reply stopped short there: it ends on a {"limit"} line, and the
+        # chat offers Continue.
         if item.name in MUTATING_TOOLS and not item.action.get("error"):
-            self.mutations += 1
+            self.mutations += item.action.get("changes") or 1
         elif item.result.startswith(CHANGE_LIMIT_PREFIX):
             self.change_limited = True
         return item
@@ -592,7 +614,9 @@ class ApprovalGate:
     unmade and tells the model why — with what to do instead when the user
     said it. A call that could not change anything is answered from its own
     plan without asking anybody. An ask-only deletion runs only on the
-    folder or label its card showed.
+    folder or label its card showed. A call naming several pages runs only
+    as its card showed it (its ``digest``; ai_tools.BATCH_CHANGED
+    otherwise).
     """
 
     def __init__(self, ws: str, scope: dict, user_id: str, stopped: threading.Event | None = None):
@@ -633,14 +657,15 @@ class ApprovalGate:
                 if again and again.get("block_id") != preview.get("block_id"):
                     return CHANGED_WHILE_ASKING, {**settled_action(name, args, CHANGED_WHILE_ASKING),
                                                   "approval": decision}
-            result, action = run_agent_tool(self.ws, self.scope, name, args, allowed_tools=armed)
+            result, action = run_agent_tool(self.ws, self.scope, name, args, allowed_tools=armed,
+                                            approved=str(preview.get("digest") or ""))
             return result, {**action, "approval": decision}
         # The chip names the refused change by its page's title (and a note
         # edit's mode), but carries no page_id: nothing changed on that page.
         result = (DECLINED_SAYING.format(note=note) if note else DECLINED) if decision == "deny" else UNANSWERED
         return result, tool_action("error", f"Not allowed: {name}", name, args, result,
                                    error=True, declined=True, approval=decision,
-                                   **{k: preview[k] for k in ("title", "mode") if preview.get(k)},
+                                   **{k: preview[k] for k in ("title", "mode", "count") if preview.get(k)},
                                    **({"note": note} if note else {}))
 
 

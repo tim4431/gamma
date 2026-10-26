@@ -117,6 +117,62 @@ def test_unlimited_rounds_lift_both_limits_for_a_streamed_reply(org, monkeypatch
     assert fake.opens == 1 and "tool-round limit" in body["response"]
 
 
+def _batches(c, ids, rounds):
+    """Four pages in "readout" and a fake _open_ai whose first ``rounds``
+    turns each rename two of them in one call, after which it answers
+    "Done."; ``.pages`` holds the pages."""
+    pages = [c.post("/api/blocks", json={"parent_id": "root", "content": f"budget page {n}",
+                                         "properties": {"folders": [ids["readout"]]}}).json()["id"]
+             for n in range(4)]
+
+    def fake_open(messages, system, entry, rt, pdf_b64s=None, **kw):
+        fake_open.opens += 1
+        n = fake_open.opens
+        if n <= rounds:
+            pair = pages[2 * (n - 1):2 * n]
+            return _tool_turn(f"t{n}", "rename_page",
+                              {"renames": [{"page_id": p, "title": f"batch {n} {p}"} for p in pair]})
+        return FakeResp([{"type": "content_block_delta", "delta": {"type": "text_delta", "text": "Done."}}])
+    fake_open.opens, fake_open.pages = 0, pages
+    return fake_open
+
+
+def _titles(c, pages):
+    return [c.get(f"/api/blocks/{p}").json()["content"] for p in pages]
+
+
+def test_a_batch_counts_each_page_against_the_change_limit(org, monkeypatch):
+    c, ids = org
+    import gamma.routers.ai as ai_mod
+
+    monkeypatch.setattr("gamma.ai_agent.MAX_TOOL_ACTIONS", 3)
+    fake = _batches(c, ids, 2)
+    monkeypatch.setattr(ai_mod, "_open_ai", fake)
+    lines = _chat(c, ids)
+    actions = [line["action"] for line in lines if "action" in line]
+    assert (actions[0]["changes"], bool(actions[0].get("error"))) == (2, False)
+    # Two pages more than the one change left: refused whole, before any card.
+    assert actions[1]["error"] and actions[1]["result"].startswith(CHANGE_LIMIT_PREFIX)
+    assert "may make only 1 more change," in actions[1]["result"]
+    assert _titles(c, fake.pages[2:]) == ["budget page 2", "budget page 3"]
+    assert lines[-1] == {"limit": {"kind": "changes", "rounds": 3, "changes": 2}}
+    assert _text(lines) == "Done."
+
+
+def test_unlimited_lifts_the_batch_limit(org, monkeypatch):
+    c, ids = org
+    import gamma.routers.ai as ai_mod
+
+    monkeypatch.setattr("gamma.ai_agent.MAX_TOOL_ACTIONS", 3)
+    fake = _batches(c, ids, 2)
+    monkeypatch.setattr(ai_mod, "_open_ai", fake)
+    lines = _chat(c, ids, stream=True, tool_rounds_unlimited=True)
+    actions = [line["action"] for line in lines if "action" in line]
+    assert [a["changes"] for a in actions] == [2, 2] and not any(a.get("error") for a in actions)
+    assert _titles(c, fake.pages)[3] == f"batch 2 {fake.pages[3]}"
+    assert not [line for line in lines if "limit" in line]
+
+
 def test_the_window_ends_the_reply_on_a_limit_line_not_an_error(org, monkeypatch):
     """A round the provider still calls too long once every earlier result
     is a stub ends the reply as a reply, which the next message replays."""

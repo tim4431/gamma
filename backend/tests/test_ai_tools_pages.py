@@ -6,7 +6,7 @@ id, read inside the chat's folder."""
 import re
 import secrets
 
-from conftest import make_folder, make_label
+from conftest import folder_names, make_folder, make_label
 from gamma import ai_tools
 from gamma.ai_tools import agent_tools, run_agent_tool
 
@@ -156,6 +156,31 @@ def test_move_at_root_replaces_all_folders(org):
     assert action["noop"] is True and not action.get("error")
     # Restore for later tests.
     run_agent_tool(ids["ws"], folder(""), "move_page", {"page_id": ids["b"], "folder": "readout"})
+
+
+def test_a_folder_argument_that_is_an_id_but_no_folders_is_refused(org):
+    """An id that names no folder — a folder deleted lately (the folder
+    tree's log names it), a page's, a label's — is refused, never made into
+    a folder called after it; a name of the same shape is still a name."""
+    c, ids = org
+    gone, gone_sub = make_folder(c, "Gone soon"), make_folder(c, "Gone soon/below")
+    assert c.delete(f"/api/folders/{gone}").status_code == 200
+    page = c.post("/api/blocks", json={"parent_id": "root", "content": "stays put", "properties": {
+        "folders": [ids["cooling"]]}}).json()["id"]
+    label = make_label(c, "an id label")
+    tree = folder_names(c)
+    for where, said in ((gone, "it was deleted"), (gone_sub, "it was deleted"), (ids["a"], "is the id of a page"),
+                        (label, "is the id of a label")):
+        text, _ = run_agent_tool(ids["ws"], folder(""), "move_page", {"page_id": page, "folder": where})
+        assert text.startswith("error") and said in text, (where, text)
+        text, _ = run_agent_tool(ids["ws"], folder(""), "list_pages", {"folder": where})
+        assert text.startswith("error") and said in text, (where, text)
+    assert folder_names(c) == tree and props(c, page)["properties"]["folders"] == [ids["cooling"]]
+    # A name of an id's shape that names nothing is a folder to make.
+    for name in ("Fall2024Term", "trash"):
+        text, _ = run_agent_tool(ids["ws"], folder(""), "move_page", {"page_id": page, "folder": name})
+        assert text == f'ok — moved to "{name}" (a new folder)', text
+    assert props(c, page)["properties"]["folders"] == [make_folder(c, "trash")]
 
 
 def test_unknown_or_out_of_scope_tools_error(org):

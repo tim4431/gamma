@@ -174,8 +174,8 @@ DeepSeek, Kimi, Qwen, GLM, OpenRouter and the custom endpoint sit under the **Ot
 
 On the home page or in a folder, the chat can act on your library: list, read and search the papers in view, rename them, file them into folders, rename folders, make and apply labels, delete a folder or a label (never its pages), search the web for papers and save them, build BibTeX, and edit your notes. On a paper, the same chat reads, searches and edits that paper and its notes.
 
-- **It asks first.** A change shows as a card. **Allow once**, **Allow in this chat**, **Always allow**, or **Don't allow** (with a line on what to do instead). Deleting a folder or a label asks every time: **Allow once** or **Don't allow**.
-- Everything it changed is listed under the reply. A note change, or a deleted folder or label, can be undone there.
+- **It asks first.** A change shows as a card — many pages renamed, filed or labelled together show on one card that lists them all. **Allow once**, **Allow in this chat**, **Always allow**, or **Don't allow** (with a line on what to do instead). Deleting a folder or a label asks every time: **Allow once** or **Don't allow**.
+- Everything it changed is listed under the reply. A note change, a rename, move or label change (one page or many at once), or a deleted folder or label, can be undone there; pages you changed since are left as they are.
 - A reply stops after 32 tool rounds or 200 changes (Settings → AI → Tool usage → Tool limits), or when the conversation is too long for the model; **Continue** under it carries on, as it does under a reply cut off at the output limit. With **Unlimited rounds** it runs until it is done or you press Stop, in its chat or in Background tasks; longer jobs cost more tokens. On a shared AI connection without a daily allowance the usual limits stay, unless you are an administrator.
 - Settings → AI → Tool usage sets each permission below to Allow, Ask or Off (Delete folders and labels: Ask or Off only), for folder, PDF and notes chats separately, with presets from *Read library* to *Allow all*. Reading is allowed by default; anything that changes your library asks.
 - A journal that blocks the server shows a card: open the page in your browser and Gamma Connector sends the PDF back.
@@ -196,10 +196,10 @@ On the home page or in a folder, the chat can act on your library: list, read an
 | Use journal sign-ins | | Use the publisher sign-ins Gamma Connector saved when fetching |
 | **Make changes** | | |
 | Save papers | `save_paper` | Add a paper found online to the library |
-| Rename pages | `rename_page` | Change a page's title (folder chats) |
-| Move pages | `move_page` | File a page into a folder (folder chats) |
-| Restore deleted pages | `restore_page` | Bring a page back from Recently deleted (folder chats) |
-| Organize folders and labels | `rename_folder`, `create_label`, `rename_label`, `label_page` | Rename folders, and make, rename and apply labels (folder chats) |
+| Rename pages | `rename_page` | Change pages' titles, many in one call (folder chats) |
+| Move pages | `move_page` | File pages into a folder, many in one call (folder chats) |
+| Restore deleted pages | `restore_page` | Bring pages back from Recently deleted (folder chats) |
+| Organize folders and labels | `rename_folder`, `create_label`, `rename_label`, `label_page` | Rename folders, and make, rename and apply labels — to many pages in one call (folder chats) |
 | Delete folders and labels | `delete_folder`, `delete_label` | Delete a folder or a label, never its pages; always asks, and you can revert it from the reply (folder chats) |
 | Edit note blocks | `edit_block`, `create_block`, `move_block`, `delete_block`, `clip_region` | Create, edit, move and delete notes, transcribe handwriting, and clip a region of a PDF page into a note |
 

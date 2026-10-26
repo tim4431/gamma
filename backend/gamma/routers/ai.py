@@ -1926,8 +1926,8 @@ def ai_approval_answer(approval_id: str, payload: AIApprovalAnswer, request: Req
 
 
 class AIRevert(BaseModel):
-    kind: Literal["edit", "create", "move", "delete"]
-    block_id: str = Field(max_length=64)
+    kind: Literal["edit", "create", "move", "delete", "pages"]
+    block_id: str = Field(default="", max_length=64)  # "" for "pages": a page tool's record names its pages
     revert: dict   # the action's `revert`, as the tool recorded it
     force: bool = False
     redo: bool = False  # put a reverted change back
@@ -1935,14 +1935,16 @@ class AIRevert(BaseModel):
 
 @router.post("/ai/revert")
 def ai_revert_change(payload: AIRevert, request: Request):
-    """Take back one change the agent made to the notes, or a folder or
-    label it deleted, or with ``redo`` put a reverted one back, from its
-    row under the reply
-    (gamma/ai_revert.py): ``{page_id, noop}``. 409
+    """Take back one change the agent made to the notes, the pages it
+    renamed, moved or labelled (``kind: "pages"``), or a folder or label it
+    deleted, or with ``redo`` put a reverted one back, from its row under
+    the reply (gamma/ai_revert.py): ``{page_id, noop, kept?}``. 409
     ``{detail, conflict, preview?}`` when the note changed since —
-    ``preview`` is what ``force`` would do — or can't go there; 404 when it
-    is gone. A workspace editor's, like the chat's writes; the change is
-    theirs to make by hand anyway. Sync: it waits on the write lock."""
+    ``preview`` is what ``force`` would do — or can't go there, and 409
+    ``conflict: "kept"`` (``preview.kept``) when every page of a page
+    tool's change changed since; 404 when it is gone. A workspace
+    editor's, like the chat's writes; the change is theirs to make by hand
+    anyway. Sync: it waits on the write lock."""
     ws = require_ws(request, write=True)
     try:
         return ai_revert.revert_change(ws, payload.kind, payload.block_id, payload.revert,

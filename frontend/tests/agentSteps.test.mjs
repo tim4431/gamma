@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { changePlace, chipNote, helperStatus, isChange, noteChangeText, runningLabel, splitActions, stepsSummary, withHelper } from "../src/chat/agentSteps.js";
+import { changeCount, changePlace, chipNote, helperStatus, isChange, noteChangeText, runningLabel, splitActions, stepsSummary, withHelper } from "../src/chat/agentSteps.js";
 
 const actions = [
   { kind: "list", tool: "list_pages", summary: "Listed 12 pages" },
@@ -140,6 +140,32 @@ test("a batch of calls reads as how many, not as one of them", () => {
   // One call still names what it is doing.
   assert.equal(runningLabel({ tool: "fetch_paper", batch: 1, args: { source: "doi:10.1/x" } }),
     "Fetching doi:10.1/x…");
+});
+
+test("a call naming several pages reads as how many, and counts each page as a change", () => {
+  assert.equal(runningLabel({ tool: "move_page", items: 12, args: { folder: "QEC" } }), "Moving 12 pages to QEC…");
+  assert.equal(runningLabel({ tool: "move_page", items: 12, args: { folder: "" } }), "Moving 12 pages…");
+  assert.equal(runningLabel({ tool: "rename_page", items: 37, args: {} }), "Renaming 37 pages…");
+  assert.equal(runningLabel({ tool: "label_page", items: 2, args: {} }), "Changing the labels of 2 pages…");
+  assert.equal(runningLabel({ tool: "restore_page", items: 5, args: {} }), "Restoring 5 pages…");
+  // cite takes page_ids too: its label stays its own.
+  assert.equal(runningLabel({ tool: "cite", items: 3, args: {} }), "Looking up citation records…");
+  // One page: the server lifts it into the one-page arguments, which read as before.
+  const titleOf = (id) => (id === "a" ? "Attention" : "");
+  assert.equal(runningLabel({ tool: "rename_page", items: 1, args: { page_id: "a", title: "Ada2019" } }, titleOf),
+    "Renaming “Attention” to “Ada2019”…");
+  assert.equal(runningLabel({ tool: "move_page", items: 1, args: { page_id: "a", folder: "QEC" } }, titleOf),
+    "Moving “Attention” to QEC…");
+  assert.equal(runningLabel({ tool: "label_page", args: { page_id: "a" } }, titleOf), "Changing the labels of “Attention”…");
+  assert.equal(changeCount({ items: [1, 2, 3] }), 3);
+  assert.equal(changeCount({}), 1);
+  assert.equal(changeCount({ items: [] }), 1);
+  const batch = { kind: "label", tool: "label_page", summary: "Labels of 3 pages: +x", added: ["x"], removed: [], changes: 3,
+    items: [{ page_id: "a", title: "A", added: ["x"], removed: [] }, { page_id: "b", title: "B", added: ["x"], removed: [] },
+      { page_id: "c", title: "C", added: ["x"], removed: [] }] };
+  assert.equal(isChange(batch), true);
+  assert.equal(changePlace(batch), "library");
+  assert.deepEqual(splitActions([batch]).library, [batch]);
 });
 
 test("a call that hands a document to a helper says so, and each helper says what it is doing", () => {

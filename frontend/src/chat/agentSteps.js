@@ -3,7 +3,9 @@
 // and the calls that changed something are listed apart, grouped by where
 // the change landed — the library (renamed, filed, saved or restored pages;
 // renamed, made, applied or deleted folders and labels) or the notes
-// (edited, added or moved blocks). While a reply streams, the
+// (edited, added or moved blocks). A call that changed several pages is one
+// step and one change, counted by its pages in the library list
+// (`changeCount`). While a reply streams, the
 // {"step"} line the server sends before each call names what is running now,
 // and a call that hands a document to a helper lists each helper under the
 // pill with what it is doing ({"helper"} lines).
@@ -32,6 +34,10 @@ export function changePlace(a) {
   if (a.tool) return LIBRARY_TOOLS.has(a.tool) ? "library" : "notes";
   return a.kind === "rename" || (a.kind === "move" && !a.block_id) ? "library" : "notes";
 }
+
+// How many changes an action stands for in "Changed in your library · n":
+// each page of a call that changed several (`items`), else one.
+export const changeCount = (a) => a?.items?.length || 1;
 
 export function splitActions(actions = []) {
   const library = [], notes = [];
@@ -109,6 +115,19 @@ export function runningLabel(step, titleOf = () => "") {
       case "search_web": return tn("Searching the web, {n} query…", "Searching the web, {n} queries…", n);
       case "search_library": return tn("Searching your library, {n} query…", "Searching your library, {n} queries…", n);
       default: return t("Running {n} steps at once…", { n });
+    }
+  }
+  // A call naming several pages ({"step"}'s `items`, ai_agent.step_event).
+  if (step?.items > 1) {
+    const n = step.items;
+    switch (step.tool) {
+      case "rename_page": return tn("Renaming {n} page…", "Renaming {n} pages…", n);
+      case "move_page":
+        return args.folder ? tn("Moving {n} page to {folder}…", "Moving {n} pages to {folder}…", n, { folder: args.folder })
+          : tn("Moving {n} page…", "Moving {n} pages…", n);
+      case "label_page": return tn("Changing the labels of {n} page…", "Changing the labels of {n} pages…", n);
+      case "restore_page": return tn("Restoring {n} page…", "Restoring {n} pages…", n);
+      default: break;
     }
   }
   const title = args.page_id ? titleOf(args.page_id) : "";
