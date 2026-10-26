@@ -980,6 +980,17 @@ save path, workspaces, auth or rendering of URLs should add a step here; the
   `log-errors` notice. The connection is closed either way and the page
   reconnects. A "data transfer failed" error that remains is some other
   exception and worth a look.
+- **`[ai_translate]` warnings** trace the PDF translator asking the model
+  again ([translation.md](translation.md) "The server"). "expected 10
+  translations, got 8 — asking again in halves" is a reply that merged or
+  dropped a paragraph, "— asking again one by one" a half that did too,
+  and "N of M lost a formula token — redoing them" a reply that broke a
+  `{v1}` token. "asking again failed: …" is a paragraph that stayed
+  untranslated: "no JSON array in reply" or "empty reply" (the model
+  answered something that is no translation), or the call itself failing.
+  Those paragraphs show the original and the viewer offers to try again.
+  Many "expected N, got M" lines mean the model keeps losing paragraphs:
+  a better instruction follower serves translation better.
 - **Two request lines, on purpose.** The console carries uvicorn's access
   log for every request (`INFO: 127.0.0.1:… "GET /api/… HTTP/1.1" 200 OK`)
   except the Background tasks tray's answered `GET /api/jobs`, which comes

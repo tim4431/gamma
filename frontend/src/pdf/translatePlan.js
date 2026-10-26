@@ -464,6 +464,48 @@ export function requestFields({ pageId = "", head = "", quick = false, before = 
   return out;
 }
 
+// A chunk's request (`run`, resolving to the server's final reply), asked
+// again when it fails. A refusal because the account's AI calls are all in
+// use (a 429 with Retry-After: the server is still asking the model again
+// for other chunks) waits as long as the server says, up to `patienceMs` in
+// all; any other failure (the network, the provider, a stream cut off
+// before its final line) is asked once more after `pauseMs`. A 429 without
+// Retry-After (the server's shared allowance used up) is final. Resolves to
+// the reply, or null once `signal` (the job's) aborts; throws the last
+// failure.
+export const RETRY_PAUSE_MS = 2000;
+export const SLOT_PATIENCE_MS = 120000;
+export async function requestChunk(run, signal, { pauseMs = RETRY_PAUSE_MS, patienceMs = SLOT_PATIENCE_MS } = {}) {
+  const start = Date.now();
+  let retried = false;
+  for (;;) {
+    let err = null;
+    try {
+      const res = await run();
+      if (res) return res;
+    } catch (e) {
+      err = e;
+    }
+    if (signal?.aborted) return null;
+    const left = patienceMs - (Date.now() - start);
+    let wait;
+    if (err?.retryAfter > 0 && left > 0) wait = Math.min(err.retryAfter * 1000, left);
+    else if (!retried && !err?.retryAfter && err?.status !== 429) { wait = pauseMs; retried = true; }
+    else if (err) throw err;
+    else return null;
+    await pause(wait, signal);
+    if (signal?.aborted) return null;
+  }
+}
+
+function pause(ms, signal) {
+  return new Promise((resolve) => {
+    const done = () => { clearTimeout(id); signal?.removeEventListener("abort", done); resolve(); };
+    const id = setTimeout(done, ms);
+    signal?.addEventListener("abort", done);
+  });
+}
+
 // --- results ----------------------------------------------------------------
 
 // Abbreviations whose period ends no sentence.

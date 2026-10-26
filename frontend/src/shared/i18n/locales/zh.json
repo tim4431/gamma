@@ -4533,6 +4533,8 @@
   "{n} page{_s}": "{n} 个页面",
   "{n} paper can be cited.": "有 {n} 篇论文可以引用。",
   "{n} paper in this reply": "此回复中有 {n} 篇论文",
+  "{n} paragraph could not be translated and still shows the original.": "{n} 段未能翻译，仍显示原文。",
+  "{n} paragraph untranslated": "{n} 段未翻译",
   "{n} part": "{n} 段",
   "{n} passages shortened: {kept} of {total} characters sent": "{n} 个段落已截短：发送了 {total} 个字符中的 {kept} 个",
   "{n} people ask to join this server": "{n} 人申请加入此服务器",
