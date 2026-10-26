@@ -333,8 +333,13 @@ account may have open: `ai_client.MAX_OPEN_CALLS` (6). An open call holds a
 server worker thread for as long as the provider takes, and those threads
 serve every other request too (a PDF page read included). So the seventh is
 refused with `TooManyCalls`, a 429 whose detail points at the translation's
-parallel requests. `open_ai` takes a slot before it connects and returns the
-response wrapped (`_OpenCall`), which frees the slot when it is closed. Every
+parallel requests and whose `Retry-After` (`CALL_RETRY_AFTER`, 5 s) the PDF
+translator waits out. A caller on a thread of its own may wait for a slot
+instead (`slot_wait`, seconds, on `open_ai` and `call_ai`): the translator's
+stream and the calls that ask the model again do
+([translation.md](translation.md) "The server"). `open_ai` takes a slot
+before it connects and returns the response wrapped (`_OpenCall`), which
+frees the slot (and wakes a caller waiting for one) when it is closed. Every
 caller closes its response when the reply ends or fails, a stream's
 generator also when its client goes away; a response dropped unread frees
 its slot when it is collected, and a failed connect at once. Both refusals

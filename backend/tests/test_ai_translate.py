@@ -190,13 +190,15 @@ def test_translate_salvages_miscounted_batch(carol, monkeypatch):
 
 
 def test_translate_unparseable_reply_degrades_to_original(carol, monkeypatch):
-    # Provider reachable but talking garbage: paragraphs come back verbatim
-    # (the viewer shows the original) and are NOT cached, so a later retry
-    # can still improve them.
-    monkeypatch.setattr("gamma.routers.ai._call_ai", lambda *a, **k: "no array here")
+    # Provider reachable but answering no translation: paragraphs come back
+    # verbatim (the viewer shows the original), named as failed so the
+    # viewer asks for them again, and are NOT cached, so that retry can
+    # still improve them.
+    monkeypatch.setattr("gamma.routers.ai._call_ai", lambda *a, **k: '{"note": "no array here"}')
     r = carol.post("/api/ai/translate", json={"texts": ["another fresh paragraph"], "lang": "de"})
     assert r.status_code == 200
     assert r.json()["translations"] == ["another fresh paragraph"]
+    assert r.json()["failed"] == [0]
 
     def good(messages, system, entry, rt, **kw):
         return json.dumps([f"besser:{t}" for t in texts_of(messages)])
@@ -242,7 +244,7 @@ def test_translate_streams_partials(carol, monkeypatch):
     lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
     assert opened == [["stream one", "stream two"]]  # duplicate collapsed upstream
     assert lines[-1] == {"translations": ["第一段", "第二段", "第一段"],
-                         "model": lines[-1]["model"], "cached": False, "redone": 0, "effort": ""}
+                         "model": lines[-1]["model"], "cached": False, "redone": 0, "failed": [], "effort": ""}
     partials = lines[:-1]
     assert partials[0] == {"i": [0, 2], "text": "第一"}  # both slots of the shared source
     assert {"i": [0, 2], "text": "第一段"} in partials
@@ -252,7 +254,8 @@ def test_translate_streams_partials(carol, monkeypatch):
         "texts": ["stream two", "stream one"], "lang": "zh-CN", "stream": True})
     assert r.status_code == 200
     lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
-    assert lines == [{"translations": ["第二段", "第一段"], "model": lines[0]["model"], "cached": True, "redone": 0, "effort": ""}]
+    assert lines == [{"translations": ["第二段", "第一段"], "model": lines[0]["model"], "cached": True, "redone": 0,
+                      "failed": [], "effort": ""}]
     assert len(opened) == 1
 
 
@@ -362,7 +365,7 @@ def test_translate_with_google(dave, monkeypatch):
     r = dave.post("/api/ai/translate", json={"texts": texts, "lang": "zh-TW", "model": "engine:google"})
     assert r.status_code == 200, r.text
     assert r.json() == {"translations": ["G:Google one.", "  ", "G:Google two.", "G:Google one."],
-                        "model": "engine:google", "cached": False, "redone": 0}
+                        "model": "engine:google", "cached": False, "redone": 0, "failed": []}
     (req,) = calls
     assert req.get_header("X-goog-api-key") == "AIza-secret-key-9876"
     assert "key=" not in req.full_url
@@ -372,7 +375,7 @@ def test_translate_with_google(dave, monkeypatch):
     r = dave.post("/api/ai/translate", json={"texts": ["Google two."], "lang": "zh-TW",
                                              "model": "engine:google", "stream": True})
     assert [json.loads(line) for line in r.text.splitlines() if line.strip()] == [
-        {"translations": ["G:Google two."], "model": "engine:google", "cached": True, "redone": 0}]
+        {"translations": ["G:Google two."], "model": "engine:google", "cached": True, "redone": 0, "failed": []}]
     assert len(calls) == 1
 
 
@@ -614,3 +617,72 @@ def test_paragraphs_that_broke_their_tokens_are_redone_in_one_call(carol, monkey
     assert body["translations"] == ["好 {v1}", "修好 one {v1}", "修好 two {v1}", "修好 three {v1}"]
     assert body["redone"] == 3
     assert batches[1] == texts[1:], "one call for the three, not three calls"
+
+
+def test_one_text_may_come_back_without_brackets(carol, monkeypatch):
+    # Asked for one text, some models answer with the translation alone.
+    replies = {"bare reply one": "裸的回答", "bare reply two": "```\n围起来的回答\n```",
+               "bare reply three": '"一个 JSON 字符串"', "bare reply four": "见 [12] 的回答"}
+    monkeypatch.setattr("gamma.routers.ai._call_ai", lambda messages, *a, **k: replies[texts_of(messages)[0]])
+    for src, want in zip(replies, ["裸的回答", "围起来的回答", "一个 JSON 字符串", "见 [12] 的回答"]):
+        body = carol.post("/api/ai/translate", json={"texts": [src], "lang": "zh-CN"}).json()
+        assert (body["translations"], body["failed"]) == ([want], []), src
+    # Nothing, or JSON that is no string, is no translation.
+    for reply in ("  ", '{"text": "不是"}', '[["嵌套"]]'):
+        monkeypatch.setattr("gamma.routers.ai._call_ai", lambda *a, reply=reply, **k: reply)
+        body = carol.post("/api/ai/translate", json={"texts": ["an unanswered paragraph"], "lang": "zh-CN"}).json()
+        assert (body["translations"], body["failed"]) == (["an unanswered paragraph"], [0]), reply
+
+
+def test_a_miscounted_chunk_is_asked_again_in_halves(carol, monkeypatch):
+    # Ten texts come back nine: the halves come back whole, so two calls
+    # finish the chunk rather than one per paragraph.
+    fake, calls = _fake_call(lambda batch: [f"半:{t}" for t in batch][: len(batch) - (len(batch) > 5)])
+    monkeypatch.setattr("gamma.routers.ai._call_ai", fake)
+    texts = [f"halves paragraph {k}" for k in range(10)]
+    body = carol.post("/api/ai/translate", json={"texts": texts, "lang": "zh-CN"}).json()
+    assert body["translations"] == [f"半:{t}" for t in texts]
+    assert (body["redone"], body["failed"]) == (10, [])
+    assert calls[0] == texts and sorted(calls[1:]) == [texts[:5], texts[5:]]
+
+
+def test_a_half_that_is_off_too_is_asked_one_text_per_call(carol, monkeypatch):
+    fake, calls = _fake_call(lambda batch: [f"单:{t}" for t in batch][: max(1, len(batch) - 1)])
+    monkeypatch.setattr("gamma.routers.ai._call_ai", fake)
+    texts = [f"one-by-one paragraph {k}" for k in range(6)]
+    body = carol.post("/api/ai/translate", json={"texts": texts, "lang": "zh-CN"}).json()
+    assert body["translations"] == [f"单:{t}" for t in texts] and body["failed"] == []
+    assert sorted(len(c) for c in calls) == [1] * 6 + [3, 3, 6]
+
+
+def test_texts_that_still_fail_are_named_with_their_duplicates(carol, monkeypatch):
+    def fake(messages, system, entry, rt, **kw):
+        batch = texts_of(messages)
+        if len(batch) > 1:
+            return json.dumps(["merged"])
+        if batch[0].startswith("stubborn"):
+            return '{"error": "no"}'
+        return json.dumps([f"好:{batch[0]}"], ensure_ascii=False)
+
+    monkeypatch.setattr("gamma.routers.ai._call_ai", fake)
+    body = carol.post("/api/ai/translate", json={
+        "texts": ["stubborn twin", "willing paragraph", "stubborn twin"], "lang": "zh-CN"}).json()
+    assert body["translations"] == ["stubborn twin", "好:willing paragraph", "stubborn twin"]
+    assert body["failed"] == [0, 2]
+    # Not cached: asked for again, the failed text goes upstream again.
+    monkeypatch.setattr("gamma.routers.ai._call_ai", lambda *a, **k: json.dumps(["终于"], ensure_ascii=False))
+    body = carol.post("/api/ai/translate", json={"texts": ["stubborn twin"], "lang": "zh-CN"}).json()
+    assert (body["translations"], body["failed"]) == (["终于"], [])
+
+
+def test_a_streamed_chunk_that_comes_back_short_is_asked_again(carol, monkeypatch):
+    import gamma.routers.ai as ai_mod
+    monkeypatch.setattr(ai_mod, "_open_ai", lambda *a, **k: _StreamResp(['["只有', '一段"]']))
+    fake, calls = _fake_call(lambda batch: [f"补:{t}" for t in batch])
+    monkeypatch.setattr(ai_mod, "_call_ai", fake)
+    r = carol.post("/api/ai/translate", json={
+        "texts": ["short stream one", "short stream two"], "lang": "zh-CN", "stream": True})
+    final = [json.loads(line) for line in r.text.splitlines() if line.strip()][-1]
+    assert final["translations"] == ["补:short stream one", "补:short stream two"]
+    assert (final["redone"], final["failed"]) == (2, [])
+    assert sorted(calls) == [["short stream one"], ["short stream two"]]

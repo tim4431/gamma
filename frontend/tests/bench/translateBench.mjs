@@ -230,6 +230,7 @@ async function translateLive(docs, opts) {
             c.translations = res.translations;
             c.cached = !!res.cached;
             c.redone = res.redone || 0;
+            c.failed = res.failed?.length || 0;
             c.effort = res.effort ?? "";
           } catch (err) {
             c.error = String(err.message || err);
@@ -249,9 +250,11 @@ async function translateLive(docs, opts) {
 
 // What came back. The server keeps every formula token (a paragraph that
 // broke one is redone, then sent back as its source), so what the model got
-// wrong shows as `redone` and `unchanged`, not in the final texts.
+// wrong shows as `redone` and `unchanged`, not in the final texts;
+// `untranslated` counts the paragraphs the server still could not translate
+// (its `failed`), which the viewer leaves pending for the next job.
 function liveMetrics(docs, live) {
-  const m = { failedChunks: 0, unchanged: 0, redone: 0, breaksLost: 0, chunkMsMedian: 0,
+  const m = { failedChunks: 0, unchanged: 0, redone: 0, untranslated: 0, breaksLost: 0, chunkMsMedian: 0,
               wallMs: live.wall, effort: "", usage: live.usage };
   const times = [];
   const efforts = new Set();
@@ -260,6 +263,7 @@ function liveMetrics(docs, live) {
       if (c.error || !c.translations) { m.failedChunks += 1; continue; }
       times.push(c.ms);
       m.redone += c.redone || 0;
+      m.untranslated += c.failed || 0;
       if (!c.cached) efforts.add(c.effort || "(none)");
       c.units.forEach((u, j) => {
         const t = c.translations[j] || "";
