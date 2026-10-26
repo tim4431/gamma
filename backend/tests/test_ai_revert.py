@@ -263,9 +263,23 @@ def test_the_replay_tells_the_model_a_change_was_reverted():
             {"kind": "edit", "tool": "edit_block", "args": {"block_id": "b1"}, "result": "ok — block [b1] updated",
              "reverted": True},
             {"kind": "edit", "tool": "edit_block", "args": {"block_id": "b2"}, "result": "ok — block [b2] updated"},
+            # A page tool's revert that left pages as they were says how many.
+            {"kind": "rename", "tool": "rename_page", "args": {}, "result": "ok — renamed 3 pages.",
+             "reverted": True, "kept": 2},
+            {"kind": "rename", "tool": "rename_page", "args": {}, "result": "ok — renamed 3 pages.",
+             "reverted": True, "kept": 0},
+            {"kind": "rename", "tool": "rename_page", "args": {}, "result": "ok — renamed 3 pages.",
+             "reverted": True, "kept": True},
+            # A redo that left pages as they were keeps `kept` without the mark.
+            {"kind": "rename", "tool": "rename_page", "args": {}, "result": "ok — renamed 3 pages.", "kept": 1},
+            {"kind": "rename", "tool": "rename_page", "args": {}, "result": "ok — renamed 3 pages.", "kept": True},
         ]},
     ]
     messages = build_messages(payload(history), "", with_tools=True)
     tools = [m["content"] for m in messages if m["role"] == "tool"]
     assert tools[0].startswith("[the user reverted this change")
     assert not tools[1].startswith("[the user reverted")
+    assert tools[2].startswith("[the user reverted this change afterwards — undone, except on 2 of its pages")
+    assert all(t.startswith("[the user reverted this change afterwards — it is undone]") for t in tools[3:5])
+    assert tools[5].startswith("[the user reverted this change and then redid it — except on 1 of its pages")
+    assert not tools[6].startswith("[the user")

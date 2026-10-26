@@ -131,7 +131,7 @@ export function CloudSignInSettings({ setStatus, action }) {
     <Row icon={UserIcon} label={t("Unknown cloud accounts")}
       hint={saved?.policy_source === "plan" ? t("Set by this server's plan")
         : t("What a cloud account that is not linked to an account here may do")}
-      title={t("Refuse: only linked accounts. Claim: a cloud username equal to an unlinked username here takes it over — for a server whose accounts were created under cloud usernames. Provision: every verified cloud account gets an account — the free share host. Invited: only a cloud account someone here invited, to a shared workspace or a shared page, gets one; anyone else's sign-in asks to join, for an admin or the page's sharer to approve.")}>
+      title={t("Refuse: only linked accounts, and people an admin invites by e-mail. Claim: the same, and a cloud username equal to an unlinked username here takes it over — for a server whose accounts were created under cloud usernames. Provision: every verified cloud account gets an account — the free share host. Invited: only a cloud account someone here invited (to this server, a shared workspace, or a shared page or folder), or one an admin approved, gets one; anyone else's sign-in asks to join, for an admin or the page's sharer to approve.")}>
       <Segmented value={draft.policy} onChange={set("policy")} options={POLICIES} disabled={disabled} />
     </Row>
     {draft.policy === "provision" ? (

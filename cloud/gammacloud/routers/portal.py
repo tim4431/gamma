@@ -6,8 +6,8 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Query, Request
 from fastapi.responses import HTMLResponse, RedirectResponse
 
-from .. import (accounts, billing, connect, db, entrance, identities, oidc, pages, pages_billing, providers, servers,
-                sessions)
+from .. import (accounts, billing, connect, db, entrance, identities, invitations, oidc, pages, pages_billing,
+                providers, servers, sessions)
 from .external import sign_in_page
 
 router = APIRouter()
@@ -113,9 +113,52 @@ def login(request: Request, next: str = "/"):
 
 
 @router.get("/register", response_class=HTMLResponse)
-def register(request: Request, invite: str = ""):
-    """``?invite=CODE``: the Admin page's copied link fills the invite field."""
-    return sign_in_page(request, lambda social: pages.register_page(social, invite[:64]))
+def register(request: Request, invite: str = "", email: str = "", next: str = "/"):
+    """``?invite=CODE``: the Admin page's copied link fills the invite field.
+    An e-mail invitation's page adds ``email`` (the invited address) and
+    ``next`` (back to it)."""
+    return sign_in_page(request, lambda social: pages.register_page(social, invite[:64], email[:254]), next_url=next)
+
+
+@router.get("/invite", response_class=HTMLResponse)
+def invitation(request: Request, token: str = ""):
+    """An e-mail invitation's link (``invitations.py``): what it is to, and
+    the way in for whoever opens it, signed in or not."""
+    with closing(db.connect()) as conn:
+        inv = invitations.lookup(conn, token)
+        if not inv:
+            return HTMLResponse(pages.error_page("This invitation is not valid any more",
+                                                 "It expired, or it was withdrawn. Ask the person who invited you "
+                                                 "for a new one."), status_code=404, headers=NO_STORE)
+        account = sessions.resolve(conn, request)
+        public = accounts.public(account, conn) if account else None
+        code = way = ""
+        if not account:
+            code = invitations.live_code(conn, inv["code"])
+            way = invitations.way_in(inv["email"], code, accounts.by_email(conn, inv["email"]) is not None)
+        conn.commit()
+    return HTMLResponse(pages.invitation_page(inv, token, public, code, way), headers=NO_STORE)
+
+
+@router.get("/invite/continue")
+def invitation_continue(request: Request, token: str = ""):
+    """The invitation page's *Continue*: on to the server's cloud sign-in
+    with the invitation's id (``invitations.continue_url``). Signed out goes
+    to the login page and comes back to the invitation; an unconfirmed
+    address, or a link no longer valid, goes back to the invitation, which
+    says what to do."""
+    here = "/invite?" + urlencode({"token": token})
+    with closing(db.connect()) as conn:
+        account = sessions.resolve(conn, request)
+        if not account:
+            return RedirectResponse("/login?" + urlencode({"next": here}), status_code=302)
+        inv = invitations.lookup(conn, token)
+        if inv and account["email_verified_at"]:
+            invitations.accept(conn, inv)
+        conn.commit()
+    if not inv or not account["email_verified_at"]:
+        return RedirectResponse(here, status_code=302)
+    return RedirectResponse(invitations.continue_url(inv), status_code=302, headers=NO_STORE)
 
 
 @router.get("/verify", response_class=HTMLResponse)

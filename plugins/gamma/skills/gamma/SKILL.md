@@ -39,6 +39,8 @@ sessions, databases, or private files to work around a missing connection.
 - For a request naming a page or topic without a link, discover IDs using
   `list_pages` or `search_library`. Prefer title, folder, or label filters to
   dumping the library. Clarify ambiguous matches with a short text list.
+- A long listing names the call that lists the next batch (`after`); follow
+  it rather than concluding the library ends there.
 - To learn how the library is organized, or to walk a folder, call
   `list_folders`, then `list_pages(folder=…)`, then `read_page`.
 - `read_chats` reads the AI chat the user kept with a page or folder. Its replies

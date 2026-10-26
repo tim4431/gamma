@@ -231,7 +231,8 @@ def exchange(access_token: str, caller: str, base_url: str) -> dict:
         raise PublishError(403, "Confirm your e-mail address on your Gamma Cloud account first.")
     if not claims.get("preferred_username"):
         raise PublishError(403, "Gamma Cloud names no username for this account.")
-    # the account server's claims only: the internal "_link_user" / "_refresh_token" keys never come from it
+    # the account server's claims only: the internal "_link_user" / "_refresh_token" / "_invite" keys never
+    # come from it (an "_invite" would admit the caller on an invitation by e-mail it holds no link to)
     claims = {k: v for k, v in claims.items() if not str(k).startswith("_")}
     try:
         user_id, username = cloud_auth.resolve_account(claims)

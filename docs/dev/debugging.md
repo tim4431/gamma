@@ -674,7 +674,8 @@ The scenarios live in `tests/e2e/scenarios/`:
   to the requests on real papers is the translation bench's
   ([translation.md](translation.md) "The bench").
 - `transfers.mjs`: the Import and Export dialogs — format/source cards,
-  the review step and its switches, direct export for fixed formats, the
+  the review step and its switches, its two columns lined up and finding
+  each other's rows, direct export for fixed formats, the
   export job's finished step, and a folder's annotated PDFs exported in the
   background: the dialog closed mid-way, reopened from Background tasks and
   its zip downloaded ([tasks.md](tasks.md)). The job's listing is held at
@@ -917,12 +918,28 @@ The scenarios live in `tests/e2e/scenarios/`:
   the page it leaves stays whole, and "Opening…" only for an open that
   keeps the reader waiting. The headers of
   `folders.mjs`, `trash.mjs` and `cloudSignIn.mjs` name the doc each
-  covers. `cloudSignIn.mjs`'s last step starts a Gamma under the `invited`
-  policy against `fakeCloud.mjs`: a page shared by Gamma Cloud username,
-  a newcomer signing in from the link's gate, a request to join approved
-  in the Share popover, a namesake of the owner who asks to join and lands
-  as `lab-owner-2`, and a request from the login page approved under
-  Server → Sign-in. `--only "cloud sign-in: a page shared"`.
+  covers. In `cloudSignIn.mjs` a workspace's invite dialog offers E-mail
+  only once the server signs in through a client of its own. Two of its
+  steps start a Gamma under the `invited` policy, with a client of its
+  own, against `fakeCloud.mjs`, which keeps the invitations it is asked to
+  mail and to cancel. What the mail's link ends in,
+  `start?next=&invite=<link id>`, is one helper (`accept`). One step
+  shares a page by e-mail: the row's role changed and a double-clicked
+  resend mailing once; a newcomer whose sign-in from the link's gate,
+  under the invited address, only asks to join (her address claims
+  nothing) until the mail's link lands her on the page with the
+  invitation's role; a request to join approved in the Share popover; a
+  namesake of the owner who asks to join and lands as `lab-owner-2`; and
+  a request from the login page approved under Server → Sign-in
+  (`--only "cloud sign-in: a page shared"`). The other invites by e-mail
+  from Settings → Users (one sent, one withdrawn), from a shared
+  workspace's Manage page (its role changed, mailed again, withdrawn) and
+  from the Share popover. The newcomers follow the mail's link under
+  another address than the invited one and land with access; a resend of
+  the used invitation finds it gone. The address of someone with access
+  already is mailed like anyone's ("Invitation sent to …", a pending
+  row), and its link keeps the role she has (`--only "cloud sign-in: an
+  invitation by e-mail"`).
 
 Every step also asserts that no API call failed (4xx/5xx), no console error
 and no page error happened meanwhile (`openPage` records them;
@@ -954,6 +971,26 @@ save path, workspaces, auth or rendering of URLs should add a step here; the
   `FORWARDED_ALLOW_IPS` lists, so anyone on that port can choose the client
   address rate limits count by. Close the remote port to everything but the
   reverse proxy.
+- **"WebSocket from <peer> dropped: [WinError 121] …"** is an info line for
+  a page socket whose peer stopped answering: a laptop asleep, Wi-Fi gone.
+  The websockets library logs it as the error "data transfer failed" with a
+  traceback, because Windows reports it as a plain `OSError` where the
+  library looks for a `ConnectionError` or `TimeoutError`;
+  `logbuf._DroppedWebSocket` makes it one line, so it raises no
+  `log-errors` notice. The connection is closed either way and the page
+  reconnects. A "data transfer failed" error that remains is some other
+  exception and worth a look.
+- **`[ai_translate]` warnings** trace the PDF translator asking the model
+  again ([translation.md](translation.md) "The server"). "expected 10
+  translations, got 8 — asking again in halves" is a reply that merged or
+  dropped a paragraph, "— asking again one by one" a half that did too,
+  and "N of M lost a formula token — redoing them" a reply that broke a
+  `{v1}` token. "asking again failed: …" is a paragraph that stayed
+  untranslated: "no JSON array in reply" or "empty reply" (the model
+  answered something that is no translation), or the call itself failing.
+  Those paragraphs show the original and the viewer offers to try again.
+  Many "expected N, got M" lines mean the model keeps losing paragraphs:
+  a better instruction follower serves translation better.
 - **Two request lines, on purpose.** The console carries uvicorn's access
   log for every request (`INFO: 127.0.0.1:… "GET /api/… HTTP/1.1" 200 OK`)
   except the Background tasks tray's answered `GET /api/jobs`, which comes

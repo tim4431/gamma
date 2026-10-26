@@ -15,6 +15,8 @@ show or save::
     ("reasoning", dict)   one provider turn's thinking, as text ({wire field: text})
     ("usage", dict)       one provider turn's token counts
     ("truncated", True)   the turn hit the provider's output cap
+    ("limit", dict)       a limit stopped the reply: {kind: "rounds" | "changes"
+                          | "window", rounds, changes}
 
 Two callers drive it: the AI chat streams these to the browser
 (``routers/ai.py``), and a :class:`Helper` runs it inside one of the chat's
@@ -31,6 +33,11 @@ branched on:
 A helper passes neither: it has no card to show, so a blocked fetch reports
 what stopped it and the chat's own wait takes over once the helper answered.
 
+``stopped`` is the chat's event for a client that left (Stop, a dropped
+connection). The loop checks it at every event a provider turn streams and
+before it opens another, and a helper's loop gets the same event, so after
+Stop at most the calls already running finish.
+
 Reads of one round run at the same time (:data:`MAX_PARALLEL_CALLS`), since
 four papers fetched one after another cost four round trips of waiting.
 Anything that changes the library, and anything that may stop on a card,
@@ -46,9 +53,9 @@ from . import ai_permissions
 from .ai_client import UpstreamError, failure_kind, partial_json_object
 from .ai_context import canonical_tool, elide_live_results
 from .ai_protocols.base import reasoning_text, truncated_stop
-from .ai_tools import (MAX_TOOL_ACTIONS, MAX_TOOL_ROUNDS, MUTATING_TOOLS, approval_preview,
-                       ensure_tally, find_selection, run_agent_tool, settled_action, skipped_fetch,
-                       tool_action, tool_permission, unanswered_fetch)
+from .ai_tools import (CHANGE_LIMIT, CHANGE_LIMIT_PREFIX, MAX_TOOL_ACTIONS, MAX_TOOL_ROUNDS, MUTATING_TOOLS,
+                       approval_preview, ensure_tally, find_selection, listed_pages, run_agent_tool,
+                       settled_action, skipped_fetch, tool_action, tool_permission, unanswered_fetch)
 from .logbuf import log
 
 # Tool calls of one round that run at the same time. Reads are network- or
@@ -86,14 +93,33 @@ UNANSWERED = ("declined: the user did not answer the approval request in time, s
 CHANGED_WHILE_ASKING = ("error: while the approval card waited, the folder or label this call names "
                         "became another one (a rename or a move), so nothing was deleted. Look it up "
                         "again; call once more only if it should still go, and the user is asked again.")
+# How a reply a limit stopped ends its text. The model reads the line back
+# next turn; the chat's pill says which limit it was and offers Continue
+# (chat/coverage.js limitNote).
+ROUND_LIMIT_NOTE = "\n\n*(stopped: tool-round limit reached)*"
+WINDOW_NOTE = "\n\n*(stopped: the conversation grew past the model's window)*"
 
 
 def step_event(name: str, call: dict) -> dict:
     """The ``{"step"}`` payload of one call: its tool and the short arguments
-    the running label reads."""
+    the running label reads — for a call naming several pages (``renames``,
+    ``page_ids``, read as its executor reads them: ai_tools.listed_pages)
+    how many (``items``), and for one naming a single page that page as the
+    one-page form's ``page_id`` / ``title``."""
     args = call.get("arguments") if isinstance(call.get("arguments"), dict) else {}
-    return {"id": call.get("id") or "", "tool": name,
-            "args": {k: str(args[k])[:120] for k in STEP_ARGS if args.get(k) not in (None, "")}}
+    short = {k: str(args[k])[:120] for k in STEP_ARGS if args.get(k) not in (None, "")}
+    listed = listed_pages(args)
+    if len(listed) == 1:
+        one = listed[0]
+        page_id = (one.get("page_id") if isinstance(one, dict) else one) or ""
+        if page_id:
+            short.setdefault("page_id", str(page_id)[:120])
+        if isinstance(one, dict) and one.get("title"):
+            short.setdefault("title", str(one["title"])[:120])
+    event = {"id": call.get("id") or "", "tool": name, "args": short}
+    if len(listed) > 1:
+        event["items"] = len(listed)
+    return event
 
 
 def batch_step(items: list) -> dict:
@@ -150,11 +176,20 @@ class AgentLoop:
     meters tokens sees them even if it ignores the event. ``pictures`` False
     (a model that reads text only) leaves out the pictures tool results
     carry.
+
+    A reply has ``max_rounds`` provider turns (0: ``MAX_TOOL_ROUNDS``) and
+    makes at most ``MAX_TOOL_ACTIONS`` changes. Either limit, or a
+    conversation the provider still calls too long once the old results are
+    stubs, ends it on a ``("limit", …)`` event, which the chat offers
+    Continue on. ``unbounded`` (the chat's Unlimited rounds) lifts the two
+    limits: the loop runs until the model answers, the window is full, or the
+    client leaves. ``stopped`` is set once the client left: the turn
+    streaming stops at its next event, and no further turn opens.
     """
 
     def __init__(self, *, ws: str, scope: dict, tools: list, conversation: Conversation,
-                 open_round, read_events, on_usage=None, max_rounds: int = 0,
-                 gate=None, settle=None, pictures: bool = True):
+                 open_round, read_events, on_usage=None, max_rounds: int = 0, unbounded: bool = False,
+                 gate=None, settle=None, pictures: bool = True, stopped: threading.Event | None = None):
         self.ws = ws
         self.scope = scope
         self.tools = tools
@@ -162,12 +197,16 @@ class AgentLoop:
         self.open_round = open_round
         self.read_events = read_events
         self.on_usage = on_usage
-        self.max_rounds = max_rounds or MAX_TOOL_ROUNDS
+        # None: no limit (Unlimited rounds lifts both together).
+        self.max_rounds = None if unbounded else max_rounds or MAX_TOOL_ROUNDS
+        self.max_changes = None if unbounded else MAX_TOOL_ACTIONS
+        self.stopped = stopped
         self.gate = gate
         self.settle = settle
         self.pictures = pictures
         self.armed = {t["name"] for t in tools}
         self.mutations = 0
+        self.change_limited = False  # a change was refused at the change limit
         # Made before anything can run in parallel, so a batch never races
         # to create the message's counters.
         ensure_tally(scope)
@@ -177,19 +216,51 @@ class AgentLoop:
     def run(self, first_resp):
         """Yield the reply's events. ``first_resp`` is the already-opened
         first provider turn (the caller opens it eagerly so a connection or
-        auth failure is a plain HTTP error, not a dead stream)."""
+        auth failure is a plain HTTP error, not a dead stream). A reply a
+        limit stopped — the rounds, a change refused at the change limit
+        once the model has answered, or the window — ends on a
+        ``("limit", …)`` event, the rounds and the window after a line of
+        text saying so."""
         resp = first_resp
-        for round_no in range(self.max_rounds):
+        for rounds in itertools.count(1):
             calls = yield from self._round(resp)
             if calls is None:
                 return                                  # truncated, or the client left
             if not calls:
+                if self.change_limited:
+                    yield ("limit", self._limit(rounds))
                 return                                  # the model answered
-            if round_no == self.max_rounds - 1:
-                yield ("delta", "\n\n*(stopped: tool-round limit reached — "
-                                "raise it in Settings → AI → Tool usage → Tool limits)*")
+            if self.max_rounds is not None and rounds >= self.max_rounds:
+                yield ("delta", ROUND_LIMIT_NOTE)
+                yield ("limit", self._limit(rounds))
                 return
-            resp = self._reopen()
+            if self._left():
+                return                                  # the client left: no further turn
+            try:
+                resp = self._reopen()
+            except UpstreamError as e:
+                if failure_kind(e) != "too_long":
+                    raise
+                # Even with the earlier results stubs (_reopen's retry), the
+                # calls themselves outgrew the window. End here, as a reply:
+                # the next message replays its newest calls and counts the
+                # rest (ai_context.REPLAY_CALLS), so Continue has room.
+                yield ("delta", WINDOW_NOTE)
+                yield ("limit", {**self._limit(rounds), "kind": "window"})
+                return
+            if resp is None:
+                return                                  # the client left before the retry
+
+    def _left(self) -> bool:
+        """Whether the client is gone (Stop, a dropped connection)."""
+        return self.stopped is not None and self.stopped.is_set()
+
+    def _limit(self, rounds: int) -> dict:
+        """The ``("limit")`` payload: the change limit when a change was
+        refused at it (more rounds would not have helped), else the round
+        limit; the rounds the reply used and the changes it made."""
+        return {"kind": "changes" if self.change_limited else "rounds", "rounds": rounds,
+                "changes": self.mutations}
 
     def _round(self, resp):
         """Stream one provider turn, then run its tool calls. Returns the
@@ -200,6 +271,8 @@ class AgentLoop:
         thinking = None  # what the wire reported of the model's thinking
         try:
             for kind, data in self.read_events(resp):
+                if self._left():
+                    return None                         # the client left: stop the turn here
                 if kind == "text":
                     text_parts.append(data)
                     yield ("delta", data)
@@ -243,13 +316,16 @@ class AgentLoop:
         """Reopen the provider with this round's results. The valve on a
         long reply: once the rounds' results outgrow their budget the oldest
         become stubs, and a provider that still calls the prompt too long
-        gets one retry with only the last round's results."""
+        gets one retry with only the last round's results — None instead
+        when the client left while it was refused."""
         elide_live_results(self.conversation.messages)
         try:
             return self.open_round(self.conversation)
         except UpstreamError as e:
             if failure_kind(e) != "too_long":
                 raise
+            if self._left():
+                return None
             elide_live_results(self.conversation.messages, keep_rounds=1, budget=0)
             log.info("[ai_agent] tool round too long for the provider, retrying with earlier results elided")
             return self.open_round(self.conversation)
@@ -323,22 +399,35 @@ class AgentLoop:
     def _run_one(self, item: ToolCall):
         """One call on its own: the change budget, then the gate (which may
         ask the user), then the tool. Returns None once the client left."""
-        if item.name in self.armed and item.name in MUTATING_TOOLS and self.mutations >= MAX_TOOL_ACTIONS:
-            item.result = "error: change limit for one message reached — stop and tell the user"
+        changes = item.name in self.armed and item.name in MUTATING_TOOLS
+        if changes and self.max_changes is not None and self.mutations >= self.max_changes:
+            item.result = CHANGE_LIMIT.format(n=self.max_changes)
             item.action = tool_action("error", f"{item.name} — change limit reached",
                                       item.name, item.args, item.result, error=True)
-            return item
-        if self.gate:
-            outcome = yield from self.gate.run(item.name, item.call, self.armed)
         else:
-            outcome = self._execute(item.name, item.args)
-        if outcome is None:
-            return None
-        item.result, item.action = outcome
+            if changes:
+                # What this message may still change: a call naming several
+                # pages changes at most that many, or is refused whole before
+                # any card (ai_tools._batch_answer). The gate's preview reads
+                # the same scope.
+                self.scope["changes_left"] = None if self.max_changes is None else self.max_changes - self.mutations
+            if self.gate:
+                outcome = yield from self.gate.run(item.name, item.call, self.armed)
+            else:
+                outcome = self._execute(item.name, item.args)
+            if outcome is None:
+                return None
+            item.result, item.action = outcome
         # Reads and failures render as chips too, but only applied mutations
-        # count against the change budget.
+        # count against the change budget — a call that changed several
+        # pages counts each (``changes``). A refusal at the change limit
+        # (CHANGE_LIMIT_PREFIX, a batch past what was left included) means
+        # the reply stopped short there: it ends on a {"limit"} line, and the
+        # chat offers Continue.
         if item.name in MUTATING_TOOLS and not item.action.get("error"):
-            self.mutations += 1
+            self.mutations += item.action.get("changes") or 1
+        elif item.result.startswith(CHANGE_LIMIT_PREFIX):
+            self.change_limited = True
         return item
 
     def _run_batch(self, group: list) -> None:
@@ -422,7 +511,9 @@ class Helper:
     token counts are metered like any other call and handed back so the
     reply's footer can say what the whole answer cost. It has
     :data:`HELPER_ROUNDS` rounds; before the last it is told to answer, and
-    one that still asks for more has no answer.
+    one that still asks for more has no answer. ``stopped`` (the chat's)
+    ends the job with the chat: no turn opens once it is set, and the job
+    has no answer.
 
     While it works it tells ``on_status`` what it is doing, its whole state
     each time: ``{id, label, state, steps, step?, blocked?}`` — ``state`` is
@@ -434,12 +525,14 @@ class Helper:
     caller with someone watching puts it on its own stream.
     """
 
-    def __init__(self, *, ws: str, open_call, read_events, on_usage=None, on_status=None):
+    def __init__(self, *, ws: str, open_call, read_events, on_usage=None, on_status=None,
+                 stopped: threading.Event | None = None):
         self.ws = ws
         self.open_call = open_call
         self.read_events = read_events
         self.on_usage = on_usage
         self.on_status = on_status
+        self.stopped = stopped
         self._ids = itertools.count(1)
 
     def run(self, *, scope: dict, question: str, system: str, tools: list, label: str) -> dict:
@@ -451,11 +544,13 @@ class Helper:
         without answering returns no text."""
         talk = Conversation([{"role": "user", "content": question}], system)
         usage = {}
+        if self.stopped is not None and self.stopped.is_set():
+            return {"text": "", "actions": [], "usage": usage}  # the chat's client left: no job
         loop = AgentLoop(ws=self.ws, scope=scope, tools=tools, conversation=talk,
                          open_round=lambda c: self._reopen(c, tools),
                          read_events=self.read_events, on_usage=self._meter(usage),
-                         max_rounds=HELPER_ROUNDS)
-        text, actions = [], []
+                         max_rounds=HELPER_ROUNDS, stopped=self.stopped)
+        text, actions, limited = [], [], False
         status = {"id": f"h{next(self._ids)}", "label": label[:STATUS_LABEL_MAX],
                   "state": "reading", "steps": 0}
         self._say(status)
@@ -473,11 +568,15 @@ class Helper:
                     blocked = data.get("handoff", {}).get("host")
                     self._say(status, steps=len(actions), step=None,
                               **({"blocked": blocked} if blocked else {}))
+                elif kind == "limit":
+                    limited = True            # out of rounds, or past the window
         except BaseException:
             self._say(status, state="failed", step=None)
             raise
-        # Out of rounds, the loop's own closing line is all it said: no answer.
-        answer = "" if _rounds(talk) >= HELPER_ROUNDS else "".join(text).strip()
+        # A limit leaves only the loop's closing line, and a stop a cut-off
+        # turn: no answer either way.
+        stopped = self.stopped is not None and self.stopped.is_set()
+        answer = "" if limited or stopped else "".join(text).strip()
         self._say(status, state="done" if answer else "failed", step=None)
         return {"text": answer, "actions": actions, "usage": usage}
 
@@ -515,7 +614,9 @@ class ApprovalGate:
     unmade and tells the model why — with what to do instead when the user
     said it. A call that could not change anything is answered from its own
     plan without asking anybody. An ask-only deletion runs only on the
-    folder or label its card showed.
+    folder or label its card showed. A call naming several pages runs only
+    as its card showed it (its ``digest``; ai_tools.BATCH_CHANGED
+    otherwise).
     """
 
     def __init__(self, ws: str, scope: dict, user_id: str, stopped: threading.Event | None = None):
@@ -556,14 +657,15 @@ class ApprovalGate:
                 if again and again.get("block_id") != preview.get("block_id"):
                     return CHANGED_WHILE_ASKING, {**settled_action(name, args, CHANGED_WHILE_ASKING),
                                                   "approval": decision}
-            result, action = run_agent_tool(self.ws, self.scope, name, args, allowed_tools=armed)
+            result, action = run_agent_tool(self.ws, self.scope, name, args, allowed_tools=armed,
+                                            approved=str(preview.get("digest") or ""))
             return result, {**action, "approval": decision}
         # The chip names the refused change by its page's title (and a note
         # edit's mode), but carries no page_id: nothing changed on that page.
         result = (DECLINED_SAYING.format(note=note) if note else DECLINED) if decision == "deny" else UNANSWERED
         return result, tool_action("error", f"Not allowed: {name}", name, args, result,
                                    error=True, declined=True, approval=decision,
-                                   **{k: preview[k] for k in ("title", "mode") if preview.get(k)},
+                                   **{k: preview[k] for k in ("title", "mode", "count") if preview.get(k)},
                                    **({"note": note} if note else {}))
 
 

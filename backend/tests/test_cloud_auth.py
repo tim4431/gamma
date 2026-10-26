@@ -37,10 +37,13 @@ class FakeAccountServer:
     """Answers the HTTP calls the client makes: discovery, JWKS, the token
     endpoint (code and refresh grants, rotating), revocation, and the API a
     Gamma server calls with an access token: the preference profile, the
-    server list and the username lookup. ``person`` is who the next sign-in
-    is; ``revoked`` the refresh tokens the client gave back; ``calls`` every
-    request as (method, path); ``offline`` makes every call fail as if the
-    network were down."""
+    server list, the username lookup and the invitations by e-mail it mails.
+    ``person`` is who the next sign-in is; ``revoked`` the refresh tokens
+    the client gave back; ``calls`` every request as (method, path);
+    ``offline`` makes every call fail as if the network were down;
+    ``invitations`` / ``cancels`` the bodies posted to send and withdraw an
+    invitation, and ``refuse_invitation`` (status, detail) the answer the
+    next sends get instead."""
 
     def __init__(self):
         self.key = ed25519.Ed25519PrivateKey.generate()
@@ -63,6 +66,9 @@ class FakeAccountServer:
         self.reports = {}     # subject -> {url: the last body posted for it}
         self.directory = {}   # cloud username -> subject
         self.connects = []    # the forms of the connect token calls
+        self.invitations = []  # the bodies posted to /api/invitations, each with the inviter's subject as "by"
+        self.cancels = []      # the bodies posted to /api/invitations/cancel, each with the grant's subject as "by"
+        self.refuse_invitation = None  # (status, detail): what a send answers instead of mailing
 
     def _mint_access(self, subject):
         self.minted += 1
@@ -168,6 +174,15 @@ class FakeAccountServer:
                 return {"server": {"url": body["url"], "name": body["name"]}}
             if method == "DELETE":
                 return {"ok": True, "removed": mine.pop(body["url"], None) is not None}
+        if path == "/api/invitations" and method == "POST":
+            if self.refuse_invitation:
+                status, detail = self.refuse_invitation
+                raise cloud_auth.CloudAuthError(detail, status=status, body={"detail": detail})
+            self.invitations.append({**body, "by": subject})
+            return {"ok": True, "expires_at": "2099-01-01T00:00:00.000Z"}
+        if path == "/api/invitations/cancel" and method == "POST":
+            self.cancels.append({**body, "by": subject})
+            return {"ok": True, "removed": True}
         if path.startswith("/api/lookup/username?u="):
             name = path.split("u=", 1)[1]
             if name not in self.directory:
@@ -232,8 +247,10 @@ def error_of(r):
 
 def test_server_config_and_start(cloud, monkeypatch):
     c = browser()
+    # the desktop client: a mailed invitation's link could not reach this server
     assert c.get("/api/server-config").json()["cloud"] == {"enabled": True, "issuer": ISSUER, "lead": False,
-                                                           "join_requests": False}
+                                                           "join_requests": False,
+                                                           "email_invites": {"server": False, "members": False}}
     # a share host's people all come from Gamma Cloud: its login page leads with that button
     monkeypatch.setenv("GAMMA_CLOUD_SHARE_HOST", "1")
     assert c.get("/api/server-config").json()["cloud"]["lead"] is True
@@ -568,8 +585,9 @@ def test_default_issuer_until_one_is_saved(monkeypatch):
     try:
         cfg = c.get("/api/admin/settings").json()["cloud"]
         assert (cfg["issuer"], cfg["enabled"], cfg["source"]) == ("https://account.example", True, "saved")
-        assert c.get("/api/server-config").json()["cloud"] == {"enabled": True, "issuer": "https://account.example",
-                                                                "lead": False, "join_requests": False}
+        cloud = c.get("/api/server-config").json()["cloud"]
+        cloud.pop("email_invites")  # what the client a test before saved allows
+        assert cloud == {"enabled": True, "issuer": "https://account.example", "lead": False, "join_requests": False}
         status = c.get("/api/auth/cloud/status").json()
         assert status["enabled"] and status["connected"] and not status["identity"]
         # a saved empty address keeps it off; a saved one replaces the default
@@ -593,7 +611,8 @@ def test_connecting_a_server_at_a_public_address(cloud, monkeypatch):
         # the desktop client cannot sign in at a public address: no cloud button, no link, a readable refusal
         assert cloud_auth.needs_connect()
         assert admin.get("/api/server-config").json()["cloud"] == {"enabled": False, "issuer": "", "lead": False,
-                                                                   "join_requests": False}
+                                                                   "join_requests": False,
+                                                                   "email_invites": {"server": False, "members": False}}
         assert admin.get("/api/admin/settings").json()["cloud"]["needs_connect"] is True
         assert admin.get("/api/auth/cloud/status").json()["connected"] is False
         r = browser().get("/api/auth/cloud/start", follow_redirects=False)

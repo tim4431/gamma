@@ -1251,6 +1251,14 @@ def _zotero_prepare(conn, ws, zf, item, dest, report) -> dict:
             "folders": [dest["paths"][f] for f in filing(props, FOLDERS) if f in dest["paths"]]}
 
 
+def _zotero_sources(item):
+    """The ZIP members an item's page comes from, named as the review's
+    source column names them: its PDF first, then its other attachments."""
+    paths = ([item["pdf_entry"]] if item["pdf_entry"] else []) + [
+        extra["entry"] for extra in item["extras"] if "entry" in extra]
+    return [path.replace("\\", "/") for path in paths]
+
+
 def _zotero_done(prep, report, uploads):
     """Count a written item into the report. Returns (block_id, pdf_path)
     when its PDF's embedded annotations should be imported afterwards, else
@@ -1261,7 +1269,7 @@ def _zotero_done(prep, report, uploads):
     report["attachments_imported"] += len(prep["extras"])
     report["pages"].append({"id": prep["block_id"], "title": item["title"] if created else prep["row"][2],
                             "created": created, "kind": "pdf" if props.get("doc_id") else "page",
-                            "folders": prep["folders"]})
+                            "folders": prep["folders"], "source_paths": _zotero_sources(item)})
     doc_id = props.get("doc_id")
     if doc_id:
         pdf_path = uploads / f"{doc_id}.pdf"
@@ -1401,8 +1409,7 @@ def _preview_zotero(ws, data, meta):
                 warnings.append(warning)
                 plan["warnings"].append(warning)
             prior = pages.get(target["id"])
-            sources = ([item["pdf_entry"]] if item["pdf_entry"] else []) + [
-                extra["entry"] for extra in item["extras"] if "entry" in extra]
+            sources = _zotero_sources(item)
             page = {"key": item["key"], "title": target["title"],
                     "folders": folders, "kind": kind, "action": "merge" if target["exists"] else "create",
                     "existing_id": target["id"] if target["exists"] else None, "source_path": item["pdf_entry"],

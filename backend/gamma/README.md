@@ -24,6 +24,7 @@ cloud_auth.py      Sign in with Gamma Cloud: an OpenID Connect client of cloud/,
 shares.py          a share's invitations by Gamma Cloud username, and the Inbox item a share sends (docs/dev/cloud_accounts.md)
 join_requests.py   Gamma Cloud accounts asking to join under the `invited` policy (docs/dev/cloud_accounts.md "Requests to join")
 cloud_sync.py      what a linked account's cloud grant does: the hourly grant check, the profile sync, the server list
+email_invites.py   invitations by e-mail to this server, a workspace or a share: mailed by the account server, claimed by the sign-in through the link
 hosted.py          a hosted container (GAMMA_HOSTED=1) learns its plan's limits from the account server
 integrations.py    revocable read / write tokens per account and workspace (MCP, the HTTP API, mirrors)
 seed.py            workspace file creation, the Welcome page and Sketchbook new accounts start with, first admin

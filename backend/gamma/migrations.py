@@ -1697,6 +1697,41 @@ def _v42_cloud_invitations(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+# users.db ``email_invites`` and its two indexes as schema version 43
+# shaped them, frozen: step 43 creates them from these.
+_V43_EMAIL_INVITES = [
+    """CREATE TABLE IF NOT EXISTS email_invites (
+        id TEXT PRIMARY KEY,
+        link_id TEXT NOT NULL,
+        email TEXT NOT NULL,
+        email_norm TEXT NOT NULL,
+        kind TEXT NOT NULL,
+        workspace_id TEXT NOT NULL DEFAULT '',
+        share_token TEXT NOT NULL DEFAULT '',
+        role TEXT NOT NULL DEFAULT '',
+        invited_by TEXT NOT NULL DEFAULT '',
+        server_url TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL,
+        mailed_at TEXT NOT NULL DEFAULT '',
+        expires_at TEXT NOT NULL
+    )""",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_email_invites_target "
+    "ON email_invites(kind, workspace_id, share_token, email_norm)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_email_invites_link ON email_invites(link_id)",
+]
+
+
+def _v43_email_invites(conn: sqlite3.Connection) -> None:
+    """users.db gains ``email_invites`` (invitations by e-mail address to
+    this server, a shared workspace or a share, gamma/email_invites.py)
+    with its target and link indexes, from the step's frozen statements.
+    Re-runnable: all three are ``IF NOT EXISTS``. No workspace is
+    touched."""
+    for stmt in _V43_EMAIL_INVITES:
+        conn.execute(stmt)
+    conn.commit()
+
+
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
@@ -1718,6 +1753,7 @@ STEPS = [
     (39, "reminders_done", _v39_reminders_done),
     (40, "comments_inbox", _v40_comments_inbox),
     (42, "cloud_invitations", _v42_cloud_invitations),
+    (43, "email_invites", _v43_email_invites),
 ]
 
 # The workspace parts of the steps from version 34 on: (version, name,

@@ -47,6 +47,17 @@ function secondPage() {
   return { runs };
 }
 
+// Two paragraphs: one the model translates, one the server gives up on.
+function stubbornPage() {
+  const runs = [];
+  const line = (x, y, text) => runs.push({ x, y, size: 10, font: "F2", text });
+  line(82, 724, "A willing paragraph that the model translates");
+  line(72, 712, "on the first request that it is asked to make.");
+  line(82, 688, "A stubborn paragraph that the model keeps");
+  line(72, 676, "getting wrong until it is asked once more.");
+  return { runs };
+}
+
 function thirdPage() {
   const runs = [];
   const line = (x, y, text) => runs.push({ x, y, size: 10, font: "F2", text });
@@ -59,6 +70,8 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
   if (!wanted("translation")) return;
   let page, pageId;
   const requests = [];
+  // A step's own answer for the translate endpoint (route, body), when set.
+  let respond = null;
 
   await step("translation: setup, a paper whose first page's paragraph runs over the column break", async () => {
     const pdf = makePdf([twoColumnPage(), secondPage(), thirdPage()]);
@@ -72,6 +85,7 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     await ctx.route("**/api/ai/translate", async (route) => {
       const body = route.request().postDataJSON();
       requests.push(body);
+      if (respond) return respond(route, body);
       const translations = body.texts.map((t) => `译:${t.split("{br}").join("{br}译:")}`);
       await route.fulfill({ contentType: "application/x-ndjson",
         body: `${JSON.stringify({ translations, model: "demo:model", cached: false })}\n` });
@@ -197,5 +211,48 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     await until(async () => (await boxes.allTextContents()).some((t) => t.startsWith("译:Here the atoms sit")),
       { what: "the second page's translation" });
     assertNoProblems(page);
+  });
+
+  await step("translation: a refusal of a busy account waits instead of stopping; a paragraph the server could not translate shows the original until Try again", async () => {
+    const up = await alice.upload("/api/uploads", makePdf([stubbornPage()]), "stubborn.pdf", "application/pdf");
+    const created = await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Stubborn", source_url: up.source_url } });
+    await page.goto(`${server.base}/?page=${created.id}&ws=${alice.ws}`);
+    await waitForPdf(page, 1);
+    // The first request is refused as the server refuses one while the
+    // account's AI calls are all in use; asked again a second later, the
+    // reply names the stubborn paragraph as failed (sent back as itself).
+    const start = requests.length;
+    const asked = [];
+    let refused = false;
+    respond = (route, body) => {
+      asked.push(Date.now());
+      if (!refused) {
+        refused = true;
+        return route.fulfill({ status: 429, headers: { "Retry-After": "1" }, contentType: "application/json",
+          body: JSON.stringify({ detail: "Too many AI requests are running for your account at once (at most 6)." }) });
+      }
+      const failed = body.texts.flatMap((t, i) => (t.startsWith("A stubborn") ? [i] : []));
+      const translations = body.texts.map((t, i) => (failed.includes(i) ? t : `译:${t}`));
+      return route.fulfill({ contentType: "application/x-ndjson",
+        body: `${JSON.stringify({ translations, model: "demo:model", cached: false, failed })}\n` });
+    };
+    await page.getByRole("button", { name: "Translate", exact: true }).click();
+    const boxes = page.locator('[data-page="1"] .pdfTransPara .pdfTransText');
+    await until(async () => (await boxes.allTextContents()).some((t) => t.startsWith("译:A willing")),
+      { what: "the willing paragraph, translated after the wait" });
+    assertEq(requests.length - start, 2, "refused once, then asked again");
+    assert(asked[1] - asked[0] >= 900, `asked again after the server's Retry-After, not at once: ${asked[1] - asked[0]} ms`);
+    const pill = page.locator(".statusPill", { hasText: "1 paragraph could not be translated" });
+    await pill.waitFor({ timeout: 5000 });
+    assert(!(await boxes.allTextContents()).some((t) => t.includes("stubborn")), "the stubborn paragraph shows its original");
+    // Try again asks for that paragraph alone.
+    respond = null;
+    await pill.locator(".pillRetryBtn", { hasText: "Try again" }).click();
+    await until(async () => (await boxes.allTextContents()).some((t) => t.startsWith("译:A stubborn")),
+      { what: "the stubborn paragraph, translated on the second try" });
+    const again = requests.slice(start + 2);
+    assertEq(again.length, 1, "one request");
+    assertEq(JSON.stringify(again[0].texts.map((t) => t.slice(0, 11))), JSON.stringify(["A stubborn "]), "for the stubborn paragraph alone");
+    assertNoProblems(page, ["POST /api/ai/translate -> 429"]);
   });
 }

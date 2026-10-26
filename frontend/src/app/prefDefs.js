@@ -315,6 +315,11 @@ export const PREFS = {
   delegateReads: flag("gamma-ai-delegate-reads", ACCOUNT, true),
   // Organizer tool-round budget (home/folder chat agent loop), 1–100.
   toolRounds: pref("gamma-ai-tool-rounds", ACCOUNT, 32, intIn(1, 100)),
+  // Unlimited rounds: no round limit and no 200-change limit per message
+  // (the request's tool_rounds_unlimited; a streamed reply runs until the
+  // model answers or the user stops it). A flag of its own, so the number
+  // above is kept for when it goes off again.
+  toolRoundsUnlimited: flag("gamma-ai-tool-rounds-unlimited", ACCOUNT, false),
   // Per-read_page-call cap on document text the folder/paper agent may pull.
   // The default matches the backend's fallback (READ_CHARS_CAP in
   // gamma/ai_tools.py) — keep the two in sync.

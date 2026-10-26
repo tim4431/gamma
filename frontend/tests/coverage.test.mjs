@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { areaPicturesNote, coverageNote, formatSpans, readSpans, shortenedNote, trimmedNote, truncatedNote, unseenSpans } from "../src/chat/coverage.js";
+import {
+  areaPicturesNote, canContinueAfterLimit, continueAfterLimitPrompt, coverageNote, formatSpans, limitNote, readSpans,
+  shortenedNote, trimmedNote, truncatedNote, unseenSpans,
+} from "../src/chat/coverage.js";
 
 const reads = [
   { kind: "read", tool: "read_page", page_id: "a", pdf_pages: [3, 5] },
@@ -77,6 +80,36 @@ test("the per-reply pills: messages left out, a reply cut off", () => {
   assert.match(trimmedNote({ turns: 4 }).long, /4 oldest messages/);
   assert.equal(truncatedNote(false), null);
   assert.equal(truncatedNote(true).short, "Reply cut off at the output limit");
+});
+
+test("a reply that stopped short says why, and offers Continue only as the conversation's last word", () => {
+  const path = "Settings / AI / Tool usage / Tool limits";
+  assert.equal(limitNote(null), null);
+  assert.equal(limitNote({ kind: "other" }), null);
+  const rounds = limitNote({ kind: "rounds", rounds: 32, changes: 40 });
+  assert.equal(rounds.short, "Stopped at the tool-round limit");
+  assert.match(rounds.long, /used its 32 tool rounds/);
+  assert.ok(rounds.long.includes(path));
+  assert.match(limitNote({ kind: "rounds", rounds: 1 }).long, /its 1 tool round before/);
+  const changes = limitNote({ kind: "changes", rounds: 3, changes: 110 });
+  assert.equal(changes.short, "Stopped at the change limit");
+  assert.match(changes.long, /change limit for one message after 110 changes/);
+  const full = limitNote({ kind: "window", rounds: 5, changes: 0 });
+  assert.equal(full.short, "Stopped: the conversation is full");
+  assert.ok(full.long.includes("in short form") && !full.long.includes(path));
+  // Unlimited was on, but this shared connection keeps the limits: the
+  // pill says so instead of pointing at the switch that is already on.
+  const withheld = limitNote({ kind: "rounds", rounds: 32, changes: 0, withheld: true });
+  assert.ok(withheld.long.includes("does not apply on a shared AI connection") && !withheld.long.includes(path));
+  assert.ok(truncatedNote(true).long.includes("Continue carries on"));
+
+  const last = { limit: { kind: "rounds", rounds: 32 }, isLast: true, idle: true, readOnly: false };
+  assert.equal(canContinueAfterLimit(last), true);
+  assert.equal(canContinueAfterLimit({ truncated: true, isLast: true, idle: true }), true);
+  for (const off of [{ isLast: false }, { idle: false }, { readOnly: true }, { limit: null }]) {
+    assert.equal(canContinueAfterLimit({ ...last, ...off }), false, JSON.stringify(off));
+  }
+  assert.equal(continueAfterLimitPrompt(), "Please continue where you stopped.");
 });
 
 test("passages that went short say what was sent, and why", () => {

@@ -18,7 +18,7 @@ import { revealDelta } from "../ink/zoomWindow.js";
 import { KEEP_MARGIN, RENDER_MARGIN, ZOOM_SETTLE_MS, basePixels, cropPage, forgetPixels, installPageRaster, keepPixels, showsKept, takePixels } from "./pageRaster.js";
 import { installVerticalScrollSnap } from "./verticalScrollSnap.js";
 import { segmentPage, selectionParagraphs, textRuns } from "./pdfTranslate";
-import { HEAD_CHARS, chunkUnits, createPlanner, partials, readingOrder, results } from "./translatePlan";
+import { HEAD_CHARS, chunkUnits, createPlanner, partials, readingOrder, requestChunk, results } from "./translatePlan";
 import { pageFaces } from "./pdfFonts";
 import { BACKFILL_DELAY_MS, chooseTransport, docIdOf, layoutFromManifest, rangeOpenOptions, typicalPageIndex } from "./pdfSource";
 import { normalizeChars } from "../shared/lib/textnorm";
@@ -1358,12 +1358,16 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // two is one unit) and feeds ONE flat list of chunks; N workers (Settings →
   // parallel requests) start on the first chunk while later pages are still
   // segmenting, and stream across page boundaries — the parallel slots never
-  // idle at page ends. Each chunk is retried once; the server additionally
-  // salvages miscounted batches per paragraph. State per page sits in
-  // transMap, its results by block index; PdfPage only *renders* its entry.
-  // Halting flips job.aborted: finished chunks keep their text.
-  const [transMap, setTransMap] = useState(() => new Map()); // pageNo -> {key, paras, texts, done, queued, busy, partial}
+  // idle at page ends. A chunk whose request fails is asked again
+  // (requestChunk); the server asks the model again for what its reply got
+  // wrong, and names the paragraphs that still failed, which stay pending
+  // for the next job. State per page sits in transMap, its results by block
+  // index; PdfPage only *renders* its entry. Halting flips job.aborted:
+  // finished chunks keep their text.
+  const [transMap, setTransMap] = useState(() => new Map()); // pageNo -> {key, paras, texts, done, queued, busy, partial, failed}
   const [transShown, setTransShown] = useState(true); // show/hide applies to ALL pages at once
+  // At a job's end: `error` (the request that stopped it kept failing, its
+  // reason) or `untranslated` (paragraphs the server could not translate).
   const [transStatus, setTransStatus] = useState({ running: false, progress: 0, label: "" });
   // A request is waiting while the server reads the paper for its brief (a
   // paper's first requests; the stream's "stage" lines): the host says so.
@@ -1505,7 +1509,10 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     // rest — its untranslated blocks included, which go back to pending.
     // `pending`: blocks still without a result; `busy`: blocks whose request
     // is in flight (the page shimmers those lines); `partial`: text streamed
-    // so far per block (typed onto the page ahead of the final text).
+    // so far per block (typed onto the page ahead of the final text);
+    // `failed`: blocks the server could not translate in this job (pending
+    // still, so the page is not done and the next job asks for them; the
+    // original shows meanwhile).
     const states = new Map();
     const stateOf = (pn) => {
       let st = states.get(pn);
@@ -1515,7 +1522,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
         const out = e && e.key === key && e.paras === paras ? e.texts.map((t) => (t === null ? undefined : t)) : [];
         const pending = new Set();
         paras.forEach((p, i) => { if (p.translate && out[i] == null) pending.add(i); });
-        st = { paras, out, pending, busy: new Set(), partial: {} };
+        st = { paras, out, pending, busy: new Set(), partial: {}, failed: new Set() };
         states.set(pn, st);
       }
       return st;
@@ -1524,7 +1531,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       const st = stateOf(pn);
       const done = st.pending.size === 0;
       return { key, paras: st.paras, texts: st.out.slice(), done, queued: !done,
-               busy: new Set(st.busy), partial: { ...st.partial } };
+               busy: new Set(st.busy), partial: { ...st.partial }, failed: new Set(st.failed) };
     };
     const paint = (pns) => setTransMap((prev) => {
       const m = new Map(prev);
@@ -1544,7 +1551,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     // is what lets them notice an abort or a failure, so halting can stay a
     // plain `job.aborted = true` everywhere.
     const queue = [];
-    let totalChars = 0, doneChars = 0, failed = false, segDone = false;
+    let totalChars = 0, doneChars = 0, failed = false, segDone = false, error = null, untranslated = 0;
     let wake = null;
     const notify = () => { const w = wake; wake = null; w?.(); };
     const producer = async () => {
@@ -1593,25 +1600,37 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           paint(pns);
         };
         const onStage = (stage) => { if (!job.aborted) readingFor(c, stage === "brief"); };
-        // One client-side retry per chunk (transient network/provider blips);
-        // the server separately salvages miscounted model replies.
-        for (let attempt = 0; attempt < 2 && !res && !job.aborted; attempt++) {
-          res = await Promise.resolve(cbRef.current.onTranslate?.(c.texts, job.ctl.signal, onPartial, { ...context, ...c.context }, onStage))
-            .catch(() => null);
-        }
+        let err = null;
+        try {
+          res = await requestChunk(() => cbRef.current.onTranslate?.(c.texts, job.ctl.signal, onPartial,
+            { ...context, ...c.context }, onStage), job.ctl.signal);
+        } catch (e) { err = e; }
         readingFor(c, false);
         for (const t of targets) { const st = stateOf(t.pn); st.busy.delete(t.i); delete st.partial[t.i]; }
         if (job.aborted) return;
-        if (!Array.isArray(res) || res.length !== c.units.length) { failed = true; return; }
+        const got = res?.translations;
+        if (!Array.isArray(got) || got.length !== c.units.length) {
+          failed = true;
+          error = err?.message || "";
+          return;
+        }
+        // The units the server could not translate keep their blocks
+        // pending (the original shows), for the next job to ask again.
+        const lost = new Set(res.failed || []);
         c.units.forEach((u, j) => {
-          for (const r of results(u, res[j])) {
+          if (lost.has(j)) {
+            for (const t of u.targets) stateOf(t.pn).failed.add(t.i);
+            untranslated += 1;
+            return;
+          }
+          for (const r of results(u, got[j])) {
             const st = stateOf(r.pn);
             st.out[r.i] = r.text;
             st.pending.delete(r.i);
           }
         });
         paint(pns);
-        doneChars += c.units.reduce((n, u) => n + u.chars, 0);
+        doneChars += c.units.reduce((n, u, j) => n + (lost.has(j) ? 0 : u.chars), 0);
         // While segmentation is still running the denominator is a lower
         // bound, so cap displayed progress until the total is final.
         const p = totalChars ? doneChars / totalChars : 1;
@@ -1633,7 +1652,8 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       return m;
     });
     setTransReading(false);
-    setTransStatus({ running: false, label, progress: totalChars ? doneChars / totalChars : 1 });
+    setTransStatus({ running: false, label, progress: totalChars ? doneChars / totalChars : 1,
+                     error: failed && !job.aborted ? error : null, untranslated: job.aborted ? 0 : untranslated });
   }
 
   // Imperative surface for the host's toolbar button + its menu.
@@ -1660,6 +1680,15 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           || ((a < cur ? 1 : 0) - (b < cur ? 1 : 0))
           || (a - b));
         runTransJob(pages, "document");
+      },
+      // The pages with paragraphs that jobs under the current language and
+      // model could not translate (both pages of one that a page break
+      // cut): asked for again, nothing else.
+      retryUntranslated: () => {
+        const key = translateKeyRef.current;
+        const pages = [...transMapRef.current]
+          .filter(([, e]) => e.key === key && e.failed?.size).map(([p]) => p).sort((a, b) => a - b);
+        runTransJob(pages, pages.length === 1 ? `p.${pages[0]}` : "document");
       },
     };
     return () => { translateCtlRef.current = null; };
@@ -2637,8 +2666,10 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
               });
               if (text !== "" && !text) {
                 // Nothing to show yet: the original stays visible, washed
-                // while its translation is queued or in flight.
-                if (final === undefined && transWorking && (transEntry.busy?.has(i) || transEntry.queued)) {
+                // while its translation is queued or in flight (not once
+                // this job could not translate it).
+                if (final === undefined && transWorking && (transEntry.busy?.has(i)
+                    || (transEntry.queued && !transEntry.failed?.has(i)))) {
                   return (
                     <div key={i} className="pdfTransPara" style={box}>
                       <TransPending lines={lines} busy={transEntry.busy?.has(i)} />
@@ -2835,10 +2866,10 @@ const SEL_TRANSLATE_MAX = 5000;
 
 // Selection popup: highlight colors, the reference link and, when enabled
 // (Settings → Reading › Translation), the selection translator. `translate`:
-// {text, auto, langLabel, run(texts, signal, onPartial) → [translation] |
-// null} — run is the page translator's request, so the same model/engine,
-// language and server cache apply. Auto starts it on open; the button starts
-// it, then folds/unfolds the result.
+// {text, auto, langLabel, run(texts, signal, onPartial) → the server's reply
+// ({translations, failed}) | null} — run is the page translator's request, so
+// the same model/engine, language and server cache apply. Auto starts it on
+// open; the button starts it, then folds/unfolds the result.
 function PlainTip({ onConfirm, onLink, onComment, translate }) {
   const palette = usePalette();
   const colors = pickerColors(palette, "highlight");
@@ -2857,7 +2888,9 @@ function PlainTip({ onConfirm, onLink, onComment, translate }) {
       if (!ctl.signal.aborted) setTrans((prev) => prev && { ...prev, text: partial });
     })).catch((err) => { reason = err?.message || ""; return null; }).then((res) => {
       if (ctl.signal.aborted) return;
-      setTrans((prev) => ({ open: prev?.open ?? true, ...(res?.[0] ? { status: "done", text: res[0] } : { status: "error", text: "", reason }) }));
+      // A text the server could not translate comes back as itself.
+      const text = res?.failed?.length ? "" : res?.translations?.[0];
+      setTrans((prev) => ({ open: prev?.open ?? true, ...(text ? { status: "done", text } : { status: "error", text: "", reason }) }));
     });
   }
   useEffect(() => {

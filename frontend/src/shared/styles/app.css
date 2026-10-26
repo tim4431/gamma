@@ -2574,7 +2574,7 @@ mark.merge-del { background: color-mix(in srgb, var(--danger) 16%, transparent);
    under the box) beside the Invite button. */
 .shareInvite { display: flex; align-items: flex-start; gap: 8px; padding: 4px 8px 6px; }
 .shareInvite .setPick { flex: 1; min-width: 0; }
-.shareInvite > .aiKeyInput { flex: 1; min-width: 0; margin-bottom: 0; } /* the Gamma Cloud username field */
+.shareInvite > .aiKeyInput { flex: 1; min-width: 0; margin-bottom: 0; } /* the e-mail field */
 .shareInvite > .uiBtn.sm { flex-shrink: 0; min-height: 32px; }
 /* ...its field and match rows keep the settings kit's look, not the
    topbar's own input and pill button. */
@@ -3638,7 +3638,7 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatErrorHead { display: flex; align-items: flex-start; gap: 6px; font-weight: 600; color: var(--danger); }
 .chatErrorHead svg { flex: none; margin-top: 0.15em; }
 .chatErrorText { margin-top: 2px; }
-.chatErrorActions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.chatErrorActions, .chatLimitActions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
 .chatErrorDetails { margin-top: 8px; color: var(--text-muted); font-size: calc(var(--fs-xs) * var(--text-scale, 1)); }
 .chatErrorDetails summary { cursor: pointer; width: fit-content; }
 .chatErrorDetails pre {
@@ -4995,6 +4995,12 @@ a.shareBrand:hover { background: var(--bg-hover); }
   cursor: pointer;
 }
 .chatChangeLink:hover { text-decoration: underline; }
+/* A call that changed several pages (chat/AgentChanges.jsx): its row folds
+   out to one line per page, in a box that scrolls past 16 lines. */
+.chatChangeItems { margin-top: 2px; }
+.chatChangeItems summary { width: fit-content; color: var(--text-muted); font-size: calc(var(--fs-xs) * var(--text-scale, 1)); cursor: pointer; }
+.chatChangeItems[open] { max-height: 16em; overflow-y: auto; overscroll-behavior: contain; }
+.chatChangeItems > div { margin-top: 2px; }
 /* Agent tool calls (folder/paper chat): one row per call, click to expand the
    arguments and the output the model got back. */
 .chatToolActions { display: flex; flex-direction: column; gap: 3px; }

@@ -7,6 +7,7 @@ import http.client
 import json
 import re
 import threading
+import time
 import urllib.error
 import urllib.request
 
@@ -58,10 +59,12 @@ class AllowanceExhausted(CallRefused):
 
 
 class TooManyCalls(CallRefused):
-    """A call past the account's MAX_OPEN_CALLS open at once."""
+    """A call past the account's MAX_OPEN_CALLS open at once. Its
+    Retry-After tells a client that may wait (the PDF translator) when to
+    ask again: a slot frees as soon as one of the account's calls ends."""
 
     def __init__(self, limit: int):
-        super().__init__(status_code=429, detail=(
+        super().__init__(status_code=429, headers={"Retry-After": str(CALL_RETRY_AFTER)}, detail=(
             f"Too many AI requests are running for your account at once (at most {limit}). Wait for "
             "one to finish and try again, or lower the parallel requests in Settings → Translation."))
 
@@ -70,18 +73,27 @@ class TooManyCalls(CallRefused):
 # metadata, a connection test). An open call holds a server thread for as
 # long as the provider takes — minutes for a long answer — and the threads
 # are shared with every other request, PDF reads included, so past the cap
-# a call is refused (TooManyCalls) instead of starving them.
+# a call is refused (TooManyCalls) instead of starving them. A caller that
+# runs on a thread of its own (the translator's repair calls, its stream)
+# may wait for a slot instead (``slot_wait``).
 MAX_OPEN_CALLS = 6
+CALL_RETRY_AFTER = 5  # seconds, the Retry-After of a TooManyCalls
 _open_calls: dict[str, int] = {}
 _open_calls_lock = threading.Lock()
+_open_calls_freed = threading.Condition(_open_calls_lock)
 
 
-def _take_call_slot(user_id: str) -> None:
-    with _open_calls_lock:
-        n = _open_calls.get(user_id, 0)
-        if n >= MAX_OPEN_CALLS:
-            raise TooManyCalls(MAX_OPEN_CALLS)
-        _open_calls[user_id] = n + 1
+def _take_call_slot(user_id: str, wait: float = 0.0) -> None:
+    """Take one of ``user_id``'s slots; with all in use, wait up to ``wait``
+    seconds for one to free, then refuse (TooManyCalls)."""
+    deadline = time.monotonic() + wait
+    with _open_calls_freed:
+        while _open_calls.get(user_id, 0) >= MAX_OPEN_CALLS:
+            left = deadline - time.monotonic()
+            if left <= 0:
+                raise TooManyCalls(MAX_OPEN_CALLS)
+            _open_calls_freed.wait(left)
+        _open_calls[user_id] = _open_calls.get(user_id, 0) + 1
 
 
 def check_call_slot(user_id: str) -> None:
@@ -94,12 +106,13 @@ def check_call_slot(user_id: str) -> None:
 
 
 def _free_call_slot(user_id: str) -> None:
-    with _open_calls_lock:
+    with _open_calls_freed:
         n = _open_calls.get(user_id, 0) - 1
         if n > 0:
             _open_calls[user_id] = n
         else:
             _open_calls.pop(user_id, None)
+        _open_calls_freed.notify_all()
 
 
 class _OpenCall:
@@ -238,16 +251,17 @@ def upstream_detail(error: urllib.error.HTTPError, cap: int = 500) -> str:
 def open_ai(
     messages, system, entry, runtime, pdf_b64s=None, effort="", speed="",
     max_tokens=8192, timeout=60, images=None, stream=False, tools=None,
-    cache_key="",
+    cache_key="", slot_wait=0.0,
 ):
     """Open a provider call without consuming response bytes. The one door
     every token-spending call goes through (call_ai too): a shared entry's
     allowance is checked here (AllowanceExhausted, a 429), and so is the
-    account's cap on calls open at once (TooManyCalls, a 429) — the call
-    holds one of its slots until the response is closed. ``cache_key``
-    names the conversation for the provider's prompt cache, and ``speed``
-    the service tier to ask the provider for (ai_protocols.SPEED_ORDER; ""
-    = its usual routing)."""
+    account's cap on calls open at once (TooManyCalls, a 429, or after up
+    to ``slot_wait`` seconds of waiting for a slot) — the call holds one of
+    its slots until the response is closed. ``cache_key`` names the
+    conversation for the provider's prompt cache, and ``speed`` the service
+    tier to ask the provider for (ai_protocols.SPEED_ORDER; "" = its usual
+    routing)."""
     conf = runtime["providers"][entry["provider"]]
     check_allowance(conf)
     wire = ai_protocols.of(conf).wire(conf, tools)
@@ -255,7 +269,7 @@ def open_ai(
                            effort, max_tokens, images, stream, tools, cache_key, speed)
     user_id = runtime.get("user") or ""
     if user_id:
-        _take_call_slot(user_id)
+        _take_call_slot(user_id, slot_wait)
     try:
         response = urllib.request.urlopen(request, timeout=timeout)
     except BaseException as error:
@@ -297,13 +311,13 @@ def read_reply(response, provider_protocol, on_usage=None) -> str:
 
 def call_ai(
     messages, system, entry, runtime, pdf_b64s=None, effort="",
-    max_tokens=8192, timeout=60, images=None, on_usage=None, cache_key="",
+    max_tokens=8192, timeout=60, images=None, on_usage=None, cache_key="", slot_wait=0.0,
 ):
-    """Send a chat and return its complete reply text. ``cache_key`` as in
-    open_ai."""
+    """Send a chat and return its complete reply text. ``cache_key`` and
+    ``slot_wait`` as in open_ai."""
     with open_ai(
         messages, system, entry, runtime, pdf_b64s, effort,
-        max_tokens=max_tokens, timeout=timeout, images=images, cache_key=cache_key,
+        max_tokens=max_tokens, timeout=timeout, images=images, cache_key=cache_key, slot_wait=slot_wait,
     ) as response:
         return read_reply(response, protocol(runtime, entry), on_usage)
 

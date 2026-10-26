@@ -157,7 +157,8 @@ def test_invites_by_cloud_username_need_cloud_sign_in(ann, ben, cid, lab, monkey
     r = ann.post(f"/api/workspaces/{lab}/invites", json={"username": "someone", "role": "viewer"})
     assert r.status_code == 400 and "not set up" in r.json()["detail"]
     assert ben.post(f"/api/workspaces/{lab}/invites", json={"username": "someone"}).status_code == 403
-    assert cid.get(f"/api/workspaces/{lab}/invites").json() == {"invites": []}  # any member reads them
+    # any member reads them (those by e-mail only the owners and admins: test_email_invites.py)
+    assert cid.get(f"/api/workspaces/{lab}/invites").json() == {"invites": [], "email_invites": []}
     assert ann.delete(f"/api/workspaces/{lab}/invites/nobody").status_code == 404
     assert not any(m.get("pending") for m in ann.get(f"/api/workspaces/{lab}").json()["members"])
 

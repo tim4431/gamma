@@ -1,5 +1,5 @@
 import { readFile } from "node:fs/promises";
-import { FAKE_AI_MODELS, fakeAiModels, wanted } from "../harness.mjs";
+import { FAKE_AI_MODELS, fakeAiModels, live, wanted } from "../harness.mjs";
 export async function chatNavigationScenarios(env) {
   const { server, browser, alice, bob, makePdf, step, until, assert, assertEq, assertNoProblems, openPage, flags } = env;
   if (!wanted("chat navigation")) return;
@@ -981,6 +981,124 @@ export async function chatNavigationScenarios(env) {
     }
   });
 
+  // A reply a limit stopped (the stream's last {"limit"} line, saved on the
+  // message) or the output cap cut off ({"truncated"}) gets a pill saying
+  // why and a Continue under it while it is the conversation's last reply
+  // (chat/coverage.js). Continue sends a message in the user's name, as the
+  // handoff card's does. Under Unlimited rounds a running reply has a row in
+  // Background tasks whose Stop ends it. The server side (the limit lines,
+  // Unlimited, Stop ending the loop) is backend/tests/test_ai_tool_limits.py's.
+  await step("chat navigation: a reply that stopped short says why and offers Continue, which carries on as the user's message; an Unlimited reply shows in Background tasks, whose Stop ends it", async () => {
+    // No title, so the tray's row is named from the first question (a save
+    // without one keeps the title an earlier step gave the conversation).
+    const { title: homeTitle } = await alice.api("/api/chats/home");
+    await alice.api("/api/chats/home", { method: "PUT", body: { title: "", messages: [
+      { id: "limit-q", role: "user", text: "Rename every page to AuthorYear" },
+      { id: "limit-a", role: "ai", text: "Renamed 40 pages so far.\n\n*(stopped: tool-round limit reached)*",
+        limit: { kind: "rounds", rounds: 32, changes: 40 } },
+    ] } });
+    const { value: profile } = await alice.api("/api/prefs/profile");
+    const bodies = [];
+    const answers = [
+      '{"delta":"Renamed the rest."}\n{"limit":{"kind":"changes","rounds":3,"changes":200}}\n',
+      '{"delta":"Renamed some more"}\n{"truncated":true}\n',
+    ];
+    let release;
+    const held = new Promise((resolve) => { release = resolve; });
+    const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+    await ctx.route("**/api/ai/chat", async (route) => {
+      const n = bodies.push(route.request().postDataJSON());
+      if (n <= answers.length) return route.fulfill({ contentType: "application/x-ndjson", body: answers[n - 1] });
+      // The Unlimited reply runs until it is stopped.
+      await held;
+      try { await route.fulfill({ contentType: "application/x-ndjson", body: '{"delta":"Too late."}\n' }); } catch { /* the page stopped it */ }
+    });
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    try {
+      const chat = page.locator(".chatPanel");
+      const reply = (i) => chat.locator(`.chatBubbleRow[data-msg-idx="${i}"]`);
+      const pill = (text) => chat.locator(".chatCoverage .chatPill", { hasText: text });
+      const note = (text) => chat.locator(".chatCoverageNote", { hasText: text });
+      const goOn = chat.locator(".chatLimitActions").getByRole("button", { name: "Continue", exact: true });
+      const input = page.getByRole("combobox", { name: "Message AI" });
+      // The one Continue there is sits under the conversation's last reply.
+      const onlyUnderLast = async (last, what) => {
+        await until(async () => (await goOn.count()) === 1, { what: `one Continue, ${what}` });
+        assertEq(await reply(last).locator(".chatLimitActions").count(), 1, `Continue is under the last reply, ${what}`);
+      };
+
+      // The pill says which limit and where to lift it.
+      await pill("Stopped at the tool-round limit").click();
+      await note("used its 32 tool rounds").waitFor();
+      assert((await note("used its 32 tool rounds").innerText()).includes("Settings / AI / Tool usage / Tool limits"),
+        "the pill names where the limit is set");
+
+      // The chat never speaks in the user's name by itself, nor over a draft.
+      await goOn.waitFor();
+      assertEq(bodies.length, 0, "nothing was sent for the user");
+      await input.fill("x");
+      await until(async () => (await goOn.count()) === 0, { what: "a draft hides Continue" });
+      await input.fill("");
+      await goOn.waitFor();
+
+      // Continue after a limit: a new message, with a fresh budget.
+      await goOn.click();
+      await until(() => bodies.length === 1, { what: "Continue sends a message" });
+      assertEq(bodies[0].prompt, "Please continue where you stopped.");
+      assertEq(bodies[0].tool_rounds, 32);
+      assertEq(bodies[0].tool_rounds_unlimited, undefined, "Unlimited is off");
+      await reply(3).getByText("Renamed the rest.").waitFor();
+      await pill("Stopped at the change limit").click();
+      await note("after 200 changes").waitFor();
+      await onlyUnderLast(3, "after the change limit");
+
+      // Continue after the output cap.
+      await goOn.click();
+      await until(() => bodies.length === 2, { what: "Continue after the output cap" });
+      await reply(5).getByText("Renamed some more").waitFor();
+      await reply(5).locator(".chatCoverage .chatPill", { hasText: "Reply cut off at the output limit" }).waitFor();
+      await onlyUnderLast(5, "after the output cap");
+
+      // A reload keeps both from the saved conversation.
+      await until(async () => (await alice.api("/api/chats/home")).messages?.[5]?.truncated === true,
+        { what: "the cut-off reply is saved" });
+      await page.reload();
+      await reply(5).getByText("Renamed some more").waitFor();
+      await onlyUnderLast(5, "after a reload");
+      await reply(1).locator(".chatCoverage .chatPill", { hasText: "Stopped at the tool-round limit" }).waitFor();
+      assertEq(await reply(1).locator(".chatLimitActions").count(), 0, "an earlier reply offers no Continue");
+
+      // Unlimited rounds: the request says so, and the running reply has a
+      // row in Background tasks whose Stop ends it.
+      await alice.api("/api/prefs/profile", { method: "PATCH", body: { set: { toolRoundsUnlimited: true } } });
+      await page.reload();
+      await until(async () => (await page.evaluate(() => localStorage.getItem("gamma-ai-tool-rounds-unlimited"))) === "1",
+        { what: "the profile's Unlimited rounds reaches the page" });
+      await goOn.click();
+      await until(() => bodies.length === 3, { what: "Continue under Unlimited" });
+      assertEq(bodies[2].tool_rounds_unlimited, true);
+      assertEq(bodies[2].tool_rounds, 32, "the number is kept for when Unlimited is off");
+      await page.click("button[aria-label='Background tasks']");
+      const tray = page.locator(live(".tasksPopover"));
+      const task = tray.locator(live(".taskRow"), { hasText: "AI reply — Rename every page to AuthorYear" });
+      await task.waitFor();
+      assert((await task.innerText()).includes("Unlimited rounds"), "the row says why it is there");
+      await task.locator('button[aria-label^="Stop AI reply"]').click();
+      await until(async () => (await reply(7).innerText()).includes("(stopped)"), { what: "the reply ends stopped" });
+      await task.waitFor({ state: "detached" });
+      await page.waitForTimeout(300);
+      assertEq(await goOn.count(), 0, "Stop is no limit: no Continue");
+      assertNoProblems(page);
+    } finally {
+      release();
+      await ctx.close();
+      await alice.api("/api/prefs/profile", { method: "PUT", body: { value: profile || {} } });
+      await alice.api("/api/chats/home", { method: "PUT", body: { title: homeTitle || "", messages: [] } });
+    }
+  });
+
   await step("chat navigation: in the background the Connector takes a blocked fetch unasked; a reply's papers save to the library", async () => {
     const HID = "e2eHandoffBackground1";
     const handoff = { id: HID, host: "www.worldscientific.com", wall: "captcha", source: "doi:10.1142/e2e.bg" };
@@ -1458,6 +1576,155 @@ export async function chatNavigationScenarios(env) {
       await alice.api("/api/prefs/profile", { method: "PUT", body: { value: profile || {} } });
       await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
       if (!(await gone())) await alice.api(`/api/folders/${folder}`, { method: "DELETE" });
+    }
+  });
+
+  await step("chat navigation: renaming several pages asks once on one card that lists them, and its row folds out to the pages and reverts them together", async () => {
+    const names = ["one", "two", "three"];
+    const pages = [];
+    for (const name of names) pages.push(await alice.api("/api/pages", { method: "POST", body: { title: `E2E batch ${name}` } }));
+    const [one, two, three] = pages;
+    await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
+    const ctx = await alice.context(browser);
+    await fakeAiModels(ctx);
+    await ctx.addInitScript(() => {
+      localStorage.setItem("gamma-ai-login-check", "off");
+      window.chatBodies = [];
+      window.approvalAnswers = [];
+      const fetch = window.fetch.bind(window);
+      window.fetch = (input, init) => {
+        const url = String(input);
+        if (url.endsWith("/api/ai/chat")) {
+          window.chatBodies.push(JSON.parse(init.body));
+          return Promise.resolve(new Response(new ReadableStream({
+            start(controller) {
+              window.chatStream = {
+                push: (event) => controller.enqueue(new TextEncoder().encode(JSON.stringify(event) + "\n")),
+                finish: () => controller.close(),
+              };
+            },
+          }), { headers: { "Content-Type": "application/x-ndjson" } }));
+        }
+        if (url.includes("/api/ai/approvals/")) {
+          window.approvalAnswers.push({ id: decodeURIComponent(url.split("/").pop()), ...JSON.parse(init.body) });
+          return Promise.resolve(new Response(JSON.stringify({ ok: true }), { headers: { "Content-Type": "application/json" } }));
+        }
+        return fetch(input, init);
+      };
+    });
+    const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
+    const push = (event) => page.evaluate((e) => window.chatStream.push(e), event);
+    const input = page.getByRole("combobox", { name: "Message AI" });
+    const send = async (text, n) => {
+      await input.fill(text);
+      await input.press("Enter");
+      await until(() => page.evaluate((count) => window.chatBodies.length === count && !!window.chatStream, n), { what: `message ${n} is sent` });
+    };
+    const finish = () => page.evaluate(() => { window.chatStream.finish(); window.chatStream = null; });
+    const card = page.locator(".chatApproval");
+    const rename = (p, title) => alice.api(`/api/blocks/${p.id}`, { method: "PUT", body: { content: title } });
+    const titles = async () => JSON.stringify(await Promise.all(pages.map((p) => alice.api(`/api/blocks/${p.id}`).then((b) => b.content))));
+    // What the agent's rename_page call recorded: each page as the one-page action names it, and the revert.
+    const to = (i) => `E2E batch ${i + 1}`;
+    const items = pages.map((p, i) => ({ page_id: p.id, title: `E2E batch ${names[i]}`, from: `E2E batch ${names[i]}`, to: to(i) }));
+    const revert = { pages: pages.map((p, i) => [p.id, "title", `E2E batch ${names[i]}`, to(i)]) };
+    // The rename as the library chat's saved reply keeps it, once its marks are as wanted.
+    const savedAs = ({ reverted, kept }) => until(async () => {
+      const chat = await alice.api("/api/chats/home");
+      const action = chat.messages.find((m) => m.role === "ai")?.actions?.find((a) => a.tool === "rename_page");
+      return action && action.reverted === reverted && action.kept === kept && action.revert?.pages?.length === 3;
+    }, { what: `the saved reply marks the rename ${reverted ? "reverted" : "not reverted"}, ${kept || 0} kept` });
+    try {
+      await input.waitFor();
+      await page.waitForLoadState("networkidle");
+      await send("Rename the three batch pages", 1);
+
+      // One card for the call: its pages counted, one line each, the one it leaves out named.
+      await push({ step: { id: "c-b1", tool: "rename_page", args: {}, items: 3 } });
+      await page.locator(".chatSteps").getByText("Renaming 3 pages…").waitFor();
+      await push({ approval: { id: "b1", call_id: "c-b1", tool: "rename_page", perm: "rename", args: {}, timeout: 600,
+        preview: { count: 3, diff: names.flatMap((name, i) => [...(i ? [["ctx", "\n"]] : []), ["ctx", "E2E batch "], ["del", name], ["ins", String(i + 1)]]),
+          left_out: ["zzz"], left_out_count: 1, same_count: 0, digest: "0123456789abcdef" } } });
+      await card.getByText("Rename 3 pages", { exact: true }).waitFor();
+      assert((await card.innerText()).includes("Approval needed · Rename pages"), "the card names the permission");
+      assertEq(await card.locator(".chatApprovalNote").innerText(), "1 page is left out: zzz");
+      assertEq((await card.locator(".chatApprovalDiff").innerText()).split("\n").length, 3, "one line per page");
+      assertEq(JSON.stringify(await card.locator(".chatApprovalDiff del").allInnerTexts()), JSON.stringify(names));
+      for (const name of ["Allow once", "Allow in this chat", "Always allow", "Don't allow"]) {
+        assertEq(await card.getByRole("button", { name, exact: true }).count(), 1, `the card offers ${name}`);
+      }
+      if (flags.keep) await card.screenshot({ path: `${server.dir}/approval-batch.png`, animations: "disabled" });
+      await card.getByRole("button", { name: "Allow once", exact: true }).click();
+      await card.getByText("Allowed. The assistant goes on…").waitFor();
+      await page.locator(".chatSteps").getByText("Renaming 3 pages…").waitFor();
+      assertEq(JSON.stringify(await page.evaluate(() => window.approvalAnswers)), JSON.stringify([{ id: "b1", decision: "once" }]));
+
+      // The renames the tool made, and its row: one for the call, its pages folded under it.
+      for (const [i, p] of pages.entries()) await rename(p, to(i));
+      await push({ action: { kind: "rename", tool: "rename_page", summary: "Renamed 3 pages", changes: 3, items, revert,
+        args: {}, result: "ok — renamed 3 pages.", approval: "once" } });
+      await until(async () => !(await card.count()), { what: "the card goes once the call ran" });
+      await push({ delta: "Renamed the three pages." });
+      await finish();
+      const changes = page.locator(".chatChanges", { hasText: "Changed in your library · 3" });
+      await changes.waitFor();
+      await until(async () => !(await page.getByRole("button", { name: "Stop generating", exact: true }).count()));
+      const row = changes.locator(".chatChange");
+      assertEq(await row.count(), 1, "one call is one row");
+      assertEq((await row.locator(".chatChangeText").innerText()).split("\n")[0], "Renamed 3 pages");
+      const links = row.locator(".chatChangeItems .chatChangeLink");
+      assertEq(await links.first().isVisible(), false, "the pages start folded");
+      await row.getByText("Show the pages", { exact: true }).click();
+      await links.nth(2).waitFor();
+      assertEq(JSON.stringify(await links.allInnerTexts()), JSON.stringify(["E2E batch 1", "E2E batch 2", "E2E batch 3"]));
+      assertEq(JSON.stringify(await row.locator(".chatChangeItems .chatChangeOld").allInnerTexts()),
+        JSON.stringify(["E2E batch one", "E2E batch two", "E2E batch three"]));
+      if (flags.keep) await changes.screenshot({ path: `${server.dir}/changes-batch.png`, animations: "disabled" });
+
+      // Page one was renamed by hand since: the revert puts the other two back, leaves it and says so.
+      await rename(one, "E2E batch hand");
+      await row.getByRole("button", { name: "Revert this change" }).click();
+      await row.filter({ hasText: "Reverted" }).waitFor();
+      const note = changes.locator(".chatRevertAsk");
+      await note.filter({ hasText: "1 of these pages changed since, or was deleted, and was left as it is." }).waitFor();
+      assertEq(JSON.stringify(await note.getByRole("button").allInnerTexts()), JSON.stringify(["Dismiss"]), "nothing to force");
+      assertEq(await titles(), JSON.stringify(["E2E batch hand", "E2E batch two", "E2E batch three"]));
+      await savedAs({ reverted: true, kept: 1 });
+      // The next request tells the model, without the per-page lists.
+      await send("Thanks", 2);
+      const sent = (await page.evaluate(() => window.chatBodies.at(-1).history)).find((m) => m.role === "ai").actions
+        .find((a) => a.tool === "rename_page");
+      assert(sent.reverted === true && sent.kept === 1 && !("revert" in sent) && !("items" in sent),
+        "the replay carries the marks and the count, not the pages");
+      await push({ delta: "You're welcome." });
+      await finish();
+      await until(async () => !(await page.getByRole("button", { name: "Stop generating", exact: true }).count()));
+
+      // Redo renames the two again and leaves page one: the Reverted mark goes, and the count stays, now the redo's.
+      await row.getByRole("button", { name: "Redo this change" }).click();
+      await row.getByRole("button", { name: "Revert this change" }).waitFor();
+      assertEq(await row.filter({ hasText: "Reverted" }).count(), 0, "a redone change is not marked");
+      await note.filter({ hasText: "1 of these pages changed since, or was deleted, and was left as it is." }).waitFor();
+      assertEq(await titles(), JSON.stringify(["E2E batch hand", "E2E batch 2", "E2E batch 3"]));
+      await savedAs({ kept: 1 });
+
+      // Every page renamed by hand since: nothing is written, the row says so and stays revertible.
+      await rename(two, "E2E batch hand 2");
+      await rename(three, "E2E batch hand 3");
+      await row.getByRole("button", { name: "Revert this change" }).click();
+      const ask = changes.locator(".chatRevertAsk", { hasText: "These 3 pages changed since, or were deleted, and were left as they are." });
+      await ask.waitFor();
+      assertEq(JSON.stringify(await ask.getByRole("button").allInnerTexts()), JSON.stringify(["Dismiss"]), "nothing to force");
+      assertEq(await row.filter({ hasText: "Reverted" }).count(), 0, "a revert that wrote nothing is not marked");
+      assertEq(await titles(), JSON.stringify(["E2E batch hand", "E2E batch hand 2", "E2E batch hand 3"]));
+      await savedAs({ kept: 1 }); // as the redo left it
+      await ask.getByRole("button", { name: "Dismiss", exact: true }).click();
+      await until(async () => !(await ask.count()) && row.getByRole("button", { name: "Revert this change" }).isEnabled(),
+        { what: "the row stays revertible once the note is dismissed" });
+      assertNoProblems(page, ["POST /api/ai/revert -> 409"]); // every page kept, answered above
+    } finally {
+      await ctx.close();
+      await alice.api("/api/chats/home", { method: "PUT", body: { messages: [] } });
     }
   });
 

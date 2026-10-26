@@ -160,7 +160,7 @@ Ask Codex to find a page, search a topic, or summarize notes. Tools available:
 | Tool | Content |
 | --- | --- |
 | `list_folders` | The folder tree, each folder with its id, its path ("a / b") and its direct and total page counts (empty folders too); pages in no folder |
-| `list_pages` | Page IDs/titles, folders (paths), labels, attachment metadata; filters by folder (a path or an id), label, title |
+| `list_pages` | Page IDs/titles, folders (paths), labels, attachment metadata; filters by folder (a path or an id), label, title; most recently added first, in batches (`limit`, `after`) |
 | `search_library` | Full-text note and PDF matches, with source locations |
 | `read_page` | Notes, highlights, properties, and windowed PDF text |
 | `read_block` | One block/subtree or a page's nested note outline |
@@ -262,8 +262,9 @@ is supplied; it does not track the user's active tab or PDF scroll position.
 A folder-share link (a `?share=` token naming a folder, [api.md](api.md)
 "Shares") resolves to the folder — by its id, the reference carrying the
 folder's path as its `title` and a `?ws=…&folder=<id>` URL — and answers
-with `list_pages` over it (scope `{"type": "folder", "folder": <id>}`): the
-pages the share view lists, with the page URL template for citing them. A
+with `list_pages(folder=<id>)` in the workspace scope, so the call its
+result names for the next batch lists the same folder: the pages the share
+view lists, with the page URL template for citing them. A
 share whose folder is gone fails as unavailable. With `&page=` beside the
 token it reads that page instead, refused unless the page is filed in the
 folder or below it.

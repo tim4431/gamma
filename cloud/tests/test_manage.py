@@ -96,6 +96,7 @@ def test_settings_command(capsys):
     manage.main(["settings"])
     out = capsys.readouterr().out
     assert "registration           invite" in out and "turnstile_secret       (not set)" in out
+    assert "invitation_signup      operator" in out
     manage.main(["settings", "registration", "open"])
     out = capsys.readouterr().out
     assert "registration           open" in out and "warning: registration is open without Turnstile" in out
@@ -107,6 +108,11 @@ def test_settings_command(capsys):
     with pytest.raises(SystemExit) as e:
         manage.main(["settings", "registration", "nonsense"])
     assert "open, invite or closed" in str(e.value)
+    manage.main(["settings", "invitation_signup", "any"])
+    assert "invitation_signup      any" in capsys.readouterr().out and settings.invitation_signup() == "any"
+    with pytest.raises(SystemExit) as e:
+        manage.main(["settings", "invitation_signup", "everyone"])
+    assert "operator or any" in str(e.value)
     with pytest.raises(SystemExit):
         manage.main(["settings", "no_such_key", "x"])  # argparse refuses it
     # a secret is shown as set or not, never printed, and an empty value clears it

@@ -333,8 +333,13 @@ account may have open: `ai_client.MAX_OPEN_CALLS` (6). An open call holds a
 server worker thread for as long as the provider takes, and those threads
 serve every other request too (a PDF page read included). So the seventh is
 refused with `TooManyCalls`, a 429 whose detail points at the translation's
-parallel requests. `open_ai` takes a slot before it connects and returns the
-response wrapped (`_OpenCall`), which frees the slot when it is closed. Every
+parallel requests and whose `Retry-After` (`CALL_RETRY_AFTER`, 5 s) the PDF
+translator waits out. A caller on a thread of its own may wait for a slot
+instead (`slot_wait`, seconds, on `open_ai` and `call_ai`): the translator's
+stream and the calls that ask the model again do
+([translation.md](translation.md) "The server"). `open_ai` takes a slot
+before it connects and returns the response wrapped (`_OpenCall`), which
+frees the slot (and wakes a caller waiting for one) when it is closed. Every
 caller closes its response when the reply ends or fails, a stream's
 generator also when its client goes away; a response dropped unread frees
 its slot when it is collected, and a failed connect at once. Both refusals
@@ -589,16 +594,19 @@ figure, and advice that depends on whether the reply had tools
 (`chat/coverage.js`); "PDF file not accepted — sent as text" when the file
 was requested but the provider took text instead, and "PDF too large to
 attach" or "PDF file unavailable" when `native_skipped` says it never went.
-Three more pills per
+Four more pills per
 reply: "Earlier messages left out: N" (the stream's `{"trimmed": {turns}}`
 line, see "Fitting the window"), "PDF passage shortened: first 12,000 of
-31,400 characters sent" (`{"shortened"}`, see "Selected PDF passages") and
+31,400 characters sent" (`{"shortened"}`, see "Selected PDF passages"),
 "Reply cut off at the output limit"
 (`{"truncated": true}`: the provider's stop reason was `max_tokens`,
 `length`, `max_output_tokens` or the Responses API's `incomplete`
 (`ai_protocols.base.TRUNCATED_STOPS`) — `Protocol.events` ends every
 stream with `("stop", reason)`, `ai_protocols.base.truncated_stop` reads
-it; the agent loop stops there rather than run a half-written tool call).
+it; the agent loop stops there rather than run a half-written tool call),
+and "Stopped at the tool-round limit", "Stopped at the change limit" or
+"Stopped: the conversation is full" (`{"limit"}`, see "The tool loop").
+That pill and the output-limit one offer Continue.
 `/api/ai/models` marks each model `native_pdf`, its protocol's flag. Every
 protocol takes PDFs today, the ChatGPT sign-in included
 ([research note](../research/chatgpt-pdf-input.md)). The composer's
@@ -728,9 +736,11 @@ costs the cache the rest of the prefix, so nothing is touched until the
 results outgrow the budget, then `elide_live_results` turns the oldest
 rounds' results into the replay's stub, the last `LIVE_KEEP_ROUNDS`
 rounds always whole; a `too_long` mid-reply keeps only the last round's
-results and retries once. The native-PDF fallback (a 4xx on a request
-with file parts is retried as text) no longer remembers a provider as
-refusing files when the failure was the size.
+results and retries once; refused again, the reply ends there with
+`{"limit": {"kind": "window"}}` and Continue ("The tool loop"). The
+native-PDF fallback (a 4xx on a request with file parts is retried as
+text) no longer remembers a provider as refusing files when the failure
+was the size.
 
 ### Reasoning effort
 
@@ -1311,11 +1321,18 @@ interactive PDF saves. Plus:
 
 - **Tool rounds** (`gamma-ai-tool-rounds` → request `tool_rounds`, default 32,
   user-tunable 1–100) — provider round-trips one message may use.
+  **Unlimited rounds** (`gamma-ai-tool-rounds-unlimited` → request
+  `tool_rounds_unlimited: true`) lifts them and the change limit for a
+  streamed reply ("The tool loop").
 - **Read window** (`gamma-ai-read-chars` → request `read_char_limit`, default
   20 000) — the most document text one `read_page` call may return, and the
   cap on the notes it shows; long papers are read in windows of this size.
 
 Rounds and the ≤200-mutation ceiling are runaway guards, not workload caps.
+A call that changes several pages counts each one ([ai_tools.md](ai_tools.md)
+"Several pages in one call"). The user may lift both (Unlimited rounds),
+except on a shared AI connection without a daily allowance, unless the
+user is an administrator.
 
 ### Asking before a call (approvals)
 
@@ -1343,7 +1360,10 @@ A call of a tool whose permission is Ask waits for the user
    tool's preview has `title` (the path, the name, or the page's title) and
    a `diff`. A deletion's preview also has the folder's or label's
    `block_id`, `pages` / `page_count`, and a folder's `subfolders` /
-   `subfolder_count`, `chats` and `chat_folders` / `chat_folder_count`.
+   `subfolder_count`, `chats` and `chat_folders` / `chat_folder_count`. A
+   card for a call naming two or more pages has `count`, one `diff` line
+   per page, `left_out` / `left_out_count`, `same_count`, `to` /
+   `new_folder` or `new_labels`, and a `digest`.
 3. The loop waits (`ai_permissions.wait_for`) for `POST
    /api/ai/approvals/{id}` with a decision: `once`, `chat`, `always` or
    `deny`, the last optionally with a `note` saying what to do instead. The
@@ -1355,11 +1375,16 @@ A call of a tool whose permission is Ask waits for the user
    ask-only call is planned again first, and runs only when it still names
    the `block_id` its card showed; otherwise its action is an error chip,
    and the model hears that the folder or label changed while the card
-   waited (`CHANGED_WHILE_ASKING`).
+   waited (`CHANGED_WHILE_ASKING`). A call naming several pages runs with
+   its card's `digest` (`run_agent_tool(…, approved=)`): planned again (a
+   rename, move or label under the write lock), it writes nothing when a
+   listed page or the target changed while the card waited
+   (`ai_tools.BATCH_CHANGED`).
    Declined, or unanswered after `APPROVAL_TIMEOUT` (10 minutes), the call
    is not made. Its action is an error chip with `declined: true` and
    `approval: "deny"` or `"expired"`,
-   plus the page `title`, the `mode` and the `note`. The model is told that
+   plus the page `title`, the `mode`, the `count` (a call naming several
+   pages) and the `note`. The model is told that
    the user declined, and not to retry or work around it. With a note it is
    told to do what the note says instead.
 
@@ -1464,6 +1489,67 @@ have spent — papers saved, web searches used, the works a search already
 listed — lives in one `ai_tools.Tally` behind a lock, so two parallel calls
 cannot take the same last unit of a budget.
 
+**Limits and Continue.** A reply has `tool_rounds` provider turns (0 =
+`MAX_TOOL_ROUNDS`, 32) and may make `MAX_TOOL_ACTIONS` (200) changes. A
+change past that is refused (`ai_tools.CHANGE_LIMIT`: the model is told
+to stop and say what is left), and so is a call that would change more
+pages than are left, whole and before any card. Three stops end the reply with a
+`{"limit": {kind, rounds, changes}}` line:
+
+- `rounds`: the round limit cut the loop. The reply's text then ends
+  "*(stopped: tool-round limit reached)*". The last round's calls ran,
+  but their results reach the model only on the next turn's replay.
+- `changes`: a call was refused at the change limit, or a call naming
+  more pages than the message may still change was refused whole, before
+  any card (its result starts with `CHANGE_LIMIT_PREFIX`), and the model
+  answered.
+- `window`: the provider still called the conversation too long after
+  `_reopen`'s fully elided retry. The text ends "*(stopped: the
+  conversation grew past the model's window)*", and the reply is saved
+  as a reply, never as an error, so the next message replays it.
+
+The chat saves the line on the message as `limit`, and a pill names the
+limit and where to raise it (`chat/coverage.js` `limitNote`). While the
+reply, or one cut off at the output cap (`truncated`), is the
+conversation's last, nothing runs and the composer is empty,
+**Continue** sends "Please continue where you stopped." in the user's
+name (`canContinueAfterLimit`, as the handoff card's Continue). It is a
+new message, so budgets start fresh, and the stopped reply's calls are
+replayed compactly (arguments cut at `_ARG_CAP`, results under
+`TOOL_REPLAY_BUDGET`, and only the newest `REPLAY_CALLS`, below). So
+after the window stopped a reply, the task and the newest work still
+fit. Stop and errors offer no Continue.
+
+**Unlimited rounds** (`tool_rounds_unlimited`; `AgentLoop(unbounded=True)`)
+lifts the round and change limits. It applies to a streamed request
+only, since nothing could stop a non-streamed one. On a shared AI
+connection it applies only under a daily allowance or for an
+administrator: with none, the per-message limits are all that bound a
+member's reply on the admin's key. Otherwise the `limit` line says
+`withheld: true`, and the pill says why. Under Unlimited the loop ends
+when:
+
+- the model answers;
+- the user presses Stop, there or in Background tasks, where the chat
+  lists a running Unlimited reply, or the connection drops (below);
+- the conversation outgrows the window (`window` above);
+- a shared allowance is used up (checked before every turn).
+
+What still applies: the per-message caps on saved papers (`MAX_SAVES`,
+20) and web searches (`MAX_WEB_SEARCHES`, 10), a helper's own
+`HELPER_ROUNDS`, approval cards (one nobody answers declines after 10
+minutes and the run goes on), and one provider call slot at a time.
+
+**Stop.** The stream's `stopped` event is set the moment the client
+leaves (`WatchedStream`). The relay closes the loop at its next line.
+The loop also checks `stopped` at every event a provider turn streams
+and before it opens another, and a `read_paper` helper's loop gets the
+same event. So after Stop the turn streaming ends at its next event, no
+further turn opens, the loop's or a helper's, and only the calls
+already running finish: the round's reads (up to 4, a helper's read in
+flight included) or the one change. A waiting card or paper wait
+returns at once.
+
 Every tool call is announced by a `{"step": {id, tool, args}}` line before
 it runs; a batch sends one step with `batch: n` (and `tools` when they are
 not all the same tool), which the chat reads as "Fetching 4 documents…". A
@@ -1475,6 +1561,9 @@ helper's state changes ([ai_tools.md](ai_tools.md#read_paper)).
 The step's `args` are only the short ones the running label reads
 (`ai_agent.STEP_ARGS`: `page_id`, `block_id`, `query`, `title`, `folder`,
 `label`, `source`, `pdf_page`, `mode`, `question`), never a note's content.
+A call naming several pages adds `items` (how many) to its step, and one
+naming a single page lifts that page's `page_id` / `title` into `args`;
+the label reads "Renaming 37 pages…".
 Once it ran, the call streams back as an
 `{"action": {kind, summary, tool, args, result}}` NDJSON line (kinds
 list/read/view/search/rename/move/edit/create, plus `error` with `error: true` for
@@ -1486,8 +1575,12 @@ The folder and label tools carry `title` (the folder's path, the label's
 name, or the labelled page's title), `from` / `to` on a rename, `added` /
 `removed` on `label_page`, and `count` (pages refiled), `chats` (a
 folder's) and `revert` on a deletion ([ai_tools.md](ai_tools.md) "Folders
-and labels" and "delete_folder / delete_label"). A change tool that changed
-nothing carries `noop: true`.
+and labels" and "delete_folder / delete_label"). A call naming several
+pages carries `changes`, `items` and (rename, move, label) `revert`
+instead of one page's fields; rename_page, move_page and label_page carry
+`revert` for one page too. A change tool that changed
+nothing carries `noop: true`. A reply a limit stopped ends with a
+`{"limit"}` line (see above).
 
 The chat shows a reply's actions as one pill ("6 steps · listed, read 1
 page · 1 failed", `chat/agentSteps.js`). It expands to every call's chip:
@@ -1513,7 +1606,9 @@ the document, then what its helper is doing now (`helperStatus`, from the
 of kind `helper`: it has its own icon, counts the helper's calls beside
 its summary, adds "used 1 helper" to the pill, and expands to those calls
 (`children`). Only
-applied mutations count against `MAX_TOOL_ACTIONS` and trigger the
+applied mutations count against `MAX_TOOL_ACTIONS` — each page of a call
+that changed several; the loop puts what is left on the scope
+(`changes_left`) for the call and its card — and trigger the
 home-feed refresh (`onLibraryChange`), and
 the note-block tools' actions carry `page_id`/`src_page_id` so the frontend
 reloads the open page's block tree when the AI touched it (`onNotesChange`;
@@ -1589,12 +1684,20 @@ request to read, show or check something is answered from a fresh call, not
 last turn's outline (the agent's own edits change what `read_block`
 returns). A change the user reverted from its row (`reverted` on the
 action) gets a second note in front, `_REVERTED_NOTE`: the change is
-undone ([ai_tools.md](ai_tools.md) "Reverting a note change"). Results share `TOOL_REPLAY_BUDGET` chars newest-first
-(older ones elided), and `_messages` in `ai_protocols/anthropic.py` folds a plain user turn into a
+undone — or, with `kept` on the action (a page tool's revert that left
+pages changed since), undone except on that many pages
+(`_REVERTED_KEPT_NOTE`). A redo that left pages as they were keeps
+`kept` without the mark, and the note says it was redone except on those
+(`_REDONE_KEPT_NOTE`) ([ai_tools.md](ai_tools.md) "Reverting a note change"). Results share `TOOL_REPLAY_BUDGET` chars newest-first
+(older ones elided). A reply replays at most its newest `REPLAY_CALLS`
+(200) calls. The older ones become one line in front of them, how many
+by tool (`_OMITTED_CALLS`): an Unlimited reply that filled the window
+made thousands, and replaying them all would fill the next message's
+window too. `_messages` in `ai_protocols/anthropic.py` folds a plain user turn into a
 preceding tool_result turn to keep roles alternating. The client sends
 only what is replayed — each turn's `role`, `text` and `actions`, never
 the pictures, coverage and counts saved with it, nor the texts an action
-keeps for reverting (`revert`). Plain chats never replay
+keeps for reverting (`revert`), nor a batch's per-page `items`. Plain chats never replay
 (providers reject tool blocks without tool defs). Renamed tools replay under
 their current name (`ai_context.DEPRECATED_TOOLS`, e.g. the saved
 `search_pdfs` chips of old chats become `search_library` calls), and a model

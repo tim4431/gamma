@@ -5,7 +5,10 @@
   leads with it (``cloud.lead``: a hosted container or a share host, whose
   people all come from Gamma Cloud), whether a newcomer's cloud sign-in
   asks to join (``cloud.join_requests``: the ``invited`` policy,
-  gamma/join_requests.py), whether guests may
+  gamma/join_requests.py), whether invitations by e-mail can be sent
+  (``cloud.email_invites: {server, members}``, gamma/email_invites.py
+  ``available``: an admin's to this server, a member's to a workspace or a
+  share), whether guests may
   sign in, for how long (``guest_ttl_hours``), whether a guest starts with
   the ``GAMMA_GUEST_SEED`` library (``guest_seeded``) and ``demo`` mode
   (docs/dev/guests.md) — and ``page_host``, the per-account page hostname
@@ -13,8 +16,10 @@
   opened on a page host (gamma/publish.py) — and, for a hosted container
   (gamma/hosted.py), ``read_only`` and ``hosted: {plan, status}`` (null
   elsewhere, or before the first sync);
-- ``GET /api/auth/cloud/start?next=&link=1`` → redirect to the account
-  server (``link=1`` with a session attaches the identity to that account);
+- ``GET /api/auth/cloud/start?next=&link=1&invite=`` → redirect to the
+  account server (``link=1`` with a session attaches the identity to that
+  account; ``invite``, the link id of an invitation by e-mail whose mailed
+  link led here, admits the sign-in, gamma/email_invites.py);
 - ``GET /api/auth/cloud/callback?code=&state=`` → session cookie + redirect
   to ``next``, or back to ``next`` signed out with ``?cloud_error=``; the
   preference profile is pulled before the redirect and this server put on
@@ -23,7 +28,7 @@
   with ``?cloud_join=sent|waiting|declined`` (gamma/join_requests.py). A
   sign-in the desktop app started instead sends the browser to the app's
   loopback address with ``?result=`` or ``?error=``, and sets no cookie;
-- ``POST /api/auth/cloud/app-start`` ``{next, link, return_to, challenge}``
+- ``POST /api/auth/cloud/app-start`` ``{next, link, return_to, challenge, invite?}``
   → ``{url}``: the desktop app's sign-in, which it opens in the system
   browser; ``POST /api/auth/cloud/app-claim`` (a form: ``result``,
   ``verifier``, from the app's window with ``X-Gamma-Desktop: claim``) →
@@ -53,7 +58,7 @@ from fastapi import APIRouter, Form, HTTPException, Request
 from fastapi.responses import JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
-from .. import cloud_auth, cloud_sync, config, guests, hosted, join_requests, ratelimit, server_settings
+from .. import cloud_auth, cloud_sync, config, email_invites, guests, hosted, join_requests, ratelimit, server_settings
 from ..auth import require_admin, require_personal_user_id, require_user_id, set_session_cookie
 from ..cloud_auth import CloudAuthError
 from ..db import connect_users_db
@@ -69,8 +74,10 @@ def server_config():
     enabled = cfg["enabled"] and not cloud_auth.needs_connect()  # an unconnected server offers no cloud button
     plan = hosted.limits()
     lead = enabled and (config.hosted() or cfg["share_host"])
+    mail = email_invites.available()
     return {"cloud": {"enabled": enabled, "issuer": cfg["issuer"] if enabled else "", "lead": lead,
-                      "join_requests": enabled and cfg["policy"] == "invited"},
+                      "join_requests": enabled and cfg["policy"] == "invited",
+                      "email_invites": {"server": mail["server"], "members": mail["members"]}},
             "password_login": True, "registration": False, "guest": guests.logins_open(),
             "guest_ttl_hours": server_settings.guest_ttl_hours(), "demo": server_settings.demo_mode(),
             "guest_seeded": bool(config.guest_seed_path()), "page_host": config.page_host_pattern(),
@@ -79,7 +86,7 @@ def server_config():
 
 
 @router.get("/api/auth/cloud/start")
-def cloud_start(request: Request, next: str = "/", link: str = ""):
+def cloud_start(request: Request, next: str = "/", link: str = "", invite: str = ""):
     ratelimit.check(f"cloud-start:ip:{ratelimit.client_ip(request)}", 30, 600)
     link_user = None
     if link:
@@ -87,7 +94,7 @@ def cloud_start(request: Request, next: str = "/", link: str = ""):
         if request.state.is_guest:
             raise HTTPException(403, "The guest account cannot be linked.")
     try:
-        url = cloud_auth.begin(request, link_user=link_user, next_path=cloud_auth.safe_next(next))
+        url = cloud_auth.begin(request, link_user=link_user, next_path=cloud_auth.safe_next(next), invite=invite)
     except CloudAuthError as e:
         if str(e) == cloud_auth.NOT_CONNECTED:  # a page to show it on, not an error body
             return _back(cloud_auth.safe_next(next), cloud_error=str(e))
@@ -108,6 +115,7 @@ class AppStartRequest(BaseModel):
     link: bool = False
     return_to: str = Field(max_length=256)  # the app's loopback address (cloud_auth.app_return)
     challenge: str = Field(max_length=64)   # S256 of the verifier the app keeps
+    invite: str = Field("", max_length=64)  # the link id of the invitation by e-mail that started it (email_invites.py)
 
 
 @router.post("/api/auth/cloud/app-start")
@@ -125,7 +133,8 @@ def cloud_app_start(payload: AppStartRequest, request: Request):
     except CloudAuthError as e:
         raise HTTPException(400, str(e))
     try:
-        url = cloud_auth.begin(request, link_user=link_user, next_path=cloud_auth.safe_next(payload.next), app=app)
+        url = cloud_auth.begin(request, link_user=link_user, next_path=cloud_auth.safe_next(payload.next), app=app,
+                               invite=payload.invite)
     except CloudAuthError as e:
         raise HTTPException(503, str(e))
     return JSONResponse({"url": url}, headers={"Cache-Control": "no-store"})
@@ -148,7 +157,7 @@ def cloud_callback(request: Request, code: str = "", state: str = "", error: str
     try:
         claims, tokens, next_path = cloud_auth.exchange(request, code=code, pending=pending)
         refresh = claims["_refresh_token"] = tokens.get("refresh_token", "")
-        user_id, _username = cloud_auth.resolve_account(claims)
+        user_id, _username = cloud_auth.resolve_account(claims, cloud_auth.callback_base(request))
     except cloud_auth.NotInvited as e:
         # nothing admits this cloud account here: its sign-in asks to join instead
         cloud_auth.revoke_later([refresh])

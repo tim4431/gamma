@@ -2663,7 +2663,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     metaPrompt, setMetaPrompt, citePrompt, setCitePrompt,
     chatContextChars, setChatContextChars, metaContextChars, setMetaContextChars,
     multiContextChars, setMultiContextChars,
-    toolRounds, setToolRounds, agentReadChars, setAgentReadChars, agentPerms, setAgentPerms,
+    toolRounds, setToolRounds, toolRoundsUnlimited, setToolRoundsUnlimited,
+    agentReadChars, setAgentReadChars, agentPerms, setAgentPerms,
     agentEnabled, setAgentEnabled,
     chatImgAutoClear, setChatImgAutoClear, chatPictures, setChatPictures,
     fetchInBackground, setFetchInBackground, delegateReads, setDelegateReads,
@@ -3422,20 +3423,36 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           info: reading ? t("reading the paper…") : `${Math.round(st.progress * 100)}%`, fraction: st.progress,
         });
       } else {
-        const full = st.progress >= 0.999;
-        updateTask(transTaskRef.current, { state: "done", info: full ? "100%" : t("stopped at {progress}%", { progress: Math.round(st.progress * 100) }) });
+        // The job's end: stopped by a request that kept failing (its
+        // reason), or done with paragraphs the server could not translate,
+        // which the next job asks for again ("Try again").
+        const stopped = t("stopped at {progress}%", { progress: Math.round(st.progress * 100) });
+        const left = st.error == null ? st.untranslated || 0 : 0;
+        updateTask(transTaskRef.current, { state: "done", info: st.error != null ? stopped
+          : left ? tn("{n} paragraph untranslated", "{n} paragraphs untranslated", left)
+            : st.progress >= 0.999 ? "100%" : stopped });
         transTaskRef.current = null;
+        if (st.error != null) {
+          setStatus(st.error ? t("Translation failed: {message}", { message: st.error })
+            : t("Translation failed — click the button to retry."));
+        } else if (left) {
+          setStatus(tn("{n} paragraph could not be translated and still shows the original.",
+            "{n} paragraphs could not be translated and still show the original.", left),
+          { label: t("Try again"), run: () => pdfTranslateCtl.current?.retryUntranslated() });
+        }
       }
     }
   }
-  // One chunk of paragraphs → translations, a single provider call. All the
-  // chunking, queueing and parallelism live in the viewer's engine; this is
-  // just the HTTP wrapper carrying the language/model/effort settings.
-  // Throws on failure, already surfaced on the status pill with the server's
-  // reason (a 429 of the shared AI allowance says what to do): the engine
-  // retries a chunk once before failing the job, the selection popup shows
-  // the reason. `signal` is the job's AbortController: halting cancels the
-  // requests still in flight.
+  // One chunk of paragraphs → the server's final reply ({translations,
+  // failed, …}), a single provider call. All the chunking, queueing and
+  // parallelism live in the viewer's engine; this is just the HTTP wrapper
+  // carrying the language/model/effort settings. Throws on failure with the
+  // server's reason (a 429 of the shared AI allowance says what to do), its
+  // HTTP `status` and `retryAfter` (seconds: the account's AI calls are all
+  // in use): the engine asks again (translatePlan.requestChunk) and reports
+  // a job that still failed through handleTranslateState, the selection
+  // popup shows the reason. `signal` is the job's AbortController: halting
+  // cancels the requests still in flight.
   // The server streams NDJSON: `{i: [indices], text}` as the model writes
   // each paragraph (→ onPartial, the viewer types it onto the page), then
   // the final `{translations}` object.
@@ -3445,37 +3462,32 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // `onStage("brief")` while the request waits for that brief, then
   // `onStage("translate")`.
   async function translateChunk(texts, signal, onPartial, context, onStage) {
-    try {
-      const res = await fetch(`${API}/ai/translate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        signal,
-        body: JSON.stringify({
-          texts, lang: translateLang,
-          model: translateSendModel || "", effort: translateEffort || "",
-          stream: true, ...requestFields(context),
-        }),
-      });
-      if (!res.ok) {
-        let detail = `${res.status} ${res.statusText}`;
-        try { detail = (await res.json()).detail || detail; } catch {}
-        throw new Error(detail);
-      }
-      let final = null;
-      await readNdjson(res, (events) => {
-        for (const ev of events) {
-          if (ev.error) throw new Error(ev.error);
-          else if (ev.translations) final = ev;
-          else if (ev.stage) onStage?.(ev.stage);
-          else if (ev.i && onPartial) for (const i of ev.i) onPartial(i, ev.text);
-        }
-      });
-      return final?.translations || null;
-    } catch (err) {
-      if (err.name !== "AbortError") setStatus(t("Translation failed: {message}", { message: err.message }));
-      throw err;
+    const res = await fetch(`${API}/ai/translate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      signal,
+      body: JSON.stringify({
+        texts, lang: translateLang,
+        model: translateSendModel || "", effort: translateEffort || "",
+        stream: true, ...requestFields(context),
+      }),
+    });
+    if (!res.ok) {
+      let detail = `${res.status} ${res.statusText}`;
+      try { detail = (await res.json()).detail || detail; } catch {}
+      throw Object.assign(new Error(detail), { status: res.status, retryAfter: Number(res.headers.get("Retry-After")) || 0 });
     }
+    let final = null;
+    await readNdjson(res, (events) => {
+      for (const ev of events) {
+        if (ev.error) throw new Error(ev.error);
+        else if (ev.translations) final = ev;
+        else if (ev.stage) onStage?.(ev.stage);
+        else if (ev.i && onPartial) for (const i of ev.i) onPartial(i, ev.text);
+      }
+    });
+    return final;
   }
 
   // POST /metadata/fetch for one page, tracked as a transfer-panel task:
@@ -6389,10 +6401,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function removeShareUser(name) {
     updateShareSettings({ users: (shareSettings?.users || []).filter((u) => u.name !== name) });
   }
-  // People named by Gamma Cloud (docs/dev/api.md "Shares"): an invitation by
-  // cloud username (to view), a waiting one's role changed or withdrawn, a
-  // request to join approved (an invitation by its subject) or declined.
-  // Each answers the share's settings; a refusal shows in the popover.
+  // People with no account here (docs/dev/api.md "Shares"): an invitation by
+  // e-mail (to view; it waits until its mailed link is followed, even when
+  // someone here has that address), a waiting one's role changed, its mail
+  // sent again or withdrawn; a waiting invitation by Gamma Cloud username's
+  // role changed or withdrawn; a request to join approved (an invitation by
+  // its subject) or declined. Each answers the share's settings; a refusal
+  // shows in the popover.
   async function shareCloudCall(path, method, body) {
     if (!shareTarget || !shareSettings?.token) return false;
     try {
@@ -6401,13 +6416,31 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       } : { method }));
       return true;
     } catch (err) {
-      setShareError(err.message); // e.g. "no Gamma Cloud account is named …"
+      setShareError(err.message); // e.g. "That is not an e-mail address."
+      // A 404: what the row names went meanwhile (an invitation accepted,
+      // withdrawn elsewhere or expired), so the row would only fail again.
+      // The people are read again straight into the settings, as
+      // applyShareSettings would also clear the line that says why.
+      if (err.status === 404) {
+        try { setShareSettings(await apiJson(shareApi(shareTarget, "share-settings"))); } catch { /* the line stands */ }
+      }
       return false;
     }
   }
+  const emailInvite = (id) => `/email-invites/${encodeURIComponent(id)}`;
   const shareCloudInvites = {
-    enabled: !!serverConfig?.cloud?.enabled,
-    onInvite: (username) => shareCloudCall("/invites", "POST", { username, role: "view" }),
+    email: !!serverConfig?.cloud?.email_invites?.members,
+    onInviteEmail: async (email) => {
+      const ok = await shareCloudCall("/invites", "POST", { email, role: "view" });
+      if (ok) setStatus(t("Invitation sent to {email}.", { email }));
+      return ok;
+    },
+    onSetEmailRole: (id, role) => shareCloudCall("/invites", "POST", { invitation: id, role }),
+    onResendEmail: async (id) => {
+      const email = shareSettings?.pending?.find((p) => p.id === id)?.email;
+      if (await shareCloudCall(`${emailInvite(id)}/resend`, "POST")) setStatus(t("Sent the invitation to {email} again.", { email }));
+    },
+    onWithdrawEmail: (id) => shareCloudCall(emailInvite(id), "DELETE"),
     onSetRole: (subject, role) => shareCloudCall("/invites", "POST", { subject, role }),
     onWithdraw: (subject) => shareCloudCall(`/invites/${encodeURIComponent(subject)}`, "DELETE"),
     onApprove: (subject) => shareCloudCall("/invites", "POST", { subject, role: "view" }),
@@ -10311,7 +10344,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           openPopover={openPopover} setOpenPopover={setOpenPopover}
           setStatus={setStatus} askConfirm={setConfirmBox}
           organizeFolder={!focusedBlockId && !shareMode ? folderFilter : null}
-          toolRounds={toolRounds} agentReadChars={agentReadChars} agentPerms={agentPerms} setAgentPerms={setAgentPerms} agentSystem={agentSystem}
+          toolRounds={toolRounds} toolRoundsUnlimited={toolRoundsUnlimited} addTask={addTask} removeTask={tasks.removeLocal}
+          agentReadChars={agentReadChars} agentPerms={agentPerms} setAgentPerms={setAgentPerms} agentSystem={agentSystem}
           agentEnabled={agentEnabled} setAgentEnabled={setAgentEnabled}
           fetchInBackground={fetchInBackground} delegateReads={delegateReads}
           paperSave={{ allowOa: oaFallback, saveCopy: pdfSaveLocal, fetchMetadata: metaAutoFetch }}
@@ -11980,6 +12014,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setMultiContextChars,
           toolRounds,
           setToolRounds,
+          toolRoundsUnlimited,
+          setToolRoundsUnlimited,
           agentReadChars,
           setAgentReadChars,
           agentPerms,

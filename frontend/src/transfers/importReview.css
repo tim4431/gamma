@@ -1,5 +1,7 @@
 .reportModal.importReviewModal { width: min(1120px, calc(100vw - 32px)); max-width: 1120px; max-height: calc(100dvh - 48px); }
-.importReviewModal .settingsDialogContent { min-height: 0; overflow-y: auto; }
+/* A row scrolled into view stops above the sticky footer (its padding and
+   button), not under it. */
+.importReviewModal .settingsDialogContent { min-height: 0; overflow-y: auto; scroll-padding-bottom: calc(var(--ctl-btn) * var(--ui-scale, 1) + 24px); }
 .importReviewHeader { margin: 8px 0 16px; }
 .importReviewHeader strong { overflow-wrap: anywhere; }
 .importReviewHeader p, .importDestination { color: var(--text-muted); font-size: var(--fs-sm); margin: 6px 0; }
@@ -13,7 +15,24 @@
 .importTree .importTree { padding-left: 16px; border-left: 1px solid var(--border); margin-left: 7px; }
 .importTree summary { padding: 7px 0; cursor: pointer; overflow-wrap: anywhere; }
 .importTree summary svg { vertical-align: middle; margin: 0 6px 0 2px; }
-.importTreeFile { display: flex; gap: 7px; align-items: flex-start; padding: 8px 0; }
+/* A row's side padding sits in a negative margin, so its text keeps its
+   place and a lit row's fill has room around it — no wider than the 4px a
+   folder's content may overflow (motion.css). */
+.importTreeFile { position: relative; isolation: isolate; display: flex; gap: 7px; align-items: flex-start; padding: 8px 4px; margin: 0 -4px; border-radius: var(--radius-sm); }
+/* The rows of a match chosen (ImportTree's `link`), lit in both columns;
+   the match just shown flashes once, as a landed block row does, on a mark
+   under the row's content. */
+.importTreeFile.linked { background: var(--bg-selected); box-shadow: inset 2px 0 0 var(--accent); }
+.importRowFlash { position: absolute; inset: 0; z-index: -1; border-radius: inherit; pointer-events: none; animation: importRowLanded 1.2s ease-out; }
+@keyframes importRowLanded {
+  0%, 25% { background: color-mix(in srgb, var(--accent) 16%, transparent); }
+  100% { background: transparent; }
+}
+/* A folder on the way to the match shown opens at once (motion.css grows a
+   <details> open): the scroll to the match measures it as it will rest. */
+.importTree details.importTreeReveal::details-content { transition: none; }
+.importRowLink { padding: 0; border: 0; background: none; font-family: inherit; font-weight: inherit; line-height: inherit; color: inherit; text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+@media (hover: hover) { .importRowLink:hover { text-decoration: underline; text-decoration-color: var(--text-muted); } }
 .importTreeFile > svg { flex-shrink: 0; margin-top: 2px; color: var(--text-muted); }
 .importFileText { flex: 1; min-width: 0; overflow-wrap: anywhere; line-height: 1.45; }
 .importFileText small { display: block; color: var(--text-muted); font-size: var(--fs-2xs); margin-top: 3px; }

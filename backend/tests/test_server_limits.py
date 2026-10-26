@@ -8,6 +8,8 @@ import io
 import ipaddress
 import json
 import re
+import threading
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -82,6 +84,7 @@ def test_open_calls_are_capped_and_released(ai_user, upstream, monkeypatch):
     assert r.status_code == 429 and "at once" in r.json()["detail"]
     r = ai_user.post("/api/ai/translate", json={"texts": ["Hallo"], "lang": "en", "stream": True})
     assert r.status_code == 429 and "at once" in r.json()["detail"]
+    assert r.headers["retry-after"] == str(ai_client.CALL_RETRY_AFTER)  # the translator waits that long
 
     # closing one frees its slot; a finished stream gives it back
     held.pop().close()
@@ -119,6 +122,51 @@ def test_a_translation_past_the_cap_is_a_429_not_a_502(ai_user, upstream):
             resp.close()
     r = ai_user.post("/api/ai/translate", json={"texts": ["Guten Tag"], "lang": "en"})
     assert r.status_code == 200 and r.json()["translations"] == ["ok"]
+    assert _in_use() == 0
+
+
+def test_a_call_may_wait_for_a_slot(ai_user, upstream):
+    held = _open(ai_client.MAX_OPEN_CALLS)
+    rt = ai_runtime(account_of("sl_ai"))
+    hi = [{"role": "user", "content": "hi"}]
+    got = []
+    waiter = threading.Thread(target=lambda: got.append(
+        ai_client.open_ai(hi, "", rt["default"], rt, stream=True, slot_wait=30)))
+    waiter.start()
+    try:
+        waiter.join(0.3)
+        assert waiter.is_alive() and not got, "every slot is taken: it waits"
+        held.pop().close()
+        waiter.join(5)
+        assert got and _in_use() == ai_client.MAX_OPEN_CALLS, "the freed slot went to it"
+        held += got
+        # a wait that runs out is refused, like a call that may not wait
+        with pytest.raises(ai_client.TooManyCalls):
+            ai_client.open_ai(hi, "", rt["default"], rt, stream=True, slot_wait=0.2)
+    finally:
+        for resp in held:
+            resp.close()
+    assert _in_use() == 0
+
+
+def test_asking_again_waits_for_the_accounts_slots(ai_user, monkeypatch):
+    # One slot free, and two texts whose reply comes back one short: they
+    # are asked again one per call, two at once. The second waits for the
+    # first's slot instead of being refused and left untranslated.
+    def slow(req, timeout=None):
+        time.sleep(0.2)
+        return io.BytesIO(json.dumps({"content": [{"type": "text", "text": '["ok"]'}],
+                                      "usage": {"input_tokens": 1, "output_tokens": 1}}).encode())
+
+    monkeypatch.setattr(urllib.request, "urlopen", slow)
+    held = _open(ai_client.MAX_OPEN_CALLS - 1)
+    try:
+        r = ai_user.post("/api/ai/translate", json={"texts": ["Erster Absatz", "Zweiter Absatz"], "lang": "en"})
+    finally:
+        for resp in held:
+            resp.close()
+    assert r.status_code == 200
+    assert r.json()["translations"] == ["ok", "ok"] and r.json()["failed"] == []
     assert _in_use() == 0
 
 

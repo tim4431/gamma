@@ -174,8 +174,9 @@ DeepSeek, Kimi, Qwen, GLM, OpenRouter and the custom endpoint sit under the **Ot
 
 On the home page or in a folder, the chat can act on your library: list, read and search the papers in view, rename them, file them into folders, rename folders, make and apply labels, delete a folder or a label (never its pages), search the web for papers and save them, build BibTeX, and edit your notes. On a paper, the same chat reads, searches and edits that paper and its notes.
 
-- **It asks first.** A change shows as a card. **Allow once**, **Allow in this chat**, **Always allow**, or **Don't allow** (with a line on what to do instead). Deleting a folder or a label asks every time: **Allow once** or **Don't allow**.
-- Everything it changed is listed under the reply. A note change, or a deleted folder or label, can be undone there.
+- **It asks first.** A change shows as a card — many pages renamed, filed or labelled together show on one card that lists them all. **Allow once**, **Allow in this chat**, **Always allow**, or **Don't allow** (with a line on what to do instead). Deleting a folder or a label asks every time: **Allow once** or **Don't allow**.
+- Everything it changed is listed under the reply. A note change, a rename, move or label change (one page or many at once), or a deleted folder or label, can be undone there; pages you changed since are left as they are.
+- A reply stops after 32 tool rounds or 200 changes (Settings → AI → Tool usage → Tool limits), or when the conversation is too long for the model; **Continue** under it carries on, as it does under a reply cut off at the output limit. With **Unlimited rounds** it runs until it is done or you press Stop, in its chat or in Background tasks; longer jobs cost more tokens. On a shared AI connection without a daily allowance the usual limits stay, unless you are an administrator.
 - Settings → AI → Tool usage sets each permission below to Allow, Ask or Off (Delete folders and labels: Ask or Off only), for folder, PDF and notes chats separately, with presets from *Read library* to *Allow all*. Reading is allowed by default; anything that changes your library asks.
 - A journal that blocks the server shows a card: open the page in your browser and Gamma Connector sends the PDF back.
 
@@ -184,7 +185,7 @@ On the home page or in a folder, the chat can act on your library: list, read an
 | Permission | Tools | What they do |
 |---|---|---|
 | **Read your library** | | |
-| List pages | `list_pages`, `list_folders`, `list_deleted` | Browse page titles, folders, metadata and Recently deleted (folder chats) |
+| List pages | `list_pages`, `list_folders`, `list_deleted` | Browse page titles, folders, metadata and Recently deleted; a long library in batches (folder chats) |
 | Read pages | `read_page`, `read_chats`, `cite` | Read PDF text, highlights, notes, earlier chats and citation records (metadata, BibTeX) |
 | Read note blocks | `read_block` | Read individual notes and their outline |
 | View pages and handwriting | `view_pdf_page`, `view_ink`, `view_image` | Look at figures, tables, scanned pages, your handwriting and the pictures in your notes |
@@ -195,10 +196,10 @@ On the home page or in a folder, the chat can act on your library: list, read an
 | Use journal sign-ins | | Use the publisher sign-ins Gamma Connector saved when fetching |
 | **Make changes** | | |
 | Save papers | `save_paper` | Add a paper found online to the library |
-| Rename pages | `rename_page` | Change a page's title (folder chats) |
-| Move pages | `move_page` | File a page into a folder (folder chats) |
-| Restore deleted pages | `restore_page` | Bring a page back from Recently deleted (folder chats) |
-| Organize folders and labels | `rename_folder`, `create_label`, `rename_label`, `label_page` | Rename folders, and make, rename and apply labels (folder chats) |
+| Rename pages | `rename_page` | Change pages' titles, many in one call (folder chats) |
+| Move pages | `move_page` | File pages into a folder, many in one call (folder chats) |
+| Restore deleted pages | `restore_page` | Bring pages back from Recently deleted (folder chats) |
+| Organize folders and labels | `rename_folder`, `create_label`, `rename_label`, `label_page` | Rename folders, and make, rename and apply labels — to many pages in one call (folder chats) |
 | Delete folders and labels | `delete_folder`, `delete_label` | Delete a folder or a label, never its pages; always asks, and you can revert it from the reply (folder chats) |
 | Edit note blocks | `edit_block`, `create_block`, `move_block`, `delete_block`, `clip_region` | Create, edit, move and delete notes, transcribe handwriting, and clip a region of a PDF page into a note |
 
@@ -262,7 +263,7 @@ The **link button** in the top bar shares the open page.
 
 - **Share** makes the link. **Copy link** carries the workspace, so a teammate lands in the right library.
 - **Who has access**: invite people by name, each with **View** or **Edit**. They find the page in their Inbox.
-- **Gamma Cloud**: on a server with Gamma Cloud sign-in, the switch beside Who has access invites someone by their Gamma Cloud username, even without an account here yet. They show as **pending** until they sign in with Gamma Cloud, then the page is theirs to open. If someone here already goes by their username, they get a name like *tim-2*, with their Gamma Cloud name shown beside it.
+- **E-mail**: on a server whose Gamma Cloud sign-in allows it, the **This server / E-mail** switch beside Who has access invites someone by their e-mail address, even without an account here yet. Gamma Cloud mails them a link to create a free Gamma Cloud account or sign in with theirs. They show as **invited**, with **View** or **Edit**, a resend and a withdraw button, until they accept; then the page is theirs to open. Only the mailed link lets anyone in, so someone who already has an account here gets the mail too and accepts the same way. If someone here already goes by their Gamma Cloud username, they get a name like *tim-2*, with their Gamma Cloud name shown beside it.
 - **Requests to join**: on a server that admits invited people only, someone who signs in from your link without an invitation asks to join instead. The request heads Who has access with **Approve** and **Decline**, and comes to your Inbox; they sign in again once you approve.
 - **General access**: anyone with the link, signed-in users, or invited people only, with View or Edit for that audience.
 - Editors edit alongside you with live cursors. **Stop sharing** ends the link.
@@ -275,7 +276,7 @@ The **link button** in the top bar shares the open page.
 A workspace is a separate library. The account menu lists yours and switches between them.
 
 - **Personal** workspaces are yours alone; make more for separate projects.
-- **Shared** workspaces are created by an administrator, with **owners**, **editors** and **viewers**.
+- **Shared** workspaces are created by an administrator, with **owners**, **editors** and **viewers**. An owner invites people from the workspace's **Manage** page: an account on this server or, where Gamma Cloud sign-in allows it, an e-mail address, which gets a link to join as an editor or a viewer.
 - Edits and cursors appear live; two people in the same block merge by span.
 - Open tabs, pinned folders and reading positions follow your account across devices.
 
@@ -372,7 +373,7 @@ The first ten are the chat's own reading tools. An assistant never gets the writ
 
 Both are in the **View menu (≡)**, on a page or on the home library (with a folder open, Export takes the whole folder).
 
-- **Import**: a Zotero library (RDF with files: pick or drop the export folder, or a .zip of it), Notability notes, an Obsidian vault or Notion export, Markdown, Logseq, annotations embedded in a PDF, or a Gamma export from another Gamma.
+- **Import**: a Zotero library (RDF with files: pick or drop the export folder, or a .zip of it), Notability notes, an Obsidian vault or Notion export, Markdown, Logseq, annotations embedded in a PDF, or a Gamma export from another Gamma. For a Zotero library, Notability notes, Markdown (an Obsidian vault or Notion export too) or a Gamma export, a review lists what you uploaded beside the library it will make, in the same order, before anything is imported; click a name on either side to find its match on the other.
 - **From Notability**: export the notes with File Format **Note** or **NTB** (in a note: the options icon → Export Options; in the library: press and hold a note → Export Options). Then pick the .note or .ntb files, or a .zip of them, under **Notability notes**. Each note becomes a page. A note with PDF pages keeps them as its PDF, its paper pages printed into it; a note on paper alone becomes a notebook. Handwriting, shapes, sticky notes, text boxes, math, pictures and recordings come along (from an NTB export, all but its recordings), and the text typed on the page itself becomes the page's notes. A recording plays, but the handwriting does not replay with it. Notes already imported are skipped.
 - **Export**: **Annotated PDF** (highlights, ink and text boxes as real annotations), **Notes as PDF** or **Markdown**, a **Notability** note, **BibTeX**, an **Obsidian vault**, a **Logseq graph**, a **Zotero library**, or a **Gamma zip**.
 - **To Notability**: choose **Notability** in Export. The page becomes a .note: its PDF or its sheets of paper, the handwriting with its pressure and tilt, shapes, text boxes, pictures, your notes as the note's typed text, and recordings (.m4a). Open it on the iPad or the Mac with Notability (from Files, or AirDrop it). Highlights stay behind, since Notability keeps none on a PDF's text; the export says what else a note could not keep. Imported back into Gamma, the .note is the page it was, until Notability saves it: from then on Gamma gets what Notability keeps (no stroke times, one paper for every page).
@@ -407,10 +408,12 @@ Account menu → **Settings**, or **Ctrl+,**; the card with your name at the top
 | Keyboard | Every shortcut, rebindable; what Enter makes |
 | AI → Connections, Chat, Tool usage, Integrations | Providers and keys, defaults, agent permissions, assistants |
 | Workspaces, Backups, Maintenance | Workspaces and clones, snapshots, storage and index health |
-| Users, Server (administrators) | Accounts, public URL, Gamma Cloud sign-in and requests to join, shared workspaces, server backups, the log |
+| Users, Server (administrators) | Accounts and invitations by e-mail, public URL, Gamma Cloud sign-in and requests to join, shared workspaces, server backups, the log |
 | Help & diagnostics | Session log, **Report a problem…** (adds what a maintainer needs, never your notes) |
 
 **Top bar** in Appearance hides a button you never use, or shows Background tasks and the Inbox only when they have news. A hidden button becomes a row of the account menu, and its shortcut still works.
+
+**Invite by e-mail…** in Users mails someone who has no account yet a link to make a free Gamma Cloud account, or sign in with theirs, and join this server. The **Invitations** list under the accounts sends one again or withdraws it.
 
 ## Shortcut cheat sheet
 

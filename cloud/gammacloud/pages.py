@@ -1,7 +1,8 @@
 """The portal's HTML.
 
 Two shells: ``auth`` (a centred card: sign in, register, verify, reset,
-the authorize page a Gamma server sends people to) and ``app`` (a sidebar
+the authorize page a Gamma server sends people to, an e-mail invitation's
+page) and ``app`` (a sidebar
 plus a content column: Overview, Plan & billing, Devices, Settings and, for
 admins, Admin; the plan's pieces are in ``pages_billing``).
 Server-rendered, in the gammapdf.com palette (``sites/site/styles.css``)
@@ -15,9 +16,10 @@ import html
 import json
 import re
 from datetime import datetime, timezone
-from urllib.parse import urlsplit
+from urllib.parse import urlencode, urlsplit
 
-from . import accounts, config, entrance, pages_billing, pages_fleet, pages_machines, pages_overview, settings
+from . import (accounts, config, entrance, invitations, pages_billing, pages_fleet, pages_machines, pages_overview,
+               settings)
 from .providers import NAMES
 
 SITE = "https://gammapdf.com"
@@ -366,20 +368,30 @@ def login_page(social: dict | None = None) -> str:
     return auth("Sign in", "One account for the desktop app and every Gamma server.", inner, script)
 
 
-def register_page(social: dict | None = None, invite: str = "") -> str:
+def register_page(social: dict | None = None, invite: str = "", email: str = "") -> str:
     """``invite``: a code from the link (``/register?invite=``) for the
-    invite field."""
+    invite field. An e-mail invitation's page also brings the invited
+    address for the E-mail field (still editable, and confirmed by the
+    verify mail like any other, which the field says) and, in
+    ``social["next"]``, the way back to the invitation, which the password
+    form, its verify link, a Google or GitHub sign-up and the sign-in link
+    all return to."""
     if settings.registration() == "closed":
         return error_page("Registration is closed", "Gamma Cloud is not taking new accounts right now.")
     tiles, script = _social(social, "sign up", "signup")
-    inner = ("<form id=f><label>E-mail<input name=email type=email autocomplete=email required autofocus></label>"
+    next_url = (social or {}).get("next", "/")
+    hidden = f"<input type=hidden name=next value='{esc(next_url)}'>" if next_url != "/" else ""
+    login = "/login" + ("?" + urlencode({"next": next_url}) if next_url != "/" else "")
+    confirm = " <small>we mail it a link to confirm it</small>" if email else ""
+    inner = (f"<form id=f>{hidden}<label>E-mail{confirm}<input name=email type=email value='{esc(email)}' "
+             "autocomplete=email required autofocus></label>"
              "<label>Username <small>lowercase letters, digits, hyphens</small><input name=username autocomplete=username "
              f"pattern='{USERNAME_PATTERN}' required></label>"
              "<label>Password<input name=password type=password autocomplete=new-password minlength=8 required></label>"
              f"{_invite_field(invite)}{turnstile_widget()}<button type=submit class='btn btn--primary btn--block'>Create account</button><div class=msg></div></form>"
-             f"{tiles}<p class=switch>Already have an account? <a href=/login>Sign in</a></p>{_terms()}")
+             f"{tiles}<p class=switch>Already have an account? <a href='{esc(login)}'>Sign in</a></p>{_terms()}")
     script = (KEEP_INVITE_JS + "bind('f', async d => { const r = await api('/api/register', d); "
-              "location.href = r.mailed === false ? '/?mail=failed' : '/'; });" + script)
+              "location.href = r.redirect; });" + script)
     return auth("Create your account", "Free. You can change the username and e-mail later.", inner, script)
 
 
@@ -399,18 +411,21 @@ def signup_finish_page(flow: dict, suggestion: str) -> str:
     return auth("Finish creating your account", hello + "Pick a username; you can change it later.", inner, script)
 
 
-def _token_page(title: str, api_path: str, token: str, done_js: str) -> str:
+def _token_page(title: str, api_path: str, token: str, done_js: str, then_js: str = "'/'") -> str:
     """A mailed link's landing page: posts the token, shows ``done_js`` (a
-    JS expression over the answer ``d``), then goes to the Overview."""
+    JS expression over the answer ``d``), then goes to ``then_js`` (another
+    one; the Overview by default)."""
     script = (f"api({_js(api_path)}, {{token: {_js(token)}}}).then(d => {{ document.getElementById('msg').textContent = "
-              f"{done_js}; setTimeout(() => location.href = '/', 1200); }})"
+              f"{done_js}; setTimeout(() => location.href = {then_js}, 1200); }})"
               f".catch(e => {{ document.getElementById('msg').textContent = e.message; }});")
     return auth(title, "One moment.", "<p id=msg class=msg></p><p class=links><a href='/'>Overview</a></p>", script)
 
 
 def verify_page(token: str) -> str:
+    """The verify link's page; it goes on to where the link was sent from
+    (``d.next``: an e-mail invitation's page), else to the Overview."""
     return _token_page("Confirming your e-mail", "/api/verify", token,
-                       "'Your e-mail address is confirmed. Taking you to your account…'")
+                       "'Your e-mail address is confirmed. Taking you on…'", "d.next || '/'")
 
 
 def email_confirm_page(token: str) -> str:
@@ -780,6 +795,9 @@ def _admin_section(title: str, sub: str, body: str) -> str:
     return f"<div class=section><h2>{title}<span>{sub}</span></h2>{body}</div>"
 
 
+INVITATION_SIGNUP_LABELS = {"operator": "Servers you run", "any": "Any connected server"}  # settings.INVITATION_SIGNUP
+
+
 def _signup_section() -> str:
     registration = srow(
         "Registration", "Who can create an account. An invite code works in open mode too and still grants its plan.",
@@ -803,8 +821,15 @@ def _signup_section() -> str:
         "subdomain) registers without an invite code, in open and invite mode alike. One per line.",
         "<form id=setallow><label><span class=sr>Allowed e-mail domains</span>"
         f"<textarea name=allowed_email_domains placeholder='university.example'></textarea></label>{formfoot('Save')}</form>")
+    from_servers = srow(
+        "Invitations from Gamma servers", "Whether an invitation sent from a Gamma server carries an invite code, so "
+        "its newcomer can register while sign-up needs one. Servers you run means the share host, hosted servers and "
+        "clients made here.",
+        "<form id=setinvsign><label><span class=sr>Invitations from Gamma servers</span><select name=invitation_signup>"
+        + "".join(f"<option value={v}>{label}</option>" for v, label in INVITATION_SIGNUP_LABELS.items())
+        + f"</select></label>{formfoot('Save')}</form>")
     return _admin_section("Sign-up", "who may register, and what a sign-up has to pass",
-                          registration + turnstile + blocked + allowed)
+                          registration + turnstile + blocked + allowed + from_servers)
 
 
 def _plans_section() -> str:
@@ -1019,6 +1044,7 @@ function showSettings(s){
   ts.turnstile_secret.value = ''; ts.turnstile_secret.placeholder = s.turnstile_secret_set ? 'stored · leave blank to keep' : '';
   document.getElementById('setdom').elements.blocked_email_domains.value = s.blocked_email_domains;
   document.getElementById('setallow').elements.allowed_email_domains.value = s.allowed_email_domains;
+  document.getElementById('setinvsign').elements.invitation_signup.value = s.invitation_signup;
   document.getElementById('tsstate').innerHTML = s.turnstile_on ? '<span class="pill pill--ok">on</span>'
     : '<span class="pill pill--warn">off</span><span class=empty>' + (s.turnstile_secret_set || s.turnstile_sitekey ? 'needs both keys' : 'no keys stored') + '</span>';
   document.getElementById('clearsecret').hidden = !s.turnstile_secret_set;
@@ -1036,6 +1062,7 @@ bind('setreg', (d, msg) => saveSettings({registration: d.registration}, msg));
 bind('setts', (d, msg) => saveSettings({turnstile_sitekey: d.turnstile_sitekey, turnstile_secret: d.turnstile_secret}, msg));
 bind('setdom', (d, msg) => saveSettings({blocked_email_domains: d.blocked_email_domains}, msg));
 bind('setallow', (d, msg) => saveSettings({allowed_email_domains: d.allowed_email_domains}, msg));
+bind('setinvsign', (d, msg) => saveSettings({invitation_signup: d.invitation_signup}, msg));
 bind('setplans', (d, msg) => saveSettings({plans_on_sale: [...document.querySelectorAll('#setplans [name=plan]:checked')].map(c => c.value).join(' ')}, msg));
 bind('setalerts', (d, msg) => saveSettings({alerts: d.alerts, alert_email: d.alert_email}, msg));
 const ta = document.getElementById('testalert'), taMsg = ta.parentNode.querySelector('.msg');
@@ -1070,6 +1097,13 @@ SCOPE_WORDS = (({"openid", "email", "profile"}, "user", "Your username and e-mai
                ({"offline_access"}, "key", "Stay signed in on this device"))
 
 
+def _who(account) -> str:
+    """The account a confirm card acts as, as an avatar row."""
+    user = account["username"]
+    return (f"<div class=who><div class=avatar>{esc(user[:1])}</div><div><b>{esc(user)}</b>"
+            f"<span>{esc(account['email'])}</span></div></div>")
+
+
 def _consent(*, title: str, heading: str, where: str, account, gets_label: str, gets, go: str, cancel: str,
              foot: str, go_js: str, cancel_js: str = "") -> str:
     """The confirm card of the authorize and connect pages: ``heading`` over
@@ -1077,11 +1111,9 @@ def _consent(*, title: str, heading: str, where: str, account, gets_label: str, 
     ``gets_label``, the ``go`` button with *Use another account* and
     ``cancel`` under it, and ``foot``; ``go_js`` / ``cancel_js`` wire the
     buttons. Everything but ``title`` and ``account`` is HTML."""
-    user = account["username"]
     items = "".join(f"<li><i>{ICONS[icon]}</i>{words}</li>" for icon, words in gets)
     card = (f"<div class=cbrand>{LOGO}<span>Gamma<em>Cloud</em></span></div><div class=cbody>"
-            f"<h1>{heading}</h1><p class=where>{where}</p>"
-            f"<div class=who><div class=avatar>{esc(user[:1])}</div><div><b>{esc(user)}</b><span>{esc(account['email'])}</span></div></div>"
+            f"<h1>{heading}</h1><p class=where>{where}</p>{_who(account)}"
             f"<p class=gets>{gets_label}</p><ul class=scopes>{items}</ul>"
             f"<div class=go><button class='btn btn--primary' id=go>{go}</button></div>"
             "<p class=alt><button class=linkbtn id=other>Use another account</button><span class=sep aria-hidden=true>·</span>"
@@ -1216,3 +1248,57 @@ def authorize_page(req: dict, account, verify_needed: bool = False, social: dict
     script = (f"bind('f', async d => {{ const r = await api('/authorize/login', {{request_id: {rid}, login: d.login, password: d.password}}); "
               f"if (r.verify_needed) location.reload(); else location.href = r.redirect; }});" + social_js)
     return auth(f"Sign in to {client['name']}", "Use your Gamma Cloud account.", inner, script)
+
+
+# --- an e-mail invitation -----------------------------------------------------
+
+def invitation_page(inv: dict, token: str, account: dict | None, code: str = "", way: str = "create") -> str:
+    """``/invite``, an e-mail invitation's link (``invitations.lookup``):
+    who invited whom to what and where, then by the visitor. Signed in and
+    confirmed: *Continue as @name* (``/invite/continue``, on to the server)
+    and *Use another account*. Signed in but unconfirmed, as everyone is
+    right after registering from here: the verify notice, its resend
+    bringing the new link back here. Signed out, by ``way``
+    (``invitations.way_in``): *Create an account* (the register page with
+    the invited address, the invitation's ``code`` when it still works, and
+    the way back here, which its verify link also takes), then *Sign in*.
+    For an address that has an account, *Sign in* under the line the mail
+    has; for one that needs a code the invitation does not carry, the same
+    with *Create an account* after it, for the register page to judge;
+    *Sign in* alone while registration is closed. ``account`` is
+    ``accounts.public``."""
+    here = "/invite?" + urlencode({"token": token})
+    script = ""
+    if account and account["email_verified"]:
+        go = "/invite/continue?" + urlencode({"token": token})
+        body = (f"{_who(account)}<div class=go><a class='btn btn--primary' href='{esc(go)}'>"
+                f"Continue as @{esc(account['username'])}</a></div>"
+                "<p class=alt><button class=linkbtn id=other>Use another account</button></p>"
+                "<div class=msg id=err></div>")
+        script = ENTRANCE_JS
+    elif account:
+        body = (f"<p class=lead>Confirm <b>{esc(account['email'])}</b> first: the link we sent brings you back "
+                "here.</p><button class='btn btn--block' id=resend>Send the link again</button>"
+                "<p class=alt><button class=linkbtn id=other>Use another account</button></p>"
+                "<div class=msg id=err></div>")
+        script = (ENTRANCE_JS + "const resend = document.getElementById('resend'); resend.onclick = () => act(resend, "
+                  f"async () => {{ const d = await api('/api/verify/resend', {{next: {_js(here)}}}); "
+                  "if (d.already) location.reload(); else resend.textContent = 'Sent — check your inbox'; }, err);")
+    else:
+        login = "/login?" + urlencode({"next": here})
+        register = "/register?" + urlencode({**({"invite": code} if code else {}), "email": inv["email"], "next": here})
+        if way == "closed":
+            body = ("<p class=lead>Gamma Cloud is not taking new accounts right now. If you have one, sign in.</p>"
+                    f"<div class=actions><a class='btn btn--primary' href='{esc(login)}'>Sign in</a></div>")
+        elif way == "create":
+            body = (f"<div class=actions><a class='btn btn--primary' href='{esc(register)}'>Create an account</a>"
+                    f"<a class=btn href='{esc(login)}'>Sign in</a></div>")
+        else:
+            create = f"<a class=btn href='{esc(register)}'>Create an account</a>" if way == "code" else ""
+            body = (f"<p class=lead>{esc(invitations.HOW[way])}</p><div class=actions>"
+                    f"<a class='btn btn--primary' href='{esc(login)}'>Sign in</a>{create}</div>")
+    card = (f"<div class=cbrand>{LOGO}<span>Gamma<em>Cloud</em></span></div><div class=cbody>"
+            f"<h1>{esc(inv['inviter'])} invited you to join {esc(invitations.what_of(inv))}</h1>"
+            f"<p class=where>{ICONS['globe']}<span>on {esc(invitations.place(inv))}</span></p>{body}</div>"
+            f"<p class=cfoot>The invitation works until {_date(inv['expires_at'])}.</p>")
+    return _auth_shell("Invitation", card, script, cls="consent", top=False)

@@ -1,10 +1,11 @@
+import re
 from urllib.parse import urlencode
 
 import pytest
 
 from conftest import login, make_folder, make_page, make_user
 from gamma.db import connect_users_db, page_now
-from test_mcp import connection, rpc
+from test_mcp import call, connection, rpc
 
 
 def read(client, token, **params):
@@ -123,10 +124,11 @@ def test_link_canonical_origin_and_revoked_connection(client, connection, monkey
         "name": "read_gamma_link", "arguments": {"url": url}}).status_code == 401
 
 
-def test_folder_share_links_list_the_folder(client, connection):
+def test_folder_share_links_list_the_folder(client, connection, monkeypatch):
     c, ws, credential = connection
     group = make_folder(c, "group")
     paper = make_page(c, "Paper in the group folder", {"folders": [make_folder(c, "group/sub")]})
+    second = make_page(c, "Second paper in the group folder", {"folders": [group]})
     other = make_page(c, "Elsewhere in the library")
     share = c.post(f"/api/share/folder/{group}").json()
     result = read(client, credential["token"], url=f"http://localhost/?share={share['token']}")
@@ -139,6 +141,17 @@ def test_folder_share_links_list_the_folder(client, connection):
     assert "Paper in the group folder" in text and paper["id"] in text
     assert "Elsewhere in the library" not in text and share["token"] not in text
     assert "page=<page_id>" in text  # the URL template for citing the listed pages
+    # A long listing names the call for its next batch, which lists the same
+    # folder through the client's own (workspace-wide) list_pages.
+    with monkeypatch.context() as m:
+        m.setattr("gamma.ai_tools._LIST_CAP", 1)
+        text = read(client, credential["token"], url=f"http://localhost/?share={share['token']}")["content"][0]["text"]
+        assert len(re.findall(r"^- id=", text, flags=re.M)) == 1 and second["id"] in text
+        nxt = re.search(r'call list_pages\(folder="([^"]+)", after="([^"]+)"\) to continue', text)
+        assert nxt and nxt[1] == group, text
+        listed = call(client, credential["token"], "list_pages", {"folder": nxt[1], "after": nxt[2]})
+        listed = listed["content"][0]["text"]
+        assert paper["id"] in listed and second["id"] not in listed and other["id"] not in listed
     # the link may also name a page in the folder — then it reads that page
     result = read(client, credential["token"], url=f"http://localhost/?share={share['token']}&page={paper['id']}")
     assert not result["isError"], result
@@ -155,3 +168,7 @@ def test_folder_share_links_list_the_folder(client, connection):
     assert r.status_code == 200, r.text
     result = read(client, credential["token"], url=f"http://localhost/?share={share['token']}")
     assert result["isError"] and "unavailable" in result["content"][0]["text"]
+    # A share of an empty folder says so.
+    share = c.post(f"/api/share/folder/{make_folder(c, 'empty-share')}").json()
+    result = read(client, credential["token"], url=f"http://localhost/?share={share['token']}")
+    assert not result["isError"] and "The folder is empty." in result["content"][0]["text"], result

@@ -4,7 +4,7 @@ import fs from "node:fs";
 import { segmentPage } from "../src/pdf/pdfTranslate.js";
 import {
   BREAK, chunkUnits, continues, createPlanner, isCaption, isHeading, pageLayout, partials,
-  readingOrder, requestFields, results,
+  readingOrder, requestChunk, requestFields, results,
 } from "../src/pdf/translatePlan.js";
 
 const PAPER = JSON.parse(fs.readFileSync(new URL("./fixtures/translatePaper.json", import.meta.url)));
@@ -221,4 +221,56 @@ test("tokens land in the block they belong to, by its own numbers", () => {
   assert.deepEqual(results(u, "其中 {v1} 和 {v2}{br}是速率").map((r) => r.text), ["其中 {v3} 和 {v:2.0.1}", "是速率"]);
   assert.deepEqual(partials(u, "其中 {v1} 是{br}而 {v"), [{ pn: 1, i: 4, text: "其中 {v3} 是" }, { pn: 2, i: 0, text: "而" }]);
   assert.deepEqual(partials(u, "其中 {v1} 是{b"), [{ pn: 1, i: 4, text: "其中 {v3} 是" }]);
+});
+
+// A request answering with the given outcomes in turn: an Error is thrown,
+// anything else returned.
+const answering = (...outcomes) => {
+  const run = async () => {
+    run.calls += 1;
+    const o = outcomes.shift();
+    if (o instanceof Error) throw o;
+    return o;
+  };
+  run.calls = 0;
+  return run;
+};
+const refused = (retryAfter) => Object.assign(new Error("Too many AI requests"), { status: 429, retryAfter });
+const quick = { pauseMs: 1 };
+
+test("a chunk's failed request is asked once more, then the failure stands", async () => {
+  const ok = { translations: ["x"] };
+  let run = answering(new Error("network"), ok);
+  assert.equal(await requestChunk(run, null, quick), ok);
+  assert.equal(run.calls, 2);
+  run = answering(new Error("network"), new Error("still down"), ok);
+  await assert.rejects(requestChunk(run, null, quick), /still down/);
+  assert.equal(run.calls, 2);
+  // A stream cut off before its final line counts as a failure too.
+  run = answering(null, null);
+  assert.equal(await requestChunk(run, null, quick), null);
+  assert.equal(run.calls, 2);
+});
+
+test("a refusal because the account's calls are all in use waits as the server says", async () => {
+  const ok = { translations: ["x"] };
+  let run = answering(refused(0.005), refused(0.005), refused(0.005), new Error("blip"), ok);
+  assert.equal(await requestChunk(run, null, quick), ok, "the waits leave the one plain retry");
+  assert.equal(run.calls, 5);
+  // Past its patience the refusal stands; a 429 without Retry-After (the
+  // shared allowance used up) at once.
+  run = answering(refused(0.005), ok);
+  await assert.rejects(requestChunk(run, null, { pauseMs: 1, patienceMs: 0 }), /Too many/);
+  run = answering(Object.assign(new Error("allowance used up"), { status: 429 }), ok);
+  await assert.rejects(requestChunk(run, null, quick), /allowance/);
+  assert.equal(run.calls, 1);
+});
+
+test("halting ends a request's wait without asking again", async () => {
+  const ctl = new AbortController();
+  const run = answering(refused(60), { translations: ["x"] });
+  const asked = requestChunk(run, ctl.signal);
+  setTimeout(() => ctl.abort(), 5);
+  assert.equal(await asked, null);
+  assert.equal(run.calls, 1);
 });

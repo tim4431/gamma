@@ -89,8 +89,11 @@ _BREAK_VARIANT = re.compile(r"[{｛]\s*br\s*[}｝]", re.IGNORECASE)
 def checked(src: str, out: str) -> str | None:
     """``out`` with its tokens and breaks written the way the viewer reads
     them, when it keeps each of ``src``'s tokens exactly once and adds none;
-    None when a token went missing, doubled or appeared from nowhere."""
-    fixed = _BREAK_VARIANT.sub(BREAK, _TOKEN_VARIANT.sub(lambda m: "{v" + m.group(1) + "}", out or ""))
+    None when a token went missing, doubled or appeared from nowhere, or
+    when ``out`` is empty (only text that says something is sent)."""
+    if not (out or "").strip():
+        return None
+    fixed = _BREAK_VARIANT.sub(BREAK, _TOKEN_VARIANT.sub(lambda m: "{v" + m.group(1) + "}", out))
     if sorted(TOKEN_RE.findall(fixed)) != sorted(TOKEN_RE.findall(src or "")):
         return None
     return fixed

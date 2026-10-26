@@ -41,6 +41,67 @@ export function buildImportTree(items, library = false) {
   }
   return root;
 }
+// A column's folders by name, numbers by value: Zotero's files/999
+// before files/1000.
+const names = new Intl.Collator(undefined, { numeric: true });
+export const byName = ([a], [b]) => names.compare(a, b);
+// A tree's files in the order ImportTree shows them (each folder's folders
+// by name, then its own files) until `visit(file, path, index)` — `path`
+// the folder names from the top, `index` the file's place in its folder —
+// returns true; returns whether one did.
+export function walkTree(node, visit, path = []) {
+  for (const [name, child] of [...node.folders].sort(byName)) {
+    if (walkTree(child, visit, [...path, name])) return true;
+  }
+  return node.files.some((file, index) => visit(file, path, index));
+}
+// The first file of `node` whose `rowKey` is one of `keys`, as
+// `{ key, path, index }` (what ImportTree opens and scrolls to), or null.
+export function firstRow(node, keys, rowKey) {
+  let found = null;
+  walkTree(node, (file, path, index) => {
+    const key = rowKey(file);
+    if (keys.has(key)) found = { key, path, index };
+    return Boolean(found);
+  });
+  return found;
+}
+
+// How the two columns of a review answer each other: a destination page
+// names the upload's members it comes from (`source_paths`, its own file
+// first), exactly as the source column names them.
+export const pageSources = page => page.source_paths || [];
+// A library row's key: the items it imports, or — a report's rows, which
+// a Zotero import gives none — the page itself.
+export const pageKey = page => itemIds(page).join("\n") || `${page.kind || "page"}:${page.id}`;
+// Which pages each file of the upload feeds (`toPages`, by path) and which
+// listed files each page comes from (`toFiles`, by pageKey), as sets.
+export function importLinks(entries, pages) {
+  const listed = new Set(entries.filter(entry => !entry.directory).map(entry => entry.path));
+  const toPages = new Map(), toFiles = new Map();
+  const add = (map, key, value) => { if (!map.has(key)) map.set(key, new Set()); map.get(key).add(value); };
+  for (const page of pages) {
+    const key = pageKey(page);
+    for (const path of pageSources(page)) {
+      if (listed.has(path)) { add(toPages, path, key); add(toFiles, key, path); }
+    }
+  }
+  return { toPages, toFiles };
+}
+// The destination pages in the source column's order: each by the first
+// of its files the column lists; pages it lists none of keep their order,
+// after the rest. `tree` is the source column's tree.
+export function orderLikeSource(pages, tree) {
+  const order = new Map();
+  walkTree(tree, file => { if (!order.has(file.path)) order.set(file.path, order.size); });
+  const rank = page => {
+    for (const path of pageSources(page)) if (order.has(path)) return order.get(path);
+    return order.size;
+  };
+  return pages.map((page, index) => ({ page, index, at: rank(page) }))
+    .sort((a, b) => a.at - b.at || a.index - b.index).map(({ page }) => page);
+}
+
 export function treeItemIds(node) {
   return [...new Set([...node.files.flatMap(itemIds), ...[...node.folders.values()].flatMap(treeItemIds)])];
 }
@@ -56,6 +117,7 @@ export function resultPages(data) {
     const key = `${page.kind || "page"}:${page.id}`;
     const prior = unique.get(key);
     unique.set(key, { ...page, folders: page.folders || [],
+      source_paths: [...new Set([...(prior?.source_paths || []), ...pageSources(page)])],
       action: page.created || prior?.action === "create" ? "create" : page.action || "merge" });
   }
   return [...unique.values()];

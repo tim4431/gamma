@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  approvalTitle, conversationId, declinedSummary, deletionNotes, grantsIn, readGrants, waitsForPapers, withGrant,
-  withoutGrants, withoutPaperWait, writeGrants,
+  approvalTitle, batchNotes, conversationId, declinedSummary, deletionNotes, grantsIn, readGrants, waitsForPapers,
+  withGrant, withoutGrants, withoutPaperWait, writeGrants,
 } from "../src/chat/approvals.js";
 
 test("the card's headline says what the call would do", () => {
@@ -56,6 +56,38 @@ test("folder and label cards say what goes", () => {
   assert.deepEqual(deletionNotes("delete_label", { page_count: 0 }), ["No page carries it."]);
   assert.deepEqual(deletionNotes("rename_folder", {}), []);
   assert.equal(declinedSummary({ approval: "deny", tool: "delete_label", title: "ML" }), "Not allowed by you: Delete the label “ML”");
+});
+
+test("a card for several pages counts them and notes what it leaves out", () => {
+  const card = (tool, preview = {}) => approvalTitle({ tool, preview });
+  assert.equal(card("rename_page", { count: 37 }), "Rename 37 pages");
+  assert.equal(card("rename_page", { count: 1 }), "Rename 1 page");
+  assert.equal(card("move_page", { count: 2, to: "QEC" }), "Move 2 pages to QEC");
+  assert.equal(card("move_page", { count: 2, to: "" }), "Move 2 pages to the library root");
+  assert.equal(card("label_page", { count: 4 }), "Change the labels of 4 pages");
+  assert.equal(card("restore_page", { count: 3 }), "Restore 3 pages from Recently deleted");
+  // A one-page card carries no count and keeps its own headline.
+  assert.equal(card("rename_page", { title: "A" }), "Rename “A”");
+  assert.equal(card("restore_page", { title: "A", to: "" }), "Restore “A” from Recently deleted");
+  // Another tool's count is not a page count.
+  assert.equal(card("delete_label", { title: "ML", count: 3 }), "Delete the label “ML”");
+  assert.deepEqual(batchNotes({ to: "A / B", new_folder: true, left_out: ["“X”", "id9"], left_out_count: 3, same_count: 2 }), [
+    "The folder A / B does not exist yet: it is made first.",
+    "3 pages are left out: “X”, id9, and 1 more",
+    "2 pages already are so and stay as they are.",
+  ]);
+  assert.deepEqual(batchNotes({ new_labels: ["n1"] }), ["A new label is made first: n1"]);
+  assert.deepEqual(batchNotes({ new_labels: ["n1", "n2"], left_out: ["“X”"], left_out_count: 1, same_count: 1 }), [
+    "2 new labels are made first: n1, n2",
+    "1 page is left out: “X”",
+    "1 page already is so and stays as it is.",
+  ]);
+  assert.deepEqual(batchNotes({ count: 2, diff: [] }), []);
+  assert.deepEqual(batchNotes(), []);
+  // A declined batch's chip counts its pages.
+  assert.equal(declinedSummary({ approval: "deny", tool: "move_page", count: 3, args: { folder: "QEC" } }),
+    "Not allowed by you: Move 3 pages to QEC");
+  assert.equal(declinedSummary({ approval: "expired", tool: "rename_page", count: 37 }), "Not answered in time: Rename 37 pages");
 });
 
 test("allowing in a chat lasts for that conversation and account only", () => {

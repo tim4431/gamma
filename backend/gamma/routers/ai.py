@@ -204,7 +204,11 @@ class AIChatRequest(BaseModel):
     # agent_system overrides the base agent prompt (the
     # scope/permission lines are always appended); tool_rounds overrides the
     # agent round budget and read_char_limit the per-read_page-call document
-    # text cap (both 0 = server default).
+    # text cap (both 0 = server default). tool_rounds_unlimited (Settings →
+    # AI → Tool usage → Tool limits → Unlimited rounds) lifts the round limit
+    # and the per-message change limit (ai_agent.AgentLoop ``unbounded``), for
+    # a streamed reply only — Stop is what ends it — and on a shared AI
+    # connection only under a daily allowance or for an administrator.
     agent_scope: str = ""
     folder: str = ""
     page_id: str = ""
@@ -212,6 +216,7 @@ class AIChatRequest(BaseModel):
     granted: list[str] = Field(default_factory=list, max_length=32)
     agent_system: str = ""
     tool_rounds: int = Field(default=0, ge=0, le=100)
+    tool_rounds_unlimited: bool = False
     read_char_limit: int = Field(default=0, ge=0, le=READ_CHARS_MAX)
     # How save_paper stores a paper — the Reading choices the reply's Save to
     # library also uses: {allow_oa, save_copy, fetch_metadata}, missing = on.
@@ -1053,6 +1058,11 @@ class WatchedStream(StreamingResponse):
 _TRANSLATE_MAX_TEXTS = 200      # paragraphs per request (a page is ~10–50)
 _TRANSLATE_MAX_CHARS = 60000    # total source chars per request
 _TRANSLATE_STREAM_INTERVAL = 0.05  # min seconds between streamed partial lines (~20 paints/s)
+# Asking again (finish's repair): calls one request runs at once, and how
+# long its calls, and a streamed request's own, wait for one of the
+# account's call slots before giving up (ai_client.MAX_OPEN_CALLS).
+_TRANSLATE_REPAIR_WORKERS = 4
+_TRANSLATE_SLOT_WAIT = 120.0
 # In-memory LRU: key (see _translate_key) → translated text. Process-wide,
 # never written to disk; a restart simply starts cold. The lock matters:
 # requests run in FastAPI's threadpool and the viewer fires several in
@@ -1120,17 +1130,49 @@ def _translate_key(user_id: str, lang: str, model: str, brief: str, text: str) -
     return hashlib.sha256(f"{user_id}\x00{lang}\x00{model}\x00{brief}\x00{text}".encode()).hexdigest()
 
 
+_FENCED = re.compile(r"^```[\w-]*[ \t]*\n?(.*?)\n?[ \t]*```$", re.S)
+
+
 def _parse_translation_array(reply: str, n: int) -> list:
     """The model's reply as a list of n strings — tolerates code fences and
-    prose around the array, nothing else."""
+    prose around the array, nothing else. Asked for one text, a model may
+    leave the brackets off: a reply without an array of strings is then
+    the translation itself (_bare_translation)."""
     s = (reply or "").strip()
     i, j = s.find("["), s.rfind("]")
-    if i < 0 or j <= i:
+    arr = None
+    if i >= 0 and j > i:
+        try:
+            arr = json.loads(s[i:j + 1])
+        except ValueError:
+            if n > 1:
+                raise
+    if n == 1 and not (isinstance(arr, list) and all(isinstance(t, str) for t in arr)):
+        return [_bare_translation(s)]  # "见 [12]" is text, not the array [12]
+    if arr is None:
         raise ValueError("no JSON array in reply")
-    arr = json.loads(s[i:j + 1])
     if not isinstance(arr, list) or len(arr) != n:
         raise ValueError(f"expected {n} translations, got {len(arr) if isinstance(arr, list) else 'non-list'}")
     return ["" if t is None else str(t) for t in arr]
+
+
+def _bare_translation(s: str) -> str:
+    """A one-text reply that is no array: its text out of a code fence, or a
+    JSON string's value. An object or an array is no translation, and
+    neither is nothing."""
+    m = _FENCED.match(s)
+    text = (m.group(1) if m else s).strip()
+    try:
+        value = json.loads(text)
+    except ValueError:
+        value = text
+    if isinstance(value, (dict, list)):
+        raise ValueError("no JSON array in reply")
+    if not isinstance(value, str):
+        value = text  # a number or a word JSON reads ("true") is still text
+    if not value.strip():
+        raise ValueError("empty reply")
+    return value
 
 
 def _translate_effort(requested: str, rt: dict, entry: dict) -> str:
@@ -1172,6 +1214,11 @@ class _TranslateBatch:
                 slots.setdefault(k, []).append(i)
         return [slots[self.keys[i]] for i in self.miss]
 
+    def at(self, misses: list) -> list:
+        """The request indices the misses at positions ``misses`` fill."""
+        targets = self.targets()
+        return sorted(i for j in misses for i in targets[j])
+
     def settle(self, translated: list) -> list:
         """Record the misses' translations (cache + hits); every text's
         translation, in order. Identity fallbacks stay uncached so a retry
@@ -1188,6 +1235,15 @@ def _translate_budget(batch: list) -> int:
     # floor covers JSON overhead and reasoning models whose thinking spends
     # from the same budget.
     return min(30000, 8000 + 2 * sum(len(t) for t in batch))
+
+
+def _halves(group: list) -> list:
+    m = (len(group) + 1) // 2
+    return [group[:m], group[m:]] if len(group) > 1 else [group]
+
+
+def _singles(group: list) -> list:
+    return [[k] for k in group]
 
 
 # Sync def: the AI call runs in the threadpool.
@@ -1230,10 +1286,12 @@ def ai_translate(payload: AITranslateRequest, request: Request):
             except translate_engines.EngineError as e:
                 log.warning(f"[ai_translate] {e}")
                 raise HTTPException(status_code=502, detail=f"translation failed: {e}")
-            # A service that mangled a formula token shows the original instead.
+            # A service that mangled a formula token shows the original
+            # instead. Not `failed`: a service answers the same text the
+            # same way, so asking again would get the same.
             translated = [translate_context.checked(src, t) or src for src, t in zip(batch.miss_texts, translated)]
         return reply_with({"translations": batch.settle(translated), "model": model_id,
-                           "cached": not batch.miss, "redone": 0})
+                           "cached": not batch.miss, "redone": 0, "failed": []})
 
     rt = require_ai_runtime(user_id)
     entry = _resolve_model(rt, payload.model)
@@ -1270,17 +1328,20 @@ def ai_translate(payload: AITranslateRequest, request: Request):
         return (translate_context.user_turn(batch_texts, *context),
                 translate_context.system_prompt(lang, brief or ""))
 
-    def call(brief, batch_texts, alone=False):
+    def call(brief, batch_texts, alone=False, slot_wait=0.0):
         messages, system = request_parts(brief, batch_texts, alone)
         return _call_ai(messages, system, entry, rt, effort=effort, max_tokens=_translate_budget(batch_texts),
-                        timeout=180, on_usage=count_usage, cache_key=prompt_cache if brief else "")
+                        timeout=180, on_usage=count_usage, cache_key=prompt_cache if brief else "",
+                        slot_wait=slot_wait)
 
     def stream_call(brief, batch_texts):
         """The same call, streamed: yields ("partial", text-so-far) as the
-        reply arrives, then ("reply", full text)."""
+        reply arrives, then ("reply", full text). Past the door's check
+        (below), it waits for a call slot that another call took meanwhile."""
         messages, system = request_parts(brief, batch_texts, False)
         resp = _open_ai(messages, system, entry, rt, effort=effort, max_tokens=_translate_budget(batch_texts),
-                        timeout=180, stream=True, cache_key=prompt_cache if brief else "")
+                        timeout=180, stream=True, cache_key=prompt_cache if brief else "",
+                        slot_wait=_TRANSLATE_SLOT_WAIT)
         acc = ""
         try:
             for text in _sse_deltas(resp, _protocol(rt, entry), count_usage):
@@ -1290,10 +1351,53 @@ def ai_translate(payload: AITranslateRequest, request: Request):
             resp.close()
         yield ("reply", acc)
 
+    def again(brief, src, whole=True):
+        """``src`` asked again on their own, with the section but not the
+        chunk's neighbours (they are the chunk's): in one call (``whole``),
+        else — or when that reply has the wrong length — in two halves, and
+        the texts of a half whose reply is off too one per call. The model
+        merges or drops an element of a long array far more often than of a
+        short one, and a half that comes back right costs one call, not one
+        per text. Each text's checked translation, None where it still
+        failed. The calls wait for the account's call slots: a stream's own
+        call has freed its slot by now, but the account's other requests
+        (and their repairs) may hold them all."""
+        out = [None] * len(src)
+        everything = list(range(len(src)))
+        groups, split = ([everything], _halves) if whole else (_halves(everything), _singles)
+
+        def ask(group):
+            texts = [src[k] for k in group]
+            try:
+                reply = call(brief, texts, alone=True, slot_wait=_TRANSLATE_SLOT_WAIT)
+                return [translate_context.checked(s, t)
+                        for s, t in zip(texts, _parse_translation_array(reply, len(texts)))]
+            except Exception as e:  # ValueError: a reply off again; anything else: the call failed
+                return e
+
+        while groups:
+            off = []
+            with ThreadPoolExecutor(max_workers=min(_TRANSLATE_REPAIR_WORKERS, len(groups))) as pool:
+                for group, got in zip(groups, pool.map(ask, groups)):
+                    if isinstance(got, list):
+                        for k, t in zip(group, got):
+                            out[k] = t
+                    elif isinstance(got, ValueError) and len(group) > 1:
+                        how = "in halves" if split is _halves else "one by one"
+                        log.warning(f"[ai_translate] {got} — asking again {how}")
+                        off.append(group)
+                    else:  # one text the model still won't answer, or a call that failed
+                        log.warning(f"[ai_translate] asking again failed: {got}")
+            groups = [part for group in off for part in split(group)]
+            split = _singles
+        return out
+
     def finish(brief, batch, reply):
         """Parse the reply, redo what it got wrong, fill the cache, and build
         the final response object. `redone` counts the paragraphs asked
-        again (the bench reads it)."""
+        again (the bench reads it); `failed` names the request's texts that
+        come back as their source because they still won't translate, so
+        the viewer asks for them again next time."""
         src = batch.miss_texts
         n = len(src)
         try:
@@ -1305,38 +1409,25 @@ def ai_translate(payload: AITranslateRequest, request: Request):
             redo = [j for j, t in enumerate(translated) if t is None]
             if redo:
                 log.warning(f"[ai_translate] {len(redo)} of {n} lost a formula token — redoing them")
-                try:
-                    again = _parse_translation_array(call(brief, [src[j] for j in redo], alone=True), len(redo))
-                    for j, t in zip(redo, again):
-                        translated[j] = translate_context.checked(src[j], t)
-                except Exception as e:
-                    log.warning(f"[ai_translate] redo failed: {e}")
+                for j, t in zip(redo, again(brief, [src[j] for j in redo])):
+                    translated[j] = t
         except ValueError as e:
-            # The provider answered but the array is off — models sometimes
-            # merge or drop an element. Salvage paragraph by paragraph (a
-            # 1-element array can't misalign) instead of failing the chunk,
-            # the single-paragraph calls concurrently: one after another, a
-            # 10-paragraph chunk would take 10 model round-trips.
-            log.warning(f"[ai_translate] {e} — salvaging per paragraph")
+            # The provider answered but the array is off: models sometimes
+            # merge or drop an element, and which one is unknown. The chunk
+            # is asked again in halves rather than failed.
+            log.warning(f"[ai_translate] {e} — asking again in halves")
             redo = list(range(n))
-
-            def salvage(t):
-                try:
-                    return translate_context.checked(t, _parse_translation_array(call(brief, [t], alone=True), 1)[0])
-                except Exception as e2:
-                    log.warning(f"[ai_translate] paragraph salvage failed: {e2}")
-                    return None
-
-            with ThreadPoolExecutor(max_workers=min(4, n)) as pool:
-                translated = list(pool.map(salvage, src))
+            translated = again(brief, src, whole=False)
         # A paragraph that still won't translate comes back VERBATIM, so the
         # viewer shows the original there instead of erroring.
+        failed = [j for j, t in enumerate(translated) if t is None]
         translated = [s if t is None else t for s, t in zip(src, translated)]
         return {"translations": batch.settle(translated), "model": model_id, "cached": False,
-                "redone": len(redo), "effort": effort}
+                "redone": len(redo), "failed": batch.at(failed), "effort": effort}
 
     def cached(batch):
-        return {"translations": batch.settle([]), "model": model_id, "cached": True, "redone": 0, "effort": effort}
+        return {"translations": batch.settle([]), "model": model_id, "cached": True, "redone": 0,
+                "failed": [], "effort": effort}
 
     # When the brief is made already (or failed a moment ago), everything is
     # known now. Otherwise a streamed request starts its response at once and
@@ -1921,8 +2012,8 @@ def ai_approval_answer(approval_id: str, payload: AIApprovalAnswer, request: Req
 
 
 class AIRevert(BaseModel):
-    kind: Literal["edit", "create", "move", "delete"]
-    block_id: str = Field(max_length=64)
+    kind: Literal["edit", "create", "move", "delete", "pages"]
+    block_id: str = Field(default="", max_length=64)  # "" for "pages": a page tool's record names its pages
     revert: dict   # the action's `revert`, as the tool recorded it
     force: bool = False
     redo: bool = False  # put a reverted change back
@@ -1930,14 +2021,16 @@ class AIRevert(BaseModel):
 
 @router.post("/ai/revert")
 def ai_revert_change(payload: AIRevert, request: Request):
-    """Take back one change the agent made to the notes, or a folder or
-    label it deleted, or with ``redo`` put a reverted one back, from its
-    row under the reply
-    (gamma/ai_revert.py): ``{page_id, noop}``. 409
+    """Take back one change the agent made to the notes, the pages it
+    renamed, moved or labelled (``kind: "pages"``), or a folder or label it
+    deleted, or with ``redo`` put a reverted one back, from its row under
+    the reply (gamma/ai_revert.py): ``{page_id, noop, kept?}``. 409
     ``{detail, conflict, preview?}`` when the note changed since —
-    ``preview`` is what ``force`` would do — or can't go there; 404 when it
-    is gone. A workspace editor's, like the chat's writes; the change is
-    theirs to make by hand anyway. Sync: it waits on the write lock."""
+    ``preview`` is what ``force`` would do — or can't go there, and 409
+    ``conflict: "kept"`` (``preview.kept``) when every page of a page
+    tool's change changed since; 404 when it is gone. A workspace
+    editor's, like the chat's writes; the change is theirs to make by hand
+    anyway. Sync: it waits on the write lock."""
     ws = require_ws(request, write=True)
     try:
         return ai_revert.revert_change(ws, payload.kind, payload.block_id, payload.revert,
@@ -2005,6 +2098,15 @@ def ai_chat(payload: AIChatRequest, request: Request):
     cache_key = _cache_key(user_id, ws, payload)
     history_len = len([h for h in payload.history if isinstance(h, dict) and not h.get("error")])
     conf = rt["providers"].get(entry["provider"]) or {}
+    # Unlimited rounds lifts the round and change limits — only where Stop can
+    # end the loop (a streamed reply: WatchedStream), and on a shared AI
+    # connection only under the admin's daily allowance, which the transport
+    # checks before every turn (ai_client.check_allowance), or for an
+    # administrator. With no allowance the per-message limits are all that
+    # bound a member's or a guest's reply on the admin's key.
+    asked_unlimited = payload.tool_rounds_unlimited and payload.stream
+    unbounded = asked_unlimited and (not is_server_id(entry["provider"]) or bool(conf.get("allowance"))
+                                     or request.state.is_admin)
     window = ai_catalog.context_window(entry["provider"], conf, entry["model"])[0] if conf else 0
     # What else the model takes: pictures (one that reads text only gets
     # none, nor a tool that answers with one) and how long a reply, its
@@ -2045,6 +2147,7 @@ def ai_chat(payload: AIChatRequest, request: Request):
         open_call=lambda talk, htools: open_upstream(talk.messages, talk.system, talk.files,
                                                      True, htools, []),
         read_events=lambda resp: _sse_events(resp, proto),
+        stopped=stopped,
     ) if tools and scope["delegates"] else None
     # Which model answers, at what effort and speed, with tools or not — the
     # reply's footer names them, and the coverage chip's advice depends on
@@ -2144,9 +2247,11 @@ def ai_chat(payload: AIChatRequest, request: Request):
             read_events=lambda resp: _sse_events(resp, proto),
             on_usage=count_usage,
             max_rounds=payload.tool_rounds,
+            unbounded=unbounded,
             gate=ApprovalGate(ws, scope, user_id, stopped),
             settle=PaperWait(ws, scope, scope["handoff_user"], stopped) if scope["paper_wait"] else None,
             pictures=pictures,
+            stopped=stopped,
         )
         return loop.run(first_resp)
 
@@ -2178,6 +2283,8 @@ def ai_chat(payload: AIChatRequest, request: Request):
                         for kind, data in agent_events(resp):
                             if kind == "usage" and _served_speed(answered, data):
                                 yield json.dumps({"model": answered}) + "\n"
+                            if kind == "limit" and asked_unlimited and not unbounded:
+                                data = {**data, "withheld": True}  # Unlimited asked for, not given here
                             yield json.dumps({kind: data}) + "\n"
                     except Exception as e:
                         log.warning(f"[ai_chat] agent stream error: {e}")
@@ -2221,7 +2328,7 @@ def ai_chat(payload: AIChatRequest, request: Request):
         if tools:
             # The tool loop is SSE-based on every protocol; join it for
             # non-stream callers and return the actions alongside the text.
-            parts, actions, usage, truncated = [], [], None, False
+            parts, actions, usage, truncated, limit = [], [], None, False, None
             for kind, data in agent_events(open_with_fallback(True)):
                 if kind == "delta":
                     parts.append(data)
@@ -2232,12 +2339,15 @@ def ai_chat(payload: AIChatRequest, request: Request):
                     usage = _add_usage(usage, data)
                 elif kind == "truncated":
                     truncated = True
+                elif kind == "limit":
+                    limit = data
                 # "progress" previews only matter to a live UI
             shortened = _shortened(payload, scope)
             return {"response": "".join(parts), "actions": actions, "model": answered,
                     "context": state.get("coverage") or [],
                     **({"usage": usage} if usage else {}),
                     **({"truncated": True} if truncated else {}),
+                    **({"limit": limit} if limit else {}),
                     **({"trimmed": {"turns": state["drop"]}} if state["drop"] else {}),
                     **({"shortened": shortened} if shortened else {})}
         usage = []
