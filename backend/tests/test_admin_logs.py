@@ -3,7 +3,7 @@
 import pytest
 
 from conftest import drop_user, login as _login, make_user as _make_user
-from gamma.logbuf import log, scrub, tail
+from gamma.logbuf import last_seq, log, scrub, tail
 
 
 @pytest.fixture(scope="module")
@@ -123,3 +123,34 @@ def test_an_invalid_request_says_who_sent_what(client, http):
     finally:
         server.should_exit = True
         thread.join(10)
+
+
+def test_a_dropped_websocket_is_one_info_line(client):
+    """The websockets library logs a socket that failed with a plain OSError
+    (Windows' WinError 121) as "data transfer failed" with a traceback, on
+    uvicorn.error with the protocol as `websocket`; logbuf._DroppedWebSocket
+    makes it one info line, which raises no log-errors notice. Any other
+    exception stays an error with its traceback."""
+    import logging
+
+    class Protocol:
+        client = ("127.0.0.1", 50123)
+
+    socket_log = logging.LoggerAdapter(logging.getLogger("uvicorn.error"), {"websocket": Protocol()})
+
+    def logged(exc):
+        after = tail()[-1]["seq"] if tail() else 0
+        try:
+            raise exc
+        except Exception:
+            socket_log.error("data transfer failed", exc_info=True)
+        return next(e for e in tail(after) if "dropped:" in e["msg"] or "data transfer failed" in e["msg"])
+
+    errors = last_seq("error")
+    entry = logged(OSError(22, "The semaphore timeout period has expired", None, 121))
+    assert entry["level"] == "INFO"
+    assert entry["msg"].startswith("WebSocket from 127.0.0.1:50123 dropped: [")
+    assert entry["msg"].endswith("The semaphore timeout period has expired")
+    assert last_seq("error") == errors
+    entry = logged(RuntimeError("a bug in the frame reader"))
+    assert entry["level"] == "ERROR" and "Traceback" in entry["msg"]
