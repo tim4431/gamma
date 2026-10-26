@@ -64,6 +64,16 @@ All state is SQLite + files on disk under a data directory (env
     `decided_by`, `created_at` and `updated_at`; a row goes when its
     person's sign-in is admitted ([cloud_accounts.md](cloud_accounts.md)
     "Requests to join");
+  - `email_invites` — invitations by e-mail address: to this server
+    (`kind` `server`, for someone with no account here), a shared workspace
+    (`workspace`, `workspace_id`) or a share (`share`, `share_token`): the
+    `id` the lists show, the secret `link_id` the mailed link carries back
+    (never listed), `email` as typed and `email_norm` lowercased, `role`,
+    `invited_by`, `server_url` (this server's address the last mail went
+    out with, where the account server keeps the link), `created_at`,
+    `mailed_at` and `expires_at`; one per target and address, gone once
+    the mailed link is used, after 14 days, or with their workspace or
+    share ([cloud_accounts.md](cloud_accounts.md) "Invitations by e-mail");
   - `user_prefs` — small JSON values per `(user_id, workspace_id, key)`,
     under workspace `''`: the account-wide keys (`db.USER_PREF_KEYS`: the
     preference `profile` and its sync base `profile-base`, the active AI

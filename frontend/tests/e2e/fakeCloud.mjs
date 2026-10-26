@@ -6,11 +6,12 @@
 // with PKCE, refresh with rotation), EdDSA ID tokens and their JWKS,
 // /userinfo (what a share host checks a publishing server's token against),
 // revocation, the preference profile and server list cloud_sync calls, the
-// username lookup an invitation by Gamma Cloud username makes (every
-// `person` is in its directory), and the plan sync a hosted container makes
-// with its own client
-// (/api/hosted/sync, gamma/hosted.py: `hosted` holds the client, the answer
-// and the reports it got).
+// invitations by e-mail a Gamma server asks it to mail and to cancel (it
+// mails nothing: `invitations` and `cancelled` keep the bodies it got, in
+// order; their `invite_id` is the invitation's link secret, never the id a
+// Gamma server lists it by), and the plan sync a hosted container makes
+// with its own client (/api/hosted/sync, gamma/hosted.py: `hosted` holds
+// the client, the answer and the reports it got).
 import crypto from "node:crypto";
 import http from "node:http";
 
@@ -24,7 +25,8 @@ export class FakeCloud {
     this.access = new Map();   // access token -> subject
     this.refresh = new Map();  // live refresh token -> subject
     this.prefs = new Map();    // `${subject} ${path}` -> {value, updated_at}
-    this.directory = new Map(); // cloud username -> subject: what /api/lookup/username finds
+    this.invitations = [];     // every POST /api/invitations body, with the inviter's subject as `inviter`
+    this.cancelled = [];       // every POST /api/invitations/cancel body
     this.shareHost = "";
     this.hosted = null;        // {clientId, secret, answer, reports}: what /api/hosted/sync answers
     this.login = "";           // the subject the authorization endpoint answers for
@@ -37,7 +39,6 @@ export class FakeCloud {
   person(sub, username) {
     this.people.set(sub, { sub, preferred_username: username, email: `${username}@example.org`, email_verified: true,
       plan: "free", name: username });
-    this.directory.set(username, sub);
     this.login = sub;
   }
 
@@ -126,11 +127,17 @@ export class FakeCloud {
     }
     const sub = bearer();
     if (path === "/userinfo") return sub ? json(200, this.people.get(sub)) : json(401, { error: "invalid_token" });
-    if (path === "/api/lookup/username") {
+    if (path === "/api/invitations" && req.method === "POST") {
       if (!sub) return json(401, { detail: "not signed in" });
-      const name = url.searchParams.get("u") || "";
-      const found = this.directory.get(name);
-      return found ? json(200, { sub: found, username: name }) : json(404, { detail: "no such account" });
+      this.invitations.push({ ...JSON.parse(raw || "{}"), inviter: sub });
+      return json(200, { ok: true, expires_at: new Date(Date.now() + 14 * 86400e3).toISOString() });
+    }
+    if (path === "/api/invitations/cancel" && req.method === "POST") {
+      if (!sub) return json(401, { detail: "not signed in" });
+      const body = JSON.parse(raw || "{}");
+      this.cancelled.push(body);
+      return json(200, { ok: true,
+        removed: this.invitations.some((i) => i.server_url === body.server_url && i.invite_id === body.invite_id) });
     }
     if (path.startsWith("/api/me/")) {
       if (!sub) return json(401, { detail: "not signed in" });

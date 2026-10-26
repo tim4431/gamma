@@ -15,8 +15,8 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from .. import (accounts, billing, captcha, config, connect, db, mail, oidc, pages, ratelimit, servers, sessions,
-                settings)
+from .. import (accounts, billing, captcha, config, connect, db, identities, mail, oidc, pages, ratelimit, servers,
+                sessions, settings)
 from ..log import log
 
 router = APIRouter(prefix="/api")
@@ -61,10 +61,13 @@ def send_mail(to: str, subject: str, body: str, html: str = "") -> None:
         raise HTTPException(503, "We could not send the e-mail right now. Try again in a few minutes.") from e
 
 
-def verify_message(conn, account) -> tuple[str, str, str, str]:
+def verify_message(conn, account, next: str = "") -> tuple[str, str, str, str]:
     """Issue a verify link; the message to ``send_mail`` once the
-    transaction has committed."""
-    token = accounts.issue_email_token(conn, account["id"], "verify", config.VERIFY_TOKEN_TTL)
+    transaction has committed. ``next``: the page the link goes on to once
+    the address is confirmed (an e-mail invitation's), kept as the token's
+    payload."""
+    token = accounts.issue_email_token(conn, account["id"], "verify", config.VERIFY_TOKEN_TTL,
+                                       identities.safe_next(next) if next else "")
     return (account["email"], *accounts.verify_mail(account, token))
 
 
@@ -96,10 +99,19 @@ class RegisterBody(BaseModel):
     invite: str = ""
     display_name: str = ""
     turnstile: str = ""
+    next: str = ""          # where the verify link goes on to (an e-mail invitation's page)
 
 
 @router.post("/register")
 def register(body: RegisterBody, request: Request):
+    """A new account starts unconfirmed and gets the verify mail, whose
+    link goes on to ``next``. So does one made from an e-mail invitation's
+    page with the invited address: an invitation's link gets forwarded and
+    shared, so opening it proves nothing about the inbox. ``redirect`` is
+    where the page goes: ``next`` once the mail went (an invitation's page,
+    which asks to confirm first and offers a resend; the Overview by
+    default), else the Overview with the failure notice. ``mailed`` says
+    whether it went."""
     if settings.registration() == "closed":
         raise HTTPException(403, "Registration is closed.")
     ip = ratelimit.client_ip(request)
@@ -110,11 +122,12 @@ def register(body: RegisterBody, request: Request):
     accounts.check_email_domain(email)
     username = accounts.norm_username(body.username)
     password = accounts.check_password(body.password)
+    next_url = identities.safe_next(body.next)
     with closing(db.connect()) as conn:
         taken = accounts.take_invite(conn, body.invite, email)
         account = accounts.create(conn, email=email, username=username, password=password,
                                   display_name=body.display_name, **taken)
-        message = verify_message(conn, account)
+        message = verify_message(conn, account, next_url)
         token = sessions.create(conn, account["id"], request)
         conn.commit()
     # The account exists now: a mail that fails is resent from the Overview.
@@ -124,7 +137,8 @@ def register(body: RegisterBody, request: Request):
     except mail.MailError as e:
         log.warning("mail to %s failed: %s", account["email"], e)
         mailed = False
-    resp = JSONResponse({"account": accounts.public(account), "mailed": mailed}, status_code=201)
+    resp = JSONResponse({"account": accounts.public(account), "mailed": mailed,
+                         "redirect": next_url if mailed else "/?mail=failed"}, status_code=201)
     sessions.set_cookie(resp, token)
     return resp
 
@@ -270,20 +284,24 @@ def verify(body: TokenBody, request: Request):
         found = accounts.consume_email_token(conn, body.token, "verify")
         if not found:
             raise HTTPException(400, "This link is not valid any more. Sign in and ask for a new one.")
-        account, _ = found
+        account, next_url = found
         accounts.mark_verified(conn, account["id"])
         conn.commit()
-        return {"account": accounts.public(accounts.by_id(conn, account["id"]))}
+        return {"account": accounts.public(accounts.by_id(conn, account["id"])), "next": next_url or "/"}
+
+
+class ResendBody(BaseModel):
+    next: str = ""   # where the new link goes on to once the address is confirmed
 
 
 @router.post("/verify/resend")
-def resend_verify(request: Request):
+def resend_verify(request: Request, body: ResendBody | None = None):
     with closing(db.connect()) as conn:
         account = portal_account(conn, request)
         if account["email_verified_at"]:
             return {"ok": True, "already": True}
         ratelimit.check(f"verify-resend:{account['id']}", 3, 3600)
-        message = verify_message(conn, account)
+        message = verify_message(conn, account, body.next if body else "")
         conn.commit()
     send_mail(*message)
     return {"ok": True}

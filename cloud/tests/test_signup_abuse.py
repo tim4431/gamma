@@ -1,12 +1,14 @@
 """What stands between open registration and one person making accounts
 without limit: alias-aware uniqueness, the throwaway-domain list, and
 rate-limit buckets that neither an IPv6 prefix nor a mail alias can walk
-out of."""
+out of, nor a scan that fills the limiter's table."""
 
 from contextlib import closing
+from types import SimpleNamespace
 
 import pytest
 from conftest import invite, last_link, set_setting
+from fastapi import HTTPException
 
 from gammacloud import accounts, db, mail, ratelimit
 
@@ -159,6 +161,24 @@ def test_allowed_domains_let_their_addresses_in_without_a_code(client):
 ])
 def test_ip_bucket(ip, expected):
     assert ratelimit.ip_bucket(ip) == expected
+
+
+def test_a_full_table_drops_each_window_by_its_own_length(monkeypatch):
+    """Past ``_MAX_KEYS`` the limiter drops the windows that are over: an
+    hour's after its hour, a day's (the daily invitation cap) only after
+    its day."""
+    clock = [1000.0]
+    monkeypatch.setattr(ratelimit, "time", SimpleNamespace(monotonic=lambda: clock[0]))
+    monkeypatch.setattr(ratelimit, "_MAX_KEYS", 2)
+    ratelimit.check("day", 1, 86400)
+    ratelimit.check("hour", 1, 3600)
+    clock[0] += 7200
+    ratelimit.check("a", 1, 60)
+    ratelimit.check("b", 1, 60)                                   # three keys: the table is full
+    assert "hour" not in ratelimit._buckets and "a" in ratelimit._buckets
+    with pytest.raises(HTTPException) as e:
+        ratelimit.check("day", 1, 86400)                          # still counted
+    assert e.value.status_code == 429 and int(e.value.headers["Retry-After"]) == 86400 - 7200
 
 
 def test_a_prefix_rotation_shares_the_register_allowance(client):

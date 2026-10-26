@@ -1,6 +1,9 @@
 """Workspaces API (/api/workspaces*): create, inspect, rename, access,
-quota, kind, default, delete, members, and invitations by Gamma Cloud
-username (pending memberships, claimed on the person's first sign-in).
+quota, kind, default, delete, members, and invitations: by Gamma Cloud
+username for someone with no account here yet (pending memberships,
+claimed on the person's first sign-in), or by e-mail address, whoever it
+belongs to (gamma/email_invites.py: the account server mails the link, and
+the sign-in through it claims it).
 
 The model and its rules live in gamma/workspaces.py; this is the HTTP skin.
 Anyone creates personal workspaces for themselves; server admins create
@@ -17,7 +20,7 @@ takes account ids.
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
-from .. import cloud_auth, collab, ratelimit, workspaces
+from .. import cloud_auth, collab, email_invites, ratelimit, workspaces
 from ..auth import require_user_id
 from ..db import account_id, account_name, connect_users_db
 from ..server_settings import user_limits, usage_bytes, validate_quota_mb, workspace_bytes, workspace_quota
@@ -48,7 +51,10 @@ class MemberRole(BaseModel):
 
 
 class CloudInvite(BaseModel):
-    username: str                    # a Gamma Cloud username
+    # exactly one of the three
+    username: str = ""               # a Gamma Cloud username
+    email: str = ""                  # an e-mail address
+    invitation: str = ""             # an invitation by e-mail waiting: its role changes
     role: str = "editor"             # editor / viewer
 
 
@@ -98,20 +104,29 @@ def _valid_owner(username: str) -> str:
     return _account(username)
 
 
-def _payload(ws: str, user_id: str) -> dict:
-    """The workspace as the caller (``user_id``, an id) sees it: its row, the
-    caller's role (None for an admin who is no member), whose personal
-    workspace it is (``personal_of``, a username; "" when shared), whether
-    it is the caller's default, and the explicit members followed by the
-    pending invitations (tagged ``pending: true``, with the cloud
-    ``subject``)."""
+def _sees_email_invites(request: Request, ws: str) -> bool:
+    """Whether the caller sees the workspace's invitations by e-mail: its
+    owners and the admins, who manage them. Nobody else does, as their
+    addresses are personal data."""
+    return request.state.is_admin or workspaces.role_of(ws, request.state.user_id) == "owner"
+
+
+def _payload(ws: str, request: Request) -> dict:
+    """The workspace as the caller sees it: its row, the caller's role (None
+    for an admin who is no member), whose personal workspace it is
+    (``personal_of``, a username; "" when shared), whether it is the
+    caller's default, and the explicit members followed by the pending
+    invitations (tagged ``pending: true``): by Gamma Cloud username with the
+    cloud ``subject``, then, for the people who manage them
+    (``_sees_email_invites``), by e-mail with their ``email`` and ``id``."""
+    user_id = request.state.user_id
     info = workspaces.get(ws)
     with connect_users_db() as conn:
         personal_of = account_name(conn, workspaces.personal_owner(ws))
     return {**info, "role": workspaces.role_of(ws, user_id),
             "personal_of": personal_of,
             "default": workspaces.default_workspace(user_id) == ws,
-            "members": workspaces.members_with_pending(ws)}
+            "members": workspaces.members_with_pending(ws, by_email=_sees_email_invites(request, ws))}
 
 
 @router.post("")
@@ -138,7 +153,7 @@ def create_workspace(payload: WorkspaceCreate, request: Request):
             public_role=payload.public_role or "viewer", quota_mb=_quota(payload.quota_mb))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return _payload(info["id"], user_id)
+    return _payload(info["id"], request)
 
 
 @router.get("/mine")
@@ -166,8 +181,8 @@ def find_page(page_id: str, request: Request):
 def get_workspace(ws: str, request: Request):
     """The workspace with its members and the storage that applies to it
     (any member; admins)."""
-    user_id = _member(request, ws, "viewer")
-    return {**_payload(ws, user_id), "quota": workspace_quota(ws)}
+    _member(request, ws, "viewer")
+    return {**_payload(ws, request), "quota": workspace_quota(ws)}
 
 
 @router.put("/{ws}")
@@ -187,7 +202,7 @@ def update_workspace(ws: str, payload: WorkspaceUpdate, request: Request):
         raise HTTPException(status_code=400, detail=str(e))
     if {"kind", "access", "public_role"} & changes.keys():
         collab.revalidate(ws)
-    return {**_payload(ws, user_id), "quota": workspace_quota(ws)}
+    return {**_payload(ws, request), "quota": workspace_quota(ws)}
 
 
 # Sync def: the final copy zips the whole workspace first.
@@ -219,7 +234,7 @@ def set_member(ws: str, username: str, payload: MemberRole, request: Request):
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
     collab.revalidate(ws)
-    return _payload(ws, user_id)
+    return _payload(ws, request)
 
 
 @router.delete("/{ws}/members/{username}")
@@ -241,23 +256,47 @@ def remove_member(ws: str, username: str, request: Request):
 
 @router.get("/{ws}/invites")
 def list_invites(ws: str, request: Request):
-    """The invitations by Gamma Cloud username still waiting for the
-    person's first sign-in (any member; admins)."""
+    """The invitations still waiting for the person's first sign-in, by
+    Gamma Cloud username (``invites``, any member; admins) and by e-mail
+    (``email_invites``, empty but for the owners and admins)."""
     _member(request, ws, "viewer")
-    return {"invites": workspaces.pending_invites(ws)}
+    mailed = email_invites.listing("workspace", ws=ws) if _sees_email_invites(request, ws) else []
+    return {"invites": workspaces.pending_invites(ws), "email_invites": mailed}
 
 
 @router.post("/{ws}/invites")
-def invite_by_cloud_username(ws: str, payload: CloudInvite, request: Request):
-    """Invite a Gamma Cloud account by its username (owner of a shared
-    workspace; admins) — sync: the lookup goes to the account server. A
-    person whose cloud identity is already linked to an account here joins
-    at once; anyone else gets a pending membership their first cloud sign-in
-    turns into a real one. Refused on personal workspaces and when cloud
-    sign-in is off on this server."""
+def invite(ws: str, payload: CloudInvite, request: Request):
+    """Invite someone who may have no account here yet (owner of a shared
+    workspace; admins), named by exactly one of: ``username``, a Gamma Cloud
+    username the account server looks up — a person whose cloud identity is
+    linked to an account here joins at once, anyone else gets a pending
+    membership their first cloud sign-in turns into a real one; ``email``,
+    an address the account server mails an invitation to, whoever it
+    belongs to (``invited: {pending}``); ``invitation``, an invitation by
+    e-mail still waiting, whose role changes. Sync: the account server is
+    asked. Refused on personal workspaces, and when cloud sign-in is off on
+    this server (an e-mail: where ``email_invites.available`` says no)."""
     user_id = _member(request, ws, "owner")
+    if sum(bool(name) for name in (payload.username, payload.email, payload.invitation)) != 1:
+        raise HTTPException(status_code=400, detail="name one person: a username, an e-mail address or an invitation")
     if workspaces.get(ws)["kind"] != "shared":
         raise HTTPException(status_code=400, detail="a personal workspace has no other members")
+    if payload.invitation:
+        try:
+            email_invites.set_role(payload.invitation, payload.role, kind="workspace", ws=ws)
+        except email_invites.NoSuchInvitation as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return _payload(ws, request)
+    if payload.email:
+        ratelimit.check(f"email-invite:{user_id}", email_invites.SENDS_PER_HOUR, 3600)
+        try:
+            invited = email_invites.invite("workspace", payload.email, user_id,
+                                           server_url=cloud_auth.callback_base(request), ws=ws, role=payload.role)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e))
+        return {**_payload(ws, request), "invited": invited}
     if not cloud_auth.settings()["enabled"]:
         raise HTTPException(status_code=400, detail="Gamma Cloud sign-in is not set up on this server")
     ratelimit.check(f"cloud-lookup:{user_id}", cloud_auth.LOOKUPS_PER_10_MIN, 600)
@@ -267,7 +306,7 @@ def invite_by_cloud_username(ws: str, payload: CloudInvite, request: Request):
         raise HTTPException(status_code=503, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
-    return {**_payload(ws, user_id), "invited": invited}
+    return {**_payload(ws, request), "invited": invited}
 
 
 @router.delete("/{ws}/invites/{subject}")
@@ -279,3 +318,32 @@ def cancel_invite(ws: str, subject: str, request: Request):
     except ValueError as e:
         raise HTTPException(status_code=404, detail=str(e))
     return {"ok": True}
+
+
+@router.delete("/{ws}/email-invites/{invite_id}")
+def withdraw_email_invite(ws: str, invite_id: str, request: Request):
+    """Withdraw an invitation by e-mail (owner; admins): its mailed link
+    stops working."""
+    user_id = _member(request, ws, "owner")
+    try:
+        email_invites.withdraw(invite_id, user_id, server_url=cloud_auth.callback_base(request), kind="workspace",
+                               ws=ws)
+    except email_invites.NoSuchInvitation as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    return _payload(ws, request)
+
+
+@router.post("/{ws}/email-invites/{invite_id}/resend")
+def resend_email_invite(ws: str, invite_id: str, request: Request):
+    """Mail an invitation by e-mail again (owner; admins): a new link, its
+    14 days from now."""
+    user_id = _member(request, ws, "owner")
+    ratelimit.check(f"email-invite:{user_id}", email_invites.SENDS_PER_HOUR, 3600)
+    try:
+        email_invites.resend(invite_id, user_id, server_url=cloud_auth.callback_base(request), kind="workspace",
+                             ws=ws)
+    except email_invites.NoSuchInvitation as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    return _payload(ws, request)

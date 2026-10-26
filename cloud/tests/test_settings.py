@@ -60,6 +60,13 @@ def test_registration_refuses_anything_but_a_mode(raw):
         settings.clean("registration", raw)
 
 
+@pytest.mark.parametrize("raw", ["everyone", "Operator", "", None])
+def test_invitation_signup_is_operator_or_any(raw):
+    with pytest.raises(ValueError) as e:
+        settings.clean("invitation_signup", raw)
+    assert str(e.value) == "invitation_signup must be operator or any."
+
+
 def test_too_many_domains():
     with pytest.raises(ValueError):
         settings.clean("blocked_email_domains",
@@ -171,6 +178,25 @@ def test_the_allowed_domains_are_saved_like_the_blocked_ones(client):
     assert settings.allowed_email_domains() == {"uni.example", "lab.example"}
     page = client.get("/admin").text
     assert "id=setallow" in page and "id=setplans" in page and "Send test mail" in page
+
+
+def test_whose_invitations_carry_a_code_is_a_sign_up_setting(client):
+    admin_client(client)
+    assert settings.invitation_signup() == "operator"
+    assert client.get("/api/admin/settings").json()["invitation_signup"] == "operator"
+    r = client.patch("/api/admin/settings", json={"invitation_signup": "any"})
+    assert r.status_code == 200 and r.json()["invitation_signup"] == "any" and settings.invitation_signup() == "any"
+    assert client.patch("/api/admin/settings", json={"invitation_signup": "everyone"}).status_code == 400
+    page = client.get("/admin").text
+    assert "Invitations from Gamma servers" in page and "<select name=invitation_signup>" in page
+    assert "<option value=operator>Servers you run</option><option value=any>Any connected server</option>" in page
+    assert "setinvsign" in page.split("function showSettings", 1)[1]                  # the tab fills and saves it
+    # a row ``update`` would refuse never widens the gate
+    with closing(db.connect()) as conn:
+        conn.execute("UPDATE settings SET value = 'everyone' WHERE key = 'invitation_signup'")
+        conn.commit()
+    settings.invalidate()
+    assert settings.invitation_signup() == "operator"
 
 
 # --- the gate reads the table, not the environment ---------------------------

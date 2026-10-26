@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 
 from . import config
 
-SCHEMA_VERSION = 12
+SCHEMA_VERSION = 13
 BUSY_TIMEOUT = 10  # seconds a connection waits for another writer
 
 
@@ -270,6 +270,34 @@ SERVER_CONNECTS ="""CREATE TABLE IF NOT EXISTS server_connects (
         expires_at TEXT NOT NULL
     )"""
 
+# An e-mail invitation a Gamma server asked this server to send
+# (``invitations.py``, step 13): the hash of the mailed link's token, the
+# server and its own id for the invitation (one row per pair: sending again
+# replaces it), the sign-in client it came through (only that client
+# replaces or cancels it), what the invitation is to, the path on that
+# server to land on, the address, and the one-use invite code minted for it
+# ('' for none).
+SERVER_INVITATIONS = """CREATE TABLE IF NOT EXISTS server_invitations (
+    token_hash TEXT PRIMARY KEY,
+    server_url TEXT NOT NULL,
+    invite_id TEXT NOT NULL,
+    client_id TEXT NOT NULL DEFAULT '',
+    server_name TEXT NOT NULL DEFAULT '',
+    kind TEXT NOT NULL,
+    what TEXT NOT NULL DEFAULT '',
+    next TEXT NOT NULL DEFAULT '/',
+    email TEXT NOT NULL,
+    email_canon TEXT NOT NULL,
+    inviter_account_id TEXT NOT NULL,
+    code TEXT NOT NULL DEFAULT '',
+    created_at TEXT NOT NULL,
+    expires_at TEXT NOT NULL,
+    accepted_at TEXT,
+    UNIQUE (server_url, invite_id)
+)"""
+SERVER_INVITATIONS_INDEX = ("CREATE INDEX IF NOT EXISTS idx_server_invitations_expires "
+                            "ON server_invitations(expires_at)")
+
 SCHEMA = [
     # ``email`` is the address as it was typed; ``email_canon`` is the inbox
     # it reaches (accounts.py ``email_canon``), what uniqueness is judged on.
@@ -331,7 +359,8 @@ SCHEMA = [
     # ``uses_total`` is how many uses the code was made with, ``uses_left``
     # what remains. ``expires_at`` NULL = no end; ``disabled`` is the
     # admin's off switch. ``grant_days``: the plan it grants ends that many
-    # days after the registration (NULL = it does not end).
+    # days after the registration (NULL = it does not end). ``invitation``:
+    # minted for an e-mail invitation (``invitations.py``), not by an admin.
     """CREATE TABLE IF NOT EXISTS invites (
         code TEXT PRIMARY KEY,
         uses_left INTEGER NOT NULL,
@@ -342,7 +371,8 @@ SCHEMA = [
         uses_total INTEGER NOT NULL DEFAULT 0,
         expires_at TEXT,
         disabled INTEGER NOT NULL DEFAULT 0,
-        grant_days INTEGER
+        grant_days INTEGER,
+        invitation INTEGER NOT NULL DEFAULT 0
     )""",
     # OIDC clients: ``secret_hash`` NULL = public client (PKCE only).
     # ``kind``: desktop / share-host / container / server. ``redirect_uris``
@@ -439,6 +469,8 @@ SCHEMA = [
     SETTINGS,
     ALERTS,
     METRICS,
+    SERVER_INVITATIONS,
+    SERVER_INVITATIONS_INDEX,
 ]
 
 
@@ -600,6 +632,14 @@ def _step_fleet_containers(conn) -> None:
     _add_column(conn, "hosts", "containers", "TEXT NOT NULL DEFAULT '[]'")
 
 
+def _step_server_invitations(conn) -> None:
+    """The e-mail invitations Gamma servers send through this server, and
+    the mark on the invite codes they carry."""
+    conn.execute(SERVER_INVITATIONS)
+    conn.execute(SERVER_INVITATIONS_INDEX)
+    _add_column(conn, "invites", "invitation", "INTEGER NOT NULL DEFAULT 0")
+
+
 STEPS: list = [
     # (version, name, fn(conn)) — append only; see docs/dev/cloud_accounts.md.
     (2, "external_logins", _step_external_logins),
@@ -613,6 +653,7 @@ STEPS: list = [
     (10, "fleet_orphans", _step_fleet_orphans),
     (11, "operations", _step_operations),
     (12, "fleet_containers", _step_fleet_containers),
+    (13, "server_invitations", _step_server_invitations),
 ]
 
 

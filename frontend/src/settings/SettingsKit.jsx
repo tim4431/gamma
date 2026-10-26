@@ -3,7 +3,7 @@
 // Step/Field/DialogButtons for the editor dialogs they open, NavAccountCard
 // on the rail, plus the small shared controls (Segmented,
 // PictureChoices/IconChoices, ToggleGroup, Stepper, UnitInput, CharSlider,
-// PasswordInput, CopyField, AccountPicker, LogBox, Stat/StatText, Empty,
+// PasswordInput, CopyField, AccountPicker, PersonRow, LogBox, Stat/StatText, Empty,
 // WorkspaceFolder, QuotaMeter/PercentMeter/AllowanceMeter, KeyCaps/KeyBinding).
 // New settings UI should reuse these; bespoke classes are for layout only.
 import React from "react";
@@ -604,6 +604,25 @@ export function WorkspaceFolder({ id }) {
     <span className="wsFolder" title={t("Folder in the server's data directory")}>
       {`workspaces/${id}`}
     </span>
+  );
+}
+
+// One person in a list of who has access or who is invited: their glyph
+// (`active` fills it: you, an owner), the name with an optional tag, one line
+// under it, and the row's controls at its end.
+export function PersonRow({ name, tag, sub, icon: Icon, active, children }) {
+  return (
+    <div className="aiProvRow">
+      <span className={`aiProvAvatar ${active ? "active" : ""}`}><Icon size={16} /></span>
+      <span className="aiProvMeta">
+        <span className="aiProvName">
+          {name}
+          {tag ? <span className="uiTag">{tag}</span> : null}
+        </span>
+        <span className="aiProvDesc">{sub}</span>
+      </span>
+      <span className="aiProvActions">{children}</span>
+    </div>
   );
 }
 
