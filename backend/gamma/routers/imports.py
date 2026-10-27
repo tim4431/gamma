@@ -1,7 +1,8 @@
 """Imports: Logseq PDF-highlight exports (PDF + EDN + optional MD), annotations
 embedded in the PDF itself (e.g. saved by SumatraPDF/Acrobat/Zotero), Markdown
 notes, and whole libraries — a Zotero RDF export, a zip of Markdown notes,
-Notability notes, a Gamma export — through the reviewed import: the upload
+Notability notes, GoodNotes notebooks, a Gamma export — through the reviewed
+import: the upload
 is staged and previewed (``/import/review``), then the chosen items are
 imported by a background job (``POST /api/jobs/import``, gamma/jobs.py)."""
 
@@ -36,6 +37,7 @@ from ..ops import MAX_OPS, after_commit, apply_batches, apply_ops, ensure_filing
 from ..markdown_import import MAX_MARKDOWN_BYTES, TooManyBlocks, md_to_blocks
 from ..markdown_zip_import import import_markdown_zip, markdown_page
 from ..notability_import import import_notes
+from ..goodnotes_import import import_goodnotes
 from ..ink import InkError, dumps as ink_dumps, from_pdf_ink, parse_ink, pdf_position as ink_position
 from ..pdf_text import GlyphPages, quote_under
 from ..pdf_export import (TEXT_BOX_TYPES, _resolve, annotation_key, annotation_shown, display_size,
@@ -75,6 +77,7 @@ def _review_source(source):
         "markdown-zip": (_preview_markdown_zip, _commit_markdown_zip),
         "markdown-file": (_preview_markdown_file, _commit_markdown_file),
         "notability": (_preview_notability, _commit_notability),
+        "goodnotes": (_preview_goodnotes, _commit_goodnotes),
         "gamma": (_preview_gamma, _commit_gamma),
     }
     if source not in sources:
@@ -407,6 +410,22 @@ def _commit_notability(ws, actor, data, meta, selection, progress=jobs.no_progre
     return _notability(ws, data, meta, actor=actor, selection=selection, progress=progress)
 
 
+def _goodnotes(ws, data, meta, *, actor="", preview=False, selection=None, progress=jobs.no_progress):
+    """GoodNotes notebooks (one .goodnotes, or a .zip of them) → a page each
+    (gamma/goodnotes_import.py)."""
+    with connect_pages_db(ws) as conn:  # the import commits notebook by notebook
+        return {"ok": True, **import_goodnotes(ws, data, conn, meta.get("folder", ""), name=meta.get("filename", ""),
+                                               actor=actor, preview=preview, selected=selection, progress=progress)}
+
+
+def _preview_goodnotes(ws, data, meta):
+    return _goodnotes(ws, data, meta, preview=True)
+
+
+def _commit_goodnotes(ws, actor, data, meta, selection, progress=jobs.no_progress):
+    return _goodnotes(ws, data, meta, actor=actor, selection=selection, progress=progress)
+
+
 def _gamma_zip(ws, data, work):
     """Refuses a guest's workspace; spools the export to ``work``."""
     if is_guest_workspace(ws):
@@ -487,6 +506,21 @@ def import_notability(request: Request, file: UploadFile = File(...), folder: st
     ``notability``)."""
     ws = require_ws(request, write=True)
     return _commit_notability(ws, actor_of(request), file.file, _meta(file, folder), parse_selection(selected))
+
+
+@router.post("/import/goodnotes/preview")
+def preview_goodnotes(request: Request, file: UploadFile = File(...), folder: str = Form("")):
+    return _preview_goodnotes(require_ws(request, write=True), file.file, _meta(file, folder))
+
+
+@router.post("/import/goodnotes")
+def import_goodnotes_endpoint(request: Request, file: UploadFile = File(...), folder: str = Form(""),
+                              selected: str | None = Form(None)):
+    """GoodNotes notebooks (one .goodnotes, or a .zip of them) → a page
+    each; the web app goes through the review (``/import/review``, source
+    ``goodnotes``)."""
+    ws = require_ws(request, write=True)
+    return _commit_goodnotes(ws, actor_of(request), file.file, _meta(file, folder), parse_selection(selected))
 
 
 @router.post("/import/gamma/preview")

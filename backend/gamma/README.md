@@ -98,6 +98,9 @@ logseq_*.py        Logseq: PDF-highlight importers (EDN / Markdown), a page as a
 markdown_*.py      Markdown import (one document, or a zip: Notion, Obsidian, Gamma's own) and export
 zotero_*.py        Zotero RDF library import and export
 notability*.py     Notability notes: the plists and the .ntb's FlatBuffers log read behind guards, a note's model, its place in Gamma, the import and the export
+goodnotes*.py      GoodNotes notebooks: protobuf, Apple LZ4 and tpl read behind guards, a notebook's model, its place in Gamma, the import
+note_app_import.py what the Notability and GoodNotes imports share: the run over an upload, the commit, the storing of a note's files
+rtf.py             the RTF Cocoa writes (a GoodNotes text box), read as spans
 obsidian_export.py an Obsidian vault export
 import_*.py        the reviewed library imports: staged uploads, preview and selection, the guarded zip walk
 bibtex.py          BibTeX entries and bibliographies, every printed entry valid BibTeX

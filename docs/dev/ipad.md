@@ -685,9 +685,9 @@ web app's login page.
 
 The app declares the types it opens (`CFBundleDocumentTypes` in
 `project.yml`), so the share sheet, Files' *Open in* and AirDrop offer it.
-The types are PDF, Markdown, Notability's `.note` and `.ntb`, and
-`.zip`. The ones other apps own are at rank *Alternate*, so installing
-Gamma never makes it their default app. Markdown and the `.note` are
+The types are PDF, Markdown, Notability's `.note` and `.ntb`,
+GoodNotes' `.goodnotes`, and `.zip`. The ones other apps own are at
+rank *Alternate*, so installing Gamma never makes it their default app. Markdown and the `.note` are
 declared as imported types as well, for an iPad where no app declares
 them. The `.note` identifier is the one Notability's own Info.plist
 exports (`com.gingerlabs.notability.notearchive`), and where Notability is
@@ -696,7 +696,11 @@ the Info.plist published for Notability's Mac app declares `.note` and
 `.nbn` only. So Gamma claims
 it, as an exported type of its own (`net.gammapdf.ntb`) at rank *Owner*,
 and the system reads an `.ntb` as that type wherever no other app
-exports one.
+exports one. GoodNotes' own identifier for `.goodnotes` is not
+published, so Gamma declares the extension as an imported type of its
+own (`net.gammapdf.goodnotes`) at rank *Alternate*: it names a
+`.goodnotes` on an iPad without GoodNotes, and where GoodNotes is
+installed its own declaration wins.
 
 The system hands the app a file URL (`onOpenURL` in `GammaApp.swift`).
 `OpenedFiles` copies the file into a folder of its own under
@@ -732,13 +736,16 @@ before a reload waits until a page can take it. The web half is
    the upload's rules: an already-known file opens its page, and the
    annotations another reader saved in it are imported. A `.note` or
    `.ntb` opens the Notability import's review, several of them as one
-   `.zip`, as the picker sends them. A `.zip` opens the Import dialog with
-   the file already chosen. It asks which export it is, offering the
-   sources that read an archive (Zotero, Markdown, Notability, Gamma),
-   and goes on to that source's review with no picker.
+   `.zip`, as the picker sends them, and a `.goodnotes` the GoodNotes
+   import's the same way. A `.zip` opens the Import dialog with the file
+   already chosen. It asks which export it is, offering the sources that
+   read an archive (Zotero, Markdown, Notability, GoodNotes, Gamma), and
+   goes on to that source's review with no picker.
 3. **What it cannot.** One import dialog shows at a time. With
    Notability notes in the same share, the review takes them, and a
-   `.zip` with them is named in the status, to be opened again. A second
+   `.goodnotes` or a `.zip` with them is named in the status, to be
+   opened again; GoodNotes notebooks without Notability notes take the
+   review the same way. A second
    `.zip` is named the same way. A file Gamma does not open is let go,
    and the status names it.
 
@@ -1315,10 +1322,14 @@ Only an iPad can show these, and none has been run yet:
     selection.
 22. Opened files ([Opened files](#opened-files)). Gamma should be listed
     in the share sheet and Files' *Open in* for a PDF, a `.md`, a `.zip`,
-    a `.note` and an `.ntb`, with Notability installed and without it.
+    a `.note`, an `.ntb` and a `.goodnotes`, with Notability and
+    GoodNotes installed and without them.
     An `.ntb` not listed with Notability installed would mean Notability
     exports a type of its own for `.ntb` after all, whose identifier then
-    belongs in the NTB document type in `project.yml`. Check a file shared from
+    belongs in the NTB document type in `project.yml`. A `.goodnotes`
+    shared from GoodNotes and not listed means the same of GoodNotes:
+    the identifier its export carries (the share sheet's file type) then
+    belongs in the GoodNotes document type. Check a file shared from
     Mail (a copy in `Documents/Inbox`, which should not stay in Files), a
     file opened in place from iCloud Drive (its security scope), a file
     shared at a cold launch and while the first launch's launcher is up,

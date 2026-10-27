@@ -59,14 +59,16 @@ class ZipEntry:
     """One member of a walked archive: ``path`` (its place in the walk, a
     nested zip's members below the zip's own directory), ``source_path``
     (where it was found), ``size`` (its unpacked bytes, as the directory
-    says) and ``depth`` (that of the zip holding it, 0 for the upload)."""
+    says), ``crc`` (its CRC-32, as the directory says) and ``depth`` (that
+    of the zip holding it, 0 for the upload)."""
 
-    __slots__ = ("path", "source_path", "size", "depth", "_zf", "_info")
+    __slots__ = ("path", "source_path", "size", "crc", "depth", "_zf", "_info")
 
     def __init__(self, path, zf, info, depth=0):
         self.path = path
         self.source_path = path
         self.size = info.file_size
+        self.crc = info.CRC
         self.depth = depth
         self._zf, self._info = zf, info
 

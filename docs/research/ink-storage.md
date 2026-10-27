@@ -136,6 +136,13 @@ https://support.goodnotes.com/hc/en-us/articles/7353718249231-Erasing-content);
 the Swift-on-web engineering post
 (https://www.swift.org/blog/bringing-goodnotes-to-web-with-swift/).
 
+The GoodNotes import survey of 2026-10
+([goodnotes-onenote-import.md](goodnotes-onenote-import.md)) reads the
+whole file, not the strokes alone, on newer evidence; where it corrects a
+claim below, it says so in its section "What this corrects in
+ink-storage.md", and the one correction that changes a reader is marked
+here.
+
 - **A record stream per page plus an event log.** A `.goodnotes` file is
   a zip: `index.events.pb` (an event log), `notes/<UUID>` one file per
   page holding `<varint length><protobuf record>` pairs, one metadata
@@ -152,7 +159,10 @@ the Swift-on-web engineering post
   talks quoted by the readers, not a vendor document.
 - **Erased strokes are removed from the page file**, not tombstoned in
   place: every live record renders in the app's own PDF export.
-  **[verified]**.
+  **[verified]**. Corrected 2026-10-25: a whole-stroke erase leaves a
+  tombstone pair in the file (gnnote's corpus, inkref's library census);
+  a reader skips those and every live record still renders
+  ([goodnotes-onenote-import.md](goodnotes-onenote-import.md#what-this-corrects-in-ink-storagemd)).
 - **Width is the final rendered value, per point.** Flat strokes (ball
   pen, highlighter, shapes) are quadratic Bézier chains with one nominal
   width `W` (on-page width exactly `W/2` pt: 24 → 12 pt, 1.559 → 0.78 pt).

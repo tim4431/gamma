@@ -2,14 +2,16 @@
 
 The View menu's (≡) Import…/Export… dialogs and every pipeline behind them: embedded
 PDF annotations, Logseq graphs, Zotero libraries, Markdown notes (Obsidian
-vaults, Notion exports), Notability notes, Markdown and Obsidian vault export, the notes
+vaults, Notion exports), Notability notes, GoodNotes notebooks, Markdown and Obsidian vault export, the notes
 typeset as their own PDF, the BibTeX bibliography, and the annotated-PDF
 writer (its internals and the shared typesetting engine are in
 [pdf_typesetting.md](pdf_typesetting.md)). Code: `gamma/routers/imports.py`, `gamma/zotero_import.py`,
 `gamma/zotero_export.py`, `gamma/logseq_import.py`, `gamma/markdown_import.py`,
 `gamma/markdown_zip_import.py`, `gamma/import_zip.py` (the zip walk the library imports share),
 `gamma/notability_import.py`, `gamma/notability.py`, `gamma/notability_archive.py`,
-`gamma/notability_map.py`, `gamma/notability_export.py`, `gamma/notability_write.py`, `gamma/markdown_export.py`, `gamma/obsidian_export.py`, `gamma/pdf_export.py`,
+`gamma/notability_map.py`, `gamma/notability_export.py`, `gamma/notability_write.py`,
+`gamma/note_app_import.py` (what the Notability and GoodNotes imports share), `gamma/goodnotes_import.py`,
+`gamma/goodnotes.py`, `gamma/goodnotes_codec.py`, `gamma/goodnotes_map.py`, `gamma/rtf.py`, `gamma/markdown_export.py`, `gamma/obsidian_export.py`, `gamma/pdf_export.py`,
 `gamma/pdf_notes.py`, `gamma/pdf_document.py`, `gamma/pdf_typeset.py`,
 `gamma/note_markup.py`, `gamma/vector_text.py`, `gamma/pdf_glyphs.py`,
 `gamma/pdf_image.py`, `gamma/text_box.py`, `gamma/bibtex.py`,
@@ -136,15 +138,17 @@ export dialog's counterpart. Step one is a source card: annotations embedded
 in this PDF, a Logseq .pdf + .edn, a Zotero library (its export folder or a
 .zip of it), Markdown notes (one
 `.md` or a `.zip` such as a Notion export), Notability notes (one or more
-`.note` files, or a `.zip` of them), or a Gamma export .zip. Double-click
+`.note` files, or a `.zip` of them), GoodNotes notebooks (one or more
+`.goodnotes` files, or a `.zip` of them), or a Gamma export .zip. Double-click
 or Next confirms. Only sources with an option get a review step. That option is
 the strip switch, which applies to embedded annotations, including those
-inside Zotero's exported PDFs. Markdown, Notability, Logseq and Gamma open the
+inside Zotero's exported PDFs. Markdown, Notability, GoodNotes, Logseq and Gamma open the
 file picker directly, with their preparation notes under the selected card.
 `resolveImport` in `transfers/transferFormats.js` decides both.
-Notability's picker takes several files, which go up as one `.zip`
-(`folderZip.js` `filesUpload`, a name picked twice numbered), and takes any
-file on an iPhone or iPad, whose Safari greys out a `.note`.
+The Notability and GoodNotes pickers take several files, which go up as one
+`.zip` (`folderZip.js` `filesUpload`, a name picked twice numbered), and take
+any file on an iPhone or iPad, whose Safari greys out a `.note` or a
+`.goodnotes`.
 Zotero is the default source (a numbered step guide reusing
 settingsKit's `Step`); with a PDF open, that PDF's own annotations win. Nothing
 is remembered: the switch starts from the Settings preference each time, so the
@@ -154,16 +158,17 @@ The iPad app opens the dialog with a `.zip` already chosen, one shared to
 it from another app ([ipad.md "Opened files"](ipad.md#opened-files)). The
 dialog is then titled with the file's name and asks which export it is.
 It offers only the sources that read an archive (`archive` in
-`resolveImport`: Zotero, Markdown, Notability and Gamma). Its button is
-*Import*, and the file goes straight to that source's review with no
-picker. A `.note` or `.ntb` shared to the app skips the dialog and opens
-the Notability review.
+`resolveImport`: Zotero, Markdown, Notability, GoodNotes and Gamma). Its
+button is *Import*, and the file goes straight to that source's review
+with no picker. A `.note` or `.ntb` shared to the app skips the dialog and
+opens the Notability review, a `.goodnotes` the GoodNotes review.
 
-Zotero, Markdown (ZIP or one file), Obsidian/Notion ZIPs, Notability notes and
-Gamma exports share one review flow: Upload → Review → Import → Summary.
+Zotero, Markdown (ZIP or one file), Obsidian/Notion ZIPs, Notability notes,
+GoodNotes notebooks and Gamma exports share one review flow: Upload → Review →
+Import → Summary.
 
 - `POST /api/import/review` takes the file, its `source` (`zotero`,
-  `markdown-zip`, `markdown-file`, `gamma`, `notability`), an optional `folder` (the
+  `markdown-zip`, `markdown-file`, `gamma`, `notability`, `goodnotes`), an optional `folder` (the
   destination folder's id, `""` the library's top; 400 when it is no
   folder, `import_review.destination`) and `strip`.
   It stages the upload, runs the source's preview and returns the two trees
@@ -521,7 +526,9 @@ zip holding one folder: `Session.plist` (the whole note, a keyed archive),
 export too: an `.ntb` is a zip of `noteBundle`, a FlatBuffers log of the
 note's records, and the pictures and PDF they name under `assets/`, read by
 `gamma/notability_ntb.py` into the same model, so what follows holds for
-both. The upload is one `.note` or `.ntb`, several picked together (the
+both. The run over the upload, its guards, the commit and the report are
+shared with the [GoodNotes import](#goodnotes-notebooks)
+(`gamma/note_app_import.py`). The upload is one `.note` or `.ntb`, several picked together (the
 dialog packs them into one `.zip`), a `.zip` of them (a library's export),
 or a zip of an unzipped note folder (`.nbn`, iCloud's form). Each note
 becomes one page. It is a source of the
@@ -824,6 +831,164 @@ point. `test_notability_ntb.py` covers what the sample does not (a log's
 versions and erase records, text boxes, a PDF's pages, damage) on bundles
 `ntb_fixtures.py` writes. `GAMMA_NOTABILITY_SAMPLES` names a folder of
 more notes to import the same way.
+
+## GoodNotes notebooks
+
+`POST /api/import/goodnotes` (View menu ≡ → Import… → GoodNotes notebooks;
+`gamma/goodnotes_import.py`, which reads a notebook through
+`gamma/goodnotes.py`, `gamma/goodnotes_codec.py` and `gamma/rtf.py` and
+places it through `gamma/goodnotes_map.py`) imports GoodNotes' own format,
+the `.goodnotes` its iPad, iPhone and Mac apps export. The upload is one
+`.goodnotes`, several picked together (the dialog packs them into one
+`.zip`), a `.zip` of a folder's export, or a `.goodnotes.zip` backup. Each
+notebook becomes one page. It is a source of the reviewed import (`source`
+`goodnotes`), and it shares the run over the upload, its guards, the
+commit and the report with the Notability import
+(`gamma/note_app_import.py`): what [Notability notes](#notability-notes)
+says of one note at a time, of folders, of a 413 and a 507, of the limits
+on zips and stored files and of the report holds here too. The format, its
+sources and what was decided where they disagree are in
+[research/goodnotes-onenote-import.md](../research/goodnotes-onenote-import.md).
+
+**The file.** A `.goodnotes` is a zip. `index.events.pb` is the document's
+event journal: its title, its paper templates, its pages made, bound to
+another template, moved and deleted, and its recordings. `index.notes.pb`
+lists a `notes/<N>` member per page, and `index.attachments.pb` the
+attachments: PDFs, pictures and audio. Every member is a stream of
+protobuf records, and a stroke's geometry is a tpl image in Apple's
+framed LZ4 (`goodnotes_codec`). Pages come in the order of their order
+keys, compared byte for byte, a deleted page left out. A page's member is
+its id plus one, as one 128-bit number. Every page is bound to a one-page
+PDF of its own size: one of GoodNotes' papers, or a page of a PDF the user
+brought. Geometry is in canvas units of 6/11 pt, from the page's top-left.
+
+**What a notebook becomes** (`goodnotes_map.plan_notebook`):
+
+| The notebook | Becomes |
+|---|---|
+| Every page on one of GoodNotes' papers: blank, dotted, squared, narrow or wide ruled, or a cover | A notebook: a sheet per page of the page's size, with its paper's colour and rule colour (read from its PDF) and its pattern and pitch (16 pt dots and squares, 17.5 and 25 pt rules); a cover is a blank sheet of its colour |
+| Its pages exactly one PDF's, 1..n in order | A page carrying that PDF as it is |
+| Anything else: a paper the import does not know (Cornell, music, planners, a custom template), PDF pages among papers, pages reordered or repeated | A page carrying one PDF composed of the pages in order (`compose_pdf`), each copied from the PDF page it is bound to, GoodNotes' own papers among them |
+
+- A page whose paper is missing, or whose PDF does not open, is blank
+  paper of its size, with a warning. A turned page is imported upright
+  (counted).
+- The preview reads the journal and the indexes but no page, so the kind
+  it shows (Page or PDF) follows from the templates alone.
+
+**Handwriting.** Each stroke becomes one gamma-ink v2 stroke per sub-path
+(an old file keeps the eraser's cuts as sub-paths), in GoodNotes' drawing
+order, its lasso offset added ([handwriting.md](handwriting.md)
+"Interchange"):
+
+- **Ball pen** (constant width): the Ballpoint (`brush: "monoline"`), even,
+  W/2 pt wide. Its quadratic segments are raised to cubics and sampled as
+  the Notability import samples a curve.
+- **Highlighter**: the highlighter tool at its width and alpha (0.5). It
+  lies in band 0 under the ink, where GoodNotes draws it on top.
+- **Fountain and brush pens** (variable width; the file does not say
+  which): the Pen, `size` the stroke's widest, `w` each sample's half width
+  over the widest half width. One of even width is even.
+- **Tape**: an opaque even band as wide as the tape. It no longer hides and
+  reveals (counted).
+- **Pencil**: drawn with an Apple Pencil, the Pencil with `p` (force ÷
+  25/6) and `w` and `o` baked by the brush table's law
+  (`goodnotes_map.pencil_law`, held to `tests/shared/inkwidth.json`), so a
+  restyle bakes the same. Its tilt is not written, since the two angle
+  columns are in dispute. Drawn without a Pencil (force 0, the Mac), it is
+  even.
+- A line style is the stroke's `dash`.
+- **A recognised shape** keeps a shape record where Gamma has one (a line,
+  a rectangle with square corners, a triangle, an ellipse), as the
+  Notability import's shapes do (`notability_map.shape_stroke`). A curved
+  line, any other polygon and an open polyline are plain outlines. A
+  shape's fill, a record of its own joined by its outline's id, is the
+  shape's `fill` at its alpha (0.1).
+- Erased strokes stay in the file as tombstones (metadata #3, content #14)
+  and are passed by.
+
+Samples lie at most a point apart, decimated as the client decimates.
+Widths scale with the page when its PDF is drawn at another size than
+6/11 pt a unit.
+
+**Text, pictures, recordings.**
+
+- A legacy text box (kind #8, Cocoa RTF, read by `gamma/rtf.py`) and a
+  schema-35 one (kind #21, its runs in Apple LZ4) become fixed-width text
+  boxes by the Notability import's rules (`notability_map.text_box`): the
+  size and colour of most of the characters, the box's fill, bold
+  (a font's or a weight's), italic and strikethrough as Markdown. Each box
+  is grown by Gamma's padding so its text starts where GoodNotes' frame
+  puts it. A turned box stands upright on the centre GoodNotes turned it to
+  (counted from half a degree).
+- A picture becomes a picture box (`picture_box`), its bytes as they came.
+  A die-cut sticker, a one-page PDF, is rendered to a PNG through PyMuPDF.
+  A picture GoodNotes shows cropped comes in whole (counted).
+- Each recording whose audio the notebook holds becomes a recording block
+  after the sheets or the PDF's markup: one segment, its length from the
+  file's movie header, started when GoodNotes started it, titled
+  "Recording" (numbered when there are several). No stroke is placed on
+  it: GoodNotes times a stroke, not its samples.
+
+**The key** is `properties.goodnotes_import`, a SHA-256 of every member's
+path, size and CRC-32 as the zip's directory lists them, but for what
+GoodNotes derives (the search index, the thumbnail). It is computed
+without reading a byte (`goodnotes.notebook_digest`). The same notebook
+imported again is skipped and named; an edited one is a new page.
+
+**Limits**, beyond the shared ones:
+
+- The commit reads one page at a time, as its ink is stored, and lets the
+  page's ink go once its strokes are made (`goodnotes.read_page`), so one
+  page's ink is held at a time. Records are parsed as they are read.
+- Protobuf: 4,000,000 records a member, 1,000,000 fields a message, the
+  group wire types refused.
+- An LZ4 frame's blocks are checked against what the frame may still
+  produce before they are decoded, and a stroke's geometry stops at 8 MiB,
+  a notebook's at 1 GiB (a dense page unpacks to about 0.7 MB). A tpl
+  image's format is checked against the five GoodNotes writes before a
+  value is read, and an array's count against the bytes left.
+- The indexes 64 MiB each, the page index read to 50,000 entries (a
+  deleted page stays listed), a page's member 256 MiB, 1,000,000 elements
+  a notebook, 100,000 points a stroke, 2,000,000 a page's ink and shapes,
+  10,000 corners a shape, 10,000 runs and 200,000 characters a text
+  element, 64 MiB of text boxes' text a notebook.
+- An RTF of 4 MiB at most, its groups past 64 deep passed by without a
+  copy, its text 1,000,000 characters; a character past the BMP (an emoji)
+  joined from its two surrogates, `\'hh` bytes in a row decoded together,
+  so a double-byte code page reads.
+- A coordinate past 10⁷ units, or not finite, leaves its element out; a
+  date past year 9999 reads as none.
+
+**Not read, and said so.**
+
+- Shape tool objects (kind #21 with #9 0), lines and connectors (#22),
+  sticky notes (#20) and math (#11): no public file holds one, so their
+  keys are unconfirmed. They are left out, named by kind.
+- Not read at all: a partial erase in the form a current build may write
+  (`#16 erasers`), Layers, page links, the outline, bookmarks, and the
+  search index's recognised handwriting.
+- Not kept: tape's hide and reveal, a picture's crop, a page's turn, a text
+  box's alignment, underline and fonts, the pencil's grain and GoodNotes'
+  own pencil law, dash lengths.
+- GoodNotes on Android, Windows and the web exports PDF only. Such a PDF
+  imports as a paper, and Import → Annotations in this PDF brings in what
+  an Editable export holds as annotations, as foreign ink: even polylines.
+
+**Real notebooks.** `backend/tests/test_goodnotes_samples.py` imports every
+`.goodnotes` of `backend/tests/samples/goodnotes/` (one CC0 notebook, its
+README says more) and of the folder `GAMMA_GOODNOTES_SAMPLES` names, and
+fails on anything left out for want of reading it. A `.pdf` beside a
+notebook, named as it is, is taken as GoodNotes' own Editable export of
+it, and the planner is held to it: the page sizes exactly, each ball pen,
+highlighter and straight shape within 2 pt of its annotation and of its
+width, each piece of a variable-width stroke inside its record's rect.
+The public notebooks of goodparse and parser-for-goodnotes, which their
+licences keep out of the repository, pass it: 14 notebooks import whole,
+and the six with exports match them. `test_goodnotes.py` covers the
+encodings, each element and each damage on notebooks
+`goodnotes_fixtures.py` writes, and `test_goodnotes_import.py` the import
+through the API.
 
 ## Notability export
 

@@ -669,6 +669,70 @@ open(sys.argv[3], 'wb').write(b"noteSN_FILE_VER_20230015" + bytes(64))
     } finally { await ctx.close(); }
   });
 
+  await step("transfer: a GoodNotes notebook imports as a notebook of its papers, with its ink, text box, picture and recording", async () => {
+    const { ctx, page } = await setup();
+    try {
+      // The backend's writer of what GoodNotes writes (backend/tests/goodnotes_fixtures.py):
+      // a cover, then a squared page with a ball pen line, a highlighter, a
+      // fountain pen stroke, a text box and a picture, and a recording.
+      const notebook = path.join(server.dir, "E2E GoodNotes notebook.goodnotes");
+      execFileSync(python, ["-c", `
+import sys
+sys.path.insert(0, 'backend/tests')
+import goodnotes_fixtures as gx
+import notability_fixtures as fx
+n = gx.Notebook("E2E GoodNotes notebook", seed=42)
+picture = n.attach(fx.png(60, 30))
+n.page(n.paper("cover", fill=(0.31764707, 0.84313726, 0.9607843), colour="Blue"))
+line = [(60.0, 80.0), ((120.0, 80.0), (180.0, 90.0)), ((240.0, 100.0), (300.0, 90.0))]
+n.page(n.paper("grid"), [gx.ink("pen", gx.flat([line])),
+    gx.ink("marker", gx.flat([line], width=24.0), rgba=(1.0, 1.0, 0.2, 0.5), highlighter=True, offset=(0.0, 60.0)),
+    gx.ink("fountain", gx.ribbon([[(60.0, 260.0, 1.0), (160.0, 280.0, 3.0), (260.0, 260.0, 1.5)]]), kind=1),
+    gx.rtf_text("box", (60, 400, 360, 60), gx.COCOA), gx.image("photo", picture, (420, 400, 120, 60))])
+n.recording(fx.m4a(2500))
+open(sys.argv[1], 'wb').write(n.bytes())
+`, notebook], { cwd: ROOT });
+      await page.waitForSelector(".folderNewBtn");
+      const dialog = await openDialog(page, "Import");
+      await choice(dialog, "GoodNotes notebooks").click();
+      const chooser = page.waitForEvent("filechooser");
+      await choice(dialog, "Choose files…").click();
+      await (await chooser).setFiles(notebook);
+      const review = page.getByRole("dialog", { name: "Review GoodNotes import", exact: true });
+      const target = review.getByRole("region", { name: "Library after import", exact: true });
+      await target.getByText("E2E GoodNotes notebook", { exact: true }).waitFor();
+      assertEq((await target.locator(".importKind").allTextContents()).join(","), "Page");
+      await choice(review, "Import to library").click();
+      const report = page.getByRole("dialog", { name: "Import complete", exact: true });
+      await report.waitFor();
+      const summary = await report.locator(".importReviewHeader").innerText();
+      assert(summary.includes("1 new page") && summary.includes("1 recording"), summary);
+      await choice(report, "Done").click();
+
+      // A sheet per page on its paper; the ink, the box and the picture on the
+      // squared one; the recording after them.
+      const imported = (await alice.api("/api/blocks/root/children")).children.find((p) => p.content === "E2E GoodNotes notebook");
+      assert(imported && !imported.properties?.doc_id, "a notebook of sheets, no PDF");
+      const [cover, squared, recording] = (await alice.api(`/api/blocks/${imported.id}/subtree`)).block.children;
+      assertEq(`${cover.properties.sheet.color} ${squared.properties.sheet.pattern} ${squared.properties.sheet.spacing}`,
+        "#51d7f5 grid 16", "the cover's colour, the squared paper's ruling");
+      const group = squared.children.find((b) => b.properties?.ink_url);
+      const file = await alice.api(group.properties.ink_url);
+      assertEq(`${file.space.kind} ${file.space.width} ${file.space.height}`, "canvas 455.04 588.45");
+      assertEq(file.strokes.map((s) => s.tool === "highlighter" ? "highlighter" : s.brush || (s.ch.includes("w") ? "pen" : "even")).join(","),
+        "monoline,highlighter,pen", "the ball pen, the highlighter, the fountain pen");
+      assert(squared.children.some((b) => b.properties?.text_box && b.content === "Plain and **bold**"), "the text box");
+      assert(squared.children.some((b) => b.properties?.text_box && b.content.startsWith("![")), "the picture's box");
+      assertEq(recording.properties?.recording?.dur, 2500, "the recording");
+
+      // On screen: the notebook's sheets, the ink drawn on the squared one.
+      await page.goto(`${server.base}/?page=${imported.id}&ws=${alice.ws}`);
+      await until(async () => (await page.locator(".inkLayer path").count()) >= 3, { what: "the three strokes drawn" });
+      if (flags.keep) await page.screenshot({ path: `${server.dir}/goodnotes-notebook.png` });
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("transfer: a page out as a Notability note and back in is the page it was", async () => {
     const { ctx, page } = await setup();
     try {
@@ -853,9 +917,9 @@ open(sys.argv[3], 'wb').write(b"noteSN_FILE_VER_20230015" + bytes(64))
       assert(await choice(dialog, "On the page").isDisabled(), "the notes' place waits on the Notes switch");
       await choice(dialog, "Close Export").click();
       dialog = await openDialog(page, "Import");
-      assertEq(await dialog.getByRole("group", { name: "Import from" }).getByRole("button").count(), 6);
+      assertEq(await dialog.getByRole("group", { name: "Import from" }).getByRole("button").count(), 7);
       assertEq(await choice(dialog, "Annotations in this PDF").getAttribute("aria-pressed"), "true");
-      for (const [type, count] of [["This paper", 2], ["Notes", 2], ["Library", 2]]) {
+      for (const [type, count] of [["This paper", 2], ["Notes", 3], ["Library", 2]]) {
         assertEq(await dialog.getByRole("group", { name: `${type} choices`, exact: true }).getByRole("button").count(), count);
       }
       if (flags.keep) await page.screenshot({ animations: "disabled", path: `${server.dir}/import-sources.png` });
