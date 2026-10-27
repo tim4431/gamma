@@ -218,13 +218,13 @@ def test_the_search_cache_is_never_opened_and_the_empty_member_is_skipped():
 
 
 def test_folder_paths_drop_the_shared_top():
-    from gamma.notability_import import _note_dirs
+    from gamma.note_app_import import note_dirs
     shared = [nb.Bundle("Export/Biology/A.note", 1), nb.Bundle("Export/Physics/B.note", 1)]
-    assert _note_dirs(shared) == {"Export/Biology/A.note": ["Biology"], "Export/Physics/B.note": ["Physics"]}
+    assert note_dirs(shared) == {"Export/Biology/A.note": ["Biology"], "Export/Physics/B.note": ["Physics"]}
     picked = [nb.Bundle("Notability notes/A.note", 1), nb.Bundle("Notability notes/B.note", 1)]
-    assert _note_dirs(picked) == {"Notability notes/A.note": [], "Notability notes/B.note": []}
+    assert note_dirs(picked) == {"Notability notes/A.note": [], "Notability notes/B.note": []}
     mixed = [nb.Bundle("A.note", 1), nb.Bundle("Sub/B.note", 1)]
-    assert _note_dirs(mixed) == {"A.note": [], "Sub/B.note": ["Sub"]}
+    assert note_dirs(mixed) == {"A.note": [], "Sub/B.note": ["Sub"]}
 
 
 # --- the reader ----------------------------------------------------------------------------

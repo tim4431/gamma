@@ -5203,7 +5203,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // write there, else to the personal one, and a workspace others see asks
   // first. Then each takes the path a picked file takes: a PDF or a Markdown
   // note becomes a page, a .note or .ntb opens the Notability import's
-  // review, and a .zip the Import dialog, which asks what export it is.
+  // review, a .goodnotes the GoodNotes import's, and a .zip the Import
+  // dialog, which asks what export it is.
   const openedBusy = useRef(false);
   const openedAgain = useRef(false);
   async function takeOpenedFiles() {
@@ -5266,7 +5267,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   // Read every held file, let the shell's copy go, then open each the way a
   // picked one opens. One import dialog at a time: the Notability review
-  // wins over a .zip's, and what neither takes is named in the status.
+  // wins over the GoodNotes one, either over a .zip's, and what none takes
+  // is named in the status.
   async function openOpenedHeld(held) {
     const files = [];
     const failed = [];
@@ -5277,12 +5279,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     }
     const pages = files.filter((f) => openedKind(f) === "page");
     const notes = files.filter((f) => openedKind(f) === "notability");
+    const notebooks = files.filter((f) => openedKind(f) === "goodnotes");
     const archives = files.filter((f) => openedKind(f) === "archive");
     const unknown = files.filter((f) => !openedKind(f)).map((f) => f.name);
-    const later = notes.length ? archives : archives.slice(1);
+    const reviewed = notes.length ? { source: "notability", files: notes, packed: t("Notability notes") }
+      : notebooks.length ? { source: "goodnotes", files: notebooks, packed: t("GoodNotes notebooks") } : null;
+    const later = reviewed ? [...(notes.length ? notebooks : []), ...archives] : archives.slice(1);
     if (pages.length) await uploadFiles(pages, "");
-    if (notes.length) {
-      setImportReview({ source: "notability", file: notes.length === 1 ? notes[0] : filesUpload(notes, t("Notability notes")), folder: "" });
+    if (reviewed) {
+      const { source, files: picked, packed } = reviewed;
+      setImportReview({ source, file: picked.length === 1 ? picked[0] : filesUpload(picked, packed), folder: "" });
     } else if (archives.length) {
       setImportOpen({ file: archives[0] });
     }
@@ -6668,18 +6674,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       importEmbeddedAnnots(focusedBlockId, docId, false, o.strip);
       return;
     }
-    if (["zotero", "markdown", "gamma", "notability"].includes(o.source)) {
+    if (["zotero", "markdown", "gamma", "notability", "goodnotes"].includes(o.source)) {
       const review = (file) => setImportReview({ source: o.source, file, strip: o.strip,
         folder: homeMode && folderFilter ? folderFilter : "" });
       if (o.file) review(o.file); // dropped on the dialog: a .zip or a folder (folderZip.js)
       else if (o.pick === "folder") pickFiles({ directory: true }, (files) => review(folderPick(files)));
-      else if (o.source === "notability") {
+      else if (o.source === "notability" || o.source === "goodnotes") {
         // Notes picked together go up as one .zip. Safari on an iPhone or
         // iPad (no folder picker: canPickFolder) greys out a file whose
-        // extension it has no type for, a .note or .ntb among them, so there
-        // the picker takes any file and the server says what it cannot read.
-        pickFiles({ accept: canPickFolder() ? ".note,.ntb,.zip,application/zip" : "", multiple: true },
-          (files) => review(files.length === 1 ? files[0] : filesUpload(files, t("Notability notes"))));
+        // extension it has no type for, a .note, .ntb or .goodnotes among
+        // them, so there the picker takes any file and the server says what
+        // it cannot read.
+        const notability = o.source === "notability";
+        const accept = notability ? ".note,.ntb,.zip,application/zip" : ".goodnotes,.zip,application/zip";
+        const packed = notability ? t("Notability notes") : t("GoodNotes notebooks");
+        pickFiles({ accept: canPickFolder() ? accept : "", multiple: true },
+          (files) => review(files.length === 1 ? files[0] : filesUpload(files, packed)));
       } else pickFiles({ accept: o.source === "markdown" ? ".md,.markdown,.zip,text/markdown,application/zip" : ".zip,application/zip" },
         ([file]) => review(file));
       return;
@@ -10506,7 +10516,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             icon={ImportIcon}
             data-guide="view.import"
             onClick={() => { setOpenPopover(null); setImportOpen(true); }}
-            title={t("Bring in notes and highlights: a Zotero library, Notability notes, Markdown, a Logseq export, a Gamma export, or the annotations saved inside this PDF")}
+            title={t("Bring in notes and highlights: a Zotero library, Notability notes, GoodNotes notebooks, Markdown, a Logseq export, a Gamma export, or the annotations saved inside this PDF")}
           >{t("Import…")}</MenuItem>
         ),
       ],
