@@ -114,6 +114,42 @@ def test_chunks_split_block_markdown_by_construct():
     assert got[8]["src"] == "/api/uploads/ab12.png"
 
 
+def _lines(md):
+    """Each text chunk's (text, style bits) spans."""
+    return [[(p, st.bits) for _k, p, _lv, st in c["spans"]] for c in chunks(md) if c["kind"] == "text"]
+
+
+def test_a_mark_crosses_the_line_breaks_of_its_paragraph():
+    # As the note shows them: a paragraph's lines are one run of text, so a
+    # mark opened on one line and closed on a later one styles every line
+    # between, each still its own chunk.
+    assert _lines("**UV Fused Silica\nDimension: 60mm x 4mm x2mm thick**") == [
+        [("UV Fused Silica", BOLD)], [("Dimension: 60mm x 4mm x2mm thick", BOLD)]]
+    got = chunks("- **item\n  goes on**")
+    assert got[0]["bullet"] == "" and "bullet" not in got[1]
+    assert _lines("- **item\n  goes on**") == [[("item", BOLD)], [("goes on", BOLD)]]
+    assert _lines("- [ ] ~~task\n  dropped~~") == [[("task", STRIKE)], [("dropped", STRIKE)]]
+    assert _lines("> *quoted\n> on*") == [[("quoted", ITALIC)], [("on", ITALIC)]]
+    assert _lines('*a <u>b\nc</u>* <span style="color:#e5484d">d\ne</span> [f\ng](https://e.dev)') == [
+        [("a ", ITALIC), ("b", ITALIC | UNDERLINE)],
+        [("c", ITALIC | UNDERLINE), (" d", 0)],
+        [("e ", 0), ("f", LINK)],
+        [("g", LINK)]]
+
+
+def test_a_mark_stays_within_its_paragraph():
+    # List items, a blank line, a heading and a blank quote line end the
+    # paragraph, and ==mark== never crosses a line — as on screen.
+    for md in ("- **a\n- b**", "**a\n\nb**", "# **a\nb**", "> **a\n>\n> b**"):
+        assert "".join(p for line in _lines(md) for p, _bits in line) == "**ab**", md
+    assert _lines("==a\nb==") == [[("==a", 0)], [("b==", 0)]]
+    # An image ends the text a mark may cross; the lines around it keep theirs.
+    got = chunks("x **a ![](/api/uploads/i.png) b** y\n**z\nw**")
+    assert [c["kind"] for c in got] == ["text", "image", "text", "text", "text"]
+    assert _lines("x **a ![](/api/uploads/i.png) b** y\n**z\nw**") == [
+        [("x **a ", 0)], [(" b** y", 0)], [("z", BOLD)], [("w", BOLD)]]
+
+
 def test_callout_header_becomes_a_bold_quote_line():
     got = chunks("> [!warning] Careful\n> the body")
     assert got[0]["quote"] and got[0]["spans"][0][1] == "Careful"
@@ -161,11 +197,11 @@ def test_embed_becomes_its_own_chunk():
 def test_render_document_writes_title_notes_and_quotes():
     pdf = render_document([_page("Cavity QED notes",
                                  {"meta": {"authors": ["Ada L."], "year": 2031}},
-                                 [_block("b1", "# Overview\nplain **note** text"),
+                                 [_block("b1", "# Overview\nplain **note** text\n**bold across\ntwo lines**"),
                                   _highlight("h1", "the quoted passage", "my comment", page=7)])])
     text = _text(pdf)
     assert "Cavity QED notes" in text and "Ada L." in text
-    assert "Overview" in text and "plain note text" in text
+    assert "Overview" in text and "plain note text" in text and "bold across" in text
     assert "the quoted passage" in text and "p. 7" in text and "my comment" in text
     # Markdown markers are rendered, never printed.
     assert "**" not in text and "#" not in text

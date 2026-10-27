@@ -1487,7 +1487,13 @@ chunk's text into styled inline spans (bold, italic, `<u>underline</u>`,
 `code`, strike, `==mark==`, `[[refs]]`, links, `$…$` math; a colored
 run's `<span style>` tags dropped, its text kept; a backslash before ASCII
 punctuation is that character, as CommonMark and the screen read it, so an
-escaped `*` or `$` prints as typed). Highlights become quoted passages
+escaped `*` or `$` prints as typed). A paragraph's lines are parsed
+together, the lines CommonMark joins (a plain line under plain text, a list
+item or a to-do, a `>` line under a quote line), so a mark that crosses a line
+break, `**a⏎b**`, is bold on both lines as the note shows it, each line still
+its own chunk. Bold, italic, strike, underline, colored runs and link labels
+cross; `==mark==`, code, math and refs stay within a line, as on screen; an
+image ends the text a mark may cross. Highlights become quoted passages
 with a bar in the highlight's own colour and a `p. N` marker, and the
 Highlights/Notes switches mean exactly what they do in the Markdown export
 (drop highlights and a highlight block keeps its own writing as a plain

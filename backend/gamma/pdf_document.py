@@ -122,24 +122,27 @@ _MEDIA_RE = re.compile(
 _ALT_WIDTH_RE = re.compile(r"(.*?)\|(\d+)(?:x\d+)?$")
 _DELIM_CELL_RE = re.compile(r":?-+:?")
 
-# One pass over a line of markdown. Order matters: ** before *, ![[ before [[,
+# One pass over a paragraph of markdown. Order matters: ** before *, ![[ before [[,
 # \( math before a backslash escape (CommonMark's: a backslash before ASCII
 # punctuation is that character, so "\*" or "\$" reads as typed, as on
-# screen). A closing mark never follows a backslash, which escapes it.
+# screen). A closing mark never follows a backslash, which escapes it. The
+# marks and a link's label may cross the paragraph's line breaks, as on
+# screen ("**a⏎b**" is bold on both lines); ==mark== and the rest stay
+# within a line, and every line break stays in the text.
 _INLINE_RE = re.compile(
-    r"(?P<code>``[^`]+``|`[^`\n]+`)"
+    r"(?P<code>``[^`\n]+``|`[^`\n]+`)"
     r"|(?P<dmath>\$\$[^\n]+?\$\$)"
     r"|(?P<math>\$[^$\n]+?\$|\\\([^\n]+?\\\))"
     r"|(?P<esc>\\[!-/:-@\[-`{-~])"
-    r"|(?P<underline><u>.+?</u>)"
-    r'|(?P<color><span style="[^"<>]*">.*?</span>)'
-    r"|(?P<bold>\*\*(?=\S).+?(?<=[^\s\\])\*\*|__(?=\S).+?(?<=[^\s\\])__)"
-    r"|(?P<italic>\*(?=\S)[^*\n]+?(?<=[^\s\\])\*|(?<![\w_])_(?=\S)[^_\n]+?(?<=[^\s\\])_(?![\w_]))"
-    r"|(?P<strike>~~(?=\S).+?(?<=[^\s\\])~~)"
+    r"|(?P<underline><u>(?s:.+?)</u>)"
+    r'|(?P<color><span style="[^"<>]*">(?s:.*?)</span>)'
+    r"|(?P<bold>\*\*(?=\S)(?s:.+?)(?<=[^\s\\])\*\*|__(?=\S)(?s:.+?)(?<=[^\s\\])__)"
+    r"|(?P<italic>\*(?=\S)[^*]+?(?<=[^\s\\])\*|(?<![\w_])_(?=\S)[^_]+?(?<=[^\s\\])_(?![\w_]))"
+    r"|(?P<strike>~~(?=\S)(?s:.+?)(?<=[^\s\\])~~)"
     r"|(?P<mark>==(?=\S).+?(?<=[^\s\\])==)"
-    r"|(?P<embed>!\[\[[^\]]+\]\])"
-    r"|(?P<ref>\[\[[^\]]+\]\])"
-    r"|(?P<link>\[[^\]]*\]\(\s*[^)\s]+[^)]*\))"
+    r"|(?P<embed>!\[\[[^\]\n]+\]\])"
+    r"|(?P<ref>\[\[[^\]\n]+\]\])"
+    r"|(?P<link>\[[^\]]*\]\([ \t]*[^)\s]+[^)\n]*\))"
     r"|(?P<url>https?://[^\s<>()\[\]]+)"
 )
 _LINK_PARTS = re.compile(r"\[([^\]]*)\]\(\s*([^)\s]+)")
@@ -166,7 +169,8 @@ def _ref_label(name: str, resolver) -> str:
 
 
 def inline(text: str, style: Style = PLAIN, resolver=None):
-    """One line of markdown → styled spans (see pdf_typeset for the shape)."""
+    """A line or a paragraph of markdown → styled spans (see pdf_typeset for
+    the shape), a paragraph's line breaks kept in its text spans."""
     out, pos = [], 0
     for m in _INLINE_RE.finditer(text):
         if m.start() > pos:
@@ -202,28 +206,63 @@ def inline(text: str, style: Style = PLAIN, resolver=None):
     return merge(out)
 
 
-def _text_chunks(text: str, style: Style, resolver=None, **extra):
-    """A line of prose → its text chunk plus a chunk per ``![](…)`` image and
-    per ``![[id]]`` synced-block embed."""
-    chunks, pos = [], 0
-    for m in _MEDIA_RE.finditer(text):
-        head = text[pos:m.start()]
-        if head.strip():
-            chunks.append({"kind": "text", "spans": inline(head, style, resolver), **extra})
-        if m.group("refid"):
-            chunks.append({"kind": "embed", "id": m.group("refid")})
-        else:
-            alt, pxw = m.group("alt"), m.group("pxw")
-            pipe = _ALT_WIDTH_RE.fullmatch(alt or "")
-            if pipe:                             # Obsidian ![alt|300](url)
-                alt, pxw = pipe.group(1), pxw or pipe.group(2)
-            chunks.append({"kind": "image", "src": m.group("src"), "alt": alt,
-                           "px_w": int(pxw) if pxw else None})
-        pos = m.end()
-    tail = text[pos:]
-    if tail.strip() or not chunks:
-        chunks.append({"kind": "text", "spans": inline(tail, style, resolver), **extra})
+def _split_lines(spans):
+    """Spans whose text holds line breaks → the spans of each line."""
+    lines = [[]]
+    for kind, payload, level, style in spans:
+        parts = payload.split("\n") if kind == TEXT else [payload]
+        for n, part in enumerate(parts):
+            if n:
+                lines.append([])
+            if part or kind != TEXT:
+                lines[-1].append((kind, part, level, style))
+    return lines
+
+
+def _text_chunks(lines, style: Style, resolver=None):
+    """A paragraph — ``(text, flags)`` per line — → a text chunk per line
+    (with that line's flags) plus a chunk per ``![](…)`` image and per
+    ``![[id]]`` synced-block embed. Its text is parsed as a whole, so a mark
+    may cross its line breaks; an image or embed ends the text it crosses."""
+    chunks, run = [], []                   # run: the text since the last image, (text, flags, keep) per line
+
+    def flush():
+        spans = _split_lines(inline("\n".join(text for text, _, _ in run), style, resolver))
+        for (text, flags, keep), line in zip(run, spans):
+            if text.strip() or keep:
+                chunks.append({"kind": "text", "spans": line, **flags})
+        run.clear()
+
+    for text, flags in lines:
+        pos = 0
+        for m in _MEDIA_RE.finditer(text):
+            run.append((text[pos:m.start()], flags, False))
+            flush()
+            if m.group("refid"):
+                chunks.append({"kind": "embed", "id": m.group("refid")})
+            else:
+                alt, pxw = m.group("alt"), m.group("pxw")
+                pipe = _ALT_WIDTH_RE.fullmatch(alt or "")
+                if pipe:                         # Obsidian ![alt|300](url)
+                    alt, pxw = pipe.group(1), pxw or pipe.group(2)
+                chunks.append({"kind": "image", "src": m.group("src"), "alt": alt,
+                               "px_w": int(pxw) if pxw else None})
+            pos = m.end()
+        run.append((text[pos:], flags, pos == 0))  # a line without media keeps its chunk, even empty
+    flush()
     return chunks
+
+
+def _prose(out, text: str, style: Style, joins=None, takes=None, **flags):
+    """A line of prose onto ``out``: the next line of the paragraph before
+    it when that paragraph ``takes`` this line's kind (``joins``: "plain" or
+    "quote"), else a paragraph of its own that takes ``takes`` lines next.
+    ``chunks`` expands the paragraphs."""
+    last = out[-1] if out else {}
+    if joins and last.get("takes") == joins:
+        last["lines"].append((text, flags))
+    else:
+        out.append({"kind": "para", "style": style, "takes": takes, "lines": [(text, flags)]})
 
 
 def _split_row(line: str):
@@ -245,6 +284,11 @@ def chunks(md: str, resolver=None):
     ``table``, ``math``, ``code`` and ``rule`` are their own kinds. Blank
     lines become ``gap``. ``resolver`` (id → {content, page_title} or None)
     gives [[refs]] their referenced text.
+
+    Prose lines are read as paragraphs, the lines CommonMark joins: a plain
+    line continues the plain text, list item or to-do above it, and a quote
+    line the quote above it, so their marks may cross the line break. Each
+    line keeps its own chunk.
     """
     lines = (md or "").replace("\r\n", "\n").replace("\r", "\n").split("\n")
     out, i = [], 0
@@ -298,7 +342,7 @@ def chunks(md: str, resolver=None):
         heading = _HEADING_RE.match(line)
         if heading:
             level = len(heading.group(1))
-            out += _text_chunks(heading.group(2), Style(BOLD, None), resolver, heading=level)
+            _prose(out, heading.group(2), Style(BOLD, None), heading=level)
             continue
         quote = _QUOTE_RE.match(line)
         if quote:
@@ -309,25 +353,29 @@ def chunks(md: str, resolver=None):
                 out.append({"kind": "text", "spans": inline(title, Style(BOLD, None), resolver),
                             "quote": True})
                 continue
-            out += _text_chunks(body, Style(ITALIC, None), resolver, quote=True)
+            # A blank ">" line ends the quote's paragraph.
+            kind = "quote" if body.strip() else None
+            _prose(out, body, Style(ITALIC, None), joins=kind, takes=kind, quote=True)
             continue
         todo = _TODO_RE.match(line)
         if todo:
             lead, marker, box, body = todo.groups()
             # "- [ ] x" is a list item too, so it lines up with its neighbours.
-            out += _text_chunks(body, PLAIN, resolver, todo=box.lower() == "x",
-                                sub=len(lead) // 2 + 1 if marker else 0)
+            _prose(out, body, PLAIN, takes="plain", todo=box.lower() == "x",
+                   sub=len(lead) // 2 + 1 if marker else 0)
             continue
         item = _LIST_RE.match(line)
         if item:
             marker = item.group(2)
             # "" = a dot; a numbered marker keeps its number.
-            out += _text_chunks(item.group(3), PLAIN, resolver,
-                                bullet=marker if marker[:1].isdigit() else "",
-                                sub=len(item.group(1)) // 2 + 1)
+            _prose(out, item.group(3), PLAIN, takes="plain",
+                   bullet=marker if marker[:1].isdigit() else "",
+                   sub=len(item.group(1)) // 2 + 1)
             continue
-        out += _text_chunks(line.strip(), PLAIN, resolver)
-    return out
+        _prose(out, line.strip(), PLAIN, joins="plain", takes="plain")
+    return [c for entry in out
+            for c in (_text_chunks(entry["lines"], entry["style"], resolver)
+                      if entry["kind"] == "para" else [entry])]
 
 
 # --- the canvas --------------------------------------------------------------
