@@ -16,13 +16,14 @@ A **command** is declared once, as an object in one of two catalogs:
 - `label` / `group` — what the palette and the pane show (`t()` at module level, like any option list).
 - `keys` — the default chord, an array of them (`["Mod-y", "Mod-Shift-z"]`), or `null`: no keys until the account binds some, a palette entry meanwhile. Defaults are deliberately few: the keys Gamma always had (search, Ctrl+P, back, undo/redo, the formatting marks), plus Ctrl+Shift+P, F2, Delete, Ctrl+Shift+K, Ctrl+Shift+. (Toggle quote, GitHub's chord: it needs the open editor, so the palette cannot offer it), Ctrl+Shift+M (Comment on this note), Ctrl+, (settings, the convention everywhere), the ↑/↓ hop, and Ctrl+C / X / V / D / A on handwriting (the keys every editor gives copy, cut, paste, duplicate and select all; their `when` keeps them to the markup strip's selection and clipboard, so a note's editor and the browser keep theirs). F2 renames the page, or on the home library the one selected page. Delete is the file manager's key: it moves the pages selected on the home library to Recently deleted, after the confirmation, and the page menu shows it. Everything else (move, duplicate, new above, indent, fold, to-do, the view toggles, export, share…) starts unbound.
 - `scope` is the catalog the command sits in:
-  - [frontend/src/app/appCommands.js](../../frontend/src/app/appCommands.js) — the app commands, alive wherever focus is: search, the palettes, back, undo / redo, rename, share, metadata, attach, the exports (the Export dialog preset to a format), download, import, new page, delete the selected pages, Recently deleted, show or hide chat / comments / PDF / notes, settings, report a problem, and the Handwriting group — `ink.copy`, `ink.cut`, `ink.paste`, `ink.duplicate`, `ink.selectAll` — alive while the markup strip holds a selection or a tool ([handwriting.md](handwriting.md) "Copy, cut and paste"; their guards under *Widget keys* below).
+  - [frontend/src/app/appCommands.js](../../frontend/src/app/appCommands.js) — the app commands, alive wherever focus is: search, the palettes, back, undo / redo, rename, share, metadata, attach, the exports (the Export dialog preset to a format), download, import, new page, delete the selected pages, Recently deleted, show or hide chat / comments / PDF / notes, settings, report a problem, the PDF group's two held keys (*Held keys* below), and the Handwriting group — `ink.copy`, `ink.cut`, `ink.paste`, `ink.duplicate`, `ink.selectAll` — alive while the markup strip holds a selection or a tool ([handwriting.md](handwriting.md) "Copy, cut and paste"; their guards under *Widget keys* below).
   - [frontend/src/editor/blockCommands.js](../../frontend/src/editor/blockCommands.js) — the block commands, for a note whose editor is open: VSCode's line shortcuts with the block as the line (move, duplicate, delete line, new above, indent, fold, to-do, select), the hop to the neighbouring block on ↑ / ↓, Obsidian's formatting keys, and Comment on this note (the block's thread popover, [comments.md](comments.md) "In the app").
 - `when(ctx)` — applies only while this holds (a page is open, the block has children…).
 - `edits: true` — skipped on a read-only page (a share view, a viewer's workspace); the dispatcher and the palette check once, no handler repeats it. A block command without it (Comment on this note) is offered there too.
 - `needsEditor: true` (block scope) — cannot run from the palette, where no editor is open.
 - `palette: false` — keyboard only (the arrow hops, the formatting marks, the palette command itself).
 - `fixed: true` — shown in the pane but not rebindable (the arrow hops).
+- `held: true` — a modifier held through a gesture, not a chord that runs the command (see *Held keys* below).
 - `inDialog(dialog)` (app scope) — still dispatches while a dialog is open (see *Dialogs* below).
 - `state(ctx)` (the block scope's formatting commands) — what the command is to the open editor's selection: `"on"` (the selection carries its mark, which the command would take away), `"off"`, or `"blocked"` (it does nothing there: math, a code fence, inline code for every mark but code). The selection toolbar presses and greys out its buttons by it. It is no `when`: a blocked mark's key is still taken and does nothing, so Ctrl+B in math never reaches the browser. The readers are `markCommands.js`'s `…StateAt`.
 - `run(ctx, event)` — returning `false` declines the key: the dispatcher tries the next command, and an unhandled key keeps its default (undo in a plain input stays the browser's).
@@ -91,6 +92,23 @@ The block context is `{ block, tree, row, editor, readOnly }`: `editor` is the o
 - **Ctrl+B / I / E / Shift+X / Shift+H / K** → `runToggleMark` / `runInsertLink` in [editor/markCommands.js](../../frontend/src/editor/markCommands.js). They are plain JS so node can load the catalog, and are swallowed inside math, fences and inline code. A system keyboard's or Format menu's `beforeinput` `formatBold`, `formatItalic` and `formatStrikeThrough` (the iPad keyboard's B and I) run `block.bold`, `block.italic` and `block.strike` in every `BlockCmEditor`.
 
 From the palette a block command runs on the **focused row** with `editor: null` (opening the palette closes any editor); `needsEditor` commands are left out there.
+
+## Held keys
+
+Two keys are held through a gesture instead of pressed with a key: the
+area drag on a PDF page (a mouse drag with the key down boxes a region for
+the chat and an area highlight) and the peek at a translated page's
+original (the overlays hide while the key is down). They are catalog
+commands of the PDF group, `pdf.areaDrag` (default `Mod`: Ctrl, ⌘ on a
+Mac, whose Ctrl+click is the right click) and `pdf.peekOriginal` (default
+`Alt`, ⌥ on a Mac), marked `held: true` with `palette: false` and a `run`
+that declines. Their chord is a lone modifier, which `chordFromEvent` never
+produces, so they never dispatch.
+
+- `heldKey(chord)` is a held key's canonical name: `Mod`, `Ctrl` (a Mac's control key; elsewhere it is `Mod`), `Alt` or `Shift`, else `""`.
+- The PDF viewer gets the effective keys from App (`commandChord(id, keybindings)`) as `areaKey` and `peekKey`. `heldAlone(e, areaKey)` starts the drag on a mouse `pointerdown` with that key down and no other modifier; `isHeldKey(e, key)` on keydown / keyup drives the crosshair cue and the peek.
+- In Settings → Keyboard they are rows like the rest. Their recorder (`KeyBinding`'s `held`) takes the first modifier pressed (`heldFromEvent`: ⌘ → `Mod` and Ctrl → `Ctrl` on a Mac, Ctrl → `Mod` elsewhere, Alt, Shift; the Windows key is refused). Backspace does not unbind them. The same key on both rows is flagged like any shared chord.
+- Guide copy names the area key as `{key:pdf.areaDrag}`, and the area demo (`guide/previewArea.js`) drags with `heldFlags(services.areaKey())`, the cap beside its pointer showing the same key.
 
 ## Widget keys: the markup strip and a text box
 

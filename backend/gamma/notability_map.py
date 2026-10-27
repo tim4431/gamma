@@ -311,7 +311,7 @@ def _affine(transform: tuple, frame: Frame) -> tuple:
     return a * k, b * k, c * k, d * k, (tx - frame.ox) * k, (ty - frame.oy) * k
 
 
-def _pieces(p0, p1, p2, p3) -> int:
+def cubic_pieces(p0, p1, p2, p3) -> int:
     """How many equal parameter steps a cubic is cut into, the larger of
     two bounds, at most MAX_PIECES: Wang's, so the polyline stays within
     TOLERANCE of the curve, and one that keeps every step within STEP_PT —
@@ -324,9 +324,9 @@ def _pieces(p0, p1, p2, p3) -> int:
     return min(MAX_PIECES, max(1, wang, math.ceil(3 * leg / STEP_PT)))
 
 
-def _cubic(p0, p1, p2, p3, n: int | None = None):
-    """The cubic's points at t = i/n, i = 1..n (n: ``_pieces``), each with its t."""
-    n = n or _pieces(p0, p1, p2, p3)
+def cubic_points(p0, p1, p2, p3, n: int | None = None):
+    """The cubic's points at t = i/n, i = 1..n (n: ``cubic_pieces``), each with its t."""
+    n = n or cubic_pieces(p0, p1, p2, p3)
     for i in range(1, n + 1):
         t = i / n
         u = 1 - t
@@ -344,9 +344,9 @@ def _edge(p0, p1, n: int):
 
 def _steps(curve: Curve, pts: list) -> list[int]:
     """How many samples each segment of the curve is cut into: a Bézier
-    chain's segments by ``_pieces``, a polyline's edges one every STEP_PT."""
+    chain's segments by ``cubic_pieces``, a polyline's edges one every STEP_PT."""
     if curve.bezier:
-        return [_pieces(*pts[3 * s:3 * s + 4]) for s in range(len(pts) // 3)]
+        return [cubic_pieces(*pts[3 * s:3 * s + 4]) for s in range(len(pts) // 3)]
     return [max(1, math.ceil(math.dist(pts[s], pts[s + 1]) / STEP_PT)) for s in range(len(pts) - 1)]
 
 
@@ -356,7 +356,7 @@ def _trace(curve: Curve, pts: list, steps: list[int]):
     segment's first anchor and ``t`` the place between it and the next."""
     yield pts[0][0], pts[0][1], 0, 0.0
     for s, n in enumerate(steps):
-        segment = _cubic(*pts[3 * s:3 * s + 4], n=n) if curve.bezier else _edge(pts[s], pts[s + 1], n)
+        segment = cubic_points(*pts[3 * s:3 * s + 4], n=n) if curve.bezier else _edge(pts[s], pts[s + 1], n)
         for x, y, t in segment:
             yield x, y, s, t
 
@@ -419,11 +419,11 @@ def flatten(curve: Curve, frame: Frame) -> list[dict] | None:
     return [sample(*s) for s in kept]
 
 
-def _hex(rgb) -> str:
+def hex_color(rgb) -> str:
     return "#%02x%02x%02x" % tuple(min(255, max(0, round(v * 255))) for v in rgb[:3])
 
 
-def _checked(stroke: dict) -> dict | None:
+def checked_stroke(stroke: dict) -> dict | None:
     """The stroke when ``ink.Stroke`` takes it (with a placeholder id)."""
     try:
         inkmod.Stroke.model_validate({**stroke, "id": "n0"})
@@ -491,7 +491,7 @@ def curve_stroke(curve: Curve, frame: Frame) -> dict | None:
     stroke["size"] = round(min(100.0, max(0.1, size)), 3)
     stroke["ch"] = ch
     stroke["pts"] = inkmod.encode_points(samples, ch)
-    return _checked(stroke)
+    return checked_stroke(stroke)
 
 
 def _opacity(alpha: int) -> float:
@@ -561,7 +561,7 @@ def exact_stroke(curve: Curve, frame: Frame) -> dict | None:
     stroke["size"] = round(size, 3)
     stroke["ch"] = ch
     stroke["pts"] = inkmod.encode_points(samples, ch)
-    return _checked(stroke)
+    return checked_stroke(stroke)
 
 
 # --- shapes -------------------------------------------------------------------------------
@@ -624,17 +624,17 @@ def _square_corners(pts: list, equal_sides: bool) -> bool:
 
 def _path_corners(pts: list, segments: tuple) -> list | None:
     """A path's corners: the end of each line, and each cubic flattened as
-    a curve is (``_cubic``); None past MAX_STROKE_SAMPLES, counted before
+    a curve is (``cubic_points``); None past MAX_STROKE_SAMPLES, counted before
     one is made."""
     steps, at = [], 0
     for segment in segments:
-        steps.append(_pieces(*pts[at:at + 4]) if segment == 3 else 1)
+        steps.append(cubic_pieces(*pts[at:at + 4]) if segment == 3 else 1)
         at += segment
     if 1 + sum(steps) > MAX_STROKE_SAMPLES:
         return None
     out, at = [pts[0]], 0
     for segment, n in zip(segments, steps):
-        out += [(x, y) for x, y, _t in _cubic(*pts[at:at + 4], n=n)] if segment == 3 else [pts[at + 1]]
+        out += [(x, y) for x, y, _t in cubic_points(*pts[at:at + 4], n=n)] if segment == 3 else [pts[at + 1]]
         at += segment
     return out
 
@@ -661,7 +661,7 @@ def shape_stroke(shape: Shape, frame: Frame, left_out: Counter | None = None) ->
         return None
     A, B, C, D, E, F = _affine(IDENTITY, frame)
     pts = [(A * x + E, D * y + F) for x, y in shape.points]
-    stroke = {"color": _hex(shape.rgba), "pen": False}
+    stroke = {"color": hex_color(shape.rgba), "pen": False}
     if alpha < 1:
         stroke["opacity"] = max(0.001, round(alpha, 3))
     if shape.style == STYLE_HIGHLIGHTER:
@@ -677,7 +677,7 @@ def shape_stroke(shape: Shape, frame: Frame, left_out: Counter | None = None) ->
         q = (A * shape.control[0] + E, D * shape.control[1] + F)
         c1 = (p0[0] + 2 / 3 * (q[0] - p0[0]), p0[1] + 2 / 3 * (q[1] - p0[1]))
         c2 = (p1[0] + 2 / 3 * (q[0] - p1[0]), p1[1] + 2 / 3 * (q[1] - p1[1]))
-        samples = [p0] + [(x, y) for x, y, _t in _cubic(p0, c1, c2, p1)]
+        samples = [p0] + [(x, y) for x, y, _t in cubic_points(p0, c1, c2, p1)]
         if shape.arrow:
             back = (q[0] - p1[0], q[1] - p1[1])
             length = math.hypot(*back) or 1
@@ -718,13 +718,13 @@ def shape_stroke(shape: Shape, frame: Frame, left_out: Counter | None = None) ->
         return None
     if shape.fill is not None and shape.fill[3] > 0:
         if stroke.get("shape", {}).get("kind") in ("rect", "triangle", "ellipse"):
-            stroke["fill"] = {"color": _hex(shape.fill), "opacity": max(0.001, round(shape.fill[3], 3))}
+            stroke["fill"] = {"color": hex_color(shape.fill), "opacity": max(0.001, round(shape.fill[3], 3))}
         elif left_out is not None:
             left_out["polygon fill"] += 1
     stroke["size"] = round(min(100.0, max(0.1, shape.width * frame.k)), 3)
     stroke["ch"] = "xy"
     stroke["pts"] = inkmod.encode_points([{"x": x, "y": y} for x, y in samples], "xy")
-    return _checked(stroke)
+    return checked_stroke(stroke)
 
 
 def sticky_stroke(media: Media, frame: Frame) -> dict | None:
@@ -736,11 +736,11 @@ def sticky_stroke(media: Media, frame: Frame) -> dict | None:
     k = frame.k
     params = _rounded(normalise_rect((media.x + media.w / 2 - frame.ox) * k, (media.y + media.h / 2 - frame.oy) * k,
                                      media.w * k, media.h * k, math.degrees(media.rotation)))
-    color = _hex(media.background or (1, 1, 1, 1))
+    color = hex_color(media.background or (1, 1, 1, 1))
     samples = inkmod.shape_samples("rect", params, MAX_STROKE_SAMPLES)
     if not samples:
         return None
-    return _checked({"pen": False, "band": 0, "color": color, "size": STICKY_EDGE,
+    return checked_stroke({"pen": False, "band": 0, "color": color, "size": STICKY_EDGE,
                      "shape": {"kind": "rect", "params": params}, "fill": {"color": color, "opacity": 1},
                      "ch": "xy", "pts": inkmod.encode_points([{"x": x, "y": y} for x, y in samples], "xy")})
 
@@ -1031,15 +1031,15 @@ def text_box(media: Media, frame: Frame, left_out: Counter | None = None) -> dic
         if not latex:
             return None
         content = markdown_of(latex) if "$$" in latex else f"$$\n{latex}\n$$"
-        size, color, bg = MATH_SIZE, _hex(media.rgba) if media.rgba else TEXT_COLOR, None
+        size, color, bg = MATH_SIZE, hex_color(media.rgba) if media.rgba else TEXT_COLOR, None
     else:
         content = box_markdown(media.runs)
-        bg = _hex(media.background) if media.background and media.background[3] > 0 else None
+        bg = hex_color(media.background) if media.background and media.background[3] > 0 else None
         if not content.strip() and bg is None:
             return None
         size = _majority(media.runs, lambda run: round(run.size, 2) if run.size else None)
         size = min(MAX_SIZE, max(MIN_SIZE, size * frame.k)) if size else 12
-        color = _majority(media.runs, lambda run: _hex(run.rgba) if run.rgba else None) or TEXT_COLOR
+        color = _majority(media.runs, lambda run: hex_color(run.rgba) if run.rgba else None) or TEXT_COLOR
     if len(content) > MAX_CONTENT:  # what the editor saves (counted)
         content = content[:MAX_CONTENT]
         if left_out is not None:

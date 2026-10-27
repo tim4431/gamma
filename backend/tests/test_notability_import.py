@@ -18,7 +18,7 @@ from fastapi import HTTPException
 import notability_fixtures as fx
 import ntb_fixtures as tx
 from conftest import account_of, folder_names, login, make_folder, make_user, workspace_of
-from gamma import import_zip, ink, jobs, notability as nb, notability_import as ni, storage
+from gamma import import_zip, ink, jobs, note_app_import as app, notability as nb, notability_import as ni, storage
 from gamma.blocks_store import folder_paths, pages_in_folder
 from gamma.db import connect_pages_db, ws_uploads_dir
 
@@ -248,7 +248,7 @@ def test_recordings_and_their_warnings(accounts):
 
 def test_a_turned_and_cropped_picture_is_stored_turned(accounts, monkeypatch):
     from PIL import Image
-    monkeypatch.setattr(ni, "MAX_TURNED_SIDE", 100)
+    monkeypatch.setattr(app, "MAX_TURNED_SIDE", 100)
     owner, ws = accounts["nbi_owner"], workspace_of("nbi_owner")
     data = note("Turned picture", files={"Images/Image .jpg": fx.jpeg(400, 300)},
                 media=[{"kind": "picture", "origin": (100, 100), "size": (145, 100), "rotation": 0.5,
@@ -290,11 +290,11 @@ def test_a_turned_picture_stays_within_its_longest_side(monkeypatch):
     past their extent, and the fit leaves room for it: a photo of
     Notability-notes-converter's example note came out 2,049 px long."""
     from PIL import Image
-    monkeypatch.setattr(ni, "MAX_TURNED_SIDE", 100)
+    monkeypatch.setattr(app, "MAX_TURNED_SIDE", 100)
     photo = fx.jpeg(300, 400)
     for angle in (k / 20 for k in range(1, 60)):  # 0.1, 0.35, 1.15 and more came out 101 px
         media = nb.Media(kind="picture", x=0, y=0, w=30, h=40, rotation=angle, picture="a.jpg")
-        assert max(Image.open(io.BytesIO(ni.picture_bytes(photo, media)[0])).size) <= 100, angle
+        assert max(Image.open(io.BytesIO(app.picture_bytes(photo, media)[0])).size) <= 100, angle
 
 
 # --- many notes, re-import, filing ------------------------------------------------------------
@@ -355,15 +355,15 @@ def imported_at_once(monkeypatch, ws: str, uploads: dict) -> dict:
     """``{name: report}`` of the uploads ``{name: .note bytes}`` imported
     into ``ws`` at once, a thread each: every import reads the library and
     stores its files, then waits for the others before it writes
-    (``_Import._write``), so none has written when another looks."""
-    real = ni._Import._write
+    (``AppImport.write``), so none has written when another looks."""
+    real = ni._Import.write
     together = threading.Barrier(len(uploads), timeout=30)
 
     def gated(self, *args, **kwargs):
         together.wait()
         return real(self, *args, **kwargs)
 
-    monkeypatch.setattr(ni._Import, "_write", gated)
+    monkeypatch.setattr(ni._Import, "write", gated)
     reports, errors = {}, []
 
     def run(name, data):
@@ -427,7 +427,7 @@ def test_a_note_whose_page_fails_to_write_leaves_no_folder(monkeypatch):
     written."""
     make_user("nbi_failed", "nbi-password")
     ws = workspace_of("nbi_failed")
-    real = ni.insert_page_tree
+    real = app.insert_page_tree
 
     def failing(conn, page_id, title, props, tree, actor):
         written = real(conn, page_id, title, props, tree, actor)
@@ -435,7 +435,7 @@ def test_a_note_whose_page_fails_to_write_leaves_no_folder(monkeypatch):
             raise RuntimeError("the write failed")
         return written
 
-    monkeypatch.setattr(ni, "insert_page_tree", failing)
+    monkeypatch.setattr(app, "insert_page_tree", failing)
     upload = fx.zip_of({"Export/Failed/Failed.note": note("Failed note", curves=[fx.curve(WORKED)]),
                         "Export/Kept/Kept.note": note("Kept note", curves=[fx.curve(WORKED)])})
     with connect_pages_db(ws) as conn:
@@ -518,7 +518,7 @@ def test_an_ntb_on_a_pdf_keeps_it(accounts):
 
 def test_a_central_directory_past_the_cap(accounts, monkeypatch):
     owner = accounts["nbi_owner"]
-    monkeypatch.setattr(ni, "MAX_DIRECTORY_BYTES", 400)
+    monkeypatch.setattr(app, "MAX_DIRECTORY_BYTES", 400)
     many = {f"Images/picture number {i:03d}.png": fx.png(2, 2) for i in range(20)}
     upload = fx.zip_of({"Big.note": note("Big directory", files=many), "Small.note": fx.note_zip(
         "N", session_bytes=fx.session(name="Small directory"), meta=fx.metadata("Small directory"))})
@@ -547,7 +547,7 @@ def test_zip_bombs(accounts):
 
 def test_a_pdf_too_big_to_hold_skips_its_note(accounts, monkeypatch):
     owner = accounts["nbi_owner"]
-    monkeypatch.setattr(ni, "MAX_HELD_BYTES", 1 << 20)
+    monkeypatch.setattr(app, "MAX_HELD_BYTES", 1 << 20)
     heavy = fx.pdf() + bytes(1 << 20)
     upload = fx.zip_of({"Heavy.note": note("Heavy PDF", layout=[(PDF, 1)], pdfs={PDF: 2},
                                            files={f"PDFs/{PDF}": heavy}),
@@ -613,8 +613,8 @@ def test_a_viewer_cannot_import(accounts):
 
 def test_one_pdf_under_several_names_is_read_once(accounts, monkeypatch):
     owner = accounts["nbi_owner"]
-    opened, real = [], ni.ExportPdfReader
-    monkeypatch.setattr(ni, "ExportPdfReader", lambda *a, **k: opened.append(1) or real(*a, **k))
+    opened, real = [], app.ExportPdfReader
+    monkeypatch.setattr(app, "ExportPdfReader", lambda *a, **k: opened.append(1) or real(*a, **k))
     names = [PDF, PDF.lower(), f"PDFs/{PDF}"]  # each resolves to the one file
     result = imported(owner, note("One PDF, three names", layout=[(n, 1) for n in names], pdfs={n: 2 for n in names},
                                   files={f"PDFs/{PDF}": fx.pdf()}), "Names.note")
@@ -632,18 +632,18 @@ def test_a_picture_file_shown_over_and_over_is_read_a_few_times(accounts, monkey
 
     monkeypatch.setattr(fx, "media_object", one_object)
     picture = {"kind": "picture", "origin": (10, 10), "size": (40, 40), "path": "Images/a.png", "crop": (0, 0, 20, 20)}
-    decoded, bytes_of = [], ni.picture_bytes
-    monkeypatch.setattr(ni, "picture_bytes", lambda *args: decoded.append(1) or bytes_of(*args))
+    decoded, bytes_of = [], app.picture_bytes
+    monkeypatch.setattr(app, "picture_bytes", lambda *args: decoded.append(1) or bytes_of(*args))
     result = imported(owner, note("One picture named often", media=[picture] * 9,
                                   files={"Images/a.png": fx.png(40, 40)}), "Often.note")
-    assert result["pictures_imported"] == ni.MAX_PICTURE_USES == len(decoded)
-    assert reasons(result) == [f"Picture a.png is shown more than {ni.MAX_PICTURE_USES} times: the rest are left out"]
+    assert result["pictures_imported"] == app.MAX_PICTURE_USES == len(decoded)
+    assert reasons(result) == [f"Picture a.png is shown more than {app.MAX_PICTURE_USES} times: the rest are left out"]
 
 
 def test_a_recording_listed_twice_is_stored_once(accounts, monkeypatch):
     owner = accounts["nbi_owner"]
-    streamed, real = [], ni.store_file_stream
-    monkeypatch.setattr(ni, "store_file_stream", lambda *a: streamed.append(1) or real(*a))
+    streamed, real = [], app.store_file_stream
+    monkeypatch.setattr(app, "store_file_stream", lambda *a: streamed.append(1) or real(*a))
     library = fx.library([{"identifier": i, "filepath": "a.m4a", "name": f"Take {i}"} for i in range(1, 6)])
     result = imported(owner, note("One recording listed five times", files={
         "Recordings/library.plist": library, "Recordings/a.m4a": fx.m4a(2000)}), "Listed.note")
@@ -659,12 +659,12 @@ def test_a_stretch_too_long_and_thin_is_refused_before_pillow_sizes_it(monkeypat
     monkeypatch.setattr(Image.Image, "resize", never)
     thin = nb.Media(kind="picture", x=0, y=0, w=1e6, h=1e-5, picture="a.png")  # 2,000,000,000 x 1 px asked
     with pytest.raises(ValueError, match="too long and thin"):
-        ni.picture_bytes(fx.png(10, 10), thin)
+        app.picture_bytes(fx.png(10, 10), thin)
 
 
 def test_the_note_s_sample_budget_bounds_the_work(accounts, monkeypatch):
     owner = accounts["nbi_owner"]
-    monkeypatch.setattr(ni, "MAX_NOTE_SAMPLES", 25)
+    monkeypatch.setattr(app, "MAX_NOTE_SAMPLES", 25)
     made, real = [], ni.nmap.curve_stroke
     monkeypatch.setattr(ni.nmap, "curve_stroke", lambda curve, at: made.append(1) or real(curve, at))
     result = imported(owner, note("Too much ink", curves=[fx.curve(WORKED)] * 6), "Ink.note")

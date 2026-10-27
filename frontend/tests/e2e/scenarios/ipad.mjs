@@ -326,7 +326,7 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
   });
 
   // --- the shell: files the system opened in the app (docs/dev/ipad.md "Opened files") ---
-  await step("ipad shell: files the app was given open as picked ones do: a PDF its page, Markdown a note, an .ntb the Notability review, a .zip the Import dialog; a workspace others see asks first, a read-only one sends them to the personal workspace", async () => {
+  await step("ipad shell: files the app was given open as picked ones do: a PDF its page, Markdown a note, an .ntb the Notability review, a .goodnotes the GoodNotes review, a .zip the Import dialog; a workspace others see asks first, a read-only one sends them to the personal workspace", async () => {
     // Accounts of its own: the workspaces it shares, and the notices they
     // bring, stay out of the steps that follow. A server admin makes the
     // shared workspaces, then stops being one.
@@ -341,19 +341,24 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
     const fileDone = (page, id) => until(async () => (await page.evaluate(() => window.e2eHostSent))
       .some((m) => m.type === "fileDone" && m.id === id), { what: `the shell lets ${id} go` });
     const hand = (page, file) => page.evaluate((file) => { window.e2eHold(file); return window.gammaNative.receive({ type: "filesOpened" }); }, file);
-    // An .ntb and a .zip of a Markdown note, as the transfer group makes them.
+    // An .ntb, a .goodnotes and a .zip of a Markdown note, as the transfer group makes them.
     const dir = fs.mkdtempSync(path.join(server.dir, "opened-"));
     const ntbPath = path.join(dir, "Handed.ntb");
     const zipPath = path.join(dir, "Handed vault.zip");
+    const goodnotesPath = path.join(dir, "Handed.goodnotes");
     execFileSync(python, ["-c", `
 import sys, zipfile
 sys.path.insert(0, 'backend/tests')
 import ntb_fixtures as tx
+import goodnotes_fixtures as gx
+n = gx.Notebook("Handed GoodNotes notebook", seed=43)
+n.page(n.paper("grid"), [gx.ink("pen", gx.flat([[(60.0, 80.0), ((120.0, 80.0), (180.0, 90.0))]]))])
+open(sys.argv[3], 'wb').write(n.bytes())
 open(sys.argv[1], 'wb').write(tx.ntb_zip(tx.bundle((1, tx.DOCUMENT, tx.document("Handed NTB note")),
     (8, (0, 11), tx.text("Typed on the iPad")))))
 with zipfile.ZipFile(sys.argv[2], 'w') as z:
     z.writestr('Vault/Vault note.md', '# Vault note\\n\\nFrom a zipped vault.\\n')
-`, ntbPath, zipPath], { cwd: ROOT });
+`, ntbPath, zipPath, goodnotesPath], { cwd: ROOT });
     const personal = (await ann.api("/api/session")).workspaces.find((w) => w.personal);
 
     // This iPad's own library: a PDF waiting when the page loads becomes its
@@ -386,6 +391,18 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
       await report.waitFor();
       await report.getByRole("button", { name: "Done", exact: true }).click();
       assert((await pages()).some((p) => p.content === "Handed NTB note"), "the note is a page");
+
+      // A .goodnotes: the GoodNotes import's review, as Import → GoodNotes opens it.
+      await hand(page, { id: "F6", name: "Handed.goodnotes", type: "", b64: b64(fs.readFileSync(goodnotesPath)) });
+      await fileDone(page, "F6");
+      review = page.getByRole("dialog", { name: "Review GoodNotes import", exact: true });
+      await review.getByRole("region", { name: "Library after import", exact: true })
+        .getByText("Handed GoodNotes notebook", { exact: true }).waitFor();
+      await review.getByRole("button", { name: "Import to library", exact: true }).click();
+      report = page.getByRole("dialog", { name: "Import complete", exact: true });
+      await report.waitFor();
+      await report.getByRole("button", { name: "Done", exact: true }).click();
+      assert((await pages()).some((p) => p.content === "Handed GoodNotes notebook"), "the notebook is a page");
 
       // A .zip: the Import dialog asks which export it is, offering only the
       // sources that read an archive, and imports it with no picker.

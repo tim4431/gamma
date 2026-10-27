@@ -5,7 +5,9 @@
 // per command id (a string rebinds, null unbinds). Dispatch runs a catalog
 // against one keydown; the Settings pane records chords with the same
 // reader (chordFromEvent) the dispatcher matches with, so what it shows is
-// what will fire. No DOM, no React: node --test covers it.
+// what will fire. A held key (a lone modifier, heldKey below) is read off
+// pointer and modifier events instead. No DOM, no React: node --test
+// covers it.
 
 const MOD_ORDER = ["Mod", "Ctrl", "Alt", "Shift"];
 
@@ -146,6 +148,48 @@ export function dispatch(commands, e, ctx, bindings, mac = IS_MAC) {
     return cmd;
   }
   return null;
+}
+
+// Held keys (docs/dev/hotkeys.md "Held keys"): a modifier held through a
+// gesture rather than pressed with a key — the area drag on a PDF page, the
+// peek at a translation's original. Its chord is the modifier alone: "Mod"
+// (Ctrl, ⌘ on a Mac), "Ctrl" (a Mac's control key; elsewhere it is Mod),
+// "Alt" or "Shift". heldKey gives that canonical name, "" for any other
+// chord.
+const HELD_KEYS = ["Mod", "Ctrl", "Alt", "Shift"];
+export function heldKey(chord, mac = IS_MAC) {
+  const c = normalizeChord(chord);
+  if (c === "Ctrl" && !mac) return "Mod";
+  return HELD_KEYS.includes(c) ? c : "";
+}
+
+// The held key a modifier press is, for the Keyboard pane's recorder: the
+// Windows key and anything that is no modifier give "".
+export function heldFromEvent(e, mac = IS_MAC) {
+  if (e.key === "Meta") return mac ? "Mod" : "";
+  if (e.key === "Control") return mac ? "Ctrl" : "Mod";
+  return e.key === "Alt" || e.key === "Shift" ? e.key : "";
+}
+
+// Whether a keydown / keyup is the held key itself going down or up.
+export function isHeldKey(e, chord, mac = IS_MAC) {
+  const key = heldKey(chord, mac);
+  return !!key && heldFromEvent(e, mac) === key;
+}
+
+// The modifier flags a pointer event carries while the held key is down
+// alone (the guide's area demo sends them).
+export function heldFlags(chord, mac = IS_MAC) {
+  const key = heldKey(chord, mac);
+  const flag = key && { Mod: mac ? "metaKey" : "ctrlKey", Ctrl: "ctrlKey", Alt: "altKey", Shift: "shiftKey" }[key];
+  return { ctrlKey: flag === "ctrlKey", metaKey: flag === "metaKey", altKey: flag === "altKey", shiftKey: flag === "shiftKey" };
+}
+
+// Whether a pointer event comes with the held key down and no other
+// modifier.
+export function heldAlone(e, chord, mac = IS_MAC) {
+  const want = heldFlags(chord, mac);
+  return Object.values(want).some(Boolean) && Object.entries(want).every(([k, on]) => !!e[k] === on);
 }
 
 // Whether `el` (the focused element) takes typed text: a key some command

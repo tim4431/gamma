@@ -792,7 +792,10 @@ the app's own updater, or `store`, the Microsoft Store, which has a
 release only once Microsoft certifies it, one to three days after GitHub;
 a Store install shows the release without the warning tone, with an Open
 Store button (`ms-windows-store://downloadsandupdates`), and raises no
-notice. Things worth an admin's eye are logged at WARNING — a
+notice. The Mac App Store build's server (`mas`) may point at no other way
+to update, so the shell also switches its check off (`GAMMA_UPDATE_CHECK=off`)
+and the row only says the App Store delivers updates, with no Check now.
+Things worth an admin's eye are logged at WARNING — a
 share-link visitor over the write throttle, an address probing unknown
 share links ([api.md](api.md) "Link visitors") — so the tile turns amber
 and the log's "Warnings" filter shows them. An admin who never opens the

@@ -18,6 +18,7 @@ export function FormatIllustration({ format }) {
   else if (format === "pdf" || format === "annots") icon = <FileGlyph isPdf />;
   else if (format === "bibtex") icon = <FileGlyph label="BIB" />;
   else if (format === "notability") icon = <FileGlyph label="NOTE" />;
+  else if (format === "goodnotes") icon = <FileGlyph label="GN" />;
   else if (format === "markdown") icon = <MarkdownIcon size={48} strokeWidth={1.5} />;
   else icon = <FileTextIcon size={48} strokeWidth={1.5} />;
   return <span className="setPicturePreview formatIllustration" aria-hidden="true">{icon}</span>;

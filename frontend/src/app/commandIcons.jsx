@@ -10,7 +10,7 @@ import {
   ArrowDownIcon, ArrowLeftIcon, ArrowUpIcon, BackspaceIcon, BoldIcon, BugIcon, ChevronDownIcon, ChevronRightIcon,
   ChevronUpIcon, ClipboardIcon, CodeIcon, CollapseIcon, CopyIcon, CornerDownLeftIcon, DatabaseIcon, DeleteLineIcon, DuplicateIcon,
   DownloadIcon, ExpandIcon, ExportIcon, FilePlusIcon, FileTextIcon, FolderFilesIcon, HighlightIcon,
-  ImportIcon, IndentIcon, InfoIcon, InsertAboveIcon, InsertBelowIcon, ItalicIcon, KeyboardIcon, LinkIcon,
+  ImportIcon, IndentIcon, InfoIcon, InsertAboveIcon, InsertBelowIcon, ItalicIcon, KeyboardIcon, LanguagesIcon, LinkIcon,
   MarkdownIcon, MessageSquareIcon, OutdentIcon, OutlineIcon, PaperclipIcon, PaperIcon, PencilIcon, PlusIcon, QuoteMarkIcon,
   RectSelectIcon, RedoIcon, ScissorsIcon, SearchIcon, SettingsIcon, SigmaIcon, SlashIcon, SparklesIcon, SquareCheckIcon,
   StrikethroughIcon, TerminalIcon, TextCursorIcon, TextSearchIcon, Trash2Icon, UnderlineIcon, UndoIcon, UsersIcon, XIcon,
@@ -50,6 +50,8 @@ const COMMAND_ICONS = {
   "ink.paste": ClipboardIcon,
   "ink.duplicate": DuplicateIcon,
   "ink.selectAll": RectSelectIcon,
+  "pdf.areaDrag": RectSelectIcon, // as the viewer's rectangle mode
+  "pdf.peekOriginal": LanguagesIcon, // as the 文A button
   "block.up": ChevronUpIcon,
   "block.down": ChevronDownIcon,
   "block.moveUp": ArrowUpIcon,

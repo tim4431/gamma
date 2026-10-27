@@ -310,13 +310,13 @@ def read_reply(response, provider_protocol, on_usage=None) -> str:
 
 
 def call_ai(
-    messages, system, entry, runtime, pdf_b64s=None, effort="",
+    messages, system, entry, runtime, pdf_b64s=None, effort="", speed="",
     max_tokens=8192, timeout=60, images=None, on_usage=None, cache_key="", slot_wait=0.0,
 ):
-    """Send a chat and return its complete reply text. ``cache_key`` and
-    ``slot_wait`` as in open_ai."""
+    """Send a chat and return its complete reply text. ``speed``,
+    ``cache_key`` and ``slot_wait`` as in open_ai."""
     with open_ai(
-        messages, system, entry, runtime, pdf_b64s, effort,
+        messages, system, entry, runtime, pdf_b64s, effort, speed,
         max_tokens=max_tokens, timeout=timeout, images=images, cache_key=cache_key, slot_wait=slot_wait,
     ) as response:
         return read_reply(response, protocol(runtime, entry), on_usage)

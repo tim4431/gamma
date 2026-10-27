@@ -22,7 +22,9 @@ A Docker container cannot update itself: the dashboard only says that a newer
 image exists and how to pull it. The desktop shell says who installs the next
 release through ``GAMMA_UPDATES``: ``desktop``, its own updater, or ``store``,
 the Microsoft Store, which has a release only once Microsoft certifies it, one
-to three days after GitHub, so a Store install raises no notice for it.
+to three days after GitHub, so a Store install raises no notice for it. A Mac
+App Store install (``mas``) may point at no other way to update, so the shell
+also switches the check off (``GAMMA_UPDATE_CHECK=off``).
 """
 
 import json
@@ -44,7 +46,7 @@ VERSION = os.environ.get("GAMMA_VERSION", "").strip().lstrip("v")
 UPDATE_CHECK = os.environ.get("GAMMA_UPDATE_CHECK", "").strip().lower() not in ("0", "off", "false", "no")
 COMMIT = os.environ.get("GAMMA_COMMIT", "").strip()[:12]
 BRANCH = os.environ.get("GAMMA_BRANCH", "").strip()
-UPDATES = os.environ.get("GAMMA_UPDATES", "").strip().lower()  # desktop | store | "" (the admin pulls)
+UPDATES = os.environ.get("GAMMA_UPDATES", "").strip().lower()  # desktop | store | mas | "" (the admin pulls)
 STARTED_AT = datetime.now(timezone.utc)
 
 REPO = "tim4431/Gamma"

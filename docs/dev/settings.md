@@ -213,7 +213,7 @@ and integration tokens get an empty list. The sources:
 
 | id | who | pane | tone | fires when | fingerprint |
 |---|---|---|---|---|---|
-| `update` | admins | Server | warn | a newer GitHub release than this build, or for a `-dev` Docker build a newer build of its branch (`version.check`, six-hour cache; the endpoint is sync on purpose); never in a Microsoft Store install (`GAMMA_UPDATES=store`), where the Store delivers it days later | the newer version |
+| `update` | admins | Server | warn | a newer GitHub release than this build, or for a `-dev` Docker build a newer build of its branch (`version.check`, six-hour cache; the endpoint is sync on purpose); never in a Microsoft Store install (`GAMMA_UPDATES=store`), where the Store delivers it days later, nor in the Mac App Store build, whose server does not check (`GAMMA_UPDATE_CHECK=off`) | the newer version |
 | `log-errors` | admins | Server | error | an error was logged since the last look (`logbuf.last_seq("error")`) | server start time + the newest error's seq |
 | `db-damage` | admins | Server | error | the latest integrity check of a database file failed — a snapshot's copy, or Server → Databases → Check now (`integrity.failures()`, one small JSON file) | a digest of the damaged files and when each was found; a file that passes a later check drops out |
 | `backup-failed` | everyone | Backups | error | a backup task of the account is in state `failed` (`backup_schedule.list_tasks`) | each failed task's id + its last run |
@@ -437,7 +437,10 @@ Preferences:
   (free) row with only Test (no key), the Google / Youdao credential rows
   with Test / Edit / remove. **Speed**: translation effort (Default asks for
   the model's lowest level; hidden while a translation service is picked, or
-  with no AI connection) and parallel requests.
+  with no AI connection), translation speed (Default / flex / fast, also
+  hidden for services), and parallel requests. `translateSpeed` syncs with
+  the account independently of chat speed; unsupported tiers use the
+  provider's usual routing.
 - **Keyboard** ([SettingsKeyboard.jsx](../../frontend/src/settings/SettingsKeyboard.jsx),
   [hotkeys.md](hotkeys.md)): a filter box in the head, then **Shortcuts**
   (the one account section, "Reset all" as its action) listing every command

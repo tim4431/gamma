@@ -122,6 +122,24 @@ or says it is a manual look (**manual**).
 | 8.5 | Signed macOS build: `codesign --verify --deep --strict Gamma.app` and `spctl --assess --type execute Gamma.app` pass; a fresh download opens without any dialog (the release job's *Verify signature* step covers this on the runner) | manual |
 | 8.6 | Cert-less macOS build (ad-hoc): a fresh download shows *Apple could not verify…*, and *Privacy & Security → Open Anyway* launches it; no *damaged* dialog | manual (needs a Mac) |
 
+## 9. Mac App Store build
+
+On a development-signed build (`npm run pack:mas-dev`, [release.md](release.md#mac-app-store)),
+the only one that runs sandboxed outside the store. The folder access
+(9.3–9.6) leans on one assumption no other build can check: a local server
+started after the app opened a folder can use it.
+
+| # | Check | How |
+|---|---|---|
+| 9.1 | Signatures: `codesign -d --entitlements -` lists the sandbox entitlements on `Gamma.app` and sandbox + inherit on `Contents/Resources/gamma-server/gamma-server`; the `.pkg` of `npm run dist:mas` names the installer certificate (`pkgutil --check-signature`) and its files are world-readable | manual (needs a Mac) |
+| 9.2 | First launch reaches the launcher; a new local server starts and opens (its data in the container); the launcher's Updates row and *Help → Check for Updates…* say the App Store delivers updates; Settings → Server shows no GitHub check; no *Start at login*, no source-checkout settings | manual (needs a Mac) |
+| 9.3 | *Local server storage → Change…* to a folder outside the container (e.g. on the Desktop), *Only new servers*, a new server there starts and keeps a page; quit, relaunch: it opens without asking for the folder | manual (needs a Mac) |
+| 9.4 | Keep a folder on this computer from the open local server into a new folder on the Desktop: the server restarts on the same address, the page carries on, the Markdown and PDFs appear; after a relaunch the folder still syncs; the same for a remote server's folder (the host restarts) | manual (needs a Mac) |
+| 9.5 | Rename that storage folder in the Finder, relaunch, open its server: the failure card says Gamma can no longer open it; name it back, *Choose folder…*, it opens | manual (needs a Mac) |
+| 9.6 | *Move data* of the servers to another outside folder and back; *Remove* with *delete everything* on a server outside the container | manual (needs a Mac) |
+| 9.7 | A PDF opened from the Finder with Gamma (*Open With*) goes into the open server; a download (a backup zip) saves through the dialog; recording into a note asks for the microphone with the purpose string, and records | manual (needs a Mac) |
+| 9.8 | Quit: no `gamma-server` process is left (`pgrep gamma-server`) | manual (needs a Mac) |
+
 ## Last run
 
 | Suite | Date | Result |
@@ -132,4 +150,7 @@ or says it is a manual look (**manual**).
 Manual items last looked at 2026-09-01 on Windows 11: 1.6, 2.4, 2.5, 6.2,
 6.4, 6.5 (screenshots of the bar + launcher in dark and light). Not yet
 exercised: 5.5, 5.6 against account.gammapdf.com, 5.7, 4.7, 4.8, 7.2–7.6, everything macOS (6.3), everything
-Linux beyond the CI smoke (6.7, 7.6), 8.4, 8.5.
+Linux beyond the CI smoke (6.7, 7.6), 8.4, 8.5, section 9. The submitted
+Mac App Store build 1.0 (2) passed the equivalent of 9.1, 9.3, 9.4 (a
+local server's folder) and 9.8 in October 2026, with its own folder
+handoff to the server rather than this one's ([research/mac-app-store.md](../../docs/research/mac-app-store.md)).

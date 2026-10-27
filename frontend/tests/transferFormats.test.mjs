@@ -99,7 +99,7 @@ test("Zotero's effective highlights follow file bundling while preserving the us
 });
 
 test("imports show options only for embedded annotations and omit inapplicable strip flags", () => {
-  for (const source of ["gamma", "markdown", "logseq", "notability"]) {
+  for (const source of ["gamma", "markdown", "logseq", "notability", "goodnotes"]) {
     const result = resolveImport(source, { hasPdf: true, strip: true });
     assert.equal(result.needsReview, false);
     assert.deepEqual(result.payload, { source });
@@ -114,7 +114,7 @@ test("imports show options only for embedded annotations and omit inapplicable s
 
 test("a .zip already chosen is offered only the sources that read an archive", () => {
   const archive = resolveImport("markdown", { hasPdf: true, archive: true });
-  assert.deepEqual(archive.formats.map(({ id }) => id), ["zotero", "markdown", "notability", "gamma"]);
+  assert.deepEqual(archive.formats.map(({ id }) => id), ["zotero", "markdown", "notability", "goodnotes", "gamma"]);
   assert.equal(archive.definition.id, "markdown");
   assert.equal(resolveImport("logseq", { archive: true }).definition.id, "zotero", "a source that reads no archive falls back");
 });

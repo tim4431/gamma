@@ -3,7 +3,7 @@
 // translator), Service (what translates — a chat model or a
 // machine-translation service — and the services' rows: Microsoft needs no
 // key; Google and Youdao keys are write-only like the AI keys:
-// /api/translate/engines masks them) and Speed (effort, parallel requests).
+// /api/translate/engines masks them) and Speed (effort, tier, parallel requests).
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { friendlyApiError } from "../library/libraryUtils";
@@ -11,8 +11,9 @@ import { MenuSelect } from "../shared/ui/Menus";
 import { Section, Row, Toggle, SubDialog, Field, PasswordInput, UnitInput } from "./SettingsKit";
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import { useSettingsRead } from "./settingsReads.js";
+import { SPEED_ORDER } from "../chat/modelPrefs.js";
 import { FREE_TRANSLATE_ENGINE, TRANSLATE_LANGS, TRANSLATE_PARALLEL_MAX, translateModelFor } from "../app/prefs";
-import { ActivityIcon, GlobeIcon, HighlightIcon, KeyIcon, LanguagesIcon, RefreshIcon, SparklesIcon, TextCursorIcon, Trash2Icon } from "../shared/ui/Icons";
+import { ActivityIcon, GlobeIcon, HighlightIcon, KeyIcon, LanguagesIcon, RefreshIcon, SparklesIcon, TextCursorIcon, Trash2Icon, ZapIcon } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { LANGUAGES, T, t } from "../shared/i18n/i18n.js";
 
@@ -102,8 +103,8 @@ export function TranslationSettings({ value }) {
   </>);
 }
 
-// Effort means nothing to a translation service, so its row hides while one
-// is what translation sends (picked, or the free default with no AI), and
+// Effort and service tiers mean nothing to a translation service, so their
+// rows hide while one is picked (or the free default with no AI), and
 // until the list of services has loaded (it always holds the free one).
 function TranslationPerformance({ value }) {
   const engines = value.translateEngines || [];
@@ -122,6 +123,15 @@ function TranslationPerformance({ value }) {
         onChange={value.setTranslateEffort}
         options={[["", t("Default")], ["minimal", t("Minimal")], ["low", t("Low")], ["medium", t("Medium")], ["high", t("High")]]}
       />
+    </Row> : null}
+    {!engine ? <Row
+      icon={ZapIcon}
+      label={t("Translation speed")}
+      hint={t("Only models whose provider offers that tier")}
+      title={t("Which service tier translation asks the provider for: fast uses premium low-latency routing at a higher price per token; flex trades latency for a lower price. Default uses the provider's usual routing. Models that do not offer the chosen tier use Default.")}
+    >
+      <MenuSelect label={t("Translation speed")} value={value.translateSpeed} onChange={value.setTranslateSpeed}
+        options={[["", t("Default")], ...SPEED_ORDER.map((tier) => [tier, tier])]} />
     </Row> : null}
     <Row
       icon={RefreshIcon}

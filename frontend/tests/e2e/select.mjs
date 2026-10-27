@@ -165,6 +165,7 @@ export const RULES = [
   ["frontend/package-lock.json", ALL],
 
   ["backend/tests/notability_fixtures.py", ["transfers"]], // the Notability note the transfers scenario imports
+  ["backend/tests/goodnotes_fixtures.py", ["transfers", "ipad"]], // the GoodNotes notebooks they import and hand over
   ["backend/tests/**", []],
   ["backend/gamma/ai_protocols/**", [...CHAT, "settings"]],
   // the AI client is the translated view's path to the model too
@@ -211,6 +212,9 @@ export const RULES = [
   ["backend/gamma/zotero_*.py", EXPORTS],
   ["backend/gamma/import_*.py", EXPORTS],
   ["backend/gamma/notability*.py", EXPORTS],
+  ["backend/gamma/goodnotes*.py", EXPORTS],
+  ["backend/gamma/note_app_import.py", EXPORTS], // what the Notability and GoodNotes imports share
+  ["backend/gamma/rtf.py", EXPORTS], // a GoodNotes text box's RTF
   ["backend/gamma/pdf_export.py", EXPORTS],
   ["backend/gamma/pdf_document.py", EXPORTS],
   ["backend/gamma/pdf_typeset.py", EXPORTS],

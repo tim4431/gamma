@@ -4362,6 +4362,20 @@ reach.
   - Shapes keep their `shape` records, sampled as `shapes.js` draws their
     params (`ink.shape_samples`), and a sticky note is a filled `rect` in
     band 0.
+- The GoodNotes import ([import_export.md](import_export.md#goodnotes-notebooks),
+  `gamma/goodnotes_map.py`) writes v2 files the same way, by the same
+  split and ids, its shapes and boxes through the Notability import's.
+  - A ball pen is the Ballpoint, its quadratic chain raised to cubics and
+    sampled as a Notability curve is; a highlighter keeps its alpha.
+  - A fountain or brush stroke stores a half width per sample: `w` is it
+    over the widest, `size` the widest width.
+  - A pencil drawn with an Apple Pencil gets `p` from its force and `w`
+    and `o` from the brush table's Pencil law at that pressure, held
+    upright (`goodnotes_map.pencil_law`, pinned by `inkwidth.json`), as
+    the Sketchbook bakes the Pen's: a restyle bakes the same widths. Its
+    tilt is not written: which of its two angle columns is the altitude is
+    in dispute.
+  - There is no `t` or `t0`: GoodNotes times a stroke, not its samples.
 - The Notability export ([import_export.md](import_export.md#notability-export),
   `gamma/notability_export.py`) writes each stroke as a straight Bézier
   chain whose anchors are its samples, each with its `w`, `p` and `a`/`z`,

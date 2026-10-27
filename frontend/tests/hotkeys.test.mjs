@@ -1,7 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
-  bindable, chordFromEvent, chordLabel, chordParts, conflicts, dispatch, effectiveKeys, normalizeChord,
+  bindable, chordFromEvent, chordLabel, chordParts, conflicts, dispatch, effectiveKeys, heldAlone, heldFlags,
+  heldFromEvent, heldKey, isHeldKey, normalizeChord,
 } from "../src/shared/lib/hotkeys.js";
 
 const key = (code, keyName, mods = {}) => ({ code, key: keyName, ...mods });
@@ -89,6 +90,45 @@ test("dispatch runs the first matching command that applies and swallows the key
   // An IME composition is never a shortcut.
   assert.equal(dispatch(commands, { ...ev("KeyK", "k", { ctrlKey: true }), isComposing: true }, {}, {}, false), null);
   assert.deepEqual(log, ["b", "prevented", "stopped", "a", "prevented", "stopped", "d-declined", "e", "prevented", "stopped", "c", "prevented", "stopped"]);
+});
+
+test("a held key is a lone modifier; off a Mac Ctrl is Mod", () => {
+  assert.equal(heldKey("Mod", true), "Mod");
+  assert.equal(heldKey("Ctrl", true), "Ctrl");
+  assert.equal(heldKey("Ctrl", false), "Mod");
+  assert.equal(heldKey("Alt", false), "Alt");
+  assert.equal(heldKey("Shift", false), "Shift");
+  assert.equal(heldKey("Mod-k", false), "", "a chord with a key is no held key");
+  assert.equal(heldKey("", false), "");
+});
+
+test("the recorder reads a modifier press as a held key", () => {
+  assert.equal(heldFromEvent({ key: "Meta" }, true), "Mod", "⌘ on a Mac");
+  assert.equal(heldFromEvent({ key: "Control" }, true), "Ctrl", "a Mac's control key");
+  assert.equal(heldFromEvent({ key: "Control" }, false), "Mod");
+  assert.equal(heldFromEvent({ key: "Meta" }, false), "", "the Windows key");
+  assert.equal(heldFromEvent({ key: "Alt" }, true), "Alt");
+  assert.equal(heldFromEvent({ key: "Shift" }, false), "Shift");
+  assert.equal(heldFromEvent({ key: "k" }, false), "");
+  assert.ok(isHeldKey({ key: "Meta" }, "Mod", true));
+  assert.ok(!isHeldKey({ key: "Control" }, "Mod", true), "a Mac's Ctrl is not ⌘");
+  assert.ok(isHeldKey({ key: "Control" }, "Ctrl", false), "a Mac's Ctrl binding is Ctrl elsewhere");
+  assert.ok(!isHeldKey({ key: "Alt" }, "Mod-k", false));
+});
+
+test("heldAlone wants the held key down and no other modifier", () => {
+  const mouse = (mods) => ({ ctrlKey: false, metaKey: false, altKey: false, shiftKey: false, ...mods });
+  assert.ok(heldAlone(mouse({ ctrlKey: true }), "Mod", false));
+  assert.ok(!heldAlone(mouse({ ctrlKey: true }), "Mod", true), "a Mac's Ctrl+click is the right click, not ⌘");
+  assert.ok(heldAlone(mouse({ metaKey: true }), "Mod", true));
+  assert.ok(!heldAlone(mouse({ ctrlKey: true, shiftKey: true }), "Mod", false));
+  assert.ok(!heldAlone(mouse({ ctrlKey: true, metaKey: true }), "Mod", false));
+  assert.ok(heldAlone(mouse({ altKey: true }), "Alt", true));
+  assert.ok(!heldAlone(mouse({}), "Mod", false));
+  assert.ok(!heldAlone(mouse({ ctrlKey: true }), "", false), "no held key, no drag");
+  assert.deepEqual(heldFlags("Mod", true), { ctrlKey: false, metaKey: true, altKey: false, shiftKey: false });
+  assert.deepEqual(heldFlags("Mod", false), { ctrlKey: true, metaKey: false, altKey: false, shiftKey: false });
+  assert.ok(heldAlone(heldFlags("Shift", false), "Shift", false), "what the guide's demo sends passes");
 });
 
 test("conflicts lists every chord more than one command answers to", () => {

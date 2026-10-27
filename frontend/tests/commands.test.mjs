@@ -77,6 +77,17 @@ test("the handwriting commands keep to the strip's selection and clipboard, and 
   assert.deepEqual(calls, ["copy", "all"]);
 });
 
+test("the PDF's held keys are lone modifiers that never dispatch", () => {
+  assert.equal(commandChord("pdf.areaDrag", {}), "Mod", "Ctrl, ⌘ on a Mac");
+  assert.equal(commandChord("pdf.peekOriginal", {}), "Alt");
+  assert.equal(commandChord("pdf.areaDrag", { "pdf.areaDrag": "Alt" }), "Alt", "rebound in Settings → Keyboard");
+  for (const id of ["pdf.areaDrag", "pdf.peekOriginal"]) {
+    const cmd = commandById(id);
+    assert.ok(cmd.held && cmd.palette === false, `${id} is held and kept out of the palette`);
+    assert.equal(cmd.run(), false, `${id} declines if it is ever run`);
+  }
+});
+
 test("fixedKeys follows the Enter preference", () => {
   assert.deepEqual(fixedKeys(false)[0][0], ["Shift-Enter"]);
   assert.deepEqual(fixedKeys(true)[0][0], ["Enter"]);
