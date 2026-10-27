@@ -39,6 +39,7 @@ if (window.location.protocol === 'file:') {
     copyAddress: (id) => ipcRenderer.invoke('shell:copy-address', id),
     setSettings: (patch) => ipcRenderer.invoke('shell:set-settings', patch),
     pickFolder: (defaultPath) => ipcRenderer.invoke('shell:pick-folder', defaultPath),
+    grantFolder: (id) => ipcRenderer.invoke('shell:grant-folder', id),
     setDataRoot: (dir, opts) => ipcRenderer.invoke('shell:set-data-root', dir, opts),
     barExpand: (on) => ipcRenderer.invoke('shell:bar-expand', on),
     updateCheck: () => ipcRenderer.invoke('shell:update-check'),

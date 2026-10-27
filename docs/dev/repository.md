@@ -134,8 +134,9 @@ and the hero's system font stack; generation works offline. See the
 [brand guide](../../design/brand/README.md).
 
 Generated PyInstaller intermediates remain under `desktop/build/`; frozen
-servers, installers, and Store packages go into `dist-backend/`, `dist/`, and
-`dist-store/`, respectively. These outputs are ignored. Do not delete
+servers, installers, Microsoft Store packages and Mac App Store packages go
+into `dist-backend/`, `dist/`, `dist-store/` and `dist-mas/`, respectively.
+These outputs are ignored. Do not delete
 `desktop/assets/` as build cleanup.
 
 ## Updating documentation media

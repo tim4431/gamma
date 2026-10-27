@@ -9,13 +9,15 @@
   "scripts": {
     "store-art": "node scripts/store-art.js",
     "start": "electron .",
-    "test": "node --test test/keeping.test.js test/cloudSignIn.test.js test/sidecar.test.js test/openFiles.test.js test/hostPath.test.js",
+    "test": "node --test test/keeping.test.js test/cloudSignIn.test.js test/sidecar.test.js test/openFiles.test.js test/hostPath.test.js test/folderAccess.test.js",
     "smoke": "node test/smoke.js",
     "smoke:packaged": "node test/smoke.js --packaged",
     "e2e": "node test/e2e.js",
     "e2e:packaged": "node test/e2e.js --packaged",
     "pack": "electron-builder --dir",
-    "dist": "electron-builder"
+    "dist": "electron-builder",
+    "dist:mas": "umask 022 && electron-builder --config electron-builder.mas.cjs --mac mas --publish never",
+    "pack:mas-dev": "umask 022 && electron-builder --config electron-builder.mas.cjs --mac mas-dev --publish never"
   },
   "devDependencies": {
     "electron": "^38.0.0",

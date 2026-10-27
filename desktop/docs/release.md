@@ -29,6 +29,9 @@ package. The unpacked `dist/linux-unpacked` dir has no setuid
 on Ubuntu ≥ 24.04), so `test/smoke.js` and `test/e2e.js` start it with
 `--no-sandbox`; on a headless machine wrap them in `xvfb-run -a`.
 
+The Mac App Store's `.pkg` is a build of its own, made by hand on a Mac
+that holds the App Store team's certificates: *Mac App Store* below.
+
 Every target registers Gamma as a PDF app, in *Open with* and as a
 default the user may choose, without taking `.pdf` over: the NSIS
 installer through `assets/installer.nsh`, the Store package through
@@ -293,6 +296,127 @@ logs a warning and the next release submits. Where the secrets come from
 
 Without the secrets the step prints a notice and the MSIX stays the
 `store-windows` workflow artifact for manual upload as described above.
+
+## Mac App Store
+
+The store build is `electron-builder.mas.cjs`, which extends the packaging
+config: the same app, server and frontend as the dmg, packaged as a signed
+`.pkg` for App Store Connect. It is listed under the App Store Connect
+record *Gamma - PDF Reader* (Apple ID 6814705181) of team `A436A36DDC`,
+with the iPad app: bundle id `net.blitzbuild.gamma`, so the two platforms
+share one listing. The dmg and zip keep `io.github.tim4431.gamma`; on one
+Mac they are two apps with separate data. Version 1.0 (build 2) was the
+first submission, in October 2026; how it was arrived at, and what was
+left out of it, is [research/mac-app-store.md](../../docs/research/mac-app-store.md).
+
+**What Apple asks of the build, and where it answers.** The rules are App
+Review's 2.4.5 (Mac App Store apps) and 2.5.2, and App Store Connect's
+upload checks.
+
+| Rule | In this build |
+|---|---|
+| Every executable runs in the App Sandbox (2.4.5(i)) | `assets/entitlements.mas.plist` for the app: the sandbox, network client and server (remote servers, Gamma Cloud, the AI; the local servers on `127.0.0.1` that the Connector and Gamma Cloud sign-in's loopback reach), user-selected files read-write and app-scoped bookmarks (below), the microphone. `assets/entitlements.mas.inherit.plist` (sandbox + inherit) for every other binary, the frozen server included, which therefore runs in the app's sandbox. No home-folder exception, no Full Disk Access |
+| Electron's Mac App Store runtime, which avoids private API | the `mas` targets: electron-builder fetches that runtime itself; `process.mas` is true at run time |
+| Updates through the App Store only (2.4.5(vii)) | `lib/updater.js` reports `unsupported` (reason `mas`) and never loads electron-updater; the local servers get `GAMMA_UPDATES=mas` and `GAMMA_UPDATE_CHECK=off`, so Settings → Server asks GitHub nothing and says the App Store delivers updates |
+| No code the review did not see (2.4.5(iv), 2.5.2) | the bundled server only: the launcher's *run local servers from a source checkout* settings are hidden and `lib/sidecar.js` ignores them |
+| Nothing at login without consent and a helper (2.4.5(iii)) | no login item: *Start at login* is hidden in the launcher and the menus. The servers stop when the app quits |
+| A purpose string for each protected resource (5.1.1) | `NSMicrophoneUsageDescription`, for recording into a note and dictating to the assistant |
+| A 1024 px icon (ITMS-90236 rejected build 1) | `assets/icon.png` is 1024 px, made by the brand generator (`design/brand/outputs.json`), so the `.icns` electron-builder derives has its 512@2x image |
+| Files the installed app can read | the npm scripts run with `umask 022`, and `scripts/mas-modes.cjs`, an `afterPack` hook, makes every file in the app world-readable before signing: the store installs the files with the modes they were packed with, owned by root |
+| Export compliance | `ITSAppUsesNonExemptEncryption` false (HTTPS only), as the iPad app declares |
+| No purchase or call to buy outside the app (3.1.1, 3.1.3(f)) | Gamma sells plans only on account.gammapdf.com, and no server page offers them; keep it that way |
+
+**Folders outside the sandbox.** A sandboxed app reads and writes its
+container, plus what the user picks in a native dialog until it quits. The
+folders the desktop app writes outside its container are the user's choice
+each time: the *Local server storage* folder and the folders kept on disk.
+The pickers ask for a security-scoped bookmark (`securityScopedBookmarks`),
+`lib/folderAccess.js` keeps it in the registry (`access`), and at launch,
+before any server starts, opens each one again
+(`app.startAccessingSecurityScopedResource`). The local servers inherit the
+app's sandbox, together with the folders the app holds at the moment they
+start. A folder picked while a server runs therefore reaches that server
+only once it starts again: after the user picks where to keep a folder,
+the server that is to write there starts again, on its port, when it
+started before the pick (`reachFolder` in `main.js`). A bookmark that no
+longer opens (the folder moved or was deleted, its disk is not connected)
+leaves that folder closed for the run and stays stored. A local server
+whose data folder the app cannot open does not start; the launcher's
+failure card says why and offers *Choose folder…* (`shell:grant-folder`). A folder kept
+on disk there reports errors in the sync panel until it is kept again.
+Nothing else needs a grant: a PDF opened from the Finder is read by the
+app, which the open lets in; downloads go through the save dialog; the
+default storage is inside the container.
+
+**Versions.** App Store Connect counts its own: the marketing version
+(`CFBundleShortVersionString`) must be higher than the last one approved,
+and the build number (`CFBundleVersion`) higher than every build uploaded
+for this Mac app. They have nothing to do with the GitHub release number,
+so they are set per build: `GAMMA_MAS_VERSION` (e.g. `1.1`) and
+`GAMMA_MAS_BUILD` (e.g. `3`). The marketing version is also what About,
+the launcher and the server's dashboard report, as on the iPad. The config
+refuses to load without them.
+
+**Build**, on a Mac (the architecture is the build machine's, since the
+frozen server is; arm64 on Apple silicon):
+
+```bash
+(cd frontend && npm ci && npm run build)
+python desktop/build_backend.py   # the same frozen server as the dmg
+cd desktop && npm ci
+export GAMMA_MAS_VERSION=1.1 GAMMA_MAS_BUILD=3
+export GAMMA_MAS_PROFILE="$HOME/…/Gamma_Mac_App_Store.provisionprofile"
+npm run dist:mas                  # dist-mas/Gamma-1.1.0-mas-arm64.pkg
+```
+
+The keychain must hold the team's *Apple Distribution* (or *3rd Party Mac
+Developer Application*) and *Mac Installer Distribution* (or *3rd Party
+Mac Developer Installer*) certificates; with several teams in it,
+`CSC_NAME="Blitzbuild Software, LLC (A436A36DDC)"` picks the team.
+`forceCodeSigning` fails the build rather than leave it unsigned.
+`GAMMA_MAS_PROFILE` is the *Mac App Store* profile of the bundle id, from
+the developer portal. osx-sign takes the application and team identifiers
+and the app group from it. Run the signing in a session that can reach
+the keychain: over SSH the keychain may refuse (`errSecInternalComponent`)
+until it is unlocked for that session.
+
+`npm run pack:mas-dev` makes the same app signed for development instead
+(an *Apple Development* certificate, `GAMMA_MAS_PROFILE` a development
+profile listing the Mac). It runs sandboxed exactly as the store one does,
+which no other build can be checked for. Try it with
+[checklist.md](checklist.md) "Mac App Store build" before uploading.
+
+**Check and upload.** `codesign -d --entitlements - <app>` shows the app's
+entitlements, and on `Contents/Resources/gamma-server/gamma-server` the
+inherited pair; `pkgutil --check-signature <pkg>` names the installer
+certificate. Upload the `.pkg` with Apple's Transporter, or `xcrun altool
+--upload-app --type macos --file <pkg>` with the team's App Store Connect
+API key (`--apiKey`, `--apiIssuer`). App Store Connect processes the
+build and reports a rejection by e-mail (ITMS-…).
+
+**Submit.** App Store Connect → the record → the macOS version → pick the
+build; the listing (description from
+[`assets/store/listing.md`](../assets/store/listing.md), Mac screenshots),
+the privacy policy URL (`PRIVACY.md`, as for the Microsoft Store) and the
+App Privacy answers. A fresh install must reach the launcher and make a
+local server with nothing configured, which is what the reviewer does.
+
+**Runtime differences of the store install:**
+
+- Electron's userData is in the container:
+  `~/Library/Containers/net.blitzbuild.gamma/Data/Library/Application Support/gamma-desktop`.
+  It never sees a dmg install's servers; moving data between them is
+  Gamma's own per-workspace *Export* / *Import*.
+- No single-instance lock: Launch Services runs one copy of a store app
+  and hands a PDF opened from the Finder over as `open-file` (the
+  submitted build found Electron's lock unusable in the sandbox).
+- The updater and the server's update check are off, *Start at login* and
+  the source-checkout settings are hidden (the table above).
+- Folders outside the container go through bookmarks (above).
+
+The workflow does not build it: the signing identity is the App Store
+team's, not the repository's, like the iPad's TestFlight builds
+([github_actions.md](../../docs/dev/github_actions.md#the-ipad-testflight-release)).
 
 ## Auto-update feed
 

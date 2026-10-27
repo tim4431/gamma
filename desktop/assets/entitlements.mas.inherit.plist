@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+  <dict>
+    <!-- Every binary of the Mac App Store build other than the app itself:
+         Electron's helpers and the frozen server (Resources/gamma-server).
+         They run in the app's sandbox, with what the app holds when they
+         start, the folders it has open included (lib/folderAccess.js), and
+         ask for nothing of their own. -->
+    <key>com.apple.security.app-sandbox</key>
+    <true/>
+    <key>com.apple.security.inherit</key>
+    <true/>
+  </dict>
+</plist>
