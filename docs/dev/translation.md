@@ -169,7 +169,7 @@ document's opening text, up to 12,000 characters, when the server has no
 stored copy: `App.jsx` passes `translateScope={{pageId, stored}}`, `stored`
 when the PDF's URL is one of the server's uploads), `before`, `after`,
 `section`, and `build_brief: false` for a one-off text. App's `translateChunk`
-sends them with `texts`, `lang`, `model`, `effort` and `stream`.
+sends them with `texts`, `lang`, `model`, `effort`, `speed` and `stream`.
 
 A reply comes back per unit. `translatePlan.results` splits a joined unit's
 translation at its `{br}` markers. When the model lost or doubled one, it
@@ -298,6 +298,13 @@ its brief, once per account, workspace, paper, language and model:
   `translate_context.default_effort` — on the Anthropic wire the first level
   after `none`, which would leave the parameter out). A model whose levels are
   unknown, or that takes none, gets no effort parameter.
+- **Speed**: the separate account preference `translateSpeed` in Settings →
+  Language and Translation → Speed sends `speed` (`""`, `flex`, or `fast`).
+  `_translate_speed` checks the resolved model's `ai_catalog.speed_tiers`;
+  Default, an unsupported tier, or a failed lookup uses the provider's usual
+  routing. The same tier applies to the paper's brief, streamed and plain
+  translations, and repair calls. Translation services ignore it. Changing
+  speed keeps existing paragraph and brief caches.
 - **Cache**: an **in-memory only** LRU (~5k entries, lock-guarded because
   requests run in the threadpool) per (user, language, bare model name, the
   brief's key, source text). Nothing goes to disk; the cache makes

@@ -132,6 +132,7 @@ export async function settingsScenarios(env) {
       // section keeps only the parallel requests.
       await row(page, "Parallel requests").waitFor();
       assertEq(await row(page, "Translation effort").count(), 0);
+      assertEq(await row(page, "Translation speed").count(), 0);
       await google.getByRole("button", { name: "Remove key", exact: true }).click();
       await until(() => google.innerText().then((text) => text.includes("Not set up")));
       assertEq((await user.api("/api/ai/models")).translate_engines.map((e) => e.id).join(), "engine:microsoft");

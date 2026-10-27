@@ -437,7 +437,10 @@ Preferences:
   (free) row with only Test (no key), the Google / Youdao credential rows
   with Test / Edit / remove. **Speed**: translation effort (Default asks for
   the model's lowest level; hidden while a translation service is picked, or
-  with no AI connection) and parallel requests.
+  with no AI connection), translation speed (Default / flex / fast, also
+  hidden for services), and parallel requests. `translateSpeed` syncs with
+  the account independently of chat speed; unsupported tiers use the
+  provider's usual routing.
 - **Keyboard** ([SettingsKeyboard.jsx](../../frontend/src/settings/SettingsKeyboard.jsx),
   [hotkeys.md](hotkeys.md)): a filter box in the head, then **Shortcuts**
   (the one account section, "Reset all" as its action) listing every command

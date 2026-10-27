@@ -8,7 +8,7 @@
 // the text around its texts. "Translate whole document" then does the two
 // pages after it, each request with the text before and after it across
 // the page breaks. The translate endpoint is answered locally.
-import { fakeAiModels, wanted } from "../harness.mjs";
+import { FAKE_AI_MODELS, fakeAiModels, wanted } from "../harness.mjs";
 import { waitForPdf } from "./pdf.mjs";
 
 // A page laid out in two columns of Times at 10pt, baselines 12pt apart.
@@ -79,7 +79,8 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     const created = await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Two columns", source_url: up.source_url } });
     pageId = created.id;
     const ctx = await alice.context(browser);
-    await fakeAiModels(ctx);
+    await fakeAiModels(ctx, { ...FAKE_AI_MODELS,
+      translate_engines: [{ id: "engine:microsoft", label: "Microsoft (free)" }] });
     // Every text comes back as "译:" + each of its pieces, tokens and
     // breaks kept: what a model following the prompt returns.
     await ctx.route("**/api/ai/translate", async (route) => {
@@ -92,6 +93,30 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     });
     page = await openPage(ctx, `${server.base}/?page=${pageId}&ws=${alice.ws}`);
     await waitForPdf(page, 1);
+  });
+
+  await step("translation: speed is chosen independently of chat and persists after reload", async () => {
+    const openTranslation = async () => {
+      await page.locator('[data-guide="header.account"]').click();
+      await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
+      await page.getByRole("navigation", { name: "Settings categories" })
+        .getByRole("button", { name: "Language and Translation", exact: true }).click();
+    };
+    await openTranslation();
+    const speed = page.getByRole("button", { name: "Translation speed", exact: true });
+    assertEq(await speed.innerText(), "Default");
+    await speed.click();
+    const menu = page.locator(".uiSelectMenu");
+    assertEq((await menu.getByRole("menuitemradio").allTextContents()).join(","), "Default,flex,fast");
+    await menu.getByRole("menuitemradio", { name: "fast", exact: true }).click();
+    await until(async () => (await alice.api("/api/prefs/profile")).value?.translateSpeed === "fast");
+    assertEq((await alice.api("/api/prefs/profile")).value?.chatSpeed || "", "");
+    await page.reload();
+    await waitForPdf(page, 1);
+    await openTranslation();
+    assertEq(await speed.innerText(), "fast");
+    await page.getByRole("button", { name: "Close settings", exact: true }).click();
+    assertNoProblems(page);
   });
 
   await step("translation: while the server reads the paper for its brief, the pill says so; leaving the PDF takes it down", async () => {
@@ -153,6 +178,7 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     assert(!sent.some((t) => t.includes("optical tweezers")), "only the page being read was translated");
     const withJoin = requests.find((r) => r.texts.includes(joined));
     assertEq(withJoin.page_id, pageId, "the request names its page");
+    assertEq(withJoin.speed, "fast", "translation requests carry their own speed setting");
     // The section heading rides along: as the request's section, or as one
     // of its texts when the request starts with it.
     assert(withJoin.section === "1 Introduction" || withJoin.texts.includes("1 Introduction"), JSON.stringify(withJoin));

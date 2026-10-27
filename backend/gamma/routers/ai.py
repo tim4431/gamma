@@ -1096,6 +1096,7 @@ class AITranslateRequest(BaseModel):
     lang: str = "zh-CN"   # target language code (TRANSLATE_LANGS key)
     model: str = ""       # model registry id, or "engine:<id>" (a translation service); "" = the user's default
     effort: str = ""      # reasoning effort; "" = the model's lowest level (_translate_effort)
+    speed: str = ""       # service tier; "" or unsupported = the provider's usual routing
     # NDJSON stream: {"i": [indices], "text": partial} lines as the model
     # writes each paragraph (the viewer types them into the page), then the
     # same final {"translations", "model", "cached", "redone", "effort"}
@@ -1189,6 +1190,20 @@ def _translate_effort(requested: str, rt: dict, entry: dict) -> str:
         return ""
     ordered = [e for e in EFFORT_ORDER if e in (levels or [])]
     return translate_context.default_effort(ordered, _wire_protocol(rt, entry))
+
+
+def _translate_speed(requested: str, rt: dict, entry: dict) -> str:
+    """Only send a translation's chosen tier when the model offers it."""
+    speed = _resolve_speed(requested)
+    if not speed:
+        return ""
+    conf = rt["providers"][entry["provider"]]
+    try:
+        tiers, _ = ai_catalog.speed_tiers(entry["provider"], conf, entry["model"])
+    except Exception as e:
+        log.warning(f"[ai_translate] speed lookup failed: {e}")
+        return ""
+    return speed if speed in (tiers or []) else ""
 
 
 class _TranslateBatch:
@@ -1297,6 +1312,7 @@ def ai_translate(payload: AITranslateRequest, request: Request):
     entry = _resolve_model(rt, payload.model)
     model_id, model_name = entry["id"], entry["model"]
     effort = _translate_effort(payload.effort, rt, entry)
+    speed = _translate_speed(payload.speed, rt, entry)
     count_usage = ai_usage.recorder("translate", entry, rt)
 
     # The paper's brief: made once per paper, language and model (the first
@@ -1310,7 +1326,7 @@ def ai_translate(payload: AITranslateRequest, request: Request):
 
     def make_brief():
         system_b, messages_b = translate_context.brief_messages(paper, lang)
-        return _call_ai(messages_b, system_b, entry, rt, effort=effort,
+        return _call_ai(messages_b, system_b, entry, rt, effort=effort, speed=speed,
                         max_tokens=8000, timeout=150, on_usage=count_usage)
 
     def resolve(wait: bool):
@@ -1330,7 +1346,7 @@ def ai_translate(payload: AITranslateRequest, request: Request):
 
     def call(brief, batch_texts, alone=False, slot_wait=0.0):
         messages, system = request_parts(brief, batch_texts, alone)
-        return _call_ai(messages, system, entry, rt, effort=effort, max_tokens=_translate_budget(batch_texts),
+        return _call_ai(messages, system, entry, rt, effort=effort, speed=speed, max_tokens=_translate_budget(batch_texts),
                         timeout=180, on_usage=count_usage, cache_key=prompt_cache if brief else "",
                         slot_wait=slot_wait)
 
@@ -1339,7 +1355,7 @@ def ai_translate(payload: AITranslateRequest, request: Request):
         reply arrives, then ("reply", full text). Past the door's check
         (below), it waits for a call slot that another call took meanwhile."""
         messages, system = request_parts(brief, batch_texts, False)
-        resp = _open_ai(messages, system, entry, rt, effort=effort, max_tokens=_translate_budget(batch_texts),
+        resp = _open_ai(messages, system, entry, rt, effort=effort, speed=speed, max_tokens=_translate_budget(batch_texts),
                         timeout=180, stream=True, cache_key=prompt_cache if brief else "",
                         slot_wait=_TRANSLATE_SLOT_WAIT)
         acc = ""

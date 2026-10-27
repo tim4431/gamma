@@ -2651,6 +2651,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     selTranslate, setSelTranslate, selTranslateAuto, setSelTranslateAuto,
     translateLang, setTranslateLang, translateModel, setTranslateModel,
     translateEffort, setTranslateEffort, translateParallel, setTranslateParallel,
+    translateSpeed, setTranslateSpeed,
     searchDetailsHome, setSearchDetailsHome, searchDetailsPaper, setSearchDetailsPaper,
     enterNewNote, setEnterNewNote, backlinksVisible, setBacklinksVisible,
     keybindings, setKeybindings,
@@ -3446,7 +3447,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // One chunk of paragraphs → the server's final reply ({translations,
   // failed, …}), a single provider call. All the chunking, queueing and
   // parallelism live in the viewer's engine; this is just the HTTP wrapper
-  // carrying the language/model/effort settings. Throws on failure with the
+  // carrying the language/model/effort/speed settings. Throws on failure with the
   // server's reason (a 429 of the shared AI allowance says what to do), its
   // HTTP `status` and `retryAfter` (seconds: the account's AI calls are all
   // in use): the engine asks again (translatePlan.requestChunk) and reports
@@ -3470,6 +3471,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       body: JSON.stringify({
         texts, lang: translateLang,
         model: translateSendModel || "", effort: translateEffort || "",
+        speed: translateSpeed || "",
         stream: true, ...requestFields(context),
       }),
     });
@@ -11910,6 +11912,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setTranslateModel,
           translateEffort,
           setTranslateEffort,
+          translateSpeed,
+          setTranslateSpeed,
           translateParallel,
           setTranslateParallel,
           aiModels: scopedAiModels, // the translation picker's registry
