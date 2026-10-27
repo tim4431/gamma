@@ -239,6 +239,9 @@ export const PREFS = {
   // default); Low/Minimal is the speed lever for reasoning models, which
   // otherwise spend their thinking budget before the first output token.
   translateEffort: pref("gamma-translate-effort", ACCOUNT, "", oneOf(["", "minimal", "low", "medium", "high"])),
+  // Translation's service tier is independent of chat; unsupported tiers use
+  // the provider's usual routing, as does the empty default.
+  translateSpeed: pref("gamma-translate-speed", ACCOUNT, "", oneOf(["", "flex", "fast"])),
 
   // --- Search (Settings → Reading) ---
   // Whether the search popover's result-detail lists start expanded, one

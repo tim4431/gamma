@@ -1,4 +1,4 @@
-import { Account, FAKE_AI_MODELS, PYTHON, Server, arrived, fakeAiModels, wanted } from "../harness.mjs";
+import { Account, FAKE_AI_MODELS, PYTHON, Server, arrived, fakeAiModels, makePdf, wanted } from "../harness.mjs";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
@@ -132,6 +132,7 @@ export async function settingsScenarios(env) {
       // section keeps only the parallel requests.
       await row(page, "Parallel requests").waitFor();
       assertEq(await row(page, "Translation effort").count(), 0);
+      assertEq(await row(page, "Translation speed").count(), 0);
       await google.getByRole("button", { name: "Remove key", exact: true }).click();
       await until(() => google.innerText().then((text) => text.includes("Not set up")));
       assertEq((await user.api("/api/ai/models")).translate_engines.map((e) => e.id).join(), "engine:microsoft");
@@ -295,6 +296,73 @@ export async function settingsScenarios(env) {
       // Duplicate block above / below, and the handwriting group's Duplicate handwriting.
       await until(async () => (await page.locator(".keyboardPane .setRow").count()) === 3, { what: "filtered to the three duplicate rows" });
       assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("settings: Keyboard rebinds the PDF's held keys, and the area drag follows", async () => {
+    const up = await user.upload("/api/uploads", makePdf([["Held keys paper", "A line to drag across"]]), "held-keys.pdf", "application/pdf");
+    const created = await user.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Held keys", source_url: up.source_url } });
+    const { ctx, page } = await setup();
+    try {
+      await openSettings(page);
+      await nav(page, "Keyboard").click();
+      const caps = async (r) => (await r.locator(".keyCap").allTextContents()).join(" ");
+      const area = row(page, "Hold to box a region of the PDF");
+      const peek = row(page, "Hold to see the original of a translated page");
+      await area.waitFor();
+      assertEq(await caps(area), "Ctrl", "Mod is Ctrl off a Mac");
+      assertEq(await caps(peek), "Alt");
+      await area.getByRole("button", { name: "Change the shortcut for Hold to box a region of the PDF" }).click();
+      await area.getByText("Press a modifier key…").waitFor();
+      // A key that is no modifier, and Backspace, leave it recording: a held key is never unbound.
+      await page.keyboard.press("x");
+      await page.keyboard.press("Backspace");
+      await area.getByText("Press a modifier key…").waitFor();
+      await page.keyboard.down("Alt");
+      await page.keyboard.up("Alt");
+      await until(async () => (await caps(area)) === "Alt", { what: "rebound to Alt" });
+      await until(async () => (await user.api("/api/prefs/profile")).value?.keybindings?.["pdf.areaDrag"] === "Alt", { what: "the held key reaches the profile" });
+      // The peek holds Alt too: both rows say so.
+      await area.getByText("Also used by Hold to see the original of a translated page").waitFor();
+      await peek.getByText("Also used by Hold to box a region of the PDF").waitFor();
+
+      await page.goto(`${server.base}/?page=${created.id}&ws=${user.ws}`);
+      await page.waitForSelector('[data-page="1"] .textLayer span', { timeout: 30000 });
+      const viewer = page.locator('[data-guide="pdf.viewer"]');
+      const crosshair = () => viewer.evaluate((el) => el.classList.contains("areaCursor"));
+      const pageBox = await page.locator('[data-page="1"]').boundingBox();
+      const x = pageBox.x + 60, y = pageBox.y + 50;
+      // Drags with `key` held; how many area rectangles showed mid-drag.
+      const drag = async (key) => {
+        await page.keyboard.down(key);
+        await page.mouse.move(x, y);
+        await page.mouse.down();
+        await page.mouse.move(x + 160, y + 90, { steps: 10 });
+        const boxes = await page.locator(".pdfAreaMarquee").count();
+        await page.mouse.up();
+        await page.keyboard.up(key);
+        return boxes;
+      };
+      await page.keyboard.down("Control");
+      await sleep(200);
+      assertEq(await crosshair(), false, "Ctrl is no longer the area key");
+      await page.keyboard.up("Control");
+      await page.keyboard.down("Alt");
+      await until(crosshair, { what: "Alt shows the crosshair" });
+      await page.keyboard.up("Alt");
+      await until(async () => !(await crosshair()), { what: "the crosshair goes with the key" });
+      assertEq(await drag("Control"), 0, "a Ctrl+drag draws no rectangle");
+      await page.keyboard.press("Escape");
+      assert(await drag("Alt") > 0, "an Alt+drag boxes a region");
+      await page.locator(".plainTip .colorBtn").first().waitFor();
+      await page.keyboard.press("Escape");
+      assertNoProblems(page);
+
+      await openSettings(page);
+      await nav(page, "Keyboard").click();
+      await page.getByRole("button", { name: "Reset all", exact: true }).click();
+      await until(async () => (await caps(row(page, "Hold to box a region of the PDF"))) === "Ctrl", { what: "reset" });
+      await until(async () => !(await user.api("/api/prefs/profile")).value?.keybindings?.["pdf.areaDrag"], { what: "the reset reaches the profile" });
     } finally { await ctx.close(); }
   });
 

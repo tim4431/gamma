@@ -69,6 +69,7 @@ const entries = [
   e("translation", t("Translate with"), t("Service"), t("A chat model, or a translation service below"), "translation model engine service AI Google Youdao"),
   e("translation", t("Translation services"), t("Service"), t("Microsoft for free; Google or Youdao with a key"), "translation engine API key Google Cloud Youdao Microsoft"),
   e("translation", t("Translation effort"), t("Speed"), t("Default asks for the model's lowest level, the fastest"), "translation reasoning thinking speed"),
+  e("translation", t("Translation speed"), t("Speed"), t("Only models whose provider offers that tier"), "translation fast mode speed service tier priority flex latency"),
   e("translation", t("Parallel requests"), t("Speed"), t("Translation calls in flight at once (1–4)"), "translation concurrency speed"),
   e("keyboard", t("Keyboard shortcuts"), null, t("Every command's keys, rebindable"), "keys hotkeys bindings rebind command palette VSCode"),
   e("keyboard", t("Enter makes"), t("Built in"), t("A new note or a new line; Shift+Enter makes the other"), "enter key new note line break notes shift return"),

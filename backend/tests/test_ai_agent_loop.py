@@ -700,6 +700,25 @@ def _calls(*calls):
         {"type": "content_block_stop"})]
 
 
+def test_a_steps_label_counts_a_batch_and_names_a_lone_page():
+    from gamma.ai_agent import step_event
+
+    event = step_event("move_page", {"id": "c1", "arguments": {"page_ids": ["p1", "p2", "p3"], "folder": "QEC"}})
+    assert event == {"id": "c1", "tool": "move_page", "args": {"folder": "QEC"}, "items": 3}
+    event = step_event("rename_page", {"id": "c2", "arguments": {"renames": [{"page_id": "p1", "title": "New"}]}})
+    assert event == {"id": "c2", "tool": "rename_page", "args": {"page_id": "p1", "title": "New"}}
+    # The one-page form a saved chat replays reads as it always has.
+    event = step_event("rename_page", {"id": "c3", "arguments": {"page_id": "p1", "title": "Old"}})
+    assert event == {"id": "c3", "tool": "rename_page", "args": {"page_id": "p1", "title": "Old"}}
+    # A list's whole JSON text, or one bare id, counts as the executor reads it.
+    renames = json.dumps([{"page_id": "p1", "title": "x"}, {"page_id": "p2", "title": "y"}])
+    assert step_event("rename_page", {"id": "c4", "arguments": {"renames": renames}})["items"] == 2
+    event = step_event("move_page", {"id": "c5", "arguments": {"page_ids": '["p1", "p2", "p3"]', "folder": "QEC"}})
+    assert event == {"id": "c5", "tool": "move_page", "args": {"folder": "QEC"}, "items": 3}
+    event = step_event("label_page", {"id": "c6", "arguments": {"page_ids": "p1", "add": ["x"]}})
+    assert event == {"id": "c6", "tool": "label_page", "args": {"page_id": "p1"}}
+
+
 def test_a_round_of_reads_runs_as_one_batch(org, monkeypatch):
     """Reads of one round go together and are announced as one step; their
     results still reach the model in the order the model asked."""

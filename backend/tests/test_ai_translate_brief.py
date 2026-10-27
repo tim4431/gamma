@@ -49,11 +49,12 @@ def eve(client):
 def _fake(monkeypatch, brief=BRIEF, delay=0.0):
     """A _call_ai stand-in that answers the brief call with `brief` (or
     raises it) and translation calls with "T:"+text; records both."""
-    calls = {"brief": [], "translate": []}
+    calls = {"brief": [], "brief_kwargs": [], "translate": []}
 
     def fake(messages, system, entry, rt, **kw):
         if system.startswith(BRIEF_SYSTEM):
             calls["brief"].append(messages[-1]["content"])
+            calls["brief_kwargs"].append(kw)
             time.sleep(delay)
             if isinstance(brief, Exception):
                 raise brief
@@ -75,9 +76,12 @@ def _translate(c, texts, **body):
 def test_the_brief_is_made_once_from_the_stored_pdf_and_carried_in_every_request(eve, monkeypatch):
     c, page = eve
     calls = _fake(monkeypatch)
-    _translate(c, ["a first brief-test paragraph"], page_id=page)
+    monkeypatch.setattr("gamma.ai_catalog.speed_tiers", lambda *a: (["fast"], "provider"))
+    _translate(c, ["a first brief-test paragraph"], page_id=page, speed="fast")
     _translate(c, ["a second brief-test paragraph"], page_id=page)
     assert len(calls["brief"]) == 1
+    assert calls["brief_kwargs"][0]["speed"] == "fast"
+    assert [call["kw"]["speed"] for call in calls["translate"]] == ["fast", ""]
     material = calls["brief"][0]
     assert "Title: Superatom paper" in material and "imperfect" in material
     for call in calls["translate"]:

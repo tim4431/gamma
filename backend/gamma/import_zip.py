@@ -58,15 +58,18 @@ _MAX_COMMENT = 0xFFFF
 class ZipEntry:
     """One member of a walked archive: ``path`` (its place in the walk, a
     nested zip's members below the zip's own directory), ``source_path``
-    (where it was found), ``size`` (its unpacked bytes, as the directory
-    says), ``crc`` (its CRC-32, as the directory says) and ``depth`` (that
-    of the zip holding it, 0 for the upload)."""
+    (where it was found), ``outer`` (the upload's own member it came from:
+    itself, or the zip in the upload that holds it, however deep it lies
+    in there), ``size`` (its unpacked bytes, as the directory says),
+    ``crc`` (its CRC-32, as the directory says) and ``depth`` (that of the
+    zip holding it, 0 for the upload)."""
 
-    __slots__ = ("path", "source_path", "size", "crc", "depth", "_zf", "_info")
+    __slots__ = ("path", "source_path", "outer", "size", "crc", "depth", "_zf", "_info")
 
-    def __init__(self, path, zf, info, depth=0):
+    def __init__(self, path, zf, info, depth=0, outer=None):
         self.path = path
         self.source_path = path
+        self.outer = outer or path
         self.size = info.file_size
         self.crc = info.CRC
         self.depth = depth
@@ -110,10 +113,11 @@ def entry_name(zi) -> str:
     return unicodedata.normalize("NFC", name.replace("\\", "/")).lstrip("/")
 
 
-def walk_zip(zf, prefix: str, out: list, walk: dict, depth: int = 0, *, nested=is_zip) -> None:
+def walk_zip(zf, prefix: str, out: list, walk: dict, depth: int = 0, *, nested=is_zip, outer=None) -> None:
     """Collect ``zf``'s files as ZipEntry objects in ``out``. ``nested(path)``
     says whether a member is a zip to open in place (``open_nested``): its
-    members then become its siblings (Notion's Part-N.zip). macOS litter
+    members then become its siblings (Notion's Part-N.zip), each keeping
+    the upload's member it was found in (``outer``). macOS litter
     (``__MACOSX/``, ``.DS_Store``, ``._*``) and members with an empty name
     or path segment are passed by; a member that unpacks like a zip bomb
     is left out with the reason in ``walk``."""
@@ -131,12 +135,12 @@ def walk_zip(zf, prefix: str, out: list, walk: dict, depth: int = 0, *, nested=i
             continue
         walk["unpacked"] += zi.file_size
         walk["packed"] += zi.compress_size
-        entry = ZipEntry(full, zf, zi, depth)
+        entry = ZipEntry(full, zf, zi, depth, outer)
         if nested(full):
             inner = open_nested(entry, walk)
             if inner is not None:
                 walk_zip(inner, posixpath.dirname(full) + "/" if "/" in full else "", out, walk, depth + 1,
-                         nested=nested)
+                         nested=nested, outer=entry.outer)
                 continue
         out.append(entry)
 

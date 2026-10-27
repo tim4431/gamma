@@ -14,12 +14,12 @@ import { Segmented, SubDialog } from "../settings/SettingsKit";
 import { fmtBytes } from "../shared/lib/format.js";
 import ImportTree from "./ImportTree";
 import { dialogSource, discardImport, importFormat, importJobBody, keepReview, requestImport } from "./importApi";
-import { IMPORT_FILTERS, allItemIds, buildImportTree, filterImportPages, importSummary,
-  importWarnings, itemSelected, resultPages, selectItems } from "./importReview";
+import { IMPORT_FILTERS, allItemIds, buildImportTree, filterImportPages, firstRow, importLinks, importSummary,
+  importWarnings, itemSelected, orderLikeSource, pageKey, resultPages, selectItems } from "./importReview";
 import { TaskProgress } from "../tasks/TasksTray";
 import { isActive } from "../tasks/taskModel.js";
 import "./importReview.css";
-import { T, t } from "../shared/i18n/i18n.js";
+import { T, t, tn } from "../shared/i18n/i18n.js";
 
 const STEPS = [T("Upload"), T("Review"), T("Import"), T("Summary")];
 const PHASE_STEP = { packing: 0, upload: 0, scanning: 0, review: 1, importing: 2, ended: 2, complete: 3 };
@@ -32,6 +32,7 @@ const REFUSED = [400, 413, 415];
 // says it is still open well within that, and when the window comes back.
 const KEEP_ALIVE_MS = 10 * 60 * 1000;
 const GONE = [404, 410]; // the staged review is no longer on the server
+const NONE = new Set();
 
 // `folder`: the destination folder's id ("" = the library root);
 // `folderPath(id)` names it, for a review opened again from its job too.
@@ -49,6 +50,11 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
   const [progress, setProgress] = React.useState({ loaded: 0, total: null });
   const [selected, setSelected] = React.useState(new Set());
   const [filter, setFilter] = React.useState("all");
+  // The row whose match the columns show: the column clicked, the row's
+  // key and name there, and the choice's number (each choice shows its
+  // match anew).
+  const [link, setLink] = React.useState(null);
+  const picks = React.useRef(0);
   const [error, setError] = React.useState("");
   const [refused, setRefused] = React.useState(false); // the preview's error is the server's refusal
   const [ended, setEnded] = React.useState(null); // the job once over, with its report
@@ -76,7 +82,7 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
       reviewId.current = data.review_id;
       const ids = allItemIds(data.pages), keep = keepChoices.current;
       keepChoices.current = false;
-      setPlan(data); setReviewPhase("review");
+      setPlan(data); setReviewPhase("review"); setLink(null);
       setSelected(previous => new Set(keep ? ids.filter(id => previous.has(id)) : ids));
     }).catch(err => {
       if (!ctl.signal.aborted) { setError(err.message); setRefused(REFUSED.includes(err.status)); setReviewPhase("review"); }
@@ -134,10 +140,35 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
   }, [shownReview]);
 
   const pages = React.useMemo(() => result ? resultPages(result) : plan?.pages || [], [plan, result]);
-  const shown = filterImportPages(pages, filter, selected);
-  const chosenCount = pages.filter(page => itemSelected(page, selected)).length;
   const sourceTree = React.useMemo(() => buildImportTree(plan?.entries || []), [plan]);
+  // The library column lists its pages in the source column's order, and
+  // each side's rows find their match on the other (importLinks).
+  const ordered = React.useMemo(() => orderLikeSource(pages, sourceTree), [pages, sourceTree]);
+  const links = React.useMemo(() => importLinks(plan?.entries || [], pages), [plan, pages]);
+  const shown = filterImportPages(ordered, filter, selected);
+  const chosenCount = pages.filter(page => itemSelected(page, selected)).length;
   const destination = buildImportTree(shown, true);
+  const matches = link ? (link.side === "source" ? links.toPages : links.toFiles).get(link.key) : null;
+  const pick = (side, key, name) => {
+    if (link?.side === side && link.key === key) { setLink(null); return; }
+    picks.current += 1;
+    setLink({ side, key, name, n: picks.current });
+    if (side === "source" && filter !== "all") { // a match the filter hides brings back All
+      const visible = new Set(shown.map(pageKey));
+      if ([...links.toPages.get(key)].some(match => !visible.has(match))) setFilter("all");
+    }
+  };
+  const columnLink = (side, tree, rowKey, toOther) => {
+    const own = Boolean(matches) && link.side === side;
+    const at = matches && !own ? firstRow(tree, matches, rowKey) : null;
+    return { rowKey, linked: key => toOther.has(key), lit: !matches ? NONE : own ? new Set([link.key]) : matches,
+      pressed: own ? link.key : null, reveal: at && { ...at, n: link.n }, onPick: (key, name) => pick(side, key, name) };
+  };
+  // Read out on each choice: it names the row, so the next one, with as
+  // many matches, is not the same sentence.
+  const matchStatus = !matches ? "" : link.side === "source"
+    ? tn("{name}: {n} matching page in the library", "{name}: {n} matching pages in the library", matches.size, { name: link.name })
+    : tn("{name}: {n} matching file in the upload", "{name}: {n} matching files in the upload", matches.size, { name: link.name });
   const warnings = importWarnings(result || plan || {});
   const reviewBusy = phase === "packing" || phase === "upload" || phase === "scanning";
   const phaseLabel = phase === "packing" && file?.picked ? t("Reading the files") : PHASE_LABEL[phase];
@@ -150,7 +181,7 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
     try {
       const started = await tasks.start("import", importJobBody(plan.review_id, selected), { dialog: "import" });
       takenBy.current = started.id;
-      setFilter("all");
+      setFilter("all"); setLink(null);
       setJobId(started.id);
     } catch (err) {
       if (closed.current) discardImport(plan.review_id);
@@ -176,6 +207,7 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
       <p className="importDestination">{destinationLabel}</p>
       <div className="importTreeScroll">
         {shown.length ? <ImportTree node={destination} library selected={selected} complete={Boolean(result)}
+          link={columnLink("library", destination, pageKey, links.toFiles)}
           onSelect={result ? undefined : (ids, checked) => setSelected(previous => selectItems(previous, ids, checked))} />
           : <p className="importEmpty">{result ? t("No new items were added.") : t("No items match this filter.")}</p>}
       </div>
@@ -184,9 +216,16 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
   const sourceColumn = (
     <section aria-label={t("ZIP contents")}><h3>{file?.picked ? t("Selected files") : file?.folder ? t("Inside the folder")
       : /\.zip$/i.test(fileName) ? t("Inside the ZIP") : t("Source file")}</h3>
-      <div className="importTreeScroll"><ImportTree node={sourceTree} /></div>
+      <div className="importTreeScroll"><ImportTree node={sourceTree} link={columnLink("source", sourceTree, entry => entry.path, links.toPages)} /></div>
     </section>
   );
+  const bothColumns = <>
+    <div className="importReviewColumns">
+      {sourceColumn}
+      {libraryColumn}
+    </div>
+    <p className="srOnly" role="status">{matchStatus}</p>
+  </>;
   return <SubDialog title={title} onClose={onClose} guard={guard} className="importReviewModal">
     <nav className="importStepsNav" aria-label={t("Import progress")}>
       {STEPS.map((label, index) => <span key={label}
@@ -195,7 +234,7 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
     <div className="importReviewHeader">
       <strong>{fileName}</strong>{fileSize != null ? <span className="importFileSize">{fmtBytes(fileSize)}</span> : null}
       {result ? <p ref={reportHeading} tabIndex={-1} role="status">{importSummary(result)}</p>
-        : <p>{reviewBusy ? phaseLabel : phase === "review" && plan ? t("Choose what to import and review its destination.") : ""}</p>}
+        : <p>{reviewBusy ? phaseLabel : phase === "review" && plan ? t("Choose what to import and review its destination. Click a name to find its match in the other column.") : ""}</p>}
     </div>
     {error ? <p role="alert" className="importWarning">{error}</p> : null}
     {reviewBusy ? <div className="importUploadProgress" role="status">
@@ -223,16 +262,9 @@ export default function ImportReviewDialog({ source, file, strip, folder = "", f
         </div>
         <p>{t("{chosen} of {total} items selected · {shown} shown", { chosen: chosenCount, total: pages.length, shown: shown.length })}{filter !== "all" ? t(" · Hidden selections are kept") : ""}</p>
       </div>
-      <div className="importReviewColumns">
-        {sourceColumn}
-        {libraryColumn}
-      </div>
+      {bothColumns}
     </> : null}
-    {phase === "complete" ? (plan
-      ? <div className="importReviewColumns">
-        {sourceColumn}
-        {libraryColumn}
-      </div>
+    {phase === "complete" ? (plan ? bothColumns
       : <div className="importReviewColumns single">{libraryColumn}</div>) : null}
     {(phase === "review" && plan) || phase === "complete" ? (
       <details className="importWarnings" open={warnings.length > 0}>

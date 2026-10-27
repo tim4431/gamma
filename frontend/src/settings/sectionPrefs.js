@@ -40,7 +40,7 @@ export const SECTION_PREFS = Object.freeze({
   translation: sections({
     Language: ["language"],
     "Viewer & selection": ["translateEnabled", "translateLang", "selTranslate", "selTranslateAuto"],
-    Speed: ["translateEffort", "translateParallel"],
+    Speed: ["translateEffort", "translateSpeed", "translateParallel"],
   }),
   keyboard: sections({
     Shortcuts: ["keybindings"],

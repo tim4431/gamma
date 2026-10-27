@@ -8,6 +8,7 @@ import json
 from fastapi import HTTPException
 
 from .blocks_store import folder_path
+from .import_zip import entry_name
 
 
 def parse_selection(raw: str | None) -> set[str] | None:
@@ -42,8 +43,16 @@ def destination(conn, folder: str) -> tuple[str, list[str]]:
 
 
 def archive_entries(zf):
-    return [{"path": zi.filename.replace("\\", "/"), "size": zi.file_size,
-             "directory": zi.is_dir(), "status": "source"} for zi in zf.infolist()]
+    """The review's source column: every member, named as the zip walk
+    names it (``import_zip.entry_name``), which the pages' ``source_paths``
+    use too. A directory is one by that name, a backslash-separated one
+    included (``is_dir`` reads the raw name)."""
+    out = []
+    for zi in zf.infolist():
+        name = entry_name(zi)
+        out.append({"path": name, "size": zi.file_size, "directory": zi.is_dir() or name.endswith("/"),
+                    "status": "source"})
+    return out
 
 
 def selected_warnings(warnings, selected):

@@ -110,6 +110,8 @@ def setup_logging():
         uvicorn_error.addHandler(buffer_handler)
     if not any(isinstance(f, _InvalidRequestDetail) for f in uvicorn_error.filters):
         uvicorn_error.addFilter(_InvalidRequestDetail())
+    if not any(isinstance(f, _DroppedWebSocket) for f in uvicorn_error.filters):
+        uvicorn_error.addFilter(_DroppedWebSocket())
     access = logging.getLogger("uvicorn.access")
     if not any(isinstance(f, _QuietPolls) for f in access.filters):
         access.addFilter(_QuietPolls())
@@ -126,6 +128,29 @@ class _QuietPolls(logging.Filter):
             _, method, path, _, status = args
             if method == "GET" and path == "/api/jobs" and isinstance(status, int) and status < 400:
                 return False
+        return True
+
+
+_DATA_TRANSFER_FAILED = "data transfer failed"
+
+
+class _DroppedWebSocket(logging.Filter):
+    """Makes the websockets library's "data transfer failed" one info line
+    when the socket itself failed. The library takes a dropped connection
+    for a ConnectionError or TimeoutError and closes it quietly, but Windows
+    reports a peer that stopped answering (a laptop asleep, Wi-Fi gone) as a
+    plain OSError, WinError 121, which it logs as an error with a traceback.
+    The connection is closed either way and the page's socket reconnects
+    (collabSession.js); any other exception stays an error."""
+
+    def filter(self, record):
+        exc = record.exc_info[1] if record.exc_info else None
+        if record.msg == _DATA_TRANSFER_FAILED and isinstance(exc, OSError):
+            peer = getattr(getattr(record, "websocket", None), "client", None)
+            record.msg, record.args = "WebSocket%s dropped: %s", (
+                f" from {peer[0]}:{peer[1]}" if isinstance(peer, tuple) else "", exc)
+            record.levelno, record.levelname = logging.INFO, "INFO"
+            record.exc_info = record.exc_text = None
         return True
 
 

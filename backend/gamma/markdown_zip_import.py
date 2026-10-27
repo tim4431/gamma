@@ -735,7 +735,7 @@ def _import_zip(ws, zf, conn, folder, unpacked, *, actor, preview, selected, pro
             report["pages_skipped"] += 1
             report["pages"].append({"id": plan.page_id, "title": plan.title,
                                     "folders": shown(plan), "selection_ids": [plan.entry.path],
-                                    "source_path": plan.entry.source_path, "source_paths": [plan.entry.source_path],
+                                    "source_path": plan.entry.source_path, "source_paths": [plan.entry.outer],
                                     "kind": "pdf" if plan.props.get("doc_id") else "page", "created": False,
                                     "action": "skip", "warnings": [], "missing": False})
             continue
@@ -775,7 +775,7 @@ def _import_zip(ws, zf, conn, folder, unpacked, *, actor, preview, selected, pro
         warnings = report["warnings"][warning_start:]
         report["pages"].append({"id": plan.page_id, "title": plan.title,
                                 "folders": shown(plan), "selection_ids": [plan.entry.path],
-                                "source_path": plan.entry.source_path, "source_paths": [plan.entry.source_path],
+                                "source_path": plan.entry.source_path, "source_paths": [plan.entry.outer],
                                 "kind": "pdf" if plan.props.get("doc_id") else "page", "created": not plan.existing,
                                 "action": "skip" if plan.existing else "create", "warnings": warnings,
                                 "missing": any("Missing" in w["reason"] for w in warnings)})

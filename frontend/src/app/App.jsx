@@ -2651,6 +2651,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     selTranslate, setSelTranslate, selTranslateAuto, setSelTranslateAuto,
     translateLang, setTranslateLang, translateModel, setTranslateModel,
     translateEffort, setTranslateEffort, translateParallel, setTranslateParallel,
+    translateSpeed, setTranslateSpeed,
     searchDetailsHome, setSearchDetailsHome, searchDetailsPaper, setSearchDetailsPaper,
     enterNewNote, setEnterNewNote, backlinksVisible, setBacklinksVisible,
     keybindings, setKeybindings,
@@ -3423,20 +3424,36 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           info: reading ? t("reading the paper…") : `${Math.round(st.progress * 100)}%`, fraction: st.progress,
         });
       } else {
-        const full = st.progress >= 0.999;
-        updateTask(transTaskRef.current, { state: "done", info: full ? "100%" : t("stopped at {progress}%", { progress: Math.round(st.progress * 100) }) });
+        // The job's end: stopped by a request that kept failing (its
+        // reason), or done with paragraphs the server could not translate,
+        // which the next job asks for again ("Try again").
+        const stopped = t("stopped at {progress}%", { progress: Math.round(st.progress * 100) });
+        const left = st.error == null ? st.untranslated || 0 : 0;
+        updateTask(transTaskRef.current, { state: "done", info: st.error != null ? stopped
+          : left ? tn("{n} paragraph untranslated", "{n} paragraphs untranslated", left)
+            : st.progress >= 0.999 ? "100%" : stopped });
         transTaskRef.current = null;
+        if (st.error != null) {
+          setStatus(st.error ? t("Translation failed: {message}", { message: st.error })
+            : t("Translation failed — click the button to retry."));
+        } else if (left) {
+          setStatus(tn("{n} paragraph could not be translated and still shows the original.",
+            "{n} paragraphs could not be translated and still show the original.", left),
+          { label: t("Try again"), run: () => pdfTranslateCtl.current?.retryUntranslated() });
+        }
       }
     }
   }
-  // One chunk of paragraphs → translations, a single provider call. All the
-  // chunking, queueing and parallelism live in the viewer's engine; this is
-  // just the HTTP wrapper carrying the language/model/effort settings.
-  // Throws on failure, already surfaced on the status pill with the server's
-  // reason (a 429 of the shared AI allowance says what to do): the engine
-  // retries a chunk once before failing the job, the selection popup shows
-  // the reason. `signal` is the job's AbortController: halting cancels the
-  // requests still in flight.
+  // One chunk of paragraphs → the server's final reply ({translations,
+  // failed, …}), a single provider call. All the chunking, queueing and
+  // parallelism live in the viewer's engine; this is just the HTTP wrapper
+  // carrying the language/model/effort/speed settings. Throws on failure with the
+  // server's reason (a 429 of the shared AI allowance says what to do), its
+  // HTTP `status` and `retryAfter` (seconds: the account's AI calls are all
+  // in use): the engine asks again (translatePlan.requestChunk) and reports
+  // a job that still failed through handleTranslateState, the selection
+  // popup shows the reason. `signal` is the job's AbortController: halting
+  // cancels the requests still in flight.
   // The server streams NDJSON: `{i: [indices], text}` as the model writes
   // each paragraph (→ onPartial, the viewer types it onto the page), then
   // the final `{translations}` object.
@@ -3446,37 +3463,33 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // `onStage("brief")` while the request waits for that brief, then
   // `onStage("translate")`.
   async function translateChunk(texts, signal, onPartial, context, onStage) {
-    try {
-      const res = await fetch(`${API}/ai/translate`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        credentials: "include",
-        signal,
-        body: JSON.stringify({
-          texts, lang: translateLang,
-          model: translateSendModel || "", effort: translateEffort || "",
-          stream: true, ...requestFields(context),
-        }),
-      });
-      if (!res.ok) {
-        let detail = `${res.status} ${res.statusText}`;
-        try { detail = (await res.json()).detail || detail; } catch {}
-        throw new Error(detail);
-      }
-      let final = null;
-      await readNdjson(res, (events) => {
-        for (const ev of events) {
-          if (ev.error) throw new Error(ev.error);
-          else if (ev.translations) final = ev;
-          else if (ev.stage) onStage?.(ev.stage);
-          else if (ev.i && onPartial) for (const i of ev.i) onPartial(i, ev.text);
-        }
-      });
-      return final?.translations || null;
-    } catch (err) {
-      if (err.name !== "AbortError") setStatus(t("Translation failed: {message}", { message: err.message }));
-      throw err;
+    const res = await fetch(`${API}/ai/translate`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      signal,
+      body: JSON.stringify({
+        texts, lang: translateLang,
+        model: translateSendModel || "", effort: translateEffort || "",
+        speed: translateSpeed || "",
+        stream: true, ...requestFields(context),
+      }),
+    });
+    if (!res.ok) {
+      let detail = `${res.status} ${res.statusText}`;
+      try { detail = (await res.json()).detail || detail; } catch {}
+      throw Object.assign(new Error(detail), { status: res.status, retryAfter: Number(res.headers.get("Retry-After")) || 0 });
     }
+    let final = null;
+    await readNdjson(res, (events) => {
+      for (const ev of events) {
+        if (ev.error) throw new Error(ev.error);
+        else if (ev.translations) final = ev;
+        else if (ev.stage) onStage?.(ev.stage);
+        else if (ev.i && onPartial) for (const i of ev.i) onPartial(i, ev.text);
+      }
+    });
+    return final;
   }
 
   // POST /metadata/fetch for one page, tracked as a transfer-panel task:
@@ -7600,6 +7613,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       },
       // A scene's drag of a window to a dock side: where it would land.
       dockZone: (win, side) => dockPreviewRect(win, { side, index: 99 }),
+      // The held key the area demo drags with (Settings → Keyboard).
+      areaKey: () => commandChord("pdf.areaDrag", keybindings),
       findEquation: async () => {
         const hits = await pdfSearchRef.current?.(/Attention\s*\(/i);
         return hits?.[0] || null;
@@ -11400,6 +11415,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               translateCtlRef={pdfTranslateCtl}
               onTranslateState={handleTranslateState}
               areaMode={areaSelectMode && !shareMode}
+              areaKey={commandChord("pdf.areaDrag", keybindings)}
+              peekKey={commandChord("pdf.peekOriginal", keybindings)}
               marks={marks}
               flashHighlightId={flashingId}
               pdfScaleValue={pdfScale} scrollRef={scrollToRef}
@@ -11905,6 +11922,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setTranslateModel,
           translateEffort,
           setTranslateEffort,
+          translateSpeed,
+          setTranslateSpeed,
           translateParallel,
           setTranslateParallel,
           aiModels: scopedAiModels, // the translation picker's registry

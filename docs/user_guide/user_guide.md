@@ -102,7 +102,7 @@ A notebook is a page with sheets of paper to write on, and any page can hold the
 
 <img alt="The translate button is clicked and the paragraphs are redrawn in another language over the original while the figure stays; holding Alt peeks at the original" src="assets/translate.svg" width="100%">
 
-- The **文A button** translates the page you are reading, in place. Hold **Alt** to peek at the original; right-click for the whole document.
+- The **文A button** translates the page you are reading, in place. Hold **Alt** (⌥ on a Mac, or the key set in Settings → Keyboard) to peek at the original; right-click for the whole document.
 - Formulas, citations and links keep their printed look inside the translation, and a paragraph that runs on into the next column is translated as one, as is one that runs over a page break when you translate the whole document.
 - Select text and press 文A in the popup to translate a passage.
 - Settings → Language and Translation picks the language and what translates: a chat model, or a translation service (Microsoft works with no setup).
@@ -174,8 +174,8 @@ DeepSeek, Kimi, Qwen, GLM, OpenRouter and the custom endpoint sit under the **Ot
 
 On the home page or in a folder, the chat can act on your library: list, read and search the papers in view, rename them, file them into folders, rename folders, make and apply labels, delete a folder or a label (never its pages), search the web for papers and save them, build BibTeX, and edit your notes. On a paper, the same chat reads, searches and edits that paper and its notes.
 
-- **It asks first.** A change shows as a card. **Allow once**, **Allow in this chat**, **Always allow**, or **Don't allow** (with a line on what to do instead). Deleting a folder or a label asks every time: **Allow once** or **Don't allow**.
-- Everything it changed is listed under the reply. A note change, or a deleted folder or label, can be undone there.
+- **It asks first.** A change shows as a card — many pages renamed, filed or labelled together show on one card that lists them all. **Allow once**, **Allow in this chat**, **Always allow**, or **Don't allow** (with a line on what to do instead). Deleting a folder or a label asks every time: **Allow once** or **Don't allow**.
+- Everything it changed is listed under the reply. A note change, a rename, move or label change (one page or many at once), or a deleted folder or label, can be undone there; pages you changed since are left as they are.
 - A reply stops after 32 tool rounds or 200 changes (Settings → AI → Tool usage → Tool limits), or when the conversation is too long for the model; **Continue** under it carries on, as it does under a reply cut off at the output limit. With **Unlimited rounds** it runs until it is done or you press Stop, in its chat or in Background tasks; longer jobs cost more tokens. On a shared AI connection without a daily allowance the usual limits stay, unless you are an administrator.
 - Settings → AI → Tool usage sets each permission below to Allow, Ask or Off (Delete folders and labels: Ask or Off only), for folder, PDF and notes chats separately, with presets from *Read library* to *Allow all*. Reading is allowed by default; anything that changes your library asks.
 - A journal that blocks the server shows a card: open the page in your browser and Gamma Connector sends the PDF back.
@@ -196,10 +196,10 @@ On the home page or in a folder, the chat can act on your library: list, read an
 | Use journal sign-ins | | Use the publisher sign-ins Gamma Connector saved when fetching |
 | **Make changes** | | |
 | Save papers | `save_paper` | Add a paper found online to the library |
-| Rename pages | `rename_page` | Change a page's title (folder chats) |
-| Move pages | `move_page` | File a page into a folder (folder chats) |
-| Restore deleted pages | `restore_page` | Bring a page back from Recently deleted (folder chats) |
-| Organize folders and labels | `rename_folder`, `create_label`, `rename_label`, `label_page` | Rename folders, and make, rename and apply labels (folder chats) |
+| Rename pages | `rename_page` | Change pages' titles, many in one call (folder chats) |
+| Move pages | `move_page` | File pages into a folder, many in one call (folder chats) |
+| Restore deleted pages | `restore_page` | Bring pages back from Recently deleted (folder chats) |
+| Organize folders and labels | `rename_folder`, `create_label`, `rename_label`, `label_page` | Rename folders, and make, rename and apply labels — to many pages in one call (folder chats) |
 | Delete folders and labels | `delete_folder`, `delete_label` | Delete a folder or a label, never its pages; always asks, and you can revert it from the reply (folder chats) |
 | Edit note blocks | `edit_block`, `create_block`, `move_block`, `delete_block`, `clip_region` | Create, edit, move and delete notes, transcribe handwriting, and clip a region of a PDF page into a note |
 
@@ -373,7 +373,7 @@ The first ten are the chat's own reading tools. An assistant never gets the writ
 
 Both are in the **View menu (≡)**, on a page or on the home library (with a folder open, Export takes the whole folder).
 
-- **Import**: a Zotero library (RDF with files: pick or drop the export folder, or a .zip of it), Notability notes, GoodNotes notebooks, an Obsidian vault or Notion export, Markdown, Logseq, annotations embedded in a PDF, or a Gamma export from another Gamma.
+- **Import**: a Zotero library (RDF with files: pick or drop the export folder, or a .zip of it), Notability notes, GoodNotes notebooks, an Obsidian vault or Notion export, Markdown, Logseq, annotations embedded in a PDF, or a Gamma export from another Gamma. For a Zotero library, Notability notes, GoodNotes notebooks, Markdown (an Obsidian vault or Notion export too) or a Gamma export, a review lists what you uploaded beside the library it will make, in the same order, before anything is imported; click a name on either side to find its match on the other.
 - **From Notability**: export the notes with File Format **Note** or **NTB** (in a note: the options icon → Export Options; in the library: press and hold a note → Export Options). Then pick the .note or .ntb files, or a .zip of them, under **Notability notes**. Each note becomes a page. A note with PDF pages keeps them as its PDF, its paper pages printed into it; a note on paper alone becomes a notebook. Handwriting, shapes, sticky notes, text boxes, math, pictures and recordings come along (from an NTB export, all but its recordings), and the text typed on the page itself becomes the page's notes. A recording plays, but the handwriting does not replay with it. Notes already imported are skipped.
 - **From GoodNotes**: on an iPad, iPhone or Mac, export the notebooks in GoodNotes' own format (a document's menu → **Export** → **GoodNotes**; a folder exports as one .zip). Then pick the .goodnotes files, or the .zip, under **GoodNotes notebooks**. Each notebook becomes a page. One on GoodNotes' papers becomes a notebook of sheets on the same papers, one on a PDF keeps the PDF. Handwriting (pressure widths, highlighters, pencils, shapes and their fills), text boxes, pictures and recordings come along; tape becomes an opaque band, and Shape tool objects and sticky notes are left out, which the import says. GoodNotes on Android, Windows and the web exports PDF only: add that PDF as a paper, then **Import** → **Annotations in this PDF**. Notebooks already imported are skipped.
 - **Export**: **Annotated PDF** (highlights, ink and text boxes as real annotations), **Notes as PDF** or **Markdown**, a **Notability** note, **BibTeX**, an **Obsidian vault**, a **Logseq graph**, a **Zotero library**, or a **Gamma zip**.
@@ -418,7 +418,7 @@ Account menu → **Settings**, or **Ctrl+,**; the card with your name at the top
 
 ## Shortcut cheat sheet
 
-**Ctrl+Shift+P** runs any command by name. Settings → Keyboard changes any key. On a Mac, Ctrl is ⌘ and Alt is ⌥.
+**Ctrl+Shift+P** runs any command by name. Settings → Keyboard changes any key, including the key held to box a region of the PDF and the key held to see a translation's original. On a Mac, Ctrl is ⌘ and Alt is ⌥.
 
 | Keys | Does |
 |---|---|
@@ -444,6 +444,7 @@ Account menu → **Settings**, or **Ctrl+,**; the card with your name at the top
 | `/` · `[[` · `@` | Command menu (in a comment, the commands that write text) · page link · in a note or a comment, mention a date, person or page; in chat, attach a paper |
 | Ctrl+wheel | Zoom the PDF at the cursor |
 | Ctrl+drag on the page | Capture a region for the chat, and an optional area highlight |
+| Hold Alt | On a translated page: see the original |
 | Ctrl+click a highlight | Quote it into the chat |
 | Ctrl+drag across note text | Attach that passage to the chat |
 | Double-click | Open a library card; collapse a window (on its grip) |

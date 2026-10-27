@@ -95,7 +95,7 @@ export default {
       id: "area",
       anchor: "pdf.viewer",
       placement: "inside",
-      title: T("Ctrl-drag a box, then choose a colour"),
+      title: T("{key:pdf.areaDrag}+drag a box, then choose a colour"),
       do: [{ previewArea: true }],
       advanceOn: { event: "highlight.created", match: { kind: "area" } },
     },

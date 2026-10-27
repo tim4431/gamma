@@ -564,6 +564,13 @@ _REPLAYED_NOTE = "[result from an earlier turn — notes may have changed since;
 # A change the user took back from its row under the reply (`reverted` on
 # the saved action, gamma/ai_revert.py): the model must not build on it.
 _REVERTED_NOTE = "[the user reverted this change afterwards — it is undone]\n"
+# A page tool's revert that left pages as they were (``kept`` on the saved
+# action, chat/aiRevert.js markReverted): undone, but not on those.
+_REVERTED_KEPT_NOTE = ("[the user reverted this change afterwards — undone, except on {n} of its pages, "
+                       "which had been changed again or deleted since and were left as they were]\n")
+# ``kept`` with no ``reverted`` mark: a redo that left those pages as they were.
+_REDONE_KEPT_NOTE = ("[the user reverted this change and then redid it — except on {n} of its pages, "
+                     "which had been changed again or deleted since and were left as they were]\n")
 
 
 def _replayable(history_item: dict) -> list[dict]:
@@ -749,8 +756,12 @@ def build_messages(payload, context: str, with_tools: bool = False,
                 for j, a in enumerate(actions[first:], start=first):
                     result = (_ELIDED_RESULT if j in elided.get(i, ())
                               else _REPLAYED_NOTE + str(a.get("result") or "(empty result)"))
+                    kept = a.get("kept")
+                    kept = kept if type(kept) is int and kept > 0 else 0
                     if a.get("reverted"):
-                        result = _REVERTED_NOTE + result
+                        result = (_REVERTED_KEPT_NOTE.format(n=kept) if kept else _REVERTED_NOTE) + result
+                    elif kept:
+                        result = _REDONE_KEPT_NOTE.format(n=kept) + result
                     messages.append({"role": "tool", "call_id": f"call_h{i}_{j}",
                                      "content": result})
         sent = history_item.get("pictures_sent") if role == "user" else None

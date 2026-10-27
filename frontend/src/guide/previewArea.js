@@ -1,4 +1,5 @@
 import { anchorElement } from "./anchors.js";
+import { chordLabel, heldFlags } from "../shared/lib/hotkeys.js";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -70,7 +71,9 @@ function figureBox(nodes, captionY, pageRect) {
 // framed (the AI chat tour's findFigure); without one, a box near the top of
 // the page in view. `context` releases the drag, so the snapshot goes to the
 // chat; it stays for the tour's next step and goes when the tour ends
-// (`services.snapshotDemo` / `onTourEnd`), unless it was sent.
+// (`services.snapshotDemo` / `onTourEnd`), unless it was sent. The drag
+// holds the account's area key (`services.areaKey`: Ctrl, ⌘ on a Mac, unless
+// rebound), and its cap beside the pointer names it.
 export async function previewArea(live, cancelled, onCleanup, { find, context = false, services = {} } = {}) {
   const target = await find?.();
   if (cancelled()) return;
@@ -111,10 +114,11 @@ export async function previewArea(live, cancelled, onCleanup, { find, context = 
   const height = box ? Math.min(box.bottom, viewer.bottom - 8) - y : Math.min(110, r.bottom - y - 30, viewer.bottom - y - 220);
   if (width < 30 || height < 30) return;
   const pointerId = 971;
+  const areaKey = services.areaKey?.() || "Mod";
   let dragging = false;
   const emit = (type, clientX = x, clientY = y, el = document) => el.dispatchEvent(new PointerEvent(type, {
     bubbles: true, cancelable: true, pointerId, pointerType: "mouse", isPrimary: true, button: 0,
-    buttons: 1, ctrlKey: true, clientX, clientY,
+    buttons: 1, ...heldFlags(areaKey), clientX, clientY,
   }));
   const clear = () => {
     if (dragging) { dragging = false; emit("pointercancel"); }
@@ -123,7 +127,7 @@ export async function previewArea(live, cancelled, onCleanup, { find, context = 
   const check = () => { if (cancelled()) throw new Error("cancelled"); };
   const show = (progress, pressed) => live({ anchor: "pdf.viewer", cursor: {
     x: x + width * progress, y: y + height * progress,
-    pressed, dragging: pressed, modifier: "Ctrl",
+    pressed, dragging: pressed, modifier: chordLabel(areaKey),
   } });
   try {
     show(0, false);

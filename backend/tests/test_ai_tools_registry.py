@@ -119,7 +119,7 @@ def test_agent_system_explains_the_new_tools_only_when_armed():
     assert "(a selection: from its picture)" in text
     assert "cite returns the citation records" in text
     assert "save_paper adds a paper" in text and "never as a side effect" in text
-    assert "restore_page brings one back" in text
+    assert "restore_page brings them back" in text
     # Without note editing the transcription is not written anywhere.
     read_only = agent_system({"type": "page", "page_id": "p1"}, {"block_edit": False})
     assert "view_ink" in read_only and "[illegible]" not in read_only
@@ -135,6 +135,24 @@ def test_the_prompt_takes_many_pages_a_batch_at_a_time():
     assert "list_pages(limit=100)" not in agent_system(folder(""), {"rename": "off", "move": "off",
                                                                     "organize": "off"})
     assert "list_pages(limit=100)" not in agent_system({"type": "page", "page_id": "p1"})
+
+
+def test_the_page_tools_take_lists_and_the_prompt_says_so():
+    specs = {t["spec"]["name"]: t["spec"]["parameters"] for t in TOOLS}
+    assert specs["rename_page"]["required"] == ["renames"]
+    assert specs["rename_page"]["properties"]["renames"]["items"]["required"] == ["page_id", "title"]
+    assert specs["move_page"]["required"] == ["page_ids", "folder"]
+    assert specs["label_page"]["required"] == ["page_ids"] and specs["restore_page"]["required"] == ["page_ids"]
+    text = agent_system(folder(""))
+    assert "Several pages at once: rename_page, move_page, label_page and restore_page each take" in text
+    text = agent_system(folder(""), {"rename": False})
+    assert "Several pages at once: move_page, label_page and restore_page each take" in text
+    assert "rename_page" not in text.split("Several pages at once")[1].split("\n")[0]
+    text = agent_system(folder(""), {"rename": False, "move": False, "organize": False})
+    assert "Several pages at once: restore_page takes a list" in text
+    off = agent_system(folder(""), {"rename": False, "move": False, "organize": False, "restore": False})
+    assert "Several pages at once" not in off
+    assert "Several pages at once" not in agent_system({"type": "page", "page_id": "p1"})
 
 
 def test_agent_system_tells_the_model_how_to_link_pages():

@@ -150,7 +150,7 @@ export function playScene(layer, scene, { services = {}, reduced = false, touch 
     pointer.appendChild(badge);
   };
   // A click with a key held: the key's cap beside the pointer, the one the
-  // Ctrl-drag demo shows ("Mod" reads Ctrl, or ⌘ on a Mac).
+  // area-drag demo shows ("Mod" reads Ctrl, or ⌘ on a Mac).
   const showKey = (key) => {
     pointer.querySelector(".guideHeldKey")?.remove();
     if (!key) return;

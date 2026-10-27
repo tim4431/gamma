@@ -768,7 +768,7 @@ export default function ChatDock({
       || (chatKeyRef.current === chatKey ? loadedRef.current : null);
     const message = current?.find((m) => m.id === id);
     if (message) {
-      const next = markReverted(current, id, indexes, reverted);
+      const next = markReverted(current, id, indexes, reverted, answer?.kept ? { kept: answer.kept } : {});
       if (next !== current) {
         session.edit(chatKey, next, chatTitle)?.catch((err) => setStatus(t("Couldn't save the conversation: {message}", { message: err.message })));
       }

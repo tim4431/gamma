@@ -404,7 +404,7 @@ in the anchor's box as fractions of it, `[0.5, 0.5]` by default.
 | Primitive | What it shows |
 |---|---|
 | `{point: anchor, at?}` | the pointer glides there and a soft halo marks the spot |
-| `{click: anchor, at?, count?, button?, key?}` | a press and its ripple; `count: 2` a double-click, `button: "right"` a right-click (a mouse badge beside the pointer), `key` (`Alt`, `Mod` or `Shift`) a click with that key held, its cap beside the pointer as the Ctrl-drag demo shows it (`Mod` reads Ctrl, ⌘ on a Mac) |
+| `{click: anchor, at?, count?, button?, key?}` | a press and its ripple; `count: 2` a double-click, `button: "right"` a right-click (a mouse badge beside the pointer), `key` (`Alt`, `Mod` or `Shift`) a click with that key held, its cap beside the pointer as the area-drag demo shows it (`Mod` reads Ctrl, ⌘ on a Mac) |
 | `{drag: anchor, at?, to: {zone, window}}` | the pointer presses, carries an outline of the anchor and lets go where `window` (`chat` or `notes`) would dock on side `zone` (`left`, `right` or `bottom`). The dock's own drop preview appears there at the size that window would get (App's `dockZone` service, the geometry the real drag previews) |
 | `{drag: anchor, at?, to: {offset: [dx, dy], size?: [w, h]}}` | the same carry by so many pixels, a drop preview of `size` (220 px wide, the anchor's height, by default) where it lands: a note carried down a row and to the right, where it nests |
 | `{stroke: anchor, at?: [x0, y0, x1, y1]}` | the pointer writes a squiggle inside that part of the anchor |
@@ -486,9 +486,11 @@ and scrolling the passage into view; it keeps looking for it for 2 s after
 the first text renders (its page may still be rendering) before settling
 for any visible passage, as other papers do.
 
-The next demo, `{previewArea: true}`, uses the PDF's real Ctrl+pointer-drag
-handler to draw a rectangle, with a Ctrl badge beside the animated cursor,
-around the attention formula App's `findEquation` service finds. It cancels
+The next demo, `{previewArea: true}`, uses the PDF's real area-drag handler
+to draw a rectangle, holding the account's area key (App's `areaKey`
+service: Ctrl, ⌘ on a Mac, unless rebound; [hotkeys.md](hotkeys.md#held-keys))
+with its badge beside the animated cursor, around the attention formula
+App's `findEquation` service finds. It cancels
 the drag before release, so it creates no snapshot or annotation. With
 `context: true` (the AI chat tour) it aims at a figure instead: App's
 `findFigure` finds the first "Figure N:" caption, and the box is the gap in

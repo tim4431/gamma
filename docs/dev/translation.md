@@ -20,7 +20,7 @@ in the PDF zoom column does everything by state:
 - A page a halted job left half-done counts as untranslated, so a click
   finishes it: blocks that came back already stay, the rest are asked for.
   Switching language or model in Settings makes the button translate afresh.
-- Hidden = slashed icon; holding Alt peeks. A click during a job halts it.
+- Hidden = slashed icon; holding Alt (the `pdf.peekOriginal` held key, [hotkeys.md](hotkeys.md#held-keys)) peeks. A click during a job halts it.
 - Right-click (long-press on touch) opens the option menu: Translate this
   page / Translate whole document / Show original·translation (Stop
   translating while running).
@@ -43,29 +43,44 @@ immediately. The queue lives in `pdf/PdfViewer.jsx` (`runTransJob`,
   under the button and as a background-tasks row.
 - Halting aborts the in-flight requests (each job carries an
   AbortController) and keeps finished chunks.
-- Each chunk gets one client-side retry; the server salvages what the model
-  got wrong paragraph by paragraph ("The server").
+- A chunk whose request fails is asked again (`translatePlan.requestChunk`).
+  A 429 with `Retry-After` (the account's AI calls are all in use, often by
+  the server asking the model again for other chunks) waits as long as it
+  says, for up to two minutes in all; any other failure (the network, the
+  provider, a stream cut off before its final line) is asked once more after
+  two seconds; a 429 without it (the shared allowance used up) is final. A
+  chunk that still fails stops the job, and the host says why once the
+  requests in flight have ended ("Translation failed: …").
+- The server asks the model again for what its reply got wrong ("The
+  server") and names the paragraphs that still failed (`failed`). Those
+  stay pending: the original shows, without the queued wash, and the page
+  is not done. At the job's end the host says how many there are, with a
+  "Try again" that runs a job over just their pages (`retryUntranslated`);
+  the button on such a page asks for them too.
 
 A page's entry in `transMap` holds results by block index: a translation;
 `null` for a block that came back as its source (the original shows); `""`
 for a block whose words all went to the part before it (a hyphenated word's
 tail alone at a column's top: it is masked, nothing is written); missing
-while not landed. A job seeds each page's state from its entry under the
-job's key, so a re-run keeps what is done and asks only for the rest — a
-`null` block included. A page is done when none of its blocks is pending,
-which a neighbouring page's unit can complete; a done page is skipped by the
-button and by "Translate whole document", so only "Translate this page" asks
-for its `null` blocks again.
+while not landed, or while the server could not translate it (its index is
+then in the entry's `failed` set). A job seeds each page's state from its
+entry under the job's key, so a re-run keeps what is done and asks only for
+the rest — a `null` block included. A page is done when none of its blocks
+is pending, which a neighbouring page's unit can complete; a done page is
+skipped by the button and by "Translate whole document", so only "Translate
+this page" asks for its `null` blocks again.
 
 The viewer requests `stream: true`. The reply is then NDJSON: `{"i": [request
 indices], "text": partial}` lines as the model writes each paragraph, then the
 same final object a plain call returns: `{translations, model, cached, redone,
-effort}`, where `redone` counts the paragraphs asked again ("The server") and
-`effort` is the level asked for. `ai_client.partial_json_strings` reads the
+failed, effort}`, where `redone` counts the paragraphs asked again ("The
+server"), `failed` lists the request indices that came back as their source
+because they still would not translate, and `effort` is the level asked
+for. `ai_client.partial_json_strings` reads the
 complete elements of the half-written JSON array plus the one in progress.
 Lines are throttled to ~20/s (`_TRANSLATE_STREAM_INTERVAL`), and an element
 maps to every request index that shares its source text. `stream: false` (the
-default) still answers in one JSON body. The salvage path never streams. An
+default) still answers in one JSON body. Asking again never streams. An
 upstream failure mid-stream is an in-band `{"error"}` line.
 
 On the page, a paragraph whose translation is queued gets a faint accent
@@ -154,7 +169,7 @@ document's opening text, up to 12,000 characters, when the server has no
 stored copy: `App.jsx` passes `translateScope={{pageId, stored}}`, `stored`
 when the PDF's URL is one of the server's uploads), `before`, `after`,
 `section`, and `build_brief: false` for a one-off text. App's `translateChunk`
-sends them with `texts`, `lang`, `model`, `effort` and `stream`.
+sends them with `texts`, `lang`, `model`, `effort`, `speed` and `stream`.
 
 A reply comes back per unit. `translatePlan.results` splits a joined unit's
 translation at its `{br}` markers. When the model lost or doubled one, it
@@ -283,6 +298,13 @@ its brief, once per account, workspace, paper, language and model:
   `translate_context.default_effort` — on the Anthropic wire the first level
   after `none`, which would leave the parameter out). A model whose levels are
   unknown, or that takes none, gets no effort parameter.
+- **Speed**: the separate account preference `translateSpeed` in Settings →
+  Language and Translation → Speed sends `speed` (`""`, `flex`, or `fast`).
+  `_translate_speed` checks the resolved model's `ai_catalog.speed_tiers`;
+  Default, an unsupported tier, or a failed lookup uses the provider's usual
+  routing. The same tier applies to the paper's brief, streamed and plain
+  translations, and repair calls. Translation services ignore it. Changing
+  speed keeps existing paragraph and brief caches.
 - **Cache**: an **in-memory only** LRU (~5k entries, lock-guarded because
   requests run in the threadpool) per (user, language, bare model name, the
   brief's key, source text). Nothing goes to disk; the cache makes
@@ -293,12 +315,33 @@ its brief, once per account, workspace, paper, language and model:
   - Duplicate paragraphs within a request go upstream once. A paragraph that
     comes back verbatim is not cached, so a retry can improve it.
   - Caps: 200 texts / 60k chars per request.
-- **Salvage**: the paragraphs whose reply broke a token are redone together in
-  one call, aligned by index; a reply array of the wrong length is redone one
-  paragraph per call, concurrently. Either way a paragraph goes with the
-  section but not the chunk's neighbours, and one that still fails comes back
-  verbatim instead of failing the request. The final object's `redone` counts
-  the paragraphs asked again.
+- **Reading the reply** (`_parse_translation_array`): a JSON array of one
+  string per text, code fences and prose around it tolerated. Asked for one
+  text, a model may leave the brackets off, so a reply that holds no array
+  of strings is that text's translation (`_bare_translation`: out of a code
+  fence, or a JSON string's value; "见 [12]" is text, not the array `[12]`),
+  unless it is empty or JSON that is no string. An empty translation counts
+  as broken (`translate_context.checked`).
+- **Asking again** (`again` in `ai_translate`): the paragraphs whose reply
+  broke a token are redone together in one call, aligned by index. A reply
+  array of the wrong length (the model merged or dropped an element, and
+  which one is unknown) is asked again in two halves, and a half whose reply
+  is off too one paragraph per call: a model keeps a short array far more
+  often than a long one, so a chunk usually takes two more calls, not one
+  per paragraph. The calls of one round run concurrently (up to
+  `_TRANSLATE_REPAIR_WORKERS`, 4). A call that failed (not a reply off) is
+  not split further. A paragraph goes with the section but not the chunk's
+  neighbours, and one that still fails comes back verbatim instead of
+  failing the request, named in the final object's `failed` (the request
+  indices it fills, a duplicate's too) and not cached. `redone` counts the
+  paragraphs asked again.
+- **Call slots**: these calls, and a streamed request's own call once past
+  the door's check, wait for one of the account's six call slots (up to
+  `_TRANSLATE_SLOT_WAIT`, 120 s) rather than being refused: the stream's own
+  call has freed its slot by then, but the account's other requests and
+  their repairs may hold them all. The door still refuses a request at once
+  when all six are in use, a 429 with `Retry-After` that the viewer waits
+  out ([ai.md](ai.md) "Calls open at once").
 
 ## Selection translation
 
@@ -359,12 +402,13 @@ the misses to `translate_engines.translate` instead of a chat model.
   Youdao `zh-CHS`) and splits a request by its batch limits.
 - The service path needs no AI provider. It has no effort, no brief, no
   streamed partials (the stream is just the final line), no token usage and
-  nothing to salvage, since the APIs answer aligned lists. A service
+  nothing to ask again, since the APIs answer aligned lists. A service
   translates sentence by sentence and takes no context.
 - Cache, validation and dedup are the LLM path's, keyed on `engine:<id>`.
   Nothing tells a service to keep the `{v1}` tokens or `{br}` markers; a
   reply that broke a token comes back verbatim (the original shows), and a
-  lost marker is cut by length.
+  lost marker is cut by length. `failed` stays empty: a service answers the
+  same text the same way, so the viewer asking again would get the same.
 
 Credentials are per account under the reserved `translate-engines` pref.
 Like `ai-settings`, `/api/prefs` refuses it and the only read path is the
@@ -402,7 +446,8 @@ translations side by side) to the OS temp dir (`--out` to choose).
   around the requests, which goes as extracted).
 - **Live numbers** (`--live`, through an isolated server from the e2e harness,
   the requests the viewer makes): failed requests, paragraphs back verbatim,
-  paragraphs `redone` (the server's count), breaks lost, the median request
+  paragraphs `redone` (the server's count), paragraphs `untranslated` (the
+  server's `failed`: still broken after asking again), breaks lost, the median request
   time, the wall time, the effort the server asked for, and the token usage.
   The server keeps every token (a broken paragraph comes back as its source),
   so a lost token shows in `redone` and `unchanged`, never in the texts. The

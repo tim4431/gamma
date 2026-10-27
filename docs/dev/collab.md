@@ -152,7 +152,9 @@ commits; `after_commit(ws, conn, result)` does the derived-data work and
 publishes; `commit_ops(ws, page_id, ops, actor=)` is both on a fresh
 connection; `apply_batches(conn, [(page_id, ops), …], actor=, client=)`
 applies several pages' batches in the caller's transaction, each logged on
-its page (the caller commits, then `after_commit`s each); `ensure_filing(ws,
+its page (the caller commits, then `after_commit`s each); `after_commits(ws,
+conn, results)` is that loop with the folder-share check run once for the
+lot (the AI page tools, a folder or label deletion, a revert); `ensure_filing(ws,
 conn, paths=, labels=, under=, actor=, client=)` makes the folders and
 labels a writer files by name where they are missing (one committed batch
 per tree); `tree_deletion(conn, tree, id)` / `delete_tree(ws, conn, tree,

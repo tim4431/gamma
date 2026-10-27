@@ -436,6 +436,63 @@ def test_a_deletion_goes_only_on_the_folder_its_card_showed(org, monkeypatch):
     assert {shown, other} <= set(folder_names(c)), "neither folder was deleted"
 
 
+def _batch_pages(c, shelf, prefix, n=2):
+    return [c.post("/api/blocks", json={"parent_id": "root", "content": f"{prefix} {k}",
+                                        "properties": {"folders": [shelf]}}).json()["id"] for k in range(n)]
+
+
+def test_a_batch_asks_once_and_its_card_lists_every_page(org, monkeypatch):
+    c, ids = org
+    a, b = _batch_pages(c, make_folder(c, "Batch asks"), "batch asks")
+    _agent(monkeypatch, ("t1", "rename_page", {"renames": [{"page_id": a, "title": "A9"},
+                                                            {"page_id": b, "title": "B9"}]}))
+    _answers(monkeypatch, ids["user"], "once")
+    lines, actions = _chat(c, permissions={**ALLOW_ALL, "rename": "ask"})
+    assert _kinds(lines) == ["step", "approval", "action"]
+    step = next(line["step"] for line in lines if "step" in line)
+    assert step["items"] == 2
+    card = next(line["approval"] for line in lines if "approval" in line)
+    assert card["perm"] == "rename" and card["preview"]["count"] == 2 and len(card["preview"]["digest"]) == 16
+    assert (actions[0]["changes"], actions[0]["approval"]) == (2, "once")
+    assert (props(c, a)["content"], props(c, b)["content"]) == ("A9", "B9")
+
+
+def test_a_batch_whose_pages_changed_while_the_card_waited_changes_nothing(org, monkeypatch):
+    """While a batch's card waits, a page it lists may change: the allowed
+    call then changes no page at all, and the model hears why."""
+    c, ids = org
+    shelf = make_folder(c, "Batch waits")
+    a, b = _batch_pages(c, shelf, "batch waits")
+    _agent(monkeypatch, ("t1", "move_page", {"page_ids": [a, b], "folder": "sub"}))
+    real, user = ai_permissions.wait_for, account_of(ids["user"])
+
+    def wait_for(approval_id, stopped=None, timeout=None):
+        # Another tab files one of the pages out of the chat's folder.
+        with connect_pages_db(ids["ws"]) as conn:
+            apply_ops(conn, b, [{"op": "set", "id": b, "props": {"folders": [ids["cooling"]]}}], actor="")
+        assert ai_permissions.answer(approval_id, user, "once")
+        return real(approval_id, stopped, timeout)
+
+    monkeypatch.setattr(ai_permissions, "wait_for", wait_for)
+    lines, actions = _chat(c, folder=shelf, permissions={**ALLOW_ALL, "move": "ask"})
+    card = next(line["approval"] for line in lines if "approval" in line)
+    assert card["preview"]["count"] == 2
+    assert (actions[0]["error"], actions[0]["approval"]) == (True, "once")
+    assert "while the approval card waited" in actions[0]["result"]
+    assert props(c, a)["properties"]["folders"] == [shelf], "no page moved"
+
+
+def test_a_declined_batch_chip_says_how_many(org, monkeypatch):
+    c, ids = org
+    a, b = _batch_pages(c, make_folder(c, "Batch declined"), "batch declined")
+    _agent(monkeypatch, ("t1", "rename_page", {"renames": [{"page_id": a, "title": "no"},
+                                                            {"page_id": b, "title": "nope"}]}))
+    _answers(monkeypatch, ids["user"], "deny")
+    _, actions = _chat(c, permissions={**ALLOW_ALL, "rename": "ask"})
+    assert (actions[0]["declined"], actions[0]["count"]) == (True, 2)
+    assert props(c, a)["content"] == "batch declined 0"
+
+
 def test_a_permission_the_conversation_granted_runs_without_a_card(org, monkeypatch):
     c, ids = org
     _agent(monkeypatch, ("t1", "rename_page", {"page_id": ids["a"], "title": "Granted title"}))

@@ -1,7 +1,9 @@
 // The card a tool call waits on while the user decides (chat/approvals.js
 // has the rules, gamma/ai_permissions.py the server's side). It says what
 // the call would do, shows the change as a word diff (or the folder a page
-// moves to), and offers four answers. Allow once runs it. Allow in this chat
+// moves to), and offers four answers. A call naming several pages shows one
+// line per page in the same box (it scrolls), and notes the pages it leaves
+// out. Allow once runs it. Allow in this chat
 // also stops asking for this permission in this conversation. Always allow
 // also sets the permission to Allow for this kind of chat in Settings.
 // Don't allow opens a line for what to do instead (optional) and leaves the
@@ -12,7 +14,7 @@
 import React, { useEffect, useState } from "react";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { ShieldIcon } from "../shared/ui/Icons";
-import { ALLOWING, approvalTitle, deletionNotes } from "./approvals.js";
+import { ALLOWING, approvalTitle, batchNotes, deletionNotes } from "./approvals.js";
 import { permStates } from "./chatSettings.js";
 import { pictureSrc } from "./pictureSrc.js";
 import { permissionIcon, permissionLabel } from "../settings/AssistantTools";
@@ -42,7 +44,7 @@ function ApprovalPreview({ tool, preview = {}, args = {} }) {
       {preview.children ? <div className="chatApprovalNote">
         {tn("{n} nested block goes with it.", "{n} nested blocks go with it.", preview.children)}
       </div> : null}
-      {deletionNotes(tool, preview).map((note) => <div key={note} className="chatApprovalNote">{note}</div>)}
+      {[...deletionNotes(tool, preview), ...batchNotes(preview)].map((note) => <div key={note} className="chatApprovalNote">{note}</div>)}
       <WordDiff diff={preview.diff} />
       {gallery}
     </>;
