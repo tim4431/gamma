@@ -27,6 +27,7 @@ import { ChatMarkdown, useCopied } from "../shared/ui/Widgets";
 import { Chevron, Collapse, IconSwap } from "../shared/ui/MotionWidgets";
 import { menuPress } from "../shared/ui/press.js";
 import { lastPointer } from "../shared/lib/pointer.js";
+import { heldAlone, isHeldKey } from "../shared/lib/hotkeys.js";
 import { PdfCitationOverlay } from "./PdfCitationOverlay";
 import { citationRuns, runChars } from "./pdfCitation.js";
 import { noteBadgeAnchor } from "./noteAnchor.js";
@@ -497,7 +498,9 @@ async function fetchPdfData(url, onLoadState, isCancelled) {
 // page tools' ink.zoom is on one of the document's pages: zoomHeight is its
 // height in css px and onZoomHeight(px) sets it (inkZoomHeight);
 // onZoomChange(update) changes the window, `update(window) → next | null`.
-function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, hideEmbeddedAnnots, darkPage = false, translateKey = "", translateScope = null, translateParallel = 3, onTranslate, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", selComment = false, marks, flashHighlightId = null, smoothWheel = false, commentMargin = null, marginRef = null, onMarginLost, onPageInView, zoomHeight = 200, onZoomHeight, onZoomChange }) {
+// areaKey / peekKey: the held keys (docs/dev/hotkeys.md "Held keys") that
+// make a mouse drag box an area and show a translated page's original.
+function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, areaKey = "Mod", peekKey = "Alt", hideEmbeddedAnnots, darkPage = false, translateKey = "", translateScope = null, translateParallel = 3, onTranslate, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", selComment = false, marks, flashHighlightId = null, smoothWheel = false, commentMargin = null, marginRef = null, onMarginLost, onPageInView, zoomHeight = 200, onZoomHeight, onZoomChange }) {
   const tools = usePageTools(), { ink, text } = tools;
   const viewerRef = useRef(null);
   const [pdfDoc, setPdfDoc] = useState(null);
@@ -569,16 +572,16 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     onLinkContext: (...a) => cbRef.current.onLinkContext?.(...a),
   }), []);
 
-  // Alt held while any page shows its translation = peek at the original:
-  // the overlays hide (CSS visibility, no re-render) until the key is
-  // released. The DOM check keeps the preventDefault (which stops a bare Alt
-  // from focusing the browser menu bar) from firing when nothing is
-  // translated.
+  // The peek key (Alt by default) held while any page shows its translation
+  // = peek at the original: the overlays hide (CSS visibility, no
+  // re-render) until the key is released. The DOM check keeps the
+  // preventDefault (which stops a bare Alt from focusing the browser menu
+  // bar) from firing when nothing is translated.
   const [transPeek, setTransPeek] = useState(false);
   useEffect(() => {
     const anyTrans = () => !!viewerRef.current?.querySelector(".pdfTransLayer");
-    const kd = (e) => { if (e.key === "Alt" && anyTrans()) { e.preventDefault(); setTransPeek(true); } };
-    const ku = (e) => { if (e.key === "Alt" && anyTrans()) { e.preventDefault(); setTransPeek(false); } };
+    const kd = (e) => { if (isHeldKey(e, peekKey) && anyTrans()) { e.preventDefault(); setTransPeek(true); } };
+    const ku = (e) => { if (isHeldKey(e, peekKey) && anyTrans()) { e.preventDefault(); setTransPeek(false); } };
     const off = () => setTransPeek(false);
     window.addEventListener("keydown", kd);
     window.addEventListener("keyup", ku);
@@ -587,8 +590,9 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       window.removeEventListener("keydown", kd);
       window.removeEventListener("keyup", ku);
       window.removeEventListener("blur", off);
+      setTransPeek(false);
     };
-  }, []);
+  }, [peekKey]);
 
   // "rendered" only means blank page boxes committed to the DOM — each canvas
   // paints asynchronously after that. Hold the swapped-in url here until the
@@ -1747,14 +1751,15 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // Text selection for highlight creation
   const [selPopup, setSelPopup] = useState(null);
 
-  // Ctrl held (when annotating is allowed) → crosshair over the pages: the
-  // cue that dragging now draws an area note instead of selecting text.
+  // The area key (Ctrl, ⌘ on a Mac, by default) held when annotating is
+  // allowed → crosshair over the pages: the cue that dragging now draws an
+  // area note instead of selecting text.
   const canAnnotate = !!onSelectionFinished;
   const [areaCursor, setAreaCursor] = useState(false);
   useEffect(() => {
     if (!canAnnotate) return;
-    const kd = (e) => { if (e.key === "Control") setAreaCursor(true); };
-    const ku = (e) => { if (e.key === "Control") setAreaCursor(false); };
+    const kd = (e) => { if (isHeldKey(e, areaKey)) setAreaCursor(true); };
+    const ku = (e) => { if (isHeldKey(e, areaKey)) setAreaCursor(false); };
     const off = () => setAreaCursor(false);
     window.addEventListener("keydown", kd);
     window.addEventListener("keyup", ku);
@@ -1765,7 +1770,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       window.removeEventListener("blur", off);
       setAreaCursor(false);
     };
-  }, [canAnnotate]);
+  }, [canAnnotate, areaKey]);
 
   // A finished Ctrl+drag on a page: hold the rect (drawn by that page while
   // the popup is up) and offer the same color tip as a text selection. The
@@ -2018,7 +2023,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           citation={displayedUrl === url && activeCitation?.page === i + 1 ? activeCitation : null}
           readOnly={!onSelectionFinished} forceRender={forcePages.has(i + 1) || activeCitation?.page === i + 1}
           hideEmbeddedAnnots={!!hideEmbeddedAnnots}
-          areaMode={canAnnotate ? !!areaMode : false}
+          areaMode={canAnnotate ? !!areaMode : false} areaKey={areaKey}
           onAreaSelected={canAnnotate ? onAreaSelected : undefined}
           pendingArea={selPopup?.kind === "area" && selPopup.pageNumber === i + 1 ? selPopup : null}
           reservedHeight={pageHeights[i] ? pageHeights[i] * scale : null}
@@ -2317,7 +2322,7 @@ function TransPending({ lines, busy }) {
 // px from the first page's top, where its margin's column goes on from the
 // pages above; activeHl: the highlight
 // whose card is the active one, drawn stronger.
-const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scale, highlights, flashId, onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, readOnly, forceRender, reservedHeight, reservedWidth, findMarks, onInternalLink, onExternalLink, onLinkContext, onPainted, onAreaSelected, pendingArea, areaMode, hideEmbeddedAnnots, trans, transKey, transShown, transSpan, toolArmed, marks, marginLeft = null, pageTop = 0, activeHl = null }) {
+const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scale, highlights, flashId, onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, readOnly, forceRender, reservedHeight, reservedWidth, findMarks, onInternalLink, onExternalLink, onLinkContext, onPainted, onAreaSelected, pendingArea, areaMode, areaKey, hideEmbeddedAnnots, trans, transKey, transShown, transSpan, toolArmed, marks, marginLeft = null, pageTop = 0, activeHl = null }) {
   const wrapRef = useRef(null);
   const baseRef = useRef(null);
   const detailRef = useRef(null);
@@ -2521,8 +2526,9 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
   const baseW = pageSize ? pageSize.width : (reservedWidth ? reservedWidth / scale : undefined);
   const baseH = pageSize ? pageSize.height : (reservedHeight ? reservedHeight / scale : undefined);
 
-  // Rectangle drag (screenshot-style area note): Ctrl+drag with a mouse, or
-  // any drag while the rectangle mode (areaMode) is on. Pointer
+  // Rectangle drag (screenshot-style area note): a mouse drag with the area
+  // key held alone (Ctrl, ⌘ on a Mac, by default: areaKey), or any drag
+  // while the rectangle mode (areaMode) is on. Pointer
   // events cover mouse and touch with one path; document-level move/up
   // listeners so the drag survives leaving the page box; rects are clamped
   // to it. Tiny drags are clicks — ignored, so Ctrl+click on highlights
@@ -2532,8 +2538,8 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
     if (readOnly || !onAreaSelected) return;
     if (e.target.closest?.(".commentMargin")) return; // a comment card beside the page
     if (e.button !== 0 || !e.isPrimary) return;
-    const viaCtrl = e.pointerType === "mouse" && e.ctrlKey && !e.metaKey && !e.shiftKey && !e.altKey;
-    if (!areaMode && !viaCtrl) return;
+    const viaKey = e.pointerType === "mouse" && heldAlone(e, areaKey);
+    if (!areaMode && !viaKey) return;
     const wrap = wrapRef.current;
     if (!wrap) return;
     e.preventDefault(); // keep the text layer from starting a selection

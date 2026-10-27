@@ -3,6 +3,8 @@
 // on each row that differs from its default, "Reset all" on the section.
 // The rows come from the one command catalog (app/commands.js); the
 // bindings are the account's `keybindings` preference (docs/dev/hotkeys.md).
+// The PDF group's two held keys (the area drag, the translation peek) are
+// rows like the rest, recording a lone modifier.
 // A chord two commands answer to is flagged on both rows. Under the
 // commands, the keys the outliner owns outright (Enter, Tab, …), read-only,
 // led by the one choice among them: whether Enter makes a new note or a new
@@ -72,7 +74,7 @@ export function KeyboardSettings({ value }) {
                   <div key={cmd.id} data-conflict={others.length ? "true" : undefined}>
                     <Row icon={commandIcon(cmd)} label={cmd.label} hint={hint}>
                       <KeyBinding
-                        chord={keys[0] || null} label={cmd.label} fixed={!!cmd.fixed} modified={modified}
+                        chord={keys[0] || null} label={cmd.label} fixed={!!cmd.fixed} held={!!cmd.held} modified={modified}
                         conflict={others.length > 0}
                         onChange={(chord) => bind(cmd.id, chord)} onReset={() => reset(cmd.id)}
                       />

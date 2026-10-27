@@ -102,7 +102,7 @@ A notebook is a page with sheets of paper to write on, and any page can hold the
 
 <img alt="The translate button is clicked and the paragraphs are redrawn in another language over the original while the figure stays; holding Alt peeks at the original" src="assets/translate.svg" width="100%">
 
-- The **文A button** translates the page you are reading, in place. Hold **Alt** to peek at the original; right-click for the whole document.
+- The **文A button** translates the page you are reading, in place. Hold **Alt** (⌥ on a Mac, or the key set in Settings → Keyboard) to peek at the original; right-click for the whole document.
 - Formulas, citations and links keep their printed look inside the translation, and a paragraph that runs on into the next column is translated as one, as is one that runs over a page break when you translate the whole document.
 - Select text and press 文A in the popup to translate a passage.
 - Settings → Language and Translation picks the language and what translates: a chat model, or a translation service (Microsoft works with no setup).
@@ -417,7 +417,7 @@ Account menu → **Settings**, or **Ctrl+,**; the card with your name at the top
 
 ## Shortcut cheat sheet
 
-**Ctrl+Shift+P** runs any command by name. Settings → Keyboard changes any key. On a Mac, Ctrl is ⌘ and Alt is ⌥.
+**Ctrl+Shift+P** runs any command by name. Settings → Keyboard changes any key, including the key held to box a region of the PDF and the key held to see a translation's original. On a Mac, Ctrl is ⌘ and Alt is ⌥.
 
 | Keys | Does |
 |---|---|
@@ -443,6 +443,7 @@ Account menu → **Settings**, or **Ctrl+,**; the card with your name at the top
 | `/` · `[[` · `@` | Command menu (in a comment, the commands that write text) · page link · in a note or a comment, mention a date, person or page; in chat, attach a paper |
 | Ctrl+wheel | Zoom the PDF at the cursor |
 | Ctrl+drag on the page | Capture a region for the chat, and an optional area highlight |
+| Hold Alt | On a translated page: see the original |
 | Ctrl+click a highlight | Quote it into the chat |
 | Ctrl+drag across note text | Attach that passage to the chat |
 | Double-click | Open a library card; collapse a window (on its grip) |

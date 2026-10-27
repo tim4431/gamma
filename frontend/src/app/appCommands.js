@@ -25,8 +25,14 @@ export const GROUP_PAGE = t("Page");
 export const GROUP_VIEW = t("View");
 export const GROUP_LIBRARY = t("Library");
 export const GROUP_HANDWRITING = t("Handwriting");
+export const GROUP_PDF = t("PDF");
 
 const cmd = (id, label, group, keys, run, extra = {}) => ({ id, label, group, keys, run, ...extra });
+// A held key (docs/dev/hotkeys.md "Held keys"): a lone modifier the PDF
+// viewer reads off its pointer and key events, so it never dispatches and
+// the palette leaves it out. The pane rebinds it to another modifier; it
+// cannot be unbound.
+const held = (id, label, keys) => cmd(id, label, GROUP_PDF, keys, () => false, { held: true, palette: false });
 
 // The open dialog on top, if any: every modal (Settings and its sub-dialogs,
 // Import, Export, the palette, the confirm box…) sits in a `.reportOverlay`,
@@ -134,6 +140,10 @@ export const APP_COMMANDS = [
   cmd("ink.duplicate", t("Duplicate handwriting"), GROUP_HANDWRITING, "Mod-d", inkRun((c) => c.inkDuplicate()), { edits: true, when: (c) => !!c.inkSelected }),
   cmd("ink.selectAll", t("Select all handwriting on this page"), GROUP_HANDWRITING, "Mod-a", inkRun((c) => c.inkSelectAll()),
     { edits: true, when: (c) => !!c.inkOpen && !!c.inkTool }),
+
+  // Mod, not Ctrl: a Mac's Ctrl+click is the right click, so it boxes with ⌘.
+  held("pdf.areaDrag", t("Hold to box a region of the PDF"), "Mod"),
+  held("pdf.peekOriginal", t("Hold to see the original of a translated page"), "Alt"),
 ];
 
 // A handwriting command's run: declined for a key pressed in a text field

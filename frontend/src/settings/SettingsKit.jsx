@@ -9,7 +9,7 @@
 import React from "react";
 import { API, apiJson, copyText, fmtBytes } from "../shared/lib/utils";
 import { AlertCircleIcon, CheckIcon, CloudCheckIcon, CopyIcon, EyeIcon, EyeOffIcon, MonitorIcon, RefreshIcon, ShieldIcon, UndoIcon, UserIcon, XIcon } from "../shared/ui/Icons";
-import { bindable, chordFromEvent } from "../shared/lib/hotkeys.js";
+import { bindable, chordFromEvent, heldFromEvent } from "../shared/lib/hotkeys.js";
 import { KeyCaps } from "../shared/ui/KeyCaps.jsx";
 import { useInMenu } from "../shared/ui/Menus";
 import { backdropPress } from "../shared/ui/press.js";
@@ -817,8 +817,10 @@ export { KeyCaps };
 // Backspace or Delete alone unbinds, Escape cancels, a bare letter is
 // refused (it would replace typing — add a modifier). `modified` shows the
 // reset button; `fixed` shows the chord read-only. `conflict` colours the
-// caps: another command answers to the same keys.
-export function KeyBinding({ chord, label, fixed, modified, conflict, onChange, onReset }) {
+// caps: another command answers to the same keys. `held` records a lone
+// modifier instead (a held key, docs/dev/hotkeys.md), the first one pressed,
+// and has no unbinding.
+export function KeyBinding({ chord, label, fixed, held, modified, conflict, onChange, onReset }) {
   const [recording, setRecording] = React.useState(false);
   const [refused, setRefused] = React.useState(false);
   const stop = () => { setRecording(false); setRefused(false); };
@@ -827,6 +829,11 @@ export function KeyBinding({ chord, label, fixed, modified, conflict, onChange, 
     event.preventDefault();
     event.stopPropagation();
     if (event.key === "Escape") { stop(); return; }
+    if (held) {
+      const next = heldFromEvent(event.nativeEvent || event);
+      if (next) { onChange(next); stop(); }
+      return;
+    }
     if ((event.key === "Backspace" || event.key === "Delete") && !event.ctrlKey && !event.metaKey && !event.altKey && !event.shiftKey) {
       onChange(null); stop(); return;
     }
@@ -836,7 +843,8 @@ export function KeyBinding({ chord, label, fixed, modified, conflict, onChange, 
     onChange(next);
     stop();
   };
-  const state = recording ? (refused ? t("Add a modifier…") : t("Press keys…")) : null;
+  const state = !recording ? null : held ? t("Press a modifier key…") : refused ? t("Add a modifier…") : t("Press keys…");
+  const how = held ? t("Click, then press the key to hold · Esc cancels") : t("Click, then press the new keys · Backspace unbinds · Esc cancels");
   const cls = ["uiBtn", "sm", "keyChip", recording ? "recording" : "", !chord && !recording ? "unbound" : "", conflict ? "conflict" : ""]
     .filter(Boolean).join(" ");
   return (
@@ -845,7 +853,7 @@ export function KeyBinding({ chord, label, fixed, modified, conflict, onChange, 
         type="button"
         className={cls}
         aria-label={fixed ? label : t("Change the shortcut for {name}", { name: label })}
-        title={fixed ? t("Built in — cannot be changed") : conflict ? t("Another command uses these keys") : t("Click, then press the new keys · Backspace unbinds · Esc cancels")}
+        title={fixed ? t("Built in — cannot be changed") : conflict ? t("Another command uses these keys") : how}
         disabled={fixed}
         onClick={() => { if (!recording) setRecording(true); }}
         onKeyDown={onKeyDown}

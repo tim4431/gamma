@@ -20,7 +20,7 @@ in the PDF zoom column does everything by state:
 - A page a halted job left half-done counts as untranslated, so a click
   finishes it: blocks that came back already stay, the rest are asked for.
   Switching language or model in Settings makes the button translate afresh.
-- Hidden = slashed icon; holding Alt peeks. A click during a job halts it.
+- Hidden = slashed icon; holding Alt (the `pdf.peekOriginal` held key, [hotkeys.md](hotkeys.md#held-keys)) peeks. A click during a job halts it.
 - Right-click (long-press on touch) opens the option menu: Translate this
   page / Translate whole document / Show original·translation (Stop
   translating while running).

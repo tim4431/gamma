@@ -7601,6 +7601,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       },
       // A scene's drag of a window to a dock side: where it would land.
       dockZone: (win, side) => dockPreviewRect(win, { side, index: 99 }),
+      // The held key the area demo drags with (Settings → Keyboard).
+      areaKey: () => commandChord("pdf.areaDrag", keybindings),
       findEquation: async () => {
         const hits = await pdfSearchRef.current?.(/Attention\s*\(/i);
         return hits?.[0] || null;
@@ -11401,6 +11403,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               translateCtlRef={pdfTranslateCtl}
               onTranslateState={handleTranslateState}
               areaMode={areaSelectMode && !shareMode}
+              areaKey={commandChord("pdf.areaDrag", keybindings)}
+              peekKey={commandChord("pdf.peekOriginal", keybindings)}
               marks={marks}
               flashHighlightId={flashingId}
               pdfScaleValue={pdfScale} scrollRef={scrollToRef}
