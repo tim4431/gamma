@@ -21,7 +21,7 @@
 // attribute the preload mirrors so the chrome paints in the same theme, and
 // `/api/session` (public HTTP API) for the workspace list.
 
-const { app, BaseWindow, WebContentsView, Menu, Tray, clipboard, nativeImage, nativeTheme, session, shell, ipcMain, net, dialog } = require('electron');
+const { app, BaseWindow, WebContentsView, Menu, Tray, clipboard, nativeImage, nativeTheme, session, shell, ipcMain, net, dialog, systemPreferences } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -36,6 +36,7 @@ const cloudSignIn = require('./lib/cloudSignIn');
 const openFiles = require('./lib/openFiles');
 const { hostPath } = require('./lib/hostPath');
 const folderAccessFor = require('./lib/folderAccess');
+const microphone = require('./lib/microphone');
 
 const SMOKE = process.argv.includes('--smoke');
 const BAR_H = 38;
@@ -786,6 +787,21 @@ async function ask(opts, testAnswer) {
   if (process.env.GAMMA_SHELL_TEST) return testAnswer;
   const r = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
   return r.response;
+}
+
+// A page asked for the microphone that macOS keeps from Gamma
+// (lib/microphone.js): the answer can only change in System Settings, and
+// reaches Gamma at its next start.
+async function microphoneRefused() {
+  const choice = await ask({
+    type: 'info',
+    message: 'Gamma may not use the microphone',
+    detail: 'Allow Gamma under System Settings → Privacy & Security → Microphone, then quit Gamma and open it again.',
+    buttons: ['Open System Settings', 'Cancel'],
+    defaultId: 0,
+    cancelId: 1,
+  }, 1);
+  if (choice === 0) openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone');
 }
 
 // A link of local server `serverId`, with what to call it through.
@@ -1751,6 +1767,10 @@ app.whenReady().then(async () => {
     return;
   }
   registerIpc();
+  session.defaultSession.setPermissionRequestHandler(microphone.create({
+    prefs: systemPreferences,
+    onDenied: () => microphoneRefused().catch(() => {}),
+  }));
   updater.init({ onChange: () => pushState(), openExternal });
   buildMenu();
   const settings = registry.getSettings();

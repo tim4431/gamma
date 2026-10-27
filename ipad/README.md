@@ -96,11 +96,14 @@ through `bash`: its executable bit does not survive a commit from a
 Windows checkout.
 
 Pick an iPad simulator or your iPad, set your development team under
-Signing & Capabilities, and run. The project targets iPadOS 17 and iPad
-only. The simulator wheels are arm64, so the simulator needs an Apple
-Silicon Mac. A build for more than one architecture (a Release build for
-the simulator) needs `ONLY_ACTIVE_ARCH=YES`, because `install_python`
-copies one architecture's standard library.
+Signing & Capabilities, and run. The bundle id, `net.blitzbuild.gamma`, is
+the App Store record's, of team `A436A36DDC`: a device build signed by
+another team needs a bundle id of its own there. The project targets
+iPadOS 17 and iPad only. The simulator wheels are arm64, so the
+simulator needs an Apple Silicon Mac. A build for more than one
+architecture (a Release build for the simulator) needs
+`ONLY_ACTIVE_ARCH=YES`, because `install_python` copies one
+architecture's standard library.
 
 In the app, the launcher shows at the first launch: open **This iPad**, or
 add another server's address, open it and sign in on its own page. The

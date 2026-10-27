@@ -10,7 +10,8 @@
          (server); folders the user picks, the storage folder and folders
          kept on disk, opened again on later runs by bookmark (user-selected,
          app-scope bookmarks); recording audio into a note (audio-input,
-         with NSMicrophoneUsageDescription). osx-sign adds the application
+         with NSMicrophoneUsageDescription from electron-builder.cjs, and
+         lib/microphone.js asking macOS first). osx-sign adds the application
          and team identifiers and the app group from the profile. -->
     <key>com.apple.security.app-sandbox</key>
     <true/>

@@ -121,6 +121,7 @@ or says it is a manual look (**manual**).
 | 8.4 | Fresh machine: installer runs (unsigned: SmartScreen *Run anyway*; signed: no SmartScreen block, *Publisher* shows the cert subject in the UAC prompt; Debian/Ubuntu: `sudo apt install ./Gamma-<v>-linux-amd64.deb` pulls the deps), first launch creates a local server, no Python/Node needed | manual |
 | 8.5 | Signed macOS build: `codesign --verify --deep --strict Gamma.app` and `spctl --assess --type execute Gamma.app` pass; a fresh download opens without any dialog (the release job's *Verify signature* step covers this on the runner) | manual |
 | 8.6 | Cert-less macOS build (ad-hoc): a fresh download shows *Apple could not verify…*, and *Privacy & Security → Open Anyway* launches it; no *damaged* dialog | manual (needs a Mac) |
+| 8.7 | macOS microphone, on the signed build and the ad-hoc one: the first recording into a note asks with Gamma's purpose string, and *Allow* records with sound; with Gamma turned off in *Privacy & Security → Microphone*, a recording is refused and the dialog's *Open System Settings* opens that pane; turned on again and Gamma reopened, it records ([architecture.md](architecture.md#the-microphone)) | manual (needs a Mac) |
 
 ## 9. Mac App Store build
 
@@ -137,7 +138,7 @@ started after the app opened a folder can use it.
 | 9.4 | Keep a folder on this computer from the open local server into a new folder on the Desktop: the server restarts on the same address, the page carries on, the Markdown and PDFs appear; after a relaunch the folder still syncs; the same for a remote server's folder (the host restarts) | manual (needs a Mac) |
 | 9.5 | Rename that storage folder in the Finder, relaunch, open its server: the failure card says Gamma can no longer open it; name it back, *Choose folder…*, it opens | manual (needs a Mac) |
 | 9.6 | *Move data* of the servers to another outside folder and back; *Remove* with *delete everything* on a server outside the container | manual (needs a Mac) |
-| 9.7 | A PDF opened from the Finder with Gamma (*Open With*) goes into the open server; a download (a backup zip) saves through the dialog; recording into a note asks for the microphone with the purpose string, and records | manual (needs a Mac) |
+| 9.7 | A PDF opened from the Finder with Gamma (*Open With*) goes into the open server; a download (a backup zip) saves through the dialog; recording into a note asks for the microphone with the purpose string, and records; refused, it behaves as in 8.7 | manual (needs a Mac) |
 | 9.8 | Quit: no `gamma-server` process is left (`pgrep gamma-server`) | manual (needs a Mac) |
 
 ## Last run

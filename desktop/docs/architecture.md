@@ -430,6 +430,27 @@ Each file is added as an upload in Gamma adds it, one at a time
 Under the test harness the question takes its first answer, and
 `openPdfFiles` is on the test hook.
 
+### The microphone
+
+A server's page records into a note and dictates to the assistant with
+`getUserMedia`. Electron grants a page every permission it asks for unless
+the session has a handler, and the shell's (`lib/microphone.js`, set on the
+default session at launch) still grants everything, with one exception:
+the microphone on macOS, which the system lets an app use only once the
+user said yes. When the system has not asked yet, the handler has it ask
+(`systemPreferences.askForMediaAccess`), with the app's
+`NSMicrophoneUsageDescription` (`mac.extendInfo` in `electron-builder.cjs`),
+and the page gets the user's answer. When the user said no, or the Mac
+does not allow it, the page is refused and reports that it could not
+record, and a dialog says where to allow Gamma: System Settings → Privacy &
+Security → Microphone, with a button that opens it. The answer reaches
+Gamma at its next start, which macOS also says. A build signed with the
+hardened runtime (the dmg with a Developer ID) or the App Sandbox (the
+Mac App Store build) also needs `com.apple.security.device.audio-input`,
+which both entitlement files carry; an ad-hoc signed build has neither and
+needs only the purpose string. Windows and Linux leave the microphone to
+the page and the system's own settings.
+
 ### Background and tray
 
 Closing the last window quits the app (macOS keeps the dock process, as
@@ -586,6 +607,9 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   sandbox: the bookmarks kept, the folders opened at launch, and when a
   server must start again to reach one ([release.md](release.md#mac-app-store));
   no Electron, unit tested by `test/folderAccess.test.js`.
+- `lib/microphone.js` — the pages' permission requests: all granted, the
+  microphone on macOS once the system allows it ("The microphone"); no
+  Electron, unit tested by `test/microphone.test.js`.
 - `electron-builder.cjs` — the packaging config (targets, extra resources,
   secret-gated signing, the update feed's `publish` block, the PDF
   registration per target). `assets/installer.nsh` — the NSIS installer's
@@ -613,7 +637,8 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
 - `assets/icon.png` — app icon (1024 px, the favicon mark, from the brand
   generator; electron-builder derives ico/icns and the Linux icon set, and
   App Store Connect wants the icns's 1024 px image). `assets/entitlements.mac.plist` —
-  hardened-runtime entitlements for signed mac builds.
+  hardened-runtime entitlements for signed mac builds, the microphone
+  among them ("The microphone").
 - `assets/appx/` and `assets/store/` — tracked Store package/listing images;
   `scripts/store-art.js` regenerates them. The packager's build-resources
   directory is `assets/`; `build/` holds generated PyInstaller intermediates.
