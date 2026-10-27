@@ -24,6 +24,10 @@ Everything here is pure: bytes in, values out, CodecError for what does
 not read.
 """
 
+# Message's accessors are named int, bytes and str, so in its class body those
+# names are its methods: annotations are kept as strings, never evaluated there.
+from __future__ import annotations
+
 import math
 import struct
 
@@ -118,7 +122,7 @@ class Message:
         self.fields = fields
 
     @classmethod
-    def read(cls, data) -> "Message | None":
+    def read(cls, data) -> Message | None:
         if not isinstance(data, (bytes, bytearray)):
             return None
         try:
@@ -181,15 +185,15 @@ class Message:
             return None
         return value
 
-    def msg(self, number: int) -> "Message | None":
+    def msg(self, number: int) -> Message | None:
         return Message.read(self._last(number, 2))
 
-    def msgs(self, number: int) -> list["Message"]:
+    def msgs(self, number: int) -> list[Message]:
         """Every occurrence of a repeated message field that parses, in order."""
         found = (Message.read(v) for n, w, v in self.fields if n == number and w == 2)
         return [m for m in found if m is not None]
 
-    def only(self) -> tuple[int, "Message"] | None:
+    def only(self) -> tuple[int, Message] | None:
         """``(number, message)`` of a message whose one field is a message
         (a page's content record: its number is the element's kind)."""
         if len(self.fields) != 1 or self.fields[0][1] != 2:
