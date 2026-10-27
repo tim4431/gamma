@@ -69,6 +69,7 @@ function fmtUptime(seconds) {
 // A -dev build (Docker, built from a branch) also counts its branch's newer
 // commits as an update.
 function updateHint(info) {
+  if (info.updates === "mas") return t("installed from the Mac App Store, which delivers its updates");
   const latest = info.latest?.version;
   if (info.update_available) return t("v{latest} is out — this server runs v{version}", { latest: info.update.version, version: info.version });
   if (info.update_available === false && info.latest_build) {
@@ -87,7 +88,9 @@ function updateHint(info) {
 // to pull the image. The desktop app's server says who installs it
 // (`updates`): the app itself, or in a Microsoft Store install the Store,
 // which has a release only once Microsoft certifies it — no warning
-// tone there, and Open Store leads to the Store's updates page.
+// tone there, and Open Store leads to the Store's updates page. A Mac App
+// Store install may point at no other way to update, so its server asks
+// GitHub nothing (GAMMA_UPDATE_CHECK off) and the row only says so.
 const STORE_UPDATES_URL = "ms-windows-store://downloadsandupdates";
 
 function ServerDashboard() {
@@ -138,9 +141,11 @@ function ServerDashboard() {
         {fromStore && info.update?.kind === "release" ? (
           <button className="uiBtn sm" onClick={() => window.open(STORE_UPDATES_URL, "_blank", "noopener")}>{t("Open Store")}</button>
         ) : null}
-        <button className={`uiBtn sm ${updateTone ? "primary" : ""}`} disabled={checking} onClick={checkNow}>
-          <MorphText>{checking ? t("Checking…") : t("Check now")}</MorphText>
-        </button>
+        {info.updates === "mas" ? null : (
+          <button className={`uiBtn sm ${updateTone ? "primary" : ""}`} disabled={checking} onClick={checkNow}>
+            <MorphText>{checking ? t("Checking…") : t("Check now")}</MorphText>
+          </button>
+        )}
       </span>
     </Row>
     {info.update?.kind === "release" ? (
