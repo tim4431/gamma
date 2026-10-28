@@ -6,10 +6,10 @@
 // there; `onJobFinished` is what the store's `onFinished` calls.
 import { useRef } from "react";
 import { API, fmtBytes, getCurrentWorkspace, withWorkspace } from "../shared/lib/utils";
-import { t } from "../shared/i18n/i18n.js";
+import { t, tn } from "../shared/i18n/i18n.js";
 import { exportJobBody } from "../transfers/transferFormats";
 import { importSummary } from "../transfers/importReview";
-import { kindOf, retryOf, taskTitle } from "./taskKinds.js";
+import { kindOf, relocationSuperseded, retryOf, taskTitle } from "./taskKinds.js";
 import { isActive } from "./taskModel.js";
 
 export function useAppJobs({
@@ -141,9 +141,10 @@ export function useAppJobs({
 
   // A job ended while this tab looked (tasks/useTasks.js onFinished):
   // `started` is what this tab started it with ({download, pill,
-  // restoreInto, after}), null for a job started elsewhere. Whatever its
-  // window shows is left to it; the rest is said here.
-  function onJobFinished(job, started) {
+  // restoreInto, after}), null for a job started elsewhere; `jobs` the
+  // listing it ended in. Whatever its window shows is left to it; the rest
+  // is said here.
+  function onJobFinished(job, started, jobs) {
     postPill(`job:${job.id}`, null);
     const title = taskTitle(job);
     // The export or import dialog shows it (one that ends as it starts
@@ -193,6 +194,35 @@ export function useAppJobs({
         }).catch(() => {});
       } else if (job.state === "cancelled") {
         setStatus(t("Metadata lookup stopped after {done} of {total} papers.", { done: job.progress?.done || 0, total: job.progress?.total || job.params?.papers || 0 }));
+      } else {
+        setStatus(t("{name} failed: {message}", { name: title, message: t(job.error) }));
+      }
+      return;
+    }
+    if (job.kind === "relocate-highlights") {
+      // The positions themselves land over the page's socket; this tab,
+      // when it started the run, hears what it found. A run stopped or
+      // refused because the PDF was replaced again says nothing: the newer
+      // run is placing the highlights, and its end reports.
+      if (!started) return;
+      if (job.state !== "done" && relocationSuperseded(job, jobs)) return;
+      if (job.state === "done") {
+        tasks.fetchJob(job.id).then((full) => {
+          const r = full?.result;
+          if (!r) return;
+          // A highlight someone moved while the run read the file is left
+          // as it is and counted apart ("changed"); the line names those
+          // too, so its numbers add up to the page's highlights.
+          setStatus([
+            t("Highlights placed in the PDF: {moved} moved, {kept} unchanged, {lost} not found.",
+              { moved: r.moved + (r.approx || 0), kept: r.kept, lost: r.lost }),
+            r.changed ? tn("{n} that someone moved meanwhile was left as it is.",
+              "{n} that someone moved meanwhile were left as they are.", r.changed) : "",
+            r.lost ? t("A hollow highlight's text is gone: right-click it and choose Move to a selection.") : "",
+          ].filter(Boolean).join(" "));
+        }).catch(() => {});
+      } else if (job.state === "cancelled") {
+        setStatus(t("{name} was stopped.", { name: title }));
       } else {
         setStatus(t("{name} failed: {message}", { name: title, message: t(job.error) }));
       }

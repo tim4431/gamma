@@ -71,7 +71,7 @@ import {
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoreIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon,
   RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
   ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon, MicIcon, MessageSquareIcon, BellIcon,
-  PanelTopIcon,
+  PanelTopIcon, LocateIcon,
 } from "../shared/ui/Icons";
 
 
@@ -207,6 +207,7 @@ import {
   formatShortDate,
   isFreshLibrary,
   friendlyApiError,
+  attachmentFile,
   pageAttachment,
   pageKindLabel,
   defaultPageTitle,
@@ -2364,7 +2365,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // list; the tray in the topbar shows it. A local row is
   // {kind, name, state, info, fraction (0..1 when the work can measure
   // itself), cancel (a function when it can be stopped)}.
-  const tasks = useTasks({ enabled: !!authUser?.user && !shareMode, onFinished: (job, started) => onJobFinished(job, started) });
+  const tasks = useTasks({ enabled: !!authUser?.user && !shareMode, onFinished: (job, started, jobs) => onJobFinished(job, started, jobs) });
   const { addLocal: addTask, updateLocal: updateTask } = tasks;
   // The search indexer of the open workspace runs (Settings shows it).
   const indexing = tasks.jobs.some((job) => job.kind === "indexing" && job.workspace === workspace?.id && isActive(job));
@@ -3999,6 +4000,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const flashTimerRef = useRef(null);
   const [attachModeBlockId, setAttachModeBlockId] = useState(null);
   const attachModeBlockIdRef = useRef(null);
+  // A highlight being moved (its menu's "Move to a selection…", a lost
+  // one's row button): the next selection on the PDF becomes its place
+  // instead of making a new highlight (docs/dev/highlight_relocation.md).
+  const [moveHighlightId, setMoveHighlightId] = useState(null);
+  const moveHighlightIdRef = useRef(null);
   const blocksRef = useRef(blocks);
   blocksRef.current = blocks;
   const blockRefs = useRef({});
@@ -5450,9 +5456,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setOpenPopover(opening ? "meta" : null);
   }
   // `replace`: a new version of the page's PDF (a paper compiled again from
-  // its TeX). The page keeps its title, notes and highlights, the highlights
-  // where they were on their pages; the old file goes unless another page
-  // uses it.
+  // its TeX). The page keeps its title, notes and highlights, and the
+  // server's relocate-highlights job moves each highlight to where its text
+  // is in the new file (docs/dev/highlight_relocation.md); the old file goes
+  // unless another page uses it.
   async function attachPdfToPage({ file, url, replace = false }) {
     const pageId = focusedBlockId;
     if (!pageId || shareMode || notebook || (!file && !url) || (replace ? !pageAttach || readOnly : pageAttach)) return;
@@ -5465,12 +5472,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       : { name: url.slice(0, 60), kind: "download", info: t("resolving…") });
     try {
       const { viewerUrl, note, ...src } = await resolvePdfSource({ file, url }, taskId);
-      await apiJson(`${API}/pages/${encodeURIComponent(pageId)}/attachment`, {
+      const bound = await apiJson(`${API}/pages/${encodeURIComponent(pageId)}/attachment`, {
         method: replace ? "PUT" : "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(src),
       });
       updateTask(taskId, { state: "done", info: replace ? t("replaced") : t("attached") });
+      // A replacement on a page with highlights: the server finds each
+      // one's text in the new file and moves it there (its job rides in the
+      // answer; onJobFinished says what it found). A job that could not
+      // start comes back as relocation_error, its reason.
+      if (bound?.job) tasks.adopt(bound.job);
       if (replace) attemptedMetaRef.current.delete(pageId); // its lookup was the old file's
       if (file) {
         refreshQuota();
@@ -5480,7 +5492,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (focusedBlockIdRef.current !== pageId) return; // navigated away meanwhile
       await openBlock(pageId, { viewerUrl });
       setPdfHidden(false);
-      setStatus(note || (replace ? t("PDF replaced.") : t("PDF attached.")));
+      setStatus(note || (!replace ? t("PDF attached.")
+        : bound?.relocation_error
+          ? t("PDF replaced. Its highlights were not placed ({reason}): choose Find highlights in this PDF in the Document menu to place them.",
+            { reason: t(bound.relocation_error) })
+          : t("PDF replaced.")));
     } catch (err) {
       if (err.status === 409 && err.data?.page_id) {
         // The library already holds this PDF on another page — the page is
@@ -7053,14 +7069,74 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   useEffect(() => { setPaperMenu(false); setNbCurrent(""); }, [focusedBlockId]);
 
   useEffect(() => { attachModeBlockIdRef.current = attachModeBlockId; }, [attachModeBlockId]);
+  useEffect(() => { moveHighlightIdRef.current = moveHighlightId; }, [moveHighlightId]);
 
-  // Escape cancels attach mode
+  // Attach mode (a note's ⊕ waits for a click on a highlight) and move mode
+  // (a highlight waits for a selection) each end the other, so one banner
+  // shows and the PDF's next click or selection means one thing. Both are
+  // entered only through these; the setters are stable, so the callbacks
+  // are too and BlockRow's memo holds.
+  const startAttachMode = useCallback((blockId) => {
+    setMoveHighlightId(null);
+    setAttachModeBlockId(blockId);
+  }, []);
+  const startHighlightMove = useCallback((blockId) => {
+    setAttachModeBlockId(null);
+    setMoveHighlightId(blockId);
+  }, []);
+
+  // Escape ends whichever mode is on.
   useEffect(() => {
-    if (!attachModeBlockId) return;
-    const onKey = (e) => { if (e.key === 'Escape') setAttachModeBlockId(null); };
+    if (!attachModeBlockId && !moveHighlightId) return;
+    const onKey = (e) => {
+      if (e.key !== 'Escape') return;
+      setAttachModeBlockId(null);
+      setMoveHighlightId(null);
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [attachModeBlockId]);
+  }, [attachModeBlockId, moveHighlightId]);
+  // Another page, or another file on this one, ends a move: the selection
+  // it waits for would be on a PDF the highlight was not picked from.
+  useEffect(() => { setMoveHighlightId(null); }, [focusedBlockId, pageAttach?.id, pageAttach?.url]);
+
+  // The highlight takes the selection's place, and its text as its quote:
+  // a tree edit like any other (ops, undo). Whatever marked it lost or
+  // placed by estimate goes with the old position. An area drag has no
+  // text, so the highlight becomes an area with no quote, as one made the
+  // usual way (null drops the key).
+  function moveHighlightTo(blockId, position, content) {
+    setMoveHighlightId(null);
+    if (readOnly || !blockId || !position || !findBlock(blocks, blockId)) return;
+    setBlocks((prev) => updateBlockTree(prev, blockId, (b) => ({
+      ...b,
+      properties: applyPatch(b.properties, {
+        pdf_position: position,
+        quote: content?.text || (position.area ? null : b.properties?.quote),
+      }),
+    })));
+    setStatus(t("Highlight moved."));
+    triggerFlash(blockId);
+  }
+
+  // The Document menu's "Find highlights in this PDF": the server's
+  // relocate-highlights job for the page by hand (gamma/highlight_relocate.py),
+  // for a PDF replaced before the job existed, or a run that did not finish.
+  // While one of this account's runs places this page's highlights, the row
+  // waits for it; a PDF shown from a URL alone has no stored file to read.
+  const relocating = tasks.jobs.some((job) => job.kind === "relocate-highlights" && isActive(job)
+    && job.params?.page_id === focusedBlockId);
+  const pdfStored = !!attachmentFile(pageAttach);
+  async function relocateHighlights() {
+    const pageId = focusedBlockId;
+    if (!pageId || !pdfStored || readOnly) return;
+    setOpenPopover(null);
+    try {
+      await tasks.start("relocate-highlights", { page_id: pageId });
+    } catch (err) {
+      setStatus(t("Could not start: {message}", { message: err.message }));
+    }
+  }
 
   // Both are tree edits like any other (ops, undo). A write of their own
   // plus a refetch would replace the tree under edits not yet saved.
@@ -9037,8 +9113,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         {!readOnly ? (
                           <>
                             <MenuItem icon={UploadIcon} disabled={loading} onClick={() => replaceFileRef.current?.click()}
-                              title={t("Upload a new version of this PDF: the notes and highlights stay, where they were on their pages")}>
+                              title={t("Upload a new version of this PDF: the notes and highlights stay, and each highlight moves to where its text is in the new file")}>
                               {t("Replace the PDF…")}
+                            </MenuItem>
+                            <MenuItem icon={LocateIcon} disabled={loading || relocating || !pdfStored} onClick={relocateHighlights}
+                              title={!pdfStored ? t("This PDF is shown from its link and not stored on the server, so its highlights cannot be placed in it")
+                                : relocating ? t("This page's highlights are being placed — see Background tasks")
+                                : t("Find each highlight's text in this file and move the highlight there; one whose text is gone is shown hollow")}>
+                              {t("Find highlights in this PDF")}
                             </MenuItem>
                             <input
                               ref={replaceFileRef}
@@ -9919,8 +10001,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   onInvite: readOnly || shareMode || authUser?.is_guest ? undefined : () => openPageShare(focusedBlockId),
                   onReminderSet: reminders.noteSet,
                   onAddSheetAfter: readOnly ? undefined : addSheetAfter,
-                  onEnterAttachMode: readOnly ? null : setAttachModeBlockId,
+                  onEnterAttachMode: readOnly ? null : startAttachMode,
                   onUnlinkHighlight: readOnly ? null : unlinkHighlightFromBlock,
+                  onMoveHighlight: readOnly || !pageAttach ? null : startHighlightMove,
                   onOpenLinkTarget: (b) => {
                     const p = b.properties || {};
                     if (p.link_page_id) {
@@ -11414,6 +11497,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           <button onClick={() => setAttachModeBlockId(null)}>{t("Cancel")}</button>
         </div>
       )}
+      {moveHighlightId && (
+        <div className="attachModeBanner" data-move-highlight={moveHighlightId}>
+          {t("Select the text on the PDF where this highlight belongs")}
+          <button onClick={() => setMoveHighlightId(null)}>{t("Cancel")}</button>
+        </div>
+      )}
       {transMenu && (
         <ContextMenu x={transMenu.x} y={transMenu.y} onClose={() => setTransMenu(null)} aria-label={t("Translate")}>
           {pdfTransState.running ? (
@@ -11616,7 +11705,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 regionBox({ boundingRect: sel.rect, width: sel.width, height: sel.height })))}
               // the selection popup's Comment: a highlight with its thread popover open on it
               selComment={commentsOn && canComment}
+              moveMode={!!moveHighlightId}
               onSelectionFinished={readOnly ? undefined : (position, content, hideTip, extras) => {
+                if (moveHighlightIdRef.current) {
+                  // a highlight waiting to be moved takes this selection's place
+                  moveHighlightTo(moveHighlightIdRef.current, position, content);
+                  hideTip?.();
+                  return;
+                }
                 if (extras?.link) {
                   setLinkDialog({ position, content });
                   setLinkDialogInput("");
@@ -12581,6 +12677,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             >
               {t("Copy as reference point")}
             </button>
+            {!readOnly ? (
+            <button
+              role="menuitem"
+              className="ctxMenuItem"
+              onClick={() => { startHighlightMove(highlightMenu.id); setHighlightMenu(null); }}
+            >
+              {t("Move to a selection…")}
+            </button>
+            ) : null}
             {commentsOn ? (
             <button
               role="menuitem"

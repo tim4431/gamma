@@ -28,7 +28,7 @@ import { mapOutsideCodeFences, remarkDiagrams, scanDiagramFences, setDiagramWidt
 import { MdObject, ObjectMenuButton, findObject } from "./MdObject";
 import { cutObject } from "./mdObjects";
 import { blockSpans, parseTable, protectedSpans, scanMathSpans, scanTables } from "./mdScan";
-import { LinkIcon, MicIcon, PenIcon, PlayIcon, TypeIcon, XIcon } from "../shared/ui/Icons";
+import { LinkIcon, LocateIcon, MicIcon, PenIcon, PlayIcon, TypeIcon, XIcon } from "../shared/ui/Icons";
 import { FileChip, parseUploadUrl, postFile, uploadFilesAsLines } from "../transfers/FileChip";
 import { findMathAtCursor, LatexAcPopup, MathLivePreview } from "./LatexEditor";
 import { useMathUi } from "./useMathUi.js";
@@ -670,6 +670,7 @@ const BlockRow = React.memo(function BlockRow({
   onShowOnPage,
   onEnterAttachMode,
   onUnlinkHighlight,
+  onMoveHighlight,
   onOpenLinkTarget,
   onChangeText,
   onCaret,
@@ -1489,19 +1490,37 @@ const BlockRow = React.memo(function BlockRow({
               className="collapseBtn highlightDotBtn dotSlot"
               onClick={(e) => { e.stopPropagation(); onJump(block.id, e.ctrlKey || e.metaKey); }}
               title={
-                block.position
-                  ? t("Jump to highlight") : block.properties?.linked_highlight_id
-                    ? t("Jump to linked highlight") : t("Jump to page (no exact position)")
+                block.position?.lost
+                  ? t("Not found in the current PDF — jump to where it was")
+                  : block.position?.approx
+                    ? t("Placed by estimate after the PDF was replaced — jump to it")
+                    : block.position
+                      ? t("Jump to highlight") : block.properties?.linked_highlight_id
+                        ? t("Jump to linked highlight") : t("Jump to page (no exact position)")
               }
             >
-              <span className="highlightDot" style={{
-                background: block.position
-                  ? (normalizeColor(block.color) || DEFAULT_HIGHLIGHT)
-                  : block.properties?.linked_highlight_id
-                    ? (normalizeColor(highlightColors?.[block.properties.linked_highlight_id]) || DEFAULT_HIGHLIGHT)
-                    : 'rgba(140,140,140,0.5)'
-              }} />
+              {/* a highlight the replaced PDF's text no longer has: a hollow dot,
+                  app.css .highlightDot.lost, in its colour (docs/dev/highlight_relocation.md) */}
+              {block.position?.lost ? (
+                <span className="highlightDot lost" style={{ borderColor: normalizeColor(block.color) || DEFAULT_HIGHLIGHT }} />
+              ) : (
+                <span className="highlightDot" style={{
+                  background: block.position
+                    ? (normalizeColor(block.color) || DEFAULT_HIGHLIGHT)
+                    : block.properties?.linked_highlight_id
+                      ? (normalizeColor(highlightColors?.[block.properties.linked_highlight_id]) || DEFAULT_HIGHLIGHT)
+                      : 'rgba(140,140,140,0.5)'
+                }} />
+              )}
             </button>
+            {block.position?.lost && onMoveHighlight ? (
+              <button
+                className="collapseBtn attachModeBtn"
+                title={t("Move to a selection on the PDF")}
+                aria-label={t("Move to a selection on the PDF")}
+                onClick={(e) => { e.stopPropagation(); onMoveHighlight(block.id); }}
+              ><LocateIcon size={12} /></button>
+            ) : null}
             {!block.position && block.properties?.linked_highlight_id && onUnlinkHighlight ? (
               <button
                 className="collapseBtn attachModeBtn"

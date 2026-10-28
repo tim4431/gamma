@@ -194,6 +194,16 @@ export function pageAttachment(block) {
     name: p.original_filename || "" };
 }
 
+// The doc id of the file an attachment shows: its id, else the stored upload
+// its url serves (a duplicated page carries only /api/uploads/<doc id>.pdf),
+// else "" (a PDF shown from another address alone, never stored). For what
+// reads the file, not for gating (gamma/blocks_store.py attachment_file, the
+// twin).
+export function attachmentFile(attachment) {
+  if (!attachment) return "";
+  return attachment.id || /^\/api\/uploads\/([0-9A-Za-z_-]{1,128})\.pdf$/.exec(attachment.url || "")?.[1] || "";
+}
+
 // What a card/row says a page is: the attachment kind, else just a page.
 export function pageKindLabel(attachment) {
   return attachment ? "PDF" : t("Page");

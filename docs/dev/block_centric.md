@@ -42,6 +42,10 @@ code keeps them apart (decided 2026-09-13, see *Files and documents* below):
   `page_attachment(props)` (backend) / `pageAttachment(block)` (frontend)
   returning `{kind: "pdf", id, url, name} | null`. Nothing else may read
   `doc_id`/`source_url` off a page directly to decide *what the page is*.
+  Code that reads the file itself takes the stored file the attachment
+  shows from `attachment_file(attachment)` / `attachmentFile(attachment)`:
+  its `id`, else the upload a copy's `/api/uploads/<doc_id>.pdf` address
+  serves, else none.
 
 A page is the only container: at most one document, any number of files in
 its body, and optionally a bibliographic record (`meta`). There are no page
@@ -162,7 +166,9 @@ Frontend (all cleared 2026-09-02 except the search panel)
   `POST /pages/{id}/attachment` (`PUT` to replace the page's PDF); both then
   `openBlock()` the page. The paperclip popover lists the attachment
   (show/hide the viewer, download it, replace it with a new version via
-  `PUT /pages/{id}/attachment`, detach via `DELETE /pages/{id}/attachment`).
+  `PUT /pages/{id}/attachment`, find its highlights in it again, detach via
+  `DELETE /pages/{id}/attachment`); a replacement's highlights follow their
+  text ([highlight_relocation.md](highlight_relocation.md)).
 - The home library only renders cards (grid/list); the block tree is only
   ever a page's notes — the old "page rows in the block tree" path is gone.
 
@@ -275,9 +281,10 @@ read-position map as `{page: 0, block}`.)*
   "another page carries this doc_id" with that page's id; automatic title +
   `auto_title` marker; a detached file nothing else uses goes to the orphan
   bookkeeping, kept 30 days). `PUT` replaces the attachment with a new
-  version of the file: the page, its notes and its highlights stay, the
-  highlights where they were on their pages, and the old file goes the way
-  of a detached one.
+  version of the file: the page, its notes and its highlights stay, a
+  background job moves each highlight to where its text is in the new file
+  ([highlight_relocation.md](highlight_relocation.md)), and the old file
+  goes the way of a detached one.
 - Generic file uploads: `POST /uploads` accepts an allowlist beyond PDF
   (md/txt/csv/json/office/zip …) and blocks reference them as
   `[name](/api/uploads/<hash>.<ext>)` chips (the image path already works

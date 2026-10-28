@@ -673,7 +673,12 @@ The scenarios live in `tests/e2e/scenarios/`:
   the chat's coverage pills against a mocked `/api/ai/chat` (a selection's
   page and picture, a PDF that went as text and why), the translate button and the selection popup's translator (against a
   mocked `/api/ai/translate`; the selection names its page and does not wait
-  for the paper's brief).
+  for the paper's brief), and "replacing the PDF moves a highlight to its
+  text": the job's result, a highlight left hollow (on a flipped page and
+  in the notes too), attach mode and move mode ending each other, the move
+  to a selection by hand with no translation of it, and a second move by an
+  area drag clearing the quote
+  ([highlight_relocation.md](highlight_relocation.md)).
 - `translation.mjs`: a two-column page whose paragraph runs over the column
   break: the request carries one text with `{br}`, the formulas and the
   citation marker as tokens, the page and the section; the reply fills both
@@ -898,7 +903,8 @@ The scenarios live in `tests/e2e/scenarios/`:
   the upload endpoint's lab-file / executable rule, a slow upload
   stopped from Background tasks, and the Document popover's "Replace the
   PDF…" swapping a document page's file while its title and highlights
-  stay.
+  stay and "the highlight follows its text" (the run's summary in the
+  status pill, the highlight's new place and quote, a second tab following).
 - `collab.mjs`: two accounts in a shared workspace: presence, live ops, edits
   to different blocks, same-block last-writer-wins, undo after a remote edit,
   rename propagation, edits made offline replaying, remote delete, a
@@ -1001,6 +1007,17 @@ save path, workspaces, auth or rendering of URLs should add a step here; the
   Those paragraphs show the original and the viewer offers to try again.
   Many "expected N, got M" lines mean the model keeps losing paragraphs:
   a better instruction follower serves translation better.
+- **`[relocate]` lines** come from the highlight run of a replaced PDF
+  ([highlight_relocation.md](highlight_relocation.md)). The warning "the
+  job did not start (…)" is a replacement whose run was refused (the
+  account's background tasks full, or the last run for the file still
+  stopping): its answer carried `relocation_error`, and Find highlights in
+  this PDF places the highlights. The info line "the file … is no longer
+  stored" names an old file gone from the uploads, whose highlights were
+  placed by their quotes. A run that failed is a `[jobs]
+  relocate-highlights … failed` line: "changed again" (the page carries
+  another file now) and "was deleted" are expected, the rest is the new
+  file (not stored, unreadable, no text layer).
 - **Two request lines, on purpose.** The console carries uvicorn's access
   log for every request (`INFO: 127.0.0.1:… "GET /api/… HTTP/1.1" 200 OK`)
   except the Background tasks tray's answered `GET /api/jobs`, which comes

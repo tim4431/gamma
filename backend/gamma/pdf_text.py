@@ -722,9 +722,11 @@ def image_part(image) -> tuple[str, str]:
 
 class GlyphPages:
     """A PDF's glyphs page by page, each with its box, for the text under a
-    highlight's quads (``quote_under``). Opens the file with PyMuPDF on the
-    first page asked for and reads each page once; a file it can't open, or
-    a page without a text layer, has no glyphs, so its highlights import
+    highlight's quads (``quote_under``), and for the highlight relocation
+    (gamma/highlight_relocate.py) a page's frame and pictures and the page
+    count. Opens the file with PyMuPDF on the first page asked for and
+    reads each page's glyphs once (``page``); a file it can't open, or a
+    page without a text layer, has no glyphs, so its highlights import
     without a quote. A context manager; close it when done. Each page's
     read takes the lock once, like iter_page_texts.
 
@@ -735,7 +737,7 @@ class GlyphPages:
     "." has a centre as sound as any letter's. After each of MuPDF's lines
     comes a line break with an empty box, which keeps its place in the
     order; a glyph of zero advance (a combining mark) has one too. ``src``
-    is a path str or PDF bytes."""
+    is a path or PDF bytes."""
 
     def __init__(self, src):
         self._src = src
@@ -755,13 +757,42 @@ class GlyphPages:
             with _lock:
                 pdf.close()
 
-    def page(self, page_no: int) -> list:
-        """The glyphs of page ``page_no`` (1-based), in MuPDF's text order."""
-        if page_no not in self._pages:
-            self._pages[page_no] = self._read(page_no)
-        return self._pages[page_no]
+    def page(self, page_no: int, cache: bool = True) -> list:
+        """The glyphs of page ``page_no`` (1-based), in MuPDF's text order,
+        kept for the next call unless ``cache`` is False (a reader that
+        keeps the page in a form of its own, like the highlight
+        relocation's ``PageText``, which reads every page of a book)."""
+        if page_no in self._pages:
+            return self._pages[page_no]
+        glyphs = self._read(page_no, _glyphs, "glyphs") or []
+        if cache:
+            self._pages[page_no] = glyphs
+        return glyphs
 
-    def _read(self, page_no: int) -> list:
+    def page_count(self) -> int:
+        """How many pages the file has; 0 when it can't be opened."""
+        if not self._open():
+            return 0
+        with _lock:
+            return len(self._pdf)
+
+    def frame(self, page_no: int):
+        """Page ``page_no``'s frame: ``(view box, rotation)``, the box in
+        the glyphs' space (the crop box clipped to the media box, as the
+        viewer shows it) and /Rotate — what pdf_export's mappers take to
+        put a glyph's box in the viewer's frame. A US Letter page, unrotated,
+        when the page can't be read."""
+        return self._read(page_no, _frame, "frame") or ((0.0, 0.0, 612.0, 792.0), 0)
+
+    def images(self, page_no: int) -> list:
+        """The pictures page ``page_no`` draws: ``(key, box)`` each, the key
+        the image data's identity (MuPDF's digest with the pixel size: the
+        same picture in another file has the same key) and the box where
+        it is drawn, in the glyphs' space."""
+        return self._read(page_no, _images, "images") or []
+
+    def _open(self) -> bool:
+        """Open the file on first use; False when it can't be."""
         if self._pdf is None and not self._failed:
             with _lock:
                 try:
@@ -771,16 +802,21 @@ class GlyphPages:
                     self._failed = True
             if self._failed:
                 log.warning(f"[pdf-text] PyMuPDF open failed ({reason}); highlights import without quotes")
-        if self._pdf is None:
-            return []
+        return self._pdf is not None
+
+    def _read(self, page_no: int, read, what: str):
+        """``read(page)`` of page ``page_no``; None for a page the file
+        doesn't have or that fails to read."""
+        if not self._open():
+            return None
         try:
             with _lock:
                 if not 1 <= page_no <= len(self._pdf):
-                    return []
-            return _read_page(self._pdf, page_no - 1, _glyphs)
+                    return None
+            return _read_page(self._pdf, page_no - 1, read)
         except Exception as e:
-            log.warning(f"[pdf-text] glyphs of page {page_no} failed: {e}")
-            return []
+            log.warning(f"[pdf-text] {what} of page {page_no} failed: {e}")
+            return None
 
 
 def _glyphs(page) -> list:
@@ -808,26 +844,73 @@ def _glyphs(page) -> list:
     return out
 
 
+def _frame(page):
+    """``GlyphPages.frame``'s read of one page: the rect MuPDF shows (the
+    crop box clipped to the media box, unrotated) taken back to the
+    glyphs' space through the same matrix ``_glyphs`` uses, and the page's
+    /Rotate."""
+    mupdf = _pymupdf()
+    rotation = page.rotation % 360
+    with unrotated(page):
+        box = mupdf.Rect(page.rect) * ~page.transformation_matrix
+    return (box.x0, box.y0, box.x1, box.y1), rotation
+
+
+def _images(page) -> list:
+    """``GlyphPages.images``'s read of one page: each drawn image's identity
+    and box, the box in the glyphs' space like the chars' (the page read
+    ``unrotated``, like ``_glyphs``)."""
+    mupdf = _pymupdf()
+    with unrotated(page):
+        to_user = ~page.transformation_matrix
+        infos = page.get_image_info(hashes=True)
+    out = []
+    for info in infos:
+        digest = info.get("digest")
+        if not digest:
+            continue
+        box = mupdf.Rect(info["bbox"]) * to_user
+        key = (bytes(digest).hex(), int(info.get("width") or 0), int(info.get("height") or 0))
+        out.append((key, (box.x0, box.y0, box.x1, box.y1)))
+    return out
+
+
+def has_box(box) -> bool:
+    """Whether a glyph's box has an area: a line break and a mark of zero
+    advance have none."""
+    return box[2] - box[0] > 0 and box[3] - box[1] > 0
+
+
+def covers(quads, box) -> bool:
+    """Whether one of ``quads`` (``(x1, y1, x2, y2)`` boxes) holds the
+    centre of the glyph ``box``, both in PDF user space: the rule for a
+    glyph under a highlight. Never for a glyph without a box."""
+    if not has_box(box):
+        return False
+    cx, cy = (box[0] + box[2]) / 2, (box[1] + box[3]) / 2
+    return any(x1 <= cx <= x2 and y1 <= cy <= y2 for x1, y1, x2, y2 in quads)
+
+
 def quote_under(glyphs, quads, limit: int = 1000) -> str:
     """The text under a highlight: the glyphs whose centre lies in one of
     ``quads`` (``(x1, y1, x2, y2)`` boxes in PDF user space, bottom-left
-    origin), in page order, on one line. A glyph counts when more than half
-    of it is covered, so a quad's edge never drags in the neighbour it
-    touches, and a highlight that starts mid-line starts there. Whatever
-    the quads skip between two counted glyphs (a line's end and the next
-    line's start, an unhighlighted word, the line breaks between MuPDF's
-    lines) reads as one space. Clipped to ``limit`` characters."""
+    origin; ``covers``), in page order, on one line. A glyph counts when
+    more than half of it is covered, so a quad's edge never drags in the
+    neighbour it touches, and a highlight that starts mid-line starts
+    there. Whatever the quads skip between two counted glyphs (a line's
+    end and the next line's start, an unhighlighted word, the line breaks
+    between MuPDF's lines) reads as one space. Clipped to ``limit``
+    characters."""
     parts, gap = [], False
-    for ch, (x1, y1, x2, y2) in glyphs:
-        if x2 - x1 <= 0 or y2 - y1 <= 0:
+    for ch, box in glyphs:
+        if not has_box(box):
             # No box of its own: a generated separator, or a mark on the glyph before it.
             if ch.isspace():
                 gap = gap or bool(parts)
             elif parts and not gap:
                 parts.append(ch)
             continue
-        cx, cy = (x1 + x2) / 2, (y1 + y2) / 2
-        if any(qx1 <= cx <= qx2 and qy1 <= cy <= qy2 for qx1, qy1, qx2, qy2 in quads):
+        if covers(quads, box):
             if gap:
                 parts.append(" ")
             parts.append(ch)
