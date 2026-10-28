@@ -5,7 +5,7 @@ import PdfViewer, { preloadPdfEngine } from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
 import { requestFields } from "../pdf/translatePlan";
 import { docIdOf } from "../pdf/pdfSource";
-import { pendingInOrder } from "../pdf/highlightReview.js";
+import { pendingInOrder, reviewQueue, reviewStep } from "../pdf/highlightReview.js";
 import { basePixels } from "../pdf/pageRaster";
 import { DEFAULT_HIGHLIGHT, colorName, highlightColor, normalizeColor, pickerColors, swatchCss } from "../shared/model/palette.js";
 import { PaletteContext } from "../shared/ui/paletteContext.js";
@@ -103,6 +103,8 @@ import {
   addHighlightAsBlock,
   blocksToHighlights,
   acceptedPosition,
+  closestPlacement,
+  reviewUndone,
   placedToCheck,
   isHighlightBlock,
   normalizeBlocks,
@@ -7136,10 +7138,21 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setMoveHighlightId(null);
     setAttachModeBlockId(blockId);
   }, []);
+  // A move started from a highlight's review card (its Move…) is
+  // remembered, {id, prior} (prior: the step the card had taken, when it
+  // was resolved already): once the selection has moved the highlight, the
+  // card opens on it again, saying so, with Undo and Next
+  // (pdf/HighlightReview.jsx). Any other start of a move forgets it.
+  const moveFromReviewRef = useRef(null);
   const startHighlightMove = useCallback((blockId) => {
+    moveFromReviewRef.current = null;
     setAttachModeBlockId(null);
     setMoveHighlightId(blockId);
   }, []);
+  const startReviewMove = useCallback((blockId, prior = null) => {
+    startHighlightMove(blockId);
+    moveFromReviewRef.current = { id: blockId, prior };
+  }, [startHighlightMove]);
 
   // Escape ends whichever mode is on.
   useEffect(() => {
@@ -7160,10 +7173,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // a tree edit like any other (ops, undo). Whatever marked it lost or
   // placed by estimate goes with the old position. An area drag has no
   // text, so the highlight becomes an area with no quote, as one made the
-  // usual way (null drops the key).
+  // usual way (null drops the key). A move started from the review card
+  // opens it again on the highlight, resolved ("Moved"), with what the
+  // move changed for its Undo (reviewStep), and the card's step before it
+  // when it had one, which that Undo goes back to.
   function moveHighlightTo(blockId, position, content) {
     setMoveHighlightId(null);
-    if (readOnly || !blockId || !position || !findBlock(blocks, blockId)) return;
+    const from = moveFromReviewRef.current;
+    const fromReview = from?.id === blockId;
+    moveFromReviewRef.current = null;
+    const block = blockId ? findBlock(blocks, blockId) : null;
+    if (readOnly || !position || !block) return;
     setBlocks((prev) => updateBlockTree(prev, blockId, (b) => ({
       ...b,
       properties: applyPatch(b.properties, {
@@ -7173,6 +7193,36 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     })));
     setStatus(t("Highlight moved."));
     triggerFlash(blockId);
+    const step = fromReview ? reviewStep("moved", {
+      position: block.properties?.pdf_position, quote: block.properties?.quote || "", prior: from.prior,
+    }, position) : null;
+    if (step) pdfReviewRef.current?.(blockId, { done: step, scroll: false });
+  }
+
+  // Use closest match on a lost highlight's review card: it takes the place
+  // the run found for its passage below the account's threshold, and that
+  // place's text (closestPlacement: lost, closest, doc_id, approx, match
+  // and prev go), drawn solid. A tree edit like any other (ops, undo).
+  function placeClosestMatch(blockId) {
+    if (readOnly || !closestPlacement(findBlock(blocks, blockId)?.properties?.pdf_position)) return;
+    setBlocks((prev) => updateBlockTree(prev, blockId, (b) => {
+      const placed = closestPlacement(b.properties?.pdf_position);
+      return placed ? { ...b, properties: applyPatch(b.properties, { pdf_position: placed.position, quote: placed.quote || null }) } : b;
+    }));
+    triggerFlash(blockId);
+  }
+
+  // The review card's Undo: the step it took (Accept, Use closest match, a
+  // move started from it) taken back, one more tree edit, so the app's own
+  // undo takes the Undo back in turn. Nothing when the highlight changed
+  // since (reviewUndone).
+  function undoReviewStep(blockId, step) {
+    const block = findBlock(blocks, blockId);
+    if (readOnly || !block || reviewUndone(block.properties, step) === block.properties) return;
+    setBlocks((prev) => updateBlockTree(prev, blockId, (b) => {
+      const props = reviewUndone(b.properties, step);
+      return props === b.properties ? b : { ...b, properties: props };
+    }));
   }
 
   // Accept on one pending after its PDF was replaced (matched roughly, or an
@@ -8446,13 +8496,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     prevHighlightsRef.current = { json, value: next };
     return next;
   }, [blocks, treeBlocks, comments.countByBlock]);
-  // The page's highlights pending after its PDF was replaced (drawn dashed
-  // until accepted or moved), in document order: the Document menu's Review
-  // and Accept all (docs/dev/highlight_relocation.md).
+  // The page's highlights to review after its PDF was replaced, in document
+  // order: the pending ones (drawn dashed until accepted or moved), the
+  // Document menu's Accept all, and with the lost ones (hollow) the review
+  // queue its Review opens the first of (docs/dev/highlight_relocation.md).
   const pendingHighlights = useMemo(() => pendingInOrder(highlights), [highlights]);
-  const pdfReviewRef = useRef(null); // set by PdfViewer: scrolls to a pending highlight and opens its card
+  const reviewHighlights = useMemo(() => reviewQueue(highlights), [highlights]);
+  // set by PdfViewer: scrolls to a highlight to review and opens its card
+  // (with a step, `done`, the card says what it did: after a move from it)
+  const pdfReviewRef = useRef(null);
   function reviewPending() {
-    const first = pendingHighlights[0];
+    const first = reviewHighlights[0];
     setOpenPopover(null);
     if (!first) return;
     const wasHidden = pdfHidden;
@@ -9199,19 +9253,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             {t("Download the PDF")}
                           </MenuItem>
                         ) : null}
-                        {/* the highlights drawn dashed after a replacement, to check: the
-                            first one's review card, or all of them accepted as one edit */}
-                        {pendingHighlights.length ? (
+                        {/* the highlights drawn dashed or hollow after a replacement, to
+                            review: the first one's card; the dashed ones accepted as one edit */}
+                        {reviewHighlights.length ? (
                           <MenuItem icon={TextSearchIcon} onClick={reviewPending}
-                            title={t("Show the first dashed highlight with what it matched and where it was before")}>
-                            {tn("Review {n} rough match", "Review {n} rough matches", pendingHighlights.length)}
+                            title={t("Show the first dashed or hollow highlight with what it matched and where it was before")}>
+                            {tn("Review {n} highlight", "Review {n} highlights", reviewHighlights.length)}
                           </MenuItem>
                         ) : null}
                         {pendingHighlights.length && !readOnly ? (
                           <MenuItem icon={CheckIcon}
                             onClick={() => { setOpenPopover(null); acceptHighlightPlaces(pendingHighlights.map((h) => h.id)); }}
                             title={t("Draw every dashed highlight solid where it is now")}>
-                            {tn("Accept {n} rough match", "Accept all {n}", pendingHighlights.length)}
+                            {tn("Accept {n} rough match", "Accept all {n} rough matches", pendingHighlights.length)}
                           </MenuItem>
                         ) : null}
                         {!readOnly ? (
@@ -11813,9 +11867,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               // the selection popup's Comment: a highlight with its thread popover open on it
               selComment={commentsOn && canComment}
               moveMode={!!moveHighlightId}
-              // a pending highlight's review card (pdf/HighlightReview.jsx): its actions are an editor's
+              // a dashed or hollow highlight's review card (pdf/HighlightReview.jsx): its actions are an
+              // editor's; a lost one's picture is of the file it was measured on, when not this one
               onAcceptHighlight={readOnly ? undefined : acceptHighlightPlace}
-              onMoveHighlight={readOnly ? undefined : startHighlightMove}
+              onPlaceHighlight={readOnly ? undefined : placeClosestMatch}
+              onMoveHighlight={readOnly ? undefined : startReviewMove}
+              onUndoReview={readOnly ? undefined : undoReviewStep}
+              fileId={attachmentFile(pageAttach)}
               reviewRef={pdfReviewRef}
               onSelectionFinished={readOnly ? undefined : (position, content, hideTip, extras) => {
                 if (moveHighlightIdRef.current) {

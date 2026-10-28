@@ -101,6 +101,40 @@ def test_from_scaled_keeps_where_a_pending_highlight_was_before_only_in_its_own_
         assert from_scaled({**rough, "prev": bad}) == bare, bad
 
 
+def test_from_scaled_keeps_a_lost_highlight_s_closest_place_only_in_its_own_form():
+    """A lost highlight's ``closest`` (the best place the run found under the
+    threshold, for the review card): a place in the page's file in the
+    stored shape, how alike it read and its text there; kept as it is, its
+    quote clipped and its rects bare, anything else dropped."""
+    closest = {**position(2, 612, 792, [(72, 300, 400, 314), (72, 314, 200, 328)]), "match": 0.71,
+               "quote": "the place most alike"}
+    lost = {**position(1, 612, 792, [(72, 90, 300, 104)]), "doc_id": "a" * 64, "lost": True, "closest": closest}
+    assert from_scaled(lost) == lost
+    assert from_scaled({**lost, "closest": {**closest, "match": 0, "quote": ""}})["closest"] == {
+        **closest, "match": 0, "quote": ""}
+    assert from_scaled({**lost, "closest": {**closest, "quote": "x" * 5000}})["closest"]["quote"] == "x" * PREV_MAX_QUOTE
+    many = {**closest, **position(2, 612, 792, [(1, 1, 2, 2)] * PREV_MAX_RECTS)}
+    assert from_scaled({**lost, "closest": many})["closest"] == many
+    # only its own keys, a rect's included
+    extra = {**closest, "lost": True, "doc_id": "b" * 64, "rects": [{**r, "width": 612} for r in closest["rects"]],
+             "boundingRect": {**closest["boundingRect"], "pageNumber": 2}}
+    assert from_scaled({**lost, "closest": extra})["closest"] == closest
+    bare = {k: v for k, v in lost.items() if k != "closest"}
+    without = lambda key: {k: v for k, v in closest.items() if k != key}  # noqa: E731
+    for bad in ("closest", [closest], None, {**closest, "pageNumber": 0}, {**closest, "pageNumber": "2"},
+                {**closest, "pageNumber": True}, without("pageNumber"), {**closest, "width": 0}, {**closest, "height": -1},
+                {**closest, "width": "612"}, without("height"), {**closest, "boundingRect": None},
+                {**closest, "boundingRect": {"x1": 1, "y1": 1, "x2": 2}}, without("boundingRect"), {**closest, "rects": []},
+                {**closest, "rects": "72,300,400,314"}, {**closest, "rects": [[72, 300, 400, 314]]},
+                {**closest, "rects": [{"x1": 1, "y1": 1, "x2": "2", "y2": 2}]},
+                {**closest, "rects": [{"x1": 1, "y1": 1, "x2": True, "y2": 2}]},
+                {**closest, "rects": [{"x1": 1, "y1": 1, "x2": 2, "y2": 2}] * (PREV_MAX_RECTS + 1)},
+                without("rects"), {**closest, "match": 1.5}, {**closest, "match": -0.1}, {**closest, "match": "0.7"},
+                {**closest, "match": True}, without("match"), {**closest, "quote": None}, {**closest, "quote": 7},
+                without("quote")):
+        assert from_scaled({**lost, "closest": bad}) == bare, bad
+
+
 def test_a_prev_is_its_position_measured_as_fractions_of_its_page():
     pos = position(2, 612, 792, [(61.2, 79.2, 306, 158.4), (-6, 700, 650, 800)])
     assert previous_place(pos, "v1", "a quote") == {

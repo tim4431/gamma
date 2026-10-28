@@ -1195,10 +1195,14 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
   // the new version changed a little is matched roughly and drawn dashed,
   // pending, until Accept (its review card, the Document menu's Accept all)
   // draws it solid; one whose text is gone is drawn hollow where it was, and
-  // a selection moves it by hand. Translate on select is on throughout: the
-  // selection that places a moved highlight is not translated. At last, an
-  // account that applies only exact matches (relocateMinMatch 100) gets a
-  // renumbered citation back lost.
+  // a selection moves it by hand. The review card stays after a step, saying
+  // what it did, with Undo and Next; Next walks the dashed and the hollow
+  // ones in document order, and a hollow one's card shows where it was. A
+  // move started from the card opens it again, moved. Translate on select is
+  // on throughout: the selection that places a moved highlight is not
+  // translated. At last, an account that applies only exact matches
+  // (relocateMinMatch 100) gets a renumbered citation back lost, with its
+  // closest match kept, which its card shows and places.
   await step("pdf: replacing the PDF moves a highlight to its text, dashes one matched roughly until Accept on its review card, hollows one whose text is gone, and a selection moves that one", async () => {
     const lineA = "Quantum dots confine single electrons";
     const lineB = "This sentence is only in the first version";
@@ -1362,16 +1366,20 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       // hovering the rough match opens its review card: how alike, a picture of where it was in the first
       // file with its old rectangles over it, the words that changed, and Accept, Move…, Next
       const cardOf = (id) => p.locator(`.hlReviewCard[data-review-id="${id}"]`);
+      const headOf = (c) => c.locator(".hlReviewHead").textContent();
+      const actionOf = (c, label) => c.locator(".hlReviewActions button", { hasText: label });
+      const pictureLoaded = (c) => until(() => c.locator(".hlReviewShot img").evaluate((img) => img.complete && img.naturalWidth > 0,
+        null, { timeout: 1000 }), { what: "the before picture loaded", timeout: 15000 });
       await p.hover(roughSel);
       const card = cardOf(roughId);
       await card.waitFor({ timeout: 5000 });
-      assertEq(await card.locator(".hlReviewHead").textContent(), `Matched roughly: ${percent}%`, "the card's header");
-      await until(() => card.locator(".hlReviewShot img").evaluate((img) => img.complete && img.naturalWidth > 0, null, { timeout: 1000 }),
-        { what: "the before picture loaded", timeout: 15000 });
+      assertEq(await headOf(card), `Matched roughly: ${percent}%`, "the card's header");
+      await pictureLoaded(card);
       assert((await card.locator(".hlReviewShot.loaded .hlReviewRect").count()) >= 1, "its old rectangles are drawn over the picture");
       assert((await card.locator(".hlReviewDiff del").allTextContents()).join(" ").includes("[27]"), "the old citation struck through");
       assert((await card.locator(".hlReviewDiff ins").allTextContents()).join(" ").includes("[25]"), "the new citation marked");
-      assertEq(await card.locator(".hlReviewCount").textContent(), "1 of 2", "the first of two pending on the page");
+      // the queue is the page's dashed and hollow highlights in document order: the hollow one on page 1 first
+      assertEq(await card.locator(".hlReviewCount").textContent(), "2 of 3", "the second of three to review on the page");
       // the pointer crosses into the card and it stays; leaving both closes it
       await card.hover();
       await sleep(400);
@@ -1381,31 +1389,106 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       // Next: the second pending highlight's card, scrolled to
       await p.hover(roughSel);
       await card.waitFor({ timeout: 5000 });
-      await card.locator(".hlReviewActions button", { hasText: "Next" }).click();
+      await actionOf(card, "Next").click();
       const card2 = cardOf(rough2Id);
       await card2.waitFor({ timeout: 5000 });
-      assertEq(await card2.locator(".hlReviewCount").textContent(), "2 of 2", "Next moves to the second");
+      assertEq(await card2.locator(".hlReviewCount").textContent(), "3 of 3", "Next moves to the third");
       assert((await card2.locator(".hlReviewDiff ins").allTextContents()).join(" ").includes("[33]"), "its own comparison");
-      // Accept on its card: drawn solid where it is, the stored position without approx, match, prev or doc_id
+      // Accept on its card: drawn solid where it is, the stored position without approx, match, prev or doc_id;
+      // the card stays on it, saying so, with Undo, Move… and Next as its primary button
       const rough2Pos = (await stored(rough2Id)).pdf_position;
       const rough2Sel = `[data-page="2"] div[data-hl-id="${rough2Id}"]`;
-      await card2.locator(".hlReviewActions button", { hasText: "Accept" }).click();
-      await card2.waitFor({ state: "detached", timeout: 5000 });
-      await until(async () => (await p.$eval(rough2Sel, (el) => getComputedStyle(el).outlineStyle)) === "none",
-        { what: "the accepted highlight drawn solid" });
-      const accepted = await until(async () => {
+      const outlineOf = (sel) => p.$eval(sel, (el) => getComputedStyle(el).outlineStyle);
+      const acceptanceSaved = () => until(async () => {
         const pos = (await stored(rough2Id)).pdf_position;
         return !["approx", "match", "prev", "doc_id"].some((k) => k in pos) ? pos : null;
       }, { what: "the acceptance saved" });
+      await actionOf(card2, "Accept").click();
+      await until(async () => (await headOf(card2)) === "Accepted", { what: "the card saying it accepted" });
+      assertEq(await actionOf(card2, "Accept").count(), 0, "nothing more to accept");
+      assert(await actionOf(card2, "Undo").isVisible(), "the accepted card offers Undo");
+      assert(await actionOf(card2, "Move").isVisible(), "and Move…");
+      assert(await card2.locator(".hlReviewActions button.primary", { hasText: "Next" }).isVisible(), "Next is its primary button");
+      await until(async () => (await outlineOf(rough2Sel)) === "none", { what: "the accepted highlight drawn solid" });
+      let accepted = await acceptanceSaved();
       assertEq(JSON.stringify(accepted.rects), JSON.stringify(rough2Pos.rects), "it stays where it was matched");
       assertEq(await p.locator(".blockRow .highlightDot.approx").count(), 1, "its row's dot is solid");
-
-      // the Document menu: Review opens the first pending one's card, Accept all accepts the rest as one edit
-      await p.click("button[aria-label='Document']");
-      await p.locator(".attachPopover .ctxMenuItem", { hasText: "Review 1 rough match" }).click();
+      // Undo: dashed and pending again as it was (one more tree edit, saved), the card with it; Accept again resolves it
+      await actionOf(card2, "Undo").click();
+      await until(async () => (await headOf(card2)) === `Matched roughly: ${Math.round(rough2Pos.match * 100)}%`,
+        { what: "the card pending again" });
+      await until(async () => (await outlineOf(rough2Sel)) === "dashed", { what: "the highlight dashed again" });
+      await until(async () => {
+        const pos = (await stored(rough2Id)).pdf_position;
+        return pos.approx === true && pos.match === rough2Pos.match && pos.prev?.doc_id === rough2Pos.prev.doc_id
+          && JSON.stringify(pos.rects) === JSON.stringify(rough2Pos.rects);
+      }, { what: "the Undo saved" });
+      assertEq(await card2.locator(".hlReviewCount").textContent(), "3 of 3", "counted again");
+      await actionOf(card2, "Accept").click();
+      await until(async () => (await headOf(card2)) === "Accepted", { what: "accepted again" });
+      accepted = await acceptanceSaved();
+      // hovering another dashed highlight leaves the accepted card where it is, with its Undo and its place in
+      // the walk
+      await p.hover(roughSel);
+      await sleep(500);
+      await p.mouse.move(2, 2);
+      await sleep(400);
+      assertEq(await cardOf(roughId).count(), 0, "no card opens in its place");
+      assertEq(await headOf(card2), "Accepted", "the accepted card stays");
+      // Move… from the accepted card and a selection: "Moved"; the move's Undo puts the card back on the
+      // acceptance, with that one's Undo
+      await actionOf(card2, "Move").click();
+      await p.waitForSelector(`.attachModeBanner[data-move-highlight="${rough2Id}"]`, { timeout: 5000 });
+      await selectPdfText(p, 2, "replaced the old one");
+      await p.waitForSelector(".plainTip .tipMoveBtn", { timeout: 5000 });
+      await p.locator(".plainTip .tipMoveBtn").click();
+      await until(async () => (await headOf(card2).catch(() => "")) === "Moved", { what: "the card saying it moved" });
+      await until(async () => (await stored(rough2Id)).quote === "replaced the old one", { what: "the move saved" });
+      await actionOf(card2, "Undo").click();
+      await until(async () => (await headOf(card2).catch(() => "")) === "Accepted", { what: "the card back on the acceptance" });
+      assert(await actionOf(card2, "Undo").isVisible(), "with the acceptance's Undo");
+      await until(async () => {
+        const { pdf_position: pos, quote } = await stored(rough2Id);
+        return pos.pageNumber === accepted.pageNumber && JSON.stringify(pos.rects) === JSON.stringify(accepted.rects)
+          && !["approx", "match", "prev", "doc_id"].some((k) => k in pos) && quote.includes("Ramsey [33]");
+      }, { what: "the move taken back, saved" });
+      // Next from it: the next to review after its place, the first again after the last: the hollow one on page 1
+      await actionOf(card2, "Next").click();
+      const lostCard = cardOf(lostId);
+      await lostCard.waitFor({ timeout: 5000 });
+      assertEq(await headOf(lostCard), "Not found in this version", "a hollow highlight's card");
+      assertEq(await lostCard.locator(".hlReviewCount").textContent(), "1 of 2", "the first of the two left");
+      assertEq(await actionOf(lostCard, "Accept").count(), 0, "nothing to accept on a hollow one");
+      assert(await actionOf(lostCard, "Move").isVisible(), "Move… is offered");
+      // where it was: a picture of the first file, which its rectangles were measured on, with them drawn over it
+      const lostPos = (await stored(lostId)).pdf_position;
+      assert(lostPos.lost === true && lostPos.doc_id === up1.doc_id, `the lost one names the file it was measured on: ${JSON.stringify(lostPos)}`);
+      await pictureLoaded(lostCard);
+      assert((await lostCard.locator(".hlReviewShot img").getAttribute("src")).includes(`/ai/selection-crop/${up1.doc_id}?`),
+        "the picture is of the first file");
+      assert((await lostCard.locator(".hlReviewShot.loaded .hlReviewRect").count()) >= 1, "its rectangles are drawn over it");
+      // Next goes on to the rough one; Escape closes it
+      await actionOf(lostCard, "Next").click();
       await card.waitFor({ timeout: 5000 });
+      assertEq(await card.locator(".hlReviewCount").textContent(), "2 of 2", "the second of the two left");
       await p.keyboard.press("Escape");
       await card.waitFor({ state: "detached", timeout: 5000 });
+      // hovering the hollow highlight opens its card too, and leaving closes it
+      await p.evaluate(() => document.querySelector('[data-page="1"]')?.scrollIntoView({ block: "start" }));
+      await p.hover(lostSel);
+      await lostCard.waitFor({ timeout: 5000 });
+      assertEq(await headOf(lostCard), "Not found in this version", "the hovered hollow highlight's card");
+      await pictureLoaded(lostCard);
+      await p.mouse.move(2, 2);
+      await lostCard.waitFor({ state: "detached", timeout: 5000 });
+
+      // the Document menu: Review opens the first one to review (the hollow one), Accept all accepts the dashed rest
+      // as one edit
+      await p.click("button[aria-label='Document']");
+      await p.locator(".attachPopover .ctxMenuItem", { hasText: "Review 2 highlights" }).click();
+      await lostCard.waitFor({ timeout: 5000 });
+      await p.keyboard.press("Escape");
+      await lostCard.waitFor({ state: "detached", timeout: 5000 });
       await p.click("button[aria-label='Document']");
       await p.locator(".attachPopover .ctxMenuItem", { hasText: "Accept 1 rough match" }).click();
       await until(async () => (await roughLook()).outline === "none", { what: "the rest drawn solid" });
@@ -1417,8 +1500,42 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       assertEq(JSON.stringify(confirmed.rects), JSON.stringify(roughPos.rects), "it stays where it was matched");
       await p.click("button[aria-label='Document']");
       await p.locator(".attachPopover .ctxMenuItem", { hasText: "Find highlights in this PDF" }).waitFor();
-      assertEq(await p.locator(".attachPopover .ctxMenuItem", { hasText: "rough match" }).count(), 0, "nothing is left to review");
+      assertEq(await p.locator(".attachPopover .ctxMenuItem", { hasText: "rough match" }).count(), 0, "no rough match is left to accept");
+      assertEq(await p.locator(".attachPopover .ctxMenuItem", { hasText: "Review 1 highlight" }).count(), 1, "the hollow one is left to review");
       await p.keyboard.press("Escape");
+
+      // Move… on the hollow one's card: the card makes way for the selection, then opens again on the moved
+      // highlight, saying so; nothing is left to review, so Close; Undo puts it back, hollow where it was
+      await p.evaluate(() => document.querySelector('[data-page="1"]')?.scrollIntoView({ block: "start" }));
+      await p.hover(lostSel);
+      await lostCard.waitFor({ timeout: 5000 });
+      await actionOf(lostCard, "Move").click();
+      await p.waitForSelector(`.attachModeBanner[data-move-highlight="${lostId}"]`, { timeout: 5000 });
+      assertEq(await lostCard.count(), 0, "the card makes way for the selection");
+      await until(async () => {
+        await p.evaluate(() => document.querySelector('[data-page="2"]')?.scrollIntoView({ block: "start" }));
+        return (await p.$('[data-page="2"] .textLayer span')) != null;
+      }, { what: "page 2 rendered", timeout: 15000 });
+      await selectPdfText(p, 2, "new sentence replaced");
+      await p.waitForSelector(".plainTip .tipMoveBtn", { timeout: 5000 });
+      await p.locator(".plainTip .tipMoveBtn").click();
+      await lostCard.waitFor({ timeout: 5000 });
+      await until(async () => (await headOf(lostCard)) === "Moved", { what: "the card saying it moved" });
+      assertEq(await lostCard.locator(".hlReviewDone").textContent(), "Every highlight on this page is reviewed.", "nothing left");
+      assert(await lostCard.locator(".hlReviewActions button.primary", { hasText: "Close" }).isVisible(), "Close in Next's place");
+      await until(async () => {
+        const pos = (await stored(lostId)).pdf_position;
+        return pos.pageNumber === 2 && !pos.lost;
+      }, { what: "the move from the card saved" });
+      await actionOf(lostCard, "Undo").click();
+      await until(async () => (await headOf(lostCard)) === "Not found in this version", { what: "the card on the hollow one again" });
+      await until(async () => {
+        const pos = (await stored(lostId)).pdf_position;
+        return pos.lost === true && pos.pageNumber === 1 && pos.doc_id === up1.doc_id;
+      }, { what: "the move taken back, saved" });
+      await p.waitForSelector(lostSel, { timeout: 5000 });
+      await p.keyboard.press("Escape");
+      await lostCard.waitFor({ state: "detached", timeout: 5000 });
 
       // move it by hand from its row's button: a selection on page 2 is its place
       const lostRow = p.locator(".blockRow", { has: p.locator(".highlightDot.lost") });
@@ -1495,12 +1612,131 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       assertEq(job3.result?.lost, 1, `one not found: ${JSON.stringify(job3.result)}`);
       const strict = (await stored(roughId)).pdf_position;
       assert(strict.lost === true && !("prev" in strict), `the renumbered one is lost, with no prev: ${JSON.stringify(strict)}`);
-      await p.waitForSelector(`div[data-hl-id="${roughId}"].pdfHlLost`, { timeout: 15000 });
+      // its best place read too unlike it for the account's 100%, and alike enough to keep as its closest match:
+      // that place in the third version, in the stored shape, how alike, and its text there
+      const near = strict.closest;
+      assert(near && near.pageNumber === 2 && near.width > 0 && near.height > 0 && near.rects?.length > 0
+        && near.match >= 0.5 && near.match < 1 && near.quote.includes("[26]"), `its closest match: ${JSON.stringify(near)}`);
+      assertEq(strict.doc_id, up2.doc_id, "it names the second version, which its rectangles were measured on");
+      const strictSel = `div[data-hl-id="${roughId}"].pdfHlLost`;
+      await p.waitForSelector(strictSel, { timeout: 15000 });
+      // its card: not found, where it was (a picture of the second version), the closest match's percentage and
+      // the stored quote against its text
+      await p.hover(strictSel);
+      const card3 = cardOf(roughId);
+      await card3.waitFor({ timeout: 5000 });
+      assertEq(await headOf(card3), "Not found in this version", "the lost one's card");
+      assertEq(await card3.locator(".hlReviewClosestHead .hlReviewLabel").textContent(), `Closest match: ${Math.round(near.match * 100)}%`,
+        "how alike its closest match reads");
+      assert((await card3.locator(".hlReviewDiff del").allTextContents()).join(" ").includes("[25]"), "its stored citation struck through");
+      assert((await card3.locator(".hlReviewDiff ins").allTextContents()).join(" ").includes("[26]"), "the candidate's marked");
+      await pictureLoaded(card3);
+      assert((await card3.locator(".hlReviewShot img").getAttribute("src")).includes(`/ai/selection-crop/${up2.doc_id}?`),
+        "the picture is of the second version");
+      // Show outlines the closest match on its page while the card is open
+      await card3.locator(".hlReviewClosestHead button", { hasText: "Show" }).click();
+      await p.waitForSelector(`[data-page="2"] .pdfHlGhost[data-review-ghost="${roughId}"]`, { timeout: 5000 });
+      assertEq(await p.locator(".pdfHlGhost").count(), near.rects.length, "one outline per rectangle");
+      // Use closest match: solid on the candidate's place with its text, as one tree edit; the card says so
+      await actionOf(card3, "Use closest match").click();
+      await until(async () => (await headOf(card3)) === "Placed", { what: "the card saying it placed it" });
+      assert(await actionOf(card3, "Undo").isVisible(), "the placed card offers Undo");
+      assert((await card3.locator(".hlReviewDone").count()) === 1 || (await card3.locator(".hlReviewActions button.primary", { hasText: "Next" }).count()) === 1,
+        "Next, or the line that nothing is left");
+      await until(async () => !(await p.$(strictSel)) && (await p.$(`[data-page="2"] div[data-hl-id="${roughId}"]`)) != null,
+        { what: "the highlight solid on page 2" });
+      assertEq(await p.locator(".pdfHlGhost").count(), 0, "the outline goes once it is placed");
+      const placed = await until(async () => {
+        const b = await account.api(`/api/blocks/${roughId}`);
+        const pos = b.properties.pdf_position;
+        return !["lost", "closest", "doc_id", "approx", "match", "prev"].some((k) => k in pos) ? b : null;
+      }, { what: "Use closest match saved" });
+      assertEq(JSON.stringify(placed.properties.pdf_position.rects), JSON.stringify(near.rects), "on the candidate's rectangles");
+      assertEq(placed.properties.quote, near.quote, "with the candidate's text");
+      await p.keyboard.press("Escape");
+      await card3.waitFor({ state: "detached", timeout: 5000 });
       assertNoProblems(p);
       await p.close();
     } finally {
       await c.close();
       await account.api("/api/prefs/profile", { method: "PUT", body: { value: { ...(profile || {}), selTranslateAuto: false } } });
+      await account.api(`/api/blocks/${doc.id}`, { method: "DELETE" });
+    }
+  });
+
+  // Review cards with nothing drawn to anchor to yet, or ever: Show on a closest match pages away, outlined
+  // only once its page renders after the scroll, keeps the card in sight under the outline; a highlight lost
+  // from a page the new version dropped, which no page draws, is reached by Next and the Document menu, its
+  // card standing in the viewer, saying so, and staying until it is closed.
+  await step("pdf: a hollow highlight's card follows Show to a far page, and one from a page the new version dropped is reached by Next", async () => {
+    const oldPages = Array.from({ length: 10 }, (_, i) => [`Page ${i + 1} of the paper`, `Some more text on page ${i + 1}`]);
+    const up1 = await account.upload("/api/uploads", makePdf(oldPages), "old.pdf", "application/pdf");
+    const newPages = oldPages.slice(0, 8).map((lines, i) => (i === 6 ? [...lines, "Spin echoes were measured by Hahn [26]"] : lines));
+    const up2 = await account.upload("/api/uploads", makePdf(newPages), "new.pdf", "application/pdf");
+    const doc = await account.api(`/api/blocks/by-doc/${up2.doc_id}`, { method: "POST", body: { default_title: "Far review" } });
+    const box = (y) => ({ x1: 72, y1: y, x2: 400, y2: y + 22 });
+    const lostAt = (pageNumber, y, extra = {}) => ({ pageNumber, width: 612, height: 792, boundingRect: box(y), rects: [box(y)],
+      lost: true, doc_id: up1.doc_id, ...extra });
+    const make = (quote, pdf_position) => account.api("/api/blocks", { method: "POST", body: { parent_id: doc.id, content: "",
+      properties: { quote, color: "rgba(255, 226, 143, 0.4)", pdf_position } } });
+    const near = await make("Spin echoes were recorded by Hahn [27]", lostAt(1, 84, { closest: { pageNumber: 7, width: 612, height: 792,
+      boundingRect: box(118), rects: [box(118)], match: 0.7, quote: "Spin echoes were measured by Hahn [26]" } }));
+    const dropped = await make("Some more text on page 10", lostAt(10, 84));
+    const c = await account.context(browser);
+    try {
+      const p = await openPage(c, `${server.base}/?page=${doc.id}&ws=${account.ws}`);
+      await waitForPdf(p, 1);
+      const nearSel = `[data-page="1"] div[data-hl-id="${near.id}"].pdfHlLost`;
+      await p.waitForSelector(nearSel, { timeout: 15000 });
+      const cardOf = (id) => p.locator(`.hlReviewCard[data-review-id="${id}"]`);
+      const inSight = (card) => card.evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        return el.style.visibility !== "hidden" && r.bottom > 0 && r.top < window.innerHeight;
+      }).catch(() => false);
+      await p.hover(nearSel);
+      const nearCard = cardOf(near.id);
+      await nearCard.waitFor({ timeout: 5000 });
+      assertEq(await nearCard.locator(".hlReviewClosestHead .hlReviewLabel").textContent(), "Closest match: 70%", "its closest match");
+      // Show: page 7 renders after the scroll, its outline then drawn, and the card follows it there without a scroll
+      await nearCard.locator(".hlReviewClosestHead button", { hasText: "Show" }).click();
+      const ghost = `[data-page="7"] .pdfHlGhost[data-review-ghost="${near.id}"]`;
+      await p.waitForSelector(ghost, { timeout: 5000 });
+      await until(() => inSight(nearCard), { what: "the card in sight under the outline", timeout: 2000 });
+      const [ghostBox, cardBox] = [await p.locator(ghost).boundingBox(), await nearCard.boundingBox()];
+      assert(Math.abs(cardBox.y - (ghostBox.y + ghostBox.height)) < 40 || Math.abs(cardBox.y + cardBox.height - ghostBox.y) < 40,
+        `the card beside the outline: ${JSON.stringify({ ghostBox, cardBox })}`);
+      assert(await nearCard.locator(".hlReviewActions button", { hasText: "Use closest match" }).isVisible(), "Use closest match on it");
+      // Next: the one from page 10, which this version does not have, its card in the viewer, saying so
+      await nearCard.locator(".hlReviewActions button", { hasText: "Next" }).click();
+      const droppedCard = cardOf(dropped.id);
+      await droppedCard.waitFor({ timeout: 5000 });
+      await until(() => inSight(droppedCard), { what: "the dropped page's highlight's card in sight", timeout: 2000 });
+      assertEq(await droppedCard.locator(".hlReviewHead").textContent(), "Not found in this version", "its header");
+      assertEq(await droppedCard.locator(".hlReviewOffPage").textContent(), "This version of the PDF has no page 10.", "what it says");
+      assertEq(await droppedCard.locator(".hlReviewCount").textContent(), "2 of 2", "the second of two");
+      assert(await droppedCard.locator(".hlReviewActions button", { hasText: "Move" }).isVisible(), "Move… is offered");
+      // where it was: a picture of page 10 of the file it was measured on
+      await until(() => droppedCard.locator(".hlReviewShot img").evaluate((img) => img.complete && img.naturalWidth > 0, null, { timeout: 1000 }),
+        { what: "its before picture", timeout: 15000 });
+      assert((await droppedCard.locator(".hlReviewShot img").getAttribute("src")).includes(`/ai/selection-crop/${up1.doc_id}?page=10&`),
+        "of page 10 of the first file");
+      // it waits for nothing to be drawn: still open past the wait for a page to render
+      await sleep(4500);
+      assert(await inSight(droppedCard), "the card stays");
+      // and Next goes round to the first again
+      await droppedCard.locator(".hlReviewActions button", { hasText: "Next" }).click();
+      await nearCard.waitFor({ timeout: 5000 });
+      assertEq(await nearCard.locator(".hlReviewCount").textContent(), "1 of 2", "the first again");
+      await p.keyboard.press("Escape");
+      await nearCard.waitFor({ state: "detached", timeout: 5000 });
+      // the Document menu counts both
+      await p.click("button[aria-label='Document']");
+      await p.locator(".attachPopover .ctxMenuItem", { hasText: "Review 2 highlights" }).waitFor({ timeout: 5000 });
+      await p.keyboard.press("Escape");
+      assertNoProblems(p);
+      await p.close();
+    } finally {
+      await c.close();
       await account.api(`/api/blocks/${doc.id}`, { method: "DELETE" });
     }
   });

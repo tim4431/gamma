@@ -15,7 +15,7 @@ from conftest import guest_name, workspace_of
 
 from gamma import highlight_relocate as hr
 from gamma import jobs
-from gamma.highlights import previous_place
+from gamma.highlights import from_scaled, previous_place
 from gamma.pdf_text import GlyphPages, has_box
 
 W, H = 612, 792
@@ -295,6 +295,103 @@ def test_a_highlight_across_two_columns_is_found_piece_by_piece_while_the_captio
                                    "quote": "new method for entanglement of two atoms"}
 
 
+TRAP_COL = ["Optical tweezers hold single atoms at", "a spacing of a few micrometres here.",
+            "The trap light is detuned far to the", "red of the D2 line, which keeps the",
+            "scattering rate low while the atoms", "are held for several seconds. Similar",
+            "schemes [3] were demonstrated with ions", "and with superconducting circuits in",
+            "several other groups, and the method", "has since become a standard tool."]
+TRAP_SENTENCE = TRAP_COL[2:5] + ["are held for several seconds."]
+NEXT_COL = ["Imaging uses an objective that also", "focuses the tweezers, so the two are",
+            "aligned by construction. We calibrate", "the trap depth from the light shift of",
+            "the cooling transition and find it", "uniform across the array to within",
+            "three percent of its mean depth."]
+
+
+def _two_columns(first=TRAP_COL):
+    """``first`` at x 72 from y 100, then ``NEXT_COL`` at x 330 from y 105,
+    each line a little below the first column's of the same row."""
+    return [(72, 100 + 14 * i, t) for i, t in enumerate(first)] + [(330, 105 + 14 * i, t) for i, t in enumerate(NEXT_COL)]
+
+
+def test_rects_that_read_a_line_low_are_placed_by_their_quote_s_own_words():
+    """Line rects stored in a frame that does not match their scale (here a
+    page height a tenth short of the one they were measured at) sit a line
+    low on the file's text: they read the sentence from "red of the D2"
+    on and the next sentence's start with its citation, which is alike
+    enough to count as the quote. Searched for as it read, that passage
+    was found roughly in the new file, where the citation was renumbered:
+    drawn dashed, its first rect from "red of the D2" and a fourth over
+    the next sentence's start. The copy of the quote on the page that the
+    rects read most of is the passage instead."""
+    old = _pdf([_two_columns()])
+    # a line added above, and the next sentence's citation renumbered
+    new = _pdf([_two_columns(["A new first line was added in revision."] + [t.replace("[3]", "[4]") for t in TRAP_COL])])
+    rects = [_line_rect(72, 128 + 14 * i, t) for i, t in enumerate(TRAP_SENTENCE)]  # the viewer's, over the sentence
+    pos = {**_position(1, rects), "height": H * 0.9, "doc_id": "v1"}
+    quote = "\n".join(TRAP_SENTENCE)
+    with hr.Doc(old) as old_doc, hr.Doc(new) as new_doc:
+        page = old_doc.text(1)
+        read = hr._joined(page, hr._stretches(page, hr.glyphs_under(page, hr._quads(pos, old_doc.frame(1)))))
+        assert read.startswith("red of the d2 line") and "schemes [3]" in read
+        assert hr._agrees(read, hr.normalize_quote(quote))
+        needle, (before, after), _anchor, pieces = hr._old_passage(old_doc, pos, hr.normalize_quote(quote))
+        placed = hr.place_all(new_doc, [("hl", {"pdf_position": pos, "quote": quote})], read_from={"v1": old_doc}.get)
+    # the passage is the sentence, with its own surroundings
+    assert needle == hr.normalize_quote(" ".join(TRAP_SENTENCE)) and len(pieces) == 1
+    assert before.endswith("micrometres here. ") and after.startswith(" similar schemes [3]")
+    # found exactly, solid, its rects over its own words alone
+    assert placed["kinds"] == {"hl": "moved"}
+    assert placed["ops"]["hl"] == {"pdf_position": _measured(new, 1, *TRAP_SENTENCE)}
+
+
+def test_another_column_s_words_under_a_rect_that_runs_past_its_column_are_not_the_passage():
+    """Line rects that run on past the column's edge, over the start of the
+    next column's lines, read those words too. Read with the passage, each
+    became a piece of its own, found beside it in the new file and given a
+    rect of its own there; the quote's own copy on the page is the
+    passage."""
+    old = _pdf([_two_columns()])
+    new = _pdf([_two_columns(["A new first line was added in revision."] + TRAP_COL)])  # the column moved down a line
+
+    def wide(row, part=None):  # a row's rect running on into the next column, unless it ends mid-line
+        line = TRAP_COL[row]
+        rect = _part_rect(72, 100 + 14 * row, line, part) if part else _line_rect(72, 100 + 14 * row, line)
+        return rect if part else {**rect, "x2": 360}
+
+    sentence = TRAP_SENTENCE
+    cases = {"the sentence": ([wide(2), wide(3), wide(4), wide(5, sentence[3])], sentence),
+             "ending mid-sentence": ([wide(2), wide(3, "red of the D2 line, which keeps")],
+                                     sentence[:1] + ["red of the D2 line, which keeps"]),
+             "from the paragraph's start": ([wide(0), wide(1), wide(2), wide(3), wide(4), wide(5, sentence[3])],
+                                            TRAP_COL[:2] + sentence)}
+    with hr.Doc(old) as old_doc:
+        page = old_doc.text(1)
+        rect = {**_position(1, wide(2)), "rects": [wide(2)]}
+        assert len(hr._stretches(page, hr.glyphs_under(page, hr._quads(rect, old_doc.frame(1))))) == 2  # "align" too
+    for label, (rects, texts) in cases.items():
+        quote = "\n".join(texts)
+        pos = {**_position(1, rects), "doc_id": "v1"}
+        with hr.Doc(old) as old_doc, hr.Doc(new) as new_doc:
+            needle, _context, _anchor, pieces = hr._old_passage(old_doc, pos, hr.normalize_quote(quote))
+            placed = hr.place_all(new_doc, [("hl", {"pdf_position": pos, "quote": quote})], read_from={"v1": old_doc}.get)
+        # found exactly, its rects over its own words alone
+        assert placed["ops"]["hl"] == {"pdf_position": _measured(new, 1, *texts)}, label
+        assert placed["kinds"] == {"hl": "moved"}, label
+        # because what it reads is the passage alone, one piece
+        assert needle == hr.normalize_quote(" ".join(texts)) and len(pieces) == 1, label
+
+
+def test_rects_within_their_quote_s_copy_say_which_of_its_words_are_the_passage():
+    # a quote that holds what the rects read (they cover its first words only): the rects' reading, as before
+    old = _pdf([_two_columns()])
+    rects = [_line_rect(72, 128, TRAP_SENTENCE[0])]
+    with hr.Doc(old) as old_doc:
+        needle = hr._old_passage(old_doc, _position(1, rects), hr.normalize_quote(" ".join(TRAP_SENTENCE)))[0]
+        assert needle == hr.normalize_quote(TRAP_SENTENCE[0])
+        # and a quote the page does not hold leaves the reading as it is, past it or not
+        assert hr._old_passage(old_doc, _position(1, rects), "not on this page at all")[0] == needle
+
+
 def test_a_highlight_read_from_the_page_s_own_file_over_its_quote_is_kept_without_a_search(monkeypatch):
     searched = []
     real = hr.find_passage
@@ -462,14 +559,24 @@ def test_a_stray_symbol_inside_the_old_rectangles_still_lets_the_passage_be_foun
     pos = {**_position(1, _line_rect(72, 100, line)), "doc_id": "v1"}
     with hr.Doc(old) as old_doc:
         assert hr._old_passage(old_doc, pos)[0] == hr.normalize_quote(line) + " +"
+        # the stored quote has no such symbol: what the rectangles read runs past it, and its own copy is the passage
+        assert hr._old_passage(old_doc, pos, hr.normalize_quote(line))[0] == hr.normalize_quote(line)
     new = _pdf([[(72, 100, "Front matter"), (72, 300, line)]])
-    with hr.Doc(old) as old_doc, hr.Doc(new) as new_doc:
-        placed = hr.place_all(new_doc, [("hl", {"pdf_position": pos, "quote": line})], read_from={"v1": old_doc}.get)
+
+    def place(quote):
+        with hr.Doc(old) as old_doc, hr.Doc(new) as new_doc:
+            return hr.place_all(new_doc, [("hl", {"pdf_position": pos, "quote": quote})], read_from={"v1": old_doc}.get)
+
+    # found exactly, solid
+    placed = place(line)
+    assert placed["kinds"] == {"hl": "moved"} and placed["ops"]["hl"] == {"pdf_position": _measured(new, 1, line)}
+    # a highlight without a quote (imported without one) has only its rectangles: the symbol read with the passage,
+    # found roughly, dashed, its text taken from the new file
+    placed = place("")
     assert placed["kinds"] == {"hl": "approx"}
-    assert placed["ops"]["hl"]["pdf_position"] == {**_measured(new, 1, line), "approx": True,
-                                                   "match": round(hr._similar(hr.normalize_quote(line) + " +", hr.normalize_quote(line)), 2),
-                                                   "prev": _prev(pos, "v1", line)}
-    assert "quote" not in placed["ops"]["hl"]  # the new file spells it as the quote does
+    assert placed["ops"]["hl"] == {"pdf_position": {
+        **_measured(new, 1, line), "approx": True, "prev": _prev(pos, "v1", ""),
+        "match": round(hr._similar(hr.normalize_quote(line) + " +", hr.normalize_quote(line)), 2)}, "quote": line}
 
 
 STALE_PREV = {"doc_id": "v0", "pageNumber": 1, "rects": [[0.1, 0.1, 0.5, 0.12]], "quote": "an older wording"}
@@ -627,6 +734,88 @@ def test_a_deleted_sentence_whose_nearest_look_alike_reads_too_unlike_is_lost():
     # it was the best place found: the threshold alone turned it down
     placed, _new = _place_one([gone], [["Front matter", alike]], _line_rect(72, 100, gone), gone, {"min_match": 0.5})
     assert placed["kinds"] == {"hl": "approx"} and placed["ops"]["hl"]["quote"] == alike
+
+
+GONE = "We then measured the lifetime of the excited state with a weak and pulsed probe laser."
+ALIKE = "We then estimated the width of the excited state with a strong and continuous pump laser."  # 0.72 alike
+GONE_RECT = _line_rect(72, 100, GONE)
+
+
+def _closest(pdf_bytes, page_no, text, needle):
+    """The ``closest`` a run keeps for a lost highlight of ``needle`` whose best
+    place is ``text`` (its first copy) on page ``page_no`` of a file."""
+    return {**_measured(pdf_bytes, page_no, text), "quote": text,
+            "match": round(hr._similar(hr.normalize_quote(needle), hr.normalize_quote(text)), 2)}
+
+
+def test_a_lost_highlight_keeps_the_place_most_like_it_under_the_threshold():
+    assert hr.CLOSEST_MIN <= hr._similar(hr.normalize_quote(GONE), hr.normalize_quote(ALIKE)) < hr.ROUGH_APPLY
+    placed, new = _place_one([GONE], [["Front matter", ALIKE]], GONE_RECT, GONE)
+    assert placed["kinds"] == {"hl": "lost"}
+    # hollow where it was, still read from its own file, and the best place found beside it: its place in the new
+    # file, how alike it reads and its text there, for the person to look at and take
+    pos = placed["ops"]["hl"]["pdf_position"]
+    assert pos == {**_position(1, GONE_RECT), "doc_id": "v1", "lost": True, "closest": _closest(new, 1, ALIKE, GONE)}
+    # the stored shape keeps it: every restore and import passes a position through from_scaled
+    assert from_scaled(pos) == pos
+
+
+def test_a_closest_place_reads_at_least_closest_min_alike_and_moves_with_the_account_s_threshold():
+    # 72% alike: the closest place from the default 80% and from 95%, applied from 70%, dashed
+    for limits, kind in ((None, "lost"), ({"min_match": 0.95}, "lost"), ({"min_match": 0.7}, "approx")):
+        placed, _new = _place_one([GONE], [["Front matter", ALIKE]], GONE_RECT, GONE, limits)
+        pos = placed["ops"]["hl"]["pdf_position"]
+        assert placed["kinds"] == {"hl": kind} and ("closest" in pos) == (kind == "lost"), limits
+    # the best place, but under half alike: none
+    line = "We saw it at the lab on a sunny day."
+    padded = ["We saw antidisestablishmentarianism it at floccinaucinihilipilification the lab",
+              "pneumonoultramicroscopic on a supercalifragilisticexpialidocious sunny day."]
+    pages = _pages("\n".join(padded))
+    found = hr.find_passage(pages, hr.normalize_quote(line), closest=0.0)
+    assert found.below and found.confidence < hr.CLOSEST_MIN
+    assert hr.find_passage(pages, hr.normalize_quote(line), closest=hr.CLOSEST_MIN) is None
+    placed, _new = _place_one([line], [padded], _line_rect(72, 100, line), line)
+    assert placed["kinds"] == {"hl": "lost"} and "closest" not in placed["ops"]["hl"]["pdf_position"]
+    # a passage under twelve characters is matched exactly or not at all: none either, however alike
+    old_line, new_line = "Then the 4 K cooling stage is switched on", "Then the 5 K cooling stage is switched on"
+    placed, _new = _place_one([old_line], [[new_line]], _part_rect(72, 100, old_line, "4 K cooling"), "4 K cooling")
+    assert placed["kinds"] == {"hl": "lost"} and "closest" not in placed["ops"]["hl"]["pdf_position"]
+    assert hr.find_passage(_pages(new_line.lower()), "4 k cooling", closest=0.0) is None
+
+
+def test_a_later_run_replaces_or_drops_a_lost_highlight_s_closest_place():
+    other = "We first measured the width of the excited level with a strong and continuous probe beam."
+    v1, v2 = _pdf([[(72, 100, GONE)]]), _pdf([[(72, 100, "Front matter"), (72, 114, ALIKE)]])
+    v3 = _pdf([[(72, 300, other)]])                          # alike in another way, elsewhere
+    v4 = _pdf([[(72, 100, "Nothing of the old text")]])
+    v5 = _pdf([[(72, 100, "A new front page")], [(72, 500, GONE)]])  # the sentence itself again
+    lost = {**_position(1, GONE_RECT), "doc_id": "v1", "lost": True}
+
+    def applied(item, placed):  # the run's write
+        return item[0], {**item[1], **placed["ops"].get(item[0], {})}
+
+    item = ("hl", {"pdf_position": {**_position(1, GONE_RECT), "doc_id": "v1"}, "quote": GONE})
+    with hr.Doc(v1) as d1, hr.Doc(v2) as d2, hr.Doc(v3) as d3, hr.Doc(v4) as d4, hr.Doc(v5) as d5:
+        files = {"v1": d1}.get
+        item = applied(item, hr.place_all(d2, [item], read_from=files, new_doc="v2"))
+        assert item[1]["pdf_position"] == {**lost, "closest": _closest(v2, 1, ALIKE, GONE)}
+        # the same file again: the same place, nothing written
+        again = hr.place_all(d2, [item], read_from=files, new_doc="v2")
+        assert again["kinds"] == {"hl": "lost"} and again["ops"] == {}
+        # a later version reads most like it elsewhere: that run's place replaces the one before
+        later = hr.place_all(d3, [item], read_from=files, new_doc="v3")
+        assert later["kinds"] == {"hl": "lost"}
+        assert later["ops"]["hl"] == {"pdf_position": {**lost, "closest": _closest(
+            v3, 1, "We first measured the width of the excited level with a strong and continuous probe", GONE)}}
+        # nothing like it any more: the closest place goes, the highlight still hollow where it was
+        assert hr.place_all(d4, [item], read_from=files, new_doc="v4")["ops"]["hl"] == {"pdf_position": lost}
+        # its text found again: placed, solid, with no closest place
+        found = hr.place_all(d5, [item], read_from=files, new_doc="v5")
+        assert found["kinds"] == {"hl": "moved"} and found["ops"]["hl"] == {"pdf_position": _measured(v5, 2, GONE)}
+        # the file it was measured on is the page's PDF again: found where it is, without a search, its lost mark,
+        # file and closest place dropped
+        back = hr.place_all(d1, [item], read_from=files, new_doc="v1")
+        assert back["kinds"] == {"hl": "moved"} and back["ops"]["hl"] == {"pdf_position": _position(1, GONE_RECT)}
 
 
 def test_a_dropped_first_word_does_not_pull_in_the_word_before():
@@ -1456,10 +1645,13 @@ def test_a_run_goes_by_its_owner_s_thresholds_as_they_were_when_it_started(guest
 
 def test_a_replacement_names_each_highlight_s_file_and_says_when_its_run_cannot_start(guest, monkeypatch):
     v1 = _pdf([[(72, 100, LINE_A), (72, 114, LINE_B)]])
-    page_id, doc1, (hl_a, hl_b) = _page_with(guest, v1, [
+    lost = {**_position(1, _line_rect(72, 128, LINE_C)), "doc_id": "an-older-file", "lost": True}
+    page_id, doc1, (hl_a, hl_b, hl_c) = _page_with(guest, v1, [
         (LINE_A, _position(1, _line_rect(72, 100, LINE_A))),
         # measured on a file before this one, as a run that never wrote leaves it
-        (LINE_B, {**_position(1, _line_rect(72, 114, LINE_B)), "doc_id": "an-older-file"})])
+        (LINE_B, {**_position(1, _line_rect(72, 114, LINE_B)), "doc_id": "an-older-file"}),
+        # lost there, with the closest place a run found in this file
+        (LINE_C, {**lost, "closest": {**_position(1, _line_rect(72, 114, LINE_B)), "match": 0.6, "quote": LINE_B}})])
     a_before = _props(guest, hl_a)["pdf_position"]
     with monkeypatch.context() as m:
         m.setattr(jobs, "MAX_ACTIVE_PER_ACCOUNT", 0)
@@ -1470,12 +1662,14 @@ def test_a_replacement_names_each_highlight_s_file_and_says_when_its_run_cannot_
         # the same commit named the file each highlight was measured on; one that named its file keeps it
         assert _props(guest, hl_a)["pdf_position"] == {**a_before, "doc_id": doc1}
         assert _props(guest, hl_b)["pdf_position"]["doc_id"] == "an-older-file"
+        # and a lost one's closest place went: it was a place in the file the page no longer shows
+        assert _props(guest, hl_c)["pdf_position"] == lost
         r = guest.post("/api/jobs/relocate-highlights", json={"page_id": page_id})
         assert r.status_code == 429, r.text
     # by hand later: A read from the file its rects name, B (whose file is not stored) by its quote
     job = guest.post("/api/jobs/relocate-highlights", json={"page_id": page_id}).json()
     assert job["params"] == {"page_id": page_id, "title": "Replaced paper", "doc_id": doc2, **DEFAULTS}
-    assert _done(guest, job) == {**NOTHING, "highlights": 2, "moved": 2}
+    assert _done(guest, job) == {**NOTHING, "highlights": 3, "moved": 2, "lost": 1}
     for hl, y in ((hl_a, 300), (hl_b, 314)):
         pos = _props(guest, hl)["pdf_position"]
         assert y - 15 < pos["rects"][0]["y1"] < y and "doc_id" not in pos

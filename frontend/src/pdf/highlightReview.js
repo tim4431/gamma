@@ -4,14 +4,19 @@
 // until the person accepts or moves it, and its position keeps where it was
 // before (pdf_position.prev: {doc_id, pageNumber, rects, quote}, the rects
 // as [x0, y0, x1, y1] fractions of that page as shown, top-left origin).
-// This module says which highlights are pending, in document order; the box
-// the before picture is cut from, and where the old rectangles fall in it;
-// and the word comparison of the old quote with the current one. Pure, so
-// node tests it (tests/highlightReview.test.mjs).
-import { placedToCheck } from "../shared/model/blockModel.js";
+// One the run could not place is lost, drawn hollow where it was, and may
+// keep closest, the best place it found below the account's threshold.
+// Both are reviewed on the card, one queue in document order. This module
+// says which highlights are to review, in that order, and which comes
+// next; what the card shows for one (reviewCardState) and what its steps
+// change, for their Undo (reviewStep); the box the before picture is cut
+// from, and where the old rectangles fall in it; and the word comparison
+// of the old quote with the current one. Pure, so node tests it
+// (tests/highlightReview.test.mjs).
+import { acceptedPosition, closestPlace, closestPlacement, placeToReview, placedToCheck, roughMatchPercent, sameJson } from "../shared/model/blockModel.js";
 import { tokens, wordDiff } from "../shared/lib/wordDiff.js";
 
-// --- Which highlights are pending, in document order -----------------------
+// --- Which highlights are to review, in document order ---------------------
 
 // A highlight's place in reading order: its page, then the top and the left
 // of its box as fractions of the page.
@@ -20,24 +25,56 @@ function orderKey(h) {
   const r = pos.boundingRect || {};
   return [pos.pageNumber || 0, (r.y1 || 0) / (pos.height || 1), (r.x1 || 0) / (pos.width || 1)];
 }
+const compareKeys = (a, b) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2];
 
-// The page's pending highlights (approx and not lost), in document order:
-// what the card's Next walks and its "{i} of {n}" counts.
-export function pendingInOrder(highlights) {
+function inOrder(highlights, keep) {
   return (highlights || [])
-    .filter((h) => placedToCheck(h?.position))
+    .filter((h) => keep(h?.position))
     .map((h) => [orderKey(h), h])
-    .sort(([a], [b]) => a[0] - b[0] || a[1] - b[1] || a[2] - b[2])
+    .sort(([a], [b]) => compareKeys(a, b))
     .map(([, h]) => h);
 }
 
-// Where the highlight `id` stands among `pending` (pendingInOrder): its
-// index, how many there are, and the one after it (the first again after
-// the last), or null when it is the only one or not pending.
-export function reviewPlace(pending, id) {
-  const index = pending.findIndex((h) => h.id === id);
-  const total = pending.length;
-  return { index, total, next: index >= 0 && total > 1 ? pending[(index + 1) % total] : null };
+// The page's pending highlights (approx and not lost, dashed), in document
+// order: the Document menu's Accept all.
+export function pendingInOrder(highlights) {
+  return inOrder(highlights, placedToCheck);
+}
+
+// The page's highlights to review, the pending (dashed) and the lost
+// (hollow) ones, in document order: what the card's Next walks, its
+// "{i} of {n}" counts and the Document menu's Review opens the first of.
+export function reviewQueue(highlights) {
+  return inOrder(highlights, placeToReview);
+}
+
+// Where the highlight `at` (a highlight, or its id) stands in `queue`
+// (reviewQueue): its index (-1 when it is not in it), how many are left,
+// and the one Next goes to. For one in the queue, the one after it, the
+// first again after the last, or null when it is the only one. For one
+// resolved meanwhile (accepted, placed, moved), so out of the queue, the
+// first at or after where it stood in document order, again the first
+// after the last: where it stood is the position `done` (reviewStep's, the
+// step the card took on it) found it at, since Use closest match or a move
+// takes it elsewhere, else its place now; null when nothing is left, or
+// for an id alone.
+export function reviewPlace(queue, at, done = null) {
+  const id = typeof at === "string" ? at : at?.id;
+  const index = queue.findIndex((h) => h.id === id);
+  const total = queue.length;
+  if (index >= 0) return { index, total, next: total > 1 ? queue[(index + 1) % total] : null };
+  const stood = done?.before?.position || at?.position;
+  if (!total || !stood) return { index, total, next: null };
+  const key = orderKey({ position: stood });
+  return { index, total, next: queue.find((h) => compareKeys(orderKey(h), key) >= 0) || queue[0] };
+}
+
+// Whether a highlight's page is past the last page of the PDF shown
+// (`pageCount`, 0 while it is not known): one lost from a page the new
+// version dropped. Nothing draws it, so its review card stands in the
+// viewer instead, saying so.
+export function pastLastPage(pos, pageCount) {
+  return pageCount > 0 && Number.isInteger(pos?.pageNumber) && pos.pageNumber > pageCount;
 }
 
 // --- Where the highlight was before ----------------------------------------
@@ -65,6 +102,40 @@ export function reviewPrev(pos) {
     rects: Array.isArray(prev.rects) ? prev.rects.filter(validRect) : [],
     quote,
     clipped: quote.length >= PREV_QUOTE_MAX,
+  };
+}
+
+// The rectangles a lost highlight keeps, as page fractions (reviewPrev's
+// shape), at most as many as a prev keeps.
+const PREV_MAX_RECTS = 200;
+function fractionRects(pos) {
+  const w = pos?.width, ht = pos?.height;
+  if (!(w > 0) || !(ht > 0) || !Array.isArray(pos.rects)) return [];
+  return pos.rects
+    .filter((r) => r && [r.x1, r.y1, r.x2, r.y2].every((v) => typeof v === "number" && Number.isFinite(v)))
+    .map((r) => [r.x1 / w, r.y1 / ht, r.x2 / w, r.y2 / ht].map((v) => round4(clamp01(v))))
+    .filter(validRect)
+    .slice(0, PREV_MAX_RECTS);
+}
+
+// Where a lost highlight was, in reviewPrev's shape plus `current`, from
+// its own position: a lost one keeps its rectangles and the file they were
+// measured on (doc_id). When that names a file other than the page's
+// current one (`fileId`), the before picture is cut from it; when it names
+// none, or the current file, the rectangles are this file's, drawn hollow
+// right there, so `current` is true and docId "": its wording alone. The
+// quote is its stored one, whole.
+export function lostPlace(h, fileId = "") {
+  const pos = h?.position || {};
+  const named = typeof pos.doc_id === "string" ? pos.doc_id : "";
+  const current = !named || named === fileId;
+  return {
+    docId: !current && /^[0-9a-f]+$/.test(named) ? named : "",
+    page: Number.isInteger(pos.pageNumber) && pos.pageNumber > 0 ? pos.pageNumber : 0,
+    rects: fractionRects(pos),
+    quote: typeof h?.content?.text === "string" ? h.content.text : "",
+    clipped: false,
+    current,
   };
 }
 
@@ -220,4 +291,73 @@ export function quoteDiff(before, after, { context = DIFF_CONTEXT, clipped = fal
     push(/\s$/.test(parts[parts.length - 1]?.text || "") ? "…" : " …", "same");
   }
   return elide(parts, context);
+}
+
+// --- What the card shows, and what its steps change -------------------------
+
+// What the review card shows for highlight `h`, `done` the step the card
+// took on it (reviewStep's, or null) and `fileId` the stored file the page
+// shows now; null when there is nothing to show (the card then closes):
+//
+// - {kind: "resolved", step}: a step taken on the card ("accepted",
+//   "placed" or "moved") left it out of the queue; the card stays, with
+//   Undo and Next. One back in the queue (its Undo, the app's undo) reads
+//   as what it is again, whatever `done` says.
+// - {kind: "pending", percent, area, before, diff}: dashed, matched
+//   roughly (`percent`, roughMatchPercent's) or placed by estimate (null);
+//   `before` reviewPrev's, `diff` the old quote against the current one
+//   (none for an area).
+// - {kind: "lost", area, before, closest, diff}: hollow; `before`
+//   lostPlace's, or null when it has nothing to show (its wording is the
+//   diff's, or there is none); `closest` closestPlace's with its whole
+//   `percent`, or null, and then `diff` its stored quote against the
+//   candidate's text.
+export function reviewCardState(h, { done = null, fileId = "" } = {}) {
+  const pos = h?.position;
+  if (!pos) return null;
+  const area = !!pos.area;
+  if (placedToCheck(pos)) {
+    const before = reviewPrev(pos);
+    return {
+      kind: "pending", percent: roughMatchPercent(pos), area, before,
+      diff: before && !area ? quoteDiff(before.quote, h.content?.text || "", { clipped: before.clipped }) : null,
+    };
+  }
+  if (pos.lost) {
+    const place = lostPlace(h, fileId);
+    const found = area ? null : closestPlace(pos);
+    const closest = found ? { ...found, percent: Math.round(found.match * 100) } : null;
+    // on the current file there is no picture to show: its wording, unless the comparison holds it
+    const before = place.current && (closest || !place.quote) ? null : place;
+    return { kind: "lost", area, before, closest, diff: closest ? quoteDiff(place.quote, closest.quote) : null };
+  }
+  if (done) return { kind: "resolved", step: done.kind };
+  return null;
+}
+
+// What a step on the card changes, for its Undo (blockModel reviewUndone):
+// {kind, before: {position, quote?}, after, prior?}, `before` the
+// highlight's position (and, for a step that rewrites it, its quote)
+// before the step, `after` the position the step writes. "accepted"
+// (Accept on a pending one: acceptedPosition) keeps the quote; "placed"
+// (Use closest match on a lost one: closestPlacement) and "moved" (a
+// selection, `after` its position) take the new text. A move started from
+// a card already resolved keeps that card's step as `prior` while the
+// position moved from is the one that step wrote, so the move's Undo
+// opens the card on it again ("Accepted", with its own Undo). Null when
+// the step does not apply.
+export function reviewStep(kind, { position, quote = "", prior = null } = {}, after = null) {
+  if (!position) return null;
+  if (kind === "accepted") return placedToCheck(position) ? { kind, before: { position }, after: acceptedPosition(position) } : null;
+  if (kind === "placed") {
+    const placed = closestPlacement(position);
+    return placed ? { kind, before: { position, quote }, after: placed.position } : null;
+  }
+  if (kind === "moved") {
+    if (!after) return null;
+    const step = { kind, before: { position, quote }, after };
+    if (prior?.after && sameJson(prior.after, position)) step.prior = prior;
+    return step;
+  }
+  return null;
 }

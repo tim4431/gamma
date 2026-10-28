@@ -19,8 +19,13 @@
 // pageNumber, rects: [[x1, y1, x2, y2], …] as fractions of that page,
 // quote before it was respelled}), which its review card shows
 // (pdf/highlightReview.js). Accepting it (acceptedPosition) drops approx,
-// match, prev and doc_id; docs/dev/highlight_relocation.md. A highlight whose
-// place on its page is not known carries pageNumber alone.
+// match, prev and doc_id. A lost one may keep closest, the best place in
+// the current PDF the run found for its text, which read too unlike it to
+// be applied ({pageNumber, width, height, boundingRect, rects, match,
+// quote}, closestPlace), which its card offers to apply
+// (closestPlacement: its place and quote, lost, closest and doc_id gone);
+// docs/dev/highlight_relocation.md. A highlight whose place on its page is
+// not known carries pageNumber alone.
 //
 // The tree is the DOCUMENT and nothing else: every change to it is an edit
 // the live session sends and the undo history records. What only this
@@ -110,6 +115,82 @@ export function acceptedPosition(pos) {
   if (!pos || !["approx", "match", "prev"].some((key) => key in pos)) return pos;
   const { approx, match, prev, doc_id, ...rest } = pos;
   return rest;
+}
+
+// A place to review after the PDF was replaced: one to check (dashed,
+// placedToCheck) or one whose text the new file does not have (hollow,
+// lost). The review card's queue walks these (pdf/highlightReview.js
+// reviewQueue).
+export function placeToReview(pos) {
+  return placedToCheck(pos) || Boolean(pos?.lost);
+}
+
+const isNum = (v) => typeof v === "number" && Number.isFinite(v);
+const placedRect = (r) => isObject(r) && ["x1", "y1", "x2", "y2"].every((k) => isNum(r[k]));
+// The longest quote a closest match keeps (gamma/highlights.py, as prev's).
+const CLOSEST_MAX_QUOTE = 1000;
+const CLOSEST_MAX_RECTS = 200;
+
+// The best place a run found for a lost highlight's passage, which read too
+// unlike it to be applied (pdf_position.closest: below the account's "Apply
+// a rough match from", at least half alike; gamma/highlight_relocate.py),
+// read defensively: {position: {pageNumber, width, height, boundingRect,
+// rects}, the candidate's place in the page's current PDF in the stored
+// shape; match, 0..1; quote, its text as that file spells it}, or null when
+// the position keeps none, or one malformed.
+export function closestPlace(pos) {
+  const c = pos?.closest;
+  if (!isObject(c) || Array.isArray(c)) return null;
+  const { pageNumber, width, height, match } = c;
+  if (!Number.isInteger(pageNumber) || pageNumber < 1 || !(isNum(width) && width > 0) || !(isNum(height) && height > 0)) return null;
+  if (!isNum(match) || match < 0 || match > 1 || !Array.isArray(c.rects)) return null;
+  const rects = c.rects.filter(placedRect).slice(0, CLOSEST_MAX_RECTS).map(({ x1, y1, x2, y2 }) => ({ x1, y1, x2, y2 }));
+  if (!rects.length) return null;
+  const b = placedRect(c.boundingRect) ? c.boundingRect : null;
+  const boundingRect = b ? { x1: b.x1, y1: b.y1, x2: b.x2, y2: b.y2 } : {
+    x1: Math.min(...rects.map((r) => r.x1)), y1: Math.min(...rects.map((r) => r.y1)),
+    x2: Math.max(...rects.map((r) => r.x2)), y2: Math.max(...rects.map((r) => r.y2)),
+  };
+  const quote = typeof c.quote === "string" ? c.quote.slice(0, CLOSEST_MAX_QUOTE) : "";
+  return { position: { pageNumber, width, height, boundingRect, rects }, match, quote };
+}
+
+// A lost highlight placed at its closest match ("Use closest match" on its
+// review card): {position, quote}, the candidate's place and its text, so
+// lost, closest, doc_id, approx, match and prev go with the old position
+// and it is drawn solid; null when the position keeps no closest match.
+export function closestPlacement(pos) {
+  const c = closestPlace(pos);
+  return c ? { position: c.position, quote: c.quote } : null;
+}
+
+// Deep equality of two JSON values, whatever their keys' order.
+export function sameJson(a, b) {
+  if (a === b) return true;
+  if (Array.isArray(a) || Array.isArray(b)) {
+    return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((v, i) => sameJson(v, b[i]));
+  }
+  if (!isObject(a) || !isObject(b)) return false;
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every((k) => k in b && sameJson(a[k], b[k]));
+}
+
+// A highlight's properties with a review step taken back (the review
+// card's Undo, after Accept, Use closest match or a move): `step` is
+// {before: {position, quote?}, after}, the position before the step and
+// the one it wrote; a quote in `before` is the step's to restore too (""
+// drops it). The same object when the position is no longer the one the
+// step wrote (changed since, by an undo or someone else), so nothing is
+// taken back over a later change.
+export function reviewUndone(props, step) {
+  const before = step?.before;
+  if (!before?.position || !sameJson(props?.pdf_position, step.after)) return props;
+  const out = { ...props, pdf_position: before.position };
+  if ("quote" in before) {
+    if (before.quote) out.quote = before.quote;
+    else delete out.quote;
+  }
+  return out;
 }
 
 // Backwards-compat accessor view: let old code that reads b.color, b.quote, b.page, b.position

@@ -677,11 +677,18 @@ The scenarios live in `tests/e2e/scenarios/`:
   text": the job's result, a highlight left hollow (on a flipped page and
   in the notes too), attach mode and move mode ending each other, two
   renumbered citations matched roughly and drawn dashed, their review card
-  on hover (the before picture, the changed words, Next, Accept) and the
-  Document menu's Review and Accept, the move to a selection by hand with
-  no translation of it, a second move by an area drag clearing the quote
-  and putting no picture in the chat, and an account that applies only
-  exact matches getting a renumbered citation back lost
+  on hover (the before picture, the changed words, Next, Accept leaving the
+  card open with Undo and Next, staying while another is hovered, a move
+  from it and that move's Undo back to it), the hollow one's card (the picture of the
+  first file, Next walking the dashed and the hollow ones in document
+  order, Move… reopening it as moved, its Undo) and the Document menu's
+  Review and Accept, the move to a selection by hand with no translation of
+  it, a second move by an area drag clearing the quote and putting no
+  picture in the chat, and an account that applies only exact matches
+  getting a renumbered citation back lost with its closest match, which
+  its card shows, outlines and places; then a hollow highlight's card
+  following Show to a closest match pages away, and one lost from a page
+  the new version dropped reached by Next, its card standing in the viewer
   ([highlight_relocation.md](highlight_relocation.md)).
 - `translation.mjs`: a two-column page whose paragraph runs over the column
   break: the request carries one text with `{br}`, the formulas and the

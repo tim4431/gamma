@@ -5408,7 +5408,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .hlReviewCard:focus { outline: none; }
 .hlReviewHead { font-weight: 600; }
 .hlReviewLabel { margin-bottom: var(--space-2); font-size: var(--fs-2xs); color: var(--text-muted); }
-.hlReviewGone { color: var(--text-secondary); }
+.hlReviewGone, .hlReviewOffPage { color: var(--text-secondary); }
 .hlReviewQuote {
   margin-top: var(--space-2);
   max-height: 6em;
@@ -5456,8 +5456,13 @@ a.shareBrand:hover { background: var(--bg-hover); }
   overflow-wrap: anywhere;
 }
 .hlReviewDiff del + ins { margin-left: var(--space-1); }
+/* a lost highlight's closest match: its percentage beside Show, then the comparison */
+.hlReviewClosestHead { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-2); }
+.hlReviewClosestHead .hlReviewLabel { margin-bottom: 0; }
+.hlReviewDone { color: var(--text-secondary); }
 .hlReviewActions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
 .hlReviewCount { margin-left: auto; font-size: var(--fs-xs); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.hlReviewSpacer { margin-left: auto; }
 
 /* --- area notes (Ctrl+drag rectangle selection on the PDF) --- */
 /* pinch-preview transform target. Origin 0 0 = the layer's top-left, which
@@ -5505,6 +5510,20 @@ a.shareBrand:hover { background: var(--bg-hover); }
   --hl: var(--hl-dark) !important;
   --hl-line: var(--hl-dark-line);
 }
+/* A lost highlight's closest match while its review card shows it
+   (pdf/HighlightReview.jsx Show): a dotted line in its colour's line tone
+   over a faint wash, taking no pointer; the dark-tuned colour on a flipped
+   page, as the highlights take it. */
+.pdfHlGhost {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  border: 2px dotted var(--hl-dark-line);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--hl) 22%, transparent);
+  pointer-events: none;
+}
+:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) .pdfPageWrap .pdfHlGhost { --hl: var(--hl-dark); }
 :is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) .pdfPageWrap .pdfNoteBadge {
   mix-blend-mode: normal !important;
   background: #2a2a2a;
