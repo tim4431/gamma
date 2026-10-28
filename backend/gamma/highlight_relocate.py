@@ -33,7 +33,9 @@ end joined whole, and a line made of a number alone left out: margin line
 numbers and page numbers, so a numbered review copy and its camera-ready
 read alike. The passage under a highlight is the text of the glyphs it
 covers, the stretches it skips (a line's end, a caption the file draws
-between two columns) read as one space.
+between two columns) read as one space; when those glyphs run past its
+stored quote, the quote's own copy there is the passage (rectangles a
+little off the file's text read its neighbours too).
 
 The passage is searched for in the new file's text, every page. Exactly
 first, on word edges ("ion" is not the end of "motion") unless the old
@@ -70,7 +72,10 @@ rectangles and quote) for the person to compare, and stays dashed through
 later runs until the person accepts it or moves it. A highlight whose
 text is nowhere, or only in places too unlike it, keeps its old
 rectangles and is marked ``lost`` for the viewer to show hollow, until
-the person moves it or a later run finds it.
+the person moves it or a later run finds it; a text highlight's best
+place under the threshold, when it reads at least ``CLOSEST_MIN`` like
+it, rides along as its ``closest`` (its place in the new file, its
+confidence and its text) for the person to look at and take.
 
 The matching is pure Python and holds the GIL, so it naps for a moment
 every few milliseconds (``_breathe``) and the server's requests go on
@@ -121,6 +126,11 @@ EXACT_SURE = 0.9
 # own (``thresholds``).
 ROUGH_APPLY = 0.8
 ROUGH_MIN_CHARS = 12
+# Set by hand, not calibrated: the confidence from which the best place
+# found for a highlight it does not place (under the run's own threshold)
+# is kept on the lost highlight as its ``closest``, for the person to look
+# at; the lowest threshold an account can set (MIN_MATCH_RANGE's 50%).
+CLOSEST_MIN = 0.5
 # The account preferences that set them (the web app's PREFS, app/prefDefs.js,
 # kept in the account's profile), each a whole number with its range and
 # step: a percentage, and characters.
@@ -620,13 +630,16 @@ class Match(NamedTuple):
     page break. ``spans``: for a passage found piece by piece
     (``_by_pieces``), the ``(start, end)`` of each piece on ``page``, in
     order, the text between them not the passage's; empty when
-    ``start``..``end`` is all of it."""
+    ``start``..``end`` is all of it. ``below``: the best place found,
+    whose confidence is under the one a match is applied from, given only
+    to a caller that asks (``find_passage``'s ``closest``)."""
     page: int
     start: int
     end: int
     confidence: float
     part: bool = False
     spans: tuple = ()
+    below: bool = False
 
 
 class Piece(NamedTuple):
@@ -793,7 +806,7 @@ def _by_pieces(pages: dict, pieces: list[Piece], tick=None, *, exact_chars: int 
 
 def find_passage(pages: dict, needle: str, *, hint_page: int = 1, context: tuple | None = None,
                  near=None, tick=None, pieces=None, min_match: float | None = None,
-                 exact_chars: int | None = None) -> Match | None:
+                 exact_chars: int | None = None, closest: float | None = None) -> Match | None:
     """Where ``needle`` (a normalized passage) is in ``pages`` (page number →
     ``PageText``): a ``Match``, or None. ``min_match`` and ``exact_chars``
     are the run's thresholds (``thresholds``), ``ROUGH_APPLY`` and
@@ -826,9 +839,12 @@ def find_passage(pages: dict, needle: str, *, hint_page: int = 1, context: tuple
 
     The best candidate is the answer when its confidence reaches
     ``min_match`` (1.0 for a needle shorter than ``exact_chars``), else
-    there is none. ``tick()`` runs once per page the rough, the
-    page-break and the piece-by-piece searches cover, so a stop lands
-    within a page."""
+    there is none; or, when the caller gives ``closest``, the best
+    candidate marked ``below`` when its confidence is at least that, for a
+    needle long enough to match roughly (a shorter one has only exact
+    candidates, and those are applied). ``tick()`` runs once per page the
+    rough, the page-break and the piece-by-piece searches cover, so a stop
+    lands within a page."""
     min_match = ROUGH_APPLY if min_match is None else min_match
     exact_chars = ROUGH_MIN_CHARS if exact_chars is None else exact_chars
     needle = (needle or "").strip()
@@ -887,7 +903,9 @@ def find_passage(pages: dict, needle: str, *, hint_page: int = 1, context: tuple
         return -score, abs(m.page - hint_page), near(m.page, m.start, m.end) if near else 0.0
 
     best = min(found, key=rank)
-    return best if best.confidence >= (min_match if rough else 1.0) else None
+    if best.confidence >= (min_match if rough else 1.0):
+        return best
+    return best._replace(below=True) if rough and closest is not None and best.confidence >= closest else None
 
 
 # --- rectangles and frames -------------------------------------------------------
@@ -1130,6 +1148,42 @@ def _stretches(page: PageText, covered: list[int]) -> list[tuple[int, int, int, 
     return out
 
 
+def _on_quote(page: PageText, stretches: list, quote: str) -> list:
+    """A text highlight's ``stretches`` (``_stretches``), or its stored
+    ``quote`` (folded) where the page holds it, when the rectangles read
+    past it.
+
+    Rectangles that sit a little off the file's glyphs (stored in a frame
+    a few percent off their own scale, read a line low or high; a line's
+    rectangle running on over the next word or into the next column) read
+    the quote's neighbours too: the end of the sentence before or the
+    start of the one after. Read as the passage, such a reading is still
+    alike enough to count as the quote (``_agrees``), and the new file
+    gives those neighbours rectangles of their own, as a rough match when
+    they changed (a renumbered citation in the next sentence). So the
+    copy of the quote that shares the most text with what the rectangles
+    read (the first of those) is the passage, one stretch, when the
+    reading runs past either of its ends. One that lies within the copy
+    stays: there the rectangles say which of the quote's words are the
+    passage (a caption between two columns that they skip). The stretches
+    stay as well when the page holds no copy of the quote that they
+    touch (a quote the viewer read otherwise than MuPDF does)."""
+    if not stretches or not quote:
+        return stretches
+    s, e = stretches[0][0], stretches[-1][1]
+    best, shared = -1, 0
+    at = page.text.find(quote)
+    while at >= 0:
+        overlap = min(e, at + len(quote)) - max(s, at)
+        if overlap > shared:
+            best, shared = at, overlap
+        at = page.text.find(quote, at + 1)
+    if best < 0 or (best <= s and e <= best + len(quote)):
+        return stretches
+    end = best + len(quote)
+    return [(best, end, page.glyph_at[best], page.glyph_at[end - 1])]
+
+
 def _joined(page: PageText, stretches: list, spell: bool = False) -> str:
     """The text of ``stretches`` (``(start, end, first glyph, last glyph)``)
     in a row, one space between two, as a selection reads: a line's end
@@ -1163,6 +1217,18 @@ def _spelled(page: PageText, spans) -> str:
     return _joined(page, [(s, e, page.glyph_at[s], page.glyph_at[e - 1]) for s, e in spans], spell=True)
 
 
+def _spans(match) -> tuple:
+    """The ``(start, end)`` spans a ``Match`` covers on its page (its pieces,
+    or all of it); none for no match."""
+    return (match.spans or ((match.start, match.end),)) if match else ()
+
+
+def _boxes(texts: dict, match, spans) -> list:
+    """The glyph boxes of a match's ``spans`` on its page, a line each per span
+    (``rects_for_span``)."""
+    return [box for s, e in spans for box in rects_for_span(texts[match.page], s, e)] if match else []
+
+
 def _pieces(page: PageText, stretches: list) -> list[Piece]:
     """A text highlight's ``stretches`` as the pieces the old file read
     without a word between (``Piece``): the stretches a line's end alone
@@ -1187,7 +1253,7 @@ def _pieces(page: PageText, stretches: list) -> list[Piece]:
     return out
 
 
-def _old_passage(src, pos: dict):
+def _old_passage(src, pos: dict, quote: str = ""):
     """What ``src`` (the ``Doc`` the highlight's rectangles were measured
     on, or None) reads under a highlight: ``(needle, (before, after),
     anchor, pieces)``, or None when there is no such file or no text under
@@ -1196,11 +1262,14 @@ def _old_passage(src, pos: dict):
     A text highlight's needle is the text of the glyphs it covers alone,
     their stretches joined as a selection reads (``_joined``): a margin
     note, a caption or a column's foot between two of its lines is not in
-    it. The context is the ``CONTEXT_CHARS`` before the first stretch and
-    after the last. Its pieces (``_pieces``) are the parts the file read
-    without a word between, for the search to find one by one when the
-    needle is nowhere whole: an unchanged two-column page still reads the
-    caption between them.
+    it. When those glyphs run past its stored ``quote`` (folded), the
+    quote's own copy on the page is the passage instead (``_on_quote``):
+    the rectangles sit a little off the file's text. The context is the
+    ``CONTEXT_CHARS`` before the first stretch and after the last. Its
+    pieces (``_pieces``) are the parts the file read without a word
+    between, for the search to find one by one when the needle is nowhere
+    whole: an unchanged two-column page still reads the caption between
+    them.
 
     An area's needle is the text from its first covered glyph to its last,
     and its anchor that text's boxes (``rects_for_span``, as fractions of
@@ -1219,6 +1288,8 @@ def _old_passage(src, pos: dict):
     frame = src.frame(page_no)
     covered = glyphs_under(page, _quads(pos, frame))
     stretches = _stretches(page, covered) if covered else []
+    if not pos.get("area"):
+        stretches = _on_quote(page, stretches, quote)
     if not stretches:
         return None
     s, e = stretches[0][0], stretches[-1][1]
@@ -1328,9 +1399,15 @@ def place_all(new, items: list[tuple[str, dict]], progress=None, *, read_from=No
     by accepting it or moving it by hand, either of which writes a position
     without them. A position written in a new place names no file, except
     an area nothing placed (below); a lost one is the old one marked
-    ``lost`` (written once, its ``doc_id`` kept, no ``prev`` added); one
-    where it was is written only to drop its ``doc_id`` or, unless it is
-    pending, a stale ``match`` or ``prev``, or to respell its quote.
+    ``lost`` (its ``doc_id`` kept, no ``prev`` added), with, for a text
+    highlight whose best candidate read under the threshold but at least
+    ``CLOSEST_MIN`` alike, that candidate as its ``closest``
+    (``highlights.valid_closest``: its position in ``new`` as a placement's
+    is built, its confidence to two decimals and at most 0.99, its text as
+    the file spells it), and written again only when that changes (another
+    candidate, or none any more); one where it was is written only to drop
+    its ``doc_id`` or, unless it is pending, a stale ``match`` or ``prev``,
+    or to respell its quote. A highlight placed carries no ``closest``.
 
     Each highlight is read (its passage, context, anchor and picture) from
     the file its rectangles were measured on: the one its position's
@@ -1388,10 +1465,27 @@ def place_all(new, items: list[tuple[str, dict]], progress=None, *, read_from=No
 
         return near
 
+    def closest_place(below) -> dict | None:
+        """A lost highlight's ``closest`` (``highlights.valid_closest``): the
+        place in ``new`` of ``below``, the best candidate under the
+        threshold (``find_passage``'s ``closest``), as a placement's position
+        is built, with its confidence (two decimals, at most 0.99) and its
+        text as the file spells it; None without one."""
+        spans = _spans(below)
+        boxes = _boxes(texts, below, spans)
+        if not boxes:
+            return None
+        return shape.valid_closest({**_position(below.page, new.frame(below.page), boxes),
+                                    "match": min(round(below.confidence, 2), 0.99),
+                                    "quote": _spelled(texts[below.page], spans)})
+
     def unflagged(pos: dict) -> dict:
         """``pos`` without what only a pending highlight carries, unless it is
-        one: a stale ``match`` or ``prev``."""
-        return pos if pos.get("approx") else {k: v for k, v in pos.items() if k not in ("match", "prev")}
+        one (a stale ``match`` or ``prev``), and without the ``closest``
+        place of a lost one, which only the run that leaves it lost writes
+        (``settle``)."""
+        drop = ("closest",) if pos.get("approx") else ("match", "prev", "closest")
+        return {k: v for k, v in pos.items() if k not in drop}
 
     def keep(bid: str, pos: dict, quote: str = ""):
         """Where it was: written only to drop its ``doc_id`` (its rects are
@@ -1426,16 +1520,18 @@ def place_all(new, items: list[tuple[str, dict]], progress=None, *, read_from=No
         return out
 
     def settle(bid: str, pos: dict, new_pos, group, src_id: str, *, match: float = 1.0,
-               estimate: bool = False, quote: str = "", before: str = ""):
+               estimate: bool = False, quote: str = "", before: str = "", closest: dict | None = None):
         """Write what the run found for a highlight: ``new_pos`` (None: not
-        found), by a match of confidence ``match`` or an ``estimate``,
+        found, ``closest`` the best place it found under the threshold, or
+        None), by a match of confidence ``match`` or an ``estimate``,
         ``quote`` its new spelling; ``src_id`` names the file its old
         rectangles were measured on, ``before`` its quote before the run
         (``flagged``)."""
         if new_pos is None:
             kinds[bid] = "lost"
-            if not pos.get("lost"):
-                ops[bid] = {"pdf_position": {**unflagged(pos), "lost": True}}
+            if not pos.get("lost") or pos.get("closest") != closest:
+                lost = {**unflagged(pos), "lost": True}
+                ops[bid] = {"pdf_position": {**lost, "closest": closest} if closest else lost}
             return
         # A box placed by what an estimate covered is still an estimate.
         estimate = estimate or bool(pos.get("area") and pos.get("approx") and "match" not in pos)
@@ -1474,25 +1570,31 @@ def place_all(new, items: list[tuple[str, dict]], progress=None, *, read_from=No
         group = (None if src is new else pos.get("doc_id"), pos["pageNumber"])
         quote = normalize_quote(props.get("quote") or "")
         before = "" if area or not isinstance(props.get("quote"), str) else props["quote"]
-        old = _old_passage(src, pos)
+        # (on the page's own file, what the rectangles read as they are says whether they are over their quote:
+        # kept when they are, else the quote is looked for; read from another file, the quote's own copy there is
+        # the passage when they read past it)
+        old = _old_passage(src, pos, "" if src is new else quote)
         if old and quote and not area:
             if not _agrees(old[0], quote):
                 old = None  # the rectangles do not belong to that file: the quote is looked for
             elif src is new:
                 # Measured on this very file and still over its quote: where it belongs, without a search
-                # (written only to drop a doc_id naming this file, or a lost mark; a pending one stays pending).
-                settle(bid, pos, {k: v for k, v in pos.items() if k not in ("doc_id", "lost")}, group, src_id)
+                # (written only to drop a doc_id naming this file, or a lost mark and its closest place; a pending
+                # one stays pending).
+                settle(bid, pos, {k: v for k, v in pos.items() if k not in ("doc_id", "lost", "closest")}, group,
+                       src_id)
                 continue
         needle, context, anchor, pieces = old or (quote, None, None, ())
         hint = min(max(pos["pageNumber"], 1), max(new.count, 1))
         near = near_to(pos)
         if not area:
             match = find_passage(texts, needle, hint_page=hint, context=context, near=near, tick=progress,
-                                 pieces=pieces, min_match=min_match, exact_chars=exact_chars)
-            spans = (match.spans or ((match.start, match.end),)) if match else ()
-            boxes = [box for s, e in spans for box in rects_for_span(texts[match.page], s, e)]
+                                 pieces=pieces, min_match=min_match, exact_chars=exact_chars, closest=CLOSEST_MIN)
+            match, below = (None, match) if match and match.below else (match, None)
+            spans = _spans(match)
+            boxes = _boxes(texts, match, spans)
             if not boxes:
-                settle(bid, pos, None, group, src_id)
+                settle(bid, pos, None, group, src_id, closest=closest_place(below))
                 continue
             spelled = _spelled(texts[match.page], spans) if match.confidence < 1.0 or match.part else ""
             settle(bid, pos, _position(match.page, new.frame(match.page), boxes), group, src_id,

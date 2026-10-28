@@ -265,7 +265,8 @@ def replace_pdf(page_id: str, payload: AttachRequest, request: Request):
     outgoing file's id as ``pdf_position.doc_id`` on each of them that
     names no file yet (the file its rectangles were measured on;
     ``highlight_relocate.UNSTORED`` for a page that showed its file from a
-    URL alone), and after the commit the ``relocate-highlights`` job starts
+    URL alone) and drops a lost one's ``closest`` (a place in the outgoing
+    file), and after the commit the ``relocate-highlights`` job starts
     (``_start_relocation``): each highlight is found again in the new file
     by its text and moved there; until it is done they sit where they
     were. Returns the updated block, with the job as ``job``, or, when no
@@ -295,9 +296,15 @@ def replace_pdf(page_id: str, payload: AttachRequest, request: Request):
             incoming = attachment_file(page_attachment(props))
             swapped = had and moved and not (outgoing and outgoing == incoming)  # another file, not another address
             placed = highlight_relocate.page_highlights(conn, page_id) if swapped else []
-            stamps = [{"op": "set", "id": bid, "props": {"pdf_position": {
-                          **p["pdf_position"], "doc_id": outgoing or highlight_relocate.UNSTORED}}}
-                      for bid, p in placed if not p["pdf_position"].get("doc_id")]
+            stamps = []
+            for bid, p in placed:
+                # the file its rects were measured on, where it names none, and no closest place a lost one kept:
+                # that is a place in the outgoing file (the run finds the new file's)
+                stamped = {k: v for k, v in p["pdf_position"].items() if k != "closest"}
+                if not stamped.get("doc_id"):
+                    stamped["doc_id"] = outgoing or highlight_relocate.UNSTORED
+                if stamped != p["pdf_position"]:
+                    stamps.append({"op": "set", "id": bid, "props": {"pdf_position": stamped}})
             batches = [(page_id, [op])]
             for extra in (marks, stamps):
                 batches += [(page_id, extra[i:i + MAX_OPS]) for i in range(0, len(extra), MAX_OPS)]

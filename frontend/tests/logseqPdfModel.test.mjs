@@ -5,6 +5,7 @@ import { DEFAULT_HIGHLIGHT } from "../src/shared/model/palette.js";
 import { setWallClock } from "../src/shared/model/wallClock.js";
 import {
   EMPTY_VIEW, acceptedPosition, addChildBlock, addHighlightAsBlock, addSiblingBlock, blockPage, blockPosition, blocksToHighlights,
+  closestPlace, closestPlacement, placeToReview, reviewUndone,
   closeEditing, extractBlock, findBlockContext, flattenBlocks, indentBlock, insertChild, insertSibling,
   isDescendant, isFolded, isFoldedAway, isHighlightBlock, makeBlockId,
   normalizeBlocks, outdentBlock, placedToCheck, revealBlock, roughMatchPercent, toggleFold, visibleBlocks, visibleNeighbor,
@@ -190,6 +191,72 @@ test("after the PDF was replaced a place to check is drawn dashed, with its matc
   const stamped = { ...POS, doc_id: "ab12" };
   assert.equal(acceptedPosition(stamped), stamped, "a solid place measured on another file too: nothing to accept");
   assert.deepEqual(rough, { ...POS, approx: true, match: 0.874, prev }, "the input is not mutated");
+});
+
+// A lost highlight's closest match as the run stores it (gamma/highlight_relocate.py): the candidate's place in
+// the page's current file, its confidence and its text there.
+const CLOSEST = { pageNumber: 3, width: 612, height: 792, boundingRect: { x1: 70, y1: 100, x2: 300, y2: 124 },
+  rects: [{ x1: 70, y1: 100, x2: 300, y2: 112 }, { x1: 70, y1: 112, x2: 180, y2: 124 }], match: 0.63, quote: "the new text" };
+
+test("to review after a replacement: the dashed and the hollow; a lost one's closest match is read defensively", () => {
+  const rough = { ...POS, approx: true, match: 0.9 };
+  const lost = { ...POS, lost: true, doc_id: "ab12" };
+  assert.deepEqual([POS, rough, lost, { ...lost, approx: true }, { ...POS, approx: true, area: true }, null].map(placeToReview),
+    [false, true, true, true, true, false]);
+  // well formed: the place in the stored shape, the match and the quote
+  assert.deepEqual(closestPlace({ ...lost, closest: CLOSEST }), {
+    position: { pageNumber: 3, width: 612, height: 792, boundingRect: CLOSEST.boundingRect, rects: CLOSEST.rects },
+    match: 0.63, quote: "the new text",
+  });
+  // a missing bounding box is the rectangles' union; a stray rectangle is left out, a long quote clipped
+  const loose = closestPlace({ closest: { ...CLOSEST, boundingRect: null, rects: [...CLOSEST.rects, { x1: "a" }], quote: "x".repeat(1200) } });
+  assert.deepEqual(loose.position.boundingRect, { x1: 70, y1: 100, x2: 300, y2: 124 });
+  assert.equal(loose.position.rects.length, 2);
+  assert.equal(loose.quote.length, 1000);
+  // malformed: no page, a page that is no page, no size, no rectangle, no match or one out of bounds
+  for (const bad of [null, "x", [], { ...CLOSEST, pageNumber: 0 }, { ...CLOSEST, pageNumber: 1.5 }, { ...CLOSEST, width: 0 },
+    { ...CLOSEST, height: "792" }, { ...CLOSEST, rects: [] }, { ...CLOSEST, rects: [{ x1: 1 }] }, { ...CLOSEST, match: 1.2 },
+    { ...CLOSEST, match: "0.6" }]) {
+    assert.equal(closestPlace({ ...lost, closest: bad }), null, JSON.stringify(bad));
+  }
+  assert.equal(closestPlace(lost), null);
+});
+
+test("Use closest match: the candidate's place and text, lost, closest, doc_id and the review's flags gone", () => {
+  const lost = { ...POS, lost: true, doc_id: "ab12", approx: true, match: 0.9,
+    prev: { doc_id: "cd34", pageNumber: 1, rects: [[0.1, 0.1, 0.2, 0.2]], quote: "old" }, closest: CLOSEST };
+  const placed = closestPlacement(lost);
+  assert.deepEqual(placed, { position: { pageNumber: 3, width: 612, height: 792, boundingRect: CLOSEST.boundingRect, rects: CLOSEST.rects },
+    quote: "the new text" });
+  for (const key of ["lost", "closest", "doc_id", "approx", "match", "prev", "area"]) assert.ok(!(key in placed.position), key);
+  assert.equal(placedToCheck(placed.position), false, "drawn solid");
+  assert.equal(closestPlacement({ ...POS, lost: true }), null, "nothing to apply without a closest match");
+  assert.equal(lost.closest, CLOSEST, "the input is not mutated");
+});
+
+test("the review card's Undo takes its step back, and nothing over a later change", () => {
+  const pending = { ...POS, approx: true, match: 0.87, prev: { doc_id: "ab12", pageNumber: 1, rects: [], quote: "old" } };
+  // Accept: the position as it was, the quote untouched
+  const accepted = { quote: "q", color: GREEN, pdf_position: acceptedPosition(pending) };
+  const acceptStep = { kind: "accepted", before: { position: pending }, after: acceptedPosition(pending) };
+  assert.deepEqual(reviewUndone(accepted, acceptStep), { quote: "q", color: GREEN, pdf_position: pending });
+  // the same place with its keys in another order (a round trip) is the same place
+  const reordered = { ...accepted, pdf_position: { rects: POS.rects, boundingRect: POS.boundingRect, height: 800, width: 600, pageNumber: 2 } };
+  assert.deepEqual(reviewUndone(reordered, acceptStep).pdf_position, pending);
+  // changed since (moved by hand, or the app's undo already took it back): nothing
+  const moved = { ...accepted, pdf_position: { ...POS, pageNumber: 5 } };
+  assert.equal(reviewUndone(moved, acceptStep), moved);
+  assert.equal(reviewUndone({ ...accepted, pdf_position: pending }, acceptStep).pdf_position, pending);
+  assert.equal(reviewUndone(accepted, null), accepted);
+  // Use closest match, or a move: the old position and the old quote back
+  const lost = { ...POS, lost: true, doc_id: "ab12", closest: CLOSEST };
+  const placed = closestPlacement(lost);
+  const placeStep = { kind: "placed", before: { position: lost, quote: "the old text" }, after: placed.position };
+  assert.deepEqual(reviewUndone({ quote: placed.quote, pdf_position: placed.position }, placeStep), { quote: "the old text", pdf_position: lost });
+  // an area had no quote: the one the move took is dropped again
+  const area = { ...POS, area: true, lost: true };
+  const moveStep = { kind: "moved", before: { position: area, quote: "" }, after: POS };
+  assert.deepEqual(reviewUndone({ quote: "selected text", pdf_position: POS }, moveStep), { pdf_position: area });
 });
 
 test("a highlight made in the viewer is a block whose id is the highlight's, its position as given", () => {

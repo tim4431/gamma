@@ -37,8 +37,9 @@ import { marginLeft as besideMargin, pageLeft } from "../comments/marginLayout.j
 import { CommentMarginContext, CommentMarginSlot, MarginStackContext, createMarginStack } from "../comments/marginSlot";
 import { useRecentIn } from "../guide/recent.js";
 import { DEFAULT_HIGHLIGHT, colorName, darkPageColor, darkPageLine, normalizeColor, pickerColors, swatchCss } from "../shared/model/palette.js";
-import { placedToCheck } from "../shared/model/blockModel.js";
+import { closestPlace, placedToCheck } from "../shared/model/blockModel.js";
 import { HighlightReview, useHighlightReview } from "./HighlightReview.jsx";
+import { pastLastPage } from "./highlightReview.js";
 import { usePalette } from "../shared/ui/paletteContext.js";
 import { placeFloating, useFloatingPosition } from "../shared/ui/placement.js";
 import { t, tn } from "../shared/i18n/i18n.js";
@@ -502,11 +503,17 @@ async function fetchPdfData(url, onLoadState, isCancelled) {
 // onZoomChange(update) changes the window, `update(window) → next | null`.
 // areaKey / peekKey: the held keys (docs/dev/hotkeys.md "Held keys") that
 // make a mouse drag box an area and show a translated page's original.
-// A highlight pending after its PDF was replaced (dashed) has a review card
-// (HighlightReview.jsx): onAcceptHighlight(id) and onMoveHighlight(id) are
-// its actions, an editor's; reviewRef.current(id) scrolls to that one and
-// opens its card (the Document menu's Review).
-function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, areaKey = "Mod", peekKey = "Alt", hideEmbeddedAnnots, darkPage = false, translateKey = "", translateScope = null, translateParallel = 3, onTranslate, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", selComment = false, moveMode = false, marks, flashHighlightId = null, smoothWheel = false, commentMargin = null, marginRef = null, onMarginLost, onPageInView, zoomHeight = 200, onZoomHeight, onZoomChange, onAcceptHighlight, onMoveHighlight, reviewRef = null }) {
+// A highlight to review after its PDF was replaced (dashed, or hollow:
+// lost) has a review card (HighlightReview.jsx): onAcceptHighlight(id),
+// onPlaceHighlight(id) (a lost one's closest match applied),
+// onMoveHighlight(id, step) (`step` the card's, when it had taken one)
+// and onUndoReview(id, step) are its actions, an
+// editor's; `fileId` is the stored file the page shows (a lost one's
+// picture is of the file its rectangles were measured on, when that is
+// another); reviewRef.current(id, {done, scroll}) scrolls to that one and
+// opens its card (the Document menu's Review; App after a move started
+// from the card, `done` what it did and scroll false).
+function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, areaKey = "Mod", peekKey = "Alt", hideEmbeddedAnnots, darkPage = false, translateKey = "", translateScope = null, translateParallel = 3, onTranslate, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", selComment = false, moveMode = false, marks, flashHighlightId = null, smoothWheel = false, commentMargin = null, marginRef = null, onMarginLost, onPageInView, zoomHeight = 200, onZoomHeight, onZoomChange, onAcceptHighlight, onPlaceHighlight, onMoveHighlight, onUndoReview, fileId = "", reviewRef = null }) {
   const tools = usePageTools(), { ink, text } = tools;
   const viewerRef = useRef(null);
   const [pdfDoc, setPdfDoc] = useState(null);
@@ -1293,20 +1300,39 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     if (scrollRef) scrollRef.current = scrollToPositionRef.current;
   }, [scrollRef, scale, pdfDoc]);
 
-  // The review card of a pending highlight (HighlightReview.jsx): opened by
-  // hovering or tapping its rectangles (PdfPage), by its Next, and from the
-  // Document menu (reviewRef), which scroll to the highlight first. Another
+  // The review card of a dashed or hollow highlight (HighlightReview.jsx):
+  // opened by hovering or tapping its rectangles (PdfPage), by its Next and
+  // Undo, from the Document menu (reviewRef), which scroll to the highlight
+  // first (to `position` when given: an Undo puts it back there), and by App
+  // after a move started from it (`done`, no scroll: the selection is in
+  // sight). A place past the last page (a lost one from a page the PDF no
+  // longer has) is not scrolled to: its card stands in the viewer. Another
   // document closes it.
-  const { card: reviewCard, review } = useHighlightReview();
-  const openReview = (id) => {
+  const { card: reviewCard, review, drawn: reviewDrawn } = useHighlightReview();
+  const openReview = (id, { done = null, scroll = true, position = null } = {}) => {
     const h = displayedUrl === url ? (highlights || []).find((x) => x.id === id) : null;
     if (!h) return;
-    scrollToPositionRef.current?.({ position: h.position });
-    review.open(id);
+    const to = position || h.position;
+    if (scroll && !pastLastPage(to, numPages)) scrollToPositionRef.current?.({ position: to });
+    review.open(id, done);
   };
   if (reviewRef) reviewRef.current = openReview;
   useEffect(() => () => { if (reviewRef) reviewRef.current = null; }, [reviewRef]);
   useEffect(() => { review.close(); }, [url, review]);
+  // A lost highlight's closest match, outlined on its page while its card
+  // shows it (Show), which scrolls there.
+  const ghostOf = reviewCard?.ghost && displayedUrl === url ? (highlights || []).find((x) => x.id === reviewCard.id) : null;
+  const reviewGhost = useMemo(() => {
+    const c = ghostOf?.position?.lost ? closestPlace(ghostOf.position) : null;
+    return c ? { id: ghostOf.id, color: normalizeColor(ghostOf.color) || DEFAULT_HIGHLIGHT, ...c.position } : null;
+  }, [ghostOf]);
+  const showClosest = (id) => {
+    const h = displayedUrl === url ? (highlights || []).find((x) => x.id === id) : null;
+    const c = h ? closestPlace(h.position) : null;
+    if (!c) return;
+    scrollToPositionRef.current?.({ position: c.position });
+    review.ghost(id);
+  };
 
   // Wait for this document, then mount only the cited page. Matching happens
   // after its actual text layer has rendered, including on zoom changes.
@@ -2044,6 +2070,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           flashId={flashHighlightId && hlsByPage.get(i + 1)?.some((h) => h.id === flashHighlightId) ? flashHighlightId : null}
           onLinkHighlight={stableCbs.onLinkHighlight} onHighlightContext={stableCbs.onHighlightContext}
           onHighlightThread={stableCbs.onHighlightThread} onReview={review}
+          reviewGhost={reviewGhost?.pageNumber === i + 1 ? reviewGhost : null}
           citation={displayedUrl === url && activeCitation?.page === i + 1 ? activeCitation : null}
           readOnly={!onSelectionFinished} forceRender={forcePages.has(i + 1) || activeCitation?.page === i + 1}
           hideEmbeddedAnnots={!!hideEmbeddedAnnots}
@@ -2087,8 +2114,10 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
         </TipFrame>
       )}
       </div>
-      <HighlightReview card={reviewCard} review={review} highlights={displayedUrl === url ? highlights : null}
-        viewerRef={viewerRef} darkPage={darkPage} onAccept={onAcceptHighlight} onMove={onMoveHighlight} onNext={openReview} />
+      <HighlightReview card={reviewCard} review={review} drawn={reviewDrawn} highlights={displayedUrl === url ? highlights : null}
+        viewerRef={viewerRef} darkPage={darkPage} fileId={fileId} pageCount={displayedUrl === url ? numPages : 0}
+        onAccept={onAcceptHighlight} onPlace={onPlaceHighlight}
+        onMove={onMoveHighlight} onUndo={onUndoReview} onOpen={openReview} onShow={showClosest} />
       {zoom ? (
         <ZoomWindow zoom={zoom} size={{ width: pageWidths[zoom.page - 1] || FALLBACK_W, height: pageHeights[zoom.page - 1] || FALLBACK_H }}
           page={zoomPage?.doc === pdfDoc && zoomPage.n === zoom.page ? zoomPage.page : null}
@@ -2350,7 +2379,7 @@ function TransPending({ lines, busy }) {
 // px from the first page's top, where its margin's column goes on from the
 // pages above; activeHl: the highlight
 // whose card is the active one, drawn stronger.
-const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scale, highlights, flashId, onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, onReview, readOnly, forceRender, reservedHeight, reservedWidth, findMarks, onInternalLink, onExternalLink, onLinkContext, onPainted, onAreaSelected, pendingArea, areaMode, areaKey, hideEmbeddedAnnots, trans, transKey, transShown, transSpan, toolArmed, marks, marginLeft = null, pageTop = 0, activeHl = null }) {
+const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scale, highlights, flashId, onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, onReview, reviewGhost = null, readOnly, forceRender, reservedHeight, reservedWidth, findMarks, onInternalLink, onExternalLink, onLinkContext, onPainted, onAreaSelected, pendingArea, areaMode, areaKey, hideEmbeddedAnnots, trans, transKey, transShown, transSpan, toolArmed, marks, marginLeft = null, pageTop = 0, activeHl = null }) {
   const wrapRef = useRef(null);
   const baseRef = useRef(null);
   const detailRef = useRef(null);
@@ -2374,6 +2403,11 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
   // a book with highlights on every page paid that on each wheel notch
   // (docs/dev/pdf_loading.md, "High zoom and touch scrolling").
   const overlays = renderVisible;
+  // A lost highlight's closest match outlined here (below): its review
+  // card anchors to the outline once it is drawn, this page rendering
+  // after Show scrolled to it.
+  const ghostDrawn = overlays && !!reviewGhost;
+  useEffect(() => { if (ghostDrawn) onReview?.drawn?.(); }, [ghostDrawn, reviewGhost, onReview]);
   const [links, setLinks] = useState([]); // link annotations, rects at scale 1
   const scaleRef = useRef(scale);
   scaleRef.current = scale;
@@ -2805,23 +2839,24 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
         const lost = !!h.position?.lost;
         const approx = placedToCheck(h.position);
         const edge = approx ? "dashed" : "solid";
-        // One to check is pending: its rectangles alone listen for the
-        // pointer, which opens its review card (HighlightReview.jsx) — what
-        // it matched, where it was, Accept — so they carry no title of
-        // their own. Only an editor is offered the move of a lost one (App's
-        // highlight menu).
-        const pending = approx && !!onReview;
-        const placing = lost
-          ? (readOnly ? t("This highlight's text was not found in the current PDF")
-            : t("This highlight's text was not found in the current PDF — right-click to move it to a selection"))
-          : "";
+        // One to check, or a lost one, is to review: its rectangles alone
+        // listen for the pointer, which opens its review card
+        // (HighlightReview.jsx) — what it matched or that it was not found,
+        // where it was, Accept, its closest match, Move… — so they carry no
+        // title of their own.
+        const reviewable = (approx || lost) && !!onReview;
         const color = normalizeColor(h.color) || DEFAULT_HIGHLIGHT;
         // The colour rides in --hl (the border in --hl-line, defaulting to
         // it) beside its dark-page variant in --hl-dark / --hl-dark-line:
         // a flipped page (Flip page colors, Gamma Dark) draws those instead
         // (app.css), whatever app the colour came from.
         // Right-click, or a finger held on it: colour, link, copy as reference.
-        const openMenu = (e) => { e.preventDefault(); onHighlightContext?.({ id: h.id, x: e.clientX, y: e.clientY }); };
+        // The menu takes the place of a review card, shown or on its way.
+        const openMenu = (e) => {
+          e.preventDefault();
+          if (reviewable) onReview.close();
+          onHighlightContext?.({ id: h.id, x: e.clientX, y: e.clientY });
+        };
         const elements = [];
         for (const [ri, r] of rects.entries()) {
           elements.push(<div key={h.id + "-" + r.x1 + "-" + r.y1} data-hl-id={h.id}
@@ -2854,12 +2889,12 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
               : { borderBottom: "2px solid rgba(70, 130, 255, 0.9)", borderRadius: 1 }) : {}),
             ...(approx && !isArea ? { outline: "1px dashed var(--hl-line, var(--hl-dark-line))" } : {}),
           }} title={isLink ? (h.linkTarget.pageId ? t("Open linked paper") : h.linkTarget.url)
-            : pending ? undefined : [placing, h.comment?.text || ""].filter(Boolean).join(" — ")}
-            {...(pending ? { onMouseEnter: () => onReview.hover(h.id, true), onMouseLeave: () => onReview.hover(h.id, false) } : null)}
+            : reviewable ? undefined : h.comment?.text || ""}
+            {...(reviewable ? { onMouseEnter: () => onReview.hover(h.id, true), onMouseLeave: () => onReview.hover(h.id, false) } : null)}
             onClick={function (e) {
               e.stopPropagation();
               // a tap (no hover on touch) opens its card instead; a second tap acts
-              if (pending && onReview.tap(h.id)) return;
+              if (reviewable && onReview.tap(h.id)) return;
               if (isLink) onLinkHighlight?.(h);
               else onHighlightJump?.(h.id, e.ctrlKey || e.metaKey);
               // a highlight with cards: its card becomes the active one
@@ -2891,6 +2926,17 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
         }
         return elements;
       })}
+      {/* A lost highlight's closest match, outlined while its review card
+          shows it (Show): its rectangles in its colour's line tone, dotted
+          over a faint wash, taking no pointer (app.css .pdfHlGhost). */}
+      {overlays && reviewGhost ? reviewGhost.rects.map((r, i) => (
+        <div key={`ghost-${i}`} className="pdfHlGhost" data-review-ghost={reviewGhost.id} aria-hidden="true" style={{
+          left: r.x1 * curW / reviewGhost.width, top: r.y1 * curH / reviewGhost.height,
+          width: Math.max(1, (r.x2 - r.x1) * curW / reviewGhost.width),
+          height: Math.max(1, (r.y2 - r.y1) * curH / reviewGhost.height),
+          "--hl": reviewGhost.color, "--hl-dark": darkPageColor(reviewGhost.color), "--hl-dark-line": darkPageLine(reviewGhost.color),
+        }} />
+      )) : null}
       {overlays && marginLeft != null ? <CommentMarginSlot pageNumber={pageNumber} highlights={highlights} pageH={curH} pageTop={pageTop} /> : null}
       {/* Over the highlights, note badges and link boxes: text boxes, then ink (app.css). */}
       <MarkupLayers surface={pageNumber} wrapRef={wrapRef} width={baseW} height={baseH} marks={marks} active={renderVisible} />

@@ -44,7 +44,7 @@ publish.py         publishing a page to the free share host (docs/dev/mirror.md 
 
 # Annotations, files and search
 highlights.py      a block's place on a PDF page: the pdf_position shape (highlights, link regions, ink)
-highlight_relocate.py  the highlights of a replaced PDF found again by their text and moved, exactly or roughly (dashed, to review) (docs/dev/highlight_relocation.md)
+highlight_relocate.py  the highlights of a replaced PDF found again by their text and moved, exactly or roughly (dashed, to review), or left lost with their closest match (docs/dev/highlight_relocation.md)
 text_box.py        text boxes: typed text on a PDF page or a sheet of paper (docs/dev/text_boxes.md)
 storage.py         uploads (content-addressed, written atomically) + the upload-reference grammar
 upload_parts.py    a PDF's upload in parts: the sessions, the parts appended and hashed, stored by a rename
