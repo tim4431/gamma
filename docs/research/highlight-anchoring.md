@@ -140,6 +140,40 @@ joined: with a budget of one edit, a word found near some page's end and
 another dropped would place almost every lost short highlight at a page
 break.
 
+**Piece by piece where the old file skipped text.** A highlight from a
+column's foot to the next column's top skips what the content stream
+draws between them, often a figure's caption or a footnote. The needle
+leaves that out, so the passage reads as a selection does, but the
+unchanged page still has the caption between its two halves, and the
+caption's words are far more than the edit budget. So such a passage is
+also kept as its pieces, and when it is nowhere whole the pieces are found
+one after another, each beginning within the old file's skip and a little
+more of the one before. Each piece keeps the rules of a passage (exact on
+word edges, word by word within its own budget from four words on, the
+pieces together within the whole passage's), since a short piece found at
+some distance would otherwise land anywhere. A highlight read from the
+page's own file over its quote needs no search at all: it is where it
+belongs, whatever the search would make of it.
+
+**Later: a confidence instead of frozen words.** Freezing numbers lost what
+a new version had only renumbered: on *Attention Is All You Need*, arXiv
+v1 against v7 with every third sentence highlighted, the edit budget
+placed 49 of 76 and lost 27, mostly passages whose citations v7
+renumbered. So no word is frozen and there is no budget: each place has a
+confidence, how alike its text and the passage read (difflib's ratio, 1.0
+only for an exact copy), ranked with a fifth of its context's likeness
+added; the best is applied from 0.8, a passage under twelve characters
+only when exact. Both thresholds were set by hand, not calibrated, and
+each account may set its own. A rough match is drawn dashed and keeps
+where the highlight was before, which a review card shows with the words
+that changed, until the person accepts or moves it, so a generous
+threshold costs a highlight to check rather than a silent wrong one. On
+the same pair: 72 of 76 on their text, 49 exact and 23 rough (0.95 to
+0.99, mostly renumbered citations), none wrong, 4 lost, each a passage
+gone from v7. The budget, the frozen words, the four-word minimum and the
+context-first ranking above no longer hold; the measurements below are of
+the edit-budget matcher.
+
 **Line numbers.** A review copy (lineno) prints a number beside every
 line, which MuPDF reads as a line of its own. Lines made of one to five
 digits alone are left out of both files' text, so the numbered copy and
@@ -157,7 +191,10 @@ text its box covers (a caption, axis labels) is a passage like any other,
 and a figure embedded again by pdfTeX is the same image data, which MuPDF
 digests. Both place the box by offsets around the thing found. An area
 over nothing recognisable follows the page's other highlights when they all
-moved the same way, and says so (`approx`); otherwise it stays.
+moved the same way, and says so (`approx`). Otherwise it stays, and says so
+too: one measured on another file is an `approx` mark where it was,
+keeping the `doc_id` of the file its rectangles belong to, rather than a
+silent "unchanged" that a later run would read from the wrong file.
 
 **Declined:** moving the viewer's whole highlight model to selectors stored
 at creation time (a large change to a working shape; the context is
@@ -173,9 +210,13 @@ server's; a move by hand is the correction); refusing ambiguous passages.
   after it was replaced, or a page shown from a URL alone) has context too.
   The folding and search would stay as they are; `normalize_quote` would
   read the stored context.
-- A passage split by MuPDF's reading order (two interleaved columns):
-  finding its parts separately and joining them. The page break is built.
+- A passage that the new file splits where the old one did not, or reads in
+  another order (two interleaved columns): finding its parts without the
+  old file's pieces to go by. The page break, and the pieces the old file
+  read apart, are built.
 - Ink groups and text boxes riding along with the page's highlights.
+- Calibrating the rough match's thresholds (0.8, twelve characters) on
+  real version pairs.
 - Measurements on a long book and on an arXiv–publisher pair; the ones
   below are of a synthetic paper.
 

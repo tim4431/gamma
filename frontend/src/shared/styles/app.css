@@ -46,7 +46,7 @@
 
 /* Shared visual primitives. Components keep their layout and sizing rules,
    while these groups own the recurring surface, field, and hover language. */
-:is(.plainTip, .popover, .ctxMenu, .refPopup, .pdfNoteTip, .mathPreviewTip, .latexAcPopup, .slashMenu, .chatMentionPicker, .citePreview, .selTools) {
+:is(.plainTip, .popover, .ctxMenu, .refPopup, .pdfNoteTip, .hlReviewCard, .mathPreviewTip, .latexAcPopup, .slashMenu, .chatMentionPicker, .citePreview, .selTools) {
   background: var(--bg-elevated);
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
@@ -1543,6 +1543,15 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   background: transparent;
   border: 2px dashed;
   box-sizing: border-box;
+}
+/* One placed to check (pdf_position.approx: matched roughly, or an area
+   placed by estimate): its fill (inline background-color) inside a dashed
+   ring in its colour's line tone (inline border-color), as the viewer draws
+   it. The fill stops inside the ring, so the dashes' gaps show. */
+.highlightDot.approx {
+  border: 1.5px dashed;
+  box-sizing: border-box;
+  background-clip: padding-box;
 }
 
 .collapseSpacer {
@@ -3737,13 +3746,15 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
-.chatApprovalDiff :is(del, ins) { color: var(--text-primary); border-radius: 2px; }
-.chatApprovalDiff del {
+/* A word diff's marks, here and on a highlight's review card (.hlReviewDiff,
+   pdf/HighlightReview.jsx): what went struck out, what came tinted. */
+:is(.chatApprovalDiff, .hlReviewDiff) :is(del, ins) { color: var(--text-primary); border-radius: 2px; }
+:is(.chatApprovalDiff, .hlReviewDiff) del {
   background: var(--danger-bg);
   text-decoration: line-through;
   text-decoration-color: color-mix(in srgb, var(--danger) 60%, transparent);
 }
-.chatApprovalDiff ins { background: color-mix(in srgb, var(--ok) 16%, transparent); text-decoration: none; }
+:is(.chatApprovalDiff, .hlReviewDiff) ins { background: color-mix(in srgb, var(--ok) 16%, transparent); text-decoration: none; }
 .chatApprovalArg { color: var(--text-muted); }
 .chatApprovalActions { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-top: 10px; }
 .chatApprovalSpacer { flex: 1; }
@@ -5367,6 +5378,86 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .pdfNoteTip p { margin: 4px 0; }
 .pdfNoteTip img { max-width: 100%; height: auto; }
 .pdfNoteTip .katex-display { margin: 6px 0; overflow-x: auto; overflow-y: hidden; }
+
+/* A highlight's review card after its PDF was replaced
+   (pdf/HighlightReview.jsx): portaled, under or over the dashed highlight
+   (placement.js), following the page as it scrolls; its surface is the
+   shared one at the top of this file. The before picture is a piece of
+   the previous file's page, so it takes the page's paper and the theme's
+   treatment of it, as the viewer's pages and the zoom window do; the old
+   rectangles over it are drawn in the highlight's colour, the dark-page
+   one where the page is flipped. */
+.hlReviewCard {
+  position: fixed;
+  z-index: var(--z-popover);
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  width: min(340px, calc(100vw - 16px));
+  max-height: min(70vh, 520px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-4) var(--space-5);
+  font-size: var(--fs-sm);
+  line-height: 1.45;
+  color: var(--text-primary);
+}
+/* it takes the focus as a whole (opened by a tap, Next or the Document
+   menu) only so the keys reach its buttons: no ring of its own */
+.hlReviewCard:focus { outline: none; }
+.hlReviewHead { font-weight: 600; }
+.hlReviewLabel { margin-bottom: var(--space-2); font-size: var(--fs-2xs); color: var(--text-muted); }
+.hlReviewGone { color: var(--text-secondary); }
+.hlReviewQuote {
+  margin-top: var(--space-2);
+  max-height: 6em;
+  overflow-y: auto;
+  padding-left: var(--space-4);
+  border-left: 2px solid var(--border-hover);
+  color: var(--text-secondary);
+  overflow-wrap: anywhere;
+}
+.hlReviewShot {
+  position: relative;
+  max-width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-deeper); /* the placeholder, until the picture is in */
+  isolation: isolate; /* the rectangles' blend stays on the picture */
+}
+/* the frame's shape is its aspect-ratio alone (the box's, then the picture's own) */
+.hlReviewShot img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; visibility: hidden; }
+.hlReviewShot.loaded img { visibility: visible; }
+.hlReviewRect { position: absolute; border-radius: 1px; background: var(--hl); mix-blend-mode: multiply; pointer-events: none; }
+/* ds-allow-start: the page's paper and the themes' treatment of it, as .pdfViewer's pages take them */
+.hlReviewShot.loaded { background: #fff; }
+.hlReviewShot.loaded.pdfDark { background: #0f0f0f; }
+.hlReviewShot.pdfDark img { filter: invert(0.94) hue-rotate(180deg); }
+/* ds-allow-end */
+[data-theme="gamma-dark"] .hlReviewShot.loaded { background: var(--pdf-paper); isolation: isolate; }
+[data-theme="gamma-dark"] .hlReviewShot img { filter: invert(1) hue-rotate(180deg); mix-blend-mode: screen; opacity: 0.9; }
+:is([data-theme="sepia"], [data-theme="solarized"], [data-theme="gray"], [data-theme="gamma-light"]) .hlReviewShot.loaded:not(.pdfDark) { background: var(--pdf-paper); isolation: isolate; }
+:is([data-theme="sepia"], [data-theme="solarized"], [data-theme="gray"]) .hlReviewShot:not(.pdfDark) img { mix-blend-mode: multiply; opacity: 0.82; }
+[data-theme="gamma-light"] .hlReviewShot:not(.pdfDark) img { mix-blend-mode: multiply; }
+:is(.hlReviewShot.pdfDark, [data-theme="gamma-dark"] .hlReviewShot) .hlReviewRect { mix-blend-mode: normal; --hl: var(--hl-dark) !important; }
+.hlReviewDiff {
+  max-height: 8em;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-3) var(--space-4);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+  font-size: var(--fs-xs);
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.hlReviewDiff del + ins { margin-left: var(--space-1); }
+.hlReviewActions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+.hlReviewCount { margin-left: auto; font-size: var(--fs-xs); color: var(--text-muted); font-variant-numeric: tabular-nums; }
 
 /* --- area notes (Ctrl+drag rectangle selection on the PDF) --- */
 /* pinch-preview transform target. Origin 0 0 = the layer's top-left, which

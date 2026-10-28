@@ -145,7 +145,7 @@ Each kind starts at `POST /api/jobs/<route>`, in the router of its work.
 | `server-backup` | `server-backup` (`routers/admin.py`) | Settings → Server → Server backups | the snapshot's info |
 | `indexing` | — (`routers/search.py`, owner `""`) | a search, a page chat, Settings → Maintenance → Rebuild | `{papers}` |
 | `transcribe` | `transcribe` (`routers/recordings.py`, one per recording block) | a recording's menu → Transcribe; every recording that ends, with Settings → Reading & editing › Recordings › Transcribe recordings on | `{paragraphs, model}` ([recording.md](recording.md)) |
-| `relocate-highlights` | `relocate-highlights` (`routers/pages.py`, one per page and file; `PUT /pages/{id}/attachment` starts it by itself) | a replaced PDF (the Document menu → Replace the PDF…, a build script's `PUT`); the Document menu → Find highlights in this PDF | `{highlights, moved, kept, lost, approx, changed}` ([highlight_relocation.md](highlight_relocation.md)) |
+| `relocate-highlights` | `relocate-highlights` (`routers/pages.py`, one per page and file; `PUT /pages/{id}/attachment` starts it by itself) | a replaced PDF (the Document menu → Replace the PDF…, a build script's `PUT`); the Document menu → Find highlights in this PDF | `{highlights, moved, kept, lost, approx, changed, min_match, exact_chars}`: the counts, then the owner's thresholds the run went by, which its params `{page_id, title, doc_id, min_match, exact_chars}` record as it starts ([highlight_relocation.md](highlight_relocation.md#the-thresholds)) |
 
 The off-site copies' Copy now (Settings → Backups, `POST
 /api/admin/offsite/run`) is not a job: it starts the server's own
@@ -240,9 +240,10 @@ window does not show:
 - A restore into the open workspace reloads the tab that started it, and
   offers a Reload to any other tab.
 - An import into the open workspace refreshes the library.
-- A highlight run says what it found in the tab that started it: how many
-  highlights moved, stayed, were not found, and were left as someone moved
-  them meanwhile. A run stopped or refused because the PDF was replaced
+- A highlight run says what it found in the tab that started it
+  (`relocationSummary`): how many highlights moved, were matched roughly or
+  estimated (drawn dashed, with where to compare and accept them), stayed,
+  were not found, and were left as someone moved them meanwhile. A run stopped or refused because the PDF was replaced
   again says nothing (`relocationSuperseded`): the newer run reports. The
   positions themselves reach every tab over the page socket.
 - A job started from a menu shows its progress in the pill while it runs

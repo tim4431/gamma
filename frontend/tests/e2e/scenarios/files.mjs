@@ -297,10 +297,12 @@ export async function fileScenarios({ server, browser, alice, makePdf, step, unt
     const up = await account.upload("/api/uploads", makePdf([["Draft one of the thesis"]]), "thesis.pdf", "application/pdf");
     const doc = await account.api(`/api/blocks/by-doc/${up.doc_id}`, {
       method: "POST", body: { default_title: "", source_url: up.source_url, original_filename: "thesis.pdf" } });
+    // a highlight over the whole line, its quote that line, as the viewer stores it (a quote that is only
+    // a short part of the text under the rectangles says they were not measured for it: _agrees)
     const rect = { x1: 72, y1: 60, x2: 300, y2: 80 };
     const position = { pageNumber: 1, width: 612, height: 792, boundingRect: rect, rects: [rect] };
     const hl = await account.api("/api/blocks", { method: "POST", body: {
-      parent_id: doc.id, content: "a note on draft one", properties: { quote: "Draft one", pdf_position: position } } });
+      parent_id: doc.id, content: "a note on draft one", properties: { quote: "Draft one of the thesis", pdf_position: position } } });
     ctx = await account.context(browser);
     page = await openPage(ctx, `${server.base}/?page=${doc.id}&ws=${account.ws}`);
     await waitForPdf(page, 1);
@@ -330,14 +332,16 @@ export async function fileScenarios({ server, browser, alice, makePdf, step, unt
     assert(after.properties.doc_id && after.properties.doc_id !== up.doc_id, "the page carries the new file");
     assertEq(after.content, "thesis.pdf", "the title stays the first file's name");
     assertEq(after.properties.original_filename, "thesis-v2.pdf", "the file name is the new file's");
-    // the job the replacement started finds the highlight's text in the new file and says so
-    const summary = "Highlights placed in the PDF: 1 moved, 0 unchanged, 0 not found.";
+    // the job the replacement started finds the highlight's text in the new file and says so: one word
+    // changed, so it is matched roughly, drawn dashed for the person to check
+    const summary = "Highlights placed in the PDF: 0 moved, 1 matched roughly or estimated, 0 stayed in place, 0 not found. "
+      + "Hover the dashed highlight to compare and accept it.";
     await until(() => page.evaluate((s) => window.pillLines.some((line) => line.includes(s)), summary),
       { what: "the relocation's summary", timeout: 20000 });
     const placed = await until(async () => {
       const b = await account.api(`/api/blocks/${hl.id}`);
       const p = b.properties.pdf_position;
-      return JSON.stringify(p) !== JSON.stringify(position) && !p.lost && !p.doc_id
+      return JSON.stringify(p) !== JSON.stringify(position) && !p.lost && !p.doc_id && p.approx && typeof p.match === "number"
         && (b.properties.quote || "").includes("Draft two") ? b : null;
     }, { what: "the highlight moved to its text in the new file", timeout: 20000 });
     assertEq(placed.content, "a note on draft one", "the highlight keeps its note");

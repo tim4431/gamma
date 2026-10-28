@@ -4,10 +4,11 @@ import { test } from "node:test";
 import { DEFAULT_HIGHLIGHT } from "../src/shared/model/palette.js";
 import { setWallClock } from "../src/shared/model/wallClock.js";
 import {
-  EMPTY_VIEW, addChildBlock, addHighlightAsBlock, addSiblingBlock, blockPage, blockPosition, blocksToHighlights,
-  closeEditing, extractBlock, findBlockContext, flattenBlocks, indentBlock, insertChild, insertSibling, isDescendant,
-  isFolded, isFoldedAway, isHighlightBlock, makeBlockId,
-  normalizeBlocks, outdentBlock, revealBlock, toggleFold, visibleBlocks, visibleNeighbor, withEditing,
+  EMPTY_VIEW, acceptedPosition, addChildBlock, addHighlightAsBlock, addSiblingBlock, blockPage, blockPosition, blocksToHighlights,
+  closeEditing, extractBlock, findBlockContext, flattenBlocks, indentBlock, insertChild, insertSibling,
+  isDescendant, isFolded, isFoldedAway, isHighlightBlock, makeBlockId,
+  normalizeBlocks, outdentBlock, placedToCheck, revealBlock, roughMatchPercent, toggleFold, visibleBlocks, visibleNeighbor,
+  withEditing,
 } from "../src/shared/model/blockModel.js";
 
 const N = (id, children = [], extra = {}) => ({ id, content: id, properties: {}, children, ...extra });
@@ -168,6 +169,27 @@ test("a highlight is a block with a position that is no ink group; its page is t
   assert.deepEqual([hl, pageOnly, link, ink, box, note].map(blockPage), [2, 4, 2, 2, 5, null]);
   // the place on the page: a position with its rectangles, not its page alone
   assert.deepEqual([hl, pageOnly].map(blockPosition), [POS, null]);
+});
+
+test("after the PDF was replaced a place to check is drawn dashed, with its match; Accept drops it with where it was", () => {
+  const prev = { doc_id: "ab12", pageNumber: 1, rects: [[0.1, 0.2, 0.5, 0.22]], quote: "the old text" };
+  const rough = { ...POS, approx: true, match: 0.874, prev };
+  const estimated = { ...POS, area: true, approx: true, prev: { ...prev, quote: "" } };
+  const lost = { ...POS, lost: true, approx: true, match: 0.9 };
+  assert.deepEqual([POS, rough, estimated, lost, null].map(placedToCheck), [false, true, true, false, false]);
+  // a whole percentage for a passage matched roughly; none for an exact place, an estimate or a lost one
+  assert.deepEqual([POS, rough, estimated, lost, { ...POS, approx: true, match: "high" }].map(roughMatchPercent),
+    [null, 87, null, null, null]);
+  assert.deepEqual(acceptedPosition(rough), POS);
+  assert.deepEqual(acceptedPosition(estimated), { ...POS, area: true });
+  assert.deepEqual(acceptedPosition({ ...POS, prev }), POS, "a stale prev goes too");
+  // an area nothing placed keeps the file it was measured on until accepted: accepted, its rectangles are
+  // the current PDF's, so a later run does not read it from the old file and dash it again
+  assert.deepEqual(acceptedPosition({ ...estimated, doc_id: "ab12" }), { ...POS, area: true });
+  assert.equal(acceptedPosition(POS), POS, "a solid place is returned as it is");
+  const stamped = { ...POS, doc_id: "ab12" };
+  assert.equal(acceptedPosition(stamped), stamped, "a solid place measured on another file too: nothing to accept");
+  assert.deepEqual(rough, { ...POS, approx: true, match: 0.874, prev }, "the input is not mutated");
 });
 
 test("a highlight made in the viewer is a block whose id is the highlight's, its position as given", () => {

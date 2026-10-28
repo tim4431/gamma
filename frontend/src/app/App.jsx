@@ -5,6 +5,7 @@ import PdfViewer, { preloadPdfEngine } from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
 import { requestFields } from "../pdf/translatePlan";
 import { docIdOf } from "../pdf/pdfSource";
+import { pendingInOrder } from "../pdf/highlightReview.js";
 import { basePixels } from "../pdf/pageRaster";
 import { DEFAULT_HIGHLIGHT, colorName, highlightColor, normalizeColor, pickerColors, swatchCss } from "../shared/model/palette.js";
 import { PaletteContext } from "../shared/ui/paletteContext.js";
@@ -71,7 +72,7 @@ import {
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoreIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon,
   RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
   ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon, MicIcon, MessageSquareIcon, BellIcon,
-  PanelTopIcon, LocateIcon,
+  PanelTopIcon, LocateIcon, TextSearchIcon,
 } from "../shared/ui/Icons";
 
 
@@ -101,6 +102,8 @@ import {
   insertChild,
   addHighlightAsBlock,
   blocksToHighlights,
+  acceptedPosition,
+  placedToCheck,
   isHighlightBlock,
   normalizeBlocks,
   findBlock,
@@ -7172,6 +7175,25 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     triggerFlash(blockId);
   }
 
+  // Accept on one pending after its PDF was replaced (matched roughly, or an
+  // area placed by estimate: its review card, its menu), or the Document
+  // menu's Accept all on every pending one of the page: the place stays, and
+  // approx, match, prev and doc_id go (acceptedPosition), so it is drawn
+  // solid and its rectangles are the current PDF's. One
+  // tree edit like any other (ops, one undo step), however many it accepts.
+  function acceptHighlightPlaces(ids) {
+    const wanted = ids.filter((id) => findBlock(blocks, id));
+    if (readOnly || !wanted.length) return;
+    const accept = (b) => {
+      const position = b.properties?.pdf_position;
+      const accepted = acceptedPosition(position);
+      return accepted === position ? b : { ...b, properties: { ...b.properties, pdf_position: accepted } };
+    };
+    setBlocks((prev) => wanted.reduce((tree, id) => updateBlockTree(tree, id, accept), prev));
+    if (wanted.length > 1) setStatus(tn("{n} highlight accepted where it was placed.", "{n} highlights accepted where they were placed.", wanted.length));
+  }
+  const acceptHighlightPlace = (blockId) => acceptHighlightPlaces([blockId]);
+
   // The Document menu's "Find highlights in this PDF": the server's
   // relocate-highlights job for the page by hand (gamma/highlight_relocate.py),
   // for a PDF replaced before the job existed, or a run that did not finish.
@@ -8424,6 +8446,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     prevHighlightsRef.current = { json, value: next };
     return next;
   }, [blocks, treeBlocks, comments.countByBlock]);
+  // The page's highlights pending after its PDF was replaced (drawn dashed
+  // until accepted or moved), in document order: the Document menu's Review
+  // and Accept all (docs/dev/highlight_relocation.md).
+  const pendingHighlights = useMemo(() => pendingInOrder(highlights), [highlights]);
+  const pdfReviewRef = useRef(null); // set by PdfViewer: scrolls to a pending highlight and opens its card
+  function reviewPending() {
+    const first = pendingHighlights[0];
+    setOpenPopover(null);
+    if (!first) return;
+    const wasHidden = pdfHidden;
+    setPhonePanel(null); // the compact shell: the PDF, not a panel over it
+    if (wasHidden) setPdfHidden(false);
+    setTimeout(() => pdfReviewRef.current?.(first.id), wasHidden ? 300 : 0);
+  }
   // The selection popup's Comment highlight (commentOnNewHighlight): its
   // popover open marks it opened; once that popover is closed, or another
   // block's took its place, a highlight with no note and no thread is
@@ -9163,6 +9199,21 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             {t("Download the PDF")}
                           </MenuItem>
                         ) : null}
+                        {/* the highlights drawn dashed after a replacement, to check: the
+                            first one's review card, or all of them accepted as one edit */}
+                        {pendingHighlights.length ? (
+                          <MenuItem icon={TextSearchIcon} onClick={reviewPending}
+                            title={t("Show the first dashed highlight with what it matched and where it was before")}>
+                            {tn("Review {n} rough match", "Review {n} rough matches", pendingHighlights.length)}
+                          </MenuItem>
+                        ) : null}
+                        {pendingHighlights.length && !readOnly ? (
+                          <MenuItem icon={CheckIcon}
+                            onClick={() => { setOpenPopover(null); acceptHighlightPlaces(pendingHighlights.map((h) => h.id)); }}
+                            title={t("Draw every dashed highlight solid where it is now")}>
+                            {tn("Accept {n} rough match", "Accept all {n}", pendingHighlights.length)}
+                          </MenuItem>
+                        ) : null}
                         {!readOnly ? (
                           <>
                             <MenuItem icon={UploadIcon} disabled={loading} onClick={() => replaceFileRef.current?.click()}
@@ -9172,7 +9223,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             <MenuItem icon={LocateIcon} disabled={loading || relocating || !pdfStored} onClick={relocateHighlights}
                               title={!pdfStored ? t("This PDF is shown from its link and not stored on the server, so its highlights cannot be placed in it")
                                 : relocating ? t("This page's highlights are being placed — see Background tasks")
-                                : t("Find each highlight's text in this file and move the highlight there; one whose text is gone is shown hollow")}>
+                                : t("Find each highlight's text in this file and move the highlight there; one matched roughly is drawn dashed, one whose text is gone hollow")}>
                               {t("Find highlights in this PDF")}
                             </MenuItem>
                             <input
@@ -11762,6 +11813,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               // the selection popup's Comment: a highlight with its thread popover open on it
               selComment={commentsOn && canComment}
               moveMode={!!moveHighlightId}
+              // a pending highlight's review card (pdf/HighlightReview.jsx): its actions are an editor's
+              onAcceptHighlight={readOnly ? undefined : acceptHighlightPlace}
+              onMoveHighlight={readOnly ? undefined : startHighlightMove}
+              reviewRef={pdfReviewRef}
               onSelectionFinished={readOnly ? undefined : (position, content, hideTip, extras) => {
                 if (moveHighlightIdRef.current) {
                   // a highlight waiting to be moved takes this selection's place
@@ -12187,6 +12242,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setEmbAnnots,
           smoothWheel,
           setSmoothWheel,
+          // the server's relocate-highlights run reads these from the profile
+          relocateMinMatch: appPrefs.relocateMinMatch,
+          setRelocateMinMatch: appPrefs.setRelocateMinMatch,
+          relocateExactChars: appPrefs.relocateExactChars,
+          setRelocateExactChars: appPrefs.setRelocateExactChars,
           inkPenOnly,
           setInkPenOnly,
           inkAutoPen,
@@ -12733,6 +12793,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             >
               {t("Copy as reference point")}
             </button>
+            {/* a highlight drawn dashed (matched roughly, or an area placed by
+                estimate), pending: accepted where it is, it is drawn solid */}
+            {!readOnly && placedToCheck(highlights.find((x) => x.id === highlightMenu.id)?.position) ? (
+            <button
+              role="menuitem"
+              className="ctxMenuItem"
+              onClick={() => { acceptHighlightPlace(highlightMenu.id); setHighlightMenu(null); }}
+            >
+              {t("Accept")}
+            </button>
+            ) : null}
             {!readOnly ? (
             <button
               role="menuitem"

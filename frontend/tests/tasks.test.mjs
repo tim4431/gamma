@@ -2,8 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { addLocalRow, fmtElapsed, isActive, LOCAL_LIMIT, localRow, mergeTasks, newlyFinished, progressFraction,
   sortTasks, trayBadge } from "../src/tasks/taskModel.js";
-import { canOpen, kindOf, progressCounts, progressText, quietKinds, relocationSuperseded, retryOf, taskActions, taskInfo,
-  taskTime, taskTitle } from "../src/tasks/taskKinds.js";
+import { canOpen, kindOf, progressCounts, progressText, quietKinds, relocationSummary, relocationSuperseded, retryOf,
+  taskActions, taskInfo, taskTime, taskTitle } from "../src/tasks/taskKinds.js";
 
 const at = (minutes) => new Date(Date.UTC(2026, 8, 29, 12, minutes)).toISOString();
 const job = (fields) => ({ kind: "export", state: "running", params: {}, progress: {}, error: "", artifact: null,
@@ -132,6 +132,24 @@ test("a highlights run the PDF's next replacement took over is no news", () => {
   assert.equal(relocationSuperseded(stopped, [stopped, run("o", "p1", "v1", 0, "done")]), false);
   assert.equal(relocationSuperseded(stopped, [stopped, run("s", "p1", "v2", 2)]), false, "the same file again is the same run");
   assert.equal(relocationSuperseded(stopped, [stopped, job({ id: "e", created_at: at(3), params: { page_id: "p1" } })]), false);
+});
+
+test("a finished highlights run says how many moved, are dashed to check, stayed and were not found", () => {
+  const result = (fields) => ({ highlights: 0, moved: 0, kept: 0, approx: 0, lost: 0, changed: 0, ...fields });
+  assert.equal(relocationSummary(result({ highlights: 3, moved: 2, kept: 1 })),
+    "Highlights placed in the PDF: 2 moved, 0 matched roughly or estimated, 1 stayed in place, 0 not found.");
+  // a dashed one says where to compare and accept it (its review card, several the Document menu's
+  // Review), a hollow one how to move it; one moved meanwhile is counted apart
+  assert.equal(relocationSummary(result({ highlights: 5, moved: 1, approx: 2, lost: 1, changed: 1 })), [
+    "Highlights placed in the PDF: 1 moved, 2 matched roughly or estimated, 0 stayed in place, 1 not found.",
+    "Hover a dashed highlight to compare and accept it, or review all 2 from the Document menu.",
+    "1 that someone moved meanwhile was left as it is.",
+    "A hollow highlight's text is gone: right-click it and choose Move to a selection.",
+  ].join(" "));
+  assert.match(relocationSummary(result({ highlights: 1, approx: 1 })), / Hover the dashed highlight to compare and accept it\.$/);
+  // a result written before the dashed count existed reads as none
+  assert.equal(relocationSummary({ moved: 1, kept: 0, lost: 0 }),
+    "Highlights placed in the PDF: 1 moved, 0 matched roughly or estimated, 0 stayed in place, 0 not found.");
 });
 
 test("a click opens the export and import dialogs again, or where the work is managed", () => {

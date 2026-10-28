@@ -5,7 +5,7 @@
 import { execFileSync } from "node:child_process";
 import { closeEditor, tree, same, partialBlockSearch } from "./notes.mjs";
 import { PYTHON, arrived, fakeAiModels, until } from "../harness.mjs";
-import { DEFAULT_PALETTE, darkPageColor } from "../../../src/shared/model/palette.js";
+import { DEFAULT_PALETTE, darkPageColor, darkPageLine } from "../../../src/shared/model/palette.js";
 
 // Select `needle` inside one text-layer span of `pageNo` and release the
 // mouse the way the viewer listens for it (document-level mouseup).
@@ -1192,13 +1192,20 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
 
   // After the PDF is replaced (docs/dev/highlight_relocation.md): each
   // highlight is found again by its text and moves with it; one whose text
-  // is gone is drawn hollow where it was, and a selection moves it by hand.
-  // Translate on select is on throughout: the selection that places a moved
-  // highlight is not translated.
-  await step("pdf: replacing the PDF moves a highlight to its text, hollows one whose text is gone, and a selection moves that one", async () => {
+  // the new version changed a little is matched roughly and drawn dashed,
+  // pending, until Accept (its review card, the Document menu's Accept all)
+  // draws it solid; one whose text is gone is drawn hollow where it was, and
+  // a selection moves it by hand. Translate on select is on throughout: the
+  // selection that places a moved highlight is not translated. At last, an
+  // account that applies only exact matches (relocateMinMatch 100) gets a
+  // renumbered citation back lost.
+  await step("pdf: replacing the PDF moves a highlight to its text, dashes one matched roughly until Accept on its review card, hollows one whose text is gone, and a selection moves that one", async () => {
     const lineA = "Quantum dots confine single electrons";
     const lineB = "This sentence is only in the first version";
-    const up1 = await account.upload("/api/uploads", makePdf([[lineA, lineB]]), "v1.pdf", "application/pdf");
+    // the next version renumbers both citations
+    const lineC = "Spin echoes were measured by Hahn [27]";
+    const lineD = "Coherence times were reported by Ramsey [31]";
+    const up1 = await account.upload("/api/uploads", makePdf([[lineA, lineB, lineC, lineD]]), "v1.pdf", "application/pdf");
     const doc = await account.api(`/api/blocks/by-doc/${up1.doc_id}`, { method: "POST", body: { default_title: "Replaced paper" } });
     // a note placed on a page but not on a passage: its ⊕ turns attach mode on
     await account.api("/api/blocks", { method: "POST", body: { parent_id: doc.id, content: "Loose remark on the paper",
@@ -1219,7 +1226,8 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await until(() => p.evaluate(() => localStorage.getItem("gamma-sel-translate-auto")).then((v) => v === "1" || v === "true"),
         { what: "the profile's translate-on-select" });
       let made = 0;
-      for (const needle of ["dots confine single", "only in the first version"]) {
+      for (const needle of ["dots confine single", "only in the first version", "echoes were measured by Hahn [27]",
+        "times were reported by Ramsey [31]"]) {
         await selectPdfText(p, 1, needle);
         await p.waitForSelector(".plainTip .colorBtn", { timeout: 5000 });
         // a selection made to highlight is translated by itself
@@ -1233,11 +1241,15 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       const saved = await until(async () => {
         const d = await account.api(`/api/blocks/${doc.id}/subtree`);
         const hls = (d.block.children || []).filter((b) => b.properties?.pdf_position?.rects);
-        return hls.length === 2 ? hls : null;
-      }, { what: "two saved highlights" });
-      const lostId = saved.find((b) => (b.properties.quote || "").includes("first version")).id;
-      // the new version: a page of front matter before, the first line kept, the second gone
-      const up2 = await account.upload("/api/uploads", makePdf([["Front matter added in revision"], [lineA, "A new sentence replaced the old one"]]), "v2.pdf", "application/pdf");
+        return hls.length === 4 ? hls : null;
+      }, { what: "four saved highlights" });
+      const idOf = (text) => saved.find((b) => (b.properties.quote || "").includes(text)).id;
+      const [exactId, lostId, roughId, rough2Id] = [idOf("dots confine"), idOf("first version"), idOf("Hahn"), idOf("Ramsey")];
+      // the new version: a page of front matter before, the first line kept, the second gone, the third's
+      // and the fourth's citations renumbered
+      const up2 = await account.upload("/api/uploads", makePdf([["Front matter added in revision"],
+        [lineA, "A new sentence replaced the old one", "Spin echoes were measured by Hahn [25]",
+          "Coherence times were reported by Ramsey [33]"]]), "v2.pdf", "application/pdf");
       const bound = await account.api(`/api/pages/${doc.id}/attachment`, { method: "PUT", body: { doc_id: up2.doc_id, original_filename: "v2.pdf" } });
       assert(bound.job?.kind === "relocate-highlights", `the replacement started the job: ${JSON.stringify(bound)}`);
       const job = await until(async () => {
@@ -1245,9 +1257,11 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
         return ["done", "failed", "cancelled"].includes(j.state) ? j : null;
       }, { what: "the relocation job", timeout: 20000 });
       assertEq(job.state, "done", `the relocation job: ${job.error}`);
-      for (const [key, count] of Object.entries({ highlights: 2, moved: 1, kept: 0, lost: 1, approx: 0, changed: 0 })) {
+      for (const [key, count] of Object.entries({ highlights: 4, moved: 1, kept: 0, lost: 1, approx: 2, changed: 0 })) {
         assertEq(job.result?.[key], count, `result.${key} of ${JSON.stringify(job.result)}`);
       }
+      // an account that set neither threshold runs with the defaults, recorded with the run
+      assert(job.params?.min_match === 0.8 && job.params?.exact_chars === 12, `the run's thresholds: ${JSON.stringify(job.params)}`);
 
       // the open tab switched to the new file; the lost highlight is hollow where it was, on page 1
       const lostSel = `[data-page="1"] div[data-hl-id="${lostId}"].pdfHlLost`;
@@ -1290,6 +1304,121 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       assertEq(await p.locator(".attachModeBanner").count(), 1, "one banner");
       await p.keyboard.press("Escape");
       await p.locator(".attachModeBanner").waitFor({ state: "detached", timeout: 5000 });
+
+      // the renumbered citations' passages, matched roughly on page 2: each its fill under a dashed outline
+      // in its colour's line tone, pending, where it was before kept beside it, until Accept makes it solid
+      const stored = async (id) => (await account.api(`/api/blocks/${id}`)).properties;
+      const exact = (await stored(exactId)).pdf_position;
+      assert(exact.pageNumber === 2 && !["approx", "match", "prev"].some((k) => k in exact), `the exact match is solid: ${JSON.stringify(exact)}`);
+      const { pdf_position: roughPos, color: roughColor, quote: roughQuote } = await stored(roughId);
+      assert(roughPos.pageNumber === 2 && roughPos.approx === true && !roughPos.lost, `the rough match: ${JSON.stringify(roughPos)}`);
+      assert(typeof roughPos.match === "number" && roughPos.match >= 0.8 && roughPos.match < 1, `its match: ${roughPos.match}`);
+      assert(roughQuote.includes("[25]"), `its quote is respelled to the new file: ${roughQuote}`);
+      // where it was: the first file, its page there, its rectangles as page fractions, its quote then
+      const before = roughPos.prev;
+      assert(before && before.doc_id === up1.doc_id && before.pageNumber === 1 && before.quote.includes("[27]")
+        && before.rects.length > 0 && before.rects.every((r) => r.length === 4 && r.every((v) => v >= 0 && v <= 1)),
+        `its prev: ${JSON.stringify(before)}`);
+      assert((await stored(rough2Id)).pdf_position.approx === true, "the second citation is pending too");
+      const percent = Math.round(roughPos.match * 100);
+      await until(async () => {
+        await p.evaluate(() => document.querySelector('[data-page="2"]')?.scrollIntoView({ block: "start" }));
+        return (await p.$('[data-page="2"] .textLayer span')) != null;
+      }, { what: "page 2 rendered", timeout: 15000 });
+      const roughSel = `[data-page="2"] div[data-hl-id="${roughId}"]`;
+      await p.waitForSelector(roughSel, { timeout: 15000 });
+      const roughLook = (flip = false) => p.$eval(roughSel, (el, flip) => {
+        const viewer = el.closest(".pdfViewer");
+        const had = viewer.classList.contains("pdfDark");
+        if (flip) viewer.classList.add("pdfDark");
+        const s = getComputedStyle(el);
+        const out = { filled: s.backgroundColor !== "rgba(0, 0, 0, 0)", outline: s.outlineStyle, line: s.outlineColor, title: el.title };
+        if (flip && !had) viewer.classList.remove("pdfDark");
+        return out;
+      }, flip);
+      const line = darkPageLine(roughColor);
+      for (const flip of [false, true]) { // a flipped page (Flip page colors, Gamma Dark) draws it dashed too
+        const got = await roughLook(flip);
+        assertEq(JSON.stringify([got.filled, got.outline, got.line]), JSON.stringify([true, "dashed", line]),
+          `a rough match keeps its fill under a dashed outline${flip ? " on a flipped page" : ""}`);
+      }
+      // its review card says it all, so its rectangles carry no title of their own
+      assertEq((await roughLook()).title, "", "a pending highlight has no title");
+      // the rows' dots: the fill inside a dashed ring, the percentage in their titles
+      const dots = await p.$$eval(".blockRow .highlightDot.approx", (els) => els.map((el) => {
+        const s = getComputedStyle(el);
+        return { filled: s.backgroundColor !== "rgba(0, 0, 0, 0)", edge: s.borderTopStyle, title: el.closest("button").title };
+      }));
+      assertEq(dots.length, 2, "two rows with a dashed dot");
+      assert(dots.every((d) => d.filled && d.edge === "dashed"), `their dots have a dashed ring: ${JSON.stringify(dots)}`);
+      assert(dots.some((d) => d.title.includes(`Matched roughly (${percent}%)`)), `a dot's title: ${JSON.stringify(dots)}`);
+      // an exact match has nothing to accept
+      await p.click(`[data-page="2"] div[data-hl-id="${exactId}"]`, { button: "right" });
+      await p.locator(".ctxMenuItem", { hasText: "Move to a selection" }).waitFor();
+      assertEq(await p.locator(".ctxMenuItem", { hasText: "Accept" }).count(), 0, "a solid highlight's menu has no Accept");
+      await p.keyboard.press("Escape");
+      await p.locator(".ctxMenuItem").first().waitFor({ state: "detached", timeout: 5000 });
+
+      // hovering the rough match opens its review card: how alike, a picture of where it was in the first
+      // file with its old rectangles over it, the words that changed, and Accept, Move…, Next
+      const cardOf = (id) => p.locator(`.hlReviewCard[data-review-id="${id}"]`);
+      await p.hover(roughSel);
+      const card = cardOf(roughId);
+      await card.waitFor({ timeout: 5000 });
+      assertEq(await card.locator(".hlReviewHead").textContent(), `Matched roughly: ${percent}%`, "the card's header");
+      await until(() => card.locator(".hlReviewShot img").evaluate((img) => img.complete && img.naturalWidth > 0, null, { timeout: 1000 }),
+        { what: "the before picture loaded", timeout: 15000 });
+      assert((await card.locator(".hlReviewShot.loaded .hlReviewRect").count()) >= 1, "its old rectangles are drawn over the picture");
+      assert((await card.locator(".hlReviewDiff del").allTextContents()).join(" ").includes("[27]"), "the old citation struck through");
+      assert((await card.locator(".hlReviewDiff ins").allTextContents()).join(" ").includes("[25]"), "the new citation marked");
+      assertEq(await card.locator(".hlReviewCount").textContent(), "1 of 2", "the first of two pending on the page");
+      // the pointer crosses into the card and it stays; leaving both closes it
+      await card.hover();
+      await sleep(400);
+      assert(await card.isVisible(), "the card stays while the pointer is in it");
+      await p.mouse.move(2, 2);
+      await card.waitFor({ state: "detached", timeout: 5000 });
+      // Next: the second pending highlight's card, scrolled to
+      await p.hover(roughSel);
+      await card.waitFor({ timeout: 5000 });
+      await card.locator(".hlReviewActions button", { hasText: "Next" }).click();
+      const card2 = cardOf(rough2Id);
+      await card2.waitFor({ timeout: 5000 });
+      assertEq(await card2.locator(".hlReviewCount").textContent(), "2 of 2", "Next moves to the second");
+      assert((await card2.locator(".hlReviewDiff ins").allTextContents()).join(" ").includes("[33]"), "its own comparison");
+      // Accept on its card: drawn solid where it is, the stored position without approx, match, prev or doc_id
+      const rough2Pos = (await stored(rough2Id)).pdf_position;
+      const rough2Sel = `[data-page="2"] div[data-hl-id="${rough2Id}"]`;
+      await card2.locator(".hlReviewActions button", { hasText: "Accept" }).click();
+      await card2.waitFor({ state: "detached", timeout: 5000 });
+      await until(async () => (await p.$eval(rough2Sel, (el) => getComputedStyle(el).outlineStyle)) === "none",
+        { what: "the accepted highlight drawn solid" });
+      const accepted = await until(async () => {
+        const pos = (await stored(rough2Id)).pdf_position;
+        return !["approx", "match", "prev", "doc_id"].some((k) => k in pos) ? pos : null;
+      }, { what: "the acceptance saved" });
+      assertEq(JSON.stringify(accepted.rects), JSON.stringify(rough2Pos.rects), "it stays where it was matched");
+      assertEq(await p.locator(".blockRow .highlightDot.approx").count(), 1, "its row's dot is solid");
+
+      // the Document menu: Review opens the first pending one's card, Accept all accepts the rest as one edit
+      await p.click("button[aria-label='Document']");
+      await p.locator(".attachPopover .ctxMenuItem", { hasText: "Review 1 rough match" }).click();
+      await card.waitFor({ timeout: 5000 });
+      await p.keyboard.press("Escape");
+      await card.waitFor({ state: "detached", timeout: 5000 });
+      await p.click("button[aria-label='Document']");
+      await p.locator(".attachPopover .ctxMenuItem", { hasText: "Accept 1 rough match" }).click();
+      await until(async () => (await roughLook()).outline === "none", { what: "the rest drawn solid" });
+      assertEq(await p.locator(".blockRow .highlightDot.approx").count(), 0, "no dashed dot is left");
+      const confirmed = await until(async () => {
+        const pos = (await stored(roughId)).pdf_position;
+        return !["approx", "match", "prev", "doc_id"].some((k) => k in pos) ? pos : null;
+      }, { what: "Accept all saved" });
+      assertEq(JSON.stringify(confirmed.rects), JSON.stringify(roughPos.rects), "it stays where it was matched");
+      await p.click("button[aria-label='Document']");
+      await p.locator(".attachPopover .ctxMenuItem", { hasText: "Find highlights in this PDF" }).waitFor();
+      assertEq(await p.locator(".attachPopover .ctxMenuItem", { hasText: "rough match" }).count(), 0, "nothing is left to review");
+      await p.keyboard.press("Escape");
 
       // move it by hand from its row's button: a selection on page 2 is its place
       const lostRow = p.locator(".blockRow", { has: p.locator(".highlightDot.lost") });
@@ -1343,6 +1472,30 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
         return b.properties.pdf_position.area ? b : null;
       }, { what: "the area move saved" });
       assert(!boxed.properties.quote, `an area keeps no quote: ${boxed.properties.quote}`);
+      // the box was only the highlight's new place: no picture of it waits in the chat
+      await p.locator("textarea.chatInputArea").waitFor();
+      assertEq(await p.locator('[data-guide="chat.imageContext"] img').count(), 0, "the move's area drag puts no picture in the chat");
+
+      // an account that applies only exact matches (Settings → Reading & editing › Replacing a PDF, the
+      // profile's relocateMinMatch): the next version renumbers the first citation again, and its
+      // highlight is left lost where it was instead of matched roughly
+      await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { relocateMinMatch: 100 } } });
+      const up3 = await account.upload("/api/uploads", makePdf([["Front matter added in revision"],
+        [lineA, "A new sentence replaced the old one", "Spin echoes were measured by Hahn [26]",
+          "Coherence times were reported by Ramsey [33]"]]), "v3.pdf", "application/pdf");
+      const bound3 = await account.api(`/api/pages/${doc.id}/attachment`, { method: "PUT", body: { doc_id: up3.doc_id, original_filename: "v3.pdf" } });
+      assert(bound3.job?.kind === "relocate-highlights", `the third version started the job: ${JSON.stringify(bound3)}`);
+      const job3 = await until(async () => {
+        const j = await account.api(`/api/jobs/${bound3.job.id}`);
+        return ["done", "failed", "cancelled"].includes(j.state) ? j : null;
+      }, { what: "the exact-only relocation job", timeout: 20000 });
+      assertEq(job3.state, "done", `the exact-only relocation job: ${job3.error}`);
+      assert(job3.params?.min_match === 1 && job3.result?.min_match === 1,
+        `the run took the account's 100%: ${JSON.stringify({ params: job3.params, result: job3.result })}`);
+      assertEq(job3.result?.lost, 1, `one not found: ${JSON.stringify(job3.result)}`);
+      const strict = (await stored(roughId)).pdf_position;
+      assert(strict.lost === true && !("prev" in strict), `the renumbered one is lost, with no prev: ${JSON.stringify(strict)}`);
+      await p.waitForSelector(`div[data-hl-id="${roughId}"].pdfHlLost`, { timeout: 15000 });
       assertNoProblems(p);
       await p.close();
     } finally {

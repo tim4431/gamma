@@ -10,7 +10,7 @@ import io
 import pytest
 
 from conftest import login, make_page, make_user
-from gamma.highlights import from_scaled, is_highlight, page_of, position
+from gamma.highlights import PREV_MAX_QUOTE, PREV_MAX_RECTS, from_scaled, is_highlight, page_of, position, previous_place
 from gamma.pdf_export import annotate_pdf
 from test_pdf_export import PAGE_H, PAGE_W, _blank_pdf
 
@@ -62,15 +62,55 @@ def test_from_scaled_keeps_every_rect_in_one_frame():
 
 def test_from_scaled_keeps_what_the_relocation_wrote_on_a_stored_position():
     """A replaced PDF's relocation (gamma/highlight_relocate.py) marks a
-    position with the file its rects were measured on, lost, or placed by
-    estimate; a restore passes every position through from_scaled, which
-    must keep them."""
+    position with the file its rects were measured on, lost, placed by
+    estimate, or matched roughly with how alike it read; a restore passes
+    every position through from_scaled, which must keep them."""
     lost = {**position(1, 612, 792, [(72, 90, 300, 104)]), "doc_id": "a" * 64, "lost": True}
     approx = {**position(2, 612, 792, [(10, 20, 110, 120)], area=True), "approx": True}
-    assert from_scaled(lost) == lost and from_scaled(approx) == approx
+    rough = {**position(1, 612, 792, [(72, 90, 300, 104)]), "approx": True, "match": 0.87}
+    assert from_scaled(lost) == lost and from_scaled(approx) == approx and from_scaled(rough) == rough
     # only those keys, and only in their own form
     odd = {**position(1, 612, 792, [(1, 1, 2, 2)]), "doc_id": "", "lost": "yes", "usePdfCoordinates": True}
     assert from_scaled(odd) == position(1, 612, 792, [(1, 1, 2, 2)])
+    for match in ("0.9", True, 1.5, -0.1, None):
+        assert from_scaled({**position(1, 612, 792, [(1, 1, 2, 2)]), "match": match}) == position(1, 612, 792, [(1, 1, 2, 2)])
+
+
+def test_from_scaled_keeps_where_a_pending_highlight_was_before_only_in_its_own_form():
+    """A dashed placement's ``prev`` (where the highlight was before the
+    run, for the review card): a file, a page, rects as page fractions and
+    a quote; kept as it is, its quote clipped, anything else dropped."""
+    prev = {"doc_id": "a" * 64, "pageNumber": 3, "rects": [[0.1176, 0.1136, 0.4902, 0.1313], [0, 0, 1, 1]],
+            "quote": "the passage as it read"}
+    rough = {**position(1, 612, 792, [(72, 90, 300, 104)]), "approx": True, "match": 0.87, "prev": prev}
+    assert from_scaled(rough) == rough
+    # no rects (a position without a frame), an area's empty quote, a file no longer stored: still its form
+    for ok in ({**prev, "rects": [], "quote": ""}, {**prev, "doc_id": "unstored"}):
+        assert from_scaled({**rough, "prev": ok})["prev"] == ok
+    # the quote clipped to PREV_MAX_QUOTE characters, the rects at most PREV_MAX_RECTS
+    assert from_scaled({**rough, "prev": {**prev, "quote": "x" * 5000}})["prev"]["quote"] == "x" * PREV_MAX_QUOTE
+    assert from_scaled({**rough, "prev": {**prev, "rects": [[0, 0, 1, 1]] * PREV_MAX_RECTS}})["prev"]["rects"] == [
+        [0, 0, 1, 1]] * PREV_MAX_RECTS
+    bare = {k: v for k, v in rough.items() if k != "prev"}
+    for bad in ("prev", [prev], {**prev, "doc_id": 7}, {**prev, "doc_id": None}, {**prev, "pageNumber": 0},
+                {**prev, "pageNumber": "3"}, {**prev, "pageNumber": True}, {**prev, "quote": None},
+                {k: v for k, v in prev.items() if k != "quote"}, {**prev, "rects": "0,0,1,1"},
+                {**prev, "rects": [[0, 0, 1]]}, {**prev, "rects": [[0, 0, 1, 1.5]]}, {**prev, "rects": [[0, -0.1, 1, 1]]},
+                {**prev, "rects": [[0, 0, "1", 1]]}, {**prev, "rects": [[0, 0, True, 1]]}, {**prev, "rects": [{"x1": 0}]},
+                {**prev, "rects": [[0, 0, 1, 1]] * (PREV_MAX_RECTS + 1)}):
+        assert from_scaled({**rough, "prev": bad}) == bare, bad
+
+
+def test_a_prev_is_its_position_measured_as_fractions_of_its_page():
+    pos = position(2, 612, 792, [(61.2, 79.2, 306, 158.4), (-6, 700, 650, 800)])
+    assert previous_place(pos, "v1", "a quote") == {
+        "doc_id": "v1", "pageNumber": 2, "quote": "a quote",
+        "rects": [[0.1, 0.1, 0.5, 0.2], [0.0, round(700 / 792, 4), 1.0, 1.0]]}  # clamped to the page
+    assert previous_place(pos, "v1", "y" * 2000)["quote"] == "y" * PREV_MAX_QUOTE
+    many = position(1, 100, 100, [(1, 1, 2, 2)] * (PREV_MAX_RECTS + 5))
+    assert len(previous_place(many, "v1")["rects"]) == PREV_MAX_RECTS
+    # a position without a frame has no measure for its rects
+    assert previous_place({k: v for k, v in pos.items() if k not in ("width", "height")}, "v1")["rects"] == []
 
 
 # --- the writers -------------------------------------------------------------------------

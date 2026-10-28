@@ -675,9 +675,13 @@ The scenarios live in `tests/e2e/scenarios/`:
   mocked `/api/ai/translate`; the selection names its page and does not wait
   for the paper's brief), and "replacing the PDF moves a highlight to its
   text": the job's result, a highlight left hollow (on a flipped page and
-  in the notes too), attach mode and move mode ending each other, the move
-  to a selection by hand with no translation of it, and a second move by an
-  area drag clearing the quote
+  in the notes too), attach mode and move mode ending each other, two
+  renumbered citations matched roughly and drawn dashed, their review card
+  on hover (the before picture, the changed words, Next, Accept) and the
+  Document menu's Review and Accept, the move to a selection by hand with
+  no translation of it, a second move by an area drag clearing the quote
+  and putting no picture in the chat, and an account that applies only
+  exact matches getting a renumbered citation back lost
   ([highlight_relocation.md](highlight_relocation.md)).
 - `translation.mjs`: a two-column page whose paragraph runs over the column
   break: the request carries one text with `{br}`, the formulas and the
@@ -904,7 +908,8 @@ The scenarios live in `tests/e2e/scenarios/`:
   stopped from Background tasks, and the Document popover's "Replace the
   PDF…" swapping a document page's file while its title and highlights
   stay and "the highlight follows its text" (the run's summary in the
-  status pill, the highlight's new place and quote, a second tab following).
+  status pill, the highlight's new place and quote, matched roughly and
+  drawn dashed, a second tab following).
 - `collab.mjs`: two accounts in a shared workspace: presence, live ops, edits
   to different blocks, same-block last-writer-wins, undo after a remote edit,
   rename propagation, edits made offline replaying, remote delete, a
