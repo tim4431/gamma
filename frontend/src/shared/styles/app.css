@@ -6562,22 +6562,18 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .pdfInkSepEnd { margin-left: auto; } /* the rule before Undo / Redo, which pins them to the right end */
 /* A preset: the icon with its colour bar underneath (the bar's height
    follows the width). touch-action: none, since a held finger drags it
-   along the row (usePresetDrag) and the viewer never scrolls from a button. */
+   along the row (shared/ui/useDragOrder.js) and the viewer never scrolls
+   from a button. */
 .pdfInkBar .inkToolBtn { position: relative; width: var(--ctl-icon-btn); height: calc(var(--ctl-icon-btn) + 2px); padding-bottom: 6px; touch-action: none; }
 .pdfInkBar .inkToolBtn.inkDragging { opacity: 0.35; }
-/* The 2 px accent bar where a dragged preset will land, and the ghost of
-   the preset riding with the pointer (on the body: the strip is transformed). */
-.inkDropBar { position: absolute; width: 2px; border-radius: 1px; background: var(--accent); pointer-events: none; z-index: 1; }
-.inkDragGhost {
+/* A reorder drag (shared/ui/useDragOrder.js): the 2 px accent bar where
+   the dragged item will land, in its container (the hook sizes it: upright
+   along a row, flat down a list), and the ghost riding with the pointer
+   (on the body, out of any transformed bar), which the caller fills. */
+.dropBar { position: absolute; border-radius: 1px; background: var(--accent); pointer-events: none; z-index: 1; }
+.dragGhost {
   position: fixed;
   z-index: var(--z-tip);
-  width: var(--ctl-icon-btn);
-  height: calc(var(--ctl-icon-btn) + 2px);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding-bottom: 6px;
-  box-sizing: border-box;
   transform: translate(-50%, -50%);
   border: 1px solid var(--border);
   border-radius: var(--radius-sm);
@@ -6586,6 +6582,16 @@ a.shareBrand:hover { background: var(--bg-hover); }
   box-shadow: var(--shadow-2);
   pointer-events: none;
   opacity: 0.9;
+}
+/* A preset's ghost: its button's size, the icon over its colour bar. */
+.dragGhost.inkPresetGhost {
+  width: var(--ctl-icon-btn);
+  height: calc(var(--ctl-icon-btn) + 2px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding-bottom: 6px;
+  box-sizing: border-box;
 }
 /* A preset's options: three captioned sub-rows, Style, Color and Width
    (the caption a 14 px line); on a phone (the block after the strip's

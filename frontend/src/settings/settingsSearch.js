@@ -3,6 +3,7 @@
 // names, does not load it before the dialog opens.
 import { t } from "../shared/i18n/i18n.js";
 import { TOPBAR_ITEMS } from "../app/topbarItems.js";
+import { VIEWER_TOOL_ITEMS } from "../app/viewerToolItems.js";
 
 // Search names the actual setting, including settings on the second-level
 // AI pages. Each entry: the pane, the setting's label (the `data-setting` the
@@ -34,9 +35,12 @@ const entries = [
   e("appearance", t("Inbox notifications"), t("Interface"), t("New inbox items pop up on this device, once each."), "system notifications desktop alerts bell mentions comments replies push"),
   e("appearance", t("Recents thumbnails"), t("Library"), t("Preview the page you last read."), "snapshots library home display cards"),
   e("appearance", t("File labels"), t("Library"), t("Show the folders a file belongs to."), "folders chips library display cards"),
-  // Top bar: a row per item of app/topbarItems.js, its label, hint and synonyms
+  // Top bar and Viewer tools: a row per item of app/topbarItems.js and
+  // app/viewerToolItems.js, its label, hint and synonyms
   ...TOPBAR_ITEMS.map((item) => e("appearance", t(item.label), t("Top bar"), t(item.hint),
-    `topbar top bar header toolbar button show hide ${item.keywords}`)),
+    `topbar top bar header toolbar button show hide order reorder arrange drag move ${item.keywords}`)),
+  ...VIEWER_TOOL_ITEMS.map((item) => e("appearance", t(item.label), t("Viewer tools"), t(item.hint),
+    `viewer tools strip side toolbar PDF notebook button show hide order reorder arrange drag move ${item.keywords}`)),
   e("appearance", t("Suggest tours"), t("Tours"), t("A short tour the first time a feature comes up."), "guide onboarding hints help"),
   e("reading", t("Imported annotations"), t("PDFs"), t("Annotations saved inside a PDF become highlights"), "hide strip keep remove originals highlights PDF"),
   e("reading", t("Smooth wheel scrolling"), t("PDFs"), t("Glide one mouse-wheel notch at a time instead of jumping"), "smooth scroll scrolling mouse wheel animation glide PDF"),
@@ -62,7 +66,7 @@ const entries = [
   e("reading", t("Transcribe recordings"), t("Recordings"), t("Write the spoken words under a recording when it ends"), "audio transcript speech to text whisper automatic"),
   e("reading", t("On the home page"), t("Search opens as"), t("Full panel: grouped result lists"), "search panel find bar expand results"),
   e("reading", t("On a page"), t("Search opens as"), t("Find bar: match counter and next / previous"), "search panel find bar expand results"),
-  e("translation", t("Translation button"), t("Viewer & selection"), t("In the viewer; nothing translates until you ask"), "translation shortcut viewer"),
+  e("translation", t("Translation button"), t("Viewer & selection"), t("On the viewer's strip; off, in its ⋯ menu. Nothing translates until you ask"), "translation shortcut viewer strip show hide"),
   e("translation", t("Translate into"), t("Viewer & selection"), t("The translated view's language"), "translation language"),
   e("translation", t("Translate a selection"), t("Viewer & selection"), t("A button next to the highlight colors"), "translation popup highlight selected text button"),
   e("translation", t("Translate on select"), t("Viewer & selection"), t("Without clicking the button first"), "translation popup selected text automatic"),

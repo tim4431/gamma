@@ -49,7 +49,7 @@ function watchHold(e) {
 // comes after the finger lifts, in a task of its own, so it is waited for a
 // moment (a menu just arriving keeps the page busy) and no longer: a click
 // that never came must not take the next tap.
-function swallowClick() {
+function swallowLiftClick() {
   const stop = (e) => { e.preventDefault(); e.stopPropagation(); };
   const done = () => setTimeout(() => document.removeEventListener("click", stop, true), LIFT_CLICK_MS);
   document.addEventListener("click", stop, { capture: true, once: true });
@@ -82,13 +82,25 @@ export function menuPress(open) {
       const timer = setTimeout(() => {
         endHold();
         held = performance.now();
-        swallowClick();
+        swallowLiftClick();
         open(pressAt(x, y, el));
       }, HOLD_MS);
       hold = { press, timer, x, y, drag };
       for (const type of ["pointermove", "pointerup", "pointercancel"]) window.addEventListener(type, watchHold, true);
     },
   };
+}
+
+// --- a handled release --------------------------------------------------------------
+
+// The click a handled pointer-up would deliver to whatever lies under it (a
+// highlight rect, a link box, the button a drag started on) is not a click
+// on that thing. Called from the pointer-up, it eats the one click that
+// event dispatches next.
+export function swallowClick() {
+  const swallow = (ce) => { ce.stopPropagation(); ce.preventDefault(); };
+  document.addEventListener("click", swallow, { capture: true, once: true });
+  setTimeout(() => document.removeEventListener("click", swallow, { capture: true }), 0);
 }
 
 // --- a menu button ---------------------------------------------------------------------

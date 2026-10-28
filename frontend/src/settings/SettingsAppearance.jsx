@@ -1,15 +1,18 @@
 import React from "react";
-import { PaneHead, Section, Row, Toggle, Stepper, PictureChoices, Segmented } from "./SettingsKit";
+import { PaneHead, Section, Row, Toggle, Stepper, PictureChoices } from "./SettingsKit";
 import { MenuSelect } from "../shared/ui/Menus";
 import { SECTION_PREFS } from "./sectionPrefs.js";
 import { LibraryDisplaySettings } from "./SettingsLibraryDisplay";
+import { BarLayoutSection } from "./BarLayoutSection";
 import {
-  ActivityIcon, BellIcon, CloudIcon, ContrastIcon, CopyIcon, HelpCircleIcon, HighlightIcon, LayoutIcon, LinkIcon, MaximizeIcon, MenuIcon, MoonIcon,
-  PaletteIcon, PenIcon, PlusIcon, SearchIcon, TrashIcon, TypeIcon, XIcon,
+  ActivityIcon, BellIcon, CloudIcon, ContrastIcon, CopyIcon, FileTextIcon, HelpCircleIcon, HighlightIcon, LanguagesIcon, LayoutIcon, LinkIcon,
+  MaximizeIcon, MenuIcon, MicIcon, MoonIcon, PaletteIcon, PenIcon, PlusIcon, SearchIcon, SheetIcon, TextCursorIcon, TrashIcon, TypeIcon, XIcon,
+  ZoomInIcon,
 } from "../shared/ui/Icons";
 import { ThemePreview, PdfPreview } from "../shared/illustrations";
 import { UI_SCALE, themeScheme } from "../app/prefs";
-import { DEFAULT_TOPBAR, TOPBAR_ITEMS, isDefaultTopbar, modeLabel, modeTip, normalizeTopbar } from "../app/topbarItems.js";
+import { TOPBAR } from "../app/topbarItems.js";
+import { VIEWER_TOOLS } from "../app/viewerToolItems.js";
 import {
   DEFAULT_PALETTE, MAX_GROUPS, MAX_GROUP_COLORS, MAX_GROUP_NAME, WASH_ALPHA, WASH_COLORS,
   colorName, isDefaultPalette, newGroupId, normalizePalette, swatchCss,
@@ -107,29 +110,14 @@ function InboxNotifications({ value }) {
   );
 }
 
-// Top bar: a row per item of app/topbarItems.js, in the bar's order, each a
-// Segmented of the modes it offers; the Inbox's only for an account that has
-// one. A new item there is a new row here, given its glyph below.
+// The two bars (BarLayoutSection): a glyph per item of app/topbarItems.js
+// and app/viewerToolItems.js, the ones the bars draw; a new item there is a
+// new row here, given its glyph below. The Inbox's row is only for an
+// account that has one.
 const TOPBAR_ICONS = { add: PlusIcon, tasks: ActivityIcon, search: SearchIcon, share: LinkIcon, sync: CloudIcon, inbox: BellIcon, view: MenuIcon };
-function TopbarSettings({ value }) {
-  const modes = normalizeTopbar(value.topbar) || DEFAULT_TOPBAR;
-  return (
-    <Section title={t("Top bar")} scope="account" prefs={SECTION_PREFS.appearance["Top bar"]}
-      action={(
-        <button type="button" className="uiBtn sm" disabled={isDefaultTopbar(modes)}
-          title={t("Every button back on the bar, the sync pill on synced pages")} onClick={() => value.setTopbar(DEFAULT_TOPBAR)}>
-          {t("Reset")}
-        </button>
-      )}>
-      {TOPBAR_ITEMS.filter((item) => item.id !== "inbox" || value.hasInbox).map((item) => (
-        <Row key={item.id} icon={TOPBAR_ICONS[item.id]} label={t(item.label)} hint={t(item.hint)}>
-          <Segmented value={modes[item.id]} onChange={(mode) => value.setTopbar({ ...modes, [item.id]: mode })}
-            options={item.modes.map((mode) => [mode, modeLabel(item, mode), null, modeTip(item, mode)])} />
-        </Row>
-      ))}
-    </Section>
-  );
-}
+const VIEWER_TOOL_ICONS = {
+  zoom: ZoomInIcon, ink: PenIcon, record: MicIcon, translate: LanguagesIcon, paper: SheetIcon, notesView: FileTextIcon, selectMode: TextCursorIcon,
+};
 
 export function AppearanceSettings({ value, diagnostics }) {
   const palette = normalizePalette(value.palette) || DEFAULT_PALETTE;
@@ -216,7 +204,14 @@ export function AppearanceSettings({ value, diagnostics }) {
         </div>
       </Section>
 
-      <TopbarSettings value={value} />
+      <BarLayoutSection title={t("Top bar")} scope="account" prefs={SECTION_PREFS.appearance["Top bar"]}
+        bar={TOPBAR} value={value.topbar} onChange={value.setTopbar} icons={TOPBAR_ICONS}
+        filter={(item) => item.id !== "inbox" || value.hasInbox}
+        resetTitle={t("Every button back on the bar in the default order, the sync pill on synced pages")} />
+
+      <BarLayoutSection title={t("Viewer tools")} scope="account" prefs={SECTION_PREFS.appearance["Viewer tools"]}
+        bar={VIEWER_TOOLS} value={value.viewerTools} onChange={value.setViewerTools} icons={VIEWER_TOOL_ICONS}
+        resetTitle={t("Every tool back on the viewer's strip, in the default order")} />
 
       <Section title={t("Tours")} scope="account" prefs={SECTION_PREFS.appearance["Tours"]}>
         <Toggle icon={HelpCircleIcon} label={t("Suggest tours")} hint={t("A short tour the first time a feature comes up.")}

@@ -54,7 +54,7 @@ import { BLOCK_TOOLS } from "../chat/agentSteps.js";
 import SearchPanel from "../search/SearchPanel";
 import LibraryEmpty from "../library/LibraryEmpty";
 import { ContextMenu, MenuButton, MenuDivider, MenuItem, MenuLabel, MenuScope, MenuSelect, SubMenuItem, menuGroups } from "../shared/ui/Menus";
-import { backdropPress, menuPress } from "../shared/ui/press.js";
+import { backdropPress, menuPress, triggerPress } from "../shared/ui/press.js";
 import { lastPointer, touchScreen } from "../shared/lib/pointer.js";
 import { appShell, nativeHost, postToHost } from "../shared/lib/host.js";
 import { pickFiles } from "../shared/lib/pickFiles.js";
@@ -68,7 +68,7 @@ import {
   ActivityIcon, AlertCircleIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpDownIcon, ArrowUpIcon, BookIcon, BugIcon, CheckIcon, CloudIcon, CopyIcon, DownloadIcon, ExportIcon,
   ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph,
   FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, HelpCircleIcon, HomeIcon, ImportIcon, InfoIcon, LabelGlyph, LabelIcon,
-  LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon,
+  LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoreIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon,
   RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
   ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon, MicIcon, MessageSquareIcon, BellIcon,
   PanelTopIcon,
@@ -120,7 +120,8 @@ import { LoginPage, SessionConflictPage, ShareBlockedPage, WorkspaceUnavailableP
 import { guestExpiryLabel } from "../auth/guestExpiry";
 import { McpAuthorization } from "../auth/McpConsent";
 import { TRANSLATE_LANGS, preloadPrefs, readPref, translateModelFor, useAppPrefs, useProfileSync } from "./prefs";
-import { topbarPlaces } from "./topbarItems.js";
+import { TOPBAR } from "./topbarItems.js";
+import { VIEWER_TOOLS } from "./viewerToolItems.js";
 import { adoptAccountLook, takeBootRead } from "./boot.js";
 import { applyTheme } from "./theme.js";
 import { useNotices } from "./useNotices";
@@ -2344,6 +2345,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setSnapsState(next);
   }, [recentViews, pageSnaps]);
   const [tabMenu, setTabMenu] = useState(null); // {id, pinned, x, y} — tab right-click menu
+  const [barMenu, setBarMenu] = useState(null); // {pane, x, y} — a bar's right-click Customize… menu
   // The tab a press picked while its page opens (selectTab): the strip shows
   // it selected from the press's own commit, while the page it leaves stays
   // on screen until the new one's tree lands (openBlock). "" when none is.
@@ -2647,7 +2649,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     inkTools, setInkTools: setInkToolsRaw, inkEraserMode, setInkEraserMode, inkEraserSize, setInkEraserSize,
     inkLassoMode, setInkLassoMode, textBoxStyle, setTextBoxStyle,
     inkShapeKind, setInkShapeKind, inkShapeFill, setInkShapeFill, inkRulerUnits, setInkRulerUnits,
-    translateEnabled, setTranslateEnabled,
     selTranslate, setSelTranslate, selTranslateAuto, setSelTranslateAuto,
     translateLang, setTranslateLang, translateModel, setTranslateModel,
     translateEffort, setTranslateEffort, translateParallel, setTranslateParallel,
@@ -2657,7 +2658,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     keybindings, setKeybindings,
     statusBarVisible, setStatusBarVisible, suggestTours, setSuggestTours, tourProgress, setTourProgress,
     inboxSystemNotifications, setInboxSystemNotifications,
-    topbar, setTopbar,
+    topbar, setTopbar, viewerTools, setViewerTools,
     chatEffort, setChatEffort, chatSpeed, setChatSpeed, aiLoginCheck, setAiLoginCheck, metaModel, setMetaModel,
     dictationModel, setDictationModel, dictationLang, setDictationLang,
     chatSystem, setChatSystem, agentSystem, setAgentSystem,
@@ -3395,12 +3396,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const pdfTranslateCtl = useRef(null); // imperative surface set by PdfViewer
   const [pdfTransState, setPdfTransState] = useState({ running: false, progress: 0, shown: true, pages: 0, current: false });
   const [transMenu, setTransMenu] = useState(null); // {x, y} while the button's option menu is open
+  const [toolsMenu, setToolsMenu] = useState(null); // {x, y} while the strip's ⋯ menu is open
+  const toolsMoreRef = useRef(null); // the ⋯ button: its own press toggles the menu
+  // The ⋯ going (its tools back on the strip, the viewer closed) takes its
+  // menu along, so the menu does not come back on its own with the ⋯.
+  const toolsMoreAt = useCallback((el) => { toolsMoreRef.current = el; if (!el) setToolsMenu(null); }, []);
   const transTaskRef = useRef(null); // background-tasks row for the running job
   const transReadingRef = useRef(false); // the "Reading the paper" pill is up
-  function openTransMenu(el) {
+  // A menu from a button of the viewer's strip opens beside it, off the
+  // strip's right edge.
+  function stripMenuAt(el) {
     const r = el.getBoundingClientRect();
-    setTransMenu({ x: r.right + 8, y: r.top - 4 });
+    return { x: r.right + 8, y: r.top - 4 };
   }
+  function openTransMenu(el) { setTransMenu(stripMenuAt(el)); }
   function handleTranslateState(st) {
     setPdfTransState(st);
     // A paper's first requests wait while the server reads it for the brief
@@ -10567,18 +10576,21 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   );
 
   // Where each of the topbar's items goes (app/topbarItems.js, Settings →
-  // Appearance › Top bar): on the bar, or a row of the account menu — the
-  // phone's More sheet, where Background tasks, the Inbox and the View
-  // menu always go (the bottom bar keeps Add, Search, a page's Share and
-  // the sync pill). An item off the bar keeps its popover anchor where its
-  // button would be (`.offBar`), so its row, its shortcut or App opens the
-  // popover in the same place. A tour or a hint on screen shows them all.
-  const barAt = topbarPlaces(topbar, {
+  // Appearance › Top bar), in the order the user gave them: on the bar, or
+  // a row of the account menu — the phone's More sheet, where Background
+  // tasks, the Inbox and the View menu always go (the bottom bar keeps Add,
+  // Search, a page's Share and the sync pill). An item off the bar keeps
+  // its popover anchor where its button would be (`.offBar`), so its row,
+  // its shortcut or App opens the popover in the same place. A tour or a
+  // hint on screen shows them all.
+  const topbarLayout = TOPBAR.read(topbar);
+  const barPlaces = TOPBAR.place(topbarLayout, {
     phone: isPhone,
     guide: guide.running || !!guide.offer,
     open: openPopover,
     active: { tasks: !!tasks.badge, inbox: inbox.unread > 0, sync: true },
   });
+  const barAt = Object.fromEntries(barPlaces.map((x) => [x.id, x.at]));
   const onBar = (id) => barAt[id] === "bar";
   const offBar = (id) => (onBar(id) ? "" : "offBar");
   const folderShareable = homeMode && lib.organize && libTree.folders.has(folderFilter) && !labelFilter;
@@ -10587,36 +10599,40 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const shareOnBar = onBar("share") && (sharesPage || !isPhone);
   const syncs = !!authUser?.user && !!(workspace?.mirror_of || workspace?.publishing);
   const phoneMainActive = phonePanel === null || (phonePanel === "notes" && centerNotes);
+  // An item's row in the account menu while it is off the bar (the View
+  // menu's rows are the menu's last group, below).
+  const barMenuRow = {
+    add: () => !onBar("add") && (
+      <MenuItem key="add" icon={PlusIcon} onClick={() => setOpenPopover("add")}
+        title={t("Add — a new page, a PDF by URL, arXiv id or DOI, or uploaded files")}>{t("Add…")}</MenuItem>
+    ),
+    tasks: () => !onBar("tasks") && (
+      <MenuItem key="tasks" icon={ActivityIcon} onClick={() => setOpenPopover("downloads")}
+        title={t("Background tasks — exports, backups, imports, downloads and uploads")}
+        trailing={<TaskBadge badge={tasks.badge} inline />}>
+        {t("Background tasks")}
+      </MenuItem>
+    ),
+    search: () => !onBar("search") && (
+      <CommandMenuItem key="search" id="app.search" ctx={appCmdRef.current} bindings={keybindings}
+        onClick={() => setOpenPopover("search")} />
+    ),
+    share: () => !shareOnBar && (sharesPage ? commandRow("app.share") : folderShareable && (
+      <MenuItem key="share" icon={LinkIcon} onClick={() => openFolderShare(folderFilter)}>{t("Share this folder")}</MenuItem>
+    )),
+    sync: () => !onBar("sync") && syncs && (
+      <MenuItem key="sync" icon={CloudIcon} onClick={() => setOpenPopover("mirror")}>{t("Sync status")}</MenuItem>
+    ),
+    inbox: () => !onBar("inbox") && inbox.enabled && (
+      <MenuItem key="inbox" icon={BellIcon} onPointerEnter={InboxPanel.preload} onClick={() => setOpenPopover("inbox")}
+        trailing={<InboxBadge unread={inbox.unread} inline />}>
+        {t("Inbox")}
+      </MenuItem>
+    ),
+  };
   const barMenuRows = () => {
     const rows = [
-      !onBar("add") && (
-        <MenuItem key="add" icon={PlusIcon} onClick={() => setOpenPopover("add")}
-          title={t("Add — a new page, a PDF by URL, arXiv id or DOI, or uploaded files")}>{t("Add…")}</MenuItem>
-      ),
-      !onBar("tasks") && (
-        <MenuItem key="tasks" icon={ActivityIcon} onClick={() => setOpenPopover("downloads")}
-          title={t("Background tasks — exports, backups, imports, downloads and uploads")}
-          trailing={<TaskBadge badge={tasks.badge} inline />}>
-          {t("Background tasks")}
-        </MenuItem>
-      ),
-      !onBar("search") && (
-        <CommandMenuItem key="search" id="app.search" ctx={appCmdRef.current} bindings={keybindings}
-          onClick={() => setOpenPopover("search")} />
-      ),
-      !shareOnBar && sharesPage && commandRow("app.share"),
-      !shareOnBar && folderShareable && (
-        <MenuItem key="share" icon={LinkIcon} onClick={() => openFolderShare(folderFilter)}>{t("Share this folder")}</MenuItem>
-      ),
-      !onBar("sync") && syncs && (
-        <MenuItem key="sync" icon={CloudIcon} onClick={() => setOpenPopover("mirror")}>{t("Sync status")}</MenuItem>
-      ),
-      !onBar("inbox") && inbox.enabled && (
-        <MenuItem key="inbox" icon={BellIcon} onPointerEnter={InboxPanel.preload} onClick={() => setOpenPopover("inbox")}
-          trailing={<InboxBadge unread={inbox.unread} inline />}>
-          {t("Inbox")}
-        </MenuItem>
-      ),
+      ...barPlaces.map(({ id }) => barMenuRow[id]?.()),
       isPhone && sharesPage && commentsOn && (
         // the Comments window, as a panel over the page (no bottom tab of its own)
         <MenuItem key="comments" icon={MessageSquareIcon} onPointerEnter={CommentsPanel.preload}
@@ -10634,11 +10650,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     );
   };
 
-  // The topbar action buttons. On a phone these move to the bottom bar:
-  // the tab row is too narrow to hold both, and thumbs reach the bottom.
-  // There each carries its word under the icon (.barLabel, hidden elsewhere).
-  const topbarActions = (
-    <>
+  // The topbar's items by id (app/topbarItems.js): each its button, or
+  // only its popover's anchor while it is off the bar. The bar renders
+  // them in the user's order, in the DOM rather than by CSS order, so Tab
+  // goes through them as they are seen.
+  const topbarItem = {
+    add: () => (
       <span data-popover="add" className={`popoverAnchor ${offBar("add")}`}>
         {onBar("add") ? (
           <button
@@ -10702,6 +10719,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           </Popover>
         ) : null}
       </span>
+    ),
+    tasks: () => (
       <span data-popover="downloads" className={`popoverAnchor ${offBar("tasks")}`}>
         {/* The spinner, a red dot for a failure worth a look (a refused
             download leaves no broken page behind, so this is the sign it
@@ -10713,6 +10732,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         ) : null}
         {openPopover === "downloads" ? <TasksPanel tasks={tasks} onOpen={openTask} onRetry={retryTask} /> : null}
       </span>
+    ),
+    search: () => (
       <SearchPanel
         open={openPopover === "search"}
         onOpenChange={(v) => setOpenPopover(v ? "search" : null)}
@@ -10731,30 +10752,31 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         onFindMarks={setFindMarks}
         initialQuery={searchSeed}
       />
-      {sharesPage ? (
-        <span data-popover="share" className={`popoverAnchor ${shareOnBar ? "" : "offBar"}`}>
-          {shareOnBar ? (
-            <button
-              className={`iconBtn ${openPopover === "share" ? "activeIcon" : ""}`}
-              onClick={() => { if (openPopover === "share") setOpenPopover(null); else openPageShare(focusedBlockId); }}
-              onPointerEnter={SharePopover.preload}
-              onFocus={SharePopover.preload}
-              disabled={loading}
-              data-guide="header.share"
-              title={t("Share")}
-              aria-label={t("Share")}
-            >
-              <LinkIcon size={16} />
-              <span className="barLabel">{t("Share")}</span>
-            </button>
-          ) : null}
-          {openPopover === "share" && shareTarget?.kind === "page" ? sharePopover : null}
-        </span>
-      ) : folderShareable ? (
-        // The same button for the open folder: one link for every page filed
-        // in it. On a phone the More sheet offers it instead.
-        <span data-popover="share" className={`popoverAnchor ${shareOnBar ? "" : "offBar"}`}>
-          {shareOnBar ? (
+    ),
+    share: () => (sharesPage ? (
+      <span data-popover="share" className={`popoverAnchor ${shareOnBar ? "" : "offBar"}`}>
+        {shareOnBar ? (
+          <button
+            className={`iconBtn ${openPopover === "share" ? "activeIcon" : ""}`}
+            onClick={() => { if (openPopover === "share") setOpenPopover(null); else openPageShare(focusedBlockId); }}
+            onPointerEnter={SharePopover.preload}
+            onFocus={SharePopover.preload}
+            disabled={loading}
+            data-guide="header.share"
+            title={t("Share")}
+            aria-label={t("Share")}
+          >
+            <LinkIcon size={16} />
+            <span className="barLabel">{t("Share")}</span>
+          </button>
+        ) : null}
+        {openPopover === "share" && shareTarget?.kind === "page" ? sharePopover : null}
+      </span>
+    ) : folderShareable ? (
+      // The same button for the open folder: one link for every page filed
+      // in it. On a phone the More sheet offers it instead.
+      <span data-popover="share" className={`popoverAnchor ${shareOnBar ? "" : "offBar"}`}>
+        {shareOnBar ? (
           <button
             className={`iconBtn ${openPopover === "share" ? "activeIcon" : ""}`}
             onClick={() => { if (openPopover === "share") setOpenPopover(null); else openFolderShare(folderFilter); }}
@@ -10766,189 +10788,393 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           >
             <LinkIcon size={16} />
           </button>
-          ) : null}
-          {openPopover === "share" && shareTarget?.kind === "folder" ? sharePopover : null}
-        </span>
-      ) : null}
-      {syncs ? (
-        <MirrorPopover
-          key={workspace.id}
-          wsId={workspace.id}
-          mirrorOf={workspace.mirror_of}
-          publication={!workspace.mirror_of && !!workspace.publishing}
-          pageId={focusedBlockId}
-          everyPage={topbar.sync === "always"}
-          button={onBar("sync")}
-          open={openPopover === "mirror"}
-          onToggle={() => setOpenPopover(openPopover === "mirror" ? null : "mirror")}
-          jumpTo={(pageId, blockId) => jumpToRef.current?.(pageId, blockId)}
-          onOpenSettings={() => openSettingsPane(workspace.mirror_of ? "workspaces" : "account")}
-        />
-      ) : null}
-      {inbox.enabled ? (
-        // The Inbox: off the bar (always on a phone), a row of the account
-        // menu opens the panel.
-        <span data-popover="inbox" className={`popoverAnchor ${offBar("inbox")}`}>
-          {onBar("inbox") ? (
-            <InboxButton unread={inbox.unread} open={openPopover === "inbox"} onPreload={InboxPanel.preload}
-              onToggle={() => setOpenPopover((p) => (p === "inbox" ? null : "inbox"))} />
-          ) : null}
-          {openPopover === "inbox" ? (
-            <LazyBoundary>
-              <InboxPanel inbox={inbox} workspaceId={wsId} onOpen={openInboxItem} />
-            </LazyBoundary>
-          ) : null}
-        </span>
-      ) : null}
-      {authUser?.user && (
-        <span data-popover="user" className="popoverAnchor">
-          <button
-            className={`iconBtn ${openPopover === "user" ? "activeIcon" : ""}`}
-            onClick={() => {
-              const opening = openPopover !== "user";
-              if (opening) { refreshQuota(); refreshAiModels(); } // fresh storage and AI meters on open
-              setOpenPopover(opening ? "user" : null);
-            }}
-            onPointerEnter={preloadAccountMenu}
-            onFocus={preloadAccountMenu}
-            data-guide="header.account"
-            // The name stays put (every script finds the button by it); the
-            // hover title counts what wants a look.
-            title={isPhone ? (inbox.unread ? tn("More — {n} unread in the inbox; account, settings, background tasks, import and export",
-              "More — {n} unread in the inbox; account, settings, background tasks, import and export", inbox.unread)
-              : inbox.enabled ? t("More — inbox, account, settings, background tasks, import and export")
-                : t("More — account, settings, background tasks, import and export"))
-              : notices.list.length ? tn("Account & settings — {n} notice", "Account & settings — {n} notices", notices.list.length)
-              : t("Account & settings")}
-            aria-label={isPhone ? t("More") : t("Account & settings")}
-            aria-haspopup="menu"
-            aria-expanded={openPopover === "user"}
-          >
-            {isPhone ? <MenuIcon size={20} /> : <UserIcon size={20} />}
-            {isPhone ? <span className="barLabel">{t("More")}</span> : null}
-            {/* On a phone: the running spinner, then the Inbox's count, then the notice dot. */}
-            {isPhone && tasks.badge === "running" ? <span className="transferSpin" aria-hidden="true" />
-              : isPhone && inbox.unread ? <InboxBadge unread={inbox.unread} />
-              : notices.tone ? <span className={`noticeDot ${dotTone(notices.tone)}`} data-tone={notices.tone} aria-hidden="true" /> : null}
+        ) : null}
+        {openPopover === "share" && shareTarget?.kind === "folder" ? sharePopover : null}
+      </span>
+    ) : null),
+    sync: () => (syncs ? (
+      <MirrorPopover
+        key={workspace.id}
+        wsId={workspace.id}
+        mirrorOf={workspace.mirror_of}
+        publication={!workspace.mirror_of && !!workspace.publishing}
+        pageId={focusedBlockId}
+        everyPage={topbarLayout.modes.sync === "always"}
+        button={onBar("sync")}
+        open={openPopover === "mirror"}
+        onToggle={() => setOpenPopover(openPopover === "mirror" ? null : "mirror")}
+        jumpTo={(pageId, blockId) => jumpToRef.current?.(pageId, blockId)}
+        onOpenSettings={() => openSettingsPane(workspace.mirror_of ? "workspaces" : "account")}
+      />
+    ) : null),
+    inbox: () => (inbox.enabled ? (
+      // The Inbox: off the bar (always on a phone), a row of the account
+      // menu opens the panel.
+      <span data-popover="inbox" className={`popoverAnchor ${offBar("inbox")}`}>
+        {onBar("inbox") ? (
+          <InboxButton unread={inbox.unread} open={openPopover === "inbox"} onPreload={InboxPanel.preload}
+            onToggle={() => setOpenPopover((p) => (p === "inbox" ? null : "inbox"))} />
+        ) : null}
+        {openPopover === "inbox" ? (
+          <LazyBoundary>
+            <InboxPanel inbox={inbox} workspaceId={wsId} onOpen={openInboxItem} />
+          </LazyBoundary>
+        ) : null}
+      </span>
+    ) : null),
+    view: () => (onBar("view") ? renderOverflowMenu(false) : null),
+  };
+
+  // Account & settings is no item: it stays last, the menu the items off
+  // the bar go to and the way back to their setting.
+  const accountButton = authUser?.user && (
+    <span data-popover="user" className="popoverAnchor">
+      <button
+        className={`iconBtn ${openPopover === "user" ? "activeIcon" : ""}`}
+        onClick={() => {
+          const opening = openPopover !== "user";
+          if (opening) { refreshQuota(); refreshAiModels(); } // fresh storage and AI meters on open
+          setOpenPopover(opening ? "user" : null);
+        }}
+        onPointerEnter={preloadAccountMenu}
+        onFocus={preloadAccountMenu}
+        data-guide="header.account"
+        // The name stays put (every script finds the button by it); the
+        // hover title counts what wants a look.
+        title={isPhone ? (inbox.unread ? tn("More — {n} unread in the inbox; account, settings, background tasks, import and export",
+          "More — {n} unread in the inbox; account, settings, background tasks, import and export", inbox.unread)
+          : inbox.enabled ? t("More — inbox, account, settings, background tasks, import and export")
+            : t("More — account, settings, background tasks, import and export"))
+          : notices.list.length ? tn("Account & settings — {n} notice", "Account & settings — {n} notices", notices.list.length)
+          : t("Account & settings")}
+        aria-label={isPhone ? t("More") : t("Account & settings")}
+        aria-haspopup="menu"
+        aria-expanded={openPopover === "user"}
+      >
+        {isPhone ? <MenuIcon size={20} /> : <UserIcon size={20} />}
+        {isPhone ? <span className="barLabel">{t("More")}</span> : null}
+        {/* On a phone: the running spinner, then the Inbox's count, then the notice dot. */}
+        {isPhone && tasks.badge === "running" ? <span className="transferSpin" aria-hidden="true" />
+          : isPhone && inbox.unread ? <InboxBadge unread={inbox.unread} />
+          : notices.tone ? <span className={`noticeDot ${dotTone(notices.tone)}`} data-tone={notices.tone} aria-hidden="true" /> : null}
+      </button>
+      {openPopover === "user" ? (
+        <Popover as={MenuScope} className="userPopover" data-guide="account.menu" aria-label={isPhone ? t("More") : t("Account & settings")}>
+          {/* The card is the way into your account: Settings → Account & sync. */}
+          <button type="button" role="menuitem" className="userCard" data-guide="account.card"
+            onClick={() => openSettingsPane("account")} title={t("Account & sync")}>
+            <span className="userAvatar" aria-hidden="true">
+              {authUser.is_guest
+                ? <UserIcon size={20} />
+                : <span className="userAvatarInitial">{authUser.user.charAt(0).toUpperCase()}</span>}
+            </span>
+            <span className="userCardMeta">
+              <span className="userCardName">{authUser.is_guest ? t("Guest") : authUser.user}</span>
+              <span className="userCardRole" title={authUser.is_guest && authUser.guest_expires_at
+                ? t("Deleted at {time}", { time: fmtDate(authUser.guest_expires_at, { dateStyle: "medium", timeStyle: "short" }) }) : undefined}>
+                {authUser.is_guest ? guestExpiryLabel(authUser.guest_expires_at) : workspace ? `${workspace.name} · ${workspaceMeta(workspace)}`
+                  : t("Signed in")}
+              </span>
+            </span>
+            {quotaInfo ? (
+              <span className="userCardQuota" title={t("Storage used by your uploaded PDFs and images")}>
+                {fmtBytes(quotaInfo.used_bytes)}
+                {quotaInfo.quota_mb ? ` / ${fmtBytes(quotaInfo.quota_mb * 1024 * 1024)}` : ""}
+              </span>
+            ) : null}
           </button>
-          {openPopover === "user" ? (
-            <Popover as={MenuScope} className="userPopover" data-guide="account.menu" aria-label={isPhone ? t("More") : t("Account & settings")}>
-              {/* The card is the way into your account: Settings → Account & sync. */}
-              <button type="button" role="menuitem" className="userCard" data-guide="account.card"
-                onClick={() => openSettingsPane("account")} title={t("Account & sync")}>
-                <span className="userAvatar" aria-hidden="true">
-                  {authUser.is_guest
-                    ? <UserIcon size={20} />
-                    : <span className="userAvatarInitial">{authUser.user.charAt(0).toUpperCase()}</span>}
-                </span>
-                <span className="userCardMeta">
-                  <span className="userCardName">{authUser.is_guest ? t("Guest") : authUser.user}</span>
-                  <span className="userCardRole" title={authUser.is_guest && authUser.guest_expires_at
-                    ? t("Deleted at {time}", { time: fmtDate(authUser.guest_expires_at, { dateStyle: "medium", timeStyle: "short" }) }) : undefined}>
-                    {authUser.is_guest ? guestExpiryLabel(authUser.guest_expires_at) : workspace ? `${workspace.name} · ${workspaceMeta(workspace)}`
-                      : t("Signed in")}
-                  </span>
-                </span>
-                {quotaInfo ? (
-                  <span className="userCardQuota" title={t("Storage used by your uploaded PDFs and images")}>
-                    {fmtBytes(quotaInfo.used_bytes)}
-                    {quotaInfo.quota_mb ? ` / ${fmtBytes(quotaInfo.quota_mb * 1024 * 1024)}` : ""}
-                  </span>
-                ) : null}
-              </button>
-              {authUser.is_guest ? (
-                <div className="popoverHint">{t("Your work stays until then, or until you log out; then the workspace is deleted with everything in it. Ask the admin for an account to keep your work.")}</div>
-              ) : null}
-              {quotaInfo?.quota_mb ? (
-                <div className="popoverQuota">
-                  <QuotaMeter usedBytes={quotaInfo.used_bytes} quotaMb={quotaInfo.quota_mb} barOnly />
-                </div>
-              ) : null}
-              {aiInfo?.allowance ? (
-                <div className="popoverQuota" data-testid="account-ai-usage"
-                  title={t("Tokens your AI requests spent through this server's shared connections in the last 24 hours. Your own keys are not counted.")}>
-                  <AllowanceMeter allowance={aiInfo.allowance} />
-                </div>
-              ) : null}
-              {/* What the red dot is about: one row per notice, its sentence
-                  and a link to the Settings pane that resolves it. The link
-                  is the menu's item and the sentence its description: a
-                  status region around them would stand between the item
-                  and its menu. */}
-              {notices.list.length ? (
-                <div className="accountNotices" data-testid="account-notices">
-                  {notices.list.map((notice) => (
-                    <div key={notice.id} className={`accountNotice ${notice.tone}`}>
-                      {notice.tone === "info" ? <InfoIcon size={14} /> : <AlertCircleIcon size={14} />}
-                      <span className="accountNoticeBody">
-                        <span className="accountNoticeText" id={`account-notice-${notice.id}`}>{noticeText(notice)}</span>
-                        <button type="button" role="menuitem" className="accountNoticeAction"
-                          aria-describedby={`account-notice-${notice.id}`}
-                          onClick={() => openSettingsPane(notice.pane)}>
-                          {noticeAction(notice)} →
-                        </button>
-                      </span>
-                    </div>
-                  ))}
-                </div>
-              ) : null}
-              {barMenuRows()}
-              <MenuDivider />
-              {/* The workspace switcher: every library this account belongs
-                  to; switching reloads the tab on that workspace's URL. The
-                  open one is the checked radio of its group. */}
-              <div data-guide="account.workspaces" role="group" aria-label={t("Workspaces")}>
-              {workspaces.length ? <div className="popoverSection">{t("Workspaces")}</div> : null}
-              {workspaces.map((w) => (
-                <MenuItem
-                  key={w.id}
-                  role="menuitemradio"
-                  aria-checked={w.id === wsId}
-                  className={`wsItem ${w.id === wsId ? "active" : ""}`}
-                  icon={() => <span className="wsItemBadge" aria-hidden="true">{(w.name || "?").charAt(0).toUpperCase()}</span>}
-                  onClick={() => { setOpenPopover(null); switchWorkspace(w.id); }}
-                  title={w.personal ? t("Your personal workspace{default}", { default: w.default ? t(" (default)") : "" }) : t("{Shared} workspace · {members} member{_s} · you {role}", { Shared: w.access === "public" ? t("Public") : t("Shared"), members: w.members, _s: w.members === 1 ? "" : "s", role: ROLE_LABEL[w.role] || w.role })}
-                  trailing={<>
-                    <span className="wsItemMeta">{workspaceMeta(w)}</span>
-                    {w.id === wsId ? <CheckIcon size={14} className="wsItemCheck" /> : null}
-                  </>}
-                ><span className="wsItemName">{w.name}</span></MenuItem>
-              ))}
-              </div>
-              {!authUser.is_guest ? (
-                <MenuItem
-                  icon={UsersIcon}
-                  onClick={() => openSettingsPane("workspaces")}
-                  title={t("All your workspaces: rename, members, export and import, create another")}
-                >{t("Workspaces…")}</MenuItem>
-              ) : null}
-              <MenuDivider />
-              <MenuItem icon={SettingsIcon} onClick={() => openSettingsPane(notices.firstPane || "general")}
-                trailing={notices.tone ? <span className={`noticeDot inline ${dotTone(notices.tone)}`} aria-hidden="true" /> : null}>
-                {t("Settings…")}
-              </MenuItem>
-              <MenuDivider />
-              {/* The tours that can start here (guide.startable); a tour
-                  whose first step needs no open popover closes this menu. */}
-              <SubMenuItem id="tours" icon={HelpCircleIcon} label={t("Tours")} data-guide="account.tour">
-                {guide.startable().map((tour) => (
-                  <MenuItem key={tour.id} data-tour={tour.id}
-                    onClick={() => guide.start(tour.id)}>{t(tour.title)}</MenuItem>
-                ))}
-              </SubMenuItem>
-              <MenuItem icon={BugIcon} onClick={() => { setOpenPopover(null); setReportOpen(true); }}
-                title={t("Describe what went wrong; Gamma adds its build, your browser and its recent log lines and opens a GitHub issue for you to review")}>
-                {t("Report a problem…")}
-              </MenuItem>
-              <MenuDivider />
-              <MenuItem icon={LogOutIcon} danger onClick={authUser.is_guest ? confirmGuestLogout : doLogout}>{t("Log out")}</MenuItem>
-            </Popover>
+          {authUser.is_guest ? (
+            <div className="popoverHint">{t("Your work stays until then, or until you log out; then the workspace is deleted with everything in it. Ask the admin for an account to keep your work.")}</div>
           ) : null}
-        </span>
-      )}
-      {onBar("view") ? renderOverflowMenu(false) : null}
+          {quotaInfo?.quota_mb ? (
+            <div className="popoverQuota">
+              <QuotaMeter usedBytes={quotaInfo.used_bytes} quotaMb={quotaInfo.quota_mb} barOnly />
+            </div>
+          ) : null}
+          {aiInfo?.allowance ? (
+            <div className="popoverQuota" data-testid="account-ai-usage"
+              title={t("Tokens your AI requests spent through this server's shared connections in the last 24 hours. Your own keys are not counted.")}>
+              <AllowanceMeter allowance={aiInfo.allowance} />
+            </div>
+          ) : null}
+          {/* What the red dot is about: one row per notice, its sentence
+              and a link to the Settings pane that resolves it. The link
+              is the menu's item and the sentence its description: a
+              status region around them would stand between the item
+              and its menu. */}
+          {notices.list.length ? (
+            <div className="accountNotices" data-testid="account-notices">
+              {notices.list.map((notice) => (
+                <div key={notice.id} className={`accountNotice ${notice.tone}`}>
+                  {notice.tone === "info" ? <InfoIcon size={14} /> : <AlertCircleIcon size={14} />}
+                  <span className="accountNoticeBody">
+                    <span className="accountNoticeText" id={`account-notice-${notice.id}`}>{noticeText(notice)}</span>
+                    <button type="button" role="menuitem" className="accountNoticeAction"
+                      aria-describedby={`account-notice-${notice.id}`}
+                      onClick={() => openSettingsPane(notice.pane)}>
+                      {noticeAction(notice)} →
+                    </button>
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          {barMenuRows()}
+          <MenuDivider />
+          {/* The workspace switcher: every library this account belongs
+              to; switching reloads the tab on that workspace's URL. The
+              open one is the checked radio of its group. */}
+          <div data-guide="account.workspaces" role="group" aria-label={t("Workspaces")}>
+          {workspaces.length ? <div className="popoverSection">{t("Workspaces")}</div> : null}
+          {workspaces.map((w) => (
+            <MenuItem
+              key={w.id}
+              role="menuitemradio"
+              aria-checked={w.id === wsId}
+              className={`wsItem ${w.id === wsId ? "active" : ""}`}
+              icon={() => <span className="wsItemBadge" aria-hidden="true">{(w.name || "?").charAt(0).toUpperCase()}</span>}
+              onClick={() => { setOpenPopover(null); switchWorkspace(w.id); }}
+              title={w.personal ? t("Your personal workspace{default}", { default: w.default ? t(" (default)") : "" }) : t("{Shared} workspace · {members} member{_s} · you {role}", { Shared: w.access === "public" ? t("Public") : t("Shared"), members: w.members, _s: w.members === 1 ? "" : "s", role: ROLE_LABEL[w.role] || w.role })}
+              trailing={<>
+                <span className="wsItemMeta">{workspaceMeta(w)}</span>
+                {w.id === wsId ? <CheckIcon size={14} className="wsItemCheck" /> : null}
+              </>}
+            ><span className="wsItemName">{w.name}</span></MenuItem>
+          ))}
+          </div>
+          {!authUser.is_guest ? (
+            <MenuItem
+              icon={UsersIcon}
+              onClick={() => openSettingsPane("workspaces")}
+              title={t("All your workspaces: rename, members, export and import, create another")}
+            >{t("Workspaces…")}</MenuItem>
+          ) : null}
+          <MenuDivider />
+          <MenuItem icon={SettingsIcon} onClick={() => openSettingsPane(notices.firstPane || "general")}
+            trailing={notices.tone ? <span className={`noticeDot inline ${dotTone(notices.tone)}`} aria-hidden="true" /> : null}>
+            {t("Settings…")}
+          </MenuItem>
+          <MenuDivider />
+          {/* The tours that can start here (guide.startable); a tour
+              whose first step needs no open popover closes this menu. */}
+          <SubMenuItem id="tours" icon={HelpCircleIcon} label={t("Tours")} data-guide="account.tour">
+            {guide.startable().map((tour) => (
+              <MenuItem key={tour.id} data-tour={tour.id}
+                onClick={() => guide.start(tour.id)}>{t(tour.title)}</MenuItem>
+            ))}
+          </SubMenuItem>
+          <MenuItem icon={BugIcon} onClick={() => { setOpenPopover(null); setReportOpen(true); }}
+            title={t("Describe what went wrong; Gamma adds its build, your browser and its recent log lines and opens a GitHub issue for you to review")}>
+            {t("Report a problem…")}
+          </MenuItem>
+          <MenuDivider />
+          <MenuItem icon={LogOutIcon} danger onClick={authUser.is_guest ? confirmGuestLogout : doLogout}>{t("Log out")}</MenuItem>
+        </Popover>
+      ) : null}
+    </span>
+  );
+
+  // The topbar action buttons: the items in their order, then Account &
+  // settings. On a phone these move to the bottom bar, in the same order:
+  // the tab row is too narrow to hold both, and thumbs reach the bottom.
+  // There each carries its word under the icon (.barLabel, hidden elsewhere).
+  const topbarActions = (
+    <>
+      {barPlaces.map(({ id }) => <React.Fragment key={id}>{topbarItem[id]()}</React.Fragment>)}
+      {accountButton}
     </>
   );
+
+  // The viewer's side strip, the PDF's and the notebook's (app/viewerToolItems.js,
+  // Settings → Appearance › Viewer tools): its tools in the user's order,
+  // each on the strip or a row of the ⋯ menu at its end. A tool that does
+  // not apply here is in neither: Paper and Notes view are a notebook's,
+  // Translate a PDF's outside a share, the selection mode a touch screen's,
+  // and a read-only page has nothing to write on or record onto. A lit tool
+  // is in use and stays on the strip whatever its mode (the pen while its
+  // tools are open, Record while it records, Translate while it translates
+  // or shows a translation, Paper while its panel is open, the rectangle
+  // mode); a tour or a hint on screen shows them all, since their steps
+  // point at them.
+  const transLit = pdfTransState.running || (pdfTransState.pages > 0 && pdfTransState.shown);
+  const stripApplies = {
+    zoom: true,
+    ink: !readOnly,
+    record: !readOnly,
+    translate: !shareMode && !!pdfUrl,
+    paper: notebook && !readOnly,
+    notesView: notebook,
+    selectMode: touchScreen() && !shareMode && !!pdfUrl,
+  };
+  const stripPlaces = VIEWER_TOOLS.place(viewerTools, {
+    guide: guide.running || !!guide.offer,
+    pinned: { ink: inkUi.open, record: !!recordingNow, translate: transLit, paper: paperMenu, selectMode: areaSelectMode },
+  }).filter((x) => stripApplies[x.id]);
+  const stripMenuTools = stripPlaces.filter((x) => x.at === "menu");
+  const toolsMore = !!(pdfUrl || notebook) && !viewerHidden && stripMenuTools.length > 0;
+  // Each tool's button on the strip, by id: zoom is its three buttons,
+  // kept together (the tour points at them), and Translate's percentage
+  // follows it while it runs.
+  const viewerTool = {
+    zoom: () => (
+      <div className="pdfCtlGroup" data-guide="viewer.zoom">
+        <button onClick={() => zoomStep(-1)} title={t("Zoom out")} aria-label={t("Zoom out")}>
+          <ZoomOutIcon size={16} />
+        </button>
+        <button onClick={() => zoomStep(1)} title={t("Zoom in")} aria-label={t("Zoom in")}>
+          <ZoomInIcon size={16} />
+        </button>
+        <button className="pdfFitWidthBtn" onClick={() => zoomTo("page-width")} title={t("Fit to width")} aria-label={t("Fit to width")}>
+          <FitWidthIcon size={16} />
+        </button>
+      </div>
+    ),
+    ink: () => (
+      <button
+        className={inkUi.open ? "modeActive" : ""}
+        data-guide="pdf.inkButton"
+        onClick={openInkTools}
+        title={inkUi.open ? t("Close the markup tools (Esc)") : t("Handwriting: draw on the page with a pen, highlighter or eraser")}
+        aria-label={t("Handwriting tools")}
+      >
+        <PenIcon size={16} />
+      </button>
+    ),
+    record: () => (
+      <button
+        className={recordingNow ? "modeActive recordBtn" : ""}
+        data-guide="viewer.record"
+        onClick={toggleRecording}
+        aria-pressed={!!recordingNow}
+        title={recordingNow ? t("Stop recording") : t("Record audio: what you write meanwhile replays in step with it")}
+        aria-label={recordingNow ? t("Stop recording") : t("Record audio")}
+      >
+        <MicIcon size={16} />
+      </button>
+    ),
+    translate: () => (
+      <>
+        <button
+          data-guide="viewer.translate"
+          className={transLit ? "modeActive" : ""}
+          onClick={() => {
+            if (pdfTransState.running) { pdfTranslateCtl.current?.halt(); return; }
+            // On a translated page: show/hide (all pages). Anywhere
+            // else: translate this page, which also shows the rest.
+            if (pdfTransState.current) { pdfTranslateCtl.current?.setShown(!pdfTransState.shown); return; }
+            pdfTranslateCtl.current?.translatePage();
+          }}
+          {...menuPress((e) => { e.preventDefault(); openTransMenu(e.currentTarget); })}
+          title={pdfTransState.running
+            ? t("Translating… {progress}% — click to stop (right-click for options)", { progress: Math.round(pdfTransState.progress * 100) })
+            : pdfTransState.current
+              ? (pdfTransState.shown
+                  ? t("Hide the translation (all pages; Alt peeks) — right-click for options")
+                  : t("Show the translation — right-click for options"))
+              : t("Translate this page into {translateLangLabel} — right-click: whole document & options", { translateLangLabel })}
+          aria-label={pdfTransState.running ? t("Stop translating")
+            : pdfTransState.current ? (pdfTransState.shown ? t("Hide translation") : t("Show translation"))
+            : t("Translate")}
+        >
+          {pdfTransState.running
+            ? <span className="pillSpin" aria-hidden="true" />
+            : pdfTransState.pages > 0 && !pdfTransState.shown
+              ? <LanguagesOffIcon size={16} />
+              : <LanguagesIcon size={16} />}
+        </button>
+        {pdfTransState.running ? <div className="pdfTransPct">{Math.round(pdfTransState.progress * 100)}%</div> : null}
+      </>
+    ),
+    paper: () => (
+      <button
+        data-guide="viewer.paper"
+        className={paperMenu ? "modeActive" : ""}
+        onClick={() => setPaperMenu((v) => !v)}
+        title={t("Paper: size, pattern and colour of this page")}
+        aria-label={t("Paper of this page")}
+        aria-expanded={paperMenu}
+      >
+        <SheetIcon size={16} />
+      </button>
+    ),
+    notesView: () => (
+      <button
+        data-guide="viewer.notesView"
+        onClick={() => setNotebookView(focusedBlockId, false)}
+        title={t("Notes view: the pages among the notes")}
+        aria-label={t("Notes view")}
+      >
+        <FileTextIcon size={16} />
+      </button>
+    ),
+    selectMode: () => (
+      <button
+        data-guide="viewer.selectMode"
+        className={areaSelectMode ? "modeActive" : ""}
+        onClick={() => setAreaSelectMode((v) => !v)}
+        title={areaSelectMode ? t("Rectangle mode — drag draws an area note (tap to switch to text selection)") : t("Text mode — drag selects text (tap to switch to rectangle drawing)")}
+        aria-label={t("Toggle selection mode")}
+      >
+        <IconSwap swap={areaSelectMode} from={<TextCursorIcon size={16} />} to={<RectSelectIcon size={16} />} />
+      </button>
+    ),
+  };
+  // A tool's rows in the ⋯ menu: what its button does, under its word.
+  const stripRow = (run) => () => { setToolsMenu(null); run(); };
+  const viewerToolRows = {
+    zoom: () => [
+      <MenuItem key="zoomOut" icon={ZoomOutIcon} onClick={stripRow(() => zoomStep(-1))}>{t("Zoom out")}</MenuItem>,
+      <MenuItem key="zoomIn" icon={ZoomInIcon} onClick={stripRow(() => zoomStep(1))}>{t("Zoom in")}</MenuItem>,
+      <MenuItem key="fit" icon={FitWidthIcon} onClick={stripRow(() => zoomTo("page-width"))}>{t("Fit to width")}</MenuItem>,
+    ],
+    ink: () => <MenuItem key="ink" icon={PenIcon} onClick={stripRow(openInkTools)}>{t("Handwriting tools")}</MenuItem>,
+    record: () => (
+      <MenuItem key="record" icon={MicIcon} onClick={stripRow(toggleRecording)}>
+        {recordingNow ? t("Stop recording") : t("Record audio")}
+      </MenuItem>
+    ),
+    // the button's click: stop, show or hide, or translate this page
+    translate: () => (
+      <MenuItem key="translate" icon={pdfTransState.pages > 0 && !pdfTransState.shown ? LanguagesOffIcon : LanguagesIcon}
+        onClick={stripRow(() => {
+          if (pdfTransState.running) pdfTranslateCtl.current?.halt();
+          else if (pdfTransState.current) pdfTranslateCtl.current?.setShown(!pdfTransState.shown);
+          else pdfTranslateCtl.current?.translatePage();
+        })}>
+        {pdfTransState.running ? t("Stop translating")
+          : pdfTransState.current ? (pdfTransState.shown ? t("Hide translation") : t("Show translation"))
+          : t("Translate")}
+      </MenuItem>
+    ),
+    paper: () => <MenuItem key="paper" icon={SheetIcon} onClick={stripRow(() => setPaperMenu(true))}>{t("Paper of this page")}</MenuItem>,
+    notesView: () => (
+      <MenuItem key="notesView" icon={FileTextIcon} onClick={stripRow(() => setNotebookView(focusedBlockId, false))}>{t("Notes view")}</MenuItem>
+    ),
+    selectMode: () => (
+      <MenuItem key="selectMode" icon={areaSelectMode ? RectSelectIcon : TextCursorIcon}
+        onClick={stripRow(() => setAreaSelectMode((v) => !v))}>{t("Toggle selection mode")}</MenuItem>
+    ),
+  };
+  // A right-click or a held finger on a bar's own background offers its
+  // Customize… row (Settings → Appearance at the bar's section). `pane` is
+  // the Settings target; `space(el)` says whether the press landed on the
+  // bar itself. A control's own menu answers first, and what a portal of
+  // the bar's shows (a popover's menu) is not the bar. The bar is no
+  // [data-press]: that would keep the text of the popovers it holds from
+  // being selected by a finger.
+  const customizePress = (pane, space = () => true) => {
+    const { "data-press": _, ...press } = menuPress((e) => { e.preventDefault(); setBarMenu({ pane, x: e.clientX, y: e.clientY }); });
+    const mine = (e) => !e.defaultPrevented && e.currentTarget.contains(e.target) && space(e.target);
+    return {
+      onContextMenu: (e) => { if (mine(e)) press.onContextMenu(e); },
+      onPointerDown: (e) => { if (mine(e)) press.onPointerDown(e); },
+    };
+  };
+  const topbarSpace = (el) => !el.closest("button, a, input, [role='tab'], [data-popover]");
+  // The strip's ⋯ opens its menu on the press, so the strip leaves that
+  // press alone: a held finger there would open both menus. (The translate
+  // button's own menuPress answers before the strip's.)
+  const stripSpace = (el) => !el.closest("[aria-haspopup]");
 
   return (
     <GammaNavContext.Provider value={gammaNav}>
@@ -11008,7 +11234,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         <>
           {/* On a phone the bottom bar's Library tab is home, and the bar
               shows only while it has tabs (or Back) to hold. */}
-          <div className={`topbar ${phoneBareTop ? "phoneBare" : ""}`}>
+          <div className={`topbar ${phoneBareTop ? "phoneBare" : ""}`} {...customizePress("topbar", topbarSpace)}>
             {isPhone ? null : (
               <button
                 className={`iconBtn homeBtn ${homeMode ? "activeIcon" : ""}`}
@@ -11212,6 +11438,24 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           ) : null}
         </ContextMenu>
       )}
+      {/* The strip's ⋯: the tools off it, then the way to their setting. */}
+      {toolsMenu && toolsMore ? (
+        <ContextMenu x={toolsMenu.x} y={toolsMenu.y} onClose={() => setToolsMenu(null)} ignoreRef={toolsMoreRef}
+          aria-label={t("More tools")}>
+          {stripMenuTools.map(({ id }) => viewerToolRows[id]())}
+          <MenuDivider />
+          <MenuItem icon={SettingsIcon} onClick={() => { setToolsMenu(null); openSettingsPane("viewer-tools"); }}>
+            {t("Customize…")}
+          </MenuItem>
+        </ContextMenu>
+      ) : null}
+      {barMenu ? (
+        <ContextMenu x={barMenu.x} y={barMenu.y} onClose={() => setBarMenu(null)}>
+          <MenuItem icon={SettingsIcon} onClick={() => { setBarMenu(null); openSettingsPane(barMenu.pane); }}>
+            {barMenu.pane === "topbar" ? t("Customize top bar…") : t("Customize viewer tools…")}
+          </MenuItem>
+        </ContextMenu>
+      ) : null}
 
       <div className="workArea">
       <PanelGroup direction="horizontal" autoSaveId="gamma-work-h" ref={(h) => { panelGroupRefs.current["work-h"] = h; }}>
@@ -11257,110 +11501,21 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             ><XIcon size={16} /></button>
           ) : null}
           {(pdfUrl || notebook) && !viewerHidden ? (
-            <div className="pdfCtlBox pdfZoomOverlay" data-guide="viewer.tools">
-              {/* The PDF and the notebook viewer share the buttons up to the
-                  pen, in the same places; what only one of them has comes
-                  after (the viewer tours teach the shared run once). */}
-              <div className="pdfCtlGroup">
-                <div className="pdfCtlGroup" data-guide="viewer.zoom">
-                  <button onClick={() => zoomStep(-1)} title={t("Zoom out")} aria-label={t("Zoom out")}>
-                    <ZoomOutIcon size={16} />
-                  </button>
-                  <button onClick={() => zoomStep(1)} title={t("Zoom in")} aria-label={t("Zoom in")}>
-                    <ZoomInIcon size={16} />
-                  </button>
-                  <button className="pdfFitWidthBtn" onClick={() => zoomTo("page-width")} title={t("Fit to width")} aria-label={t("Fit to width")}>
-                    <FitWidthIcon size={16} />
-                  </button>
-                </div>
-                {!readOnly ? (
-                  <button
-                    className={inkUi.open ? "modeActive" : ""}
-                    data-guide="pdf.inkButton"
-                    onClick={openInkTools}
-                    title={inkUi.open ? t("Close the markup tools (Esc)") : t("Handwriting: draw on the page with a pen, highlighter or eraser")}
-                    aria-label={t("Handwriting tools")}
-                  >
-                    <PenIcon size={16} />
-                  </button>
-                ) : null}
-                {!readOnly ? (
-                  <button
-                    className={recordingNow ? "modeActive recordBtn" : ""}
-                    data-guide="viewer.record"
-                    onClick={toggleRecording}
-                    aria-pressed={!!recordingNow}
-                    title={recordingNow ? t("Stop recording") : t("Record audio: what you write meanwhile replays in step with it")}
-                    aria-label={recordingNow ? t("Stop recording") : t("Record audio")}
-                  >
-                    <MicIcon size={16} />
-                  </button>
-                ) : null}
-              </div>
-              {translateEnabled && !shareMode && pdfUrl ? (
+            <div className="pdfCtlBox pdfZoomOverlay" data-guide="viewer.tools" {...customizePress("viewer-tools", stripSpace)}>
+              {/* The tools on the strip in their order (viewerTool), then
+                  the ⋯ while some that apply here are off it. */}
+              {stripPlaces.map(({ id, at }) => (at === "bar" ? <React.Fragment key={id}>{viewerTool[id]()}</React.Fragment> : null))}
+              {toolsMore ? (
                 <button
-                  data-guide="viewer.translate"
-                  className={pdfTransState.running || (pdfTransState.pages > 0 && pdfTransState.shown) ? "modeActive" : ""}
-                  onClick={() => {
-                    if (pdfTransState.running) { pdfTranslateCtl.current?.halt(); return; }
-                    // On a translated page: show/hide (all pages). Anywhere
-                    // else: translate this page, which also shows the rest.
-                    if (pdfTransState.current) { pdfTranslateCtl.current?.setShown(!pdfTransState.shown); return; }
-                    pdfTranslateCtl.current?.translatePage();
-                  }}
-                  {...menuPress((e) => { e.preventDefault(); openTransMenu(e.currentTarget); })}
-                  title={pdfTransState.running
-                    ? t("Translating… {progress}% — click to stop (right-click for options)", { progress: Math.round(pdfTransState.progress * 100) })
-                    : pdfTransState.current
-                      ? (pdfTransState.shown
-                          ? t("Hide the translation (all pages; Alt peeks) — right-click for options")
-                          : t("Show the translation — right-click for options"))
-                      : t("Translate this page into {translateLangLabel} — right-click: whole document & options", { translateLangLabel })}
-                  aria-label={pdfTransState.running ? t("Stop translating")
-                    : pdfTransState.current ? (pdfTransState.shown ? t("Hide translation") : t("Show translation"))
-                    : t("Translate")}
+                  ref={toolsMoreAt}
+                  className={toolsMenu ? "modeActive" : ""}
+                  {...triggerPress((e) => { const el = e.currentTarget; setToolsMenu((cur) => (cur ? null : stripMenuAt(el))); })}
+                  title={t("More tools")}
+                  aria-label={t("More tools")}
+                  aria-haspopup="menu"
+                  aria-expanded={!!toolsMenu}
                 >
-                  {pdfTransState.running
-                    ? <span className="pillSpin" aria-hidden="true" />
-                    : pdfTransState.pages > 0 && !pdfTransState.shown
-                      ? <LanguagesOffIcon size={16} />
-                      : <LanguagesIcon size={16} />}
-                </button>
-              ) : null}
-              {translateEnabled && !shareMode && pdfTransState.running ? (
-                <div className="pdfTransPct">{Math.round(pdfTransState.progress * 100)}%</div>
-              ) : null}
-              {notebook && !readOnly ? (
-                <button
-                  data-guide="viewer.paper"
-                  className={paperMenu ? "modeActive" : ""}
-                  onClick={() => setPaperMenu((v) => !v)}
-                  title={t("Paper: size, pattern and colour of this page")}
-                  aria-label={t("Paper of this page")}
-                  aria-expanded={paperMenu}
-                >
-                  <SheetIcon size={16} />
-                </button>
-              ) : null}
-              {notebook ? (
-                <button
-                  data-guide="viewer.notesView"
-                  onClick={() => setNotebookView(focusedBlockId, false)}
-                  title={t("Notes view: the pages among the notes")}
-                  aria-label={t("Notes view")}
-                >
-                  <FileTextIcon size={16} />
-                </button>
-              ) : null}
-              {touchScreen() && !shareMode && pdfUrl ? (
-                <button
-                  data-guide="viewer.selectMode"
-                  className={areaSelectMode ? "modeActive" : ""}
-                  onClick={() => setAreaSelectMode((v) => !v)}
-                  title={areaSelectMode ? t("Rectangle mode — drag draws an area note (tap to switch to text selection)") : t("Text mode — drag selects text (tap to switch to rectangle drawing)")}
-                  aria-label={t("Toggle selection mode")}
-                >
-                  <IconSwap swap={areaSelectMode} from={<TextCursorIcon size={16} />} to={<RectSelectIcon size={16} />} />
+                  <MoreIcon size={16} />
                 </button>
               ) : null}
             </div>
@@ -11910,8 +12065,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setReplayLeadIn,
           recordingTranscribe,
           setRecordingTranscribe,
-          translateEnabled,
-          setTranslateEnabled,
           selTranslate,
           setSelTranslate,
           selTranslateAuto,
@@ -11941,6 +12094,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setFileLabels,
           topbar,
           setTopbar,
+          viewerTools,
+          setViewerTools,
           backlinksVisible,
           setBacklinksVisible,
           inboxSystemNotifications,
