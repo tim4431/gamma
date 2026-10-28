@@ -812,6 +812,9 @@ export async function chatNavigationScenarios(env) {
       // The second "Default" is the Speed section's (effort's comes first).
       await page.locator(".uiSelectMenu .ctxMenuItem", { hasText: "Default" }).last().click();
       await until(async () => (await chipSpeed(page))[0] === 0, { what: "Default drops the speed" });
+      // Saved before the page closes: the groups after this one on the worker share alice.
+      await until(async () => ((await alice.api("/api/prefs/profile")).value?.chatSpeed || "") === "",
+        { what: "the profile drops the speed" });
       assertNoProblems(page);
     } finally {
       await ctx.close();

@@ -105,12 +105,14 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     await openTranslation();
     const speed = page.getByRole("button", { name: "Translation speed", exact: true });
     assertEq(await speed.innerText(), "Default");
+    // Whatever the chat's speed is (another group on this worker may have set alice's), it stays.
+    const chatSpeed = (await alice.api("/api/prefs/profile")).value?.chatSpeed || "";
     await speed.click();
     const menu = page.locator(".uiSelectMenu");
     assertEq((await menu.getByRole("menuitemradio").allTextContents()).join(","), "Default,flex,fast");
     await menu.getByRole("menuitemradio", { name: "fast", exact: true }).click();
     await until(async () => (await alice.api("/api/prefs/profile")).value?.translateSpeed === "fast");
-    assertEq((await alice.api("/api/prefs/profile")).value?.chatSpeed || "", "");
+    assertEq((await alice.api("/api/prefs/profile")).value?.chatSpeed || "", chatSpeed, "the chat's speed is left as it was");
     await page.reload();
     await waitForPdf(page, 1);
     await openTranslation();
