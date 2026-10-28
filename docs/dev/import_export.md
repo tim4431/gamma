@@ -6,7 +6,7 @@ vaults, Notion exports), Notability notes, Markdown and Obsidian vault export, t
 typeset as their own PDF, the BibTeX bibliography, and the annotated-PDF
 writer (its internals and the shared typesetting engine are in
 [pdf_typesetting.md](pdf_typesetting.md)). Code: `gamma/routers/imports.py`, `gamma/zotero_import.py`,
-`gamma/zotero_export.py`, `gamma/logseq_import.py`, `gamma/markdown_import.py`,
+`gamma/zotero_export.py`, `gamma/zotero_notes.py`, `gamma/logseq_import.py`, `gamma/markdown_import.py`,
 `gamma/markdown_zip_import.py`, `gamma/import_zip.py` (the zip walk the library imports share),
 `gamma/notability_import.py`, `gamma/notability.py`, `gamma/notability_archive.py`,
 `gamma/notability_map.py`, `gamma/notability_export.py`, `gamma/notability_write.py`, `gamma/markdown_export.py`, `gamma/obsidian_export.py`, `gamma/pdf_export.py`,
@@ -29,8 +29,9 @@ highlights) into highlight blocks — each a `pdf_position` in the page's
 points (the page box once, the quads as bare rects, `area: true` for a
 /Square or /Circle; [api.md](api.md) "The highlight shape") under a block
 id of its own, which is the highlight's id — idempotent via `properties.imported_annot`
-keys; opacity honors the annotation's `/CA` so a Gamma export → re-import
-round-trips exact colors, and each channel is rounded, not truncated (an
+keys; opacity honors the annotation's `/GammaAlpha`, else its `/CA`, so a
+Gamma export → re-import round-trips exact colors (a Zotero copy keeps its
+alpha in the first, [below](#zotero-rdf-export)), and each channel is rounded, not truncated (an
 app that writes 0.831 means 212); PyPDF2 dict access returns `IndirectObject`s, always
 `.get_object()` them. `/Ink` (freehand drawings from any PDF app, or a Gamma
 export) becomes a handwriting block: the strokes are stored as an `.ink`
@@ -181,7 +182,10 @@ Gamma exports share one review flow: Upload → Review → Import → Summary.
 - Each source is a request-free preview and commit in `routers/imports.py`
   (`_review_source`), over the staged file and the review's metadata; the
   plain endpoints (`/import/zotero`, `/import/markdown-zip`, …) run the
-  same functions in the request.
+  same functions in the request. A preview may return a `stage`, what it
+  learned that the commit can reuse (a Zotero review's PDF digests):
+  `_preview_staged` adds it to the review's metadata
+  (`import_staging.update`), and no answer carries it.
 - Staging (`gamma/import_staging.py`): a directory per review, bound to the
   account and workspace, expiring after two hours (`TTL`; expired ones are
   swept on the next upload). The import job holds a claim (`running/`
@@ -420,7 +424,8 @@ destination's id.
 Zotero's File → Export Library → "Zotero RDF" (with Export Files/Notes).
 `gamma/zotero_import.py` parses the RDF (items with their item type,
 publisher and ISBN, journal and book records carrying the DOI, collections,
-tags, HTML notes) and tolerant zip-name lookup
+tags, HTML notes, standalone notes, and what Gamma's record has no place
+for, below) and tolerant zip-name lookup
 (cp437-mojibake, NFC/NFD, backslashes); the endpoint in `routers/imports.py`
 uploads PDFs (dedup + quota per file, over-quota items are skipped not fatal),
 upserts pages keyed by file hash then `properties.zotero_key` (re-exports
@@ -429,12 +434,22 @@ exported (`#gamma_page_<id>`) first by the page it came from, when it is in
 this workspace, so a Gamma export brought back merges into its pages even
 where another page holds the same PDF, and a note Gamma exported
 (`#gamma_note_<id>`) is there as that block (`_zotero_existing_page`;
-the preview looks in the same order) —, maps
+the preview looks in the same order) —. A key local to one Zotero database
+(`#item_<n>`, which two libraries reuse for different works) merges only
+into a page of the same work (`zotero_import.same_work`: the same DOI when
+both have one, else the same title, casefolded, punctuation as spaces), as
+the page's record has it or as the Zotero record it was imported with did
+(`zotero_rdf`'s `work`), so a record edited in Gamma still merges. An item
+with no DOI retitled in Zotero is another work by this rule: once its PDF's
+bytes change too, it comes back as a second page. URL and `urn:isbn:` keys
+merge as before. The look-up reads every page
+under the key through `idx_ub_zotero_key` ([user_db.md](user_db.md)), so
+two such pages can sit side by side. The import maps
 collections→folders, nested as in Zotero, made below the destination
 folder (the optional `folder` form field, a folder id) where missing — an
 item in no collection lands in the destination itself —,
-tags→labels (by name, made where missing), notes→child blocks
-(`properties.zotero_note`), the item's other attachments→file chips and
+tags→labels (by name, made where missing), notes→block trees (below),
+the item's other attachments→file chips and
 links under the page's "Attachments" block (below), then runs the
 shared `import_embedded_annotations` (reader annotations arrive inside the
 exported PDFs; `strip` follows the client's embedded-annotations preference).
@@ -445,16 +460,25 @@ quote is the text under it), an image an area highlight, ink handwriting, a
 text annotation and a note text boxes. A text annotation turned in Zotero
 is its unturned `/Zotero:Rect` upright on the same centre, since a box
 cannot turn. Zotero writes no `/CA` on markup, so its colours take the
-importer's 0.45; its annotation tags (`/Zotero:Tags`) are not kept.
+importer's 0.45; its annotation tags (`/Zotero:Tags`) are not kept. A
+block made from an annotation Zotero wrote keeps its `/Zotero:Key` (when
+it is a valid key, never Gamma's own `/NM`) as
+`properties.zotero_annotation`, so the annotation it came from stays named.
+Nothing writes it back: Gamma's copies name annotations by block id, and a
+key Zotero knows would let it re-parent its own annotation. A duplicated
+block drops it, as it drops `imported_annot`.
 `test_each_kind_of_zotero_annotation_imports` holds the shapes Zotero 9
 writes.
 Merging only fills gaps: existing meta/bibtex/files are kept, the folders
 and labels union (the page's own ids first, those that still exist —
 `existing_in`).
 Each item's PDF is stored first, outside any transaction
-(`_zotero_prepare`). New pages and their notes then go in
-`ZOTERO_PAGES_PER_COMMIT` (50) at a time, in one short transaction under
-the write lock, each page touched in the change log (`_zotero_write_new`);
+(`_zotero_prepare`), and so are the pictures in its notes. New pages and
+their note trees then go in `ZOTERO_PAGES_PER_COMMIT` (50) at a time, in
+one short transaction under the write lock
+(`blocks_store.insert_page_tree`), each page touched in the change log and
+the uploads it names claimed from the upload GC's orphans
+(`upload_gc.claim`) in the same transaction (`_zotero_write_new`);
 an item that merges writes the new pages before it first, so the report
 keeps the export's order. Each new page is looked for again once the lock
 is held: when another import of the same item made it meanwhile (a
@@ -462,9 +486,71 @@ double-click, two tabs), or an earlier item of the batch did, this one
 merges into it after the commit instead of making a second. The embedded annotations are likewise checked
 against the page's `imported_annot` keys under the lock. A merge into an
 existing page is an op batch by the importing account (a `set` of the
-changed properties plus an `insert` per new note, through `apply_ops`),
-which the page's open tabs and the workspace's mirrors see like any edit.
+changed properties plus an `insert` per new block, each parent before its
+children; `_insert_ops`), which the page's open tabs and the workspace's
+mirrors see like any edit. It is cut at `MAX_OPS` and applied in one
+transaction (`apply_batches`), so an item that fails partway leaves its
+page as it was.
 A re-import that changes nothing writes nothing.
+
+A note is a block tree on its item's page (`gamma/zotero_notes.py`
+`note_tree`, read with the standard library's HTML parser): the note's
+first block element is the root, which carries the note's key
+(`properties.zotero_note`), each later element is a child, and a list item
+is a child with its nested list under it. Headings, quotes, code blocks,
+`<pre class="math">`, tables and rules become Gamma's markdown for them;
+an ordered item keeps its `N.`. Inline, bold, italic, strike, underline,
+Zotero's yellow highlight (`==mark==`), colour spans (Gamma's
+`<span style>`), code, math and links come in as Gamma writes them,
+escaped so the text reads back as typed through `note_markup.INLINE_RE`
+(the inline grammar the PDF writers share). A `javascript:`, `vbscript:`
+or `data:` link is its text. A paragraph, heading or list item of only
+whitespace, no-break spaces included (the `<p>&nbsp;</p>` blank lines of
+older Zotero notes), is left out. A block longer than the editor saves
+(`ops.MAX_CONTENT`, 200,000 characters) is cut there with a warning, and a
+note nested deeper than 200 levels (`zotero_import.NOTE_DEPTH_MAX`, below
+what the import's copy and the export can walk) comes in as its text in one
+block, with a warning, instead of failing its item. The export's `note_html` is the exact
+inverse for every tree the import makes. A picture in a note (a data URI,
+its alt and `width`) is stored as an upload when the note comes in
+(`store_images`, at most 25 MB each, `NOTE_IMAGE_MAX_BYTES`) and linked as
+`![alt|width](/api/uploads/…)`. One of a type Gamma does not store, a
+larger one, or one past the quota is "(image)" with a warning, and so is
+an image Zotero keeps as an attachment (`data-attachment-key`), which the
+RDF names by a key that is not the note's. An image attachment with the
+bytes of a note's picture makes no chip.
+
+A standalone note (a `bib:Memo` no item references) is a note page,
+titled by its first line as text (`zotero_import._note_page`), filed in its
+collections and labelled with its tags, with no PDF, `zotero_key` and
+`zotero_note` both its key. The rest of the note is the page's body. When
+the note opens with a heading or a paragraph, that block's later lines are
+the body's first block. A first block that is a table, code, math or a
+quote, or one whose first line holds a picture or a link, which a title
+as text would lose, stays whole at the top of the body. The review lists it as a page that misses
+nothing, and the report counts it as a page, not in `notes_imported`.
+Imported again it is refiled and relabelled only.
+
+What Zotero holds and Gamma's record (`meta`) has no field for travels
+with the page as `properties.zotero_rdf`, which only the Zotero RDF export
+reads (the item's `rdf`, version 1): the full date, the creators as Zotero
+split them (editors too), the publisher with its place, the abstract,
+URL, ISSN, issue, journal
+abbreviation, Extra, an item type Gamma reads as a document with its RDF
+classes, the PDF attachment's title, and every other element of the item
+and its container record as Zotero wrote it. Past 64 KB its largest fields
+are dropped, with a warning. The import sets it when it sets the page's
+record, and later on a page of the same work that keeps none.
+
+The parse also reads an attachment's path from the `rdf:resource` element
+older exports wrote when there is no `z:path`, takes a call number
+(`dcterms:LCC` in a `dc:subject`) for no tag, takes the container that is
+not a `bib:Series` as an item's venue, and reads an arXiv id from
+`z:archiveID` and an `arXiv:` line in Extra. Each PDF is hashed as it
+streams from the zip, once per archive (`plan_zotero_archive`), and a
+review's preview keeps the digests, by entry size and CRC, for its commit
+(the `stage` above). A PDF the workspace already stores, the same digest
+and size, is not copied again.
 
 The Zotero step leads with "Choose folder…" (the export's folder, as
 Zotero leaves it); "or choose a .zip" sits beside it, and the step takes
@@ -519,7 +605,9 @@ rechecks the current library, and leaves actual results and warnings in the dial
   recovered PDF to an existing metadata-only page.
 - Warned: missing or invalid PDFs, missing files, unsupported or unlinked
   files, recovered filenames, existing PDFs kept, attachments that could
-  not be stored.
+  not be stored. The files beside an attachment in its `files/<id>`
+  folder (a web snapshot's page resources) are one warning per folder,
+  and Zotero's own `.zotero-*` files none.
 - An export taken before Zotero finished writing it (`unwritten_file`).
   Zotero writes a `files/<id>/` path only for a file it has, makes the
   folders at once and writes the files after its export window closes: the
@@ -984,9 +1072,19 @@ container carries its DOI and ISBN itself. A publisher (a thesis's
 university, a report's institution) is a `dc:publisher` `foaf:Organization`
 with a `foaf:name`. The import reads all of these back: `z:itemType` through
 `item_types.from_zotero`, the publisher, and the ISBN from the item's or its
-container's identifiers. Notes go as `bib:Memo` HTML
-(top-level non-highlight subtrees, one note each — the inverse of the import's
-notes→child-blocks mapping), the page's folders as the `z:Collection` tree
+container's identifiers. Notes go as `bib:Memo` HTML, each top-level
+non-highlight subtree one note written by `zotero_notes.note_html`, the
+inverse of the import's tree, its first block as its own element and the
+blocks under it as one list, as the page shows them (so a Zotero note's
+later paragraphs come back to Zotero as list items): headings, lists numbered or not, quotes, code,
+math, tables and links, a `[[ref]]` as the text it names, an image's alt and
+width as its `<img>`'s. A note page (`zotero_note` equal to `zotero_key`)
+goes back as a standalone note, its title an `<h1>` and then its blocks,
+and is left out when notes are off. The page's "Attachments" block is no
+note: each file chip under it goes back as an attachment of the item,
+packed from storage as `files/<n>/<k>/<name>` and titled by its label, and
+each web link as a linked-URL attachment (a `z:Attachment` with a URL and
+no `z:path`). Other blocks under that heading still go as a note. The page's folders go as the `z:Collection` tree
 (paths below the exported folder on a folder export — a page filed in the
 exported folder itself is in no collection —, the whole path for one page),
 its labels' names as `dc:subject`. An item's `rdf:about` is
@@ -997,6 +1095,30 @@ next, whatever else the export holds, which is what the import upserts by.
 A Zotero key already written in the same export (a copied page keeps its
 Zotero key) gives way to the page id, as Zotero's translator keeps its own
 names unique.
+A page's `zotero_rdf` goes back while it is a record of the same work as
+the page's (`same_work`): the original type and RDF classes, the full date
+(while its year is the record's), the creators as Zotero had them (while
+the names are the record's), Extra with its `Citation Key:` line set to
+the pinned key, the PDF attachment's title, and the passed-through
+elements verbatim. A record edited into another work leaves it out. Since
+any editor of a page can write its properties, the stored pass-through is
+checked on the way out: an element holding `<!` (a DTD or entity), one the
+import maps itself (`zotero_import.MAPPED`, `CONTAINER_MAPPED`), and one
+holding an item, a note or a file path, or linking an attachment or a note
+(`z:Attachment`, `bib:Memo`, `z:path`, `link:link`,
+`dcterms:isReferencedBy`, an `rdf:resource` element, `z:itemType`) are
+dropped, the creators only as `bib:authors`, the publisher only as
+`dc:publisher`, and at most 64 KB of elements per list goes out. A
+related-item link (`dc:relation`) goes back as written; Zotero's importer
+ignores it.
+Without one, an author is split into Zotero's two fields by `split_name`:
+"Surname, Given" as written, a lowercase particle (van, de, von) with the
+surname, a suffix (Jr., III) after a comma with it, and one word or an
+organisation a single-field creator. A preprint with an arXiv id names its
+archive (`z:archiveID arXiv:<id>`) and, with no publisher, `arXiv` as its
+repository. An item carries one URL: the pass-through's, else the arXiv
+abstract page, else the page's `web_url`. A volume with no container record
+sits on the item, as Zotero writes it.
 Attachment paths live in `z:path` like Zotero's own export — never an
 `rdf:resource` *element*, an RDF/XML syntax term that Zotero tolerates but
 strict parsers (rdflib) reject. The pipeline is verified against a live Zotero
@@ -1016,8 +1138,10 @@ never render a picture, so a highlight whose notes carry images ALSO becomes
 its own Memo with a page+quote header (`highlight_memo_html`). An export job
 ([tasks.md](tasks.md)) reports each page as it goes. Annotations are not in the RDF
 — like Zotero's "Include Annotations" they're burned into the exported PDF
-copies with `pdf_export.annotate_pdf` (`_ZoteroBuilder._annotated_copy`),
-as the annotated PDF writes them: highlights, area notes and handwriting
+copies with `pdf_export.annotate_pdf` (`_ZoteroBuilder._pdf_copy`), as
+the annotated PDF writes them. A PDF with nothing to draw goes in as it is
+stored, packed from the uploads directory and never read, and so does one
+whose annotating fails. The marks are highlights, area notes and handwriting
 with `highlights=1`, text boxes with either switch (`pdf=0` omits the files
 entirely, `notes=0` the Memos). An ink group's caption and notes are its
 `/Ink` comment, not a Memo too; a text box is its `/FreeText` alone, and a
@@ -1034,9 +1158,16 @@ text (Zotero 7+). An `/Ink`, `/Square` or `/FreeText` without a Zotero id
 `/Zotero:Rotation` and `/Zotero:FontSize` ([text_boxes.md](text_boxes.md#server-and-interchange)).
 Zotero shows them once the PDF is open, locked (external), and its reader's
 File → Import Annotations… makes them its own and takes them out of the
-file; the zip's README.txt says so. A colour arrives blended with white by
-the annotation's `/CA` (Zotero's rule), so Gamma's 0.65 washes look paler
-there than here.
+file; the zip's README.txt says so. Zotero blends a colour with white by
+the annotation's `/CA`, so a copy (`annotate_pdf(..., zotero=True)`)
+writes no `/CA` on highlights and area notes. Their alpha goes in the
+private `/GammaAlpha` (`pdf_export.GAMMA_ALPHA`) instead, which Gamma's
+import reads first, so Zotero shows the true colour and a copy brought
+back keeps it. Another viewer draws such a highlight at full strength; an
+area note's appearance stream keeps its alpha. Ink and text boxes are
+written as in the annotated PDF. Every annotation Gamma writes names its
+author in `/Zotero:AuthorName` as well as `/T`, since Zotero reads only
+the first.
 
 ## The export framework
 
@@ -1057,7 +1188,9 @@ with it. `begin(conn, root_ids)` shows a builder the whole export set before
 the walk; the DB connection is closed by the time `save` runs. A generated
 part too big to hold (an annotated PDF) is `spool`ed to a temporary file
 and packed from there, and a bundled upload is packed straight from the
-uploads directory. `skip(page, reason)` leaves a page out, and `summary()`
+uploads directory. The zip stores PDFs and already-compressed media as
+they are and deflates the rest (`_write_zip`, `_STORED_EXTENSIONS`):
+deflating a PDF costs time for a few percent. `skip(page, reason)` leaves a page out, and `summary()`
 (the job's result) counts the pages and lists the skipped ones. Adding an
 export format means adding a builder; the endpoints, the job and the zip
 writer stay untouched. A builder whose download isn't a zip overrides
@@ -1493,7 +1626,12 @@ item or a to-do, a `>` line under a quote line), so a mark that crosses a line
 break, `**a⏎b**`, is bold on both lines as the note shows it, each line still
 its own chunk. Bold, italic, strike, underline, colored runs and link labels
 cross; `==mark==`, code, math and refs stay within a line, as on screen; an
-image ends the text a mark may cross. Highlights become quoted passages
+image ends the text a mark may cross. A link's target, an image's source and
+a bare web address hold one level of balanced parentheses, as Gamma's
+renderer reads them, so an Elsevier DOI
+(`https://doi.org/10.1016/S0140-6736(20)30183-5`) or a Wikipedia page links
+whole and a parenthesis around an address stays text. The grammar lives in
+`note_markup` (`INLINE_RE`), which the Zotero notes read too. Highlights become quoted passages
 with a bar in the highlight's own colour and a `p. N` marker, and the
 Highlights/Notes switches mean exactly what they do in the Markdown export
 (drop highlights and a highlight block keeps its own writing as a plain

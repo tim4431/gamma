@@ -109,17 +109,21 @@ Zotero came in as a 40 × 200 box instead of 200 × 40, from its turned
   import merges a Gamma export into the page it came from.
 - A Zotero text annotation imports as its `/Zotero:Rect` upright on the
   same centre; colour channels are rounded.
-- Colours were left as they are (below).
+- Colours were left as they are at first (below). In October 2026 the
+  Zotero copies stopped writing `/CA` on highlights and area notes, Gamma's
+  alpha in the private `/GammaAlpha` instead, which the import reads first
+  ([zotero-roundtrip.md](zotero-roundtrip.md)), and every annotation names
+  its author in `/Zotero:AuthorName`.
 
 ## Still open
 
-- **Colours.** Gamma's washes reach Zotero paler, blended by their `/CA`,
-  and Zotero's own come in at the importer's default 0.45, unlike Gamma's
-  0.65. There are two ways to fix it. One is to write the swatch without
-  `/CA` in the Zotero copies, so Zotero applies its own highlight opacity,
-  with a private key keeping Gamma's alpha. The other is to map onto
-  Zotero's eight colours (`#ffd400 #ff6666 #5fb236 #2ea8e5 #a28ae5 #e56eee
-  #f19837 #aaaaaa`) by nearest hue, as the Logseq names are mapped.
+- **Colours.** Zotero's own come in at the importer's default 0.45,
+  unlike Gamma's 0.65. Gamma's now reach Zotero unblended (above), and
+  another viewer draws such a copy's highlight at full strength, since a
+  highlight there has no appearance stream. Mapping onto Zotero's eight
+  colours (`#ffd400 #ff6666 #5fb236 #2ea8e5 #a28ae5 #e56eee #f19837
+  #aaaaaa`) by nearest hue, as the Logseq names are mapped, was not done.
+  None of it was checked in a running Zotero.
 - **Annotation tags** (`/Zotero:Tags`) have no place on a block.
 - **Shapes Gamma lacks:** an underline is a highlight, a note's colour is
   dropped, a turned text annotation stands upright.

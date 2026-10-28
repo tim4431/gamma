@@ -15,7 +15,8 @@ with the bytes held here). There is no size cap: an upload is refused
 (507) only when it would leave the disk with less than MIN_FREE_BYTES free.
 A backup zip restored as a job (routers/ws_backups.py) is staged here too
 when it comes in parts; ``meta`` is whatever the caller keeps with the
-upload (an import's source, folder and strip; a restore's mode and target).
+upload (an import's source, folder and strip; a restore's mode and target),
+and ``update`` adds what a preview learned (a Zotero review's PDF digests).
 """
 import hashlib
 import json
@@ -116,6 +117,15 @@ def finish(token, user_id, ws):
             raise HTTPException(status_code=400, detail=f"{received} of {metadata['size']} bytes received")
         metadata.pop("pending", None)
         (path / "metadata.json").write_text(json.dumps(metadata), encoding="utf-8")
+
+
+def update(token, user_id, ws, **meta):
+    """Add ``meta`` to a staged review's metadata: what the review learned
+    once its upload was staged (a source preview's ``stage``,
+    routers/imports.py), which the import's commit reads back with the
+    rest."""
+    with claim(token, user_id, ws) as (path, metadata):
+        (path / "metadata.json").write_text(json.dumps({**metadata, **meta}), encoding="utf-8")
 
 
 def get(token, user_id, ws, pending=False):

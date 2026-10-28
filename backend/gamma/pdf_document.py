@@ -34,7 +34,7 @@ from PyPDF2.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from . import vector_text
 from .logbuf import log
-from .note_markup import MATH, TEXT, latex_spans
+from .note_markup import INLINE_RE, LINK_PARTS, LINK_TARGET, MATH, TEXT, latex_spans
 from .pdf_export import parse_css_color
 from .pdf_glyphs import GlyphFonts
 from .pdf_image import XObjectStore
@@ -115,37 +115,14 @@ _TODO_RE = re.compile(r"^(\s*)(?:([-*+])\s+)?\[([ xX])\]\s+(.*)$")
 _LIST_RE = re.compile(r"^(\s*)([-*+]|\d{1,3}[.)])\s+(.*)$")
 # An ![](…) image — sized Obsidian-style (``![alt|300](url)``) or with the
 # legacy Logseq ``{:width N}`` suffix — or an ![[id]] synced-block embed;
-# each leaves the text flow as its own chunk.
+# each leaves the text flow as its own chunk. A source reads as a link's
+# target does (``LINK_TARGET``), so "Foo_(bar).png" is one source.
 _MEDIA_RE = re.compile(
-    r"!\[(?P<alt>[^\]]*)\]\(\s*(?P<src>[^)\s]+)[^)]*\)(?:\{:width\s+(?P<pxw>\d+)\})?"
+    r"!\[(?P<alt>[^\]]*)\]\(\s*(?P<src>" + LINK_TARGET + r")(?:\s[^)]*)?\)(?:\{:width\s+(?P<pxw>\d+)\})?"
     r"|!\[\[(?P<refid>[a-zA-Z0-9_-]+)\]\]")
 _ALT_WIDTH_RE = re.compile(r"(.*?)\|(\d+)(?:x\d+)?$")
 _DELIM_CELL_RE = re.compile(r":?-+:?")
 
-# One pass over a paragraph of markdown. Order matters: ** before *, ![[ before [[,
-# \( math before a backslash escape (CommonMark's: a backslash before ASCII
-# punctuation is that character, so "\*" or "\$" reads as typed, as on
-# screen). A closing mark never follows a backslash, which escapes it. The
-# marks and a link's label may cross the paragraph's line breaks, as on
-# screen ("**a⏎b**" is bold on both lines); ==mark== and the rest stay
-# within a line, and every line break stays in the text.
-_INLINE_RE = re.compile(
-    r"(?P<code>``[^`\n]+``|`[^`\n]+`)"
-    r"|(?P<dmath>\$\$[^\n]+?\$\$)"
-    r"|(?P<math>\$[^$\n]+?\$|\\\([^\n]+?\\\))"
-    r"|(?P<esc>\\[!-/:-@\[-`{-~])"
-    r"|(?P<underline><u>(?s:.+?)</u>)"
-    r'|(?P<color><span style="[^"<>]*">(?s:.*?)</span>)'
-    r"|(?P<bold>\*\*(?=\S)(?s:.+?)(?<=[^\s\\])\*\*|__(?=\S)(?s:.+?)(?<=[^\s\\])__)"
-    r"|(?P<italic>\*(?=\S)[^*]+?(?<=[^\s\\])\*|(?<![\w_])_(?=\S)[^_]+?(?<=[^\s\\])_(?![\w_]))"
-    r"|(?P<strike>~~(?=\S)(?s:.+?)(?<=[^\s\\])~~)"
-    r"|(?P<mark>==(?=\S).+?(?<=[^\s\\])==)"
-    r"|(?P<embed>!\[\[[^\]\n]+\]\])"
-    r"|(?P<ref>\[\[[^\]\n]+\]\])"
-    r"|(?P<link>\[[^\]]*\]\([ \t]*[^)\s]+[^)\n]*\))"
-    r"|(?P<url>https?://[^\s<>()\[\]]+)"
-)
-_LINK_PARTS = re.compile(r"\[([^\]]*)\]\(\s*([^)\s]+)")
 # The constructs that wrap their content: the characters that open and close
 # one, and the style bit its content takes. Underline and color are the
 # inline HTML the note editor writes; a colored run's opening tag varies
@@ -172,7 +149,7 @@ def inline(text: str, style: Style = PLAIN, resolver=None):
     """A line or a paragraph of markdown → styled spans (see pdf_typeset for
     the shape), a paragraph's line breaks kept in its text spans."""
     out, pos = [], 0
-    for m in _INLINE_RE.finditer(text):
+    for m in INLINE_RE.finditer(text):
         if m.start() > pos:
             out.append((TEXT, text[pos:m.start()], 0, style))
         pos = m.end()
@@ -197,7 +174,7 @@ def inline(text: str, style: Style = PLAIN, resolver=None):
             name = body.strip("![]").split("|")[0].strip()
             out.append((TEXT, _ref_label(name, resolver), 0, Style(style.bits | LINK, None)))
         elif which == "link":
-            label, href = _LINK_PARTS.match(body).groups()
+            label, href = LINK_PARTS.match(body).groups()
             out.extend(inline(label or href, styled(style, LINK, href=href), resolver))
         else:                                    # bare URL
             out.append((TEXT, body, 0, styled(style, LINK, href=body)))

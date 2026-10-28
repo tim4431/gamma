@@ -4,7 +4,7 @@ import { t, T } from "../shared/i18n/i18n.js";
 import { zipFolder } from "./folderZip.js";
 
 const FORMATS = {
-  zotero: { label: T("Zotero"), endpoint: "zotero", instructions: T("Collections become folders. Additional PDFs become separate pages. Existing PDFs are kept.") },
+  zotero: { label: T("Zotero"), endpoint: "zotero", instructions: T("Collections become folders. An item's other files and links go under Attachments on its page, and a standalone note becomes a page of its own. Existing PDFs are kept.") },
   markdown: { label: T("Markdown"), endpoint: "markdown-zip", instructions: T("Notes become pages; linked files travel with the selected notes. Links to deselected notes stay as written.") },
   gamma: { label: T("Gamma"), endpoint: "gamma", instructions: T("Selected pages include their notes, attachments and chats. Pages already in your library are kept unchanged.") },
   notability: { label: T("Notability"), endpoint: "notability", instructions: T("Each note becomes a page with its handwriting, typed text, pictures and recordings. Notes already imported are skipped.") },

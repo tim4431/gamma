@@ -257,6 +257,101 @@ def test_annotate_rotated_page():
     assert abs(rect[2] - 122.4) < 0.01 and abs(rect[3] - 158.4) < 0.01
 
 
+def _every_kind():
+    """``annotate_pdf`` keywords for one annotation of each kind it writes
+    on page 1: a highlight, an area note, a one-stroke ink group and a text
+    box."""
+    from gamma import ink as inkmod, text_box
+
+    area = _position(y1=300, y2=400)
+    area["area"] = True
+    ink = inkmod.parse_ink({
+        "format": "gamma-ink", "version": 2,
+        "space": {"kind": "pdf-page", "page": 1, "width": PAGE_W, "height": PAGE_H},
+        "strokes": [{"id": "s1", "tool": "pen", "color": "#1f1f1f", "size": 2, "ch": "xy",
+                     "pts": inkmod.encode_points([{"x": 100, "y": 500}, {"x": 200, "y": 520}], "xy")}],
+    })
+    return {
+        "highlights": [
+            {"position": _position(), "color": "rgba(170, 235, 170, 0.65)", "note": "a note", "id": "hl1"},
+            {"position": area, "color": "rgba(155, 205, 255, 0.65)", "note": "", "id": "area1"},
+        ],
+        "ink": [{"ink": ink, "note": "", "id": "ink1"}],
+        "text_boxes": [{"box": text_box.normalize_text_box({"x": 100, "y": 600}), "content": "box",
+                        "page": 1, "id": "tb1", "modified": ""}],
+    }
+
+
+def _by_kind(pdf_bytes):
+    """Page 1's annotations by subtype (one of each in these tests)."""
+    from PyPDF2 import PdfReader
+
+    annots = [a.get_object() for a in PdfReader(io.BytesIO(pdf_bytes)).pages[0]["/Annots"]]
+    return {str(a["/Subtype"]): a for a in annots}
+
+
+def _plain(obj, drop=frozenset()):
+    """A PDF object as plain Python to compare two files' objects:
+    references resolved, a stream as its dictionary and data, without the
+    keys in ``drop`` (at this level only) or the links back to the page."""
+    from PyPDF2.generic import ArrayObject, DictionaryObject, StreamObject
+
+    obj = obj.get_object()
+    if isinstance(obj, DictionaryObject):
+        out = {k: _plain(v) for k, v in obj.items() if k not in drop | {"/P", "/Parent"}}
+        return (out, obj.get_data()) if isinstance(obj, StreamObject) else out
+    if isinstance(obj, ArrayObject):
+        return [_plain(v) for v in obj]
+    return str(obj)
+
+
+def test_a_zotero_copy_keeps_the_alpha_of_its_marks_out_of_ca():
+    """Zotero blends /C toward white by /CA, so a Zotero copy's highlight
+    and area note carry none, their alpha in /GammaAlpha, and differ from
+    the plain copy in nothing else: the area note's appearance keeps its
+    alpha. Ink and text boxes are the same in both."""
+    from gamma.pdf_export import GAMMA_ALPHA
+
+    kinds = _every_kind()
+    plain = _by_kind(annotate_pdf(_blank_pdf(), author="tester", **kinds)[0])
+    zotero = _by_kind(annotate_pdf(_blank_pdf(), author="tester", zotero=True, **kinds)[0])
+    assert set(zotero) == set(plain) == {"/Highlight", "/Square", "/Ink", "/FreeText"}
+    for kind in ("/Highlight", "/Square"):
+        assert "/CA" not in zotero[kind] and float(zotero[kind][GAMMA_ALPHA]) == 0.65
+        assert GAMMA_ALPHA not in plain[kind] and float(plain[kind]["/CA"]) == 0.65
+    assert float(zotero["/Ink"]["/CA"]) == float(plain["/Ink"]["/CA"]) == 1.0
+    assert GAMMA_ALPHA not in zotero["/Ink"] and GAMMA_ALPHA not in zotero["/FreeText"]
+    for kind in plain:
+        assert _plain(zotero[kind], drop={"/CA", GAMMA_ALPHA}) == _plain(plain[kind], drop={"/CA", GAMMA_ALPHA})
+
+
+def test_a_zotero_copy_reimports_at_the_alpha_it_was_drawn_with():
+    """The importer reads /GammaAlpha before /CA, so a Zotero copy's marks
+    come back in their own shade rather than at the alpha of a mark with
+    no /CA."""
+    from PyPDF2 import PdfReader
+    from gamma.routers.imports import _extract_pdf_annotations
+
+    out, written = annotate_pdf(_blank_pdf(), _every_kind()["highlights"], zotero=True)
+    assert written == 2
+    found = _extract_pdf_annotations(PdfReader(io.BytesIO(out)))
+    assert [f["color"] for f in found] == ["#aaebaaa6", "#9bcdffa6"]
+
+
+def test_every_annotation_names_its_author_for_zotero_too():
+    """Zotero takes an annotation's author from /Zotero:AuthorName, never
+    /T: every kind carries both, in either copy, and neither without an
+    author."""
+    kinds = _every_kind()
+    for zotero in (False, True):
+        annots = _by_kind(annotate_pdf(_blank_pdf(), author="Zoë 李", zotero=zotero, **kinds)[0])
+        assert len(annots) == 4
+        for annot in annots.values():
+            assert annot["/T"] == annot["/Zotero:AuthorName"] == "Zoë 李"
+    for annot in _by_kind(annotate_pdf(_blank_pdf(), **kinds)[0]).values():
+        assert "/T" not in annot and "/Zotero:AuthorName" not in annot
+
+
 def test_parse_css_color():
     assert parse_css_color("rgba(255, 226, 143, 0.65)") == (1.0, 226 / 255, 143 / 255, 0.65)
     assert parse_css_color("#ff0000") == (1.0, 0.0, 0.0, 1.0)

@@ -81,6 +81,23 @@ def test_inline_nests_and_leaves_bare_urls_clickable():
     assert url.bits == LINK and url.href == "https://gamma.dev/x"
 
 
+def test_addresses_hold_balanced_parentheses():
+    """A link's target, a bare address and an image's source keep one level
+    of balanced parentheses, as Gamma's renderer reads them (an Elsevier
+    DOI, a Wikipedia page); a parenthesis around an address stays text."""
+    doi = "https://doi.org/10.1016/S0140-6736(20)30183-5"
+
+    def links(md):
+        return [(p, st.href) for _k, p, _lv, st in inline(md) if st.bits & LINK]
+
+    assert links(f"[the Lancet paper]({doi}) is key") == [("the Lancet paper", doi)]
+    assert links(f"see {doi} now") == [(doi, doi)]
+    assert links("(see https://x.org/a)") == [("https://x.org/a", "https://x.org/a")]
+    assert links("[a](b(c)") == []                       # unbalanced: text, as CommonMark reads it
+    [image, _after] = chunks("![plot](https://e.com/Foo_(bar).png) after")
+    assert (image["kind"], image["src"]) == ("image", "https://e.com/Foo_(bar).png")
+
+
 def test_chunks_split_block_markdown_by_construct():
     got = chunks("## Heading\n"
                  "- one\n"
