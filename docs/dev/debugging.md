@@ -927,7 +927,9 @@ The scenarios live in `tests/e2e/scenarios/`:
 - `i18n.mjs`: Settings → Appearance → Language switches the interface to
   Chinese and back through the reload ([i18n.md](i18n.md)). `--only i18n`.
 - `share.mjs`: the share dialog, the anonymous share view (PDF, highlight,
-  image through the share token, no editor), an edit share.
+  image through the share token, no editor), an edit share, a folder share
+  copied into another library by the listing's Add to my library and, on a
+  second server, by its link pasted into +.
 - `settings.mjs`, `folders.mjs`, `trash.mjs`, `quickOpen.mjs`, `mcp.mjs`
   and `cloudSignIn.mjs` are groups of their own. `quickOpen.mjs` holds the
   tabs' steps too: a tab pressed selected in the press's own frame while

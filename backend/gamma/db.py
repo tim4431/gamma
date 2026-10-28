@@ -647,15 +647,19 @@ WORKSPACE_PREFS_SCHEMA = """CREATE TABLE IF NOT EXISTS workspace_prefs (
 )"""
 
 
-def copy_chats(src: sqlite3.Connection, dst: sqlite3.Connection, where: str = "1", args=()) -> int:
+def copy_chats(src: sqlite3.Connection, dst: sqlite3.Connection, where: str = "1", args=(),
+               tables=tuple(_CHAT_COLUMNS)) -> int:
     """Copy the conversations ``where`` (a condition on ``bucket``, with
     ``args``) selects from the pages.db ``src`` into the pages.db ``dst``,
-    both tables, keeping every one ``dst`` has (a bucket's active
+    both tables (or the ``tables`` named: ``("chats",)`` for the active
+    ones alone), keeping every one ``dst`` has (a bucket's active
     conversation, an archived one by its id) — inside the callers'
     transactions: a backup merge, a Gamma export. Returns how many were
     added."""
     added = 0
     for table, columns in _CHAT_COLUMNS.items():
+        if table not in tables:
+            continue
         rows = src.execute(f"SELECT {columns} FROM {table} WHERE {where}", args).fetchall()
         marks = ", ".join("?" * len(columns.split(", ")))
         added += dst.executemany(f"INSERT OR IGNORE INTO {table} ({columns}) VALUES ({marks})", rows).rowcount

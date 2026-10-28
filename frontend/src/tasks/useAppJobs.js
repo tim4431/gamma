@@ -44,8 +44,11 @@ export function useAppJobs({
   // Background tasks show how far it got. Once it is done in the open
   // workspace this tab reloads (every piece of in-memory state is stale) —
   // into after.openPage when given (a shared page imported by link keeps
-  // its block id, so it opens directly). `target`: another workspace of
-  // mine (null = the open one), which is left alone here.
+  // its block id, so it opens directly), or the folder after.openFolder
+  // names (a shared folder imported by link: where the restore's report
+  // says it went, a folder of the same path here perhaps). `target`:
+  // another workspace of mine (null = the open one), which is left alone
+  // here.
   function runBackupImport(f, mode, target, after = {}) {
     const into = target || getCurrentWorkspace();
     postPill("backup-upload", { msg: t("Uploading {file}…", { file: f.name }), spinner: true });
@@ -155,9 +158,15 @@ export function useAppJobs({
     if (job.kind === "restore") {
       if (job.state === "done" && here) {
         if (started) {
-          // Every piece of in-memory state is stale now: start fresh (in the page a shared link named).
-          const page = started.after?.openPage;
-          window.location.href = withWorkspace(page ? `${window.location.pathname}?page=${encodeURIComponent(page)}` : window.location.pathname);
+          // Every piece of in-memory state is stale now: start fresh (in the
+          // page or folder a shared link named).
+          const { openPage: page, openFolder: folder } = started.after || {};
+          const reload = (query) => { window.location.href = withWorkspace(`${window.location.pathname}${query}`); };
+          if (page) reload(`?page=${encodeURIComponent(page)}`);
+          else if (folder) {
+            tasks.fetchJob(job.id).catch(() => null)
+              .then((full) => reload(`?folder=${encodeURIComponent(full?.result?.folder || folder)}`));
+          } else reload("");
         } else {
           postPill(`job:${job.id}`, { msg: t("{name} finished — this workspace changed.", { name: title }),
             action: { label: t("Reload"), run: () => { window.location.href = withWorkspace(window.location.pathname); } } }, { after: [20000, null] });

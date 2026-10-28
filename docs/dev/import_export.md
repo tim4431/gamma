@@ -1273,7 +1273,10 @@ it is added there; the pages are filed under the workspace's ids for them
 and the folder chats follow — `ws_backup._merge_trees`, `_refiled`; a
 reviewed import brings only the folders and labels its chosen pages need),
 deduped by block id / doc id / conversation / content hash, so re-importing
-adds nothing.
+adds nothing. A folder's export names its folder in the manifest
+(`scope.folder`), and the merge's report then carries `folder`: the
+workspace's id for it, the folder it became (one of the same name already
+there, perhaps), or `""` when the import brought it nowhere.
 A page it adds comes in whole and touched now (the change feed sees it); a
 block whose id the workspace already uses on another page gets a fresh id
 ([workspaces.md](workspaces.md) "Export and backups"). The
@@ -1282,19 +1285,54 @@ other library sources, then merges the selected pages (`restore_zip` merge
 with a selection) as the import job; guests can't import. A Gamma export is
 a complete copy, so the Export dialog has no switches for it.
 
-### Importing a shared page by link
+Through a share token (`?share=`: another Gamma importing a shared page or
+folder by its link, below) the export carries only what the share shows
+(`_GammaBuilder._shared_trees`):
+
+- A folder export: the exported folder's subtree, that folder moved to the
+  top level (its `parent_id` the folders tree's root), none of the folders
+  above or beside it; and the labels its pages carry, flat, as a folder
+  share's listing shows them.
+- A page opened through a folder share: its folders inside the shared
+  folder and the ones between, the shared folder at the top; and its
+  labels, flat, as for a folder export.
+- A page share, which shows no folder or label: none, so the page lands
+  unfiled.
+
+Each page's filing is cut to the folders and labels kept, and of the chats
+only each page's active conversation travels (the one
+`GET /chats/{page}?share=` reads): no archived conversation and no folder
+view's chat. A member's own export is unchanged. The other formats through
+a share still name the folder's whole path (the download's name, a `.bib`'s
+header, a Markdown page's front matter) and render embeds of pages outside
+the share.
+
+### Importing a shared page or folder by link
 
 The same pipeline, without the zip ever touching disk: `importSharedPage` in
 `app/App.jsx` takes a share URL (`https://other/?share=<token>`), resolves the
-token against that origin's `/api/share/{token}`, fetches the page as
-`/api/pages/{id}/export?mode=gamma&share=<token>`, and hands the blob to
-`runBackupImport(…, "merge")` with `after.openPage` set: a `restore` job
-([tasks.md](tasks.md)), after which the tab reloads. Block ids survive the
-export, so the reload lands on `?page=<id>` in the importer's own library.
+token against that origin's `/api/share/{token}`, fetches what it shares as a
+Gamma export — a page as `/api/pages/{id}/export?mode=gamma&share=<token>`,
+a folder as `/api/folders/{id}/export?mode=gamma&share=<token>` — and hands
+the blob to `runBackupImport(…, "merge")`: a `restore` job
+([tasks.md](tasks.md)), after which the tab reloads into what came over. A
+folder share's link may name one of its pages (`page=`, the share view's
+address while a page is open) or a subfolder (`folder=`, while one is
+browsed), and then that is what is fetched; a page or folder the share does
+not reach is refused (403, which is also what one deleted meanwhile gets:
+a share does not learn whether an id outside its reach exists), and so is a
+folder with no pages (404 "no pages in that folder", said as such). Block ids survive the export, so a page
+reloads on `?page=<id>` in the importer's own library (`after.openPage`); a
+folder reloads on the id the restore's report names (`after.openFolder`,
+read from the finished job), since it may have become a folder of the same
+name the library already had. The folder fetched (the shared one, or the
+subfolder the link names) arrives at the top level (above). Pages the library already has (the same id, or the same PDF) are
+left as they are and are not filed into the imported folder.
 The fetch is browser-side on purpose: the browser reaches a Gamma on
 the LAN or at `localhost` that the server's SSRF guard (`net_guard.py`)
 refuses. That works because share GETs answer
-`Access-Control-Allow-Origin: *` ([api.md](api.md)); with `*` the browser
+`Access-Control-Allow-Origin: *` ([api.md](api.md)), refusals too, so the
+import can say which one it got; with `*` the browser
 sends no cookies cross-origin, so only links open to `anyone` import from
 another Gamma, while a same-origin link also carries the session and
 invite-only ones work too. Two entry points:
@@ -1304,7 +1342,16 @@ invite-only ones work too. Two entry points:
   hint, and Enter imports instead of fetching a PDF. Everything else typed
   there is still a paper.
 - The share view's topbar: a signed-in non-guest viewer gets "Add to my
-  library" (the same function on `window.location.href`). The page's owner
+  library" on a page and on a folder share's listing (not on a page host,
+  which serves no library). A share view has no workspace and no background
+  tasks of its own, so it does not import: `addShareToLibrary` puts the link
+  for what it shows (the open page, or the folder browsed) in
+  `sessionStorage` (`gamma-import-share`) and goes to the library, whose
+  boot takes it and imports there, with the tray and the reload of the "+"
+  box. That library opens on the last workspace used, unless the account
+  may only read it, then on its personal one (`chooseWorkspace`). Only the
+  app's own tab can leave that key, so an address alone never imports
+  anything. The page's owner
   gets "Open in my library" instead, a plain jump to `?page=<id>` (a folder
   share's to `?folder=<id>`) with the share's workspace as `ws=` and no
   token, since the page is already theirs. A visitor with no account gets "Sign in" (the
@@ -1313,7 +1360,10 @@ invite-only ones work too. Two entry points:
 
 The remote must be recent enough to serve `mode=gamma` and the CORS
 header; an older one surfaces as "couldn't reach …" / "too old" in the
-status line and the task's row.
+status line and the task's row. A remote from before the share-scoped
+export still answers, with its export as a member's (the folders above,
+the archived chats): the leak is that server's, which any holder of the
+token can already download, and the import takes what it is given.
 
 ## The Export dialog
 
