@@ -29,9 +29,9 @@ from .. import ink as inkmod
 from .. import comments, jobs, notability_export, notebook
 from ..auth import require_user, require_ws, resolve_ws, share_scope
 from ..blocks_store import (
-    BLOCK_COLUMNS, PATH_SEP, STORED_COLUMNS, TREES, assert_block_in_scope, block_to_dict,
-    fetch_subtree, filing, folder_path, folder_subtree_ids, page_root_id, pages_in_folder,
-    tree_rows)
+    BLOCK_COLUMNS, FOLDERS, LABELS, PATH_SEP, STORED_COLUMNS, TREES, assert_block_in_scope, block_to_dict,
+    existing_in, fetch_subtree, filing, folder_path, folder_subtree_ids, page_root_id, pages_in_folder,
+    tree_parents, tree_rows)
 from ..db import connect_pages_db, ws_uploads_dir
 from ..db import (
     PAGES_SCHEMA,
@@ -744,7 +744,13 @@ class _GammaBuilder(_Builder):
     by block id / doc id / conversation / content hash, its folders mapped
     onto the workspace's at the same path (``ws_backup._merge_trees``), so
     re-importing adds nothing. Lossless by construction, which is why the
-    dialog's three switches don't apply to this format."""
+    dialog's three switches don't apply to this format.
+
+    Through a share token (``opts["share"]``, the request's ShareScope:
+    another Gamma importing a shared page or folder by its link) it carries
+    only what the share shows (``_shared_trees``): the exported folder's
+    subtree with that folder at the top level, none of the folders above or
+    beside it, and of the chats only each page's active conversation."""
     suffix = "-gamma.zip"
 
     def __init__(self, ws, base, opts):
@@ -774,22 +780,78 @@ class _GammaBuilder(_Builder):
             # bookkeeping keeps files by.
             self.upload_names |= upload_refs(row[3] or "", row[4] or "{}")
 
+    def _shared_trees(self, src, share, subtree: set) -> dict:
+        """The folder and label blocks a share-scoped export carries, as
+        ``{id: the parent it gets}`` (None: its own): a folder export the
+        exported folder's subtree (``subtree``), that folder at the top; a
+        page through a folder share its folders inside the shared folder
+        with the ones between, the shared folder at the top; a folder
+        share's pages their labels, flat, as its listing shows them
+        (``routers/blocks._trees``); a page share, which shows no folder or
+        label, none."""
+        if not share.folder:
+            return {}
+        if subtree:
+            kept = dict.fromkeys(subtree)
+            kept[self.opts["folder_scope"]] = FOLDERS
+        else:
+            reach, parents = folder_subtree_ids(src, share.folder), tree_parents(src, FOLDERS)
+            kept = {}
+            for block_id in self.filed & reach:
+                while block_id in reach and block_id not in kept:  # up to the shared folder
+                    kept[block_id] = None
+                    block_id = parents.get(block_id)
+            if kept:
+                kept[share.folder] = FOLDERS
+        kept.update(dict.fromkeys(existing_in(src, LABELS, sorted(self.filed)), LABELS))
+        return kept
+
+    def _confine(self, kept: dict) -> None:
+        """Re-root the kept tree blocks (``_shared_trees``) in the export
+        and file its pages only under them."""
+        for block_id, parent in kept.items():
+            if parent:
+                self.db.execute("UPDATE unified_blocks SET parent_id = ? WHERE id = ?", (parent, block_id))
+        for page_id in self.page_ids:
+            raw = self.db.execute("SELECT properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()[0]
+            props = json.loads(raw or "{}")
+            filed = {tree: [i for i in filing(props, tree) if i in kept] for tree in TREES if tree in props}
+            if all(ids == props[tree] for tree, ids in filed.items()):
+                continue
+            for tree, ids in filed.items():
+                if ids:
+                    props[tree] = ids
+                else:
+                    props.pop(tree)
+            self.db.execute("UPDATE unified_blocks SET properties = ? WHERE id = ?", (json.dumps(props), page_id))
+
     def finish(self):
         scope = self.opts.get("folder_scope")
+        share = self.opts.get("share")
         with connect_pages_db(self.ws) as src:
             subtree = folder_subtree_ids(src, scope) if scope else set()
-            parents = {r[0]: r[1] for tree in TREES for r in tree_rows(src, tree)}
-            blocks = set(subtree)
-            for block_id in self.filed | ({scope} if scope else set()):
-                while block_id in parents:  # the block and the folders above it
-                    blocks.add(block_id)
-                    block_id = parents[block_id]
+            if share is not None:
+                kept = self._shared_trees(src, share, subtree)
+                blocks = set(kept)
+            else:
+                parents = {r[0]: r[1] for tree in TREES for r in tree_rows(src, tree)}
+                blocks = set(subtree)
+                for block_id in self.filed | ({scope} if scope else set()):
+                    while block_id in parents:  # the block and the folders above it
+                        blocks.add(block_id)
+                        block_id = parents[block_id]
             for row in src.execute(f"SELECT {BLOCK_COLUMNS} FROM unified_blocks "
                                    "WHERE id IN (SELECT value FROM json_each(?))", (json.dumps(sorted(blocks)),)):
                 self._put(row)
-            # the pages' chats, and on a folder export its folder views'
-            copy_chats(src, self.db, "bucket IN (SELECT value FROM json_each(?))",
-                       [json.dumps(self.page_ids + sorted(subtree))])
+            if share is not None:
+                self._confine(kept)
+                # what the share reads of the chats: each page's active conversation
+                copy_chats(src, self.db, "bucket IN (SELECT value FROM json_each(?))",
+                           [json.dumps(self.page_ids)], tables=("chats",))
+            else:
+                # the pages' chats, and on a folder export its folder views'
+                copy_chats(src, self.db, "bucket IN (SELECT value FROM json_each(?))",
+                           [json.dumps(self.page_ids + sorted(subtree))])
             # the threads shown on the pages; their authors' names travel with them (author_name)
             comments.copy_rows(self.db, comments.rows_of_pages(src, self.page_ids))
         self.db.commit()
@@ -1058,11 +1120,13 @@ def _notes_place(notes_at: str) -> str:
 
 
 def _export_opts(pdf=True, highlights=True, notes=True, folder_scope=None, author="", comments=False,
-                 notes_at="beside") -> dict:
-    """The switches as the builders read them."""
+                 notes_at="beside", share=None) -> dict:
+    """The switches as the builders read them; ``share`` the request's
+    ShareScope (None for a member), which confines a ``gamma`` export to
+    what the share shows."""
     notes_at = _notes_place(notes_at)
     return {"pdf": bool(pdf), "highlights": bool(highlights), "notes": bool(notes), "comments": bool(comments),
-            "notes_at": notes_at, "folder_scope": folder_scope, "author": author}
+            "notes_at": notes_at, "folder_scope": folder_scope, "author": author, "share": share}
 
 
 def page_builder(ws: str, block_id: str, mode: str, opts: dict, scope=None) -> _Builder:
@@ -1205,9 +1269,10 @@ def export_page(block_id: str, request: Request, mode: str = "readable", pdf: in
     file), or ``gamma`` (a scoped account backup any Gamma imports via
     /api/import-data?mode=merge)."""
     ws = resolve_ws(request)
+    scope = share_scope(request)
     opts = _export_opts(pdf, highlights, notes, author=request.state.user or "", comments=comments,
-                        notes_at=notes_at)
-    return page_builder(ws, block_id, mode, opts, share_scope(request)).response()
+                        notes_at=notes_at, share=scope)
+    return page_builder(ws, block_id, mode, opts, scope).response()
 
 
 # Sync on purpose: PyPDF2 rewriting is CPU-bound; the threadpool keeps the loop free.
@@ -1280,7 +1345,7 @@ def export_folder(folder_id: str, request: Request, mode: str = "readable", pdf:
     scope = share_scope(request)
     ws = resolve_ws(request)
     opts = _export_opts(pdf, highlights, notes, folder_scope=folder_id, author=request.state.user or "",
-                        comments=comments, notes_at=notes_at)
+                        comments=comments, notes_at=notes_at, share=scope)
     with connect_pages_db(ws) as conn:
         path = _export_folder(conn, folder_id, scope)
         ids = pages_in_folder(conn, folder_id)

@@ -725,7 +725,8 @@ pencil with "View only" / "Can edit", then "· shared by" with the owner's
 avatar initial and name, the sentence behind it as its hover title; phones
 keep the icon and the role), "as <name>" for an editing visitor without an
 account, and one action: Sign in for a visitor with no account, "Add to my
-library" for a signed-in one, "Open in my library" for the owner.
+library" for a signed-in one (on a page, and on a folder share's listing,
+where it copies the folder browsed), "Open in my library" for the owner.
 
 ### Sign-in and status pages
 

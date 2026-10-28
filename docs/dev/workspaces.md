@@ -425,6 +425,8 @@ its rows (it may have been built under other normalization rules).
   The backup's folders and labels join the workspace's trees first
   (`_merge_trees`), and an added page is filed under the workspace's ids
   for them ([import_export.md](import_export.md) "Gamma-to-Gamma export").
+  A folder's export comes back with `folder`, the workspace's id for that
+  folder, which a folder imported by its share link reloads into.
 - **Pages in Recently deleted** count as lacking. A merge (and the reviewed
   Gamma import, which plans such a page as "create") removes the trashed
   copy's rows and brings the backup's version back live under the same ids.

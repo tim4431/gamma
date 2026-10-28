@@ -263,6 +263,9 @@ const preloadViewMenu = preloading(ImportDialog, ChatDock, CommentsPanel);
 // Why the iPad app's opened files went to another workspace, kept across
 // the reload the switch is (takeOpenedFiles).
 const OPENED_NOTE = "gamma-opened-note";
+// The share link a share view's "Add to my library" hands the visitor's own
+// library to import as it boots (addShareToLibrary).
+const IMPORT_SHARE = "gamma-import-share";
 // Recently deleted asks for its list with its module, so it lands whole.
 const preloadTrash = () => { RecentlyDeleted.preload(); prefetchTrash(); };
 
@@ -654,9 +657,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         if (ids.has(d.workspace_id)) return d.workspace_id;
       } catch {}
     }
-    let last = "";
+    let last = "", importing = false;
     try { last = localStorage.getItem(`gamma-last-ws:${user}`) || ""; } catch {}
-    if (last && ids.has(last)) return last;
+    // a share view's "Add to my library" waiting to import (IMPORT_SHARE)
+    // goes into a workspace this account may write to
+    try { importing = Boolean(sessionStorage.getItem(IMPORT_SHARE)); } catch {}
+    const writable = (id) => !importing || list.find((w) => w.id === id)?.role !== "viewer";
+    if (last && ids.has(last) && writable(last)) return last;
     return ids.has(dflt) ? dflt : (list[0]?.id || null);
   }
 
@@ -4700,6 +4707,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // Stay on home page with the label/folder filter — don't restore session
     }
     else {
+      // A share view's "Add to my library" sent this tab here to import its link.
+      let shared = "";
+      try { shared = sessionStorage.getItem(IMPORT_SHARE) || ""; sessionStorage.removeItem(IMPORT_SHARE); } catch {}
+      if (shared) { importSharedPage(shared); return; }
       // Bare `/` — try restore last session
       const session = loadSession();
       if (session.focusedBlockId) {
@@ -6747,53 +6758,95 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return link;
   }
 
-  // Import a page from a share link — another Gamma's or this server's — into
-  // this library. Browser-side on purpose: the browser can reach a Gamma on
-  // the LAN or at localhost that the server's SSRF guard would rightly
-  // refuse. The owner's Gamma answers share reads cross-origin, so with the
-  // token alone (no cookies — only "anyone" links open from another origin;
-  // a same-origin link also gets this session, so invite-only ones work
-  // here) the page is fetched as a Gamma export and merged through the same
-  // path as Import → Gamma export. Block ids survive, so the imported page
-  // opens by the id the link named.
+  // Import what a share link shares — a page, or a folder with its pages and
+  // subfolders — from another Gamma or this server into this library.
+  // Browser-side on purpose: the browser can reach a Gamma on the LAN or at
+  // localhost that the server's SSRF guard would rightly refuse. The owner's
+  // Gamma answers share reads cross-origin, so with the token alone (no
+  // cookies — only "anyone" links open from another origin; a same-origin
+  // link also gets this session, so invite-only ones work here) the page or
+  // folder is fetched as a Gamma export and merged through the same path as
+  // Import → Gamma export. A folder share's link may name one of its pages
+  // (page=, the share view's address while a page is open) or a subfolder
+  // (folder=, while one is browsed): that is what comes over. The tab then
+  // reloads into it: a page by the id the link named (block ids survive), a
+  // folder by the id the merge reports (it may become a folder of the same
+  // name this library already has).
   async function importSharedPage(shareUrl) {
-    let origin = "", token = "", linkedPage = "";
+    let origin = "", token = "", linkedPage = "", linkedFolder = "";
     try {
       const u = new URL(shareUrl, window.location.href);
       origin = u.origin;
       token = u.searchParams.get("share") || "";
       linkedPage = u.searchParams.get("page") || ""; // a page opened through a folder share
+      linkedFolder = u.searchParams.get("folder") || ""; // a subfolder browsed in one
     } catch {}
     if (!token) { setStatus(t("That isn't a Gamma share link (no ?share= in it).")); return; }
     const local = origin === window.location.origin;
     const opts = { credentials: local ? "include" : "omit" };
-    const tid = addTask({ name: `Shared page from ${local ? "this Gamma" : new URL(origin).host}`.slice(0, 60), kind: "download", info: t("resolving…") });
+    const host = local ? t("this Gamma") : new URL(origin).host;
+    const tid = addTask({ name: t("Shared link from {host}", { host }).slice(0, 60), kind: "download", info: t("resolving…") });
     try {
       let r;
       try {
         r = await fetch(`${origin}${API}/share/${encodeURIComponent(token)}`, opts);
       } catch {
-        throw new Error(`couldn't reach ${origin} — is it up, and a Gamma recent enough to share across servers?`);
+        throw new Error(t("couldn't reach {origin} — is it up, and a Gamma recent enough to share across servers?", { origin }));
       }
       if (r.status === 401 || r.status === 403) {
         throw new Error(local
           ? t("that link is shared with specific people only")
           : t("that link isn't open to anyone — only public share links can be imported from another Gamma"));
       }
-      if (!r.ok) throw new Error("share link not found");
+      if (!r.ok) throw new Error(t("share link not found"));
       const info = await r.json();
       const pageId = info.page_id || linkedPage;
-      if (!pageId) throw new Error(t("that link shares a folder — open one of its pages to add it"));
-      updateTask(tid, { info: t("downloading…") });
-      r = await fetch(`${origin}${API}/pages/${encodeURIComponent(pageId)}/export?mode=gamma&share=${encodeURIComponent(token)}`, opts);
-      if (!r.ok) throw new Error(r.status === 404 ? "that Gamma is too old to export pages for another Gamma" : `export failed (${r.status})`);
+      const folder = pageId ? "" : linkedFolder || info.folder || "";
+      updateTask(tid, {
+        name: (pageId ? t("Shared page from {host}", { host }) : t("Shared folder from {host}", { host })).slice(0, 60),
+        info: t("downloading…"),
+      });
+      const what = pageId ? `pages/${encodeURIComponent(pageId)}` : `folders/${encodeURIComponent(folder)}`;
+      r = await fetch(`${origin}${API}/${what}/export?mode=gamma&share=${encodeURIComponent(token)}`, opts);
+      if (!r.ok) {
+        // the server's words say which refusal it is (a share read's error is readable cross-origin too)
+        let detail = "";
+        try { detail = String((await r.json()).detail || ""); } catch {}
+        // (through a share, a page or folder deleted meanwhile is refused as out of reach)
+        throw new Error(detail === "no pages in that folder" ? t("that folder has no pages yet")
+          : r.status === 403 ? t("that isn't in what the link shares — it may have been moved out or deleted")
+          : r.status === 404 || r.status === 400 ? t("that Gamma is too old to export pages for another Gamma")
+          : t("export failed ({status})", { status: r.status }));
+      }
       const blob = await r.blob();
       updateTask(tid, { state: "done", info: fmtBytes(blob.size) });
-      runBackupImport(new File([blob], "shared-page.zip", { type: "application/zip" }), "merge", null, { openPage: pageId });
+      runBackupImport(new File([blob], pageId ? "shared-page.zip" : "shared-folder.zip", { type: "application/zip" }),
+        "merge", null, pageId ? { openPage: pageId } : { openFolder: folder });
     } catch (err) {
       updateTask(tid, { state: "failed", info: String(err.message) });
       setStatus(t("Import failed: {message}", { message: err.message }));
     }
+  }
+
+  // The share view's "Add to my library": what it shows — the open page, or
+  // the folder browsed (the shared folder or one below it) — is imported by
+  // the visitor's own library, not by this tab, which has no workspace and
+  // no background tasks: the link goes over in sessionStorage, where no
+  // other site can put one (an address alone never imports anything), and
+  // the library takes it as it boots (in a workspace it may write to:
+  // chooseWorkspace). A page host serves no library, so it has no such button.
+  function addShareToLibrary() {
+    const root = window.location.pathname;
+    const q = new URLSearchParams({ share: initialShare });
+    if (focusedBlockId) q.set("page", focusedBlockId);
+    else if (folderFilter) q.set("folder", folderFilter);
+    try {
+      sessionStorage.setItem(IMPORT_SHARE, `${window.location.origin}${root}?${q}`);
+    } catch {
+      setStatus(t("This browser keeps no session storage here: copy the link, then paste it into + in your library."));
+      return;
+    }
+    window.location.href = root;
   }
 
   // Download the PDF exactly as stored — no highlight annotations. Reuses the
@@ -10766,7 +10819,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 if (e.key === "Enter" && addUrl.trim() && !loading) {
                   setOpenPopover(null);
                   // A share link from another Gamma (or this one) brings the
-                  // whole page over; anything else is a paper to fetch.
+                  // page or folder it shares over; anything else is a paper to fetch.
                   const shareLink = parseGammaShareLink(addUrl);
                   if (shareLink) importSharedPage(shareLink);
                   else openPdf(cleanAddInput(addUrl));
@@ -10776,7 +10829,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             />
             {parseGammaShareLink(addUrl) ? (
               <div className="popoverHint">
-                {t("A Gamma share link — Enter copies that page, with its blocks, highlights and PDF, into your library.")}
+                {t("A Gamma share link — Enter copies what it shares, a page or a whole folder, into your library.")}
               </div>
             ) : null}
             <MenuItem icon={UploadIcon} disabled={loading} data-guide="add.upload" onClick={() => addFilesRef.current?.click()}>{t("Upload files…")}</MenuItem>
@@ -11443,12 +11496,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   : `${window.location.pathname}?folder=${encodeURIComponent(sharedFolder?.id || "")}${ws}`;
               }}
             >{t("Open in my library")}</button>
-          ) : shareInfo?.viewer && !shareInfo.viewerIsGuest && focusedBlockId ? (
+          ) : shareInfo?.viewer && !shareInfo.viewerIsGuest && !publicPage && (focusedBlockId || sharedFolder) ? (
             <button
               className="uiBtn sm"
               disabled={loading}
-              title={t("Copy this page — blocks, highlights, its PDF and files — into your own library")}
-              onClick={() => importSharedPage(publicPage ? `${window.location.origin}/?share=${encodeURIComponent(initialShare)}` : window.location.href)}
+              title={focusedBlockId
+                ? t("Copy this page — blocks, highlights, its PDF and files — into your own library")
+                : t("Copy this folder — its pages, subfolders, PDFs and files — into your own library")}
+              onClick={addShareToLibrary}
             >{t("Add to my library")}</button>
           ) : shareInfo && !shareInfo.viewer && !publicPage ? (
             // no account behind this visitor: the share's own sign-in gate

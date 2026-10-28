@@ -162,6 +162,24 @@ def test_gamma_folder_export_merges_into_another_account(gx_export, greceiver):
     assert folder_names(greceiver) == paths and label_names(greceiver) == {label: "gxtag"}
 
 
+def test_gamma_folder_export_reports_where_its_folder_went(gx_export, gdonor):
+    """The merge's report names the workspace's id for the exported folder
+    (the manifest's scope.folder); a backup whose scope is not shaped so
+    merges as any other, with no folder named."""
+    assert _merge(gdonor, gx_export["zip"])["folder"] == gx_export["folders"]["gxtop/gxfolder"]
+    for scope in ("all", {"folder": ["x"]}, {"folder": None}):
+        src = zipfile.ZipFile(io.BytesIO(gx_export["zip"]))
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as out:
+            for name in src.namelist():
+                data = src.read(name)
+                if name == "manifest.json":
+                    data = json.dumps({**json.loads(data), "scope": scope}).encode()
+                out.writestr(name, data)
+        d = _merge(gdonor, buf.getvalue())
+        assert "folder" not in d and d["pages_skipped"] == 2, scope
+
+
 def test_gamma_folder_export_maps_onto_the_same_paths(gx_export):
     """A workspace that has folders at the same paths (other ids) and a
     label of the same name: the import files the pages in those, and makes
