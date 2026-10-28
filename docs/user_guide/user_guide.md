@@ -47,6 +47,7 @@ A new account starts with a **Welcome** page to practise on, and a **Sketchbook*
 - **Area screenshot**: hold **Ctrl** and drag a rectangle. The region goes to the AI chat as an image, and a color keeps it as an area highlight.
 - **Click a highlight** to jump to its note; click the note to jump back. **Right-click** to recolor, link, comment on or delete it.
 - Highlights made in other PDF apps are imported when the paper is added.
+- **A new version of the PDF**: the paperclip menu's *Replace the PDF…* swaps the file and finds each highlight's text in the new one, moving the highlight there (an area highlight follows the caption or picture inside it). One whose text is gone stays hollow where it was: right-click it and choose *Move to a selection…* (or the same button beside its row in the notes), then select the text where it belongs, or drag an area, and press *Move the highlight here* in the bar that opens. *Find highlights in this PDF* in the same menu runs the search again at any time, and places the highlights when the status says they were not placed. *Move to a selection…* also fixes any highlight that sits wrong.
 - **Zoom** with Ctrl+wheel or pinch; **dark pages** in Settings → Appearance.
 
 ## Draw and type on the page

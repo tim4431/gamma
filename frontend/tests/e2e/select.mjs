@@ -202,6 +202,7 @@ export const RULES = [
   ["backend/gamma/pdf_meta.py", PDF_VIEW],
   ["backend/gamma/pdf_text.py", PDF_VIEW],
   ["backend/gamma/pdf_index.py", ["notes-pdf-share", "quick-open"]],
+  ["backend/gamma/highlight_relocate.py", ["notes-pdf-share"]], // the highlights found again in a replaced PDF
   ["backend/gamma/routers/pdf.py", PDF_VIEW],
   ["backend/gamma/textnorm.py", ["notes-pdf-share", "quick-open"]],
   ["backend/gamma/block_index.py", ["notes-pdf-share", "quick-open"]],

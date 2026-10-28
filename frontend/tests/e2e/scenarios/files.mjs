@@ -290,9 +290,10 @@ export async function fileScenarios({ server, browser, alice, makePdf, step, unt
 
   // A new version of a document page's PDF (a paper compiled again from its
   // TeX): the Document popover's "Replace the PDF…" swaps the file; the page
-  // keeps its id, title and highlights, the highlights where they were, and
-  // another tab on the page follows.
-  await step("files: 'Replace the PDF…' swaps a document page's file and keeps its title and highlights", async () => {
+  // keeps its id, title and highlights, the server's relocate-highlights job
+  // moves the highlight to where its text is in the new file
+  // (docs/dev/highlight_relocation.md), and another tab on the page follows.
+  await step("files: 'Replace the PDF…' swaps a document page's file, keeps its title and highlights, and the highlight follows its text", async () => {
     const up = await account.upload("/api/uploads", makePdf([["Draft one of the thesis"]]), "thesis.pdf", "application/pdf");
     const doc = await account.api(`/api/blocks/by-doc/${up.doc_id}`, {
       method: "POST", body: { default_title: "", source_url: up.source_url, original_filename: "thesis.pdf" } });
@@ -306,6 +307,15 @@ export async function fileScenarios({ server, browser, alice, makePdf, step, unt
     await page.locator(`[data-page="1"] [data-hl-id="${hl.id}"]`).first().waitFor();
     const other = await openPage(ctx, `${server.base}/?page=${doc.id}&ws=${account.ws}`); // a second tab
     await waitForPdf(other, 1);
+    // every line the status pill shows, so the job's summary is seen
+    // whichever of it and "PDF replaced." comes first
+    await page.evaluate(() => {
+      window.pillLines = [];
+      new MutationObserver(() => {
+        const text = document.querySelector(".statusPill")?.textContent;
+        if (text && text !== window.pillLines.at(-1)) window.pillLines.push(text);
+      }).observe(document.body, { subtree: true, childList: true, characterData: true });
+    });
 
     await page.click("button[aria-label='Document']");
     const chooser = page.waitForEvent("filechooser");
@@ -320,8 +330,17 @@ export async function fileScenarios({ server, browser, alice, makePdf, step, unt
     assert(after.properties.doc_id && after.properties.doc_id !== up.doc_id, "the page carries the new file");
     assertEq(after.content, "thesis.pdf", "the title stays the first file's name");
     assertEq(after.properties.original_filename, "thesis-v2.pdf", "the file name is the new file's");
-    assertEq(JSON.stringify((await account.api(`/api/blocks/${hl.id}`)).properties.pdf_position), JSON.stringify(position),
-      "the highlight keeps its place");
+    // the job the replacement started finds the highlight's text in the new file and says so
+    const summary = "Highlights placed in the PDF: 1 moved, 0 unchanged, 0 not found.";
+    await until(() => page.evaluate((s) => window.pillLines.some((line) => line.includes(s)), summary),
+      { what: "the relocation's summary", timeout: 20000 });
+    const placed = await until(async () => {
+      const b = await account.api(`/api/blocks/${hl.id}`);
+      const p = b.properties.pdf_position;
+      return JSON.stringify(p) !== JSON.stringify(position) && !p.lost && !p.doc_id
+        && (b.properties.quote || "").includes("Draft two") ? b : null;
+    }, { what: "the highlight moved to its text in the new file", timeout: 20000 });
+    assertEq(placed.content, "a note on draft one", "the highlight keeps its note");
     await page.locator(`[data-page="1"] [data-hl-id="${hl.id}"]`).first().waitFor(); // drawn over the new file
     // the other tab hears of it over the page's socket and shows the new file
     await waitForPdf(other, 2);

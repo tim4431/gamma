@@ -3,7 +3,7 @@
 // row + persisted position), the library card, and the search panel hitting
 // PDF text on another page.
 import { execFileSync } from "node:child_process";
-import { tree, same, partialBlockSearch } from "./notes.mjs";
+import { closeEditor, tree, same, partialBlockSearch } from "./notes.mjs";
 import { PYTHON, arrived, fakeAiModels, until } from "../harness.mjs";
 import { DEFAULT_PALETTE, darkPageColor } from "../../../src/shared/model/palette.js";
 
@@ -1186,6 +1186,168 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       }
     } finally {
       await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { smoothWheel: false } } });
+      await account.api(`/api/blocks/${doc.id}`, { method: "DELETE" });
+    }
+  });
+
+  // After the PDF is replaced (docs/dev/highlight_relocation.md): each
+  // highlight is found again by its text and moves with it; one whose text
+  // is gone is drawn hollow where it was, and a selection moves it by hand.
+  // Translate on select is on throughout: the selection that places a moved
+  // highlight is not translated.
+  await step("pdf: replacing the PDF moves a highlight to its text, hollows one whose text is gone, and a selection moves that one", async () => {
+    const lineA = "Quantum dots confine single electrons";
+    const lineB = "This sentence is only in the first version";
+    const up1 = await account.upload("/api/uploads", makePdf([[lineA, lineB]]), "v1.pdf", "application/pdf");
+    const doc = await account.api(`/api/blocks/by-doc/${up1.doc_id}`, { method: "POST", body: { default_title: "Replaced paper" } });
+    // a note placed on a page but not on a passage: its ⊕ turns attach mode on
+    await account.api("/api/blocks", { method: "POST", body: { parent_id: doc.id, content: "Loose remark on the paper",
+      properties: { pdf_position: { pageNumber: 1 } } } });
+    const { value: profile } = await account.api("/api/prefs/profile");
+    await account.api("/api/prefs/profile", { method: "PUT", body: { value: { ...(profile || {}), selTranslateAuto: true } } });
+    const c = await account.context(browser);
+    const translations = [];
+    await c.route("**/api/ai/translate", async (route) => {
+      const body = route.request().postDataJSON();
+      translations.push(body);
+      await route.fulfill({ contentType: "application/x-ndjson",
+        body: `${JSON.stringify({ translations: body.texts.map((text) => `译:${text}`), model: "engine:google", cached: false })}\n` });
+    });
+    try {
+      const p = await openPage(c, `${server.base}/?page=${doc.id}&ws=${account.ws}`);
+      await waitForPdf(p, 1);
+      await until(() => p.evaluate(() => localStorage.getItem("gamma-sel-translate-auto")).then((v) => v === "1" || v === "true"),
+        { what: "the profile's translate-on-select" });
+      let made = 0;
+      for (const needle of ["dots confine single", "only in the first version"]) {
+        await selectPdfText(p, 1, needle);
+        await p.waitForSelector(".plainTip .colorBtn", { timeout: 5000 });
+        // a selection made to highlight is translated by itself
+        await until(async () => (await p.locator(".plainTip .selTransBody").textContent().catch(() => "")) === `译:${needle}`,
+          { what: `the translation of "${needle}"` });
+        await p.locator(".plainTip .colorBtn").first().click();
+        made += 1;
+        await until(async () => (await p.$$('[data-page="1"] div[data-hl-id]')).length >= made, { what: `the highlight of "${needle}"` });
+      }
+      await closeEditor(p); // the new highlight's note was open for typing; a row being edited shows no dot
+      const saved = await until(async () => {
+        const d = await account.api(`/api/blocks/${doc.id}/subtree`);
+        const hls = (d.block.children || []).filter((b) => b.properties?.pdf_position?.rects);
+        return hls.length === 2 ? hls : null;
+      }, { what: "two saved highlights" });
+      const lostId = saved.find((b) => (b.properties.quote || "").includes("first version")).id;
+      // the new version: a page of front matter before, the first line kept, the second gone
+      const up2 = await account.upload("/api/uploads", makePdf([["Front matter added in revision"], [lineA, "A new sentence replaced the old one"]]), "v2.pdf", "application/pdf");
+      const bound = await account.api(`/api/pages/${doc.id}/attachment`, { method: "PUT", body: { doc_id: up2.doc_id, original_filename: "v2.pdf" } });
+      assert(bound.job?.kind === "relocate-highlights", `the replacement started the job: ${JSON.stringify(bound)}`);
+      const job = await until(async () => {
+        const j = await account.api(`/api/jobs/${bound.job.id}`);
+        return ["done", "failed", "cancelled"].includes(j.state) ? j : null;
+      }, { what: "the relocation job", timeout: 20000 });
+      assertEq(job.state, "done", `the relocation job: ${job.error}`);
+      for (const [key, count] of Object.entries({ highlights: 2, moved: 1, kept: 0, lost: 1, approx: 0, changed: 0 })) {
+        assertEq(job.result?.[key], count, `result.${key} of ${JSON.stringify(job.result)}`);
+      }
+
+      // the open tab switched to the new file; the lost highlight is hollow where it was, on page 1
+      const lostSel = `[data-page="1"] div[data-hl-id="${lostId}"].pdfHlLost`;
+      await p.waitForSelector(lostSel, { timeout: 15000 });
+      const look = () => p.$eval(lostSel, (el) => {
+        const s = getComputedStyle(el);
+        return { fill: s.backgroundColor, top: s.borderTopStyle, bottom: s.borderBottomStyle };
+      });
+      const hollow = JSON.stringify({ fill: "rgba(0, 0, 0, 0)", top: "dashed", bottom: "dashed" });
+      assertEq(JSON.stringify(await look()), hollow, "a lost highlight is a dashed outline with no fill");
+      // a flipped page (Flip page colors, Gamma Dark) draws it hollow too
+      const flipped = await p.$eval(lostSel, (el) => {
+        const viewer = el.closest(".pdfViewer");
+        const had = viewer.classList.contains("pdfDark");
+        viewer.classList.add("pdfDark");
+        const fill = getComputedStyle(el).backgroundColor;
+        if (!had) viewer.classList.remove("pdfDark");
+        return fill;
+      });
+      assertEq(flipped, "rgba(0, 0, 0, 0)", "a lost highlight has no fill on a flipped page");
+      const dot = await p.$eval(".blockRow .highlightDot.lost", (el) => {
+        const s = getComputedStyle(el);
+        return { fill: s.backgroundColor, edge: s.borderTopStyle };
+      });
+      assertEq(JSON.stringify(dot), JSON.stringify({ fill: "rgba(0, 0, 0, 0)", edge: "dashed" }), "its row's dot is hollow");
+      // a comment on it (the commented look's underline) leaves it hollow
+      await until(async () => (await account.api(`/api/pages/${doc.id}/comments`, { method: "POST",
+        body: { block_id: lostId, body: "Where did this sentence go?" } }).catch(() => null))?.thread, { what: "the comment stored" });
+      await until(async () => (await p.$(`.pdfNoteBadge[data-hl-id="${lostId}"], .commentCard`)) != null, { what: "the comment shown" });
+      assertEq(JSON.stringify(await look()), hollow, "a lost highlight with a comment stays hollow");
+
+      // attach mode and move mode end each other: one banner, the move's, and Escape ends it
+      const loose = p.locator(".blockRow", { hasText: "Loose remark on the paper" });
+      await loose.hover(); // ⊕ takes a press only while its row is hovered or focused
+      await loose.getByTitle("Attach to a PDF highlight").click();
+      await p.locator(".attachModeBanner").waitFor();
+      await p.click(lostSel, { button: "right" });
+      await p.locator(".ctxMenuItem", { hasText: "Move to a selection" }).click();
+      await p.waitForSelector(".attachModeBanner[data-move-highlight]", { timeout: 5000 });
+      assertEq(await p.locator(".attachModeBanner").count(), 1, "one banner");
+      await p.keyboard.press("Escape");
+      await p.locator(".attachModeBanner").waitFor({ state: "detached", timeout: 5000 });
+
+      // move it by hand from its row's button: a selection on page 2 is its place
+      const lostRow = p.locator(".blockRow", { has: p.locator(".highlightDot.lost") });
+      await lostRow.hover(); // its buttons take a press only while the row is hovered or focused
+      await lostRow.locator(".attachModeBtn[aria-label='Move to a selection on the PDF']").click();
+      await p.waitForSelector(`.attachModeBanner[data-move-highlight="${lostId}"]`, { timeout: 5000 });
+      // page 2 holds the moved highlight and the new sentence
+      await until(async () => {
+        await p.evaluate(() => document.querySelector('[data-page="2"]')?.scrollIntoView({ block: "start" }));
+        return (await p.$('[data-page="2"] .textLayer span')) != null;
+      }, { what: "page 2 rendered", timeout: 15000 });
+      await until(async () => (await p.$$('[data-page="2"] div[data-hl-id]:not(.pdfHlLost)')).length > 0, { what: "the moved highlight on page 2" });
+      const asked = translations.length;
+      await selectPdfText(p, 2, "new sentence replaced");
+      await p.waitForSelector(".plainTip .tipMoveBtn", { timeout: 5000 });
+      assert(!(await p.$(".plainTip .colorBtn:not(.tipMoveBtn)")), "the tip offers the move alone");
+      await sleep(300);
+      assertEq(translations.length, asked, "the move's selection is not translated");
+      await p.locator(".plainTip .tipMoveBtn").click();
+      await p.waitForSelector(".attachModeBanner[data-move-highlight]", { state: "detached", timeout: 5000 });
+      await until(async () => !(await p.$("[data-hl-id].pdfHlLost")) && (await p.$(`[data-page="2"] div[data-hl-id="${lostId}"]`)) != null,
+        { what: "the moved highlight on page 2, nothing hollow" });
+      const moved = await until(async () => {
+        const b = await account.api(`/api/blocks/${lostId}`);
+        return b.properties.pdf_position.pageNumber === 2 && !b.properties.pdf_position.lost ? b : null;
+      }, { what: "the move saved" });
+      assert((moved.properties.quote || "").includes("new sentence replaced"), `quote: ${moved.properties.quote}`);
+
+      // moved again onto a box (an area drag), it becomes an area with no quote
+      await p.click(`[data-page="2"] div[data-hl-id="${lostId}"]`, { button: "right" });
+      await p.locator(".ctxMenuItem", { hasText: "Move to a selection" }).click();
+      await p.waitForSelector(".attachModeBanner[data-move-highlight]", { timeout: 5000 });
+      const pageEl = p.locator('[data-page="2"]');
+      await pageEl.evaluate((el) => el.scrollIntoView({ block: "center" }));
+      await sleep(300);
+      const box = await pageEl.boundingBox();
+      const x0 = box.x + 80, y0 = box.y + box.height / 2 - 60;
+      assert(y0 > 0 && y0 + 140 < p.viewportSize().height, `page 2's middle is in view (${JSON.stringify(box)})`);
+      await p.keyboard.down("Control");
+      await p.mouse.move(x0, y0);
+      await p.mouse.down();
+      await p.mouse.move(x0 + 100, y0 + 60, { steps: 8 });
+      await p.mouse.move(x0 + 200, y0 + 120, { steps: 8 });
+      await p.mouse.up();
+      await p.keyboard.up("Control");
+      await p.waitForSelector(".plainTip .tipMoveBtn", { timeout: 5000 });
+      await p.locator(".plainTip .tipMoveBtn").click();
+      await p.waitForSelector(".attachModeBanner[data-move-highlight]", { state: "detached", timeout: 5000 });
+      const boxed = await until(async () => {
+        const b = await account.api(`/api/blocks/${lostId}`);
+        return b.properties.pdf_position.area ? b : null;
+      }, { what: "the area move saved" });
+      assert(!boxed.properties.quote, `an area keeps no quote: ${boxed.properties.quote}`);
+      assertNoProblems(p);
+      await p.close();
+    } finally {
+      await c.close();
+      await account.api("/api/prefs/profile", { method: "PUT", body: { value: { ...(profile || {}), selTranslateAuto: false } } });
       await account.api(`/api/blocks/${doc.id}`, { method: "DELETE" });
     }
   });

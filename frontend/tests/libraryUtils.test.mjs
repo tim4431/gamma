@@ -7,7 +7,7 @@ import {
   NO_LABEL, NO_LABEL_TITLE, addToFolder, childFolders, defaultPageTitle, filedIn, findNamed, findPageForUrl,
   firstFolderPath, folderChain, folderEntries, folderNeighbour, folderPath, folderPosition, folderPositions, folderSubtree, folderTargets,
   formatFullDate, formatRelativeTime, formatShortDate,
-  inFolder, isFreshLibrary, labelName, libraryTree, normalizeLinkInput, pageAttachment,
+  attachmentFile, inFolder, isFreshLibrary, labelName, libraryTree, normalizeLinkInput, pageAttachment,
   siblingFolders,
 } from "../src/library/libraryUtils.js";
 
@@ -182,6 +182,12 @@ test("pageAttachment and defaultPageTitle", () => {
     { kind: "pdf", id: "d1", url: "https://x.test/p.pdf", name: "" });
   assert.deepEqual(pageAttachment({ properties: { source_url: "/api/uploads/d1.pdf" } }),
     { kind: "pdf", id: "", url: "/api/uploads/d1.pdf", name: "" });
+  // the file it shows: its doc_id, else the stored upload a duplicated page's address serves, else none
+  assert.equal(attachmentFile(pageAttachment({ properties: { doc_id: "d1", source_url: "https://x.test/p.pdf" } })), "d1");
+  assert.equal(attachmentFile(pageAttachment({ properties: { source_url: "/api/uploads/d1.pdf" } })), "d1");
+  assert.equal(attachmentFile(pageAttachment({ properties: { source_url: "https://x.test/api/uploads/d1.pdf" } })), "");
+  assert.equal(attachmentFile(pageAttachment({ properties: { source_url: "/api/uploads/d1.png" } })), "");
+  assert.equal(attachmentFile(null), "");
   assert.equal(defaultPageTitle(null), "Untitled");
   assert.equal(defaultPageTitle({ name: "paper.pdf" }), "paper.pdf");
   assert.equal(defaultPageTitle({ url: "https://x.test/dir/a%20b.pdf" }), "a b.pdf");

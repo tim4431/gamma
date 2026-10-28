@@ -8,10 +8,11 @@
 // started elsewhere (another tab, a scheduled backup) still turns up; a
 // hidden tab asks nothing and catches up when it is shown again.
 //
-// `onFinished(job, started)` hears each job that ends while this tab looks
-// — `started` is what `start` / `upload` were given for a job started in
-// this tab ({download, …}), else null. A finished job whose file was asked
-// for with download: "auto" is downloaded here first.
+// `onFinished(job, started, jobs)` hears each job that ends while this tab
+// looks — `started` is what `start` / `upload` were given for a job started
+// in this tab ({download, …}), else null; `jobs` is the listing it ended in
+// (newer than the last render's). A finished job whose file was asked for
+// with download: "auto" is downloaded here first.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fmtBytes, makeId } from "../shared/lib/utils";
 import { t } from "../shared/i18n/i18n.js";
@@ -66,7 +67,7 @@ export function useTasks({ enabled, onFinished }) {
     notified.current.add(job.id);
     const meta = started.current.get(job.id) || null;
     if (job.state === "done" && job.artifact && meta?.download === "auto") download(job);
-    finishedRef.current?.(job, meta);
+    finishedRef.current?.(job, meta, jobsRef.current);
   }, [download]);
 
   // A new picture of the jobs: settle the ones that ended since the last.
@@ -239,8 +240,8 @@ export function useTasks({ enabled, onFinished }) {
     running: tasks.filter(isActive).length,
     byId: (id) => jobs.find((job) => job.id === id) || null,
     fetchJob: getJob,
-    start, upload, cancel, dismiss, clear, download, setDownload, startedHere, watch, wake,
+    start, adopt, upload, cancel, dismiss, clear, download, setDownload, startedHere, watch, wake,
     addLocal, updateLocal, reviveLocal, removeLocal, wasStopped,
-  }), [tasks, jobs, start, upload, cancel, dismiss, clear, download, setDownload, startedHere, watch, wake,
+  }), [tasks, jobs, start, adopt, upload, cancel, dismiss, clear, download, setDownload, startedHere, watch, wake,
     addLocal, updateLocal, reviveLocal, removeLocal, wasStopped]);
 }
