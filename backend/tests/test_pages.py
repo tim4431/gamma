@@ -214,7 +214,9 @@ def test_replace_swaps_the_pdf_and_keeps_the_page(guest, no_grace):
     # the stored copy's URL is derived, never stored (page_attachment)
     assert props["doc_id"] == new and "source_url" not in props and props["original_filename"] == "main-v2.pdf"
     assert guest.get(f"/api/blocks/{page['id']}").json()["properties"] == props
-    assert guest.get(f"/api/blocks/{hl['id']}").json()["properties"]["pdf_position"] == position
+    # the highlight keeps its place, now naming the file it was measured on
+    # (gamma/highlight_relocate.py; the run that would move it cannot read these bytes)
+    assert guest.get(f"/api/blocks/{hl['id']}").json()["properties"]["pdf_position"] == {**position, "doc_id": old}
     # by attachment, the page is the new file's and no longer the old one's
     assert guest.get(f"/api/blocks/by-doc/{new}").json()["id"] == page["id"]
     assert guest.get(f"/api/blocks/by-doc/{old}").status_code == 404

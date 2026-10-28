@@ -60,6 +60,19 @@ def test_from_scaled_keeps_every_rect_in_one_frame():
     assert from_scaled({"pageNumber": 1, "boundingRect": {"x1": 0, "y1": 0, "x2": 1, "y2": 1, "area": True}})["area"]
 
 
+def test_from_scaled_keeps_what_the_relocation_wrote_on_a_stored_position():
+    """A replaced PDF's relocation (gamma/highlight_relocate.py) marks a
+    position with the file its rects were measured on, lost, or placed by
+    estimate; a restore passes every position through from_scaled, which
+    must keep them."""
+    lost = {**position(1, 612, 792, [(72, 90, 300, 104)]), "doc_id": "a" * 64, "lost": True}
+    approx = {**position(2, 612, 792, [(10, 20, 110, 120)], area=True), "approx": True}
+    assert from_scaled(lost) == lost and from_scaled(approx) == approx
+    # only those keys, and only in their own form
+    odd = {**position(1, 612, 792, [(1, 1, 2, 2)]), "doc_id": "", "lost": "yes", "usePdfCoordinates": True}
+    assert from_scaled(odd) == position(1, 612, 792, [(1, 1, 2, 2)])
+
+
 # --- the writers -------------------------------------------------------------------------
 
 def _upload(c, data, name="p.pdf"):

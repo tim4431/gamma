@@ -18,11 +18,12 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
-from .. import pdf_index, publish
-from ..auth import actor_of, require_ws
+from .. import highlight_relocate, jobs, pdf_index, publish
+from ..auth import actor_of, require_user_id, require_ws
 from ..blocks_store import (
     BLOCK_COLUMNS,
     TRASH,
+    attachment_file,
     attachment_props,
     block_to_dict,
     create_page,
@@ -34,13 +35,16 @@ from ..blocks_store import (
 )
 from ..db import connect_pages_db, safe_doc_id
 from ..markdown_zip_import import markdown_page
+from ..logbuf import log
 from ..storage import find_upload_file
-from ..ops import MAX_OPS, OpError, after_commit, apply_batches, apply_ops, props_patch
+from ..ops import MAX_OPS, OpError, after_commit, after_commits, apply_batches, apply_ops, props_patch
 from .imports import originals_gone
 
 router = APIRouter(prefix="/api", tags=["pages"])
 
 ATTACHMENT_KEYS = ("doc_id", "source_url", "original_filename")
+RELOCATE = "relocate-highlights"  # the job that places a replaced PDF's highlights (_start_relocation)
+NOT_STORED = "the PDF is not stored on the server"  # why no run places the highlights of a PDF shown from a URL alone
 
 
 class PageCreate(BaseModel):
@@ -244,8 +248,7 @@ def replace_pdf(page_id: str, payload: AttachRequest, request: Request):
     (a new version of the file: a paper compiled again from its TeX). Body
     and 409s as ``POST``'s; a page without an attachment gets this one as
     ``POST`` would give it. The page keeps its id, title, notes and
-    highlights, and the highlights stay where they were on their pages.
-    The same attachment again changes nothing.
+    highlights. The same attachment again changes nothing.
 
     When the file changes (whatever the page showed it from: a ``doc_id``,
     or only a ``source_url`` as on a duplicated document page), the blocks
@@ -254,8 +257,23 @@ def replace_pdf(page_id: str, payload: AttachRequest, request: Request):
     export draws them again, and a failed metadata lookup's marker goes
     (``_attachment_op``). The old file is no longer the page's: its search
     rows and manifest go now, and unless something else references it the
-    file is purged after 30 days (gamma/upload_gc.py). Returns the updated
-    block."""
+    file is purged after 30 days (gamma/upload_gc.py).
+
+    When the stored file changes (``attachment_file``: a duplicated page's
+    ``/api/uploads/<doc id>.pdf`` address is its stored file) and the page
+    has highlights placed on its PDF, the same transaction writes the
+    outgoing file's id as ``pdf_position.doc_id`` on each of them that
+    names no file yet (the file its rectangles were measured on;
+    ``highlight_relocate.UNSTORED`` for a page that showed its file from a
+    URL alone), and after the commit the ``relocate-highlights`` job starts
+    (``_start_relocation``): each highlight is found again in the new file
+    by its text and moved there; until it is done they sit where they
+    were. Returns the updated block, with the job as ``job``, or, when no
+    run started, the reason as ``relocation_error``: the account's
+    background tasks are full (the Document menu's Find highlights in this
+    PDF places the highlights later), or the new PDF is shown from a URL
+    alone (``NOT_STORED``: no file to read). The replacement stands
+    either way."""
     ws = require_ws(request, write=True)
     doc_id, source_url = _attachment_body(payload)
     with connect_pages_db(ws) as conn:
@@ -273,7 +291,16 @@ def replace_pdf(page_id: str, payload: AttachRequest, request: Request):
                 conn.rollback()  # nothing to write: let go of the lock
                 return page
             marks = originals_gone(conn, page_id) if had and moved else []
-            batches = [(page_id, [op])] + [(page_id, marks[i:i + MAX_OPS]) for i in range(0, len(marks), MAX_OPS)]
+            outgoing = attachment_file(page_attachment(page["properties"]))
+            incoming = attachment_file(page_attachment(props))
+            swapped = had and moved and not (outgoing and outgoing == incoming)  # another file, not another address
+            placed = highlight_relocate.page_highlights(conn, page_id) if swapped else []
+            stamps = [{"op": "set", "id": bid, "props": {"pdf_position": {
+                          **p["pdf_position"], "doc_id": outgoing or highlight_relocate.UNSTORED}}}
+                      for bid, p in placed if not p["pdf_position"].get("doc_id")]
+            batches = [(page_id, [op])]
+            for extra in (marks, stamps):
+                batches += [(page_id, extra[i:i + MAX_OPS]) for i in range(0, len(extra), MAX_OPS)]
             try:
                 results = apply_batches(conn, batches, actor=actor_of(request))
             except OpError as e:
@@ -282,11 +309,100 @@ def replace_pdf(page_id: str, payload: AttachRequest, request: Request):
         except BaseException:
             conn.rollback()
             raise
-        for result in results:
-            after_commit(ws, conn, result)
+        after_commits(ws, conn, results)
         if old and old != doc_id:
             pdf_index.purge_unused(ws, conn)
-    return {**page, "content": content, "properties": props, "updated_at": results[0]["at"]}
+    answer = {**page, "content": content, "properties": props, "updated_at": results[0]["at"]}
+    if placed:
+        job, reason = (_start_relocation(request, ws, page["id"], content, incoming, outgoing=outgoing)
+                       if incoming else (None, NOT_STORED))
+        if job:
+            answer["job"] = job
+        elif reason:
+            answer["relocation_error"] = reason
+    return answer
+
+
+def _start_relocation(request: Request, ws: str, page_id: str, title: str, new_doc: str, *,
+                      outgoing: str | None = None, quiet: bool = True) -> tuple[dict | None, str]:
+    """Start the ``relocate-highlights`` job that places the page's
+    highlights in its PDF ``new_doc`` (gamma/highlight_relocate.py
+    ``relocate``), owned by the account behind the request. One run per
+    page and file: its key is ``<page id>:<new_doc>``, and a start while a
+    run for the same page and file is going answers that run. A
+    replacement (``outgoing``: the file it replaced) first stops the same
+    account's run for the outgoing file, whose result would be for a file
+    the page no longer shows; that run never holds up the new one, and one
+    past its last stop finishes on its own and has its write refused.
+    → ``(job, "")``, or ``(None, why)`` when no run started: the account's
+    jobs are full, or the last run for this file is still stopping. A
+    replacement is ``quiet`` (its answer says why as ``relocation_error``
+    and the replacement stands); a start by hand raises that as its 429 or
+    409."""
+    owner = request.state.user_id
+    name = " ".join((title or "").split())[:80] or "Untitled"
+    params = {"page_id": page_id, "title": name, "doc_id": new_doc}
+    if outgoing is not None:
+        previous = jobs.latest(owner, RELOCATE, f"{page_id}:{outgoing}")
+        if previous and previous["state"] in jobs.ACTIVE:
+            try:
+                jobs.cancel(previous["id"])
+            except HTTPException:
+                pass  # past its last stop: it finishes, and its write is refused (the page carries another file)
+
+    def run(job):
+        return highlight_relocate.relocate(ws, page_id, new_doc, actor=owner, progress=job.progress)
+
+    try:
+        return jobs.start(RELOCATE, owner=owner, ws=ws, key=f"{page_id}:{new_doc}", params=params, run=run,
+                          title=f"Placing the highlights of “{name}”"), ""
+    except jobs.Busy as busy:
+        if not busy.job.get("stopping"):
+            return busy.job, ""
+        reason = "the last run for this file is still stopping — try again in a moment"
+    except HTTPException as e:
+        if not quiet:
+            raise
+        reason = str(e.detail)
+    if not quiet:
+        raise HTTPException(status_code=409, detail=reason)
+    log.warning(f"[relocate] {page_id}: the job did not start ({reason})")
+    return None, reason
+
+
+class RelocateRequest(BaseModel):
+    page_id: str
+
+
+@router.post("/jobs/relocate-highlights")
+def relocate_highlights(payload: RelocateRequest, request: Request):
+    """Start the ``relocate-highlights`` job for the page by hand (the
+    Document menu's "Find highlights in this PDF", a background task's Try
+    again): every highlight placed on its PDF is found again by its text
+    and moved there, the ones not found marked ``lost``, each read from
+    the file its rectangles were measured on while that file is stored
+    (``_start_relocation``). Session accounts only, like every job start
+    (a token gets 403), and workspace editors. → the job, the running one
+    when a run for this page and file is going already; 400 for a page
+    without a PDF, with one shown from a URL alone (``NOT_STORED``), or
+    without highlights on it, 404 for no such page, 429 when the account's
+    jobs are full, 409 while the last run for this file is still
+    stopping."""
+    require_user_id(request)
+    ws = require_ws(request, write=True)
+    with connect_pages_db(ws) as conn:
+        page = _load_page(conn, payload.page_id)
+        placed = highlight_relocate.page_highlights(conn, page["id"])
+    attachment = page_attachment(page["properties"])
+    if not attachment:
+        raise HTTPException(status_code=400, detail="the page has no PDF")
+    new_doc = attachment_file(attachment)
+    if not new_doc:
+        raise HTTPException(status_code=400, detail=NOT_STORED)
+    if not placed:
+        raise HTTPException(status_code=400, detail="the page has no highlights placed on its PDF")
+    job, _reason = _start_relocation(request, ws, page["id"], page["content"], new_doc, quiet=False)
+    return job
 
 
 @router.delete("/pages/{page_id}/attachment")

@@ -6,8 +6,13 @@
 // {pageNumber, width, height, boundingRect: {x1, y1, x2, y2}, rects: [{x1,
 // y1, x2, y2}, …]} (area: true on an area highlight): the 1-based page,
 // the page as measured when the place was taken, and the rectangles in
-// that frame, top-left origin. A highlight whose place on its page is not
-// known carries pageNumber alone.
+// that frame, top-left origin. After the page's PDF is replaced a
+// highlight's position may also carry doc_id (the stored file its
+// rectangles were measured on, when that is no longer the page's PDF;
+// absent, the current one, which is what a selection here writes), lost:
+// true (its text was not found in the new file) and approx: true (an area
+// placed by estimate); docs/dev/highlight_relocation.md. A highlight whose
+// place on its page is not known carries pageNumber alone.
 //
 // The tree is the DOCUMENT and nothing else: every change to it is an edit
 // the live session sends and the undo history records. What only this

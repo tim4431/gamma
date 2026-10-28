@@ -1536,6 +1536,14 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   height: 10px;
   border-radius: var(--radius-full);
 }
+/* A highlight the replaced PDF's text no longer has (pdf_position.lost,
+   docs/dev/highlight_relocation.md): a hollow dot, a dashed ring in the
+   highlight's colour (inline border-color), as the viewer draws it. */
+.highlightDot.lost {
+  background: transparent;
+  border: 2px dashed;
+  box-sizing: border-box;
+}
 
 .collapseSpacer {
   display: inline-block;

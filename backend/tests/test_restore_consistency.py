@@ -299,6 +299,32 @@ def test_a_backup_from_before_the_highlight_shape_is_converted_on_restore(tmp_pa
         assert props["camel"] == {"doc_id": "b" * 24}
 
 
+def test_a_restore_keeps_what_a_pdf_replacement_wrote_on_the_highlights():
+    """A replaced PDF's relocation marks a highlight lost and names the file
+    its rects were measured on, and an area placed by estimate approx
+    (gamma/highlight_relocate.py); a replace or merge of a backup taken
+    after that keeps them, though it passes every position through the
+    highlight shape's rewrite."""
+    ws, c = _account("rc_relocated")
+    pid = _page(c, "Replaced paper")
+    rect = {"x1": 72, "y1": 90, "x2": 300, "y2": 104}
+    lost = {"pageNumber": 1, "width": 612, "height": 792, "boundingRect": rect, "rects": [rect],
+            "doc_id": "a" * 64, "lost": True}
+    approx = {"pageNumber": 2, "width": 612, "height": 792, "boundingRect": rect, "rects": [rect],
+              "area": True, "approx": True}
+    r = c.post(f"/api/pages/{pid}/ops", json={"client": "t", "ops": [
+        {"op": "insert", "id": "rcLost", "parent": pid, "content": "", "props": {"pdf_position": lost, "quote": "q"}},
+        {"op": "insert", "id": "rcApprox", "parent": pid, "content": "", "props": {"pdf_position": approx}}]})
+    assert r.status_code == 200, r.text
+    snap = ws_backup.backup_path(ws, ws_backup.create(ws, label="relocated", uploads=False)["name"])
+    other, c2 = _account("rc_relocated_merge")
+    for into, client, mode in ((ws, c, "replace"), (other, c2, "merge")):
+        ws_backup.restore_zip(into, snap, mode)
+        positions = {bid: client.get(f"/api/blocks/{bid}").json()["properties"]["pdf_position"]
+                     for bid in ("rcLost", "rcApprox")}
+        assert positions == {"rcLost": lost, "rcApprox": approx}, mode
+
+
 def test_replace_moves_every_page_forward_deletes_the_removed_and_reloads_open_tabs():
     ws, c = _account("rc_seq")
     pid = _page(c, "Restored page")

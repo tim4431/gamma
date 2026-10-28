@@ -119,7 +119,7 @@ def display_size(crop, rotation):
     return (ch, cw) if rotation in (90, 270) else (cw, ch)
 
 
-def _viewer_rect_to_pdf(rect, size, rotation, crop):
+def viewer_rect_to_pdf(rect, size, rotation, crop):
     """One stored viewer rect, in a frame of ``size`` (the position's
     width, height), → (x1, y1, x2, y2) in PDF user space."""
     w, h = (float(v or 0) or 1.0 for v in size)
@@ -631,7 +631,7 @@ def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=(),
             continue
         crop, rotation = page_frame(writer.pages[page_num - 1])
         size = (pos.get("width"), pos.get("height"))
-        pdf_rects = [_viewer_rect_to_pdf(r, size, rotation, crop) for r in viewer_rects]
+        pdf_rects = [viewer_rect_to_pdf(r, size, rotation, crop) for r in viewer_rects]
         color = parse_css_color(h.get("color"))
         if pos.get("area"):
             annot = _square_annotation(writer, pdf_rects, color, h.get("note") or "",

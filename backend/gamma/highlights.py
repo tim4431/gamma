@@ -13,7 +13,14 @@ then, an ink file's page in points, an imported annotation's page box),
 and the rectangles are in that frame, top-left origin: a reader scales them
 by its own page size over ``width`` / ``height``. ``boundingRect`` is their
 union, and ``rects`` is never empty beside it. An area highlight adds
-``"area": true``. A highlight whose place on its page is not known (a
+``"area": true``. After the page's PDF is replaced
+(gamma/highlight_relocate.py, docs/dev/highlight_relocation.md) a
+highlight's position may also carry ``doc_id``, the stored file its
+rectangles were measured on when that is no longer the page's PDF (absent:
+measured on the current one, which is what the viewer, the imports and a
+move by hand write), ``"lost": true`` when its text was not found in the
+new file (drawn hollow where it was), and ``"approx": true`` on an area
+placed by estimate. A highlight whose place on its page is not known (a
 Logseq import without positions) carries ``pageNumber`` alone. A text box
 has none: its place is its ``text_box`` (gamma/text_box.py). The block id
 is the highlight's id. The frontend's twin is
@@ -49,7 +56,7 @@ def _size(rect: dict):
     return size if all(_number(v) and v > 0 for v in size) else None
 
 
-def _placed(rect) -> bool:
+def placed(rect) -> bool:
     return isinstance(rect, dict) and all(_number(rect.get(k)) for k in COORDS)
 
 
@@ -65,9 +72,11 @@ def from_scaled(pos: dict, page=None) -> dict | None:
     position's own size, else the first measured rect's; a rect measured at
     another size is scaled into it, so nothing moves. ``page`` stands in
     for a position that names none. A position in the stored shape comes
-    back as it is. None without a page."""
+    back as it is, the relocation's ``doc_id``, ``lost`` and ``approx``
+    included (a restore passes every position through here). None without
+    a page."""
     old = pos.get("boundingRect") if isinstance(pos.get("boundingRect"), dict) else {}
-    rects = [r for r in pos.get("rects") or () if _placed(r)]
+    rects = [r for r in pos.get("rects") or () if placed(r)]
     page = pos.get("pageNumber") or old.get("pageNumber") or next(
         (r["pageNumber"] for r in rects if r.get("pageNumber")), None) or page
     if not _is_page(page):
@@ -82,13 +91,18 @@ def from_scaled(pos: dict, page=None) -> dict | None:
         return {"x1": rect["x1"] * kx, "y1": rect["y1"] * ky, "x2": rect["x2"] * kx, "y2": rect["y2"] * ky}
 
     rects = [into_frame(r) for r in rects]
-    if not (rects or _placed(old)):
+    if not (rects or placed(old)):
         return {"pageNumber": page}
-    bounding = into_frame(old) if _placed(old) else _union(rects)
+    bounding = into_frame(old) if placed(old) else _union(rects)
     out = {"pageNumber": page, **({"width": frame[0], "height": frame[1]} if frame else {}),
            "boundingRect": bounding, "rects": rects or [dict(bounding)]}
     if pos.get("area") or old.get("area"):
         out["area"] = True
+    if isinstance(pos.get("doc_id"), str) and pos["doc_id"]:
+        out["doc_id"] = pos["doc_id"]
+    for flag in ("lost", "approx"):
+        if pos.get(flag) is True:
+            out[flag] = True
     return out
 
 
