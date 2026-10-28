@@ -13,11 +13,18 @@ scoped to the page's block tree and needs a signed-in editor.
 """
 
 
+import io
+import json
+import sqlite3
+import tempfile
+import zipfile
+from contextlib import closing
+
 import bcrypt
 import pytest
 from fastapi.testclient import TestClient
 
-from conftest import account_of, login, make_folder, make_user, make_page
+from conftest import account_of, folder_names, login, make_folder, make_label, make_user, make_page
 from gamma.seed import insert_account
 
 
@@ -733,6 +740,112 @@ def test_folder_share_reaches_the_pages_filed_in_it(bob, anon):
     assert r.json()["removed"] == 1
     assert anon.get(f"/api/share/{token}").status_code == 404
     assert bob.get(f"/api/share-settings/folder/{readout}").json()["token"] is None
+
+
+def _export_db(data: bytes) -> dict:
+    """What a Gamma export zip holds of the trees and chats: {"trees": {name:
+    (tree, parent name)}, "filed": {page id: (folders, labels)}, "chats",
+    "history"} (the bucket ids)."""
+    with tempfile.TemporaryDirectory() as td:
+        path = f"{td}/pages.db"
+        with open(path, "wb") as out:
+            out.write(zipfile.ZipFile(io.BytesIO(data)).read("pages.db"))
+        with closing(sqlite3.connect(path)) as conn:
+            rows = conn.execute("SELECT id, parent_id, content, page_id FROM unified_blocks "
+                                "WHERE page_id IN ('folders', 'labels')").fetchall()
+            names = {r[0]: r[2] for r in rows}
+            pages = conn.execute("SELECT id, properties FROM unified_blocks WHERE parent_id = 'root'").fetchall()
+            return {"trees": {r[2]: (r[3], names.get(r[1], r[1])) for r in rows},
+                    "filed": {pid: tuple([names.get(i, i) for i in json.loads(props).get(tree, [])]
+                                         for tree in ("folders", "labels")) for pid, props in pages},
+                    "chats": {r[0] for r in conn.execute("SELECT bucket FROM chats")},
+                    "history": {r[0] for r in conn.execute("SELECT bucket FROM chat_history")}}
+
+
+def _merge_zip(client, data: bytes) -> dict:
+    r = client.post("/api/import-data?mode=merge", files={"file": ("shared-folder.zip", data, "application/zip")})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_folder_share_imports_into_another_gamma(bob, anon):
+    """A folder share link pasted into another Gamma: the folder comes over
+    as a Gamma export through the token (cross-origin readable), confined to
+    what the share shows — the shared folder at the top level, none of the
+    folders above or beside it, only the pages' active chats — and the merge
+    reports where the folder went."""
+    top = make_folder(bob, "xi-private/xi-mid")
+    shared, sub = make_folder(bob, "xi-private/xi-mid/xi-shared"), make_folder(bob, "xi-private/xi-mid/xi-shared/sub")
+    elsewhere = make_folder(bob, "xi-elsewhere/xi-hidden")
+    tag = make_label(bob, "xi-tag")
+    inside = make_page(bob, "Xi in the folder", {"folders": [shared], "labels": [tag]})
+    deeper = make_page(bob, "Xi in a subfolder", {"folders": [sub, elsewhere], "labels": [tag]})
+    _child(bob, deeper["id"], "carried along")
+    bob.post("/api/chat-history/archive", json={"bucket": inside["id"], "messages": [
+        {"role": "user", "content": "archived"}]}).raise_for_status()
+    for bucket in (inside["id"], shared, sub):
+        bob.put(f"/api/chats/{bucket}", json={"messages": [{"role": "user", "content": bucket}]}).raise_for_status()
+    token = _folder_share(bob, shared, audience="anyone")["token"]
+    q = {"share": token, "mode": "gamma"}
+
+    zipped = anon.get(f"/api/folders/{shared}/export", params=q)
+    assert zipped.status_code == 200, zipped.text
+    assert zipped.headers.get("access-control-allow-origin") == "*"
+    got = _export_db(zipped.content)
+    assert got["trees"] == {"xi-shared": ("folders", "folders"), "sub": ("folders", "xi-shared"),
+                            "xi-tag": ("labels", "labels")}
+    assert got["filed"] == {inside["id"]: (["xi-shared"], ["xi-tag"]), deeper["id"]: (["sub"], ["xi-tag"])}
+    assert got["chats"] == {inside["id"]} and got["history"] == set()
+    # a member's own export of the folder still carries all of it
+    member = _export_db(bob.get(f"/api/folders/{shared}/export", params={"mode": "gamma"}).content)
+    assert member["trees"].keys() == {"xi-private", "xi-mid", "xi-shared", "sub", "xi-hidden", "xi-elsewhere", "xi-tag"}
+    assert member["chats"] == {inside["id"], shared, sub} and member["history"] == {inside["id"]}
+
+    make_user("erin_share", "erinpw1234567")
+    erin = login("erin_share", "erinpw1234567")
+    result = _merge_zip(erin, zipped.content)
+    assert result["pages_added"] == 2 and result["folder"] == shared
+    assert sorted(folder_names(erin).values()) == [["xi-shared"], ["xi-shared", "sub"]]
+    assert erin.get(f"/api/blocks/{deeper['id']}").json()["properties"]["folders"] == [sub]
+    # pasted again: nothing new, the folder found by its id
+    assert _merge_zip(erin, zipped.content) == {**result, "pages_added": 0, "pages_skipped": 2, "chats_added": 0,
+                                                "comments_added": 0, "uploads_added": 0}
+
+    # an importer with a top-level folder of that name gets the pages in it
+    make_user("fay_share", "faypw1234567")
+    fay = login("fay_share", "faypw1234567")
+    mine = make_folder(fay, "XI-SHARED")
+    result = _merge_zip(fay, zipped.content)
+    assert result["folder"] == mine and fay.get(f"/api/blocks/{inside['id']}").json()["properties"]["folders"] == [mine]
+
+    # a subfolder the share view browsed comes over on its own, at the top
+    assert _export_db(anon.get(f"/api/folders/{sub}/export", params=q).content)["trees"] == {
+        "sub": ("folders", "folders"), "xi-tag": ("labels", "labels")}
+    # a page opened through the folder share: its folders inside the share, its labels
+    page = _export_db(anon.get(f"/api/pages/{deeper['id']}/export", params=q).content)
+    assert page["trees"] == {"xi-shared": ("folders", "folders"), "sub": ("folders", "xi-shared"),
+                             "xi-tag": ("labels", "labels")}
+    assert page["filed"] == {deeper["id"]: (["sub"], ["xi-tag"])}
+    # a folder outside the share, or a folder with no pages, is refused in words
+    assert anon.get(f"/api/folders/{top}/export", params=q).status_code == 403
+    empty = make_folder(bob, "xi-private/xi-mid/xi-shared/empty")
+    r = anon.get(f"/api/folders/{empty}/export", params=q)
+    assert r.status_code == 404 and r.json()["detail"] == "no pages in that folder"
+    assert r.headers.get("access-control-allow-origin") == "*"
+
+
+def test_page_share_export_carries_no_folders_or_labels(bob, anon):
+    """A page share shows no folder or label, and its Gamma export (what
+    another Gamma imports) carries none: the page lands unfiled."""
+    folder = make_folder(bob, "xp-private/xp-folder")
+    page = make_page(bob, "Xp shared page", {"folders": [folder], "labels": [make_label(bob, "xp-tag")]})
+    bob.post("/api/chat-history/archive", json={"bucket": page["id"], "messages": [
+        {"role": "user", "content": "archived"}]}).raise_for_status()
+    bob.put(f"/api/chats/{page['id']}", json={"messages": [{"role": "user", "content": "hi"}]}).raise_for_status()
+    token = _share(bob, page["id"], audience="anyone")["token"]
+    got = _export_db(anon.get(f"/api/pages/{page['id']}/export", params={"share": token, "mode": "gamma"}).content)
+    assert got["trees"] == {} and got["filed"] == {page["id"]: ([], [])}
+    assert got["chats"] == {page["id"]} and got["history"] == set()
 
 
 def test_folder_share_reads_only_its_pages_assets(bob, anon):

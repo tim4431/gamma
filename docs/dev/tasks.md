@@ -140,7 +140,7 @@ Each kind starts at `POST /api/jobs/<route>`, in the router of its work.
 | `import` | `import` (`routers/imports.py`) | the import review's Import to library | the import report |
 | `workspace-export` | `workspace-export` (`routers/ws_backups.py`) | Settings → Workspaces → Data → Export…, Export all | the zip |
 | `snapshot` | `snapshot` | Settings → Backups → Back up now, Back up all | `{snapshots, failed}` |
-| `restore` | `restore` (an uploaded zip), `restore-snapshot` | Settings → Workspaces → Data → Merge / Restore, Settings → Backups → Restore, a shared page imported by link | the restore report |
+| `restore` | `restore` (an uploaded zip), `restore-snapshot` | Settings → Workspaces → Data → Merge / Restore, Settings → Backups → Restore, a shared page or folder imported by link | the restore report |
 | `metadata` | `metadata` (`routers/metadata.py`) | Settings → Maintenance → Fetch needed / Fetch selected / Refetch; an upload of several PDFs | `{papers, fetched, failed}` |
 | `server-backup` | `server-backup` (`routers/admin.py`) | Settings → Server → Server backups | the snapshot's info |
 | `indexing` | — (`routers/search.py`, owner `""`) | a search, a page chat, Settings → Maintenance → Rebuild | `{papers}` |
@@ -258,7 +258,10 @@ belong to the dialog and have no row, so a close by the backdrop, Escape
 or × asks first.
 
 A share view has no background tasks. Its exports download directly
-through the synchronous endpoints.
+through the synchronous endpoints, and its "Add to my library" hands the
+link to the visitor's own library, which imports it
+([import_export.md](import_export.md) "Importing a shared page or folder
+by link").
 
 ## Adding a kind
 

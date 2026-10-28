@@ -269,6 +269,7 @@ The **link button** in the top bar shares the open page.
 - **General access**: anyone with the link, signed-in users, or invited people only, with View or Edit for that audience.
 - Editors edit alongside you with live cursors. **Stop sharing** ends the link.
 - **Share a folder** the same way: the link opens every page filed in it.
+- **Copy a shared page or folder into your library**: paste its link into **+** in your own Gamma, or press **Add to my library** on the shared page or folder. A folder comes with its pages and subfolders, as a folder of your library's own; from another Gamma server this works for links open to anyone.
 
 ## Workspaces
 

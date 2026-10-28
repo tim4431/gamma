@@ -221,7 +221,10 @@ def restore_zip(ws: str, zpath: Path, mode: str = "replace", *, selected: set[st
     in within one write transaction and data.db with the sqlite backup API
     (both transactional, safe while the app serves).
     ``merge``: additive — pages and chats the workspace does not have are
-    appended, everything it has stays (``_merge``). In both modes the
+    appended, everything it has stays (``_merge``); for a folder's export
+    (the manifest's ``scope.folder``) the report's ``folder`` is the
+    workspace's id for that folder, where its pages were filed ("" when
+    the import brought it nowhere). In both modes the
     backup's uploads the workspace lacks are copied in first (content-hash
     names: identical files never conflict, nothing existing is
     overwritten); after a replace, files only the old pages used are left
@@ -241,6 +244,7 @@ def restore_zip(ws: str, zpath: Path, mode: str = "replace", *, selected: set[st
     if selected is not None and mode != "merge":
         raise BackupError("selection is only supported for additive imports")
     progress = progress or jobs.no_progress
+    folder = _scope_folder(read_manifest(zpath))
     with tempfile.TemporaryDirectory(prefix="gamma-restore-") as td:
         tdir = Path(td)
         upload_names = _unpack(zpath, tdir, progress)
@@ -283,7 +287,7 @@ def restore_zip(ws: str, zpath: Path, mode: str = "replace", *, selected: set[st
         if mode == "merge":
             uploads_added = _copy_uploads(ws, tdir, upload_names, progress)
             progress(phase="restoring", stoppable=False)
-            result = _merge(ws, tdir, by)
+            result = _merge(ws, tdir, by, folder=folder)
         else:
             progress(phase="saving")
             pre = _keep_current(ws, by, progress)
@@ -295,6 +299,14 @@ def restore_zip(ws: str, zpath: Path, mode: str = "replace", *, selected: set[st
         result["warnings"] = [w for p in chosen for w in p["warnings"]]
     return {"mode": mode, "workspace": ws, **result,
             "uploads_in_backup": len(upload_names), "uploads_added": uploads_added}
+
+
+def _scope_folder(manifest) -> str:
+    """The folder a folder's Gamma export came from (its manifest's
+    ``scope.folder``); "" for any other backup, or a scope not shaped so."""
+    scope = manifest.get("scope") if isinstance(manifest, dict) else None
+    folder = scope.get("folder") if isinstance(scope, dict) else ""
+    return folder if isinstance(folder, str) else ""
 
 
 def _copy_uploads(ws: str, tdir: Path, upload_names: list[str], progress=jobs.no_progress) -> int:
@@ -653,7 +665,7 @@ def _fresh_ids(rows, taken: set) -> tuple[list[list], dict[str, str]]:
     return out, remap
 
 
-def _merge(ws: str, tdir: Path, by: str) -> dict:
+def _merge(ws: str, tdir: Path, by: str, folder: str = "") -> dict:
     """Additive import: pages from the backup that don't exist locally (by
     block id, or by doc_id for PDF pages) are appended to the library; pages
     that do exist are left untouched (live data always wins). A page that is
@@ -673,14 +685,16 @@ def _merge(ws: str, tdir: Path, by: str) -> dict:
     added page's comments come with it (``comments.copy_rows``: on the
     blocks' ids as ``_fresh_ids`` remapped them, a comment id the
     workspace has minted afresh); ``comments_added`` counts them, and a
-    trashed copy that gives way takes its own with it.
+    trashed copy that gives way takes its own with it. ``folder``, the
+    backup's id of the folder it was exported from, comes back as the
+    workspace's id for it (``folder``), when the backup names one.
     Nothing in the backup's data.db is touched."""
     from fractional_indexing import generate_n_keys_between
 
     from . import ops
 
     pages_skipped = chats_added = comments_added = 0
-    added, untrashed, grew = [], [], []
+    added, untrashed, grew, mapping = [], [], [], {}
     snap = tdir / "pages.db"
     if snap.exists():
         with closing(sqlite3.connect(str(snap))) as src, connect_pages_db(ws) as dst:
@@ -732,7 +746,8 @@ def _merge(ws: str, tdir: Path, by: str) -> dict:
     if added or grew:
         _announce(ws, added + grew)
     return {"pages_added": len(added), "pages_skipped": pages_skipped, "chats_added": chats_added,
-            "comments_added": comments_added, "from_trash": len(untrashed)}
+            "comments_added": comments_added, "from_trash": len(untrashed),
+            **({"folder": mapping.get(folder, "")} if folder else {})}
 
 
 def _merge_trees(src, dst, taken: set) -> tuple[dict, list[str]]:
