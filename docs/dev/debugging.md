@@ -814,6 +814,8 @@ The scenarios live in `tests/e2e/scenarios/`:
     written on.
   - With no viewer shown, Play docks the player over the notes, and Escape
     closes it.
+  - With Record hidden from the viewer's strip, its ⋯ menu starts a
+    recording, and the button stays on the strip until it stops.
 - `textBoxes.mjs`: text boxes ([text_boxes.md](text_boxes.md)) on a PDF
   page and on a sheet in both views. It covers the Text tool's click and
   drag, typing, the stored block after a reload, the notes marker's jump,

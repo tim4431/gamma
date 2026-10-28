@@ -1,16 +1,18 @@
 import { T } from "../../shared/i18n/i18n.js";
 // The viewer's left edge, top to bottom: the PDF's table of contents, then
-// the tool column. The PDF and the notebook viewer share the column up to
-// the pen, so their tours are siblings: the zoom and pen steps are `shared`,
-// the same objects in both, and a user who has finished either tour gets
-// the other without them — only what is new there (stepApplies in
-// guide/triggers.js, docs/dev/onboarding.md).
+// the tool column, its tools in the order the user gave them (Settings →
+// Appearance › Viewer tools; a tour shows every one, hidden or not, so no
+// step speaks of where a tool stands among the others). The PDF and the
+// notebook viewer share the zoom and the pen, so their tours are siblings:
+// those steps are `shared`, the same objects in both, and a user who has
+// finished either tour gets the other without them — only what is new
+// there (stepApplies in guide/triggers.js, docs/dev/onboarding.md).
 
 const zoom = { id: "viewer-zoom", anchor: "viewer.zoom", placement: "right", shared: true,
   title: T("Zoom, or fit to the width"),
   body: T("{key:Mod} + scroll zooms at the pointer."),
   bodyTouch: T("Pinching zooms too."),
-  // Zoom out, zoom in, fit to width: the column's three buttons, top to bottom.
+  // Zoom out, zoom in, fit to width: the zoom group's three buttons, top to bottom.
   scene: [{ point: "viewer.zoom", at: [0.5, 0.17] }, { point: "viewer.zoom", at: [0.5, 0.5] }, { point: "viewer.zoom", at: [0.5, 0.83] }] };
 const pen = { id: "viewer-pen", anchor: "pdf.inkButton", placement: "right", shared: true, requires: { editable: true },
   title: T("Write and draw on the page"),

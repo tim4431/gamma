@@ -8,14 +8,15 @@ import { SECTION_PREFS, accountPrefs } from "../src/settings/sectionPrefs.js";
 
 const SETTINGS = path.join(path.dirname(fileURLToPath(import.meta.url)), "../src/settings");
 
-// Every `scope="account"` in the panes, with the Section title before it and
-// the table entry its `prefs` prop names.
+// Every `scope="account"` in the panes, with the title of the Section (or
+// BarLayoutSection, which hands it its scope and prefs) before it and the
+// table entry its `prefs` prop names.
 function accountSections() {
   const found = [];
   for (const file of fs.readdirSync(SETTINGS).filter((f) => f.endsWith(".jsx"))) {
     const source = fs.readFileSync(path.join(SETTINGS, file), "utf8");
     for (const match of source.matchAll(/scope="account"/g)) {
-      const open = source.lastIndexOf("<Section", match.index);
+      const open = Math.max(...["<Section", "<BarLayoutSection"].map((tag) => source.lastIndexOf(tag, match.index)));
       const title = /title=(?:"([^"]+)"|\{t\("([^"]+)"\)\})/.exec(source.slice(open, match.index))?.slice(1).find(Boolean);
       const ref = /^scope="account"\s+prefs=\{SECTION_PREFS\.(\w+)\["([^"]+)"\]\}/.exec(source.slice(match.index));
       found.push({ file, title, pane: ref?.[1], entry: ref?.[2] });

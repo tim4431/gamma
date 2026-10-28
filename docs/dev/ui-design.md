@@ -183,7 +183,7 @@ already exists. Bespoke CSS classes are for **layout only**.
 | Class / component | Use for |
 |---|---|
 | `uiBtn` (+ `primary`, `ghost`, `danger`, `sm`, `iconSq`, `on`) | every button with a label, in the topbar too (there is no generic topbar button style); the hierarchy and sizes are under Buttons below |
-| `ctlBtn` / `ctlBtnRow` / `pdfCtlBox` | the flat `--ctl-icon-btn` (29 px) icon buttons (a 16 px icon) of the PDF zoom column: `pdfCtlBox` = the elevated vertical box, `ctlBtnRow` = the same buttons laid flat with no box (chat header), `modeActive` = on, `danger` = destructive (red under the pointer or the keyboard's focus); `pdfCtlGroup` keeps a run of a box's buttons together (a guide anchor) without changing the layout. The zoom column of the PDF and the notebook viewer starts with the same buttons in the same places (zoom out, zoom in, fit to width, the pen); what only one viewer has goes after them. **`ctlBtn` (frameless) is the DEFAULT style for any icon button** — new icon toolbars (e.g. the image tools) use it, not bespoke button styles |
+| `ctlBtn` / `ctlBtnRow` / `pdfCtlBox` | the flat `--ctl-icon-btn` (29 px) icon buttons (a 16 px icon) of the PDF zoom column: `pdfCtlBox` = the elevated vertical box, `ctlBtnRow` = the same buttons laid flat with no box (chat header), `modeActive` = on, `danger` = destructive (red under the pointer or the keyboard's focus); `pdfCtlGroup` keeps a run of a box's buttons together (a guide anchor) without changing the layout. The zoom column of the PDF and the notebook viewer stands in the account's one Viewer tools order, by default the same buttons first in both (zoom out, zoom in, fit to width, the pen) and what only one viewer has after them; a hidden tool is a row of the ⋯ button that ends the column ([settings.md](settings.md#bars-order-and-modes)). **`ctlBtn` (frameless) is the DEFAULT style for any icon button** — new icon toolbars (e.g. the image tools) use it, not bespoke button styles |
 | `uiClose` (+ `uiCloseSm`/`uiCloseLg`) | every × close button: round, `--ctl-close` 26 px (Sm 22 for chips and rows, Lg 31 for dialogs and panes) |
 | `MenuButton` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | a row's or a card's "⋯": the visible way into the menu its right-click or held finger opens ([below](#one-behaviour-for-mouse-and-finger)) |
 | `aiKeyInput` | every text/number/password input in dialogs and settings |
@@ -808,8 +808,8 @@ never learns which gesture it was.
   - The click after a press belongs to the press, so it does nothing. The
     right and middle buttons do nothing either.
 - **The timings** are exported (`HOLD_MS`, `HOLD_SLOP`, `DOUBLE_MS`,
-  `DOUBLE_SLOP`) for gestures these helpers do not cover: the strip's
-  preset drag (`markup/MarkupToolbar.jsx`) and the finger-undo chords
+  `DOUBLE_SLOP`) for gestures these helpers do not cover: the reorder
+  drag (`shared/ui/useDragOrder.js`, below) and the finger-undo chords
   (`ink/fingerChords.js`) read them.
 - **Where they are.**
   - `menuPress`: the library's rows, cards and chips, tabs, the Back
@@ -825,6 +825,41 @@ never learns which gesture it was.
     `addEventListener`.
   - `tests/press.test.mjs` covers the counting and which press or click
     `triggerPress` answers.
+
+### Reorder by dragging: `shared/ui/useDragOrder.js`
+
+A row or a list whose items the user puts in order drags them through one
+hook, `useDragOrder({ containerRef, axis, start, onMove, onStatus, bounds })`:
+the handwriting strip's presets along a row
+([handwriting.md](handwriting.md), "Reorder by dragging") and Settings'
+bar lists down a column ([settings.md](settings.md#bars-order-and-modes)).
+The caller marks each slot with `data-order-id`, and their DOM order is the
+order seen.
+
+- **Where the drag starts.** `start: "hold"` is for a slot that is a button
+  with a click of its own: a mouse drags it past 6 px (`DRAG_PX`), a finger
+  or pen after holding it `HOLD_MS` and then moving, and a hold that never
+  moved is its click. `start: "handle"` is for a ⋮⋮ grip with no click of
+  its own (`touch-action: none`, `user-select: none`): any pointer drags it
+  past 6 px.
+- **What shows.** `drag` is `{ id, x, y, to, bar }` while a drag is live.
+  The caller draws the 2 px `.dropBar` at `bar`, in the container's
+  coordinates (so the container is `position: relative`), and a `.dragGhost`
+  at `x, y`, and dims the source. "Drop to reorder." goes to `onStatus`.
+- **Where it lands.** A release inside `bounds()` (the container by
+  default) calls `onMove(id, to)`, `to` a visible slot, and eats the click
+  that follows. A release outside, Escape, a window blur or a
+  pointercancel leaves the order. Outside `bounds()` `bar` is null, so the
+  drop bar shows only where a release lands. A list gives a looser
+  `bounds` than its own rect: Settings' takes the pane's width and a row
+  past either end.
+- **The keyboard.** `keyProps(id)` on the focused slot or grip moves it a
+  slot with the arrow keys along the axis, and to either end with Home and
+  End, through the same `onMove`. A list says each new place in a polite
+  live region ("Search: 2 of 7") and keeps the focus on what moved.
+- **The order.** The caller's `onMove` applies `moveVisible`
+  (`shared/model/barLayout.js`), so the items a filter hides keep their
+  places between the ones moved round them.
 
 ### Device questions: `shared/lib/pointer.js`
 
@@ -980,7 +1015,8 @@ own controls.
    `:focus-visible` twin, and decide what shows it where nothing hovers.
 6. Sizes from `--ctl-*`, and what sits around them by `calc()` of them.
 7. Drag alone is not enough: what a drag files or orders has a menu row
-   too (the folder menu's Move to, Move up, Move down).
+   too (the folder menu's Move to, Move up, Move down), or keys on its
+   grip (a Settings bar list, `useDragOrder`'s `keyProps`).
 8. A text field's Enter handler returns early while an input method
    composes (`composing` in `chat/enterKey.js`), and an `autoFocus` that
    would raise an on-screen keyboard is `!touchTyping()`. A username or
@@ -1379,7 +1415,8 @@ editor's other popups.
 | `collaboration/MirrorPopover.jsx`, `collaboration/MergeResolver.jsx`, `collaboration/conflictKinds.js`, `settings/SettingsMirrors.jsx` | a clone's sync pill with its settings and conflicts views, the conflict card + the row chip, what each kind of conflict row says (pure), Settings → Workspaces → Clones ([mirror.md](mirror.md)) |
 | `app/boot.js`, `app/theme.js` | the first load's reads, sent as `main.jsx` starts and taken once by the code that would ask for them (`startBootReads`, `takeBootRead`: the server's config, the session), and the account's theme and language put on from the session's `profile` (`adoptAccountLook`, `languageSeen`; [settings.md](settings.md), [i18n.md](i18n.md)); the theme list (`THEMES`, `DARK_THEMES`, `themeScheme`) and `applyTheme`, which changes every colour in one frame ([Motion](#motion)) |
 | `app/prefDefs.js`, `app/prefs.js` | every preference's key, default, codec and scope (`PREFS`); the hooks that make them state (`useAppPrefs`) and sync the account-scoped ones (`useProfileSync`) |
-| `app/topbarItems.js` | the topbar's configurable buttons, their modes and where each goes: on the bar, or a row of the account menu with its popover anchored where the button would be (`.offBar`) ([settings.md](settings.md#the-top-bars-buttons)) |
+| `shared/model/barLayout.js`, `app/topbarItems.js`, `app/viewerToolItems.js`, `settings/BarLayoutSection.jsx` | a bar's order and modes (`defineBar`: the preference's codec, the edits, where each item goes) and the two bars on it: the topbar's configurable buttons, each on the bar or a row of the account menu with its popover anchored where the button would be (`.offBar`), and the viewer strip's tools, each on the strip or a row of its ⋯ menu; the Settings list that orders them ([settings.md](settings.md#bars-order-and-modes)) |
+| `shared/ui/useDragOrder.js` | the one drag-to-reorder, by a hold on a button or by a grip, with its keys ([above](#reorder-by-dragging-shareduiusedragorderjs)) |
 | `settings/SettingsDialog.jsx` + the `settings/Settings*.jsx` panes | the Settings dialog (`SettingsKit.jsx` holds the shared primitives incl. `AccountPicker`, the search-box-over-account-rows people picker, `PersonRow` (one person in a list of who has access or who is invited: the share popover, a workspace's members, Settings → Users' invitations), and `LogBox`) |
 | `settings/settingsReads.js` | what the panes read through one store while the dialog is open: `PANE_READS` (each pane's paths, in order), `useSettingsRead(path, {poll})` for a section, `useSettingsReads` for one whose paths it learns as it goes ([settings.md](settings.md) "What a pane reads") |
 | `settings/sectionPrefs.js`, `settings/syncState.js` | which account preferences each settings section holds (`SECTION_PREFS`), and how their sync reads: a section's scope tag (`profileSyncState`) and the Settings sync row's hint (`cloudSyncHint`) ([settings.md](settings.md)) |

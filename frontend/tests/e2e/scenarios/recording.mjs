@@ -5,12 +5,14 @@
 // its moment and the note shaded, a tap on the stroke seeks, and Escape
 // closes the player; in a notebook view, Follow scrolls the viewer to the
 // sheet being written on; with no viewer shown, the player docks over the
-// notes. The browser has no microphone and no decoder
+// notes; with Record hidden from the strip, its ⋯ menu starts one and the
+// button stays while it records. The browser has no microphone and no decoder
 // here: an init script stands in for MediaRecorder and Audio. The server's
 // side is backend/tests/test_recordings.py.
 import { waitForPdf } from "./pdf.mjs";
 import { assertMenuFrom, assertMenuRoles } from "../harness.mjs";
 import { encodeStroke, newCanvasInk } from "../../../src/ink/ink.js";
+import { VIEWER_TOOLS } from "../../../src/app/viewerToolItems.js";
 
 async function drawLine(page, from, to) {
   await page.mouse.move(from[0], from[1]);
@@ -299,5 +301,35 @@ export async function recordingScenarios({ server, browser, alice, makePdf, step
       await until(async () => !(await npage.$(".replayBar")), { what: "the player closed" });
       assertNoProblems(npage);
     } finally { await nctx.close(); }
+  });
+
+  await step("recording: with Record hidden from the strip, ⋯ starts a recording, and its button stays on the strip until it stops", async () => {
+    // Settings → Appearance › Viewer tools, Record "Hidden" (docs/dev/settings.md "Bars: order and modes")
+    await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { viewerTools: VIEWER_TOOLS.setMode(VIEWER_TOOLS.DEFAULT, "record", "hidden") } } });
+    const up = await account.upload("/api/uploads", makePdf([["Recorded from the menu"]]), "menu.pdf", "application/pdf");
+    const created = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Menu recording", source_url: up.source_url } });
+    const mctx = await account.context(browser);
+    await mctx.addInitScript(fakeMedia);
+    try {
+      const mpage = await openPage(mctx, `${server.base}/?page=${created.id}&ws=${account.ws}`);
+      await waitForPdf(mpage, 1);
+      const onStrip = () => mpage.locator('[data-guide="viewer.tools"] [data-guide="viewer.record"]').count();
+      assertEq(await onStrip(), 0, "Record is off the strip");
+      await mpage.getByRole("button", { name: "More tools", exact: true }).click();
+      await mpage.getByRole("menu", { name: "More tools" }).getByRole("menuitem", { name: "Record audio", exact: true }).click();
+      await mpage.waitForSelector(".recordingPill.live", { timeout: 5000 });
+      await until(async () => (await onStrip()) === 1, { what: "the recording keeps its button on the strip" });
+      assert(await mpage.$("[data-guide='viewer.record'][aria-label='Stop recording'].modeActive"), "the button shows the recording");
+      await sleep(1200);
+      await mpage.click("[data-guide='viewer.record']");
+      await until(async () => !(await mpage.$(".recordingPill")), { what: "the recording stopped" });
+      await until(async () => (await onStrip()) === 0, { what: "Record back in ⋯ once stopped" });
+      await until(async () => ((await account.api(`/api/blocks/${created.id}/subtree`)).block.children || [])
+        .some((b) => b.properties?.recording?.state === "done"), { what: "the recording finished on the server", timeout: 15000 });
+      assertNoProblems(mpage);
+    } finally {
+      await mctx.close();
+      await account.api("/api/prefs/profile", { method: "PATCH", body: { set: { viewerTools: VIEWER_TOOLS.DEFAULT } } });
+    }
   });
 }

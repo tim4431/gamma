@@ -2478,8 +2478,8 @@ reach.
       `above` keeps a strip's tips above, on the side its menus open.
   - `InkCard` is the picture in the notes.
   - For `markup/` the file exports `InkTooltips`, `inkColorName`,
-    `ERASER_SIZES`, `ColorChoices` and `swallowClick` (eats the click a
-    handled pointer-up would deliver).
+    `ERASER_SIZES` and `ColorChoices`. `swallowClick` (eats the click a
+    handled pointer-up would deliver) is `shared/ui/press.js`'s.
   - `ColorChoices` is a palette role's swatches plus a custom colour, for a
     pen preset's row, a text box's colours and the selection's Color and
     Fill rows.
@@ -3867,12 +3867,18 @@ reach.
       - The eraser's row has, after the sizes, the *Erases* trio and the
         *Back to last tool* toggle (`aria-pressed`, title "After erasing,
         return to the tool you had").
-    - A preset button is `touch-action: none` and carries the drag
-      (`usePresetDrag`).
+    - A preset button is `touch-action: none` and carries the drag, the
+      shared `useDragOrder` (`shared/ui/useDragOrder.js`) in its "hold"
+      start, its button the `data-order-id` slot and `.pdfInkBar` its
+      bounds (the hook is in [ui-design.md](ui-design.md#reorder-by-dragging-shareduiusedragorderjs);
+      Settings' bar lists drag by a grip with it). The strip takes no
+      `keyProps`: Move left / right in a preset's menu is its keyboard way.
       - A mouse past 6 px, or a touch or pen past `HOLD_MS` 500 ms from
         `shared/ui/press.js`, takes `setPointerCapture`, draws the
-        `.inkDragGhost` and the `.inkDropBar` and says "Drop to reorder."
-      - On release it calls `onChangeTools` with the moved list and
+        `.dragGhost` (`.inkPresetGhost`: the icon over its colour bar) and
+        the `.dropBar` and says "Drop to reorder."
+      - On release it calls `onChangeTools` with the moved list
+        (`moveTool`, `moveVisible` of `shared/model/barLayout.js`) and
         `swallowClick`s the click.
       - Escape or a release outside the strip cancels, and a hold that
         never moved is the button's ordinary click.

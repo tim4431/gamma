@@ -87,6 +87,7 @@ test("legacy settings destinations resolve to the reorganized pages", () => {
   assert.equal(resolveSettingsPane("workspace"), "workspaces");
   assert.equal(resolveSettingsPane("advanced"), "diagnostics");
   assert.equal(resolveSettingsPane("account"), "account");
+  for (const bar of ["topbar", "viewer-tools"]) assert.equal(resolveSettingsPane(bar), "appearance", `${bar}: Appearance, at its section`);
 });
 
 test("every preference declares one scope; the profile carries exactly the account-scoped ones", async () => {
