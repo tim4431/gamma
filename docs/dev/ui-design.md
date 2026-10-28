@@ -567,7 +567,10 @@ released, when that is near the selection, else under the selection;
 (`useCaretAnchored`: "/", `[[`, `@`, the LaTeX completion and preview) and
 a note's selection toolbar (`SelectionToolbar.jsx`: above the selection's
 first line, else under its last, inside the box the note scrolls in,
-`scrollBox`) are built on it; the guide card's anchor is measured the same way
+`scrollBox`) and the review card of a highlight placed after its PDF was
+replaced (`pdf/HighlightReview.jsx`: under the highlight, else over it,
+following the page, [highlight_relocation.md](highlight_relocation.md#in-the-web-app))
+are built on it; the guide card's anchor is measured the same way
 (`GuideOverlay`). A surface placed in its event handler before it renders
 (the tooltips, the citation preview) or by CSS under its button (the
 popovers) has nothing to correct. The browser suite's

@@ -37,6 +37,8 @@ import { marginLeft as besideMargin, pageLeft } from "../comments/marginLayout.j
 import { CommentMarginContext, CommentMarginSlot, MarginStackContext, createMarginStack } from "../comments/marginSlot";
 import { useRecentIn } from "../guide/recent.js";
 import { DEFAULT_HIGHLIGHT, colorName, darkPageColor, darkPageLine, normalizeColor, pickerColors, swatchCss } from "../shared/model/palette.js";
+import { placedToCheck } from "../shared/model/blockModel.js";
+import { HighlightReview, useHighlightReview } from "./HighlightReview.jsx";
 import { usePalette } from "../shared/ui/paletteContext.js";
 import { placeFloating, useFloatingPosition } from "../shared/ui/placement.js";
 import { t, tn } from "../shared/i18n/i18n.js";
@@ -500,7 +502,11 @@ async function fetchPdfData(url, onLoadState, isCancelled) {
 // onZoomChange(update) changes the window, `update(window) → next | null`.
 // areaKey / peekKey: the held keys (docs/dev/hotkeys.md "Held keys") that
 // make a mouse drag box an area and show a translated page's original.
-function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, areaKey = "Mod", peekKey = "Alt", hideEmbeddedAnnots, darkPage = false, translateKey = "", translateScope = null, translateParallel = 3, onTranslate, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", selComment = false, moveMode = false, marks, flashHighlightId = null, smoothWheel = false, commentMargin = null, marginRef = null, onMarginLost, onPageInView, zoomHeight = 200, onZoomHeight, onZoomChange }) {
+// A highlight pending after its PDF was replaced (dashed) has a review card
+// (HighlightReview.jsx): onAcceptHighlight(id) and onMoveHighlight(id) are
+// its actions, an editor's; reviewRef.current(id) scrolls to that one and
+// opens its card (the Document menu's Review).
+function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, areaKey = "Mod", peekKey = "Alt", hideEmbeddedAnnots, darkPage = false, translateKey = "", translateScope = null, translateParallel = 3, onTranslate, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", selComment = false, moveMode = false, marks, flashHighlightId = null, smoothWheel = false, commentMargin = null, marginRef = null, onMarginLost, onPageInView, zoomHeight = 200, onZoomHeight, onZoomChange, onAcceptHighlight, onMoveHighlight, reviewRef = null }) {
   const tools = usePageTools(), { ink, text } = tools;
   const viewerRef = useRef(null);
   const [pdfDoc, setPdfDoc] = useState(null);
@@ -1287,6 +1293,21 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     if (scrollRef) scrollRef.current = scrollToPositionRef.current;
   }, [scrollRef, scale, pdfDoc]);
 
+  // The review card of a pending highlight (HighlightReview.jsx): opened by
+  // hovering or tapping its rectangles (PdfPage), by its Next, and from the
+  // Document menu (reviewRef), which scroll to the highlight first. Another
+  // document closes it.
+  const { card: reviewCard, review } = useHighlightReview();
+  const openReview = (id) => {
+    const h = displayedUrl === url ? (highlights || []).find((x) => x.id === id) : null;
+    if (!h) return;
+    scrollToPositionRef.current?.({ position: h.position });
+    review.open(id);
+  };
+  if (reviewRef) reviewRef.current = openReview;
+  useEffect(() => () => { if (reviewRef) reviewRef.current = null; }, [reviewRef]);
+  useEffect(() => { review.close(); }, [url, review]);
+
   // Wait for this document, then mount only the cited page. Matching happens
   // after its actual text layer has rendered, including on zoom changes.
   const [activeCitation, setActiveCitation] = useState(null);
@@ -1777,12 +1798,15 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // drawn region also acts as a chat selection — its page and box go to the
   // host as soon as it is drawn (the server renders the region), like text
   // selections attach on mouseup, whether or not a
-  // note is then created.
+  // note is then created. In move mode (App's highlight waiting for a new
+  // place) the region is only that place and goes nowhere else.
+  const moveModeRef = useRef(moveMode);
+  moveModeRef.current = moveMode;
   const onAreaSelected = useCallback((sel) => {
     setSelPopup({ kind: "area", ...sel });
     // The region goes to the chat as its page and box (chat/chatPictures.js
     // regionPicture); the server draws it from the document.
-    cbRef.current.onAreaSelection?.(sel);
+    if (!moveModeRef.current) cbRef.current.onAreaSelection?.(sel);
   }, []);
 
   // Dismiss the color popup when the user mouses down anywhere outside it
@@ -2019,7 +2043,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           highlights={hlsByPage.get(i + 1) || EMPTY_MARKS} onJump={stableCbs.onJump} onHighlightJump={stableCbs.onHighlightJump}
           flashId={flashHighlightId && hlsByPage.get(i + 1)?.some((h) => h.id === flashHighlightId) ? flashHighlightId : null}
           onLinkHighlight={stableCbs.onLinkHighlight} onHighlightContext={stableCbs.onHighlightContext}
-          onHighlightThread={stableCbs.onHighlightThread}
+          onHighlightThread={stableCbs.onHighlightThread} onReview={review}
           citation={displayedUrl === url && activeCitation?.page === i + 1 ? activeCitation : null}
           readOnly={!onSelectionFinished} forceRender={forcePages.has(i + 1) || activeCitation?.page === i + 1}
           hideEmbeddedAnnots={!!hideEmbeddedAnnots}
@@ -2063,6 +2087,8 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
         </TipFrame>
       )}
       </div>
+      <HighlightReview card={reviewCard} review={review} highlights={displayedUrl === url ? highlights : null}
+        viewerRef={viewerRef} darkPage={darkPage} onAccept={onAcceptHighlight} onMove={onMoveHighlight} onNext={openReview} />
       {zoom ? (
         <ZoomWindow zoom={zoom} size={{ width: pageWidths[zoom.page - 1] || FALLBACK_W, height: pageHeights[zoom.page - 1] || FALLBACK_H }}
           page={zoomPage?.doc === pdfDoc && zoomPage.n === zoom.page ? zoomPage.page : null}
@@ -2324,7 +2350,7 @@ function TransPending({ lines, busy }) {
 // px from the first page's top, where its margin's column goes on from the
 // pages above; activeHl: the highlight
 // whose card is the active one, drawn stronger.
-const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scale, highlights, flashId, onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, readOnly, forceRender, reservedHeight, reservedWidth, findMarks, onInternalLink, onExternalLink, onLinkContext, onPainted, onAreaSelected, pendingArea, areaMode, areaKey, hideEmbeddedAnnots, trans, transKey, transShown, transSpan, toolArmed, marks, marginLeft = null, pageTop = 0, activeHl = null }) {
+const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scale, highlights, flashId, onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, onReview, readOnly, forceRender, reservedHeight, reservedWidth, findMarks, onInternalLink, onExternalLink, onLinkContext, onPainted, onAreaSelected, pendingArea, areaMode, areaKey, hideEmbeddedAnnots, trans, transKey, transShown, transSpan, toolArmed, marks, marginLeft = null, pageTop = 0, activeHl = null }) {
   const wrapRef = useRef(null);
   const baseRef = useRef(null);
   const detailRef = useRef(null);
@@ -2767,23 +2793,28 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
         const isArea = !!h.position?.area;
         // After the PDF was replaced (docs/dev/highlight_relocation.md): a
         // highlight whose text the new file does not have is drawn hollow
-        // where it was, a dashed line and no fill, whatever else it is; an
-        // area placed by estimate keeps its look under a dashed edge. The
-        // dash always rides inside a border shorthand: React rewrites only
-        // the style keys that change, so a shorthand rewritten beside an
-        // unchanged border-style would reset the dash to solid. The class
-        // pdfHlLost has no style; the browser tests find a lost one by it.
+        // where it was, a dashed line and no fill, whatever else it is; one
+        // to check (approx) keeps its look under a dashed edge: an area's
+        // border, a passage's outline in the line tone of its colour (an
+        // outline, so a commented or link passage keeps its underline,
+        // which is a border). The dash always rides inside a shorthand:
+        // React rewrites only the style keys that change, so a shorthand
+        // rewritten beside an unchanged border-style would reset the dash
+        // to solid. The class pdfHlLost has no style; the browser tests
+        // find a lost one by it.
         const lost = !!h.position?.lost;
-        const approx = !lost && !!h.position?.approx;
+        const approx = placedToCheck(h.position);
         const edge = approx ? "dashed" : "solid";
-        // Only an editor is offered the move (App's highlight menu).
+        // One to check is pending: its rectangles alone listen for the
+        // pointer, which opens its review card (HighlightReview.jsx) — what
+        // it matched, where it was, Accept — so they carry no title of
+        // their own. Only an editor is offered the move of a lost one (App's
+        // highlight menu).
+        const pending = approx && !!onReview;
         const placing = lost
           ? (readOnly ? t("This highlight's text was not found in the current PDF")
             : t("This highlight's text was not found in the current PDF — right-click to move it to a selection"))
-          : approx
-            ? (readOnly ? t("Placed by estimate after the PDF was replaced")
-              : t("Placed by estimate after the PDF was replaced — right-click to move it"))
-            : "";
+          : "";
         const color = normalizeColor(h.color) || DEFAULT_HIGHLIGHT;
         // The colour rides in --hl (the border in --hl-line, defaulting to
         // it) beside its dark-page variant in --hl-dark / --hl-dark-line:
@@ -2821,9 +2852,14 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
             ...(isLink && !lost ? (isArea
               ? { border: `2px ${edge} rgba(70, 130, 255, 0.9)` }
               : { borderBottom: "2px solid rgba(70, 130, 255, 0.9)", borderRadius: 1 }) : {}),
-          }} title={isLink ? (h.linkTarget.pageId ? t("Open linked paper") : h.linkTarget.url) : [placing, h.comment?.text || ""].filter(Boolean).join(" — ")}
+            ...(approx && !isArea ? { outline: "1px dashed var(--hl-line, var(--hl-dark-line))" } : {}),
+          }} title={isLink ? (h.linkTarget.pageId ? t("Open linked paper") : h.linkTarget.url)
+            : pending ? undefined : [placing, h.comment?.text || ""].filter(Boolean).join(" — ")}
+            {...(pending ? { onMouseEnter: () => onReview.hover(h.id, true), onMouseLeave: () => onReview.hover(h.id, false) } : null)}
             onClick={function (e) {
               e.stopPropagation();
+              // a tap (no hover on touch) opens its card instead; a second tap acts
+              if (pending && onReview.tap(h.id)) return;
               if (isLink) onLinkHighlight?.(h);
               else onHighlightJump?.(h.id, e.ctrlKey || e.metaKey);
               // a highlight with cards: its card becomes the active one

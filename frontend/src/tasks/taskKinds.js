@@ -207,6 +207,28 @@ export function relocationSuperseded(job, jobs) {
     && (Date.parse(other.created_at || "") || 0) > since);
 }
 
+// What the tab that started a relocate-highlights run says when it is done,
+// from its result (docs/dev/highlight_relocation.md): how many moved (found
+// exactly, in a new place), how many are drawn dashed to be checked (approx:
+// matched roughly, or an area placed by estimate), how many stayed (found
+// exactly where they were) and how many were not found (lost, drawn
+// hollow). One someone moved while the run read the file is left as it is
+// and counted apart (changed), so the numbers add up to the page's
+// highlights; a dashed one says where to check it (its review card,
+// pdf/HighlightReview.jsx, and for several the Document menu's Review), a
+// hollow one how to fix it.
+export function relocationSummary(r) {
+  return [
+    t("Highlights placed in the PDF: {moved} moved, {approx} matched roughly or estimated, {kept} stayed in place, {lost} not found.",
+      { moved: r.moved || 0, approx: r.approx || 0, kept: r.kept || 0, lost: r.lost || 0 }),
+    r.approx ? tn("Hover the dashed highlight to compare and accept it.",
+      "Hover a dashed highlight to compare and accept it, or review all {n} from the Document menu.", r.approx) : "",
+    r.changed ? tn("{n} that someone moved meanwhile was left as it is.",
+      "{n} that someone moved meanwhile were left as they are.", r.changed) : "",
+    r.lost ? t("A hollow highlight's text is gone: right-click it and choose Move to a selection.") : "",
+  ].filter(Boolean).join(" ");
+}
+
 export const canOpen = (task) => !task.local && Boolean(kindOf(task).open);
 
 // The row's buttons, in order: "stop" while it can be stopped, then for a

@@ -301,8 +301,9 @@ def test_a_backup_from_before_the_highlight_shape_is_converted_on_restore(tmp_pa
 
 def test_a_restore_keeps_what_a_pdf_replacement_wrote_on_the_highlights():
     """A replaced PDF's relocation marks a highlight lost and names the file
-    its rects were measured on, and an area placed by estimate approx
-    (gamma/highlight_relocate.py); a replace or merge of a backup taken
+    its rects were measured on, an area placed by estimate approx, and a
+    highlight matched roughly approx with its match and where it was
+    before (gamma/highlight_relocate.py); a replace or merge of a backup taken
     after that keeps them, though it passes every position through the
     highlight shape's rewrite."""
     ws, c = _account("rc_relocated")
@@ -312,17 +313,21 @@ def test_a_restore_keeps_what_a_pdf_replacement_wrote_on_the_highlights():
             "doc_id": "a" * 64, "lost": True}
     approx = {"pageNumber": 2, "width": 612, "height": 792, "boundingRect": rect, "rects": [rect],
               "area": True, "approx": True}
+    rough = {"pageNumber": 1, "width": 612, "height": 792, "boundingRect": rect, "rects": [rect],
+             "approx": True, "match": 0.91,
+             "prev": {"doc_id": "b" * 64, "pageNumber": 2, "rects": [[0.1, 0.2, 0.5, 0.25]], "quote": "q before"}}
     r = c.post(f"/api/pages/{pid}/ops", json={"client": "t", "ops": [
         {"op": "insert", "id": "rcLost", "parent": pid, "content": "", "props": {"pdf_position": lost, "quote": "q"}},
-        {"op": "insert", "id": "rcApprox", "parent": pid, "content": "", "props": {"pdf_position": approx}}]})
+        {"op": "insert", "id": "rcApprox", "parent": pid, "content": "", "props": {"pdf_position": approx}},
+        {"op": "insert", "id": "rcRough", "parent": pid, "content": "", "props": {"pdf_position": rough, "quote": "r"}}]})
     assert r.status_code == 200, r.text
     snap = ws_backup.backup_path(ws, ws_backup.create(ws, label="relocated", uploads=False)["name"])
     other, c2 = _account("rc_relocated_merge")
     for into, client, mode in ((ws, c, "replace"), (other, c2, "merge")):
         ws_backup.restore_zip(into, snap, mode)
         positions = {bid: client.get(f"/api/blocks/{bid}").json()["properties"]["pdf_position"]
-                     for bid in ("rcLost", "rcApprox")}
-        assert positions == {"rcLost": lost, "rcApprox": approx}, mode
+                     for bid in ("rcLost", "rcApprox", "rcRough")}
+        assert positions == {"rcLost": lost, "rcApprox": approx, "rcRough": rough}, mode
 
 
 def test_replace_moves_every_page_forward_deletes_the_removed_and_reloads_open_tabs():

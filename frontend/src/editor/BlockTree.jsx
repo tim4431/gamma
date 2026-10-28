@@ -9,8 +9,8 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
-import { countBlocks, isFolded, isHighlightBlock, withLegacyAccessors } from "../shared/model/blockModel";
-import { DEFAULT_HIGHLIGHT, normalizeColor } from "../shared/model/palette.js";
+import { countBlocks, isFolded, isHighlightBlock, roughMatchPercent, withLegacyAccessors } from "../shared/model/blockModel";
+import { DEFAULT_HIGHLIGHT, darkPageLine, normalizeColor } from "../shared/model/palette.js";
 import { citesSeveralPapers, gammaLinkId, parseGammaLink, relativeGammaLink } from "../shared/model/gammaLinks.js";
 import { NO_LABELS, REF_RE, refIdsOf } from "./refLabels.js";
 import { InkCard } from "../ink/InkLayer";
@@ -1036,6 +1036,8 @@ const BlockRow = React.memo(function BlockRow({
   }, [editing]);
 
   const isHighlight = isHighlightBlock(block);
+  // How alike its text and the replaced PDF's were, for one matched roughly.
+  const roughPercent = isHighlight ? roughMatchPercent(block.position) : null;
   // The highlight made last: its card is the one the guide's highlight tour
   // points at (guide/recent.js).
   const recentHighlight = useIsRecent("highlight", block.id);
@@ -1492,20 +1494,33 @@ const BlockRow = React.memo(function BlockRow({
               title={
                 block.position?.lost
                   ? t("Not found in the current PDF — jump to where it was")
-                  : block.position?.approx
-                    ? t("Placed by estimate after the PDF was replaced — jump to it")
-                    : block.position
-                      ? t("Jump to highlight") : block.properties?.linked_highlight_id
-                        ? t("Jump to linked highlight") : t("Jump to page (no exact position)")
+                  : roughPercent != null
+                    ? t("Matched roughly ({n}%) after the PDF was replaced — jump to it", { n: roughPercent })
+                    : block.position?.approx
+                      ? t("Placed by estimate after the PDF was replaced — jump to it")
+                      : block.position
+                        ? t("Jump to highlight") : block.properties?.linked_highlight_id
+                          ? t("Jump to linked highlight") : t("Jump to page (no exact position)")
               }
             >
-              {/* a highlight the replaced PDF's text no longer has: a hollow dot,
-                  app.css .highlightDot.lost, in its colour (docs/dev/highlight_relocation.md) */}
+              {/* after the PDF was replaced (docs/dev/highlight_relocation.md): a
+                  highlight whose text it no longer has is a hollow dot, app.css
+                  .highlightDot.lost, in its colour; one to check (approx) keeps its
+                  fill under a dashed ring, .highlightDot.approx, in its colour's
+                  line tone, as the viewer draws it */}
               {block.position?.lost ? (
                 <span className="highlightDot lost" style={{ borderColor: normalizeColor(block.color) || DEFAULT_HIGHLIGHT }} />
+              ) : block.position?.approx ? (
+                <span className="highlightDot approx" style={{
+                  backgroundColor: normalizeColor(block.color) || DEFAULT_HIGHLIGHT,
+                  borderColor: darkPageLine(normalizeColor(block.color) || DEFAULT_HIGHLIGHT),
+                }} />
               ) : (
+                // backgroundColor in every branch: the one span takes each
+                // look in turn, and a background shorthand would undo
+                // .approx's clip
                 <span className="highlightDot" style={{
-                  background: block.position
+                  backgroundColor: block.position
                     ? (normalizeColor(block.color) || DEFAULT_HIGHLIGHT)
                     : block.properties?.linked_highlight_id
                       ? (normalizeColor(highlightColors?.[block.properties.linked_highlight_id]) || DEFAULT_HIGHLIGHT)

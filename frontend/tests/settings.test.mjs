@@ -145,6 +145,16 @@ test("the profile codec keeps valid entries and drops the rest", async () => {
   const legacy = readProfile({ agentPerms: { folder: { rename: true, read: true, move: "allow" } } });
   assert.deepEqual([legacy.agentPerms.folder.rename, legacy.agentPerms.folder.read, legacy.agentPerms.folder.move],
     ["ask", "allow", "allow"], "a change stored as on from before Ask asks; an explicit Allow stays");
+  // The relocation's thresholds (the server reads them by these names): a percentage on steps of 5 in
+  // 50–100 and a length in 0–60, a value out of range or between steps pulled in, not dropped.
+  assert.deepEqual([PREFS.relocateMinMatch.default, PREFS.relocateExactChars.default], [80, 12]);
+  for (const [stored, want] of [[83, 85], [82, 80], [30, 50], [120, 100], [100, 100]]) {
+    assert.equal(readProfile({ relocateMinMatch: stored }).relocateMinMatch, want, `relocateMinMatch ${stored}`);
+  }
+  for (const [stored, want] of [[99, 60], [-3, 0], [0, 0], [25, 25]]) {
+    assert.equal(readProfile({ relocateExactChars: stored }).relocateExactChars, want, `relocateExactChars ${stored}`);
+  }
+  assert.ok(!("relocateMinMatch" in readProfile({ relocateMinMatch: "90" })), "a percentage that is no number is dropped");
   // Unlimited rounds is a flag beside the number, which it leaves alone.
   assert.equal(readProfile({ toolRoundsUnlimited: true }).toolRoundsUnlimited, true);
   assert.ok(!("toolRoundsUnlimited" in readProfile({ toolRoundsUnlimited: "yes" })), "a flag that is no boolean is dropped");

@@ -6,10 +6,10 @@
 // there; `onJobFinished` is what the store's `onFinished` calls.
 import { useRef } from "react";
 import { API, fmtBytes, getCurrentWorkspace, withWorkspace } from "../shared/lib/utils";
-import { t, tn } from "../shared/i18n/i18n.js";
+import { t } from "../shared/i18n/i18n.js";
 import { exportJobBody } from "../transfers/transferFormats";
 import { importSummary } from "../transfers/importReview";
-import { kindOf, relocationSuperseded, retryOf, taskTitle } from "./taskKinds.js";
+import { kindOf, relocationSummary, relocationSuperseded, retryOf, taskTitle } from "./taskKinds.js";
 import { isActive } from "./taskModel.js";
 
 export function useAppJobs({
@@ -217,18 +217,7 @@ export function useAppJobs({
       if (job.state !== "done" && relocationSuperseded(job, jobs)) return;
       if (job.state === "done") {
         tasks.fetchJob(job.id).then((full) => {
-          const r = full?.result;
-          if (!r) return;
-          // A highlight someone moved while the run read the file is left
-          // as it is and counted apart ("changed"); the line names those
-          // too, so its numbers add up to the page's highlights.
-          setStatus([
-            t("Highlights placed in the PDF: {moved} moved, {kept} unchanged, {lost} not found.",
-              { moved: r.moved + (r.approx || 0), kept: r.kept, lost: r.lost }),
-            r.changed ? tn("{n} that someone moved meanwhile was left as it is.",
-              "{n} that someone moved meanwhile were left as they are.", r.changed) : "",
-            r.lost ? t("A hollow highlight's text is gone: right-click it and choose Move to a selection.") : "",
-          ].filter(Boolean).join(" "));
+          if (full?.result) setStatus(relocationSummary(full.result));
         }).catch(() => {});
       } else if (job.state === "cancelled") {
         setStatus(t("{name} was stopped.", { name: title }));

@@ -47,7 +47,9 @@ A new account starts with a **Welcome** page to practise on, and a **Sketchbook*
 - **Area screenshot**: hold **Ctrl** and drag a rectangle. The region goes to the AI chat as an image, and a color keeps it as an area highlight.
 - **Click a highlight** to jump to its note; click the note to jump back. **Right-click** to recolor, link, comment on or delete it.
 - Highlights made in other PDF apps are imported when the paper is added.
-- **A new version of the PDF**: the paperclip menu's *Replace the PDF…* swaps the file and finds each highlight's text in the new one, moving the highlight there (an area highlight follows the caption or picture inside it). One whose text is gone stays hollow where it was: right-click it and choose *Move to a selection…* (or the same button beside its row in the notes), then select the text where it belongs, or drag an area, and press *Move the highlight here* in the bar that opens. *Find highlights in this PDF* in the same menu runs the search again at any time, and places the highlights when the status says they were not placed. *Move to a selection…* also fixes any highlight that sits wrong.
+- **A new version of the PDF**: the paperclip menu's *Replace the PDF…* swaps the file and finds each highlight's text in the new one, moving the highlight there (an area highlight follows the caption or picture inside it). *Find highlights in this PDF* in the same menu runs the search again at any time, and places the highlights when the status says they were not placed.
+- **A dashed highlight** is one whose text changed a little in the new version (a renumbered citation, a reworded phrase), or an area whose place is an estimate: it sits where the closest match is, for you to check. Hover it (tap it on a touch screen) to see how closely it matched, a picture of where it was in the previous version (on a page opened through a share link, its old text instead) and the words that changed. **Accept** keeps it where it is and draws it solid, **Move…** puts it on your next selection, and **Next** goes to the page's next dashed highlight. While a page has some, the paperclip menu shows *Review 3 rough matches*, which starts with the first, and *Accept all 3*, which accepts every one on the page at once (Undo takes it back); right-clicking a dashed highlight offers *Accept* too. How alike a changed passage must read to be moved, and how short a passage must match exactly, are set in Settings → Reading & editing › Replacing a PDF.
+- **A hollow highlight**'s text is gone from the new version, so it stays where it was: right-click it and choose *Move to a selection…* (or the same button beside its row in the notes), then select the text where it belongs, or drag an area, and press *Move the highlight here* in the bar that opens. *Move to a selection…* also fixes any highlight that sits wrong.
 - **Zoom** with Ctrl+wheel or pinch; **dark pages** in Settings → Appearance.
 
 ## Draw and type on the page
@@ -406,7 +408,7 @@ Account menu → **Settings**, or **Ctrl+,**; the card with your name at the top
 |---|---|
 | Account & sync | Your account, storage, the Gamma Cloud link, settings sync |
 | Appearance | Theme, dark PDF pages, library cards, interface size, Inbox notifications, the top bar's buttons, the viewer's tools |
-| Reading & editing | Imported annotations, open-access fallback, handwriting, how search opens |
+| Reading & editing | Imported annotations, open-access fallback, how a new version of a PDF moves its highlights, handwriting, how search opens |
 | Language and Translation | Interface language, what translates and into what |
 | Keyboard | Every shortcut, rebindable; what Enter makes |
 | AI → Connections, Chat, Tool usage, Integrations | Providers and keys, defaults, agent permissions, assistants |

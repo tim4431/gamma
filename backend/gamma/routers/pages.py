@@ -33,7 +33,7 @@ from ..blocks_store import (
     valid_block_id,
     write_lock,
 )
-from ..db import connect_pages_db, safe_doc_id
+from ..db import connect_pages_db, get_profile, safe_doc_id
 from ..markdown_zip_import import markdown_page
 from ..logbuf import log
 from ..storage import find_upload_file
@@ -338,10 +338,18 @@ def _start_relocation(request: Request, ws: str, page_id: str, title: str, new_d
     jobs are full, or the last run for this file is still stopping. A
     replacement is ``quiet`` (its answer says why as ``relocation_error``
     and the replacement stands); a start by hand raises that as its 429 or
-    409."""
+    409.
+
+    The run goes by its owner's thresholds as they are when it starts
+    (``highlight_relocate.thresholds`` of the account's profile: Settings'
+    relocateMinMatch and relocateExactChars), which its params record as
+    ``min_match`` (a fraction) and ``exact_chars``, and its result echoes:
+    a setting changed later leaves the runs already started as they
+    are."""
     owner = request.state.user_id
     name = " ".join((title or "").split())[:80] or "Untitled"
-    params = {"page_id": page_id, "title": name, "doc_id": new_doc}
+    limits = highlight_relocate.thresholds(get_profile(owner)[0])
+    params = {"page_id": page_id, "title": name, "doc_id": new_doc, **limits}
     if outgoing is not None:
         previous = jobs.latest(owner, RELOCATE, f"{page_id}:{outgoing}")
         if previous and previous["state"] in jobs.ACTIVE:
@@ -351,7 +359,7 @@ def _start_relocation(request: Request, ws: str, page_id: str, title: str, new_d
                 pass  # past its last stop: it finishes, and its write is refused (the page carries another file)
 
     def run(job):
-        return highlight_relocate.relocate(ws, page_id, new_doc, actor=owner, progress=job.progress)
+        return highlight_relocate.relocate(ws, page_id, new_doc, actor=owner, progress=job.progress, **limits)
 
     try:
         return jobs.start(RELOCATE, owner=owner, ws=ws, key=f"{page_id}:{new_doc}", params=params, run=run,

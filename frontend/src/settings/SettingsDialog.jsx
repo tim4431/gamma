@@ -68,6 +68,7 @@ import {
   SlidersIcon,
   SparklesIcon,
   TerminalIcon,
+  TextSearchIcon,
   TypeIcon,
   UserIcon,
   UsersIcon,
@@ -171,6 +172,33 @@ function ViewerSettings({ value }) {
           checked={value.pdfSaveLocal}
           onChange={value.setPdfSaveLocal}
         />
+      </Section>
+      {/* How a replacement's run finds each highlight's text in the new file:
+          the server reads both from the account's profile as a run starts
+          (docs/dev/highlight_relocation.md); a run already done keeps its own. */}
+      <Section title={t("Replacing a PDF")} scope="account" prefs={SECTION_PREFS.reading["Replacing a PDF"]}>
+        <Row
+          icon={TextSearchIcon}
+          label={t("Apply a rough match from")}
+          hint={t("How alike a changed passage must read for its highlight to move")}
+          title={t("When a page's PDF is replaced, each highlight's text is looked for in the new file. A passage that changed a little (a renumbered citation, a reworded phrase) moves there when it reads at least this alike, drawn dashed until you accept it; one less alike stays where it was, drawn hollow. At 100% only a passage found exactly moves. A change applies from the next replacement or Find highlights in this PDF.")}
+        >
+          <Stepper value={value.relocateMinMatch} onChange={value.setRelocateMinMatch} min={50} max={100} step={5}
+            format={(v) => `${v}%`} reset={80} />
+        </Row>
+        <Row
+          icon={TypeIcon}
+          label={t("Passages shorter than this must match exactly")}
+          hint={t("A shorter passage that changed is not moved")}
+          title={t("A short passage that changed could pass for many places in the new file, so a highlight's text shorter than this many characters moves only where it is found exactly as it was. 0 lets every passage match roughly.")}
+        >
+          <UnitInput value={value.relocateExactChars} unit={t("characters")} min={0} max={60}
+            label={t("Passages shorter than this must match exactly")}
+            onCommit={(raw) => {
+              const n = Number.parseInt(raw, 10);
+              if (Number.isFinite(n)) value.setRelocateExactChars(Math.max(0, Math.min(60, n)));
+            }} />
+        </Row>
       </Section>
       <Section title={t("Notes")} scope="account" prefs={SECTION_PREFS.reading["Notes"]}>
         <Toggle
