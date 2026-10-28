@@ -105,9 +105,9 @@ without them, or keeps the file as it came and hides them viewer-side
 (`annotationMode: DISABLE`). Stripping makes the blocks the only copy, so
 deleting one in Gamma removes it from the exports too. A kept original
 outlives its block: delete the block and the annotated export still shows
-the original (the View menu's "Import…" dialog can
-override that for one run; the auto-import on open always follows the
-preference). The strip (`_strip_embedded_annotations`) removes the
+the original. Every import follows the preference: the View menu's
+"Import…" dialog, the auto-import on open and the desktop app's open (it
+asks nothing per run). The strip (`_strip_embedded_annotations`) removes the
 annotations the import makes blocks of, with their threads (the replies
 and review states that answer them) and their `/Popup` windows
 (`pdf_export.drop_annotations`). Links, kinds not imported, hidden ones
@@ -140,9 +140,10 @@ in this PDF, a Logseq .pdf + .edn, a Zotero library (its export folder or a
 `.md` or a `.zip` such as a Notion export), Notability notes (one or more
 `.note` files, or a `.zip` of them), GoodNotes notebooks (one or more
 `.goodnotes` files, or a `.zip` of them), or a Gamma export .zip. Double-click
-or Next confirms. Only sources with an option get a review step. That option is
-the strip switch, which applies to embedded annotations, including those
-inside Zotero's exported PDFs. Markdown, Notability, GoodNotes, Logseq and Gamma open the
+or Next confirms. Only Zotero gets a review step, its export guide.
+Annotations in this PDF imports at once, and it and Zotero (for the
+annotations inside its exported PDFs) send the strip preference above.
+Markdown, Notability, GoodNotes, Logseq and Gamma open the
 file picker directly, with their preparation notes under the selected card.
 `resolveImport` in `transfers/transferFormats.js` decides both.
 The Notability and GoodNotes pickers take several files, which go up as one
@@ -150,9 +151,7 @@ The Notability and GoodNotes pickers take several files, which go up as one
 any file on an iPhone or iPad, whose Safari greys out a `.note` or a
 `.goodnotes`.
 Zotero is the default source (a numbered step guide reusing
-settingsKit's `Step`); with a PDF open, that PDF's own annotations win. Nothing
-is remembered: the switch starts from the Settings preference each time, so the
-setting stays the standing policy.
+settingsKit's `Step`); with a PDF open, that PDF's own annotations win.
 
 The iPad app opens the dialog with a `.zip` already chosen, one shared to
 it from another app ([ipad.md "Opened files"](ipad.md#opened-files)). The

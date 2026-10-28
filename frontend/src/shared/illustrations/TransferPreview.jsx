@@ -1,9 +1,9 @@
 import React from "react";
-import { FileTextIcon, PaperclipIcon } from "../ui/Icons";
+import { PaperclipIcon } from "../ui/Icons";
 import { t } from "../../shared/i18n/i18n.js";
 
 // Illustrative layouts, not a render of the user's document. These elements
-// follow the same effective options sent to the import/export handlers.
+// follow the same effective options sent to the export handlers.
 function PaperLines() {
   return <div className="transferPaperLines" aria-hidden="true"><i /><i /><i /><i /></div>;
 }
@@ -66,22 +66,6 @@ export function ExportPreview({ format, highlights, notes, bundle, comments, not
       <PaperclipIcon size={14} />
       <div><strong>{bundle ? t("Files included") : metadataOnly ? t("PDF files not included") : t("Files stay as links")}</strong>
         <span>{bundle ? t("PDFs and images travel with the export") : metadataOnly ? t("Metadata, collections and notes only") : t("Links point back to this server")}</span></div>
-    </div> : null}
-  </figure>;
-}
-
-export function ImportPreview({ annotations, strip }) {
-  return <figure className="transferPreview" aria-label={t("Import preview")}>
-    <figcaption>{annotations ? t("PDF after import") : t("In your library")}</figcaption>
-    {annotations ? <Paper original highlights={!strip} notes={false} /> : <div className="transferPaper">
-      <div className="transferPaperTitle">{t("Your imported pages")}</div>
-      <div className="transferPaperByline">{t("Ready to read and organize")}</div>
-      <PaperLines /><HighlightSample /><NoteSample />
-      <span className="transferPageNumber">1</span>
-    </div>}
-    {annotations ? <div className="transferFiles" data-preview="imported-annotations">
-      <FileTextIcon size={16} /><div><strong>{t("Highlights and notes in Gamma")}</strong>
-        <span>{strip ? t("Original annotations removed from the PDF") : t("Originals kept in the PDF, hidden in the viewer")}</span></div>
     </div> : null}
   </figure>;
 }

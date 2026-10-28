@@ -11849,7 +11849,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         <ImportDialog
           file={importOpen?.file || null}
           hasPdf={!!docId && !!focusedBlockId}
-          stripDefault={embAnnots === "strip"}
+          strip={embAnnots === "strip"}
           busy={loading}
           onCancel={() => setImportOpen(false)}
           onImport={runImport}
