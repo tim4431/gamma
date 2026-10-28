@@ -136,7 +136,7 @@
         </div>
         <label class="switch"><input type="checkbox" role="switch" id="swBackground" aria-label="Keep running in the background"><span class="switchTrack"></span></label>
       </div>
-      <div class="setRow">
+      <div class="setRow" id="rowLogin">
         <div>
           <div class="l">Start at login</div>
           <div class="d">Starts hidden in the tray when you sign in to this computer (the installed app only).</div>
@@ -407,10 +407,13 @@
   }
 
   // The Settings block, the desktop's alone: the iPad's state has no settings.
+  // A Mac App Store build has no login item and runs only its bundled server.
   function renderSettings() {
     $('swOpenLast').checked = Boolean(state.settings.openLastOnLaunch);
     $('swBackground').checked = Boolean(state.settings.background);
     $('swLogin').checked = Boolean(state.settings.openAtLogin);
+    $('rowLogin').hidden = Boolean(state.mas);
+    $('advanced').hidden = Boolean(state.mas);
     renderUpdate(state.update || {});
     $('setPython').value = state.settings.pythonPath || '';
     $('setBackend').value = state.settings.backendDir || '';
@@ -470,6 +473,7 @@
         text.textContent =
           u.error === 'dev build' ? 'Development build: update from git.'
           : u.error === 'store' ? 'Installed from the Microsoft Store: updates arrive through the Store.'
+          : u.error === 'mas' ? 'Installed from the Mac App Store: updates arrive through the App Store.'
           : 'Not available in this build.';
         btn.hidden = true;
         break;
@@ -589,6 +593,16 @@
       act('Check for updates', () => { gammaShell.updateCheck(); $('btnUpdate').scrollIntoView({ block: 'center', behavior: 'smooth' }); }, true);
     } else if (f.action === 'data' && f.server) {
       act('Open data folder', () => gammaShell.revealData(f.server), true);
+    } else if (f.action === 'access' && f.server) {
+      // Mac App Store: choose the server's folder again, then open it.
+      act('Choose folder…', async (b) => {
+        try {
+          if (!(await gammaShell.grantFolder(f.server))) return;
+          hideFailure();
+          const ws = server();
+          if (ws) openWs(ws, b);
+        } catch (e) { setStatus(cleanErr(e), true); }
+      }, true);
     }
     if (f.action === 'http' && f.server && /^https:/i.test((server() || {}).url || '')) {
       // A plain-HTTP server behind an https:// address: switch the address and open again.

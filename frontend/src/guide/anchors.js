@@ -22,7 +22,7 @@
 export const ANCHORS = {
   "header.view": { view: "desktop", description: "View menu: reopen closed windows" },
   "view.menu": { view: "desktop", open: ["header.view"], description: "The View menu itself" },
-  "view.import": { view: "desktop", open: ["header.view"], surface: "view.menu", description: "Import…: a Zotero library, Notability notes, an Obsidian vault, a Notion export, Logseq highlights or a Gamma export" },
+  "view.import": { view: "desktop", open: ["header.view"], surface: "view.menu", description: "Import…: a Zotero library, Notability notes, GoodNotes notebooks, an Obsidian vault, a Notion export, Logseq highlights or a Gamma export" },
   "header.tabs": { view: "tabs", description: "The open-tab strip; right-click a tab to pin it, or to pin its page to the library" },
   "chat.grip": { view: "desktop chat", description: "Chat title: drag to dock, double-click to collapse or expand" },
   "notes.grip": { view: "docked notes", description: "Notes title: drag to dock, double-click to collapse or expand" },
@@ -59,12 +59,12 @@ export const ANCHORS = {
   "pdf.highlightColor": { view: "pdf", open: ["pdf.textLayer"], description: "The first colour in the text selection palette" },
   "pdf.pane": { view: "pdf", description: "The PDF with its controls and tool strip" },
   "pdf.inkButton": { view: "viewer", description: "Opens and closes the handwriting tools; in the PDF and the notebook viewer's tool column" },
-  // The viewer's left edge, the same in the PDF and the notebook viewer up
-  // to the pen; "viewer" is either of them, open and not closed.
-  "viewer.tools": { view: "viewer", description: "The viewer's tool column, mid-left: zoom, the pen, then what only this viewer has" },
-  // Recordings (docs/dev/recording.md): the mic after the pen, the pill
+  // The viewer's tool column, the PDF's and the notebook viewer's, its tools
+  // in the user's order; "viewer" is either of them, open and not closed.
+  "viewer.tools": { view: "viewer", description: "The viewer's tool column, mid-left: zoom, the pen and what this viewer has, in the order Settings gives them, and ⋯ for those taken off it" },
+  // Recordings (docs/dev/recording.md): the mic on the tool column, the pill
   // while one is recorded, a recording's card in the notes, and the player.
-  "viewer.record": { view: "viewer", description: "Records audio; in the PDF and the notebook viewer's tool column after the pen" },
+  "viewer.record": { view: "viewer", description: "Records audio; in the PDF and the notebook viewer's tool column" },
   "recording.pill": { view: "viewer", description: "The recording in progress: its time, the input level, Pause, Bookmark and Stop" },
   "recording.card": { view: "notes", pick: "last", description: "A recording block in the notes: its length and date, Play and its menu" },
   "recording.player": { view: "viewer", description: "The recording player at the viewer's bottom: the scrubber with its writing marks, the display modes, the speed" },

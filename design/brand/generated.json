@@ -3,7 +3,7 @@
     "design/brand/compositions/hero-light.svg": "10ded132b2433a84fd12cc91dc2f7f4a2e550880f9738384a918b677e8212584",
     "design/brand/compositions/logo.svg": "14872e644f9397c2ef2468d9e170b0910833931b4df92c88a2115cfe2393379a",
     "design/brand/marks/favicon.svg": "aa87ab7a445627b7cb8ffa71b63b36ceb6848815549233a0c6f6d8bd48a2002b",
-    "design/brand/outputs.json": "a6f8e1c7965779b6f4d36eb7b5fb57644c75a53695487b420a72154d4e616dea",
+    "design/brand/outputs.json": "d0724d8c0e0ad2222da6505fd69d38b2642b001a72fd8e4542b37494a8a58f8f",
     "design/brand/tokens.json": "8778598768aefb172e4dc17f43e060fff18f87717ffa00977b64494e341c397f",
     "frontend/package-lock.json": "229699fa083d98db810c4d58e8cdda3682019222dcd2ebe18cffe89bd8456fcb",
     "frontend/src/shared/illustrations/brands/LICENSE.md": "9046848b63a5c92bff14e4accca80bd987e0623b74adf9226ce5198d312b79d5",
@@ -152,10 +152,10 @@
       "source": "marks/favicon.svg",
       "variant": "icon",
       "size": [
-        512,
-        512
+        1024,
+        1024
       ],
-      "sha256": "96e63c9a3a02c32df03d680fa771459437c8b598c40a4d3380e4dcb4486355b2"
+      "sha256": "7e7ac6e6c34f74618c0da435ed5030890b32faeb744ca428fd9b3f509747d768"
     },
     "backend/gamma/mcp_icon.png": {
       "source": "marks/favicon.svg",

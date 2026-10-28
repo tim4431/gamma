@@ -60,17 +60,18 @@ class ZipEntry:
     nested zip's members below the zip's own directory), ``source_path``
     (where it was found), ``outer`` (the upload's own member it came from:
     itself, or the zip in the upload that holds it, however deep it lies
-    in there), ``size`` (its unpacked bytes, as
-    the directory says) and ``depth`` (that of the zip holding it, 0 for
-    the upload)."""
+    in there), ``size`` (its unpacked bytes, as the directory says),
+    ``crc`` (its CRC-32, as the directory says) and ``depth`` (that of the
+    zip holding it, 0 for the upload)."""
 
-    __slots__ = ("path", "source_path", "outer", "size", "depth", "_zf", "_info")
+    __slots__ = ("path", "source_path", "outer", "size", "crc", "depth", "_zf", "_info")
 
     def __init__(self, path, zf, info, depth=0, outer=None):
         self.path = path
         self.source_path = path
         self.outer = outer or path
         self.size = info.file_size
+        self.crc = info.CRC
         self.depth = depth
         self._zf, self._info = zf, info
 

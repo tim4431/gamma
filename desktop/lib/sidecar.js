@@ -7,6 +7,9 @@
 //   2. packaged: the frozen backend bundled under resources/gamma-server
 //   3. dev auto-detect: ../backend/venv relative to this file (the repo layout)
 //
+// A Mac App Store build runs the bundled server only: an App Store app may
+// not run code it was not reviewed with (App Review 2.4.5).
+//
 // The server seeds itself on an empty data dir (schema + first admin); the
 // shell passes GAMMA_ADMIN_USER/GAMMA_ADMIN_PASSWORD so the one-time password
 // lands in the registry instead of a hidden console.
@@ -17,7 +20,7 @@ const fs = require('fs');
 const path = require('path');
 const { startupError } = require('./startup');
 
-const running = new Map(); // workspace id -> { child, port, url, logPath }
+const running = new Map(); // workspace id -> { child, port, url, logPath, access }
 
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -74,7 +77,7 @@ function detectDev(settings) {
 
 function resolveBackend(settings, { isPackaged, resourcesPath }) {
   const dev = detectDev(settings);
-  const explicit = settings.pythonPath && fs.existsSync(settings.pythonPath);
+  const explicit = !process.mas && settings.pythonPath && fs.existsSync(settings.pythonPath);
   if (explicit) return { mode: 'dev', ...dev };
 
   if (isPackaged) {
@@ -86,7 +89,7 @@ function resolveBackend(settings, { isPackaged, resourcesPath }) {
     if (fs.existsSync(exe)) return { mode: 'frozen', exe };
   }
 
-  if (fs.existsSync(dev.pythonPath)) return { mode: 'dev', ...dev };
+  if (!process.mas && fs.existsSync(dev.pythonPath)) return { mode: 'dev', ...dev };
   throw new Error(
     isPackaged
       ? 'Bundled server missing and no Python configured in launcher settings.'
@@ -128,7 +131,9 @@ async function start(ws, settings, appInfo, { avoid = [] } = {}) {
 
   // GAMMA_VERSION: the shell's own version, so the server's admin dashboard
   // (gamma/version.py) reports the app it ships in; GAMMA_UPDATES: who installs
-  // a newer one, the shell's updater or the Microsoft Store. GAMMA_CLOUD_DEFAULT_ISSUER:
+  // a newer one, the shell's updater or the Microsoft Store or Mac App Store.
+  // A Mac App Store app may not point at another way to update (App Review
+  // 2.4.5), so its servers do not ask GitHub either. GAMMA_CLOUD_DEFAULT_ISSUER:
   // Gamma Cloud sign-in is on until the admin saves another account server
   // or none (gamma/cloud_auth.py); the shell's own environment may name another.
   const env = {
@@ -141,6 +146,7 @@ async function start(ws, settings, appInfo, { avoid = [] } = {}) {
     // runs as the user, on the user's own machine.
     GAMMA_FOLDER_LINKS: '1',
   };
+  if (appInfo?.updates === 'mas') env.GAMMA_UPDATE_CHECK = 'off';
   // Fresh data dir: hand the server its first-admin credentials so the
   // one-time seed matches what the registry remembers.
   if (!fs.existsSync(path.join(ws.dataDir, 'users.db')) && ws.adminUser) {
@@ -188,7 +194,8 @@ async function start(ws, settings, appInfo, { avoid = [] } = {}) {
   while (Date.now() < deadline) {
     if (exited) throw startupError('exit', logPath, logFrom);
     if (await healthy(url)) {
-      const entry = { child, port, url, logPath };
+      // `access`: the folder grants it started with (lib/folderAccess.js).
+      const entry = { child, port, url, logPath, access: appInfo?.access || 0 };
       running.set(ws.id, entry);
       return entry;
     }
@@ -208,12 +215,24 @@ function killChild(child) {
   }
 }
 
+// Resolves once the process has exited, so a caller can copy or delete its
+// data directory, or start it again on the same port. One that ignores the
+// request is killed after 10 s.
 function stop(id) {
   const entry = running.get(id);
-  if (entry) {
-    killChild(entry.child);
-    running.delete(id);
-  }
+  if (!entry) return Promise.resolve();
+  running.delete(id);
+  const { child } = entry;
+  if (child.exitCode !== null || child.signalCode !== null) return Promise.resolve();
+  const exited = new Promise((resolve) => {
+    const force = setTimeout(() => child.kill('SIGKILL'), 10_000);
+    child.once('exit', () => {
+      clearTimeout(force);
+      resolve();
+    });
+  });
+  killChild(child);
+  return exited;
 }
 
 function stopAll() {

@@ -20,8 +20,9 @@ nothing in `backend/` or `frontend/` needs to know about it:
 The only contract Gamma keeps for the shell: the env variables
 `GAMMA_DATA_DIR`, `GAMMA_STATIC_DIR`, `GAMMA_ADMIN_USER`,
 `GAMMA_ADMIN_PASSWORD`, `GAMMA_VERSION` (the shell's version, shown as the
-server's build), `GAMMA_UPDATES` (`desktop` or, in a Microsoft Store
-install, `store`: who installs a newer release, for the Server dashboard,
+server's build), `GAMMA_UPDATES` (`desktop`, in a Microsoft Store
+install `store`, in the Mac App Store build `mas`, which also sets
+`GAMMA_UPDATE_CHECK=off`: who installs a newer release, for the Server dashboard,
 [user_db.md](user_db.md) "Server dashboard and log"), `GAMMA_CLOUD_DEFAULT_ISSUER` (Gamma Cloud, so sign-in with
 it is on until the admin saves another account server or none,
 [cloud_accounts.md](cloud_accounts.md)), `GAMMA_FOLDER_LINKS` (this server keeps

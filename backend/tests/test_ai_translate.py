@@ -125,6 +125,46 @@ def test_translate_forwards_effort(carol, monkeypatch):
     assert seen.get("effort") == ""
 
 
+@pytest.mark.parametrize("requested,tiers,expected", [
+    ("fast", ["flex", "fast"], "fast"),
+    ("flex", ["flex", "fast"], "flex"),
+    (" FAST ", ["fast"], "fast"),
+    ("flex", ["fast"], ""),
+    ("fast", [], ""),
+    ("fast", None, ""),
+    ("turbo", ["fast"], ""),
+    ("", ["fast"], ""),
+])
+def test_translate_speed_uses_only_a_supported_tier(carol, monkeypatch, requested, tiers, expected):
+    seen = []
+
+    def fake(messages, system, entry, rt, **kw):
+        seen.append(kw["speed"])
+        return json.dumps([f"T:{text}" for text in texts_of(messages)])
+
+    monkeypatch.setattr("gamma.routers.ai._call_ai", fake)
+    monkeypatch.setattr("gamma.ai_catalog.speed_tiers", lambda *a: (tiers, "provider"))
+    r = carol.post("/api/ai/translate", json={
+        "texts": [f"speed {requested!r} with {tiers!r}"], "lang": "fr", "speed": requested})
+    assert r.status_code == 200, r.text
+    assert seen == [expected]
+
+
+def test_translate_speed_lookup_failure_uses_default(carol, monkeypatch):
+    def unavailable(*args):
+        raise RuntimeError("catalog unavailable")
+
+    def fake(*args, **kw):
+        assert kw["speed"] == ""
+        return '["traduit"]'
+
+    monkeypatch.setattr("gamma.ai_catalog.speed_tiers", unavailable)
+    monkeypatch.setattr("gamma.routers.ai._call_ai", fake)
+    r = carol.post("/api/ai/translate", json={
+        "texts": ["speed catalog failure"], "lang": "fr", "speed": "fast"})
+    assert r.status_code == 200, r.text
+
+
 def test_translate_prompt_names_the_language_and_the_break_marker(carol, monkeypatch):
     seen = {}
 
@@ -142,16 +182,18 @@ def test_translate_prompt_names_the_language_and_the_break_marker(carol, monkeyp
 
 def test_translate_sends_the_context_and_salvages_without_the_neighbours(carol, monkeypatch):
     bodies = []
+    monkeypatch.setattr("gamma.ai_catalog.speed_tiers", lambda *a: (["fast"], "provider"))
 
     def fake(messages, system, entry, rt, **kw):
         body = json.loads(messages[-1]["content"])
         bodies.append(body)
+        assert kw["speed"] == "fast"  # the original call and every repair
         # The batch comes back one element short: salvaged per paragraph.
         return json.dumps([f"c:{t}" for t in body["texts"]][: max(1, len(body["texts"]) - 1)])
 
     monkeypatch.setattr("gamma.routers.ai._call_ai", fake)
     r = carol.post("/api/ai/translate", json={
-        "texts": ["a context-test paragraph", "its context-test neighbour"], "lang": "ko",
+        "texts": ["a context-test paragraph", "its context-test neighbour"], "lang": "ko", "speed": "fast",
         "before": "x" * 2000 + " the end of the paragraph before", "after": "the start of the one after",
         "section": "  II.   MODEL  "})
     assert r.status_code == 200
@@ -229,16 +271,18 @@ def test_translate_streams_partials(carol, monkeypatch):
     same final object a plain call returns; the cache is filled the same way."""
     import gamma.routers.ai as ai_mod
     monkeypatch.setattr(ai_mod, "_TRANSLATE_STREAM_INTERVAL", 0)
+    monkeypatch.setattr(ai_mod.ai_catalog, "speed_tiers", lambda *a: (["fast"], "provider"))
     opened = []
 
     def fake_open(messages, system, entry, rt, **kw):
         opened.append(texts_of(messages))
         assert kw.get("stream") is True
+        assert kw["speed"] == "fast"
         return _StreamResp(['```json\n["第一', '段", "第', '二段"]\n```'])
 
     monkeypatch.setattr(ai_mod, "_open_ai", fake_open)
     r = carol.post("/api/ai/translate", json={
-        "texts": ["stream one", "stream two", "stream one"], "lang": "zh-CN", "stream": True})
+        "texts": ["stream one", "stream two", "stream one"], "lang": "zh-CN", "stream": True, "speed": "fast"})
     assert r.status_code == 200, r.text
     assert r.headers["content-type"].startswith("application/x-ndjson")
     lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
@@ -362,7 +406,8 @@ def test_translate_with_google(dave, monkeypatch):
     monkeypatch.setattr("gamma.translate_engines.urlopen", fake)
 
     texts = ["Google one.", "  ", "Google two.", "Google one."]
-    r = dave.post("/api/ai/translate", json={"texts": texts, "lang": "zh-TW", "model": "engine:google"})
+    monkeypatch.setattr("gamma.ai_catalog.speed_tiers", lambda *a: pytest.fail("engines have no speed tier"))
+    r = dave.post("/api/ai/translate", json={"texts": texts, "lang": "zh-TW", "model": "engine:google", "speed": "fast"})
     assert r.status_code == 200, r.text
     assert r.json() == {"translations": ["G:Google one.", "  ", "G:Google two.", "G:Google one."],
                         "model": "engine:google", "cached": False, "redone": 0, "failed": []}

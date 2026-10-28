@@ -2478,8 +2478,8 @@ reach.
       `above` keeps a strip's tips above, on the side its menus open.
   - `InkCard` is the picture in the notes.
   - For `markup/` the file exports `InkTooltips`, `inkColorName`,
-    `ERASER_SIZES`, `ColorChoices` and `swallowClick` (eats the click a
-    handled pointer-up would deliver).
+    `ERASER_SIZES` and `ColorChoices`. `swallowClick` (eats the click a
+    handled pointer-up would deliver) is `shared/ui/press.js`'s.
   - `ColorChoices` is a palette role's swatches plus a custom colour, for a
     pen preset's row, a text box's colours and the selection's Color and
     Fill rows.
@@ -3867,12 +3867,18 @@ reach.
       - The eraser's row has, after the sizes, the *Erases* trio and the
         *Back to last tool* toggle (`aria-pressed`, title "After erasing,
         return to the tool you had").
-    - A preset button is `touch-action: none` and carries the drag
-      (`usePresetDrag`).
+    - A preset button is `touch-action: none` and carries the drag, the
+      shared `useDragOrder` (`shared/ui/useDragOrder.js`) in its "hold"
+      start, its button the `data-order-id` slot and `.pdfInkBar` its
+      bounds (the hook is in [ui-design.md](ui-design.md#reorder-by-dragging-shareduiusedragorderjs);
+      Settings' bar lists drag by a grip with it). The strip takes no
+      `keyProps`: Move left / right in a preset's menu is its keyboard way.
       - A mouse past 6 px, or a touch or pen past `HOLD_MS` 500 ms from
         `shared/ui/press.js`, takes `setPointerCapture`, draws the
-        `.inkDragGhost` and the `.inkDropBar` and says "Drop to reorder."
-      - On release it calls `onChangeTools` with the moved list and
+        `.dragGhost` (`.inkPresetGhost`: the icon over its colour bar) and
+        the `.dropBar` and says "Drop to reorder."
+      - On release it calls `onChangeTools` with the moved list
+        (`moveTool`, `moveVisible` of `shared/model/barLayout.js`) and
         `swallowClick`s the click.
       - Escape or a release outside the strip cancels, and a hold that
         never moved is the button's ordinary click.
@@ -4362,6 +4368,20 @@ reach.
   - Shapes keep their `shape` records, sampled as `shapes.js` draws their
     params (`ink.shape_samples`), and a sticky note is a filled `rect` in
     band 0.
+- The GoodNotes import ([import_export.md](import_export.md#goodnotes-notebooks),
+  `gamma/goodnotes_map.py`) writes v2 files the same way, by the same
+  split and ids, its shapes and boxes through the Notability import's.
+  - A ball pen is the Ballpoint, its quadratic chain raised to cubics and
+    sampled as a Notability curve is; a highlighter keeps its alpha.
+  - A fountain or brush stroke stores a half width per sample: `w` is it
+    over the widest, `size` the widest width.
+  - A pencil drawn with an Apple Pencil gets `p` from its force and `w`
+    and `o` from the brush table's Pencil law at that pressure, held
+    upright (`goodnotes_map.pencil_law`, pinned by `inkwidth.json`), as
+    the Sketchbook bakes the Pen's: a restyle bakes the same widths. Its
+    tilt is not written: which of its two angle columns is the altitude is
+    in dispute.
+  - There is no `t` or `t0`: GoodNotes times a stroke, not its samples.
 - The Notability export ([import_export.md](import_export.md#notability-export),
   `gamma/notability_export.py`) writes each stroke as a straight Bézier
   chain whose anchors are its samples, each with its `w`, `p` and `a`/`z`,

@@ -54,6 +54,8 @@ test("a change selects the groups that exercise it", () => {
   // the Notability import is an export's groups; its fixture writer is the transfers scenario's
   assert.deepEqual(pick(["backend/gamma/notability_import.py"]).sort(), ["diagrams", "files", "ink", "transfers"]);
   assert.deepEqual(pick(["backend/tests/notability_fixtures.py"]), ["transfers"]);
+  assert.deepEqual(pick(["backend/gamma/goodnotes_import.py"]).sort(), ["diagrams", "files", "ink", "transfers"]);
+  assert.deepEqual(pick(["backend/tests/goodnotes_fixtures.py"]).sort(), ["ipad", "transfers"]);
   // and the note that scenario imports goes through ink.py (its strokes: encode_points, the
   // stroke file's checks, group_files) and notebook.py (its paper page: normalize_paper, paper_ops)
   for (const file of ["backend/gamma/ink.py", "backend/gamma/notebook.py"]) assert.ok(pick([file]).includes("transfers"), file);

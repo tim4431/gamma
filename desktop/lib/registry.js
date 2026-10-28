@@ -21,6 +21,10 @@
 // sync state and no token — only this map, for the switcher's cross-links
 // and for starting the servers that hold copies at launch.
 //
+// `access` is the Mac App Store build's alone: the folders outside its
+// sandbox the user picked, as security-scoped bookmarks
+// (lib/folderAccess.js).
+//
 // Local server data dirs live under ONE root, `<root>/<server id>`:
 // `settings.dataRoot` when set, else `<userData>/workspaces` (the folder
 // name predates the rename and stays so existing installs need no move).
@@ -57,6 +61,7 @@ const DEFAULTS = {
   },
   servers: [],
   mirrors: [],
+  access: [],
   lastOpened: null,
   windowBounds: null,
 };
@@ -88,6 +93,7 @@ function load() {
       settings: { ...DEFAULTS.settings, ...(raw.settings || {}) },
       servers: list,
       mirrors: Array.isArray(raw.mirrors) ? raw.mirrors : [],
+      access: Array.isArray(raw.access) ? raw.access : [],
       lastOpened: raw.lastOpened || null,
       windowBounds: raw.windowBounds || null,
     };
@@ -331,6 +337,16 @@ function setWindowBounds(bounds) {
   save(state);
 }
 
+function getAccess() {
+  return load().access;
+}
+
+function setAccess(list) {
+  const state = load();
+  state.access = list;
+  save(state);
+}
+
 // --- offline copies -------------------------------------------------------
 
 function originOf(url) {
@@ -397,7 +413,7 @@ function dirSize(dir) {
 
 module.exports = {
   init, load, get, addLocal, addRemote, setRemoteUrl, withScheme, rename, remove, setPort, markOpened, getLastOpened,
-  getSettings, setSettings, getWindowBounds, setWindowBounds, dirSize,
+  getSettings, setSettings, getWindowBounds, setWindowBounds, getAccess, setAccess, dirSize,
   defaultDataRoot, dataRoot, localsUnderRoot, setDataRoot,
   originOf, findMirror, mirrorOf, addMirror, setServerMirrors,
 };

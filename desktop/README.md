@@ -20,8 +20,8 @@ keep it in sync:**
   map, invariants.
 - [docs/release.md](docs/release.md) — package, the `desktop` workflow,
   code signing (Azure Trusted Signing / Apple notarization, secret-gated),
-  the auto-update feed, distribution alternatives (Store, winget). The
-  repo's workflows side by side:
+  the auto-update feed, distribution alternatives (Microsoft Store, Mac
+  App Store, winget). The repo's workflows side by side:
   [docs/dev/github_actions.md](../docs/dev/github_actions.md).
 - [docs/checklist.md](docs/checklist.md) — the pre-release QA checklist and
   what `npm run e2e` / `npm run e2e:packaged` cover.

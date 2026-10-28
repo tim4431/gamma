@@ -268,7 +268,9 @@ platforms, no Xcode) runs on Linux in `check.yml`, on every PR.
 ### The iPad TestFlight release
 
 The signed build is made outside GitHub Actions, on a Mac mini that holds
-the team's signing identity. It checks `tim4431/gamma`'s `main` every
+the signing identity of team `A436A36DDC`, whose App Store Connect record
+(`net.blitzbuild.gamma`, shared with the Mac App Store build) the builds
+go to. It checks `tim4431/gamma`'s `main` every
 minute; when a commit's message (subject or body) contains a marker
 `ipad-test-release-NNN` it has not seen, it checks that commit out, builds
 the app, runs the tests, signs it and uploads it to TestFlight. Nothing is

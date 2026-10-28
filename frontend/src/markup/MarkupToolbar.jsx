@@ -3,7 +3,7 @@
 // ink/useInkStrip.js's and the stroke history ink/useInkDocument.js's;
 // the layers read the armed tool through PageToolsContext
 // (markup/PageTools.jsx).
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import {
   CheckIcon, ChevronLeftIcon, ChevronRightIcon, DuplicateIcon, ErasePartialIcon, EraserIcon, EraseStrokeIcon, EyeIcon, EyeOffIcon, HandIcon,
@@ -16,10 +16,11 @@ import { CommandMenuItem } from "../app/CommandMenuItem.jsx";
 import {
   DEFAULT_NIB, DEFAULT_TOOLS, MAX_TOOLS, NIB_MAX, NIB_MIN, NIB_STEP, defaultOpacity, presetSmoothing, sizesFor, toolId, visibleTools,
 } from "../ink/ink";
-import { ColorChoices, ERASER_SIZES, InkTooltips, inkColorName, swallowClick } from "../ink/InkLayer";
+import { ColorChoices, ERASER_SIZES, InkTooltips, inkColorName } from "../ink/InkLayer";
 import { InkLineChoices, InkStyleMenu, InkStylePicker, NibPreview, brushValue } from "../ink/InkStylePicker.jsx";
 import { nativeHost } from "../shared/lib/host.js";
-import { HOLD_MS, HOLD_SLOP } from "../shared/ui/press.js";
+import { useDragOrder } from "../shared/ui/useDragOrder.js";
+import { moveVisible } from "../shared/model/barLayout.js";
 import { pickerColors } from "../shared/model/palette.js";
 import { usePalette } from "../shared/ui/paletteContext.js";
 import { TextStyleChoices } from "./TextBoxLayer";
@@ -134,15 +135,7 @@ const toolLabel = (preset) => t("{name} · {size} pt", { name: inkToolName(prese
 // between the visible ones; ids never change. The same list when the slot
 // is where it already stands.
 export function moveTool(tools, id, to) {
-  const visible = visibleTools(tools);
-  const from = visible.findIndex((x) => x.id === id);
-  if (from < 0 || to === from || to === from + 1) return tools;
-  const item = tools.find((x) => x.id === id);
-  const rest = tools.filter((x) => x.id !== id);
-  const restVisible = visible.filter((x) => x.id !== id);
-  const j = to > from ? to - 1 : to;
-  const at = j >= restVisible.length ? rest.length : rest.indexOf(restVisible[j]);
-  return [...rest.slice(0, at), item, ...rest.slice(at)];
+  return moveVisible(tools, tools.find((x) => x.id === id), to, (x) => !x.hidden);
 }
 // The pill after a move: "Blue pen is now key 3.", or "Blue pen moved."
 // past the digit keys.
@@ -150,95 +143,6 @@ function movedStatus(tools, id) {
   const name = inkToolName(tools.find((x) => x.id === id));
   const n = visibleTools(tools).findIndex((x) => x.id === id) + 1;
   return n <= 9 ? t("{name} is now key {n}.", { name, n }) : t("{name} moved.", { name });
-}
-
-// The handwriting strip's reorder-by-drag (docs/dev/handwriting.md
-// "Reorder by dragging"): a mouse past DRAG_PX, or a finger or pen held
-// HOLD_MS (shared/ui/press.js's long press, with its HOLD_SLOP), takes the
-// pointer (setPointerCapture) and rides a ghost of the preset along the
-// row; `to` is the visible slot under the pointer, drawn as a 2 px bar.
-// The release inside the strip writes the order and swallows the click
-// the button would get; outside, or Escape, leaves it.
-// A hold that never moved is the button's ordinary click (a tap arms the
-// tool). Returns the preset buttons' props, the live drag for the row
-// (ghost and bar) and the dragged id.
-const DRAG_PX = 6;
-function usePresetDrag({ tools, rowRef, onChangeTools, onStatus }) {
-  const [drag, setDrag] = useState(null);     // {id, x, y, to, bar: {left, top, height}} while live
-  const press = useRef(null);                 // the press: {id, pointerId, el, x, y, timer, live, moved}
-  const latest = useRef(null);
-  latest.current = { tools, onChangeTools, onStatus };
-  const end = useCallback(() => {
-    const p = press.current;
-    if (!p) return;
-    clearTimeout(p.timer);
-    try { p.el.releasePointerCapture(p.pointerId); } catch {}
-    press.current = null;
-    setDrag(null);
-  }, []);
-  // The visible slot a point drops into, and where the bar for it goes
-  // (in the row's own coordinates).
-  const slotAt = (x) => {
-    const buttons = [...(rowRef.current?.querySelectorAll("[data-preset]") || [])];
-    const rects = buttons.map((b) => b.getBoundingClientRect());
-    let to = rects.findIndex((r) => x < r.left + r.width / 2);
-    if (to < 0) to = rects.length;
-    const row = rowRef.current.getBoundingClientRect();
-    const r = rects[Math.min(to, rects.length - 1)];
-    const left = (to < rects.length ? r.left : r.right) - row.left;
-    return { to, bar: { left: Math.round(left) - 1, top: Math.round(r.top - row.top), height: Math.round(r.height) } };
-  };
-  const begin = (p) => {
-    p.live = true;
-    latest.current.onStatus?.(t("Drop to reorder."));
-    setDrag({ id: p.id, x: p.x, y: p.y, ...slotAt(p.x) });
-  };
-  useEffect(() => {
-    const escape = (e) => { if (e.key === "Escape" && press.current?.live) { e.stopPropagation(); end(); } };
-    window.addEventListener("keydown", escape, true);
-    window.addEventListener("blur", end);
-    return () => { window.removeEventListener("keydown", escape, true); window.removeEventListener("blur", end); end(); };
-  }, [end]);
-  const props = (id) => ({
-    "data-preset": id,
-    onPointerDown: (e) => {
-      if (press.current || !e.isPrimary || (e.pointerType === "mouse" && e.button !== 0)) return;
-      const p = { id, pointerId: e.pointerId, el: e.currentTarget, x: e.clientX, y: e.clientY, timer: 0, live: false, moved: false };
-      press.current = p;
-      try { e.currentTarget.setPointerCapture(e.pointerId); } catch {}
-      if (e.pointerType !== "mouse") p.timer = setTimeout(() => { if (press.current === p) begin(p); }, HOLD_MS);
-    },
-    onPointerMove: (e) => {
-      const p = press.current;
-      if (!p || p.pointerId !== e.pointerId) return;
-      const d = Math.hypot(e.clientX - p.x, e.clientY - p.y);
-      if (!p.live) {
-        if (p.timer) { if (d > HOLD_SLOP) { clearTimeout(p.timer); p.timer = 0; } return; }  // a held finger that wandered: a plain press
-        if (e.pointerType === "mouse" && d >= DRAG_PX) begin(p); else return;
-      }
-      if (d >= DRAG_PX) p.moved = true;
-      setDrag({ id: p.id, x: e.clientX, y: e.clientY, ...slotAt(e.clientX) });
-    },
-    onPointerUp: (e) => {
-      const p = press.current;
-      if (!p || p.pointerId !== e.pointerId) return;
-      if (!p.live || !p.moved) { end(); return; }   // a click, or a hold that never moved: the button's own tap
-      swallowClick();
-      const bar = rowRef.current?.closest(".pdfInkBar")?.getBoundingClientRect();
-      const inside = bar && e.clientX >= bar.left && e.clientX <= bar.right && e.clientY >= bar.top && e.clientY <= bar.bottom;
-      const { to } = slotAt(e.clientX);
-      end();
-      if (!inside) return;
-      const { tools: list, onChangeTools: write, onStatus: say } = latest.current;
-      const moved = moveTool(list, p.id, to);
-      if (moved === list) return;
-      write(moved);
-      say?.(movedStatus(moved, p.id));
-    },
-    onPointerCancel: (e) => { if (press.current?.pointerId === e.pointerId) { if (press.current.live) swallowClick(); end(); } },
-    onLostPointerCapture: (e) => { if (press.current?.pointerId === e.pointerId && !press.current.live) end(); },
-  });
-  return { props, drag };
 }
 
 export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, eraserReturn = false, eraserFilter = "all", lassoMode,
@@ -263,7 +167,19 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
   useEffect(() => {
     if ((menus.kind === "tool" || menus.kind === "style") && !(options === true && preset)) closeMenu();
   }, [menus.kind, closeMenu, options, preset]);
-  const { props: dragProps, drag } = usePresetDrag({ tools, rowRef, onChangeTools, onStatus });
+  // A preset follows a mouse drag, or a finger or pen held and then moved,
+  // along the row (docs/dev/handwriting.md "Reorder by dragging"); the drop
+  // counts only inside the strip.
+  const { sourceProps: dragProps, drag } = useDragOrder({
+    containerRef: rowRef, onStatus,
+    bounds: () => rowRef.current?.closest(".pdfInkBar")?.getBoundingClientRect(),
+    onMove: (id, to) => {
+      const moved = moveTool(tools, id, to);
+      if (moved === tools) return;
+      onChangeTools(moved);
+      onStatus?.(movedStatus(moved, id));
+    },
+  });
   // A press on the Text tool leaves the box being typed in focused, so a
   // tap on the armed tool opens the options row that restyles that box.
   const btn = (id, label, icon, extra, more) => (
@@ -348,7 +264,7 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
             + (active === tt.id ? t(" — tap again for options") : "");
           return btn(tt.id, label, hl ? <HighlightIcon size={16} /> : <PenIcon size={16} />,
             <span className="inkToolInk" style={{ background: tt.color, height: hl ? 3 + Math.round(k / 2) : 2 + Math.round(k / 3),
-              opacity: hl ? 0.85 : 1 }} />, dragProps(tt.id));
+              opacity: hl ? 0.85 : 1 }} />, { "data-order-id": tt.id, ...dragProps(tt.id) });
         })}
         <span className="pdfInkSep" />
         {btn("eraser", t("Eraser (E) — the pen's eraser end and barrel button erase too"), <EraserIcon size={16} />)}
@@ -384,7 +300,7 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
             title={blockHistory ? t("Redo the last change to the text boxes and notes") : t("Redo handwriting")}
             disabled={!canRedo} onClick={onRedo}><RedoIcon aria-hidden="true" /></button>
         </span>
-        {drag ? <span className="inkDropBar" style={{ left: drag.bar.left, top: drag.bar.top, height: drag.bar.height }} aria-hidden="true" /> : null}
+        {drag?.bar ? <span className="dropBar" style={drag.bar} aria-hidden="true" /> : null}
       </div>
       {options === true && preset ? (
         <div className="pdfInkSub inkPresetOptions" data-ink-options="tool" data-guide="ink.options">
@@ -560,7 +476,7 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
     ) : null}
     {/* The dragged preset's ghost rides with the pointer; on the body, out of the strip's transform. */}
     {drag ? createPortal(
-      <div className="inkDragGhost" style={{ left: drag.x, top: drag.y }} aria-hidden="true">
+      <div className="dragGhost inkPresetGhost" style={{ left: drag.x, top: drag.y }} aria-hidden="true">
         {(() => {
           const tt = tools.find((x) => x.id === drag.id);
           if (!tt) return null;

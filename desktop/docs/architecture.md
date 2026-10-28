@@ -157,6 +157,13 @@ Under the test harness `GAMMA_SHELL_PICK_DIR` answers the picker, the
 questions take their first answer, and a directory "opened" is only
 recorded (`openDirectory`, like `openExternal`).
 
+In the Mac App Store build the pick is also the app's access to the
+directory, kept as a bookmark (`lib/folderAccess.js`), and a server
+reaches only the folders the app held when it started. So `keepFolder`
+first starts the server that is to write there again, on its port, when
+it started before the pick (`reachFolder`;
+[release.md](release.md#mac-app-store) "Folders outside the sandbox").
+
 Where the link lives depends on the server:
 
 - On a **local** server it is that server's own link, made with `POST
@@ -423,6 +430,27 @@ Each file is added as an upload in Gamma adds it, one at a time
 Under the test harness the question takes its first answer, and
 `openPdfFiles` is on the test hook.
 
+### The microphone
+
+A server's page records into a note and dictates to the assistant with
+`getUserMedia`. Electron grants a page every permission it asks for unless
+the session has a handler, and the shell's (`lib/microphone.js`, set on the
+default session at launch) still grants everything, with one exception:
+the microphone on macOS, which the system lets an app use only once the
+user said yes. When the system has not asked yet, the handler has it ask
+(`systemPreferences.askForMediaAccess`), with the app's
+`NSMicrophoneUsageDescription` (`mac.extendInfo` in `electron-builder.cjs`),
+and the page gets the user's answer. When the user said no, or the Mac
+does not allow it, the page is refused and reports that it could not
+record, and a dialog says where to allow Gamma: System Settings → Privacy &
+Security → Microphone, with a button that opens it. The answer reaches
+Gamma at its next start, which macOS also says. A build signed with the
+hardened runtime (the dmg with a Developer ID) or the App Sandbox (the
+Mac App Store build) also needs `com.apple.security.device.audio-input`,
+which both entitlement files carry; an ad-hoc signed build has neither and
+needs only the purpose string. Windows and Linux leave the microphone to
+the page and the system's own settings.
+
 ### Background and tray
 
 Closing the last window quits the app (macOS keeps the dock process, as
@@ -442,7 +470,9 @@ with `--hidden`, so a login start makes no window and goes straight to the
 tray (`applyLoginItem`; macOS reports a hidden start itself through
 `wasOpenedAsHidden`). On Windows and macOS that is `app.setLoginItemSettings`;
 on Linux an autostart entry under `~/.config/autostart`. Packaged builds
-only, and nothing under the test harness.
+only, and nothing under the test harness. The Mac App Store build has no
+login item (a sandboxed app needs a login helper of its own, which it does
+not have): the launcher and the menus leave the switch out.
 
 ## In-app updates
 
@@ -455,9 +485,11 @@ GitHub Release (details and the signing caveat: [release.md](release.md)).
 
 State machine (`update` in the shell state): `idle` → `checking` →
 `up-to-date` | `downloading` (percent) → `downloaded` | `error`;
-`unsupported` in dev builds, under the test harness and in a Microsoft
+`unsupported` in dev builds, under the test harness, in a Microsoft
 Store install (`process.windowsStore`; the Store delivers those updates,
-see [release.md](release.md#microsoft-store)). On **Windows** the
+see [release.md](release.md#microsoft-store)) and in the Mac App Store
+build (`process.mas`, reason `mas`: App Review allows no other way to
+update, so it never even reads the feed, [release.md](release.md#mac-app-store)). On **Windows** the
 update installs on restart (`quitAndInstall`, silent NSIS run; unsigned
 builds are fine — electron-updater only verifies a publisher when one is
 configured). On **Linux** (the `.deb`) the same flow runs through
@@ -477,7 +509,9 @@ the app shows the path at the
 bottom of the launcher; a Microsoft Store install gets the MSIX-virtualized
 copy under `%LOCALAPPDATA%\Packages\xwtim.GammaPDF_<hash>\LocalCache\Roaming`,
 which the Store uninstall deletes — [release.md](release.md#microsoft-store);
-the launcher shows that real location, and opens it, through `lib/hostPath.js`):
+the launcher shows that real location, and opens it, through `lib/hostPath.js`;
+the Mac App Store build's is in its container,
+`~/Library/Containers/net.blitzbuild.gamma/Data/Library/Application Support/gamma-desktop`):
 
 - `servers.json` — the registry: server list (a local server with its
   admin credentials and last `port`), `lastOpened`, `windowBounds`,
@@ -486,7 +520,9 @@ the launcher shows that real location, and opens it, through `lib/hostPath.js`):
   keeps folders of remote servers), the dev-mode
   `pythonPath`/`backendDir`/`staticDir` overrides). Local admin credentials
   are stored in plaintext here — same trust level as the SQLite files next
-  to it; acceptable for a per-OS-user desktop app. An older profile's
+  to it; acceptable for a per-OS-user desktop app. The Mac App Store build
+  also keeps `access` here: the folders outside its sandbox the user
+  picked, as security-scoped bookmarks (`lib/folderAccess.js`). An older profile's
   `workspaces.json` (the file's previous name) is copied over on first start
   and left in place.
 - `workspaces/<id>/` — local servers' data dirs (a standard `GAMMA_DATA_DIR`
@@ -567,12 +603,25 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
 - `lib/hostPath.js` — a path as programs outside a Store package find it:
   the package's private copy of AppData ("Shell state"); no Electron, unit
   tested by `test/hostPath.test.js`.
+- `lib/folderAccess.js` — the Mac App Store build's folders outside its
+  sandbox: the bookmarks kept, the folders opened at launch, and when a
+  server must start again to reach one ([release.md](release.md#mac-app-store));
+  no Electron, unit tested by `test/folderAccess.test.js`.
+- `lib/microphone.js` — the pages' permission requests: all granted, the
+  microphone on macOS once the system allows it ("The microphone"); no
+  Electron, unit tested by `test/microphone.test.js`.
 - `electron-builder.cjs` — the packaging config (targets, extra resources,
   secret-gated signing, the update feed's `publish` block, the PDF
   registration per target). `assets/installer.nsh` — the NSIS installer's
   PDF registration; `assets/appx-extensions.xml` — the Store package's.
   `scripts/adhoc-sign.cjs` — its `afterPack` hook: ad-hoc signs a macOS
   build made without a certificate ([release.md](release.md)).
+- `electron-builder.mas.cjs` — the Mac App Store build, extending the
+  config above (bundle id, versions from the environment, the sandbox
+  entitlements `assets/entitlements.mas.plist` and
+  `assets/entitlements.mas.inherit.plist`, the profile).
+  `scripts/mas-modes.cjs` — its `afterPack` hook: file modes the installed
+  app can read ([release.md](release.md#mac-app-store)).
 - `backend_entry.py` — entry for the frozen server (`--port`, `--data-dir`;
   sets env before importing gamma, serves the bundled `frontend_dist`).
 - `build_backend.py` — PyInstaller onedir freeze into
@@ -585,9 +634,11 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   server verifies HTTPS with certifi's instead ([api.md](../../docs/dev/api.md)).
   Handles conda-based interpreters by adding `<base>/Library/bin` to the
   DLL search path.
-- `assets/icon.png` — app icon (512 px, the favicon mark; electron-builder
-  derives ico/icns and the Linux icon set). `assets/entitlements.mac.plist` —
-  hardened-runtime entitlements for signed mac builds.
+- `assets/icon.png` — app icon (1024 px, the favicon mark, from the brand
+  generator; electron-builder derives ico/icns and the Linux icon set, and
+  App Store Connect wants the icns's 1024 px image). `assets/entitlements.mac.plist` —
+  hardened-runtime entitlements for signed mac builds, the microphone
+  among them ("The microphone").
 - `assets/appx/` and `assets/store/` — tracked Store package/listing images;
   `scripts/store-art.js` regenerates them. The packager's build-resources
   directory is `assets/`; `build/` holds generated PyInstaller intermediates.
@@ -601,8 +652,9 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   public HTTP API + env config (`GAMMA_DATA_DIR`, `GAMMA_STATIC_DIR`,
   `GAMMA_ADMIN_USER`, `GAMMA_ADMIN_PASSWORD`, `GAMMA_VERSION` = the shell's
   own version, so the server's admin dashboard names the app,
-  `GAMMA_UPDATES` = `desktop`, or `store` in a Store install, so it says
-  who installs a newer one,
+  `GAMMA_UPDATES` = `desktop`, or `store` in a Microsoft Store install, or
+  `mas` in the Mac App Store build (which also sets `GAMMA_UPDATE_CHECK=off`),
+  so it says who installs a newer one,
   `GAMMA_CLOUD_DEFAULT_ISSUER` = Gamma Cloud, the account server until the
   admin saves another, `GAMMA_FOLDER_LINKS` = this server keeps folders on
   disk, anywhere the user picks, since the sidecar runs as the user), `/api/health` and

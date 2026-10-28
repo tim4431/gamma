@@ -21,7 +21,7 @@
 // attribute the preload mirrors so the chrome paints in the same theme, and
 // `/api/session` (public HTTP API) for the workspace list.
 
-const { app, BaseWindow, WebContentsView, Menu, Tray, clipboard, nativeImage, nativeTheme, session, shell, ipcMain, net, dialog } = require('electron');
+const { app, BaseWindow, WebContentsView, Menu, Tray, clipboard, nativeImage, nativeTheme, session, shell, ipcMain, net, dialog, systemPreferences } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
@@ -35,6 +35,8 @@ const keeping = require('./lib/keeping');
 const cloudSignIn = require('./lib/cloudSignIn');
 const openFiles = require('./lib/openFiles');
 const { hostPath } = require('./lib/hostPath');
+const folderAccessFor = require('./lib/folderAccess');
+const microphone = require('./lib/microphone');
 
 const SMOKE = process.argv.includes('--smoke');
 const BAR_H = 38;
@@ -49,8 +51,16 @@ if (process.env.GAMMA_SHELL_USER_DATA) app.setPath('userData', process.env.GAMMA
 // data directories. A second start (a PDF opened from the file manager, the
 // Start menu while the app sits in the tray) hands its command line to this
 // one (`second-instance`, below) and quits. The smoke test runs beside it.
-const primary = SMOKE || app.requestSingleInstanceLock();
+// The Mac App Store build takes no lock (the submitted build found
+// Electron's unusable in the sandbox): Launch Services already runs one
+// copy of a store app, handing a PDF opened from the Finder over as
+// `open-file`.
+const primary = SMOKE || process.mas || app.requestSingleInstanceLock();
 if (!primary) app.quit();
+
+// The Mac App Store build's folders outside its sandbox (lib/folderAccess.js),
+// set up at launch; null in every other build.
+let folderAccess = null;
 
 // Title-bar palette per Gamma theme: the shell bar's chrome, Gamma's
 // --bg-page in ui/tokens.css (frontend/tests/themes.test.mjs checks it), and
@@ -133,7 +143,9 @@ function appInfo() {
     resourcesPath: process.resourcesPath,
     userDataDir: app.getPath('userData'),
     version: app.getVersion(), // the sidecar reports it as its build (GAMMA_VERSION)
-    updates: process.windowsStore ? 'store' : 'desktop', // who installs the next release (GAMMA_UPDATES)
+    // who installs the next release (GAMMA_UPDATES)
+    updates: process.mas ? 'mas' : process.windowsStore ? 'store' : 'desktop',
+    access: folderAccess ? folderAccess.generation() : 0, // the folder grants a server starting now inherits
   };
 }
 
@@ -540,10 +552,43 @@ function revokeToken(api, origin, wsId, tokenId) {
 // — across launches.
 async function startLocal(srv) {
   const state = registry.load();
+  const ws = registry.get(srv.id) || srv;
+  if (folderAccess && !folderAccess.reachable(ws.dataDir)) throw accessError(ws);
   const avoid = state.servers.filter((s) => s.id !== srv.id && s.port).map((s) => s.port);
-  const entry = await sidecar.start(registry.get(srv.id) || srv, state.settings, appInfo(), { avoid });
+  const entry = await sidecar.start(ws, state.settings, appInfo(), { avoid });
   registry.setPort(srv.id, entry.port);
   return entry;
+}
+
+// Mac App Store: a local server's folder outside the sandbox that the app
+// could not open this run (lib/folderAccess.js). The launcher's failure
+// card offers to choose it again (`access`, shell:grant-folder).
+function accessError(ws) {
+  const err = new Error(`Gamma cannot open ${ws.dataDir}; choose the folder again.`);
+  err.startup = {
+    summary: 'Gamma can no longer open this server’s folder.',
+    hint: 'macOS lets an App Store app into a folder only once you have chosen it. If the folder was moved or renamed, put it back, or connect the disk it is on, then choose it again.',
+    action: 'access',
+    detail: ws.dataDir,
+  };
+  return err;
+}
+
+// Mac App Store: the server that is to write into `dir` reaches it only if
+// the app held the folder when the server started (lib/folderAccess.js).
+// One that started before starts again, on its port, so the page it shows
+// carries on (opened again should the port have changed). Says whether it
+// restarted.
+async function reachFolder(srv, dir) {
+  const entry = folderAccess && sidecar.status(srv.id);
+  if (!entry || !folderAccess.grantedSince(dir, entry.access)) return false;
+  await sidecar.stop(srv.id);
+  const next = await startLocal(srv);
+  if (current && current.id === srv.id && next.url !== current.url) {
+    current = null;
+    await openServer(srv.id);
+  }
+  return true;
 }
 
 // The local server that hosts what this computer keeps of remote servers —
@@ -604,7 +649,9 @@ async function localServer(serverId) {
 // pauses or resumes it (pauseFolder), syncs it (syncFolder) and stops it
 // (dropFolder, the files kept or taken back; the token it minted revoked).
 // An empty directory is used as it is; one holding anything gets a
-// subdirectory named after the folder.
+// subdirectory named after the folder. In the Mac App Store build the
+// server that is to write there first starts again when it started before
+// the directory was picked (reachFolder).
 
 function openOrigin() {
   if (!current || !content) throw new Error('Open a server first');
@@ -635,10 +682,15 @@ async function listFolders(wsId) {
   return { folders: tree.folders || [], links };
 }
 
-// The native directory picker: the path chosen, null when cancelled.
+// The native directory picker: the path chosen, null when cancelled. In the
+// Mac App Store build the choice is also the app's access to the folder,
+// kept for later runs as a bookmark (lib/folderAccess.js).
 async function chooseDirectory(opts) {
-  const r = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts);
-  return r.canceled ? null : r.filePaths[0] || null;
+  const o = folderAccess ? { ...opts, securityScopedBookmarks: true } : opts;
+  const r = win ? await dialog.showOpenDialog(win, o) : await dialog.showOpenDialog(o);
+  const dir = r.canceled ? null : r.filePaths[0] || null;
+  if (dir && folderAccess) folderAccess.add(dir, r.bookmarks && r.bookmarks[0]);
+  return dir;
 }
 
 function pickDirectory(name) {
@@ -692,7 +744,8 @@ async function keepFolder(wsId, folderId) {
         headers: { 'Content-Type': 'application/json', 'X-Gamma-Workspace': wsId },
         body: JSON.stringify({ name: `Gamma desktop: ${name} on disk`.slice(0, 80), scope: 'read', expires_in_days: 365 }),
       });
-      const host = await ensureHost(api);
+      let host = await ensureHost(api);
+      if (await reachFolder(host.local, target)) host = await ensureHost(api);
       link = await api(host.origin, '/api/folder-links', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -701,7 +754,8 @@ async function keepFolder(wsId, folderId) {
       token = null; // the host holds it now
       registry.setSettings({ folderHost: host.local.id }); // runs at launch with the clones' hosts
     } else {
-      link = await api(origin, '/api/folder-links', {
+      await reachFolder(registry.get(current.id), target);
+      link = await api(openOrigin(), '/api/folder-links', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'X-Gamma-Workspace': wsId },
         body: JSON.stringify({ folder: folderId, path: target, notes: true }),
@@ -733,6 +787,21 @@ async function ask(opts, testAnswer) {
   if (process.env.GAMMA_SHELL_TEST) return testAnswer;
   const r = win ? await dialog.showMessageBox(win, opts) : await dialog.showMessageBox(opts);
   return r.response;
+}
+
+// A page asked for the microphone that macOS keeps from Gamma
+// (lib/microphone.js): the answer can only change in System Settings, and
+// reaches Gamma at its next start.
+async function microphoneRefused() {
+  const choice = await ask({
+    type: 'info',
+    message: 'Gamma may not use the microphone',
+    detail: 'Allow Gamma under System Settings → Privacy & Security → Microphone, then quit Gamma and open it again.',
+    buttons: ['Open System Settings', 'Cancel'],
+    defaultId: 0,
+    cancelId: 1,
+  }, 1);
+  if (choice === 0) openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone');
 }
 
 // A link of local server `serverId`, with what to call it through.
@@ -1114,12 +1183,13 @@ function trayIcon() {
   return img.resize({ width: size, height: size });
 }
 
-// The two switches as menu items, under the labels the menu's case wants.
+// The two switches as menu items, under the labels the menu's case wants
+// (the Mac App Store build has no login item, applyLoginItem).
 function backgroundItems(keepLabel, loginLabel) {
   const s = registry.getSettings();
   return [
     { label: keepLabel, type: 'checkbox', checked: Boolean(s.background), click: (item) => setBackground(item.checked) },
-    { label: loginLabel, type: 'checkbox', checked: Boolean(s.openAtLogin), click: (item) => setOpenAtLogin(item.checked) },
+    ...(process.mas ? [] : [{ label: loginLabel, type: 'checkbox', checked: Boolean(s.openAtLogin), click: (item) => setOpenAtLogin(item.checked) }]),
   ];
 }
 
@@ -1190,10 +1260,12 @@ function setOpenAtLogin(on) {
 // The OS login item: Electron's on Windows and macOS, an autostart entry on
 // Linux — a packaged app only (in dev it would register the electron
 // binary; under the test harness nothing is touched). Started that way the
-// app opens hidden, into the tray (`--hidden`).
+// app opens hidden, into the tray (`--hidden`). Not in the Mac App Store
+// build: a sandboxed app registers a login item only through a helper of
+// its own, which it does not have yet, and the launcher hides the switch.
 function applyLoginItem() {
   const on = Boolean(registry.getSettings().openAtLogin);
-  if (!app.isPackaged || process.env.GAMMA_SHELL_TEST) return;
+  if (!app.isPackaged || process.env.GAMMA_SHELL_TEST || process.mas) return;
   if (process.platform === 'linux') {
     const dir = path.join(app.getPath('home'), '.config', 'autostart');
     const file = path.join(dir, 'gamma-desktop.desktop');
@@ -1289,6 +1361,7 @@ function fullState() {
     defaultDataRoot: hostPath(registry.defaultDataRoot()),
     // Names of the local servers a root change would move.
     movable: registry.localsUnderRoot(state).map((w) => w.name),
+    mas: Boolean(process.mas), // the launcher hides what a Mac App Store build lacks
   };
 }
 
@@ -1389,6 +1462,7 @@ async function checkForUpdatesInteractive() {
     opts.detail =
       st.error === 'dev build' ? 'Development build: update from git.'
       : st.error === 'store' ? 'Installed from the Microsoft Store: updates arrive through the Store.'
+      : st.error === 'mas' ? 'Installed from the Mac App Store: updates arrive through the App Store.'
       : String(st.error || '');
   } else if (st.status === 'downloaded') {
     opts.message = `Gamma ${st.version} is ready to install.`;
@@ -1496,9 +1570,9 @@ function registerIpc() {
     pushState();
     return ws;
   }));
-  ipcMain.handle('shell:remove', shellOnly((id, opts) => {
+  ipcMain.handle('shell:remove', shellOnly(async (id, opts) => {
     if (current && current.id === id) loadLauncher();
-    sidecar.stop(id);
+    await sidecar.stop(id);
     registry.remove(id, opts || {});
     buildMenu();
     pushState();
@@ -1577,15 +1651,32 @@ function registerIpc() {
   }));
   ipcMain.handle('shell:pick-folder', shellOnly((defaultPath) =>
     chooseDirectory({ properties: ['openDirectory', 'createDirectory'], defaultPath: defaultPath || undefined })));
+  // Mac App Store: the launcher's answer to a server whose folder the app
+  // can no longer open (accessError). The folder chosen must hold the
+  // server's data; true once it does.
+  ipcMain.handle('shell:grant-folder', shellOnly(async (id) => {
+    const srv = registry.get(id);
+    if (!folderAccess || !srv || srv.type !== 'local') throw new Error('Nothing to choose');
+    const dir = await chooseDirectory({
+      title: `Choose the folder of “${srv.name}”`,
+      message: `Choose ${srv.dataDir}, or a folder it is in.`,
+      buttonLabel: 'Choose',
+      properties: ['openDirectory'],
+      defaultPath: path.dirname(srv.dataDir),
+    });
+    if (!dir) return false;
+    if (!folderAccess.reachable(srv.dataDir)) throw new Error(`That folder does not hold ${srv.dataDir}.`);
+    return true;
+  }));
   // Storage root for local servers ('' = default). Moving needs the SQLite
-  // files closed, so every sidecar under the old root is stopped first; they
-  // restart on the next open. A local server that is open goes back to the
-  // launcher (its process is about to be killed).
-  ipcMain.handle('shell:set-data-root', shellOnly((dir, { move = true } = {}) => {
+  // files closed, so every sidecar under the old root is stopped, and has
+  // exited, first; they restart on the next open. A local server that is
+  // open goes back to the launcher (its process is about to be killed).
+  ipcMain.handle('shell:set-data-root', shellOnly(async (dir, { move = true } = {}) => {
     if (move) {
       const moving = new Set(registry.localsUnderRoot().map((w) => w.id));
       if (current && moving.has(current.id)) loadLauncher();
-      for (const id of moving) sidecar.stop(id);
+      await Promise.all([...moving].map((id) => sidecar.stop(id)));
     }
     const r = registry.setDataRoot(dir, { move });
     buildMenu();
@@ -1660,11 +1751,26 @@ async function runSmoke() {
 app.whenReady().then(async () => {
   if (!primary) return; // quitting: the running app has the command line
   registry.init(app.getPath('userData'));
+  // Before any server starts: a server reaches only the folders the app
+  // holds when it starts.
+  if (process.mas) {
+    folderAccess = folderAccessFor.create({
+      load: registry.getAccess,
+      save: registry.setAccess,
+      start: (bookmark) => app.startAccessingSecurityScopedResource(bookmark),
+      container: app.getPath('userData'),
+    });
+    folderAccess.restore();
+  }
   if (SMOKE) {
     runSmoke();
     return;
   }
   registerIpc();
+  session.defaultSession.setPermissionRequestHandler(microphone.create({
+    prefs: systemPreferences,
+    onDenied: () => microphoneRefused().catch(() => {}),
+  }));
   updater.init({ onChange: () => pushState(), openExternal });
   buildMenu();
   const settings = registry.getSettings();

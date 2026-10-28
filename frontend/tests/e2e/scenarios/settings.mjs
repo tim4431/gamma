@@ -3,6 +3,8 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
+import { TOPBAR } from "../../../src/app/topbarItems.js";
+import { VIEWER_TOOLS } from "../../../src/app/viewerToolItems.js";
 
 export async function settingsScenarios(env) {
   const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until, sleep, flags } = env;
@@ -132,6 +134,7 @@ export async function settingsScenarios(env) {
       // section keeps only the parallel requests.
       await row(page, "Parallel requests").waitFor();
       assertEq(await row(page, "Translation effort").count(), 0);
+      assertEq(await row(page, "Translation speed").count(), 0);
       await google.getByRole("button", { name: "Remove key", exact: true }).click();
       await until(() => google.innerText().then((text) => text.includes("Not set up")));
       assertEq((await user.api("/api/ai/models")).translate_engines.map((e) => e.id).join(), "engine:microsoft");
@@ -820,10 +823,10 @@ export async function settingsScenarios(env) {
       assertEq(await sync("Theme"), "saved");
       // the top bar's buttons are an account preference shown under Appearance
       await row(page, "Sync pill").getByRole("button", { name: "Every page", exact: true }).click();
-      await until(async () => (await user.api("/api/prefs/profile")).value?.topbar?.sync === "always");
+      await until(async () => (await user.api("/api/prefs/profile")).value?.topbar?.modes?.sync === "always");
       assertEq(await sync("Theme"), "saved", "the change spins only Top bar");
       await row(page, "Sync pill").getByRole("button", { name: "Synced pages", exact: true }).click();
-      await until(async () => (await user.api("/api/prefs/profile")).value?.topbar?.sync === "auto");
+      await until(async () => (await user.api("/api/prefs/profile")).value?.topbar?.modes?.sync === "auto");
       await nav(page, "Keyboard").click();
       await row(page, "Enter makes").getByRole("button", { name: "New line", exact: true }).click();
       await until(async () => (await user.api("/api/prefs/profile")).value?.enterNewNote === false);
@@ -834,7 +837,7 @@ export async function settingsScenarios(env) {
   await step("settings: the top bar's buttons hide into the account menu, open their panels from it, and come back with Reset", async () => {
     const { ctx, page } = await setup();
     try {
-      const topbar = () => user.api("/api/prefs/profile").then((r) => r.value?.topbar);
+      const topbar = () => user.api("/api/prefs/profile").then((r) => r.value?.topbar?.modes);
       const onBar = (id) => page.locator(`.topbar [data-guide="${id}"]`).count();
       const menu = page.locator('[data-guide="account.menu"]');
       const openMenu = () => page.locator('[data-guide="header.account"]').click();
@@ -872,11 +875,174 @@ export async function settingsScenarios(env) {
       await nav(page, "Appearance").click();
       await page.locator('.settingsPane .setSection[data-setting="Top bar"]').getByRole("button", { name: "Reset", exact: true }).click();
       await until(async () => (await topbar())?.tasks === "always");
-      assertEq(JSON.stringify(await topbar()), JSON.stringify({ add: "always", tasks: "always", search: "always", share: "always", sync: "auto", inbox: "always", view: "always" }));
+      assertEq(JSON.stringify(await topbar()), JSON.stringify(TOPBAR.DEFAULT.modes));
       await page.getByRole("button", { name: "Close settings", exact: true }).click();
       for (const id of ["header.tasks", "header.search", "header.inbox", "header.view"]) assertEq(await onBar(id), 1, `${id} is back on the bar`);
       assertNoProblems(page);
     } finally { await ctx.close(); }
+  });
+
+  // A bar's rows in Appearance: the list after its section's header, a row's
+  // grip, and the ids in the order the rows show.
+  const barList = (page, title) => page.locator(`.settingsPane .setSection[data-setting="${title}"] + .barLayoutList`);
+  const grip = (list, id) => list.locator(`.barLayoutRow[data-order-id="${id}"] .barLayoutGrip`);
+  const listed = (list) => list.locator(".barLayoutRow").evaluateAll((els) => els.map((el) => el.dataset.orderId));
+
+  await step("settings: a top bar button's grip drags it into place, the bar follows through a reload, an arrow key moves a row, and Reset puts the order back", async () => {
+    const { ctx, page } = await setup();
+    try {
+      const topbar = () => user.api("/api/prefs/profile").then((r) => r.value?.topbar);
+      // the configurable buttons in the header's own order, Account last
+      const header = () => page.locator('.topbar [data-guide^="header."]').evaluateAll((els) => els.map((el) => el.dataset.guide.slice(7))
+        .filter((id) => ["add", "tasks", "search", "view", "account"].includes(id)).join());
+      assertEq(await header(), "add,tasks,search,view,account");
+      await openSettings(page);
+      await nav(page, "Appearance").click();
+      const list = barList(page, "Top bar");
+      // a real drag: Search's grip pressed and moved over the top half of Add's row
+      await grip(list, "search").scrollIntoViewIfNeeded();
+      const from = await grip(list, "search").boundingBox();
+      const add = await list.locator('.barLayoutRow[data-order-id="add"]').boundingBox();
+      await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(from.x + from.width / 2, add.y + add.height / 4, { steps: 12 });
+      await page.locator(".dragGhost.barLayoutGhost").waitFor();
+      const bar = await list.locator(".dropBar").boundingBox();
+      assert(Math.abs(bar.y + 1 - add.y) <= 2, `the drop bar marks Add's top edge: bar ${JSON.stringify(bar)}, row ${JSON.stringify(add)}`);
+      assertEq(await list.locator('.barLayoutRow[data-order-id="search"].lifted').count(), 1, "the dragged row is lifted");
+      await page.mouse.up();
+      await until(async () => (await topbar())?.order?.[0] === "search", { what: "Search first in the stored order" });
+      assertEq((await listed(list)).slice(0, 3).join(), "search,add,tasks");
+      assertEq(await page.locator(".dragGhost").count(), 0, "the ghost is gone after the drop");
+      await page.getByRole("button", { name: "Close settings", exact: true }).click();
+      await until(async () => (await header()) === "search,add,tasks,view,account", { what: "the header in the new order" });
+      await page.reload();
+      await page.waitForSelector(".folderNewBtn");
+      await until(async () => (await header()) === "search,add,tasks,view,account", { what: "the order kept through a reload" });
+      // the keyboard: ArrowDown on Add's grip moves it one place, says where, and keeps the focus
+      await openSettings(page);
+      await nav(page, "Appearance").click();
+      await grip(list, "add").focus();
+      await page.keyboard.press("ArrowDown");
+      await until(async () => (await listed(list)).slice(0, 3).join() === "search,tasks,add", { what: "Add one row down" });
+      const said = await list.locator("xpath=following-sibling::*[contains(@class, 'srOnly')][1]").innerText();
+      assert(/^Add: 3 of \d+$/.test(said), `the live region says the new place: ${said}`);
+      assertEq(await grip(list, "add").evaluate((el) => el === document.activeElement), true, "the focus stays on the moved row's grip");
+      await until(async () => (await topbar())?.order?.slice(0, 3).join() === "search,tasks,add", { what: "the key's move stored" });
+      // a drag that ends left of the grip and just below the last row still
+      // lands, last; off the pane the drop bar goes
+      const rows = await listed(list);
+      await list.locator(`.barLayoutRow[data-order-id="${rows.at(-1)}"]`).scrollIntoViewIfNeeded();
+      const lastRow = await list.locator(`.barLayoutRow[data-order-id="${rows.at(-1)}"]`).boundingBox();
+      const start = await grip(list, "search").boundingBox();
+      const pane = await page.locator(".settingsPane").boundingBox();
+      await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2);
+      await page.mouse.down();
+      await page.mouse.move(pane.x - 20, lastRow.y + lastRow.height / 2, { steps: 12 });
+      await page.locator(".dragGhost.barLayoutGhost").waitFor();
+      assertEq(await list.locator(".dropBar").count(), 0, "no drop bar where a release would not land");
+      await page.mouse.move(start.x - 12, lastRow.y + lastRow.height + 8, { steps: 6 });
+      const endBar = await list.locator(".dropBar").boundingBox();
+      assert(endBar && Math.abs(endBar.y + 1 - (lastRow.y + lastRow.height)) <= 2, `the drop bar marks the last row's bottom: ${JSON.stringify(endBar)}`);
+      await page.mouse.up();
+      await until(async () => (await listed(list)).at(-1) === "search", { what: "Search last in the list" });
+      await until(async () => {
+        const order = (await topbar())?.order || [];
+        return order.indexOf("search") > order.indexOf(rows.at(-1));
+      }, { what: "Search after the last row in the stored order" });
+      // Reset: the default order and modes, and nothing left to reset
+      const reset = page.locator('.settingsPane .setSection[data-setting="Top bar"]').getByRole("button", { name: "Reset", exact: true });
+      await reset.click();
+      await until(async () => JSON.stringify(await topbar()) === JSON.stringify(TOPBAR.DEFAULT), { what: "the default layout stored" });
+      assertEq(await reset.isDisabled(), true, "Reset is off at the default");
+      assertEq((await listed(list)).slice(0, 3).join(), "add,tasks,search");
+      await page.getByRole("button", { name: "Close settings", exact: true }).click();
+      await until(async () => (await header()) === "add,tasks,search,view,account", { what: "the header back in the default order" });
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("settings: a right-click on the top bar's empty space offers Customize top bar…, which opens its section", async () => {
+    const { ctx, page } = await setup();
+    try {
+      // a point of the bar that is none of its buttons, tabs or fields
+      const spot = await page.evaluate(() => {
+        const bar = document.querySelector(".topbar").getBoundingClientRect();
+        const y = bar.top + bar.height / 2;
+        for (let x = bar.left + bar.width / 2; x < bar.right; x += 4) {
+          const el = document.elementFromPoint(x, y);
+          if (el?.closest(".topbar") && !el.closest("button, a, input, [role='tab'], [data-popover]")) return { x, y };
+        }
+        return null;
+      });
+      assert(spot, "the top bar has empty space");
+      await page.mouse.click(spot.x, spot.y, { button: "right" });
+      await page.getByRole("menuitem", { name: "Customize top bar…", exact: true }).click();
+      await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
+      await until(() => page.evaluate(() => document.activeElement?.dataset.setting === "Top bar"), { what: "the Top bar section focused" });
+      assertEq(await nav(page, "Appearance").getAttribute("aria-current"), "page");
+      // a right-click on a button is that button's, not the bar's
+      await page.getByRole("button", { name: "Close settings", exact: true }).click();
+      await page.locator('[data-guide="header.add"]').click({ button: "right" });
+      await sleep(300);
+      assertEq(await page.getByRole("menuitem", { name: "Customize top bar…", exact: true }).count(), 0, "no Customize… on a button");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("settings: a viewer tool hidden in Settings is a row of the strip's ⋯ menu, whose Customize… opens Viewer tools; the strip follows the order in the PDF and the notebook viewer", async () => {
+    const up = await user.upload("/api/uploads", makePdf([["Viewer tools", "a page to read"]]), "tools.pdf", "application/pdf");
+    const doc = await user.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Viewer tools", source_url: up.source_url } });
+    const notebook = await user.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Tools notebook" } });
+    const paper = { width: 595.28, height: 841.89, color: "#ffffff", pattern: "blank", spacing: 24, line: "#c8d1dc" };
+    await user.api("/api/blocks", { method: "POST", body: { parent_id: notebook.id, content: "", properties: { sheet: paper, collapsed: true } } });
+    const ctx = await user.context(browser);
+    try {
+      const tools = () => user.api("/api/prefs/profile").then((r) => r.value?.viewerTools);
+      // the strip's children in order: each tool by its anchor, the ⋯ by its name
+      const strip = (page) => page.locator('[data-guide="viewer.tools"] > *').evaluateAll((els) => els
+        .map((el) => el.dataset.guide || el.getAttribute("aria-label")).filter(Boolean).join());
+      const page = await openPage(ctx, `${server.base}/?page=${doc.id}&ws=${user.ws}`);
+      await page.waitForSelector('[data-page="1"] .textLayer span', { timeout: 30000 });
+      assertEq(await strip(page), "viewer.zoom,pdf.inkButton,viewer.record,viewer.translate", "the default strip, no ⋯");
+      await openSettings(page);
+      await nav(page, "Appearance").click();
+      const list = barList(page, "Viewer tools");
+      await list.locator('.barLayoutRow[data-order-id="record"]').getByRole("button", { name: "Hidden", exact: true }).click();
+      // Home on Translate's grip: first
+      await grip(list, "translate").focus();
+      await page.keyboard.press("Home");
+      await until(async () => {
+        const value = await tools();
+        return value?.modes?.record === "hidden" && value.order[0] === "translate";
+      }, { what: "Record hidden and Translate first, stored" });
+      assertEq(await list.locator('.barLayoutRow[data-order-id="record"].off').count(), 1, "a hidden tool's row reads muted");
+      await page.getByRole("button", { name: "Close settings", exact: true }).click();
+      await until(async () => (await strip(page)) === "viewer.translate,viewer.zoom,pdf.inkButton,More tools", { what: "the strip in the new order, Record in ⋯" });
+      await page.getByRole("button", { name: "More tools", exact: true }).click();
+      const menu = page.getByRole("menu", { name: "More tools" });
+      await menu.waitFor();
+      const rows = await menu.getByRole("menuitem").evaluateAll((els) => els.map((el) => el.textContent.trim()));
+      assertEq(rows.join(" | "), "Record audio | Customize…", "the ⋯ menu: the hidden tool, then the way to its setting");
+      // the ⋯'s own press is not the strip's: a right-click on it offers no Customize viewer tools…
+      await page.getByRole("button", { name: "More tools", exact: true }).click({ button: "right" });
+      await sleep(300);
+      assertEq(await page.getByRole("menuitem", { name: "Customize viewer tools…", exact: true }).count(), 0, "no strip menu on the ⋯");
+      await menu.getByRole("menuitem", { name: "Customize…", exact: true }).click();
+      await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
+      await until(() => page.evaluate(() => document.activeElement?.dataset.setting === "Viewer tools"), { what: "the Viewer tools section focused" });
+      assertEq(await nav(page, "Appearance").getAttribute("aria-current"), "page");
+      await page.getByRole("button", { name: "Close settings", exact: true }).click();
+      // the notebook viewer: the same order, less what only a PDF has
+      await page.goto(`${server.base}/?page=${notebook.id}&ws=${user.ws}`);
+      await page.locator(".noteSheetBar button[aria-label='Notebook view']").first().click();
+      await page.waitForSelector(".nbViewer .nbSheet", { timeout: 15000 });
+      await until(async () => (await strip(page)) === "viewer.zoom,pdf.inkButton,viewer.paper,viewer.notesView,More tools", { what: "the notebook's strip" });
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await user.api("/api/prefs/profile", { method: "PATCH", body: { set: { viewerTools: VIEWER_TOOLS.DEFAULT } } });
+    }
   });
 
   await step("settings: navigation, search, scoped management, and preferences survive reload", async () => {

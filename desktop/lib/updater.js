@@ -21,7 +21,10 @@
 // Nothing here runs in dev (`app.isPackaged` false: electron-updater needs
 // the packaged app-update.yml), under the test harness, or in a Microsoft
 // Store install (`process.windowsStore`: the Store delivers updates and
-// there is no installer for electron-updater to run).
+// there is no installer for electron-updater to run). Nor in the Mac App
+// Store build (`process.mas`), which may not update any other way than
+// through the App Store (App Review 2.4.5) and is never told about a
+// GitHub release.
 
 const { app } = require('electron');
 
@@ -66,6 +69,10 @@ function init(opts = {}) {
   }
   if (process.windowsStore) {
     set({ status: 'unsupported', error: 'store' });
+    return;
+  }
+  if (process.mas) {
+    set({ status: 'unsupported', error: 'mas' });
     return;
   }
   let mod;

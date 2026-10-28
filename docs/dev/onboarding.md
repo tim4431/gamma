@@ -161,11 +161,13 @@ tour.
 
 **The PDF viewer** and **The notebook view** (`tours/viewer.js`) walk the
 viewer's left edge top to bottom: the PDF's table of contents (`optional`:
-only a PDF with an outline has it), then the tool column. The two viewers
-share the column up to the pen (zoom out, zoom in, fit to width, the pen,
-in the same places in both). The zoom step's scene visits the three zoom
-buttons; the pen step's presses the pen and writes a stroke on the page.
-What only one viewer has comes after them: Translate (right-click for the
+only a PDF with an outline has it), then the tool column. Both viewers'
+columns follow the account's one Viewer tools order, and a tour or hint on
+screen puts every tool on the column, hidden ones too
+([settings.md](settings.md#bars-order-and-modes)). The zoom step's scene
+visits the three zoom buttons; the pen step's presses the pen and writes a
+stroke on the page. What only one viewer has comes after them in the
+default order: Translate (right-click for the
 whole paper; a selected passage is translated by itself) and, on a touch screen
 (`requires: {touch: true}`), the selection mode on a PDF; Paper and Notes
 view in the notebook view. So the
@@ -650,9 +652,12 @@ selects by class name, text or DOM position.** It selects by anchor id.
   element carries, or referencing an unregistered id from a tour fails
   `npm test`; the scan also reads a conditional
   `data-guide={cond ? "id" : undefined}`.
-- The topbar's buttons a person can hide (Settings → Appearance › Top bar,
-  [settings.md](settings.md#the-top-bars-buttons)) are all on the bar while
-  a tour runs or a hint is offered, so a step's `header.*` anchor is there.
+- The topbar's buttons and the viewer strip's tools a person can hide
+  (Settings → Appearance › Top bar and › Viewer tools,
+  [settings.md](settings.md#bars-order-and-modes)) are all on their bars
+  while a tour runs or a hint is offered, so a step's `header.*` or
+  `viewer.*` anchor is there. A step names no position on a bar: the
+  order is the user's.
 - Anchors move with the JSX they decorate. When a control is deleted, delete
   its registry row; the tests then name every step that referenced it. The
   registry may keep a control no tour points at yet (`header.search`,

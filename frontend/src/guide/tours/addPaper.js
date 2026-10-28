@@ -51,7 +51,7 @@ export default {
       placement: "left",
       requires: { phone: false },
       title: T("Coming from Zotero? Import is in View"),
-      body: T("Notability, Obsidian, Notion and Logseq too."),
+      body: T("Notability, GoodNotes, Obsidian, Notion and Logseq too."),
     },
   ],
 };

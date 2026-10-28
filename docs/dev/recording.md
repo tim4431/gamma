@@ -15,7 +15,9 @@ tests `backend/tests/test_recordings.py`, `frontend/tests/replay.test.mjs`,
 ## What the user sees
 
 - **Record** is the microphone button in the viewer's zoom column, after
-  the pen (the PDF and the notebook viewer alike). It asks for the
+  the pen by default (the PDF and the notebook viewer alike; hidden, it is
+  a row of the column's ⋯ menu, and it stays on the column while it
+  records, [settings.md](settings.md#bars-order-and-modes)). It asks for the
   microphone once, then a **pill** at the bottom of the viewer shows a red
   dot, the time recorded, the input level, Pause, Bookmark and Stop. A
   **recording block** appears at the end of the page's notes at once:

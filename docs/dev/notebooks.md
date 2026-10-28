@@ -181,6 +181,11 @@ No schema change: sheets are blocks and properties.
   handwriting under it is written on it"), a group on one ("handwriting
   on the page of paper above") and a text box on one ("text box on the
   page of paper above").
+- The GoodNotes import ([import_export.md](import_export.md#goodnotes-notebooks))
+  makes a notebook of a notebook whose pages are all on GoodNotes' own
+  papers: a sheet per page, of its size, colour and rule colour, its
+  pattern and pitch from the paper's design (`goodnotes_map.paper_of`),
+  a cover a blank sheet of its colour.
 - The Notability import ([import_export.md](import_export.md#notability-notes))
   makes notebooks on the server: a note with no PDF page becomes a page of
   sheets, one per Notability page, folded, each on the note's paper

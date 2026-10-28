@@ -8,6 +8,7 @@ const FORMATS = {
   markdown: { label: T("Markdown"), endpoint: "markdown-zip", instructions: T("Notes become pages; linked files travel with the selected notes. Links to deselected notes stay as written.") },
   gamma: { label: T("Gamma"), endpoint: "gamma", instructions: T("Selected pages include their notes, attachments and chats. Pages already in your library are kept unchanged.") },
   notability: { label: T("Notability"), endpoint: "notability", instructions: T("Each note becomes a page with its handwriting, typed text, pictures and recordings. Notes already imported are skipped.") },
+  goodnotes: { label: T("GoodNotes"), endpoint: "goodnotes", instructions: T("Each notebook becomes a page with its handwriting, typed text, pictures and recordings. Notebooks already imported are skipped.") },
 };
 export function importFormat(source, file) {
   const format = FORMATS[source];

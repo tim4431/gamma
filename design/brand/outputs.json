@@ -41,7 +41,7 @@
     "source": "marks/favicon.svg",
     "destination": "desktop/assets/icon.png",
     "kind": "png",
-    "size": 512
+    "size": 1024
   },
   {
     "source": "marks/favicon.svg",

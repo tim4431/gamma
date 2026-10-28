@@ -8,7 +8,7 @@
 # after that the pre-build phase below keeps it current.
 name: GammaIPad
 options:
-  bundleIdPrefix: net.gammapdf
+  bundleIdPrefix: net.blitzbuild
   deploymentTarget:
     iOS: "17.0"
   createIntermediateGroups: true
@@ -43,7 +43,10 @@ targets:
         codeSign: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: net.gammapdf.ipad
+        # The App Store Connect record "Gamma - PDF Reader" of team
+        # A436A36DDC, which the Mac App Store build shares
+        # (desktop/electron-builder.mas.cjs): signing needs that team.
+        PRODUCT_BUNDLE_IDENTIFIER: net.blitzbuild.gamma
         PRODUCT_NAME: Gamma
         INFOPLIST_FILE: GammaIPad/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: ""
@@ -240,7 +243,7 @@ targets:
         # The Gamma Cloud sign-in's sheet closes on gamma-ipad://cloud-signin
         # (Shell/CloudSignIn.swift).
         CFBundleURLTypes:
-          - CFBundleURLName: net.gammapdf.ipad.cloud-signin
+          - CFBundleURLName: net.blitzbuild.gamma.cloud-signin
             CFBundleURLSchemes:
               - gamma-ipad
         NSAppTransportSecurity:
@@ -274,6 +277,10 @@ targets:
             CFBundleTypeRole: Viewer
             LSHandlerRank: Owner
             LSItemContentTypes: [net.gammapdf.ntb]
+          - CFBundleTypeName: GoodNotes notebook
+            CFBundleTypeRole: Viewer
+            LSHandlerRank: Alternate
+            LSItemContentTypes: [net.gammapdf.goodnotes]
           - CFBundleTypeName: ZIP archive
             CFBundleTypeRole: Viewer
             LSHandlerRank: Alternate
@@ -290,9 +297,10 @@ targets:
             UTTypeTagSpecification:
               public.filename-extension: [ntb]
         # Types other apps own, declared for a device that has no app
-        # declaring them: Markdown, and Notability's .note (the identifier
-        # its own Info.plist exports). Where Notability is installed its
-        # declaration wins.
+        # declaring them: Markdown, Notability's .note (the identifier
+        # its own Info.plist exports), and GoodNotes' .goodnotes, under an
+        # identifier of Gamma's since GoodNotes' own is not published.
+        # Where the app is installed its declaration wins.
         UTImportedTypeDeclarations:
           - UTTypeIdentifier: net.daringfireball.markdown
             UTTypeDescription: Markdown document
@@ -305,6 +313,11 @@ targets:
             UTTypeConformsTo: [public.data, public.content]
             UTTypeTagSpecification:
               public.filename-extension: [note]
+          - UTTypeIdentifier: net.gammapdf.goodnotes
+            UTTypeDescription: GoodNotes notebook
+            UTTypeConformsTo: [public.data, public.content]
+            UTTypeTagSpecification:
+              public.filename-extension: [goodnotes]
         # The web app's recordings (getUserMedia in the web view).
         NSMicrophoneUsageDescription: Gamma records audio for the recordings you make with your notes.
         # A file picker in the web view offers the camera, and the share
@@ -330,7 +343,7 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
-        PRODUCT_BUNDLE_IDENTIFIER: net.gammapdf.ipad.tests
+        PRODUCT_BUNDLE_IDENTIFIER: net.blitzbuild.gamma.tests
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/Gamma.app/Gamma
         BUNDLE_LOADER: $(TEST_HOST)
 schemes:

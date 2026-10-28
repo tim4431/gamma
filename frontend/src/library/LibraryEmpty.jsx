@@ -23,7 +23,7 @@ export default function LibraryEmpty({ onOpenLink, onUpload, onNewPage, onImport
       text: t("A blank outline for ideas, meeting notes or a reading list.") },
     { id: "import", icon: DownloadIcon, onClick: onImport,
       title: t("Import a library"),
-      text: t("From Zotero, Notability, Obsidian, Logseq, Notion or a Markdown folder.") },
+      text: t("From Zotero, Notability, GoodNotes, Obsidian, Logseq, Notion or a Markdown folder.") },
   ];
   return (
     <section className="libEmpty" data-guide="home.empty" aria-labelledby="libEmptyTitle">

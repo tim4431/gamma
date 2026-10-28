@@ -28,6 +28,7 @@ export const SECTION_PREFS = Object.freeze({
     Colors: ["palette"],
     Library: ["recentThumbs", "fileLabels"],
     "Top bar": ["topbar"],
+    "Viewer tools": ["viewerTools"],
     Tours: ["suggestTours", "tourProgress"],
   }),
   reading: sections({
@@ -39,8 +40,10 @@ export const SECTION_PREFS = Object.freeze({
   }),
   translation: sections({
     Language: ["language"],
-    "Viewer & selection": ["translateEnabled", "translateLang", "selTranslate", "selTranslateAuto"],
-    Speed: ["translateEffort", "translateParallel"],
+    // Its Translation button is the strip's translate mode, a second view
+    // of Appearance › Viewer tools.
+    "Viewer & selection": ["viewerTools", "translateLang", "selTranslate", "selTranslateAuto"],
+    Speed: ["translateEffort", "translateSpeed", "translateParallel"],
   }),
   keyboard: sections({
     Shortcuts: ["keybindings"],

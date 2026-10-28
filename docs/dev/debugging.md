@@ -17,6 +17,14 @@ choices take httptools for HTTP and, on Linux and macOS, uvloop for the event
 loop (pip skips uvloop on Windows by its platform marker); `--reload` watches
 with watchfiles. No command names them.
 
+CI and the Docker image run Python 3.12 and the iPad 3.13, so a venv on a
+newer Python may accept what they refuse. `tests/test_python_versions.py`
+fails on either kind locally: syntax past 3.11, and an annotation that does
+not evaluate (from 3.14 annotations are evaluated only when asked for, before
+it as each function is defined, so a class whose method is named `int` stops
+its module importing at a later method's `-> int | None`; such a module takes
+`from __future__ import annotations`).
+
 Frontend (React + Vite):
 
 ```bash
@@ -814,6 +822,8 @@ The scenarios live in `tests/e2e/scenarios/`:
     written on.
   - With no viewer shown, Play docks the player over the notes, and Escape
     closes it.
+  - With Record hidden from the viewer's strip, its ⋯ menu starts a
+    recording, and the button stays on the strip until it stops.
 - `textBoxes.mjs`: text boxes ([text_boxes.md](text_boxes.md)) on a PDF
   page and on a sheet in both views. It covers the Text tool's click and
   drag, typing, the stored block after a reload, the notes marker's jump,

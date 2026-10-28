@@ -7,7 +7,7 @@ Where every setting lives, and how the Settings dialog is built.
 | Layer | Storage | Examples |
 |---|---|---|
 | Per browser | `localStorage`, one `gamma-*` key per preference, all declared in `PREFS` ([frontend/src/app/prefDefs.js](../../frontend/src/app/prefDefs.js)) with scope `browser` — except `gamma-link-name`, the share view's display name for a visitor without an account, owned by `src/collaboration/linkName.js` because the fetch wrapper reads it outside React | what describes this device: the interface size (`gamma-ui-scale`, applied pre-paint by `index.html`), the status bar, the handwriting input rules, finger undo, the hover preview, the tool strip's eraser and lasso choices and, in the iPad app, what the Apple Pencil's gestures do and its haptics (`gamma-ink-*`: `gamma-ink-pen-only`, `gamma-ink-auto-pen`, `gamma-ink-pressure`, `gamma-ink-finger-undo`, `gamma-ink-hover-preview`, `gamma-ink-eraser`, `gamma-ink-eraser-size`, `gamma-ink-lasso`, `gamma-ink-pencil-tap`, `gamma-ink-pencil-squeeze`, `gamma-ink-haptics`, the ruler's units `gamma-ink-ruler-units` and the zoom window's height `gamma-ink-zoom-height`; the presets themselves, `gamma-ink-tools`, and the Shapes tool's kind and fill are the account's), the style of new text boxes (`gamma-text-box-style`), whether Inbox items ring as system notifications (`gamma-inbox-notifications`, `inboxSystemNotifications`: the browser's permission is this device's; Settings → Appearance › Interface › Inbox notifications, [comments.md](comments.md) "The Inbox") and how a recording plays back (`gamma-replay-mode`, `gamma-replay-rate`, `gamma-replay-follow`; its lead-in `gamma-replay-lead-in` and the automatic transcript `gamma-recording-transcribe` are the account's), the metadata and translation model picks and dictation (they name this server's provider entries, like the chat model `gamma-chat-model`), and whether a shown "Linked from" section is folded (`gamma-backlinks-collapsed`; whether it is shown at all is the account's `gamma-backlinks`); outside `PREFS`, diagnostics tracing (`gamma-debug-log`) |
-| Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache, and `gamma-profile-seen` keeps the profile as this browser last took it from an account or sent it, whichever account that was (which local value is this browser's own, "Reading & editing" below) | appearance (theme — the pre-paint script in `index.html` reads `gamma-theme`, resolves System to light or dark the way App.jsx's theme effect does and sets `data-theme` with its `data-scheme`, so the first frame has the right tokens ([ui-design.md](ui-design.md#tokens)) — flip page colors, the colour palette (`palette`, the swatches highlights, pens and text boxes offer), whether tours are suggested, `suggestTours`, and which tours the account has seen, `tourProgress`, written by the guide and shown nowhere, [onboarding.md](onboarding.md#storage)), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, smooth wheel scrolling, how search opens, the handwriting habits `gamma-ink-draw-hold`, `gamma-ink-scribble-erase`, `gamma-ink-eraser-return` and `gamma-ink-eraser-filter`, the tool strip's presets `gamma-ink-tools`, and the Shapes tool's kind and fill `gamma-ink-shape-kind` and `gamma-ink-shape-fill`), translation (button and language, selection translation, effort, parallel requests), the Enter key, library display and PDF fetching, the topbar's buttons (`topbar`: which show, and when, [below](#the-top-bars-buttons)), chat behaviour (tools switch, per-kind tool permissions, reasoning effort, speed, the login connection check, tool limits, snapshot clearing), context budgets, prompts, keyboard shortcuts (`keybindings`: command id → chord or null, [hotkeys.md](hotkeys.md)) |
+| Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache, and `gamma-profile-seen` keeps the profile as this browser last took it from an account or sent it, whichever account that was (which local value is this browser's own, "Reading & editing" below) | appearance (theme — the pre-paint script in `index.html` reads `gamma-theme`, resolves System to light or dark the way App.jsx's theme effect does and sets `data-theme` with its `data-scheme`, so the first frame has the right tokens ([ui-design.md](ui-design.md#tokens)) — flip page colors, the colour palette (`palette`, the swatches highlights, pens and text boxes offer), whether tours are suggested, `suggestTours`, and which tours the account has seen, `tourProgress`, written by the guide and shown nowhere, [onboarding.md](onboarding.md#storage)), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, smooth wheel scrolling, how search opens, the handwriting habits `gamma-ink-draw-hold`, `gamma-ink-scribble-erase`, `gamma-ink-eraser-return` and `gamma-ink-eraser-filter`, the tool strip's presets `gamma-ink-tools`, and the Shapes tool's kind and fill `gamma-ink-shape-kind` and `gamma-ink-shape-fill`), translation (language, selection translation, effort, parallel requests; the viewer's button is the strip's translate mode), the Enter key, library display and PDF fetching, the topbar's buttons and the viewer's side strip (`topbar`, `viewerTools`: their order, and where each item shows, [below](#bars-order-and-modes)), chat behaviour (tools switch, per-kind tool permissions, reasoning effort, speed, the login connection check, tool limits, snapshot clearing), context budgets, prompts, keyboard shortcuts (`keybindings`: command id → chord or null, [hotkeys.md](hotkeys.md)) |
 | Session only | React state, nothing stored | the Ctrl+scroll text size of the notes list and the chat transcript (`useTextScale` in [Widgets.jsx](../../frontend/src/shared/ui/Widgets.jsx)) — resets on reload |
 | Per account, synced | `/api/prefs/{key}` (small JSON KV: the account-wide keys in `users.db` `user_prefs`, the others in the workspace's `pages.db` `workspace_prefs`, [user_db.md](user_db.md)) | per account AND workspace, kept in that workspace and left out of its exports and backups: open tabs (`open-tabs`), the recently-viewed queue (`recent-views`), reading positions (`read-pos`) — they name one workspace's pages (pins are no pref: a pinned page or folder carries `properties.pinned` on its block, [home_library.md](home_library.md) "Pinned"); account-wide: active AI key (`ai-provider`) and the preference profile (`profile`, previous row). Server wins on load, localStorage (keyed `user@workspace`) is the instant-paint cache. The recents-card cover thumbnails are workspace data, through their own `/api/page-snaps` store (`page_snaps` in the workspace's `data.db` — over the prefs size cap) |
 | Per account, seen notices | the account-wide `notices-seen` prefs key (`db.NOTICES_SEEN_PREF_KEY`), `{notice id: fingerprint}`, written only by `POST /api/notices/{id}/seen` (below, "Notices") | which release and which log error the account has already looked at |
@@ -213,7 +213,7 @@ and integration tokens get an empty list. The sources:
 
 | id | who | pane | tone | fires when | fingerprint |
 |---|---|---|---|---|---|
-| `update` | admins | Server | warn | a newer GitHub release than this build, or for a `-dev` Docker build a newer build of its branch (`version.check`, six-hour cache; the endpoint is sync on purpose); never in a Microsoft Store install (`GAMMA_UPDATES=store`), where the Store delivers it days later | the newer version |
+| `update` | admins | Server | warn | a newer GitHub release than this build, or for a `-dev` Docker build a newer build of its branch (`version.check`, six-hour cache; the endpoint is sync on purpose); never in a Microsoft Store install (`GAMMA_UPDATES=store`), where the Store delivers it days later, nor in the Mac App Store build, whose server does not check (`GAMMA_UPDATE_CHECK=off`) | the newer version |
 | `log-errors` | admins | Server | error | an error was logged since the last look (`logbuf.last_seq("error")`) | server start time + the newest error's seq |
 | `db-damage` | admins | Server | error | the latest integrity check of a database file failed — a snapshot's copy, or Server → Databases → Check now (`integrity.failures()`, one small JSON file) | a digest of the damaged files and when each was found; a file that passes a later check drops out |
 | `backup-failed` | everyone | Backups | error | a backup task of the account is in state `failed` (`backup_schedule.list_tasks`) | each failed task's id + its last run |
@@ -321,11 +321,13 @@ Preferences:
   with the thumbnails / folders / labels switches
   ([SettingsLibraryDisplay.jsx](../../frontend/src/settings/SettingsLibraryDisplay.jsx)),
   **Interface** (this browser's): the interface size, the status bar and
-  Inbox notifications (`inboxSystemNotifications`), **Top bar** (a row per
-  topbar button with the modes it offers, and Reset, [below](#the-top-bars-buttons)),
-  and last **Suggest tours** (`suggestTours`: off, no tour or hint is
-  offered by itself, [onboarding.md](onboarding.md)). The old `library`
-  pane id is an alias of this pane.
+  Inbox notifications (`inboxSystemNotifications`), **Top bar** and
+  **Viewer tools** (a row per topbar button or strip tool, in the bar's
+  order, with a grip to drag it and the modes it offers, and Reset,
+  [below](#bars-order-and-modes)), and last **Suggest tours**
+  (`suggestTours`: off, no tour or hint is offered by itself,
+  [onboarding.md](onboarding.md)). The old `library` pane id is an alias
+  of this pane, and `topbar` and `viewer-tools` open it at their sections.
 - **Reading & editing**: how papers and notes behave, one section per
   subject. **PDFs**: imported annotations (a Keep / Remove segmented choice),
   open-access fallback, metadata auto-fetch and saving external PDFs.
@@ -427,7 +429,9 @@ Preferences:
 - **Language and Translation** (pane id `translation`,
   [SettingsTranslation.jsx](../../frontend/src/settings/SettingsTranslation.jsx)),
   in four sections. **Language**: the interface language (a `MenuSelect`:
-  System / English / 中文, [i18n.md](i18n.md)). **Viewer & selection**: the viewer's button and the
+  System / English / 中文, [i18n.md](i18n.md)). **Viewer & selection**: the viewer's
+  Translation button (the strip's translate mode in `viewerTools`: on, the
+  button is on the strip; off, a row of its ⋯ menu, [below](#bars-order-and-modes)), the
   language (`translateLang`; with none stored, the first of the browser's
   languages on offer — `defaultTranslateLang` in `app/prefDefs.js`, en-* →
   English — else Simplified Chinese), the selection popup's translate button
@@ -437,7 +441,10 @@ Preferences:
   (free) row with only Test (no key), the Google / Youdao credential rows
   with Test / Edit / remove. **Speed**: translation effort (Default asks for
   the model's lowest level; hidden while a translation service is picked, or
-  with no AI connection) and parallel requests.
+  with no AI connection), translation speed (Default / flex / fast, also
+  hidden for services), and parallel requests. `translateSpeed` syncs with
+  the account independently of chat speed; unsupported tiers use the
+  provider's usual routing.
 - **Keyboard** ([SettingsKeyboard.jsx](../../frontend/src/settings/SettingsKeyboard.jsx),
   [hotkeys.md](hotkeys.md)): a filter box in the head, then **Shortcuts**
   (the one account section, "Reset all" as its action) listing every command
@@ -745,7 +752,8 @@ one caption per pane. Picking one opens the pane and focuses the matching
 carry their own × (the browser's is hidden).
 Legacy pane names resolve through `resolveSettingsPane`; old notes, search,
 viewer, context, ai-advanced and prompts entry points also jump to their
-section.
+section, as do `handwriting`, `topbar` and `viewer-tools`, the targets of
+the strip's and the bars' settings rows.
 
 The desktop surface has a persistent search header and labeled sidebar. On
 phones the Back button opens a labeled category list. All controls remain
@@ -798,48 +806,154 @@ switches once, at 208 ms, with every section in place (at once after a
 hover); read section by section it made 12 in five waves, the sections
 jumping down four times as the ones above them filled.
 
-## The top bar's buttons
+## Bars: order and modes
 
-Settings → Appearance › Top bar sets, for each of the topbar's buttons,
-whether it shows. One registry lists them in the bar's order,
-[app/topbarItems.js](../../frontend/src/app/topbarItems.js): Add,
-Background tasks, Search, Share, the sync pill, the Inbox and the View
-menu. Each entry gives its key in the preference, the popover it opens,
-its row's label and hint, its search synonyms and the modes it offers,
-the first being its default. The pane draws one `Segmented` row per
-entry, and the settings search lists one entry per row. A new button is a
-registry entry, a glyph in the pane and a gate where App renders it.
+Two bars take an order and a mode per item from the user: the topbar, and
+the viewer's side strip (the column of buttons at the left edge of the PDF
+and the notebook view, `.pdfZoomOverlay`). Settings → Appearance › Top bar
+and › Viewer tools edit them. Both run on one pure model,
+[shared/model/barLayout.js](../../frontend/src/shared/model/barLayout.js)
+(`tests/barLayout.test.mjs`).
 
-The `topbar` preference follows the account and holds a mode per button:
+**The registries.** A bar is a list of items in their default order, given
+to `defineBar`:
+
+- [app/topbarItems.js](../../frontend/src/app/topbarItems.js), `TOPBAR`:
+  Add, Background tasks, Search, Share, the sync pill, the Inbox and the
+  View menu.
+- [app/viewerToolItems.js](../../frontend/src/app/viewerToolItems.js),
+  `VIEWER_TOOLS`: Zoom (zoom out, zoom in and fit to width as one item, the
+  three buttons the tour's `viewer.zoom` points at), Handwriting tools
+  (the pen), Record audio, Translate, Notebook paper, Notes view and
+  Selection mode. The default order is the strip's former fixed one, so
+  the PDF and notebook tours meet the tools they share in the same places.
+
+Each entry gives its id (its key in the preference), its Settings row's
+label and hint (a strip tool's hint says where it applies when that is not
+everywhere: "PDFs only", "Notebooks only", "On touch screens"), its search
+synonyms and the modes it offers, the first being its default. A topbar
+entry also names the popover it opens and, with `phone: false`, that the
+phone's bottom bar has no room for it.
+
+**What is stored.** `topbar` (`gamma-topbar`) and `viewerTools`
+(`gamma-viewer-tools`) are account preferences, each
+`{ order: [ids], modes: { id: mode } }`. `bar.normalize` is their codec:
+
+- an unknown id is dropped, and a repeated one kept where it first stands;
+- an id the order lacks (an item a later release adds) goes right after
+  the item before it in the registry, at the start when it is the first,
+  so it lands beside its neighbours wherever the user put them;
+- a mode its item does not offer becomes the item's default;
+- anything but an object reads as the default, and so does a value in an
+  earlier shape (the topbar's flat `{ id: mode }` map): there is no
+  migration.
+
+Consumers call `bar.read(value)`. The edits Settings makes are
+`bar.setMode(value, id, mode)` and `bar.move(value, id, to, isVisible)`:
+`to` is a slot among the items `isVisible` keeps (`moveVisible`, the same
+step the handwriting strip's presets take), and the others keep their
+places. `bar.isDefault` compares order and modes.
+
+**The modes:**
 
 - **always**: on the bar.
-- **auto**: on the bar while it has something to say. Background tasks
-  shows while a task runs, failed or has a file to download, and the Inbox
-  while something is unread. The sync pill's auto is "on the pages that
-  sync", which `MirrorPopover` judges itself, and its always is "on every
-  page of a workspace that syncs some".
-- **hidden**: a row of the account menu instead.
+- **auto** (topbar only): on the bar while it has something to say.
+  Background tasks shows while a task runs, failed or has a file to
+  download, and the Inbox while something is unread. The sync pill's auto
+  is "on the pages that sync", which `MirrorPopover` judges itself, and
+  its always is "on every page of a workspace that syncs some".
+- **hidden**: a row of the bar's menu instead: the account menu for the
+  topbar (More on a phone), the ⋯ menu at the strip's end for the strip.
 
-A button off the bar is never gone. Its row in the account menu opens the
-same popover, and its shortcut still works, Ctrl+F for Search. The
-popover's anchor stays where the button would be, zero wide (`.offBar` in
-app.css), so the popover opens in its usual place. An open popover keeps
-an auto button on the bar, so the bell does not vanish while its items
-are read. While a tour runs or a hint is offered, every button is on the
-bar, since tours point at them (`header.add`, `header.view`).
+**Where each item goes.** `bar.place(value, { phone, guide, open, active,
+pinned })` returns `[{ id, item, at: "bar" | "menu" }]` in the layout's
+order, and App renders each bar from it through a renderer per id, so the
+Tab order is the order seen. On a phone an item marked `phone: false` is a
+menu row in every mode. Otherwise an item is on the bar while a tour runs
+or a hint is offered (`guide`: steps point at every item), while it is
+`pinned`, or as its mode says (an auto item with something to say in
+`active`, or whose popover is `open`). Whether an item applies here at all
+is App's to say; `place` only says where it would go.
 
-On a phone the bottom bar follows the same preference for Add, Search, a
-page's Share and the sync pill. Background tasks, the Inbox and the View
-menu never fit there, so they are rows of the More sheet in every mode
-(`phone: false` in the registry); the More sheet is the same account
-menu. One function, `topbarPlaces`, places the buttons for both layouts,
-and `tests/topbarItems.test.mjs` covers it.
+**The topbar.** A button off the bar is never gone. Its row in the account
+menu opens the same popover, and its shortcut still works, Ctrl+F for
+Search. The popover's anchor stays where the button would be, zero wide
+(`.offBar` in app.css), so the popover opens in its usual place. An open
+popover keeps an auto button on the bar, so the bell does not vanish while
+its items are read. The account menu lists the hidden buttons in the
+layout's order. On a phone the bottom bar follows the same layout for Add,
+Search, a page's Share and the sync pill. Background tasks, the Inbox and
+the View menu never fit there, so they are rows of the More sheet in every
+mode; the More sheet is the same account menu. Home, Back and the tabs
+keep their places before the items, and Account & settings comes last:
+the account menu is where hidden buttons go, and the way back to this
+setting. A `syncPillScope` (`gamma-sync-pill`) left in a profile from
+before this preference is not read.
 
-Home, Back, the tabs and Account & settings are not configurable: the
-account menu is where hidden buttons go, and the way back to this setting.
+**The strip.** App leaves out what does not apply to the open viewer: the
+pen and Record on a read-only page, Translate outside a PDF or in a share,
+Selection mode there too and off a touch screen, Notebook paper and Notes
+view outside a notebook (Paper on a read-only one as well). A tool in use is pinned to
+the strip whatever its mode, so what was switched on from ⋯ stays in reach
+to switch off: the pen while its tools are open, Record while it records,
+Translate while it translates or shows a translation, Paper while its panel
+is open, Selection mode in rectangle mode. While some applicable tool is
+hidden the strip ends with a ⋯ button ("More tools"). Its menu opens beside
+the strip, where the translate button's menu opens (`stripMenuAt` in App),
+and lists the hidden tools in the layout's order: Zoom out, Zoom in and Fit
+to width; Handwriting tools; Record audio, or Stop recording; Translate's
+current action; Paper of this page; Notes view; Toggle selection mode;
+then Customize…. A row closes the menu. Translate hidden is how the
+translate button is turned off, so there is no separate translate switch:
+Translation › Viewer & selection › Translation button sets the same mode
+(on, always; off, hidden), and `SECTION_PREFS` lists `viewerTools` under
+both sections.
 
-A `syncPillScope` (`gamma-sync-pill`) left in a profile from before this
-preference is not read: such an account starts on Synced pages.
+**Ways to the setting.** A right-click or a held finger (`menuPress`) on
+the topbar's own background, not on a button, link, tab or popover, offers
+"Customize top bar…"; on the strip, except the translate button and the ⋯,
+which have their own menus, "Customize viewer tools…". The ⋯ menu ends with Customize….
+They call `openSettingsPane("topbar")` and `openSettingsPane("viewer-tools")`:
+pane aliases of Appearance (`settingsNavigation.js`) that the dialog's
+jump map in `SettingsDialog.jsx` takes to the section's header.
+
+**The editor.**
+[settings/BarLayoutSection.jsx](../../frontend/src/settings/BarLayoutSection.jsx)
+draws a bar as a `Section` whose action is Reset: the bar's default order
+and modes, disabled while they are. Under it is one row per item in the
+layout's order: a ⋮⋮ grip, then the `Row` with the item's icon, label and
+hint and a `Segmented` of its modes (`bar.modeLabel`, `bar.modeTip`: Shown
+and Hidden, an item's own words where those would read wrong; hidden's
+tooltip says where the item goes). A hidden item's row reads muted
+(`.off`: its icon faded, its label in the hint's colour, the hint itself
+unchanged so it stays readable).
+
+- The grip drags its row (`useDragOrder` with the "handle" start on axis
+  y, [ui-design.md](ui-design.md#reorder-by-dragging-shareduiusedragorderjs)):
+  any pointer past 6 px lifts it (`.lifted`), a `.dropBar` marks the slot
+  and a chip with its icon and label follows the pointer. A release
+  anywhere across the pane counts, and up to a row's height past either
+  end of the list, so a finger that drifts off the grip still lands; any
+  further out the bar goes, and a release there, Escape or a window blur
+  leaves the order.
+- On the focused grip, Up and Down move the row a slot, and Home and End
+  move it to either end.
+- Each move is said in a polite live region ("Search: 2 of 7"), and the
+  focus stays on the moved row's grip.
+- `filter` drops the rows that do not apply (the Inbox for an account
+  without one). They keep their places in the order, since `bar.move`
+  gets the same filter. Viewer tools shows every tool, its hint saying
+  where it applies.
+
+**Adding a bar.** A registry file calling `defineBar`, a `PREFS` entry
+with `json(BAR.normalize)`, a `SECTION_PREFS` line, a `<BarLayoutSection>`
+in its pane (`title` first, then `scope="account" prefs={…}`, since
+`tests/sectionPrefs.test.mjs` and `tests/settingsSearch.test.mjs` read the
+call site), settings-search entries from the registry, and App rendering
+`BAR.place(...)` through a renderer per id. A new item on an existing bar
+is a registry entry, its icon in the pane's map and its renderer in App.
+`tests/topbarItems.test.mjs` and `tests/viewerToolItems.test.mjs` hold the
+two registries to the model.
 
 ## Chat settings are global
 
@@ -902,6 +1016,11 @@ accept a `draft` value for dismissal protection. See
 and the panes' shared reads (`tests/settingsReads.test.mjs`).
 After building, `npm run e2e -- --only settings` exercises the actual UI:
 preferences and reload, management navigation, prompt/connection draft guards,
+the bars' layouts (a top bar row dragged by its grip, the header following
+it through a reload, an arrow key's move and what the live region says,
+Reset; a viewer tool hidden into the strip's ⋯ menu and its Customize…,
+the strip's order in the PDF and the notebook viewer; Customize top bar…
+from a right-click on the bar's empty space),
 shared chat settings, mobile layout, administrator account separation, and
 Backups › Off-site copies: an admin's alone, set up in its dialog and read
 back there with its write-only secret, the unsaved-edit question on Cancel,

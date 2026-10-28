@@ -41,7 +41,7 @@ import {
   stretchRuler, turnRuler,
 } from "./ruler.js";
 import { toolShape } from "./shapeTool.js";
-import { doublePress } from "../shared/ui/press.js";
+import { doublePress, swallowClick } from "../shared/ui/press.js";
 import { scrollBox } from "../shared/ui/placement.js";
 import { makeStabilizer } from "./stabilizer.js";
 import { duplicateOffset, measureSurface } from "./surfaceScale.js";
@@ -191,14 +191,6 @@ function wireChords() {
 // Drawings already checked for what this build cannot show (inkFeatures);
 // a drawing is told of once, through onInkFeatures.
 const featured = new WeakSet();
-
-// The click a handled pointer-up would deliver to whatever lies under it
-// (a highlight rect, a link box) is not a click on that thing.
-export function swallowClick() {
-  const swallow = (ce) => { ce.stopPropagation(); ce.preventDefault(); };
-  document.addEventListener("click", swallow, { capture: true, once: true });
-  setTimeout(() => document.removeEventListener("click", swallow, { capture: true }), 0);
-}
 
 // --- the pencil's grain --------------------------------------------------------
 // A pencil stroke is filled with its colour's grain (grain.js): one
