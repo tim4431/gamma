@@ -60,10 +60,9 @@ module.exports = {
     hardenedRuntime: false,
     notarize: false,
     extendInfo: {
+      ...base.mac.extendInfo, // the microphone's purpose string
       CFBundleShortVersionString: version,
       ElectronTeamID: TEAM_ID,
-      // Recording audio into a note, and dictation in the chat.
-      NSMicrophoneUsageDescription: 'Gamma uses the microphone when you record audio into a note or dictate to the assistant.',
       // HTTPS only, as the iPad app declares (ipad/project.yml).
       ITSAppUsesNonExemptEncryption: false,
     },

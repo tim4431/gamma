@@ -7,13 +7,14 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { SETTINGS_SEARCH, searchSettings } from "../src/settings/settingsSearch.js";
 import { TOPBAR_ITEMS } from "../src/app/topbarItems.js";
+import { VIEWER_TOOL_ITEMS } from "../src/app/viewerToolItems.js";
 
 const SETTINGS = path.join(path.dirname(fileURLToPath(import.meta.url)), "../src/settings");
 const source = (file) => fs.readFileSync(path.join(SETTINGS, file), "utf8");
 
 // The sources each pane renders: its own file and the sections it pulls in.
 const PANE_FILES = {
-  appearance: ["SettingsAppearance.jsx", "SettingsLibraryDisplay.jsx", "../app/topbarItems.js"],
+  appearance: ["SettingsAppearance.jsx", "SettingsLibraryDisplay.jsx", "BarLayoutSection.jsx", "../app/topbarItems.js", "../app/viewerToolItems.js"],
   reading: ["SettingsDialog.jsx"],
   translation: ["SettingsTranslation.jsx"],
   keyboard: ["SettingsKeyboard.jsx"],
@@ -30,16 +31,17 @@ const PANE_FILES = {
   diagnostics: ["SettingsDialog.jsx"],
 };
 // Rows a pane draws from a table (label={label}): the table holds the t()
-// call, or the T() of a registry the row translates (the Top bar's items).
+// call, or the T() of a registry the row translates (the Top bar's and the
+// Viewer tools' items).
 const FROM_TABLES = new Set(["Folder chat", "PDF chat", "Notes chat", "Single paper", "Metadata extraction", "Multi-paper total",
-  ...TOPBAR_ITEMS.map((item) => item.label)]);
+  ...TOPBAR_ITEMS.map((item) => item.label), ...VIEWER_TOOL_ITEMS.map((item) => item.label)]);
 
 const esc = (text) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 // What becomes a data-setting: a Row's or Toggle's label, a Section's or
 // PaneHead's title, an explicit data-setting.
 function rendersSetting(files, target) {
   const key = `t\\("${esc(target)}"\\)`;
-  const pattern = new RegExp(`<(?:Row|Toggle)\\b[^>]*?\\blabel=\\{${key}\\}|<(?:Section|PaneHead)\\b[^>]*?\\btitle=\\{${key}\\}|data-setting=\\{${key}\\}`);
+  const pattern = new RegExp(`<(?:Row|Toggle)\\b[^>]*?\\blabel=\\{${key}\\}|<(?:Section|BarLayoutSection|PaneHead)\\b[^>]*?\\btitle=\\{${key}\\}|data-setting=\\{${key}\\}`);
   return files.some((file) => pattern.test(source(file))
     || (FROM_TABLES.has(target) && (source(file).includes(`t("${target}")`) || source(file).includes(`T("${target}")`))));
 }

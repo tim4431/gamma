@@ -570,9 +570,13 @@ async function main() {
 
     await step('clone: the "clone" chip on a remote row makes the clone; the rows then cross-link', async () => {
       // On the remote (Alpha by URL — same server, so the session is there):
-      // the personal workspace row carries the "clone" chip on hover.
-      const g = await waitFor(async () => hook(app, (s) => s.gamma()), 'workspaces read off the remote', 15_000);
-      const origWs = g.current;
+      // the personal workspace row carries the "clone" chip on hover. Named
+      // from the session, not from the workspace shown: the page opens the
+      // one this address used last (E2E lab), and the shell reports the
+      // personal one only until the page writes ?ws= into its URL.
+      await waitFor(async () => hook(app, (s) => s.gamma()), 'workspaces read off the remote', 15_000);
+      const origWs = (await serverCall(app, '/api/session')).default_workspace;
+      assert(origWs, 'the session names the personal workspace');
       await bar.click('#wsBtn');
       const row = bar.locator(`#menu .wsItem[data-ws="${origWs}"]`);
       await row.waitFor({ timeout: 15_000 });

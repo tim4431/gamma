@@ -98,16 +98,18 @@ test("Zotero's effective highlights follow file bundling while preserving the us
   assert.equal(opts.highlights, true);
 });
 
-test("imports show options only for embedded annotations and omit inapplicable strip flags", () => {
+test("imports of embedded annotations carry the strip preference, and only Zotero reviews", () => {
   for (const source of ["gamma", "markdown", "logseq", "notability", "goodnotes"]) {
     const result = resolveImport(source, { hasPdf: true, strip: true });
     assert.equal(result.needsReview, false);
     assert.deepEqual(result.payload, { source });
   }
-  for (const source of ["annots", "zotero"]) {
-    const result = resolveImport(source, { hasPdf: true, strip: true });
-    assert.equal(result.needsReview, true);
-    assert.deepEqual(result.payload, { source, strip: true });
+  for (const [source, review] of [["annots", false], ["zotero", true]]) {
+    for (const strip of [true, false]) {
+      const result = resolveImport(source, { hasPdf: true, strip });
+      assert.equal(result.needsReview, review);
+      assert.deepEqual(result.payload, { source, strip });
+    }
   }
   assert.equal(resolveImport("annots", { hasPdf: false }).definition.id, "zotero");
 });

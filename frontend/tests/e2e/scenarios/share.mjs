@@ -3,7 +3,10 @@
 // share view (title, PDF, highlight overlay, an image served through the
 // share token, no editing), an edit share letting another account type into
 // the page, and a folder share (the folder view's link button; the listing a
-// visitor browses).
+// visitor browses; the folder copied into another library by the listing's
+// Add to my library and by its link pasted into another Gamma's +, which
+// is a second server).
+import { Account, Server } from "../harness.mjs";
 import { tree, same, editRow, closeEditor, PNG_1PX } from "./notes.mjs";
 import { waitForPdf } from "./pdf.mjs";
 
@@ -139,6 +142,66 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
     assertNoProblems(o);
     await octx.close();
     await alice.api(`/api/share-settings/folder/${sharedlab}`, { method: "DELETE" });
+  });
+
+  await step("folder share: Add to my library, and the link pasted into another Gamma's +, copy the folder to the top level", async () => {
+    const paper = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Copied folder paper" } });
+    await alice.file(paper.id, { folders: ["privatetop/copylab"] });
+    await alice.api("/api/blocks", { method: "POST", body: { parent_id: paper.id, content: "a note that comes along" } });
+    const deeper = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Copied subfolder paper" } });
+    await alice.file(deeper.id, { folders: ["privatetop/copylab/sub"] });
+    const copylab = await alice.folder("privatetop/copylab");
+    const { token } = await alice.api(`/api/share/folder/${copylab}`, { method: "POST", body: { audience: "anyone" } });
+    const link = `${server.base}/?share=${token}`;
+    // the top-level folders of a library, each with its subfolders' names
+    const tops = async (account, ws) => (await account.api(`/api/blocks/folders/subtree?ws=${ws}`)).block.children
+      .map((f) => `${f.content}/${f.children.map((c) => c.content).join()}`);
+    const landed = (page) => !page.url().includes("share=") && new URL(page.url()).searchParams.get("folder");
+
+    // bob, signed in on alice's server: the listing's Add to my library
+    // leaves the share view for his own library, which imports the folder
+    // and opens it there
+    const ctx = await bob.context(browser);
+    const page = await openPage(ctx, link);
+    await page.locator(".fileRow", { hasText: "Copied folder paper" }).waitFor({ timeout: 15000 });
+    await page.getByRole("button", { name: "Add to my library", exact: true }).click();
+    await until(async () => landed(page), { what: "bob's library, at the imported folder", timeout: 30000 });
+    await page.locator(".fileRow", { hasText: "Copied folder paper" }).waitFor({ timeout: 15000 });
+    assert((await page.textContent(".folderCurrent")).includes("copylab"), "the imported folder is open");
+    const bobWs = new URL(page.url()).searchParams.get("ws");
+    const bobTops = await tops(bob, bobWs);
+    assert(bobTops.includes("copylab/sub") && !bobTops.some((f) => f.startsWith("privatetop/")),
+      `the shared folder at the top level, nothing above it (${bobTops})`);
+    assertNoProblems(page);
+    await ctx.close();
+
+    // another Gamma: the link pasted into +, fetched cross-origin with no session
+    const other = new Server();
+    let octx = null;
+    try {
+      await other.start();
+      await other.manage("create-user", "share-importer", "share-importer-pw");
+      const importer = await new Account(other, "share-importer", "share-importer-pw").login();
+      octx = await importer.context(browser);
+      const o = await openPage(octx, `${other.base}/?ws=${importer.ws}`);
+      await o.waitForSelector(".folderNewBtn");
+      await o.locator('[data-guide="header.add"]').click();
+      await o.locator('[data-guide="add.urlInput"]').fill(`Here it is: ${link}`);
+      await o.locator(".addPopover .popoverHint", { hasText: "a page or a whole folder" }).waitFor();
+      await o.locator('[data-guide="add.urlInput"]').press("Enter");
+      await until(async () => landed(o), { what: "the other library, at the imported folder", timeout: 30000 });
+      assertEq(new URL(o.url()).searchParams.get("folder"), copylab, "a fresh library keeps the folder's id");
+      await o.locator(".fileRow", { hasText: "Copied folder paper" }).waitFor({ timeout: 15000 });
+      assertEq((await tops(importer, importer.ws)).join(), "copylab/sub", "only the shared folder, at the top level");
+      assertEq((await importer.api(`/api/blocks/${deeper.id}`)).content, "Copied subfolder paper", "the subfolder's page came too");
+      const notes = (await importer.api(`/api/blocks/${paper.id}/children`)).children.map((c) => c.content);
+      assertEq(notes.join(), "a note that comes along", "with its notes");
+      assertNoProblems(o);
+    } finally {
+      await octx?.close();
+      await other.stop();
+      await alice.api(`/api/share-settings/folder/${copylab}`, { method: "DELETE" });
+    }
   });
 
   await step("share view: the topbar says who shared it and what a visitor may do; Sign in keeps the page", async () => {

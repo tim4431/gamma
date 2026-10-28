@@ -77,7 +77,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     // Five groups split by rules: presets | eraser, lasso, text | hand | More, close | undo, redo.
     const groups = await page.locator(".pdfInkRow").evaluate((row) => [...row.children].map((el) =>
       el.classList.contains("pdfInkSep") ? "|" : el.classList.contains("pdfInkHistory") ? "history"
-        : el.hasAttribute("data-preset") ? "preset" : (el.getAttribute("aria-label") || "").split(" ")[0]).join(" "));
+        : el.hasAttribute("data-order-id") ? "preset" : (el.getAttribute("aria-label") || "").split(" ")[0]).join(" "));
     assertEq(groups, "preset preset preset preset preset preset preset | Eraser Lasso Text | Hand | More Close | history", "the row's five groups");
     box = await page.locator('[data-page="1"]').boundingBox();
     await drawLine(page, [box.x + 100, box.y + 150], [box.x + 250, box.y + 170]);
@@ -463,7 +463,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
   await step("ink: Move right, Hide and Hidden tools in the Tool menu, and a mouse drag, reorder the presets; the number keys follow", async () => {
     const armed = () => page.locator(".pdfInkBar .inkToolBtn.modeActive");
     const name = async () => (await armed().getAttribute("aria-label")).split(" · ")[0];
-    const presets = () => page.locator(".pdfInkRow [data-preset]");
+    const presets = () => page.locator(".pdfInkRow [data-order-id]");
     const presetName = async (i) => (await presets().nth(i).getAttribute("aria-label")).split(" · ")[0];
     const pillText = async () => (await page.locator(".statusPill .pillText").textContent()) || "";
     const toolMenu = async () => {
@@ -532,13 +532,13 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
     await page.mouse.down();
     await page.mouse.move(from.x + from.width / 2 + 12, from.y + from.height / 2, { steps: 3 });
-    await page.waitForSelector(".inkDragGhost");
-    assert(await page.$(".pdfInkRow .inkDropBar"), "the insertion bar shows");
+    await page.waitForSelector(".dragGhost");
+    assert(await page.$(".pdfInkRow .dropBar"), "the insertion bar shows");
     assert((await pillText()).includes("Drop to reorder."), "the pill says what the drag does");
     await page.mouse.move(third.x + third.width - 2, third.y + third.height / 2, { steps: 6 });   // past the third preset's centre: after it
     await page.mouse.up();
     await until(async () => (await pillText()).includes(`${first} is now key 3.`), { what: "the drop's pill" });
-    await until(async () => !(await page.$(".inkDragGhost")), { what: "the ghost gone" });
+    await until(async () => !(await page.$(".dragGhost")), { what: "the ghost gone" });
     assertEq(await presetName(2), first, "the dragged preset at key 3");
     assert(await page.$(".pdfInkSub[data-ink-options='tool']"), "the drop was no tap: the options row is as it was");
     await page.keyboard.press("3");
@@ -556,7 +556,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
   await step("ink: opening the strip arms the stylus pen: with the last pen hidden and a highlighter first in the row, the first pen, not the highlighter", async () => {
     const armed = () => page.locator(".pdfInkBar .inkToolBtn.modeActive");
     const name = async () => (await armed().getAttribute("aria-label")).split(" · ")[0];
-    const presets = () => page.locator(".pdfInkRow [data-preset]");
+    const presets = () => page.locator(".pdfInkRow [data-order-id]");
     const presetName = async (i) => (await presets().nth(i).getAttribute("aria-label")).split(" · ")[0];
     const pillText = async () => (await page.locator(".statusPill .pillText").textContent()) || "";
     const ids = async () => page.evaluate(() => JSON.parse(localStorage.getItem("gamma-ink-tools")).map((t) => t.id).join());

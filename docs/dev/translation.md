@@ -24,6 +24,12 @@ in the PDF zoom column does everything by state:
 - Right-click (long-press on touch) opens the option menu: Translate this
   page / Translate whole document / Show original·translation (Stop
   translating while running).
+- The button is one of the strip's tools (`translate` in the `viewerTools`
+  preference, [settings.md](settings.md#bars-order-and-modes)): its place
+  is the user's order, and hidden (Settings → Translation › Translation
+  button off, or Appearance › Viewer tools) it is a row of the strip's ⋯
+  menu that does what a click does. While it translates or a translation
+  is shown it stays on the strip, whatever its mode.
 
 ## The queue
 

@@ -47,6 +47,9 @@ A new account starts with a **Welcome** page to practise on, and a **Sketchbook*
 - **Area screenshot**: hold **Ctrl** and drag a rectangle. The region goes to the AI chat as an image, and a color keeps it as an area highlight.
 - **Click a highlight** to jump to its note; click the note to jump back. **Right-click** to recolor, link, comment on or delete it.
 - Highlights made in other PDF apps are imported when the paper is added.
+- **A new version of the PDF**: the paperclip menu's *Replace the PDF…* swaps the file and finds each highlight's text in the new one, moving the highlight there (an area highlight follows the caption or picture inside it). *Find highlights in this PDF* in the same menu runs the search again at any time, and places the highlights when the status says they were not placed.
+- **A dashed highlight** is one whose text changed a little in the new version (a renumbered citation, a reworded phrase), or an area whose place is an estimate: it sits where the closest match is, for you to check. Hover it (tap it on a touch screen) to see how closely it matched, a picture of where it was in the previous version (on a page opened through a share link, its old text instead) and the words that changed. **Accept** keeps it where it is and draws it solid, **Move…** puts it on your next selection, and **Next** goes to the page's next dashed highlight. While a page has some, the paperclip menu shows *Review 3 rough matches*, which starts with the first, and *Accept all 3*, which accepts every one on the page at once (Undo takes it back); right-clicking a dashed highlight offers *Accept* too. How alike a changed passage must read to be moved, and how short a passage must match exactly, are set in Settings → Reading & editing › Replacing a PDF.
+- **A hollow highlight**'s text is gone from the new version, so it stays where it was: right-click it and choose *Move to a selection…* (or the same button beside its row in the notes), then select the text where it belongs, or drag an area, and press *Move the highlight here* in the bar that opens. *Move to a selection…* also fixes any highlight that sits wrong.
 - **Zoom** with Ctrl+wheel or pinch; **dark pages** in Settings → Appearance.
 
 ## Draw and type on the page
@@ -71,7 +74,7 @@ The **Text** tool puts typed text on the page like a text box in Acrobat: click 
 
 <img alt="The microphone button starts a recording; a word is written and a note typed while it runs; after Stop, Play on the recording's card replays the audio with the handwriting and the note revealed as they were written, and a tap on the word jumps the audio back to that moment" src="assets/record.svg" width="100%">
 
-Press the **microphone** in the viewer's zoom column, after the pen, and keep reading and writing: everything you write or type while it records is linked to the moment you made it.
+Press the **microphone** in the viewer's zoom column (after the pen, unless you moved it) and keep reading and writing: everything you write or type while it records is linked to the moment you made it.
 
 - The **recording** appears as a block in the notes with its length and date. **Pause** and **Stop** are on the pill at the bottom of the page; **Bookmark** drops a note stamped a few seconds back, for a moment you want to find again.
 - **Play** on the recording's card plays it back: handwriting not yet reached is faded and appears as it was written, notes are shaded until their moment, and the page and the notes follow along.
@@ -102,7 +105,7 @@ A notebook is a page with sheets of paper to write on, and any page can hold the
 
 <img alt="The translate button is clicked and the paragraphs are redrawn in another language over the original while the figure stays; holding Alt peeks at the original" src="assets/translate.svg" width="100%">
 
-- The **文A button** translates the page you are reading, in place. Hold **Alt** (⌥ on a Mac, or the key set in Settings → Keyboard) to peek at the original; right-click for the whole document.
+- The **文A button** translates the page you are reading, in place. Hold **Alt** (⌥ on a Mac, or the key set in Settings → Keyboard) to peek at the original; right-click for the whole document. With Settings → Language and Translation › **Translation button** off, it waits in the viewer's **⋯** menu instead.
 - Formulas, citations and links keep their printed look inside the translation, and a paragraph that runs on into the next column is translated as one, as is one that runs over a page break when you translate the whole document.
 - Select text and press 文A in the popup to translate a passage.
 - Settings → Language and Translation picks the language and what translates: a chat model, or a translation service (Microsoft works with no setup).
@@ -268,6 +271,7 @@ The **link button** in the top bar shares the open page.
 - **General access**: anyone with the link, signed-in users, or invited people only, with View or Edit for that audience.
 - Editors edit alongside you with live cursors. **Stop sharing** ends the link.
 - **Share a folder** the same way: the link opens every page filed in it.
+- **Copy a shared page or folder into your library**: paste its link into **+** in your own Gamma, or press **Add to my library** on the shared page or folder. A folder comes with its pages and subfolders, as a folder of your library's own; from another Gamma server this works for links open to anyone.
 
 ## Workspaces
 
@@ -403,8 +407,8 @@ Account menu → **Settings**, or **Ctrl+,**; the card with your name at the top
 | Pane | What's there |
 |---|---|
 | Account & sync | Your account, storage, the Gamma Cloud link, settings sync |
-| Appearance | Theme, dark PDF pages, library cards, interface size, Inbox notifications, the top bar's buttons |
-| Reading & editing | Imported annotations, open-access fallback, handwriting, how search opens |
+| Appearance | Theme, dark PDF pages, library cards, interface size, Inbox notifications, the top bar's buttons, the viewer's tools |
+| Reading & editing | Imported annotations, open-access fallback, how a new version of a PDF moves its highlights, handwriting, how search opens |
 | Language and Translation | Interface language, what translates and into what |
 | Keyboard | Every shortcut, rebindable; what Enter makes |
 | AI → Connections, Chat, Tool usage, Integrations | Providers and keys, defaults, agent permissions, assistants |
@@ -412,7 +416,7 @@ Account menu → **Settings**, or **Ctrl+,**; the card with your name at the top
 | Users, Server (administrators) | Accounts and invitations by e-mail, public URL, Gamma Cloud sign-in and requests to join, shared workspaces, server backups, the log |
 | Help & diagnostics | Session log, **Report a problem…** (adds what a maintainer needs, never your notes) |
 
-**Top bar** in Appearance hides a button you never use, or shows Background tasks and the Inbox only when they have news. A hidden button becomes a row of the account menu, and its shortcut still works.
+**Top bar** in Appearance hides a button you never use, or shows Background tasks and the Inbox only when they have news. A hidden button becomes a row of the account menu, and its shortcut still works. **Viewer tools** does the same for the column of buttons beside a PDF or a notebook: a hidden tool moves into the **⋯** at the column's end, and one you are using (a recording, a translation, the pen's strip) stays on the column until you are done. In both lists, drag a row by its **⋮⋮** grip to change the order, or focus the grip and press ↑ / ↓; **Reset** puts the default order and buttons back. To get there from the bar itself, right-click (or long-press) an empty part of the top bar, or the viewer's column, and choose **Customize top bar…** or **Customize viewer tools…**.
 
 **Invite by e-mail…** in Users mails someone who has no account yet a link to make a free Gamma Cloud account, or sign in with theirs, and join this server. The **Invitations** list under the accounts sends one again or withdraws it.
 

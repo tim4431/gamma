@@ -43,11 +43,12 @@ in the worker thread and returns the result. It reports through
 `job.progress(done=, total=, unit=, phase=, item=)`:
 
 - `unit` names what `done` and `total` count: `pages`, `bytes`, `files`,
-  `items`, `papers`, `workspaces`, `segments`.
+  `items`, `papers`, `workspaces`, `segments`, `highlights`.
 - `phase` is a short key the interface words (`packing`, `typesetting`,
   `unpacking`, `checking`, `saving`, `copying`, `restoring`, `annotations`,
   `databases`, `files`, the paper-handoff row's `browser` and `connector`,
-  the transcription's `transcribing`; `PHASES` in `tasks/taskKinds.js`).
+  the transcription's `transcribing`, the highlight run's `reading` and
+  `matching`; `PHASES` in `tasks/taskKinds.js`).
 - `item` is the thing at hand, a page title or a workspace name.
 - A new phase or unit starts its own counts; a field left out is kept.
 
@@ -72,7 +73,8 @@ wait queued, oldest first. A workspace's own jobs (the indexer) run outside
 those limits. An account may have 20 queued or running jobs (429 past
 that). A `key` makes two jobs of one owner and kind the same work: while
 one is queued or running, starting another raises `jobs.Busy` with it (the
-indexer, one per workspace; an import, one per review).
+indexer, one per workspace; an import, one per review; a highlight run, one
+per page and file).
 
 **Files.** A job's file is `<data dir>/jobs/<id>/artifact`; an upload a job
 reads (a restore's zip) waits in `jobs/incoming/` and the job removes it
@@ -100,7 +102,11 @@ with it (`workspaces.delete_account`).
 ## The API (`routers/jobs.py`)
 
 Only a session account uses jobs (integration tokens get 403, like every
-account-level endpoint). A job is its starter's business: another account
+account-level endpoint). The one exception: a token's `PUT
+/pages/{id}/attachment` that replaces a page's PDF starts its account's
+`relocate-highlights` run, as a session's does, and the account's sessions
+see it in Background tasks while the token cannot read it. A job is its
+starter's business: another account
 gets 404 for it. A workspace's own jobs are seen by the workspace's members
 while they work in it (the request's workspace), and stopped or removed by
 its editors and owners. Endpoints and shapes: [api.md](api.md) "Background
@@ -134,11 +140,12 @@ Each kind starts at `POST /api/jobs/<route>`, in the router of its work.
 | `import` | `import` (`routers/imports.py`) | the import review's Import to library | the import report |
 | `workspace-export` | `workspace-export` (`routers/ws_backups.py`) | Settings → Workspaces → Data → Export…, Export all | the zip |
 | `snapshot` | `snapshot` | Settings → Backups → Back up now, Back up all | `{snapshots, failed}` |
-| `restore` | `restore` (an uploaded zip), `restore-snapshot` | Settings → Workspaces → Data → Merge / Restore, Settings → Backups → Restore, a shared page imported by link | the restore report |
+| `restore` | `restore` (an uploaded zip), `restore-snapshot` | Settings → Workspaces → Data → Merge / Restore, Settings → Backups → Restore, a shared page or folder imported by link | the restore report |
 | `metadata` | `metadata` (`routers/metadata.py`) | Settings → Maintenance → Fetch needed / Fetch selected / Refetch; an upload of several PDFs | `{papers, fetched, failed}` |
 | `server-backup` | `server-backup` (`routers/admin.py`) | Settings → Server → Server backups | the snapshot's info |
 | `indexing` | — (`routers/search.py`, owner `""`) | a search, a page chat, Settings → Maintenance → Rebuild | `{papers}` |
 | `transcribe` | `transcribe` (`routers/recordings.py`, one per recording block) | a recording's menu → Transcribe; every recording that ends, with Settings → Reading & editing › Recordings › Transcribe recordings on | `{paragraphs, model}` ([recording.md](recording.md)) |
+| `relocate-highlights` | `relocate-highlights` (`routers/pages.py`, one per page and file; `PUT /pages/{id}/attachment` starts it by itself) | a replaced PDF (the Document menu → Replace the PDF…, a build script's `PUT`); the Document menu → Find highlights in this PDF | `{highlights, moved, kept, lost, approx, changed, min_match, exact_chars}`: the counts, then the owner's thresholds the run went by, which its params `{page_id, title, doc_id, min_match, exact_chars}` record as it starts ([highlight_relocation.md](highlight_relocation.md#the-thresholds)) |
 
 The off-site copies' Copy now (Settings → Backups, `POST
 /api/admin/offsite/run`) is not a job: it starts the server's own
@@ -165,6 +172,18 @@ workspace (`jobs.prune`). Synchronous endpoints serve scripts, the share
 view and the MCP export: `/api/export`, `/export-all`, `/import-data`,
 `/pages/{id}/export`, `/folders/{id}/export` and the snapshot endpoints. They
 run the same code as the jobs.
+
+A highlight run (`relocate-highlights`,
+[highlight_relocation.md](highlight_relocation.md)) is keyed by the page
+and the file it places for (`<page id>:<doc_id>`). A start while one runs
+for that page and file answers it (409 only while it is still stopping). A
+replacement first stops the same account's run for the file it replaced
+and starts the new file's, which never waits for the old one. A stop lands
+within a page of the search; once the matching is done the run marks
+itself unstoppable and writes. When the replacement's run cannot start
+(the account's jobs are full, the last run for that file is still
+stopping, or the new PDF is shown from a URL alone and not stored), the
+replacement stands and its answer says why (`relocation_error`).
 
 ## The web app (`frontend/src/tasks/`)
 
@@ -221,6 +240,12 @@ window does not show:
 - A restore into the open workspace reloads the tab that started it, and
   offers a Reload to any other tab.
 - An import into the open workspace refreshes the library.
+- A highlight run says what it found in the tab that started it
+  (`relocationSummary`): how many highlights moved, were matched roughly or
+  estimated (drawn dashed, with where to compare and accept them), stayed,
+  were not found, and were left as someone moved them meanwhile. A run stopped or refused because the PDF was replaced
+  again says nothing (`relocationSuperseded`): the newer run reports. The
+  positions themselves reach every tab over the page socket.
 - A job started from a menu shows its progress in the pill while it runs
   (`meta.pill`).
 
@@ -234,7 +259,10 @@ belong to the dialog and have no row, so a close by the backdrop, Escape
 or × asks first.
 
 A share view has no background tasks. Its exports download directly
-through the synchronous endpoints.
+through the synchronous endpoints, and its "Add to my library" hands the
+link to the visitor's own library, which imports it
+([import_export.md](import_export.md) "Importing a shared page or folder
+by link").
 
 ## Adding a kind
 

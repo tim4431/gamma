@@ -13,9 +13,10 @@
 //   the AZURE_TENANT_ID / AZURE_CLIENT_ID / AZURE_CLIENT_SECRET env vars).
 // macOS: Developer ID Application cert via CSC_LINK / CSC_KEY_PASSWORD
 //   (electron-builder's own convention), hardened runtime + the entitlements
-//   the Electron JIT and the PyInstaller sidecar need, then notarization with
-//   an App Store Connect app-specific password. osx-sign walks the whole
-//   .app, so the frozen backend under Contents/Resources/gamma-server is
+//   the Electron JIT, the PyInstaller sidecar and the microphone need, then
+//   notarization with an App Store Connect app-specific password (the
+//   microphone's purpose string is `mac.extendInfo`). osx-sign walks the
+//   whole .app, so the frozen backend under Contents/Resources/gamma-server is
 //   signed with the same identity — nothing to configure per binary.
 //   Without a certificate the afterPack hook (scripts/adhoc-sign.cjs)
 //   ad-hoc signs the app so Gatekeeper offers "Open Anyway" instead of the
@@ -112,6 +113,11 @@ module.exports = {
     entitlementsInherit: 'assets/entitlements.mac.plist',
     gatekeeperAssess: false,
     notarize,
+    extendInfo: {
+      // What macOS shows when it asks whether Gamma may use the microphone
+      // (lib/microphone.js); the Mac App Store build inherits it.
+      NSMicrophoneUsageDescription: 'Gamma uses the microphone when you record audio into a note or dictate to the assistant.',
+    },
     // An alternate viewer: listed under Open With, the default only when chosen.
     fileAssociations: [{ ext: 'pdf', name: 'PDF document', role: 'Viewer', rank: 'Alternate' }],
   },

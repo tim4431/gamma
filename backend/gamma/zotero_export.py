@@ -11,13 +11,29 @@ reads): items are bib classes carrying ``z:itemType``, the page's item type
 paper's venue, volume and DOI live on a standalone ``bib:Journal`` record
 referenced via ``dcterms:isPartOf``, a chapter's book title and ISBN on a
 ``bib:Book``; a publisher (a thesis's university, a report's institution) is
-a ``dc:publisher`` ``foaf:Organization``. Attachments are
+a ``dc:publisher`` ``foaf:Organization``. Authors are ``foaf:Person``s split
+into Zotero's two name fields (``split_name``). Attachments are
 ``z:Attachment`` elements linked by ``link:link`` with the file path in
-``z:path`` (exactly what Zotero's own export writes; an ``rdf:resource``
-*element* is an RDF/XML syntax term — Zotero's parser happens to tolerate one,
+``z:path``, or a web link's URL (exactly what Zotero's own export writes; an
+``rdf:resource`` *element* is an RDF/XML syntax term — Zotero's parser happens to tolerate one,
 verified live against Zotero 9, but strict parsers like rdflib reject the
 whole file, so it is never emitted), notes are ``bib:Memo`` HTML linked by
-``dcterms:isReferencedBy``, and folders become a ``z:Collection`` tree.
+``dcterms:isReferencedBy`` (``zotero_notes.note_html``, the exact inverse of
+the import's note trees), and folders become a ``z:Collection`` tree. A note
+page, a Zotero standalone note the import made a page of, goes out as that
+standalone ``bib:Memo`` again.
+
+What Zotero held about a work that ``meta`` does not model rides in the
+page's ``zotero_rdf``, the pass-through the import kept: the original item
+type and RDF classes (a ``webpage`` is a ``document`` here and goes out a
+webpage again), the full date, the original ``bib:authors``, the Extra text,
+the PDF attachment's title, and every element the import did not map
+(abstract, issue, ISSN, editors, URL, …), written back verbatim. Each part
+is used only while the page's record still agrees with it, and none of it
+once the record names another work (``zotero_import.same_work``). Anyone who
+edits the workspace can write a page's properties, so only what the import
+keeps there goes back (``_passed``): fields, never an item, a note or a
+file path of the machine that imports the export.
 
 The whole pipeline is verified against a real Zotero via its connector
 server's ``/connector/import`` (the same translator code path as the import
@@ -42,7 +58,7 @@ import html as html_mod
 import re
 import xml.etree.ElementTree as ET
 
-from . import item_types
+from . import item_types, zotero_import, zotero_notes
 from .highlights import page_of
 from .text_box import box_page
 
@@ -55,6 +71,7 @@ _NS = {
     "link": "http://purl.org/rss/1.0/modules/link/",
     "dc": "http://purl.org/dc/elements/1.1/",
     "prism": "http://prismstandard.org/namespaces/1.2/basic/",
+    "vcard": "http://nwalsh.com/rdf/vCard#",  # a publisher's place, passed through
 }
 for _p, _u in _NS.items():
     ET.register_namespace(_p, _u)
@@ -79,7 +96,7 @@ def _sub(parent, prefix, tag, text=None, **attrs):
     return el
 
 
-# --- notes: block text → the minimal HTML Zotero notes hold -----------------
+# --- notes: block subtrees → Zotero note HTML -------------------------------
 
 # Markdown image refs to Gamma's content-addressed uploads (the image shape of
 # markdown_export.UPLOAD_RE).
@@ -100,65 +117,21 @@ def strip_image_md(text: str) -> str:
     return MD_IMAGE_RE.sub(lambda m: f"(image: {m.group(1)} — see item notes)", text or "")
 
 
-def _inline_html(text: str) -> str:
-    """The inverse of zotero_import.html_note_text's inline rules: escape,
-    then **bold**/*italic* back to tags, newlines to <br/>."""
-    s = html_mod.escape(text, quote=False)
-    s = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", s)
-    s = re.sub(r"(?<!\*)\*([^*\n]+)\*(?!\*)", r"<em>\1</em>", s)
-    return s.replace("\n", "<br/>")
-
-
-def _content_html(text: str, resolve_image) -> str:
-    """Inline HTML for one block's text; markdown image refs become embedded
-    ``<img src="data:...">`` (Zotero's note import keeps data URIs verbatim —
-    verified live) or a plain placeholder when the file can't be resolved."""
-    parts, last = [], 0
-    for m in MD_IMAGE_RE.finditer(text):
-        parts.append(_inline_html(text[last:m.start()]))
-        data = resolve_image(m.group(1)) if resolve_image else None
-        if data:
-            mime, b64 = data
-            parts.append(f'<img src="data:{mime};base64,{b64}"/>')
-        else:
-            parts.append(f"(image: {m.group(1)})")
-        last = m.end()
-    parts.append(_inline_html(text[last:]))
-    return "".join(parts)
-
-
-def note_html(node, resolve_image=None) -> str:
-    """One block subtree (a ``build_tree`` node) → one Zotero note's HTML:
-    the block itself as a paragraph (after its page, for a text box on a
-    PDF page), children as nested lists.
+def note_html(node, resolve_image=None, resolve_ref=None) -> str:
+    """One block subtree (a ``build_tree`` node) → one Zotero note's HTML
+    (``zotero_notes.note_html``: the block as its element, its children as
+    lists), after its page for a text box on a PDF page.
     ``resolve_image(filename) -> (mime, base64) | None`` embeds pasted images
-    into the note."""
-
-    def items(children):
-        out = ""
-        for child in children:
-            content = (child.get("content") or "").strip()
-            inner = items(child.get("children") or [])
-            if not content and not inner:
-                continue
-            out += (f"<li>{_content_html(content, resolve_image)}"
-                    + (f"<ul>{inner}</ul>" if inner else "") + "</li>")
-        return out
-
-    parts = ""
-    content = (node.get("content") or "").strip()
-    if content:
-        page_no = box_page(node.get("properties"))
-        if page_no:
-            parts += f"<p><strong>Text box on p.{page_no}</strong></p>"
-        parts += f"<p>{_content_html(content, resolve_image)}</p>"
-    kids = items(node.get("children") or [])
-    if kids:
-        parts += f"<ul>{kids}</ul>"
-    return parts
+    into the note; ``resolve_ref(id) -> {content, …} | None`` reads a
+    [[ref]] as the text of the block it names."""
+    body = zotero_notes.note_html(node, resolve_image, resolve_ref)
+    page_no = box_page(node.get("properties"))
+    if body and page_no and (node.get("content") or "").strip():
+        return f"<p><strong>Text box on p.{page_no}</strong></p>{body}"
+    return body
 
 
-def highlight_memo_html(node, resolve_image=None) -> str:
+def highlight_memo_html(node, resolve_image=None, resolve_ref=None) -> str:
     """A Zotero note for a highlight whose writing carries images. The
     annotation comment can only hold a plain placeholder, so the pictures live
     here — prefixed with the page and quote, so the note stays findable next
@@ -170,23 +143,71 @@ def highlight_memo_html(node, resolve_image=None) -> str:
         f"p.{page_no}" if page_no else "",
         f"“{quote[:120]}”" if quote else "",
     ) if part)
-    body = note_html(node, resolve_image)
+    body = note_html(node, resolve_image, resolve_ref)
     if not body:
         return ""
     head = f"<p><strong>{html_mod.escape(header, quote=False)}</strong></p>" if header else ""
     return head + body
 
 
-# --- the RDF document -------------------------------------------------------
+def standalone_note_html(title: str, children, resolve_image=None, resolve_ref=None) -> str:
+    """A note page (a Zotero standalone note the import made a page of) as
+    that note again: the title as its heading, which Zotero shows as the
+    note's title, then the page's blocks as the note's body. The import
+    reads the heading's text back as the title and the blocks as the
+    children they were."""
+    return f"<h1>{html_mod.escape(title, quote=False)}</h1>" + zotero_notes.note_html(
+        {"content": "", "children": children}, resolve_image, resolve_ref)
+
+
+# --- names ------------------------------------------------------------------
+
+# Lowercase particles that start a surname: "Jan van der Berg" is surname
+# "van der Berg", given name "Jan".
+_PARTICLES = frozenset("van von der de la du da di del della den ter ten le zu bin al".split())
+# A generational suffix stays with the surname, its comma too.
+_SUFFIX_RE = re.compile(r"(,?\s+)(Jr\.?|Sr\.?|II|III|IV)$")
+# A word that makes a name an organisation's.
+_ORG_RE = re.compile(
+    r"\b(?:Collaboration|Consortium|Group|Team|Committee|Organi[sz]ation|Institute|University|Association|"
+    r"Society|Council|Agency|Foundation|Network|Project|Initiative|Cent(?:er|re)|Laboratory|Inc|Ltd)\b", re.I)
+
+
+def split_name(name: str) -> tuple[str, str]:
+    """An author as Zotero's two name fields, ``(surname, given name)``: a
+    ``Last, First`` name at its comma, else the surname from the first
+    lowercase particle on ("van der Berg") or the last word, a trailing
+    Jr., Sr., II, III or IV kept with it. An organisation ("ATLAS
+    Collaboration") or a single word is a surname alone, which Zotero reads
+    as a single-field name. Gamma keeps an author as one string, so this is
+    where it becomes Zotero's two."""
+    name = " ".join(str(name).split())
+    if " " not in name or _ORG_RE.search(name):
+        return name, ""
+    suffix = _SUFFIX_RE.search(name)
+    if suffix:
+        name = name[:suffix.start()]
+    if "," in name:
+        last, _, given = name.partition(",")
+        last, given = last.strip(), given.strip()
+    else:
+        words = name.split(" ")
+        at = next((i for i, w in enumerate(words[:-1]) if w in _PARTICLES), len(words) - 1)
+        last, given = " ".join(words[at:]), " ".join(words[:at])
+    if suffix:
+        last += (", " if "," in suffix.group(1) else " ") + suffix.group(2)
+    return last, given
+
 
 def _person(seq, name: str):
-    li = ET.SubElement(seq, _q("rdf", "li"))
-    person = ET.SubElement(li, _q("foaf", "Person"))
-    parts = name.strip().split()
-    _sub(person, "foaf", "surname", parts[-1] if parts else name)
-    if len(parts) > 1:
-        _sub(person, "foaf", "givenName", " ".join(parts[:-1]))
+    surname, given = split_name(name)
+    person = ET.SubElement(ET.SubElement(seq, _q("rdf", "li")), _q("foaf", "Person"))
+    _sub(person, "foaf", "surname", surname)
+    if given:
+        _sub(person, "foaf", "givenName", given)
 
+
+# --- the RDF document -------------------------------------------------------
 
 # The RDF class Zotero's translator gives each item type (the item itself);
 # a type it gives none is a plain rdf:Description — z:itemType is what any
@@ -200,95 +221,224 @@ _ITEM_CLASS = {
 # and ISBN go with it, as Zotero writes them.
 _CONTAINER_CLASS = {"journalArticle": "Journal", "conferencePaper": "Journal", "bookSection": "Book"}
 
+# An element name in Clark notation, as the pass-through keeps a class.
+_CLARK_RE = re.compile(r"\{[^{}\s]+\}[A-Za-z_][\w.-]*")
+_YEAR_RE = re.compile(r"\d{4}")
+# Better BibTeX's key line in Extra (what zotero_import._citation_key reads).
+_KEY_LINE_RE = re.compile(r"\s*citation key\s*:", re.I)
+
+
+def _clark(value) -> str | None:
+    return value if isinstance(value, str) and _CLARK_RE.fullmatch(value) else None
+
+
+def _shape(kind: str, rdf: dict) -> tuple[str, str, str | None]:
+    """An item's ``z:itemType``, its RDF class and its venue record's class
+    (Clark names; None: no record): the original ones the pass-through
+    kept while they still name the page's kind, else the export's own."""
+    item_class = _q(*_ITEM_CLASS[kind]) if kind in _ITEM_CLASS else _q("rdf", "Description")
+    container_class = _q("bib", _CONTAINER_CLASS[kind]) if kind in _CONTAINER_CLASS else None
+    original = rdf.get("type") if isinstance(rdf.get("type"), str) else ""
+    if item_types.from_zotero(original or kind) != kind:
+        return kind, item_class, container_class
+    return (original or kind, _clark(rdf.get("class")) or item_class,
+            _clark(rdf.get("container_class")) or container_class)
+
+
+# What a field the import passes through never holds: an item of its own
+# (Zotero reads an inline node as one, and an attachment's path as a file of
+# the importing machine to take in), a link to one, or a note.
+_NOT_A_FIELD = {_q("z", "itemType"), _q("z", "Attachment"), _q("z", "path"), _q("rdf", "resource"),
+                _q("link", "link"), _q("bib", "Memo"), _q("dcterms", "isReferencedBy")}
+
+
+def _passed(xmls, mapped=frozenset()) -> list:
+    """The pass-through's serialized elements, parsed back: the fields the
+    import kept, and nothing else a page's properties may hold instead.
+    Left out: one that does not parse; one with a DTD, whose entities would
+    expand (``ET.tostring``, which wrote them, writes no ``<!``); an element
+    the import maps itself (``mapped``) or one holding what no field holds
+    (``_NOT_A_FIELD``); and every one past PASS_THROUGH_BYTES in all."""
+    out, size = [], 0
+    for text in xmls if isinstance(xmls, list) else []:
+        if not isinstance(text, str) or "<!" in text:
+            continue
+        size += len(text)
+        if size > zotero_import.PASS_THROUGH_BYTES:
+            break
+        try:
+            el = ET.fromstring(text)
+        except ET.ParseError:
+            continue
+        if el.tag not in mapped and not any(d.tag in _NOT_A_FIELD for d in el.iter()):
+            out.append(el)
+    return out
+
+
+def _extra(original, cite_key: str) -> str:
+    """Zotero's Extra text (``dc:description``): the original's lines with
+    its Better BibTeX ``Citation Key:`` line made the page's pinned key —
+    replaced where it was, added first, or removed."""
+    line = f"Citation Key: {cite_key}" if cite_key else ""
+    lines = []
+    for text in str(original or "").splitlines():
+        if not _KEY_LINE_RE.match(text):
+            lines.append(text)
+        elif line:
+            lines.append(line)
+            line = ""
+    if line:
+        lines.insert(0, line)
+    return "\n".join(lines).strip()
+
+
+def _is_url(el) -> bool:
+    return el.tag == _q("dc", "identifier") and el.find(f"{_q('dcterms', 'URI')}/{_q('rdf', 'value')}") is not None
+
+
+def _item(root, n: int, item: dict) -> None:
+    """One page's bibliographic item, with its venue record, attachments and
+    notes, under ``root``."""
+    meta = item.get("meta") or {}
+    rdf = item.get("rdf") if isinstance(item.get("rdf"), dict) else {}
+    if rdf and not zotero_import.same_work(rdf.get("work") or {}, meta):
+        rdf = {}  # it describes the work the page held before
+    arxiv = (meta.get("arxiv_id") or "").strip()
+    venue = (meta.get("venue") or "").strip()
+    # A page with no record is no known work: a plain document.
+    kind = item_types.item_type(meta) if meta else "document"
+    zotero_type, item_class, container_class = _shape(kind, rdf)
+
+    el = ET.SubElement(root, item_class, {_q("rdf", "about"): item["key"]})
+    _sub(el, "z", "itemType", zotero_type)
+    # The volume and identifiers sit on the container when there is one, as
+    # Zotero's do.
+    holder = el
+    if container_class and venue:
+        container_key = f"#{container_class.rsplit('}', 1)[1].lower()}_{n}"
+        _sub(el, "dcterms", "isPartOf", rdf_resource=container_key)
+        holder = ET.SubElement(root, container_class, {_q("rdf", "about"): container_key})
+        _sub(holder, "dc", "title", venue)
+    if meta.get("volume"):
+        _sub(holder, "prism", "volume", str(meta["volume"]))
+    for label, field in (("DOI", "doi"), ("ISBN", "isbn")):
+        value = str(meta.get(field) or "").strip()
+        if value:
+            _sub(holder, "dc", "identifier", f"{label} {value}")
+    if holder is not el:
+        holder.extend(_passed(rdf.get("container"), zotero_import.CONTAINER_MAPPED))
+    # arXiv is a preprint's repository, as Zotero's own arXiv records name it.
+    publisher = item_types.publisher(meta) or ("arXiv" if kind == "preprint" and arxiv else "")
+    # Zotero's own publisher element, its place with it, while it names the
+    # record's publisher.
+    kept = rdf.get("publisher") if isinstance(rdf.get("publisher"), dict) else {}
+    original = _passed([kept.get("xml")]) if publisher and kept.get("name") == publisher else []
+    if original and original[0].tag == _q("dc", "publisher"):
+        el.extend(original)
+    elif publisher:
+        org = _sub(_sub(el, "dc", "publisher"), "foaf", "Organization")
+        _sub(org, "foaf", "name", publisher)
+
+    authors = meta.get("authors")
+    stored = rdf.get("authors") if isinstance(rdf.get("authors"), dict) else {}
+    original = _passed([stored.get("xml")]) if authors and stored.get("names") == authors else []
+    if original and original[0].tag == _q("bib", "authors"):
+        el.extend(original)
+    elif isinstance(authors, list) and authors:
+        seq = ET.SubElement(ET.SubElement(el, _q("bib", "authors")), _q("rdf", "Seq"))
+        for name in authors:
+            if str(name).strip():
+                _person(seq, str(name))
+
+    _sub(el, "dc", "title", item["title"])
+    # Zotero's Extra field travels as dc:description; Better BibTeX pins its
+    # key there as a "Citation Key:" line, which is what the import reads
+    # back (zotero_import._citation_key) — so a library that goes out and
+    # comes back keeps citing the same keys.
+    extra = _extra(rdf.get("extra"), item.get("cite_key") or "")
+    if extra:
+        _sub(el, "dc", "description", extra)
+    # The original date while it names the record's year (or, like it, none).
+    year = str(meta.get("year") or "").strip()
+    date = rdf.get("date") if isinstance(rdf.get("date"), str) else ""
+    found = _YEAR_RE.search(date)
+    if date and (found.group() if found else "") == year:
+        _sub(el, "dc", "date", date)
+    elif year:
+        _sub(el, "dc", "date", year)
+    if meta.get("pages"):
+        _sub(el, "bib", "pages", str(meta["pages"]))
+
+    passed = _passed(rdf.get("item"), zotero_import.MAPPED)
+    if kind == "preprint" and arxiv and not any(p.tag == _q("z", "archiveID") for p in passed):
+        _sub(el, "z", "archiveID", f"arXiv:{arxiv}")
+    # One URL: the original's, else the arXiv abstract's, else the web page
+    # the page was clipped from.
+    if not any(_is_url(p) for p in passed):
+        url = f"https://arxiv.org/abs/{arxiv}" if arxiv else str(item.get("url") or "").strip()
+        if url:
+            _sub(_sub(_sub(el, "dc", "identifier"), "dcterms", "URI"), "rdf", "value", url)
+    for t in item.get("tags") or []:
+        _sub(el, "dc", "subject", t)
+    el.extend(passed)
+
+    if item.get("pdf_path"):
+        attach_key = f"#attach_{n}"
+        _sub(el, "link", "link", rdf_resource=attach_key)
+        att = _sub(root, "z", "Attachment", rdf_about=attach_key)
+        _sub(att, "z", "itemType", "attachment")
+        _sub(att, "z", "path", rdf_resource=item["pdf_path"])
+        _sub(att, "dc", "title", str(rdf.get("pdf_title") or "PDF"))
+        _sub(att, "link", "type", "application/pdf")
+
+    # Pasted note images ride as further attachments on the item — the
+    # counterpart of the "(image: …)" placeholders in annotation comments —
+    # and so do the item's other files and its web links, which Zotero
+    # makes a linked URL of (an attachment with a URL and no file).
+    for k, img in enumerate(item.get("images") or [], 1):
+        img_key = f"#img_{n}_{k}"
+        _sub(el, "link", "link", rdf_resource=img_key)
+        att = _sub(root, "z", "Attachment", rdf_about=img_key)
+        _sub(att, "z", "itemType", "attachment")
+        _sub(att, "dc", "title", img.get("title") or "Image")
+        if img.get("path"):
+            _sub(att, "z", "path", rdf_resource=img["path"])
+            _sub(att, "link", "type", img.get("mime") or "application/octet-stream")
+        else:
+            _sub(_sub(_sub(att, "dc", "identifier"), "dcterms", "URI"), "rdf", "value", img["url"])
+
+    for note in item.get("notes") or []:
+        _sub(el, "dcterms", "isReferencedBy", rdf_resource=note["key"])
+        memo = _sub(root, "bib", "Memo", rdf_about=note["key"])
+        _sub(memo, "rdf", "value", note["html"])
+
 
 def build_rdf(items: list[dict]) -> str:
     """items: one dict per page —
-    ``{key, title, meta, cite_key, tags, folders, pdf_path, notes}`` where
-    ``folders`` are the collection paths it is in (each a list of names
-    from the top), ``cite_key`` the citation key pinned on the page ("" for
-    none), ``pdf_path`` the zip path relative to the .rdf (or None) and
-    ``notes`` a list of ``{key, html}``. → the .rdf document text."""
+    ``{key, title, meta, cite_key, tags, folders, pdf_path, images, notes,
+    rdf, url}`` where ``folders`` are the collection paths it is in (each a
+    list of names from the top), ``cite_key`` the citation key pinned on
+    the page ("" for none), ``pdf_path`` the zip path relative to the .rdf
+    (or None), ``images`` its other attachments (``{path, title, mime}``,
+    a web link ``{url, title}``),
+    ``notes`` a list of ``{key, html}``, ``rdf`` the page's ``zotero_rdf``
+    (None for none) and ``url`` the web page it was clipped from ("" for
+    none). A note page is ``{key, title, tags, folders, memo}``, ``memo``
+    its note's HTML, and goes out as a standalone note. → the .rdf
+    document text."""
     root = ET.Element(_q("rdf", "RDF"))
 
     folder_paths = set()
     for n, item in enumerate(items, 1):
-        meta = item.get("meta") or {}
-        arxiv = (meta.get("arxiv_id") or "").strip()
-        venue = (meta.get("venue") or "").strip()
-        # A page with no record is no known work: a plain document.
-        kind = item_types.item_type(meta) if meta else "document"
-
-        el = _sub(root, *_ITEM_CLASS.get(kind, ("rdf", "Description")), rdf_about=item["key"])
-        _sub(el, "z", "itemType", kind)
-        # Identifiers sit on the container when there is one, as Zotero's do.
-        holder = el
-        container = _CONTAINER_CLASS.get(kind)
-        if container and venue:
-            container_key = f"#{container.lower()}_{n}"
-            _sub(el, "dcterms", "isPartOf", rdf_resource=container_key)
-            holder = _sub(root, "bib", container, rdf_about=container_key)
-            _sub(holder, "dc", "title", venue)
-            if meta.get("volume"):
-                _sub(holder, "prism", "volume", str(meta["volume"]))
-        for label, field in (("DOI", "doi"), ("ISBN", "isbn")):
-            value = str(meta.get(field) or "").strip()
-            if value:
-                _sub(holder, "dc", "identifier", f"{label} {value}")
-        publisher = item_types.publisher(meta)
-        if publisher:
-            org = _sub(_sub(el, "dc", "publisher"), "foaf", "Organization")
-            _sub(org, "foaf", "name", publisher)
-
-        authors = meta.get("authors")
-        if isinstance(authors, list) and authors:
-            seq = ET.SubElement(ET.SubElement(el, _q("bib", "authors")), _q("rdf", "Seq"))
-            for name in authors:
-                if str(name).strip():
-                    _person(seq, str(name))
-
-        _sub(el, "dc", "title", item["title"])
-        if item.get("cite_key"):
-            # Zotero's Extra field travels as dc:description; Better BibTeX
-            # pins its key there as a "Citation Key:" line, which is what the
-            # import reads back (zotero_import._citation_key) — so a library
-            # that goes out and comes back keeps citing the same keys.
-            _sub(el, "dc", "description", f"Citation Key: {item['cite_key']}")
-        year = str(meta.get("year") or "").strip()
-        if year:
-            _sub(el, "dc", "date", year)
-        if meta.get("pages"):
-            _sub(el, "bib", "pages", str(meta["pages"]))
-        if arxiv:
-            uri = _sub(_sub(el, "dc", "identifier"), "dcterms", "URI")
-            _sub(uri, "rdf", "value", f"https://arxiv.org/abs/{arxiv}")
-        for t in item.get("tags") or []:
-            _sub(el, "dc", "subject", t)
-
-        if item.get("pdf_path"):
-            attach_key = f"#attach_{n}"
-            _sub(el, "link", "link", rdf_resource=attach_key)
-            att = _sub(root, "z", "Attachment", rdf_about=attach_key)
-            _sub(att, "z", "itemType", "attachment")
-            _sub(att, "z", "path", rdf_resource=item["pdf_path"])
-            _sub(att, "dc", "title", "PDF")
-            _sub(att, "link", "type", "application/pdf")
-
-        # Pasted note images ride as further attachments on the item — the
-        # counterpart of the "(image: …)" placeholders in annotation comments.
-        for k, img in enumerate(item.get("images") or [], 1):
-            img_key = f"#img_{n}_{k}"
-            _sub(el, "link", "link", rdf_resource=img_key)
-            att = _sub(root, "z", "Attachment", rdf_about=img_key)
-            _sub(att, "z", "itemType", "attachment")
-            _sub(att, "z", "path", rdf_resource=img["path"])
-            _sub(att, "dc", "title", img.get("title") or "Image")
-            _sub(att, "link", "type", img.get("mime") or "application/octet-stream")
-
-        for note in item.get("notes") or []:
-            _sub(el, "dcterms", "isReferencedBy", rdf_resource=note["key"])
-            memo = _sub(root, "bib", "Memo", rdf_about=note["key"])
-            _sub(memo, "rdf", "value", note["html"])
-
+        if item.get("memo"):
+            # A standalone note, as Zotero's translator writes one.
+            memo = _sub(root, "bib", "Memo", rdf_about=item["key"])
+            _sub(memo, "z", "itemType", "note")
+            _sub(memo, "rdf", "value", item["memo"])
+            for t in item.get("tags") or []:
+                _sub(memo, "dc", "subject", t)
+        else:
+            _item(root, n, item)
         for path in item.get("folders") or []:
             for i in range(len(path)):
                 folder_paths.add(tuple(path[: i + 1]))

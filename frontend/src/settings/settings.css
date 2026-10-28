@@ -810,6 +810,35 @@
    Suppress the shared settingRow hover fill; buttons keep their shared states. */
 .appearanceSettings .setRow:hover { background: transparent; }
 
+/* A bar's layout (BarLayoutSection): its rows in the bar's order, each led
+   by a ⋮⋮ grip that drags it up or down (the shared .dropBar marks where it
+   lands, the .dragGhost rides with the pointer) or moves it with the arrow
+   keys. A hidden item's row reads muted, as the bar would leave it out:
+   its icon faded and its label in the hint's colour, the hint as it was. */
+.barLayoutList { position: relative; display: flex; flex-direction: column; }
+.barLayoutRow { display: flex; align-items: center; gap: 2px; flex-shrink: 0; transition: opacity var(--dur-fast); }
+.barLayoutList .barLayoutRow > .setRow { flex: 1 1 0; min-width: 0; padding-left: 4px; }
+.barLayoutGrip {
+  width: var(--ctl-icon-btn-xs); height: var(--ctl-icon-btn); flex-shrink: 0; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  border: none; border-radius: var(--radius-xs); background: transparent;
+  color: var(--text-muted); font-size: var(--fs-lg); font-weight: 600; line-height: 1;
+  cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
+  transition: color var(--dur-fast), background var(--dur-fast);
+}
+.barLayoutGrip:hover { background: var(--bg-subtle); color: var(--text-bright); }
+.barLayoutGrip:active { cursor: grabbing; }
+.barLayoutRow.off .setIcon { opacity: 0.55; }
+.barLayoutRow.off .settingLabel { color: var(--text-muted); }
+.barLayoutRow.lifted { opacity: 0.4; }
+.dragGhost.barLayoutGhost {
+  transform: translate(-6px, -50%);
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 10px;
+  font-size: var(--fs-sm);
+  white-space: nowrap;
+}
+
 .libraryDisplay { margin: 8px 0; }
 .libraryDisplayDemo { display: grid; grid-template-columns: minmax(0, 260px) minmax(0, 1fr); align-items: center; gap: 24px; padding: 18px; border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); }
 .libraryDisplayExample { margin: 0; min-width: 0; }

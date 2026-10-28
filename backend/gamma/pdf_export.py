@@ -28,6 +28,17 @@ Handwriting becomes /Ink and text boxes /FreeText (gamma/text_box.py), each
 with a private key holding Gamma's own record for a lossless re-import.
 Zotero imports both: the /Ink with its /NM id, the /FreeText as a text
 annotation through its ``/Zotero:*`` keys.
+
+Zotero's reader blends /C toward white by /CA (and draws a highlight at its
+own opacity on top), so Gamma's highlights and area notes reached it paler
+than drawn. The copies in a Zotero RDF export (``annotate_pdf(zotero=True)``)
+therefore give their /Highlight and /Square no /CA, as Zotero's own carry
+none, and keep Gamma's alpha in the private ``/GammaAlpha``, which the
+importer reads before /CA. The /Square's appearance stream keeps the alpha,
+so other viewers draw it as before; a /Highlight, which has no appearance,
+they draw from /C at full strength. Ink and text boxes are written the same
+in both. Every annotation names its author as /T and as
+/Zotero:AuthorName, the only one Zotero reads.
 """
 
 import hashlib
@@ -50,6 +61,9 @@ from PyPDF2.generic import (
 
 from . import colors
 DEFAULT_COLOR = (1.0, 226 / 255, 143 / 255, 0.65)  # the viewer's yellow
+# Where a Zotero copy's highlights and area notes keep their alpha instead of
+# /CA (module docstring); routers/imports.py reads it first.
+GAMMA_ALPHA = "/GammaAlpha"
 
 
 class ExportPdfReader(PdfReader):
@@ -119,7 +133,7 @@ def display_size(crop, rotation):
     return (ch, cw) if rotation in (90, 270) else (cw, ch)
 
 
-def _viewer_rect_to_pdf(rect, size, rotation, crop):
+def viewer_rect_to_pdf(rect, size, rotation, crop):
     """One stored viewer rect, in a frame of ``size`` (the position's
     width, height), → (x1, y1, x2, y2) in PDF user space."""
     w, h = (float(v or 0) or 1.0 for v in size)
@@ -263,19 +277,29 @@ def _drop_replaced(writer, keys) -> None:
             drop_annotations(page, doomed)
 
 
-def _finish_annotation(annot, color, note, author):
+def _sign(annot, author) -> None:
+    """Name ``author`` on the annotation for PDF viewers (/T) and for
+    Zotero (/Zotero:AuthorName); nothing without one."""
+    if author:
+        annot[NameObject("/T")] = TextStringObject(author)
+        annot[NameObject("/Zotero:AuthorName")] = TextStringObject(author)
+
+
+def _finish_annotation(annot, color, note, author, zotero=False):
+    """The colour, print flag, note and author a highlight, area note or
+    ink annotation shares. ``zotero``: the alpha goes in /GammaAlpha, not
+    /CA (module docstring)."""
     r, g, b, alpha = color
     annot[NameObject("/C")] = ArrayObject((FloatObject(r), FloatObject(g), FloatObject(b)))
-    annot[NameObject("/CA")] = FloatObject(round(alpha, 3))
+    annot[NameObject(GAMMA_ALPHA if zotero else "/CA")] = FloatObject(round(alpha, 3))
     annot[NameObject("/F")] = NumberObject(4)  # print
     if note:
         annot[NameObject("/Contents")] = TextStringObject(note)
-    if author:
-        annot[NameObject("/T")] = TextStringObject(author)
+    _sign(annot, author)
     return annot
 
 
-def _highlight_annotation(rects, color, note, author):
+def _highlight_annotation(rects, color, note, author, zotero=False):
     quads, xs, ys = [], [], []
     for x1, y1, x2, y2 in rects:
         # Quad order: upper-left, upper-right, lower-left, lower-right.
@@ -290,7 +314,7 @@ def _highlight_annotation(rects, color, note, author):
         ),
         NameObject("/QuadPoints"): ArrayObject(FloatObject(v) for v in quads),
     })
-    return _finish_annotation(annot, color, note, author)
+    return _finish_annotation(annot, color, note, author, zotero)
 
 
 # Zotero's item-key alphabet (32 chars — 5 bits per char).
@@ -343,7 +367,7 @@ def _square_appearance(writer, box, color):
     return writer._add_object(stream)
 
 
-def _square_annotation(writer, rects, color, note, author, block_id=""):
+def _square_annotation(writer, rects, color, note, author, block_id="", zotero=False):
     """Area note → /Square over the bounding box of the rects, with an
     appearance stream for the viewer's look (``_square_appearance``). The
     /NM id is what makes Zotero import it (see module docstring)."""
@@ -364,7 +388,7 @@ def _square_annotation(writer, rects, color, note, author, block_id=""):
     })
     if block_id:
         annot[NameObject("/NM")] = TextStringObject(f"Zotero-{zotero_annot_key(block_id)}")
-    return _finish_annotation(annot, color, note, author)
+    return _finish_annotation(annot, color, note, author, zotero)
 
 
 def _ink_scale(ink, rotation, crop) -> float:
@@ -520,8 +544,7 @@ def _text_box_annotation(writer, glyphs, tb, rotation, crop, author, resolve_ref
         annot[NameObject("/C")] = ArrayObject(FloatObject(round(v, 4)) for v in parse_css_color(box["bg"])[:3])
     if rotation:
         annot[NameObject("/Rotate")] = NumberObject(rotation)
-    if author:
-        annot[NameObject("/T")] = TextStringObject(author)
+    _sign(annot, author)
     if tb.get("modified"):
         annot[NameObject("/M")] = TextStringObject(_pdf_date(tb["modified"]))
     return annot
@@ -570,7 +593,8 @@ def highlight_note_text(block, children_by_id) -> str:
 
 
 def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=(),
-                 text_boxes=(), replaced=(), resolve_ref=None) -> tuple[bytes, int]:
+                 text_boxes=(), replaced=(), resolve_ref=None,
+                 zotero: bool = False) -> tuple[bytes, int]:
     """Return (annotated pdf bytes, number of annotations written).
 
     ``highlights``: [{position: <pdf_position dict>, color: <css string>,
@@ -585,6 +609,8 @@ def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=(),
     ``imported_annot`` keys of text boxes imported from this PDF and still
     embedded in it, whose originals leave the copy (``_drop_replaced``)
     before anything is written, so the Gamma version stands alone.
+    ``zotero``: a copy for a Zotero RDF export, its highlights' and area
+    notes' alpha in ``/GammaAlpha`` instead of /CA (module docstring).
     """
     from .pdf_glyphs import GlyphFonts
     from .pdf_typeset import finalize_cid
@@ -631,13 +657,13 @@ def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=(),
             continue
         crop, rotation = page_frame(writer.pages[page_num - 1])
         size = (pos.get("width"), pos.get("height"))
-        pdf_rects = [_viewer_rect_to_pdf(r, size, rotation, crop) for r in viewer_rects]
+        pdf_rects = [viewer_rect_to_pdf(r, size, rotation, crop) for r in viewer_rects]
         color = parse_css_color(h.get("color"))
         if pos.get("area"):
             annot = _square_annotation(writer, pdf_rects, color, h.get("note") or "",
-                                       author, block_id=h.get("id") or "")
+                                       author, block_id=h.get("id") or "", zotero=zotero)
         else:
-            annot = _highlight_annotation(pdf_rects, color, h.get("note") or "", author)
+            annot = _highlight_annotation(pdf_rects, color, h.get("note") or "", author, zotero)
         writer.add_annotation(page_number=page_num - 1, annotation=annot)
         written += 1
 

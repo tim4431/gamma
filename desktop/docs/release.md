@@ -83,7 +83,7 @@ secrets through:
 | Platform | Secrets | What it does |
 |---|---|---|
 | Windows | `AZURE_TENANT_ID`, `AZURE_CLIENT_ID`, `AZURE_CLIENT_SECRET`, `AZURE_SIGN_ENDPOINT`, `AZURE_SIGN_ACCOUNT`, `AZURE_SIGN_PROFILE`, optional `AZURE_SIGN_PUBLISHER` | [Azure Trusted Signing](https://learn.microsoft.com/azure/trusted-signing/) via electron-builder's `azureSignOptions`: signs `Gamma.exe`, the frozen `gamma-server.exe` and the NSIS installer. The three `AZURE_*` auth values are an Entra app registration (client secret) holding the *Trusted Signing Certificate Profile Signer* role on the account; endpoint is the region URL (e.g. `https://eus.codesigning.azure.net`), account/profile are the resource names, publisher the certificate subject (`CN=…`). |
-| macOS | `MAC_CERT_P12` (base64 of the *Developer ID Application* `.p12`: `base64 -i cert.p12 \| pbcopy`), `MAC_CERT_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` | Developer ID signing (the macOS build step exports them as electron-builder's `CSC_LINK`/`CSC_KEY_PASSWORD` only when set — an empty `CSC_LINK` in the env is read as a certificate path and fails the build) with hardened runtime + `assets/entitlements.mac.plist` (JIT + `disable-library-validation`, which the PyInstaller sidecar needs to load its Python extension modules; osx-sign walks the whole `.app`, so `Contents/Resources/gamma-server` is signed too), then notarization (`mac.notarize`) with an [app-specific password](https://support.apple.com/102654) and stapling. |
+| macOS | `MAC_CERT_P12` (base64 of the *Developer ID Application* `.p12`: `base64 -i cert.p12 \| pbcopy`), `MAC_CERT_PASSWORD`, `APPLE_ID`, `APPLE_APP_SPECIFIC_PASSWORD`, `APPLE_TEAM_ID` | Developer ID signing (the macOS build step exports them as electron-builder's `CSC_LINK`/`CSC_KEY_PASSWORD` only when set — an empty `CSC_LINK` in the env is read as a certificate path and fails the build) with hardened runtime + `assets/entitlements.mac.plist` (JIT + `disable-library-validation`, which the PyInstaller sidecar needs to load its Python extension modules, and `device.audio-input` for the microphone; osx-sign walks the whole `.app`, so `Contents/Resources/gamma-server` is signed too), then notarization (`mac.notarize`) with an [app-specific password](https://support.apple.com/102654) and stapling. |
 
 Linux has no equivalent: a `.deb` file carries no signature (apt trusts
 repositories, not files), so the Linux build is neither signed nor warned
@@ -304,7 +304,7 @@ config: the same app, server and frontend as the dmg, packaged as a signed
 `.pkg` for App Store Connect. It is listed under the App Store Connect
 record *Gamma - PDF Reader* (Apple ID 6814705181) of team `A436A36DDC`,
 with the iPad app: bundle id `net.blitzbuild.gamma`, so the two platforms
-share one listing. The dmg and zip keep `io.github.tim4431.gamma`; on one
+share one listing (`ipad/project.yml` names the same id). The dmg and zip keep `io.github.tim4431.gamma`; on one
 Mac they are two apps with separate data. Version 1.0 (build 2) was the
 first submission, in October 2026; how it was arrived at, and what was
 left out of it, is [research/mac-app-store.md](../../docs/research/mac-app-store.md).
@@ -320,7 +320,7 @@ upload checks.
 | Updates through the App Store only (2.4.5(vii)) | `lib/updater.js` reports `unsupported` (reason `mas`) and never loads electron-updater; the local servers get `GAMMA_UPDATES=mas` and `GAMMA_UPDATE_CHECK=off`, so Settings → Server asks GitHub nothing and says the App Store delivers updates |
 | No code the review did not see (2.4.5(iv), 2.5.2) | the bundled server only: the launcher's *run local servers from a source checkout* settings are hidden and `lib/sidecar.js` ignores them |
 | Nothing at login without consent and a helper (2.4.5(iii)) | no login item: *Start at login* is hidden in the launcher and the menus. The servers stop when the app quits |
-| A purpose string for each protected resource (5.1.1) | `NSMicrophoneUsageDescription`, for recording into a note and dictating to the assistant |
+| A purpose string for each protected resource (5.1.1) | `NSMicrophoneUsageDescription`, for recording into a note and dictating to the assistant, from the base config's `mac.extendInfo` (the dmg carries the same); the app asks macOS before a page gets the microphone ([architecture.md](architecture.md#the-microphone)) |
 | A 1024 px icon (ITMS-90236 rejected build 1) | `assets/icon.png` is 1024 px, made by the brand generator (`design/brand/outputs.json`), so the `.icns` electron-builder derives has its 512@2x image |
 | Files the installed app can read | the npm scripts run with `umask 022`, and `scripts/mas-modes.cjs`, an `afterPack` hook, makes every file in the app world-readable before signing: the store installs the files with the modes they were packed with, owned by root |
 | Export compliance | `ITSAppUsesNonExemptEncryption` false (HTTPS only), as the iPad app declares |

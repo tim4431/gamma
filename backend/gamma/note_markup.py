@@ -11,7 +11,9 @@ base-14 Symbol font, which every viewer has), ``^``/``_`` become genuinely
 raised/lowered runs, and structures collapse to inline forms
 (``\\frac{a}{b}`` → ``a/b``, ``\\sqrt x`` → ``√x``). Unknown commands fall back
 to their own name, which is what you want for ``\\sin``, ``\\log``, ``\\max``.
-It also keeps the one place that knows the legacy Logseq image width.
+It also keeps the one place that knows the legacy Logseq image width, and
+the inline grammar (``INLINE_RE``) that both ``pdf_document`` and the Zotero
+notes (``zotero_notes``) read a block's text with.
 """
 
 import re
@@ -31,6 +33,46 @@ LEGACY_WIDTH_RE = re.compile(r"(!\[[^\]]*)(\]\([^)]+\))\{:width\s+(\d+)\}")
 def obsidian_image_sizes(md: str) -> str:
     """``![a](u){:width N}`` → ``![a|N](u)`` (text without the suffix is returned unchanged)."""
     return LEGACY_WIDTH_RE.sub(lambda m: f"{m.group(1)}|{m.group(3)}{m.group(2)}", md or "")
+
+# One pass over a paragraph of markdown. Order matters: ** before *, ![[ before [[,
+# \( math before a backslash escape (CommonMark's: a backslash before ASCII
+# punctuation is that character, so "\*" or "\$" reads as typed, as on
+# screen). A closing mark never follows a backslash, which escapes it. The
+# marks and a link's label may cross the paragraph's line breaks, as on
+# screen ("**a⏎b**" is bold on both lines); ==mark== and the rest stay
+# within a line, and every line break stays in the text. LITERAL_SPANS are
+# its first alternatives, the spans read as written (code, math, an escape):
+# nothing inside one is markup, which a reader that takes images out first
+# (zotero_notes) has to know too.
+#
+# A link's target, an image's source and a bare web address hold a "(" only
+# as one of a balanced pair (one level deep), as on screen: an Elsevier DOI
+# "…/S0140-6736(20)30183-5" or "…/Foo_(bar)" reads whole, and "(see
+# https://x.org)" leaves its ")" out. A title follows the target after a
+# space, so a target never stops short at a "(" and LINK_PARTS, which reads
+# the target alone, takes the one the link was read with.
+LINK_TARGET = r"(?:[^()\s]|\([^()\s]*\))+"
+BARE_URL = r"https?://(?:[^\s<>()\[\]]|\([^\s<>()\[\]]*\))+"
+LITERAL_SPANS = (
+    r"(?P<code>``[^`\n]+``|`[^`\n]+`)"
+    r"|(?P<dmath>\$\$[^\n]+?\$\$)"
+    r"|(?P<math>\$[^$\n]+?\$|\\\([^\n]+?\\\))"
+    r"|(?P<esc>\\[!-/:-@\[-`{-~])"
+)
+INLINE_RE = re.compile(
+    LITERAL_SPANS
+    + r"|(?P<underline><u>(?s:.+?)</u>)"
+    r'|(?P<color><span style="[^"<>]*">(?s:.*?)</span>)'
+    r"|(?P<bold>\*\*(?=\S)(?s:.+?)(?<=[^\s\\])\*\*|__(?=\S)(?s:.+?)(?<=[^\s\\])__)"
+    r"|(?P<italic>\*(?=\S)[^*]+?(?<=[^\s\\])\*|(?<![\w_])_(?=\S)[^_]+?(?<=[^\s\\])_(?![\w_]))"
+    r"|(?P<strike>~~(?=\S)(?s:.+?)(?<=[^\s\\])~~)"
+    r"|(?P<mark>==(?=\S).+?(?<=[^\s\\])==)"
+    r"|(?P<embed>!\[\[[^\]\n]+\]\])"
+    r"|(?P<ref>\[\[[^\]\n]+\]\])"
+    r"|(?P<link>\[[^\]]*\]\([ \t]*" + LINK_TARGET + r"(?:[ \t][^)\n]*)?\))"
+    r"|(?P<url>" + BARE_URL + ")"
+)
+LINK_PARTS = re.compile(r"\[([^\]]*)\]\(\s*(" + LINK_TARGET + ")")
 
 # LaTeX command → unicode. Every value here is either WinAnsi- or Symbol-font
 # encodable (see pdf_typeset.font_of), so it can actually be drawn.

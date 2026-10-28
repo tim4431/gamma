@@ -411,6 +411,17 @@ def pdf_url(doc_id: str) -> str:
     return f"/api/uploads/{doc_id}.pdf"
 
 
+_PDF_URL_RE = re.compile(r"/api/uploads/([0-9A-Za-z_-]{1,128})\.pdf")
+
+
+def pdf_url_doc_id(url: str) -> str:
+    """The doc id of the stored PDF ``url`` serves when it is exactly
+    ``pdf_url``'s form (a duplicated page shows its file so, by its
+    ``source_url`` alone), else ``""``."""
+    m = _PDF_URL_RE.fullmatch(url or "")
+    return m.group(1) if m else ""
+
+
 def store_pdf(ws: str, data: bytes) -> tuple[str, bool]:
     """Store PDF bytes under their content hash in the workspace (callers
     validate with :func:`is_pdf` first). Returns ``(doc_id,

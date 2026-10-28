@@ -2,8 +2,8 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { addLocalRow, fmtElapsed, isActive, LOCAL_LIMIT, localRow, mergeTasks, newlyFinished, progressFraction,
   sortTasks, trayBadge } from "../src/tasks/taskModel.js";
-import { canOpen, kindOf, progressCounts, progressText, quietKinds, retryOf, taskActions, taskInfo, taskTime,
-  taskTitle } from "../src/tasks/taskKinds.js";
+import { canOpen, kindOf, progressCounts, progressText, quietKinds, relocationSummary, relocationSuperseded, retryOf,
+  taskActions, taskInfo, taskTime, taskTitle } from "../src/tasks/taskKinds.js";
 
 const at = (minutes) => new Date(Date.UTC(2026, 8, 29, 12, minutes)).toISOString();
 const job = (fields) => ({ kind: "export", state: "running", params: {}, progress: {}, error: "", artifact: null,
@@ -40,6 +40,7 @@ test("progress: a local fraction, a job's counts, or nothing to tell", () => {
   assert.equal(progressCounts({ done: 3, total: 40, unit: "pages" }), "3 of 40 pages");
   assert.equal(progressCounts({ done: 1, total: 1, unit: "files" }), "1 of 1 file");
   assert.equal(progressCounts({ done: 1536, total: 3 * 1073741824, unit: "bytes" }), "2 KB of 3.0 GB");
+  assert.equal(progressCounts({ done: 1, total: 2, unit: "highlights" }), "1 of 2 highlights");
   assert.equal(progressCounts({}), "");
   assert.equal(progressText(job({ progress: { phase: "packing", done: 2, total: 5, unit: "files" } })), "Packing the files · 2 of 5 files");
   assert.equal(progressText(job({ progress: { done: 1, total: 3, unit: "pages", item: "Attention" } })), "1 of 3 pages · Attention");
@@ -72,6 +73,8 @@ test("titles read the job's params; local rows keep their own name", () => {
   assert.equal(taskTitle(job({ kind: "import", params: { filename: "zotero.zip" } })), "Import zotero.zip");
   assert.equal(taskTitle(job({ kind: "scheduled-backup", params: { name: "Nightly" } })), "Backup task “Nightly”");
   assert.equal(taskTitle(job({ kind: "metadata", params: { papers: 12 } })), "Metadata lookup for 12 papers");
+  assert.equal(taskTitle(job({ kind: "relocate-highlights", params: { page_id: "p1", title: "Paper", doc_id: "d1" } })),
+    "Placing the highlights of “Paper”");
   assert.equal(taskTitle(job({ kind: "future-kind", title: "Something new" })), "Something new");
   assert.equal(taskTitle({ local: true, kind: "upload", name: "paper.pdf" }), "paper.pdf");
   assert.equal(kindOf({ kind: "nope" }).icon, "activity");
@@ -110,8 +113,43 @@ test("starting the same work again names the route and the body the first start 
     ["workspace-export", { ws: "w1", user: "", uploads: true }]);
   assert.deepEqual(retryOf(job({ kind: "restore", params: { source: "snapshot", ws: "w1", snapshot: "20260929-x", mode: "merge" } })),
     ["restore-snapshot", { ws: "w1", name: "20260929-x", mode: "merge" }]);
+  assert.deepEqual(retryOf(job({ kind: "relocate-highlights", params: { page_id: "p1", title: "Paper", doc_id: "d1" } })),
+    ["relocate-highlights", { page_id: "p1" }], "Try again places the page's highlights in the file it carries now");
   assert.equal(retryOf(job({ kind: "indexing" })), null);
   assert.equal(retryOf({ local: true, kind: "download" }), null);
+});
+
+test("a highlights run the PDF's next replacement took over is no news", () => {
+  const run = (id, page, doc, minutes, state = "running") => job({ id, kind: "relocate-highlights", state,
+    params: { page_id: page, title: "Paper", doc_id: doc }, created_at: at(minutes) });
+  const stopped = run("a", "p1", "v2", 1, "cancelled");
+  // the replacement's own run for the next file, adopted here or seen in the listing from another tab
+  assert.equal(relocationSuperseded(stopped, [stopped, run("c", "p1", "v3", 2)]), true);
+  assert.equal(relocationSuperseded(stopped, [run("c", "p1", "v3", 2, "done"), stopped]), true);
+  // a stop the person asked for, a run on another page or an older one, or another kind: it reports
+  assert.equal(relocationSuperseded(stopped, [stopped]), false);
+  assert.equal(relocationSuperseded(stopped, [stopped, run("c", "p2", "v3", 2)]), false);
+  assert.equal(relocationSuperseded(stopped, [stopped, run("o", "p1", "v1", 0, "done")]), false);
+  assert.equal(relocationSuperseded(stopped, [stopped, run("s", "p1", "v2", 2)]), false, "the same file again is the same run");
+  assert.equal(relocationSuperseded(stopped, [stopped, job({ id: "e", created_at: at(3), params: { page_id: "p1" } })]), false);
+});
+
+test("a finished highlights run says how many moved, are dashed to check, stayed and were not found", () => {
+  const result = (fields) => ({ highlights: 0, moved: 0, kept: 0, approx: 0, lost: 0, changed: 0, ...fields });
+  assert.equal(relocationSummary(result({ highlights: 3, moved: 2, kept: 1 })),
+    "Highlights placed in the PDF: 2 moved, 0 matched roughly or estimated, 1 stayed in place, 0 not found.");
+  // a dashed one says where to compare and accept it (its review card, several the Document menu's
+  // Review), a hollow one how to move it; one moved meanwhile is counted apart
+  assert.equal(relocationSummary(result({ highlights: 5, moved: 1, approx: 2, lost: 1, changed: 1 })), [
+    "Highlights placed in the PDF: 1 moved, 2 matched roughly or estimated, 0 stayed in place, 1 not found.",
+    "Hover a dashed highlight to compare and accept it, or review all 2 from the Document menu.",
+    "1 that someone moved meanwhile was left as it is.",
+    "A hollow highlight's text is gone: right-click it and choose Move to a selection.",
+  ].join(" "));
+  assert.match(relocationSummary(result({ highlights: 1, approx: 1 })), / Hover the dashed highlight to compare and accept it\.$/);
+  // a result written before the dashed count existed reads as none
+  assert.equal(relocationSummary({ moved: 1, kept: 0, lost: 0 }),
+    "Highlights placed in the PDF: 1 moved, 0 matched roughly or estimated, 0 stayed in place, 0 not found.");
 });
 
 test("a click opens the export and import dialogs again, or where the work is managed", () => {

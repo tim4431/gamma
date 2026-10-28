@@ -8,7 +8,7 @@
 # after that the pre-build phase below keeps it current.
 name: GammaIPad
 options:
-  bundleIdPrefix: net.gammapdf
+  bundleIdPrefix: net.blitzbuild
   deploymentTarget:
     iOS: "17.0"
   createIntermediateGroups: true
@@ -43,7 +43,10 @@ targets:
         codeSign: true
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: net.gammapdf.ipad
+        # The App Store Connect record "Gamma - PDF Reader" of team
+        # A436A36DDC, which the Mac App Store build shares
+        # (desktop/electron-builder.mas.cjs): signing needs that team.
+        PRODUCT_BUNDLE_IDENTIFIER: net.blitzbuild.gamma
         PRODUCT_NAME: Gamma
         INFOPLIST_FILE: GammaIPad/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: ""
@@ -240,7 +243,7 @@ targets:
         # The Gamma Cloud sign-in's sheet closes on gamma-ipad://cloud-signin
         # (Shell/CloudSignIn.swift).
         CFBundleURLTypes:
-          - CFBundleURLName: net.gammapdf.ipad.cloud-signin
+          - CFBundleURLName: net.blitzbuild.gamma.cloud-signin
             CFBundleURLSchemes:
               - gamma-ipad
         NSAppTransportSecurity:
@@ -340,7 +343,7 @@ targets:
     settings:
       base:
         GENERATE_INFOPLIST_FILE: YES
-        PRODUCT_BUNDLE_IDENTIFIER: net.gammapdf.ipad.tests
+        PRODUCT_BUNDLE_IDENTIFIER: net.blitzbuild.gamma.tests
         TEST_HOST: $(BUILT_PRODUCTS_DIR)/Gamma.app/Gamma
         BUNDLE_LOADER: $(TEST_HOST)
 schemes:

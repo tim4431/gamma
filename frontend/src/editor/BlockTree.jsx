@@ -9,8 +9,8 @@ import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
 import rehypeRaw from "rehype-raw";
-import { countBlocks, isFolded, isHighlightBlock, withLegacyAccessors } from "../shared/model/blockModel";
-import { DEFAULT_HIGHLIGHT, normalizeColor } from "../shared/model/palette.js";
+import { countBlocks, isFolded, isHighlightBlock, roughMatchPercent, withLegacyAccessors } from "../shared/model/blockModel";
+import { DEFAULT_HIGHLIGHT, darkPageLine, normalizeColor } from "../shared/model/palette.js";
 import { citesSeveralPapers, gammaLinkId, parseGammaLink, relativeGammaLink } from "../shared/model/gammaLinks.js";
 import { NO_LABELS, REF_RE, refIdsOf } from "./refLabels.js";
 import { InkCard } from "../ink/InkLayer";
@@ -28,7 +28,7 @@ import { mapOutsideCodeFences, remarkDiagrams, scanDiagramFences, setDiagramWidt
 import { MdObject, ObjectMenuButton, findObject } from "./MdObject";
 import { cutObject } from "./mdObjects";
 import { blockSpans, parseTable, protectedSpans, scanMathSpans, scanTables } from "./mdScan";
-import { LinkIcon, MicIcon, PenIcon, PlayIcon, TypeIcon, XIcon } from "../shared/ui/Icons";
+import { LinkIcon, LocateIcon, MicIcon, PenIcon, PlayIcon, TypeIcon, XIcon } from "../shared/ui/Icons";
 import { FileChip, parseUploadUrl, postFile, uploadFilesAsLines } from "../transfers/FileChip";
 import { findMathAtCursor, LatexAcPopup, MathLivePreview } from "./LatexEditor";
 import { useMathUi } from "./useMathUi.js";
@@ -670,6 +670,7 @@ const BlockRow = React.memo(function BlockRow({
   onShowOnPage,
   onEnterAttachMode,
   onUnlinkHighlight,
+  onMoveHighlight,
   onOpenLinkTarget,
   onChangeText,
   onCaret,
@@ -1035,6 +1036,8 @@ const BlockRow = React.memo(function BlockRow({
   }, [editing]);
 
   const isHighlight = isHighlightBlock(block);
+  // How alike its text and the replaced PDF's were, for one matched roughly.
+  const roughPercent = isHighlight ? roughMatchPercent(block.position) : null;
   // The highlight made last: its card is the one the guide's highlight tour
   // points at (guide/recent.js).
   const recentHighlight = useIsRecent("highlight", block.id);
@@ -1489,19 +1492,50 @@ const BlockRow = React.memo(function BlockRow({
               className="collapseBtn highlightDotBtn dotSlot"
               onClick={(e) => { e.stopPropagation(); onJump(block.id, e.ctrlKey || e.metaKey); }}
               title={
-                block.position
-                  ? t("Jump to highlight") : block.properties?.linked_highlight_id
-                    ? t("Jump to linked highlight") : t("Jump to page (no exact position)")
+                block.position?.lost
+                  ? t("Not found in the current PDF — jump to where it was")
+                  : roughPercent != null
+                    ? t("Matched roughly ({n}%) after the PDF was replaced — jump to it", { n: roughPercent })
+                    : block.position?.approx
+                      ? t("Placed by estimate after the PDF was replaced — jump to it")
+                      : block.position
+                        ? t("Jump to highlight") : block.properties?.linked_highlight_id
+                          ? t("Jump to linked highlight") : t("Jump to page (no exact position)")
               }
             >
-              <span className="highlightDot" style={{
-                background: block.position
-                  ? (normalizeColor(block.color) || DEFAULT_HIGHLIGHT)
-                  : block.properties?.linked_highlight_id
-                    ? (normalizeColor(highlightColors?.[block.properties.linked_highlight_id]) || DEFAULT_HIGHLIGHT)
-                    : 'rgba(140,140,140,0.5)'
-              }} />
+              {/* after the PDF was replaced (docs/dev/highlight_relocation.md): a
+                  highlight whose text it no longer has is a hollow dot, app.css
+                  .highlightDot.lost, in its colour; one to check (approx) keeps its
+                  fill under a dashed ring, .highlightDot.approx, in its colour's
+                  line tone, as the viewer draws it */}
+              {block.position?.lost ? (
+                <span className="highlightDot lost" style={{ borderColor: normalizeColor(block.color) || DEFAULT_HIGHLIGHT }} />
+              ) : block.position?.approx ? (
+                <span className="highlightDot approx" style={{
+                  backgroundColor: normalizeColor(block.color) || DEFAULT_HIGHLIGHT,
+                  borderColor: darkPageLine(normalizeColor(block.color) || DEFAULT_HIGHLIGHT),
+                }} />
+              ) : (
+                // backgroundColor in every branch: the one span takes each
+                // look in turn, and a background shorthand would undo
+                // .approx's clip
+                <span className="highlightDot" style={{
+                  backgroundColor: block.position
+                    ? (normalizeColor(block.color) || DEFAULT_HIGHLIGHT)
+                    : block.properties?.linked_highlight_id
+                      ? (normalizeColor(highlightColors?.[block.properties.linked_highlight_id]) || DEFAULT_HIGHLIGHT)
+                      : 'rgba(140,140,140,0.5)'
+                }} />
+              )}
             </button>
+            {block.position?.lost && onMoveHighlight ? (
+              <button
+                className="collapseBtn attachModeBtn"
+                title={t("Move to a selection on the PDF")}
+                aria-label={t("Move to a selection on the PDF")}
+                onClick={(e) => { e.stopPropagation(); onMoveHighlight(block.id); }}
+              ><LocateIcon size={12} /></button>
+            ) : null}
             {!block.position && block.properties?.linked_highlight_id && onUnlinkHighlight ? (
               <button
                 className="collapseBtn attachModeBtn"

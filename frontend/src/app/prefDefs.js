@@ -28,7 +28,8 @@ import { LANGUAGES } from "../shared/i18n/locales.js";
 import { normalizeChord } from "../shared/lib/hotkeys.js";
 import { DEFAULT_PALETTE, normalizePalette } from "../shared/model/palette.js";
 import { DARK_THEMES, THEMES, themeScheme } from "./theme.js";
-import { DEFAULT_TOPBAR, normalizeTopbar } from "./topbarItems.js";
+import { TOPBAR } from "./topbarItems.js";
+import { VIEWER_TOOLS } from "./viewerToolItems.js";
 
 export const ACCOUNT = "account";
 export const BROWSER = "browser";
@@ -48,6 +49,14 @@ const intClamped = (min, max) => ({
   parse: (raw) => {
     const value = Number.parseInt(raw, 10);
     return Number.isFinite(value) ? Math.min(max, Math.max(min, value)) : undefined;
+  },
+});
+// Like intClamped, on a grid of `step` up from min: a value between two
+// steps reads as the nearer one.
+const stepClamped = (min, max, step) => ({
+  parse: (raw) => {
+    const value = Number.parseInt(raw, 10);
+    return Number.isFinite(value) ? Math.min(max, Math.max(min, min + Math.round((value - min) / step) * step)) : undefined;
   },
 });
 const json = (normalize) => ({
@@ -163,12 +172,17 @@ export const PREFS = {
   // stored highlights and strokes keep their own colour.
   palette: pref("gamma-palette", ACCOUNT, DEFAULT_PALETTE, json(normalizePalette)),
   // The topbar's buttons (Settings → Appearance › Top bar;
-  // app/topbarItems.js): a mode per item — always on the bar, on it while
-  // it has something to say, or a row of the account menu instead. The
-  // sync pill's auto is "on the pages that sync", its always "on every page
-  // of a workspace that syncs some"; a clone's pill is on every page either
-  // way (it syncs them all).
-  topbar: pref("gamma-topbar", ACCOUNT, DEFAULT_TOPBAR, json(normalizeTopbar)),
+  // app/topbarItems.js): { order, modes }, the order they stand in and a
+  // mode per item — always on the bar, on it while it has something to say,
+  // or a row of the account menu instead. The sync pill's auto is "on the
+  // pages that sync", its always "on every page of a workspace that syncs
+  // some"; a clone's pill is on every page either way (it syncs them all).
+  topbar: pref("gamma-topbar", ACCOUNT, TOPBAR.DEFAULT, json(TOPBAR.normalize)),
+  // The viewer's side strip (Settings → Appearance › Viewer tools;
+  // app/viewerToolItems.js): { order, modes }, its tools' order and each
+  // one on the strip or a row of its ⋯ menu. Translate hidden is the
+  // translate button turned off.
+  viewerTools: pref("gamma-viewer-tools", ACCOUNT, VIEWER_TOOLS.DEFAULT, json(VIEWER_TOOLS.normalize)),
   // Interface size: index.html applies the stored value before first paint,
   // App.jsx keeps `--ui-scale` on the root in sync afterwards. Screens
   // differ, so it stays with the device.
@@ -207,6 +221,19 @@ export const PREFS = {
   metaAutoFetch: flag("gamma-meta-auto", ACCOUNT, true),
   pdfSaveLocal: flag("gamma-pdf-save", ACCOUNT, true),
 
+  // --- Highlights after a replaced PDF (Settings → Reading › Replacing a
+  // PDF; docs/dev/highlight_relocation.md) ---
+  // The server's relocate-highlights run reads both from its owner's
+  // profile by these names as it starts, clamps them the same way and falls
+  // back to its own defaults (gamma/highlight_relocate.py ROUGH_APPLY,
+  // ROUGH_MIN_CHARS); a run already done keeps what it was given. How alike
+  // a changed passage must read to be moved and drawn dashed, as a whole
+  // percentage, 50–100 in steps of 5; and how many characters a passage
+  // needs before it may match roughly at all (a shorter one must match
+  // exactly), 0–60.
+  relocateMinMatch: pref("gamma-relocate-min-match", ACCOUNT, 80, stepClamped(50, 100, 5)),
+  relocateExactChars: pref("gamma-relocate-exact-chars", ACCOUNT, 12, intClamped(0, 60)),
+
   // --- PDF viewer (Settings → Reading) ---
   // Embedded PDF annotations (burned in by a Gamma export or another viewer)
   // would render twice once imported as blocks — canvas + overlay. "strip"
@@ -220,8 +247,6 @@ export const PREFS = {
   smoothWheel: flag("gamma-smooth-wheel", ACCOUNT, false),
 
   // --- Translation (Settings → Translation) ---
-  // Master switch: off removes the translate button from the viewer.
-  translateEnabled: flag("gamma-translate-enabled", ACCOUNT, true),
   // Selection translation: a translate button in the text-selection popup
   // (next to the highlight colors), and whether it translates as soon as
   // text is selected instead of on click.

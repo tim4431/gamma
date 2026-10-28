@@ -647,15 +647,19 @@ WORKSPACE_PREFS_SCHEMA = """CREATE TABLE IF NOT EXISTS workspace_prefs (
 )"""
 
 
-def copy_chats(src: sqlite3.Connection, dst: sqlite3.Connection, where: str = "1", args=()) -> int:
+def copy_chats(src: sqlite3.Connection, dst: sqlite3.Connection, where: str = "1", args=(),
+               tables=tuple(_CHAT_COLUMNS)) -> int:
     """Copy the conversations ``where`` (a condition on ``bucket``, with
     ``args``) selects from the pages.db ``src`` into the pages.db ``dst``,
-    both tables, keeping every one ``dst`` has (a bucket's active
+    both tables (or the ``tables`` named: ``("chats",)`` for the active
+    ones alone), keeping every one ``dst`` has (a bucket's active
     conversation, an archived one by its id) — inside the callers'
     transactions: a backup merge, a Gamma export. Returns how many were
     added."""
     added = 0
     for table, columns in _CHAT_COLUMNS.items():
+        if table not in tables:
+            continue
         rows = src.execute(f"SELECT {columns} FROM {table} WHERE {where}", args).fetchall()
         marks = ", ".join("?" * len(columns.split(", ")))
         added += dst.executemany(f"INSERT OR IGNORE INTO {table} ({columns}) VALUES ({marks})", rows).rowcount
@@ -681,6 +685,12 @@ PAGES_SCHEMA = [
     # every candidate row.
     "CREATE INDEX IF NOT EXISTS idx_ub_updated ON unified_blocks(updated_at)",
     *BLOCK_HOT_INDEXES,
+    # The page a Zotero item key made (routers/imports.py
+    # _zotero_existing_page), looked up for each item of a library import.
+    # A query uses it only when it names this expression and condition:
+    # ``parent_id = 'root' AND json_extract(properties, '$.zotero_key') = ?``.
+    "CREATE INDEX IF NOT EXISTS idx_ub_zotero_key ON unified_blocks(json_extract(properties, '$.zotero_key')) "
+    "WHERE parent_id = 'root'",
     # page_changes = the workspace's change log (gamma/blocks_store.py
     # touch_page): one row per page that exists or ever existed, whose `seq`
     # every write to the page moves to the next value in the workspace —

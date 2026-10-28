@@ -9,7 +9,7 @@ import { API, fmtBytes, getCurrentWorkspace, withWorkspace } from "../shared/lib
 import { t } from "../shared/i18n/i18n.js";
 import { exportJobBody } from "../transfers/transferFormats";
 import { importSummary } from "../transfers/importReview";
-import { kindOf, retryOf, taskTitle } from "./taskKinds.js";
+import { kindOf, relocationSummary, relocationSuperseded, retryOf, taskTitle } from "./taskKinds.js";
 import { isActive } from "./taskModel.js";
 
 export function useAppJobs({
@@ -44,8 +44,11 @@ export function useAppJobs({
   // Background tasks show how far it got. Once it is done in the open
   // workspace this tab reloads (every piece of in-memory state is stale) —
   // into after.openPage when given (a shared page imported by link keeps
-  // its block id, so it opens directly). `target`: another workspace of
-  // mine (null = the open one), which is left alone here.
+  // its block id, so it opens directly), or the folder after.openFolder
+  // names (a shared folder imported by link: where the restore's report
+  // says it went, a folder of the same path here perhaps). `target`:
+  // another workspace of mine (null = the open one), which is left alone
+  // here.
   function runBackupImport(f, mode, target, after = {}) {
     const into = target || getCurrentWorkspace();
     postPill("backup-upload", { msg: t("Uploading {file}…", { file: f.name }), spinner: true });
@@ -141,9 +144,10 @@ export function useAppJobs({
 
   // A job ended while this tab looked (tasks/useTasks.js onFinished):
   // `started` is what this tab started it with ({download, pill,
-  // restoreInto, after}), null for a job started elsewhere. Whatever its
-  // window shows is left to it; the rest is said here.
-  function onJobFinished(job, started) {
+  // restoreInto, after}), null for a job started elsewhere; `jobs` the
+  // listing it ended in. Whatever its window shows is left to it; the rest
+  // is said here.
+  function onJobFinished(job, started, jobs) {
     postPill(`job:${job.id}`, null);
     const title = taskTitle(job);
     // The export or import dialog shows it (one that ends as it starts
@@ -154,9 +158,15 @@ export function useAppJobs({
     if (job.kind === "restore") {
       if (job.state === "done" && here) {
         if (started) {
-          // Every piece of in-memory state is stale now: start fresh (in the page a shared link named).
-          const page = started.after?.openPage;
-          window.location.href = withWorkspace(page ? `${window.location.pathname}?page=${encodeURIComponent(page)}` : window.location.pathname);
+          // Every piece of in-memory state is stale now: start fresh (in the
+          // page or folder a shared link named).
+          const { openPage: page, openFolder: folder } = started.after || {};
+          const reload = (query) => { window.location.href = withWorkspace(`${window.location.pathname}${query}`); };
+          if (page) reload(`?page=${encodeURIComponent(page)}`);
+          else if (folder) {
+            tasks.fetchJob(job.id).catch(() => null)
+              .then((full) => reload(`?folder=${encodeURIComponent(full?.result?.folder || folder)}`));
+          } else reload("");
         } else {
           postPill(`job:${job.id}`, { msg: t("{name} finished — this workspace changed.", { name: title }),
             action: { label: t("Reload"), run: () => { window.location.href = withWorkspace(window.location.pathname); } } }, { after: [20000, null] });
@@ -193,6 +203,24 @@ export function useAppJobs({
         }).catch(() => {});
       } else if (job.state === "cancelled") {
         setStatus(t("Metadata lookup stopped after {done} of {total} papers.", { done: job.progress?.done || 0, total: job.progress?.total || job.params?.papers || 0 }));
+      } else {
+        setStatus(t("{name} failed: {message}", { name: title, message: t(job.error) }));
+      }
+      return;
+    }
+    if (job.kind === "relocate-highlights") {
+      // The positions themselves land over the page's socket; this tab,
+      // when it started the run, hears what it found. A run stopped or
+      // refused because the PDF was replaced again says nothing: the newer
+      // run is placing the highlights, and its end reports.
+      if (!started) return;
+      if (job.state !== "done" && relocationSuperseded(job, jobs)) return;
+      if (job.state === "done") {
+        tasks.fetchJob(job.id).then((full) => {
+          if (full?.result) setStatus(relocationSummary(full.result));
+        }).catch(() => {});
+      } else if (job.state === "cancelled") {
+        setStatus(t("{name} was stopped.", { name: title }));
       } else {
         setStatus(t("{name} failed: {message}", { name: title, message: t(job.error) }));
       }

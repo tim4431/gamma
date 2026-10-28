@@ -1093,18 +1093,15 @@ open(sys.argv[1], 'wb').write(n.bytes())
         assertEq(await dialog.getByRole("group", { name: `${type} choices`, exact: true }).getByRole("button").count(), count);
       }
       if (flags.keep) await page.screenshot({ animations: "disabled", path: `${server.dir}/import-sources.png` });
-      await choice(dialog, "Next").click();
-      await toggle(dialog, "Strip the originals").check();
-      assertEq(await dialog.locator('[data-preview="highlights"]').count(), 0);
-      assertEq(await dialog.locator('[data-preview="imported-annotations"]').count(), 1);
-      await choice(dialog, "1. Choose a source").click();
-      assertEq(await choice(dialog, "Annotations in this PDF").getAttribute("aria-pressed"), "true");
-      await choice(dialog, "Next").click();
-      assert(await toggle(dialog, "Strip the originals").isChecked(), "breadcrumb preserves the import options");
-      await toggle(dialog, "Strip the originals").uncheck();
-      assertEq(await dialog.locator('[data-preview="highlights"]').count(), 1);
-      if (flags.keep) await page.screenshot({ animations: "disabled", path: `${server.dir}/import-preview.png` });
-      await choice(dialog, "1. Choose a source").click();
+      // The PDF's own annotations import at once, stripped as Settings says:
+      // no review step, no switch.
+      assertEq(await dialog.getByRole("button", { name: "Next", exact: true }).count(), 0);
+      assertEq(await dialog.getByRole("checkbox").count(), 0);
+      const annotsImport = page.waitForRequest((r) => r.method() === "POST" && new URL(r.url()).pathname === "/api/import/pdf-annotations");
+      await choice(dialog, "Import").click();
+      assertEq((await annotsImport).postDataJSON().strip, true, "the default preference strips the originals");
+      await dialog.waitFor({ state: "detached" });
+      dialog = await openDialog(page, "Import");
       const markdownChooser = page.waitForEvent("filechooser");
       await choice(dialog, "Markdown notes").dblclick();
       assertEq(await (await markdownChooser).element().getAttribute("accept"), ".md,.markdown,.zip,text/markdown,application/zip");

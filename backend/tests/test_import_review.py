@@ -260,6 +260,83 @@ def test_an_open_review_is_kept_and_a_swept_one_is_gone(accounts):
     owner.delete(f"/api/import/review/{token}")
 
 
+def test_update_adds_to_a_staged_reviews_metadata(accounts):
+    """``import_staging.update`` merges into the review's metadata, under
+    its claim: the account's own review only, and not while its import
+    holds it."""
+    from gamma import import_staging
+    owner = accounts["review-owner"]
+    me, ws = account_of("review-owner"), workspace_of("review-owner")
+    plan = review(owner, archive({"one.md": "# Updated review\ntext"}), "markdown-zip")
+    token = plan["review_id"]
+    _, before = import_staging.get(token, me, ws)
+    import_staging.update(token, me, ws, learned={"one.md": [1, 2, "digest"]})
+    import_staging.update(token, me, ws, also=True)
+    _, after = import_staging.get(token, me, ws)
+    assert after == {**before, "learned": {"one.md": [1, 2, "digest"]}, "also": True}
+    with pytest.raises(HTTPException) as other:
+        import_staging.update(token, account_of("review-other"), ws, learned={})
+    assert other.value.status_code == 404
+    with import_staging.claim(token, me, ws):
+        with pytest.raises(HTTPException) as running:
+            import_staging.update(token, me, ws, learned={})
+    assert running.value.status_code == 409
+    owner.delete(f"/api/import/review/{token}")
+
+
+def test_a_previews_stage_reaches_its_commit_and_no_answer(accounts, monkeypatch):
+    """What a preview hands on in ``stage`` stays with the staged review,
+    for its commit's metadata, and leaves the review's answer; a plain
+    preview endpoint, with no review to keep it for, drops it."""
+    from gamma import import_staging
+    from gamma.routers import imports
+
+    owner = accounts["review-owner"]
+    me, ws = account_of("review-owner"), workspace_of("review-owner")
+    stage = {"learned": {"one.md": [12, 34, "digest"]}}
+    preview, commit_markdown, committed = imports._preview_markdown_zip, imports._commit_markdown_zip, []
+
+    def committing(ws, actor, data, meta, *rest):
+        committed.append(meta)
+        return commit_markdown(ws, actor, data, meta, *rest)
+
+    monkeypatch.setattr(imports, "_preview_markdown_zip", lambda *args: {**preview(*args), "stage": stage})
+    monkeypatch.setattr(imports, "_commit_markdown_zip", committing)
+    plan = review(owner, archive({"one.md": "# Staged preview\ntext"}), "markdown-zip")
+    assert "stage" not in plan
+    _, metadata = import_staging.get(plan["review_id"], me, ws)
+    assert metadata["learned"] == stage["learned"] and metadata["source"] == "markdown-zip"
+    assert report(commit(owner, plan, plan["pages"][0]["selection_ids"]))["pages_created"] == 1
+    assert [meta["learned"] for meta in committed] == [stage["learned"]]
+
+    monkeypatch.setattr(imports, "_preview_zotero", lambda ws, data, meta: {"ok": True, "pages": [], "stage": stage})
+    plain = owner.post("/api/import/zotero/preview", files={"file": ("lib.zip", archive({"a.rdf": ""}))})
+    assert plain.status_code == 200 and plain.json() == {"ok": True, "pages": []}
+
+
+def test_a_zotero_reviews_commit_hashes_no_pdf_its_preview_hashed(accounts, monkeypatch):
+    """A Zotero review's preview hashes each PDF once and keeps the digests
+    with the staged review (its ``stage``, ``zotero_digests``); the commit
+    files the PDF under its digest without reading it for one again."""
+    from gamma import import_staging, zotero_import
+    from gamma.storage import content_digest
+
+    owner = accounts["review-owner"]
+    me, ws = account_of("review-owner"), workspace_of("review-owner")
+    hashed, real = [], zotero_import._pdf_digest
+    monkeypatch.setattr(zotero_import, "_pdf_digest", lambda zf, name: hashed.append(name) or real(zf, name))
+    pdf, entry = _annotated_pdf(b"Hashed once for its review"), "files/3/Vaswani - 2017 - Attention.pdf"
+    rdf = RDF.replace("s41586-000-00000-0", "hashed-once").replace("Attention is all you need", "Hashed once")
+    plan = review(owner, archive({"library.rdf": rdf, entry: pdf}), "zotero")
+    assert hashed == [entry] and "stage" not in plan
+    _, metadata = import_staging.get(plan["review_id"], me, ws)
+    assert metadata["zotero_digests"][entry][2] == content_digest(pdf)
+    paper = next(p for p in plan["pages"] if p["kind"] == "pdf")
+    data = report(commit(owner, plan, paper["selection_ids"]))
+    assert data["pages_created"] == 1 and hashed == [entry]
+    assert owner.get(f"/api/blocks/{data['pages'][0]['id']}").json()["properties"]["doc_id"] == content_digest(pdf)
+
+
 def test_upload_in_parts_reviews_and_imports_like_one_request(accounts):
     """Past what a proxy lets one request carry, the upload comes in parts;
     finishing answers the same preview, and the job imports from it."""

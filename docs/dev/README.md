@@ -84,6 +84,7 @@ These describe the implementation unless explicitly marked as plans.
 | Chat buckets per page and folder, the active conversation, the archive, and exporting a conversation with its pictures | [Chat history](chat_history.md) |
 | The translated PDF view, its engines and limits | [PDF translation](translation.md) |
 | Clickable PDF citations and library links | [PDF citations](pdf_citations.md) |
+| A page's highlights found again by their text after its PDF is replaced, the rough matches drawn dashed and their review card, the ones not found, moving one by hand | [Highlights after a PDF replacement](highlight_relocation.md) |
 | MCP, integration tokens, OAuth, and assistant plugins | [MCP](mcp.md) |
 | Preferences, Settings panes, notices, and backup tasks | [Settings](settings.md) |
 | Themes, controls, menus, dialogs, and editor interactions | [UI design](ui-design.md) |

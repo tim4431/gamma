@@ -67,6 +67,14 @@ export const TASK_KINDS = {
     title: ({ params }) => t("Transcribe “{name}”", { name: named(params.title) }),
     retry: ({ params }) => ["transcribe", { block_id: params.block_id }],
   },
+  // A page's highlights found again in its PDF after the file was replaced
+  // (docs/dev/highlight_relocation.md): started by the replacement itself
+  // or by the Document menu's "Find highlights in this PDF".
+  "relocate-highlights": {
+    icon: "search",
+    title: ({ params }) => t("Placing the highlights of “{name}”", { name: named(params.title) }),
+    retry: ({ params }) => ["relocate-highlights", { page_id: params.page_id }],
+  },
   // Settings → Maintenance's batch lookup and the one after an upload of
   // several PDFs. A start while it runs adds papers to it, so the count is
   // its progress's. No retry: the pane is where the papers are picked again.
@@ -125,6 +133,8 @@ const PHASES = {
   browser: t("Waiting for you in your browser"),
   connector: t("Gamma Connector is on it"),
   transcribing: t("Transcribing"),
+  reading: t("Reading the PDF"),
+  matching: t("Finding each highlight's text"),
 };
 
 // "12 of 40 pages", "120 MB of 2.1 GB", "" when there are no counts.
@@ -139,6 +149,7 @@ export function progressCounts({ done, total, unit } = {}) {
     case "items": return tn("{done} of {total} item", "{done} of {total} items", total, args);
     case "papers": return tn("{done} of {total} paper", "{done} of {total} papers", total, args);
     case "workspaces": return tn("{done} of {total} workspace", "{done} of {total} workspaces", total, args);
+    case "highlights": return tn("{done} of {total} highlight", "{done} of {total} highlights", total, args);
     default: return t("{done} of {total}", args);
   }
 }
@@ -182,6 +193,40 @@ export function taskTime(task, now = Date.now()) {
 // [route, body] that starts the same work again, or null.
 export function retryOf(task) {
   return (!task.local && kindOf(task).retry?.(task)) || null;
+}
+
+// Whether a relocate-highlights run was taken over by a newer one for the
+// same page and another file, among `jobs`: the PDF was replaced again,
+// which stops the run for the file before or has its write refused. That
+// run's end is no news; the newer run reports.
+export function relocationSuperseded(job, jobs) {
+  const page = job?.params?.page_id;
+  const since = Date.parse(job?.created_at || "") || 0;
+  return !!page && jobs.some((other) => other.id !== job.id && other.kind === "relocate-highlights"
+    && other.params?.page_id === page && other.params?.doc_id !== job.params?.doc_id
+    && (Date.parse(other.created_at || "") || 0) > since);
+}
+
+// What the tab that started a relocate-highlights run says when it is done,
+// from its result (docs/dev/highlight_relocation.md): how many moved (found
+// exactly, in a new place), how many are drawn dashed to be checked (approx:
+// matched roughly, or an area placed by estimate), how many stayed (found
+// exactly where they were) and how many were not found (lost, drawn
+// hollow). One someone moved while the run read the file is left as it is
+// and counted apart (changed), so the numbers add up to the page's
+// highlights; a dashed one says where to check it (its review card,
+// pdf/HighlightReview.jsx, and for several the Document menu's Review), a
+// hollow one how to fix it.
+export function relocationSummary(r) {
+  return [
+    t("Highlights placed in the PDF: {moved} moved, {approx} matched roughly or estimated, {kept} stayed in place, {lost} not found.",
+      { moved: r.moved || 0, approx: r.approx || 0, kept: r.kept || 0, lost: r.lost || 0 }),
+    r.approx ? tn("Hover the dashed highlight to compare and accept it.",
+      "Hover a dashed highlight to compare and accept it, or review all {n} from the Document menu.", r.approx) : "",
+    r.changed ? tn("{n} that someone moved meanwhile was left as it is.",
+      "{n} that someone moved meanwhile were left as they are.", r.changed) : "",
+    r.lost ? t("A hollow highlight's text is gone: right-click it and choose Move to a selection.") : "",
+  ].filter(Boolean).join(" ");
 }
 
 export const canOpen = (task) => !task.local && Boolean(kindOf(task).open);

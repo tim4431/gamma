@@ -1385,6 +1385,9 @@ Only an iPad can show these, and none has been run yet:
   `ipad-test-release-NNN` marker. Every desktop release from `main`
   pushes one, and the `release-ipad` skill sends one between releases
   ([github_actions.md](github_actions.md#the-ipad-testflight-release)).
+  They go to the App Store Connect record the Mac App Store build shares,
+  `net.blitzbuild.gamma` of team `A436A36DDC`
+  ([research/mac-app-store.md](../research/mac-app-store.md)).
   CI itself signs and uploads nothing, the App
   Store submission is not automated, and App Review has not been tried
   ([research/ipad-web-shell.md](../research/ipad-web-shell.md), risk 9).
@@ -1460,9 +1463,9 @@ screen, not the device (`PHONE_MQ` / `useIsPhone` in App.jsx):
   (home: the topbar has no Home button here, so it stays on a page's bar
   and carries the `header.home` anchor), the page's PDF and Notes, Chat —
   and the topbar's actions on the right: Add, Search, a page's Share (and
-  a clone's Sync pill), More. Settings → Appearance › Top bar can hide any
-  of the first four; a hidden one is a row of More, like Background tasks
-  and the Inbox ([settings.md](settings.md#the-top-bars-buttons)). Every item is a 22px icon over its word
+  a clone's Sync pill), More. Settings → Appearance › Top bar orders them
+  and can hide any of the first four; a hidden one is a row of More, like Background tasks
+  and the Inbox ([settings.md](settings.md#bars-order-and-modes)). Every item is a 22px icon over its word
   (`.barLabel`, `--fs-2xs`, hidden on the desktop topbar), about 50px tall.
 - **A page with sheets** ([notebooks.md](notebooks.md)) has Notebook and
   Notes tabs in place of the page's tab and the Notes panel's: they switch

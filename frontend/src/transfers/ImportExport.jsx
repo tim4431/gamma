@@ -1,7 +1,7 @@
 import React from "react";
-import { FileIcon, HighlightIcon, LayoutIcon, MessageSquareIcon, PaperclipIcon, PenIcon, PinIcon, ScissorsIcon } from "../shared/ui/Icons";
+import { FileIcon, HighlightIcon, LayoutIcon, MessageSquareIcon, PaperclipIcon, PenIcon, PinIcon } from "../shared/ui/Icons";
 import { CopyField, PictureChoices, Row, Segmented, Step, SubDialog, Toggle } from "../settings/SettingsKit";
-import { ExportPreview, ImportPreview, FormatIllustration } from "../shared/illustrations";
+import { ExportPreview, FormatIllustration } from "../shared/illustrations";
 import { CopyBox, useCopied } from "../shared/ui/Widgets";
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { copyText } from "../shared/lib/utils";
@@ -400,19 +400,17 @@ function ExportDrop({ busy, onDrop, children }) {
   </div>;
 }
 
-// The import counterpart of ExportDialog, same shape: pick a source, flip the
-// switch that source understands, confirm. Nothing here is remembered — the
-// strip switch starts from the Settings preference every time, so the setting
-// stays the standing policy and the dialog is only ever a one-off override.
-// `file`: a .zip already chosen, one the iPad app was given (docs/dev/ipad.md
-// "Opened files"): the dialog asks only which export it is, offers the
-// sources that read an archive, and imports it with no picker.
-export function ImportDialog({ hasPdf, stripDefault, busy, onCancel, onImport, file = null }) {
+// The import counterpart of ExportDialog, same shape: pick a source, confirm;
+// Zotero shows its export guide first. Whether the originals of embedded
+// annotations are stripped is the Settings preference (`strip`), never asked
+// here. `file`: a .zip already chosen, one the iPad app was given
+// (docs/dev/ipad.md "Opened files"): the dialog asks only which export it is,
+// offers the sources that read an archive, and imports it with no picker.
+export function ImportDialog({ hasPdf, strip, busy, onCancel, onImport, file = null }) {
   const [step, setStep] = React.useState(0);
   // Zotero is the default source; with a PDF open, that PDF's own annotations
   // are the more likely intent and win instead.
   const [source, setSource] = React.useState(hasPdf && !file ? "annots" : "zotero");
-  const [strip, setStrip] = React.useState(stripDefault);
   const scope = { hasPdf: hasPdf && !file, archive: Boolean(file) };
   const { definition, formats, needsReview, payload } = resolveImport(source, { ...scope, strip });
   const src = definition.id;
@@ -425,34 +423,15 @@ export function ImportDialog({ hasPdf, stripDefault, busy, onCancel, onImport, f
     if (next.needsReview) setStep(1);
     else onImport(withFile(next.payload));
   };
-  const review = <>
-    <div className="transferReview">
-      <ImportPreview annotations strip={payload.strip} />
-      <div className="transferControls">
-        <Toggle
-          icon={ScissorsIcon}
-          label={t("Strip the originals")}
-          hint={src === "annots" ? t("Rewrite the stored PDF without them") : t("Rewrite the imported PDFs without them")}
-          title={t("Rewrite the stored file without the annotations you're importing, so only Gamma's copies remain. Off: they stay in the file and the viewer hides them.")}
-          checked={payload.strip}
-          onChange={setStrip}
-        />
-      </div>
-    </div>
-    {src === "zotero" ? (
-      // Same numbered-step guide as the add-API-key wizard.
-      <div className="importSteps">
-        <Step n={1} title={t("Export from Zotero")}
-          hint={t('File → Export Library… (or right-click a collection), format "Zotero RDF".')} />
-        <Step n={2} title={t("Include the files and notes")}
-          hint={t('Check "Export Files" and "Export Notes" — the files carry your PDFs and the annotations you made in Zotero\'s reader.')} />
-        <Step n={3} title={t("Pick the exported folder, or a .zip of it")}
-          hint={t("First wait until Zotero has written every PDF: it keeps writing them after its export window closes. Collections become folders, tags labels, notes blocks; importing again updates instead of duplicating.")} />
-      </div>
-    ) : (
-      <div className="reportModalHint">{t(definition.instructions)}</div>
-    )}
-  </>;
+  // Same numbered-step guide as the add-API-key wizard.
+  const zoteroGuide = <div className="importSteps">
+    <Step n={1} title={t("Export from Zotero")}
+      hint={t('File → Export Library… (or right-click a collection), format "Zotero RDF".')} />
+    <Step n={2} title={t("Include the files and notes")}
+      hint={t('Check "Export Files" and "Export Notes" — the files carry your PDFs and the annotations you made in Zotero\'s reader.')} />
+    <Step n={3} title={t("Pick the exported folder, or a .zip of it")}
+      hint={t("First wait until Zotero has written every PDF: it keeps writing them after its export window closes. Collections become folders, tags labels, notes blocks; importing again updates instead of duplicating.")} />
+  </div>;
   return <TransferDialog title={file ? t("Import {name}", { name: file.name }) : t("Import")} step={step} setStep={setStep}
     onCancel={onCancel} busy={busy}
     firstTitle={t("Choose a source")} secondTitle={t(definition.label)} needsReview={needsReview} onContinue={() => advance()}
@@ -464,6 +443,6 @@ export function ImportDialog({ hasPdf, stripDefault, busy, onCancel, onImport, f
       {file ? <p className="reportModalHint">{t("Which kind of export is this .zip?")}</p> : null}
       <FormatChoices label={t("Import from")} value={src} onChange={setSource} onConfirm={advance} options={formats} />
       {!needsReview ? <p className="reportModalHint">{t(definition.instructions)}</p> : null}
-    </> : src === "zotero" ? <ExportDrop busy={busy} onDrop={(file) => onImport({ ...payload, file })}>{review}</ExportDrop> : review}
+    </> : <ExportDrop busy={busy} onDrop={(file) => onImport({ ...payload, file })}>{zoteroGuide}</ExportDrop>}
   </TransferDialog>;
 }

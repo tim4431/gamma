@@ -16,9 +16,10 @@ this note keeps the reasoning and what was left out. A fact marked
   (Apple ID 6814705181) belongs to team `A436A36DDC`, bundle id
   `net.blitzbuild.gamma`, one listing for both platforms. The iPad's current
   release there is 1.1 (3), from the collaborator's fork, whose
-  `ipad/project.yml` names that bundle id; this repository's names
-  `net.gammapdf.ipad`. Mac 1.0 (2) was accepted as valid and waits for
-  review, to be released once approved.
+  `ipad/project.yml` names that bundle id. This repository's named
+  `net.gammapdf.ipad` until the listing was settled on 2026-10-27, and now
+  names `net.blitzbuild.gamma` as well. Mac 1.0 (2) was accepted as valid
+  and waits for review, to be released once approved.
 - **Most of what Apple asks is configuration.** A separate packaging
   config on Electron's Mac App Store runtime, the App Sandbox for every
   binary, the store's certificates and profile, no updater and no update
@@ -62,7 +63,9 @@ the build:
   stop when the app quits, as on every platform.
 - **Purpose strings (5.1.1).** Electron's own `Info.plist` carries a
   generic microphone string (*unverified*); a specific one is safer at
-  review.
+  review. The packaging config gives both Mac builds Gamma's, and the app
+  asks macOS for the microphone before a page gets it, since Electron does
+  not ([architecture.md](../../desktop/docs/architecture.md#the-microphone)).
 - **Payments (3.1.1, 3.1.3(f)).** A free app that is a client of a paid
   web service may not sell or point at a purchase. Gamma's servers never
   speak of money (plans are sold on account.gammapdf.com only,
@@ -182,7 +185,9 @@ Gamma's.
   registry's `access`.
 - The build is made by hand; the Mac mini that builds the iPad's TestFlight
   releases could make it on the same marker.
-- The dmg's `entitlements.mac.plist` has no
-  `com.apple.security.device.audio-input`, which a Developer ID build with
-  the hardened runtime needs for the microphone.
-- Whose team the listing stays under, given the two iPad bundle ids.
+- The iPad builds now go to this listing, so the Mac mini that makes
+  them has to sign as team `A436A36DDC`, and `MARKETING_VERSION` in
+  `ipad/project.yml` (0.2.0) has to rise above the iPad's approved 1.1:
+  App Store Connect refuses a lower version than the one approved
+  (ITMS-90062). The app is a new one on an iPad that has the
+  `net.gammapdf.ipad` build: its local server's data stays with that one.

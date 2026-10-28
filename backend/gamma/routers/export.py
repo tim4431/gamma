@@ -10,6 +10,7 @@ and the background job the web app starts (``POST /api/jobs/export``)."""
 
 import base64
 import json
+import mimetypes
 import os
 import re
 import shutil
@@ -28,9 +29,9 @@ from .. import ink as inkmod
 from .. import comments, jobs, notability_export, notebook
 from ..auth import require_user, require_ws, resolve_ws, share_scope
 from ..blocks_store import (
-    BLOCK_COLUMNS, PATH_SEP, STORED_COLUMNS, TREES, assert_block_in_scope, block_to_dict,
-    fetch_subtree, filing, folder_path, folder_subtree_ids, page_root_id, pages_in_folder,
-    tree_rows)
+    BLOCK_COLUMNS, FOLDERS, LABELS, PATH_SEP, STORED_COLUMNS, TREES, assert_block_in_scope, block_to_dict,
+    existing_in, fetch_subtree, filing, folder_path, folder_subtree_ids, page_root_id, pages_in_folder,
+    tree_parents, tree_rows)
 from ..db import connect_pages_db, ws_uploads_dir
 from ..db import (
     PAGES_SCHEMA,
@@ -72,27 +73,40 @@ from ..zotero_export import (
     build_rdf,
     highlight_memo_html,
     note_html,
+    standalone_note_html,
     strip_image_md,
 )
+from .imports import ATTACHMENTS_PROP
 
 router = APIRouter(prefix="/api", tags=["export"])
+
+# Entries packed as they are: a PDF, and media already compressed. Deflating
+# a PDF costs a second of one core per 50 MB to save a few percent.
+_STORED_EXTENSIONS = frozenset({".pdf", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".mp4", ".webm", ".m4a",
+                                ".mp3", ".ogg", ".opus", ".zip"})
+
+
+def _compression(arcname: str) -> int:
+    """How a zip entry is packed, by its name's extension."""
+    return zipfile.ZIP_STORED if os.path.splitext(arcname)[1].lower() in _STORED_EXTENSIONS else zipfile.ZIP_DEFLATED
 
 
 def _write_zip(dest, entries, assets, uploads_dir, files=(), blobs=(), progress=jobs.no_progress) -> None:
     """entries: list of (arcname, text). assets: set of upload filenames, written
     once under assets/ (deduped by content-addressed name). files: (arcname,
     disk path) pairs; blobs: (arcname, bytes) pairs. ``progress`` hears the
-    files packed so far (the phase "packing")."""
+    files packed so far (the phase "packing"). PDFs and compressed media are
+    stored (``_compression``), the rest deflated."""
     stored = [(f"assets/{name}", uploads_dir / name) for name in sorted(assets)] + list(files)
     with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as z:
         for arcname, text in entries:
-            z.writestr(arcname, text)
+            z.writestr(arcname, text, compress_type=_compression(arcname))
         for n, (arcname, path) in enumerate(stored):
             progress(phase="packing", done=n, total=len(stored), unit="files")
             if path.is_file():
-                z.write(path, arcname)
+                z.write(path, arcname, compress_type=_compression(arcname))
         for arcname, data in blobs:
-            z.writestr(arcname, data)
+            z.writestr(arcname, data, compress_type=_compression(arcname))
     progress(phase="packing", done=len(stored), total=len(stored), unit="files")
 
 
@@ -496,16 +510,26 @@ class _LogseqBuilder(_Builder):
         self.entries.append(("logseq/config.edn", CONFIG_EDN))
 
 
+# A block under the import's "Attachments" heading that is one of Zotero's
+# other attachments again: a file chip or a web link, one markdown link
+# (imports._markdown_link) — its label, and its upload or its URL.
+_CHIP_RE = re.compile(r"\[([^\]\n]*)\]\((?:/api/uploads/([0-9a-fA-F]+\.[A-Za-z0-9]+)|(https?://[^\s)]+))\)")
+
+
 class _ZoteroBuilder(_Builder):
     """A Zotero RDF library: ``<base>/<base>.rdf`` + ``<base>/files/<n>/…``.
     What is drawn on the page travels inside the PDF copies (annotate_pdf —
     Zotero's "Include Annotations" convention): highlights, area notes and
     handwriting with the highlights switch, text boxes with either switch,
-    as the annotated PDF writes them. Notes become bib:Memo items with pasted
-    images embedded as data URIs, the folders below the exported folder the
-    collection tree, labels tags. Images referenced anywhere in a page also
-    ride as item attachments; annotation comments carry a plain "(image: …)"
-    placeholder since they can't hold pictures."""
+    as the annotated PDF writes them, in Zotero's own colours. A page with
+    nothing to draw sends its stored PDF as it is. Notes become bib:Memo
+    items with pasted images embedded as data URIs, the folders below the
+    exported folder the collection tree, labels tags. Images referenced
+    anywhere in a page also ride as item attachments; annotation comments
+    carry a plain "(image: …)" placeholder since they can't hold pictures.
+    The file chips and web links of the page's "Attachments" block go back
+    as the attachments the import made them of. A note page (a Zotero
+    standalone note the import made a page of) goes out as that note."""
     suffix = "-zotero.zip"
 
     def __init__(self, ws, base, opts):
@@ -532,58 +556,109 @@ class _ZoteroBuilder(_Builder):
         self.keys.add(key)
         return key
 
-    def _annotated_copy(self, data, blocks, page_id, title):
-        """The PDF copy with the page's annotations, and the ids of the ink
-        groups and text boxes it carries."""
+    def _pdf_copy(self, n, rows, page, title) -> tuple[str | None, set]:
+        """The page's PDF in the zip: its path there (None: the export
+        carries no files, or the page has no stored PDF) and the ids of the
+        ink groups and text boxes the copy carries. With nothing to draw it
+        is the stored file, packed from storage unread; else the copy is
+        drawn as Zotero reads it (``zotero=True``: no /CA for Zotero to pale
+        the colours by) and spooled."""
+        doc_id = (page.get("properties") or {}).get("doc_id")
+        if not (self.opts["pdf"] and doc_id):
+            return None, set()
+        try:
+            pdf_path = self.uploads_dir / f"{safe_doc_id(doc_id)}.pdf"
+        except ValueError:
+            return None, set()
+        if not pdf_path.is_file():
+            return None, set()
+        pdf_arc = f"files/{n}/{slugify(title, '')}.pdf"
         highlights, notes = self.opts["highlights"], self.opts["notes"]
+        blocks = [block_to_dict(r) for r in rows] if highlights or notes else []
         marks = _collect_marks(blocks) if highlights else []
         ink = _collect_ink(blocks, self.uploads_dir) if highlights else []
-        boxes, replaced = _collect_text_boxes(blocks, page_id) if highlights or notes else ([], set())
-        for mark in marks + ink:
-            mark["note"] = strip_image_md(mark["note"])
-        if not (marks or ink or boxes or replaced):
-            return data, set()
-        try:
-            data, _ = annotate_pdf(data, marks, author=self.opts.get("author", ""), ink=ink,
-                                   text_boxes=boxes, replaced=replaced, resolve_ref=self.resolve_ref)
-        except Exception as e:
-            log(f"zotero export: annotating '{title}' failed, exporting bare PDF: {e}")
-            return data, set()
-        return data, {g["id"] for g in ink} | {b["id"] for b in boxes}
+        boxes, replaced = _collect_text_boxes(blocks, page["id"]) if highlights or notes else ([], set())
+        if marks or ink or boxes or replaced:
+            for mark in marks + ink:
+                mark["note"] = strip_image_md(mark["note"])
+            try:
+                data, _ = annotate_pdf(pdf_path.read_bytes(), marks, author=self.opts.get("author", ""), ink=ink,
+                                       text_boxes=boxes, replaced=replaced, resolve_ref=self.resolve_ref,
+                                       zotero=True)
+            except Exception as e:
+                log.warning(f"[zotero export] annotating '{title}' failed, exporting bare PDF: {e}")
+            else:
+                self.spool(f"{self.base}/{pdf_arc}", data)
+                return pdf_arc, {g["id"] for g in ink} | {b["id"] for b in boxes}
+        self.files.append((f"{self.base}/{pdf_arc}", pdf_path))
+        return pdf_arc, set()
+
+    def _attachments(self, n, page) -> tuple[list, set]:
+        """The item's attachments besides its PDF (``build_rdf``'s
+        ``images``), their files packed: the pictures its blocks show, and
+        the file chips and web links under its "Attachments" block, each
+        file under the name its chip shows. Also the ids of those chips,
+        which are no note. Files ride only when the export carries them."""
+        out, packed, chips = [], set(), set()
+
+        def pack(fname, arc, title):
+            if fname in packed or not (self.uploads_dir / fname).is_file():
+                return
+            packed.add(fname)
+            self.files.append((f"{self.base}/{arc}", self.uploads_dir / fname))
+            out.append({"path": arc, "title": title,
+                        "mime": IMAGE_MIME.get(fname.rsplit(".", 1)[-1].lower())
+                                or mimetypes.guess_type(fname)[0] or "application/octet-stream"})
+
+        if self.opts["pdf"]:
+            for node in _walk_tree(page):
+                for fname in MD_IMAGE_RE.findall(node.get("content") or ""):
+                    pack(fname, f"files/{n}/{fname}", fname)
+        for block in page["children"]:
+            if not (block.get("properties") or {}).get(ATTACHMENTS_PROP):
+                continue
+            for chip in block.get("children") or []:
+                found = _CHIP_RE.fullmatch((chip.get("content") or "").strip())
+                if not found or chip.get("children"):
+                    continue
+                chips.add(chip["id"])
+                label, fname, url = found.groups()
+                if url:
+                    out.append({"url": url, "title": label or url})
+                elif self.opts["pdf"]:
+                    ext = os.path.splitext(fname)[1]
+                    stem = label[:-len(ext)] if label.lower().endswith(ext.lower()) else label
+                    # A folder each, as Zotero keeps them: two chips may show one name.
+                    pack(fname, f"files/{n}/{len(out) + 1}/{slugify(stem, '')}{ext}", label or fname)
+        return out, chips
+
+    def _note_page(self, page, props, title) -> None:
+        """A note page as the standalone note it came in as: its title the
+        note's heading, its blocks the note. The page is nothing but that
+        note, so with the notes switch off it is left out."""
+        if not self.opts["notes"]:
+            self.skip(page, "a note page, and notes are switched off")
+            return
+        children = [c for c in page["children"]
+                    if not (is_highlight(c.get("properties")) or (c.get("properties") or {}).get("link_url"))]
+        self.items.append({
+            "key": self._item_key(page, props),
+            "title": title,
+            "tags": self.filing.tags(props),
+            "folders": self.filing.folders(props),
+            "memo": standalone_note_html(title, children, self.resolve_image, self.resolve_ref),
+        })
 
     def add_page(self, n, rows, page):
         props = page.get("properties") or {}
-        meta = props.get("meta") if isinstance(props.get("meta"), dict) else {}
         title = re.sub(r"\s+", " ", page.get("content") or "").strip() or "Untitled"
-        include_pdf = self.opts["pdf"]
-
-        pdf_arc = None
-        in_copy = set()  # the ink groups and text boxes the PDF copy carries
-        doc_id = props.get("doc_id")
-        if include_pdf and doc_id:
-            try:
-                pdf_path = self.uploads_dir / f"{safe_doc_id(doc_id)}.pdf"
-            except ValueError:
-                pdf_path = None
-            if pdf_path and pdf_path.is_file():
-                data, in_copy = self._annotated_copy(
-                    pdf_path.read_bytes(), [block_to_dict(r) for r in rows], page["id"], title)
-                pdf_arc = f"files/{n}/{slugify(title, '')}.pdf"
-                self.spool(f"{self.base}/{pdf_arc}", data)
-
-        images = []
-        if include_pdf:
-            seen = set()
-            for node in _walk_tree(page):
-                for fname in MD_IMAGE_RE.findall(node.get("content") or ""):
-                    if fname in seen or not (self.uploads_dir / fname).is_file():
-                        continue
-                    seen.add(fname)
-                    arc = f"files/{n}/{fname}"
-                    self.files.append((f"{self.base}/{arc}", self.uploads_dir / fname))
-                    images.append({"path": arc, "title": fname,
-                                   "mime": IMAGE_MIME.get(fname.rsplit(".", 1)[-1].lower())
-                                           or "application/octet-stream"})
+        if props.get("zotero_note") and props["zotero_note"] == props.get("zotero_key"):
+            self._note_page(page, props, title)
+            return
+        meta = props.get("meta") if isinstance(props.get("meta"), dict) else {}
+        # in_copy: the ink groups and text boxes the PDF copy carries
+        pdf_arc, in_copy = self._pdf_copy(n, rows, page, title)
+        attachments, chips = self._attachments(n, page)
 
         notes = []
         if self.opts["notes"]:
@@ -597,11 +672,16 @@ class _ZoteroBuilder(_Builder):
                 cprops = child.get("properties") or {}
                 if is_highlight(cprops) or cprops.get("link_url"):
                     continue
+                if cprops.get(ATTACHMENTS_PROP):
+                    # Its chips are attachments; what else is written under it, a note.
+                    child = {**child, "children": [c for c in child.get("children") or [] if c["id"] not in chips]}
+                    if not child["children"]:
+                        continue
                 if child["id"] in in_copy and not (
                         is_text_box(cprops) and any((d.get("content") or "").strip()
                                                     for d in _walk_tree(child) if d is not child)):
                     continue
-                html = note_html(child, resolve_image=self.resolve_image)
+                html = note_html(child, self.resolve_image, self.resolve_ref)
                 if html:
                     notes.append({"key": f"{GAMMA_NOTE_KEY}{child['id']}", "html": html})
             # Popup comments are plain text, so a highlight (or an ink group in
@@ -614,7 +694,7 @@ class _ZoteroBuilder(_Builder):
                 if not any(MD_IMAGE_RE.search(d.get("content") or "")
                            for d in _walk_tree(node)):
                     continue
-                html = highlight_memo_html(node, resolve_image=self.resolve_image)
+                html = highlight_memo_html(node, self.resolve_image, self.resolve_ref)
                 if html:
                     notes.append({"key": f"{GAMMA_NOTE_KEY}{node['id']}", "html": html})
 
@@ -626,8 +706,10 @@ class _ZoteroBuilder(_Builder):
             "tags": self.filing.tags(props),
             "folders": self.filing.folders(props),
             "pdf_path": pdf_arc,
-            "images": images,
+            "images": attachments,
             "notes": notes,
+            "rdf": props.get("zotero_rdf"),
+            "url": str(props.get("web_url") or ""),
         })
 
     def finish(self):
@@ -639,10 +721,10 @@ class _ZoteroBuilder(_Builder):
             f"1. Extract this zip somewhere (keep {self.base}.rdf and files/ together).\n"
             f"2. In Zotero: File -> Import... -> \"A file\" -> pick {self.base}.rdf.\n\n"
             "Do NOT pick the .zip itself - Zotero reports 'unsupported format' for it.\n"
-            "Collections, tags, notes and PDFs come along. Highlights, handwriting and\n"
-            "text boxes ride inside the PDFs: Zotero shows them, locked, once a PDF is\n"
-            "open, and File -> Import Annotations... there makes them Zotero's own.\n"
-            "Text boxes need Zotero 7 or later.\n"
+            "Collections, tags, notes, PDFs and other attachments come along. Highlights,\n"
+            "handwriting and text boxes ride inside the PDFs: Zotero shows them, locked,\n"
+            "once a PDF is open, and File -> Import Annotations... there makes them\n"
+            "Zotero's own. Text boxes need Zotero 7 or later.\n"
         )
         self.entries += [(f"{self.base}/{self.base}.rdf", build_rdf(self.items)),
                          (f"{self.base}/README.txt", readme)]
@@ -662,7 +744,13 @@ class _GammaBuilder(_Builder):
     by block id / doc id / conversation / content hash, its folders mapped
     onto the workspace's at the same path (``ws_backup._merge_trees``), so
     re-importing adds nothing. Lossless by construction, which is why the
-    dialog's three switches don't apply to this format."""
+    dialog's three switches don't apply to this format.
+
+    Through a share token (``opts["share"]``, the request's ShareScope:
+    another Gamma importing a shared page or folder by its link) it carries
+    only what the share shows (``_shared_trees``): the exported folder's
+    subtree with that folder at the top level, none of the folders above or
+    beside it, and of the chats only each page's active conversation."""
     suffix = "-gamma.zip"
 
     def __init__(self, ws, base, opts):
@@ -692,22 +780,78 @@ class _GammaBuilder(_Builder):
             # bookkeeping keeps files by.
             self.upload_names |= upload_refs(row[3] or "", row[4] or "{}")
 
+    def _shared_trees(self, src, share, subtree: set) -> dict:
+        """The folder and label blocks a share-scoped export carries, as
+        ``{id: the parent it gets}`` (None: its own): a folder export the
+        exported folder's subtree (``subtree``), that folder at the top; a
+        page through a folder share its folders inside the shared folder
+        with the ones between, the shared folder at the top; a folder
+        share's pages their labels, flat, as its listing shows them
+        (``routers/blocks._trees``); a page share, which shows no folder or
+        label, none."""
+        if not share.folder:
+            return {}
+        if subtree:
+            kept = dict.fromkeys(subtree)
+            kept[self.opts["folder_scope"]] = FOLDERS
+        else:
+            reach, parents = folder_subtree_ids(src, share.folder), tree_parents(src, FOLDERS)
+            kept = {}
+            for block_id in self.filed & reach:
+                while block_id in reach and block_id not in kept:  # up to the shared folder
+                    kept[block_id] = None
+                    block_id = parents.get(block_id)
+            if kept:
+                kept[share.folder] = FOLDERS
+        kept.update(dict.fromkeys(existing_in(src, LABELS, sorted(self.filed)), LABELS))
+        return kept
+
+    def _confine(self, kept: dict) -> None:
+        """Re-root the kept tree blocks (``_shared_trees``) in the export
+        and file its pages only under them."""
+        for block_id, parent in kept.items():
+            if parent:
+                self.db.execute("UPDATE unified_blocks SET parent_id = ? WHERE id = ?", (parent, block_id))
+        for page_id in self.page_ids:
+            raw = self.db.execute("SELECT properties FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()[0]
+            props = json.loads(raw or "{}")
+            filed = {tree: [i for i in filing(props, tree) if i in kept] for tree in TREES if tree in props}
+            if all(ids == props[tree] for tree, ids in filed.items()):
+                continue
+            for tree, ids in filed.items():
+                if ids:
+                    props[tree] = ids
+                else:
+                    props.pop(tree)
+            self.db.execute("UPDATE unified_blocks SET properties = ? WHERE id = ?", (json.dumps(props), page_id))
+
     def finish(self):
         scope = self.opts.get("folder_scope")
+        share = self.opts.get("share")
         with connect_pages_db(self.ws) as src:
             subtree = folder_subtree_ids(src, scope) if scope else set()
-            parents = {r[0]: r[1] for tree in TREES for r in tree_rows(src, tree)}
-            blocks = set(subtree)
-            for block_id in self.filed | ({scope} if scope else set()):
-                while block_id in parents:  # the block and the folders above it
-                    blocks.add(block_id)
-                    block_id = parents[block_id]
+            if share is not None:
+                kept = self._shared_trees(src, share, subtree)
+                blocks = set(kept)
+            else:
+                parents = {r[0]: r[1] for tree in TREES for r in tree_rows(src, tree)}
+                blocks = set(subtree)
+                for block_id in self.filed | ({scope} if scope else set()):
+                    while block_id in parents:  # the block and the folders above it
+                        blocks.add(block_id)
+                        block_id = parents[block_id]
             for row in src.execute(f"SELECT {BLOCK_COLUMNS} FROM unified_blocks "
                                    "WHERE id IN (SELECT value FROM json_each(?))", (json.dumps(sorted(blocks)),)):
                 self._put(row)
-            # the pages' chats, and on a folder export its folder views'
-            copy_chats(src, self.db, "bucket IN (SELECT value FROM json_each(?))",
-                       [json.dumps(self.page_ids + sorted(subtree))])
+            if share is not None:
+                self._confine(kept)
+                # what the share reads of the chats: each page's active conversation
+                copy_chats(src, self.db, "bucket IN (SELECT value FROM json_each(?))",
+                           [json.dumps(self.page_ids)], tables=("chats",))
+            else:
+                # the pages' chats, and on a folder export its folder views'
+                copy_chats(src, self.db, "bucket IN (SELECT value FROM json_each(?))",
+                           [json.dumps(self.page_ids + sorted(subtree))])
             # the threads shown on the pages; their authors' names travel with them (author_name)
             comments.copy_rows(self.db, comments.rows_of_pages(src, self.page_ids))
         self.db.commit()
@@ -749,7 +893,7 @@ class _NotesPdfBuilder(_Builder):
                     highlights=self.opts["highlights"], notes=self.opts["notes"],
                     resolve_ref=block_ref_resolver(conn))
         except Exception as e:
-            log(f"notes PDF export failed for '{self.base}': {e}")
+            log.warning(f"[notes pdf export] '{self.base}' failed: {e}")
             raise HTTPException(status_code=400, detail=f"could not build the PDF: {e}")
 
     def save(self, dest, progress=jobs.no_progress):
@@ -976,11 +1120,13 @@ def _notes_place(notes_at: str) -> str:
 
 
 def _export_opts(pdf=True, highlights=True, notes=True, folder_scope=None, author="", comments=False,
-                 notes_at="beside") -> dict:
-    """The switches as the builders read them."""
+                 notes_at="beside", share=None) -> dict:
+    """The switches as the builders read them; ``share`` the request's
+    ShareScope (None for a member), which confines a ``gamma`` export to
+    what the share shows."""
     notes_at = _notes_place(notes_at)
     return {"pdf": bool(pdf), "highlights": bool(highlights), "notes": bool(notes), "comments": bool(comments),
-            "notes_at": notes_at, "folder_scope": folder_scope, "author": author}
+            "notes_at": notes_at, "folder_scope": folder_scope, "author": author, "share": share}
 
 
 def page_builder(ws: str, block_id: str, mode: str, opts: dict, scope=None) -> _Builder:
@@ -1123,9 +1269,10 @@ def export_page(block_id: str, request: Request, mode: str = "readable", pdf: in
     file), or ``gamma`` (a scoped account backup any Gamma imports via
     /api/import-data?mode=merge)."""
     ws = resolve_ws(request)
+    scope = share_scope(request)
     opts = _export_opts(pdf, highlights, notes, author=request.state.user or "", comments=comments,
-                        notes_at=notes_at)
-    return page_builder(ws, block_id, mode, opts, share_scope(request)).response()
+                        notes_at=notes_at, share=scope)
+    return page_builder(ws, block_id, mode, opts, scope).response()
 
 
 # Sync on purpose: PyPDF2 rewriting is CPU-bound; the threadpool keeps the loop free.
@@ -1198,7 +1345,7 @@ def export_folder(folder_id: str, request: Request, mode: str = "readable", pdf:
     scope = share_scope(request)
     ws = resolve_ws(request)
     opts = _export_opts(pdf, highlights, notes, folder_scope=folder_id, author=request.state.user or "",
-                        comments=comments, notes_at=notes_at)
+                        comments=comments, notes_at=notes_at, share=scope)
     with connect_pages_db(ws) as conn:
         path = _export_folder(conn, folder_id, scope)
         ids = pages_in_folder(conn, folder_id)

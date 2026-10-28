@@ -236,10 +236,12 @@ const IMPORT_SOURCES = [
 ];
 
 // `archive`: a .zip is already chosen (one the iPad app was given), so only
-// the sources that read one (`archive`) are offered.
+// the sources that read one (`archive`) are offered. `strip` is the Settings
+// preference, sent by the sources that bring embedded annotations; only
+// Zotero has a review step, its export guide.
 export function resolveImport(source, { hasPdf, strip, archive } = {}) {
   const formats = IMPORT_SOURCES.filter((format) => (format.id !== "annots" || hasPdf) && (!archive || format.archive));
   const definition = formats.find(({ id }) => id === source) || formats.find(({ id }) => id === "zotero");
-  return { definition, formats, needsReview: Boolean(definition.strip),
+  return { definition, formats, needsReview: definition.id === "zotero",
     payload: definition.strip ? { source: definition.id, strip: Boolean(strip) } : { source: definition.id } };
 }

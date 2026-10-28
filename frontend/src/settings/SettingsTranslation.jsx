@@ -13,6 +13,7 @@ import { SECTION_PREFS } from "./sectionPrefs.js";
 import { useSettingsRead } from "./settingsReads.js";
 import { SPEED_ORDER } from "../chat/modelPrefs.js";
 import { FREE_TRANSLATE_ENGINE, TRANSLATE_LANGS, TRANSLATE_PARALLEL_MAX, translateModelFor } from "../app/prefs";
+import { VIEWER_TOOLS } from "../app/viewerToolItems.js";
 import { ActivityIcon, GlobeIcon, HighlightIcon, KeyIcon, LanguagesIcon, RefreshIcon, SparklesIcon, TextCursorIcon, Trash2Icon, ZapIcon } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
 import { LANGUAGES, T, t } from "../shared/i18n/i18n.js";
@@ -51,10 +52,10 @@ export function TranslationSettings({ value }) {
       <Toggle
         icon={LanguagesIcon}
         label={t("Translation button")}
-        hint={t("In the viewer; nothing translates until you ask")}
-        title={t("Show the translate button in the PDF viewer. Click translates the current page (or shows/hides an existing translation); right-click or long-press opens the options, including translating the whole document. Nothing translates until you ask.")}
-        checked={value.translateEnabled}
-        onChange={value.setTranslateEnabled}
+        hint={t("On the viewer's strip; off, in its ⋯ menu. Nothing translates until you ask")}
+        title={t("Shows the translate button on the PDF viewer's strip; off, it is a row of the strip's ⋯ menu. Click translates the current page (or shows/hides an existing translation); right-click or long-press opens the options, including translating the whole document. Nothing translates until you ask. Appearance › Viewer tools sets the same, and the strip's order.")}
+        checked={VIEWER_TOOLS.read(value.viewerTools).modes.translate !== "hidden"}
+        onChange={(on) => value.setViewerTools(VIEWER_TOOLS.setMode(value.viewerTools, "translate", on ? "always" : "hidden"))}
       />
       <Row
         icon={GlobeIcon}

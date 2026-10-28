@@ -9,7 +9,7 @@ from fractional_indexing import generate_key_between, generate_n_keys_between
 
 from . import upload_gc
 from .db import page_now
-from .storage import display_filename, pdf_url, upload_refs, url_filename
+from .storage import display_filename, pdf_url, pdf_url_doc_id, upload_refs, url_filename
 
 # What a copy of a block writes (``kind`` and ``doc_id`` are generated:
 # never written, db.BLOCK_HOT_COLUMNS) and what a read of one selects —
@@ -401,6 +401,19 @@ def page_attachment(props: dict | None) -> dict | None:
         return None
     return {"kind": "pdf", "id": doc_id, "url": url or pdf_url(doc_id),
             "name": str(props.get("original_filename") or "")}
+
+
+def attachment_file(attachment: dict | None) -> str:
+    """The doc id of the file an attachment (``page_attachment``) shows: its
+    ``id``, else the stored upload its ``url`` serves (a duplicated page
+    carries only ``/api/uploads/<doc id>.pdf``), else ``""`` (a PDF shown
+    from another address alone, never stored). The attachment's ``id``
+    stays ``""`` for such a page: this is for code that reads the file,
+    not for gating or lookups by attachment. Mirrored by
+    ``attachmentFile()`` in frontend/src/library/libraryUtils.js."""
+    if not attachment:
+        return ""
+    return attachment["id"] or pdf_url_doc_id(attachment["url"])
 
 
 def page_for_doc(conn, doc_id: str, columns: str = "id"):

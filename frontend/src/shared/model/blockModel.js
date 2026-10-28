@@ -6,8 +6,21 @@
 // {pageNumber, width, height, boundingRect: {x1, y1, x2, y2}, rects: [{x1,
 // y1, x2, y2}, …]} (area: true on an area highlight): the 1-based page,
 // the page as measured when the place was taken, and the rectangles in
-// that frame, top-left origin. A highlight whose place on its page is not
-// known carries pageNumber alone.
+// that frame, top-left origin. After the page's PDF is replaced a
+// highlight's position may also carry doc_id (the stored file its
+// rectangles were measured on, when that is no longer the page's PDF;
+// absent, the current one, which is what a selection here writes), lost:
+// true (its text was not found in the new file: drawn hollow), and approx:
+// true (drawn dashed, pending until the person accepts or moves it: a
+// passage matched roughly, with match, how alike its text and the text
+// found read, 0..0.99; or, without match, an area placed by estimate or
+// left where it was when nothing placed it). A pending one also keeps
+// prev, where it was before the run that first drew it dashed ({doc_id,
+// pageNumber, rects: [[x1, y1, x2, y2], …] as fractions of that page,
+// quote before it was respelled}), which its review card shows
+// (pdf/highlightReview.js). Accepting it (acceptedPosition) drops approx,
+// match, prev and doc_id; docs/dev/highlight_relocation.md. A highlight whose
+// place on its page is not known carries pageNumber alone.
 //
 // The tree is the DOCUMENT and nothing else: every change to it is an edit
 // the live session sends and the undo history records. What only this
@@ -69,6 +82,34 @@ export function blockCollapsed(b) {
 export function blockPosition(b) {
   const pos = b?.properties?.pdf_position;
   return pos?.boundingRect ? pos : null;
+}
+
+// A place to check after the PDF was replaced, drawn dashed: approx, and
+// not lost (a lost highlight is drawn hollow whatever else it carries).
+export function placedToCheck(pos) {
+  return Boolean(pos?.approx) && !pos.lost;
+}
+
+// A passage matched roughly after its PDF was replaced: how alike its text
+// and the text found for it are (the position's match), as a whole
+// percentage; null for a place found exactly, set by hand or estimated.
+export function roughMatchPercent(pos) {
+  const m = placedToCheck(pos) ? pos.match : null;
+  return typeof m === "number" && m >= 0 && m <= 1 ? Math.round(m * 100) : null;
+}
+
+// The position with its place accepted (Accept, on the review card, in the
+// highlight's menu, or the Document menu's Accept all): approx, match and
+// prev go, the rectangles stay, and the highlight is drawn solid. doc_id
+// goes too: accepting says the rectangles are right on the PDF the page
+// shows, so they no longer name another file (an area nothing placed keeps
+// its old file's until then), and a later run neither reads them from that
+// file nor dashes them again. A position with none of approx, match and
+// prev is returned as it is.
+export function acceptedPosition(pos) {
+  if (!pos || !["approx", "match", "prev"].some((key) => key in pos)) return pos;
+  const { approx, match, prev, doc_id, ...rest } = pos;
+  return rest;
 }
 
 // Backwards-compat accessor view: let old code that reads b.color, b.quote, b.page, b.position

@@ -280,7 +280,8 @@ the highlights, so under them, as on the page.
 - `/C`: the fill, only when `bg` is set; Acrobat, MuPDF and pypdf read it as
   the background. `/IC` is not FreeText's.
 - `/BS << /W 0 >>`: no border. `/F 4`: print. `/NM` from the block id, `/T`
-  the author, `/M` the block's `updated_at`.
+  the author (and `/Zotero:AuthorName`, the key Zotero reads it from), `/M`
+  the block's `updated_at`.
 - `/Rotate` on a turned page: Adobe's key, read by pdf.js and MuPDF, keeps
   a rebuilt look upright. NoRotate is not set: the appearance's matrix
   already keeps the text upright, and NoRotate support varies.

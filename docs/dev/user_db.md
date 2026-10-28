@@ -192,6 +192,10 @@ All state is SQLite + files on disk under a data directory (env
   - `idx_ub_updated` on `updated_at`: the newest-first readers (block
     search, the `[[` picker's suggestions, backlinks) walk it and stop at
     their limit instead of sorting every candidate.
+  - `idx_ub_zotero_key` on `json_extract(properties, '$.zotero_key')`
+    over root pages: a Zotero import's look-up of the pages an item key
+    made (`_zotero_existing_page`), once per item. A query uses it only
+    when it names that expression with `parent_id = 'root'`.
   - `doc_id` — generated: `properties.doc_id`. "Which page carries this
     PDF" (`page_for_doc`) and "which files are still in use" read its
     partial index (`WHERE doc_id IS NOT NULL`).

@@ -73,10 +73,12 @@
    after another, and a tip that grew would trail the pointer. The PDF
    selection popup (.plainTip), a note's selection toolbar (.selTools) and
    the caret's popups ("/", [[, @, the LaTeX completion and preview) fade
-   in quickly, so typing never waits on one. */
+   in quickly, so typing never waits on one. A highlight's review card
+   (.hlReviewCard) opens on a hover too. */
 .inkTooltip,
 .citePreview,
-.pdfNoteTip {
+.pdfNoteTip,
+.hlReviewCard {
   animation: fade-in var(--dur-base);
 }
 .plainTip,
