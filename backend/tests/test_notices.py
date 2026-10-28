@@ -42,6 +42,8 @@ def _quiet_sources(monkeypatch):
     monkeypatch.setattr(notices.cloud_auth, "settings", lambda: {"enabled": True, "share_host": False})
     monkeypatch.setattr(notices.cloud_auth, "needs_connect", lambda: False)
     monkeypatch.setattr(notices.cloud_auth, "status_of", lambda user_id: {"username": "linked"})
+    # nobody asks to join, whatever requests another file left in the worker's users.db
+    monkeypatch.setattr(notices.join_requests, "waiting", lambda: (0, ""))
 
 
 def _ids(client):
