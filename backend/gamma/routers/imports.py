@@ -6,6 +6,7 @@ import: the upload
 is staged and previewed (``/import/review``), then the chosen items are
 imported by a background job (``POST /api/jobs/import``, gamma/jobs.py)."""
 
+import copy
 import hashlib
 import html
 import io
@@ -21,30 +22,31 @@ from pathlib import Path
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from fractional_indexing import generate_key_between, generate_n_keys_between
+from fractional_indexing import generate_n_keys_between
 
 from .. import bibtex as bibtex_mod
-from .. import import_staging, jobs, upload_parts
+from .. import import_staging, jobs, upload_gc, upload_parts
 from ..auth import actor_of, require_user_id, require_ws
 from ..db import connect_pages_db, page_now, safe_doc_id, ws_uploads_dir
 from ..blocks_store import (FOLDERS, LABELS, STORED_COLUMNS, create_page, existing_in, filing, folder_paths,
-                            last_child_position, new_block_id, page_for_doc, page_root_id, refiled, refiled_paths,
-                            touch_page, write_lock)
+                            insert_page_tree, last_child_position, new_block_id, page_for_doc, page_root_id, refiled,
+                            refiled_paths, touch_page, write_lock)
 from ..colors import DEFAULT_HIGHLIGHT, normalize_color
 from ..highlights import position as highlight_position
 from ..logbuf import log
-from ..ops import MAX_OPS, after_commit, apply_batches, apply_ops, ensure_filing, note_reload, props_patch
+from ..ops import (MAX_CONTENT, MAX_OPS, after_commit, after_commits, apply_batches, ensure_filing, note_reload,
+                   props_patch)
 from ..markdown_import import MAX_MARKDOWN_BYTES, TooManyBlocks, md_to_blocks
 from ..markdown_zip_import import import_markdown_zip, markdown_page
 from ..notability_import import import_notes
 from ..goodnotes_import import import_goodnotes
 from ..ink import InkError, dumps as ink_dumps, from_pdf_ink, parse_ink, pdf_position as ink_position
 from ..pdf_text import GlyphPages, quote_under
-from ..pdf_export import (TEXT_BOX_TYPES, _resolve, annotation_key, annotation_shown, display_size,
+from ..pdf_export import (GAMMA_ALPHA, TEXT_BOX_TYPES, _resolve, annotation_key, annotation_shown, display_size,
                           drop_annotations, first_rect, page_frame, pdf_point_to_viewer, reply_parent)
 from ..text_box import escape_markdown, keep_on_surface, markdown_of, measure, normalize_text_box, plain_text
 from ..storage import (display_filename, find_upload_file, pdf_url, put_upload, store_file, store_file_stream,
-                       store_pdf_stream, stat as stored_stat)
+                       store_pdf_stream, size as stored_size, stat as stored_stat, touch as stored_touch, upload_refs)
 from ..logseq_import import (
     edn_highlight_position,
     edn_highlight_to_block,
@@ -53,8 +55,9 @@ from ..logseq_import import (
     parse_edn,
     parse_logseq_md,
 )
-from ..zotero_export import GAMMA_NOTE_KEY, GAMMA_PAGE_KEY
-from ..zotero_import import html_note_text, plan_zotero_archive
+from ..zotero_export import GAMMA_NOTE_KEY, GAMMA_PAGE_KEY, IMAGE_MIME
+from ..zotero_import import html_note_text, plan_zotero_archive, same_work
+from ..zotero_notes import store_images
 from ..import_review import destination, parse_selection, selected_warnings, validate_selection
 from ..workspaces import is_guest_workspace
 
@@ -69,7 +72,10 @@ router = APIRouter(prefix="/api", tags=["import"])
 # progress)`` — ``selection`` the chosen source ids (None: everything),
 # ``progress`` a background job's report (gamma/jobs.py). A preview writes
 # nothing; a commit makes the folders and labels its pages need first
-# (``ops.ensure_filing``).
+# (``ops.ensure_filing``). A preview may answer a ``stage`` dict, what its
+# commit can reuse (a Zotero review's PDF digests): a staged review keeps
+# it in the metadata its commit gets (``import_staging.update``), and no
+# answer carries it.
 
 def _review_source(source):
     sources = {
@@ -86,13 +92,17 @@ def _review_source(source):
 
 
 def _preview_staged(ws, user_id, token):
-    """The staged upload's preview with the review's ``review_id``; a
-    preview that fails discards the upload."""
+    """The staged upload's preview with the review's ``review_id``, its
+    ``stage`` kept with the review for the commit; a preview that fails
+    discards the upload."""
     try:
         path, metadata = import_staging.get(token, user_id, ws)
         preview, _ = _review_source(metadata["source"])
         with (path / "upload").open("rb") as data:
             report = preview(ws, data, metadata)
+        stage = report.pop("stage", None)
+        if stage:
+            import_staging.update(token, user_id, ws, **stage)
         return {**report, "review_id": token}
     except Exception:
         import_staging.discard(token, user_id, ws)
@@ -570,6 +580,32 @@ _AREA_TYPES = {"/Square", "/Circle"}
 # /Ink annotations pdf_export.py writes.
 _INK_TYPES = {"/Ink"}
 _IMPORT_TYPES = _MARKUP_TYPES | _NOTE_TYPES | _AREA_TYPES | _INK_TYPES
+# The key Zotero gives an item, an annotation among them: eight characters
+# of its alphabet (no 0, 1 or O).
+_ZOTERO_KEY_RE = re.compile(r"^[23456789ABCDEFGHIJKLMNPQRSTUVWXYZ]{8}$")
+
+
+def _alpha(obj, default: float) -> float:
+    """The annotation's opacity, from 0.05 to 1: its ``/GammaAlpha`` when
+    it has one (pdf_export.GAMMA_ALPHA: a Zotero RDF export's copy keeps
+    Gamma's alpha there instead of in /CA, by which Zotero would pale the
+    colour), else its /CA, else ``default``."""
+    for key in (GAMMA_ALPHA, "/CA"):
+        try:
+            return min(max(float(_resolve(obj.get(key))), 0.05), 1.0)
+        except (TypeError, ValueError):
+            pass
+    return default
+
+
+def _zotero_annotation_key(obj) -> str:
+    """The key of the Zotero annotation an embedded one is a copy of, which
+    Zotero writes as ``/Zotero:Key`` on each annotation of its own; "" for
+    any other. Its ``/NM`` is not read: Gamma's exports give a /Square, an
+    /Ink and a /FreeText an ``/NM`` of Zotero's shape too
+    (``pdf_export.zotero_annot_key``), naming no annotation Zotero holds."""
+    key = str(_resolve(obj.get("/Zotero:Key")) or "").strip()
+    return key if _ZOTERO_KEY_RE.match(key) else ""
 
 
 def _ink_from_annotation(obj, pnum: int, pw: float, ph: float, contents: str):
@@ -595,10 +631,7 @@ def _ink_from_annotation(obj, pnum: int, pw: float, ph: float, contents: str):
             color = "#%02x%02x%02x" % tuple(min(255, max(0, int(round(float(_resolve(v)) * 255)))) for v in c)
     except (TypeError, ValueError):
         pass
-    try:
-        alpha = min(max(float(_resolve(obj.get("/CA"))), 0.05), 1.0)
-    except (TypeError, ValueError):
-        alpha = 1.0
+    alpha = _alpha(obj, 1.0)
     private = _resolve(obj.get("/GammaInk"))
     try:
         ink = parse_ink(from_pdf_ink(ink_list, width, color, alpha, pnum, pw, ph,
@@ -761,11 +794,12 @@ def _text_box_from_annotation(obj, subtype: str, pnum: int, page, contents: str)
 def _extract_pdf_annotations(reader, glyphs=None):
     """The annotations of ``reader``'s pages that become blocks, as records
     in page order: ``key`` (the ``imported_annot``), ``page``, ``content``
-    and the kind's fields, ``annot`` (the annotation's dictionary) and
-    ``replies``. Only what the page shows counts (``annotation_shown``: no
-    Hidden or NoView annotation, no review-state stamp). A reply (/IRT) is
-    no block of its own but a note under the annotation it answers, in
-    ``replies`` in page order: ``{key, legacy, content, annot, replies}``,
+    and the kind's fields, ``annot`` (the annotation's dictionary),
+    ``zotero_key`` (``_zotero_annotation_key``) and ``replies``. Only
+    what the page shows counts (``annotation_shown``: no Hidden or NoView
+    annotation, no review-state stamp). A reply (/IRT) is no block of its
+    own but a note under the annotation it answers, in ``replies`` in
+    page order: ``{key, legacy, content, annot, replies}``,
     ``legacy`` the key it had when replies were imported as annotations of
     their own, ``key`` that with its /NM (or its place in /Annots), since a
     reply shares its parent's rectangle. A reply to something not imported
@@ -808,7 +842,7 @@ def _extract_pdf_annotations(reader, glyphs=None):
                 else:
                     record = _mark_from_annotation(obj, subtype, pnum, pw, ph, contents, glyphs)
                 if record:
-                    record.update(annot=obj, replies=[])
+                    record.update(annot=obj, replies=[], zotero_key=_zotero_annotation_key(obj))
                     found.append(record)
                     records[id(obj)] = record
             except Exception as e:
@@ -853,13 +887,11 @@ def _mark_from_annotation(obj, subtype, pnum, pw, ph, contents, glyphs):
     color = DEFAULT_HIGHLIGHT
     c = _resolve(obj.get("/C"))
     try:
-        # /CA is the annotation's own opacity — honoring it makes a
-        # Gamma export → re-import round-trip the exact shade. Stored as the
-        # viewer stores a colour, #rrggbbaa (gamma/colors.py).
-        alpha = 0.45
-        ca = _resolve(obj.get("/CA"))
-        if ca is not None:
-            alpha = min(max(float(ca), 0.05), 1.0)
+        # The annotation's own opacity (``_alpha``; Zotero's carry none) —
+        # honoring it makes a Gamma export → re-import round-trip the exact
+        # shade. Stored as the viewer stores a colour, #rrggbbaa
+        # (gamma/colors.py).
+        alpha = _alpha(obj, 0.45)
         if c is not None and len(c) == 3:
             # Rounded, not truncated: an app that writes 0.831 means 212.
             r, g, b = (round(float(_resolve(v)) * 255) for v in c)
@@ -915,13 +947,14 @@ def _strip_embedded_annotations(ws: str, pdf_path) -> tuple[int, set]:
 def _imported_blocks(conn, block_id: str) -> list:
     """``(id, imported_annot, annot_stripped)`` of the blocks an import made
     under ``block_id``, at any depth: a reply's note sits under its
-    parent's block, and a block may have been moved in since."""
+    parent's block, and a block may have been moved in since. Each block's
+    properties are read as the walk reaches it: joining the walk back to
+    the table had SQLite read every block of the workspace instead."""
     return conn.execute(
-        "WITH RECURSIVE sub(id) AS (SELECT id FROM unified_blocks WHERE parent_id = ? "
-        "UNION ALL SELECT b.id FROM unified_blocks b JOIN sub ON b.parent_id = sub.id) "
-        "SELECT b.id, json_extract(b.properties, '$.imported_annot'), "
-        "json_extract(b.properties, '$.annot_stripped') FROM unified_blocks b JOIN sub ON b.id = sub.id "
-        "WHERE json_extract(b.properties, '$.imported_annot') IS NOT NULL", (block_id,)).fetchall()
+        "WITH RECURSIVE sub(id, properties) AS (SELECT id, properties FROM unified_blocks WHERE parent_id = ? "
+        "UNION ALL SELECT b.id, b.properties FROM unified_blocks b JOIN sub ON b.parent_id = sub.id) "
+        "SELECT id, json_extract(properties, '$.imported_annot'), json_extract(properties, '$.annot_stripped') "
+        "FROM sub WHERE json_extract(properties, '$.imported_annot') IS NOT NULL", (block_id,)).fetchall()
 
 
 def originals_gone(conn, page_id: str) -> list[dict]:
@@ -963,10 +996,12 @@ def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, a
     then follows the file on every block an import made: set where this
     import's strip removed the original, cleared where the page's own file,
     as this import read it, holds the original again (a replacement file
-    carrying the old one's annotations, ``originals_gone``). ``found`` counts the
-    annotations that make blocks, replies included. Shared by the per-paper
-    endpoint below and the Zotero library import. ``pdf_path``: the stored
-    file's path (``storage.find_upload_file``)."""
+    carrying the old one's annotations, ``originals_gone``). A block made
+    from a copy of a Zotero annotation names it (``zotero_annotation``, its
+    ``/Zotero:Key``); a block there already is left as it is. ``found``
+    counts the annotations that make blocks, replies included. Shared by
+    the per-paper endpoint below and the Zotero library import.
+    ``pdf_path``: the stored file's path (``storage.find_upload_file``)."""
     from PyPDF2 import PdfReader
     read_as = stored_stat(ws, pdf_path.name)  # the file ``found`` describes; a strip rewrites it
     reader = PdfReader(os.fspath(pdf_path))
@@ -1034,6 +1069,8 @@ def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, a
                         "color": f["color"], "quote": f["quote"], "pdf_position": f["position"],
                         "imported_annot": f["key"],
                     }
+                if f.get("zotero_key"):
+                    props["zotero_annotation"] = f["zotero_key"]
                 insert(f, block_id, pos, props)
         for f in found:
             if f.get("replies"):
@@ -1102,19 +1139,45 @@ def import_pdf_annotations(payload: PdfAnnotsRequest, request: Request):
 # --- Zotero library import ----------------------------------------------------
 # A zip of Zotero's File → Export Library → "Zotero RDF" (with "Export Files",
 # "Export Notes" and "Include Annotations"). Items become pages, collections
-# folders (below the destination folder), tags labels, item notes child
-# blocks; reader annotations
-# arrive embedded in the exported PDF copies and go through
+# folders (below the destination folder), tags labels, item notes block
+# trees on their pages, standalone notes pages of their own; reader
+# annotations arrive embedded in the exported PDF copies and go through
 # import_embedded_annotations above. Idempotent: pages are keyed by the file
 # hash and by properties.zotero_key (export bytes change between exports —
 # Zotero re-embeds annotations — so the item key is what survives a re-export).
 
 
+def _work(meta, title) -> dict:
+    """The record ``same_work`` compares for a page or an item: its paper
+    record, else (none, or one without a title: a note) its title."""
+    meta = meta if isinstance(meta, dict) else {}
+    return meta if meta.get("title") else {**meta, "title": title}
+
+
+def _zotero_key_merges(item, props, title) -> bool:
+    """Whether ``item`` merges into a page carrying its Zotero key (the
+    page's ``props`` and ``title``). A key naming the work itself (a URL,
+    ``urn:isbn:…``) or a page Gamma exported always does. Zotero names
+    other items ``#item_<itemID>``, a number local to one Zotero database,
+    which an item of another library carries for another work: a ``#`` key
+    merges only into a page of the same work (``same_work``: the DOI, else
+    the title), as the page's record has it or as the Zotero record it was
+    imported with (``zotero_rdf``'s ``work``) had it, so a record edited in
+    Gamma still knows its item."""
+    key = item["key"]
+    if not key.startswith("#") or key.startswith(GAMMA_PAGE_KEY):
+        return True
+    work = _work(item["meta"], item["title"])
+    kept = props.get("zotero_rdf")
+    kept = kept.get("work") if isinstance(kept, dict) else None
+    return same_work(_work(props.get("meta"), title), work) or (isinstance(kept, dict) and same_work(kept, work))
+
+
 def _zotero_existing_page(conn, item):
     """The page an item merges into: an item Gamma exported, the page it was
     exported from when it is in this workspace, which other pages may share
-    a PDF with; else the page holding its PDF; else the one its Zotero key
-    made."""
+    a PDF with; else the page holding its PDF; else one its Zotero key made
+    that it may merge into (``_zotero_key_merges``)."""
     row = None
     if item["key"].startswith(GAMMA_PAGE_KEY):
         row = conn.execute("SELECT id, properties, content FROM unified_blocks WHERE parent_id='root' AND id = ?",
@@ -1122,9 +1185,10 @@ def _zotero_existing_page(conn, item):
     if row is None:
         row = page_for_doc(conn, item["digest"], "id, properties, content")
     if row is None and item["key"]:
-        row = conn.execute(
-            "SELECT id, properties, content FROM unified_blocks WHERE parent_id='root' "
-            "AND json_extract(properties,'$.zotero_key') = ?", (item["key"],)).fetchone()
+        rows = conn.execute(  # idx_ub_zotero_key's expression and condition (db.PAGES_SCHEMA)
+            "SELECT id, properties, content FROM unified_blocks "
+            "WHERE parent_id = 'root' AND json_extract(properties, '$.zotero_key') = ?", (item["key"],)).fetchall()
+        row = next((r for r in rows if _zotero_key_merges(item, json.loads(r[1] or "{}"), r[2])), None)
     return row
 
 
@@ -1169,17 +1233,19 @@ def _markdown_link(text: str, url: str) -> str:
     return f"[{text}]({_link_target(url)})"
 
 
-def _zotero_extras(conn, ws, zf, item, block_id, created, doc_id, report) -> tuple[list, str | None]:
+def _zotero_extras(conn, ws, zf, item, block_id, created, doc_id, images, report) -> tuple[list, str | None]:
     """The item's ``extras`` as the blocks its page gets under
     "Attachments": a file chip per file, stored here (outside any
     transaction, like its PDF), and a link per web link. One the page holds
     already is left out: by its Zotero key, else by the stored file or URL
-    a block of the page names — the page's own PDF included, and a Gamma
-    export brought back, whose note images are in its notes already. A file
-    that cannot be stored is a warning and the rest go on. Returns
-    ``(blocks, heading)``, each block ``{content, props}``; ``heading`` is
-    the page's "Attachments" block to add them under, None to make one."""
-    keys, heading, named = set(), None, []
+    a block of the page names or a note this import adds names
+    (``images``, the pictures its notes brought in) — the page's own PDF
+    included, and a Gamma export's note images, which ride along as
+    attachments too. A file that cannot be stored is a warning and the rest
+    go on. Returns ``(blocks, heading)``, each block ``{content,
+    properties}``; ``heading`` is the page's "Attachments" block to add
+    them under, None to make one."""
+    keys, heading, named = set(), None, [f"/api/uploads/{name}" for name in images]
     if not created:
         for bid, content, key, is_heading in conn.execute(
                 f"SELECT id, content, json_extract(properties,'$.{ATTACHMENT_KEY}'), "
@@ -1211,18 +1277,74 @@ def _zotero_extras(conn, ws, zf, item, block_id, created, doc_id, report) -> tup
                 continue
             content = _markdown_link(extra["name"], url)
         text += "\n" + content  # two attachments of one file make one chip
-        blocks.append({"content": content, "props": {ATTACHMENT_KEY: extra["key"]}})
+        blocks.append({"content": content, "properties": {ATTACHMENT_KEY: extra["key"]}})
     return blocks, heading
 
 
+# A note's picture larger than this (decoded) stays out: a placeholder and a warning.
+NOTE_IMAGE_MAX_BYTES = 25 * 1024 * 1024
+# The extension a note's picture is stored under, by its type: the first
+# zotero_export.IMAGE_MIME names for it (.jpg, as POST /upload-image stores one).
+_NOTE_IMAGE_EXT = {mime: f".{ext}" for ext, mime in reversed(IMAGE_MIME.items())}
+
+
+def _zotero_note_images(ws, item, blocks, report) -> set:
+    """Store the pictures the block trees ``blocks`` (an item's notes, or a
+    standalone note's body) hold as data URIs, as ``POST /upload-image``
+    stores one, outside any transaction; the blocks then name the stored
+    files instead (``zotero_notes.store_images``, in place). A picture past
+    NOTE_IMAGE_MAX_BYTES, of a type Gamma does not store, or past the
+    storage quota is a placeholder and a warning, and its note comes in all
+    the same. Returns the stored names."""
+    names = set()
+
+    def store(mime, data):
+        ext = _NOTE_IMAGE_EXT.get(mime)
+        if ext is None:
+            reason = f"{mime} is not a picture Gamma stores"
+        elif len(data) > NOTE_IMAGE_MAX_BYTES:
+            reason = f"larger than {NOTE_IMAGE_MAX_BYTES >> 20} MB"
+        else:
+            try:
+                name, _ = store_file(ws, data, ext)
+            except HTTPException as e:  # the quota (507)
+                reason = e.detail
+            else:
+                names.add(name)
+                return f"/api/uploads/{name}"
+        report["warnings"].append({"title": item["title"], "reason": f"Note image not imported: {reason}"})
+        return None
+
+    for block in blocks:
+        store_images(block, store)
+    return names
+
+
+def _pdf_stored(ws, digest, size) -> bool:
+    """Whether the workspace stores the PDF ``digest`` already, as ``size``
+    bytes, so the import need not stream it from the zip again. Such a
+    file is re-dated, as storing it again would (``storage``'s dedup),
+    under the upload GC's guard, so its purge keeps the file the page about
+    to be written names."""
+    name = f"{digest}.pdf"
+    if stored_size(ws, name) != size:
+        return False
+    with upload_gc.guard(ws):
+        return stored_touch(ws, name)
+
+
 def _zotero_prepare(conn, ws, zf, item, dest, report) -> dict:
-    """What the item makes of the library: the page it merges into (found
-    by PDF, else by Zotero key) or a new one, with the properties, the
-    notes and the attachments it adds — filed in its collections' folders
-    and labelled with its tags, ``dest``'s ids for them (``_commit_zotero``)
-    after a merged page's own. Its files are stored here, outside any
+    """What the item makes of the library: the page it merges into
+    (``_zotero_existing_page``) or a new one, with the properties, the
+    block trees and the attachments it adds — filed in its collections'
+    folders and labelled with its tags, ``dest``'s ids for them
+    (``_commit_zotero``) after a merged page's own. A standalone note makes
+    a note page: ``zotero_key`` and ``zotero_note`` its key, its body the
+    note below its first block (the page's title); a merge into one
+    refiles and relabels it only. Its files are stored here, outside any
     transaction, so a long import never holds the workspace's write lock
-    over file writes."""
+    over file writes: its PDF (unless the workspace stores it already), the
+    pictures of the notes it adds, its other attachments."""
     digest = item["digest"]
     row = _zotero_existing_page(conn, item)
 
@@ -1232,28 +1354,41 @@ def _zotero_prepare(conn, ws, zf, item, dest, report) -> dict:
     else:
         block_id, old = row[0], json.loads(row[1] or "{}")
     props = dict(old)
+    note_page = bool(item.get("standalone_note"))
 
-    if props.get("doc_id") and digest and props["doc_id"] != digest:
-        report["warnings"].append({"title": item["title"], "reason": "Existing page keeps its current PDF and annotations; the different exported PDF will not replace it."})
+    if note_page:
+        if created:
+            props["zotero_key"] = props["zotero_note"] = item["key"]
+    else:
+        if props.get("doc_id") and digest and props["doc_id"] != digest:
+            report["warnings"].append({"title": item["title"], "reason": "Existing page keeps its current PDF and annotations; the different exported PDF will not replace it."})
 
-    # Attach the file only when the page doesn't already have one — a page
-    # found by zotero_key keeps its existing PDF (and the highlights tied to it).
-    if digest and not props.get("doc_id"):
-        with zf.open(item["pdf_entry"]) as src:  # streamed, like its other files
-            _, already_existed, _ = store_pdf_stream(ws, src)
-        if not already_existed:
-            report["pdfs_stored"] += 1
-        props["doc_id"] = digest
+        # Attach the file only when the page doesn't already have one — a page
+        # found by zotero_key keeps its existing PDF (and the highlights tied to it).
+        if digest and not props.get("doc_id"):
+            if not _pdf_stored(ws, digest, zf.getinfo(item["pdf_entry"]).file_size):
+                with zf.open(item["pdf_entry"]) as src:  # streamed, like its other files
+                    _, already_existed, _ = store_pdf_stream(ws, src)
+                if not already_existed:
+                    report["pdfs_stored"] += 1
+            props["doc_id"] = digest
 
-    if item["meta"]["title"] and not props.get("meta"):
-        props["meta"] = item["meta"]
-        # A Better BibTeX key travels with the record, so the .tex files that
-        # already cite this paper keep working (zotero_import._citation_key).
-        if item.get("cite_key") and not props.get("cite_key"):
-            props["cite_key"] = item["cite_key"]
-        if not props.get("bibtex"):
-            props["bibtex"] = bibtex_mod.build_entry(item["meta"], props.get("cite_key") or "")
-    props["zotero_key"] = item["key"]
+        sets_meta = bool(item["meta"]["title"]) and not props.get("meta")
+        if sets_meta:
+            props["meta"] = item["meta"]
+            # A Better BibTeX key travels with the record, so the .tex files that
+            # already cite this paper keep working (zotero_import._citation_key).
+            if item.get("cite_key") and not props.get("cite_key"):
+                props["cite_key"] = item["cite_key"]
+            if not props.get("bibtex"):
+                props["bibtex"] = bibtex_mod.build_entry(item["meta"], props.get("cite_key") or "")
+        # What Zotero holds beyond the record, for a later Zotero RDF export:
+        # with the record it came with, or onto a page of the same work
+        # that keeps none yet.
+        if item.get("rdf") and (sets_meta or (not props.get("zotero_rdf")
+                                              and same_work(props.get("meta"), item["meta"]))):
+            props["zotero_rdf"] = item["rdf"]
+        props["zotero_key"] = item["key"]
 
     under = dest["under"]
     # filed like any refiling (refiled): a merged page's own folders first,
@@ -1267,21 +1402,40 @@ def _zotero_prepare(conn, ws, zf, item, dest, report) -> dict:
     if labels:
         props[LABELS] = existing_in(conn, LABELS, filing(props, LABELS) + labels)
 
-    todo = item["notes"]
-    if todo and not created:
-        # A note is there under its key, or — a note Gamma exported — as the
-        # block it was written from.
-        existing = set()
-        for bid, note_key in conn.execute(
-                "SELECT id, json_extract(properties,'$.zotero_note') FROM unified_blocks WHERE page_id=?",
-                (block_id,)):
-            existing.add(f"{GAMMA_NOTE_KEY}{bid}")
-            if note_key:
-                existing.add(note_key)
-        todo = [n for n in todo if n["key"] not in existing]
-    extras, heading = _zotero_extras(conn, ws, zf, item, block_id, created, props.get("doc_id"), report)
+    # The block trees the page gets, copies: storing their pictures rewrites
+    # them, and an item may be prepared again (_zotero_write_new's retry).
+    if note_page:
+        notes, blocks = 0, copy.deepcopy(item["note"]) if created else []
+    else:
+        todo = item["notes"]
+        if todo and not created:
+            # A note is there under its key, or — a note Gamma exported — as the
+            # block it was written from.
+            existing = set()
+            for bid, note_key in conn.execute(
+                    "SELECT id, json_extract(properties,'$.zotero_note') FROM unified_blocks WHERE page_id=?",
+                    (block_id,)):
+                existing.add(f"{GAMMA_NOTE_KEY}{bid}")
+                if note_key:
+                    existing.add(note_key)
+            todo = [n for n in todo if n["key"] not in existing]
+        notes = len(todo)
+        blocks = [{"content": n["text"], "properties": {"zotero_note": n["key"]},
+                   "children": copy.deepcopy(n.get("children") or [])} for n in todo]
+    images = _zotero_note_images(ws, item, blocks, report)
+    # Cut where the editor's save stops: a merge's op batch would refuse a
+    # longer block, and the item with it.
+    pending = list(blocks)
+    while pending:
+        block = pending.pop()
+        if len(block.get("content") or "") > MAX_CONTENT:
+            block["content"] = block["content"][:MAX_CONTENT]
+            report["warnings"].append({"title": item["title"],
+                                       "reason": f"Note text cut: a block longer than {MAX_CONTENT:,} characters"})
+        pending += block.get("children") or []
+    extras, heading = _zotero_extras(conn, ws, zf, item, block_id, created, props.get("doc_id"), images, report)
     return {"item": item, "row": row, "block_id": block_id, "old": old, "props": props,
-            "todo": todo, "extras": extras, "heading": heading, "created": created,
+            "blocks": blocks, "notes": notes, "extras": extras, "heading": heading, "created": created,
             "folders": [dest["paths"][f] for f in filing(props, FOLDERS) if f in dest["paths"]]}
 
 
@@ -1299,7 +1453,7 @@ def _zotero_done(prep, report, uploads):
     None."""
     item, props, created = prep["item"], prep["props"], prep["created"]
     report["pages_created" if created else "pages_merged"] += 1
-    report["notes_imported"] += len(prep["todo"])
+    report["notes_imported"] += prep["notes"]
     report["attachments_imported"] += len(prep["extras"])
     report["pages"].append({"id": prep["block_id"], "title": item["title"] if created else prep["row"][2],
                             "created": created, "kind": "pdf" if props.get("doc_id") else "page",
@@ -1312,68 +1466,84 @@ def _zotero_done(prep, report, uploads):
     return None
 
 
+def _attachments_block(extras) -> dict:
+    """The page's "Attachments" block holding the chips and links ``extras``."""
+    return {"content": ATTACHMENTS_HEADING, "properties": {ATTACHMENTS_PROP: True}, "children": extras}
+
+
+def _insert_ops(parent: str, blocks: list) -> list:
+    """Insert ops writing the block trees ``blocks`` (``{content,
+    properties?, children?}``) after ``parent``'s children: each block after
+    its parent and its earlier siblings, appended to its parent, so the ops
+    apply in order however a long batch is cut (MAX_OPS)."""
+    ops, queue = [], [(parent, block) for block in blocks]
+    for parent_id, block in queue:  # grows as it is read: breadth first
+        block_id = new_block_id()
+        ops.append({"op": "insert", "id": block_id, "parent": parent_id, "content": block.get("content", ""),
+                    "props": block.get("properties") or {}})
+        queue.extend((block_id, child) for child in block.get("children") or [])
+    return ops
+
+
 def _zotero_merge(conn, ws, prep, report, uploads, actor):
-    """An item that merges into an existing page: an op batch by ``actor``
-    (``apply_ops``), which the page's open tabs and the workspace's mirrors
-    see."""
+    """An item that merges into an existing page: an op batch by ``actor``,
+    which the page's open tabs and the workspace's mirrors see, in MAX_OPS
+    pieces when it is longer, all in one transaction (``apply_batches``):
+    an item that fails leaves its page as it was. A note half written
+    would stay so, as a later import takes the note its key finds for the
+    whole note."""
     block_id = prep["block_id"]
     patch = props_patch(prep["old"], prep["props"])
-    batch = ([{"op": "set", "id": block_id, "props": patch}] if patch else []) + [
-        {"op": "insert", "id": new_block_id(), "parent": block_id,
-         "content": note["text"], "props": {"zotero_note": note["key"]}} for note in prep["todo"]]
+    batch = ([{"op": "set", "id": block_id, "props": patch}] if patch else []) + _insert_ops(block_id, prep["blocks"])
     if prep["extras"]:
-        heading = prep["heading"]
-        if heading is None:
-            heading = new_block_id()
-            batch.append({"op": "insert", "id": heading, "parent": block_id,
-                          "content": ATTACHMENTS_HEADING, "props": {ATTACHMENTS_PROP: True}})
-        batch += [{"op": "insert", "id": new_block_id(), "parent": heading, **extra} for extra in prep["extras"]]
-    for i in range(0, len(batch), MAX_OPS):
-        after_commit(ws, conn, apply_ops(conn, block_id, batch[i:i + MAX_OPS], actor=actor))
+        if prep["heading"] is None:
+            batch += _insert_ops(block_id, [_attachments_block(prep["extras"])])
+        else:
+            batch += _insert_ops(prep["heading"], prep["extras"])
+    if batch:
+        try:
+            results = apply_batches(conn, [(block_id, batch[i:i + MAX_OPS])
+                                           for i in range(0, len(batch), MAX_OPS)], actor=actor)
+            conn.commit()
+        except BaseException:
+            conn.rollback()
+            raise
+        after_commits(ws, conn, results)
     return _zotero_done(prep, report, uploads)
 
 
+def _tree_uploads(title, props, blocks) -> set:
+    """The stored files a new page (its ``title`` and ``props``) and its
+    block trees name (``storage.upload_refs``)."""
+    names, pending = upload_refs(title, props), list(blocks)
+    while pending:
+        block = pending.pop()
+        names |= upload_refs(block.get("content", ""), block.get("properties"))
+        pending += block.get("children") or []
+    return names
+
+
 def _zotero_write_new(conn, staged, report, uploads, actor):
-    """Write new items' pages and notes, ZOTERO_PAGES_PER_COMMIT of them in
-    one short transaction, each page touched by ``actor`` (``touch_page``,
-    what the change feed lists). Each page is looked for again under the
+    """Write new items' pages with their block trees (``insert_page_tree``):
+    the notes, then the "Attachments" block. ZOTERO_PAGES_PER_COMMIT of
+    them go in one short transaction, each page touched by ``actor``
+    (``touch_page``, what the change feed lists), and the stored files they
+    name claimed from the upload GC's orphans (``upload_gc.claim``), as
+    ``create_page`` claims its PDF. Each page is looked for again under the
     lock: an item another import (or an earlier item of this batch) made a
     page for is not written but returned, to merge into that page. Returns
     ``(annotation jobs, items to merge)``."""
     write_lock(conn)
     written, retry = [], []
     try:
-        now = page_now()
-        pos = last_child_position(conn, "root")
         for prep in staged:
             item = prep["item"]
             if _zotero_existing_page(conn, item) is not None:
                 retry.append(item)
                 continue
-            pos = generate_key_between(pos, None)
-            conn.execute(
-                f"INSERT INTO unified_blocks ({STORED_COLUMNS}) VALUES (?,'root',?,?,?,?,?,?)",
-                (prep["block_id"], pos, item["title"], json.dumps(prep["props"]), now, now, prep["block_id"]))
-            todo, extras = prep["todo"], prep["extras"]
-            count = len(todo) + bool(extras)  # the notes, then the attachments' heading
-            positions = generate_n_keys_between(None, None, n=count) if count else []
-            for note, note_pos in zip(todo, positions):
-                conn.execute(
-                    f"INSERT INTO unified_blocks ({STORED_COLUMNS}) VALUES (?,?,?,?,?,?,?,?)",
-                    (new_block_id(), prep["block_id"], note_pos, note["text"],
-                     json.dumps({"zotero_note": note["key"]}), now, now, prep["block_id"]))
-            if extras:
-                heading = new_block_id()
-                conn.execute(
-                    f"INSERT INTO unified_blocks ({STORED_COLUMNS}) VALUES (?,?,?,?,?,?,?,?)",
-                    (heading, prep["block_id"], positions[-1], ATTACHMENTS_HEADING,
-                     json.dumps({ATTACHMENTS_PROP: True}), now, now, prep["block_id"]))
-                for extra, extra_pos in zip(extras, generate_n_keys_between(None, None, n=len(extras))):
-                    conn.execute(
-                        f"INSERT INTO unified_blocks ({STORED_COLUMNS}) VALUES (?,?,?,?,?,?,?,?)",
-                        (new_block_id(), heading, extra_pos, extra["content"],
-                         json.dumps(extra["props"]), now, now, prep["block_id"]))
-            touch_page(conn, prep["block_id"], actor, now=now)
+            blocks = prep["blocks"] + ([_attachments_block(prep["extras"])] if prep["extras"] else [])
+            insert_page_tree(conn, prep["block_id"], item["title"], prep["props"], blocks, actor)
+            upload_gc.claim(conn, _tree_uploads(item["title"], prep["props"], blocks))
             written.append(prep)
         conn.commit()
     except BaseException:
@@ -1389,9 +1559,9 @@ def _open_zotero_zip(data):
         raise HTTPException(status_code=400, detail="not a zip file — zip the exported folder and upload that")
 
 
-def _zotero_plan(zf):
+def _zotero_plan(zf, digests=None):
     try:
-        return plan_zotero_archive(zf)
+        return plan_zotero_archive(zf, digests)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"could not read the Zotero export: {exc}")
 
@@ -1399,16 +1569,21 @@ def _zotero_plan(zf):
 # Sync endpoints: zip + PyPDF2 work is CPU-bound; the threadpool keeps the loop free.
 @router.post("/import/zotero/preview")
 def preview_zotero(request: Request, file: UploadFile = File(...), folder: str = Form("")):
-    return _preview_zotero(require_ws(request, write=True), file.file, _meta(file, folder))
+    report = _preview_zotero(require_ws(request, write=True), file.file, _meta(file, folder))
+    report.pop("stage", None)  # no review to keep it for
+    return report
 
 
 def _preview_zotero(ws, data, meta):
     """What importing the Zotero export would make of the library, without
     storing a file, making a folder or changing a page (merges within the
-    zip simulated). A page's ``folders`` are the paths (names from the top)
-    it would be filed in, ``attachments`` how many of its items' other
-    attachments go under its "Attachments" block (ones a merged page holds
-    already counted too, as its ``notes`` are)."""
+    zip simulated, as ``_zotero_existing_page`` finds them). A page's
+    ``folders`` are the paths (names from the top) it would be filed in,
+    ``attachments`` how many of its items' other attachments go under its
+    "Attachments" block (ones a merged page holds already counted too, as
+    its ``notes`` are); a standalone note's is a page with no PDF to miss.
+    ``stage`` is the plan's PDF digests (``zotero_digests``), which spare a
+    review's commit hashing the PDFs again."""
     with _open_zotero_zip(data) as zf:
         plan = _zotero_plan(zf)
     pages, by_digest, by_key, by_id = {}, {}, {}, {}
@@ -1424,12 +1599,15 @@ def _preview_zotero(ws, data, meta):
             if props.get("doc_id"):
                 by_digest.setdefault(props["doc_id"], target)
             if props.get("zotero_key"):
-                by_key.setdefault(props["zotero_key"], target)
+                by_key.setdefault(props["zotero_key"], []).append(target)
         for index, item in enumerate(plan["items"]):
             # _zotero_existing_page's order: the page Gamma exported it from, the PDF, the key
             target = ((by_id.get(item["key"][len(GAMMA_PAGE_KEY):]) if item["key"].startswith(GAMMA_PAGE_KEY)
-                       else None) or by_digest.get(item["digest"]) or by_key.get(item["key"]))
-            if target is None:
+                       else None) or by_digest.get(item["digest"])
+                      or next((t for t in by_key.get(item["key"], ())
+                               if _zotero_key_merges(item, t["props"], t["title"])), None))
+            created = target is None
+            if created:
                 target = {"id": f"new:{index}", "title": item["title"], "props": {}, "exists": False, "folders": []}
             props = target["props"]
             folders = target["folders"]
@@ -1450,7 +1628,8 @@ def _preview_zotero(ws, data, meta):
                     "notes": len(item["notes"]), "attachments": len(item["extras"]),
                     "tags": item["tags"], "warnings": warnings,
                     "selection_ids": [item["selection_id"]],
-                    "missing": not bool(item["pdf_entry"]) or any("PDF missing from ZIP" in w["reason"] for w in warnings),
+                    "missing": not item["standalone_note"] and (
+                        not item["pdf_entry"] or any("PDF missing from ZIP" in w["reason"] for w in warnings)),
                     "source_paths": sources}
             if prior:
                 page["warnings"] = prior["warnings"] + warnings
@@ -1464,14 +1643,18 @@ def _preview_zotero(ws, data, meta):
             if item["digest"] and not props.get("doc_id"):
                 props["doc_id"] = item["digest"]
                 by_digest[item["digest"]] = target
+            if not item["standalone_note"] and item["meta"]["title"] and not props.get("meta"):
+                props["meta"] = item["meta"]  # what a later item's key is matched with
             old_key = props.get("zotero_key")
-            if old_key and by_key.get(old_key) is target:
-                del by_key[old_key]
-            props["zotero_key"] = item["key"]
-            if item["key"]:
-                by_key[item["key"]] = target
+            if item["key"] != old_key and (created or not item["standalone_note"]):  # a note page keeps its key
+                if old_key:
+                    by_key[old_key] = [t for t in by_key.get(old_key, []) if t is not target]
+                props["zotero_key"] = item["key"]
+                if item["key"]:
+                    by_key.setdefault(item["key"], []).append(target)
     return {"ok": True, "manifest": plan["manifest"], "entries": plan["entries"],
-            "pages": list(pages.values()), "warnings": plan["warnings"], "folder": meta.get("folder", "")}
+            "pages": list(pages.values()), "warnings": plan["warnings"], "folder": meta.get("folder", ""),
+            "stage": {"zotero_digests": plan["digests"]}}
 
 
 @router.post("/import/zotero")
@@ -1487,10 +1670,11 @@ def _commit_zotero(ws, actor, data, meta, selection, progress=jobs.no_progress):
     their tags made first (``ops.ensure_filing``), then pages upserted item
     by item, new ones written ZOTERO_PAGES_PER_COMMIT at a time, then the
     annotations embedded in their PDFs. A stopped job keeps what it wrote
-    (the staged new pages are written first)."""
+    (the staged new pages are written first). A review's commit hashes no
+    PDF its preview hashed (``meta["zotero_digests"]``, its ``stage``)."""
     strip = bool(meta.get("strip"))
     with _open_zotero_zip(data) as zf:
-        plan = _zotero_plan(zf)
+        plan = _zotero_plan(zf, meta.get("zotero_digests"))
         validate_selection(selection, (i["selection_id"] for i in plan["items"]))
         items = [i for i in plan["items"] if selection is None or i["selection_id"] in selection]
         uploads = ws_uploads_dir(ws)

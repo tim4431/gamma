@@ -39,7 +39,9 @@ workspace's files), `db.SCHEMA_VERSION` and `db.WS_VERSION_BASE`,
    statement in `db.PAGES_SCHEMA` / `DATA_SCHEMA` only, with no workspace
    part and no format bump: every connection applies those statements
    when it opens a file (`db._open_ws_db`), and so do a new workspace, a
-   restored copy and the Gamma export. The release's versions row says so.
+   restored copy and the Gamma export. An index over columns or
+   expressions the file already has is additive the same way
+   (`idx_ub_zotero_key`). The release's versions row says so.
 3. **The runner goes first.** `migrations.ensure_current()` is the first
    thing `app.create_app` does, before any table is opened. A data
    directory that is *ahead* of the binary (`NewerDataError`), older than

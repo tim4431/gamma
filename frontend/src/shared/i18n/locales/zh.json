@@ -681,7 +681,7 @@
   "Collapse children": "折叠子块",
   "Collapse result details (compact find — the default is in Settings → Search)": "折叠结果详情（紧凑查找——默认值在“设置 → 搜索”中）",
   "Collapse section": "折叠部分",
-  "Collections become folders. Additional PDFs become separate pages. Existing PDFs are kept.": "分类变为文件夹。额外的 PDF 成为单独页面。已有的 PDF 保留。",
+  "Collections become folders. An item's other files and links go under Attachments on its page, and a standalone note becomes a page of its own. Existing PDFs are kept.": "分类变为文件夹。条目的其他文件和链接放在其页面的“附件”下，独立笔记成为单独的页面。已有的 PDF 保留。",
   "Color": "颜色",
   "Color groups": "颜色分组",
   "Color the text": "为文字着色",

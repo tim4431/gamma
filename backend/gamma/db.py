@@ -685,6 +685,12 @@ PAGES_SCHEMA = [
     # every candidate row.
     "CREATE INDEX IF NOT EXISTS idx_ub_updated ON unified_blocks(updated_at)",
     *BLOCK_HOT_INDEXES,
+    # The page a Zotero item key made (routers/imports.py
+    # _zotero_existing_page), looked up for each item of a library import.
+    # A query uses it only when it names this expression and condition:
+    # ``parent_id = 'root' AND json_extract(properties, '$.zotero_key') = ?``.
+    "CREATE INDEX IF NOT EXISTS idx_ub_zotero_key ON unified_blocks(json_extract(properties, '$.zotero_key')) "
+    "WHERE parent_id = 'root'",
     # page_changes = the workspace's change log (gamma/blocks_store.py
     # touch_page): one row per page that exists or ever existed, whose `seq`
     # every write to the page moves to the next value in the workspace —

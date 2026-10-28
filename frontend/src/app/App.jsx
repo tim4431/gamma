@@ -10236,9 +10236,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     // Fresh ids all the way down; PDF anchoring stays with the
                     // original — a copy with the same position would draw a
                     // duplicate highlight on the page (same rule as
-                    // linkHighlightToBlock). The quote text is kept.
+                    // linkHighlightToBlock), and so does the Zotero
+                    // annotation an import made it from. The quote text is kept.
                     const clone = (b) => {
-                      const { pdf_position, imported_annot, annot_stripped, ...props } = b.properties || {};
+                      const { pdf_position, imported_annot, annot_stripped, zotero_annotation, ...props } = b.properties || {};
                       return { ...b, id: makeId(), properties: props,
                         children: (b.children || []).map(clone) };
                     };

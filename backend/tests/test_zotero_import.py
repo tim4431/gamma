@@ -1,12 +1,17 @@
 """Zotero library import: a zip of the "Zotero RDF" export becomes pages with
-metadata, collections→folder labels, tags→flat labels, notes→child blocks, and
-the annotations embedded in the exported PDFs become highlight blocks."""
+metadata, collections→folder labels, tags→flat labels, notes→block trees,
+standalone notes→note pages, and the annotations embedded in the exported
+PDFs become highlight blocks."""
 
+import base64
+import html
 import io
+import os
+import time
 import zipfile
 
 import pytest
-from conftest import folder_names, guest_name, label_names, make_folder
+from conftest import folder_names, guest_name, label_names, make_folder, make_page
 
 
 def _annotated_pdf(text=b"Attention is all you need, says the paper."):
@@ -221,58 +226,78 @@ def _send(guest, data, preview=False, **form):
                       files={"file": ("lib.zip", data, "application/zip")}, data=form)
 
 
-def _zotero_annotated_pdf():
-    """The paper with one annotation of each kind Zotero has, keyed as its
-    pdf-worker writes them into an export with "Include Annotations"
-    (annotationToRaw, Zotero 9): a Zotero id on each, no /CA on the markup,
-    a text annotation's own box and turn in /Zotero:* keys."""
-    from PyPDF2 import PdfReader, PdfWriter
+def _pdf_object(v):
+    """A test value as a PyPDF2 object: a str starting with "/" a name,
+    any other str a string, a tuple an array, a dict a dictionary."""
     from PyPDF2.generic import ArrayObject, DictionaryObject, FloatObject, NameObject, NumberObject, TextStringObject
+    if hasattr(v, "write_to_stream"):
+        return v
+    if isinstance(v, tuple):
+        return ArrayObject(_pdf_object(x) for x in v)
+    if isinstance(v, dict):
+        return DictionaryObject({NameObject(k): _pdf_object(x) for k, x in v.items()})
+    if isinstance(v, str):
+        return NameObject(v) if v.startswith("/") else TextStringObject(v)
+    return NumberObject(v) if isinstance(v, int) else FloatObject(v)
 
-    def value(v):
-        if hasattr(v, "write_to_stream"):
-            return v
-        if isinstance(v, tuple):
-            return ArrayObject(value(x) for x in v)
-        if isinstance(v, dict):
-            return DictionaryObject({NameObject(k): value(x) for k, x in v.items()})
-        if isinstance(v, str):
-            return NameObject(v) if v.startswith("/") else TextStringObject(v)
-        return NumberObject(v) if isinstance(v, int) else FloatObject(v)
 
-    def annot(subtype, key, rect, **keys):
-        return DictionaryObject({NameObject(k): value(v) for k, v in {
-            "/Type": "/Annot", "/Subtype": subtype, "/Rect": rect, "/F": 4,
-            "/NM": f"Zotero-{key}", "/Zotero:Key": key, **{f"/{k}": v for k, v in keys.items()}}.items()})
+def _annot(subtype, rect, **keys):
+    """An annotation dictionary, ``keys`` named without their slash."""
+    return _pdf_object({"/Type": "/Annot", "/Subtype": subtype, "/Rect": rect, "/F": 4,
+                        **{f"/{k}": v for k, v in keys.items()}})
+
+
+def _zotero_annot(subtype, key, rect, **keys):
+    """An annotation as Zotero's pdf-worker writes its own: its key as /NM
+    and /Zotero:Key."""
+    return _annot(subtype, rect, NM=f"Zotero-{key}", **{"Zotero:Key": key}, **keys)
+
+
+def _with_annotations(*annots):
+    """``_annotated_pdf``'s page carrying these annotations in place of its
+    own."""
+    from PyPDF2 import PdfReader, PdfWriter
+    from PyPDF2.generic import NameObject
 
     w = PdfWriter()
     w.append(PdfReader(io.BytesIO(_annotated_pdf())))
     del w.pages[0][NameObject("/Annots")]
-    for a in (
-        annot("/Highlight", "HLAAAAAA", (72, 716, 300, 732), QuadPoints=(72, 732, 300, 732, 72, 716, 300, 716),
-              C=(1, 0.831, 0), Contents="a highlight"),
-        annot("/Underline", "ULAAAAAA", (72, 716, 200, 732), QuadPoints=(72, 732, 200, 732, 72, 716, 200, 716),
-              C=(1, 0.4, 0.4), Contents="an underline"),
-        annot("/Text", "NTAAAAAA", (500, 700, 522, 722), C=(0.373, 0.698, 0.212), CA=1, Contents="a note"),
-        annot("/Square", "IMAAAAAA", (100, 300, 400, 500), BS={"/W": 2}, C=(0.18, 0.659, 0.898),
-              Contents="an image"),
-        annot("/Ink", "INAAAAAA", (98, 98, 302, 202), BS={"/S": "/N", "/Type": "/Border", "/W": 2},
-              InkList=((100, 100, 150, 150, 200, 120, 300, 200),), C=(0.635, 0.541, 0.898), CA=1),
-        annot("/FreeText", "TXAAAAAA", (100, 550, 300, 600), Contents="typed in Zotero", CA=1,
-              DA=TextStringObject("/Helvetica 14 Tf 0.898 0.431 0.933 rg"), **{
-                  "Zotero:Rect": (100, 550, 300, 600), "Zotero:Rotation": 0, "Zotero:FontSize": 14,
-                  "Zotero:Color": (0.898, 0.431, 0.933)}),
-    ):
+    for a in annots:
         w.add_annotation(page_number=0, annotation=a)
     out = io.BytesIO()
     w.write(out)
     return out.getvalue()
 
 
+def _zotero_annotated_pdf():
+    """The paper with one annotation of each kind Zotero has, keyed as its
+    pdf-worker writes them into an export with "Include Annotations"
+    (annotationToRaw, Zotero 9): a Zotero id on each, no /CA on the markup,
+    a text annotation's own box and turn in /Zotero:* keys."""
+    from PyPDF2.generic import TextStringObject
+
+    return _with_annotations(
+        _zotero_annot("/Highlight", "HLAAAAAA", (72, 716, 300, 732),
+                      QuadPoints=(72, 732, 300, 732, 72, 716, 300, 716), C=(1, 0.831, 0), Contents="a highlight"),
+        _zotero_annot("/Underline", "ULAAAAAA", (72, 716, 200, 732),
+                      QuadPoints=(72, 732, 200, 732, 72, 716, 200, 716), C=(1, 0.4, 0.4), Contents="an underline"),
+        _zotero_annot("/Text", "NTAAAAAA", (500, 700, 522, 722), C=(0.373, 0.698, 0.212), CA=1, Contents="a note"),
+        _zotero_annot("/Square", "IMAAAAAA", (100, 300, 400, 500), BS={"/W": 2}, C=(0.18, 0.659, 0.898),
+                      Contents="an image"),
+        _zotero_annot("/Ink", "INAAAAAA", (98, 98, 302, 202), BS={"/S": "/N", "/Type": "/Border", "/W": 2},
+                      InkList=((100, 100, 150, 150, 200, 120, 300, 200),), C=(0.635, 0.541, 0.898), CA=1),
+        _zotero_annot("/FreeText", "TXAAAAAA", (100, 550, 300, 600), Contents="typed in Zotero", CA=1,
+                      DA=TextStringObject("/Helvetica 14 Tf 0.898 0.431 0.933 rg"), **{
+                          "Zotero:Rect": (100, 550, 300, 600), "Zotero:Rotation": 0, "Zotero:FontSize": 14,
+                          "Zotero:Color": (0.898, 0.431, 0.933)}),
+    )
+
+
 def test_each_kind_of_zotero_annotation_imports(guest):
     """Zotero's highlight and underline are highlights (Gamma has no
     underline), its image an area highlight, its ink handwriting, its text
-    and its note text boxes — each with its comment or text, its colour."""
+    and its note text boxes — each with its comment or text, its colour,
+    and the key of the Zotero annotation it copies."""
     rdf = RDF.replace("s41586-000-00000-0", "every-kind").replace("Attention is all you need", "Every kind")
     d = _send(guest, _custom_zip(rdf, {"files/3/Vaswani - 2017 - Attention.pdf": _zotero_annotated_pdf()})).json()
     assert d["annotations_imported"] == 6, d
@@ -287,6 +312,132 @@ def test_each_kind_of_zotero_annotation_imports(guest):
     assert (box["x"], box["y"], box["w"], box["h"], box["size"], box["color"]) == (100, 192, 200, 50, 14, "#e56eee")
     [ink] = [p for p in kids.values() if p.get("ink_url")]
     assert ink["color"] == "#a28ae5" and ink["ink_strokes"] == 1
+    assert {content: props.get("zotero_annotation") for content, props in kids.items()} == {
+        "a highlight": "HLAAAAAA", "an underline": "ULAAAAAA", "an image": "IMAAAAAA", "a note": "NTAAAAAA",
+        "typed in Zotero": "TXAAAAAA", "": "INAAAAAA"}
+
+
+def _imported_annotations(guest, pdf, page=None):
+    """Store ``pdf`` and import its embedded annotations into ``page`` (a
+    new page holding it when None) → ``(page, the import's answer, the
+    page's imported blocks' properties by content)``."""
+    up = guest.post("/api/uploads", files={"file": ("a.pdf", pdf, "application/pdf")})
+    assert up.status_code == 200, up.text
+    if page is None:
+        page = make_page(guest, "Embedded annotations",
+                         {"doc_id": up.json()["doc_id"], "source_url": up.json()["source_url"]})
+    r = guest.post("/api/import/pdf-annotations", json={"block_id": page["id"], "doc_id": up.json()["doc_id"]})
+    assert r.status_code == 200, r.text
+    kids = guest.get(f"/api/blocks/{page['id']}/children").json()["children"]
+    return page, r.json(), {c["content"]: c["properties"] for c in kids if c["properties"].get("imported_annot")}
+
+
+def test_embedded_alpha_is_gamma_alpha_before_ca(guest):
+    """A highlight's or area's alpha is Gamma's /GammaAlpha when it has
+    one, which a Zotero copy writes in place of /CA, even beside a /CA
+    another app added; else its /CA; else the 0.45 of an annotation with
+    neither, as Zotero's own are."""
+    quads = {"QuadPoints": (72, 732, 300, 732, 72, 716, 300, 716)}
+    _, result, kids = _imported_annotations(guest, _with_annotations(
+        _annot("/Highlight", (72, 716, 300, 732), C=(1, 0, 0), GammaAlpha=0.3, Contents="gamma alpha", **quads),
+        _annot("/Square", (100, 300, 400, 500), C=(0, 0, 1), GammaAlpha=0.6, CA=0.2, Contents="both"),
+        _annot("/Highlight", (72, 616, 300, 632), C=(0, 1, 0), CA=0.8, Contents="ca only"),
+        _annot("/Highlight", (72, 516, 300, 532), C=(1, 1, 0), Contents="neither")))
+    assert result["imported"] == 4
+    assert {content: props["color"] for content, props in kids.items()} == {
+        "gamma alpha": "#ff00004c", "both": "#0000ff99", "ca only": "#00ff00cc", "neither": "#ffff0073"}
+
+
+def test_a_gamma_zotero_copy_brings_its_colours_back(guest):
+    """The copy a Zotero RDF export writes (``annotate_pdf(zotero=True)``)
+    carries no /CA on its highlight and area note, so Zotero shows their
+    true colour, and reads back here at the alpha they had. Its area
+    note's /NM is shaped like a Zotero key but names no Zotero annotation."""
+    from gamma.colors import normalize_color
+    from gamma.pdf_export import annotate_pdf
+
+    def at(y):
+        rect = {"x1": 72, "y1": y, "x2": 300, "y2": y + 16}
+        return {"pageNumber": 1, "width": 612, "height": 792, "boundingRect": rect, "rects": [rect]}
+
+    colors = {"washed": "rgba(255, 212, 0, 0.3)", "figure": "rgba(46, 168, 229, 0.65)"}
+    pdf, written = annotate_pdf(_with_annotations(), [
+        {"position": at(60), "color": colors["washed"], "note": "washed", "id": "hl-washed"},
+        {"position": {**at(200), "area": True}, "color": colors["figure"], "note": "figure", "id": "hl-figure"}],
+        zotero=True)
+    assert written == 2
+    _, _, kids = _imported_annotations(guest, pdf)
+    assert {content: props["color"] for content, props in kids.items()} == {
+        content: normalize_color(color) for content, color in colors.items()}
+    assert not any("zotero_annotation" in props for props in kids.values())
+
+
+def test_a_zotero_key_names_only_the_blocks_an_import_makes(guest):
+    """The key comes with a block made now; a block imported earlier from
+    the same annotation without it is left as it is, and a /Zotero:Key
+    that is no Zotero key names nothing."""
+    quads = {"QuadPoints": (72, 732, 300, 732, 72, 716, 300, 716)}
+    earlier = _annot("/Highlight", (72, 716, 300, 732), C=(1, 0.831, 0), Contents="imported before", **quads)
+    page, _, kids = _imported_annotations(guest, _with_annotations(earlier))
+    assert "zotero_annotation" not in kids["imported before"]
+    _, result, kids = _imported_annotations(guest, _with_annotations(
+        _zotero_annot("/Highlight", "HLBBBBBB", (72, 716, 300, 732), C=(1, 0.831, 0), Contents="imported before",
+                      **quads),
+        _zotero_annot("/Square", "IMBBBBBB", (100, 300, 400, 500), C=(0, 0, 1), Contents="new now"),
+        _annot("/Square", (100, 100, 200, 200), C=(0, 0, 1), Contents="no key", **{"Zotero:Key": "not a key"})),
+        page=page)
+    assert result["imported"] == 2
+    assert {content: props.get("zotero_annotation") for content, props in kids.items()} == {
+        "imported before": None, "new now": "IMBBBBBB", "no key": None}
+
+
+def test_zotero_key_lookup_uses_its_index(guest):
+    """The page an item's Zotero key made is found through
+    idx_ub_zotero_key (db.PAGES_SCHEMA), not by reading every page: each
+    query the lookup runs on the key is planned on that index."""
+    from conftest import workspace_of
+    from gamma.db import connect_pages_db
+    from gamma.routers.imports import _zotero_existing_page
+
+    page = make_page(guest, "Found by its key", {"zotero_key": "#item_424242",
+                                                 "meta": {"title": "Found by its key", "doi": ""}})
+    item = {"key": "#item_424242", "digest": "", "title": "Found by its key",
+            "meta": {"title": "Found by its key", "doi": ""}}
+    ran = []
+    with connect_pages_db(workspace_of(guest_name())) as conn:
+        conn.set_trace_callback(ran.append)
+        try:
+            row = _zotero_existing_page(conn, item)
+        finally:
+            conn.set_trace_callback(None)
+        lookups = [sql for sql in ran if "zotero_key" in sql]
+        plans = [" ".join(step[-1] for step in conn.execute(f"EXPLAIN QUERY PLAN {sql}")) for sql in lookups]
+    assert row[0] == page["id"]
+    assert plans and all("USING INDEX idx_ub_zotero_key" in plan for plan in plans), plans
+
+
+def test_imported_blocks_are_found_in_the_pages_subtree_only(guest):
+    """The blocks an import made under a page are found by walking the
+    page's subtree, each block read as it is reached, never by reading
+    every block of the workspace: a Zotero import looks twice per
+    annotated PDF, in a library its note trees make large."""
+    from conftest import workspace_of
+    from gamma.db import connect_pages_db
+    from gamma.routers.imports import _imported_blocks
+
+    square = _annot("/Square", (100, 100, 200, 200), C=(0, 0, 1), Contents="found")
+    page, _, kids = _imported_annotations(guest, _with_annotations(square))
+    ran = []
+    with connect_pages_db(workspace_of(guest_name())) as conn:
+        conn.set_trace_callback(ran.append)
+        try:
+            rows = _imported_blocks(conn, page["id"])
+        finally:
+            conn.set_trace_callback(None)
+        [sql] = [sql for sql in ran if "imported_annot" in sql]
+        steps = [step[-1] for step in conn.execute(f"EXPLAIN QUERY PLAN {sql}")]
+    assert [key for _, key, _ in rows] == [kids["found"]["imported_annot"]]
+    assert all(step == "SCAN sub" for step in steps if step.startswith("SCAN")), steps
 
 
 def test_preview_is_read_only_and_predicts_upgrade(guest):
@@ -640,3 +791,409 @@ def test_zotero_filing_refines_like_any_refiling(guest):
     props = guest.get(f"/api/blocks/{paper['id']}").json()["properties"]
     paths = folder_names(guest)
     assert [paths[f] for f in props["folders"]] == [["Elsewhere"], ["ML", "Transformers"]]
+
+
+# --- the commit: local keys, note trees and pictures, note pages, Zotero's fields, stored PDFs ---
+
+def _library():
+    """A library of its own (a new guest account's): its client and its
+    workspace."""
+    from conftest import fresh_client, workspace_of
+    c = fresh_client()
+    r = c.post("/api/login-guest")
+    assert r.status_code == 200, r.text
+    return c, workspace_of(r.json()["username"])
+
+
+def _rdf(*elements):
+    """An RDF export of ``elements``, in RDF's namespaces."""
+    return RDF[:RDF.index(">") + 1] + "".join(elements) + "</rdf:RDF>"
+
+
+def _article(about, title, *children):
+    return (f'<bib:Article rdf:about="{about}"><z:itemType>journalArticle</z:itemType>'
+            f'<dc:title>{title}</dc:title>{"".join(children)}</bib:Article>')
+
+
+def _memo(about, note, *children):
+    """A Zotero note, ``note`` its HTML."""
+    return (f'<bib:Memo rdf:about="{about}"><z:itemType>note</z:itemType>{"".join(children)}'
+            f'<rdf:value>{html.escape(note, quote=False)}</rdf:value></bib:Memo>')
+
+
+def _tree(client, block_id):
+    """The block and its subtree as ``{content, children}``, in order."""
+    def shape(node):
+        return {"content": node["content"], "children": [shape(c) for c in node["children"]]}
+    r = client.get(f"/api/blocks/{block_id}/subtree")
+    assert r.status_code == 200, r.text
+    return shape(r.json()["block"])
+
+
+def _notes_of(client, page_id):
+    return [c for c in client.get(f"/api/blocks/{page_id}/children").json()["children"]
+            if c["properties"].get("zotero_note")]
+
+
+def test_a_local_item_key_merges_only_into_the_same_work():
+    """Zotero names an item #item_<itemID>, a number local to one Zotero
+    database, so two libraries both hold an #item_1: the second library's,
+    another work, makes a page of its own instead of landing on the first's.
+    The same work merges, by its DOI though retitled, else by its title, in
+    the preview as in the import. A URL key names the work itself and
+    merges whatever the title says, as before."""
+    c, _ = _library()
+    alpha_doi = "<dc:identifier>DOI 10.1000/alpha</dc:identifier>"
+    [alpha] = _send(c, _custom_zip(_rdf(_article("#item_1", "Alpha paper", alpha_doi)), {})).json()["pages"]
+    beta = _custom_zip(_rdf(_article("#item_1", "Beta paper")), {})
+    assert [p["action"] for p in _send(c, beta, preview=True).json()["pages"]] == ["create"]
+    d = _send(c, beta).json()
+    [beta_page] = d["pages"]
+    assert d["pages_created"] == 1 and beta_page["id"] != alpha["id"]
+
+    retitled = _rdf(_article("#item_1", "Alpha, revised", "<dc:identifier>DOI 10.1000/ALPHA</dc:identifier>"))
+    for rdf, page in ((retitled, alpha), (_rdf(_article("#item_1", "BETA paper.")), beta_page)):
+        data = _custom_zip(rdf, {})
+        [planned] = _send(c, data, preview=True).json()["pages"]
+        assert (planned["action"], planned["existing_id"]) == ("merge", page["id"])
+        d = _send(c, data).json()
+        assert d["pages_merged"] == 1 and [p["id"] for p in d["pages"]] == [page["id"]]
+    other_doi = _rdf(_article("#item_1", "Alpha paper", "<dc:identifier>DOI 10.1000/other</dc:identifier>"))
+    assert _send(c, _custom_zip(other_doi, {})).json()["pages_created"] == 1
+
+    url = "https://example.org/a-work-named-by-its-url"
+    [page] = _send(c, _custom_zip(_rdf(_article(url, "Named by its URL")), {})).json()["pages"]
+    d = _send(c, _custom_zip(_rdf(_article(url, "Renamed in Zotero")), {})).json()
+    assert d["pages_merged"] == 1 and d["pages"][0]["id"] == page["id"]
+
+
+_PNG = base64.b64decode("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9a"
+                        "wAAAABJRU5ErkJggg==")
+
+
+def _data_uri(data, mime="image/png"):
+    return f"data:{mime};base64,{base64.b64encode(data).decode()}"
+
+
+TREE_NOTE = ('<div data-schema-version="9"><h1>Reading notes</h1><p>Read <strong>twice</strong>.</p>'
+             "<ul><li>outer<ul><li>inner</li></ul></li><li>second</li></ul>"
+             f'<p>A figure: <img src="{_data_uri(_PNG)}"/></p></div>')
+
+
+def _tree_note(image_url):
+    """TREE_NOTE as its block tree, its picture stored at ``image_url``."""
+    return {"content": "# Reading notes", "children": [
+        {"content": "Read **twice**.", "children": []},
+        {"content": "outer", "children": [{"content": "inner", "children": []}]},
+        {"content": "second", "children": []},
+        {"content": f"A figure: ![]({image_url})", "children": []}]}
+
+
+def test_a_note_is_its_block_tree_and_comes_back_as_it_went(monkeypatch):
+    """A Zotero note is a block subtree on its page: its first block the
+    root, named by the note's key, the rest under it in order, however the
+    merge's op batch is cut. Its picture is stored once, and an attachment
+    of the same picture makes no chip of its own. The same export again,
+    or the Zotero RDF export Gamma makes of the page, adds nothing to the
+    library; into another library the export brings the same tree, the
+    stored files it names claimed from the upload GC's orphans."""
+    from gamma.db import connect_pages_db, page_now
+    from gamma.routers import imports
+    from gamma.storage import content_digest
+
+    c, _ = _library()
+    url, pdf = "https://example.org/a-tree-note", _annotated_pdf(b"A paper with a tree note")
+    files = {"files/3/paper.pdf": pdf, "files/7/figure.png": _PNG}
+    pdf_att = _file_att("#item_3", "files/3/paper.pdf", "application/pdf")
+    first = _rdf(_article(url, "Tree note", '<link:link rdf:resource="#item_3"/>'), pdf_att)
+    page_id = _send(c, _custom_zip(first, files)).json()["pages"][0]["id"]
+    with_note = _custom_zip(_rdf(
+        _article(url, "Tree note", '<link:link rdf:resource="#item_3"/>', '<link:link rdf:resource="#item_7"/>',
+                 '<dcterms:isReferencedBy rdf:resource="#item_9"/>'),
+        pdf_att, _file_att("#item_7", "files/7/figure.png", "image/png"), _memo("#item_9", TREE_NOTE)), files)
+    monkeypatch.setattr(imports, "MAX_OPS", 2)  # the merge's op batch, cut into pieces
+    d = _send(c, with_note).json()
+    monkeypatch.undo()
+    assert (d["pages_merged"], d["notes_imported"], d["attachments_imported"], d["skipped"]) == (1, 1, 0, []), d
+    name = f"{content_digest(_PNG)}.png"
+    image_url = f"/api/uploads/{name}"
+    [note] = _notes_of(c, page_id)
+    assert note["properties"] == {"zotero_note": "#item_9"}
+    assert _tree(c, note["id"]) == _tree_note(image_url)
+    assert c.get(image_url).content == _PNG
+    assert _attachments_of(c, page_id) == (None, [])
+
+    before = _tree(c, page_id)
+    exported = c.get(f"/api/pages/{page_id}/export", params={"mode": "zotero-rdf"})
+    assert exported.status_code == 200, exported.text
+    for data in (with_note, exported.content):
+        d = _send(c, data).json()
+        assert (d["pages_created"], d["pages_merged"], d["notes_imported"], d["attachments_imported"]) == (0, 1, 0, 0)
+        assert _tree(c, page_id) == before
+
+    other, other_ws = _library()
+    with connect_pages_db(other_ws) as conn:  # the picture was stored there once and let go of
+        conn.execute("INSERT INTO upload_orphans (name, since) VALUES (?, ?)", (name, page_now()))
+        conn.commit()
+    d = _send(other, exported.content).json()
+    assert (d["pages_created"], d["notes_imported"], d["attachments_imported"], d["skipped"]) == (1, 1, 0, []), d
+    [copy] = _notes_of(other, d["pages"][0]["id"])
+    assert copy["properties"] == {"zotero_note": f"#gamma_note_{note['id']}"}  # the export's key for it
+    assert _tree(other, copy["id"]) == _tree_note(image_url)
+    assert other.get(image_url).content == _PNG
+    with connect_pages_db(other_ws) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM upload_orphans WHERE name = ?", (name,)).fetchone()[0] == 0
+
+
+def test_a_note_picture_that_is_not_stored_is_a_placeholder_and_a_warning(monkeypatch):
+    """A note's picture of a type Gamma does not store, one past
+    NOTE_IMAGE_MAX_BYTES, or one past the storage quota is "(image)" in
+    the note, with a warning; the note comes in all the same."""
+    from fastapi import HTTPException
+    from gamma import storage
+    from gamma.routers import imports
+
+    def full(ws, nbytes):
+        raise HTTPException(status_code=507, detail="storage quota exceeded")
+
+    c, _ = _library()
+    note = (f'<p>tiff <img src="{_data_uri(_PNG, "image/tiff")}"/></p>'
+            f'<p>big <img src="{_data_uri(_PNG + bytes(1000))}"/></p>'
+            f'<p>full <img src="{_data_uri(_PNG)}"/></p>')
+    data = _custom_zip(_rdf(_article("https://example.org/unstored-pictures", "Unstored pictures",
+                                     '<dcterms:isReferencedBy rdf:resource="#item_9"/>'), _memo("#item_9", note)), {})
+    monkeypatch.setattr(imports, "NOTE_IMAGE_MAX_BYTES", 500)
+    monkeypatch.setattr(storage, "check_upload_allowed", full)
+    d = _send(c, data).json()
+    assert (d["pages_created"], d["notes_imported"], d["skipped"]) == (1, 1, [])
+    [block] = _notes_of(c, d["pages"][0]["id"])
+    assert _tree(c, block["id"]) == {"content": "tiff (image)", "children": [
+        {"content": "big (image)", "children": []}, {"content": "full (image)", "children": []}]}
+    reasons = sorted(w["reason"] for w in d["warnings"] if w["reason"].startswith("Note image"))
+    assert reasons[:1] + reasons[2:] == ["Note image not imported: image/tiff is not a picture Gamma stores",
+                                         "Note image not imported: storage quota exceeded"]
+    assert reasons[1].startswith("Note image not imported: larger than")
+
+
+STANDALONE_NOTE = ('<div data-schema-version="9"><h2>Ideas <em>later</em></h2>'
+                   "<p>One</p><ul><li>two</li></ul></div>")
+
+
+def test_a_standalone_note_is_a_note_page():
+    """A note no item holds (Zotero's standalone note) is a page with no
+    PDF: titled by its first line, its body the rest of the note, filed in
+    its collections, labelled with its tags, ``zotero_key`` and
+    ``zotero_note`` its key. The review lists it as a page that misses
+    nothing. Imported again, and as the standalone note Gamma's Zotero RDF
+    export makes of it, it is that page, refiled and relabelled only."""
+    c, _ = _library()
+
+    def library(*collections, tags=("idea",)):
+        subjects = "".join(f"<dc:subject>{tag}</dc:subject>" for tag in tags)
+        return _custom_zip(_rdf(_memo("#item_20", STANDALONE_NOTE, subjects), *(
+            f'<z:Collection rdf:about="#collection_{i}"><dc:title>{name}</dc:title>'
+            '<dcterms:hasPart rdf:resource="#item_20"/></z:Collection>' for i, name in enumerate(collections))), {})
+
+    [planned] = _send(c, library("Ideas"), preview=True).json()["pages"]
+    assert (planned["title"], planned["kind"], planned["action"], planned["missing"]) == (
+        "Ideas later", "page", "create", False)
+    assert planned["folders"] == [["Ideas"]] and planned["warnings"] == []
+    d = _send(c, library("Ideas")).json()
+    assert (d["pages_created"], d["notes_imported"], d["skipped"], d["warnings"]) == (1, 0, [], [])
+    page_id = d["pages"][0]["id"]
+    body = {"content": "Ideas later", "children": [{"content": "One", "children": []},
+                                                   {"content": "two", "children": []}]}
+    assert _tree(c, page_id) == body
+
+    def filing():
+        props = c.get(f"/api/blocks/{page_id}").json()["properties"]
+        assert props["zotero_key"] == props["zotero_note"] == "#item_20" and "doc_id" not in props
+        return (sorted(folder_names(c)[f] for f in props["folders"]),
+                [label_names(c)[label] for label in props["labels"]])
+
+    assert filing() == ([["Ideas"]], ["idea"])
+    d = _send(c, library("Ideas", "Later", tags=("idea", "soon"))).json()
+    assert (d["pages_created"], d["pages_merged"], d["notes_imported"]) == (0, 1, 0)
+    assert filing() == ([["Ideas"], ["Later"]], ["idea", "soon"]) and _tree(c, page_id) == body
+
+    exported = c.get(f"/api/pages/{page_id}/export", params={"mode": "zotero-rdf"})
+    assert exported.status_code == 200, exported.text
+    d = _send(c, exported.content).json()
+    assert (d["pages_created"], d["pages_merged"]) == (0, 1)
+    assert filing() == ([["Ideas"], ["Later"]], ["idea", "soon"]) and _tree(c, page_id) == body
+
+
+def test_what_zotero_holds_beyond_the_record_stays_with_it():
+    """The item's ``rdf`` (the fields Gamma's record has no place for) is
+    the page's ``zotero_rdf`` when the import sets the page's record, and
+    later on a page of the same work that keeps none; never on a page whose
+    record is another work's now."""
+    from gamma.zotero_import import plan_zotero_archive
+
+    c, _ = _library()
+    url = "https://example.org/kept-zotero-fields"
+    data = _custom_zip(_rdf(_article(url, "Kept Zotero fields", "<dc:date>2017-06-12</dc:date>",
+                                     "<dcterms:abstract>What it found.</dcterms:abstract>")), {})
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        [item] = plan_zotero_archive(zf)["items"]
+    rdf = item["rdf"]
+    assert rdf["date"] == "2017-06-12" and any("What it found." in el for el in rdf["item"])
+    page_id = _send(c, data).json()["pages"][0]["id"]
+
+    def props():
+        return c.get(f"/api/blocks/{page_id}").json()["properties"]
+
+    assert props()["zotero_rdf"] == rdf
+
+    def imported_onto(meta):
+        edited = c.put(f"/api/blocks/{page_id}", json={"properties": {"zotero_rdf": None, "meta": meta}})
+        assert edited.status_code == 200, edited.text
+        assert _send(c, data).json()["pages_merged"] == 1
+        return props().get("zotero_rdf")
+
+    meta = props()["meta"]
+    assert imported_onto({"title": "Another work entirely", "doi": ""}) is None
+    assert imported_onto({**meta, "title": "KEPT zotero fields!"}) == rdf
+
+
+def test_a_pdf_the_library_stores_already_is_not_streamed_again(monkeypatch):
+    """An item's PDF the workspace stores already (a page of it deleted, a
+    file chip of it) is not copied from the zip again, only re-dated, as
+    storing it again would, so the upload GC keeps it; a PDF it lacks is
+    streamed in."""
+    from gamma import storage
+    from gamma.routers import imports
+
+    c, ws = _library()
+    stored, new = _annotated_pdf(b"Stored before the import"), _annotated_pdf(b"New with the import")
+    doc_id, _ = storage.store_pdf(ws, stored)
+    path = storage.open_path(ws, f"{doc_id}.pdf")
+    os.utime(path, (time.time() - 86400, time.time() - 86400))
+    streamed, real = [], imports.store_pdf_stream
+    monkeypatch.setattr(imports, "store_pdf_stream", lambda ws_, src: streamed.append(src.name) or real(ws_, src))
+    rdf = _rdf(_article("https://example.org/stored-before", "Stored before", '<link:link rdf:resource="#item_3"/>'),
+               _file_att("#item_3", "files/3/stored.pdf", "application/pdf"),
+               _article("https://example.org/new-with-it", "New with it", '<link:link rdf:resource="#item_4"/>'),
+               _file_att("#item_4", "files/4/new.pdf", "application/pdf"))
+    d = _send(c, _custom_zip(rdf, {"files/3/stored.pdf": stored, "files/4/new.pdf": new})).json()
+    assert (d["pages_created"], d["pdfs_stored"], d["annotations_imported"]) == (2, 1, 2)
+    assert streamed == ["export/files/4/new.pdf"]
+    by_title = {p["title"]: p["id"] for p in d["pages"]}
+    assert c.get(f"/api/blocks/{by_title['Stored before']}").json()["properties"]["doc_id"] == doc_id
+    assert time.time() - path.stat().st_mtime < 600
+
+
+def test_a_merge_that_fails_leaves_its_page_as_it_was(monkeypatch):
+    """A merge longer than one op batch (MAX_OPS) is written in one
+    transaction: a failure after its first piece leaves the page as it
+    was, so a later import brings the note in whole, in order. A note
+    root holding only its first blocks would stay so, as every later
+    import takes a note found under its key for the whole note."""
+    from gamma import ops
+
+    c, _ = _library()
+    url = "https://example.org/a-long-merge"
+    page_id = _send(c, _custom_zip(_rdf(_article(url, "A long merge")), {})).json()["pages"][0]["id"]
+    before = c.get(f"/api/blocks/{page_id}").json()["properties"]
+    items = [f"item {i}" for i in range(ops.MAX_OPS + 100)]
+    data = _custom_zip(_rdf(
+        _article(url, "A long merge", "<dc:subject>later</dc:subject>",
+                 '<dcterms:isReferencedBy rdf:resource="#item_9"/>'),
+        _memo("#item_9", "<p>root</p><ul>" + "".join(f"<li>{i}</li>" for i in items) + "</ul>")), {})
+
+    pieces, real = [], ops._apply
+
+    def second_piece_fails(conn, target, batch, **kwargs):
+        if target == page_id:
+            pieces.append(len(batch))
+            if len(pieces) == 2:
+                raise RuntimeError("stopped between pieces")
+        return real(conn, target, batch, **kwargs)
+
+    monkeypatch.setattr(ops, "_apply", second_piece_fails)
+    d = _send(c, data).json()
+    assert pieces == [ops.MAX_OPS, 102]  # the page's labels and the note's root first
+    assert d["pages_merged"] == 0 and [s["reason"] for s in d["skipped"]] == ["stopped between pieces"]
+    assert _notes_of(c, page_id) == []
+    assert c.get(f"/api/blocks/{page_id}").json()["properties"] == before
+
+    monkeypatch.setattr(ops, "_apply", real)
+    d = _send(c, data).json()
+    assert (d["pages_merged"], d["notes_imported"], d["skipped"]) == (1, 1, [])
+    [note] = _notes_of(c, page_id)
+    tree = _tree(c, note["id"])
+    assert tree["content"] == "root" and [child["content"] for child in tree["children"]] == items
+
+
+def test_a_note_block_longer_than_the_editor_saves_is_cut():
+    """A note's block past ops.MAX_CONTENT characters, the most the editor
+    saves, is cut there with a warning, on a merged page as on a new one,
+    where the merge's op batch would refuse it and the item with it."""
+    from gamma.ops import MAX_CONTENT
+
+    c, _ = _library()
+    url = "https://example.org/a-long-note"
+    _send(c, _custom_zip(_rdf(_article(url, "A long note")), {}))
+    data = _custom_zip(_rdf(_article(url, "A long note", '<dcterms:isReferencedBy rdf:resource="#item_9"/>'),
+                            _memo("#item_9", f"<p>root</p><p>{'y' * (MAX_CONTENT + 10)}</p>")), {})
+    for client, made in ((c, (0, 1)), (_library()[0], (1, 0))):
+        d = _send(client, data).json()
+        assert (d["pages_created"], d["pages_merged"], d["notes_imported"], d["skipped"]) == (*made, 1, [])
+        assert f"Note text cut: a block longer than {MAX_CONTENT:,} characters" in [w["reason"] for w in d["warnings"]]
+        [note] = _notes_of(client, d["pages"][0]["id"])
+        assert _tree(client, note["id"])["children"] == [{"content": "y" * MAX_CONTENT, "children": []}]
+
+
+def test_a_note_given_as_its_text_alone_comes_in(monkeypatch):
+    """A plan whose note has its text and no tree (zotero-cloud's Web API
+    items, ``{key, text, …}``) brings the note in as one block."""
+    from gamma.routers import imports
+
+    key = "http://zotero.org/users/1/items/ABCD2345"
+    item = {"key": key, "title": "A cloud paper", "meta": {"title": "A cloud paper", "doi": "", "authors": []},
+            "cite_key": "", "tags": [], "folders": [], "warnings": [], "pdf_entry": None, "digest": None,
+            "extras": [], "selection_id": "zotero:ABCD2345",
+            "notes": [{"key": "http://zotero.org/users/1/items/NOTE2345", "text": "my note"}]}
+    monkeypatch.setattr(imports, "_zotero_plan", lambda zf, digests=None: {"items": [item], "warnings": []})
+    c, _ = _library()
+    d = _send(c, _custom_zip(_rdf(), {})).json()
+    assert (d["pages_created"], d["notes_imported"], d["skipped"]) == (1, 1, [])
+    [note] = _notes_of(c, d["pages"][0]["id"])
+    assert _tree(c, note["id"]) == {"content": "my note", "children": []}
+
+
+def test_a_note_too_deep_for_its_readers_still_brings_its_item():
+    """A note nested past NOTE_DEPTH_MAX comes in as its text with a warning,
+    and its item, and a standalone note as deep, are made all the same."""
+    from gamma.zotero_import import NOTE_DEPTH_MAX
+
+    depth = NOTE_DEPTH_MAX + 100
+    deep = "<p>top</p>" + "<ul><li>x" * depth + "</li></ul>" * depth
+    c, _ = _library()
+    data = _custom_zip(_rdf(
+        _article("https://example.org/deep-note", "Deep note", '<dcterms:isReferencedBy rdf:resource="#item_9"/>'),
+        _memo("#item_9", deep), _memo("#item_20", deep)), {})
+    d = _send(c, data).json()
+    assert (d["pages_created"], d["notes_imported"], d["skipped"]) == (2, 1, []), d
+    reasons = [w["reason"] for w in d["warnings"]]
+    assert reasons.count("A note nested too deeply to keep its structure came in as plain text") == 2
+
+
+def test_a_record_retitled_in_gamma_still_knows_its_zotero_item():
+    """A page whose record was edited in Gamma is still the item its Zotero
+    record (``zotero_rdf``'s ``work``) names, so the item merges into it;
+    a page of another work under the same #item key still does not."""
+    c, _ = _library()
+    book = _rdf(_article("#item_5", "Optics of fibres", "<dc:date>2019-03-14</dc:date>"))
+    [page] = _send(c, _custom_zip(book, {})).json()["pages"]
+    props = c.get(f"/api/blocks/{page['id']}").json()["properties"]
+    assert props["zotero_rdf"]["work"]["title"] == "Optics of fibres"
+    edited = c.put(f"/api/blocks/{page['id']}", json={"properties": {"meta": {**props["meta"], "title": "Fibre optics"}}})
+    assert edited.status_code == 200, edited.text
+    data = _custom_zip(book, {})
+    [planned] = _send(c, data, preview=True).json()["pages"]
+    assert (planned["action"], planned["existing_id"]) == ("merge", page["id"])
+    d = _send(c, data).json()
+    assert (d["pages_created"], d["pages_merged"]) == (0, 1) and d["pages"][0]["id"] == page["id"]
+    other = _rdf(_article("#item_5", "Something else entirely", "<dc:date>2001</dc:date>"))
+    assert _send(c, _custom_zip(other, {})).json()["pages_created"] == 1
