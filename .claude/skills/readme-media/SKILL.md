@@ -15,10 +15,17 @@ scripts.
   a replacement library or read account databases for credentials. Credentials
   may be in project memory (`gamma-demo-account.md`); otherwise ask for the demo
   login. Never commit credentials, cookies, or workspace exports.
-- After a capture, run `check-media.mjs`, inspect the contact sheets, verify the
-  demonstrated action saved, update the matching README link, and stop any
-  isolated server you started.
+- The README stories record on `take.mjs` (isolated server, the scripted demo
+  model for AI): a take is kept only when its checks pass. Keep to the house
+  style in the media guide's delivery rules: one story per clip, waits cut,
+  pointer and streams sped up (typing at 1×), results held, at most two camera
+  moves.
+- After a capture, render, then look at the frames of `<name>-preview.mp4` and
+  `check-media.mjs`'s contact sheet, verify the demonstrated action saved,
+  update the matching README link (and the site's, `sites/build.mjs` and
+  `sites/site/index.html`), and stop any isolated server you started.
 - Leave changes in the working tree. Do not commit unless the user asks.
 
 The research behind the style lives in
-[demo-production.md](../../../docs/research/demo-production.md).
+[demo-production.md](../../../docs/research/demo-production.md) and
+[demo-film-pipeline.md](../../../docs/research/demo-film-pipeline.md).

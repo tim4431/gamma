@@ -35,7 +35,7 @@ const MEDIA = {
   'connections-light.svg': 'docs/assets/branding/gamma-connections-light.svg',
   'workspaces-light.svg': 'docs/assets/branding/gamma-workspaces-light.svg',
   'anywhere-light.svg': 'docs/assets/branding/gamma-anywhere-light.svg',
-  'demo-annotate-and-ink.webp': 'docs/assets/demos/demo-annotate-and-ink.webp',
+  'demo-ink-import.webp': 'docs/assets/demos/demo-ink-import.webp',
   'demo-notes.webp': 'docs/assets/demos/demo-notes.webp',
   'demo-native-agentic.webp': 'docs/assets/demos/demo-native-agentic.webp',
   'demo-agentic-notes.webp': 'docs/assets/demos/demo-agentic-notes.webp',
