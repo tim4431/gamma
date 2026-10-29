@@ -116,7 +116,8 @@ function InboxNotifications({ value }) {
 // account that has one.
 const TOPBAR_ICONS = { add: PlusIcon, tasks: ActivityIcon, search: SearchIcon, share: LinkIcon, sync: CloudIcon, inbox: BellIcon, view: MenuIcon };
 const VIEWER_TOOL_ICONS = {
-  zoom: ZoomInIcon, ink: PenIcon, record: MicIcon, translate: LanguagesIcon, paper: SheetIcon, notesView: FileTextIcon, selectMode: TextCursorIcon,
+  zoom: ZoomInIcon, ink: PenIcon, record: MicIcon, highlighter: HighlightIcon, translate: LanguagesIcon, paper: SheetIcon, notesView: FileTextIcon,
+  selectMode: TextCursorIcon,
 };
 
 export function AppearanceSettings({ value, diagnostics }) {

@@ -67,7 +67,7 @@ import { collectEntryFiles } from "../shared/lib/dropEntries.js";
 import { useWheelPan } from "../shared/ui/wheelPan";
 import {
   ActivityIcon, AlertCircleIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpDownIcon, ArrowUpIcon, BookIcon, BugIcon, CheckIcon, CloudIcon, CopyIcon, DownloadIcon, ExportIcon,
-  ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph,
+  ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph, HighlightIcon,
   FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, HelpCircleIcon, HomeIcon, ImportIcon, InfoIcon, LabelGlyph, LabelIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoreIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon,
   RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
@@ -2671,7 +2671,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     keybindings, setKeybindings,
     statusBarVisible, setStatusBarVisible, suggestTours, setSuggestTours, tourProgress, setTourProgress,
     inboxSystemNotifications, setInboxSystemNotifications,
-    topbar, setTopbar, viewerTools, setViewerTools,
+    topbar, setTopbar, viewerTools, setViewerTools, highlighterColor, setHighlighterColor,
     chatEffort, setChatEffort, chatSpeed, setChatSpeed, aiLoginCheck, setAiLoginCheck, metaModel, setMetaModel,
     dictationModel, setDictationModel, dictationLang, setDictationLang,
     chatSystem, setChatSystem, agentSystem, setAgentSystem,
@@ -3965,6 +3965,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // drawing. A mouse holds Ctrl; a finger has no Ctrl, so a touch screen gets
   // a sticky toggle button in the viewer's zoom column instead.
   const [areaSelectMode, setAreaSelectMode] = useState(false);
+  // The strip's text highlighter (app/viewerToolItems.js): while it is on,
+  // a text selection on the PDF is highlighted at once in highlighterColor,
+  // with no popup; its button's right-click or long press picks the colour
+  // ({x, y} of that menu).
+  const [highlighterOn, setHighlighterOn] = useState(false);
+  const [highlighterMenu, setHighlighterMenu] = useState(null);
   // The build fence (ink/buildFence.js): a server updated under this
   // bundle stops the page drawing until it is reloaded (inkStale).
   const { inkStale, noteServerBuild } = useBuildFence({ sessionBuild: authUser?.build, setStatus });
@@ -8979,7 +8985,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // sheet actions (the tools reach them through PageToolsContext), and the
   // strip over the notes when no viewer is there to hold it.
   const viewerInk = (!!pdfUrl || notebook) && !viewerHidden;
-  const openInkTools = () => (inkUi.open ? closeInkStrip() : openInkStrip());
+  // The pen's strip and the text highlighter both take a drag on the page:
+  // opening one puts the other away.
+  const openInkTools = () => {
+    if (inkUi.open) { closeInkStrip(); return; }
+    setHighlighterOn(false);
+    openInkStrip();
+  };
+  function setHighlighter(on) {
+    if (on && inkUi.open) closeInkStrip();
+    setHighlighterOn(on);
+  }
   const noteSheetCtx = notebook ? null : {
     marks, inkOpen: inkUi.open,
     onPen: openInkTools, onPaper: setSheetPaper, onPaperAll: applyPaperToAll, onAddAfter: addSheetAfter,
@@ -11232,17 +11248,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // each on the strip or a row of the ⋯ menu at its end. A tool that does
   // not apply here is in neither: Paper and Notes view are a notebook's,
   // Translate a PDF's outside a share, the selection mode a touch screen's,
-  // and a read-only page has nothing to write on or record onto. A lit tool
-  // is in use and stays on the strip whatever its mode (the pen while its
-  // tools are open, Record while it records, Translate while it translates
-  // or shows a translation, Paper while its panel is open, the rectangle
-  // mode); a tour or a hint on screen shows them all, since their steps
-  // point at them.
+  // the text highlighter a PDF's, and a read-only page has nothing to write
+  // on, highlight or record onto. A lit tool is in use and stays on the
+  // strip whatever its mode (the pen while its tools are open, Record while
+  // it records, the highlighter while it is on, Translate while it
+  // translates or shows a translation, Paper while its panel is open, the
+  // rectangle mode); a tour or a hint on screen shows them all, since their
+  // steps point at them.
   const transLit = pdfTransState.running || (pdfTransState.pages > 0 && pdfTransState.shown);
   const stripApplies = {
     zoom: true,
     ink: !readOnly,
     record: !readOnly,
+    highlighter: !readOnly && !!pdfUrl,
     translate: !shareMode && !!pdfUrl,
     paper: notebook && !readOnly,
     notesView: notebook,
@@ -11250,8 +11268,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   };
   const stripPlaces = VIEWER_TOOLS.place(viewerTools, {
     guide: guide.running || !!guide.offer,
-    pinned: { ink: inkUi.open, record: !!recordingNow, translate: transLit, paper: paperMenu, selectMode: areaSelectMode },
+    pinned: { ink: inkUi.open, record: !!recordingNow, highlighter: highlighterOn, translate: transLit, paper: paperMenu, selectMode: areaSelectMode },
   }).filter((x) => stripApplies[x.id]);
+  // The highlighter's colour: the one used last, else the popup's first.
+  const highlighterPen = highlighterColor || highlightColor(pickerColors(palette, "highlight")[0]);
+  const highlighterName = t(colorName(highlighterPen));
   const stripMenuTools = stripPlaces.filter((x) => x.at === "menu");
   const toolsMore = !!(pdfUrl || notebook) && !viewerHidden && stripMenuTools.length > 0;
   // Each tool's button on the strip, by id: zoom is its three buttons,
@@ -11292,6 +11313,23 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         aria-label={recordingNow ? t("Stop recording") : t("Record audio")}
       >
         <MicIcon size={16} />
+      </button>
+    ),
+    // Under the icon, its colour (as the markup strip's highlighters).
+    highlighter: () => (
+      <button
+        className={"stripInkBtn" + (highlighterOn ? " modeActive" : "")}
+        data-guide="viewer.highlighter"
+        onClick={() => setHighlighter(!highlighterOn)}
+        {...menuPress((e) => { e.preventDefault(); setHighlighterMenu(stripMenuAt(e.currentTarget)); })}
+        aria-pressed={highlighterOn}
+        title={highlighterOn
+          ? t("Text highlighter: on, in {color} — click to turn it off, right-click for its colour", { color: highlighterName })
+          : t("Text highlighter: what you select is highlighted in {color}, with no popup — right-click for its colour", { color: highlighterName })}
+        aria-label={t("Text highlighter")}
+      >
+        <HighlightIcon size={16} />
+        <span className="inkToolInk" style={{ background: highlighterPen }} />
       </button>
     ),
     translate: () => (
@@ -11373,6 +11411,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     record: () => (
       <MenuItem key="record" icon={MicIcon} onClick={stripRow(toggleRecording)}>
         {recordingNow ? t("Stop recording") : t("Record audio")}
+      </MenuItem>
+    ),
+    highlighter: () => (
+      <MenuItem key="highlighter" icon={HighlightIcon} onClick={stripRow(() => setHighlighter(!highlighterOn))}>
+        {highlighterOn ? t("Turn off the text highlighter") : t("Text highlighter")}
       </MenuItem>
     ),
     // the button's click: stop, show or hide, or translate this page
@@ -11688,6 +11731,30 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           ) : null}
         </ContextMenu>
       )}
+      {/* The highlighter's colours, the selection popup's: a pick is its
+          colour from then on, and turns it on. */}
+      {highlighterMenu ? (
+        <ContextMenu x={highlighterMenu.x} y={highlighterMenu.y} onClose={() => setHighlighterMenu(null)} aria-label={t("Text highlighter")}>
+          <div className="colorRow ctxMenuColors">
+            {pickerColors(palette, "highlight").map((c, i) => {
+              const color = highlightColor(c), on = color === highlighterPen;
+              return (
+                <button
+                  key={c.hex + c.alpha + i}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={on}
+                  className={"colorBtn" + (on ? " selected" : "")}
+                  style={{ background: swatchCss(c) }}
+                  onClick={() => { setHighlighterMenu(null); setHighlighterColor(color); setHighlighter(true); }}
+                  title={t("Highlight in {color}", { color: t(colorName(c)) })}
+                  aria-label={t("Highlight in {color}", { color: t(colorName(c)) })}
+                />
+              );
+            })}
+          </div>
+        </ContextMenu>
+      ) : null}
       {/* The strip's ⋯: the tools off it, then the way to their setting. */}
       {toolsMenu && toolsMore ? (
         <ContextMenu x={toolsMenu.x} y={toolsMenu.y} onClose={() => setToolsMenu(null)} ignoreRef={toolsMoreRef}
@@ -11866,6 +11933,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 regionBox({ boundingRect: sel.rect, width: sel.width, height: sel.height })))}
               // the selection popup's Comment: a highlight with its thread popover open on it
               selComment={commentsOn && canComment}
+              highlighter={highlighterOn && !readOnly ? highlighterPen : ""}
               moveMode={!!moveHighlightId}
               // a dashed or hollow highlight's review card (pdf/HighlightReview.jsx): its actions are an
               // editor's; a lost one's picture is of the file it was measured on, when not this one
@@ -11888,12 +11956,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   hideTip?.();
                   return;
                 }
+                // The popup's swatch is a palette colour, which a highlight
+                // stores at the swatch's alpha; the highlighter's is that of
+                // the last swatch picked, and a pick is its colour from now on.
+                const color = extras?.highlighter ? highlighterPen : highlightColor(extras?.color) || DEFAULT_HIGHLIGHT;
+                if (extras?.color && !extras.comment) setHighlighterColor(color);
                 const id = addHighlight({
                   content: content || { text: "" },
                   position,
                   comment: { text: extras?.commentText || "" },
-                  // the popup's swatch is a palette colour; a highlight stores it at the wash alpha
-                  color: highlightColor(extras?.color) || DEFAULT_HIGHLIGHT,
+                  color,
                 }, { edit: !extras?.comment });
                 hideTip?.();
                 if (extras?.comment && id) commentOnNewHighlight(id);

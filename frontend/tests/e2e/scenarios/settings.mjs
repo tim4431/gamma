@@ -1004,7 +1004,7 @@ export async function settingsScenarios(env) {
         .map((el) => el.dataset.guide || el.getAttribute("aria-label")).filter(Boolean).join());
       const page = await openPage(ctx, `${server.base}/?page=${doc.id}&ws=${user.ws}`);
       await page.waitForSelector('[data-page="1"] .textLayer span', { timeout: 30000 });
-      assertEq(await strip(page), "viewer.zoom,pdf.inkButton,viewer.record,viewer.translate", "the default strip, no ⋯");
+      assertEq(await strip(page), "viewer.zoom,pdf.inkButton,viewer.record,viewer.highlighter,viewer.translate", "the default strip, no ⋯");
       await openSettings(page);
       await nav(page, "Appearance").click();
       const list = barList(page, "Viewer tools");
@@ -1018,7 +1018,7 @@ export async function settingsScenarios(env) {
       }, { what: "Record hidden and Translate first, stored" });
       assertEq(await list.locator('.barLayoutRow[data-order-id="record"].off').count(), 1, "a hidden tool's row reads muted");
       await page.getByRole("button", { name: "Close settings", exact: true }).click();
-      await until(async () => (await strip(page)) === "viewer.translate,viewer.zoom,pdf.inkButton,More tools", { what: "the strip in the new order, Record in ⋯" });
+      await until(async () => (await strip(page)) === "viewer.translate,viewer.zoom,pdf.inkButton,viewer.highlighter,More tools", { what: "the strip in the new order, Record in ⋯" });
       await page.getByRole("button", { name: "More tools", exact: true }).click();
       const menu = page.getByRole("menu", { name: "More tools" });
       await menu.waitFor();

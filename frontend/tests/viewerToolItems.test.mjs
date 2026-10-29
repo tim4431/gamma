@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { PREFS } from "../src/app/prefDefs.js";
 import { VIEWER_TOOLS, VIEWER_TOOL_ITEMS } from "../src/app/viewerToolItems.js";
 
-const ORDER = ["zoom", "ink", "record", "translate", "paper", "notesView", "selectMode"];
+const ORDER = ["zoom", "ink", "record", "highlighter", "translate", "paper", "notesView", "selectMode"];
 
 test("every tool has its row's parts and is on the strip or in its ⋯ menu", () => {
   assert.equal(VIEWER_TOOLS.items, VIEWER_TOOL_ITEMS);
@@ -27,6 +27,24 @@ test("the preference stores the layout, and the old translate switch is gone", (
   assert.deepEqual(PREFS.viewerTools.parse(PREFS.viewerTools.serialize(value)), value);
   assert.equal(PREFS.viewerTools.parse("{"), undefined);
   assert.equal(PREFS.translateEnabled, undefined, "Translate hidden is the switch now");
+});
+
+test("a stored layout from before the text highlighter gets it after Record, on the strip", () => {
+  const stored = { order: ["record", "zoom", "ink", "translate", "paper", "notesView", "selectMode"], modes: { translate: "hidden" } };
+  const read = VIEWER_TOOLS.read(stored);
+  assert.deepEqual(read.order, ["record", "highlighter", "zoom", "ink", "translate", "paper", "notesView", "selectMode"]);
+  assert.equal(read.modes.highlighter, "always");
+  assert.equal(read.modes.translate, "hidden", "the rest keep their modes");
+});
+
+test("the text highlighter's colour is stored as a highlight stores it, or empty for the popup's first", () => {
+  const def = PREFS.highlighterColor;
+  assert.equal(def.key, "gamma-highlighter-color");
+  assert.equal(def.scope, "account");
+  assert.equal(def.default, "");
+  assert.equal(def.parse(""), "");
+  assert.equal(def.parse("#AAEBAAA6"), "#aaebaaa6");
+  assert.equal(def.parse("green"), undefined, "a value that is no colour falls back to the default");
 });
 
 test("a tool in use stays on the strip whatever its mode", () => {

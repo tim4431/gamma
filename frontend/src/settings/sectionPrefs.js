@@ -28,7 +28,8 @@ export const SECTION_PREFS = Object.freeze({
     Colors: ["palette"],
     Library: ["recentThumbs", "fileLabels"],
     "Top bar": ["topbar"],
-    "Viewer tools": ["viewerTools"],
+    // The highlighter's colour has no row: it is set where it acts.
+    "Viewer tools": ["viewerTools", "highlighterColor"],
     Tours: ["suggestTours", "tourProgress"],
   }),
   reading: sections({

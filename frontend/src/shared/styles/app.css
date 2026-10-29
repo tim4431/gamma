@@ -7,8 +7,8 @@
 /* The tokens (theme colours, type, radii, layers) live in tokens.css, which
    index.html links ahead of this file; this file only reads them. */
 
-/* Live-preview selection color while picking in PlainTip. PlainTip sets
-   --selection-color on :root; otherwise we fall back to default. */
+/* A PDF text selection's colour: the text highlighter's while it is on (the
+   viewer sets --selection-color, pdf/PdfViewer.jsx), else a light blue. */
 .textLayer ::selection,
 .textLayer span::selection {
   background: var(--selection-color, rgba(180, 200, 255, 0.5));
@@ -5711,6 +5711,10 @@ a.shareBrand:hover { background: var(--bg-hover); }
   line-height: 1;
   padding-bottom: 2px;
 }
+/* The text highlighter's button on the strip: its colour under the icon,
+   as on the markup strip's highlighters. */
+.pdfCtlBox .stripInkBtn { position: relative; padding-bottom: 5px; }
+.pdfCtlBox .stripInkBtn .inkToolInk { left: 7px; right: 7px; bottom: 3px; height: 3px; }
 .pdfViewer.areaCursor .pdfPageWrap,
 .pdfViewer.areaCursor .textLayer,
 .pdfViewer.areaCursor .textLayer span {

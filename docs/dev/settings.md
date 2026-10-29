@@ -7,7 +7,7 @@ Where every setting lives, and how the Settings dialog is built.
 | Layer | Storage | Examples |
 |---|---|---|
 | Per browser | `localStorage`, one `gamma-*` key per preference, all declared in `PREFS` ([frontend/src/app/prefDefs.js](../../frontend/src/app/prefDefs.js)) with scope `browser` — except `gamma-link-name`, the share view's display name for a visitor without an account, owned by `src/collaboration/linkName.js` because the fetch wrapper reads it outside React | what describes this device: the interface size (`gamma-ui-scale`, applied pre-paint by `index.html`), the status bar, the handwriting input rules, finger undo, the hover preview, the tool strip's eraser and lasso choices and, in the iPad app, what the Apple Pencil's gestures do and its haptics (`gamma-ink-*`: `gamma-ink-pen-only`, `gamma-ink-auto-pen`, `gamma-ink-pressure`, `gamma-ink-finger-undo`, `gamma-ink-hover-preview`, `gamma-ink-eraser`, `gamma-ink-eraser-size`, `gamma-ink-lasso`, `gamma-ink-pencil-tap`, `gamma-ink-pencil-squeeze`, `gamma-ink-haptics`, the ruler's units `gamma-ink-ruler-units` and the zoom window's height `gamma-ink-zoom-height`; the presets themselves, `gamma-ink-tools`, and the Shapes tool's kind and fill are the account's), the style of new text boxes (`gamma-text-box-style`), whether Inbox items ring as system notifications (`gamma-inbox-notifications`, `inboxSystemNotifications`: the browser's permission is this device's; Settings → Appearance › Interface › Inbox notifications, [comments.md](comments.md) "The Inbox") and how a recording plays back (`gamma-replay-mode`, `gamma-replay-rate`, `gamma-replay-follow`; its lead-in `gamma-replay-lead-in` and the automatic transcript `gamma-recording-transcribe` are the account's), the metadata and translation model picks and dictation (they name this server's provider entries, like the chat model `gamma-chat-model`), and whether a shown "Linked from" section is folded (`gamma-backlinks-collapsed`; whether it is shown at all is the account's `gamma-backlinks`); outside `PREFS`, diagnostics tracing (`gamma-debug-log`) |
-| Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache, and `gamma-profile-seen` keeps the profile as this browser last took it from an account or sent it, whichever account that was (which local value is this browser's own, "Reading & editing" below) | appearance (theme — the pre-paint script in `index.html` reads `gamma-theme`, resolves System to light or dark the way App.jsx's theme effect does and sets `data-theme` with its `data-scheme`, so the first frame has the right tokens ([ui-design.md](ui-design.md#tokens)) — flip page colors, the colour palette (`palette`, the swatches highlights, pens and text boxes offer), whether tours are suggested, `suggestTours`, and which tours the account has seen, `tourProgress`, written by the guide and shown nowhere, [onboarding.md](onboarding.md#storage)), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, smooth wheel scrolling, how search opens, how a replaced PDF's highlights are matched — `relocateMinMatch` and `relocateExactChars`, which the server's highlight run also reads from the profile as it starts ([highlight_relocation.md](highlight_relocation.md#the-thresholds)) — the handwriting habits `gamma-ink-draw-hold`, `gamma-ink-scribble-erase`, `gamma-ink-eraser-return` and `gamma-ink-eraser-filter`, the tool strip's presets `gamma-ink-tools`, and the Shapes tool's kind and fill `gamma-ink-shape-kind` and `gamma-ink-shape-fill`), translation (language, selection translation, effort, parallel requests; the viewer's button is the strip's translate mode), the Enter key, library display and PDF fetching, the topbar's buttons and the viewer's side strip (`topbar`, `viewerTools`: their order, and where each item shows, [below](#bars-order-and-modes)), chat behaviour (tools switch, per-kind tool permissions, reasoning effort, speed, the login connection check, tool limits, snapshot clearing), context budgets, prompts, keyboard shortcuts (`keybindings`: command id → chord or null, [hotkeys.md](hotkeys.md)) |
+| Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache, and `gamma-profile-seen` keeps the profile as this browser last took it from an account or sent it, whichever account that was (which local value is this browser's own, "Reading & editing" below) | appearance (theme — the pre-paint script in `index.html` reads `gamma-theme`, resolves System to light or dark the way App.jsx's theme effect does and sets `data-theme` with its `data-scheme`, so the first frame has the right tokens ([ui-design.md](ui-design.md#tokens)) — flip page colors, the colour palette (`palette`, the swatches highlights, pens and text boxes offer), whether tours are suggested, `suggestTours`, and which tours the account has seen, `tourProgress`, written by the guide and shown nowhere, [onboarding.md](onboarding.md#storage)), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, smooth wheel scrolling, how search opens, how a replaced PDF's highlights are matched — `relocateMinMatch` and `relocateExactChars`, which the server's highlight run also reads from the profile as it starts ([highlight_relocation.md](highlight_relocation.md#the-thresholds)) — the handwriting habits `gamma-ink-draw-hold`, `gamma-ink-scribble-erase`, `gamma-ink-eraser-return` and `gamma-ink-eraser-filter`, the tool strip's presets `gamma-ink-tools`, and the Shapes tool's kind and fill `gamma-ink-shape-kind` and `gamma-ink-shape-fill`), translation (language, selection translation, effort, parallel requests; the viewer's button is the strip's translate mode), the Enter key, library display and PDF fetching, the topbar's buttons and the viewer's side strip (`topbar`, `viewerTools`: their order, and where each item shows, [below](#bars-order-and-modes)), the strip's text highlighter's colour (`highlighterColor`: the last swatch picked for a text highlight, as a highlight stores it, set where it acts, [below](#bars-order-and-modes)), chat behaviour (tools switch, per-kind tool permissions, reasoning effort, speed, the login connection check, tool limits, snapshot clearing), context budgets, prompts, keyboard shortcuts (`keybindings`: command id → chord or null, [hotkeys.md](hotkeys.md)) |
 | Session only | React state, nothing stored | the Ctrl+scroll text size of the notes list and the chat transcript (`useTextScale` in [Widgets.jsx](../../frontend/src/shared/ui/Widgets.jsx)) — resets on reload |
 | Per account, synced | `/api/prefs/{key}` (small JSON KV: the account-wide keys in `users.db` `user_prefs`, the others in the workspace's `pages.db` `workspace_prefs`, [user_db.md](user_db.md)) | per account AND workspace, kept in that workspace and left out of its exports and backups: open tabs (`open-tabs`), the recently-viewed queue (`recent-views`), reading positions (`read-pos`) — they name one workspace's pages (pins are no pref: a pinned page or folder carries `properties.pinned` on its block, [home_library.md](home_library.md) "Pinned"); account-wide: active AI key (`ai-provider`) and the preference profile (`profile`, previous row). Server wins on load, localStorage (keyed `user@workspace`) is the instant-paint cache. The recents-card cover thumbnails are workspace data, through their own `/api/page-snaps` store (`page_snaps` in the workspace's `data.db` — over the prefs size cap) |
 | Per account, seen notices | the account-wide `notices-seen` prefs key (`db.NOTICES_SEEN_PREF_KEY`), `{notice id: fingerprint}`, written only by `POST /api/notices/{id}/seen` (below, "Notices") | which release and which log error the account has already looked at |
@@ -837,9 +837,10 @@ to `defineBar`:
 - [app/viewerToolItems.js](../../frontend/src/app/viewerToolItems.js),
   `VIEWER_TOOLS`: Zoom (zoom out, zoom in and fit to width as one item, the
   three buttons the tour's `viewer.zoom` points at), Handwriting tools
-  (the pen), Record audio, Translate, Notebook paper, Notes view and
-  Selection mode. The default order is the strip's former fixed one, so
-  the PDF and notebook tours meet the tools they share in the same places.
+  (the pen), Record audio, Text highlighter, Translate, Notebook paper,
+  Notes view and Selection mode. The default order is the strip's former
+  fixed one, with the text highlighter after Record, so the PDF and
+  notebook tours meet the tools they share in the same places.
 
 Each entry gives its id (its key in the preference), its Settings row's
 label and hint (a strip tool's hint says where it applies when that is not
@@ -904,17 +905,19 @@ setting. A `syncPillScope` (`gamma-sync-pill`) left in a profile from
 before this preference is not read.
 
 **The strip.** App leaves out what does not apply to the open viewer: the
-pen and Record on a read-only page, Translate outside a PDF or in a share,
+pen and Record on a read-only page, the text highlighter there and outside
+a PDF, Translate outside a PDF or in a share,
 Selection mode there too and off a touch screen, Notebook paper and Notes
 view outside a notebook (Paper on a read-only one as well). A tool in use is pinned to
 the strip whatever its mode, so what was switched on from ⋯ stays in reach
 to switch off: the pen while its tools are open, Record while it records,
-Translate while it translates or shows a translation, Paper while its panel
+the text highlighter while it is on, Translate while it translates or shows a translation, Paper while its panel
 is open, Selection mode in rectangle mode. While some applicable tool is
 hidden the strip ends with a ⋯ button ("More tools"). Its menu opens beside
 the strip, where the translate button's menu opens (`stripMenuAt` in App),
 and lists the hidden tools in the layout's order: Zoom out, Zoom in and Fit
-to width; Handwriting tools; Record audio, or Stop recording; Translate's
+to width; Handwriting tools; Record audio, or Stop recording; Text
+highlighter, or Turn off the text highlighter; Translate's
 current action; Paper of this page; Notes view; Toggle selection mode;
 then Customize…. A row closes the menu. Translate hidden is how the
 translate button is turned off, so there is no separate translate switch:
@@ -922,10 +925,31 @@ Translation › Viewer & selection › Translation button sets the same mode
 (on, always; off, hidden), and `SECTION_PREFS` lists `viewerTools` under
 both sections.
 
+**The text highlighter.** Its button toggles App's `highlighterOn`
+(session state, like the rectangle mode) and draws its colour as a bar
+under the icon (`.stripInkBtn`, the markup strip's `.inkToolInk`). Its
+right-click or long press opens the Highlight picker's swatches beside the
+strip; a pick is its colour and turns it on. While it is on, PdfViewer's
+`highlighter` prop is that colour: a text selection ended by a mouse or
+pen release (the `mouseup` path, not a finger's) goes to
+`onSelectionFinished` with `{highlighter: true}` instead of opening the
+popup, and App adds it in `highlighterColor` with its note open for typing,
+as the popup's. The viewer sets `--selection-color`, so
+the selection is drawn in that colour as it is made. A finger's selection,
+an area drag and a selection that places a highlight waiting to be moved
+still get the popup. `highlighterColor` (`gamma-highlighter-color`, account)
+is the last swatch picked for a text or area highlight, in the popup or in
+the button's menu, stored as a highlight stores it (`#rrggbbaa`); "" until
+then, which is the Highlight picker's first swatch. The popup's Comment
+does not set it. Opening the pen's strip turns the highlighter off and
+turning it on closes the strip: both take a drag on the page.
+`SECTION_PREFS` holds it under Viewer tools, which shows no row for it.
+
 **Ways to the setting.** A right-click or a held finger (`menuPress`) on
 the topbar's own background, not on a button, link, tab or popover, offers
-"Customize top bar…"; on the strip, except the translate button and the ⋯,
-which have their own menus, "Customize viewer tools…". The ⋯ menu ends with Customize….
+"Customize top bar…"; on the strip, except the translate button, the text
+highlighter and the ⋯, which have their own menus, "Customize viewer
+tools…". The ⋯ menu ends with Customize….
 They call `openSettingsPane("topbar")` and `openSettingsPane("viewer-tools")`:
 pane aliases of Appearance (`settingsNavigation.js`) that the dialog's
 jump map in `SettingsDialog.jsx` takes to the section's header.

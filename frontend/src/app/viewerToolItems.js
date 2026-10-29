@@ -11,7 +11,8 @@
 // while some tool that applies here is hidden. A tool in use stays on the
 // strip whatever its mode (App pins it): Record while recording, Translate
 // while it translates or shows a translation, the pen while its tools are
-// open. Translate hidden is how the translate button is turned off.
+// open, the text highlighter while it is on. Translate hidden is how the
+// translate button is turned off.
 //
 // The default order is the strip's own: the PDF and the notebook viewer
 // share the run up to Record, in the same places, so the viewer tours
@@ -44,6 +45,12 @@ export const VIEWER_TOOL_ITEMS = Object.freeze([
     id: "record", label: T("Record audio"),
     hint: T("What you write meanwhile replays in step with it."),
     keywords: "microphone mic audio recording voice",
+    modes: ["always", "hidden"],
+  },
+  {
+    id: "highlighter", label: T("Text highlighter"),
+    hint: T("PDFs only. What you select is highlighted at once, in the colour you used last."),
+    keywords: "highlight marker colour color select text quick",
     modes: ["always", "hidden"],
   },
   {

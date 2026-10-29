@@ -491,6 +491,12 @@ async function fetchPdfData(url, onLoadState, isCancelled) {
 // (.pdfHlFlash; App's triggerFlash sets it for about a second).
 // selComment: the selection popup offers Comment (the reader may comment on
 // the page); a press reaches onSelectionFinished with {comment: true}.
+// highlighter: the strip's text highlighter is on, in this colour ("" off):
+// a text selection the mouse or the pen lets go of reaches
+// onSelectionFinished at once with {highlighter: true}, no popup, and the
+// selection is drawn in that colour while it is made. A finger's selection
+// has no such end (its handles are still being dragged), so it gets the
+// popup, and so does one that places a highlight waiting to be moved.
 // commentMargin: what the comment cards beside the pages read (App's
 // CommentMarginContext value, comments/marginSlot.jsx: the threads, the
 // active card's `target`, the handlers), or null for no margin (a phone, a
@@ -513,7 +519,7 @@ async function fetchPdfData(url, onLoadState, isCancelled) {
 // another); reviewRef.current(id, {done, scroll}) scrolls to that one and
 // opens its card (the Document menu's Review; App after a move started
 // from the card, `done` what it did and scroll false).
-function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, areaKey = "Mod", peekKey = "Alt", hideEmbeddedAnnots, darkPage = false, translateKey = "", translateScope = null, translateParallel = 3, onTranslate, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", selComment = false, moveMode = false, marks, flashHighlightId = null, smoothWheel = false, commentMargin = null, marginRef = null, onMarginLost, onPageInView, zoomHeight = 200, onZoomHeight, onZoomChange, onAcceptHighlight, onPlaceHighlight, onMoveHighlight, onUndoReview, fileId = "", reviewRef = null }) {
+function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, areaKey = "Mod", peekKey = "Alt", hideEmbeddedAnnots, darkPage = false, translateKey = "", translateScope = null, translateParallel = 3, onTranslate, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", selComment = false, highlighter = "", moveMode = false, marks, flashHighlightId = null, smoothWheel = false, commentMargin = null, marginRef = null, onMarginLost, onPageInView, zoomHeight = 200, onZoomHeight, onZoomChange, onAcceptHighlight, onPlaceHighlight, onMoveHighlight, onUndoReview, fileId = "", reviewRef = null }) {
   const tools = usePageTools(), { ink, text } = tools;
   const viewerRef = useRef(null);
   const [pdfDoc, setPdfDoc] = useState(null);
@@ -1828,6 +1834,12 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // place) the region is only that place and goes nowhere else.
   const moveModeRef = useRef(moveMode);
   moveModeRef.current = moveMode;
+  // The highlighter's colour and the confirm it skips the popup with, for
+  // the selection listeners below, which subscribe once.
+  const highlighterRef = useRef(highlighter);
+  highlighterRef.current = highlighter;
+  const confirmRef = useRef(null);
+  confirmRef.current = confirmSelection;
   const onAreaSelected = useCallback((sel) => {
     setSelPopup({ kind: "area", ...sel });
     // The region goes to the chat as its page and box (chat/chatPictures.js
@@ -1913,10 +1925,18 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
         const pageW = parseFloat(pageEl.style.width) || pageEl.offsetWidth || 1;
         const pageH = parseFloat(pageEl.style.height) || pageEl.offsetHeight || 1;
         const rect = { top: r.top, left: r.left, width: r.width, bottom: r.bottom };
-        setSelPopup({
+        const snap = {
           text, rect, point: nearRelease(point, rect), lineRects, pageNumber,
           pageLeft: pageRect.left, pageTop: pageRect.top, pageW, pageH,
-        });
+        };
+        // The highlighter: a release of the mouse or the pen ends the
+        // selection, which is highlighted then. A tap after a finger's
+        // selection also sends a mouseup; that one still gets the popup.
+        if (point && highlighterRef.current && !moveModeRef.current && lastPointer() !== "touch") {
+          confirmRef.current(snap, "", null, { highlighter: true });
+          return;
+        }
+        setSelPopup(snap);
       }
     }
     // iPadOS/iOS never fires mouseup for a long-press selection or for a drag
@@ -1963,31 +1983,35 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     if (dx || dy) root.scrollBy({ left: dx, top: dy });
   }, [zoom?.page, zoom?.x, zoom?.y, zoom?.w, zoom?.h]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function handleSelConfirm(commentText, color, extra) {
-    if (!selPopup) return;
-    if (selPopup.kind === "area") {
+  // A selection to onSelectionFinished: the popup's (`sel` its state), or
+  // the one the highlighter takes without it.
+  function confirmSelection(sel, commentText, color, extra) {
+    if (sel.kind === "area") {
       // Rect is already page-relative at capture-time render size. area: true
       // rides inside the position, so it flows through block storage,
       // rendering, and PDF export (/Square) without extra plumbing.
-      const { pageNumber, rect, width, height } = selPopup;
+      const { pageNumber, rect, width, height } = sel;
       const position = { pageNumber, width, height, boundingRect: { ...rect }, rects: [{ ...rect }], area: true };
       onSelectionFinished(position, { text: "" }, () => setSelPopup(null), { color, commentText, ...(extra || {}) });
       return;
     }
-    const r = selPopup.rect;
+    const r = sel.rect;
     // Use the page offset/size snapshotted with the selection — the current
     // page position may have drifted (scroll/zoom) since the rects were taken.
-    const curW = selPopup.pageW, curH = selPopup.pageH;
-    const px = selPopup.pageLeft, py = selPopup.pageTop;
+    const curW = sel.pageW, curH = sel.pageH;
+    const px = sel.pageLeft, py = sel.pageTop;
     const x1 = r.left - px, y1 = r.top - py;
     const x2 = r.left + r.width - px, y2 = r.bottom - py;
-    const lineRects = (selPopup.lineRects && selPopup.lineRects.length)
-      ? selPopup.lineRects.map(lr => ({ x1: lr.left - px, y1: lr.top - py, x2: lr.right - px, y2: lr.bottom - py }))
+    const lineRects = (sel.lineRects && sel.lineRects.length)
+      ? sel.lineRects.map(lr => ({ x1: lr.left - px, y1: lr.top - py, x2: lr.right - px, y2: lr.bottom - py }))
       : [{ x1, y1, x2, y2 }];
     // The page size once: every rect is in its frame (shared/model/blockModel.js).
-    const position = { pageNumber: selPopup.pageNumber, width: curW, height: curH, boundingRect: { x1, y1, x2, y2 }, rects: lineRects };
-    const content = { text: selPopup.text };
+    const position = { pageNumber: sel.pageNumber, width: curW, height: curH, boundingRect: { x1, y1, x2, y2 }, rects: lineRects };
+    const content = { text: sel.text };
     onSelectionFinished(position, content, () => { window.getSelection()?.removeAllRanges(); setSelPopup(null); }, { color, commentText, ...(extra || {}) });
+  }
+  function handleSelConfirm(commentText, color, extra) {
+    if (selPopup) confirmSelection(selPopup, commentText, color, extra);
   }
 
   return (
@@ -2047,7 +2071,9 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           the zoom anchor re-places about the viewport's centre, and each
           return to the tab would land a few px higher. */}
       <div ref={viewerRef} data-guide="pdf.viewer" className={"pdfViewer" + (areaCursor || areaMode ? " areaCursor" : "") + (areaMode ? " areaMode" : "") + (darkPage ? " pdfDark" : "") + (transPeek ? " transPeek" : "") + armedClasses(tools) + (ink.tool?.tool === "select" ? " inkSelect" : "")}
-        style={{ height: zoom ? `calc(100% - ${zoomHeight}px)` : "100%", overflowY: "auto", overflowX: "auto", overflowAnchor: "none", scrollbarGutter: "stable" }}
+        style={{ height: zoom ? `calc(100% - ${zoomHeight}px)` : "100%", overflowY: "auto", overflowX: "auto", overflowAnchor: "none", scrollbarGutter: "stable",
+          // the selection in the colour the highlighter will give it (app.css)
+          ...(highlighter && !moveMode ? { "--selection-color": highlighter } : null) }}
         onScroll={(e) => {
           lastScrollRef.current = e.currentTarget.scrollTop;
           lastScrollLeftRef.current = e.currentTarget.scrollLeft;
