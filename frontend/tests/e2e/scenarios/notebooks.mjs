@@ -134,6 +134,16 @@ export async function notebookScenarios({ server, browser, alice, step, until, s
     await until(async () => (await sheetsOnServer())[0].properties.sheet.pattern === "ruled", { what: "page 1 ruled on the server" });
     await until(async () => !!(await page.$(".nbSheet >> nth=0 >> .nbPaper path")), { what: "page 1 draws its lines" });
     if (flags.keep) await page.screenshot({ path: `${server.dir}/notebook-paper.png` });
+    // A highlighter multiplies into light paper but is drawn as it is on dark
+    // paper, where it would all but vanish: the blend every layer's canvas
+    // for peers' highlighters takes, as the highlighters' plane does.
+    const blend = () => page.locator(".nbSheet >> nth=0 >> .inkWetCanvas[data-blend]").evaluate((c) => getComputedStyle(c).mixBlendMode);
+    assertEq(await blend(), "multiply", "a highlighter multiplies into white paper");
+    await page.locator(".nbPaperMenu").getByRole("button", { name: "Dark", exact: true }).click();
+    await until(async () => (await blend()) === "normal", { what: "a highlighter drawn as it is on dark paper" });
+    await page.locator(".nbPaperMenu").getByRole("button", { name: "White", exact: true }).click();
+    await until(async () => (await sheetsOnServer())[0].properties.sheet.color === "#ffffff" && (await blend()) === "multiply",
+      { what: "page 1 white again" });
     const first = pageRow(1);
     await first.hover();
     await first.locator(".dragHandle").click();

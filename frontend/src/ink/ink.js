@@ -392,7 +392,7 @@ export function strokePlaceholder(stroke) {
   const hit = lines.get(stroke);
   if (hit) return hit;
   const pts = decodeStroke(stroke);
-  const out = { d: polyline(pts), stroke: true, width: meanWidth(stroke, pts), multiply: stroke.tool === "highlighter" };
+  const out = { d: polyline(pts), stroke: true, width: meanWidth(stroke, pts), multiply: strokeMultiplies(stroke) };
   lines.set(stroke, out);
   return out;
 }
@@ -467,6 +467,17 @@ export function strokeMaxWidth(stroke) {
 const meanWidth = (stroke, pts) => (pts.length ? pts.reduce((sum, s) => sum + strokeWidth(stroke, s), 0) / pts.length : stroke.size ?? DEFAULT_SIZE);
 // Which layer a stroke draws on: 0 under (a highlighter's default), 1 as ink.
 export const strokeBand = (stroke) => stroke.band ?? (stroke.tool === "highlighter" ? 0 : 1);
+// Whether a stroke (or a look) multiplies into what lies under it: a
+// highlighter, which leaves the text under it black as a marker does.
+export const strokeMultiplies = (stroke) => stroke.tool === "highlighter";
+// The plane a page's layer stacks a stroke in, bottom to top: band 0's
+// other strokes (an imported sticky), band 0's highlighters, band 1's other
+// strokes (INK_PLANE), band 1's highlighters. InkLayer draws each plane as an
+// SVG of its own, a highlighter plane multiplied into the page as a whole.
+export const PLANES = [0, 1, 2, 3];
+export const INK_PLANE = 2;
+export const strokePlane = (stroke) => strokeBand(stroke) * 2 + (strokeMultiplies(stroke) ? 1 : 0);
+export const planeMultiplies = (plane) => plane % 2 === 1;
 // Strokes in drawing order: every band-0 stroke, then the band-1 ones,
 // each band in file order.
 export function byBand(strokes) {
@@ -1750,7 +1761,7 @@ function buildOutline(stroke, pts) {
   const size = stroke.size ?? DEFAULT_SIZE;
   if (tool !== "pen") {
     const width = tool === "highlighter" ? size : meanWidth(stroke, pts);
-    return { d: polyline(pts), stroke: true, width, multiply: tool === "highlighter", dash: dashArray(stroke) };
+    return { d: polyline(pts), stroke: true, width, multiply: strokeMultiplies(stroke), dash: dashArray(stroke) };
   }
   const grain = stroke.brush === "pencil";
   const dash = dashPattern(stroke), dotted = !!dash && stroke.dash === "dotted";

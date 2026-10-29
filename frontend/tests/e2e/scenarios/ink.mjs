@@ -29,6 +29,29 @@ async function drawLine(page, from, to) {
   await page.mouse.up();
 }
 
+// What the screen shows in `clip` (css px), from a screenshot: its darkest
+// and lightest pixels (by r + g + b) and how many pixels are tinted (one
+// channel 40 below another).
+async function screenPixels(page, clip) {
+  const png = await page.screenshot({ clip });
+  return page.evaluate(async (b64) => {
+    const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+    const bitmap = await createImageBitmap(new Blob([bytes], { type: "image/png" }));
+    const canvas = Object.assign(document.createElement("canvas"), { width: bitmap.width, height: bitmap.height });
+    const g = canvas.getContext("2d");
+    g.drawImage(bitmap, 0, 0);
+    const px = g.getImageData(0, 0, bitmap.width, bitmap.height).data;
+    let darkest = null, lightest = null, tinted = 0;
+    for (let i = 0; i < px.length; i += 4) {
+      const rgb = [px[i], px[i + 1], px[i + 2]], sum = rgb[0] + rgb[1] + rgb[2];
+      if (!darkest || sum < darkest.sum) darkest = { sum, rgb };
+      if (!lightest || sum > lightest.sum) lightest = { sum, rgb };
+      if (Math.max(...rgb) - Math.min(...rgb) >= 40) tinted += 1;
+    }
+    return { darkest: darkest.rgb, lightest: lightest.rgb, tinted };
+  }, png.toString("base64"));
+}
+
 // The strokes saved on a page, by id, over every group (a stroke joins the
 // current group, so a new one is found by its id, not its block).
 export async function savedInkStrokes(account, pageId) {
@@ -871,7 +894,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     assertNoProblems(page);
   });
 
-  await step("ink: a pressure stroke is stored as version 2 with its baked width; a highlighter draws under the ink", async () => {
+  await step("ink: a pressure stroke is stored as version 2 with its baked width; a highlighter draws under the ink and multiplies into the page", async () => {
     // The file a pen stroke leaves (docs/dev/handwriting.md "The stroke file"):
     // version 2, the drawn width baked into the w channel on the client
     // (finishStroke.js bakeWidths: w = 1 + (p - 0.5) for the default pen),
@@ -928,18 +951,55 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     const hlInk = await account.api(hlBlock.properties.ink_url);
     assertEq(hlInk.strokes[0].tool, "highlighter");
     assert(!hlInk.strokes[0].ch.includes("w") && hlInk.strokes[0].band === undefined, "a highlighter carries no width channel and its band is the tool's default");
-    const order = await page.locator('[data-page="1"] .inkLayer').evaluate((svg, [penId, hlId]) => {
-      const groups = [...svg.querySelectorAll("g[data-ink-id]")];
-      const hl = groups.findIndex((g) => g.dataset.inkId === hlId);
-      const pen = groups.findIndex((g) => g.dataset.inkId === penId);
-      const hlPath = svg.querySelector(`g[data-ink-id="${hlId}"] path`);
-      const penPath = svg.querySelector(`g[data-ink-id="${penId}"] path`);
-      return { hl, pen, multiply: getComputedStyle(hlPath).mixBlendMode,
+    // Its plane (ink.js strokePlane) is an SVG of its own under the ink's,
+    // and that SVG as a whole multiplies into the page: a blend inside the
+    // ink's SVG would stay inside it (#147).
+    const order = await page.locator('[data-page="1"]').evaluate((wrap, [penId, hlId]) => {
+      const hlPath = wrap.querySelector(`.inkLayer g[data-ink-id="${hlId}"] path`);
+      const penPath = wrap.querySelector(`.inkLayer g[data-ink-id="${penId}"] path`);
+      const hlPlane = hlPath.closest(".inkLayer"), penPlane = penPath.closest(".inkLayer");
+      return { apart: hlPlane !== penPlane, blend: getComputedStyle(hlPlane).mixBlendMode, inkBlend: getComputedStyle(penPlane).mixBlendMode,
         pathOrder: !!(hlPath.compareDocumentPosition(penPath) & Node.DOCUMENT_POSITION_FOLLOWING) };
     }, [penBlock.id, hlBlock.id]);
-    assert(order.hl >= 0 && order.pen >= 0 && order.hl < order.pen, `the highlighter's group is painted before the pen's (${order.hl} < ${order.pen})`);
-    assert(order.pathOrder, "the highlighter path precedes the pen path");
-    assertEq(order.multiply, "multiply", "the highlighter multiplies onto the page");
+    assert(order.apart && order.pathOrder, `the highlighter's plane is painted before the pen's: ${JSON.stringify(order)}`);
+    assertEq(order.blend, "multiply", "the highlighter's plane multiplies into the page");
+    assertEq(order.inkBlend, "normal", "the ink's plane does not");
+
+    // So the screen shows it: across a line of the page's text, the text
+    // stays black under the highlighter (painted over the page at 60 %, it
+    // would read about rgb(153, 136, 86)), and light under it once the page
+    // is flipped or Gamma Dark draws it, where the plane screens. The stroke
+    // in progress multiplies as well.
+    const line = await page.locator('[data-page="1"] .textLayer span').evaluateAll((spans) => {
+      const r = spans.map((s) => s.getBoundingClientRect()).find((b) => b.width > 120 && b.height > 6 && b.top > 0);
+      return r && { x: r.left, y: r.top + r.height / 2, width: r.width };
+    });
+    assert(line, "a line of text on page 1");
+    const from = [line.x + 4, line.y], to = [line.x + Math.min(line.width - 4, 160), line.y];
+    const band = { x: from[0] + 12, y: line.y - 2, width: to[0] - from[0] - 24, height: 4 };
+    const paths = await page.locator('[data-page="1"] .inkLayer path').count();
+    await page.mouse.move(...from);
+    await page.mouse.down();
+    await page.mouse.move(...to, { steps: 12 });
+    const live = await page.locator('[data-page="1"] .inkCanvas').evaluate((c) => getComputedStyle(c).mixBlendMode);
+    await page.mouse.up();
+    assertEq(live, "multiply", "the highlighter in progress multiplies into the page");
+    await until(async () => (await page.locator('[data-page="1"] .inkLayer path').count()) > paths
+      && (await page.locator('[data-page="1"] .inkCanvas').evaluate((c) => c.style.display)) === "none", { what: "the highlighter across the text drawn" });
+    const light = await screenPixels(page, band);
+    assert(Math.max(...light.darkest) < 90 && light.tinted > 0, `the text under the highlighter stays black: ${JSON.stringify(light)}`);
+    await page.locator(".pdfViewer").evaluate((el) => el.classList.add("pdfDark"));
+    const flipped = await screenPixels(page, band);
+    await page.locator(".pdfViewer").evaluate((el) => el.classList.remove("pdfDark"));
+    assert(Math.min(...flipped.lightest) > 190, `on a flipped page the text under it stays light: ${JSON.stringify(flipped)}`);
+    const theme = await page.evaluate(() => document.documentElement.dataset.theme);
+    await page.evaluate(() => { document.documentElement.dataset.theme = "gamma-dark"; });
+    const charcoal = await screenPixels(page, band);
+    await page.evaluate((was) => {
+      if (was == null) delete document.documentElement.dataset.theme;
+      else document.documentElement.dataset.theme = was;
+    }, theme ?? null);
+    assert(Math.min(...charcoal.lightest) > 190, `in Gamma Dark the text under it stays light: ${JSON.stringify(charcoal)}`);
     assertNoProblems(page);
   });
 

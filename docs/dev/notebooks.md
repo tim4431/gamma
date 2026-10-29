@@ -143,6 +143,11 @@ No schema change: sheets are blocks and properties.
   never trusted. A missing or bad key takes the default's value. Sizes are
   clamped to 144–2000 pt and spacing to 12–96 pt, both rounded to
   hundredths, and colours are lowercase.
+- A paper whose luma is under a half (`paperIsDark`: the Dark colour, or
+  an imported dark one) marks its sheet `data-paper="dark"`, and a
+  highlighter on it is drawn as it is rather than multiplied into the
+  paper, where it would all but vanish ([handwriting.md](handwriting.md)
+  "Client").
 - The pattern's geometry is `paper_lines` / `paperLines`. Ruled paper has
   a line every `spacing`. Grid paper has the verticals, then the
   horizontals. Dot paper has a dot at each crossing, row by row. All

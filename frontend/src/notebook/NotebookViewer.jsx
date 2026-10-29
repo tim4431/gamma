@@ -16,7 +16,7 @@ import { t, T } from "../shared/i18n/i18n.js";
 import { installViewerZoom } from "../shared/lib/viewerZoom.js";
 import { clampZoom } from "../shared/model/zoom.js";
 import {
-  DEFAULT_PAPER, DOT_RADIUS, LINE_WIDTH, PAPER_COLORS, PAPER_SIZES, isLandscape, paperLines, paperSizeKey, turnPaper,
+  DEFAULT_PAPER, DOT_RADIUS, LINE_WIDTH, PAPER_COLORS, PAPER_SIZES, isLandscape, paperIsDark, paperLines, paperSizeKey, turnPaper,
 } from "./notebook";
 import { placeAt, placeY } from "./sheetPlace";
 import "./notebook.css";
@@ -89,7 +89,7 @@ const NotebookSheet = React.memo(function NotebookSheet({ sheet, number, scale, 
   const wrapRef = useRef(null);
   const { paper } = sheet;
   return (
-    <div ref={wrapRef} className="nbSheet" data-sheet-id={sheet.id}
+    <div ref={wrapRef} className="nbSheet" data-sheet-id={sheet.id} data-paper={paperIsDark(paper) ? "dark" : undefined}
       style={{ width: `${paper.width * scale}px`, height: `${paper.height * scale}px` }}
       aria-label={t("Page {n}", { n: number })}>
       <PaperBackground paper={paper} />

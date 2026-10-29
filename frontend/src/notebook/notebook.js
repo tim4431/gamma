@@ -11,6 +11,7 @@
 // blocks under a sheet are notes about that page. Stored papers are read
 // through normalizePaper, never trusted.
 import { findBlock, insertSibling, updateBlockTree } from "../shared/model/blockModel.js";
+import { parseColor } from "../shared/model/palette.js";
 import { wallNow } from "../shared/model/wallClock.js";
 
 export const DEFAULT_PAPER = Object.freeze({ width: 595.28, height: 841.89, color: "#ffffff", pattern: "blank",
@@ -49,6 +50,14 @@ export function normalizePaper(raw, fallback = null) {
   for (const k of ["color", "line"]) if (typeof raw[k] === "string" && HEX.test(raw[k])) out[k] = raw[k].toLowerCase();
   if (PATTERNS.includes(raw.pattern)) out.pattern = raw.pattern;
   return out;
+}
+
+// Whether a paper is dark (its luma under a half, as the Dark colour's):
+// a highlighter multiplied into it would all but vanish, so the sheet
+// draws one as it is (data-paper, notebook.css).
+export function paperIsDark(paper) {
+  const c = parseColor(paper?.color);
+  return !!c && (0.2126 * c[0] + 0.7152 * c[1] + 0.0722 * c[2]) / 255 < 0.5;
 }
 
 // Offsets k * spacing, k = 1, 2, …, strictly inside `extent`.

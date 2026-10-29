@@ -20,7 +20,7 @@ import { newCanvasInk } from "../ink/ink";
 import { MarkupLayers, NO_MARKS } from "../markup/MarkupLayers";
 import { armedClasses, usePageTools } from "../markup/PageTools";
 import { PaperBackground, PaperMenu } from "./NotebookViewer";
-import { normalizePaper } from "./notebook";
+import { normalizePaper, paperIsDark } from "./notebook";
 import { NotebookIcon, PenIcon, PlusIcon, SheetIcon } from "../shared/ui/Icons";
 import { t } from "../shared/i18n/i18n.js";
 
@@ -104,7 +104,7 @@ export function NoteSheet({ block, number }) {
           onClose={() => setPaperOpen(false)} />
       ) : null}
       {scale ? (
-        <div ref={wrapRef} className="nbSheet" data-sheet-id={block.id}
+        <div ref={wrapRef} className="nbSheet" data-sheet-id={block.id} data-paper={paperIsDark(paper) ? "dark" : undefined}
           style={{ width: `${paper.width * scale}px`, height: `${paper.height * scale}px` }} aria-label={t("Page {n}", { n: number })}>
           <PaperBackground paper={paper} />
           <MarkupLayers surface={block.id} wrapRef={wrapRef} width={paper.width} height={paper.height} marks={marks} />

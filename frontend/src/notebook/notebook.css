@@ -32,6 +32,9 @@
 .nbViewer.inkArmed .nbSheet { cursor: crosshair; }
 .nbViewer.inkTouchDraw .nbSheet { touch-action: none; }
 .nbSheet.inkHovering { cursor: none; }
+/* Dark paper (notebook.js paperIsDark): a highlighter multiplied into it
+   would all but vanish, so it is drawn over the paper as it is. */
+.nbSheet[data-paper="dark"] [data-blend="multiply"] { mix-blend-mode: normal; }
 .nbPaper {
   position: absolute;
   inset: 0;
