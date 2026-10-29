@@ -3,13 +3,13 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { ROOT } from './runtime.mjs';
-import { Server, Account } from '../../frontend/tests/e2e/harness.mjs';
+import { library, ATOMS } from './take.mjs';
 const name = process.argv[2];
-const names = ['notes', 'library', 'search', 'metadata', 'agent', 'download-and-chat', 'reference-links', 'connector'];
+// The connector records on its own (record-connector.mjs on take.mjs).
+const names = ['notes', 'library', 'search', 'metadata', 'agent', 'download-and-chat', 'reference-links'];
 if (!names.includes(name)) throw new Error(`Choose: ${names.join(', ')}`);
 const suite = path.join(ROOT, 'artifacts/readme-media/suite');
-const isolatedNotes = name === 'notes';
-const isolated = isolatedNotes || name === 'connector';
+const isolated = name === 'notes';
 const state = isolated ? {} : JSON.parse(fs.readFileSync(path.join(suite, 'workspace.json')));
 if (state.removed) throw new Error('Prepare a suite workspace first');
 const dir = path.join(suite, name);
@@ -18,20 +18,13 @@ let server;
 let noteId;
 try {
   if (isolated) {
-    // Notes needs no AI, and the extension targets the default workspace.
-    // Both can use the curated export on an isolated account/server; the
-    // connector's popup previews the paper, which takes registry lookups.
-    server = new Server(isolatedNotes ? {} : { env: { GAMMA_METADATA_LOOKUP: 'on' } });
-    await server.start();
-    await server.manage('create-user', 'demo', 'isolated-media-only');
-    const account = await new Account(server, 'demo', 'isolated-media-only').login();
-    await account.upload('/api/import-data', fs.readFileSync(path.join(ROOT, 'artifacts/readme-media/demo.zip')), 'demo.zip', 'application/zip');
-    await account.file('fy0-h_BqOHcH', { folders: ['Quantum/Neutral atoms'] });   // the folder made where missing (harness.mjs Account.file)
+    // Notes needs no AI: the curated export on an isolated account/server.
+    const lib = await library();
+    server = lib.server;
+    const { account } = lib;
+    await account.file(ATOMS.id, { folders: ['Quantum/Neutral atoms'] });   // the folder made where missing (harness.mjs Account.file)
     state.base = server.base; state.workspace = account.ws;
-    if (isolatedNotes) {
-      const note = await account.api('/api/pages', { method: 'POST', body: { title: 'Rabi oscillations' } });
-      noteId = note.id;
-    }
+    noteId = (await account.api('/api/pages', { method: 'POST', body: { title: 'Rabi oscillations' } })).id;
     fs.writeFileSync(path.join(dir, 'session.txt'), account.session);
   } else {
     await import('./prepare-cases.mjs');

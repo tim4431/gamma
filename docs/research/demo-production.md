@@ -90,6 +90,18 @@ same size without the ghosts.
 Result: five README animations at 1600 × 900, 8.62 MiB together, against 10.34 MiB
 for the previous four at 960–1120 px. Each file is smaller than the one it replaced.
 
+## Shorter clips, sped up by stretch (2026-10)
+
+The README clips were cut down to one story each, 10–20 s (the AI demo from
+41 s to 20 s), in the promo film's style. They do speed up again, but not as
+the jerky 2026-09 GIFs did: those sped whole recordings up, typing and
+drawing included. Now only stretches whose pace carries no meaning play fast
+(pointer travel up to 1.3×, ink up to 1.5×, streamed AI text up to 2×), waits
+are cut or, where only a status pill moves, sped up to 3×, typing stays at 1×, and each result holds about a second. At
+25 fps on 2× captures the sped-up stretches read as smooth. How it was done,
+and why the edits kept compose.py rather than Remotion:
+[demo-film-pipeline.md](demo-film-pipeline.md).
+
 ## Abstract SVG scenes next to the recordings (2026-09)
 
 Tried: the same three interactions (annotate + ink, notes with live math,

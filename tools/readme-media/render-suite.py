@@ -1,9 +1,10 @@
 """Re-render freshly captured README cases at 25 fps, as small animated WebP images.
 
-Raw captures and timing manifests stay in ignored artifacts/readme-media/suite.
-Notes, library, search and the connector are retina captures rendered by
-compose.py; metadata, reference-links and the AI previews are the earlier WebM
-recordings.
+Raw captures and timing manifests stay in ignored artifacts/readme-media/suite
+(the connector's take, recorded by record-connector.mjs on take.mjs, in
+artifacts/readme-media/connector). Notes, library, search and the connector
+are retina captures rendered by compose.py; metadata, reference-links and the
+AI previews are the earlier WebM recordings.
 """
 import argparse
 from functools import lru_cache
@@ -16,7 +17,7 @@ from imageio_ffmpeg import get_ffmpeg_exe
 import PIL.Image
 import PIL.ImageDraw
 import PIL.ImageFilter
-from compose import Capture, Camera, FULL, focus, publish_demo, quiet
+from compose import Capture, Camera, FULL, Take, focus, publish_demo, quiet
 from media_output import ROOT, FRAME, concat_segments, encode_webp, publish
 from render_feature_demos import CASES as FEATURES
 
@@ -43,50 +44,71 @@ def duration(source):
 
 
 class Browser:
-    """The connector's three captures as one capture-like timeline under a browser toolbar.
+    """The connector take's three screencasts as one capture-like timeline under a browser toolbar.
 
-    `pieces` are (state, capture, start, end) in that capture's seconds, played
-    back to back: the APS page, a beat with the pointer on the toolbar icon,
-    the popup over the page, the paper in Gamma. Frames are the 1440 x 900
-    card: the recorder's toolbar screenshot above the 860 px page, and in the
-    popup piece the popup's own capture cut to its height, hung under the icon.
+    `pieces` are (state, capture, start, end) in that capture's seconds, laid
+    back to back; `t(state, local)` is the timeline second of a piece's
+    capture second, which the edit and the camera are written in. States: the
+    APS page, a beat with the pointer drawn on the toolbar icon, the popup
+    hung under the icon over the page, the paper in Gamma. Frames are the
+    1440 x 900 card: the recorder's toolbar screenshot above the 860 px page,
+    and in the popup state the popup's own capture cut to its sampled height,
+    placed where Chrome hangs it (right-aligned under the icon). The toolbar's
+    badge turns to the saved check once the popup says so.
     """
-    def __init__(self, directory, marks, heights, toolbar, pieces):
-        self.dir, self.marks, self.toolbar = directory, marks, toolbar
-        self.heights = [(t, h) for t, h in heights if h]
+    def __init__(self, take, pieces):
+        timing, self.marks = take.timing, take.marks
+        self.toolbar = timing['toolbar']
+        self.heights = [(t, h) for t, h in timing['heights'] if h]
+        self.popup_at = (timing['popup']['x'], timing['popup']['y'])
+        self.popup_w = timing['popup']['width']
+        self.icon = timing['icon']
         self.scale = pieces[0][1].scale
         self.pieces, self.starts, t = pieces, [], 0.0
         for _, _, a, b in pieces:
             self.starts.append(t)
             t += b - a
         self.duration = t
-        self.bars = {k: PIL.Image.open(directory / f'toolbar-{k}.png').convert('RGB') for k in ('page', 'hover', 'open', 'gamma')}
-        # The popup's resting place: right-aligned under the icon, as Chrome hangs it.
-        icon = marks['icon']
-        self.popup_at = (round(icon['x'] + icon['width'] + 4 - 360), toolbar + 4)
+        self.bars = {k: PIL.Image.open(take.dir / f'toolbar-{k}.png').convert('RGB') for k in ('page', 'hover', 'open', 'saved', 'gamma')}
+        self.dir = take.dir   # what publish_demo reports as the capture
 
-    def at(self, name):
-        """Timeline seconds where piece `name` starts."""
-        return self.starts[[p[0] for p in self.pieces].index(name)]
+    def t(self, state, local):
+        """Timeline seconds of capture second `local` in piece `state`."""
+        k = [p[0] for p in self.pieces].index(state)
+        _, _, a, b = self.pieces[k]
+        # Parenthesised so a piece's first frame lands on its start exactly, not
+        # an ulp before it, in the previous piece.
+        return self.starts[k] + (min(max(local, a), b) - a)
 
     def index(self, t):
         k = max(i for i, s in enumerate(self.starts) if s <= max(t, 0)) if t > 0 else 0
         state, capture, a, _ = self.pieces[k]
         local = a + t - self.starts[k]
-        height = next((h for s, h in reversed(self.heights) if s <= local), self.heights[0][1]) if state == 'open' else 0
-        return (k, capture.index(local), height)
+        if state != 'open':
+            return (k, capture.index(local), 0, state)
+        height = next((h for s, h in reversed(self.heights) if s <= local), self.heights[0][1])
+        return (k, capture.index(local), height, 'saved' if local >= self.marks['bSaved'] else 'open')
 
     @lru_cache(maxsize=8)
     def image(self, key):
-        k, i, height = key
+        k, i, height, bar = key
         state, capture, _, _ = self.pieces[k]
         s = self.scale
         card = PIL.Image.new('RGB', (1440 * s, 900 * s), 'white')
-        page = self.pieces[0][1].image(self.pieces[0][1].index(self.marks['aHidden'] + 0.2)) if state == 'open' else capture.image(i)
+        page = capture.image(i)
+        if state in ('hover', 'open'):
+            # The APS page as the pointer left it for the toolbar. The page's
+            # drawn arrow still rests on its top row under the icon (its
+            # screencast sent no frame for the arrow's hiding): that strip
+            # comes from the first frame, the same still header without it.
+            aps = self.pieces[0][1]
+            page = aps.image(aps.index(self.marks['aHidden'] + 0.2)).copy()
+            x0, x1 = (round(v * s) for v in (self.icon['x'] - 60, self.icon['x'] + self.icon['width'] + 30))
+            page.paste(aps.image(0).crop((x0, 0, x1, 40 * s)), (x0, 0))
         card.paste(page, (0, self.toolbar * s))
-        card.paste(self.bars[state], (0, 0))
+        card.paste(self.bars[bar], (0, 0))
         if state == 'open':
-            popup = capture.image(i).crop((0, 0, 360 * s, height * s))
+            popup = capture.image(i).crop((0, 0, self.popup_w * s, height * s))
             x, y = (v * s for v in self.popup_at)
             radius = 8 * s
             mask = PIL.Image.new('L', popup.size, 0)
@@ -99,27 +121,86 @@ class Browser:
         return card
 
 
-def connector(directory):
-    m = read(directory, 'connector_marks.json')
-    marks, verified = m['marks'], m.get('verified', {})
-    if not (verified.get('saved') and verified.get('pdf') and verified.get('folder') and verified.get('labels')):
-        raise ValueError('Capture the paper saved with its PDF, a folder and a label first')
-    a, b, c = (Capture(directory / s) for s in 'abc')
-    browser = Browser(directory, marks, m['heights'], m['toolbar'], [
-        ('page', a, max(0, marks['a0'] - 0.3), marks['a1']),
-        ('hover', a, marks['aHidden'], marks['aHidden'] + 0.35),
-        ('open', b, marks['bReady'] + 0.1, marks['b1'] + 0.35),
-        ('gamma', c, max(0, marks['cReady'] - 0.5), marks['c1']),
+def connector(_suite=None):
+    # record-connector.mjs's kept take, in artifacts/readme-media/connector
+    # (not the suite/ folder render() passes): timing.json exists only when
+    # the paper was saved with its PDF, in Quantum/Neutral atoms, labeled,
+    # and still showed both after a reload.
+    take = Take(ROOT / 'artifacts/readme-media/connector')
+    m, timing = take.marks, take.timing
+    page, popup, gamma = (Capture(take.dir / timing['pieces'][k]) for k in ('page', 'popup', 'gamma'))
+    # The paper in Gamma is shown once page 1 is painted with its chips up and
+    # the metadata look-up that opening it starts has settled (no spinner, no
+    # status pill), and the pointer rests under the Open in Gamma spot.
+    shown = max(m['cSettled'], m.get('cParked', 0) + 0.1)
+    # The popup comes up 0.85 s before the pointer heads for the folder: a
+    # beat to read the title and authors (it is still before that).
+    opened = max(m['bReady'], m['bFolderGo'] - 0.85)
+    # The press on Save plays up to the frame before the progress row shows:
+    # its "saving to your library…" lasts about 0.1 s before the PDF fetch's
+    # words, too short to read, so the cut goes from the pressed button
+    # straight to Saved.
+    pressed = max(m['bSave'] + 0.06, m['bProgress'] - 0.02)
+    # Gamma holds 1.3 s in the popup framing (the title and both chips read),
+    # then 0.5 s back to the whole window, which holds 1.2 s before the loop:
+    # the one view of the paper open in Gamma, PDF and notes side by side.
+    HOLD = 1.3
+    gamma_end = min(m['cEnd'], shown + HOLD + 0.5 + 1.2)
+    b = Browser(take, [
+        ('page', page, 0.0, m['aIcon']),
+        ('hover', page, m['aHidden'], m['aHidden'] + 0.2),
+        ('open', popup, opened, m['bEnd']),
+        ('gamma', gamma, shown, gamma_end),
     ])
-    # Real speed throughout, the save's wait included. The camera closes in
-    # on the popup as it opens and pulls back as its link is clicked; the
-    # paper opening in Gamma dissolves in, in the full view.
-    cut = browser.at('gamma')
-    popup = {'x': browser.popup_at[0], 'y': browser.popup_at[1], 'width': 360, 'height': max(h for _, h in browser.heights)}
+    T = b.t
+    POINTER = 1.25
+    segments = [
+        # The APS article, the badge on the Connector's icon: held still for
+        # the eye to find the paper and the toolbar.
+        (T('page', max(0.1, m['aGlide'] - 0.6)), T('page', m['aGlide'])),
+        # Up to the icon (pointer travel, sped up), and the icon under it.
+        (T('page', m['aGlide']), T('page', m['aIcon']), POINTER),
+        (T('hover', m['aHidden']), T('hover', m['aHidden'] + 0.2)),
+        # The popup, with the paper's title and authors: a beat to read them.
+        (T('open', opened), T('open', m['bFolderGo'])),
+        # The folder menu and Quantum/Neutral atoms, then into Labels.
+        (T('open', m['bFolderGo']), T('open', m['bType']), POINTER),
+        # The label typed at its own speed; the suggestions close.
+        (T('open', m['bType']), T('open', m['bTyped'])),
+        (T('open', m['bTyped']), T('open', m['bFilled']), POINTER),
+        # The filled popup holds about 0.85 s (the pointer rests on Save),
+        # then Save is pressed and starts saving.
+        (T('open', m['bFilled']), T('open', pressed)),
+        # A hard cut past the save's wait (the server, then the browser,
+        # fetching the PDF): the pointer has not moved, so the popup just
+        # turns into "Saved to your library." with the badge now a check; a
+        # dissolve here would ghost the form under it. It holds 0.8 s.
+        (T('open', max(m['bSaved'], m['bOpenGo'] - 0.8)), T('open', m['bOpenGo']), 1, 0),
+        # On to Open in Gamma, and its press.
+        (T('open', m['bOpenGo']), T('open', m['bPress']), POINTER),
+        (T('open', m['bPress']), T('open', m['bEnd'])),
+        # Past the new tab's load: the pieces lie back to back, so this joins
+        # the press with no dissolve, a hard cut like the browser's own switch
+        # to the new tab (a dissolve would ghost the popup over the notes).
+        # Gamma comes in at the popup's framing, the notes column's title with
+        # its folder and label chips and the pointer just below where Open in
+        # Gamma was; that holds 1.3 s (HOLD), then the camera pulls back to
+        # the whole window, which holds before the loop dissolves to the APS
+        # page (whole window to whole window).
+        (T('gamma', shown), T('gamma', gamma_end)),
+    ]
+    # The popup's framing: the popup and the icon above it, zoomed in during
+    # the pointer's glide to the icon. The Gamma tab cuts in at that same
+    # framing, where the notes column's title, chips and the PDF's right half
+    # read at README size; after the hold the camera goes back to the whole
+    # window for the loop. Two moves.
+    height = max(h for _, h in b.heights)
+    box = {'x': b.popup_at[0], 'y': timing['icon']['y'], 'width': b.popup_w, 'height': b.popup_at[1] + height - timing['icon']['y']}
+    g = T('gamma', shown)
     camera = (Camera()
-              .move(browser.at('hover') - 0.25, focus(popup, margin=30), 0.5)
-              .move(cut - 0.6, FULL, 0.5))
-    return publish_demo('connector', browser, [(0, cut), (cut, browser.duration)], camera, directory, loop_fade=0.4)
+              .move(T('page', m['aGlide']), focus(box, margin=30, max_zoom=1.6), 0.5)
+              .move(g + HOLD, FULL, 0.5))
+    return publish_demo('connector', b, segments, camera, take.dir, loop_fade=0.3, quality=70)
 
 
 def notes(directory):

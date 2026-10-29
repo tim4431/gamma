@@ -5,6 +5,14 @@ frames of the 1440 x 900 app with timestamps. `render_master()` places it on
 the warm-paper card, points an eased camera at it, dissolves across cuts and
 back into the first frame at the loop, and writes a lossless master at the
 output size. Camera and edit times are capture seconds, the recorders' marks.
+
+An edit is a list of segments `(start, end[, rate[, fade]])` in capture
+seconds: a segment plays its stretch of the capture at `rate` (2 is twice as
+fast; 0 holds the frame at `start` for `end - start` seconds). A segment that
+starts where the previous one ended continues it (a change of speed, a hold;
+a hold counts as ending at its `start`);
+any other step is a cut, which dissolves over `fade` seconds (the edit's
+default when left out; 0 cuts hard).
 """
 from bisect import bisect_right
 from functools import lru_cache
@@ -25,6 +33,25 @@ PAPER, EDGE = (246, 244, 239), (227, 224, 216)
 # what an animated WebP pays for, and detail nobody can follow costs the most.
 SHUTTER = 0.15
 SOFTEN = 0.6
+
+
+class Take:
+    """A recorder's kept take (take.mjs): its timing.json, written only when
+    every check passed, and its frames."""
+    def __init__(self, directory):
+        self.dir = Path(directory)
+        path = self.dir / 'timing.json'
+        if not path.exists():
+            failed = (self.dir / 'timing.failed.json').exists()
+            raise FileNotFoundError(f'No kept take in {self.dir}' + ('; the last one failed its checks (timing.failed.json)' if failed else ''))
+        self.timing = json.loads(path.read_text(encoding='utf-8'))
+        self.marks, self.framing, self.details = self.timing['marks'], self.timing['framing'], self.timing.get('details', {})
+        self.capture = Capture(self.dir / self.timing['frames']['dir'])
+
+
+def hold(t, seconds):
+    """A segment that holds the frame at capture time t."""
+    return (t, t + seconds, 0)
 
 
 class Capture:
@@ -151,9 +178,9 @@ def mix(layers):
 
 
 def render_master(capture, segments, camera, master, width=1600, fps=25, fade=0.3, loop_fade=0.5):
-    """Write `master` (lossless FFV1) from capture-time `segments` [(start, end), ...].
+    """Write `master` (lossless FFV1) from capture-time `segments` (the module docstring).
 
-    Consecutive segments dissolve over `fade` seconds; the last frame dissolves
+    Cuts dissolve over `fade` seconds unless a segment names its own; the last frame dissolves
     into the first over `loop_fade`, so the loop has no jump. Camera moves get
     a light motion blur: each frame averages the camera across `SHUTTER` of it.
     Returns the output duration in seconds.
@@ -166,14 +193,17 @@ def render_master(capture, segments, camera, master, width=1600, fps=25, fade=0.
         x, y, w, h = (v * capture.scale for v in rect)
         return capture.image(capture.index(t)).resize(frame.card, Image.LANCZOS, box=(x, y, x + w, y + h))
 
-    def blurred(t):
-        """(cache key, output px the camera travels in half a frame, renderer)"""
-        a, b = camera.at(t - step/4), camera.at(t + step/4)
+    def blurred(t, rate):
+        """(cache key, output px the camera travels in half a frame, renderer).
+        A frame spans `rate` frames of capture time: the camera's travel, and
+        its blur, follow the segment's speed (none while a frame is held)."""
+        span = step * rate
+        a, b = camera.at(t - span/4), camera.at(t + span/4)
         travel = max(abs(p - q) for p, q in zip(a, b)) * cw / min(a[2], b[2])
         samples = min(8, max(1, math.ceil(travel * SHUTTER * 2 / 1.5)))
         if samples == 1:
             return (capture.index(t), camera.at(t)), travel, lambda: card(t, camera.at(t))
-        rects = [camera.at(t + step * SHUTTER * (j / (samples-1) - 0.5)) for j in range(samples)]
+        rects = [camera.at(t + span * SHUTTER * (j / (samples-1) - 0.5)) for j in range(samples)]
         soften = min(SOFTEN, travel / 12) * width / 1600
 
         def render():
@@ -181,21 +211,27 @@ def render_master(capture, segments, camera, master, width=1600, fps=25, fade=0.
             return image.filter(ImageFilter.GaussianBlur(soften)) if soften >= 0.2 else image
         return (capture.index(t), tuple(rects)), travel, render
 
-    # Each output frame is a list of (weight, capture time) layers.
-    timeline = []
-    for i, (start, end) in enumerate(segments):
-        times = [start + k*step for k in range(max(1, round((end - start) * fps)))]
-        overlap = min(round(fade * fps), len(times) // 2, len(timeline) // 2)
+    # Each output frame is a list of (weight, capture time, rate) layers.
+    timeline, previous_end = [], None
+    for segment in segments:
+        start, end, rate = (*segment, 1)[:3]
+        # An optional fourth item: this cut's dissolve in seconds (0 cuts hard).
+        cut_fade = segment[3] if len(segment) > 3 else fade
+        frames = max(1, round((end - start) / (rate or 1) * fps))
+        times = [start + k*step*rate for k in range(frames)]
+        joined = previous_end is not None and abs(start - previous_end) < 1e-6
+        previous_end = start if rate == 0 else end
+        overlap = 0 if joined else min(round(cut_fade * fps), len(times) // 2, len(timeline) // 2)
         base = len(timeline) - overlap
         for k, t in enumerate(times):
             if k < overlap:
                 u = ease((k + 1) / (overlap + 1))
-                timeline[base + k] = [(w * (1-u), s) for w, s in timeline[base + k]] + [(u, t)]
+                timeline[base + k] = [(w * (1-u), s, r) for w, s, r in timeline[base + k]] + [(u, t, rate)]
             else:
-                timeline.append([(1.0, t)])
+                timeline.append([(1.0, t, rate)])
     last, first = timeline[-1][-1][1], timeline[0][0][1]
     n = round(loop_fade * fps)
-    timeline += [[(1 - ease((k+1)/(n+1)), last), (ease((k+1)/(n+1)), first)] for k in range(n)]
+    timeline += [[(1 - ease((k+1)/(n+1)), last, 0), (ease((k+1)/(n+1)), first, 0)] for k in range(n)]
 
     proc = subprocess.Popen([get_ffmpeg_exe(), '-v', 'error', '-y', '-f', 'rawvideo', '-pix_fmt', 'rgb24',
                              '-s', f'{frame.width}x{frame.height}', '-r', str(fps), '-i', '-',
@@ -203,7 +239,7 @@ def render_master(capture, segments, camera, master, width=1600, fps=25, fade=0.
     previous_key, data, motion = None, None, []
     try:
         for layers in timeline:
-            parts = [(w, *blurred(t)) for w, t in layers if w > 0]
+            parts = [(w, *blurred(t, r)) for w, t, r in layers if w > 0]
             key = tuple((round(w, 4), k) for w, k, _, _ in parts)
             if key != previous_key:
                 data = frame.compose(mix((w, make()) for w, _, _, make in parts)).tobytes()
@@ -247,6 +283,9 @@ def publish_demo(name, capture, segments, camera, scratch, width=1600, fps=25, f
     scratch = Path(scratch)
     master = scratch / f'{name}-master.mkv'
     render_master(capture, segments, camera, master, width=width, fps=fps, fade=fade, loop_fade=loop_fade)
+    # A small H.264 copy to watch the edit in any player before reviewing the WebP.
+    subprocess.run([get_ffmpeg_exe(), '-v', 'error', '-y', '-i', str(master), '-vf', 'scale=1280:-2:flags=lanczos',
+                    '-c:v', 'libx264', '-crf', '20', '-pix_fmt', 'yuv420p', str(scratch / f'{name}-preview.mp4')], check=True)
     output = scratch / f'{name}.webp'
     report = {'name': name, 'fps': fps, 'width': width, **encoding, **encode_master(master, output, **encoding),
               'segments': segments, 'capture': str(capture.dir)}

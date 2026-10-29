@@ -7,24 +7,28 @@ delivery rules and regeneration steps are in
 
 | Demo | Duration | Dimensions | Size |
 |---|---:|---:|---:|
-| [annotate-and-ink](demo-annotate-and-ink.webp) | 22.8 s | 1600 x 900 | 1.89 MiB |
+| [native-agentic](demo-native-agentic.webp) | 20.0 s | 1600 x 900 | 2.60 MiB |
+| [agentic-notes](demo-agentic-notes.webp) | 11.0 s | 1600 x 900 | 0.54 MiB |
+| [ink-import](demo-ink-import.webp) | 15.0 s | 1600 x 900 | 2.43 MiB |
 | [notes](demo-notes.webp) | 29.0 s | 1600 x 900 | 1.04 MiB |
-| [native-agentic](demo-native-agentic.webp) | 41.1 s | 1600 x 900 | 3.05 MiB |
-| [agentic-notes](demo-agentic-notes.webp) | 18.9 s | 1600 x 900 | 0.59 MiB |
 | [search](demo-search.webp) | 15.4 s | 1600 x 900 | 2.05 MiB |
-| [collab](demo-collab.webp) | 19.2 s | 1600 x 900 | 1.58 MiB |
-| [connector](demo-connector.webp) | 17.6 s | 1600 x 900 | 2.27 MiB |
+| [collab](demo-collab.webp) | 9.8 s | 1600 x 900 | 0.83 MiB |
+| [connector](demo-connector.webp) | 11.8 s | 1600 x 900 | 1.75 MiB |
 | [library](demo-library.webp) | 17.8 s | 1600 x 900 | 3.32 MiB |
 | [metadata](demo-metadata.webp) | 13.2 s | 1120 x 714 | 1.10 MiB |
 | [reference-links](demo-reference-links.webp) | 15.2 s | 1040 x 662 | 4.58 MiB |
 
-The first seven are the README's; the website shows those seven, metadata
-and reference-links. Library is shown nowhere at the moment (search took its
-place); it and its recorder are kept for re-use.
-The ten total about 21.5 MiB; each is below 5 MiB. The eight 1600 × 900
-animations are retina captures; the README's seven come to 12.47 MiB. Collab
-and connector sit beside the workspaces and connections illustrations: the
-pictures say what the features are, the recordings show them used.
+The first seven are the README's, in its order; the website shows those
+seven, metadata and reference-links. Library is shown nowhere at the moment
+(search took its place); it and its recorder are kept for re-use.
+The ten total about 20.2 MiB; each is below 5 MiB. The eight 1600 × 900
+animations are retina captures; the README's seven come to 11.24 MiB. The
+AI reading, AI in notes, Notability import, collab and connector clips are
+told as short stories with waits cut and pointer and streams sped up
+(recorded on `take.mjs`, with a scripted model for the AI); notes, search
+and the rest are the earlier real-time recordings. Collab and connector sit
+beside the workspaces and connections illustrations: the pictures say what
+the features are, the recordings show them used.
 
 ## Abstract counterparts
 

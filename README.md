@@ -15,6 +15,20 @@
 
 Every picture below is clickable and opens the matching part of the [user guide](./docs/user_guide/user_guide.md).
 
+## Ask an AI about your papers
+
+<a href="./docs/user_guide/user_guide.md#ai-chat"><img alt="Ctrl+drag panels c and d of a figure into the chat and ask what they show; the answer cites page 2 and a click jumps to the marked passage. Then click a highlighted sentence that cites refs 3–5 and ask to compare them: the assistant searches for the three papers, fetches them and answers in a table that cites the reference list" src="./docs/assets/demos/demo-native-agentic.webp" width="100%"></a>
+
+- **Chat with the open paper** — ask about it, Ctrl+drag a figure or table into the question, paste pictures, dictate by voice, or attach the whole PDF so the model sees tables and plots. Answers cite pages; a click jumps the PDF to the passage. Use Anthropic or OpenAI models, or sign in with your ChatGPT subscription — no API key.
+- **Mention a paper** — type `@` to attach a library page; its text stays in context for follow-ups.
+- **Put the agent to work** — ask it to search your library or the web for papers, read and compare them, save the ones you want, rename pages, file and label them, many at once, or tidy up folders and labels. It asks before each change, many pages on one card (once, or for the whole chat; deleting a folder or a label asks every time), each tool step expands to show what it did, and it never deletes a page. What it changed is listed under its answer, and a note change, a rename, move or label change, or a deleted folder or label can be reverted from there — note changes one at a time or all at once.
+
+<a href="./docs/user_guide/user_guide.md#the-library-agent"><img alt="Paste a lecture slide into the chat and ask for its equation under the block you are on: after the approval card, the formula lands rendered in the note" src="./docs/assets/demos/demo-agentic-notes.webp" width="100%"></a>
+
+- **Write into your notes** — paste a slide or a screenshot into the chat and ask: the new block goes where your cursor is, math as KaTeX, once you approve the edit.
+
+→ Guide: [AI chat](./docs/user_guide/user_guide.md#ai-chat) · [The library agent](./docs/user_guide/user_guide.md#the-library-agent)
+
 ## Read from any place
 
 <a href="./docs/user_guide/user_guide.md#offline-copies"><img alt="One library on the lab server, open on a desktop, an iPad and a phone; a note typed from the iPad appears on every other device as the sync between them runs" src="./docs/assets/branding/gamma-anywhere-light.svg" width="100%"></a>
@@ -28,12 +42,12 @@ Your library lives on your server and opens from any browser: the office desktop
 
 ## Highlight, annotate and draw
 
-<a href="./docs/user_guide/user_guide.md#highlight-and-annotate"><img alt="Highlight a phrase and note why it matters, circle the claim it makes possible and draw an arrow from one to the other, then lasso the arrow and recolor it red" src="./docs/assets/demos/demo-annotate-and-ink.webp" width="100%"></a>
+<a href="./docs/user_guide/user_guide.md#draw-and-type-on-the-page"><img alt="Import a Notability note: the review lists the new page, and the paper opens with the pencil marks made on the iPad and their ink cards in the notes; then Gamma's pen circles a phrase and draws an arrow to a margin note" src="./docs/assets/demos/demo-ink-import.webp" width="100%"></a>
 
 Open a paper by pasting any link — arXiv, DOI, or a publisher page; Gamma finds the PDF and falls back to a legal open-access copy when the DOI is paywalled — or drag the file in. Then:
 
 - **Highlight** — select text or drag a box around a figure, pick a color, add a note. Each highlight becomes a block in your notes. Highlights already saved in the file by Acrobat, Preview or SumatraPDF come in as blocks too.
-- **Draw** — with a stylus or the mouse: circle a claim, sketch an arrow, highlight freely. Lasso strokes to move, resize, rotate or recolor them; erase whole strokes or part of one. Ink is a note block linked to its place on the page.
+- **Draw** — with a stylus or the mouse: circle a claim, sketch an arrow, highlight freely. Lasso strokes to move, resize, rotate or recolor them; erase whole strokes or part of one. Ink is a note block linked to its place on the page. Notes from Notability come in with their handwriting as live ink you can keep writing on.
 - **Type on the page** — the Text tool puts a text box on a PDF page or a notebook sheet, like Acrobat's, with Markdown and math inside. Boxes are notes too, and export as real text boxes in the annotated PDF.
 - **Follow citations** — references in the PDF are clickable; a global **← Back** unwinds jumps across documents, and a cited arXiv/DOI paper is one click from your library.
 - **Translate** — redraw a page in your language in place, figures untouched, or translate just a selected sentence. Microsoft's free service works with no setup; a chat model, Google or Youdao are one setting away.
@@ -53,20 +67,6 @@ Highlights and free notes are the same kind of block, so a paper's notes and a p
 - **Link and embed** — `[[page]]` mentions, `/page` for a new page linked where you type, `![[block]]` embeds that edit the source in place, backlinks, and a "/" menu for everything else.
 
 → Guide: [Notes](./docs/user_guide/user_guide.md#notes)
-
-## Ask an AI about your papers
-
-<a href="./docs/user_guide/user_guide.md#ai-chat"><img alt="Ctrl+drag a figure into the chat and ask about it, follow a cited passage, then ask for the most-cited follow-up papers: the assistant searches online and saves them once you allow it" src="./docs/assets/demos/demo-native-agentic.webp" width="100%"></a>
-
-- **Chat with the open paper** — ask about it, Ctrl+drag a figure or table into the question, paste pictures, dictate by voice, or attach the whole PDF so the model sees tables and plots. Answers cite pages; a click jumps the PDF to the passage. Use Anthropic or OpenAI models, or sign in with your ChatGPT subscription — no API key.
-- **Mention a paper** — type `@` to attach a library page; its text stays in context for follow-ups.
-- **Put the agent to work** — ask it to search your library or the web for papers, read and compare them, save the ones you want, rename pages, file and label them, many at once, or tidy up folders and labels. It asks before each change, many pages on one card (once, or for the whole chat; deleting a folder or a label asks every time), each tool step expands to show what it did, and it never deletes a page. What it changed is listed under its answer, and a note change, a rename, move or label change, or a deleted folder or label can be reverted from there — note changes one at a time or all at once.
-
-<a href="./docs/user_guide/user_guide.md#the-library-agent"><img alt="Paste a slide's equation into the chat and ask for it in the note: after an approval card, it lands as a KaTeX block under the cursor" src="./docs/assets/demos/demo-agentic-notes.webp" width="100%"></a>
-
-- **Write into your notes** — paste a slide or a screenshot into the chat and ask: the new block goes where your cursor is, math as KaTeX, once you approve the edit.
-
-→ Guide: [AI chat](./docs/user_guide/user_guide.md#ai-chat) · [The library agent](./docs/user_guide/user_guide.md#the-library-agent)
 
 ## Link and organize
 
@@ -102,7 +102,7 @@ Coming from Zotero? A folder is a collection and a label is a tag. Importing or 
 - **Workspaces** — keep separate personal libraries, or collaborate in a shared library created by a server administrator: owners manage members, editors change pages, viewers read.
 - **Share a page or a folder** — send a link to an annotated paper, or to a whole folder of them; invite people with view or edit rights, or open it to anyone with the link.
 
-<a href="./docs/user_guide/user_guide.md#workspaces"><img alt="Three people on one page of a shared workspace: the owner and Maya type two questions into the same block at once while Sam captions another block and pastes a figure from the paper under it, each caret labeled with its writer's name" src="./docs/assets/demos/demo-collab.webp" width="100%"></a>
+<a href="./docs/user_guide/user_guide.md#workspaces"><img alt="Three people on one page of a shared workspace: Maya types a question and Sam adds to the takeaway, each caret labeled with its writer's name, while the owner pastes a figure from the paper and drags it larger" src="./docs/assets/demos/demo-collab.webp" width="100%"></a>
 
 - **Edit together** — changes and cursors appear live; edits to different blocks coexist, same-block edits merge.
 - **Comments and an inbox** — comment on a note, a highlight or the whole page, @mention people, reply and resolve; viewers comment too. The bell gathers the mentions, replies, shares and invitations of every workspace and share you can open, and opens each one at its note with the thread showing.
@@ -118,7 +118,7 @@ Coming from Zotero? A folder is a collection and a label is a tag. Importing or 
 <a href="./docs/user_guide/user_guide.md#gamma-connector"><img alt="On a Physical Review Letters article page, the Gamma Connector's toolbar badge has found the paper; its popup shows the title and authors, files it under Quantum/Neutral atoms with a label, saves it, and the PDF opens in Gamma with its folder and label" src="./docs/assets/demos/demo-connector.webp" width="100%"></a>
 
 - **Gamma Connector** — the browser extension ([Chrome Web Store](https://chromewebstore.google.com/detail/gamma-connector/njpeklephhndnpakmlaancinpnabcomn) · [source](./extension/)) saves the paper you're reading in one click — PDF, metadata, folder, labels — from the arXiv / DOI / publisher tab, and clips links or selections into your notes. Its cookie button saves your **publisher sign-in per journal**, so the server can fetch that journal's PDFs on its own from then on.
-- **Import** — Zotero libraries and Logseq exports with their annotations; Obsidian vaults, Notion exports and Markdown folders as notes. **Export** — annotated PDF, Markdown, an Obsidian vault, a Logseq graph, a Zotero library, or a Gamma zip another Gamma can merge.
+- **Import** — Zotero libraries, Logseq exports and Notability notes with their annotations and handwriting; Obsidian vaults, Notion exports and Markdown folders as notes. **Export** — annotated PDF, Markdown, an Obsidian vault, a Logseq graph, a Zotero library, a Notability note, or a Gamma zip another Gamma can merge.
 
 → Guide: [Assistants](./docs/user_guide/user_guide.md#assistants) · [Gamma Connector](./docs/user_guide/user_guide.md#gamma-connector) · [Import and export](./docs/user_guide/user_guide.md#import-and-export) · [Backups and upgrades](./docs/user_guide/user_guide.md#backups-and-upgrades)
 
