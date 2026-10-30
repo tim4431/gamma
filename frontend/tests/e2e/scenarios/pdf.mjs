@@ -268,6 +268,11 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       return [Math.min(...btns.map((b) => b.left)) - tip.left, tip.right - Math.max(...btns.map((b) => b.right))];
     });
     assert(Math.abs(left - right) < 1, `the popup's space left of its buttons ${left}px, right ${right}px`);
+    // A scroll event that leaves the viewer where it stood (a re-layout of
+    // the pages sends one) keeps the popup.
+    await page.evaluate(() => document.querySelector(".pdfViewer").dispatchEvent(new Event("scroll")));
+    await sleep(100);
+    assertEq(await page.locator(".plainTip").count(), 1, "a scroll event that moves nothing keeps the popup");
     await page.locator(".plainTip .colorBtn").first().click();
     await page.waitForSelector('[data-page="1"] [data-hl-id]', { timeout: 5000 });
     await page.waitForSelector(".blockRow .blockQuote", { timeout: 5000 });
@@ -289,6 +294,12 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     await page.reload();
     await waitForPdf(page, 1);
     await page.waitForSelector('[data-page="1"] [data-hl-id]', { timeout: 10000 });
+    // The popup is placed on the screen, so a scroll that moves the page closes it.
+    await selectPdfText(page, 1, "Second line");
+    await page.waitForSelector(".plainTip .colorBtn", { timeout: 5000 });
+    await page.evaluate(() => { document.querySelector(".pdfViewer").scrollTop += 40; });
+    await page.waitForSelector(".plainTip", { state: "detached", timeout: 3000 });
+    await page.evaluate(() => { document.querySelector(".pdfViewer").scrollTop = 0; window.getSelection().removeAllRanges(); });
     assertNoProblems(page);
   });
 

@@ -1801,8 +1801,11 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     return () => document.removeEventListener("mousedown", onDown);
   }, [outlineOpen]);
 
-  // Text selection for highlight creation
+  // Text selection for highlight creation. The popup keeps where the viewer
+  // stood when it opened (`scroll`, [left, top]), for the scroll that closes
+  // it (onScroll below).
   const [selPopup, setSelPopup] = useState(null);
+  const viewerScroll = () => (viewerRef.current ? [viewerRef.current.scrollLeft, viewerRef.current.scrollTop] : null);
 
   // The area key (Ctrl, ⌘ on a Mac, by default) held when annotating is
   // allowed → crosshair over the pages: the cue that dragging now draws an
@@ -1841,7 +1844,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   const confirmRef = useRef(null);
   confirmRef.current = confirmSelection;
   const onAreaSelected = useCallback((sel) => {
-    setSelPopup({ kind: "area", ...sel });
+    setSelPopup({ kind: "area", ...sel, scroll: viewerScroll() });
     // The region goes to the chat as its page and box (chat/chatPictures.js
     // regionPicture); the server draws it from the document.
     if (!moveModeRef.current) cbRef.current.onAreaSelection?.(sel);
@@ -1927,7 +1930,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
         const rect = { top: r.top, left: r.left, width: r.width, bottom: r.bottom };
         const snap = {
           text, rect, point: nearRelease(point, rect), lineRects, pageNumber,
-          pageLeft: pageRect.left, pageTop: pageRect.top, pageW, pageH,
+          pageLeft: pageRect.left, pageTop: pageRect.top, pageW, pageH, scroll: viewerScroll(),
         };
         // The highlighter: a release of the mouse or the pen ends the
         // selection, which is highlighted then. A tap after a finger's
@@ -2080,8 +2083,11 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           syncCurPage();
           // The tip is placed on the screen, not on the page, so a scroll
           // would leave it over other text; and a touch scroll sends none of
-          // the mousedown that otherwise closes it.
-          if (selPopup) setSelPopup(null);
+          // the mousedown that otherwise closes it. A scroll event that
+          // leaves the viewer where it stood when the tip opened (one a
+          // re-layout of the pages sends) moves nothing under it.
+          const at = selPopup?.scroll, el = e.currentTarget;
+          if (selPopup && (!at || Math.abs(el.scrollLeft - at[0]) >= 1 || Math.abs(el.scrollTop - at[1]) >= 1)) setSelPopup(null);
         }}>
       {/* pdfZoomLayer: the pinch preview's transform target — spans the full
           scroll content so transform-origin 0 0 coincides with content (0,0) */}
