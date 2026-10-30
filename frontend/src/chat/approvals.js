@@ -95,7 +95,7 @@ export function approvalTitle(approval, { titleOf = () => "", permission = "" } 
 export function deletedKind(what) {
   return {
     highlight: () => t("highlight"), handwriting: () => t("handwriting"), "text box": () => t("text box"),
-    "page of paper": () => t("page of paper"),
+    "page of paper": () => t("page of paper"), picture: () => t("picture"),
   }[what]?.() || t("note");
 }
 
