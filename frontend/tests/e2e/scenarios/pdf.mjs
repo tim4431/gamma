@@ -590,6 +590,8 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await arrived(tour);
       assert(Math.abs((await tour.boundingBox()).height - toursBox.height) < 1, "submenu scales once");
       await settings.click();
+      // Settings opens on Account & sync; the interface size is under Appearance
+      await page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Appearance", exact: true }).click();
       const font = await page.getByText("Interface size", { exact: true }).evaluate((el) => parseFloat(getComputedStyle(el).fontSize));
       base ||= { font, badge: before.width };
       assert(Math.abs(font / base.font - scale) < 0.02, `ordinary settings text follows interface size (${font} at ${scale})`);
