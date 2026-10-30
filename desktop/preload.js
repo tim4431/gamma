@@ -49,6 +49,12 @@ if (window.location.protocol === 'file:') {
       ipcRenderer.on('shell:state', handler);
       return () => ipcRenderer.removeListener('shell:state', handler);
     },
+    // A storage-folder move's progress ({ name, done, total } bytes; null once it ends).
+    onDataMove: (cb) => {
+      const handler = (_e, move) => cb(move);
+      ipcRenderer.on('shell:data-move', handler);
+      return () => ipcRenderer.removeListener('shell:data-move', handler);
+    },
   });
 } else if (/^https?:$/.test(window.location.protocol)) {
   const report = () => {

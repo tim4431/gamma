@@ -552,7 +552,12 @@ to place it:
   then, while the surface stands hidden. When its size changes later (a row
   of options opens, a translation streams in), the window's does, or, with
   `follow`, the page scrolls, it is placed again in that same frame
-  (`flushSync`).
+  (`flushSync`). A surface hidden this way (or while its anchor is out of
+  sight) is hidden by `visibility`, which a child set `visibility: visible`
+  overrides: nothing inside such a surface sets it, or that child shows
+  alone where the surface stands. A child kept unseen for a while (a
+  picture until it loads) is hidden by a rule that lets go of it after,
+  so it inherits again (`.hlReviewShot:not(.loaded) img`).
 
 The rule behind the second half: a state update from a ResizeObserver, a
 scroll listener, a `requestAnimationFrame` or a passive effect renders

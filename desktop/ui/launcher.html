@@ -9,6 +9,8 @@
 <style>
   html, body { background: var(--bg-page); height: 100%; }
   body { overflow-y: auto; }
+  /* Until the first list arrives: the page's colour only, no empty list. */
+  html[data-loading] .wrap { visibility: hidden; }
   .wrap { max-width: 680px; margin: 0 auto; padding: 40px 28px 64px; }
   .head { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; }
   .head svg { width: 40px; height: 40px; flex-shrink: 0; }
@@ -70,6 +72,10 @@
   .setRow .d { color: var(--text-muted); font-size: var(--fs-xs); margin-top: 1px; }
   .setRow .d.path { font-family: var(--font-mono); word-break: break-all; -webkit-user-select: text; user-select: text; }
   .setRow .btns { display: flex; gap: 6px; flex-shrink: 0; }
+  .moveProgress { margin-top: 6px; }
+  .moveProgress progress { display: block; width: 100%; max-width: 360px; height: 4px; appearance: none; border: none; border-radius: 2px; overflow: hidden; background: var(--border); }
+  .moveProgress progress::-webkit-progress-bar { background: var(--border); }
+  .moveProgress progress::-webkit-progress-value { background: var(--accent); transition: width 0.15s; }
   details { margin-top: 14px; color: var(--text-muted); }
   details summary { cursor: pointer; font-size: var(--fs-xs); }
   details .settings { margin-top: 8px; }
@@ -78,6 +84,21 @@
   .detected { font-size: var(--fs-2xs); }
   .foot { margin-top: 26px; color: var(--text-dim); font-size: var(--fs-2xs); display: flex; justify-content: space-between; }
 </style>
+<script>
+  // Gamma's theme on the chrome: tokens.css derives each theme's colours
+  // with its scheme's recipe, so the scheme goes beside it (DARK_THEMES in
+  // Gamma's app/prefDefs.js). The first paint takes the window's theme from
+  // ?theme= (main.js loadLauncher); without it (the iPad) it follows the OS,
+  // as Gamma's index.html does.
+  const DARK_THEMES = ['dark', 'gamma-dark'];
+  function paintTheme(theme) {
+    const t = theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
+    document.documentElement.setAttribute('data-scheme', DARK_THEMES.includes(t) ? 'dark' : 'light');
+    document.documentElement.setAttribute('data-theme', t);
+  }
+  paintTheme(new URLSearchParams(location.search).get('theme') || '');
+  document.documentElement.setAttribute('data-loading', '');
+</script>
 </head>
 <body>
 <div class="wrap">
@@ -147,6 +168,10 @@
         <div>
           <div class="l">Local server storage</div>
           <div class="d path" id="dataRootText"></div>
+          <div class="moveProgress" id="dataMove" hidden>
+            <progress id="dataMoveBar" max="1" value="0"></progress>
+            <div class="d" id="dataMoveText"></div>
+          </div>
         </div>
         <div class="btns">
           <button class="uiBtn sm" id="btnDataRootReset" hidden>Use default</button>
@@ -247,17 +272,6 @@
 </dialog>
 
 <script>
-  // Gamma's theme on the chrome: tokens.css derives each theme's colours
-  // with its scheme's recipe, so the scheme goes beside it (DARK_THEMES in
-  // Gamma's app/prefDefs.js). None reported yet — the first paint, before
-  // the shell's state arrives — follows the OS, as Gamma's index.html does.
-  const DARK_THEMES = ['dark', 'gamma-dark'];
-  function paintTheme(theme) {
-    const t = theme || (matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
-    document.documentElement.setAttribute('data-scheme', DARK_THEMES.includes(t) ? 'dark' : 'light');
-    document.documentElement.setAttribute('data-theme', t);
-  }
-  paintTheme('');
   const ICONS = {
     local: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="8" ry="3"/><path d="M4 5v6c0 1.66 3.58 3 8 3s8-1.34 8-3V5"/><path d="M4 11v6c0 1.66 3.58 3 8 3s8-1.34 8-3v-6"/></svg>',
     remote: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M3 12h18"/><path d="M12 3a14 14 0 0 1 0 18a14 14 0 0 1 0-18"/></svg>',
@@ -424,7 +438,23 @@
     $('detected').textContent = state.packaged ? 'Packaged app: the bundled server is used unless a Python path is set.' : 'Dev mode: repo auto-detected.';
     $('dataRootText').textContent = state.dataRoot;
     $('btnDataRootReset').hidden = !state.settings.dataRoot;
+    showDataMove(state.dataMove);
   }
+
+  // A storage-folder move under way: a bar under the setting and the bytes
+  // copied, also on the status line at the top; the buttons wait for it.
+  function showDataMove(m) {
+    $('dataMove').hidden = !m;
+    $('btnDataRoot').disabled = Boolean(m);
+    $('btnDataRootReset').disabled = Boolean(m);
+    if (!m) return;
+    const frac = m.total ? Math.min(1, m.done / m.total) : 0;
+    $('dataMoveBar').value = frac;
+    const text = `Moving ${m.name || 'server data'}… ${fmtBytes(m.done)} of ${fmtBytes(m.total)} (${Math.floor(frac * 100)}%)`;
+    $('dataMoveText').textContent = text;
+    setStatus(text);
+  }
+  if (gammaShell.onDataMove) gammaShell.onDataMove(showDataMove);
 
   // Storage root: pick a folder (or reset to the default), then choose
   // whether the existing local workspaces move there too.
@@ -627,7 +657,7 @@
   const err = new URLSearchParams(location.search).get('error');
   if (err) showFailure(JSON.parse(err));
   gammaShell.onState(() => refresh());
-  refresh();
+  refresh().finally(() => document.documentElement.removeAttribute('data-loading'));
 </script>
 </body>
 </html>

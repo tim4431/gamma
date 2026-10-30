@@ -1730,6 +1730,182 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     }
   });
 
+  // A hollow highlight's card (docs/dev/highlight_relocation.md "In the web app"). A card open while its highlight
+  // is scrolled out of the viewer's sight shows nothing of itself, its before picture included, and is on the
+  // highlight again when it scrolls back. Discard on a hollow highlight with nothing of its own deletes it, and the
+  // card's Undo brings it back hollow; on one with a note it takes the highlight off the PDF and keeps the note, out
+  // of the review queue.
+  await step("pdf: a hollow highlight's card leaves nothing on screen while its highlight is scrolled away, and Discard deletes a bare one or keeps one with a note off the PDF", async () => {
+    const kept = "Quantum dots confine single electrons";
+    const bare = "This sentence is only in the first version";
+    const noted = "Another remark was taken out of the second";
+    const note = "Why was this taken out?";
+    const rest = [["Page two of the paper"], ["Page three of the paper"]];
+    const up1 = await account.upload("/api/uploads", makePdf([[kept, bare, noted], ...rest]), "v1.pdf", "application/pdf");
+    const doc = await account.api(`/api/blocks/by-doc/${up1.doc_id}`, { method: "POST", body: { default_title: "Discard paper" } });
+    const c = await account.context(browser);
+    try {
+      const p = await openPage(c, `${server.base}/?page=${doc.id}&ws=${account.ws}`);
+      await waitForPdf(p, 1);
+      // the bare one, then one with a note typed on it (its note opens for typing)
+      await selectPdfText(p, 1, bare);
+      await p.waitForSelector(".plainTip .colorBtn", { timeout: 5000 });
+      await p.locator(".plainTip .colorBtn").first().click();
+      await until(async () => (await p.$$('[data-page="1"] div[data-hl-id]')).length >= 1, { what: "the bare highlight" });
+      await closeEditor(p);
+      await selectPdfText(p, 1, noted);
+      await p.waitForSelector(".plainTip .colorBtn", { timeout: 5000 });
+      await p.locator(".plainTip .colorBtn").first().click();
+      await p.locator(".blockEditorCm").waitFor({ timeout: 5000 });
+      await p.keyboard.type(note);
+      await closeEditor(p);
+      const saved = await until(async () => {
+        const d = await account.api(`/api/blocks/${doc.id}/subtree`);
+        const hls = (d.block.children || []).filter((b) => b.properties?.pdf_position?.rects);
+        return hls.length === 2 && hls.some((b) => b.content === note) ? hls : null;
+      }, { what: "two saved highlights, one with its note" });
+      const bareId = saved.find((b) => b.properties.quote === bare)?.id;
+      const notedId = saved.find((b) => b.properties.quote === noted)?.id;
+      assert(bareId && notedId, `the quotes as selected: ${JSON.stringify(saved.map((b) => b.properties.quote))}`);
+
+      // the new version has neither passage: both hollow
+      const up2 = await account.upload("/api/uploads", makePdf([[kept, "Quantum dots were measured in a new run"], ...rest]),
+        "v2.pdf", "application/pdf");
+      const bound = await account.api(`/api/pages/${doc.id}/attachment`, { method: "PUT", body: { doc_id: up2.doc_id, original_filename: "v2.pdf" } });
+      const job = await until(async () => {
+        const j = await account.api(`/api/jobs/${bound.job.id}`);
+        return ["done", "failed", "cancelled"].includes(j.state) ? j : null;
+      }, { what: "the relocation job", timeout: 20000 });
+      assertEq(job.result?.lost, 2, `two not found: ${JSON.stringify(job.result)}`);
+      const stored = async (id) => (await account.api(`/api/blocks/${id}`)).properties;
+      assert(!(await stored(bareId)).pdf_position.closest, "nothing close to it either");
+      const lostSel = (id) => `[data-page="1"] div[data-hl-id="${id}"].pdfHlLost`;
+      await p.waitForSelector(lostSel(bareId), { timeout: 15000 });
+      await p.waitForSelector(lostSel(notedId), { timeout: 15000 });
+      const cardOf = (id) => p.locator(`.hlReviewCard[data-review-id="${id}"]`);
+      const headOf = (card) => card.locator(".hlReviewHead").textContent();
+      const actionOf = (card, label) => card.locator(".hlReviewActions button", { hasText: label });
+      const pictureLoaded = (card) => until(() => card.locator(".hlReviewShot img").evaluate((img) => img.complete && img.naturalWidth > 0,
+        null, { timeout: 1000 }), { what: "the before picture loaded", timeout: 15000 });
+
+      // its card, its quote and its before picture
+      await p.hover(lostSel(bareId));
+      const bareCard = cardOf(bareId);
+      await bareCard.waitFor({ timeout: 5000 });
+      assertEq(await bareCard.locator(".hlReviewQuote").textContent(), bare, "the card's quote");
+      await pictureLoaded(bareCard);
+
+      // scrolled out of sight, nothing of the card is on screen; scrolled back, it is on its highlight again.
+      // `seen`: the card's elements the page paints; `attached`: the card under or over its highlight
+      const seen = () => p.evaluate(() => [...document.querySelectorAll(".hlReviewCard, .hlReviewCard *")].filter((el) => {
+        const r = el.getBoundingClientRect();
+        return getComputedStyle(el).visibility === "visible" && r.width > 0 && r.height > 0 && r.bottom > 0 && r.top < innerHeight;
+      }).map((el) => el.tagName.toLowerCase() + [...el.classList].map((k) => `.${k}`).join("")));
+      const attached = (id) => p.evaluate((id) => {
+        const card = document.querySelector(".hlReviewCard")?.getBoundingClientRect();
+        const hl = document.querySelector(`[data-page="1"] div[data-hl-id="${id}"]`)?.getBoundingClientRect();
+        return !!card && !!hl && (Math.abs(card.top - hl.bottom - 6) <= 2 || Math.abs(hl.top - card.bottom - 6) <= 2);
+      }, id);
+      // away by most of the viewer's height (the highlight starts in its middle), back to where it was
+      const scrollTop = () => p.evaluate(() => document.querySelector(".pdfViewer").scrollTop);
+      const scrollTo = (top) => p.evaluate((top) => { document.querySelector(".pdfViewer").scrollTop = top; }, top);
+      const scrollAway = () => p.evaluate(() => { const v = document.querySelector(".pdfViewer"); v.scrollTop += v.clientHeight * 0.8; });
+      const scrollBack = (id) => p.evaluate((id) => document.querySelector(`[data-page="1"] div[data-hl-id="${id}"]`)
+        ?.scrollIntoView({ block: "center" }), id);
+      const nothingSeen = (what) => until(async () => (await seen()).length === 0, { what: `nothing of the card on screen ${what}`, timeout: 3000 })
+        .catch(async () => { throw new Error(`the card's parts left on screen ${what}: ${JSON.stringify(await seen())}`); });
+      // the pointer gone into the card, which keeps it open, and the viewer scrolled under it
+      await bareCard.hover();
+      await scrollAway();
+      await nothingSeen("with the pointer in the card");
+      await p.mouse.move(2, 2);
+      await bareCard.waitFor({ state: "detached", timeout: 5000 });
+      // opened from the Document menu (it stays), scrolled by the scroller and by the wheel
+      await scrollBack(bareId);
+      await p.click("button[aria-label='Document']");
+      await p.locator(".attachPopover .ctxMenuItem", { hasText: "Review 2 highlights" }).click();
+      await bareCard.waitFor({ timeout: 5000 });
+      await pictureLoaded(bareCard);
+      await until(() => attached(bareId), { what: "the card on its highlight" });
+      const top0 = await scrollTop();
+      await scrollAway();
+      await nothingSeen("after the scroller moved");
+      await scrollTo(top0);
+      await until(async () => (await seen()).includes("img") && await attached(bareId), { what: "the card back on its highlight, picture and all" });
+      const view = await p.locator(".pdfViewer").boundingBox();
+      await p.mouse.move(view.x + view.width - 30, view.y + view.height / 2);
+      for (let i = 0; i < 2; i++) await p.mouse.wheel(0, 350);
+      await until(() => p.evaluate((id) => {
+        const hl = document.querySelector(`[data-page="1"] div[data-hl-id="${id}"]`)?.getBoundingClientRect();
+        return !!hl && hl.bottom < document.querySelector(".pdfViewer").getBoundingClientRect().top;
+      }, bareId), { what: "the highlight wheeled out of sight" });
+      await nothingSeen("after the wheel");
+      let last = -1;
+      await until(async () => { const now = await scrollTop(); const still = now === last; last = now; return still; },
+        { what: "the wheel's glide over", every: 150 });
+      await scrollTo(top0);
+      await until(async () => (await seen()).includes("img") && await attached(bareId), { what: "the card back on its highlight again" });
+
+      // Discard on the bare one: it says it deletes; the highlight goes from the page and the store, the card stays
+      // where it was, saying so, with Undo and Next (the other one is left)
+      const discard = actionOf(bareCard, "Discard");
+      assert((await discard.getAttribute("title")).startsWith("Delete the highlight"), `its title: ${await discard.getAttribute("title")}`);
+      const before = await bareCard.boundingBox();
+      await discard.click();
+      await until(async () => (await headOf(bareCard)) === "Discarded", { what: "the card saying it discarded" });
+      assert(await actionOf(bareCard, "Undo").isVisible(), "the discarded card offers Undo");
+      assertEq(await actionOf(bareCard, "Move").count(), 0, "nothing to move");
+      assert(await bareCard.locator(".hlReviewActions button.primary", { hasText: "Next" }).isVisible(), "Next to the other one");
+      assertEq(await p.locator(`[data-hl-id="${bareId}"]`).count(), 0, "gone from the page");
+      const after = await bareCard.boundingBox();
+      assert(Math.abs(after.y - before.y) <= 2, `the card stays where it was: ${before.y} → ${after.y}`);
+      await until(async () => !(await account.api(`/api/blocks/${doc.id}/subtree`)).block.children.some((b) => b.id === bareId),
+        { what: "the highlight deleted" });
+      // Undo: back, hollow where it was, with the file it was measured on
+      await actionOf(bareCard, "Undo").click();
+      await until(async () => (await headOf(bareCard)) === "Not found in this version", { what: "the card on the hollow one again" });
+      await p.waitForSelector(lostSel(bareId), { timeout: 5000 });
+      await until(async () => {
+        const props = await stored(bareId).catch(() => null);
+        return props?.pdf_position?.lost === true && props.pdf_position.doc_id === up1.doc_id && props.quote === bare;
+      }, { what: "the highlight back, saved" });
+
+      // Next: the one with a note. Discard says it keeps the note, and takes the highlight off the PDF: the row and its
+      // note stay, its position its page alone; Undo puts it back hollow, and a second Discard leaves one to review
+      await actionOf(bareCard, "Next").click();
+      const notedCard = cardOf(notedId);
+      await notedCard.waitFor({ timeout: 5000 });
+      const keep = actionOf(notedCard, "Discard");
+      assert((await keep.getAttribute("title")).includes("keep it as a note"), `its title: ${await keep.getAttribute("title")}`);
+      await keep.click();
+      await until(async () => (await headOf(notedCard)) === "Discarded", { what: "the noted one discarded" });
+      assertEq(await p.locator(`[data-hl-id="${notedId}"]`).count(), 0, "off the page");
+      assert(await p.locator(".blockRow", { hasText: note }).isVisible(), "its note row stays");
+      await until(async () => {
+        const props = await stored(notedId);
+        return JSON.stringify(props.pdf_position) === JSON.stringify({ pageNumber: 1 }) && props.quote === noted ? props : null;
+      }, { what: "its position its page alone, its quote kept" });
+      assertEq((await account.api(`/api/blocks/${notedId}`)).content, note, "its note kept");
+      await actionOf(notedCard, "Undo").click();
+      await until(async () => (await headOf(notedCard)) === "Not found in this version", { what: "the noted one hollow again" });
+      await p.waitForSelector(lostSel(notedId), { timeout: 5000 });
+      await until(async () => (await stored(notedId)).pdf_position.lost === true, { what: "its Undo saved" });
+      await actionOf(notedCard, "Discard").click();
+      await until(async () => (await headOf(notedCard)) === "Discarded", { what: "discarded again" });
+      await p.keyboard.press("Escape");
+      await notedCard.waitFor({ state: "detached", timeout: 5000 });
+      await p.click("button[aria-label='Document']");
+      await p.locator(".attachPopover .ctxMenuItem", { hasText: "Find highlights in this PDF" }).waitFor();
+      assertEq(await p.locator(".attachPopover .ctxMenuItem", { hasText: "Review 1 highlight" }).count(), 1, "the bare one is left to review");
+      await p.keyboard.press("Escape");
+      assertNoProblems(p);
+      await p.close();
+    } finally {
+      await c.close();
+      await account.api(`/api/blocks/${doc.id}`, { method: "DELETE" });
+    }
+  });
+
   // Review cards with nothing drawn to anchor to yet, or ever: Show on a closest match pages away, outlined
   // only once its page renders after the scroll, keeps the card in sight under the outline; a highlight lost
   // from a page the new version dropped, which no page draws, is reached by Next and the Document menu, its

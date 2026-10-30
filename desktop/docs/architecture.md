@@ -211,7 +211,7 @@ action buttons, always shown (each named by its tooltip):
   so a paused clone reads *Detached*, as in Gamma's pill. For a folder they
   are `pauseFolder`, `PATCH /api/folder-links/<id> {paused}`: the server's
   tick leaves a paused folder alone, and resuming runs a round.
-- *sync* runs a round now. For a clone that is `POST
+- *sync* runs a round now, the panel staying open as for *pause*. For a clone that is `POST
   /api/mirrors/<ws>/sync` on its local server, shut while it is detached.
   For a folder it is `syncFolder`, which asks first whether to replace
   files changed on disk when there are any, and reports the round in the
@@ -302,7 +302,11 @@ theme is persisted so the chrome is right before any page has loaded, and
 with none of either — a first run, or the launcher, which reports no theme
 — it follows the OS scheme (`main.js` `currentTheme`, repainting on
 `nativeTheme`'s `updated`), since Gamma's own default theme is System: a
-light machine never opens a dark window.
+light machine never opens a dark window. The launcher's first paint takes
+that theme from its `?theme=` (`loadLauncher`) and shows only the page's
+colour until its first server list arrives, so leaving a server for it
+does not flash a light, empty page; the content view's background follows
+the theme too, for the moment between one page and the next.
 
 The tokens are Gamma's own. `ui/tokens.css` is a committed copy of
 `frontend/src/shared/styles/tokens.css`, and `ui/fonts/` holds the Latin
@@ -537,8 +541,12 @@ the Mac App Store build's is in its container,
 Changing the root is `registry.setDataRoot(dir, { move })`. With `move` it
 relocates every local server under the old root. The shell stops their
 sidecars first (an open one returns to the launcher). The registry copies
-each `<id>` dir with `fs.cpSync` (so it works across drives), and only after
-every copy succeeded re-points the entries and deletes the originals. A
+each `<id>` dir a file at a time and asynchronously (`copyTree`, so it works
+across drives and the app stays live), and only after every copy succeeded
+re-points the entries and deletes the originals. Meanwhile the launcher
+shows the bytes copied of the total (`shell:data-move`, a bar under *Local
+server storage* and the status line), and the servers being moved refuse to
+open. A
 failure midway rolls back the copies and leaves the registry untouched. The
 new folder may not be inside the current one or contain it. Removing a
 server offers *keep files* / *delete everything*; deletion is guarded to

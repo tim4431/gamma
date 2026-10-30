@@ -12,16 +12,21 @@
 // it was (the picture of the file its rectangles were measured on, else
 // its wording), and when the run found a place below the threshold, how
 // alike that read, the two texts compared, Show (the place outlined on the
-// page) and Use closest match. A step taken on the card (Accept, Use
-// closest match, a move started from it) leaves it open on the highlight,
-// resolved, saying what it did, with Undo and Next, or Close once nothing
-// is left; hovering another highlight leaves it. The pointer may cross
+// page) and Use closest match, and Discard, which takes it off the page
+// (deleted when it carries nothing of its own, else kept as a note;
+// highlightReview.js discardKind). A step taken on the card (Accept, Use
+// closest match, a move started from it, Discard) leaves it open on the
+// highlight, resolved, saying what it did, with Undo and Next, or Close
+// once nothing is left; a discarded one's card stays where the highlight
+// was. Hovering another highlight leaves it. The pointer may cross
 // into the card; leaving both closes a hovered one, as the note badge's
 // tip does (PdfViewer.jsx NoteBadge). Touch has no hover, so a tap on such
 // a highlight opens it instead of the tap's usual action (a second tap
 // does that action), and a tap outside closes it; so does Escape. One
 // opened by a tap, by Next, from the Document menu or by a step stays
-// until then. A lost one from a page the PDF no longer has, which nothing
+// until then. The card follows its highlight as the page scrolls, and
+// stands hidden, all of it, while the highlight is out of the viewer's
+// sight. A lost one from a page the PDF no longer has, which nothing
 // draws, is reached by Next and the Document menu, its card standing in
 // the viewer and saying so.
 //
@@ -34,9 +39,9 @@ import { t } from "../shared/i18n/i18n.js";
 import { API, getShareToken, withWorkspace } from "../shared/lib/utils";
 import { lastPointer } from "../shared/lib/pointer.js";
 import { DEFAULT_HIGHLIGHT, darkPageColor, normalizeColor } from "../shared/model/palette.js";
-import { CheckIcon, ChevronRightIcon, EyeIcon, LocateIcon, UndoIcon } from "../shared/ui/Icons";
+import { CheckIcon, ChevronRightIcon, EyeIcon, LocateIcon, UndoIcon, XIcon } from "../shared/ui/Icons";
 import { placeFloating, surfaceSize, useFloatingPosition } from "../shared/ui/placement.js";
-import { PAGE_ASPECT, beforeCrop, cropAspect, pastLastPage, rectsInCrop, reviewCardState, reviewPlace, reviewQueue, reviewStep } from "./highlightReview.js";
+import { PAGE_ASPECT, beforeCrop, cropAspect, pastLastPage, placeBox, rectsInCrop, reviewCardState, reviewPlace, reviewQueue, reviewStep } from "./highlightReview.js";
 
 // The hover's delays: the card shows once the pointer rests on the
 // highlight, and waits a little as it leaves, so the pointer can cross the
@@ -113,23 +118,33 @@ export function useHighlightReview() {
 // the last one is not drawn, and its card stands in the viewer. `drawn`
 // (useHighlightReview's) changes when the closest match's outline is
 // drawn. `onAccept(id)`, `onPlace(id)` (Use closest match), `onMove(id,
-// step)` (the card's step, when it took one) and `onUndo(id, step)` are an
-// editor's (absent, the card has no actions); `onOpen(id, {position,
-// done})` scrolls to that highlight (or that place) and opens its card;
-// `onShow(id)` scrolls to its closest match and outlines it.
-export function HighlightReview({ card, review, drawn = 0, highlights, viewerRef, darkPage = false, fileId = "", pageCount = 0, onAccept, onPlace, onMove, onUndo, onOpen, onShow }) {
+// step)` (the card's step, when it took one), `onDiscard(id)` (Discard on
+// a lost one: the step it took, discardStep's, or null), `discardOf(id)`
+// (which of the two Discard would do, discardKind's) and `onUndo(id,
+// step)` are an editor's (absent, the card has no actions); `onOpen(id,
+// {position, done})` scrolls to that highlight (or that place) and opens
+// its card; `onShow(id)` scrolls to its closest match and outlines it.
+export function HighlightReview({ card, review, drawn = 0, highlights, viewerRef, darkPage = false, fileId = "", pageCount = 0, onAccept, onPlace, onMove, onDiscard, discardOf, onUndo, onOpen, onShow }) {
   const queue = useMemo(() => reviewQueue(highlights), [highlights]);
-  const h = card ? (highlights || []).find((x) => x.id === card.id) || null : null;
+  const live = card ? (highlights || []).find((x) => x.id === card.id) || null : null;
   const done = card?.done || null;
-  const state = useMemo(() => (h ? reviewCardState(h, { done, fileId }) : null), [h, done, fileId]);
+  // A discarded one is drawn no more: its card shows it as it was last seen.
+  const seenRef = useRef(null);
+  if (live) seenRef.current = live;
+  else if (seenRef.current?.id !== card?.id) seenRef.current = null;
+  const h = live || (done?.kind === "discarded" ? seenRef.current : null);
+  const state = useMemo(() => (h ? reviewCardState(live, { done, fileId }) : null), [h, live, done, fileId]);
   useEffect(() => { if (card && !state) review.close(); }, [card, state, review]);
   if (!card || !state) return null;
   const resolved = state.kind === "resolved" ? done : null;
   return createPortal(
     <ReviewCard key={h.id} h={h} state={state} done={resolved} pinned={card.pinned}
       ghost={!!card.ghost && !!state.closest} drawn={drawn} offPage={pastLastPage(h.position, pageCount)}
+      stood={!live ? done.before.position : null}
       place={reviewPlace(queue, h, resolved)} review={review} viewerRef={viewerRef}
-      darkPage={darkPage} onAccept={onAccept} onPlace={onPlace} onMove={onMove} onUndo={onUndo} onOpen={onOpen} onShow={onShow} />,
+      darkPage={darkPage} onAccept={onAccept} onPlace={onPlace} onMove={onMove}
+      discard={state.kind === "lost" && onDiscard ? discardOf?.(h.id) || null : null} onDiscard={onDiscard}
+      onUndo={onUndo} onOpen={onOpen} onShow={onShow} />,
     document.body,
   );
 }
@@ -137,7 +152,13 @@ export function HighlightReview({ card, review, drawn = 0, highlights, viewerRef
 // The highlight's rectangles on screen, as one box, or null while they are
 // not drawn (their page not rendered yet). With `ghost`, its closest
 // match's outline (PdfPage) while that is drawn: Show scrolled to it.
-function anchorRect(viewer, id, ghost) {
+// `stood`: the position of one no longer drawn (discarded), whose box is
+// worked out on its page (placeBox).
+function anchorRect(viewer, id, ghost, stood = null) {
+  if (stood) {
+    const page = viewer?.querySelector(`.pdfPageWrap[data-page="${stood.pageNumber}"]`);
+    return page ? placeBox(page.getBoundingClientRect(), stood) : null;
+  }
   const sel = (attr) => `[data-page] > div[${attr}="${CSS.escape(id)}"]`;
   let els = ghost ? viewer?.querySelectorAll(sel("data-review-ghost")) : null;
   if (!els?.length) els = viewer?.querySelectorAll(sel("data-hl-id")) || [];
@@ -158,32 +179,37 @@ function inViewer(size, v) {
 }
 
 function cardTitle(state) {
-  if (state.kind === "resolved") return state.step === "placed" ? t("Placed") : state.step === "moved" ? t("Moved") : t("Accepted");
+  if (state.kind === "resolved") {
+    return state.step === "placed" ? t("Placed") : state.step === "moved" ? t("Moved")
+      : state.step === "discarded" ? t("Discarded") : t("Accepted");
+  }
   if (state.kind === "lost") return t("Not found in this version");
   return state.percent != null ? t("Matched roughly: {n}%", { n: state.percent }) : t("Placed by estimate");
 }
 
-function ReviewCard({ h, state, done, pinned, ghost, drawn, offPage, place, review, viewerRef, darkPage, onAccept, onPlace, onMove, onUndo, onOpen, onShow }) {
+function ReviewCard({ h, state, done, pinned, ghost, drawn, offPage, stood, place, review, viewerRef, darkPage, onAccept, onPlace, onMove, discard, onDiscard, onUndo, onOpen, onShow }) {
   const ref = useRef(null);
   const [tick, setTick] = useState(0);
   const focusedRef = useRef(false);
   // Under the highlight, else over it; kept inside the window, following
   // the page as it scrolls. Hidden while the highlight is out of the
-  // viewer's sight, and while it is not drawn yet (`missing`). Placed
+  // viewer's sight, and while it is not drawn yet (`missing`): the whole
+  // card, nothing in it seen on its own (app.css .hlReviewShot). Placed
   // again when the closest match's outline is drawn (`drawn`), its page
   // rendered after Show scrolled there. One past the PDF's last page,
   // which nothing draws, stands in the viewer (under its outline while
-  // Show's is in sight).
+  // Show's is in sight). A discarded one's stays where the highlight was
+  // (`stood`).
   const pos = useFloatingPosition(ref, (el) => {
     const viewer = viewerRef.current;
-    const a = anchorRect(viewer, h.id, ghost);
+    const a = anchorRect(viewer, h.id, ghost, stood);
     const v = viewer?.getBoundingClientRect();
     const seen = !!a && !!v && a.bottom > v.top && a.top < v.bottom && a.right > v.left && a.left < v.right;
     if (offPage && v && !seen) return { ...inViewer(surfaceSize(el), v), hidden: false, missing: false };
     if (!a) return { left: 0, top: 0, hidden: true, missing: true };
     const spot = placeFloating(surfaceSize(el), { x: a.left, y: a.bottom + GAP, flipY: a.top - GAP });
     return { ...spot, hidden: !seen, missing: false };
-  }, [h.id, h.position, ghost, drawn, offPage, tick], { follow: true });
+  }, [h.id, h.position, ghost, drawn, offPage, stood, tick], { follow: true });
   // A card opened for a highlight whose page is still rendering waits for
   // its rectangles, and gives up after a few seconds.
   const missing = !pos || pos.missing;
@@ -246,13 +272,19 @@ function ReviewCard({ h, state, done, pinned, ghost, drawn, offPage, place, revi
     if (onOpen) onOpen(h.id, { position: step.after, done: step });
     else review.open(h.id, step);
   };
+  // (deleted, or kept as a note off the PDF: the card stays where it was)
+  const discardIt = () => {
+    const step = onDiscard?.(h.id);
+    if (step) review.open(h.id, step);
+  };
   // Undo takes the step back (one more tree edit); a step that moved it
   // scrolls back to where it was. A move started from a card already
   // resolved goes back to that card's step (reviewStep's `prior`), whose
-  // own Undo the card offers again.
+  // own Undo the card offers again. A discarded one comes back where the
+  // card stands.
   const undo = () => {
     onUndo(h.id, done);
-    if (done.kind === "accepted") review.open(h.id);
+    if (done.kind === "accepted" || done.kind === "discarded") review.open(h.id);
     else onOpen?.(h.id, { position: done.before.position, done: done.prior || null });
   };
   // (a resolved card hands its step on, for the move's Undo to come back to)
@@ -263,6 +295,13 @@ function ReviewCard({ h, state, done, pinned, ghost, drawn, offPage, place, revi
       <LocateIcon size={14} /> {t("Move…")}
     </button>
   );
+  const discardBtn = discard ? (
+    <button type="button" className="uiBtn sm" onClick={discardIt}
+      title={discard === "delete" ? t("Delete the highlight: it holds no note or comment, and its text is not in this version")
+        : t("Take the highlight off the PDF and keep it as a note, with its quote, note and comments")}>
+      <XIcon size={14} /> {t("Discard")}
+    </button>
+  ) : null;
   const nextBtn = (primary) => (
     <button type="button" className={`uiBtn sm${primary ? " primary" : ""}`} disabled={!place.next} onClick={next}
       title={t("The next highlight to check on this page")}>
@@ -309,7 +348,7 @@ function ReviewCard({ h, state, done, pinned, ghost, drawn, offPage, place, revi
               <CheckIcon size={14} /> {t("Use closest match")}
             </button>
           ) : null}
-          {moveBtn}{count}{nextBtn(false)}
+          {moveBtn}{discardBtn}{count}{nextBtn(false)}
         </div>
       ) : null}
       {state.kind === "resolved" ? (
@@ -319,7 +358,7 @@ function ReviewCard({ h, state, done, pinned, ghost, drawn, offPage, place, revi
               <UndoIcon size={14} /> {t("Undo")}
             </button>
           ) : null}
-          {onMove ? moveBtn : null}
+          {onMove && done?.kind !== "discarded" ? moveBtn : null}
           <span className="hlReviewSpacer" />
           {place.next ? nextBtn(true) : (
             <button type="button" className="uiBtn sm primary" onClick={review.close}>{t("Close")}</button>

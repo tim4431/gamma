@@ -291,6 +291,14 @@ const shownPage = (content) => {
 // Both of the bar's dropdowns closed.
 const menuClosed = (bar) => waitFor(() => bar.evaluate(() => document.getElementById('menu').hidden && document.getElementById('syncPanel').hidden), 'menu closed');
 
+// The sync panel still shown a while after a press in it: open in the page,
+// and the bar view still grown over the content (else the panel is cut off).
+async function panelStaysOpen(app, bar) {
+  await sleep(1500);
+  assert(!(await bar.evaluate(() => document.getElementById('syncPanel').hidden)), 'the panel stays open');
+  assert(await hook(app, (s) => s.barExpanded()), 'the bar view stays grown over the content');
+}
+
 // ------------------------------------------------------------- steps -------
 
 async function main() {
@@ -635,9 +643,13 @@ async function main() {
       // "pause" detaches the clone, the panel staying open, its sync shut; "resume" reattaches it.
       await cloneRow.locator('[data-act="pause"]').click();
       await waitFor(async () => (await cloneRow.locator('.state').textContent()).startsWith('Detached'), 'shown paused', 15_000);
+      await panelStaysOpen(app, bar);
       assert.equal(await cloneRow.locator('[data-act="sync"]').getAttribute('aria-disabled'), 'true', 'no sync while detached');
       await cloneRow.locator('[data-act="resume"]').click();
       await waitFor(async () => (await cloneRow.locator('[data-act="pause"]').count()) === 1, 'shown resumed', 30_000);
+      await panelStaysOpen(app, bar);
+      await cloneRow.locator('[data-act="sync"]').click();
+      await panelStaysOpen(app, bar);
       await bar.keyboard.press('Escape');
       await menuClosed(bar);
       return `${origWs} → copy ${copyWs} on Alpha, paused and resumed`;
@@ -672,13 +684,13 @@ async function main() {
       assert((await row.locator('.state').textContent()).includes(fs.realpathSync(kept).split(path.sep).pop()), 'its state and where it is');
       for (const act of ['pause', 'sync', 'stop']) assert(await row.locator(`[data-act="${act}"]`).isVisible(), `"${act}" shown without hovering`);
       await row.locator('[data-act="sync"]').click();
-      await menuClosed(bar);
       await waitFor(async () => /is up to date/.test((await hook(app, (s) => s.notice())) || ''), 'the sync reported', 15_000);
+      await panelStaysOpen(app, bar);
       // "pause" leaves the panel open on the paused row, whose "resume" starts it again.
-      const toggled = await keptRow(app, bar, 'folder', 'Kept lab');
+      const toggled = row;
       await toggled.locator('[data-act="pause"]').click();
       await waitFor(async () => (await toggled.locator('.state').textContent()).startsWith('Paused'), 'shown paused', 15_000);
-      assert(!(await bar.evaluate(() => document.getElementById('syncPanel').hidden)), 'the panel stays open');
+      await panelStaysOpen(app, bar);
       const linkOf = async () => (await hook(app, (s, w) => s.listFolders(w), ws)).links[0];
       assert((await linkOf()).status.paused_at, 'paused on the server');
       await toggled.locator('[data-act="resume"]').click();
@@ -1002,8 +1014,19 @@ async function main() {
       const newRoot = path.join(profile, 'moved-root');
       const before = await hook(app, (s) => s.registry.load().servers.filter((w) => w.type === 'local').map((w) => w.dataDir));
       assert(before.length === 2, 'two local servers');
-      const r = await content.evaluate((dir) => gammaShell.setDataRoot(dir, { move: true }), newRoot);
+      const { r, seen } = await content.evaluate(async (dir) => {
+        const seen = [];
+        const off = gammaShell.onDataMove((m) => seen.push(m));
+        const r = await gammaShell.setDataRoot(dir, { move: true });
+        await new Promise((ok) => setTimeout(ok, 200));
+        off();
+        return { r, seen };
+      }, newRoot);
       assert.deepEqual(r.moved.sort(), ['Alpha', 'Beta renamed'], JSON.stringify(r));
+      // the launcher heard how far the copy was, up to all of it, then that it ended
+      const last = seen.filter(Boolean).pop();
+      assert(last && last.total > 0 && last.done === last.total, `progress up to the whole: ${JSON.stringify(seen.slice(-3))}`);
+      assert.equal(seen[seen.length - 1], null, 'the move reported done');
       const after = await hook(app, (s) => s.registry.load().servers.filter((w) => w.type === 'local').map((w) => w.dataDir));
       for (const d of after) {
         assert(d.startsWith(newRoot + path.sep), `moved: ${d}`);

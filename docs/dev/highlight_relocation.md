@@ -27,13 +27,14 @@ itself draws),
 file a page shows); in the web app `pdf/PdfViewer.jsx` (the dashed and
 hollow looks, the closest match's outline, the tip's move button),
 `pdf/HighlightReview.jsx` with `pdf/highlightReview.js` (the review card,
-its queue and its pure arithmetic) and `shared/lib/wordDiff.js` (its word
-comparison), `shared/model/blockModel.js` (`placedToCheck`,
+its queue, Discard's step and its pure arithmetic) and
+`shared/lib/wordDiff.js` (its word comparison),
+`shared/model/blockModel.js` (`placedToCheck`,
 `placeToReview`, `roughMatchPercent`, `acceptedPosition`, `closestPlace`,
-`closestPlacement`, `reviewUndone`), `editor/BlockTree.jsx` (the row's
-dashed and hollow dots, its move button), `app/App.jsx` (Accept, Use
-closest match, the card's Undo, move mode, the Document menu's rows, what
-the replacement says),
+`closestPlacement`, `reviewUndone`, `blockPlace`, `insertBlockAt`),
+`editor/BlockTree.jsx` (the row's dashed and hollow dots, its move
+button), `app/App.jsx` (Accept, Use closest match, Discard, the card's
+Undo, move mode, the Document menu's rows, what the replacement says),
 `app/prefDefs.js` and `settings/SettingsDialog.jsx` (the thresholds),
 `tasks/taskKinds.js` and `tasks/useAppJobs.js` (the task row, the summary
 when a run ends).
@@ -646,8 +647,16 @@ in app.css, fading in as the tips do), placed with `placeFloating` and
 `useFloatingPosition` ([ui-design.md](ui-design.md#menus-and-popups-open-in-place)):
 under the highlight's rectangles, above them when there is no room below,
 following the page as it scrolls, hidden while the highlight is out of the
-viewer's sight, and, opened for a highlight whose page is still rendering,
-waiting up to four seconds for its rectangles. A lost highlight from a page
+viewer's sight and shown again on it when it scrolls back, and, opened for
+a highlight whose page is still rendering, waiting up to four seconds for
+its rectangles (as long as it waits for a page scrolled so far that it
+drops them, then it closes). Hidden is the whole card, through its inline
+`visibility`: nothing in it is set visible on its own. The before picture,
+unseen until it is in, then inherits the card's visibility
+(`.hlReviewShot:not(.loaded) img` hides it, nothing shows it); a picture
+set `visible` once it loaded showed through the hidden card, alone and
+without its rectangles, over the page text at the window's edge where
+the hidden card stood, while the pages scrolled under it. A lost highlight from a page
 the PDF no longer has (a revision that dropped an appendix: the run keeps
 its old page number, `pastLastPage` against the viewer's page count) is
 drawn nowhere, so no hover or tap reaches it; Next and the Document menu
@@ -686,15 +695,22 @@ card took on it, if any:
   the scroll, and PdfPage then says so (`review.drawn`, the hook's
   `drawn`), so the card places itself under the outline.
   For an editor: **Use closest match** (the primary button, when there is
-  one), **Move…**, "1 of 3" and **Next**; nothing to accept. A lost area
-  has no `closest`.
+  one), **Move…**, **Discard** (below), "1 of 3" and **Next**; nothing to
+  accept. A lost area has no `closest`.
 - **Resolved**, after a step taken on the card: Accept, Use closest match,
-  or a move started from its Move…. The card stays on the highlight, now
-  out of the queue, the header saying what it did ("Accepted", "Placed",
-  "Moved"), with **Undo**, **Move…** and, as the primary button, **Next**
-  while the queue still holds a highlight; else the line "Every highlight
-  on this page is reviewed." and **Close**. A highlight back in the queue
-  (by Undo, or the app's undo) shows as what it is again.
+  a move started from its Move…, or Discard. The card stays on the
+  highlight, now out of the queue, the header saying what it did
+  ("Accepted", "Placed", "Moved", "Discarded"), with **Undo**, **Move…**
+  (not after Discard: nothing is left on the page to move) and, as the
+  primary button, **Next** while the queue still holds a highlight; else
+  the line "Every highlight on this page is reviewed." and **Close**. A
+  discarded highlight is drawn no more, so its card shows it as it was last
+  seen and stays where it stood: anchored to its old rectangles on its page
+  (`placeBox`, from the page's box on screen, the way PdfPage scales them),
+  following the page and hidden out of sight as any card. A highlight back
+  in the queue (by Undo, or the app's undo) shows as what it is again; one
+  drawn on the page again after a Discard (placed by hand since) has
+  nothing of the Discard to show, and the card closes.
 
 A viewer who may not edit sees the card without actions (Show stays).
 
@@ -767,6 +783,29 @@ position and it is drawn solid. A tree edit like any other: undoable, sent
 to the others as ops. The card scrolls to the new place and shows it
 "Placed".
 
+**Discard** (App's `discardLostHighlight`; `discardKind`, `discardStep`,
+`discardApplied` in highlightReview.js), on a lost highlight's card for an
+editor, beside Move…: the highlight's passage is gone, and the person does
+not want it placed. One that carries nothing of its own (no note, its
+content empty or spaces; no child blocks, even empty ones; no comment
+thread, open or resolved, `comments.threadsByBlock`) is deleted, as the
+highlight menu's Delete deletes it (`removeBlockTree`). One that carries
+any stays as a note and comes off the PDF: its `pdf_position` becomes its
+page alone, `{pageNumber}`, the shape of a highlight whose place on its
+page is not known (a Logseq import's), so nothing draws it and the review
+queue leaves it out; its rectangles, `lost`, `closest`, `doc_id`,
+`approx`, `match` and `prev` go, its quote, colour, note, children and
+threads stay. Its row then reads as such a note's: a grey dot ("Jump to
+page (no exact position)"), "p.1" and the ⊕ that attaches it to a
+highlight. Either way it is one tree edit (ops, undo). The button's title
+says which it will do: "Delete the highlight: it holds no note or
+comment, and its text is not in this version", or "Take the highlight off
+the PDF and keep it as a note, with its quote, note and comments" (the
+viewer's `discardOf`). The card then stays, "Discarded" (above). There is
+no Discard on a dashed one, in the highlight's menu (its Delete does the
+one, Move to a selection… the other's undoing) or in the Document menu:
+discarding goes one highlight at a time, after a look at its card.
+
 **Moving a highlight** (App's `moveHighlightId`): a highlight's context
 menu on the page offers **Move to a selection…** to an editor, a lost row
 its button and the review card **Move…**, which closes the card to make
@@ -809,7 +848,17 @@ started from a card already resolved ("Accepted", "Placed", "Moved") keeps
 that card's step as its own `prior` while the position it moved from is
 the one that step wrote: its Undo opens the card on that step again, with
 that step's Undo, so Accept, a move and another, then Undo three times,
-goes back one step each time to the highlight pending.
+goes back one step each time to the highlight pending. A Discard's step
+(`discardStep`: `{kind: "discarded", deleted, before: {position}}` with,
+for a deletion, `removed`, the block as it was and its place among its
+siblings, `blockPlace`; else `after`, `{pageNumber}`) is taken back by
+`discardUndone`: a deleted highlight inserted again where it stood
+(`insertBlockAt`; at the page's top, at the end, when its parent has gone
+since; nothing when it is back already), an insert of its id as the
+app's own undo of a deletion sends; one kept as a note given its lost
+position again (`reviewUndone`, nothing when its position changed since).
+Either way it is back on the page, hollow, where the card stands, and the
+card shows it lost again.
 
 **The Document menu.** When the open page has highlights to review, the
 paperclip popover lists **Review 3 highlights** (**Review 1 highlight**
@@ -818,7 +867,8 @@ scrolls to the first in the review queue and opens its card) and, for an
 editor while some are pending, **Accept all 3 rough matches** (**Accept 1
 rough match** for one: one Accept over all of them, the status saying how
 many when there are several). Review counts the pending and the lost ones,
-Accept all the pending ones alone, an estimated area included. Review's
+Accept all the pending ones alone, an estimated area included; a
+discarded one is in neither, and there is no Discard over them all. Review's
 title is "Show the first dashed or hollow highlight with what it matched
 and where it was before". **Find highlights in this PDF**'s title says
 what a run does: "Find each highlight's text in this file and move the
@@ -1024,7 +1074,18 @@ queue; what each step changes, for its Undo, a move from a resolved card
 keeping that card's step as its `prior`; the picture asked of the old
 file and not through a share link, the crop's box and the old rectangles
 in it, the quote comparison, a long passage compared quickly, an old quote
-clipped to a `prev`'s length compared only as far as it goes),
+clipped to a `prev`'s length compared only as far as it goes; Discard:
+which of the two it does, a note of spaces no note, an empty child or a
+thread keeping it, only a lost one discarded; a bare one deleted as one
+tree edit and out of the queue, its Undo putting it back in its place,
+lost, at the top's end when its parent has gone, nothing when it is back
+already; one with a note kept with its quote, colour, note and children,
+its position its page alone, out of the page's highlights and the queue,
+the rest of the tree keeping its identity, its Undo putting the lost
+position back, nothing over a later change; the card "Discarded" while the
+highlight is gone, lost again when it is back, nothing once it is placed
+elsewhere, Next from where it stood; `placeBox`; `blockPlace` and
+`insertBlockAt`),
 `logseqPdfModel.test.mjs` `placedToCheck`, `roughMatchPercent`,
 `acceptedPosition` (`doc_id` going too), `placeToReview`, `closestPlace`
 (read defensively), `closestPlacement` and `reviewUndone` (nothing taken
@@ -1063,6 +1124,17 @@ version, Show drawing one outline per rectangle, and Use closest match
 placing it solid there with the candidate's rectangles and quote, the
 position free of `lost`, `closest`, `doc_id`, `approx`, `match` and
 `prev`, the card saying "Placed" with Undo); its step "a hollow
+highlight's card leaves nothing on screen" (nothing of the card
+on screen, its picture included, while its highlight is scrolled out of
+sight with the pointer in the card, from the scroller and from the wheel with the card opened from the Document
+menu, and the card on its highlight again, picture and all, when it
+scrolls back; Discard on the bare one, its title saying it deletes:
+"Discarded" where the card stood, with Undo and Next and no Move…, the
+highlight gone from the page and the store, and Undo bringing it back
+hollow with its file and quote, saved; Next and Discard on the one with a
+note, its title saying it keeps it: the row and its note staying, the
+position its page alone, the quote kept, its Undo hollow again, and after
+a second Discard "Review 1 highlight" in the Document menu); its step "a hollow
 highlight's card follows Show to a far page" (Show on a closest match six
 pages on keeping the card in sight beside the outline, without a scroll;
 Next to a highlight lost from a page the new version dropped, its card in

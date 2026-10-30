@@ -512,14 +512,16 @@ async function fetchPdfData(url, onLoadState, isCancelled) {
 // A highlight to review after its PDF was replaced (dashed, or hollow:
 // lost) has a review card (HighlightReview.jsx): onAcceptHighlight(id),
 // onPlaceHighlight(id) (a lost one's closest match applied),
-// onMoveHighlight(id, step) (`step` the card's, when it had taken one)
-// and onUndoReview(id, step) are its actions, an
+// onMoveHighlight(id, step) (`step` the card's, when it had taken one),
+// onDiscardHighlight(id) (a lost one taken off the page: the step taken,
+// or null), discardOf(id) (what that Discard would do) and
+// onUndoReview(id, step) are its actions, an
 // editor's; `fileId` is the stored file the page shows (a lost one's
 // picture is of the file its rectangles were measured on, when that is
 // another); reviewRef.current(id, {done, scroll}) scrolls to that one and
 // opens its card (the Document menu's Review; App after a move started
 // from the card, `done` what it did and scroll false).
-function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, areaKey = "Mod", peekKey = "Alt", hideEmbeddedAnnots, darkPage = false, translateKey = "", translateScope = null, translateParallel = 3, onTranslate, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", selComment = false, highlighter = "", moveMode = false, marks, flashHighlightId = null, smoothWheel = false, commentMargin = null, marginRef = null, onMarginLost, onPageInView, zoomHeight = 200, onZoomHeight, onZoomChange, onAcceptHighlight, onPlaceHighlight, onMoveHighlight, onUndoReview, fileId = "", reviewRef = null }) {
+function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, areaKey = "Mod", peekKey = "Alt", hideEmbeddedAnnots, darkPage = false, translateKey = "", translateScope = null, translateParallel = 3, onTranslate, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", selComment = false, highlighter = "", moveMode = false, marks, flashHighlightId = null, smoothWheel = false, commentMargin = null, marginRef = null, onMarginLost, onPageInView, zoomHeight = 200, onZoomHeight, onZoomChange, onAcceptHighlight, onPlaceHighlight, onMoveHighlight, onDiscardHighlight, discardOf, onUndoReview, fileId = "", reviewRef = null }) {
   const tools = usePageTools(), { ink, text } = tools;
   const viewerRef = useRef(null);
   const [pdfDoc, setPdfDoc] = useState(null);
@@ -2149,7 +2151,8 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       <HighlightReview card={reviewCard} review={review} drawn={reviewDrawn} highlights={displayedUrl === url ? highlights : null}
         viewerRef={viewerRef} darkPage={darkPage} fileId={fileId} pageCount={displayedUrl === url ? numPages : 0}
         onAccept={onAcceptHighlight} onPlace={onPlaceHighlight}
-        onMove={onMoveHighlight} onUndo={onUndoReview} onOpen={openReview} onShow={showClosest} />
+        onMove={onMoveHighlight} onDiscard={onDiscardHighlight} discardOf={discardOf}
+        onUndo={onUndoReview} onOpen={openReview} onShow={showClosest} />
       {zoom ? (
         <ZoomWindow zoom={zoom} size={{ width: pageWidths[zoom.page - 1] || FALLBACK_W, height: pageHeights[zoom.page - 1] || FALLBACK_H }}
           page={zoomPage?.doc === pdfDoc && zoomPage.n === zoom.page ? zoomPage.page : null}
