@@ -243,8 +243,9 @@ one tinted row per notice under the identity card (itself a button into
 Account & sync): `noticeText` (the
 message translated with its params, or the server's title for a message
 this build does not know) and a link (`noticeAction`, "Review storage →")
-that opens the notice's pane. "Settings…" opens on `firstPane`; every other
-opener keeps its pane. Showing a pane calls
+that opens the notice's pane. "Settings…" opens on `firstPane`, else on
+Account & sync (as Ctrl+, does; Appearance when the account pane is not
+shown); every other opener keeps its pane. Showing a pane calls
 `markSeen(pane)`: its notices leave the list at once and each ack is posted
 to `POST /api/notices/{id}/seen`, so other tabs and browsers agree on their
 next poll. The browser flow is the last step of `e2e/scenarios/settings.mjs`,

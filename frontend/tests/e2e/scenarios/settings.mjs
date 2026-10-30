@@ -230,6 +230,7 @@ export async function settingsScenarios(env) {
     try {
       await page.keyboard.press("Control+Comma");
       await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
+      assertEq(await nav(page, "Account & sync").getAttribute("aria-current"), "page", "Settings opens on Account & sync");
       // Over the home library, whose own find box used to take the key.
       await page.keyboard.press("Control+f");
       const box = page.getByRole("searchbox", { name: "Search settings" });
@@ -798,6 +799,7 @@ export async function settingsScenarios(env) {
     const { ctx, page } = await setup();
     try {
       await openSettings(page);
+      await nav(page, "Appearance").click();
       const tag = (title) => page.locator(`.settingsPane .setSection[data-setting="${title}"] .setScope`);
       const sync = (title) => tag(title).getAttribute("data-sync");
       // a password account without Gamma Cloud: saved on this server, a check and one word
@@ -1049,7 +1051,8 @@ export async function settingsScenarios(env) {
     const { ctx, page } = await setup();
     try {
       await openSettings(page);
-      assertEq(await nav(page, "Appearance").getAttribute("aria-current"), "page");
+      assertEq(await nav(page, "Account & sync").getAttribute("aria-current"), "page");
+      await nav(page, "Appearance").click();
       for (const [label, theme, scheme] of [["Gamma Light", "gamma-light", "light"], ["Gamma Dark", "gamma-dark", "dark"]]) {
         await page.getByRole("button", { name: label, exact: true }).click();
         await until(() => page.locator("html").getAttribute("data-theme").then((v) => v === theme));
@@ -1059,6 +1062,7 @@ export async function settingsScenarios(env) {
         await page.waitForSelector(".folderNewBtn");
         assertEq(await page.locator("html").getAttribute("data-theme"), theme);
         await openSettings(page);
+        await nav(page, "Appearance").click();
         assertEq(await page.getByRole("button", { name: label, exact: true }).getAttribute("aria-pressed"), "true");
         if (flags.keep) await page.screenshot({ path: `${server.dir}/settings-${theme}.png`, animations: "disabled" });
       }
@@ -1074,6 +1078,7 @@ export async function settingsScenarios(env) {
       await page.waitForSelector(".folderNewBtn");
       await until(() => page.locator("html").getAttribute("data-theme").then((v) => v === "solarized"));
       await openSettings(page);
+      await nav(page, "Appearance").click();
       const themes = page.getByRole("group", { name: "Theme", exact: true });
       assertEq(await themes.locator('[aria-pressed="true"]').count(), 1);
       await page.getByRole("checkbox", { name: "Dark PDF pages", exact: true }).check();
@@ -1179,8 +1184,8 @@ export async function settingsScenarios(env) {
       await page.reload();
       await page.getByRole("button", { name: "Account & settings", exact: true }).waitFor();
       await openSettings(page);
-      assertEq(await page.getByRole("button", { name: "Solarized Light", exact: true }).getAttribute("aria-pressed"), "true");
       await nav(page, "Appearance").click();
+      assertEq(await page.getByRole("button", { name: "Solarized Light", exact: true }).getAttribute("aria-pressed"), "true");
       assertEq(await page.getByRole("checkbox", { name: "Folders", exact: true }).isChecked(), true);
       assertEq(await page.getByRole("checkbox", { name: "Labels", exact: true }).isChecked(), false);
       assertEq(await page.getByRole("checkbox", { name: "Thumbnails", exact: true }).isChecked(), false);
@@ -2050,6 +2055,8 @@ export async function settingsScenarios(env) {
     const { ctx, page } = await setup({ width: 390, height: 844 });
     try {
       await openSettings(page);
+      await page.getByRole("button", { name: "Back", exact: true }).click();
+      await nav(page, "Appearance").click();
       await page.getByRole("button", { name: "Gray", exact: true }).click();
       assertEq(await page.getByRole("button", { name: "Gray", exact: true }).getAttribute("aria-pressed"), "true");
       assert(!(await page.locator(".settingsPane").evaluate((el) => el.scrollWidth > el.clientWidth + 1)), "appearance fits the phone without horizontal scrolling");
@@ -2309,9 +2316,15 @@ export async function settingsScenarios(env) {
       }), [name, text]);
       // The Server pane (where Settings opens while a notice points there, else
       // a click away): its five sections over the server's settings make one
-      // read, and no path is read twice.
-      await openSettings(page);
-      await page.locator(".settingsPane .settingsPaneTitle").first().waitFor();
+      // read, and no path is read twice. Settings opens on Keyboard, which
+      // reads nothing (Account & sync, where Settings… opens, reads Users'
+      // accounts and Server's settings ahead).
+      await page.keyboard.press("Control+Shift+p");
+      const palette = page.getByRole("dialog", { name: "Command palette" });
+      await palette.getByRole("textbox", { name: "Type a command" }).fill(">Keyboard shortcuts");
+      await until(async () => /Keyboard shortcuts/.test(await palette.locator('[role="option"][aria-selected="true"]').textContent()), { what: "the command selected" });
+      await page.keyboard.press("Enter");
+      await until(async () => (await title()) === "Keyboard shortcuts", { what: "the Keyboard pane" });
       if ((await title()) !== "Server") await nav(page, "Server").click();
       await until(async () => (await title()) === "Server", { what: "the Server pane" });
       await page.getByRole("textbox", { name: "Public server URL" }).waitFor();

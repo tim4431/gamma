@@ -7759,7 +7759,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (!notesVisible) guideEvents.emit("window.shown", { id: "notes" });
       setNotesVisible((v) => !v);
     },
-    openSettings: (pane) => { setOpenPopover(null); setSettingsOpen((cur) => pane || cur || "appearance"); },
+    openSettings: (pane) => { setOpenPopover(null); setSettingsOpen((cur) => pane || cur || "account"); },
     // The Export dialog, preset to a format (transfers/transferFormats.js).
     exportAs: (format) => { setExportFolder(null); setExportOpts((o) => ({ ...o, format })); setExportOpen(true); },
     downloadPdf: () => exportRawPdf(),
@@ -11297,7 +11297,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             >{t("Workspaces…")}</MenuItem>
           ) : null}
           <MenuDivider />
-          <MenuItem icon={SettingsIcon} onClick={() => openSettingsPane(notices.firstPane || "general")}
+          <MenuItem icon={SettingsIcon} onClick={() => openSettingsPane(notices.firstPane || "account")}
             trailing={notices.tone ? <span className={`noticeDot inline ${dotTone(notices.tone)}`} aria-hidden="true" /> : null}>
             {t("Settings…")}
           </MenuItem>

@@ -208,6 +208,7 @@ try {
           await pulled;
           await page.locator('[data-guide="header.account"]').click();
           await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
+          await page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Appearance", exact: true }).click();
           const dark = page.getByRole("checkbox", { name: "Dark PDF pages", exact: true });
           await dark.waitFor();
           const mark = server.log().length;
