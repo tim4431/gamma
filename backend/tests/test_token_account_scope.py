@@ -2,7 +2,8 @@
 workspace's data (require_ws) and nothing that belongs to the ACCOUNT
 behind it — the AI provider entries (whose base URL decides where the
 stored key is sent), preferences, AI usage, translation keys, the
-workspace list, backups. Whatever its scope (auth.require_user)."""
+workspace list, backups, the Zotero links. Whatever its scope
+(auth.require_user)."""
 
 import pytest
 from fastapi.testclient import TestClient
@@ -62,6 +63,21 @@ def test_a_token_never_changes_the_account(owner, scope):
         ("GET", "/api/publisher-sessions", None),
         ("GET", "/api/integrations/tokens", None),
         ("GET", "/api/auth/cloud/status", None),
+        # the account's Zotero links: whatever workspace the token names
+        ("GET", "/api/zotero/links", None),
+        ("POST", "/api/zotero/links", {"library": "users/123", "workspace_id": ws}),
+        ("GET", "/api/zotero/links/preview?library=users/123", None),
+        ("GET", f"/api/zotero/links/{ws}", None),
+        ("PATCH", f"/api/zotero/links/{ws}", {"poll_s": 0}),
+        ("POST", f"/api/zotero/links/{ws}/sync?wait=1", None),
+        ("POST", f"/api/zotero/links/{ws}/fetch", {"page_id": "anything"}),
+        ("POST", f"/api/zotero/links/{ws}/detach", None),
+        ("POST", f"/api/zotero/links/{ws}/relink", {}),
+        ("POST", f"/api/zotero/links/{ws}/force", {"direction": "pull"}),
+        ("DELETE", f"/api/zotero/links/{ws}", None),
+        ("GET", f"/api/zotero/links/{ws}/log", None),
+        ("GET", f"/api/zotero/links/{ws}/conflicts", None),
+        ("POST", f"/api/zotero/links/{ws}/conflicts/1", {"choice": "keep"}),
     ):
         r = c.request(method, path, json=body)
         assert r.status_code == 403, (method, path, r.status_code, r.text)

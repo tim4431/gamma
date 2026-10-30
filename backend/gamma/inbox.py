@@ -30,7 +30,8 @@ import re
 from datetime import datetime, timedelta, timezone
 
 from . import collab, join_requests, mentions, workspaces
-from .auth import LINK_ACTOR_PREFIX, MIRROR_ACTOR, ShareScope, share_access, share_lookup
+from .auth import (LINK_ACTOR_PREFIX, MIRROR_ACTOR, ZOTERO_ACTOR, ZOTERO_CLIENT, ShareScope, share_access,
+                   share_lookup)
 from .blocks_store import new_block_id
 from .db import account_names, connect_pages_db, connect_users_db, format_stamp, page_now
 from .logbuf import log
@@ -237,17 +238,18 @@ def from_ops(ws: str, result: dict, via: str = "") -> None:
     the batch gained, as a half-typed ``@ben`` saved on its way to
     ``@benjamin``) archives their item on that block. ``via``: the share
     the writer came through. A batch an offline copy wrote (client
-    ``sync``: the names were typed on the other server), a mirror's round
-    and a link visitor (no account to name) write no item, though their
-    moves and drops are followed; the AI's batch is its chat owner's.
-    Never raises."""
+    ``sync``: the names were typed on the other server), a mirror's round,
+    a Zotero link's writes (client or actor ``zotero``: typed in Zotero, or
+    a conflict's "theirs" taken from there) and a link visitor (no account
+    to name) write no item, though their moves and drops are followed; the
+    AI's batch is its chat owner's. Never raises."""
     try:
         _follow(ws, result.get("mentions_moved") or [], result.get("mentions_dropped") or [])
     except Exception as e:  # noqa: BLE001
         log.warning(f"[inbox] the moved mentions of a batch in workspace {ws} were not followed: {e}")
     found, actor = result.get("mentions_added"), result.get("actor") or ""
-    if (not found or not actor or result.get("client") == SYNC_CLIENT or actor == MIRROR_ACTOR
-            or actor.startswith(LINK_ACTOR_PREFIX)):
+    if (not found or not actor or result.get("client") in (SYNC_CLIENT, ZOTERO_CLIENT)
+            or actor in (MIRROR_ACTOR, ZOTERO_ACTOR) or actor.startswith(LINK_ACTOR_PREFIX)):
         return
     try:
         ids = _ids_of({u for f in found for u in f["users"]})

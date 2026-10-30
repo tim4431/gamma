@@ -2,7 +2,10 @@
 
 A stored file (``uploads/<name>``) is in use while a block names it —
 ``/api/uploads/<name>`` in its content or properties, or a page's ``doc_id``
-(``storage.upload_refs``, the one grammar). When the last reference goes the
+(``storage.upload_refs``, the one grammar) — while an AI chat names it, and
+while an open ``zotero_file`` conflict keeps it (Zotero's PDF a Zotero link
+kept when Gamma's went over it, for that conflict's "theirs",
+gamma/zotero_sync_pdfs.py). When the last reference goes the
 file is NOT deleted: its name goes into the workspace's ``upload_orphans``
 table (pages.db: ``name``, ``since``) and the file stays stored, served as
 before — so an undo, a cut pasted in a later batch, an AI edit, an ink undo
@@ -68,16 +71,25 @@ PURGE_SHARE = 0.2
 def referenced(conn) -> set[str]:
     """Every stored-file name the workspace's blocks reference, lowercased
     (compared without case, as the old ``LIKE`` did), in one pass over the
-    rows that mention an upload or carry a ``doc_id`` — and every one its
+    rows that mention an upload or carry a ``doc_id`` — every one its
     AI chats name: a picture attached to a message is a stored upload the
     conversation points at (``/api/uploads/<name>`` in the saved messages'
     JSON, the one grammar; gamma/ai_pictures.py), in the active
-    conversations and the archived ones alike."""
+    conversations and the archived ones alike — and the PDF each open
+    ``zotero_file`` conflict keeps (its ``base``'s ``doc_id``): resolved
+    ("keep", or "theirs", which makes it a page's PDF) or gone with its
+    link, it is a file like any other."""
     names = set()
     for content, props in conn.execute(
             "SELECT content, properties FROM unified_blocks WHERE instr(content, '/api/uploads/') > 0 "
             "OR instr(properties, '/api/uploads/') > 0 OR doc_id IS NOT NULL"):
         names.update(n.lower() for n in upload_refs(content or "", props or "{}"))
+    try:
+        kept = conn.execute("SELECT base FROM sync_conflicts WHERE resolved = 0 AND kind = 'zotero_file'").fetchall()
+    except sqlite3.OperationalError:  # a database from before the table existed
+        kept = []
+    for (base,) in kept:  # the base is JSON, its doc_id read as a page's is
+        names.update(n.lower() for n in upload_refs("", base or "{}"))
     for table in ("chats", "chat_history"):
         try:
             rows = conn.execute(f"SELECT messages FROM {table} WHERE instr(messages, '/api/uploads/') > 0")

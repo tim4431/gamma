@@ -618,6 +618,8 @@ def share_grant(request: Request):
 LINK_NAME_HEADER = "x-gamma-name"
 LINK_ACTOR_PREFIX = "link:"
 MIRROR_ACTOR = "mirror"  # a mirror's round (gamma/sync_engine.py), the other writer that is no account
+ZOTERO_ACTOR = "zotero"  # a Zotero link's round (gamma/zotero_sync.py), shown as "Zotero"
+ZOTERO_CLIENT = "zotero"  # ...and the op-log client its writes carry (zotero_sync.CLIENT)
 LINK_NAME_MAX = 40
 ANONYMOUS_NAME = "Anonymous"
 
@@ -651,11 +653,12 @@ def actor_of(carrier) -> str:
 def actor_names(actors) -> dict[str, str]:
     """``actor_of`` backwards, for a list that shows who wrote: ``{actor:
     shown}`` — an account by its username ("" once it is deleted), a link
-    visitor's ``link:<name>`` and the mirror as they are. One users.db
-    read."""
+    visitor's ``link:<name>`` and the mirror as they are, a Zotero link's
+    round as "Zotero". One users.db read."""
     with connect_users_db() as conn:
         names = account_names(conn, actors)
-    return {a: names.get(a) or (a if a.startswith(LINK_ACTOR_PREFIX) or a == MIRROR_ACTOR else "")
+    return {a: names.get(a) or ("Zotero" if a == ZOTERO_ACTOR else
+                                a if a.startswith(LINK_ACTOR_PREFIX) or a == MIRROR_ACTOR else "")
             for a in set(actors)}
 
 

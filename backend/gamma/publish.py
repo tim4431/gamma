@@ -17,7 +17,9 @@ Both halves live in every Gamma; which one runs depends on the server:
   mirror's two-way sync.
 
 A workspace that already mirrors another server (a lab NAS) cannot publish:
-one remote per copy, and the page's home is that other server.
+one remote per copy, and the page's home is that other server. Nor can a
+workspace a Zotero link keeps (gamma/zotero_sync.py, detached or not): a
+workspace is a clone, a publication or a Zotero link, never two of these.
 
 The share host also caps how many pages a plan may publish (``page_cap``,
 ``config.PLAN_PAGE_LIMITS``) and, with ``GAMMA_PAGE_HOST`` set, gives every
@@ -42,6 +44,7 @@ TOKEN_DAYS = 365
 MIRROR_NAME = "Gamma Cloud"
 SIGN_IN = "Sign in with Gamma Cloud to publish."
 IS_SHARE_HOST = "This server is a share host: share its pages directly."
+ZOTERO_LINKED = "This workspace is kept in step with a Zotero library, so it cannot publish pages."
 EXCHANGE_PATH = "/api/auth/cloud/exchange"
 
 
@@ -270,6 +273,12 @@ def share_host() -> str:
     return url
 
 
+def _zotero_linked(ws: str) -> bool:
+    """Whether a Zotero link keeps ``ws`` (detached or not)."""
+    with connect_users_db() as conn:
+        return conn.execute("SELECT 1 FROM zotero_links WHERE workspace_id = ?", (ws,)).fetchone() is not None
+
+
 def _require_page(ws: str, page_id: str) -> None:
     with connect_pages_db(ws) as conn:
         row = conn.execute("SELECT parent_id FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
@@ -473,6 +482,8 @@ def publish(user_id: str, ws: str, page_id: str, *, audience: str | None = None,
     if publishing_blocked():
         raise PublishError(409, IS_SHARE_HOST)
     _require_page(ws, page_id)
+    if _zotero_linked(ws):  # before any token is minted on the share host
+        raise PublishError(409, ZOTERO_LINKED)
     if not cloud_auth.settings()["enabled"] or not cloud_auth.grant_of(user_id)[1]:
         raise PublishError(409, SIGN_IN)
     host = share_host()
@@ -539,6 +550,8 @@ def state(user_id: str, ws: str, page_id: str) -> dict:
     mirror = sync_engine.get_mirror(ws, with_token=True)
     if publishing_blocked():
         reason = IS_SHARE_HOST
+    elif _zotero_linked(ws):
+        reason = ZOTERO_LINKED
     elif not cloud_auth.settings()["enabled"] or not cloud_auth.grant_of(user_id)[1]:
         reason = SIGN_IN
     else:

@@ -1,8 +1,10 @@
 // Conflict resolution for a clone (docs/dev/mirror.md), in git's words:
-// local is this clone, remote is origin. One card — ConflictCard — serves
-// every surface: the chip on a block row (its popover walks the page's
-// conflicts one by one), the sync pill's list and Settings (Workspaces →
-// Clones, Account & sync → Publishing).
+// local is this clone, remote is origin; and for a Zotero link
+// (docs/dev/zotero_sync.md), whose sides are Gamma and Zotero. One card —
+// ConflictCard — serves every surface: the chip on a block row or on the
+// page's record (its popover walks the page's conflicts one by one), the
+// sync pill's list and Settings (Workspaces → Clones and Zotero links,
+// Account & sync → Publishing).
 // A block both sides edited shows what each side changed as a word diff
 // against the text before either edit (removed words struck through, added
 // words in the side's colour), and under them the text that is in the block
@@ -10,17 +12,22 @@
 // Every version carries a radio, the one in the block preselected, and one
 // Apply confirms. A decision is an ordinary edit the next round pushes.
 // Rows from before the base was kept (and diverged blocks, which have
-// none) show the two texts against each other instead. The other kinds
-// are acknowledged with OK; what each kind says is conflictKinds.js's.
+// none) show the two texts against each other instead, as a Zotero
+// link's do: Gamma's version, kept on both sides (or in Gamma alone while
+// a receive-only link sends nothing), against Zotero's, which Apply can
+// take instead (an edit Gamma cannot write back may also be sent
+// anyway). The other kinds are acknowledged with OK; what each kind says is
+// conflictKinds.js's.
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
+import { linkPath } from "./syncLinks.js";
 import { T, t } from "../shared/i18n/i18n.js";
 import { guideEvents } from "../guide/events.js";
 import {
-  AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, ExternalLinkIcon,
-  HardDriveIcon, MergeIcon, ServerIcon, TrashIcon,
+  AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, CheckIcon, ChevronLeftIcon, ChevronRightIcon, ExternalLinkIcon,
+  HardDriveIcon, MergeIcon, ServerIcon, TrashIcon, UploadIcon,
 } from "../shared/ui/Icons";
-import { inkMergeLines, isTextual, kindOf as conflictKind } from "./conflictKinds.js";
+import { conflictPlace, inkMergeLines, isTextual, isZotero, kindOf as conflictKind, zoteroReason } from "./conflictKinds.js";
 import { Popover } from "../shared/ui/Surfaces";
 import { lcs, tokens, wordDiff } from "../shared/lib/wordDiff.js";
 
@@ -97,6 +104,13 @@ const SIDE = {
   theirs: { label: T("Remote"), hint: T("origin"), Icon: ServerIcon },
   result: { label: T("Merged"), hint: T("both edits in one text"), Icon: MergeIcon },
 };
+// A Zotero link's sides.
+const SIDE_ZOTERO = {
+  mine: { label: T("Gamma"), hint: T("this workspace"), Icon: HardDriveIcon },
+  theirs: { label: T("Zotero"), hint: T("zotero.org"), Icon: BookIcon },
+  result: SIDE.result,
+};
+const sidesOf = (conflict) => (isZotero(conflict) ? SIDE_ZOTERO : SIDE);
 
 // Neighbouring tokens of one tag become one run, the whitespace between
 // two marked tokens included — a phrase reads as a phrase, not as words.
@@ -122,8 +136,8 @@ export function Marked({ parts }) {
 // One version of the block: a header naming the side, a tag when it is the
 // text in the block now, a radio to pick it, the text with the marks. Its
 // name is the side and the hint it shows (`hint`, else the side's own).
-function Version({ side, parts, current, hint, group, selected, onSelect, busy }) {
-  const s = SIDE[side];
+function Version({ side, sides = SIDE, parts, current, hint, group, selected, onSelect, busy }) {
+  const s = sides[side];
   const pickable = Boolean(onSelect);
   return (
     <section className={`mergeVersion ${side} ${current ? "current" : ""} ${selected === side ? "selected" : ""}`}
@@ -131,7 +145,8 @@ function Version({ side, parts, current, hint, group, selected, onSelect, busy }
       <header className="mergeVersionHead">
         {pickable ? (
           <input type="radio" className="mergePick" name={group} value={side} checked={selected === side} disabled={busy}
-            onChange={() => onSelect(side)} aria-label={t(s.label)} title={t("Put the {side} text into the block", { side: t(s.label).toLowerCase() })} />
+            onChange={() => onSelect(side)} aria-label={t(s.label)}
+            title={sides === SIDE_ZOTERO ? t("Take {side}'s version", { side: t(s.label) }) : t("Put the {side} text into the block", { side: t(s.label).toLowerCase() })} />
         ) : null}
         <span className={`mergeSide ${side}`} title={hint || t(s.hint)}><s.Icon size={14} />{t(s.label)}</span>
         <span className="popoverHint mergeSideHint">{hint || t(s.hint)}</span>
@@ -150,32 +165,52 @@ function Version({ side, parts, current, hint, group, selected, onSelect, busy }
 // conflict resolved as it is.
 function Versions({ conflict, busy, onUse }) {
   const c = conflict;
-  const diverged = c.kind === "diverged";
-  const currentSide = !diverged ? "result" : c.result === c.mine ? "mine" : "theirs";
+  const kind = conflictKind(c);
+  const sides = sidesOf(c);
+  const zotero = isZotero(c);
+  // Two texts and no merged one: a diverged block, or a Zotero difference,
+  // whose Gamma version is the one kept (unless the row says Zotero's).
+  const two = c.kind === "diverged" || Boolean(kind.two);
+  const currentSide = !two ? "result"
+    : zotero ? (c.result && c.result === c.theirs && c.result !== c.mine ? "theirs" : "mine")
+    : c.result === c.mine ? "mine" : "theirs";
   const [selected, setSelected] = React.useState(currentSide);
   const group = React.useId();
-  const base = !diverged && typeof c.base === "string" && c.base ? c.base : null;
+  // (a Zotero row's base is its projection, not a text both sides came from)
+  const base = !two && typeof c.base === "string" && c.base ? c.base : null;
   const mineParts = base ? sideParts(base, c.mine, "mine") : onlyIn(c.mine, c.theirs, "mine");
   const theirsParts = base ? sideParts(base, c.theirs, "theirs") : onlyIn(c.theirs, c.mine, "theirs");
-  const pick = { group, selected, onSelect: setSelected, busy };
+  const pick = { group, selected, onSelect: setSelected, busy, sides };
   const keeps = selected === currentSide;
+  const sideWord = t(sides[selected].label);
+  const reason = zoteroReason(c);
   React.useEffect(() => { guideEvents.emit("conflict.shown"); }, []);
   return (
     <>
-      <div className={`mergeVersions ${diverged ? "two" : "three"}`} data-guide="merge.versions">
-        <Version side="mine" parts={mineParts} current={currentSide === "mine"} hint={base ? t("changed here") : undefined} {...pick} />
-        <Version side="theirs" parts={theirsParts} current={currentSide === "theirs"} hint={base ? t("changed on origin") : undefined} {...pick} />
-        {diverged ? null : (
+      {reason ? <div className="popoverHint mergeReason">{reason}</div> : null}
+      <div className={`mergeVersions ${two ? "two" : "three"}`} data-guide="merge.versions">
+        <Version side="mine" parts={mineParts} current={currentSide === "mine"} hint={base || zotero ? t("changed here") : undefined} {...pick} />
+        <Version side="theirs" parts={theirsParts} current={currentSide === "theirs"}
+          hint={base ? t("changed on origin") : zotero ? t("changed in Zotero") : undefined} {...pick} />
+        {two ? null : (
           <Version side="result" current {...pick}
             parts={base ? mergedParts(base, c.mine, c.theirs, c.result) : attribute(c.result, c.mine, c.theirs)} />
         )}
       </div>
       <div className="mergeActions">
         <span className="popoverHint mergeActionsHint">
-          {keeps ? t("Keeps the text as it is and marks the conflict resolved") : t("Puts the {side} text into the block", { side: t(SIDE[selected].label).toLowerCase() })}
+          {keeps ? t("Keeps the text as it is and marks the conflict resolved")
+            : zotero ? t("Takes {side}'s version, here and in Zotero", { side: sideWord })
+            : t("Puts the {side} text into the block", { side: sideWord.toLowerCase() })}
         </span>
+        {kind.send ? (
+          <button type="button" className="uiBtn sm" disabled={busy} onClick={() => onUse("mine")}
+            title={t("Write Gamma's version over Zotero's, losing what Gamma cannot hold")}>
+            <UploadIcon size={14} /> {t("Send to Zotero anyway")}
+          </button>
+        ) : null}
         <button type="button" className="uiBtn sm primary" disabled={busy} onClick={() => onUse(keeps ? "keep" : selected)}
-          title={keeps ? t("Mark resolved as it is") : t("Write the chosen text; the next round pushes it")}>
+          title={keeps ? t("Mark resolved as it is") : zotero ? t("Write the chosen version; the next round sends it") : t("Write the chosen text; the next round pushes it")}>
           <CheckIcon size={14} /> {t("Apply")}
         </button>
       </div>
@@ -186,9 +221,26 @@ function Versions({ conflict, busy, onUse }) {
 // A non-textual decision: the one text involved, to acknowledge. A removed
 // block or page carries the text of the side that lost it, a drawing the
 // remote merged what each side lost (inkMergeLines), one it refused its
-// reason.
+// reason; a Zotero row says what happened in its own sentence (`result`).
 function Decision({ conflict }) {
   const c = conflict;
+  if (isZotero(c)) {
+    // the row's sentence (a refusal, Gamma giving up after its tries,
+    // another member's annotation back), then what each side holds
+    const reason = zoteroReason(c);
+    const shown = [["mine", c.mine, t("in Gamma")], ["theirs", c.theirs, t("in Zotero")]].filter(([, text]) => text);
+    if (!shown.length && !reason) return null;
+    return (
+      <>
+        {reason ? <div className="popoverHint mergeReason">{reason}</div> : null}
+        {shown.length ? (
+          <div className={`mergeVersions ${shown.length > 1 ? "two" : "one"}`}>
+            {shown.map(([side, text, hint]) => <Version key={side} side={side} sides={SIDE_ZOTERO} parts={[{ text, tag: "same" }]} hint={hint} />)}
+          </div>
+        ) : null}
+      </>
+    );
+  }
   if (c.kind === "ink_merged") {
     const lines = inkMergeLines(c);
     return (
@@ -211,24 +263,28 @@ function Decision({ conflict }) {
   );
 }
 
-// A mirror's open conflicts and their resolution, for the lists (the sync
-// pill's review view, Settings → Workspaces → Clones): `[items, busy,
-// resolve]` — `items` null while loading; `resolve(conflict, choice)` posts
-// the choice, drops the row and raises `gamma:mirror` so the page's chips
-// and the pill follow; `onError(message)` hears a failed post.
-export function useConflicts(wsId, { onError } = {}) {
+// A link's open conflicts and their resolution, for the lists (the sync
+// pill's review view, Settings → Workspaces → Clones and Zotero links):
+// `[items, busy, resolve, keepAll]` — `items` null while loading;
+// `resolve(conflict, choice)` posts the choice, drops the row and raises
+// `gamma:mirror` so the page's chips and the pill follow; `keepAll()` marks
+// every listed one seen, keeping what the workspace holds (a Zotero link's
+// list offers it: a first link can leave many); `onError(message)` hears a
+// failed post. `kind` is the link's, "mirror" or "zotero" (syncLinks.js).
+export function useConflicts(wsId, { onError, kind = "mirror" } = {}) {
   const [items, setItems] = React.useState(null);
   const [busy, setBusy] = React.useState(false);
   React.useEffect(() => {
     setItems(null);
-    apiJson(`${API}/mirrors/${encodeURIComponent(wsId)}/conflicts`).then((d) => setItems(d.conflicts || [])).catch(() => setItems([]));
-  }, [wsId]);
+    apiJson(`${API}${linkPath(kind, wsId, "/conflicts")}`).then((d) => setItems(d.conflicts || [])).catch(() => setItems([]));
+  }, [wsId, kind]);
+  const post = React.useCallback((c, choice) => apiJson(`${API}${linkPath(kind, wsId, `/conflicts/${c.id}`)}`, {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ choice }),
+  }), [wsId, kind]);
   const resolve = React.useCallback(async (c, choice) => {
     setBusy(true);
     try {
-      await apiJson(`${API}/mirrors/${encodeURIComponent(wsId)}/conflicts/${c.id}`, {
-        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ choice }),
-      });
+      await post(c, choice);
       setItems((prev) => (prev || []).filter((x) => x.id !== c.id));
     } catch (err) {
       onError?.(err.message);
@@ -236,18 +292,38 @@ export function useConflicts(wsId, { onError } = {}) {
       setBusy(false);
       window.dispatchEvent(new CustomEvent("gamma:mirror"));
     }
-  }, [wsId, onError]);
-  return [items, busy, resolve];
+  }, [post, onError]);
+  const keepAll = React.useCallback(async () => {
+    setBusy(true);
+    const kept = new Set();
+    try {
+      for (const c of items || []) {
+        await post(c, "keep");
+        kept.add(c.id);
+      }
+    } catch (err) {
+      onError?.(err.message);
+    } finally {
+      setItems((prev) => (prev || []).filter((x) => !kept.has(x.id)));
+      setBusy(false);
+      window.dispatchEvent(new CustomEvent("gamma:mirror"));
+    }
+  }, [items, post, onError]);
+  return [items, busy, resolve, keepAll];
 }
 
 // The card. `onResolve(conflict, choice)` with choice keep | mine | theirs;
 // `nav` {index, total, onStep(delta)} walks a page's conflicts (the row
-// chip); `onOpen` jumps to the block (the lists); `showPage` names the page.
+// chip); `onOpen` jumps to the block (the lists), or to the folder or
+// label a row of the folders or labels tree is about; `showPage` names
+// the page.
 export function ConflictCard({ conflict, busy, onResolve, nav, onOpen, showPage = false }) {
   const kind = kindOf(conflict);
   const textual = isTextual(conflict);
   const many = nav && nav.total > 1;
   const pageGone = conflict.kind === "dropped" && conflict.page_title == null; // a removed page: nothing to open
+  const place = conflictPlace(conflict);
+  const opens = place === "folder" ? t("Open the folder") : place === "label" ? t("Open the label") : "";
   return (
     <div className={`mergeCard kind-${conflict.kind}`}>
       <div className="mergeHead">
@@ -255,7 +331,7 @@ export function ConflictCard({ conflict, busy, onResolve, nav, onOpen, showPage 
         <span className="mergeHeadText">
           <span className="popoverTitle">
             {t(kind.short)}
-            {showPage && conflict.page_title ? <span className="mergePage" title={conflict.page_title}> · {conflict.page_title}</span> : null}
+            {showPage && conflict.page_title && place === "page" ? <span className="mergePage" title={conflict.page_title}> · {conflict.page_title}</span> : null}
           </span>
           <span className="popoverHint">{t(kind.long)}</span>
         </span>
@@ -267,7 +343,7 @@ export function ConflictCard({ conflict, busy, onResolve, nav, onOpen, showPage 
           </span>
         ) : null}
         {onOpen && !pageGone ? (
-          <button type="button" className="uiBtn sm iconSq" onClick={() => onOpen(conflict)} aria-label={t("Open the block")} title={t("Open the page on this block")}>
+          <button type="button" className="uiBtn sm iconSq" onClick={() => onOpen(conflict)} aria-label={opens || t("Open the block")} title={opens || t("Open the page on this block")}>
             <ExternalLinkIcon size={16} />
           </button>
         ) : null}

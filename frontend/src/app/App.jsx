@@ -72,7 +72,7 @@ import {
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoreIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon,
   RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
   ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon, MicIcon, MessageSquareIcon, BellIcon,
-  PanelTopIcon, LocateIcon, TextSearchIcon,
+  PanelTopIcon, LocateIcon, TextSearchIcon, CloudDownloadIcon,
 } from "../shared/ui/Icons";
 
 
@@ -191,6 +191,12 @@ import { AllowanceMeter, Empty, QuotaMeter, Section } from "../settings/Settings
 import { LazyBoundary, lazySurface, useLatch, whenIdle } from "../shared/ui/lazy";
 import { libraryAccess } from "../library/libraryAccess";
 import { MirrorPopover } from "../collaboration/MirrorPopover";
+import { MergeChip } from "../collaboration/MergeResolver";
+import {
+  ZOTERO_PDF_COMING, isZoteroPdfComing, linkGone, linkPath, pillLink, zoteroLibraryLabel, zoteroPdfCard, zoteroPdfSource, zoteroPdfState,
+} from "../collaboration/syncLinks.js";
+import { ZoteroPdfCard, ZoteroReadonlyBadge } from "../collaboration/ZoteroPage.jsx";
+import { fetchZoteroPdf } from "../transfers/zoteroApi";
 import {
   EMPTY_TREE,
   addToFolder,
@@ -1280,7 +1286,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   async function duplicatePage(pageId) {
     const data = await apiJson(`${API}/blocks/${pageId}/subtree`);
     const src = data.block || {};
-    const { doc_id: pdfId, ...properties } = src.properties || {};
+    // (nor what a Zotero link says of the page it keeps, which a copy is not: docs/dev/zotero_sync.md)
+    const { doc_id: pdfId, zotero_pdf: _zoteroPdf, zotero_readonly: _readonly, zotero_author: _author, ...properties } = src.properties || {};
     if (pdfId && !properties.source_url) properties.source_url = `/api/uploads/${pdfId}.pdf`;
     const created = await apiJson(`${API}/blocks`, {
       method: "POST",
@@ -1291,7 +1298,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const clone = (list) => (list || []).map((b) => {
       const id = makeId();
       ids.set(b.id, id);
-      return { ...b, id, properties: { ...(b.properties || {}) }, children: clone(b.children) };
+      const { zotero_readonly: _readonly, zotero_author: _author, ...properties } = b.properties || {};
+      return { ...b, id, properties, children: clone(b.children) };
     });
     const remap = (list) => {
       for (const b of list || []) {
@@ -4168,20 +4176,27 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
 
   // Merges an offline copy's sync decided on this page's blocks
-  // (docs/dev/mirror.md): a chip on each such row (MergeResolver). Read on
-  // page open and after any sync event; a decision is posted and the block's
-  // new text arrives over the page socket like any edit.
+  // (docs/dev/mirror.md), and the differences a Zotero link kept
+  // (docs/dev/zotero_sync.md): a chip on each such row (MergeResolver), and
+  // for a link's row on the page itself (its record) one on the page's
+  // header. Read on page open and after any sync event; a decision is posted
+  // and the block's new text arrives over the page socket like any edit.
   const [merges, setMerges] = useState(null);
-  const mirrorWs = workspace?.mirror_of || workspace?.publishing ? workspace.id : "";
+  // The workspace's link (syncLinks.js pillLink): the session row's, or one
+  // the pill detached ({ws, kind}, `pillHeld`), whose pill stays, detached
+  // with Reattach, though the row read again lists an ordinary workspace.
+  const [pillHeld, setPillHeld] = useState(null);
+  const syncKind = pillLink(workspace, pillHeld);
+  const mirrorWs = syncKind ? workspace.id : "";
   const loadMerges = useCallback(async () => {
     if (!mirrorWs || !focusedBlockId || !authUser?.user) { setMerges(null); return; }
     try {
-      const d = await apiJson(`${API}/mirrors/${encodeURIComponent(mirrorWs)}/conflicts?page=${encodeURIComponent(focusedBlockId)}`);
+      const d = await apiJson(`${API}${linkPath(syncKind, mirrorWs, `/conflicts?page=${encodeURIComponent(focusedBlockId)}`)}`);
       const map = new Map();
       for (const c of d.conflicts || []) if (!map.has(c.block_id)) map.set(c.block_id, c);
       setMerges(map.size ? map : null);
     } catch { setMerges(null); }
-  }, [mirrorWs, focusedBlockId, authUser?.user]);
+  }, [syncKind, mirrorWs, focusedBlockId, authUser?.user]);
   // No timer of its own: the sync pill polls the mirror and raises
   // "gamma:mirror-changed" when its open conflicts move.
   useEffect(() => { loadMerges(); }, [loadMerges]);
@@ -4198,13 +4213,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // conflicts is worked through without hunting for the chips.
   const [mergeOpen, setMergeOpen] = useState(null);
   useEffect(() => { setMergeOpen(null); }, [focusedBlockId]);
+  // (a Zotero link's row on the page itself, its record, comes first)
+  const recordMerge = syncKind === "zotero" && focusedBlockId ? merges?.get(focusedBlockId) || null : null;
   const mergeOrder = useMemo(
-    () => (merges ? flattenBlocks(blocks).map((b) => b.id).filter((id) => merges.has(id)) : []),
-    [merges, blocks],
+    () => (merges ? [...(recordMerge ? [focusedBlockId] : []), ...flattenBlocks(blocks).map((b) => b.id).filter((id) => merges.has(id))] : []),
+    [merges, blocks, recordMerge, focusedBlockId],
   );
   function showMerge(id) {
     setMergeOpen(id);
-    if (id) jumpToRef.current?.(focusedBlockId, id);
+    if (id && id !== focusedBlockId) jumpToRef.current?.(focusedBlockId, id);
   }
   function stepMerge(fromId, delta) {
     if (!mergeOrder.length) { setMergeOpen(null); return; }
@@ -4213,7 +4230,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
   const mergeNav = (id) => ({ index: mergeOrder.indexOf(id) + 1, total: mergeOrder.length, onStep: (delta) => stepMerge(id, delta) });
   async function resolveMerge(conflict, choice) {
-    await apiJson(`${API}/mirrors/${encodeURIComponent(mirrorWs)}/conflicts/${conflict.id}`, {
+    await apiJson(`${API}${linkPath(syncKind, mirrorWs, `/conflicts/${conflict.id}`)}`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ choice }),
     });
     // on to the next conflict down the page (the one above when it was the last), else done
@@ -4227,13 +4244,23 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const jumpToRef = useRef(null);
   jumpToRef.current = (pageId, blockId) => {
     setOpenPopover(null);
+    // a row of the folders or labels tree (a Zotero collection's) is about
+    // its folder or label, which the library shows: the tree is no page
+    if (pageId === "folders" || pageId === "labels") {
+      if (!homeMode) goHome();
+      if (pageId === "folders") openFolder(blockId || lib.root);
+      else if (blockId) openLabel(blockId, "");
+      return;
+    }
+    // a conflict on the page itself (a Zotero link's record) is on its header, not a row
+    if (blockId && blockId === pageId) blockId = "";
     if (pageId && pageId !== focusedBlockId) { openPage(pageId, blockId); return; }
     if (blockId) { scrollToBlock(blockId); reveal(blockId); }
   };
   useEffect(() => {
     const h = (e) => jumpToRef.current?.(e.detail?.page, e.detail?.block);
-    // the link was forgotten: this is an ordinary workspace again (no pill, no merge chips)
-    const gone = () => setWorkspace((prev) => (prev && prev.mirror_of ? { ...prev, mirror_of: "" } : prev));
+    // the link was forgotten: this is an ordinary workspace again (no pill, no merge chips, no PDF a link brings)
+    const gone = () => setWorkspace(linkGone);
     window.addEventListener("gamma:jump", h);
     window.addEventListener("gamma:mirror-gone", gone);
     return () => { window.removeEventListener("gamma:jump", h); window.removeEventListener("gamma:mirror-gone", gone); };
@@ -5532,6 +5559,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         openBlock(err.data.page_id, { pushNav: true });
         return;
       }
+      if (isZoteroPdfComing(err)) {
+        // The page waits for the PDF its Zotero item holds (this view had not
+        // heard yet): the page is read again, so its card shows in the
+        // paperclip's place.
+        updateTask(taskId, { state: "done", info: t("in Zotero") });
+        setStatus(t(ZOTERO_PDF_COMING));
+        setLoading(false);
+        if (focusedBlockIdRef.current === pageId) openBlock(pageId);
+        return;
+      }
       updateTask(taskId, { state: "failed", info: (err.message || "failed") });
       setStatus(replace
         ? t("Replace failed: {message}", { message: err.message })
@@ -6587,7 +6624,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
   function markPublishing() {
     // the header's sync pill follows the publication without a reload
-    setWorkspace((prev) => (prev && !prev.mirror_of && !prev.publishing ? { ...prev, publishing: true } : prev));
+    setWorkspace((prev) => (prev && !prev.mirror_of && !prev.zotero_of && !prev.publishing ? { ...prev, publishing: true } : prev));
     window.dispatchEvent(new CustomEvent("gamma:mirror"));
   }
   async function publishPage(patch) {
@@ -6931,6 +6968,26 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // What the open page carries — THE switch for layout and page-level
   // affordances (docs/dev/block_centric.md). pdfUrl is only the viewer's input.
   const pageAttach = useMemo(() => pageAttachment(focusedBlock), [focusedBlock]);
+  // A page whose PDF Zotero holds and Gamma not yet (its `zotero_pdf`,
+  // docs/dev/zotero_sync.md): its card shows in the attach popover, in the
+  // prompt's place while something brings that PDF (`zoteroPdfShown`, the
+  // server refuses another meanwhile), above the prompt when nothing can
+  // (a linked file, WebDAV, no file access, a failed download, no link any
+  // more), so the page takes a copy of its own, which stays in Gamma.
+  // Opening the page asks a live link for that PDF first, once.
+  const zoteroPdf = !pageAttach && focusedBlock?.properties?.zotero_pdf || null;
+  const zoteroSource = shareMode ? "" : zoteroPdfSource(workspace);
+  const zoteroLinked = zoteroSource === "zotero";
+  const zoteroCard = zoteroPdfCard(zoteroPdf, { source: zoteroSource });
+  const zoteroPdfShown = zoteroCard?.takesOver || false;
+  const fetchZoteroPdfNow = (pageId) => { fetchZoteroPdf(workspace.id, pageId).catch(() => {}); };
+  const zoteroPdfAsked = useRef(new Set());
+  const zoteroPdfWanted = zoteroLinked && zoteroPdfState(zoteroPdf)?.fetch ? focusedBlock?.id || "" : "";
+  useEffect(() => {
+    if (!zoteroPdfWanted || zoteroPdfAsked.current.has(zoteroPdfWanted)) return;
+    zoteroPdfAsked.current.add(zoteroPdfWanted);
+    fetchZoteroPdfNow(zoteroPdfWanted);
+  }, [zoteroPdfWanted]); // eslint-disable-line react-hooks/exhaustive-deps -- once per page
   // The page's sheets of paper (notebook/notebook.js, docs/dev/notebooks.md).
   // The notes view draws them among the blocks (notebook/NoteSheet.jsx); on
   // a page without a PDF the notebook view — `notebook`, switched per page
@@ -7968,8 +8025,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // is on screen: a PDF or the notebook view, not closed, and on a
       // phone not under the Notes or Chat panel
       viewerTools: !!(pdfUrl || notebook) && !viewerHidden && !(isPhone && phonePanel),
-      // this workspace has an offline copy or a publication, so it has a sync pill
-      clonedWorkspace: !!(workspace?.mirror_of || workspace?.publishing),
+      // this workspace has an offline copy, a publication or a Zotero link, so it has a sync pill
+      clonedWorkspace: !!syncKind,
       installable: HOME_SCREEN_INSTALLABLE,
       // Gamma Connector in this browser (undefined while it is asked, and
       // in the desktop app), and a Gamma Cloud account this one could link.
@@ -9296,19 +9353,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     <NotebookIcon size={16} /> {t("Notebook")}
                   </button>
                 ) : null}
-                {pageAttach || (!readOnly && !notebook) ? (
+                {pageAttach || zoteroPdf || (!readOnly && !notebook) ? (
                   <span data-popover="attach" className="popoverAnchor">
                     <button
                       className={`pageActionBtn ${pageAttach ? "active" : ""}`}
                       title={pageAttach
                         ? t("Document: {name}", { name: pageAttach.name || defaultPageTitle(pageAttach) })
+                        : zoteroPdfShown ? zoteroCard.title
                         : t("Attach a PDF as this page's document (URL, arXiv id, DOI, or upload) — it gets the viewer, highlights and metadata. Other files go into blocks.")}
-                      aria-label={pageAttach ? t("Document") : t("Attach document")}
+                      aria-label={pageAttach ? t("Document") : zoteroPdfShown ? t("PDF in Zotero") : t("Attach document")}
                       aria-haspopup={pageAttach ? "menu" : undefined}
                       aria-expanded={openPopover === "attach"}
                       disabled={loading}
                       onClick={() => setOpenPopover((p) => (p === "attach" ? null : "attach"))}
-                    ><PaperclipIcon size={16} /></button>
+                    >{zoteroPdfShown ? <CloudDownloadIcon size={16} /> : <PaperclipIcon size={16} />}</button>
                     {openPopover === "attach" && pageAttach ? (
                       <Popover as={MenuScope} className="addPopover attachPopover" aria-label={t("Document")}>
                         <div className="popoverTitle">{t("Document")}</div>
@@ -9361,30 +9419,50 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           </>
                         ) : null}
                       </Popover>
+                    ) : openPopover === "attach" && zoteroPdfShown ? (
+                      <Popover className="addPopover attachPopover" aria-label={t("PDF in Zotero")}>
+                        <ZoteroPdfCard pdf={zoteroPdf} source={zoteroSource} onFetch={() => fetchZoteroPdfNow(focusedBlockId)} />
+                      </Popover>
                     ) : openPopover === "attach" ? (
                       <Popover className="addPopover attachPopover">
-                        <div className="popoverTitle">{t("Attach a document")}</div>
-                        <input
-                          autoFocus
-                          className="searchInput"
-                          value={attachUrl}
-                          onChange={(e) => setAttachUrl(e.target.value)}
-                          placeholder={t("PDF URL, arXiv id, or DOI — press Enter")}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" && attachUrl.trim() && !loading) attachPdfToPage({ url: attachUrl.trim() });
-                            else if (e.key === "Escape") setOpenPopover(null);
-                          }}
-                        />
-                        <MenuItem icon={UploadIcon} disabled={loading} onClick={() => attachFileRef.current?.click()}>{t("Upload a PDF…")}</MenuItem>
-                        <input
-                          ref={attachFileRef}
-                          type="file"
-                          accept=".pdf,application/pdf"
-                          hidden
-                          onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) attachPdfToPage({ file: f }); }}
-                        />
+                        {/* a PDF in Zotero that cannot come: why, above the page's own copy */}
+                        {zoteroPdf ? (
+                          <ZoteroPdfCard pdf={zoteroPdf} source={zoteroSource} ownCopy={!readOnly && !notebook}
+                            onFetch={() => fetchZoteroPdfNow(focusedBlockId)} />
+                        ) : null}
+                        {!readOnly && !notebook ? <>
+                          <div className="popoverTitle">{t("Attach a document")}</div>
+                          <input
+                            autoFocus={!zoteroPdf}
+                            className="searchInput"
+                            value={attachUrl}
+                            onChange={(e) => setAttachUrl(e.target.value)}
+                            placeholder={t("PDF URL, arXiv id, or DOI — press Enter")}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && attachUrl.trim() && !loading) attachPdfToPage({ url: attachUrl.trim() });
+                              else if (e.key === "Escape") setOpenPopover(null);
+                            }}
+                          />
+                          <MenuItem icon={UploadIcon} disabled={loading} onClick={() => attachFileRef.current?.click()}>{t("Upload a PDF…")}</MenuItem>
+                          <input
+                            ref={attachFileRef}
+                            type="file"
+                            accept=".pdf,application/pdf"
+                            hidden
+                            onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) attachPdfToPage({ file: f }); }}
+                          />
+                        </> : null}
                       </Popover>
                     ) : null}
+                  </span>
+                ) : null}
+                {/* a note page that is a Zotero note Gamma cannot write back */}
+                {focusedBlock?.properties?.zotero_readonly ? <ZoteroReadonlyBadge props={focusedBlock.properties} onPage /> : null}
+                {/* a Zotero link's difference on the record (both sides changed a field) */}
+                {recordMerge ? (
+                  <span className="zoteroRecordChip">
+                    <MergeChip conflict={recordMerge} onResolve={resolveMerge} nav={mergeNav(focusedBlockId)}
+                      open={mergeOpen === focusedBlockId} onOpenChange={(v) => setMergeOpen(v ? focusedBlockId : null)} />
                   </span>
                 ) : null}
                 {pageAttach || pageMeta ? (
@@ -10573,7 +10651,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       hold=".slashMenu, .refPopup">
                       <FileChipContext.Provider value={fileChipCtx}>
                         <NoteSheetContext.Provider value={noteSheetCtx}>
-                          <BlockTree blocks={blocks} readOnly={readOnly} rowProps={stableRowProps(rowProps)} />
+                          <BlockTree blocks={blocks} readOnly={readOnly} rowProps={stableRowProps(rowProps)}
+                            zoteroLock={focusedBlock?.properties?.zotero_readonly ? focusedBlockId : ""} />
                         </NoteSheetContext.Provider>
                       </FileChipContext.Provider>
                       {backlinksPanel}
@@ -10909,7 +10988,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // the open page's Share, or the open folder's; a folder's is a row on a phone
   const sharesPage = !!focusedBlockId && !homeMode;
   const shareOnBar = onBar("share") && (sharesPage || !isPhone);
-  const syncs = !!authUser?.user && !!(workspace?.mirror_of || workspace?.publishing);
+  const syncs = !!authUser?.user && !!syncKind;
   const phoneMainActive = phonePanel === null || (phonePanel === "notes" && centerNotes);
   // An item's row in the account menu while it is off the bar (the View
   // menu's rows are the menu's last group, below).
@@ -11106,17 +11185,26 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     ) : null),
     sync: () => (syncs ? (
       <MirrorPopover
-        key={workspace.id}
+        key={`${syncKind}:${workspace.id}`}
         wsId={workspace.id}
-        mirrorOf={workspace.mirror_of}
-        publication={!workspace.mirror_of && !!workspace.publishing}
+        kind={syncKind}
+        mirrorOf={syncKind === "zotero" ? zoteroLibraryLabel({ name: workspace.zotero_of }) : workspace.mirror_of}
+        publication={syncKind === "mirror" && !workspace.mirror_of && !!workspace.publishing}
         pageId={focusedBlockId}
         everyPage={topbarLayout.modes.sync === "always"}
         button={onBar("sync")}
         open={openPopover === "mirror"}
         onToggle={() => setOpenPopover(openPopover === "mirror" ? null : "mirror")}
         jumpTo={(pageId, blockId) => jumpToRef.current?.(pageId, blockId)}
-        onOpenSettings={() => openSettingsPane(workspace.mirror_of ? "workspaces" : "account")}
+        onOpenSettings={() => openSettingsPane(workspace.mirror_of || workspace.mirror_detached || syncKind === "zotero" ? "workspaces" : "account")}
+        onOpenAccount={() => openSettingsPane("account")}
+        onLinkMoved={(path) => {
+          // detached or reattached here: the session row says so (zotero_of,
+          // mirror_of, …), and the page's PDF card follows; the pill that
+          // detached the link stays, for its Reattach
+          if (path === "/detach") setPillHeld({ ws: workspace.id, kind: syncKind });
+          checkSession();
+        }}
       />
     ) : null),
     inbox: () => (inbox.enabled ? (
@@ -12666,7 +12754,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             build: authUser?.build,
             view: { mode: shareMode ? "share" : homeMode ? "home" : "page", pdf: !!pdfUrl, readOnly, phone: isPhone, theme, uiScale },
             workspace: workspace ? {
-              kind: workspace.mirror_of ? "clone" : workspace.personal ? "personal" : workspace.access === "public" ? "public" : "shared",
+              kind: workspace.mirror_of ? "clone" : workspace.zotero_of ? "zotero" : workspace.personal ? "personal" : workspace.access === "public" ? "public" : "shared",
               role: workspace.role,
             } : null,
             events: sysLog,

@@ -2474,6 +2474,9 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .mirrorSetActions { display: flex; gap: 6px; flex-wrap: wrap; padding: 6px 4px; }
 .mirrorConfirm { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 4px; font-size: var(--fs-xs); color: var(--text-secondary); }
 .mirrorConfirm > svg { color: var(--warn); flex-shrink: 0; }
+/* why the sync settings' last change was refused, and Reconnect when a connection mends it */
+.mirrorRefused { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 2px 4px 6px; }
+.mirrorRefused .settingsPaneHint { padding: 0; flex: 1 1 200px; min-width: 0; }
 .mirrorConfirmBtns { display: inline-flex; gap: 6px; margin-left: auto; }
 /* The merge chip on a block row and the conflict card (MergeResolver.jsx):
    one card for the chip's popover, the sync pill's list and Settings — the
@@ -2491,6 +2494,8 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .mergePage { font-weight: 500; color: var(--text-muted); }
 .mergeNav { display: inline-flex; align-items: center; gap: 2px; flex-shrink: 0; }
 .mergeNavCount { font-size: var(--fs-2xs); color: var(--text-muted); font-variant-numeric: tabular-nums; min-width: 34px; text-align: center; }
+/* a Zotero row's own sentence (a refusal, a give-up, an annotation back) */
+.mergeReason { padding: 0 4px; white-space: pre-wrap; word-break: break-word; }
 .mergeVersions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .mergeVersions.one, .mirrorPopover .mergeVersions { grid-template-columns: 1fr; }
 .mergeVersions .mergeVersion.result { grid-column: 1 / -1; }

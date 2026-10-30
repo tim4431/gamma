@@ -278,6 +278,6 @@ stops a round on Windows.
   app" above); a computer without the app runs the client.
 - A link to a folder of a local server's own workspace syncs while that
   server runs: outside background mode, the app starts at launch only the
-  servers holding clones and the folder host, so such a link waits for its
-  server to be opened.
+  servers holding clones or a Zotero link and the folder host, so such a
+  link waits for its server to be opened.
 - A remote source's token expires as its issuer set; see the same section.

@@ -1055,56 +1055,59 @@ def delete_tree(ws: str, conn, tree: str, block_id: str, *, actor: str,
     return rows, carried, results
 
 
-def record_ops(ws: str, conn, page_id: str, ops: list[dict], *, actor: str) -> int:
+def record_ops(ws: str, conn, page_id: str, ops: list[dict], *, actor: str, client: str = "") -> int:
     """Log + publish ops a writer performed with its own SQL (a cross-page
     move, whose two halves are a delete on one page and an arrival on the
-    other), touching the page like a batch. Commits."""
+    other), touching the page like a batch. ``client`` is logged, sent with
+    the ops and told to the commit listeners, as a batch's is. Commits."""
     now = page_now()
     touch_page(conn, page_id, actor, now=now)
-    seq = _log(conn, page_id, actor, "", now, ops)
+    seq = _log(conn, page_id, actor, client, now, ops)
     conn.commit()
     collab.publish(ws, page_id, {"t": "ops", "seq": seq, "at": now, "actor": actor,
-                                   "client": "", "ops": ops})
-    notify_commit(ws, "", page_id)
+                                   "client": client, "ops": ops})
+    notify_commit(ws, client, page_id)
     return seq
 
 
 def move_across_pages(ws: str, conn, block_id: str, parent_id: str, position: str,
-                      src_page_id: str, page_id: str, *, actor: str) -> None:
+                      src_page_id: str, page_id: str, *, actor: str, client: str = "") -> None:
     """Move a block with its subtree under ``parent_id`` on another page.
     The op vocabulary is per page, so this is its own SQL: the subtree's
     rows take the page's id, a delete is logged on the page it leaves and a
-    reload on the page it joins (each touching its page); the subtree's
-    comments follow it (``comments.place``). Commits."""
+    reload on the page it joins (each touching its page, both under
+    ``client``); the subtree's comments follow it (``comments.place``).
+    Commits."""
     conn.execute("UPDATE unified_blocks SET parent_id = ?, position = ?, updated_at = ? WHERE id = ?",
                  (parent_id, position, page_now(), block_id))
     move_subtree_to_page(conn, block_id, page_id)
     comments.place(conn, [r[0] for r in fetch_subtree(conn, block_id)], page_id)
-    record_ops(ws, conn, src_page_id, [{"op": "delete", "id": block_id}], actor=actor)
-    note_reload(ws, conn, page_id, actor)
+    record_ops(ws, conn, src_page_id, [{"op": "delete", "id": block_id}], actor=actor, client=client)
+    note_reload(ws, conn, page_id, actor, client=client)
 
 
-def note_reload(ws: str, conn, page_id: str, actor: str) -> int:
+def note_reload(ws: str, conn, page_id: str, actor: str, *, client: str = "") -> int:
     """``log_reload`` + commit + fan-out, for writers that rewrote a page's
-    tree wholesale (the subtree replace, imports into an existing page)."""
-    seq = log_reload(conn, page_id, actor)
+    tree wholesale (the subtree replace, imports into an existing page);
+    ``client`` as ``record_ops`` takes it."""
+    seq = log_reload(conn, page_id, actor, client=client)
     conn.commit()
     collab.publish_reload(ws, page_id, seq)
-    notify_commit(ws, "", page_id)
+    notify_commit(ws, client, page_id)
     return seq
 
 
-def log_reload(conn, page_id: str, actor: str, *, after: int = 0) -> int:
+def log_reload(conn, page_id: str, actor: str, *, after: int = 0, client: str = "") -> int:
     """Log a change ops can't express (a subtree replace, an import into an
     existing page) so a catching-up client knows to refetch, and touch the
     page like any batch (``touch_page``: the home feed and the change feed).
     ``after``: a seq the entry must land above even when this log is behind
     it (a restored backup's log, which a client may have seen past —
-    gamma/ws_backup.py). Caller commits and publishes
-    (``collab.publish_reload``)."""
+    gamma/ws_backup.py). ``client``: the writer's, logged. Caller commits
+    and publishes (``collab.publish_reload``)."""
     now = page_now()
     touch_page(conn, page_id, actor, now=now)
-    return _log(conn, page_id, actor, "", now, [{"op": "reload"}], after)
+    return _log(conn, page_id, actor, client, now, [{"op": "reload"}], after)
 
 
 def latest_seq(conn, page_id: str) -> int:

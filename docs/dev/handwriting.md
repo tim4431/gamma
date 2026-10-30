@@ -4508,6 +4508,13 @@ reach.
   reads the samples back exactly; the stroke verbatim (its time, a
   pencil's `o`, every key) rides in the note's private copy, which the
   import takes while the curve still has those samples.
+- A Zotero link (`gamma/zotero_annotations.py`,
+  [zotero_sync.md](zotero_sync.md#annotations)) sends an ink group on a
+  PDF page as one Zotero `ink` annotation per look, since an item has one
+  colour and one width. Each such item owns the ids of its strokes: a row
+  keeps its item when its strokes change look, and a pull replaces exactly
+  the strokes an item owns. What a stroke holds that Zotero's paths cannot
+  (pressure, time) never reads as a change on either side.
 - `gamma/ink_view.py`: the picture the chat sees of a group (`view_ink`,
   and an attached handwriting block), drawn where it was written.
   - A sheet goes through `notebook_pdf`, and a PDF page through

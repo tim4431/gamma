@@ -1337,7 +1337,8 @@ export default function SettingsDialog({
                   {workspace ? <SyncSettings value={workspace} /> : null}
                 </> : null}
                 {pane === "users" ? <UsersSettings value={users} /> : null}
-                {pane === "workspaces" ? <WorkspacesSettings value={workspace} onServer={available("server") ? () => navigate("server", t("Shared workspaces")) : null} /> : null}
+                {pane === "workspaces" ? <WorkspacesSettings value={workspace} onServer={available("server") ? () => navigate("server", t("Shared workspaces")) : null}
+                  onAccount={() => navigate("account", t("Zotero"))} /> : null}
                 {pane === "backups" && backups ? <WorkspaceBackups value={backups} /> : null}
                 {pane === "server" ? <ServerSettings value={server} /> : null}
                 {pane === "diagnostics" ? <AdvancedSettings value={diagnostics} /> : null}

@@ -160,6 +160,27 @@ def test_publication_conflicts_point_at_the_sync_pane(nuser, monkeypatch):
     assert one["title"].startswith("1 sync conflict ") and one["message"] == "{n} sync conflict to look at in your clones"
 
 
+def test_zotero_link_conflicts_have_their_own_notice(nuser, monkeypatch):
+    links = [{"workspace_id": "ws-zotero"}, {"workspace_id": "ws-group"}]
+    marks = {"ws-zotero": (0, 0), "ws-group": (0, 0), "ws-clone": (4, 9)}
+    monkeypatch.setattr(notices.zotero_sync, "list_links", lambda owner: links if owner == account_of("nuser") else [])
+    monkeypatch.setattr(notices.sync_engine, "list_mirrors", lambda owner: [{"workspace_id": "ws-clone"}])
+    monkeypatch.setattr(notices.sync_engine, "open_conflict_mark", lambda ws: marks[ws])
+    assert _only(nuser, "zotero-conflicts") is None
+    assert _only(nuser, "mirror-conflicts")["title"].startswith("4 sync conflicts")  # the clones' stay apart
+    marks["ws-zotero"] = (1, 3)
+    one = _only(nuser, "zotero-conflicts")
+    assert one["pane"] == "workspaces" and one["tone"] == "warn"
+    assert one["title"] == "1 sync conflict to look at in your Zotero link"
+    assert one["message"] == "{n} sync conflict to look at in your Zotero link" and one["params"] == {"n": 1}
+    nuser.post("/api/notices/zotero-conflicts/seen", json={"fingerprint": one["fingerprint"]})
+    assert _only(nuser, "zotero-conflicts") is None
+    marks["ws-group"] = (2, 5)  # a new conflict in another link brings it back, counted together
+    both = _only(nuser, "zotero-conflicts")
+    assert both["title"] == "3 sync conflicts to look at in your Zotero link"
+    assert both["message"] == "{n} sync conflicts to look at in your Zotero link"
+
+
 def test_cloud_sync_error_names_the_reason(nuser, monkeypatch):
     status = {"state": "off", "at": "", "error": ""}
     monkeypatch.setattr(notices.cloud_sync, "profile_status", lambda user_id: status)

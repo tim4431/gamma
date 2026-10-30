@@ -33,6 +33,7 @@ export const GROUPS = [
   { id: "ipad", files: ["ipad.mjs"], s: 37 },
   { id: "collab", files: ["collab.mjs"], s: 33 },
   { id: "comments", files: ["comments.mjs"], s: 27 },
+  { id: "zotero-link", files: ["zotero-link.mjs"], s: 27 },
   { id: "pdf-load", files: ["pdfload.mjs"], s: 25 },
   { id: "publish", files: ["publish.mjs"], s: 25 },
   { id: "pdf-touch", files: ["pdfTouch.mjs"], s: 23 },
@@ -76,7 +77,7 @@ const ALL = "all";
 const GUIDES = ["guide", "contextual-guide", "triggered-guide"];
 const CHAT = ["chat-navigation", "mentions", "contextual-guide", "triggered-guide", "notes-pdf-share", "touch"];
 // every group that opens a PDF in the viewer
-const PDF_VIEW = ["notes-pdf-share", "translation", "pdf-load", "pdf-touch", "ink", "ink-editing", "ink-shapes", "ink-zoom", "textbox", "pictures", "collab", "comments", "files", "transfers", "touch", ...GUIDES];
+const PDF_VIEW = ["notes-pdf-share", "translation", "pdf-load", "pdf-touch", "ink", "ink-editing", "ink-shapes", "ink-zoom", "textbox", "pictures", "collab", "comments", "files", "transfers", "touch", "zotero-link", ...GUIDES];
 const EXPORTS = ["transfers", "files", "ink", "diagrams"];
 // what a change to the handwriting (src/ink/) can break: a text box's menu and a
 // picture's are placed and labelled by the ink layer's helpers; ipad: the host
@@ -141,13 +142,22 @@ export const RULES = [
   ["frontend/src/editor/MentionMenu.jsx", ["note-mentions", "notes-pdf-share", "inbox"]],
   // the @ menu's state and keys, a note row's and a comment field's
   ["frontend/src/editor/useMentionMenu.js", ["note-mentions", "notes-pdf-share", "comments", "inbox"]],
-  ["frontend/src/editor/**", ["notes-pdf-share", "diagrams", "files", "collab", "comments", "transfers", "mcp", "guide", "triggered-guide", "textbox", "pictures", "touch"]],
+  ["frontend/src/editor/**", ["notes-pdf-share", "diagrams", "files", "collab", "comments", "transfers", "mcp", "guide", "triggered-guide", "textbox", "pictures", "touch", "zotero-link"]],
   ["frontend/src/chat/**", [...CHAT, "ink-zoom"]], // ink-zoom: a selection's Transcribe reaches the chat's request
   // the Inbox notifications row
-  ["frontend/src/settings/SettingsAppearance.jsx", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad", "inbox"]],
-  ["frontend/src/settings/**", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad"]], // ipad: Apple Pencil, under its host
-  ["frontend/src/collaboration/MirrorPopover.jsx", ["mirror", "publish"]],
-  ["frontend/src/collaboration/MergeResolver.jsx", ["mirror"]],
+  ["frontend/src/settings/SettingsAppearance.jsx", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad", "inbox", "zotero-link"]],
+  // the Zotero link's dialog, opened from Workspaces › Clones and Zotero links only (the Account row is SettingsZotero.jsx, below)
+  ["frontend/src/settings/ZoteroLinkDialog.jsx", ["zotero-link"]],
+  ["frontend/src/settings/**", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad", "zotero-link"]], // ipad: Apple Pencil, under its host
+  // the sync pill and its popover, the conflict cards: a clone's, a publication's, a Zotero link's
+  ["frontend/src/collaboration/MirrorPopover.jsx", ["mirror", "publish", "zotero-link"]],
+  ["frontend/src/collaboration/MergeResolver.jsx", ["mirror", "zotero-link"]],
+  ["frontend/src/collaboration/conflictKinds.js", ["mirror", "zotero-link"]], // the conflict card's words
+  // which API a clone, a publication or a Zotero link calls: the pill, its popover, Settings' Clones and Zotero links
+  ["frontend/src/collaboration/syncLinks.js", ["mirror", "publish", "settings", "zotero-link"]],
+  // a Zotero-linked page's PDF card and read-only badges
+  ["frontend/src/collaboration/ZoteroPage.jsx", ["zotero-link"]],
+  ["frontend/src/collaboration/zoteroLink.css", ["zotero-link"]],
   ["frontend/src/collaboration/**", ALL], // the page's live session carries every edit
   ["frontend/src/library/QuickOpen.jsx", ["quick-open"]],
   ["frontend/src/library/RecentlyDeleted.jsx", ["trash"]],
@@ -155,6 +165,8 @@ export const RULES = [
   ["frontend/src/search/**", ["notes-pdf-share", "quick-open"]],
   // cloud-sign-in: the people invited by e-mail and the requests to join
   ["frontend/src/sharing/**", ["notes-pdf-share", "publish", "collab", "cloud-sign-in"]],
+  // the Zotero account and links' calls (Account & sync › Zotero, the link dialog)
+  ["frontend/src/transfers/zoteroApi.js", ["settings", "mirror", "zotero-link"]],
   ["frontend/src/transfers/**", EXPORTS],
   ["frontend/src/tasks/**", [...EXPORTS, "settings", "ipad"]], // the Background tasks tray and its store
   ["frontend/src/support/**", ["settings"]],
@@ -167,6 +179,9 @@ export const RULES = [
 
   ["backend/tests/notability_fixtures.py", ["transfers"]], // the Notability note the transfers scenario imports
   ["backend/tests/goodnotes_fixtures.py", ["transfers", "ipad"]], // the GoodNotes notebooks they import and hand over
+  // the fake Zotero the Zotero link scenario's second Gamma talks to, and the library it serves
+  ["backend/tests/zotero_fake.py", ["zotero-link"]],
+  ["backend/tests/zotero_fixtures.py", ["zotero-link"]],
   ["backend/tests/**", []],
   ["backend/gamma/ai_protocols/**", [...CHAT, "settings"]],
   // the AI client is the translated view's path to the model too
@@ -183,7 +198,8 @@ export const RULES = [
   ["backend/gamma/folder_sync.py", []],
   ["backend/gamma/gamma_sync.py", []],
   ["backend/gamma/routers/folder_links.py", []],
-  ["backend/gamma/sync_*.py", ["mirror", "publish"]],
+  // the clones' engine and the clock the Zotero link's rounds run on (sync_clock.py), its conflicts and log tables (sync_engine.py)
+  ["backend/gamma/sync_*.py", ["mirror", "publish", "zotero-link"]],
   ["backend/gamma/textmerge.py", ["mirror"]],
   ["backend/gamma/routers/sync.py", ["mirror", "publish"]],
   ["backend/gamma/routers/mirrors.py", ["mirror", "publish"]],
@@ -213,7 +229,20 @@ export const RULES = [
   ["backend/gamma/markdown_*.py", EXPORTS],
   ["backend/gamma/obsidian_export.py", EXPORTS],
   ["backend/gamma/logseq_*.py", EXPORTS],
-  ["backend/gamma/zotero_*.py", EXPORTS],
+  // the Zotero link (docs/dev/zotero_sync.md): the Account pane's Zotero row reads the account (and whether
+  // it may sign in); the Workspaces pane lists the links beside the clones; an import asks whether a link
+  // keeps its workspace (zotero_sync.get_link); the link's engine shares the Zotero import's note and
+  // record rules; the rest (the engine, its Zotero client, zotero_schema.json) only the scenario drives
+  ["backend/gamma/routers/zotero.py", ["zotero-link", "settings"]],
+  ["backend/gamma/zotero_account.py", ["zotero-link", "settings"]],
+  ["backend/gamma/zotero_oauth.py", ["zotero-link", "settings"]],
+  ["backend/gamma/routers/zotero_sync.py", ["zotero-link", "mirror", "publish", "settings"]],
+  ["backend/gamma/zotero_sync.py", ["zotero-link", "mirror", "publish", "settings", "transfers"]],
+  ["backend/gamma/zotero_sync_rows.py", ["zotero-link", "mirror", "publish", "settings", "transfers"]],
+  ["backend/gamma/zotero_import.py", [...EXPORTS, "zotero-link"]],
+  ["backend/gamma/zotero_notes.py", [...EXPORTS, "zotero-link"]],
+  ["backend/gamma/zotero_export.py", EXPORTS],
+  ["backend/gamma/zotero_*", ["zotero-link"]],
   ["backend/gamma/import_*.py", EXPORTS],
   ["backend/gamma/notability*.py", EXPORTS],
   ["backend/gamma/goodnotes*.py", EXPORTS],

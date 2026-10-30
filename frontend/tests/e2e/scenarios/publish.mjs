@@ -161,7 +161,7 @@ export async function publishScenarios(env) {
       await row.waitFor();
       assert((await row.textContent()).includes("1 published page"), "the count of published pages");
       await nav.getByRole("button", { name: "Workspaces", exact: true }).click();
-      await page.getByText("No clones yet.", { exact: true }).waitFor();
+      await page.getByText("No clones or Zotero links yet.", { exact: true }).waitFor();
       assertEq(await page.locator(".aiProvRow", { hasText: "clone of" }).count(), 0, "no publication among the clones");
       await page.keyboard.press("Escape");
       assertNoProblems(page);

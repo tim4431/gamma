@@ -3,6 +3,7 @@
 // module of its own so the switcher does not pull the Settings panes into
 // the startup bundle (docs/dev/frontend-refactor.md, "Lazy boundaries").
 import { t } from "../shared/i18n/i18n.js";
+import { zoteroLibraryLabel } from "../collaboration/syncLinks.js";
 
 export const ROLE_OPTIONS = [["owner", t("Owner")], ["editor", t("Can edit")], ["viewer", t("View only")]];
 export const ROLE_LABEL = { owner: t("owner"), editor: t("can edit"), viewer: t("view only") };
@@ -11,6 +12,7 @@ export const ROLE_LABEL = { owner: t("owner"), editor: t("can edit"), viewer: t(
 // a shared one, your role.
 export function workspaceMeta(w) {
   if (w.mirror_of) return t("clone of {mirror_of}", { mirror_of: w.mirror_of });
+  if (w.zotero_of) return t("linked to Zotero · {library}", { library: zoteroLibraryLabel({ name: w.zotero_of }) });
   if (w.personal) return w.default ? t("personal · default") : t("personal");
   return w.access === "public" ? t("public · {role}", { role: ROLE_LABEL[w.role] || w.role }) : ROLE_LABEL[w.role] || w.role;
 }

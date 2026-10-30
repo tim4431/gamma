@@ -71,6 +71,19 @@ def check(key: str, max_hits: int, window_seconds: int) -> None:
                             headers={"Retry-After": str(retry)})
 
 
+def full(key: str, max_hits: int, window_seconds: int) -> int:
+    """The seconds until ``key``'s window ends when it already holds
+    ``max_hits``, else 0; counts no hit. For a limit counted only once what
+    it guards has happened (``check`` then counts it)."""
+    bucket = _buckets.get(key)
+    if not bucket:
+        return 0
+    elapsed = time.monotonic() - bucket[0]
+    if elapsed >= window_seconds or bucket[1] < max_hits:
+        return 0
+    return max(1, int(window_seconds - elapsed))
+
+
 def reset(key: str) -> None:
     _buckets.pop(key, None)
 
