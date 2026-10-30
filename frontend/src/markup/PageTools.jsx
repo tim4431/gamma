@@ -7,7 +7,7 @@ import { createContext, useContext } from "react";
 
 // {readOnly, ink: {tool, penTool, penOnly, pressure, eraserMode, eraserSize,
 // eraserFilter, drawHold, scribble, fingerUndo, lassoMode, clip, keys,
-// hoverPreview}, text: {armed, style}, actions}. ink.tool is the
+// hoverPreview}, text: {armed, style, zotero}, actions}. ink.tool is the
 // armed tool and ink.penTool what a stylus writes with when nothing is
 // armed; both are null on a read-only page and while the Text tool is
 // armed. drawHold, scribble and eraserFilter ('all' | 'pen' |
@@ -22,7 +22,9 @@ import { createContext, useContext } from "react";
 // kind, fill, style} (ink/shapeTool.js; `style` the stylus pen's look as an
 // even Ballpoint line). ink.zoom: the zoom window, {page, x, y, w, h, mag,
 // line, x0} in page points (ink/zoomWindow.js), or null. text.armed: the
-// Text tool is armed; text.style: the style of new boxes ({size, color, bg}).
+// Text tool is armed; text.style: the style of new boxes ({size, color, bg});
+// text.zotero: the workspace has a live Zotero link, so a new box on a PDF
+// page is a Zotero box (text_box.zotero, markup/textBox.js).
 // actions carries the handlers: the ink ones (onStroke(page, stroke,
 // {width, height}, {label}): a stroke and its history entry's label, onEraseAlong(page,
 // path, r, {mode, pass}): the path the eraser swept since its last call,

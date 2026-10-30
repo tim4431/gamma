@@ -116,6 +116,29 @@ def _locked(block: dict) -> bool:
     return (block.get("properties") or {}).get("zotero_readonly") == "locked"
 
 
+def _needs_key(block: dict, row: dict) -> bool:
+    """Whether ``row`` links a Zotero ``text`` annotation to a text box that
+    is no Zotero box (its ``text_box`` without ``zotero``): one stored
+    without the key, or written back by a writer that drops it. The engine
+    adds the key, with no request, its rect being the box already
+    (``Blocks._zotero_box``); ``box_checks`` brings each such page once."""
+    box = (block.get("properties") or {}).get("text_box")
+    return row["zotero_type"] == "text" and isinstance(box, dict) and box.get("zotero") is not True
+
+
+def _keyed_base(block: dict, base: dict) -> dict:
+    """Gamma's base ``base`` of a row ``_needs_key`` finds, read as the key
+    makes its box read: a box with no key goes to Zotero with its blank
+    lines dropped, a Zotero box with them (``text_box.plain_text``), so a
+    base whose comment is the block's text without them takes the block's
+    text with them, and the key alone reads as no change on either side."""
+    content = block.get("content") or ""
+    comment = (base or {}).get("comment")
+    if comment is None or comment != text_box.plain_text(content):
+        return base
+    return {**base, "comment": text_box.plain_text(content, gaps=True)}
+
+
 def _page_index(data: dict) -> int:
     """The 0-based page an annotation item's position names (-1 for none)."""
     try:
@@ -220,7 +243,8 @@ class Blocks:
     the strokes it owns (``detail.stroke_ids``, ink). A row whose block is on
     its page but is no annotation Gamma may write now is held (state
     ``held``, its reason); one Zotero holds and Gamma cannot show yet waits
-    (``waiting``); neither is ever trashed for it."""
+    (``waiting``); neither is ever trashed for it. A text box goes to Zotero
+    as a Zotero box (``_zotero_box``), the block changed to one first."""
 
     def __init__(self, u):  # the item's unit (gamma/zotero_sync_items.py's _Unit)
         self.u, self.r = u, u.r
@@ -236,6 +260,7 @@ class Blocks:
         self.changes: dict = {}        # block id -> the annotation changes applied to it, merged
         self.quiet_at = None           # the page's notes wait till then to go as "Notes from Gamma"
         self.bound: set = set()        # region roots bound to a Zotero note this unit (a first link)
+        self.boxes: dict = {}          # block id -> its text box made a Zotero box this unit (``_zotero_box``)
 
     # reading
 
@@ -924,9 +949,51 @@ class Blocks:
                      row["state"] == "readonly") for row in rows_of if row["slot"] or "ink_url" in props]
         types = {row["zotero_type"] for row in rows_of if row["zotero_type"]}
         zotero_type = zotero_type or (next(iter(types)) if len(types) == 1 else None)
+        block = self._zotero_box(block, page, rows_of, zotero_type)
         items = zotero_annotations.to_items(block, page, ink_file=ink, rows=ink_rows, zotero_type=zotero_type,
                                             nested=ann.nested)
         return {item.slot: item for item in items}
+
+    def _zotero_box(self, block: dict, page, rows_of, zotero_type) -> dict:
+        """``block`` as it goes to Zotero on ``page``: a text box that is no
+        Zotero box made one, the change planned on the block once in the
+        unit. One a ``text`` row links gains the key alone, its rect being
+        the box; any other becomes its text area (``text_box.zotero_frame``),
+        its text where it was. A ``note``'s box, a Zotero box and any other
+        block as they are."""
+        props = block.get("properties") or {}
+        box = props.get("text_box")
+        if zotero_type == "note" or not isinstance(box, dict) or box.get("zotero") is True:
+            return block
+        new = self.boxes.get(block["id"])
+        if new is None:
+            linked = zotero_type == "text" or any(row["zotero_type"] == "text" for row in rows_of)
+            new = ({**text_box.normalize_text_box(box), "zotero": True} if linked
+                   else self._framed(box, block.get("content") or "", page))
+            self.boxes[block["id"]] = new
+            self._change(block["id"], {"props": {"text_box": new}})
+        return {**block, "properties": {**props, "text_box": new}}
+
+    @staticmethod
+    def _framed(box: dict, content: str, page) -> dict:
+        """A Gamma box's text area as a Zotero box on ``page``
+        (``text_box.zotero_frame``), a line taller for each blank line of
+        ``content``: the box gives a blank line no height, Zotero's textarea
+        a line of its own, so its rect holds the text as Zotero lays it."""
+        new = text_box.zotero_frame(box, *page.size)
+        blank = text_box.plain_text(content, gaps=True).count("\n") - text_box.plain_text(content).count("\n")
+        if blank > 0:
+            new = text_box.keep_on_surface({**new, "h": new["h"] + blank * new["size"] * text_box.ZOTERO_LINE},
+                                           *page.size)
+        return new
+
+    def _sig(self, ann) -> str:
+        """An annotation block's signature as the unit leaves it: its text
+        box as ``_zotero_box`` made it, once it did."""
+        block, new = ann.block, self.boxes.get(ann.block["id"])
+        if new is not None:
+            block = {**block, "properties": {**(block.get("properties") or {}), "text_box": new}}
+        return zotero_annotations.block_sig(block, ann.nested)
 
     def annotations(self) -> None:
         """The annotations of the item's primary PDF against the page's
@@ -1046,11 +1113,14 @@ class Blocks:
             row.update(state="held", version=version, detail={**row["detail"], "reason": reason})
             u._put(row)
             return
+        if _needs_key(ann.block, row):
+            row["gbase"] = _keyed_base(ann.block, row["gbase"])
         if trashed:
             return self._annotation_trashed(key, obj, row, ann, by_block.get(row["block_id"], []))
         if (row["state"] in ("live", "readonly") and not row["detail"].get("first")
                 and zotero_annotations.projection(data) == row["zbase"]
-                and zotero_annotations.block_sig(ann.block, ann.nested) == row["gsig"]):
+                and zotero_annotations.block_sig(ann.block, ann.nested) == row["gsig"]
+                and not _needs_key(ann.block, row)):
             author = _author(self.r, obj) or ("readonly" if row["state"] == "readonly" else "")
             due = self._label_due(row, data, author)
             refused = row["detail"].get("rejected")
@@ -1185,8 +1255,7 @@ class Blocks:
             row.update(version=version, zbase=Z)
             u._put(row)
             u.writes.update("annotations", key, version, body)
-            u.sent[key] = {"what": "ann_restore", "G": G, "sig": zotero_annotations.block_sig(ann.block, ann.nested),
-                           "item": item}
+            u.sent[key] = {"what": "ann_restore", "G": G, "sig": self._sig(ann), "item": item}
             return
         if first:  # Zotero's version, its trash with it
             if item is not None and not zotero_annotations.same(Z, G):
@@ -1294,7 +1363,13 @@ class Blocks:
             if "pulled" not in u.notes:
                 u.notes.append("pulled")
         if "comment" in m.merged_text:
-            self._change(bid, {"content": m.merged_text["comment"]})
+            merged = {"content": m.merged_text["comment"]}
+            box = text_box.normalize_text_box((self.changes.get(bid, {}).get("props") or {}).get("text_box")
+                                              or (ann.block.get("properties") or {}).get("text_box"))
+            if (row["zotero_type"] == "text" and box is not None and box["auto"]
+                    and merged["content"] != (ann.block.get("content") or "")):
+                merged["props"] = {"text_box": {**box, "auto": False}}  # Zotero wraps it at its rect's width
+            self._change(bid, merged)
         label = self._label((G.get("position") or {}).get("pageIndex", -1) + 1)
         for name, ours, theirs in m.conflicts:  # (a first link's or a force's: the side it took, resolved)
             took = ("zotero" if name in m.apply else "gamma") if first else ""
@@ -1304,7 +1379,7 @@ class Blocks:
             if first:
                 r.decided["annotations"] = r.decided.get("annotations", 0) + 1
         wanted = {**m.push, **m.merged_text}  # Gamma's side to send: its base waits until the write lands
-        sig = zotero_annotations.block_sig(ann.block, ann.nested)
+        sig = self._sig(ann)
         refused = row["detail"].get("rejected")
         sends = r.pushes and not (refused and refused == sig)  # refused: again once it changes
         push = wanted if sends else {}
@@ -1353,10 +1428,10 @@ class Blocks:
         if (readonly and "ink_url" not in props) or (_locked(ann.block) and not readonly):
             return  # another member's: never made under this key, even once its row went with an old primary
             # (while its row is live, a drawing's strokes no row owns are the user's own)
-        sig = zotero_annotations.block_sig(ann.block, ann.nested)
-        if live and all(x["gsig"] == sig for x in live):
+        if live and all(x["gsig"] == self._sig(ann) for x in live):
             return  # as synced: no item of it is new
         items = self._items(ann, live) or {}
+        sig = self._sig(ann)  # (its text box as a Zotero box)
         have = {x["slot"] for x in live}
         for slot, item in items.items():
             if slot in have:
@@ -1386,12 +1461,12 @@ class Blocks:
             u._drop(row["key"])
             by_block[row["block_id"]] = [x for x in by_block.get(row["block_id"], []) if x["key"] != row["key"]]
             return
-        sig = zotero_annotations.block_sig(ann.block, ann.nested)
-        if row["state"] == "rejected" and row["detail"].get("rejected") == sig:
+        if row["state"] == "rejected" and row["detail"].get("rejected") == self._sig(ann):
             return
         items = self._items(ann, by_block.get(row["block_id"], []))
         if items is None:
             return  # its place cannot be read now: the create waits
+        sig = self._sig(ann)
         item = items.get(row["slot"])
         if item is None:
             u._drop(row["key"])
@@ -1597,6 +1672,8 @@ def blocks_dirty(r: Round, page_id: str, md5: str, bound: dict | None, *, notes:
         if row["state"] in ("live", "readonly", "held", "pending", "rejected") and \
                 zotero_annotations.block_sig(ann.block, ann.nested) != row["gsig"]:
             return True  # (a create Zotero refused goes again once the block changed)
+        if row["state"] in ("live", "readonly") and _needs_key(ann.block, row):
+            return True  # a text annotation's box to make a Zotero box
         if row["state"] == "live" and row["detail"].get("labels") != zotero_annotations.LABELS \
                 and not row["detail"].get("rejected") and _made_here(r, row):
             unsettled.add(((row["zbase"] or {}).get("position") or {}).get("pageIndex"))
@@ -1622,8 +1699,9 @@ def label_checks(r: Round, conn) -> set[str]:
     annotation Gamma made (``_made_here``) whose label is neither settled
     nor queued for it (no ``detail.labels``), each such row marked queued
     (``labels`` 0) so its page comes once; a live row of Zotero's own
-    annotation without it is settled here. The caller queues the pages, in
-    its write transaction (``conn`` holds the write lock)."""
+    annotation without it is settled here; with them, the pages of
+    ``box_checks``. The caller queues the pages, in its write transaction
+    (``conn`` holds the write lock)."""
     found = conn.execute("SELECT key, page_id, parent, block_id, slot FROM zotero_objects WHERE kind = 'annotation' "
                          "AND state = 'live' AND page_id != '' AND json_extract(detail, '$.labels') IS NULL").fetchall()
     ours = {key: page for key, page, parent, block_id, slot in found
@@ -1633,7 +1711,27 @@ def label_checks(r: Round, conn) -> set[str]:
         if keys:
             conn.execute("UPDATE zotero_objects SET detail = json_set(detail, '$.labels', ?) "
                          "WHERE key IN (SELECT value FROM json_each(?))", (value, json.dumps(keys)))
-    return set(ours.values())
+    return set(ours.values()) | box_checks(conn)
+
+
+def box_checks(conn) -> set[str]:
+    """The pages to look at once for a text annotation's box to make a
+    Zotero box (``_needs_key``): those with a live or read-only ``text``
+    row whose block's ``text_box`` lacks the key and that was not queued
+    for it before (no ``detail.box_check``), each such row marked so its
+    page comes once. A page so stored, never changed since, comes then;
+    a box that loses the key later is a change of its page, which the
+    local feed brings. ``label_checks``' caller queues the pages."""
+    found = conn.execute(
+        "SELECT o.key, o.page_id FROM zotero_objects o JOIN unified_blocks b ON b.id = o.block_id "
+        "WHERE o.kind = 'annotation' AND o.zotero_type = 'text' AND o.state IN ('live', 'readonly') "
+        "AND o.page_id != '' AND json_extract(o.detail, '$.box_check') IS NULL "
+        "AND json_type(b.properties, '$.text_box') = 'object' "
+        "AND json_type(b.properties, '$.text_box.zotero') IS NOT 'true'").fetchall()
+    if found:
+        conn.execute("UPDATE zotero_objects SET detail = json_set(detail, '$.box_check', 1) "
+                     "WHERE key IN (SELECT value FROM json_each(?))", (json.dumps([key for key, _ in found]),))
+    return {page for _, page in found}
 
 
 # --- removals for good -------------------------------------------------------------------

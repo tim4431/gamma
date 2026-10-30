@@ -540,7 +540,9 @@ Zotero writes each of its kinds as a standard annotation
 ([research/zotero-annotations.md](../research/zotero-annotations.md)): a
 highlight and an underline become highlights (Gamma has no underline; the
 quote is the text under it), an image an area highlight, ink handwriting, a
-text annotation and a note text boxes. A text annotation turned in Zotero
+note a text box, and a text annotation a Zotero box, a text box laid out as
+Zotero's reader lays it out ([text_boxes.md](text_boxes.md#zotero-boxes)). A text
+annotation turned in Zotero
 is its unturned `/Zotero:Rect` upright on the same centre, since a box
 cannot turn. Zotero writes no `/CA` on markup, so its colours take the
 importer's 0.45; its annotation tags (`/Zotero:Tags`) are not kept. A

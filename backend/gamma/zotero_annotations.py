@@ -7,11 +7,15 @@ lands on a block it already has.
 A highlight is a ``highlight`` (or the ``underline`` Zotero made it), an area
 highlight an ``image``, a text box on a PDF page a ``text`` (or the ``note``
 Zotero made it), and an ink group one ``ink`` item per look, since an item has
-one colour and one width. Zotero keeps positions in the page's user space,
-Gamma in the page as shown; every conversion goes through the frame (view box
-and rotation) and pdf_export's mappers, never a plain media-box flip, so
-cropped, offset and turned pages land where they are drawn. ``Pages`` reads a
-stored PDF once per round for the frames, the characters and the page labels.
+one colour and one width. A ``text`` annotation is a Zotero box (a
+``text_box`` with ``zotero``), laid out as Zotero's reader lays it out, so
+its rect is the box itself both ways; a Gamma box goes as one, converted
+first (``text_box.zotero_frame``). Zotero keeps positions in the page's user
+space, Gamma in the page as shown; every conversion goes through the frame
+(view box and rotation) and pdf_export's mappers, never a plain media-box
+flip, so cropped, offset and turned pages land where they are drawn.
+``Pages`` reads a stored PDF once per round for the frames, the characters
+and the page labels.
 
 The fields Zotero derives are computed as its reader computes them: the sort
 index from the top-most rect (the reader's "top-most" is the one with the
@@ -22,7 +26,7 @@ annotation (``item_label``), so the reader's numbering of later annotations
 follows the book's. A comment is the block's own note and the notes nested under it, as
 the RDF export's popup text writes them, with bold and italic as the
 ``<b>``/``<i>`` tags the reader shows; a ``text`` annotation's comment is
-plain text, as the reader draws it.
+plain text, as the reader draws it, its blank lines kept.
 
 Each item has a projection (``projection``: type, colour, comment, quote,
 position rounded to hundredths of a point) that the engine keeps two bases
@@ -744,6 +748,10 @@ def _highlight_fields(props: dict, content: str, page: Page, zotero_type, nested
 
 
 def _text_box_fields(props: dict, content: str, page: Page, zotero_type, nested) -> dict | None:
+    """A text box's item fields: a ``note`` at the box's top-left, or a
+    ``text`` whose rect is the box, which is a Zotero box's text area (the
+    engine makes a Gamma box one before it goes), its comment the box's
+    plain text, a Zotero box's blank lines kept."""
     box = text_box.normalize_text_box(props.get("text_box"))
     if box is None or text_box.box_page(props) != page.number:
         return None
@@ -761,8 +769,8 @@ def _text_box_fields(props: dict, content: str, page: Page, zotero_type, nested)
                           for x, y in ((box["x"], box["y"]), (box["x"] + box["w"], box["y"] + box["h"])))
     cx, cy = (ax + bx) / 2, (ay + by) / 2
     rect = (cx - box["w"] / 2, cy - box["h"] / 2, cx + box["w"] / 2, cy + box["h"] / 2)
-    return {"annotationType": "text", "annotationComment": text_box.plain_text(content),
-            "annotationColor": color_out(box["color"]),
+    comment = text_box.plain_text(content, gaps=box.get("zotero") is True)
+    return {"annotationType": "text", "annotationComment": comment, "annotationColor": color_out(box["color"]),
             "annotationPosition": {"pageIndex": page.number - 1, "fontSize": _num(box["size"], _OUT_DIGITS),
                                    "rotation": page.rotation, "rects": [_rect_out(rect)]}}
 
@@ -858,9 +866,9 @@ def _text_box_from(kind: str, rect: tuple, position: dict, data: dict, md: str, 
                    keep: dict | None = None) -> dict:
     """A note's or a text annotation's box on ``page``: a note's at its
     icon's top-left, note yellow, as wide as its text (``measure``), a text
-    annotation's upright on its rect's centre at its font size. ``keep`` is
-    the block's box now: what Zotero has no place for (a fill, the width
-    mode, a note's size) stays."""
+    annotation's a Zotero box, its rect upright on the same centre, at its
+    font size. ``keep`` is the block's box now: what Zotero has no place for
+    (a fill, the width mode, a note's size) stays."""
     w, h = page.size
     if kind == "note":
         corners = [pdf_point_to_viewer(px, py, page.rotation, page.view)
@@ -876,7 +884,7 @@ def _text_box_from(kind: str, rect: tuple, position: dict, data: dict, md: str, 
         u, v = pdf_point_to_viewer((rect[0] + rect[2]) / 2, (rect[1] + rect[3]) / 2, page.rotation, page.view)
         size = position.get("fontSize")
         box = {**(keep or {"auto": False, "bg": None, "color": data.get("annotationColor")}),
-               "x": u * w - bw / 2, "y": v * h - bh / 2, "w": bw, "h": bh}
+               "x": u * w - bw / 2, "y": v * h - bh / 2, "w": bw, "h": bh, "zotero": True}
         if _positive(size):
             box["size"] = size
     return text_box.keep_on_surface(text_box.normalize_text_box(box), w, h)
@@ -1162,7 +1170,10 @@ def apply_fields(block: dict, page: Page, changed: dict, *, ink_file=None, strok
     colour is its text's (a note has none); the comment becomes the block's
     own note when it still ends with the ``nested`` notes' text, else
     "comment" is in ``conflicts`` (``comment_parts``); a text annotation's is
-    taken as plain text; the quote is set as sent; the position becomes the
+    taken as plain text, and its box is a Zotero box, fixed at Zotero's
+    width once Zotero changed that width (by more than ``POSITION_TOL``),
+    the text or the font size, since Zotero wraps at its rect's width (a
+    move keeps an auto width); the quote is set as sent; the position becomes the
     block's geometry, which drops a highlight's relocation marks, as a move
     by hand does. For ink (``ink_file``, the item's ``stroke_ids``; ``key``
     the item's key) a new colour or width restyles exactly those strokes,
@@ -1214,6 +1225,9 @@ def apply_fields(block: dict, page: Page, changed: dict, *, ink_file=None, strok
                                  page, keep=new)
             if props.get("pdf_page") != page.number:
                 out["props"]["pdf_page"] = page.number
+        if (new is not None and zotero_type != "note" and new["auto"]
+                and ("content" in out or new["size"] != box["size"] or abs(new["w"] - box["w"]) > POSITION_TOL)):
+            new["auto"] = False
         if new is not None and new != box:
             out["props"]["text_box"] = new
     else:

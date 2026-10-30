@@ -67,7 +67,7 @@ All in `backend/gamma/` unless named otherwise.
 | `zotero_sync_reads.py` | What units read: a page's Gamma side (`Side`, `page_side`, its PDF's MD5 read only when needed), the projections both sides are compared in (`gamma_item` / `zotero_item`, a standalone PDF's and a note page's), shared row rules (`HELD_ROWS`, `moving_pdf`), Zotero objects read by key ahead of their units (`read_ahead`, `read_unit`, `_listed_children`) |
 | `zotero_sync_items.py` | An item's unit (`_Unit`, `reconcile`, `unit_item`, `unit_child`): record, tags, collections, trash, a note page's note, the writes and their outcomes |
 | `zotero_sync_pdfs.py` | The PDF part of an item's unit (`UnitPdf`, `_file_plan`, `pair_side`), a new attachment and the PDF it went beside (`_beside`, `_beside_again`, `_back_beside`), a file's own unit (`unit_file`: downloads, uploads), kept copies of Zotero's file (`_hold_copy`, `_went`), the wait while a page's highlights are placed (`relocation_ended`), Zotero's full storage (`quota_step`); `STORAGE_WAIT`, the reason of a download held back by this server's full storage |
-| `zotero_sync_blocks.py` | An item's notes and annotations (`Blocks`), whether a page's blocks differ from what last synced (`blocks_dirty`), the pages to check once for their page labels (`label_checks`), what Zotero removed for good of them (`children_gone`), the note, lossy-note and annotation resolvers |
+| `zotero_sync_blocks.py` | An item's notes and annotations (`Blocks`), whether a page's blocks differ from what last synced (`blocks_dirty`), the pages to check once for their page labels (`label_checks`) or for a text box to make a Zotero box (`box_checks`), what Zotero removed for good of them (`children_gone`), the note, lossy-note and annotation resolvers |
 | `zotero_sync_pages.py` | A Gamma page's unit (`unit_page`): a page made an item (batched creates), a standalone PDF given a parent item (`_send_move`), a create derived again (`_resend`), a note page or a standalone PDF's page going back to Zotero (through `send_back`) |
 | `zotero_sync_gone.py` | Items Zotero removed for good (`items_gone`, `_goes_back`), a page changed here sent back as a new standalone note or PDF (`send_back`), a key Zotero did not answer for (`absent`) |
 | `zotero_sync_first.py` | A first link's pairs (`first_match`), note pages paired when notes access arrives (`first_notes`), the link dialog's preview of a first link (`preview_first_link`) |
@@ -247,7 +247,8 @@ The states:
   `labels` (`zotero_annotations.LABELS` once its Zotero page label is
   settled: sent as pdf.js reads it, Zotero's own, or checked; 0 while the
   page of an annotation Gamma made is queued for the check,
-  `zotero_sync_blocks.label_checks`);
+  `zotero_sync_blocks.label_checks`), `box_check` (1 once the page of a
+  `text` row whose box is no Zotero box was queued, `box_checks`);
 - image: `name` (the stored upload);
 - collection: `kept` (a folder left here while its collection is in
   Zotero's trash), `collateral` (trashed with its parent), `members` (the
@@ -518,6 +519,10 @@ queued (`zotero_sync_blocks.label_checks`, which marks those rows queued,
 `detail.labels` 0, and settles the rows of Zotero's own annotations), so a
 label a create sent undecoded is corrected without an edit; such a page is
 queued, not made due, so one whose notes wait to be still keeps waiting.
+With them it queues, once, each page with a live or read-only `text` row
+whose block's text box lacks the `zotero` key (`box_checks`, which marks
+those rows `detail.box_check`), so a box stored without the key gains it
+without an edit ([Text boxes](#text-boxes)).
 The scan reads the `detail` of every live annotation row each two-way
 round (about 25 ms for 50,000 rows). A page changed again while its "Notes from
 Gamma" waited to be still is made due at once (`zr.wake`): only that note
@@ -1480,7 +1485,7 @@ files differ and comes with the PDF. The reasons are counted in
 | `highlight`, `underline` | a highlight (an underline stays one: the row's type is sent back) |
 | `image` | an area highlight (`pdf_position.area`) |
 | `ink` | an ink group; one item per look |
-| `text` | a text box, upright on the annotation's centre at its font size |
+| `text` | a Zotero box ([Text boxes](#text-boxes)), its rect the box, upright on the annotation's centre at its font size |
 | `note` | a text box in note yellow at the icon's corner, as wide as its text |
 
 The type never changes (Zotero refuses it). Positions convert through the
@@ -1490,7 +1495,7 @@ cropped, offset and turned pages land where they are drawn. Positions go
 out at three decimals, as the reader writes them, and compare at hundredths
 of a point. What Gamma cannot hold stays Zotero's by the two bases: a
 turned text annotation stands upright here, a passage's `nextPageRects`
-stay in Zotero, a text box's fill and width mode stay Gamma's.
+stay in Zotero, a text box's fill stays Gamma's.
 
 - **Quote** (`annotationText`, highlight and underline only): as Zotero
   sent it, up to 7,500 characters, never collapsed or clipped on the way
@@ -1543,7 +1548,61 @@ stay in Zotero, a text box's fill and width mode stay Gamma's.
   (`comment_parts`, `comment_in`); a change in the nested part is no change
   Gamma can apply to one block, so it is a `zotero_annotation` conflict and
   Gamma's goes. A `text` annotation's comment is the box's plain text both
-  ways. A drawing's later items and a split piece carry no comment.
+  ways, its blank lines kept (`plain_text(…, gaps=True)` going out,
+  `markdown_of` coming in). A drawing's later items and a split piece
+  carry no comment.
+
+### Text boxes
+
+A `text` annotation and its block's text box are one rectangle. The box
+is a Zotero box (`text_box.zotero`,
+[text_boxes.md](text_boxes.md#zotero-boxes)): it has no padding and
+draws in the face of Zotero's reader, so its `x`, `y`, `w`, `h` are
+Zotero's rect and both apps wrap its text at that width. The mapping is
+the identity both ways (`_text_box_from`, `_text_box_fields`): a rect goes
+to a box and back to hundredths of a point. A `note` annotation's box is
+a Gamma box in note yellow and never takes the key.
+
+- **From Zotero**: a new block's box is a fixed Zotero box at the rect, in
+  the annotation's colour. A pull keeps what Zotero has no place for, the
+  box's fill and its width mode, with one rule for the width.
+- **Width mode** (`apply_fields`). Zotero has no auto width: its rect is
+  the width it wraps at. A pull that changes an auto box's width by more
+  than `POSITION_TOL` (0.5 pt), its text or its font size makes the box
+  fixed at Zotero's width, and so does a text merged from both sides
+  (`_merge_annotation`). A pull that only moves it keeps `auto`. Nothing
+  goes back for it.
+- **To Zotero**: an auto box goes at the width it stores, which the client
+  measured plus `ZOTERO_SLACK` (1 pt), as Zotero's own `measureWidth`
+  sizes one, and its `h` as the client measured it, at the screen's line
+  height.
+- **A Gamma box's first send** (`Blocks._zotero_box`, called from
+  `_items`). A text box without the key is made a Zotero box once per
+  unit: the change is planned on the block (`_change`), so it is an op of
+  the unit's transaction, and the items are made from the converted
+  block. The row's signature is the converted block's (`Blocks._sig`, for
+  a create, a resend, a restore and a merge), so the next round finds it
+  as synced. A box no `text` row links becomes its text area (`_framed`:
+  `text_box.zotero_frame` on the page's size, a line, `size ×
+  ZOTERO_LINE`, taller for each blank line of its text, since Zotero's
+  textarea gives a blank line a line and Gamma's box none). Its text stays
+  where it was drawn; it loses its padding and takes Zotero's face.
+- **A linked box without the key** (`_needs_key`): one stored without it,
+  or written back by a writer that drops it (an older client or clone, a
+  writer that names no base box). It gains the key alone, its geometry as
+  it is, with no Zotero request, since its rect is the box already.
+  `blocks_dirty` counts such a live or read-only row, and the as-synced
+  skip lets it through to `_merge_annotation`. Its row's Gamma base is
+  read with the block's blank lines (`_keyed_base`: a box without the key
+  went to Zotero with them dropped), so the key alone reads as no change
+  on either side, and a trash in Zotero finds the box unchanged here. A
+  page so stored and not changed since comes once through `box_checks`
+  ([Listing Gamma's changes](#listing-gammas-changes)); a box that loses
+  the key later is an edit of its page, which the feed brings. A
+  receive-only round lists no Gamma changes, so there the key comes with
+  Zotero's next change to the item, or once the link is two-way again.
+- A box stored without the key whose text has a blank line Zotero lacks
+  keeps Zotero's text as it was until the box's next edit here.
 
 ### Ink
 
@@ -2494,10 +2553,18 @@ holds every reading only a Zotero link has, pure so node tests it.
   out go with the page's own notes, so they also stand in "Notes from
   Gamma" beside the lossy note Zotero still holds.
 - **Lossy mappings** are kept apart, not carried: a turned text annotation
-  stands upright here, a text box's Markdown goes as plain text, an ink
-  item has one colour and one width (pressure, timing, opacity and grain
-  stay Gamma's), a passage's `nextPageRects` and an annotation's tags stay
-  in Zotero.
+  stands upright here; a text box's Markdown goes as plain text, so bold,
+  lists, code and math draw here and can move a line break, a `~~~` fence
+  is code here and text in Zotero, and an @mention is a chip here and its
+  raw `@…` there; a text annotation's leading spaces and runs of spaces,
+  which Zotero keeps, collapse in its box; an ink item has one colour and
+  one width (pressure, timing, opacity and grain stay Gamma's); a
+  passage's `nextPageRects` and an annotation's tags stay in Zotero. A
+  text box's blank lines travel both ways, each a line in both apps.
+- **A text box's lines** break where Zotero's reader breaks them when both
+  apps resolve the reader's font stack to the same face: measured on
+  Windows (Segoe UI) only. macOS, Linux and the iPad are not verified
+  ([text_boxes.md](text_boxes.md#zotero-boxes)).
 - **The sort index's offset** comes from MuPDF's characters, not pdf.js's,
   and can miss by a few characters on a page the two read differently.
 - **Page labels Zotero infers.** Gamma's labels are pdf.js's, as the web
@@ -2618,12 +2685,12 @@ that leaked the key would fail its test).
 | `test_zotero_sync_first_link.py` | the first link of an existing workspace, its records and PDFs, force |
 | `test_zotero_sync_link.py` | a first link or force spent with PDFs held by full storage (here and Zotero's), a pair refused or held keeping its side, a force pull after a push, a log line per round, an annotated PDF in a push, a read edited between two of its pages (items and notes), an emptied publication forgotten, a reattach keeping a first link's side |
 | `test_zotero_sync_words.py` | what the link's words on screen say it does: a force push taking Zotero's lossy note and annotated PDF, a force pull deleting a trashed note edited here, a replaced PDF on a linked-file paper staying here, a copy attached while Zotero's PDF cannot come, Manual still syncing after an edit |
-| `test_zotero_sync_annotations.py` | annotations, force, restore, receive only, web snapshots, a waiting annotation Zotero trashes (and restores), page labels (a label a create sent undecoded corrected once by a plain round, Zotero's own and another member's kept, the PATCH of the label alone or with an edit) |
+| `test_zotero_sync_annotations.py` | annotations, force, restore, receive only, web snapshots, a waiting annotation Zotero trashes (and restores), page labels (a label a create sent undecoded corrected once by a plain round, Zotero's own and another member's kept, the PATCH of the label alone or with an edit), text boxes (a Gamma box framed on its first send, fixed, auto and with a blank line; a linked box without the key, stored so or written back so, gaining it with no request, a blank line in its text and a trash in Zotero among them; a refused create and a restore sent from the converted box; the width mode on a pull and on a merged text) |
 | `test_zotero_sync_notes.py` | notes, a first line deleted, notes access granted later, note pages, a note page changed here whose note Zotero removed for good |
 | `test_zotero_sync_large.py` | scale: a long fill over many rounds, a 2,000-item library within the budget, a 3,000-block page, the queries' plans (`ZOTERO_MEASURE=1` prints timings and memory) |
 | `test_zotero_sync_hardening.py` | Gamma edits made while a unit decides (the compare-and-set), Zotero's library moving at each step of a round, receive-only rounds, another member's annotation |
 | `test_zotero_sync_crashes.py` | a round killed after (or before) each kind of write, after a download stored and before it was attached, after an upload sent and before it was registered: the next round converges, compared with a run never killed |
-| `test_zotero_sync_fuzz.py` | random edits on both sides with rounds between them at random (PDFs replaced on either side, relocations running, writing and ending, note pages removed for good among them), now and then receive only, detached, a force, a killed round: once settled (nothing due, no round asked for at once, rounds capped at 400 units) both sides hold the same, each paper's PDF is one attachment holding one file, three more rounds write nothing and add no conflict, and no new attachment was made beside Zotero's PDF while its highlights were placed or when each of its annotations could move (`ZOTERO_FUZZ_SEEDS`, `ZOTERO_FUZZ_STEPS`, `ZOTERO_FUZZ_TRACE=<key>`) |
+| `test_zotero_sync_fuzz.py` | random edits on both sides with rounds between them at random (PDFs replaced on either side, relocations running, writing and ending, note pages removed for good among them; text boxes made in Gamma, auto and fixed, and text annotations made in Zotero, retyped with and without blank lines, resized, moved in Zotero, and written back here without their `zotero` key), now and then receive only, detached, a force, a killed round: once settled (nothing due, no round asked for at once, rounds capped at 400 units) both sides hold the same, every text box on a live page is a Zotero box with one live row whose comment, rect and font size are the box's, each paper's PDF is one attachment holding one file, three more rounds write nothing and add no conflict, and no new attachment was made beside Zotero's PDF while its highlights were placed or when each of its annotations could move (`ZOTERO_FUZZ_SEEDS`, `ZOTERO_FUZZ_STEPS`, `ZOTERO_FUZZ_TRACE=<key>`) |
 | `test_zotero_merge.py`, `test_zotero_annotations.py`, `test_zotero_notes.py`, `test_zotero_fields.py`, `test_zotero_local.py`, `test_zotero_remote.py`, `test_zotero_web.py` | the pure rules and the I/O layers on their own (the sort index against the reader's values for the fixture PDF, the field mapping per type, note regions) |
 | `test_page_labels.py` | `pdf_text.read_page_labels` against pdf.js's rules on PDFs written in the test (prefix encodings, styles, `/St`, Kids and the order they are read in, malformed trees, an encrypted file, a 3,000-page tree) |
 | `test_zotero_account.py`, `test_zotero_oauth.py`, `test_zotero_routes.py`, `test_zotero_stream.py`, `test_sync_clock.py` | the connection, OAuth, the routes and their refusals, the stream, the clock and its pool |
@@ -2658,7 +2725,11 @@ workspace, its pill showing the first sync from its first read, and syncs
 it; the pill waits on a linked file until Zotero trashes it; the paper has
 its PDF, highlight, ink and text box, the collections and tags came as
 folders and labels; a highlight's note edited here reaches Zotero, a
-colour changed in Zotero comes back, a record field both sides changed is
+colour changed in Zotero comes back; its text annotation is a Zotero box
+that shows the lines a textarea styled as Zotero's reader shows at its
+rect, and a box typed on the paper is one from its first keystroke, sent
+on Sync now with the box as its rect, an auto box 1 pt wider than its
+text; a record field both sides changed is
 a conflict resolved with Zotero's value; a group library linked "When
 opened" into the open workspace closes Settings on it, gives it its pill
 at once, and shows its paper's PDF card until the page, opened, brings the

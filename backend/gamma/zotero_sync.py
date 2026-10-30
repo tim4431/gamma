@@ -963,8 +963,10 @@ def _list_gamma(r: Round) -> None:
     round read, so a label renamed here (a pulled one too) reaches each
     item's tags, and once each page with an annotation Gamma made whose
     page label is not settled (``label_checks``), so a label its create
-    sent as PyMuPDF reads it is corrected without an edit. The cursor moves
-    unless a settings change started it over meanwhile; a page whose
+    sent as PyMuPDF reads it is corrected without an edit, and once each
+    page whose text annotation's box is not yet a Zotero box
+    (``box_checks``), so it takes the key without an edit. The cursor
+    moves unless a settings change started it over meanwhile; a page whose
     reconcile fails stays queued, so moving it loses nothing."""
     with connect_pages_db(r.ws) as conn:
         since = zr.get_state(conn)["local_cursor"]
