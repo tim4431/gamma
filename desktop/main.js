@@ -186,6 +186,8 @@ function applyTheme() {
   if (!win) return;
   const p = palette();
   win.setBackgroundColor(p.bg);
+  // what the content view shows between one page going and the next painting
+  if (content) content.setBackgroundColor(p.bg);
   if (process.platform !== 'darwin') {
     try {
       win.setTitleBarOverlay({ color: p.bg, symbolColor: p.symbol, height: BAR_H });
@@ -340,8 +342,10 @@ function loadLauncher(error, serverId) {
   current = null;
   gamma = null;
   busy = null;
-  const q = error ? '?error=' + encodeURIComponent(launcherError(error, serverId)) : '';
-  content.webContents.loadURL(pathToFileURL(path.join(__dirname, 'ui', 'launcher.html')).href + q);
+  // ?theme=: the page's first paint is in the window's theme, not the OS's.
+  const q = new URLSearchParams({ theme: currentTheme() });
+  if (error) q.set('error', launcherError(error, serverId));
+  content.webContents.loadURL(pathToFileURL(path.join(__dirname, 'ui', 'launcher.html')).href + '?' + q);
   win.setTitle('Gamma');
   pushState();
 }
@@ -1337,6 +1341,13 @@ function barState() {
   };
 }
 
+// A storage-folder move under way (shell:set-data-root): the servers it
+// moves, and the bytes copied of all of theirs. null when none runs.
+let dataMove = null;
+function dataMoveState() {
+  return dataMove && { name: dataMove.name, done: dataMove.done, total: dataMove.total };
+}
+
 // The launcher's fuller view: credentials, data dirs, sizes, settings.
 function fullState() {
   const state = registry.load();
@@ -1361,6 +1372,7 @@ function fullState() {
     defaultDataRoot: hostPath(registry.defaultDataRoot()),
     // Names of the local servers a root change would move.
     movable: registry.localsUnderRoot(state).map((w) => w.name),
+    dataMove: dataMoveState(),
     mas: Boolean(process.mas), // the launcher hides what a Mac App Store build lacks
   };
 }
@@ -1413,6 +1425,7 @@ async function openServer(id) {
 async function openServerNow(id) {
   const ws = registry.get(id);
   if (!ws) throw new Error('Unknown server');
+  if (dataMove && dataMove.ids.has(id)) throw new Error(`${ws.name} is being moved to the new storage folder: open it once the move is done.`);
   if (!win) createWindow();
   if (current && current.id === id) return { url: current.url, autoLogin: 'already-open' };
   busy = ws.type === 'local' ? `Starting ${ws.name}…` : `Connecting to ${ws.name}…`;
@@ -1581,8 +1594,10 @@ function registerIpc() {
     setBarExpanded(false);
     await openGammaWorkspace(id);
   }));
-  const withDialog = (message, fn) => async (id) => {
-    setBarExpanded(false);
+  // collapse: the bar view shrinks back to its strip first (the dropdown that
+  // asked closes); false for a panel action that leaves the panel open.
+  const withDialog = (message, fn, collapse = true) => async (id) => {
+    if (collapse) setBarExpanded(false);
     try {
       return await fn(id);
     } catch (e) {
@@ -1631,8 +1646,9 @@ function registerIpc() {
   ipcMain.handle('shell:keep-folder', shellOnly((wsId, folderId) =>
     withDialog('Could not keep the folder on this computer.', () => keepFolder(wsId, folderId))()));
   ipcMain.handle('shell:keeping', shellOnly(() => { refreshKeeping().catch(() => {}); return keepingState; }));
+  // pause, resume and sync leave the sync panel open on the new state (bar.html keptRow)
   ipcMain.handle('shell:keeping-action', shellOnly((kind, serverId, id, action) =>
-    withDialog('Could not do that.', () => keepingAction(kind, serverId, id, action))()));
+    withDialog('Could not do that.', () => keepingAction(kind, serverId, id, action), action === 'open' || action === 'stop')()));
   // A folder's "Keep on this computer…" in Gamma's own menu, passed on by the
   // page preload: only from the content view's page of the open server, one
   // action at a time. The native directory picker is the user's say, so the
@@ -1672,16 +1688,40 @@ function registerIpc() {
   // files closed, so every sidecar under the old root is stopped, and has
   // exited, first; they restart on the next open. A local server that is
   // open goes back to the launcher (its process is about to be killed).
+  // While the copy runs the launcher shows how far it is (shell:data-move,
+  // a few times a second), and the servers being moved do not open.
   ipcMain.handle('shell:set-data-root', shellOnly(async (dir, { move = true } = {}) => {
-    if (move) {
-      const moving = new Set(registry.localsUnderRoot().map((w) => w.id));
+    if (dataMove) throw new Error('The server data is already being moved.');
+    if (!move) {
+      const r = await registry.setDataRoot(dir, { move });
+      buildMenu();
+      pushState();
+      return r;
+    }
+    const moving = new Set(registry.localsUnderRoot().map((w) => w.id));
+    dataMove = { ids: moving, name: '', done: 0, total: 0 };
+    let sentAt = 0;
+    const send = (force) => {
+      if (!force && Date.now() - sentAt < 150) return;
+      sentAt = Date.now();
+      if (content && !content.webContents.isDestroyed() && content.webContents.getURL().startsWith('file:')) {
+        content.webContents.send('shell:data-move', dataMoveState());
+      }
+    };
+    try {
       if (current && moving.has(current.id)) loadLauncher();
       await Promise.all([...moving].map((id) => sidecar.stop(id)));
+      return await registry.setDataRoot(dir, {
+        move,
+        onProgress: (p) => { Object.assign(dataMove, p); send(false); },
+      });
+    } finally {
+      send(true); // the last count, which the throttle may have held back
+      dataMove = null;
+      send(true);
+      buildMenu();
+      pushState();
     }
-    const r = registry.setDataRoot(dir, { move });
-    buildMenu();
-    pushState();
-    return r;
   }));
   ipcMain.handle('shell:bar-expand', shellOnly((on) => setBarExpanded(on)));
 

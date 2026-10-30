@@ -129,12 +129,57 @@ function localsUnderRoot(state = load()) {
   return state.servers.filter((s) => s.type === 'local' && s.dataDir && isUnder(s.dataDir, root));
 }
 
+// The bytes under `dir`, counted the way copyTree copies them (links not followed).
+async function treeBytes(dir) {
+  let n = 0;
+  for (const e of await fs.promises.readdir(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) n += await treeBytes(p);
+    else if (e.isFile()) n += (await fs.promises.stat(p)).size;
+  }
+  return n;
+}
+
+// `from` copied to `to`, a file at a time and asynchronously, so the shell
+// stays live while it runs; `onBytes(n)` after each file, and after each chunk of a
+// large one. Throws on any failed file, like fs.cpSync.
+const STREAM_FROM = 8 * 1024 * 1024;
+async function copyTree(from, to, onBytes) {
+  await fs.promises.mkdir(to, { recursive: true });
+  for (const e of await fs.promises.readdir(from, { withFileTypes: true })) {
+    const src = path.join(from, e.name);
+    const dest = path.join(to, e.name);
+    if (e.isDirectory()) {
+      await copyTree(src, dest, onBytes);
+    } else if (e.isSymbolicLink()) {
+      await fs.promises.symlink(await fs.promises.readlink(src), dest);
+    } else if (e.isFile()) {
+      const { size } = await fs.promises.stat(src);
+      if (size < STREAM_FROM) {
+        await fs.promises.copyFile(src, dest, fs.constants.COPYFILE_EXCL);
+        onBytes(size);
+      } else {
+        await new Promise((resolve, reject) => {
+          const r = fs.createReadStream(src);
+          const w = fs.createWriteStream(dest, { flags: 'wx' });
+          r.on('data', (chunk) => onBytes(chunk.length));
+          r.on('error', reject);
+          w.on('error', reject);
+          w.on('finish', resolve);
+          r.pipe(w);
+        });
+      }
+    }
+  }
+}
+
 // Change the storage root. `newRoot` '' resets to the default. With `move`
 // every local server under the old root is copied to `<newRoot>/<id>`; only
 // after ALL copies succeed does the registry switch over and the old copies
 // get deleted, so a failure (disk full, permissions) leaves everything as it
-// was. Returns { root, moved: [names] }.
-function setDataRoot(newRoot, { move = true } = {}) {
+// was. `onProgress({ name, done, total })`, in bytes over all the servers,
+// as the copy goes. Returns { root, moved: [names] }.
+async function setDataRoot(newRoot, { move = true, onProgress = () => {} } = {}) {
   const state = load();
   const oldRoot = dataRoot(state);
   const target = newRoot ? path.resolve(newRoot) : '';
@@ -146,11 +191,16 @@ function setDataRoot(newRoot, { move = true } = {}) {
   fs.mkdirSync(targetRoot, { recursive: true });
   const moved = [];
   if (move) {
-    for (const srv of localsUnderRoot(state)) {
+    const servers = localsUnderRoot(state);
+    let total = 0;
+    for (const srv of servers) if (fs.existsSync(srv.dataDir)) total += await treeBytes(srv.dataDir);
+    let done = 0;
+    for (const srv of servers) {
       const dest = path.join(targetRoot, path.basename(srv.dataDir));
+      onProgress({ name: srv.name, done, total });
       try {
         if (fs.existsSync(dest)) throw new Error('already exists');
-        fs.cpSync(srv.dataDir, dest, { recursive: true }); // throws on any failed file
+        await copyTree(srv.dataDir, dest, (n) => { done += n; onProgress({ name: srv.name, done, total }); });
       } catch (e) {
         for (const m of moved) fs.rmSync(m.dest, { recursive: true, force: true });
         fs.rmSync(dest, { recursive: true, force: true });

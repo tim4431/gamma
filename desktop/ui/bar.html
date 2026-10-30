@@ -304,9 +304,10 @@
   // A kept clone or folder in the panel: its name over its state, a dot for
   // the state, and its actions, always shown. A click opens it (the clone in
   // the window, the folder's directory); "pause" stops its rounds (a clone
-  // detaches) and "resume" starts them again, the panel staying open on the
-  // new state; "sync" runs a round now (a detached clone has none); "stop"
-  // (a folder) ends it, the shell asking about the files.
+  // detaches) and "resume" starts them again; "sync" runs a round now (a
+  // detached clone has none), the panel staying open on the new state after
+  // each of the three; "stop" (a folder) ends it, the shell asking about the
+  // files.
   const TONE = { ok: 'on', error: 'off', conflicts: 'warn', pending: 'warn', busy: 'busy' };
   function keptRow(i) {
     const b = document.createElement('button');
@@ -329,7 +330,7 @@
     b.querySelector('.label').textContent = i.name;
     b.querySelector('.state').textContent = `${i.text} · ${i.kind === 'folder' ? i.dest : i.where}`;
     const run = (action) => {
-      if (action !== 'pause' && action !== 'resume') closeMenu();
+      if (action === 'open' || action === 'stop') closeMenu();
       gammaShell.keepingAction(i.kind, i.server, i.id, action).catch(() => {});
     };
     b.onclick = () => run('open');
