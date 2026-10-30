@@ -5,7 +5,7 @@ import PdfViewer, { preloadPdfEngine } from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
 import { requestFields } from "../pdf/translatePlan";
 import { docIdOf } from "../pdf/pdfSource";
-import { pendingInOrder, reviewQueue, reviewStep } from "../pdf/highlightReview.js";
+import { discardApplied, discardKind, discardStep, discardUndone, pendingInOrder, reviewQueue, reviewStep } from "../pdf/highlightReview.js";
 import { basePixels } from "../pdf/pageRaster";
 import { DEFAULT_HIGHLIGHT, colorName, highlightColor, normalizeColor, pickerColors, swatchCss } from "../shared/model/palette.js";
 import { PaletteContext } from "../shared/ui/paletteContext.js";
@@ -7218,13 +7218,34 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     triggerFlash(blockId);
   }
 
+  // Discard on a lost highlight's review card, its passage gone from the
+  // new PDF (highlightReview.js discardStep): one with no note of its own,
+  // no child blocks and no comment thread is deleted, as the highlight
+  // menu's Delete deletes it; one that carries any stays as a note, its
+  // position its page alone, so it leaves the PDF and the review queue. One
+  // tree edit either way (ops, undo). The step goes back to the card, for
+  // its Undo; `discardOf` says which of the two it would be, for its title.
+  const discardThreads = (blockId) => comments.threadsByBlock.get(blockId)?.length || 0;
+  const discardOf = (blockId) => discardKind(findBlock(blocks, blockId), discardThreads(blockId));
+  function discardLostHighlight(blockId) {
+    const step = readOnly ? null : discardStep(blocks, blockId, discardThreads(blockId));
+    if (!step) return null;
+    setBlocks((prev) => discardApplied(prev, blockId, step));
+    return step;
+  }
+
   // The review card's Undo: the step it took (Accept, Use closest match, a
-  // move started from it) taken back, one more tree edit, so the app's own
-  // undo takes the Undo back in turn. Nothing when the highlight changed
-  // since (reviewUndone).
+  // move started from it, Discard) taken back, one more tree edit, so the
+  // app's own undo takes the Undo back in turn. Nothing when the highlight
+  // changed since (reviewUndone; a discarded one back already).
   function undoReviewStep(blockId, step) {
+    if (readOnly) return;
+    if (step?.kind === "discarded") {
+      setBlocks((prev) => discardUndone(prev, blockId, step));
+      return;
+    }
     const block = findBlock(blocks, blockId);
-    if (readOnly || !block || reviewUndone(block.properties, step) === block.properties) return;
+    if (!block || reviewUndone(block.properties, step) === block.properties) return;
     setBlocks((prev) => updateBlockTree(prev, blockId, (b) => {
       const props = reviewUndone(b.properties, step);
       return props === b.properties ? b : { ...b, properties: props };
@@ -11940,6 +11961,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               onAcceptHighlight={readOnly ? undefined : acceptHighlightPlace}
               onPlaceHighlight={readOnly ? undefined : placeClosestMatch}
               onMoveHighlight={readOnly ? undefined : startReviewMove}
+              onDiscardHighlight={readOnly ? undefined : discardLostHighlight}
+              discardOf={readOnly ? undefined : discardOf}
               onUndoReview={readOnly ? undefined : undoReviewStep}
               fileId={attachmentFile(pageAttach)}
               reviewRef={pdfReviewRef}

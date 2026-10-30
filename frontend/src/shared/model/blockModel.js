@@ -253,6 +253,33 @@ export function removeBlockTree(blocks, id) {
   return out;
 }
 
+// Where block `id` stands in the tree: {parentId, index}, its parent's id
+// (null for a block at the top) and its index among its siblings; null
+// when it is not in the tree. With insertBlockAt, a removed block is put
+// back where it was (a review card's Undo of a Discard).
+export function blockPlace(blocks, id, parentId = null) {
+  const list = blocks || [];
+  for (let i = 0; i < list.length; i++) {
+    if (list[i].id === id) return { parentId, index: i };
+    const found = blockPlace(list[i].children, id, list[i].id);
+    if (found) return found;
+  }
+  return null;
+}
+
+// The tree with `block` inserted under `parentId` (null: at the top) at
+// `index` among its siblings (past the last: at the end); the same array
+// when that parent is not in the tree. Only the path to the parent is
+// copied, as updateBlockTree copies it.
+export function insertBlockAt(blocks, parentId, index, block) {
+  const list = blocks || [];
+  if (parentId == null) {
+    const at = Math.max(0, Math.min(list.length, index));
+    return [...list.slice(0, at), block, ...list.slice(at)];
+  }
+  return updateBlockTree(list, parentId, (p) => ({ ...p, children: insertBlockAt(p.children || [], null, index, block) }));
+}
+
 export function appendChild(blocks, id, newBlock) {
   return (blocks || []).map((b) => {
     if (b.id === id) {

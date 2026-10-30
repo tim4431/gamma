@@ -9,11 +9,11 @@
 // Both are reviewed on the card, one queue in document order. This module
 // says which highlights are to review, in that order, and which comes
 // next; what the card shows for one (reviewCardState) and what its steps
-// change, for their Undo (reviewStep); the box the before picture is cut
-// from, and where the old rectangles fall in it; and the word comparison
-// of the old quote with the current one. Pure, so node tests it
-// (tests/highlightReview.test.mjs).
-import { acceptedPosition, closestPlace, closestPlacement, placeToReview, placedToCheck, roughMatchPercent, sameJson } from "../shared/model/blockModel.js";
+// change, for their Undo (reviewStep; a lost one's Discard, discardStep);
+// the box the before picture is cut from, and where the old rectangles
+// fall in it; and the word comparison of the old quote with the current
+// one. Pure, so node tests it (tests/highlightReview.test.mjs).
+import { acceptedPosition, blockPlace, closestPlace, closestPlacement, findBlock, insertBlockAt, placeToReview, placedToCheck, removeBlockTree, reviewUndone, roughMatchPercent, sameJson, updateBlockTree } from "../shared/model/blockModel.js";
 import { tokens, wordDiff } from "../shared/lib/wordDiff.js";
 
 // --- Which highlights are to review, in document order ---------------------
@@ -75,6 +75,24 @@ export function reviewPlace(queue, at, done = null) {
 // viewer instead, saying so.
 export function pastLastPage(pos, pageCount) {
   return pageCount > 0 && Number.isInteger(pos?.pageNumber) && pos.pageNumber > pageCount;
+}
+
+// Where the rectangles of position `pos` stand on screen, as one box
+// {left, top, right, bottom}, its page being drawn in the box `page`
+// ({left, top, width, height}, the page's on screen), as PdfPage draws
+// them: what the card of a highlight no longer drawn (discarded) stays
+// anchored to, following the page. Null without a page or a rectangle.
+export function placeBox(page, pos) {
+  const w = pos?.width, ht = pos?.height;
+  if (!page || !(w > 0) || !(ht > 0) || !Array.isArray(pos.rects)) return null;
+  const kx = page.width / w, ky = page.height / ht;
+  let box = null;
+  for (const r of pos.rects) {
+    if (![r?.x1, r?.y1, r?.x2, r?.y2].every((v) => typeof v === "number" && Number.isFinite(v))) continue;
+    const b = { left: page.left + r.x1 * kx, top: page.top + r.y1 * ky, right: page.left + r.x2 * kx, bottom: page.top + r.y2 * ky };
+    box = box ? { left: Math.min(box.left, b.left), top: Math.min(box.top, b.top), right: Math.max(box.right, b.right), bottom: Math.max(box.bottom, b.bottom) } : b;
+  }
+  return box;
 }
 
 // --- Where the highlight was before ----------------------------------------
@@ -302,7 +320,11 @@ export function quoteDiff(before, after, { context = DIFF_CONTEXT, clipped = fal
 // - {kind: "resolved", step}: a step taken on the card ("accepted",
 //   "placed" or "moved") left it out of the queue; the card stays, with
 //   Undo and Next. One back in the queue (its Undo, the app's undo) reads
-//   as what it is again, whatever `done` says.
+//   as what it is again, whatever `done` says. A Discard ("discarded")
+//   took the highlight off the page, so `h` is null (deleted, or a note
+//   whose position is its page alone, which nothing draws): the card stays
+//   where it was; one drawn on the page again after a Discard (moved by
+//   hand since) has nothing of it left to show.
 // - {kind: "pending", percent, area, before, diff}: dashed, matched
 //   roughly (`percent`, roughMatchPercent's) or placed by estimate (null);
 //   `before` reviewPrev's, `diff` the old quote against the current one
@@ -314,7 +336,7 @@ export function quoteDiff(before, after, { context = DIFF_CONTEXT, clipped = fal
 //   candidate's text.
 export function reviewCardState(h, { done = null, fileId = "" } = {}) {
   const pos = h?.position;
-  if (!pos) return null;
+  if (!pos) return done?.kind === "discarded" ? { kind: "resolved", step: "discarded" } : null;
   const area = !!pos.area;
   if (placedToCheck(pos)) {
     const before = reviewPrev(pos);
@@ -331,7 +353,7 @@ export function reviewCardState(h, { done = null, fileId = "" } = {}) {
     const before = place.current && (closest || !place.quote) ? null : place;
     return { kind: "lost", area, before, closest, diff: closest ? quoteDiff(place.quote, closest.quote) : null };
   }
-  if (done) return { kind: "resolved", step: done.kind };
+  if (done && done.kind !== "discarded") return { kind: "resolved", step: done.kind };
   return null;
 }
 
@@ -360,4 +382,74 @@ export function reviewStep(kind, { position, quote = "", prior = null } = {}, af
     return step;
   }
   return null;
+}
+
+// --- Discard: a lost highlight off the page ----------------------------------
+
+// What Discard on a lost highlight's card does, its passage being gone
+// from the PDF: "delete" when the highlight carries nothing of its own (no
+// note, its content empty; no child blocks; no comment thread, open or
+// resolved: `threads`, how many it has), as the highlight menu's Delete
+// deletes it; "unplace" when it carries any, so it stays, a note, and
+// only comes off the PDF (discardedPosition). Null for a block that is no
+// lost highlight on a page.
+export function discardKind(block, threads = 0) {
+  const pos = block?.properties?.pdf_position;
+  if (!pos?.lost || !Number.isInteger(pos.pageNumber) || pos.pageNumber < 1) return null;
+  const bare = !(block.content || "").trim() && !(block.children || []).length && !(threads > 0);
+  return bare ? "delete" : "unplace";
+}
+
+// The position a discarded highlight keeps as a note: its page alone, the
+// shape of a highlight whose place on its page is not known, so nothing
+// draws it and the review queue leaves it out; its rectangles, lost,
+// closest, doc_id, approx, match and prev go. Its quote, colour and the
+// rest of its properties stay.
+export const discardedPosition = (pos) => ({ pageNumber: pos.pageNumber });
+
+// Discard's step for the lost highlight `id` of the tree `blocks`, with
+// `threads` comment threads: {kind: "discarded", deleted, before:
+// {position}, …} with, when it deletes the highlight (discardKind's
+// "delete"), `removed`: {block, parentId, index}, the block as it was and
+// its place among its siblings (blockModel blockPlace), which its Undo
+// puts back; else `after`, the position it keeps (discardedPosition),
+// which its Undo takes back as reviewUndone takes back another step's.
+// Null when Discard does not apply.
+export function discardStep(blocks, id, threads = 0) {
+  const block = findBlock(blocks || [], id);
+  const kind = discardKind(block, threads);
+  if (!kind) return null;
+  const position = block.properties.pdf_position;
+  if (kind === "unplace") return { kind: "discarded", deleted: false, before: { position }, after: discardedPosition(position) };
+  return { kind: "discarded", deleted: true, before: { position }, removed: { block, ...blockPlace(blocks, id) } };
+}
+
+// The tree with the Discard `step` (discardStep's) applied to block `id`:
+// the highlight deleted, or its position its page alone while it is still
+// the lost one discarded. The same tree when it no longer applies.
+export function discardApplied(blocks, id, step) {
+  const block = step?.kind === "discarded" ? findBlock(blocks, id) : null;
+  if (!block) return blocks;
+  if (step.deleted) return removeBlockTree(blocks, id);
+  if (!sameJson(block.properties?.pdf_position, step.before.position)) return blocks;
+  return updateBlockTree(blocks, id, (b) => ({ ...b, properties: { ...b.properties, pdf_position: step.after } }));
+}
+
+// The tree with the Discard `step` taken back (the card's Undo), the
+// highlight as it was, lost, on the page: a deleted one put back where it
+// stood (at the top's end when its parent has gone since), unless it is
+// back already; one kept as a note given its lost position again, unless
+// its position changed since. The same tree when there is nothing to take
+// back.
+export function discardUndone(blocks, id, step) {
+  if (step?.kind !== "discarded") return blocks;
+  if (step.deleted) {
+    const { block, parentId = null, index = Infinity } = step.removed || {};
+    if (!block || findBlock(blocks, block.id)) return blocks;
+    const back = insertBlockAt(blocks, parentId, index, block);
+    return back !== blocks ? back : insertBlockAt(blocks, null, Infinity, block);
+  }
+  const block = findBlock(blocks, id);
+  const props = block ? reviewUndone(block.properties, step) : null;
+  return props && props !== block.properties ? updateBlockTree(blocks, id, (b) => ({ ...b, properties: props })) : blocks;
 }
