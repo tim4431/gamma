@@ -4,7 +4,7 @@ import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import { setWallClock } from "../src/shared/model/wallClock.js";
 import {
-  DEFAULT_PAPER, blockToSheet, firstSheetId, inkBySheet, insertSheetAfter, newSheet, normalizePaper, paperBefore, paperLines,
+  DEFAULT_PAPER, PAPER_COLORS, blockToSheet, firstSheetId, inkBySheet, insertSheetAfter, newSheet, normalizePaper, paperBefore, paperIsDark, paperLines,
   paperSizeKey, sheetAfterPlan, sheetIdAfter, sheetOfBlock, sheetsOf, stableId, turnPaper, wantsSheetAfter, withAllSheetsPaper,
   withSheetPaper,
 } from "../src/notebook/notebook.js";
@@ -103,6 +103,12 @@ test("paper sizes are recognised either way round", () => {
   assert.equal(paperSizeKey(turnPaper(a4)), "a4");
   assert.equal(paperSizeKey(normalizePaper({ width: 612, height: 792 })), "letter");
   assert.equal(paperSizeKey(normalizePaper({ width: 700, height: 700 })), "");
+});
+
+test("only the dark paper draws a highlighter unblended", () => {
+  assert.deepEqual(PAPER_COLORS.map((color) => paperIsDark({ color })), [false, false, false, true]);
+  assert.equal(paperIsDark({ color: "#1a2b3c" }), true, "an imported dark colour");
+  assert.equal(paperIsDark({}), false);
 });
 
 test("a new sheet stores its whole paper and starts folded: it shows its drawings itself", () => {

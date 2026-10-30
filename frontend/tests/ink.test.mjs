@@ -9,6 +9,7 @@ import {
   mergeInk, serializeInk, inkProps, newCanvasInk, sameStroke,
   inkAtTime, inkTimeline, REPLAY_MAX, REPLAY_PAUSE,
   DEFAULT_SIZE, STROKE_DEFAULTS, byBand, cloneStrokes, encodePoints, inkBytes, inkFeatures, strokeBand, strokeBounds, strokeBytes,
+  INK_PLANE, PLANES, planeMultiplies, strokeMultiplies, strokePlane,
   upgradeV1, withDefaults, appendStrokes, flipStrokes,
   transformPoint, visibleTools, BRUSH_ORDER, KNOWN_BRUSHES, bandRuns, dashArray, dashDots, dashPattern, dashRuns, opacityBand, strokeOpacity,
   outlineOptions, runOutline, cachedStrokePath as cachedPath, strokePlaceholder as placeholderOf,
@@ -116,6 +117,10 @@ test("bands: highlighters draw under ink; a tap prefers the ink above a highligh
   const ink = { ...newInk(1, 612, 792), strokes: [pen(), hl, under, top] };
   assert.deepEqual([strokeBand(pen()), strokeBand(hl), strokeBand(under), strokeBand(top)], [1, 0, 0, 1]);
   assert.deepEqual(byBand(ink.strokes).map((s) => s.id), ["hl", "under", "pen", "top"]);
+  // the layer's planes: a band's highlighters over its other strokes, each band's over the band below
+  assert.deepEqual([under, hl, pen(), top].map(strokePlane), [0, 1, INK_PLANE, 3]);
+  assert.deepEqual(PLANES.filter(planeMultiplies), [1, 3], "the highlighters' planes multiply into the page");
+  assert.equal(strokePath(hl).multiply && strokeMultiplies(hl) && !strokeMultiplies(under), true);
   const plain = [pen(), encodeStroke({ id: "b", samples: samples() })];
   assert.equal(byBand(plain), plain, "nothing to reorder: the same array");
   // a thin pen over a wide highlighter: the pen is what a tap near both means

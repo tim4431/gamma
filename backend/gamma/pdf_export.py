@@ -400,14 +400,35 @@ def _ink_scale(ink, rotation, crop) -> float:
     return ((cw if rotation in (0, 180) else ch) / sw) if sw else 1.0
 
 
-def _ink_annotations(ink, rotation, crop, note, author, block_id=""):
+def _marker_appearance(writer, ink, bucket, to_pdf, scale, rect):
+    """A highlighter bucket's normal appearance: its strokes as the screen
+    draws them (``ink.pdf_path_ops``: each centreline at its own width under
+    ``/GSinkM<α>``, which multiplies), in user space (the form's /BBox is
+    the annotation's /Rect). /Ink has no blend mode of its own, so a viewer
+    drawing it from /InkList and /CA paints the colour over the text under
+    it; one drawing this keeps that text black, as the viewer does."""
+    from . import ink as inkmod
+    ops = inkmod.pdf_path_ops(ink.model_copy(update={"strokes": bucket}), to_pdf, scale)
+    stream = DecodedStreamObject()
+    stream.set_data(ops)
+    stream.update({
+        NameObject("/Type"): NameObject("/XObject"),
+        NameObject("/Subtype"): NameObject("/Form"),
+        NameObject("/BBox"): ArrayObject(FloatObject(round(v, 2)) for v in rect),
+        NameObject("/Resources"): DictionaryObject({NameObject("/ExtGState"): inkmod.pdf_path_resources(ops)}),
+    })
+    return writer._add_object(stream)
+
+
+def _ink_annotations(writer, ink, rotation, crop, note, author, block_id=""):
     """One handwriting group → ``/Ink`` annotations, one per look bucket
     (``ink.ink_buckets``): ``/InkList`` polylines in user space, ``/BS /W``
     the bucket's mean drawn width, ``/BS /S /D /D [on off]`` when the
     bucket's first stroke is dashed or dotted (a bucket mixing dashes takes
     that one's: the bucket key has no dash, so a re-export keeps its
     ``/NM`` set), ``/C`` + ``/CA`` its colour at the opacity the screen
-    draws it (``ink.drawn_alpha``). Every annotation also carries
+    draws it (``ink.drawn_alpha``), and a highlighter's an appearance that
+    multiplies (``_marker_appearance``). Every annotation also carries
     its strokes as ``/GammaInk`` (the gamma-ink version 2 JSON, verbatim)
     so a Gamma re-import keeps pressure, time, the dash and every key;
     other readers ignore the private key. The note rides on the first
@@ -419,6 +440,10 @@ def _ink_annotations(ink, rotation, crop, note, author, block_id=""):
     from . import ink as inkmod
     sw, sh = float(ink.space.width), float(ink.space.height)
     k = _ink_scale(ink, rotation, crop)
+
+    def to_pdf(x, y):
+        return viewer_point_to_pdf(x / sw, y / sh, rotation, crop)
+
     out = []
     for n, bucket in enumerate(inkmod.ink_buckets(ink)):
         first = bucket[0]
@@ -428,7 +453,7 @@ def _ink_annotations(ink, rotation, crop, note, author, block_id=""):
             poly = inkmod.stroke_polyline(stroke)
             flat = []
             for x, y, w in poly:
-                px, py = viewer_point_to_pdf(x / sw, y / sh, rotation, crop)
+                px, py = to_pdf(x, y)
                 flat.extend((px, py))
                 xs.append(px)
                 ys.append(py)
@@ -439,7 +464,8 @@ def _ink_annotations(ink, rotation, crop, note, author, block_id=""):
         if not paths:
             continue
         width = (sum(widths) / len(widths)) * k
-        pad = width / 2 + 1
+        pad = max(widths) * k / 2 + 1
+        rect = (min(xs) - pad, min(ys) - pad, max(xs) + pad, max(ys) + pad)
         border = DictionaryObject({NameObject("/W"): FloatObject(round(width, 2)), NameObject("/S"): NameObject("/S")})
         pattern = inkmod.dash_pattern(first)
         if pattern:
@@ -448,8 +474,7 @@ def _ink_annotations(ink, rotation, crop, note, author, block_id=""):
         annot = DictionaryObject({
             NameObject("/Type"): NameObject("/Annot"),
             NameObject("/Subtype"): NameObject("/Ink"),
-            NameObject("/Rect"): ArrayObject(
-                FloatObject(v) for v in (min(xs) - pad, min(ys) - pad, max(xs) + pad, max(ys) + pad)),
+            NameObject("/Rect"): ArrayObject(FloatObject(round(v, 2)) for v in rect),
             NameObject("/InkList"): ArrayObject(paths),
             NameObject("/BS"): border,
             NameObject("/GammaInk"): TextStringObject(inkmod.dumps({
@@ -458,6 +483,9 @@ def _ink_annotations(ink, rotation, crop, note, author, block_id=""):
                 "strokes": [inkmod.to_dict(s) for s in bucket],
             }).decode("utf-8")),
         })
+        if first.tool == "highlighter":
+            annot[NameObject("/AP")] = DictionaryObject({
+                NameObject("/N"): _marker_appearance(writer, ink, bucket, to_pdf, k, rect)})
         if block_id:
             annot[NameObject("/NM")] = TextStringObject(f"Zotero-{zotero_annot_key(f'{block_id}:{n}')}")
         out.append((inkmod.band_of(first), _finish_annotation(annot, (r, g, b, inkmod.drawn_alpha(first, a)),
@@ -638,7 +666,7 @@ def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=(),
             continue
         crop, rotation = page_frame(writer.pages[page_num - 1])
         by_page.setdefault(page_num - 1, []).extend(_ink_annotations(
-            ink_file, rotation, crop, group.get("note") or "", author, block_id=group.get("id") or ""))
+            writer, ink_file, rotation, crop, group.get("note") or "", author, block_id=group.get("id") or ""))
     # A page's annotations from every group on it go band 0 first (a stable
     # sort: groups and buckets keep their order within a band), as the layers
     # draw: /Ink has no blend mode, so the order alone keeps a later group's

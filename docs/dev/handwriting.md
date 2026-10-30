@@ -959,7 +959,7 @@ and the canonical bytes never write a key at its omission value:
 | `opacity` | number in (0, 1] | `1` | |
 | `pen` | bool | `true` | `false` marks a stroke without real pressure (a mouse or finger, or a stylus with *Pressure-sensitive strokes* off), drawn even, no `w`, for every brush but `brush`, whose `w` then comes from the pointer's speed, and `calligraphy`, whose `w` comes from its direction alone (a snapped stroke is `pen: false` too, and even whatever its brush: it carries `shape`) |
 | `t0` | int ≥ 0 | omitted | wall-clock ms of the first sample, never invented (a client without timing omits `t` and `t0`); the replay reads both |
-| `band` | `0` or `1` | the tool's default, `0` for a highlighter and `1` otherwise, and omitted when equal to it | `0` draws under, `1` draws as ink. Every layer draws band 0 first, then band 1 (`InkLayer`, `to_svg`, `pdf_path_ops`, the annotated PDF's `/Annots` order); a tap prefers band 1 within the radius (`nearestInkStroke`) |
+| `band` | `0` or `1` | the tool's default, `0` for a highlighter and `1` otherwise, and omitted when equal to it | `0` draws under, `1` draws as ink. Every layer draws band 0 first, then band 1 (`InkLayer`, whose planes put a band's highlighters over its other strokes, `to_svg`, `pdf_path_ops`, the annotated PDF's `/Annots` order); a tap prefers band 1 within the radius (`nearestInkStroke`) |
 | `from` | a stroke id | omitted | the stroke this piece was cut from by the partial eraser. A cut of a piece keeps the root's id, so every piece names the original. Written by `restroke`, kept by every edit, dropped on paste and duplicate (`cloneStrokes`, `duplicateStrokes`: a copy is not a piece). Read by the merge only |
 | `shape` | `{kind, params}` | omitted | `kind` one of `line` `arrow` `rect` `ellipse` `triangle` `polygon` `curve`; `params` an object of at most 64 finite numbers (and booleans), the geometry an editor rebuilds `pts` from after a handle drag, moved with `pts` by every edit that moves the samples ("Client"). The stroke **also carries its baked `pts`**, so hit test, bounds, eraser, lasso, replay and every exporter draw it as any stroke; it is constant width whatever its `brush` (no `w`, no `o`: "The brush table"); a piece cut from a shape loses `shape` and `fill` |
 | `fill` | `{color: '#rrggbb', opacity}` | omitted; `opacity` in (0, 1], omitted at `0.25` | the inside of a closed shape (a `shape` of kind `rect`, `ellipse`, `triangle` or `polygon`: `CLOSED_SHAPES`, both languages), drawn under its outline at `opacity`; written only there (the selection's Fill, the Shapes tool's), and a fill on any other stroke is kept but not drawn; a piece cut from the shape drops it |
@@ -2377,9 +2377,31 @@ reach.
   `desynchronized` canvas for the stroke in progress. There is one per
   surface (a PDF page, a sheet in the notebook view, a sheet among the
   notes), and it draws after the highlights and the text boxes.
-  - The SVG draws every group's band-0 strokes first, then every group's
-    band-1 strokes (two `<g data-ink-id>` per group at most). `Strokes`
-    alone, as in the notes card, orders one drawing by band.
+  - The strokes stand in planes (`ink.js strokePlane`), bottom to top:
+    band 0's other strokes (an imported sticky), band 0's highlighters,
+    band 1's other strokes (`INK_PLANE`), band 1's highlighters. Each plane
+    is an `svg.inkLayer` of its own, drawn while a stroke of it is on the
+    surface (the ink plane always), with every group's strokes of it in one
+    `<g data-ink-id>`. `Strokes` alone, as in the notes card, orders one
+    drawing by band.
+  - A highlighter plane carries `data-blend="multiply"` and multiplies into
+    the page as a whole, so the text under a highlighter stays black (#147).
+    A blend on a path inside an SVG never leaves it: `.inkLayer`'s z-index
+    makes it a stacking context, which isolates what it holds. The paths
+    keep their own multiply, so two highlighters still mix where they
+    cross. The live canvas takes the blend while it draws a highlighter (or
+    the Shapes tool in one's look), and peers' wet highlighters have a
+    canvas of their own that blends.
+  - On a turned-over page (Flip page colors, Gamma Dark), where the layer
+    is inverted with the page, those planes and canvases screen instead,
+    multiply's dual: the page shows the light page's highlight inverted,
+    the light text under it staying light. On dark notebook paper
+    (`notebook.js paperIsDark`, the sheet's `data-paper="dark"`) a
+    highlighter is drawn as it is, since multiplied it would all but
+    vanish.
+  - The ink plane holds the grain's `<defs>`, which the other planes'
+    pencils reach by id, the selection's box and the flash. A dragged
+    selection's preview draws in each plane its strokes stand in.
   - A drawing `inkFeatures` finds something in is reported once
     (`onInkFeatures`). App puts one pill per page visit on it: "Some
     handwriting here comes from a newer Gamma and is drawn plainly; update
@@ -2989,7 +3011,8 @@ reach.
       lands.
     - It is not React state: each layer subscribes to its own surface
       (`useWetStrokes`) and paints the wet strokes on a canvas of their own
-      (`.inkWetCanvas`).
+      (`.inkWetCanvas`), the highlighters on a second one that multiplies
+      into the page (`data-blend`), as their plane will.
     - That canvas is under the live canvas, cleared whole per paint and
       laid on what shows of the surface as the live canvas is. While it has
       strokes it is painted again when a scroll or a resize brings more of
@@ -3035,13 +3058,13 @@ reach.
     - **The raster**: on a surface holding more than `RASTER_STROKES`
       (1 500) strokes, every finished group's `<g>` is drawn, once it has
       stood unchanged for a second, as a picture of itself.
-      - That is each `<g>` (one per band) but the group the layer's last
+      - That is each `<g>` (one per plane) but the group the layer's last
         stroke went into, one with a selection or in a replay, and one
         culled.
       - The picture is its own markup, with the layer's `<defs>`, as an SVG
         image drawn to a canvas at the current zoom in device pixels and
         kept as a PNG. It is shown as one `<image class="inkRaster">` in its
-        `<g>` (multiplied onto the page for band 0) until the group
+        `<g>` (multiplied, in a highlighter plane) until the group
         changes.
       - The picture takes no presses (`pointer-events: none`). An image is
         hit over its whole box, where the paths are hit on their ink alone,
@@ -4335,6 +4358,15 @@ reach.
       `/Annots` (`annotate_pdf` sorts a page's annotations by band,
       stably, since `/Ink` has no blend mode). The note carrier and the
       Zotero `/NM` keep the first-seen bucket index.
+    - A highlighter's bucket also carries a normal appearance (`/AP /N`,
+      `_marker_appearance`): its strokes as `pdf_path_ops` draws them,
+      under a graphics state that multiplies, in a form whose `/BBox` is
+      the `/Rect`. A viewer drawing it keeps the text under the
+      highlighter black, as Gamma does (PDFium, MuPDF and pdf.js were
+      checked). Drawn from `/InkList` and `/CA` it would paint the colour
+      over the text instead, and pdf.js draws a `/BS /W` wider than half
+      the `/Rect`'s height as a 1 pt line. The `/Rect` takes in the
+      bucket's widest stroke.
   - A bucket whose first stroke is dashed writes `/BS /S /D /D [on off]`.
     A bucket mixing dashes writes that first one's: `/GammaInk` carries
     the truth, and the dash is not part of the bucket key, so re-exports
@@ -4402,8 +4434,9 @@ reach.
   - The pens show their baked widths, tapers, dashes, the pencil's shades
     in its grain and the calligraphy nib.
   - The highlighters are multiplied onto the page, so the text under them
-    stays as dark as it was, and they stay under the ink. `/Ink`
-    annotations (drawn over the page's content) could not do that.
+    stays as dark as it was, and they stay under the ink. A plain `/Ink`
+    annotation (drawn over the page's content) could not do that; the
+    annotated PDF's highlighters do it through their appearance.
   - MuPDF rasterizes the sheet's PDF and the stamped page
     ([ai_tools.md](ai_tools.md) "view_ink").
   - `backend/tests/test_ai_tools_ink.py` renders text under a highlighter

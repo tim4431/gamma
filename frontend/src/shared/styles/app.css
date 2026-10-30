@@ -6554,6 +6554,12 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .inkLayer { z-index: 6; overflow: visible; }
 /* The stroke in progress; peers' strokes in progress (ink-live) have a canvas of their own under it. */
 .inkCanvas, .inkWetCanvas { z-index: 6; display: none; }
+/* A highlighter multiplies into the page under it, so the text there stays
+   black: its plane of the layer as a whole (InkLayer), and the canvas while
+   one is drawn or a peer draws one. The blend sits on the SVG or canvas
+   itself, since one inside an SVG never leaves it (its z-index makes it a
+   stacking context, which isolates what is in it). */
+:is(.inkLayer, .inkCanvas, .inkWetCanvas)[data-blend="multiply"] { mix-blend-mode: multiply; }
 .pdfViewer .pdfPageWrap.inkHovering, .pdfPageWrap.inkHovering .textLayer { cursor: none; }
 /* Drawn over an arbitrary PDF page, so fixed white/black like the lasso,
    not theme tokens. */
@@ -6609,6 +6615,10 @@ a.shareBrand:hover { background: var(--bg-hover); }
 /* The selection menu's second row (More edits): the first row's targets. */
 .inkEditOptions.inkEditMore .ctlBtn { flex: 1; min-width: 36px; min-height: 36px; }
 :is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) :is(.inkLayer, .inkCanvas, .inkWetCanvas, .textBoxBody) { filter: invert(1) hue-rotate(180deg); }
+/* Turned over with the page, a highlighter screens, multiply's dual: the
+   dark page shows the light page's highlight inverted, the light text under
+   it staying light. */
+:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) [data-blend="multiply"] { mix-blend-mode: screen; }
 /* The brief outline after a jump from the notes. */
 .inkFlash {
   fill: none;
@@ -6923,6 +6933,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 :is([data-theme="sepia"], [data-theme="solarized"], [data-theme="gray"]) .inkZoomPanel:not(.pdfDark) .inkZoomRaster { mix-blend-mode: multiply; opacity: 0.82; }
 [data-theme="gamma-light"] .inkZoomPanel:not(.pdfDark) .inkZoomRaster { mix-blend-mode: multiply; }
 :is(.inkZoomPanel.pdfDark, [data-theme="gamma-dark"] .inkZoomPanel) :is(.inkLayer, .inkCanvas, .inkWetCanvas) { filter: invert(1) hue-rotate(180deg); }
+:is(.inkZoomPanel.pdfDark, [data-theme="gamma-dark"] .inkZoomPanel) [data-blend="multiply"] { mix-blend-mode: screen; }
 .viewerWrap.inkZoomOpen :is(.pdfCloseBtn, .pdfFullscreenBox) { bottom: calc(14px + var(--ink-zoom-h, 0px)); }
 .viewerWrap.inkZoomOpen .recordingPill { bottom: calc(12px + var(--ink-zoom-h, 0px)); }
 .viewerWrap.inkZoomOpen .replayBar { bottom: calc(10px + var(--ink-zoom-h, 0px)); }

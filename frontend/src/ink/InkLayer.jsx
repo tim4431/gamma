@@ -24,8 +24,8 @@ import {
 import {
   MAX_STROKE_SIZE, boundsOf, byBand, cachedStrokePath, dashDots, dashPattern, dashRuns, encodeStroke, eraserKeep, isDash,
   inkBounds, inkFeatures, inkUntil, lerpSample, nearestInkStroke, opacityBand, outlineOptions, outlinePressure, runOutline,
-  sizesFor, strokeBand, strokeBounds, strokeId, strokeMaxWidth, strokePath, strokePlaceholder, strokeWalls, strokesInLasso, svgPathFromPoints,
-  transformPoint, unionBox,
+  sizesFor, strokeBounds, strokeId, strokeMaxWidth, strokeMultiplies, strokePath, strokePlaceholder, strokePlane, strokeWalls,
+  strokesInLasso, svgPathFromPoints, transformPoint, unionBox, INK_PLANE, PLANES, planeMultiplies,
   CLOSED_SHAPES, DEFAULT_NIB, FILL_OPACITY, NIB_HAIR, encodedStyle, isClosedShape, nibOutline, strokeNib,
 } from "./ink";
 import { brushOpacities, brushWidths, finishStroke, strokeChannels, widthLaw } from "./finishStroke.js";
@@ -229,13 +229,14 @@ function useGrain(inks) {
 // A drawing's strokes as SVG paths (ink.js strokePath): a pen's filled
 // outline (its dash runs or dots when dashed or dotted; a pencil's a path
 // per shade, filled with the grain), a constant-width dashed pen's and a
-// highlighter's stroked polyline, the highlighter multiplied onto the page,
-// an unknown tool's polyline. Band 0 (under) draws before band 1 (ink);
-// `band` restricts the drawing to one band, for a layer that interleaves
-// several groups' bands.
-export function Strokes({ ink, hide, band, lazy = false }) {
+// highlighter's stroked polyline, the highlighter multiplied onto what the
+// SVG drew before it, an unknown tool's polyline. Band 0 (under) draws
+// before band 1 (ink); `plane` restricts the drawing to one plane
+// (ink.js strokePlane), for a layer that draws every group's strokes plane
+// by plane.
+export function Strokes({ ink, hide, plane, lazy = false }) {
   const grainFill = useContext(GrainContext);
-  const strokes = band == null ? byBand(ink.strokes) : ink.strokes.filter((s) => strokeBand(s) === band);
+  const strokes = plane == null ? byBand(ink.strokes) : ink.strokes.filter((s) => strokePlane(s) === plane);
   return strokes.map((s) => {
     if (hide?.has(s.id)) return null;
     // `lazy` (a dense group, "dense pages" below): a stroke whose outline is
@@ -269,16 +270,16 @@ export function Strokes({ ink, hide, band, lazy = false }) {
 // strokes begun so far, the one in progress cut short, and the ones not
 // yet reached faded (spotlight), left out (reveal) or drawn as they are
 // (static). Without a frame, the drawing as it is.
-export function ReplayStrokes({ ink, frame, hide, band, lazy = false }) {
-  if (!frame || frame.mode === "static") return <Strokes ink={ink} hide={hide} band={band} lazy={lazy} />;
+export function ReplayStrokes({ ink, frame, hide, plane, lazy = false }) {
+  if (!frame || frame.mode === "static") return <Strokes ink={ink} hide={hide} plane={plane} lazy={lazy} />;
   const until = inkUntil(ink, frame.at, frame.times);
   const pending = new Set(frame.mode === "spotlight" ? until.pending : []);
   return (
     <>
       {pending.size ? (
-        <g className="inkPending"><Strokes ink={{ ...ink, strokes: ink.strokes.filter((s) => pending.has(s.id)) }} hide={hide} band={band} /></g>
+        <g className="inkPending"><Strokes ink={{ ...ink, strokes: ink.strokes.filter((s) => pending.has(s.id)) }} hide={hide} plane={plane} /></g>
       ) : null}
-      <Strokes ink={until.ink} hide={hide} band={band} />
+      <Strokes ink={until.ink} hide={hide} plane={plane} />
     </>
   );
 }
@@ -444,13 +445,15 @@ function paintPencil(ctx, samples, use, color, alpha, dash) {
 // painted on a canvas of their own under this layer's stroke in progress,
 // repainted on every chunk, each through paintLiveStroke with its style's
 // width law baked on the fly (the start taper only, like the writer's own
-// live line). One a loaded file of the surface holds is gone (landWet), so
-// the committed stroke takes its place with no visible change. The canvas
-// covers what shows of the surface (canvasWindow, as the live canvas does)
-// and, while it has strokes, follows the scrolls and resizes that bring
-// more of the surface into view. Its data-wet counts the wet strokes and
-// data-wet-ids names them.
-function useWetStrokes(surface, wrapRef, wetRef, live) {
+// live line); a highlighter on a second canvas (`washRef`) that multiplies
+// into the page as the highlighter planes do. One a loaded file of the
+// surface holds is gone (landWet), so the committed stroke takes its place
+// with no visible change. The canvases cover what shows of the surface
+// (canvasWindow, as the live canvas does) and, while they have strokes,
+// follow the scrolls and resizes that bring more of the surface into view.
+// The first canvas's data-wet counts the wet strokes and data-wet-ids names
+// them.
+function useWetStrokes(surface, wrapRef, wetRef, washRef, live) {
   const paintRef = useRef(null);
   useEffect(() => {
     // `shown`: the window the canvas draws while it has strokes; `view`:
@@ -471,12 +474,11 @@ function useWetStrokes(surface, wrapRef, wetRef, live) {
       else { window.removeEventListener("scroll", onView, true); window.removeEventListener("resize", onView); }
     };
     const blank = (canvas) => {
-      shown = null;
-      if (canvas.width || canvas.style.display === "block") releaseCanvas(canvas);
+      if (canvas && (canvas.width || canvas.style.display === "block")) releaseCanvas(canvas);
     };
     const paintWet = () => {
       raf = 0;
-      const canvas = wetRef.current, el = wrapRef.current, L = live.current;
+      const canvas = wetRef.current, wash = washRef.current, el = wrapRef.current, L = live.current;
       if (!canvas || !el) return;
       let strokes = inkLive.wetOn(surface);
       if (strokes.length) {
@@ -486,7 +488,9 @@ function useWetStrokes(surface, wrapRef, wetRef, live) {
       }
       const rect = el.getBoundingClientRect();
       if (!strokes.length || !L.width || !rect.width) {
+        shown = null;
         blank(canvas);
+        blank(wash);
         watch(false);
         canvas.dataset.wet = "0";
         canvas.dataset.wetIds = "";
@@ -496,26 +500,31 @@ function useWetStrokes(surface, wrapRef, wetRef, live) {
       canvas.dataset.wetIds = strokes.map((s) => s.id).join(" ");
       watch(true);
       const win = canvasWindow(rect, viewRect(viewOf(el)));
-      if (!win) { blank(canvas); return; }   // none of the surface shows: drawn once it does
-      fitCanvas(canvas, win, rect);
       shown = win;
-      const ctx = canvas.getContext("2d");
-      if (!ctx) return;
-      ctx.setTransform(1, 0, 0, 1, 0, 0);
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-      ctx.setTransform(...windowMatrix(canvas, win, rect.width / L.width));
-      for (const s of strokes) {
-        ctx.globalAlpha = 1;
-        ctx.globalCompositeOperation = "source-over";
-        ctx.setLineDash([]);
-        paintLiveStroke(ctx, s.samples, s.style, { done: s.done });
+      // none of the surface shows: drawn once it does
+      const parts = win ? [[canvas, strokes.filter((s) => !strokeMultiplies(s.style))],
+        [wash, strokes.filter((s) => strokeMultiplies(s.style))]] : [[canvas, []], [wash, []]];
+      for (const [target, mine] of parts) {
+        if (!target || !mine.length) { blank(target); continue; }
+        fitCanvas(target, win, rect);
+        const ctx = target.getContext("2d");
+        if (!ctx) continue;
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.clearRect(0, 0, target.width, target.height);
+        ctx.setTransform(...windowMatrix(target, win, rect.width / L.width));
+        for (const s of mine) {
+          ctx.globalAlpha = 1;
+          ctx.globalCompositeOperation = "source-over";
+          ctx.setLineDash([]);
+          paintLiveStroke(ctx, s.samples, s.style, { done: s.done });
+        }
       }
     };
     paintRef.current = schedule;
     const off = inkLive.subscribeWet(surface, schedule);
     schedule();
     return () => { off(); cancelAnimationFrame(raf); watch(false); paintRef.current = null; };
-  }, [surface, wrapRef, wetRef, live]);
+  }, [surface, wrapRef, wetRef, washRef, live]);
   // A file landing (the groups change) may hold a wet stroke's id now.
   useEffect(() => { if (inkLive.wetOn(surface).length) paintRef.current?.(); });
 }
@@ -640,7 +649,7 @@ function useVisibleGroups(wrapRef, groups, width, height, enabled) {
 }
 const NO_GROUPS = new Set();
 // The raster: on a surface holding more than RASTER_STROKES strokes, every
-// finished group's <g> (one per band) is drawn once as a picture of itself
+// finished group's <g> (one per plane) is drawn once as a picture of itself
 // — its own markup with the layer's <defs> as an SVG image, drawn to a
 // canvas at the current zoom in device pixels — and shown as one <image>
 // until the group changes. A zoom draws it again from the markup it kept,
@@ -649,9 +658,9 @@ const NO_GROUPS = new Set();
 // replay), one not drawn (culled), one too large for a canvas (canvasSize's
 // caps), or one past what the layer's pictures may hold together
 // (RASTER_PIXELS; the pictures of groups scrolled away go first to make
-// room): those keep their paths. → raster(key "id:band", ink) → {url, box:
-// [x, y, w, h]} | null.
-function useGroupRasters(svgRef, wrapRef, groups, width, enabled, busy, shown, lazy) {
+// room): those keep their paths. `planeRefs.current[plane]` is each plane's
+// SVG. → raster(key "id:plane", ink) → {url, box: [x, y, w, h]} | null.
+function useGroupRasters(planeRefs, wrapRef, groups, width, enabled, busy, shown, lazy) {
   const store = useRef(new Map());   // key → {ink, markup, scale, box, px (device pixels), url, working}
   const lazyRef = useRef(lazy);
   lazyRef.current = lazy;            // the groups this render drew with placeholders
@@ -678,10 +687,9 @@ function useGroupRasters(svgRef, wrapRef, groups, width, enabled, busy, shown, l
     if (enabled) {
       for (const g of groups) {
         if (busy.has(g.id)) continue;
-        for (const band of [0, 1]) {
-          if (!g.ink.strokes.some((s) => strokeBand(s) === band)) continue;
-          keep.set(`${g.id}:${band}`, g);
-          if (!shown || shown.has(g.id)) make.set(`${g.id}:${band}`, g);
+        for (const plane of new Set(g.ink.strokes.map(strokePlane))) {
+          keep.set(`${g.id}:${plane}`, g);
+          if (!shown || shown.has(g.id)) make.set(`${g.id}:${plane}`, g);
         }
       }
     }
@@ -689,8 +697,8 @@ function useGroupRasters(svgRef, wrapRef, groups, width, enabled, busy, shown, l
     for (const [key, r] of [...map]) if (!keep.has(key) || keep.get(key).ink !== r.ink) drop(key);
     if (!make.size) return undefined;
     const timer = setTimeout(() => {
-      const el = wrapRef.current, svg = svgRef.current;
-      if (!el || !svg || !width) return;
+      const el = wrapRef.current, defsSvg = planeRefs.current[INK_PLANE];
+      if (!el || !defsSvg || !width) return;
       const scale = el.getBoundingClientRect().width / width * (window.devicePixelRatio || 1);
       // the pixels the layer's pictures hold, one being made at the size it is made at
       let used = 0;
@@ -718,12 +726,12 @@ function useGroupRasters(svgRef, wrapRef, groups, width, enabled, busy, shown, l
         }
         let markup = r?.markup;
         if (!markup) {
-          const [id, band] = key.split(":");
+          const [id, plane] = key.split(":");
           if (lazyRef.current.has(id)) continue;   // its placeholders are not its picture
-          const gEl = svg.querySelector(`g[data-ink-id="${CSS.escape(id)}"][data-ink-band="${band}"]`);
+          const gEl = planeRefs.current[plane]?.querySelector(`g[data-ink-id="${CSS.escape(id)}"]`);
           if (!gEl || !gEl.childElementCount || gEl.querySelector("image.inkRaster")) continue;
           const xml = new XMLSerializer();
-          markup = [...svg.children].filter((n) => n.localName === "defs").map((n) => xml.serializeToString(n)).join("")
+          markup = [...defsSvg.children].filter((n) => n.localName === "defs").map((n) => xml.serializeToString(n)).join("")
             + xml.serializeToString(gEl);
         }
         const rec = { ink: g.ink, markup, scale, box, px: w * h, url: r?.url || null, working: true };
@@ -825,7 +833,10 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
   useInkVersion();
   const canvasRef = useRef(null);
   const wetRef = useRef(null);
-  const svgRef = useRef(null);
+  const washRef = useRef(null);
+  // each plane's SVG (ink.js strokePlane), set by a ref callback per plane
+  const planeRefs = useRef([]);
+  const planeRef = useMemo(() => PLANES.map((plane) => (el) => { planeRefs.current[plane] = el; }), []);
   // the id of the last stroke this layer committed: its group is the one
   // being written, which keeps its paths on a dense page
   const lastStrokeRef = useRef(null);
@@ -903,7 +914,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     width, height, groups, selBox, replay, clip, hoverPreview, ruler: rulerOn, penBusy: () => penBusy.current(),
     onStroke, onEraseAlong, onEraseEnd, onEraseMany, onSelect, onMoveSelection, onJump, onPaste, onFingerScroll, onUndoGesture,
     onHoldStatus, onInkLive, onHaptic, onZoom, onZoomStroke };
-  useWetStrokes(pageNumber, wrapRef, wetRef, live);
+  useWetStrokes(pageNumber, wrapRef, wetRef, washRef, live);
   // Dense pages ("dense pages" above): culling past IDLE_STROKES strokes on
   // the surface, outlines built in idle time, and past RASTER_STROKES the
   // finished groups as pictures — not the group this layer's last stroke
@@ -920,7 +931,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     }
   }
   const lazy = new Set(total > IDLE_STROKES ? groups.filter((g) => lazyGroup(g.ink)).map((g) => g.id) : []);
-  const raster = useGroupRasters(svgRef, wrapRef, groups, width, total > RASTER_STROKES, busy, shown, lazy);
+  const raster = useGroupRasters(planeRefs, wrapRef, groups, width, total > RASTER_STROKES, busy, shown, lazy);
 
   // The finger chords: this layer is a host while it can undo (an editable
   // surface); the document-level detector is wired while any host is.
@@ -1295,10 +1306,14 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       paintLiveStroke(ctx, samples, { ...style, pen: false, shape: shape.kind, ...shapeFill(d.use, shape.kind) }, { done: true });
     };
     // At the down: the canvas on what shows of the layer (the window the
-    // draw context carries, `cw`), blank.
+    // draw context carries, `cw`), blank, and multiplying into the page
+    // while a highlighter (or the Shapes tool in one's look) draws on it, as
+    // its plane will once it commits.
     const showCanvas = (ctx) => {
       const canvas = canvasRef.current;
       if (!canvas) return;
+      if (strokeMultiplies(ctx.use.tool === "shape" ? ctx.use.style : ctx.use)) canvas.dataset.blend = "multiply";
+      else delete canvas.dataset.blend;
       ctx.cw = canvasWindow(ctx.rect, viewRect(viewOf())) || { x: 0, y: 0, width: ctx.rect.width, height: ctx.rect.height };
       fitCanvas(canvas, ctx.cw, ctx.rect, true);
     };
@@ -1883,50 +1898,59 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
   const lone = selectedIds.size === 1 ? selectedStrokes : [];
   const shaped = lone.length === 1 && lone[0].shape && shapeHandles(lone[0].shape.kind, lone[0].shape.params).length ? lone[0] : null;
   const reshaped = reshape && shaped && reshape.id === shaped.id ? reshape : null;
+  // The planes drawn (ink.js strokePlane): the ink plane always, another
+  // while a stroke of it is on the page.
+  const groupPlanes = new Map(groups.map((g) => [g.id, new Set(g.ink.strokes.map(strokePlane))]));
+  const planes = PLANES.filter((plane) => plane === INK_PLANE || groups.some((g) => groupPlanes.get(g.id).has(plane)));
   return (
     <GrainContext.Provider value={grain.fill}>
-      <svg ref={svgRef} className="inkLayer" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
-        {grain.defs}
-        {/* every group's band-0 strokes (highlighters) under every group's ink; on a dense
-            page a group off the view is left empty and a finished one drawn as its picture */}
-        {[0, 1].map((band) => groups.map((g) => {
-          if (!g.ink.strokes.some((s) => strokeBand(s) === band)) return null;
-          const culled = shown && !shown.has(g.id);
-          const pic = culled ? null : raster(`${g.id}:${band}`, g.ink);
-          return (
-            <g key={`${g.id}:${band}`} data-ink-id={g.id} data-ink-band={band}
-              style={{ pointerEvents: armed || !onSelect ? "none" : "visiblePainted", cursor: "pointer" }}>
-              {culled ? null : pic ? (
-                // the picture takes no presses: an image is hit over its whole box, the paths
-                // on their ink only, and a tap selects from the samples (nearestInkStroke)
-                <image className="inkRaster" href={pic.url} x={pic.box[0]} y={pic.box[1]} width={pic.box[2]} height={pic.box[3]}
-                  preserveAspectRatio="none" style={band === 0 ? { mixBlendMode: "multiply", pointerEvents: "none" } : { pointerEvents: "none" }} />
-              ) : (
-                <ReplayStrokes ink={g.ink} band={band} frame={frame && groupInScope(replay, g.id, g.ink, pageNumber) ? frame : null}
-                  hide={dragging || reshaped ? selectedIds : null} lazy={lazy.has(g.id)} />
-              )}
+      {/* An SVG per plane, bottom to top, each holding every group's strokes of it. A highlighter
+          plane multiplies into the page as a whole (data-blend): a blend inside one SVG stays inside
+          it, its z-index making it a stacking context. The ink plane holds the grain's defs, which
+          the others' pencils reach by id, the selection and the flash. On a dense page a group off
+          the view is left empty and a finished one drawn as its picture. */}
+      {planes.map((plane) => (
+        <svg key={plane} ref={planeRef[plane]} className="inkLayer" data-blend={planeMultiplies(plane) ? "multiply" : undefined}
+          viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
+          {plane === INK_PLANE ? grain.defs : null}
+          {groups.map((g) => {
+            if (!groupPlanes.get(g.id).has(plane)) return null;
+            const culled = shown && !shown.has(g.id);
+            const pic = culled ? null : raster(`${g.id}:${plane}`, g.ink);
+            return (
+              <g key={g.id} data-ink-id={g.id} style={{ pointerEvents: armed || !onSelect ? "none" : "visiblePainted", cursor: "pointer" }}>
+                {culled ? null : pic ? (
+                  // the picture takes no presses: an image is hit over its whole box, the paths
+                  // on their ink only, and a tap selects from the samples (nearestInkStroke)
+                  <image className="inkRaster" href={pic.url} x={pic.box[0]} y={pic.box[1]} width={pic.box[2]} height={pic.box[3]}
+                    preserveAspectRatio="none" style={planeMultiplies(plane) ? { mixBlendMode: "multiply", pointerEvents: "none" } : { pointerEvents: "none" }} />
+                ) : (
+                  <ReplayStrokes ink={g.ink} plane={plane} frame={frame && groupInScope(replay, g.id, g.ink, pageNumber) ? frame : null}
+                    hide={dragging || reshaped ? selectedIds : null} lazy={lazy.has(g.id)} />
+                )}
+              </g>
+            );
+          })}
+          {dragging ? (
+            <g transform={previewTransform}>
+              {groups.map((g) => (
+                <Strokes key={g.id} ink={{ strokes: g.ink.strokes.filter((s) => selectedIds.has(s.id)) }} plane={plane} />
+              ))}
             </g>
-          );
-        }))}
-        {dragging ? (
-          <g transform={previewTransform}>
-            {groups.map((g) => (
-              <Strokes key={g.id} ink={{ strokes: g.ink.strokes.filter((s) => selectedIds.has(s.id)) }} />
-            ))}
-          </g>
-        ) : null}
-        {reshaped && !dragging ? <g className="inkReshape"><Strokes ink={{ strokes: [reshaped] }} /></g> : null}
-        {selBox ? (
-          <rect className="inkSelRect" data-ink-selection="true"
-            transform={previewTransform}
-            x={selBox[0] - 4} y={selBox[1] - 4}
-            width={selBox[2] - selBox[0] + 8} height={selBox[3] - selBox[1] + 8} rx={3} />
-        ) : null}
-        {fb ? (
-          <rect key={flash.nonce} className="inkFlash" x={fb[0] - 6} y={fb[1] - 6}
-            width={fb[2] - fb[0] + 12} height={fb[3] - fb[1] + 12} rx={4} />
-        ) : null}
-      </svg>
+          ) : null}
+          {reshaped && !dragging && strokePlane(reshaped) === plane ? <g className="inkReshape"><Strokes ink={{ strokes: [reshaped] }} /></g> : null}
+          {plane === INK_PLANE && selBox ? (
+            <rect className="inkSelRect" data-ink-selection="true"
+              transform={previewTransform}
+              x={selBox[0] - 4} y={selBox[1] - 4}
+              width={selBox[2] - selBox[0] + 8} height={selBox[3] - selBox[1] + 8} rx={3} />
+          ) : null}
+          {plane === INK_PLANE && fb ? (
+            <rect key={flash.nonce} className="inkFlash" x={fb[0] - 6} y={fb[1] - 6}
+              width={fb[2] - fb[0] + 12} height={fb[3] - fb[1] + 12} rx={4} />
+          ) : null}
+        </svg>
+      ))}
       {selBox && onSelect ? <div className="inkSelectionHit" data-guide="ink.selection" aria-label={t("Move selected handwriting")}
         style={{ left: pct(hitBox[0], width), top: pct(hitBox[1], height),
           width: pct(hitBox[2] - hitBox[0], width), height: pct(hitBox[3] - hitBox[1], height) }} /> : null}
@@ -1950,6 +1974,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
       {rulerOn ? <InkRuler wrapRef={wrapRef} ruler={rulerOn} width={width} height={height} units={rulerUnits} onRuler={onRuler} /> : null}
       {zoom && onZoom && chrome ? <InkZoomRect wrapRef={wrapRef} page={pageNumber} zoom={zoom} width={width} height={height} onZoom={onZoom} /> : null}
       <canvas ref={wetRef} className="inkWetCanvas" />
+      <canvas ref={washRef} className="inkWetCanvas" data-blend="multiply" />
       <canvas ref={canvasRef} className="inkCanvas" />
       <div ref={cursorRef} className="inkCursor" aria-hidden="true">
         <span />

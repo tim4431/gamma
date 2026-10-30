@@ -895,6 +895,37 @@ def test_annots_come_band_0_first_and_keep_their_bucket_index():
     assert ids == ["h", "h2", "a", "b"]
 
 
+def test_an_exported_highlighter_multiplies_into_the_page():
+    """/Ink has no blend mode, so a highlighter's annotation carries an
+    appearance that multiplies (#147): drawn by a viewer, black under it
+    stays black and white paper takes the colour at its opacity, where
+    the /InkList painted at /CA would wash the black out to the colour.
+    A pen's annotation keeps no appearance."""
+    import pymupdf
+    from PyPDF2 import PdfReader
+    from gamma.pdf_export import annotate_pdf
+
+    src = pymupdf.open()
+    src.new_page(width=PAGE_W, height=PAGE_H).draw_rect(pymupdf.Rect(100, 90, 200, 110), color=None, fill=(0, 0, 0))
+    ink = inkmod.parse_ink(_ink(strokes=[
+        {"id": "h", "tool": "highlighter", "color": "#ffe28f", "size": 20, "opacity": 0.6, "ch": "xy",
+         "pts": inkmod.encode_points([{"x": 50.0, "y": 100.0}, {"x": 250.0, "y": 100.0}], "xy")},
+        {"id": "p", "ch": "xy", "pts": [10000, 10000, 1000, 0]},
+    ]))
+    out, written = annotate_pdf(src.tobytes(), [], ink=[{"ink": ink, "note": "", "id": "blk"}])
+    assert written == 2
+    hl, pen = [a.get_object() for a in PdfReader(io.BytesIO(out)).pages[0]["/Annots"]]
+    assert "/AP" not in pen
+    form = hl["/AP"]["/N"].get_object()
+    assert [float(v) for v in form["/BBox"]] == [float(v) for v in hl["/Rect"]]
+    states = form["/Resources"]["/ExtGState"]
+    assert [str(states[name]["/BM"]) for name in states] == ["/Multiply"]
+    pix = pymupdf.open(stream=out, filetype="pdf")[0].get_pixmap(annots=True)
+    assert pix.pixel(150, 100) == (0, 0, 0)            # the black under it stays black
+    paper = pix.pixel(70, 100)
+    assert abs(paper[1] - 238) <= 2 and abs(paper[2] - 188) <= 2   # white × #ffe28f at 0.6
+
+
 def _pdf_with_ink_annotation(gamma_ink: str | None = None, border=None):
     from PyPDF2 import PdfReader, PdfWriter
     from PyPDF2.generic import ArrayObject, DictionaryObject, FloatObject, NameObject, TextStringObject
