@@ -57,6 +57,7 @@ from .routers import (
     shares,
     sync,
     trash as trash_router,
+    translate,
     uploads,
     workspaces as workspaces_router,
     ws_backups, cloud_auth as cloud_auth_router,
@@ -403,6 +404,7 @@ def create_app() -> FastAPI:
     app.include_router(backup_tasks.router)
     app.include_router(jobs_router.router)
     app.include_router(ai.router)
+    app.include_router(translate.router)
     app.include_router(ai_handoffs.router)
     app.include_router(chats.router)
     app.include_router(chats.history_router)

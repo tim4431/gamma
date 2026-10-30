@@ -770,7 +770,14 @@ The scenarios live in `tests/e2e/scenarios/`:
   break: the request carries one text with `{br}`, the formulas and the
   citation marker as tokens, the page and the section; the reply fills both
   columns' boxes, and a formula comes back as a crop of the page inside the
-  translated line (against a mocked `/api/ai/translate`). What a change does
+  translated line (against a mocked `/api/ai/translate` and
+  `/api/ai/translate/brief`). Then the first chunk landing while the brief
+  is made, the job running on after leaving the PDF to 100% in its
+  background-tasks row and asking again for the chunk that went without the
+  brief; a busy account's refusal waited out and a paragraph left in the
+  original until Try again; the keep switch, the kept line and Clear in
+  Settings; Forget this translation; and a viewer of the workspace offered
+  neither Forget nor Clear. What a change does
   to the requests on real papers is the translation bench's
   ([translation.md](translation.md) "The bench").
 - `transfers.mjs`: the Import and Export dialogs — format/source cards,
@@ -1103,17 +1110,34 @@ save path, workspaces, auth or rendering of URLs should add a step here; the
   `log-errors` notice. The connection is closed either way and the page
   reconnects. A "data transfer failed" error that remains is some other
   exception and worth a look.
-- **`[ai_translate]` warnings** trace the PDF translator asking the model
-  again ([translation.md](translation.md) "The server"). "expected 10
-  translations, got 8 — asking again in halves" is a reply that merged or
-  dropped a paragraph, "— asking again one by one" a half that did too,
-  and "N of M lost a formula token — redoing them" a reply that broke a
-  `{v1}` token. "asking again failed: …" is a paragraph that stayed
-  untranslated: "no JSON array in reply" or "empty reply" (the model
-  answered something that is no translation), or the call itself failing.
-  Those paragraphs show the original and the viewer offers to try again.
-  Many "expected N, got M" lines mean the model keeps losing paragraphs:
-  a better instruction follower serves translation better.
+- **`[ai_translate]` warnings** trace the PDF translator
+  ([translation.md](translation.md) "The server"):
+  - "N of M segments came back missing, doubled or with a broken token —
+    asking for them again" is a reply that left out, doubled or emptied a
+    numbered segment, or broke a `{v1}` token. They go again in one call.
+    A segment still wrong after it shows the original, and the viewer
+    offers to try again. Many such lines mean the model keeps losing
+    segments: a better instruction follower serves translation better.
+  - "asking again failed: …" is that one call failing as a call.
+  - A bare "[ai_translate] <error>" is a chunk's own call (or a
+    translation service) failing after its retries: a 502 for a plain
+    request, an `{error}` line in a stream. The viewer asks once more,
+    then leaves the chunk's paragraphs in the original and goes on.
+  - "the paper's brief: …" is a brief request that failed outside its
+    model call.
+  - `[translate]` lines are the brief itself: "making the paper's brief
+    failed: …" and "the paper's brief came back unusable" are remembered
+    for 30 s, during which the chunks translate without a brief; "the
+    paper's brief was not asked for: …" is Gamma's own refusal (the calls
+    all in use, the allowance spent), not remembered.
+  - `[translate_store]` lines are the kept translations' own sqlite errors,
+    which never fail a translation, and "… has 20000 kept paragraphs …;
+    not keeping more" (`MAX_ROWS`, once per document per process).
+- **`[ai]` retry lines** ("<model>: <why> — retrying in 1s (attempt 1 of
+  2)") are info lines: a provider call that failed before its reply began
+  and is tried again ([ai.md](ai.md) "Calls open at once"). Many with a
+  connect timeout (`WinError 10060`) mean the provider is hard to reach
+  from this server.
 - **`[relocate]` lines** come from the highlight run of a replaced PDF
   ([highlight_relocation.md](highlight_relocation.md)). The warning "the
   job did not start (…)" is a replacement whose run was refused (the

@@ -18,8 +18,8 @@ import gamma.chatgpt_oauth as co
 from ai_fixtures import FakeResp
 from conftest import account_of
 from gamma import ai_catalog, ai_client
+from gamma.ai_client import sse_deltas as _sse_deltas
 from gamma.ai_protocols import WIRES, chatgpt as chatgpt_proto
-from gamma.routers.ai import _sse_deltas
 
 _chatgpt_request = WIRES["chatgpt"].request
 

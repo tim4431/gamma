@@ -76,6 +76,8 @@ const entries = [
   e("translation", t("Translate on select"), t("Viewer & selection"), t("Without clicking the button first"), "translation popup selected text automatic"),
   e("translation", t("Translate with"), t("Service"), t("A chat model, or a translation service below"), "translation model engine service AI Google Youdao"),
   e("translation", t("Translation services"), t("Service"), t("Microsoft for free; Google or Youdao with a key"), "translation engine API key Google Cloud Youdao Microsoft"),
+  e("translation", t("Keep translations"), t("Service"), t("So a paper read again shows at once"), "translation keep store save cache remember restart workspace"),
+  e("translation", t("Kept in this workspace"), t("Service"), t("Translated paragraphs and the papers' briefs, with Clear"), "translation kept stored cache clear delete forget size"),
   e("translation", t("Translation effort"), t("Speed"), t("Default asks for the model's lowest level, the fastest"), "translation reasoning thinking speed"),
   e("translation", t("Translation speed"), t("Speed"), t("Only models whose provider offers that tier"), "translation fast mode speed service tier priority flex latency"),
   e("translation", t("Parallel requests"), t("Speed"), t("Translation calls in flight at once (1–4)"), "translation concurrency speed"),

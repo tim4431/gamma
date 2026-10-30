@@ -3,7 +3,8 @@ import { flushSync } from "react-dom";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer, { preloadPdfEngine } from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
-import { requestFields } from "../pdf/translatePlan";
+import { briefRequest, chunkRequest, endTranslations, forgetTranslation, useTranslateJobs } from "./translateClient.js";
+import { scopeOf } from "../pdf/translateState.js";
 import { docIdOf } from "../pdf/pdfSource";
 import { discardApplied, discardKind, discardStep, discardUndone, pendingInOrder, reviewQueue, reviewStep } from "../pdf/highlightReview.js";
 import { basePixels } from "../pdf/pageRaster";
@@ -19,7 +20,7 @@ import { progressText, taskTitle } from "../tasks/taskKinds.js";
 import { isActive } from "../tasks/taskModel.js";
 import { parseGammaLink } from "../shared/model/gammaLinks.js";
 import { pageHostUser, publicPath } from "../shared/lib/slug.js";
-import { API, apiJson, getShareToken, setShareView, withShare, withWorkspace, setCurrentWorkspace, getCurrentWorkspace, setLinkName, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, PAGE_FILE_ACCEPT, metaSourceInfo, resolvePdfUrl, pdfProxyUrl, attachmentViewerUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson } from "../shared/lib/utils";
+import { API, apiJson, getShareToken, setShareView, withShare, withWorkspace, setCurrentWorkspace, getCurrentWorkspace, setLinkName, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, PAGE_FILE_ACCEPT, metaSourceInfo, resolvePdfUrl, pdfProxyUrl, attachmentViewerUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich } from "../shared/lib/utils";
 import { ITEM_TYPES, itemTypeFields, itemTypeOf } from "../shared/lib/itemTypes.js";
 import {
   AutoGrowTextarea,
@@ -897,6 +898,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // false after the cookie is removed performs a local-only workspace
     // teardown, without starting reads that race logout.
     leaveCurrentPage();
+    // Translation jobs outlive the viewer: stop them before the session goes.
+    endTranslations();
     await fetch(`${API}/logout`, { method: "POST", credentials: "include" });
     // Logout kills the browser-wide session: tell other tabs of this account
     // so they drop to the login page instead of failing on their next save.
@@ -978,6 +981,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   useEffect(() => {
     const u = authUser?.user && wsId ? `${authUser.user}@${wsId}` : "";
     tabHistoryRef.current = [];
+    // Leaving the account or workspace (here too when the session expired
+    // or another tab signed in): its translation jobs stop and its
+    // documents' translations go with it.
+    if (prefsUserRef.current && prefsUserRef.current !== u) endTranslations();
     if (!u || shareMode) {
       // Losing the session (logout button, expiry in another tab) must fully
       // close the workspace: a stale focusedBlockId would get merged into the
@@ -2676,7 +2683,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     selTranslate, setSelTranslate, selTranslateAuto, setSelTranslateAuto,
     translateLang, setTranslateLang, translateModel, setTranslateModel,
     translateEffort, setTranslateEffort, translateParallel, setTranslateParallel,
-    translateSpeed, setTranslateSpeed,
+    translateSpeed, setTranslateSpeed, translateKeep, setTranslateKeep,
     searchDetailsHome, setSearchDetailsHome, searchDetailsPaper, setSearchDetailsPaper,
     enterNewNote, setEnterNewNote, backlinksVisible, setBacklinksVisible,
     keybindings, setKeybindings,
@@ -3409,24 +3416,25 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   };
 
   // --- PDF translation (the 文A button in the viewer's zoom column) ---
-  // The queue lives in PdfViewer (translateCtl), which calls translateChunk
-  // below for each chunk; the selection popup uses the same request. The
-  // settings live in Settings → Language and Translation. What is sent: a
-  // machine-translation service ("engine:<id>") or a model, per
-  // translateModelFor, else the chat model.
+  // The viewer starts the jobs (translateCtl), which send translateChunk
+  // below for each chunk and translateBrief for the paper's brief; the
+  // selection popup uses the same chunk request. app/translateClient.js
+  // follows the jobs of every document: their background-tasks rows, the
+  // reading pill, how they ended. The settings live in Settings → Language
+  // and Translation. What is sent: a machine-translation service
+  // ("engine:<id>") or a model, per translateModelFor, else the chat model.
   const translateEngines = aiInfo?.translate_engines || [];
-  const translateSendModel = translateModelFor(translateModel, translateEngines, scopedAiModels) || chatSendModel;
+  const translatePick = translateModelFor(translateModel, translateEngines, scopedAiModels);
+  const translateSendModel = translatePick || chatSendModel;
   const translateLangLabel = (TRANSLATE_LANGS.find(([code]) => code === translateLang) || ["", ""])[1];
   const pdfTranslateCtl = useRef(null); // imperative surface set by PdfViewer
-  const [pdfTransState, setPdfTransState] = useState({ running: false, progress: 0, shown: true, pages: 0, current: false });
+  const [pdfTransState, setPdfTransState] = useState({ running: false, progress: 0, shown: true, pages: 0, current: false, translated: false, url: "" });
   const [transMenu, setTransMenu] = useState(null); // {x, y} while the button's option menu is open
   const [toolsMenu, setToolsMenu] = useState(null); // {x, y} while the strip's ⋯ menu is open
   const toolsMoreRef = useRef(null); // the ⋯ button: its own press toggles the menu
   // The ⋯ going (its tools back on the strip, the viewer closed) takes its
   // menu along, so the menu does not come back on its own with the ⋯.
   const toolsMoreAt = useCallback((el) => { toolsMoreRef.current = el; if (!el) setToolsMenu(null); }, []);
-  const transTaskRef = useRef(null); // background-tasks row for the running job
-  const transReadingRef = useRef(false); // the "Reading the paper" pill is up
   // A menu from a button of the viewer's strip opens beside it, off the
   // strip's right edge.
   function stripMenuAt(el) {
@@ -3434,96 +3442,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return { x: r.right + 8, y: r.top - 4 };
   }
   function openTransMenu(el) { setTransMenu(stripMenuAt(el)); }
-  function handleTranslateState(st) {
-    setPdfTransState(st);
-    // A paper's first requests wait while the server reads it for the brief
-    // (its terms and notation): the pill says why nothing lands yet.
-    const reading = !!(st.running && st.reading);
-    if (reading !== transReadingRef.current) {
-      transReadingRef.current = reading;
-      postPill("translate", reading
-        ? { msg: t("Reading the paper first, so its terms stay the same throughout…"), spinner: true }
-        : null);
-    }
-    if (st.running && !transTaskRef.current) {
-      transTaskRef.current = addTask({
-        name: `Translate ${st.label} → ${translateLangLabel}`, kind: "ai", info: "0%", fraction: 0,
-        cancel: () => pdfTranslateCtl.current?.halt(),
-      });
-    }
-    if (transTaskRef.current) {
-      if (st.running) {
-        updateTask(transTaskRef.current, {
-          info: reading ? t("reading the paper…") : `${Math.round(st.progress * 100)}%`, fraction: st.progress,
-        });
-      } else {
-        // The job's end: stopped by a request that kept failing (its
-        // reason), or done with paragraphs the server could not translate,
-        // which the next job asks for again ("Try again").
-        const stopped = t("stopped at {progress}%", { progress: Math.round(st.progress * 100) });
-        const left = st.error == null ? st.untranslated || 0 : 0;
-        updateTask(transTaskRef.current, { state: "done", info: st.error != null ? stopped
-          : left ? tn("{n} paragraph untranslated", "{n} paragraphs untranslated", left)
-            : st.progress >= 0.999 ? "100%" : stopped });
-        transTaskRef.current = null;
-        if (st.error != null) {
-          setStatus(st.error ? t("Translation failed: {message}", { message: st.error })
-            : t("Translation failed — click the button to retry."));
-        } else if (left) {
-          setStatus(tn("{n} paragraph could not be translated and still shows the original.",
-            "{n} paragraphs could not be translated and still show the original.", left),
-          { label: t("Try again"), run: () => pdfTranslateCtl.current?.retryUntranslated() });
-        }
-      }
-    }
-  }
-  // One chunk of paragraphs → the server's final reply ({translations,
-  // failed, …}), a single provider call. All the chunking, queueing and
-  // parallelism live in the viewer's engine; this is just the HTTP wrapper
-  // carrying the language/model/effort/speed settings. Throws on failure with the
-  // server's reason (a 429 of the shared AI allowance says what to do), its
-  // HTTP `status` and `retryAfter` (seconds: the account's AI calls are all
-  // in use): the engine asks again (translatePlan.requestChunk) and reports
-  // a job that still failed through handleTranslateState, the selection
-  // popup shows the reason. `signal` is the job's AbortController: halting
-  // cancels the requests still in flight.
-  // The server streams NDJSON: `{i: [indices], text}` as the model writes
-  // each paragraph (→ onPartial, the viewer types it onto the page), then
-  // the final `{translations}` object.
-  // `context` is the viewer's for this request (pdf/translatePlan.js
-  // requestFields): the page and, for a page without a stored PDF, the
-  // document's opening text, from which the server makes the paper's brief.
-  // `onStage("brief")` while the request waits for that brief, then
-  // `onStage("translate")`.
-  async function translateChunk(texts, signal, onPartial, context, onStage) {
-    const res = await fetch(`${API}/ai/translate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      signal,
-      body: JSON.stringify({
-        texts, lang: translateLang,
-        model: translateSendModel || "", effort: translateEffort || "",
-        speed: translateSpeed || "",
-        stream: true, ...requestFields(context),
-      }),
-    });
-    if (!res.ok) {
-      let detail = `${res.status} ${res.statusText}`;
-      try { detail = (await res.json()).detail || detail; } catch {}
-      throw Object.assign(new Error(detail), { status: res.status, retryAfter: Number(res.headers.get("Retry-After")) || 0 });
-    }
-    let final = null;
-    await readNdjson(res, (events) => {
-      for (const ev of events) {
-        if (ev.error) throw new Error(ev.error);
-        else if (ev.translations) final = ev;
-        else if (ev.stage) onStage?.(ev.stage);
-        else if (ev.i && onPartial) for (const i of ev.i) onPartial(i, ev.text);
-      }
-    });
-    return final;
-  }
+  const [translateChunk, translateBrief] = useMemo(() => {
+    const settings = { lang: translateLang, model: translateSendModel, effort: translateEffort, speed: translateSpeed, keep: translateKeep };
+    return [chunkRequest(settings), briefRequest(settings)];
+  }, [translateLang, translateSendModel, translateEffort, translateSpeed, translateKeep]);
+  useTranslateJobs({ screenUrl: pdfUrl, langLabel: translateLangLabel, postPill, addTask, updateTask, setStatus,
+    retry: () => pdfTranslateCtl.current?.retryUntranslated(),
+    followsChat: !translatePick, openSettings: () => openSettingsPane("translation") });
 
   // POST /metadata/fetch for one page, tracked as a transfer-panel task:
   // the open page's lookup (an upload's are the metadata job's). Throws on
@@ -7366,6 +7291,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const relocating = tasks.jobs.some((job) => job.kind === "relocate-highlights" && isActive(job)
     && job.params?.page_id === focusedBlockId);
   const pdfStored = !!attachmentFile(pageAttach);
+  // The page as the PDF translated view sees it (translateState.scopeOf):
+  // the page and the PDF it shows, together, since while the next PDF loads
+  // the viewer still shows the last one, which this page must not name.
+  // stored: the server reads its own copy for the paper's brief; a PDF read
+  // through the proxy may have none, so the brief's request carries the
+  // opening text. file: what the server keeps the paper's translations
+  // under, the page's file (an upload, a duplicated page's, or for a PDF
+  // opened from its link the copy the proxy saves under the link's hash).
+  const pdfTransScope = { url: pdfUrl, pageId: focusedBlockId, stored: !!docIdOf(pdfUrl), file: attachmentFile(pageAttach) };
+  // The file "Forget this translation" names: the page's, once the document
+  // the viewer reports on (the one on screen) is the page's.
+  const pdfTransFile = scopeOf(pdfTransState.url, pdfTransScope).file;
   async function relocateHighlights() {
     const pageId = focusedBlockId;
     if (!pageId || !pdfStored || readOnly) return;
@@ -11873,6 +11810,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               {pdfTransState.shown ? t("Show original") : t("Show translation")}
             </MenuItem>
           ) : null}
+          {/* A stored PDF's translation is kept on the server, under the
+              page's file: forgetting it there and here makes the next click
+              translate afresh. For a writer of the workspace. */}
+          {!pdfTransState.running && pdfTransState.translated && pdfTransFile && !readOnly ? (
+            <MenuItem icon={Trash2Icon}
+              onClick={() => { setTransMenu(null); forgetTranslation(pdfTransState.url, pdfTransFile, scopeOf(pdfTransState.url, pdfTransScope).pageId, setStatus); }}>
+              {t("Forget this translation")}
+            </MenuItem>
+          ) : null}
         </ContextMenu>
       )}
       {/* The highlighter's colours, the selection popup's: a pick is its
@@ -12021,15 +11967,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               zoomHeight={appPrefs.inkZoomHeight} onZoomHeight={appPrefs.setInkZoomHeight} onZoomChange={changeInkZoom}
               darkPage={pdfDarkPage}
               translateKey={`${translateLang}|${translateSendModel}`}
-              // stored: the viewer reads the server's own copy; a PDF read through the
-              // proxy may have none, so its requests carry the opening text too.
-              translateScope={{ pageId: focusedBlockId, stored: !!docIdOf(pdfUrl) }}
+              translateScope={pdfTransScope}
               translateParallel={translateParallel}
               onTranslate={shareMode ? undefined : translateChunk}
+              onTranslateBrief={shareMode ? undefined : translateBrief}
               selTranslate={selTranslate ? (selTranslateAuto ? "auto" : "button") : ""}
               translateLangLabel={translateLangLabel}
               translateCtlRef={pdfTranslateCtl}
-              onTranslateState={handleTranslateState}
+              onTranslateState={setPdfTransState}
               areaMode={areaSelectMode && !shareMode}
               areaKey={commandChord("pdf.areaDrag", keybindings)}
               peekKey={commandChord("pdf.peekOriginal", keybindings)}
@@ -12569,6 +12514,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setTranslateSpeed,
           translateParallel,
           setTranslateParallel,
+          translateKeep,
+          setTranslateKeep,
+          readOnly, // a viewer of the workspace cannot clear its kept translations
           aiModels: scopedAiModels, // the translation picker's registry
           translateEngines, // …and the translation services set up for it
           refreshAiModels, // saving a service's key updates that list

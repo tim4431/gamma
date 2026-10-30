@@ -273,6 +273,11 @@ export const PREFS = {
   // Translation's service tier is independent of chat; unsupported tiers use
   // the provider's usual routing, as does the empty default.
   translateSpeed: pref("gamma-translate-speed", ACCOUNT, "", oneOf(["", "flex", "fast"])),
+  // Whether the server keeps the translations it makes, and each paper's
+  // brief, in the workspace (sent as `keep` with every translation request),
+  // so a paper read again shows at once. Off, they last only in the
+  // server's memory; what is kept already stays until cleared.
+  translateKeep: flag("gamma-translate-keep", ACCOUNT, true),
 
   // --- Search (Settings → Reading) ---
   // Whether the search popover's result-detail lists start expanded, one

@@ -361,6 +361,12 @@ class Protocol:
         """The reply text of a non-streamed response body."""
         raise NotImplementedError
 
+    def stop_reason(self, data) -> str:
+        """The stop reason of a non-streamed response body, as the wire names
+        it ("" when it names none); ``truncated_stop`` says whether it means
+        the output cap cut the reply off."""
+        return ""
+
     def usage(self, raw) -> dict | None:
         """The provider's token report as ``{input, output, cache_read,
         cache_write}``: ``input`` is the whole prompt as the provider counted
@@ -379,10 +385,11 @@ class Protocol:
         default — a wire without service tiers)."""
         return None
 
-    def read_reply(self, response, on_usage=None) -> str:
+    def read_reply(self, response, on_usage=None, on_stop=None) -> str:
         """The full reply text of an open response; ``on_usage`` hears the
         token counts when the provider reports them (with the served
-        ``speed`` when it named one — ``usage``)."""
+        ``speed`` when it named one — ``usage``), and ``on_stop`` the
+        provider's stop reason when it gave one."""
         if self.streams_only:
             parts = []
             for kind, data in self.events(response):
@@ -390,8 +397,13 @@ class Protocol:
                     parts.append(data)
                 elif kind == "usage" and on_usage:
                     on_usage(data)
+                elif kind == "stop" and on_stop:
+                    on_stop(data)
             return "".join(parts)
         data = json.loads(response.read())
+        stop = self.stop_reason(data)
+        if stop and on_stop:
+            on_stop(stop)
         usage = self.usage(data.get("usage"))
         speed = self.served_speed(data)
         if usage and speed is not None:

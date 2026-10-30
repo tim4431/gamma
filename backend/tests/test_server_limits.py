@@ -4,12 +4,12 @@ and the rate limiter's bounded memory and client address."""
 
 import gc
 import gzip
+import http.client
 import io
 import ipaddress
 import json
 import re
 import threading
-import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -51,14 +51,19 @@ def ai_user():
 
 @pytest.fixture
 def upstream(monkeypatch):
-    """Every provider call answers '["ok"]', streamed or whole (faked below
-    open_ai, so the cap runs for real)."""
+    """Every provider call answers "<s1>ok</s1>" (one translated segment),
+    streamed or whole (faked below open_ai, so the cap runs for real)."""
     def fake_urlopen(req, timeout=None):
         if json.loads(req.data).get("stream"):
-            return FakeResp([{"type": "content_block_delta", "delta": {"type": "text_delta", "text": '["ok"]'}}])
-        return io.BytesIO(json.dumps({"content": [{"type": "text", "text": '["ok"]'}],
-                                      "usage": {"input_tokens": 1, "output_tokens": 1}}).encode())
+            return FakeResp([{"type": "content_block_delta", "delta": {"type": "text_delta", "text": "<s1>ok</s1>"}}])
+        return _reply("<s1>ok</s1>")
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+
+
+def _reply(text):
+    """A whole Anthropic reply answering ``text``."""
+    return io.BytesIO(json.dumps({"content": [{"type": "text", "text": text}],
+                                  "usage": {"input_tokens": 1, "output_tokens": 1}}).encode())
 
 
 def _open(n):
@@ -125,50 +130,262 @@ def test_a_translation_past_the_cap_is_a_429_not_a_502(ai_user, upstream):
     assert _in_use() == 0
 
 
-def test_a_call_may_wait_for_a_slot(ai_user, upstream):
+def test_a_slot_may_be_waited_for_and_held_across_calls(ai_user, upstream):
     held = _open(ai_client.MAX_OPEN_CALLS)
     rt = ai_runtime(account_of("sl_ai"))
     hi = [{"role": "user", "content": "hi"}]
-    got = []
-    waiter = threading.Thread(target=lambda: got.append(
-        ai_client.open_ai(hi, "", rt["default"], rt, stream=True, slot_wait=30)))
+    in_use = []
+
+    def wait_then_call_twice():
+        with ai_client.call_slot(account_of("sl_ai"), wait=30) as slot:
+            for _ in range(2):
+                ai_client.call_ai(hi, "", rt["default"], rt, slot=slot)
+                in_use.append(_in_use())
+
+    waiter = threading.Thread(target=wait_then_call_twice)
     waiter.start()
     try:
         waiter.join(0.3)
-        assert waiter.is_alive() and not got, "every slot is taken: it waits"
+        assert waiter.is_alive() and not in_use, "every slot is taken: it waits"
         held.pop().close()
         waiter.join(5)
-        assert got and _in_use() == ai_client.MAX_OPEN_CALLS, "the freed slot went to it"
-        held += got
+        # The freed slot went to it, and both calls ran under it: neither
+        # took another (there was none to take) nor gave it back.
+        assert in_use == [ai_client.MAX_OPEN_CALLS] * 2
+        assert _in_use() == ai_client.MAX_OPEN_CALLS - 1, "the block's end frees it"
+        held += _open(1)
         # a wait that runs out is refused, like a call that may not wait
         with pytest.raises(ai_client.TooManyCalls):
-            ai_client.open_ai(hi, "", rt["default"], rt, stream=True, slot_wait=0.2)
+            with ai_client.call_slot(account_of("sl_ai"), wait=0.2):
+                pass
     finally:
         for resp in held:
             resp.close()
     assert _in_use() == 0
 
 
-def test_asking_again_waits_for_the_accounts_slots(ai_user, monkeypatch):
-    # One slot free, and two texts whose reply comes back one short: they
-    # are asked again one per call, two at once. The second waits for the
-    # first's slot instead of being refused and left untranslated.
-    def slow(req, timeout=None):
-        time.sleep(0.2)
-        return io.BytesIO(json.dumps({"content": [{"type": "text", "text": '["ok"]'}],
-                                      "usage": {"input_tokens": 1, "output_tokens": 1}}).encode())
+def test_a_translation_asks_again_under_the_slot_it_holds(ai_user, monkeypatch):
+    # The account's last slot free, and two texts whose reply leaves the
+    # second out: it is asked again under the request's own slot, not a
+    # second one (there is none), and comes back translated.
+    in_use = []
 
-    monkeypatch.setattr(urllib.request, "urlopen", slow)
+    def upstream(req, timeout=None):
+        in_use.append(_in_use())
+        return _reply("<s1>ok</s1>")
+
+    monkeypatch.setattr(urllib.request, "urlopen", upstream)
     held = _open(ai_client.MAX_OPEN_CALLS - 1)
+    in_use.clear()
     try:
         r = ai_user.post("/api/ai/translate", json={"texts": ["Erster Absatz", "Zweiter Absatz"], "lang": "en"})
     finally:
         for resp in held:
             resp.close()
     assert r.status_code == 200
-    assert r.json()["translations"] == ["ok", "ok"] and r.json()["failed"] == []
+    assert r.json()["translations"] == ["ok", "ok"] and r.json()["failed"] == [] and r.json()["redone"] == 1
+    assert in_use == [ai_client.MAX_OPEN_CALLS] * 2
     assert _in_use() == 0
 
+
+def test_a_streamed_chunk_whose_client_left_while_it_waited_for_a_slot_opens_no_call(ai_user, upstream, monkeypatch):
+    # Past the door, every slot taken: the chunk's stream waits for one.
+    # The viewer aborts the chunk meanwhile (translation off, the PDF
+    # closed), and when a slot frees, the stream lets it go without paying
+    # for a provider call for no one.
+    from contextlib import contextmanager
+    from functools import partial
+
+    from gamma.routers import translate as translate_mod
+
+    opened, let_go = [], threading.Event()
+
+    @contextmanager
+    def watched_slot(*a, **kw):
+        try:
+            with ai_client.call_slot(*a, **kw) as slot:
+                yield slot
+        finally:
+            let_go.set()
+
+    monkeypatch.setattr(translate_mod, "_call_slot", watched_slot)
+    monkeypatch.setattr(translate_mod, "_open_ai", lambda *a, **kw: opened.append(kw) or FakeResp([]))
+    monkeypatch.setattr(translate_mod, "require_user_id", lambda request: account_of("sl_ai"))
+    monkeypatch.setattr(translate_mod, "keepalive_lines", partial(translate_mod.keepalive_lines, interval=0.05))
+    held = _open(ai_client.MAX_OPEN_CALLS - 1)
+    runner = None
+    try:
+        response = translate_mod.ai_translate(
+            translate_mod.AITranslateRequest(texts=["Verlassen"], lang="en", stream=True), None)
+        held += _open(1)
+
+        async def receive():
+            await anyio.sleep(0.2)
+            return {"type": "http.disconnect"}
+
+        async def send(message):
+            pass
+
+        runner = threading.Thread(target=anyio.run, args=(
+            response, {"type": "http", "asgi": {"spec_version": "2.3"}}, receive, send))
+        runner.start()
+        assert response.gone.wait(2), "the client's leaving is heard"
+        assert not let_go.is_set(), "it waits for a slot"
+        held.pop().close()
+        assert let_go.wait(5)
+        assert opened == []
+        assert _in_use() == ai_client.MAX_OPEN_CALLS - 1, "the slot it took is free again"
+    finally:
+        for resp in held:
+            resp.close()
+        if runner:
+            runner.join(10)
+    assert _in_use() == 0
+
+
+# --- a call that failed before its reply, tried again ---------------------------------
+
+@pytest.fixture
+def waits(monkeypatch):
+    """The waits between attempts, recorded instead of slept."""
+    seen = []
+    monkeypatch.setattr(ai_client, "_sleep", seen.append)
+    return seen
+
+
+def _http_error(code, headers=None):
+    return urllib.error.HTTPError("https://api.example/v1/messages", code, "error", headers or {},
+                                  io.BytesIO(json.dumps({"error": {"message": f"status {code}"}}).encode()))
+
+
+def _failing_then(monkeypatch, failures, answer="<s1>ok</s1>"):
+    """urlopen raising each of ``failures`` in turn, then answering; returns
+    the account's slots in use at each attempt."""
+    attempts, left = [], list(failures)
+
+    def upstream(req, timeout=None):
+        attempts.append(_in_use())
+        if left:
+            raise left.pop(0)
+        if json.loads(req.data).get("stream"):
+            return FakeResp([{"type": "content_block_delta", "delta": {"type": "text_delta", "text": answer}}])
+        return _reply(answer)
+
+    monkeypatch.setattr(urllib.request, "urlopen", upstream)
+    return attempts
+
+
+def test_a_translation_whose_connection_failed_is_tried_again_under_its_one_slot(ai_user, monkeypatch, waits):
+    # The connect to the provider timed out (as Windows' 21 s one did in the
+    # baseline): asked again a second later, under the slot it holds.
+    attempts = _failing_then(monkeypatch, [urllib.error.URLError(TimeoutError("timed out"))])
+    r = ai_user.post("/api/ai/translate", json={"texts": ["Erneut verbunden"], "lang": "en"})
+    assert r.status_code == 200 and r.json()["translations"] == ["ok"]
+    assert attempts == [1, 1] and waits == [1]
+    assert _in_use() == 0
+
+    # Streamed, a provider that hung up before answering is tried again too.
+    attempts = _failing_then(monkeypatch, [ConnectionResetError("reset by peer")])
+    r = ai_user.post("/api/ai/translate", json={"texts": ["Erneut gestreamt"], "lang": "en", "stream": True})
+    assert json.loads(r.text.splitlines()[-1])["translations"] == ["ok"]
+    assert attempts == [1, 1] and waits == [1, 1]
+    assert _in_use() == 0
+
+
+def test_a_rejected_request_is_not_tried_again(ai_user, monkeypatch, waits):
+    attempts = _failing_then(monkeypatch, [_http_error(400)])
+    r = ai_user.post("/api/ai/translate", json={"texts": ["Abgelehnt"], "lang": "en"})
+    assert r.status_code == 502 and "upstream 400" in r.json()["detail"]
+    assert len(attempts) == 1 and waits == []
+    assert _in_use() == 0
+
+
+def test_a_busy_provider_is_asked_again_after_its_retry_after(ai_user, monkeypatch, waits):
+    attempts = _failing_then(monkeypatch, [_http_error(503, {"Retry-After": "3"})])
+    r = ai_user.post("/api/ai/translate", json={"texts": ["Später bitte"], "lang": "en"})
+    assert r.status_code == 200 and len(attempts) == 2 and waits == [3]
+
+    # A Retry-After past what a chunk may wait is a limit for a while: not
+    # tried again.
+    attempts = _failing_then(monkeypatch, [_http_error(429, {"Retry-After": "600"})])
+    r = ai_user.post("/api/ai/translate", json={"texts": ["Viel später"], "lang": "en"})
+    assert r.status_code == 502 and len(attempts) == 1 and waits == [3]
+    assert _in_use() == 0
+
+
+def test_tries_stop_after_the_retries_and_a_chat_call_has_none(ai_user, monkeypatch, waits):
+    attempts = _failing_then(monkeypatch, [_http_error(502) for _ in range(5)])
+    r = ai_user.post("/api/ai/translate", json={"texts": ["Nie erreicht"], "lang": "en"})
+    assert r.status_code == 502 and "upstream 502" in r.json()["detail"]
+    assert len(attempts) == 3 and waits == [1, 4]
+    assert _in_use() == 0
+
+    # A call that asks for no retries (the chat's) fails at the first.
+    attempts = _failing_then(monkeypatch, [urllib.error.URLError("no route")])
+    rt = ai_runtime(account_of("sl_ai"))
+    with pytest.raises(urllib.error.URLError):
+        ai_client.call_ai([{"role": "user", "content": "hi"}], "", rt["default"], rt)
+    assert len(attempts) == 1 and waits == [1, 4]
+    assert _in_use() == 0
+
+
+
+def test_a_whole_reply_slow_to_come_is_not_asked_for_again(ai_user, monkeypatch, waits):
+    # A request sent whole and left unanswered (urllib's bare TimeoutError
+    # from waiting for the status line, a hang-up, a gateway's 504): the
+    # provider is most likely still making the reply, and billing it, so a
+    # whole reply is not asked for again.
+    for failure in (TimeoutError("timed out"), http.client.RemoteDisconnected("closed"), _http_error(504)):
+        attempts = _failing_then(monkeypatch, [failure])
+        r = ai_user.post("/api/ai/translate", json={"texts": ["Langsam gedacht"], "lang": "en"})
+        assert r.status_code != 200, failure
+        assert len(attempts) == 1 and waits == [], failure
+        assert _in_use() == 0
+
+    # Streamed, the headers come before the model begins: a request left
+    # unanswered never got to it, and is tried again.
+    attempts = _failing_then(monkeypatch, [TimeoutError("timed out")])
+    r = ai_user.post("/api/ai/translate", json={"texts": ["Langsam gestreamt"], "lang": "en", "stream": True})
+    assert json.loads(r.text.splitlines()[-1])["translations"] == ["ok"]
+    assert attempts == [1, 1] and waits == [1]
+    assert _in_use() == 0
+
+
+_BRIEF_REPLY = json.dumps({"field": "optics", "summary": "s", "notation": [],
+                           "terms": [{"source": "waveguide", "target": "Wellenleiter"}], "keep": []})
+
+
+def _brief_lines(c, head):
+    r = c.post("/api/ai/translate/brief", json={"lang": "en", "head": head})
+    assert r.status_code == 200, r.text
+    return [json.loads(line) for line in r.text.splitlines() if line.strip() and "ping" not in line]
+
+
+def test_the_brief_is_tried_again_only_while_its_chunks_wait_for_it(ai_user, monkeypatch, waits):
+    # A brief whose connect failed is asked again under its one slot: the
+    # job's chunks get it, not a translation without it.
+    attempts = _failing_then(monkeypatch, [urllib.error.URLError(TimeoutError("timed out"))], _BRIEF_REPLY)
+    assert _brief_lines(ai_user, "Ein Wellenleiter, einmal verbunden.")[-1] == {"ready": True}
+    assert attempts == [1, 1] and waits == [1]
+    assert _in_use() == 0
+
+    # Each try taking the brief's whole timeout (a blackholed connect where
+    # the socket timeout covers it): another would end after the chunks
+    # have stopped waiting for the brief (_BRIEF_WAIT), so none is begun.
+    now = [0.0]
+    attempts = []
+
+    def slow(req, timeout=None):
+        attempts.append(_in_use())
+        now[0] += timeout
+        raise urllib.error.URLError(TimeoutError("timed out"))
+
+    monkeypatch.setattr(ai_client, "_clock", lambda: now[0])
+    monkeypatch.setattr(urllib.request, "urlopen", slow)
+    last = _brief_lines(ai_user, "Ein Wellenleiter, nie erreicht.")[-1]
+    assert last["ready"] is False and last.get("error")
+    assert attempts == [1] and waits == [1]
+    assert _in_use() == 0
 
 # --- gzip, JSON only -----------------------------------------------------------------
 

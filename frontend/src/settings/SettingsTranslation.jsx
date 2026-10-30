@@ -3,9 +3,10 @@
 // translator), Service (what translates — a chat model or a
 // machine-translation service — and the services' rows: Microsoft needs no
 // key; Google and Youdao keys are write-only like the AI keys:
-// /api/translate/engines masks them) and Speed (effort, tier, parallel requests).
+// /api/translate/engines masks them; then whether translations are kept,
+// and what this workspace keeps) and Speed (effort, tier, parallel requests).
 import React from "react";
-import { API, apiJson } from "../shared/lib/utils";
+import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { friendlyApiError } from "../library/libraryUtils";
 import { MenuSelect } from "../shared/ui/Menus";
 import { Section, Row, Toggle, SubDialog, Field, PasswordInput, UnitInput } from "./SettingsKit";
@@ -13,10 +14,11 @@ import { SECTION_PREFS } from "./sectionPrefs.js";
 import { useSettingsRead } from "./settingsReads.js";
 import { SPEED_ORDER } from "../chat/modelPrefs.js";
 import { FREE_TRANSLATE_ENGINE, TRANSLATE_LANGS, TRANSLATE_PARALLEL_MAX, translateModelFor } from "../app/prefs";
+import { clearTranslations } from "../app/translateClient.js";
 import { VIEWER_TOOLS } from "../app/viewerToolItems.js";
-import { ActivityIcon, GlobeIcon, HighlightIcon, KeyIcon, LanguagesIcon, RefreshIcon, SparklesIcon, TextCursorIcon, Trash2Icon, ZapIcon } from "../shared/ui/Icons";
+import { ActivityIcon, ArchiveIcon, DatabaseIcon, GlobeIcon, HighlightIcon, KeyIcon, LanguagesIcon, RefreshIcon, SparklesIcon, TextCursorIcon, Trash2Icon, ZapIcon } from "../shared/ui/Icons";
 import { MorphText } from "../shared/ui/MotionWidgets";
-import { LANGUAGES, T, t } from "../shared/i18n/i18n.js";
+import { LANGUAGES, T, t, tn } from "../shared/i18n/i18n.js";
 
 // Per engine: the form's fields in order, with where to get them.
 const ENGINE_FORMS = {
@@ -34,10 +36,10 @@ const ENGINE_FORMS = {
 };
 
 // In the order a reader meets it: what shows in the viewer, then what
-// translates (a model or a service, and the services' keys), then how fast.
-// "Translate with" names this server's provider entries, so it stays with
-// the browser (its row's own tag); the service keys are the account's, kept
-// on the server — the Service section holds no profile preference.
+// translates (a model or a service, the services' keys, and whether the
+// translations are kept), then how fast. "Translate with" names this
+// server's provider entries, so it stays with the browser (its row's own
+// tag); the service keys are the account's, kept on the server.
 export function TranslationSettings({ value }) {
   return (<>
     <Section title={t("Language")} scope="account" prefs={SECTION_PREFS.translation["Language"]}>
@@ -88,7 +90,7 @@ export function TranslationSettings({ value }) {
         disabled={!value.selTranslate}
       />
     </Section>
-    <Section title={t("Service")}>
+    <Section title={t("Service")} scope="account" prefs={SECTION_PREFS.translation["Service"]}>
       <Row
         icon={SparklesIcon}
         label={t("Translate with")}
@@ -99,9 +101,69 @@ export function TranslationSettings({ value }) {
         <TranslateModelSelect value={value} />
       </Row>
       <TranslationServices value={value} />
+      <KeptTranslations value={value} />
     </Section>
     <TranslationPerformance value={value} />
   </>);
+}
+
+// Keep translations (the account's switch, sent as `keep` with every
+// translation request) and what this workspace keeps (GET
+// /api/translations/stats), with Clear (DELETE /api/translations: the
+// workspace's kept translations and briefs, asked first; the viewer drops
+// what it shows of them too, app/translateClient.js clearTranslations).
+function KeptTranslations({ value }) {
+  const stats = useSettingsRead("/translations/stats");
+  const kept = stats.data; // {documents, paragraphs, bytes}
+  const [error, setError] = React.useState("");
+  const [busy, setBusy] = React.useState(false);
+  const clear = () => value.confirm?.({
+    title: T("Clear kept translations"),
+    message: T("Forget every translation kept in this workspace, and the papers' briefs? A paper is translated again the next time you ask for it."),
+    confirmLabel: t("Clear"),
+    danger: true,
+    onConfirm: async () => {
+      setBusy(true);
+      setError("");
+      try {
+        await clearTranslations();
+        stats.set({ documents: 0, paragraphs: 0, bytes: 0 });
+      } catch (err) {
+        setError(friendlyApiError(err));
+      } finally {
+        setBusy(false);
+      }
+    },
+  });
+  const summary = !kept ? (stats.error ? friendlyApiError({ message: stats.error }) : null)
+    : !kept.bytes ? t("Nothing kept yet")
+      : t("{paragraphs} in {documents} ({size})", {
+        paragraphs: tn("{n} paragraph", "{n} paragraphs", kept.paragraphs),
+        documents: tn("{n} document", "{n} documents", kept.documents),
+        size: fmtBytes(kept.bytes),
+      });
+  return <>
+    <Toggle
+      icon={ArchiveIcon}
+      label={t("Keep translations")}
+      hint={t("So a paper read again shows at once")}
+      title={t("Translations of this workspace's PDFs, and each paper's brief, are kept on the server in the workspace, so a paper read again shows its translation at once and needs no AI call. Off, they last only until the server restarts; what is kept already stays until you clear it. A PDF without a copy on the server is never kept.")}
+      checked={value.translateKeep}
+      onChange={value.setTranslateKeep}
+    />
+    <Row
+      icon={DatabaseIcon}
+      label={t("Kept in this workspace")}
+      hint={summary}
+      title={t("Translated paragraphs in every language and model, and the papers' briefs. A PDF that leaves the workspace takes its translations along; Forget this translation, in the translate button's menu, forgets one paper's.")}
+    >
+      {/* Clearing needs a writer of the workspace, as its other clears do. */}
+      {!value.readOnly ? (
+        <button type="button" className="uiBtn sm" disabled={busy || !kept?.bytes} onClick={clear}>{t("Clear")}</button>
+      ) : null}
+    </Row>
+    {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
+  </>;
 }
 
 // Effort and service tiers mean nothing to a translation service, so their

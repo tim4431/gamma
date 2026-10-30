@@ -10,6 +10,7 @@ import threading
 import time
 import urllib.error
 import urllib.request
+from contextlib import contextmanager
 
 from fastapi import HTTPException
 
@@ -73,9 +74,10 @@ class TooManyCalls(CallRefused):
 # metadata, a connection test). An open call holds a server thread for as
 # long as the provider takes — minutes for a long answer — and the threads
 # are shared with every other request, PDF reads included, so past the cap
-# a call is refused (TooManyCalls) instead of starving them. A caller that
-# runs on a thread of its own (the translator's repair calls, its stream)
-# may wait for a slot instead (``slot_wait``).
+# a call is refused (TooManyCalls) instead of starving them. A request whose
+# calls follow one another (a translation and its re-ask) holds one slot for
+# all of them (call_slot), and one that runs on a thread of its own (the
+# translator's stream) may wait for that slot instead of being refused.
 MAX_OPEN_CALLS = 6
 CALL_RETRY_AFTER = 5  # seconds, the Retry-After of a TooManyCalls
 _open_calls: dict[str, int] = {}
@@ -115,11 +117,33 @@ def _free_call_slot(user_id: str) -> None:
         _open_calls_freed.notify_all()
 
 
+class CallSlot:
+    """One of an account's call slots, held by a ``with call_slot(...)``
+    block for the calls made in it (open_ai's and call_ai's ``slot``)."""
+
+
+@contextmanager
+def call_slot(user_id: str, wait: float = 0.0):
+    """Hold one of ``user_id``'s call slots for the block: taken on entry
+    (with all in use, waiting up to ``wait`` seconds for one to free, then
+    TooManyCalls), freed on exit. The calls given the slot it yields take
+    none of their own, so a request's calls in turn count once against the
+    account's MAX_OPEN_CALLS however many there are."""
+    if user_id:
+        _take_call_slot(user_id, wait)
+    try:
+        yield CallSlot()
+    finally:
+        if user_id:
+            _free_call_slot(user_id)
+
+
 class _OpenCall:
     """An open provider response that holds one of its account's call slots
     until it is closed: by its reader (``with``, ``close()`` — every caller
     closes it when the reply ends or fails, a stream's also when its client
-    goes away), or, for a response dropped unread, when it is collected."""
+    goes away), or, for a response dropped unread, when it is collected. A
+    call made under a slot its caller holds (call_slot) has none to free."""
 
     def __init__(self, response, user_id: str):
         self._response, self._user_id = response, user_id or None
@@ -248,30 +272,102 @@ def upstream_detail(error: urllib.error.HTTPError, cap: int = 500) -> str:
     return f"upstream {error.code}: {body[:cap] or error.reason}"
 
 
+# A call that failed before the provider began on it may be tried again
+# (open_ai's ``retries``): the request never delivered (a connect or send
+# that failed or timed out, which urllib wraps in a URLError), or the
+# provider answered one of these statuses, which say "not now" rather than
+# "not this": a timeout, a rate limit, an overload, a gateway between it and
+# us. Other 4xx (a rejected key, a bad or too long request) would only fail
+# again. A request delivered and then left without an answer (a bare
+# TimeoutError or ConnectionError from waiting for the status line, or a
+# gateway's 504) is tried again only when streamed, whose headers come
+# before the model begins: a whole reply's headers come once it is done, so
+# the provider is most likely generating it, and billing it, still. The
+# waits are 1 s, 4 s, then _RETRY_WAIT_CAP; a 429 or 503 whose Retry-After
+# asks for longer than _RETRY_AFTER_CAP is not tried again (the limit is
+# the account's for a while, not a moment's).
+_RETRY_STATUSES = frozenset({408, 429, 500, 502, 503, 504, 529})
+_RETRY_WAIT_CAP = 8
+_RETRY_AFTER_CAP = 20
+_sleep = time.sleep  # the waits between attempts (tests replace it)
+_clock = time.monotonic  # what ``within`` is measured by (tests replace it)
+
+
+def _retry_wait(error: BaseException, attempt: int, stream: bool = False) -> float | None:
+    """Seconds to wait before trying a call again after ``error``, its
+    ``attempt``-th failure (0 for the first); None when it is not worth
+    another try. ``stream``: whether the request asked for a streamed
+    reply."""
+    backoff = min(_RETRY_WAIT_CAP, 4 ** attempt)
+    if isinstance(error, urllib.error.HTTPError):
+        if error.code not in _RETRY_STATUSES or (error.code == 504 and not stream):
+            return None
+        if error.code in (429, 503):
+            try:
+                after = float((error.headers or {}).get("Retry-After") or "")
+            except ValueError:  # none, or an HTTP date: the usual wait
+                return backoff
+            return max(0.0, after) if after <= _RETRY_AFTER_CAP else None
+        return backoff
+    if isinstance(error, urllib.error.URLError):  # the connect or the send
+        return backoff
+    # Raised unwrapped while waiting for the answer to a request sent whole
+    # (socket.timeout is TimeoutError; http.client.RemoteDisconnected and a
+    # reset are ConnectionErrors).
+    if stream and isinstance(error, (TimeoutError, ConnectionError)):
+        return backoff
+    return None
+
+
+def _urlopen(request, timeout, retries: int, model: str, stream: bool = False, within=None):
+    """urllib's urlopen, tried up to ``retries`` more times while it fails
+    in a way worth trying again (_retry_wait), but never with an attempt
+    that could end more than ``within`` seconds after the first began. Once it
+    returns, the reply has begun, and nothing after is tried again here: a
+    stream cut midway is the caller's to ask for again."""
+    began = _clock()
+    for attempt in range(retries + 1):
+        try:
+            return urllib.request.urlopen(request, timeout=timeout)
+        except Exception as error:
+            wait = _retry_wait(error, attempt, stream) if attempt < retries else None
+            if wait is not None and within is not None and _clock() - began + wait + timeout > within:
+                wait = None
+            if wait is None:
+                raise
+            why = upstream_detail(error, 200) if isinstance(error, urllib.error.HTTPError) else str(error)[:200]
+            log.info(f"[ai] {model}: {why} — retrying in {wait:g}s (attempt {attempt + 1} of {retries})")
+            _sleep(wait)
+
+
 def open_ai(
     messages, system, entry, runtime, pdf_b64s=None, effort="", speed="",
     max_tokens=8192, timeout=60, images=None, stream=False, tools=None,
-    cache_key="", slot_wait=0.0,
+    cache_key="", slot=None, retries=0, within=None,
 ):
     """Open a provider call without consuming response bytes. The one door
     every token-spending call goes through (call_ai too): a shared entry's
     allowance is checked here (AllowanceExhausted, a 429), and so is the
-    account's cap on calls open at once (TooManyCalls, a 429, or after up
-    to ``slot_wait`` seconds of waiting for a slot) — the call holds one of
-    its slots until the response is closed. ``cache_key`` names the
-    conversation for the provider's prompt cache, and ``speed`` the service
-    tier to ask the provider for (ai_protocols.SPEED_ORDER; "" = its usual
-    routing)."""
+    account's cap on calls open at once (TooManyCalls, a 429) — the call
+    holds one of its slots until the response is closed, unless it runs
+    under ``slot``, one its caller holds (call_slot). ``cache_key`` names
+    the conversation for the provider's prompt cache, and ``speed`` the
+    service tier to ask the provider for (ai_protocols.SPEED_ORDER; "" = its
+    usual routing). ``retries``: how many more times a call that failed
+    before the provider began on it is tried (_retry_wait says which
+    failures), under the same slot; ``within``: the seconds its attempts
+    may take in all (None: no limit), past which no retry is begun."""
     conf = runtime["providers"][entry["provider"]]
     check_allowance(conf)
     wire = ai_protocols.of(conf).wire(conf, tools)
     request = wire.request(conf, messages, system, entry["model"], pdf_b64s,
                            effort, max_tokens, images, stream, tools, cache_key, speed)
-    user_id = runtime.get("user") or ""
+    # The account whose slot this call takes and frees: none under ``slot``.
+    user_id = "" if slot is not None else runtime.get("user") or ""
     if user_id:
-        _take_call_slot(user_id, slot_wait)
+        _take_call_slot(user_id)
     try:
-        response = urllib.request.urlopen(request, timeout=timeout)
+        response = _urlopen(request, timeout, retries, entry["model"], stream, within)
     except BaseException as error:
         if user_id:
             _free_call_slot(user_id)
@@ -302,24 +398,30 @@ def add_usage(total: dict | None, usage: dict | None) -> dict | None:
     return {k: total.get(k, 0) + usage.get(k, 0) for k in ("input", "output", "cache_read", "cache_write")}
 
 
-def read_reply(response, provider_protocol, on_usage=None) -> str:
+def read_reply(response, provider_protocol, on_usage=None, on_stop=None) -> str:
     """Read the full reply text from an open provider response. ``on_usage``
     (a callable taking the normalized usage dict) hears the token counts
-    when the provider reports them."""
-    return ai_protocols.get(provider_protocol).read_reply(response, on_usage)
+    when the provider reports them, and ``on_stop`` its stop reason
+    (``ai_protocols.base.truncated_stop`` says whether the output cap cut
+    the reply off)."""
+    return ai_protocols.get(provider_protocol).read_reply(response, on_usage, on_stop)
 
 
 def call_ai(
     messages, system, entry, runtime, pdf_b64s=None, effort="", speed="",
-    max_tokens=8192, timeout=60, images=None, on_usage=None, cache_key="", slot_wait=0.0,
+    max_tokens=8192, timeout=60, images=None, on_usage=None, cache_key="", slot=None, retries=0,
+    within=None, on_stop=None,
 ):
     """Send a chat and return its complete reply text. ``speed``,
-    ``cache_key`` and ``slot_wait`` as in open_ai."""
+    ``cache_key``, ``slot``, ``retries`` and ``within`` as in open_ai (a
+    reply cut off while it is read is not tried again); ``on_usage`` and
+    ``on_stop`` as in read_reply."""
     with open_ai(
         messages, system, entry, runtime, pdf_b64s, effort, speed,
-        max_tokens=max_tokens, timeout=timeout, images=images, cache_key=cache_key, slot_wait=slot_wait,
+        max_tokens=max_tokens, timeout=timeout, images=images, cache_key=cache_key, slot=slot,
+        retries=retries, within=within,
     ) as response:
-        return read_reply(response, protocol(runtime, entry), on_usage)
+        return read_reply(response, protocol(runtime, entry), on_usage, on_stop)
 
 
 def sse_events(response, provider_protocol):
@@ -329,14 +431,16 @@ def sse_events(response, provider_protocol):
     return ai_protocols.get(provider_protocol).events(response)
 
 
-def sse_deltas(response, provider_protocol, on_usage=None):
+def sse_deltas(response, provider_protocol, on_usage=None, on_stop=None):
     """Yield text deltas from a provider's SSE response; ``on_usage`` hears
-    the stream's token counts."""
+    the stream's token counts, and ``on_stop`` its stop reason."""
     for kind, data in sse_events(response, provider_protocol):
         if kind == "text":
             yield data
         elif kind == "usage" and on_usage:
             on_usage(data)
+        elif kind == "stop" and on_stop:
+            on_stop(data)
 
 
 def _partial_json_string(raw: str):
@@ -455,39 +559,4 @@ def partial_json_object(raw: str) -> dict:
             break
         if s[i] == ",":
             i += 1
-    return out
-
-
-def partial_json_strings(raw: str) -> list:
-    """Best-effort read of a JSON array of strings still being streamed (the
-    translation reply): the complete elements plus the one being written,
-    decoded as far as it goes. Prose or a code fence before the ``[`` is
-    skipped. Never raises; ``[]`` when nothing is readable yet."""
-    out = []
-    s = raw or ""
-    i = s.find("[")
-    if i < 0:
-        return out
-    i += 1
-    n = len(s)
-    while i < n:
-        while i < n and s[i] in " \t\r\n,":
-            i += 1
-        if i >= n or s[i] == "]":
-            break
-        if s[i] != '"':
-            # null or some other non-string element: stop previewing here.
-            break
-        end, complete = _scan_json_string(s, i)
-        if complete:
-            try:
-                out.append(json.loads(s[i:end]))
-            except ValueError:
-                break
-            i = end
-        else:
-            value = _partial_json_string(s[i + 1:])
-            if value is not None:
-                out.append(value)
-            break
     return out

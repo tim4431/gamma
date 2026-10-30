@@ -180,7 +180,14 @@ test("chunks close at their unit or character limit and carry the edges' context
   assert.deepEqual(chunks.map((c) => c.texts.length), [2, 1]);
   assert.deepEqual(chunks[0].context, { before: "before 0", after: "after 1", section: "section 0" });
   assert.deepEqual(chunkUnits([unit(1300, 0), unit(1300, 1), unit(10, 2)], { maxChars: 2500 }).map((c) => c.texts.length), [2, 1]);
-  assert.deepEqual(requestFields({ pageId: "p", quick: true, before: "b", section: "" }), { page_id: "p", build_brief: false, before: "b" });
+});
+
+test("a request's fields name the paper, whether it waits for the brief and whether the server may keep it", () => {
+  assert.deepEqual(requestFields({ pageId: "p", waitBrief: false, before: "b", section: "" }),
+    { page_id: "p", wait_brief: false, keep: true, before: "b" });
+  assert.deepEqual(requestFields({ head: "Opening text", keep: false, after: "a", section: "1 Introduction" }),
+    { head: "Opening text", wait_brief: true, keep: false, after: "a", section: "1 Introduction" });
+  assert.deepEqual(requestFields(), { wait_brief: true, keep: true }, "by default a request waits for the brief and may be kept");
 });
 
 const unit2 = (parts, tokens = []) => ({ parts, targets: parts.map((_, k) => ({ pn: 1, i: k })), tokens });

@@ -13,8 +13,8 @@
 // rects, the dominant font height, the text as extracted, the text for the
 // model with its formulas, citations and URLs as tokens and what each token
 // stands for (blockSource), and whether it is prose worth sending at all
-// (equations, bare numbers and stray symbols stay original — a wrong
-// "translation" of an equation is worse than none).
+// (equations, bare numbers, stray symbols and author lines stay original — a
+// wrong "translation" of an equation is worse than none).
 
 import { TEXT_TOKEN, lineParts, spanBox } from "./pdfMath.js";
 
@@ -347,6 +347,62 @@ export function isTranslatable(text) {
   return /[A-Za-zÀ-ɏЀ-ӿ]{2}/.test(t);
 }
 
+// Whether a block's text for the model (`src`, its formulas as tokens) is an
+// author line, which has nothing to translate: names separated by commas (or
+// "and", "&"), most of them a first and a last name, and an affiliation mark
+// (a superscript, so a token) ending most of them and at least two. A mark
+// ends a name when it follows it, or the comma after it as APS sets it
+// ("Thompson,{v1} T. G. Tiecke"). One glued to the word after it opens an
+// affiliation instead ("{v1}Harvard University, {v2}Google Research"), one
+// before the first name with a space after it is a stray, and one inside a
+// piece means the piece is no name ("… and Entanglement of {v1}Rb Atoms").
+// A name is one to four capitalised words with no digit, and its only
+// lower-case words are particles ("van der", "de la"): a title or heading in
+// title case writes "of", "the" or "in" between its words.
+const NAME_PARTICLES = new Set(["al", "bin", "d", "da", "das", "de", "del", "della", "den", "der", "di", "do", "dos",
+  "du", "e", "el", "et", "ibn", "la", "le", "ten", "ter", "van", "von", "y", "zu"]);
+// Marks before or after a name: tokens, with the footnote signs set beside
+// them ("Satzinger{v1}*", "Endres{v6}✉").
+const LEAD_MARKS = /^\s*(?:(?:\{v\d+\}|[*∗†‡§¶✉])\s*)*/;
+const TRAIL_MARKS = /(?:(?:\{v\d+\}|[*∗†‡§¶✉])\s*)*$/;
+const TOKEN_MARK = /\{v\d+\}/;
+// An accent on no letter: TeX sets the caron of Š as a glyph of its own,
+// which can land after the comma ("Tamara Sumarac,ˇ{v2} Peiran Niu").
+const LOOSE_ACCENT = /[`\u00a8\u00af\u00b4\u02c6-\u02dd](?!\p{L})/gu;
+export function isNameList(src) {
+  if (!TOKEN_MARK.test(src)) return false;
+  const names = [];
+  let opening = 0;
+  for (const piece of src.replace(LOOSE_ACCENT, "").split(/,|&|\band\b/)) {
+    const lead = piece.match(LEAD_MARKS)[0];
+    const rest = piece.slice(lead.length);
+    const trail = rest.match(TRAIL_MARKS)[0];
+    const body = rest.slice(0, rest.length - trail.length).trim();
+    if (TOKEN_MARK.test(body)) return false;
+    const before = names[names.length - 1];
+    if (TOKEN_MARK.test(lead)) {
+      // Glued to the comma: the name before's. Glued to the word after: an
+      // affiliation's. Else the name before's, or a stray before the first.
+      if (before && !/^\s/.test(piece)) before.marked = true;
+      else if (body && !/\s$/.test(lead)) opening += 1;
+      else if (before) before.marked = true;
+    }
+    if (body) names.push({ words: body.split(/\s+/), marked: TOKEN_MARK.test(trail) });
+  }
+  const marked = names.filter((n) => n.marked).length;
+  const words = names.flatMap((n) => n.words);
+  const capital = (w) => /^\p{Lu}/u.test(w);
+  // The words besides the particles are capitalised, or pieces of a name an
+  // accent split ("Vuleti ´c").
+  const others = words.filter((w) => !/^\p{Ll}/u.test(w));
+  return marked >= 2 && marked * 2 >= names.length && opening < marked
+    && !/\d/.test(words.join(""))
+    && words.every((w) => !/^\p{Ll}/u.test(w) || NAME_PARTICLES.has(w.replace(/[.’'-].*$/, "")))
+    && others.filter(capital).length >= others.length * 0.7
+    && names.filter((n) => n.words.length >= 2).length * 2 > names.length
+    && names.every((n) => n.words.filter(capital).length <= 4);
+}
+
 // A block's text for the model, its formulas, citation markers and URLs as
 // numbered tokens ({v1}, {v2}…, pdf/pdfMath.js), and what each token stands
 // for: a formula's box on the page (the overlay crops it back into the
@@ -460,8 +516,9 @@ export function segmentPage(runs) {
         // reads it to tell a new paragraph from a continued one).
         indent: lines.length > 1 ? lines[0].x1 - lines[1].x1 : null,
         // Prose, judged without its formulas: a display equation (all
-        // formula, maybe a word or two of operator names) stays original.
-        translate: isTranslatable(plain),
+        // formula, maybe a word or two of operator names) stays original,
+        // and so does an author line.
+        translate: isTranslatable(plain) && !isNameList(src),
       });
     }
   }

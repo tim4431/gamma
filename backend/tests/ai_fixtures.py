@@ -1,8 +1,10 @@
 """Shared fixtures and helpers of the AI test files (test_ai_*.py): a
 per-module account with a small library, the note-tree page for the block
-tools, a faked streaming provider response, and the wire-test constants."""
+tools, a faked streaming provider response, the wire-test constants, and the
+translation wire's numbered segments as a fake model reads and writes them."""
 
 import json
+import re
 
 import pytest
 
@@ -143,3 +145,20 @@ class FakeResp:
 def payload(history):
     from types import SimpleNamespace
     return SimpleNamespace(history=history, prompt="now do it", selection="")
+
+
+# --- the translation wire (translate_context.user_turn and segments) ----------------
+
+_SEGMENT = re.compile(r"<s(\d+)>(.*?)</s\1>", re.S)
+
+
+def texts_of(messages):
+    """The texts a translation call's user turn carries, in order: its
+    numbered segments."""
+    return [text for _, text in _SEGMENT.findall(messages[-1]["content"])]
+
+
+def segmented(translations):
+    """A model's reply on the translation wire: each translation as its
+    numbered segment, one per line."""
+    return "\n".join(f"<s{k}>{text}</s{k}>" for k, text in enumerate(translations, 1))

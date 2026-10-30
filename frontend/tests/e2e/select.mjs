@@ -148,6 +148,8 @@ export const RULES = [
   ["frontend/src/settings/SettingsAppearance.jsx", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad", "inbox", "zotero-link"]],
   // the Zotero link's dialog, opened from Workspaces › Clones and Zotero links only (the Account row is SettingsZotero.jsx, below)
   ["frontend/src/settings/ZoteroLinkDialog.jsx", ["zotero-link"]],
+  // the translation speed and Keep translations, which the translated view's scenario sets
+  ["frontend/src/settings/SettingsTranslation.jsx", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad", "zotero-link", "translation"]],
   ["frontend/src/settings/**", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad", "zotero-link"]], // ipad: Apple Pencil, under its host
   // the sync pill and its popover, the conflict cards: a clone's, a publication's, a Zotero link's
   ["frontend/src/collaboration/MirrorPopover.jsx", ["mirror", "publish", "zotero-link"]],
@@ -280,6 +282,9 @@ export const RULES = [
   ["backend/gamma/routers/metadata.py", ["notes-pdf-share", "guide"]],
   ["backend/gamma/translate_engines.py", ["settings", "notes-pdf-share", "translation"]],
   ["backend/gamma/translate_context.py", ["translation", "notes-pdf-share"]],
+  ["backend/gamma/translate.py", ["translation", "notes-pdf-share"]],
+  // the translated view's endpoint, and the services' keys Settings stores
+  ["backend/gamma/routers/translate.py", ["settings", "notes-pdf-share", "translation"]],
   // deleting a folder or a label (the trees' other writes are ops, ALL below)
   ["backend/gamma/routers/folders.py", ["folders", "notes-pdf-share"]],
   // comments: their storage and API, and the hooks every block writer runs

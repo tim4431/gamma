@@ -45,6 +45,8 @@ export const SECTION_PREFS = Object.freeze({
     // Its Translation button is the strip's translate mode, a second view
     // of Appearance › Viewer tools.
     "Viewer & selection": ["viewerTools", "translateLang", "selTranslate", "selTranslateAuto"],
+    // "Translate with" there stays with the browser (its row's own tag).
+    Service: ["translateKeep"],
     Speed: ["translateEffort", "translateSpeed", "translateParallel"],
   }),
   keyboard: sections({
