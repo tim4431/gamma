@@ -51,8 +51,8 @@ function linkPdf() {
 }
 
 // A stylus on the page, through the DevTools protocol (Chromium's pen): a
-// press at x0, y0 moved to x1, y1 and let go.
-function stylus(cdp) {
+// press at x0, y0 moved to x1, y1 and let go. pictures.mjs drives one too.
+export function stylus(cdp) {
   const send = (type, x, y, buttons) => cdp.send("Input.dispatchMouseEvent", {
     type, x, y, button: type === "mouseMoved" ? "none" : "left", buttons, clickCount: type === "mouseMoved" ? 0 : 1, pointerType: "pen",
   });

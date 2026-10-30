@@ -17,9 +17,9 @@
 //            them, everything else is re-keyed between its new neighbours
 //            (the minimal set of moves);
 //   set    — content and/or a properties PATCH (null deletes a key); a
-//            changed text box carries `base_props`, the box it was changed
-//            from, which the server merges key by key into a box changed
-//            meanwhile (gamma/text_box.py merge_text_box);
+//            changed text box or picture carries `base_props`, the
+//            `text_box` or `picture` it was changed from, which the server
+//            merges key by key into one changed meanwhile (PLACED);
 //   delete — the top-most removed subtrees, last (so a block that escaped
 //            a deleted parent is moved out before the parent goes).
 // applyOps is idempotent: inserting a known id re-parents it, moving or
@@ -27,6 +27,19 @@
 // the block where it is (a new one stays out); siblings stay sorted by key.
 import { generateKeyBetween } from "fractional-indexing";
 import { findBlock } from "./blockModel.js";
+import { mergeTextBox, normalizeTextBox } from "../../markup/textBox.js";
+import { mergePicture, normalizePicture } from "../../markup/picture.js";
+
+// The properties that place an object on a page, each with its module's
+// normalizer and merge: a text box's `text_box` (markup/textBox.js) and a
+// picture's `picture` (markup/picture.js). Every change sends one whole, so
+// a set of one names the value it was changed from (`base_props`) and the
+// server merges it key by key into the value it holds (gamma/ops.py
+// PLACED_KEYS); the live session and the undo history merge alike.
+export const PLACED = {
+  text_box: { normalize: normalizeTextBox, merge: mergeTextBox },
+  picture: { normalize: normalizePicture, merge: mergePicture },
+};
 
 const same = (a, b) => a === b || JSON.stringify(a) === JSON.stringify(b);
 
@@ -146,8 +159,10 @@ export function diffTrees(base, next, pageId, pos) {
         }
         const patch = propsPatch(r.b.node.properties, r.n.properties);
         if (Object.keys(patch).length) { set.props = patch; changed = true; }
-        const box = r.b.node.properties?.text_box;
-        if (patch.text_box && box && typeof box === "object" && !Array.isArray(box)) set.base_props = { text_box: box };
+        for (const key of Object.keys(PLACED)) {
+          const was = r.b.node.properties?.[key];
+          if (patch[key] && was && typeof was === "object" && !Array.isArray(was)) set.base_props = { ...set.base_props, [key]: was };
+        }
         if (changed) ops.push(set);
       }
       walk(r.n.children, r.n.id);

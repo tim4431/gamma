@@ -23,6 +23,7 @@ from .notebook import is_sheet
 from .pdf_index import doc_pages, pdf_missing
 from .pdf_text import (MAX_PAGES, PAGE_LABEL_RE, PDF_EXTRACT_FAILED, extract_pages, extract_text,
                        extract_text_pages, outline, page_count, page_label, render_page)
+from .picture import is_picture, markdown_of, picture_page
 from .recording import recording_label
 from .server_settings import can_store
 from .storage import find_upload_file, put_upload
@@ -415,11 +416,11 @@ def notes_focus_section(ws: str, payload, notes_seen: dict | None = None,
 
                 def line(row, depth, on_sheet):
                     props = props_of(row)
-                    text = (row[3] or "").strip() or "(empty)"
+                    text = picture_text(props, row[3]) or (row[3] or "").strip() or "(empty)"
                     quote = (props.get("quote") or "").strip()
                     if quote:
                         text = f'(highlight: "{quote[:200]}") {text}'
-                    elif label := text_box_label(props, on_sheet) or handwriting_label(props):
+                    elif label := placed_label(props, on_sheet) or handwriting_label(props):
                         text = f"{label} {text}"
                     pad = "  " * depth
                     return pad + f"- [{row[0]}] " + text.replace("\n", "\n" + pad + "  ")
@@ -1445,22 +1446,33 @@ def area_highlight(properties: dict) -> tuple[int, tuple] | None:
     return page, box
 
 
-def text_box_label(properties: dict, on_sheet: bool = False, above: bool = False) -> str:
-    """A text box's block as the model is told of it, with where it is
-    placed: "(text box on p. N)", "(text box on a page of paper)" or
-    "(text box, not placed on a page)"; "" for any other block. The
-    nearest sheet wins: ``on_sheet`` says a sheet is among the block's
-    ancestors, as the walk that reached it knows. ``above`` names that
-    sheet as "the page of paper above", for an outline that shows it
+def placed_label(properties: dict, on_sheet: bool = False, above: bool = False) -> str:
+    """A text box's or a picture's block as the model is told of it, with
+    where it is placed: "(text box on p. N)", "(picture on a page of
+    paper)", "(text box, not placed on a page)" and so on; "" for any other
+    block. The nearest sheet wins: ``on_sheet`` says a sheet is among the
+    block's ancestors, as the walk that reached it knows. ``above`` names
+    that sheet as "the page of paper above", for an outline that shows it
     (read_block)."""
-    if not is_text_box(properties):
+    if is_text_box(properties):
+        kind, page = "text box", box_page(properties, on_sheet)
+    elif is_picture(properties):
+        kind, page = "picture", picture_page(properties, on_sheet)
+    else:
         return ""
-    page = box_page(properties, on_sheet)
     if page:
-        return f"(text box on p. {page})"
+        return f"({kind} on p. {page})"
     if on_sheet:
-        return "(text box on the page of paper above)" if above else "(text box on a page of paper)"
-    return "(text box, not placed on a page)"
+        return f"({kind} on the page of paper above)" if above else f"({kind} on a page of paper)"
+    return f"({kind}, not placed on a page)"
+
+
+def picture_text(properties: dict, content: str | None) -> str:
+    """A picture block's text as the model reads it: its ``![caption](url)``
+    line (``picture.markdown_of``), the url what view_image looks at; "" for
+    any other block, and for a picture whose value names no file, which
+    reads as its caption."""
+    return markdown_of(content, properties["picture"]) if is_picture(properties) else ""
 
 
 def under_sheet(conn, block_id: str) -> bool:
@@ -1616,11 +1628,12 @@ def page_report_section(connection, ws: str, page_id: str, pdf_budget: int,
                     entry += f"\n  User note: {content}"
                 highlights.append(entry)
                 shown_as = entry
-            elif content:
-                label = text_box_label(child_properties, on_sheet)
-                shown_as = "  " * depth + "- " + (f"{label} {content}" if label else content)
+            elif content or is_picture(child_properties):
+                label = placed_label(child_properties, on_sheet)
+                text = picture_text(child_properties, content) or content or "(empty)"
+                shown_as = "  " * depth + "- " + (f"{label} {text}" if label else text)
                 notes.append(shown_as)
-            if shown_as and (quote or content):
+            if shown_as and (quote or content or is_picture(child_properties)):
                 seen_rows.append((row[0], row[3] or "", shown_as))
             walk(row[0], depth + 1, on_sheet or is_sheet(child_properties))
 

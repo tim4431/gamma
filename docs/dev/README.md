@@ -72,6 +72,7 @@ These describe the implementation unless explicitly marked as plans.
 | Ink format, input, editing, merging, and PDF ink import/export | [Handwriting](handwriting.md) |
 | Sheets of paper in a page, the notes and notebook views, paper | [Notebooks](notebooks.md) |
 | Typed text boxes on PDF pages and sheets, and their PDF interchange | [Text boxes](text_boxes.md) |
+| Photos and images placed on PDF pages and sheets: moving, turning, cropping and flipping them, the upload, the `/Stamp` they become in the annotated PDF, and Notability's pictures | [Pictures](pictures.md) |
 | Audio recordings in step with the notes: capture, the one replay store, playback, transcription | [Recordings](recording.md) |
 | Metadata, citations, and PDF resolution | [Paper metadata](paper_metadata.md) |
 | Imports and exports: dialogs, formats, pipelines | [Import and export](import_export.md) |

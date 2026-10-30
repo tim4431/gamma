@@ -58,6 +58,7 @@ from ..markdown_export import (
 from ..logbuf import log
 from ..highlights import is_highlight
 from ..storage import attachment_disposition, upload_refs
+from ..picture import is_picture, normalize_picture, picture_page
 from ..text_box import box_page, is_text_box, normalize_text_box
 from ..obsidian_export import (APP_JSON, Filing, VaultContext, page_dir, referenced_blocks, render_vault_page,
                                unique_name, vault_name)
@@ -179,7 +180,8 @@ def _collect_cards(blocks, *, notes: bool, threads: dict) -> list[dict]:
     note, as the app calls it); the highlight's threads on their own when
     it has no note shown; and the threads on the blocks under it the cards
     do not show (all of them with the notes off, an empty note, a text
-    box), each with its block's text to quote, in reading order. Unlike the marks, a highlight still embedded in the PDF
+    box or a picture on the page), each with its block's text to quote, in
+    reading order. Unlike the marks, a highlight still embedded in the PDF
     has its cards too: its notes and threads are the reader's own, whatever
     the file already carries."""
     children_by_id = _children_by_id(blocks)
@@ -223,18 +225,25 @@ def _collect_ink(blocks, uploads_dir) -> list[dict]:
     return groups
 
 
+def _on_sheets(blocks, page_id) -> set:
+    """The ids of the blocks a sheet holds: placed on it, whatever their
+    ``pdf_page`` says."""
+    return {b["id"] for sheet in notebook.sheets_of(blocks, page_id) for b in sheet["blocks"]}
+
+
 def _collect_text_boxes(blocks, page_id) -> tuple[list[dict], set]:
-    """Text boxes on the PDF's pages → ``annotate_pdf``'s text boxes (the
-    normalized box, the text, the page, the block id, when it last
+    """Text boxes on the PDF's pages, in document order (the order they
+    stack in, ``notebook.document_order``) → ``annotate_pdf``'s text boxes
+    (the normalized box, the text, the page, the block id, when it last
     changed) and its ``replaced`` keys. A box under a sheet is on the sheet
     whatever its ``pdf_page`` says, and an empty one draws nothing. Unlike
     the other marks, a box that came from the PDF and is still embedded in
     it is written too, and its original leaves the copy (``replaced``, the
     box's ``imported_annot``): the page shows the box as Gamma has it, so an
     edit made here reaches the export."""
-    on_sheets = {b["id"] for sheet in notebook.sheets_of(blocks, page_id) for b in sheet["blocks"]}
+    on_sheets = _on_sheets(blocks, page_id)
     boxes, replaced = [], set()
-    for b in blocks:
+    for b in notebook.document_order(blocks, page_id):
         props = b["properties"]
         if not is_text_box(props):
             continue
@@ -245,6 +254,42 @@ def _collect_text_boxes(blocks, page_id) -> tuple[list[dict], set]:
             boxes.append({"box": normalize_text_box(props["text_box"]), "content": b["content"],
                           "page": page, "id": b["id"], "modified": b.get("updated_at") or ""})
     return boxes, replaced
+
+
+def _collect_pictures(blocks, page_id, uploads_dir) -> tuple[list[dict], set]:
+    """Pictures on the PDF's pages, in document order (the order they stack
+    in) → ``annotate_pdf``'s pictures (the normalized picture, the caption,
+    the page, the block id, when it last changed) and its ``replaced`` keys,
+    by the text boxes' rules (``_collect_text_boxes``): one under a sheet is
+    on the sheet, and one imported from the PDF and still embedded in it is
+    written again in place of its original. A picture whose value does not normalize draws
+    nothing, and one whose file is missing is left out with a log line; the
+    original either has in the PDF stays."""
+    on_sheets = _on_sheets(blocks, page_id)
+    pictures, replaced = [], set()
+    for b in notebook.document_order(blocks, page_id):
+        props = b["properties"]
+        pic = normalize_picture(props["picture"]) if is_picture(props) else None
+        if pic is None:
+            continue
+        page = picture_page(props, on_sheet=b["id"] in on_sheets)
+        if page and not (uploads_dir / pic["url"].rsplit("/", 1)[1]).is_file():
+            log.info(f"[export] the picture {b['id']} is left out: its file {pic['url']} is missing")
+            continue
+        if still_embedded(props):
+            replaced.add(props["imported_annot"])
+        if page:
+            pictures.append({"picture": pic, "content": b["content"], "page": page, "id": b["id"],
+                             "modified": b.get("updated_at") or ""})
+    return pictures, replaced
+
+
+def _picture_files(node) -> list[str]:
+    """The upload a picture block places, as a file name; [] for any other
+    block."""
+    props = node.get("properties") or {}
+    pic = normalize_picture(props.get("picture")) if is_picture(props) else None
+    return [pic["url"].rsplit("/", 1)[1]] if pic else []
 
 
 # Pasted images above this size stay attachments only — a data URI this big
@@ -520,16 +565,17 @@ class _ZoteroBuilder(_Builder):
     """A Zotero RDF library: ``<base>/<base>.rdf`` + ``<base>/files/<n>/…``.
     What is drawn on the page travels inside the PDF copies (annotate_pdf —
     Zotero's "Include Annotations" convention): highlights, area notes and
-    handwriting with the highlights switch, text boxes with either switch,
-    as the annotated PDF writes them, in Zotero's own colours. A page with
-    nothing to draw sends its stored PDF as it is. Notes become bib:Memo
-    items with pasted images embedded as data URIs, the folders below the
-    exported folder the collection tree, labels tags. Images referenced
-    anywhere in a page also ride as item attachments; annotation comments
-    carry a plain "(image: …)" placeholder since they can't hold pictures.
-    The file chips and web links of the page's "Attachments" block go back
-    as the attachments the import made them of. A note page (a Zotero
-    standalone note the import made a page of) goes out as that note."""
+    handwriting with the highlights switch, text boxes and pictures with
+    either switch, as the annotated PDF writes them, in Zotero's own
+    colours. A page with nothing to draw sends its stored PDF as it is.
+    Notes become bib:Memo items with pasted images embedded as data URIs,
+    the folders below the exported folder the collection tree, labels tags.
+    Images referenced anywhere in a page, the pictures placed on it among
+    them, also ride as item attachments; annotation comments carry a plain
+    "(image: …)" placeholder since they can't hold pictures. The file chips
+    and web links of the page's "Attachments" block go back as the
+    attachments the import made them of. A note page (a Zotero standalone
+    note the import made a page of) goes out as that note."""
     suffix = "-zotero.zip"
 
     def __init__(self, ws, base, opts):
@@ -559,10 +605,10 @@ class _ZoteroBuilder(_Builder):
     def _pdf_copy(self, n, rows, page, title) -> tuple[str | None, set]:
         """The page's PDF in the zip: its path there (None: the export
         carries no files, or the page has no stored PDF) and the ids of the
-        ink groups and text boxes the copy carries. With nothing to draw it
-        is the stored file, packed from storage unread; else the copy is
-        drawn as Zotero reads it (``zotero=True``: no /CA for Zotero to pale
-        the colours by) and spooled."""
+        ink groups, text boxes and pictures the copy carries. With nothing
+        to draw it is the stored file, packed from storage unread; else the
+        copy is drawn as Zotero reads it (``zotero=True``: no /CA for Zotero
+        to pale the colours by) and spooled."""
         doc_id = (page.get("properties") or {}).get("doc_id")
         if not (self.opts["pdf"] and doc_id):
             return None, set()
@@ -578,27 +624,29 @@ class _ZoteroBuilder(_Builder):
         marks = _collect_marks(blocks) if highlights else []
         ink = _collect_ink(blocks, self.uploads_dir) if highlights else []
         boxes, replaced = _collect_text_boxes(blocks, page["id"]) if highlights or notes else ([], set())
-        if marks or ink or boxes or replaced:
+        pictures, more = _collect_pictures(blocks, page["id"], self.uploads_dir) if highlights or notes else ([], set())
+        if marks or ink or boxes or pictures or replaced or more:
             for mark in marks + ink:
                 mark["note"] = strip_image_md(mark["note"])
             try:
                 data, _ = annotate_pdf(pdf_path.read_bytes(), marks, author=self.opts.get("author", ""), ink=ink,
-                                       text_boxes=boxes, replaced=replaced, resolve_ref=self.resolve_ref,
-                                       zotero=True)
+                                       text_boxes=boxes, replaced=replaced | more, resolve_ref=self.resolve_ref,
+                                       pictures=pictures, uploads_dir=self.uploads_dir, zotero=True)
             except Exception as e:
                 log.warning(f"[zotero export] annotating '{title}' failed, exporting bare PDF: {e}")
             else:
                 self.spool(f"{self.base}/{pdf_arc}", data)
-                return pdf_arc, {g["id"] for g in ink} | {b["id"] for b in boxes}
+                return pdf_arc, {g["id"] for g in ink} | {b["id"] for b in boxes} | {p["id"] for p in pictures}
         self.files.append((f"{self.base}/{pdf_arc}", pdf_path))
         return pdf_arc, set()
 
     def _attachments(self, n, page) -> tuple[list, set]:
         """The item's attachments besides its PDF (``build_rdf``'s
-        ``images``), their files packed: the pictures its blocks show, and
-        the file chips and web links under its "Attachments" block, each
-        file under the name its chip shows. Also the ids of those chips,
-        which are no note. Files ride only when the export carries them."""
+        ``images``), their files packed: the pictures its blocks show or
+        place, and the file chips and web links under its "Attachments"
+        block, each file under the name its chip shows. Also the ids of
+        those chips, which are no note. Files ride only when the export
+        carries them."""
         out, packed, chips = [], set(), set()
 
         def pack(fname, arc, title):
@@ -612,7 +660,7 @@ class _ZoteroBuilder(_Builder):
 
         if self.opts["pdf"]:
             for node in _walk_tree(page):
-                for fname in MD_IMAGE_RE.findall(node.get("content") or ""):
+                for fname in [*MD_IMAGE_RE.findall(node.get("content") or ""), *_picture_files(node)]:
                     pack(fname, f"files/{n}/{fname}", fname)
         for block in page["children"]:
             if not (block.get("properties") or {}).get(ATTACHMENTS_PROP):
@@ -656,7 +704,7 @@ class _ZoteroBuilder(_Builder):
             self._note_page(page, props, title)
             return
         meta = props.get("meta") if isinstance(props.get("meta"), dict) else {}
-        # in_copy: the ink groups and text boxes the PDF copy carries
+        # in_copy: the ink groups, text boxes and pictures the PDF copy carries
         pdf_arc, in_copy = self._pdf_copy(n, rows, page, title)
         attachments, chips = self._attachments(n, page)
 
@@ -666,8 +714,10 @@ class _ZoteroBuilder(_Builder):
             # inverse of the import's notes→child-blocks mapping. Writing
             # nested under highlights instead travels in the annotation popups,
             # and so does an ink group's in the copy. A text box in the copy
-            # is its own text there; one with notes under it is a note too,
-            # since a Zotero text annotation holds nothing but its text.
+            # is its own text there, and a picture is drawn there; one with
+            # notes under it is a note too, since a Zotero text annotation
+            # holds nothing but its text and a stamp is no annotation Zotero
+            # keeps.
             for child in page["children"]:
                 cprops = child.get("properties") or {}
                 if is_highlight(cprops) or cprops.get("link_url"):
@@ -678,8 +728,8 @@ class _ZoteroBuilder(_Builder):
                     if not child["children"]:
                         continue
                 if child["id"] in in_copy and not (
-                        is_text_box(cprops) and any((d.get("content") or "").strip()
-                                                    for d in _walk_tree(child) if d is not child)):
+                        (is_text_box(cprops) or is_picture(cprops))
+                        and any((d.get("content") or "").strip() for d in _walk_tree(child) if d is not child)):
                     continue
                 html = note_html(child, self.resolve_image, self.resolve_ref)
                 if html:
@@ -724,7 +774,9 @@ class _ZoteroBuilder(_Builder):
             "Collections, tags, notes, PDFs and other attachments come along. Highlights,\n"
             "handwriting and text boxes ride inside the PDFs: Zotero shows them, locked,\n"
             "once a PDF is open, and File -> Import Annotations... there makes them\n"
-            "Zotero's own. Text boxes need Zotero 7 or later.\n"
+            "Zotero's own. Text boxes need Zotero 7 or later. Pictures placed on a page\n"
+            "are drawn in the PDFs too, and Zotero shows them, but it imports no\n"
+            "annotation for them: they stay part of the PDF.\n"
         )
         self.entries += [(f"{self.base}/{self.base}.rdf", build_rdf(self.items)),
                          (f"{self.base}/README.txt", readme)]
@@ -1164,8 +1216,8 @@ def page_notes_pdf(ws: str, page_id: str, *, highlights=True, notes=True) -> tup
 
 def annotated_pdf(ws: str, block_id: str, *, highlights=True, notes=False, comments=False, notes_at="beside",
                   author="", scope=None) -> tuple[bytes, str, int, int]:
-    """The page's PDF with its highlights, ink and text boxes as standard
-    annotations; with ``notes``, each highlight's notes as a card beside the
+    """The page's PDF with its highlights, ink, text boxes and pictures as
+    standard annotations; with ``notes``, each highlight's notes as a card beside the
     pages or on them (``notes_at``), and with ``comments`` its open comment
     threads as cards beside the pages: ``(pdf bytes, file name, annotations
     written, cards drawn)``. All three off = the stored PDF as is. Raises
@@ -1191,15 +1243,17 @@ def annotated_page_pdf(ws: str, blocks: list[dict], block_id: str, *, highlights
         # each, the paper painted, the text boxes typeset and the
         # handwriting drawn on it (gamma/notebook.py).
         uploads = ws_uploads_dir(ws)
-        sheets, drawn = [], 0
+        sheets, pictures, drawn = [], [], 0
         for sheet in page_sheets:
             boxes = notebook.sheet_text_boxes(sheet["blocks"])
             inks = [ink for b in sheet["blocks"] if (b["properties"] or {}).get("ink_url")
                     if (ink := inkmod.read_upload(uploads, b["properties"]["ink_url"])) is not None]
-            drawn += len(boxes) + len(inks)
+            pictures.append(notebook.sheet_pictures(sheet["blocks"]))
+            drawn += len(boxes) + len(inks) + len(pictures[-1])
             sheets.append((sheet["paper"], boxes, inks))
         with connect_pages_db(ws) as conn:
-            pdf_bytes = notebook.notebook_pdf(sheets, resolve_ref=block_ref_resolver(conn))
+            pdf_bytes = notebook.notebook_pdf(sheets, resolve_ref=block_ref_resolver(conn), pictures=pictures,
+                                              uploads_dir=uploads)
         return pdf_bytes, f"{slugify(root.get('content'), block_id)}.pdf", drawn, 0
     if not doc_id:
         raise HTTPException(status_code=400, detail="page has no PDF")
@@ -1210,23 +1264,27 @@ def annotated_page_pdf(ws: str, blocks: list[dict], block_id: str, *, highlights
     if not pdf_path.is_file():
         raise HTTPException(status_code=404, detail="PDF not stored on the server")
 
+    uploads = ws_uploads_dir(ws)
     marks = _collect_marks(blocks)
     boxes, replaced = _collect_text_boxes(blocks, block_id)
+    pictures, more = _collect_pictures(blocks, block_id, uploads)
+    replaced |= more
 
     written = 0
     pdf_bytes = pdf_path.read_bytes()
-    # A text box is part of the annotation layer and it is the user's own
-    # writing on the page, so any switch writes it: the notes-only PDF keeps
-    # the boxes with the cards. All off: the stored file.
+    # A text box or a picture is part of the annotation layer and it is the
+    # user's own work on the page, so any switch writes it: the notes-only
+    # PDF keeps them with the cards. All off: the stored file.
     cards = notes or comments
-    if highlights or (cards and (boxes or replaced)):
+    if highlights or (cards and (boxes or pictures or replaced)):
         try:
             # [[refs]] in a box read as the text they name, as in the notes PDF.
             with connect_pages_db(ws) as conn:
                 pdf_bytes, written = annotate_pdf(
                     pdf_bytes, marks if highlights else [], author=author,
-                    ink=_collect_ink(blocks, ws_uploads_dir(ws)) if highlights else (),
-                    text_boxes=boxes, replaced=replaced, resolve_ref=block_ref_resolver(conn))
+                    ink=_collect_ink(blocks, uploads) if highlights else (),
+                    text_boxes=boxes, replaced=replaced, resolve_ref=block_ref_resolver(conn),
+                    pictures=pictures, uploads_dir=uploads)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"could not annotate PDF: {str(e) or type(e).__name__}") from e
 
@@ -1242,7 +1300,7 @@ def annotated_page_pdf(ws: str, blocks: list[dict], block_id: str, *, highlights
                     threads.setdefault(thread["block_id"], []).append(thread["comments"])
                 pdf_bytes, drawn = render_notes(
                     pdf_bytes, _collect_cards(blocks, notes=notes, threads=threads), notes_at=notes_at,
-                    uploads_dir=ws_uploads_dir(ws), resolve_ref=block_ref_resolver(conn))
+                    uploads_dir=uploads, resolve_ref=block_ref_resolver(conn))
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"could not render notes: {e}")
 
@@ -1289,7 +1347,7 @@ def export_page_pdf(block_id: str, request: Request, notes: int = 0, highlights:
     open comment threads as cards beside the page, as the viewer's margin
     shows them. ``highlights=0`` skips the annotation layer, so
     ``highlights=0&notes=1`` gives a clean PDF carrying only the written
-    notes: the cards and the text boxes, the writing already placed on the
+    notes: the cards, and the text boxes and pictures already placed on the
     page."""
     ws = resolve_ws(request)
     pdf_bytes, filename, written, drawn = annotated_pdf(

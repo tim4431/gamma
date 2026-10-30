@@ -13,12 +13,15 @@ import struct
 import zipfile
 from array import array
 from collections import Counter
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
 
 import notability_fixtures as fx
 from gamma import ink, notability as nb, notability_map as nm
+from gamma.ops import MAX_CONTENT
+from gamma.text_box import PAD
 from gamma.import_zip import DirectoryTooLarge, directory_size, new_walk, open_zip, walk_zip
 from gamma.notability_archive import Archive, ArchiveError, load_plist, parse_numbers
 from gamma.recording import mp4_duration_ms
@@ -829,7 +832,7 @@ def test_a_box_s_markdown():
     assert nm.box_markdown(runs) == "Plan\n- first\n    2. sub\n- [x] check\n\nafter"
 
 
-def test_text_boxes_math_and_pictures():
+def test_text_boxes_and_math():
     k = 2.0
     page = frame(k=k, width=600, height=800)
     text = nb.Media("text", 10, 20, 100, 30, rotation=0.3, runs=[run("Big ", size=20, rgba=(1, 0, 0, 1)),
@@ -845,9 +848,74 @@ def test_text_boxes_math_and_pictures():
     math_box = nm.text_box(nb.Media("math", 0, 0, 10, 10, latex="x^2\n\n+ 1", rgba=(0, 1, 0, 1)), page)
     assert math_box["content"] == "$$\nx^2\n+ 1\n$$" and math_box["text_box"]["color"] == "#00ff00"
     assert nm.text_box(nb.Media("math", 0, 0, 10, 10, latex="a $$ b"), page)["content"] == "a \\$\\$ b"
-    turned = nm.picture_box(nb.Media("picture", 100, 100, 40, 20, rotation=math.pi / 2), page)
-    assert (turned["w"], turned["h"]) == (pytest.approx(40 + 8), pytest.approx(80 + 8))
-    assert turned["x"] == pytest.approx(240 - 20 - 4) and turned["auto"] is False
+
+
+def test_a_picture_keeps_its_crop_turn_and_flips_as_numbers():
+    """A picture is a picture block of its file as it came: its frame
+    through the page's, its turn in degrees (rotationDegrees holds
+    radians), its flips, its crop as fractions of the image (cut to it, the
+    whole image when it holds nothing; an .ntb's in the asset's logical
+    size), its caption on one line and escaped, and kept on the page."""
+    page = frame(k=2.0, width=600, height=800)
+    url = "/api/uploads/a.png"
+    turned = nb.Media("picture", 100, 100, 40, 20, rotation=math.pi / 2, flip_h=True, crop=(10, 20, 100, 50),
+                      caption="A |300\n [x]")
+    made = nm.picture_block(turned, page, url, (200, 100))
+    assert made == {"content": "A \\|300 \\[x\\]", "picture": {
+        "url": url, "x": 200, "y": 200, "w": 80, "h": 40, "angle": 90,
+        "crop": {"x": 0.05, "y": 0.2, "w": 0.5, "h": 0.5}, "flip_h": True, "flip_v": False}}
+    whole = {"x": 0, "y": 0, "w": 1, "h": 1}
+    for crop in (None, (-10, -10, 1000, 1000), (300, 0, 50, 50), (0, 0, 0, 0)):  # none, past the image, outside it
+        assert nm.picture_block(replace(turned, crop=crop), page, url, (200, 100))["picture"]["crop"] == whole, crop
+    edge = nm.picture_block(replace(turned, crop=(150, -20, 100, 60)), page, url, (200, 100))["picture"]["crop"]
+    assert edge == {"x": 0.75, "y": 0, "w": 0.25, "h": 0.4}  # the part inside the image
+    logical = replace(turned, crop=(0, 0, 50, 25), crop_size=(100, 50))  # an .ntb's: in its logical size
+    assert nm.picture_block(logical, page, url, (400, 200))["picture"]["crop"] == {"x": 0, "y": 0, "w": 0.5, "h": 0.5}
+    wide = nm.picture_block(nb.Media("picture", -100, 50, 500, 100, rotation=-3.5), page, url, (500, 100))["picture"]
+    # kept on the page: the 1000 x 200 frame turned is about 1006 pt wide, scaled down until it fits the 600-pt page
+    assert (wide["x"], wide["y"], wide["w"], wide["h"], wide["angle"]) == (1.97, 140.39, 596.07, 119.21, 159.46)
+    left = Counter()
+    long = nm.picture_block(replace(turned, caption="*" * (MAX_CONTENT // 2 + 1)), page, url, (200, 100), left)
+    assert len(long["content"]) == MAX_CONTENT and left["long text"] == 1
+
+
+def test_gamma_s_copy_of_a_picture():
+    """A note Gamma wrote carries its copy of each picture, by the media's
+    UUID: used while the note still shows the picture as the copy has it
+    (the same place, size, turn, crop and flips), and then the caption's
+    Markdown and every number are the copy's, the file the note's. A copy
+    an older export wrote, of the box it drew the picture in, gives its
+    alt text as the caption."""
+    page = frame(k=1.0, width=600, height=800)
+    media = nb.Media("picture", 100, 120, 80, 60, rotation=math.radians(30), flip_v=True, crop=(0, 0, 100, 75),
+                     caption="a red block", uuid=bytes(range(16)))
+    made = nm.picture_block(media, page, "/api/uploads/note.png", (200, 100))
+    ours = made["picture"]
+    copy = {"caption": "a *red* block", "picture": {**ours, "url": "/api/uploads/other.png", "x": 100.03,
+                                                     "angle": 30.04, "crop": {**ours["crop"], "w": 0.5004}}}
+
+    def copied(entry, uuid=media.uuid):
+        note = nb.Note(title="t", private={"pictures": {media.uuid.hex(): entry}})
+        return nm.copied_picture(note, replace(media, uuid=uuid), made, page)
+
+    assert copied(copy) == {"content": "a *red* block", "picture": {**copy["picture"], "url": ours["url"]}}
+    assert copied(copy, uuid=None) is made
+    changed = [{**copy["picture"], "x": 101}, {**copy["picture"], "h": 59.9}, {**copy["picture"], "angle": 31},
+               {**copy["picture"], "flip_v": False}, {**copy["picture"], "flip_h": True},
+               {**copy["picture"], "crop": {**ours["crop"], "y": 0.01}}, None, "a picture"]
+    for picture in changed:
+        assert copied({**copy, "picture": picture}) is made, picture
+    for caption in (None, 3, "x" * (MAX_CONTENT + 1)):
+        assert copied({**copy, "caption": caption}) is made, caption
+    upside = nm.picture_block(replace(media, rotation=math.pi - 1e-4), page, "/api/uploads/note.png", (200, 100))
+    assert upside["picture"]["angle"] == 179.99  # 0.01 from the copy's -180: turns compare the short way round
+    turned = nb.Note(title="t", private={"pictures": {media.uuid.hex(): {
+        **copy, "picture": {**copy["picture"], "angle": -180}}}})
+    assert nm.copied_picture(turned, media, upside, page)["picture"]["angle"] == -180
+    box = {"x": 100 - PAD, "y": 120 - PAD, "w": 80 + 2 * PAD, "h": 90, "auto": False}
+    assert copied({"alt": "an *old* one", "text_box": box}) == {"content": "an *old* one", "picture": ours}
+    assert copied({"alt": "an *old* one", "text_box": {**box, "x": 90}}) is made
+    assert copied({"alt": None, "text_box": box}) is made
 
 
 def test_paper():

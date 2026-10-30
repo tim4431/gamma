@@ -4,13 +4,14 @@ page or on their sheet of paper — rasterized by MuPDF like view_pdf_page's
 page, whole or cropped to the handwriting.
 
 Nothing is drawn here. A sheet goes through the notebook export's one-page
-PDF (``notebook.notebook_pdf``: the paper painted, its text boxes typeset,
-the strokes as vectors); ink on a PDF page is that page alone with the
-strokes stamped into its content as the same vectors
-(``pdf_export.page_with_ink``: baked widths, tapers, dashes, the
+PDF (``notebook.notebook_pdf``: the paper painted, its pictures drawn and
+its text boxes typeset, the strokes as vectors); ink on a PDF page is that
+page alone with its pictures and text boxes drawn into its content as the
+annotated export places them, and the strokes over them as the same
+vectors (``pdf_export.page_with_ink``: baked widths, tapers, dashes, the
 pencil's shades and grain and the calligraphy nib as drawn, highlighters
-multiplied onto the text under them). ``pdf_text.render_page`` rasterizes
-either.
+multiplied onto the text under them). So a picture of a page is the page
+as the user sees it. ``pdf_text.render_page`` rasterizes either.
 """
 
 from . import ink as inkmod
@@ -18,7 +19,7 @@ from .ai_pictures import page_pdf_path
 from .blocks_store import block_to_dict, fetch_subtree, page_attachment
 from .db import ws_uploads_dir
 from .logbuf import log
-from .notebook import is_sheet, normalize_paper, notebook_pdf, sheet_text_boxes, sheets_of
+from .notebook import is_sheet, normalize_paper, notebook_pdf, sheet_pictures, sheet_text_boxes, sheets_of
 from .pdf_text import RENDER_MAX_SIDE, render_page
 
 # A cropped picture's margin around the handwriting (points, or a tenth of
@@ -52,6 +53,29 @@ def crop_box(inks, width: float, height: float):
 
     (fx0, fx1), (fy0, fy1) = side(x0, x1, width), side(y0, y1, height)
     return (fx0, fy0, fx1, fy1)
+
+
+def _sheet_pdf(paper, sheet, inks, uploads) -> bytes:
+    """One sheet as ``notebook_pdf`` draws it: its paper, pictures, text
+    boxes and ``inks``; blank paper with the strokes alone when ``sheet``
+    is None."""
+    blocks = sheet["blocks"] if sheet else []
+    return notebook_pdf([(paper, sheet_text_boxes(blocks), inks)], pictures=[sheet_pictures(blocks)],
+                        uploads_dir=uploads)
+
+
+def _placed(conn, blocks: list[dict], page_id: str, uploads) -> dict:
+    """What ``pdf_export.page_with_ink`` draws under the handwriting of the
+    page ``page_id``'s PDF: its pictures and text boxes, with the originals
+    they replace, picked as the annotated export picks them
+    (routers/export.py ``_collect_pictures``, ``_collect_text_boxes``)."""
+    from .markdown_export import block_ref_resolver
+    from .routers.export import _collect_pictures, _collect_text_boxes
+
+    boxes, replaced = _collect_text_boxes(blocks, page_id)
+    pictures, more = _collect_pictures(blocks, page_id, uploads)
+    return {"pictures": pictures, "text_boxes": boxes, "replaced": replaced | more, "uploads_dir": uploads,
+            "resolve_ref": block_ref_resolver(conn)}
 
 
 def picture(ws: str, conn, block_id: str, page_id: str, whole: bool = False, ink=None) -> dict:
@@ -88,8 +112,7 @@ def picture(ws: str, conn, block_id: str, page_id: str, whole: bool = False, ink
         if sheet is None:
             return {"error": "error: that page of paper could not be read"}
         inks = [ink for b in sheet["blocks"] if (ink := load(b)) is not None]
-        return _done(_render(notebook_pdf([(sheet["paper"], sheet_text_boxes(sheet["blocks"]), inks)]), None),
-                     inks, whole=True)
+        return _done(_render(_sheet_pdf(sheet["paper"], sheet, inks, uploads), None), inks, whole=True)
     elif not props.get("ink_url"):
         return {"error": ('error: that block holds no handwriting — pass the id of a handwriting '
                           'block (read_block labels it "handwriting on …") or of a page of paper')}
@@ -107,8 +130,7 @@ def picture(ws: str, conn, block_id: str, page_id: str, whole: bool = False, ink
         inks = ([i for b in sheet["blocks"] if (i := load(b)) is not None]
                 if whole and sheet else [ink])
         box = None if whole else crop_box([ink], paper["width"], paper["height"])
-        boxes = sheet_text_boxes(sheet["blocks"]) if sheet else []
-        return _done(_render(notebook_pdf([(paper, boxes, inks)]), box), inks, whole=whole)
+        return _done(_render(_sheet_pdf(paper, sheet, inks, uploads), box), inks, whole=whole)
 
     from .ai_context import pdf_path
     from .pdf_export import page_with_ink, still_embedded
@@ -129,7 +151,7 @@ def picture(ws: str, conn, block_id: str, page_id: str, whole: bool = False, ink
     data = b""
     if path:
         try:
-            data, pages = page_with_ink(path, page_no, inks)
+            data, pages = page_with_ink(path, page_no, inks, **_placed(conn, blocks, page_id, uploads))
             if not data:
                 return {"error": f"error: the handwriting is on PDF page {page_no}, but the PDF has {pages} pages"}
         except Exception as e:  # an encrypted or broken file: the strokes alone still read
@@ -146,13 +168,15 @@ def _render(pdf: bytes, box):
 
 
 def page_with_handwriting(ws: str, conn, page_id: str, page_no: int, path=None):
-    """PDF page ``page_no`` of the page ``page_id`` with every handwriting
-    group stamped on it, as one-page PDF bytes (``pdf_export.page_with_ink``)
-    — what a picture of "the page as the user sees it" is rendered from —
-    or ``(b"", pages)`` when the page has no such PDF page; ``(None, 0)``
-    for a page without a PDF file on this server (``path`` is that file
-    when the caller has it already). Ink the PDF still embeds is drawn by
-    the file itself and never added twice."""
+    """PDF page ``page_no`` of the page ``page_id`` with its pictures and
+    text boxes drawn on it and every handwriting group over them, as
+    one-page PDF bytes (``pdf_export.page_with_ink``) — what a picture of
+    "the page as the user sees it" is rendered from — or ``(b"", pages)``
+    when the page has no such PDF page; ``(None, 0)`` for a page without a
+    PDF file on this server (``path`` is that file when the caller has it
+    already). Ink the PDF still embeds is drawn by the file itself and never
+    added twice; a box or picture it embeds is drawn as Gamma has it, in
+    place of the original, as the annotated export writes it."""
     from .pdf_export import page_with_ink, still_embedded
 
     path = path or page_pdf_path(ws, conn, page_id)
@@ -169,7 +193,7 @@ def page_with_handwriting(ws: str, conn, page_id: str, page_no: int, path=None):
         if ink is not None and ink.space.kind == "pdf-page" and ink.space.page == page_no:
             inks.append(ink)
     try:
-        return page_with_ink(path, page_no, inks)
+        return page_with_ink(path, page_no, inks, **_placed(conn, blocks, page_id, uploads))
     except Exception as e:  # an encrypted or broken file: no handwriting, the page itself still renders
         log.warning(f"[ink-view] could not copy PDF page {page_no} of {page_id}: {e}")
         return b"", 0

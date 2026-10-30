@@ -56,9 +56,9 @@ in the outgoing file); a move by hand writes a position without it, and
 the review card's Use closest match takes its place and quote, dropping
 it with ``lost`` and ``doc_id``. A highlight whose place on its page is
 not known (a Logseq import without positions) carries ``pageNumber``
-alone. A text box
-has none: its place is its ``text_box`` (gamma/text_box.py). The block id
-is the highlight's id. The frontend's twin is
+alone. A text box and a picture have none: their place is their
+``text_box`` (gamma/text_box.py) or ``picture`` (gamma/picture.py). The
+block id is the highlight's id. The frontend's twin is
 frontend/src/shared/model/blockModel.js; docs/dev/api.md "The highlight
 shape" describes it.
 """
@@ -216,9 +216,10 @@ def page_of(props: dict | None) -> int | None:
 
 def is_highlight(props: dict | None) -> bool:
     """A highlight or a link region: a block with a ``pdf_position`` that
-    is no ink group, text box or sheet — the ``kind`` column's
+    is no ink group, text box, picture or sheet — the ``kind`` column's
     ``highlight``, and its ``link`` made on the page (db.BLOCK_HOT_COLUMNS
     tests the other kinds first)."""
     props = props or {}
     return (isinstance(props.get("pdf_position"), dict) and "ink_url" not in props
-            and not isinstance(props.get("text_box"), dict) and not isinstance(props.get("sheet"), dict))
+            and not isinstance(props.get("text_box"), dict) and not isinstance(props.get("picture"), dict)
+            and not isinstance(props.get("sheet"), dict))

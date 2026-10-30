@@ -15,10 +15,11 @@ can edit one page at once and only the touched rows move:
   group's new ``ink_url`` whose base is not the stored one is merged into
   the stored drawing by stroke (``gamma/ink.py`` ``merge_ink``, the applied
   op names the merged file), so two people drawing in one group both keep
-  their strokes, and a text box's ``text_box`` is merged key by key
-  (``gamma/text_box.py`` ``merge_text_box``, the applied op carries the
-  merged box), so one person's move survives another's typing. Other keys
-  stay last-writer-wins.
+  their strokes, and a text box's ``text_box`` or a picture's ``picture``
+  is merged key by key (``PLACED_KEYS``: ``gamma/text_box.py``
+  ``merge_text_box``, ``gamma/picture.py`` ``merge_picture``; the applied
+  op carries the merged value), so one person's move survives another's
+  typing or crop. Other keys stay last-writer-wins.
 - ``insert {id, parent, position?, content, props}`` — the client mints the
   id and the fractional position; a position that collides with a sibling is
   re-keyed here and the applied op carries the final value. Re-inserting a
@@ -82,7 +83,8 @@ from pydantic import BaseModel, Field, model_validator
 
 from . import collab, comments, inbox, mentions, pdf_index, textmerge, upload_gc
 from . import ink as inkmod
-from .text_box import merge_text_box
+from .picture import merge_picture, normalize_picture
+from .text_box import merge_text_box, normalize_text_box
 from .blocks_store import (
     BLOCK_COLUMNS, FOLDERS, LABELS, STORED_COLUMNS, TRASH, TREES, block_to_dict, delete_subtree, ensure_reserved,
     fetch_subtree, filing, filing_ids, folder_inserts, free_position, is_op_page, label_inserts, last_child_position,
@@ -105,6 +107,14 @@ PRUNE_EVERY = 16     # prune check cadence (every Nth seq, or a batch over its s
 CATCHUP_MAX_BATCHES = 200
 CATCHUP_MAX_BYTES = 1_000_000
 _SURROGATE = re.compile(r"[\ud800-\udfff]")
+# The properties that place an object on a page, each with its module's
+# normaliser and merge: a text box's ``text_box`` (gamma/text_box.py) and a
+# picture's ``picture`` (gamma/picture.py). Every change sends one whole, so
+# a ``set`` whose ``base_props`` names the value it was changed from is
+# merged key by key into the value stored now. The mirror's diff and resend
+# (gamma/sync_tree.py, sync_engine.py) read the same table, and the client
+# its twin (frontend/src/shared/model/blockOps.js PLACED).
+PLACED_KEYS = {"text_box": (normalize_text_box, merge_text_box), "picture": (normalize_picture, merge_picture)}
 
 # Conflict codes: the page changed under the batch, so an op no longer applies.
 MISSING = "missing"  # the block or the parent is gone
@@ -356,9 +366,9 @@ class _Batch:
         base_props = op.get("base_props")
         if patch and base_props:
             patch = self.merge_ink(block_id, props, patch, base_props, op.get("base_ids"))
-            if "text_box" in patch and "text_box" in base_props:
-                patch = {**patch, "text_box": merge_text_box(props.get("text_box"), patch["text_box"],
-                                                              base_props["text_box"])}
+            for key, (_normalize, merge) in PLACED_KEYS.items():
+                if key in patch and key in base_props:
+                    patch = {**patch, key: merge(props.get(key), patch[key], base_props[key])}
         echo = {"op": "set", "id": block_id}
         sets, values = ["updated_at = ?"], [self.now]
         if content is not None:

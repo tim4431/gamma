@@ -141,12 +141,15 @@ import { makeStableActions, useStableActions } from "../shared/lib/stableActions
 import { keepIfSame, sameMap, sameObject } from "../shared/lib/keepIfSame.js";
 import { isTextBox, normalizeTextBox } from "../markup/textBox.js";
 import { useTextBoxes } from "../markup/useTextBoxes";
+import { isPicture, normalizePicture, turnedBox } from "../markup/picture.js";
+import { picturesDrag } from "../markup/pictureUpload.js";
+import { usePictures } from "../markup/usePictures";
 import { inkBounds } from "../ink/ink";
 import { useBuildFence } from "../ink/buildFence.js";
 import { useInkStrip } from "../ink/useInkStrip.js";
 import { useInkLive } from "../ink/useInkLive.js";
 import { useInkSave } from "../ink/useInkSave.js";
-import { useInkSurfaces } from "../ink/useInkSurfaces.js";
+import { useInkSurfaces, visiblePart } from "../ink/useInkSurfaces.js";
 import { useInkDocument } from "../ink/useInkDocument.js";
 import { useInkStrokes } from "../ink/useInkStrokes.js";
 import { useInkSelection } from "../ink/useInkSelection.js";
@@ -4094,13 +4097,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const pendingCaretRef = useRef(null);  // caret to place once a restore has committed
   // Text boxes (markup/useTextBoxes.js): the selected or edited box, its
   // edits. A box's editor and the notes' row editor are never open at once,
-  // nor a selected box and the lasso's selection; an ink tool armed makes
-  // the boxes inert.
+  // nor a selected box and the lasso's selection or a selected picture
+  // (pictures, below); an ink tool armed makes the boxes inert.
   const textBoxes = useTextBoxes({
     blocks, blocksRef, setBlocks, foldBlocks, readOnly, pageId: focusedBlockId,
     rowEditingId: view.editingId, closeRowEditor: () => setView((v) => (v.editingId ? closeEditing(v, v.editingId) : v)),
     style: textBoxStyle, setStyle: setTextBoxStyle, keybindings,
-    inert: !!inkUi.tool && inkUi.tool !== "text", onSelect: () => clearInkSelection(),
+    inert: !!inkUi.tool && inkUi.tool !== "text", onSelect: () => { clearInkSelection(); pictures.deselect(); },
   });
   const blockHistory = useBlockHistory(blocks, setBlocks, {
     originOf: (tree) => treeOriginRef.current.get(tree),
@@ -6947,9 +6950,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The PATCH names the file the draft was edited from (base_properties):
   // when someone else changed the drawing meanwhile the server merges both
   // by stroke and answers with the merged file (gamma/ops.py merge_ink).
-  // Undo / Redo (the strip's buttons, Ctrl+Z while it is open) step the
-  // block history for text boxes, the stroke history otherwise.
-  const boxUndo = textArmed || !!textBoxes.sel;
   // The save (ink/useInkSave.js over ink/inkSaver.js): the drafts go to the
   // server 700 ms after the last edit, at most 5 s after the first unsaved
   // one, and at once when the tab is hidden, the page goes away or another
@@ -6961,6 +6961,24 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // messages.
   const { inkBlocks, inkBySurface, onPageInView, pasteTarget, inkPageNumber } = useInkSurfaces({
     blocks, nbSheets, nbSheetsRef, nbCurrent, notebook, pdfUrl, pdfHidden });
+  // Pictures (markup/usePictures.js): the selected picture and its crop
+  // mode, its edits, and the new ones the strip's Picture button, a paste
+  // and a drop place on the surface in view. One selection in the app: a
+  // picture selected lets go of a text box and of the lasso's strokes, and
+  // either of those lets go of the picture; a tool armed lets go of it.
+  // A new picture without a point goes to the surface in view, else to the
+  // sheet among the notes that shows the most of itself.
+  const pictureTarget = () => pasteTarget() || nbSheetsRef.current.reduce((best, s) => {
+    const size = { width: s.paper.width, height: s.paper.height }, seen = visiblePart(s.id, size);
+    const area = seen ? seen.width * seen.height : 0;
+    return area > (best?.area || 0) ? { page: s.id, size, area } : best;
+  }, null);
+  const pictures = usePictures({ blocks, blocksRef, setBlocks, readOnly, pageId: focusedBlockId, tool: inkUi.tool,
+    pasteTarget: pictureTarget, setStatus, onSelect: () => { textBoxes.actions.onBoxDeselect(); clearInkSelection(); } });
+  // Undo / Redo (the strip's buttons, Ctrl+Z while it is open) step the
+  // block history for text boxes and pictures (the Text tool armed, a box
+  // or a picture selected), the stroke history otherwise.
+  const boxUndo = textArmed || !!textBoxes.sel || !!pictures.sel;
   // The page's ink as a document (ink/useInkDocument.js): every edit
   // through applyInk, the stroke history and its steps, the eraser's
   // sweeps and a scribble's erasures, the journal's restored drafts.
@@ -6984,7 +7002,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     deleteInkSelection, selectionStill, handleInkAction, copyInkSelection, pasteInk, pasteAtCentre,
     duplicateInkSelection, selectAllInk } = useInkSelection({ focusedBlockId, readOnly, inkUi, blocksRef, inkOf,
     applyInk, flushInk, handleInkStrokes, pickInkTool, revealInkStrip, inkBySurface, pasteTarget,
-    onBoxDeselect: textBoxes.actions.onBoxDeselect, showInNotes, transcribe: shareMode ? null : askToTranscribe, setStatus });
+    onBoxDeselect: () => { textBoxes.actions.onBoxDeselect(); pictures.deselect(); }, showInNotes,
+    transcribe: shareMode ? null : askToTranscribe, setStatus });
   // The ruler (ink/useInkRuler.js): laid on the surface in view with its
   // row, Stamp line, and the layers' moves of it; it goes with the page,
   // and when the viewer stops showing its surface.
@@ -7009,7 +7028,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // never sees the stroke history's Ctrl+Z; Hold-E learns of an eraser
   // pass through noteInkEraseHold (handleInkEraseEnd).
   const { noteInkEraseHold } = useStripKeys({ inkUi, inkSelection, inkVisible, inkTools, setInkTools, pickInkTool,
-    toggleInkShape, closeInkOptions, toggleInkOptions, closeInkStrip, inkUndo, boxUndo, hasBox: !!textBoxes.sel,
+    toggleInkShape, closeInkOptions, toggleInkOptions, closeInkStrip, inkUndo, boxUndo, hasBox: !!textBoxes.sel || !!pictures.sel,
+    onPicture: readOnly ? null : pictures.pick,
     deleteInkSelection, selectionStill, clearInkSelection, restoreInkSelection, inkRuler, toggleInkRuler,
     inkZoom, toggleInkZoom, inkZoomNewLine, setStatus });
   // The Apple Pencil (ink/usePencil.js): the double tap and the squeeze
@@ -7037,16 +7057,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     inkEraserLifted();
   }
 
-  // From the notes (a marker, an ink card): show an ink group or a text box
-  // on its page and outline it. From the page (Show note, a read-only click
-  // on ink or a box): show its block in the notes.
+  // From the notes (a marker, an ink card, a picture's card): show an ink
+  // group, a text box or a picture on its page and outline it. From the
+  // page (Show note, a read-only click on ink, a box or a picture): show its
+  // block in the notes.
   function showOnPage(id) {
     const b = findBlock(blocksRef.current, id);
     if (!b) return;
     setPhonePanel(null); // the compact shell: the page, not a panel over it
     const tb = isTextBox(b) ? normalizeTextBox(b.properties.text_box) : null;
-    const box = tb ? [tb.x, tb.y, tb.x + tb.w, tb.y + tb.h] : inkBounds(inkOf(id));
-    const flash = () => (tb ? textBoxes.flashBox(id) : setInkFlash({ id, nonce: Date.now() }));
+    const pic = !tb && isPicture(b) ? normalizePicture(b.properties.picture) : null;
+    if (!tb && !pic && isPicture(b)) return; // a picture whose file is missing is drawn nowhere
+    const box = tb ? [tb.x, tb.y, tb.x + tb.w, tb.y + tb.h] : pic ? turnedBox(pic) : inkBounds(inkOf(id));
+    const flash = () => (tb ? textBoxes.flashBox(id) : pic ? pictures.flashPicture(id) : setInkFlash({ id, nonce: Date.now() }));
     const sheetId = sheetOfBlock(blocksRef.current, id);
     if (sheetId && notebook) {
       nbScrollRef.current?.(sheetId, box);
@@ -7067,11 +7090,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       flash();
       return;
     }
-    // A box is on its pdf_page (it stores no position), an ink group where its position says.
-    const position = tb ? { pageNumber: b.properties.pdf_page } : b.properties.pdf_position;
+    // A box or a picture is on its pdf_page (it stores no position), an ink group where its position says.
+    const position = tb || pic ? { pageNumber: b.properties.pdf_page } : b.properties.pdf_position;
     const wasHidden = pdfHidden;
     if (wasHidden) setPdfHidden(false);
-    setTimeout(() => scrollToRef.current?.({ position, box: tb, offset: 120 }), wasHidden ? 300 : 0);
+    setTimeout(() => scrollToRef.current?.({ position, box: tb || (pic ? { y: box[1] } : undefined), offset: 120 }), wasHidden ? 300 : 0);
     flash();
   }
   function showInNotes(id) {
@@ -7457,13 +7480,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   nbSheetsRef.current = nbSheets;
   // The page tools every surface's layers read (markup/PageTools.jsx), and
   // per surface its marks (markup/MarkupLayers.jsx): a PDF page's ink groups
-  // by their position's page, a sheet's by its id, its text boxes, with the lasso
-  // selection, the selected box and the flashes on the surface they are on.
+  // by their position's page, a sheet's by its id, its text boxes and its
+  // pictures, with the lasso selection, the selected box, the selected
+  // picture and the flashes on the surface they are on.
   const inkFeaturesToldRef = useRef(null); // the page whose newer-ink pill was shown
   const pageActions = useStableActions({
     onStroke: handleInkStroke, onEraseAlong: handleInkEraseAlong, onEraseEnd: handleInkEraseEnd,
     onEraseMany: handleInkEraseMany, onSelect: handleInkSelect, onUndoGesture: handleUndoGesture, onHoldStatus: handleHoldStatus,
     onAction: handleInkAction, onMoveSelection: handleInkMoveSelection, onJump: showInNotes, ...textBoxes.actions,
+    ...pictures.actions,
     // a held pen or mouse, or a right-click, asking for the clipboard at a page point
     onPaste: pasteInk,
     onInkLive: handleInkLive,
@@ -7617,7 +7642,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   ) : null;
 
   const marks = useMarks({ ink: inkBySurface, inkSelection, inkFlash, boxes: textBoxes.bySurface, boxSel: textBoxes.sel,
-    boxFlash: textBoxes.flash });
+    boxFlash: textBoxes.flash, pictures: pictures.bySurface, pictureSel: pictures.sel, pictureFlash: pictures.flash });
   const homeMode = !focusedBlockId && lib.browse;
   // The one page selected on the home library (F2 renames it), or "".
   const homePick = homeMode && lib.organize && selectedPages.size === 1 && !selectedFolders.size && !selectedLabels.size
@@ -9007,6 +9032,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       eraserMode={inkEraserMode} eraserSize={inkEraserSize} eraserReturn={inkEraserReturn} eraserFilter={inkEraserFilter}
       lassoMode={inkLassoMode} textStyle={textBoxes.shownStyle}
       onPick={pickInkTool} onTextStyle={textBoxes.restyle} blockHistory={boxUndo}
+      onPicture={readOnly ? undefined : pictures.pick}
       onUndo={() => stripUndo(false)} onRedo={() => stripUndo(true)}
       // the block history keeps no count to disable its buttons by: a step with nothing to undo says so
       canUndo={boxUndo || inkHistoryState.undo > 0} canRedo={boxUndo || inkHistoryState.redo > 0}
@@ -11477,8 +11503,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         e.preventDefault();
         // The overlay only where a drop does something: the library imports
         // files, an editable page takes files as blocks; block rows take
-        // files themselves.
-        const dropHere = ((homeMode && lib.organize) || (focusedBlockId && !readOnly)) && !e.target.closest(".blockRowWrap");
+        // files themselves, and a page or a sheet takes pictures
+        // (markup/PictureLayer.jsx).
+        const dropHere = ((homeMode && lib.organize) || (focusedBlockId && !readOnly)) && !e.target.closest(".blockRowWrap")
+          && !picturesDrag(e);
         appRef.current?.classList.toggle("dragOver", dropHere);
       }}
       onDragLeave={shareMode ? undefined : (e) => {

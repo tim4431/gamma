@@ -44,7 +44,7 @@ from .textnorm import normalize_text
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 43
+SCHEMA_VERSION = 44
 # A workspace's pages.db keeps a version of its own (its ``PRAGMA
 # user_version``): the newest step whose per-workspace part has run on it
 # (gamma/migrations.py WORKSPACE_STEPS). One stamped 0 is at this version:
@@ -487,10 +487,11 @@ USERS_SCHEMA = [
 # is NULL on the reserved rows, ``page`` on a page (in the library or the
 # trash), ``folder`` / ``label`` in the pseudo-pages, else what the block's
 # properties make it, tested in this order the way the frontend tests them
-# (ink: an ``ink_url`` key; text box, sheet: an object; link: a non-empty
-# value; highlight: a ``pdf_position`` object, which ink groups and link
-# regions carry too — gamma/highlights.py). An older file gains them, or a
-# ``kind`` of an older definition, through normalize.block_columns.
+# (ink: an ``ink_url`` key; text box, picture, sheet, recording: an object;
+# link: a non-empty value; highlight: a ``pdf_position`` object, which ink
+# groups and link regions carry too — gamma/highlights.py). An older file
+# gains them, or a ``kind`` of an older definition, through
+# normalize.block_columns.
 BLOCK_HOT_COLUMNS = {
     "page_id": "page_id TEXT NOT NULL DEFAULT ''",
     "kind": """kind TEXT GENERATED ALWAYS AS (CASE
@@ -500,6 +501,7 @@ BLOCK_HOT_COLUMNS = {
             WHEN page_id = 'labels' THEN 'label'
             WHEN json_type(properties, '$.ink_url') IS NOT NULL THEN 'ink'
             WHEN json_type(properties, '$.text_box') = 'object' THEN 'text_box'
+            WHEN json_type(properties, '$.picture') = 'object' THEN 'picture'
             WHEN json_type(properties, '$.sheet') = 'object' THEN 'sheet'
             WHEN json_type(properties, '$.recording') = 'object' THEN 'recording'
             WHEN json_extract(properties, '$.link_url') != ''

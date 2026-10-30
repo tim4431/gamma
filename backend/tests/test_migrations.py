@@ -175,7 +175,7 @@ def test_v36_reshapes_the_folder_links_release_0_2_16_made(data_dir):
         assert conn.execute("SELECT id, path, remote_url FROM folder_links").fetchall() == [("l1", "Papers", "")]
         conn.execute("INSERT INTO folder_links (id, workspace_id, folder_id, path, created_by, created_at, remote_url) "
                      "VALUES ('l2', 'wsOfAnotherServer', 'root', 'Shared', 'u1', '2026-01-02T00:00:00Z', 'https://nas')")
-    assert migrations.data_version() == SCHEMA_VERSION == 43
+    assert migrations.data_version() == SCHEMA_VERSION == 44
     assert migrations.ensure_current()["applied"] == []  # 0.2.16's own step 36 left it here: current
     with connect_users_db() as conn:
         assert conn.execute("SELECT COUNT(*) FROM folder_links").fetchone() == (2,)
@@ -226,7 +226,8 @@ def test_v40_adds_the_inbox_and_the_invitation_time(data_dir):
         conn.execute("PRAGMA user_version = 39")
         conn.commit()
     result = migrations.ensure_current()
-    assert result["applied"] == ["comments_inbox", "cloud_invitations", "email_invites"] and result["workspace_steps"] == ["ink_v2"]
+    assert result["applied"] == ["comments_inbox", "cloud_invitations", "email_invites"]
+    assert result["workspace_steps"] == ["ink_v2", "picture_kind"]
     assert 40 not in [v for v, _, _ in migrations.WORKSPACE_STEPS]  # a global step only: it does not move workspace_format()
     with connect_users_db() as conn:
         assert conn.execute("SELECT token, user_id, role, added_at FROM share_users").fetchall() == [
@@ -1270,8 +1271,8 @@ def test_v34_moves_the_workspace_prefs_into_the_workspace(data_dir, monkeypatch)
 
     result = migrations.ensure_current()
     assert result["applied"] == ["folder_links", "folder_links_remote", "reminders_done", "comments_inbox", "cloud_invitations", "email_invites"]
-    assert result["workspace_steps"] == ["workspace_prefs", "highlight_colors", "recording_kind", "ink_v2"]
-    assert migrations.data_version() == SCHEMA_VERSION == 43
+    assert result["workspace_steps"] == ["workspace_prefs", "highlight_colors", "recording_kind", "ink_v2", "picture_kind"]
+    assert migrations.data_version() == SCHEMA_VERSION == 44
     assert migrations.is_behind(WS34)
     with closing(sqlite3.connect(str(pages_db))) as conn:  # the upgrade left the workspace as it was
         assert conn.execute("PRAGMA user_version").fetchone()[0] == 0
@@ -1384,7 +1385,7 @@ def test_v41_moves_every_stroke_file_to_version_2(data_dir):
         migrations._v41_ink_v2(WS41, conn, None)
         assert sorted(conn.execute("SELECT id, properties FROM unified_blocks")) == before
     assert (41, "ink_v2", migrations._v41_ink_v2) in migrations.WORKSPACE_STEPS
-    assert migrations.workspace_format() == 41
+    assert migrations.workspace_format() >= 41
 
     # a copy without the table (an old backup): nothing to do
     migrations._v41_ink_v2("", sqlite3.connect(":memory:"), None)
@@ -1447,7 +1448,7 @@ def test_a_workspace_with_version_1_files_serves_version_2_after_its_first_open(
     assert new_url.rsplit("/", 1)[1] == f"{storage.content_digest(served.content)}.ink", "named by its bytes"
     assert c.get(old_url).status_code == 200, "the old file stays for the orphan cleanup"
     with closing(sqlite3.connect(str(config.WORKSPACES_DIR / ws / "pages.db"))) as conn:
-        assert conn.execute("PRAGMA user_version").fetchone()[0] == 41  # the newest workspace step's own version
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == 44  # the newest workspace step's own version
     files_after = sorted(p.name for p in uploads.iterdir() if p.is_file())
     assert files_after == sorted([old_name, new_url.rsplit("/", 1)[1]])
 
@@ -1464,8 +1465,10 @@ def test_a_data_directory_at_40_gets_only_the_ink_upgrade(data_dir, monkeypatch)
     created, stamped 40, each holding a version 1 stroke file. The upgrade
     runs the global parts of steps 42 and 43 alone (step 40 not again; its
     tables, which the schema statements made already, stay as they are)
-    and stamps users.db 43, copying users.db alone; each workspace runs
-    step 41 alone on its first open and names the version 2 file."""
+    and stamps users.db 44, copying users.db alone; each workspace runs
+    steps 41 and 44 on its first open, names the version 2 file and gets
+    the ``kind`` column's picture case (a derived column: no row
+    changes)."""
     from gamma import db
     from gamma import ink as inkmod
     from gamma.storage import content_digest
@@ -1490,8 +1493,8 @@ def test_a_data_directory_at_40_gets_only_the_ink_upgrade(data_dir, monkeypatch)
         shape = users_db_shape(conn)
 
     result = migrations.ensure_current()
-    assert result["applied"] == ["cloud_invitations", "email_invites"] and result["workspace_steps"] == ["ink_v2"]
-    assert migrations.data_version() == SCHEMA_VERSION == 43
+    assert result["applied"] == ["cloud_invitations", "email_invites"] and result["workspace_steps"] == ["ink_v2", "picture_kind"]
+    assert migrations.data_version() == SCHEMA_VERSION == 44
     assert backups.info(Path(result["backup"]).name)["files"] == ["users.db"]
     with closing(sqlite3.connect(str(config.USERS_DB))) as conn:  # only its stamp moved
         assert users_db_shape(conn) == shape
@@ -1499,14 +1502,14 @@ def test_a_data_directory_at_40_gets_only_the_ink_upgrade(data_dir, monkeypatch)
         assert conn.execute("SELECT id FROM inbox_items").fetchall() == [("i1",)]
     assert sorted(migrations.workspaces_behind()) == sorted(stamps)
     for ws, stamp in stamps.items():
-        assert [name for _, name, _ in migrations.workspace_steps_after(stamp)] == ["ink_v2"]
-        with db.connect_pages_db(ws) as conn:  # the first open runs step 41
+        assert [name for _, name, _ in migrations.workspace_steps_after(stamp)] == ["ink_v2", "picture_kind"]
+        with db.connect_pages_db(ws) as conn:  # the first open runs steps 41 and 44
             props = json.loads(conn.execute("SELECT properties FROM unified_blocks WHERE id = 'g1'").fetchone()[0])
         db.close_workspace_connections(ws)
         assert props == {"ink_url": f"/api/uploads/{new_name}", "ink_strokes": 2}
         assert (config.WORKSPACES_DIR / ws / "uploads" / new_name).is_file()
         with closing(sqlite3.connect(str(config.WORKSPACES_DIR / ws / "pages.db"))) as conn:
-            assert conn.execute("PRAGMA user_version").fetchone()[0] == 41
+            assert conn.execute("PRAGMA user_version").fetchone()[0] == 44
     assert migrations.ensure_current()["applied"] == [] and not migrations.workspaces_behind()
 
 
@@ -1522,7 +1525,7 @@ def test_v42_adds_the_cloud_invitations_and_the_requests_to_join(data_dir):
         conn.execute("PRAGMA user_version = 41")
         conn.commit()
     result = migrations.ensure_current()
-    assert result["applied"] == ["cloud_invitations", "email_invites"] and result["workspace_steps"] == []
+    assert result["applied"] == ["cloud_invitations", "email_invites"] and result["workspace_steps"] == ["picture_kind"]
     assert 42 not in [v for v, _, _ in migrations.WORKSPACE_STEPS]
     with connect_users_db() as conn:
         assert migrations._columns(conn, "pending_share_users") == [
@@ -1541,7 +1544,7 @@ def test_v42_adds_the_cloud_invitations_and_the_requests_to_join(data_dir):
     with connect_users_db() as conn:
         assert conn.execute("SELECT subject, role FROM pending_share_users").fetchall() == [("sub-1", "edit")]
         assert conn.execute("SELECT subject, status FROM join_requests").fetchall() == [("sub-2", "pending")]
-    assert migrations.data_version() == SCHEMA_VERSION == 43
+    assert migrations.data_version() == SCHEMA_VERSION == 44
 
 
 def test_v43_adds_the_email_invitations(data_dir):
@@ -1555,7 +1558,7 @@ def test_v43_adds_the_email_invitations(data_dir):
         conn.execute("PRAGMA user_version = 42")
         conn.commit()
     result = migrations.ensure_current()
-    assert result["applied"] == ["email_invites"] and result["workspace_steps"] == []
+    assert result["applied"] == ["email_invites"] and result["workspace_steps"] == ["picture_kind"]
     assert 43 not in [v for v, _, _ in migrations.WORKSPACE_STEPS]
     with connect_users_db() as conn:
         assert migrations._columns(conn, "email_invites") == [
@@ -1583,7 +1586,78 @@ def test_v43_adds_the_email_invitations(data_dir):
     with connect_users_db() as conn:
         assert conn.execute("SELECT id, email, server_url FROM email_invites").fetchall() == [
             ("inv-1", "Ann@Example.org", "")]
-    assert migrations.data_version() == SCHEMA_VERSION == 43
+    assert migrations.data_version() == SCHEMA_VERSION == 44
+
+
+def test_v44_rebuilds_the_kind_column_with_its_picture_case():
+    """A pages.db from before step 44: ``kind`` without its picture case,
+    so a picture on a PDF page reads as a highlight. The step adds the
+    column again (normalize.block_columns) with its index and the generated
+    column after it, and the picture reads as one; a rerun changes nothing,
+    and a copy without the table is passed by."""
+    from gamma.db import BLOCK_HOT_INDEXES, PAGES_SCHEMA
+    old = next(s for s in PAGES_SCHEMA if s.startswith("CREATE TABLE IF NOT EXISTS unified_blocks"))
+    line = "WHEN json_type(properties, '$.picture') = 'object' THEN 'picture'"
+    assert line in old
+    conn = sqlite3.connect(":memory:")
+    conn.execute(old.replace(line, ""))
+    for stmt in BLOCK_HOT_INDEXES:
+        conn.execute(stmt)
+    picture = {"picture": {"url": "/api/uploads/3f2a9c.png", "x": 10, "y": 20, "w": 144, "h": 96},
+               "pdf_position": {"pageNumber": 1}}
+    conn.execute("INSERT INTO unified_blocks (id, parent_id, position, properties, created_at, updated_at, page_id) "
+                 "VALUES ('p', 'root', 'a0', '{\"doc_id\": \"d1\"}', 't', 't', 'p'), "
+                 "('i', 'p', 'a0', ?, 't', 't', 'p'), ('n', 'p', 'a1', '{}', 't', 't', 'p')", (json.dumps(picture),))
+    conn.commit()
+    assert conn.execute("SELECT kind FROM unified_blocks WHERE id = 'i'").fetchone() == ("highlight",)
+    migrations._v44_picture_kind("ws", conn, None)
+    assert conn.execute("SELECT id, kind, doc_id FROM unified_blocks ORDER BY id").fetchall() == [
+        ("i", "picture", None), ("n", "note", None), ("p", "page", "d1")]
+    assert conn.execute("SELECT id FROM unified_blocks WHERE kind = 'picture'").fetchall() == [("i",)]
+    indexes = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type = 'index'")}
+    assert {"idx_ub_kind", "idx_ub_doc"} <= indexes
+    ddl = conn.execute("SELECT sql FROM sqlite_master WHERE name = 'unified_blocks'").fetchone()[0]
+    assert line in ddl
+    migrations._v44_picture_kind("ws", conn, None)  # re-runnable: nothing to do
+    assert conn.execute("SELECT sql FROM sqlite_master WHERE name = 'unified_blocks'").fetchone()[0] == ddl
+    migrations._v44_picture_kind("", sqlite3.connect(":memory:"), None)  # a copy without the table
+    assert (44, "picture_kind", migrations._v44_picture_kind) in migrations.WORKSPACE_STEPS
+    assert 44 not in [v for v, _, _ in migrations.STEPS]  # a workspace step only
+    assert migrations.workspace_format() >= 44
+
+
+def test_a_restored_backup_keeps_a_picture_on_its_page(data_dir):
+    """Every restore runs the step-30 shape over the copy
+    (ws_backup._normalize_copies), which drops ``pdf_page`` from every block
+    but a text box and a picture, whose only page it is; a copy from before
+    step 44 gets the picture case of ``kind`` on the way."""
+    from gamma import ws_backup
+    from gamma.db import BLOCK_HOT_INDEXES, PAGES_SCHEMA
+
+    copy = data_dir / "restored44"
+    copy.mkdir()
+    old = next(s for s in PAGES_SCHEMA if s.startswith("CREATE TABLE IF NOT EXISTS unified_blocks"))
+    line = "WHEN json_type(properties, '$.picture') = 'object' THEN 'picture'"
+    pic = {"url": "/api/uploads/3f2a9c.png", "x": 10, "y": 20, "w": 144, "h": 96}
+    with closing(sqlite3.connect(str(copy / "pages.db"))) as conn:  # a copy as release 43 made it
+        conn.execute(old.replace(line, ""))
+        for stmt in BLOCK_HOT_INDEXES:
+            conn.execute(stmt)
+        conn.executemany(
+            "INSERT INTO unified_blocks (id, parent_id, position, properties, created_at, updated_at, page_id) "
+            "VALUES (?, ?, ?, ?, 't', 't', ?)",
+            [("pg", "root", "a0", "{}", "pg"), ("i", "pg", "a0", json.dumps({"picture": pic, "pdf_page": 2}), "pg"),
+             ("b", "pg", "a1", json.dumps({"text_box": {"x": 1}, "pdf_page": 2}), "pg"),
+             ("n", "pg", "a2", json.dumps({"pdf_page": 2}), "pg")])
+        conn.execute("PRAGMA user_version = 43")
+        conn.commit()
+    ws_backup._normalize_copies(copy)
+    with closing(sqlite3.connect(str(copy / "pages.db"))) as conn:
+        got = {r[0]: (json.loads(r[1]), r[2]) for r in conn.execute("SELECT id, properties, kind FROM unified_blocks "
+                                                                     "WHERE id IN ('i', 'b', 'n')")}
+        assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
+    assert got == {"i": ({"picture": pic, "pdf_page": 2}, "picture"),
+                   "b": ({"text_box": {"x": 1}, "pdf_page": 2}, "text_box"), "n": ({}, "note")}
 
 
 def test_each_version_is_one_step_and_the_newest_is_the_schema_version():

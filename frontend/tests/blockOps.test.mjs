@@ -2,7 +2,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { generateNKeysBetween } from "fractional-indexing";
-import { applyOps, diffTrees, displacedRow, propsPatch, pushOp, seedPositions } from "../src/shared/model/blockOps.js";
+import { PLACED, applyOps, diffTrees, displacedRow, propsPatch, pushOp, seedPositions } from "../src/shared/model/blockOps.js";
+import { blockPage, isHighlightBlock } from "../src/shared/model/blockModel.js";
+import { mergePicture } from "../src/markup/picture.js";
+import { mergeTextBox } from "../src/markup/textBox.js";
 
 const PAGE = "page1";
 const N = (id, content = "", children = [], properties = {}, extra = {}) =>
@@ -189,6 +192,54 @@ test("a changed text box names the box it was changed from, which a run of chang
   pushOp(w, { op: "set", id: "t", props: { text_box: box } });
   pushOp(w, { op: "set", id: "t", props: { text_box: { ...box, x: 50 } }, base_props: { text_box: box } });
   assert.equal(w[0].base_props, undefined, "a run that began with a whole box stays one");
+});
+
+const PIC = { url: "/api/uploads/3f2a9c.png", x: 10, y: 10, w: 100, h: 80, angle: 0,
+  crop: { x: 0, y: 0, w: 1, h: 1 }, flip_h: false, flip_v: false };
+
+test("a changed picture names the picture it was changed from, as a text box does", () => {
+  const box = { x: 10, y: 10, w: 60, h: 23, auto: true, size: 12, color: "#1f1f1f", bg: null };
+  const crop = { ...PIC, x: 30, y: 25, w: 60, h: 40, crop: { x: 0.2, y: 0.25, w: 0.6, h: 0.5 } };
+  const ops = roundTrip(
+    [N("i", "A figure", [], { picture: PIC, pdf_page: 1 }), N("t", "Hi", [], { text_box: box, pdf_page: 1 }), N("n", "note")],
+    [N("i", "A figure", [], { picture: crop, pdf_page: 1 }), N("t", "Hi", [], { text_box: { ...box, x: 40 }, pdf_page: 1 }),
+      N("n", "note", [], { picture: PIC })],
+  );
+  // (gamma/ops.py PLACED_KEYS: the server takes only the keys changed from it)
+  assert.deepEqual(ops, [
+    { op: "set", id: "i", props: { picture: crop }, base_props: { picture: PIC } },
+    { op: "set", id: "t", props: { text_box: { ...box, x: 40 } }, base_props: { text_box: box } },
+    { op: "set", id: "n", props: { picture: PIC } }, // a new picture: nothing to merge into
+  ]);
+  // one block changing both names both
+  const both = roundTrip([N("x", "", [], { picture: PIC, text_box: box })],
+    [N("x", "", [], { picture: { ...PIC, angle: 90 }, text_box: { ...box, x: 1 } })]);
+  assert.deepEqual(both[0].base_props, { text_box: box, picture: PIC });
+  // a removed picture names none: the server takes the removal as sent
+  assert.deepEqual(roundTrip([N("i", "", [], { picture: PIC })], [N("i", "", [], {})]),
+    [{ op: "set", id: "i", props: { picture: null } }]);
+  const q = [];
+  pushOp(q, { op: "set", id: "i", props: { picture: { ...PIC, x: 50 } }, base_props: { picture: PIC } });
+  pushOp(q, { op: "set", id: "i", props: { picture: { ...PIC, x: 50, angle: 15 } }, base_props: { picture: { ...PIC, x: 50 } } });
+  assert.deepEqual(q, [{ op: "set", id: "i", props: { picture: { ...PIC, x: 50, angle: 15 } }, base_props: { picture: PIC } }],
+    "a run keeps the picture it began from");
+  assert.deepEqual(Object.keys(PLACED), ["text_box", "picture"]);
+  assert.equal(PLACED.text_box.merge, mergeTextBox);
+  assert.equal(PLACED.picture.merge, mergePicture);
+});
+
+test("a picture is placed by its pdf_page and is no highlight, whatever position it carries", () => {
+  const pos = { pageNumber: 2, width: 612, height: 792, boundingRect: { x1: 1, y1: 2, x2: 3, y2: 4 }, rects: [] };
+  const pic = N("i", "", [], { picture: PIC, pdf_page: 5, pdf_position: pos });
+  assert.equal(isHighlightBlock(pic), false);
+  assert.equal(blockPage(pic), 5);
+  assert.equal(blockPage(N("i", "", [], { picture: { url: "/api/uploads/gone.svg" }, pdf_page: 3 })), 3, "a missing file still places it");
+  assert.equal(blockPage(N("i", "", [], { picture: PIC })), null, "on no PDF page");
+  // the precedence: ink, then a text box, then a picture
+  assert.equal(blockPage(N("g", "", [], { ink_url: "/api/uploads/a.ink", picture: PIC, pdf_page: 5, pdf_position: pos })), 2);
+  // a value that is no object is no picture
+  assert.equal(isHighlightBlock(N("h", "", [], { picture: [], pdf_position: pos })), true);
+  assert.equal(blockPage(N("h", "", [], { picture: "x", pdf_page: 5, pdf_position: pos })), 2);
 });
 
 test("a diff of a large flat reorder stays minimal", () => {

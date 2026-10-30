@@ -6543,7 +6543,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
    click over a link. */
 .pdfViewer.inkArmed .pdfPageWrap { cursor: crosshair; }
 .pdfViewer.inkTouchDraw .pdfPageWrap { touch-action: none; }
-.inkLayer, .inkCanvas, .inkWetCanvas {
+.inkLayer, .inkOverPictures, .inkCanvas, .inkWetCanvas {
   position: absolute;
   left: 0;
   top: 0;
@@ -6551,7 +6551,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   height: 100%;
   pointer-events: none;
 }
-.inkLayer { z-index: 6; overflow: visible; }
+.inkLayer, .inkOverPictures { z-index: 6; overflow: visible; }
 /* The stroke in progress; peers' strokes in progress (ink-live) have a canvas of their own under it. */
 .inkCanvas, .inkWetCanvas { z-index: 6; display: none; }
 /* A highlighter multiplies into the page under it, so the text there stays
@@ -6560,6 +6560,13 @@ a.shareBrand:hover { background: var(--bg-hover); }
    itself, since one inside an SVG never leaves it (its z-index makes it a
    stacking context, which isolates what is in it). */
 :is(.inkLayer, .inkCanvas, .inkWetCanvas)[data-blend="multiply"] { mix-blend-mode: multiply; }
+/* Over a picture a highlighter multiplies whatever the page around it does:
+   a picture is never inverted, so the screen of a turned-over page, or dark
+   paper's plain drawing, would all but lose it there. A highlighter plane
+   is drawn off the surface's pictures and its strokes again over them in an
+   SVG of its own (InkLayer), which neither the dark page's filter nor the
+   blend rules for [data-blend] reach. */
+.inkOverPictures { mix-blend-mode: multiply; }
 .pdfViewer .pdfPageWrap.inkHovering, .pdfPageWrap.inkHovering .textLayer { cursor: none; }
 /* Drawn over an arbitrary PDF page, so fixed white/black like the lasso,
    not theme tokens. */
@@ -6793,9 +6800,10 @@ a.shareBrand:hover { background: var(--bg-hover); }
 }
 
 /* The notes: a rounded-square pen marker in the dot slot (a text box's is
-   a T), the strokes as a picture above the caption (on white: the card is
-   a piece of the page, the same rule as .pdfAreaMarquee). */
-.inkMarker, .textBoxMarker {
+   a T, a picture's a picture), the strokes as a picture above the caption
+   (on white: the card is a piece of the page, the same rule as
+   .pdfAreaMarquee). */
+.inkMarker, .textBoxMarker, .pictureMarker {
   display: inline-flex;
   align-items: center;
   justify-content: center;

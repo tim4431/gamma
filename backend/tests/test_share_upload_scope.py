@@ -1,8 +1,9 @@
 """A share visitor's file reads (GET /api/uploads/<file>?share=, /pdf-info)
 check the shared pages only — a page share its page's subtree, a folder
 share the pages filed there — never an instr() scan over every block of the
-workspace; a yes is remembered for a while (bounded), a no never is; the
-endpoint runs in the threadpool."""
+workspace; a yes is remembered for a while (bounded), a no never is; a
+share editor's own upload is a yes at once; the endpoint runs in the
+threadpool."""
 
 import inspect
 import io
@@ -136,6 +137,26 @@ def test_the_memory_is_bounded(owner, anon, monkeypatch):
     for fig in figs:
         assert anon.get(fig, params={"share": token}).status_code == 200
     assert len(uploads_router._share_reads) == 2
+
+
+def test_an_editor_reads_its_own_fresh_upload(owner, anon):
+    """A share editor's image or file is readable through its share at
+    once, before a saved block names it (a dropped picture shows without a
+    reload); through another share it is not."""
+    page = make_page(owner, "Edit share page")
+    r = owner.post(f"/api/share/{page['id']}", json={"audience": "anyone", "role": "edit"})
+    assert r.status_code == 200, r.text
+    token = r.json()["token"]
+    other = _share(owner, make_page(owner, "Another shared page")["id"])
+    png = b"\x89PNG\r\n\x1a\n" + b"\x06" * 16
+    image = anon.post("/api/upload-image", params={"share": token}, files={"file": ("p.png", png, "image/png")})
+    attached = anon.post("/api/upload-file", params={"share": token},
+                         files={"file": ("n.txt", b"fresh notes", "text/plain")})
+    for r in (image, attached):
+        assert r.status_code == 200, r.text
+        url = r.json()["url"]
+        assert anon.get(url, params={"share": token}).status_code == 200
+        assert anon.get(url, params={"share": other}).status_code == 403
 
 
 def test_serving_a_file_runs_in_the_threadpool():

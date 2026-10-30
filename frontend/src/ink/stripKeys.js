@@ -15,7 +15,9 @@
 // what: "ruler" | "shape" | "zoom"} (R, S, Z: the ruler, the Shapes tool,
 // the zoom window on or off) · {kind: "off", what} (Escape taking one of
 // them away) · {kind: "newLine"} (Enter while the zoom window is open: its
-// New line); `prevent` and `stop` say what to do with the event.
+// New line) · {kind: "picture"} (I: the Picture button, which opens the
+// file picker; P is the pens'); `prevent` and `stop` say what to do with
+// the event.
 // stepWidth and stepBrush, below, are what width and brush do to the
 // armed preset.
 //
@@ -27,13 +29,14 @@ import { BRUSH_ORDER, sizesFor } from "./ink.js";
 
 // state: {tools: the visible presets in row order, tool: the armed tool,
 // hasSelection: the lasso holds strokes, boxUndo: Ctrl+Z belongs to the
-// block history (the Text tool is armed or a box is selected or edited),
-// hasBox: a text box is selected (Escape is its), optionsOpen: an options
-// row is open, the armed tool's or the ruler's (Escape closes it before the
-// strip), eraserDown: the timeStamp of the E keydown still held, or null,
-// ruler / zoom: the ruler shows / the zoom window is open, onControl: the
-// key's target is a button, a link or a menu row (which keeps its Enter)}.
-// Escape goes one layer at a time: the text box, the selection, the open
+// block history (the Text tool is armed, a box is selected or edited, or a
+// picture is selected), hasBox: a text box or a picture is selected
+// (Escape is its), optionsOpen: an options row is open, the armed tool's
+// or the ruler's (Escape closes it before the strip), eraserDown: the
+// timeStamp of the E keydown still held, or null, ruler / zoom: the ruler
+// shows / the zoom window is open, onControl: the key's target is a
+// button, a link or a menu row (which keeps its Enter)}. Escape goes one
+// layer at a time: the text box or the picture, the selection, the open
 // row, the Shapes tool (the tool before it comes back), the ruler, the
 // zoom window, then the strip.
 export function stripKey(e, state = {}) {
@@ -69,6 +72,7 @@ export function stripKey(e, state = {}) {
   if (code === "KeyR") return { kind: "toggle", what: "ruler" };
   if (code === "KeyS") return { kind: "toggle", what: "shape" };
   if (code === "KeyZ") return { kind: "toggle", what: "zoom" };
+  if (code === "KeyI") return { kind: "picture" };
   // a selected text box keeps its Enter (it opens the box), as it keeps its Escape
   if ((code === "Enter" || code === "NumpadEnter") && zoom && !onControl && !hasBox) return { kind: "newLine", prevent: true };
   if (code === "BracketLeft" || code === "BracketRight") {

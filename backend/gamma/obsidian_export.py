@@ -17,8 +17,9 @@ blocks that are actually linked carry an anchor). Highlights are
 ``[!quote]`` callouts whose title links the bundled PDF's page
 (``[[Paper.pdf#page=3|p. 3]]``); the PDF is also the quoted
 ``source: "[[Paper.pdf]]"`` property. A text box on a PDF page is a note
-followed by that page link. A recording is its length, an ``![[…]]`` embed
-per audio file in ``attachments/`` and its title. Targets outside the
+followed by that page link, and a picture is its image line, followed by
+the link when it is on a PDF page. A recording is its length, an
+``![[…]]`` embed per audio file in ``attachments/`` and its title. Targets outside the
 export degrade the way the readable Markdown export does (text, or the
 materialized block).
 
@@ -36,6 +37,7 @@ from .highlights import is_highlight, page_of
 from .markdown_export import _BLOCK_REF_RE, _link_label, resolve_block_links
 from .note_markup import obsidian_image_sizes
 from .notebook import is_sheet
+from .picture import is_picture, markdown_of, picture_page
 from .recording import heading as recording_heading, is_recording, segments_of
 from .text_box import box_page
 
@@ -288,6 +290,13 @@ class _Renderer:
         content = resolve_links(content, self.ctx, self.page_id)
         return content if self.notes else ""
 
+    def _picture(self, node, props) -> str:
+        """A picture block's image line (``picture.markdown_of``), its file
+        bundled by the caller's rewrite as an image's is; "" for any other
+        block, and with the notes switch off, which takes a picture out with
+        the notes as it takes a text box."""
+        return markdown_of(node.get("content"), props["picture"]) if self.notes and is_picture(props) else ""
+
     def _props(self, node):
         props = node.get("properties") or {}
         if not self.highlights and (is_highlight(props) or props.get("link_url") or is_recording(props)):
@@ -309,9 +318,9 @@ class _Renderer:
         return f"[[{self.pdf_leaf}#page={page_no}|p. {page_no}]]" if self.pdf_leaf else f"p. {page_no}"
 
     def _box_link(self, props, on_sheet):
-        """The page link of a text box on a PDF page; "" for any other block
-        (a box under a sheet, ``on_sheet``, included)."""
-        return self._page_link(box_page(props, on_sheet))
+        """The page link of a text box or a picture on a PDF page; "" for
+        any other block (one under a sheet, ``on_sheet``, included)."""
+        return self._page_link(box_page(props, on_sheet) or picture_page(props, on_sheet))
 
     def _region(self, props, content):
         """A PDF link region → a link line, or None when it isn't one."""
@@ -358,6 +367,11 @@ class _Renderer:
             lines.append("")
             if content:
                 lines += [content, ""]
+            self._children_as_list(node, lines, under_sheet)
+        elif picture := self._picture(node, props):
+            self._paragraph(picture, marker, lines)
+            if link := self._box_link(props, on_sheet):
+                lines += [link, ""]
             self._children_as_list(node, lines, under_sheet)
         elif content and (link := self._box_link(props, on_sheet)):
             # The link is a paragraph of its own: a line straight after a
@@ -420,6 +434,10 @@ class _Renderer:
             if link:
                 lines.append(f"{pad}  {link}")
             lines += [f"{pad}  {c}" for c in content.split("\n")] if content else []
+        elif picture := self._picture(node, props):
+            lines.append(f"{pad}- {picture}" + (f" ^{marker}" if marker else ""))
+            if link := self._box_link(props, on_sheet):
+                lines.append(f"{pad}  {link}")
         elif content:
             clines = content.split("\n")
             lines.append(f"{pad}- {clines[0]}" + (f" ^{marker}" if marker else ""))

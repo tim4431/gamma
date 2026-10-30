@@ -20,7 +20,8 @@ its review card, or a later run finds it.
 Code: `gamma/highlight_relocate.py` (the search and the write),
 `gamma/highlights.py` (the position's flags, `prev` and `closest`:
 `previous_place`, `valid_prev`, `valid_closest`, `from_scaled`),
-`pdf_text.GlyphPages` (the glyphs, a page's frame and pictures),
+`pdf_text.GlyphPages` (the glyphs, a page's frame and the pictures the PDF
+itself draws),
 `routers/pages.py` (`replace_pdf`, `_start_relocation`, `POST
 /api/jobs/relocate-highlights`), `blocks_store.attachment_file` (the stored
 file a page shows); in the web app `pdf/PdfViewer.jsx` (the dashed and
@@ -100,11 +101,12 @@ run reads each highlight from its own file, as the replacement's does.
 The run (`relocate`) reads the page's placed highlights, the snapshot it
 works from: highlights and link regions with rectangles, whatever their
 depth in the notes (`page_highlights`, `highlights.is_highlight`; ink
-groups, text boxes, sheets and a position of its page alone are not its
-business). It opens the new file (`ai_context.pdf_path`: the stored copy,
-or a URL-opened PDF fetched as the indexer fetches it), reads every page
-(phase `reading`, unit `pages`), places each highlight (phase `matching`,
-unit `highlights`), and closes the files and all it read from them. Once
+groups, text boxes, pictures, sheets and a position of its page alone are
+not its business). It opens the new file (`ai_context.pdf_path`: the
+stored copy, or a URL-opened PDF fetched as the indexer fetches it), reads
+every page (phase `reading`, unit `pages`), places each highlight (phase
+`matching`, unit `highlights`), and closes the files and all it read from
+them. Once
 the matching is done it reports so (a stop asked for until then lands
 there) and marks itself unstoppable (`stoppable=False`): from there it
 writes. A new file that is not stored on the server, cannot be read, or
@@ -430,9 +432,10 @@ by:
   as fractions of the page, clamped to the page (`_box_by_offsets`). The
   match's confidence decides as a text highlight's does: solid when exact,
   dashed with its `match` when rough;
-- **the picture it covers**, in its own file: the image drawn under at
-  least half of the box (or of which at least half is under the box),
-  known by MuPDF's digest of its data with its pixel size
+- **the picture it covers**, in its own file: an image the PDF itself
+  draws, not a picture placed on the page ([pictures.md](pictures.md)),
+  drawn under at least half of the box (or of which at least half is
+  under the box), known by MuPDF's digest of its data with its pixel size
   (`GlyphPages.images`), found where the new file draws the same data, on
   the page nearest the old one when it draws it more than once (a figure
   embedded again by pdfTeX; a publisher's re-encoded figure is another
@@ -507,9 +510,9 @@ runs go by the defaults.
 A run leaves each highlight in one of three looks, and counts it by the
 look it leaves (`place_all`'s `kinds`):
 
-- **solid**: placed by an exact match or by the picture under an area, or
-  left where it was made (a highlight on the page's own file over its
-  quote, an area there that nothing moves). Its position carries no
+- **solid**: placed by an exact match or by the PDF's picture under an
+  area, or left where it was made (a highlight on the page's own file over
+  its quote, an area there that nothing moves). Its position carries no
   `approx`, `match` or `prev`. In a new place it counts as `moved` (so does
   a lost one found again, even where it was); in the same place as `kept`,
   written then only to drop a `doc_id` or a stale `match` or `prev`, or to
@@ -904,7 +907,8 @@ page is going, **Find highlights in this PDF** is disabled, its title
 - A page whose PDF is shown from a URL alone (no `doc_id`, and an address
   that is not an upload's) has no file a run can read: no run starts for
   it, and its highlights stay where they were.
-- Ink groups and text boxes stay where they were; their pages may have
+- Ink groups, text boxes and pictures placed on the page
+  ([pictures.md](pictures.md)) stay where they were; their pages may have
   shifted. Carrying them along with the page's highlights (the ride-along
   rule) is open.
 - An area over a vector figure without text and without an embedded image

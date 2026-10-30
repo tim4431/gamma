@@ -125,10 +125,14 @@ class TextBox:
 
 @dataclass
 class Picture:
-    """A picture shown in its frame: ``image`` is its file below the note's
-    folder, ``pixels`` that file's size; ``gif`` the asset id whose
-    ``Assets/<id>/media.gif`` is its animation (``image`` then holds the
-    still frame)."""
+    """A picture shown in its frame (``x``, ``y`` its top-left before the
+    turn, ``w``, ``h`` its size after the crop): ``image`` is its file
+    below the note's folder, ``pixels`` that file's size; ``gif`` the asset
+    id whose ``Assets/<id>/media.gif`` is its animation (``image`` then
+    holds the still frame). ``crop`` is the part shown, ``(x, y, w, h)`` in
+    the file's pixels (None: the whole image); the flips mirror it about
+    the frame's axes, then ``rotation`` turns it about the frame's centre,
+    clockwise as seen; ``caption`` is shown under it."""
     x: float
     y: float
     w: float
@@ -137,6 +141,11 @@ class Picture:
     pixels: tuple
     jpeg: bool = False
     gif: str | None = None
+    rotation: float = 0.0              # radians
+    crop: tuple | None = None
+    flip_h: bool = False
+    flip_v: bool = False
+    caption: str = ""
     z: int = 0
     uuid: bytes = b""
 
@@ -550,8 +559,10 @@ class _Session:
 
     def _common(self, item, *, canvas: bool) -> dict:
         """The keys every media object has (GenericMediaObject's), for a
-        CanvasMediaObject (a text box, a sticky) or an ImageMediaObject."""
+        CanvasMediaObject (a text box, a sticky) or an ImageMediaObject,
+        whose turn, flips and caption are a picture's own."""
         a = self.arch
+        caption = getattr(item, "caption", "")
         fields = {
             "unscaledContentSize": a.string(point(item.w, item.h)),
             "locked": False,
@@ -560,7 +571,7 @@ class _Session:
             "rotationDegrees": float(getattr(item, "rotation", 0.0)),
             "captionIsUnderlined": False,
             "documentContentOrigin": a.string(point(item.x, item.y)),
-            "captionFieldText": plistlib.UID(0),
+            "captionFieldText": a.string(caption) if caption else plistlib.UID(0),
             "minDimension": 8.0,
             "textWrapMode": 1,
             "cornerMode": 1,
@@ -574,7 +585,8 @@ class _Session:
             "maxDimension": 1024.0,
         }
         if not canvas:
-            fields.update(isFlippedHorizontal=False, isCaptionEnabled=False, isFlippedVertical=False, indexable=False)
+            fields.update(isFlippedHorizontal=bool(item.flip_h), isCaptionEnabled=bool(caption),
+                          isFlippedVertical=bool(item.flip_v), indexable=False)
         return fields
 
     def _media(self, item) -> plistlib.UID:
@@ -593,7 +605,7 @@ class _Session:
             fields["figure"] = a.obj("Figure", {
                 "kFigurePrimitiveObjectsArrayKey": a.array([]), "FigureObjectTypeKey": 1,
                 "FigureCanvasSizeKey": a.string(point(0, 0)),
-                "FigureCropRectKey": a.string(rect(0, 0, *item.pixels)),
+                "FigureCropRectKey": a.string(rect(*(item.crop or (0, 0, *item.pixels)))),
                 "$0": plistlib.UID(0), "FigureBackgroundObjectKey": image})
             if item.gif:
                 fields["isGif"] = True

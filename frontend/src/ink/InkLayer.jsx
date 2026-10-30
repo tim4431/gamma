@@ -18,7 +18,7 @@ import { IconSwap } from "../shared/ui/MotionWidgets";
 import { getStroke } from "perfect-freehand";
 import {
   ClipboardIcon, CopyIcon, DuplicateIcon, FileTextIcon, FlipHIcon, FlipVIcon, HighlightIcon, LineWidthIcon, MergeIcon, MoreIcon, NotebookPenIcon,
-  PaletteIcon, PenIcon, PlayIcon, RectSelectIcon, RedoIcon, ResizeIcon, ScissorsIcon, StopIcon, TrashIcon, BrushIcon, SparklesIcon,
+  PaletteIcon, PenIcon, PlayIcon, RectSelectIcon, ScissorsIcon, StopIcon, TrashIcon, BrushIcon, SparklesIcon,
   PaintBucketIcon,
 } from "../shared/ui/Icons";
 import {
@@ -43,6 +43,9 @@ import {
 import { toolShape } from "./shapeTool.js";
 import { doublePress, swallowClick } from "../shared/ui/press.js";
 import { scrollBox } from "../shared/ui/placement.js";
+import { TransformHandles, arrowSign, pct } from "../markup/TransformHandles.jsx";
+import { MAX_COORD, normalizePicture } from "../markup/picture.js";
+import { pictureShape } from "./overPictures.js";
 import { makeStabilizer } from "./stabilizer.js";
 import { duplicateOffset, measureSurface } from "./surfaceScale.js";
 import { magForWidth, moveWindow, setMag } from "./zoomWindow.js";
@@ -57,6 +60,7 @@ import { appendInkSample, inkSample, penTilt, penTwist, predictedInkSamples } fr
 import * as inkLive from "./inkLive.js";
 import { canvasSize, canvasWindow, windowHolds, windowMatrix, windowUnion } from "../shared/lib/canvasSize.js";
 import { nativeHost, onHostMessage, postToHost } from "../shared/lib/host.js";
+import { assetUrl } from "../shared/lib/utils.js";
 import { t, T } from "../shared/i18n/i18n.js";
 
 // Words for colours, so tooltips read "Pink highlighter", not "#f9a8d4":
@@ -77,12 +81,14 @@ export const ERASER_SIZES = [5, 9, 16];
 // What a press on never starts ink, even from a stylus that writes right
 // away: the menus (portalled), the lasso's handles, the ruler's knob and
 // ends, the zoom window's band and corner, a text box's width handle, its
-// move band and its open editor (markup/TextBoxLayer.jsx), and the comment
-// cards beside a PDF page (comments/CommentMargin.jsx). The ruler's band is
-// the pointer's kind's: a pen about to write writes along it, any other
-// pointer moves it (writesOnBand).
+// move band and its open editor (markup/TextBoxLayer.jsx), a selected
+// picture, its handles and its crop (markup/PictureLayer.jsx: a picture
+// placed while a pen is armed moves before the pen writes over it), and the
+// comment cards beside a PDF page (comments/CommentMargin.jsx). The ruler's
+// band is the pointer's kind's: a pen about to write writes along it, any
+// other pointer moves it (writesOnBand).
 const BESIDE_PAGE = ".commentMargin";
-const NOT_INK = `.inkEditMenu, .inkTransformHandle, .inkRulerKnob, .inkRulerEnd, .inkZoomBand, .inkZoomResize, .textBoxWidth, .textBoxBand, .textBox.editing, ${BESIDE_PAGE}`;
+const NOT_INK = `.inkEditMenu, .inkTransformHandle, .inkRulerKnob, .inkRulerEnd, .inkZoomBand, .inkZoomResize, .textBoxWidth, .textBoxBand, .textBox.editing, .pagePicture.selected, .pictureCrop, ${BESIDE_PAGE}`;
 // The tools that write a stroke: a pen or a highlighter preset (the
 // stylus's pen with nothing armed included).
 const strokeTool = (use) => use?.tool === "pen" || use?.tool === "highlighter";
@@ -98,8 +104,9 @@ const coalesced = (e) => {
 };
 // What takes a click above a stroke of a read-only page (whose tap shows
 // the stroke's note): the page's own clickable marks. The strokes are drawn
-// above them all, text boxes included (app.css), but take no pointer.
-const ABOVE_PASSIVE_INK = "[data-hl-id], .pdfNoteAnchor, .pdfLinkBox, .textBox";
+// above them all, text boxes and pictures included (app.css), but take no
+// pointer.
+const ABOVE_PASSIVE_INK = "[data-hl-id], .pdfNoteAnchor, .pdfLinkBox, .textBox, .pagePicture";
 // Under a native host that captures the Pencil (shared/lib/host.js), a pen
 // stroke is claimed at its down: the host takes the touch and draws the live
 // line itself, then hands the finished samples back, and they commit here as
@@ -224,6 +231,47 @@ function useGrain(inks) {
     </defs>
   ) : null;
   return { fill, defs };
+}
+
+// --- a highlighter over a picture -----------------------------------------------
+// A picture (markup/PictureLayer.jsx) is not inverted with a dark page, so
+// over one a highlighter plane that screens there (a turned-over page) or
+// is drawn as it is (dark paper) would all but vanish. On a surface with
+// pictures a highlighter plane draws its strokes, the group `id`, through
+// `${id}-page`, the surface less its pictures, and an SVG of its own laid
+// right after it (.inkOverPictures, which neither the dark page's filter
+// nor a blend rule of the page reaches) draws them again, a <use> of the
+// group, through `${id}-pictures`, the pictures alone, always multiplied:
+// over a picture a highlighter looks as it does on a light page. The
+// pictures' mask is their images as the page draws them (overPictures.js
+// pictureShape), so where one is transparent, or its image has yet to
+// load, the highlighter takes the page's blend as the page around it does.
+// Both masks reach the largest page's side (MAX_COORD) past every edge of
+// the surface, since a stroke may run off its page; ids are the
+// document's, so every layer names its own. `pictures`: [{id, pic}], each
+// normalized, by its block's id.
+const MASK_REGION = { x: -MAX_COORD, y: -MAX_COORD, width: 3 * MAX_COORD, height: 3 * MAX_COORD };
+function PictureMasks({ id, pictures }) {
+  return (
+    <defs>
+      <mask id={`${id}-pictures`} maskUnits="userSpaceOnUse" {...MASK_REGION} style={{ maskType: "alpha" }}>
+        {pictures.map(({ id: key, pic }) => {
+          const { frame, image, flip, turn } = pictureShape(pic);
+          return (
+            <g key={key} transform={turn ?? undefined}>
+              <svg {...frame} overflow="hidden">
+                <image href={assetUrl(pic.url)} {...image} transform={flip ?? undefined} preserveAspectRatio="none" />
+              </svg>
+            </g>
+          );
+        })}
+      </mask>
+      <mask id={`${id}-page`} maskUnits="userSpaceOnUse" {...MASK_REGION}>
+        <rect {...MASK_REGION} fill="#fff" />
+        <rect {...MASK_REGION} fill="#000" mask={`url(#${id}-pictures)`} />
+      </mask>
+    </defs>
+  );
 }
 
 // A drawing's strokes as SVG paths (ink.js strokePath): a pen's filled
@@ -782,8 +830,11 @@ function samplesBox(samples, pad) {
 // or null; penTool: what a stylus draws with when nothing is armed;
 // eraserMode: "stroke" (whole strokes) | "partial" (cuts through them),
 // eraserSize its S/M/L index; lassoMode: "free" (a drawn loop) | "box";
-// blocks: this page's ink blocks; selection: {page, items: [{id, ids}]};
-// flash: {id, nonce} outlines a group briefly. onStroke(page, stroke,
+// blocks: this page's ink blocks; pictures: its pictures' blocks
+// (markup/picture.js picturesBySurface), over which a highlighter
+// multiplies whatever the page's blend ("a highlighter over a picture"
+// above); selection: {page, items: [{id, ids}]}; flash: {id, nonce}
+// outlines a group briefly. onStroke(page, stroke,
 // {width, height}, {label}): a stroke committed, `label` its history
 // entry's (finishStroke's: "ink stroke", "ink straight line", "ink shape").
 // onFingerScroll: a finger dragged with a tool armed and pen only on, and
@@ -824,7 +875,7 @@ function samplesBox(samples, pad) {
 // strokeBounds. zoom: the zoom window when its box lies on this page, drawn
 // over it (InkZoomRect), whose drags and a blank tap on any page call
 // onZoom(page, {x, y} | {mag} | {at, size}) while a window is open.
-export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, penTool, penOnly, pressure, eraserMode,
+export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures, tool, penTool, penOnly, pressure, eraserMode,
   eraserSize = 1, eraserFilter = "all", drawHold = false, scribble = false, fingerUndo = "off", lassoMode = "free", selection, flash,
   clip = false, keys, hoverPreview = true, ruler = null, rulerUnits = "pt",
   onStroke, onEraseAlong, onEraseEnd, onEraseMany, onSelect, onAction, onMoveSelection, onJump, onPaste,
@@ -877,6 +928,10 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     groups.push({ id: b.id, ink });
   }
   const grain = useGrain(groups.map((g) => g.ink));
+  // The pictures a highlighter multiplies into ("a highlighter over a
+  // picture" above), and the prefix of the ids its planes' masks and groups take.
+  const overId = "inkOver-" + useId().replace(/[^A-Za-z0-9_-]/g, "");
+  const shownPictures = (pictures || []).map((b) => ({ id: b.id, pic: normalizePicture(b.properties?.picture) })).filter((p) => p.pic);
   // A drawing from a newer build (a tool, a brush, a key or a channel
   // this one does not know) draws plainly; say so, once per drawing. The
   // handler sets the app's status, so it runs after the render, not in it.
@@ -1906,13 +1961,15 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
     <GrainContext.Provider value={grain.fill}>
       {/* An SVG per plane, bottom to top, each holding every group's strokes of it. A highlighter
           plane multiplies into the page as a whole (data-blend): a blend inside one SVG stays inside
-          it, its z-index making it a stacking context. The ink plane holds the grain's defs, which
-          the others' pencils reach by id, the selection and the flash. On a dense page a group off
-          the view is left empty and a finished one drawn as its picture. */}
-      {planes.map((plane) => (
-        <svg key={plane} ref={planeRef[plane]} className="inkLayer" data-blend={planeMultiplies(plane) ? "multiply" : undefined}
-          viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
-          {plane === INK_PLANE ? grain.defs : null}
+          it, its z-index making it a stacking context. On a surface with pictures it draws its
+          strokes off them, and the SVG after it draws them again over them, multiplied ("a
+          highlighter over a picture" above). The ink plane holds the grain's defs, which the others'
+          pencils reach by id, the selection and the flash. On a dense page a group off the view is
+          left empty and a finished one drawn as its picture. */}
+      {planes.map((plane) => {
+        const over = shownPictures.length > 0 && planeMultiplies(plane) ? `${overId}-${plane}` : null;
+        // the plane's strokes: every group's, a dragged selection's preview and a reshaped shape
+        const strokes = <>
           {groups.map((g) => {
             if (!groupPlanes.get(g.id).has(plane)) return null;
             const culled = shown && !shown.has(g.id);
@@ -1939,18 +1996,33 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
             </g>
           ) : null}
           {reshaped && !dragging && strokePlane(reshaped) === plane ? <g className="inkReshape"><Strokes ink={{ strokes: [reshaped] }} /></g> : null}
-          {plane === INK_PLANE && selBox ? (
-            <rect className="inkSelRect" data-ink-selection="true"
-              transform={previewTransform}
-              x={selBox[0] - 4} y={selBox[1] - 4}
-              width={selBox[2] - selBox[0] + 8} height={selBox[3] - selBox[1] + 8} rx={3} />
-          ) : null}
-          {plane === INK_PLANE && fb ? (
-            <rect key={flash.nonce} className="inkFlash" x={fb[0] - 6} y={fb[1] - 6}
-              width={fb[2] - fb[0] + 12} height={fb[3] - fb[1] + 12} rx={4} />
-          ) : null}
-        </svg>
-      ))}
+        </>;
+        return (
+          <React.Fragment key={plane}>
+            <svg ref={planeRef[plane]} className="inkLayer" data-blend={planeMultiplies(plane) ? "multiply" : undefined}
+              viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none">
+              {plane === INK_PLANE ? grain.defs : null}
+              {over ? <PictureMasks id={over} pictures={shownPictures} /> : null}
+              {over ? <g mask={`url(#${over}-page)`}><g id={over}>{strokes}</g></g> : strokes}
+              {plane === INK_PLANE && selBox ? (
+                <rect className="inkSelRect" data-ink-selection="true"
+                  transform={previewTransform}
+                  x={selBox[0] - 4} y={selBox[1] - 4}
+                  width={selBox[2] - selBox[0] + 8} height={selBox[3] - selBox[1] + 8} rx={3} />
+              ) : null}
+              {plane === INK_PLANE && fb ? (
+                <rect key={flash.nonce} className="inkFlash" x={fb[0] - 6} y={fb[1] - 6}
+                  width={fb[2] - fb[0] + 12} height={fb[3] - fb[1] + 12} rx={4} />
+              ) : null}
+            </svg>
+            {over ? (
+              <svg className="inkOverPictures" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="none" aria-hidden="true">
+                <use href={`#${over}`} mask={`url(#${over}-pictures)`} />
+              </svg>
+            ) : null}
+          </React.Fragment>
+        );
+      })}
       {selBox && onSelect ? <div className="inkSelectionHit" data-guide="ink.selection" aria-label={t("Move selected handwriting")}
         style={{ left: pct(hitBox[0], width), top: pct(hitBox[1], height),
           width: pct(hitBox[2] - hitBox[0], width), height: pct(hitBox[3] - hitBox[1], height) }} /> : null}
@@ -1986,73 +2058,19 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, tool, pen
   );
 }
 
-// A length as a percentage of `of`: the controls laid over a page and its
-// canvases are placed in the page's percentages, so they follow it through
-// the viewer's zoom. A focused control's arrow keys: the step each one
-// moves (ARROWS, y down) and its sign (arrowSign: right and up are 1, left
-// and down -1).
-const pct = (v, of) => `${(v / of) * 100}%`;
+// A focused control's arrow keys: the step each one moves (y down). The
+// percentages the controls are laid in and the arrow keys' signs are
+// markup/TransformHandles.jsx's pct and arrowSign.
 const ARROWS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] };
-const arrowSign = (key) => (key === "ArrowRight" || key === "ArrowUp" ? 1 : key === "ArrowLeft" || key === "ArrowDown" ? -1 : 0);
 
-// The selection's resize and rotate buttons, and, for a shape held alone
-// in the selection (`shape`, a stroke with a shape record), its own
-// handles (InkShapeHandles).
+// The selection's resize and rotate buttons (markup/TransformHandles.jsx),
+// and, for a shape held alone in the selection (`shape`, a stroke with a
+// shape record), its own handles (InkShapeHandles).
 function InkTransformHandles({ wrapRef, box, width, height, positions, maxScale, onPreview, onCommit, shape, place,
   onShapePreview, onShapeCommit }) {
-  const drag = useRef(null);
-  const cancel = () => { drag.current = null; onPreview(null); };
-  useEffect(() => {
-    const escape = (e) => { if (e.key === "Escape") cancel(); };
-    window.addEventListener("blur", cancel);
-    window.addEventListener("keydown", escape);
-    return () => { drag.current = null; window.removeEventListener("blur", cancel); window.removeEventListener("keydown", escape); };
-  }, []);
-  const valueAt = (e) => {
-    const d = drag.current;
-    const x = (e.clientX - d.rect.left) / d.k - d.cx, y = (e.clientY - d.rect.top) / d.k - d.cy;
-    let angle = Math.atan2(y, x) - d.startAngle;
-    angle = Math.atan2(Math.sin(angle), Math.cos(angle));
-    if (e.shiftKey) angle = Math.round(angle / (Math.PI / 12)) * Math.PI / 12;
-    return { cx: d.cx, cy: d.cy, angle: d.mode === "rotate" ? angle : 0,
-      scale: d.mode === "resize" ? Math.max(0.1, Math.min(d.maxScale, Math.hypot(x, y) / d.radius)) : 1 };
-  };
-  const begin = (e, mode) => {
-    if (e.button !== 0 || drag.current) return;
-    e.preventDefault(); e.stopPropagation();
-    const rect = wrapRef.current.getBoundingClientRect(), k = rect.width / width;
-    const cx = (box[0] + box[2]) / 2, cy = (box[1] + box[3]) / 2;
-    const x = (e.clientX - rect.left) / k - cx, y = (e.clientY - rect.top) / k - cy;
-    drag.current = { id: e.pointerId, mode, rect, k, cx, cy, radius: Math.max(0.01, Math.hypot(x, y)), startAngle: Math.atan2(y, x), maxScale };
-    e.currentTarget.setPointerCapture(e.pointerId);
-  };
-  const move = (e) => {
-    if (drag.current?.id !== e.pointerId) return;
-    e.preventDefault(); e.stopPropagation(); onPreview(valueAt(e));
-  };
-  const finish = (e) => {
-    if (drag.current?.id !== e.pointerId) return;
-    e.preventDefault(); e.stopPropagation();
-    const value = valueAt(e);
-    cancel();
-    e.currentTarget.releasePointerCapture(e.pointerId);
-    if (Math.abs(value.scale - 1) > 0.001 || Math.abs(value.angle) > 0.001) onCommit(value);
-  };
   return <>
-    {["resize", "rotate"].map((mode) => <button key={mode} type="button" className={`inkTransformHandle inkTransform-${mode}`}
-      aria-label={mode === "resize" ? t("Resize selected handwriting") : t("Rotate selected handwriting")}
-      title={mode === "resize" ? t("Drag to resize; arrow keys change size") : t("Drag to rotate; hold Shift to snap to 15°; arrow keys rotate")}
-      style={{ left: pct(positions[mode][0], width), top: pct(positions[mode][1], height) }}
-      onPointerDown={(e) => begin(e, mode)} onPointerMove={move} onPointerUp={finish}
-      onPointerCancel={cancel} onLostPointerCapture={cancel} onClick={(e) => e.stopPropagation()}
-      onKeyDown={(e) => {
-        const sign = arrowSign(e.key);
-        if (!sign) return;
-        e.preventDefault(); e.stopPropagation();
-        onCommit({ cx: (box[0] + box[2]) / 2, cy: (box[1] + box[3]) / 2,
-          scale: mode === "resize" ? Math.min(maxScale, sign > 0 ? 1.1 : 1 / 1.1) : 1,
-          angle: mode === "rotate" ? sign * Math.PI / 12 : 0 });
-      }}>{mode === "resize" ? <ResizeIcon /> : <RedoIcon />}</button>)}
+    <TransformHandles wrapRef={wrapRef} box={box} width={width} height={height} positions={positions} maxScale={maxScale}
+      onPreview={onPreview} onCommit={onCommit} />
     {shape ? <InkShapeHandles wrapRef={wrapRef} stroke={shape} width={width} height={height}
       place={place} onPreview={onShapePreview} onCommit={onShapeCommit} /> : null}
   </>;

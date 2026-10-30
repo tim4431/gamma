@@ -1,6 +1,6 @@
 // Copying a picture to the clipboard as an image: the object menu's "Copy
-// image" (editor/MdObject.jsx). The picture is the element showing it, an
-// <img> or an inline <svg>. The async clipboard writes image/png in every
+// image" (editor/MdObject.jsx), and a page picture's (copyPng, below). The
+// picture is the element showing it, an <img> or an inline <svg>. The async clipboard writes image/png in every
 // browser and image/svg+xml in current Chromium, and refuses every other
 // image type ("Type image/jpeg not supported on write"), so:
 //
@@ -121,6 +121,22 @@ export async function copyImage(el) {
   for (const blob of Object.values(flavors)) blob.catch(() => {});
   try {
     await navigator.clipboard.write([new window.ClipboardItem(flavors)]);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// A PNG still being made (`png`, a promise of its blob: a picture drawn as
+// the page shows it, markup/pictureUpload.js shownPng) to the clipboard.
+// The ClipboardItem is made at once, in the click, so Safari keeps the
+// gesture while the picture is fetched and drawn. Resolves true when it got
+// there.
+export async function copyPng(png) {
+  png.catch(() => {});
+  if (!canCopyImage()) return false;
+  try {
+    await navigator.clipboard.write([new window.ClipboardItem({ [PNG]: png })]);
     return true;
   } catch {
     return false;

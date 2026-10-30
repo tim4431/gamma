@@ -228,11 +228,11 @@ def page_space(bounds, view, to_display, disp_w: float, disp_h: float) -> Space:
     ``bounds`` is the page's bbox log: one entry per drawing operation, form
     XObjects flattened into the page's space, and the annotations'
     appearances among them. So what ``annotate_pdf`` wrote before the notes
-    counts as occupied too: the text boxes with either export switch, the
-    highlights and ink when the highlight layer is on. Invisible text (an
-    OCR layer) draws nothing visible and is skipped. A shading's entry is the
-    clip it was painted through (``bbox_log``), so a gradient-filled box
-    counts as occupied.
+    counts as occupied too: the pictures and the text boxes with either
+    export switch, the highlights and ink when the highlight layer is on.
+    Invisible text (an OCR layer) draws nothing visible and is skipped. A
+    shading's entry is the clip it was painted through (``bbox_log``), so a
+    gradient-filled box counts as occupied.
 
     The log's space is the unrotated page's: origin at the view box's
     top-left corner, y down. The step back to user space is spelled out

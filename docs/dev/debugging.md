@@ -394,7 +394,10 @@ Rules the frontend mirrors — search normalization (`gamma/textnorm.py` ↔
 `frontend/src/shared/lib/textnorm.js`), published pages' slugs
 (`gamma/publish.py` ↔ `frontend/src/shared/lib/slug.js`), text boxes
 (`gamma/text_box.py` ↔ `frontend/src/markup/textBox.js`,
-`tests/shared/textbox.json`, [text_boxes.md](text_boxes.md)) and
+`tests/shared/textbox.json`, [text_boxes.md](text_boxes.md)), pictures
+(`gamma/picture.py` ↔ `frontend/src/markup/picture.js`: the normalizer,
+the turned frame, the Markdown line and the merge, `tests/shared/picture.json`
+and `picturemerge.json`, [pictures.md](pictures.md)) and
 handwriting (`gamma/ink.py` ↔ `frontend/src/ink/ink.js` and
 `ink/grain.js`: the codec, dashes, merge, the calligraphy nib and the
 pencil's grain, [handwriting.md](handwriting.md)) — are pinned by ONE
@@ -413,10 +416,11 @@ above), `mdMarks` (the formatting hotkeys' toggle), `logseqPdfModel` (tree
 ops), `blockHistory` (the undo classifier), `menuAim` (the safe-triangle
 geometry), `themes` (the design tokens: the desktop copy, the pre-paint's
 theme lists, every theme resolving, the contrast ratchet) and
-`designTokens` (the raw-value ratchet on the stylesheets). Both ratchets are
-described in [ui-design.md](ui-design.md#ratchets). A module is testable
-there when its relative imports carry the `.js` extension (node resolves
-nothing else). Modules that import React can still be imported for their
+`designTokens` (the raw-value ratchet on the stylesheets, and no
+`(pointer: coarse)` rule sizing a control but the text box's handle).
+Both ratchets are described in [ui-design.md](ui-design.md#ratchets). A
+module is testable there when its relative imports carry the `.js`
+extension (node resolves nothing else). Modules that import React can still be imported for their
 pure exports. Actual React rendering and
 interactions are exercised by the browser suite below, plus one standalone
 browser regression: `npm run e2e:latex` bundles the block
@@ -549,8 +553,11 @@ glob wins) to the groups that exercise it. `frontend/src/guide/**` goes to
 the three tour groups. `frontend/src/markup/**` (the page layers and the
 tool strip, whose anchors the ink tour uses) goes to the ink groups (ink,
 ink-editing, ink-shapes, ink-zoom), pdf-touch, touch, notebooks,
-triggered-guide, textbox and comments (a press on a margin card with a pen
-or the Text tool armed). `backend/gamma/ink.py` goes to ink,
+triggered-guide, textbox, pictures and comments (a press on a margin card
+with a pen or the Text tool armed). The pictures group also runs for
+`frontend/src/ink/`, `notebook/`, `editor/` and `pdf/`, and for
+`backend/gamma/picture.py` (with notebooks, the export groups and the
+chat's) and `text_box.py`. `backend/gamma/ink.py` goes to ink,
 ink-editing, ink-shapes, notebooks, triggered-guide and transfers, and
 `backend/gamma/notebook.py` to notebooks and transfers: the Notability
 note the transfers scenario imports writes its strokes through the first
@@ -856,6 +863,23 @@ The scenarios live in `tests/e2e/scenarios/`:
   - a touch pointer is captured by the element under the finger, so taking
     the capture on another element fires `lostpointercapture` on that
     child, and the box's handler checks which element lost it.
+- `pictures.mjs`: pictures ([pictures.md](pictures.md)) on a PDF page and
+  on a sheet in the notebook view. `--group pictures`.
+  - The strip's Picture button places a PNG on the page in view at its
+    aspect, centred and selected, and a reload keeps it. A paste places
+    one at the page's centre and a drop at the drop point.
+  - A drag, the arrows, the handles (Alt stretching, the turn's
+    right-angle magnet), the flips, a crop (Escape cancels one), Reset,
+    Fit to page and a turn after it each undo and redo. Copy image puts the
+    picture on the clipboard as it shows. Duplicate, Bring to front and
+    Send to back act on the page and in the notes.
+  - Then come the caption typed in its row, a stylus, a finger's tap,
+    drag, scroll and pinch, Escape and a press elsewhere during a handle
+    drag, a text box over the handles, an upload that lands after a box
+    was opened, the notes' card and marker, a read-only visitor, an edit
+    share's drop, and two people on one picture (a move while the other
+    crops and types the caption).
+  - A drop on a sheet drawn among the notes leaves no row outlined.
 - `guide.mjs`: the first-run guide ([onboarding.md](onboarding.md)),
   started from the account menu's Tours — every registered home-view anchor
   is present once, the demo step adds a paper by itself (pointed at an

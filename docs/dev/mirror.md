@@ -129,14 +129,28 @@ the frontend changes: editing a mirror is editing a workspace.
     landed is answered from the remote's op log, which keeps no report,
     so an unclean merge whose answer was lost leaves no row ("Limits and
     next steps").
-- **Text boxes** merge key by key, the same way. A diff that changes a
-  box's `text_box` carries the box it was changed from (`base_props`), so
-  either side's server keeps the keys the other changed
-  (`text_box.merge_text_box`, [text_boxes.md](text_boxes.md) "Merge").
-- A push whose answer was lost is judged key by key for a text box
-  (`_unlanded`, `_box_again`). The keys of ours the remote still shows as
-  they were go again, onto the remote's box. A key it shows as ours, or
+- **Text boxes and pictures** merge on either side's server too. A diff
+  that changes a box's `text_box` or a picture's `picture` carries the
+  value it was changed from (`base_props`, sync_tree `_set_op`), so either
+  side's server keeps what the other changed: a box key by key
+  (`text_box.merge_text_box`, [text_boxes.md](text_boxes.md) "Merge"), a
+  picture by its size, its centre and its other keys
+  (`picture.merge_picture`, [pictures.md](pictures.md#model) "Merge").
+  Both go through the placed-objects table, `ops.PLACED_KEYS`
+  ([collab.md](collab.md) "same-box merge").
+- A push whose answer was lost is judged by the parts the merge merges
+  (`_unlanded`, `_placed_again`). What goes again goes onto the remote's
+  value, with that value as its base. A part the remote shows as ours, or
   changed since, counts as landed.
+  - A text box goes key by key: the keys of ours the remote still shows
+    as they were go again.
+  - A picture goes as `merge_picture` would merge it
+    (`picture.resend_picture`): each key but `x` and `y` on its own, then
+    the centre as one. Our shift of the centre goes again, onto the
+    remote's centre, when that centre has not moved or our crop goes
+    again. A centre both sides moved otherwise stays the remote's. So a
+    lost resize sent again after someone moved the picture stays about the
+    moved centre.
 
 Not synced: preferences (reading positions, open tabs, recents — they are
 per account and per server), the AI chats (in pages.db beside the pages,
@@ -256,6 +270,9 @@ does not hide it. When the two differ the round stops (`FormatMismatch`):
   other failure, it does not hold the policy back (`_round`). Publishing
   such a page answers 502 while it waits on the retry list
   ([Publishing](#publishing), step 3).
+- **Step 44** (`picture_kind`) moves the format to 44. It only redefines
+  the generated `kind` column, so a pair that has run it on both sides has
+  nothing to send for it, and the pause above holds until then.
 
 ## One round, one page (`sync_engine._sync_page`)
 

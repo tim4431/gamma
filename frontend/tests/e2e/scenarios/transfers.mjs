@@ -791,7 +791,7 @@ open(sys.argv[3], 'wb').write(b"noteSN_FILE_VER_20230015" + bytes(64))
       await choice(report, "Done").click();
 
       // The page carries one PDF, the note's PDF page and its paper page; an
-      // ink group per page; the boxes on page 1; the recording.
+      // ink group per page; the text box and the picture on page 1; the recording.
       const imported = (await alice.api("/api/blocks/root/children")).children.find((p) => p.content === "E2E Notability note");
       assert(imported?.properties?.doc_id, "the note keeps a PDF");
       const blocks = (await alice.api(`/api/blocks/${imported.id}/subtree`)).block.children;
@@ -803,7 +803,9 @@ open(sys.argv[3], 'wb').write(b"noteSN_FILE_VER_20230015" + bytes(64))
       assert(files.flatMap((f) => f.strokes).some((s) => (s.ch || "").includes("w")), "a stroke whose width varies along it");
       const boxes = blocks.filter((b) => b.properties?.text_box && b.properties.pdf_page === 1);
       assert(boxes.some((b) => b.content.includes("Typed **box**")), "the text box");
-      assert(boxes.some((b) => b.content.startsWith("![")), "the picture's box");
+      const pictures = blocks.filter((b) => b.properties?.picture);
+      assertEq(pictures.map((b) => b.properties.pdf_page).join(","), "1", "the picture, a picture block on page 1");
+      assert(/^\/api\/uploads\/[\w-]+\.png$/.test(pictures[0].properties.picture.url), "its file stored as it came");
       const recording = blocks.find((b) => b.properties?.recording);
       assertEq(recording?.properties.recording.segments[0].mime, "audio/mp4");
 
@@ -820,20 +822,13 @@ open(sys.argv[3], 'wb').write(b"noteSN_FILE_VER_20230015" + bytes(64))
       await choice(review, "Cancel").click();
       await review.waitFor({ state: "detached" });
 
-      // On screen: both pages, the ink drawn, the picture as wide as its box's text.
+      // On screen: both pages, the ink drawn, the picture on its page's picture layer.
       await page.goto(`${server.base}/?page=${imported.id}&ws=${alice.ws}`);
       await until(async () => (await page.locator(".pdfPageWrap").count()) === 2, { what: "the note's two pages" });
       await until(async () => (await page.locator('[data-page="1"] .inkLayer path').count()) >= 2, { what: "the pen and the highlighter drawn" });
-      const picture = page.locator('[data-page="1"] .textBox img.mdImg');
+      const picture = page.locator('[data-page="1"] .pagePicture img');
       await picture.waitFor();
       await until(() => picture.evaluate((img) => img.complete && img.naturalWidth > 0), { what: "the picture loaded" });
-      const fit = await picture.evaluate((img) => {
-        const body = img.closest(".textBoxBody");
-        const style = getComputedStyle(body);
-        return { picture: img.getBoundingClientRect().width,
-          text: body.getBoundingClientRect().width - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight) };
-      });
-      assert(Math.abs(fit.picture - fit.text) < 1, `the picture fills its box's text width: ${JSON.stringify(fit)}`);
       if (flags.keep) await page.screenshot({ path: `${server.dir}/notability-note.png` });
       assertNoProblems(page);
     } finally { await ctx.close(); }
@@ -892,12 +887,19 @@ open(sys.argv[1], 'wb').write(n.bytes())
       assertEq(file.strokes.map((s) => s.tool === "highlighter" ? "highlighter" : s.brush || (s.ch.includes("w") ? "pen" : "even")).join(","),
         "monoline,highlighter,pen", "the ball pen, the highlighter, the fountain pen");
       assert(squared.children.some((b) => b.properties?.text_box && b.content === "Plain and **bold**"), "the text box");
-      assert(squared.children.some((b) => b.properties?.text_box && b.content.startsWith("![")), "the picture's box");
+      const pictures = squared.children.filter((b) => b.properties?.picture);
+      assertEq(pictures.length, 1, "the picture, a picture block on the squared sheet");
+      assert(/^\/api\/uploads\/[\w-]+\.png$/.test(pictures[0].properties.picture.url), "its file stored as it came");
+      assert(!pictures[0].properties.text_box, "no text box around it");
       assertEq(recording.properties?.recording?.dur, 2500, "the recording");
 
-      // On screen: the notebook's sheets, the ink drawn on the squared one.
+      // On screen: the notebook's sheets, the ink drawn on the squared one and
+      // the picture on its picture layer.
       await page.goto(`${server.base}/?page=${imported.id}&ws=${alice.ws}`);
       await until(async () => (await page.locator(".inkLayer path").count()) >= 3, { what: "the three strokes drawn" });
+      const picture = page.locator(`.nbSheet[data-sheet-id="${squared.id}"] .pagePicture img`);
+      await picture.waitFor();
+      await until(() => picture.evaluate((img) => img.complete && img.naturalWidth > 0), { what: "the picture loaded" });
       if (flags.keep) await page.screenshot({ path: `${server.dir}/goodnotes-notebook.png` });
       assertNoProblems(page);
     } finally { await ctx.close(); }
@@ -952,13 +954,16 @@ open(sys.argv[1], 'wb').write(n.bytes())
           const ink = await alice.api(b.properties.ink_url);
           strokes.push(...ink.strokes.map(({ id: _id, ...s }) => JSON.stringify({ page: ink.space.page, ...s })));
         }
-        return { strokes: strokes.sort(), boxes: blocks.filter((b) => b.properties?.text_box && !b.content.startsWith("!["))
+        return { strokes: strokes.sort(), boxes: blocks.filter((b) => b.properties?.text_box)
           .map((b) => `${b.properties.pdf_page} ${b.content} ${JSON.stringify(b.properties.text_box)}`),
+        pictures: blocks.filter((b) => b.properties?.picture)
+          .map((b) => `${b.properties.pdf_page} ${b.content} ${JSON.stringify(b.properties.picture)}`),
         recordings: blocks.filter((b) => b.properties?.recording).map((b) => b.content) };
       };
       const [was, now] = [await content(original.id), await content(back.id)];
       assert(was.strokes.length >= 3, "the note has its strokes");
-      assertEq(JSON.stringify(now), JSON.stringify(was), "stroke for stroke, box for box");
+      assertEq(was.pictures.length, 1, "the note has its picture");
+      assertEq(JSON.stringify(now), JSON.stringify(was), "stroke for stroke, box for box, picture for picture");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

@@ -177,16 +177,18 @@ class _Import(app.AppImport):
             self.progress(item=title)
         groups = (self.store_ink(plan, lambda page, left_out, left: nmap.page_strokes(note, page, left_out, left),
                                  title) if plan.kind != "note" else [])
-        boxes, counts, uses = [], Counter(), Counter()
+        boxes, counts, files = [], Counter(), {}
         for page in plan.pages:
             found = []
             for i in page.boxes:
                 media = note.media[i]
-                box = (self.store_picture(members, media, page.frame, title, uses) if media.kind == "picture"
-                       else nmap.text_box(media, page.frame, plan.left_out))
-                box = nmap.copied_box(note, media, box, page.frame)
-                if box is not None:
-                    found.append(box)
+                if media.kind == "picture":
+                    made = self.store_picture(members, media, page.frame, title, plan.left_out, files)
+                    made = nmap.copied_picture(note, media, made, page.frame)
+                else:
+                    made = nmap.copied_box(note, media, nmap.text_box(media, page.frame, plan.left_out), page.frame)
+                if made is not None:
+                    found.append(made)
                     counts["pictures" if media.kind == "picture" else "boxes"] += 1
             boxes.append(found)
         recordings = self._recordings(members, note)

@@ -749,6 +749,23 @@ before a reload waits until a page can take it. The web half is
    `.zip` is named the same way. A file Gamma does not open is let go,
    and the status names it.
 
+### Pictures
+
+Pictures on a page ([pictures.md](pictures.md#adding-a-picture)) are the
+web app's, with no native code. The iPad differs in three ways:
+
+- **The picker.** The strip's Picture button opens the system file picker
+  (`shared/lib/pickFiles.js`, `accept="image/*"`), which WebKit shows as
+  Photos, the camera and Files.
+- **HEIC and HEIF.** WebKit decodes them, so the page re-encodes one as a
+  JPEG before the upload (`markup/pictureUpload.js`). Chrome and Firefox
+  cannot decode them, and there the pill asks for a JPEG or PNG.
+- **Smaller re-encodes.** A canvas on an iPad holds at most 8 Mi pixels
+  and 4096 per edge (`shared/lib/canvasSize.js`, as in every WebKit; 16 Mi
+  and 8192 in desktop Chromium and Firefox). So a picture re-encoded there (a HEIC, a TIFF, one past
+  24 MP) comes out within those caps, and so does Copy image's PNG. A PNG,
+  JPEG, GIF or WebP up to 24 MP goes up as it is, as on every device.
+
 ### The local server
 
 "This iPad" is Gamma's own backend running inside the app on
@@ -1371,6 +1388,17 @@ Only an iPad can show these, and none has been run yet:
     25); ⌘⇧B with the same focus cases as check 29, and its title in the
     shortcuts overlay; and a launch on This iPad with the bar hidden,
     which shows it until the server runs.
+31. The strip's Picture button ([Pictures](#pictures)): the picker WebKit
+    shows for `accept="image/*"`, a photo from Photos, one taken with the
+    camera, and several picked at once.
+32. A HEIC from Files, and one from Photos: whether the page is handed a
+    HEIC or a JPEG, the re-encode within the canvas caps, and the picture
+    placed at its aspect.
+33. A WebP with an EXIF orientation. The server and the exports ignore it,
+    as Chromium and Firefox do (`pdf_image.browser_orientation`), and
+    whether WebKit applies it is unverified. If it does, the iPad shows
+    such a picture turned where the exports and the other browsers show it
+    upright.
 
 ### Not built yet
 

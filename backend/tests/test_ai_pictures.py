@@ -119,6 +119,32 @@ def test_normalize_sizes_and_encodes_every_picture():
     assert ai_pictures.normalize(b"") is None
 
 
+def test_normalize_never_opens_postscript(org, monkeypatch):
+    """A chat picture is opened as any format Pillow reads in its own code
+    but EPS (ai_pictures.chat_formats): PostScript pasted, picked or sent as
+    an older client's data URL never reaches Pillow's EPS reader, which runs
+    Ghostscript on it, while a TIFF still becomes a picture as before."""
+    import subprocess
+    from PIL import EpsImagePlugin
+
+    started = []
+    monkeypatch.setattr(EpsImagePlugin.EpsImageFile, "_open", lambda self: started.append("eps") or 1 / 0)
+    monkeypatch.setattr(subprocess, "check_call", lambda *a, **k: started.append("gs") or 1 / 0)
+    monkeypatch.setattr(subprocess, "Popen", lambda *a, **k: started.append("gs") or 1 / 0)
+    eps = b"%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 2 2\n{} loop\n%%EOF\n"
+    assert ai_pictures.normalize(eps) is None
+    assert ai_pictures.normalize(eps, "image/png") is None
+    assert ai_pictures.data_url_picture(_data_url(eps)) is None
+    c, _ids = org
+    r = c.post("/api/ai/pictures", files={"file": ("figure.png", eps, "image/png")})
+    assert r.status_code == 400
+    assert started == []
+    # every other format Pillow reads still is, one no browser draws too
+    assert ai_pictures.normalize(_png(20, 10, "white", fmt="BMP"))[1:] == ("image/jpeg", 20, 10)
+    assert ai_pictures.normalize(_png(20, 10, "white", fmt="TIFF"))[1:] == ("image/jpeg", 20, 10)
+    assert "EPS" not in ai_pictures.chat_formats() and "TIFF" in ai_pictures.chat_formats()
+
+
 def test_picture_store_route(org):
     c, ids = org
     r = c.post("/api/ai/pictures", files={"file": ("shot.png", _png(2500, 1000, "teal"), "image/png")})

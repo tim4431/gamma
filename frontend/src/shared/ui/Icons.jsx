@@ -644,6 +644,17 @@ export const FlipHIcon = (p) => (
 export const FlipVIcon = (p) => (
   <Icon {...p}><path d="M3 12h18" strokeDasharray="2 2" /><path d="M7 9l5-5 5 5H7Z" /><path d="m7 15 5 5 5-5H7Z" fill="currentColor" stroke="none" /></Icon>
 );
+// A picture's menu (markup/PictureLayer.jsx): the crop marks of a
+// rectangle, and two squares with the one in front or behind the other.
+export const CropIcon = (p) => (
+  <Icon {...p}><path d="M6 2v14a2 2 0 0 0 2 2h14" /><path d="M18 22V8a2 2 0 0 0-2-2H2" /></Icon>
+);
+export const BringToFrontIcon = (p) => (
+  <Icon {...p}><rect x="8" y="8" width="8" height="8" rx="2" /><path d="M4 10a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2" /><path d="M14 20a2 2 0 0 0 2 2h4a2 2 0 0 0 2-2v-4a2 2 0 0 0-2-2" /></Icon>
+);
+export const SendToBackIcon = (p) => (
+  <Icon {...p}><rect x="14" y="14" width="8" height="8" rx="2" /><rect x="2" y="2" width="8" height="8" rx="2" /><path d="M7 14v1a2 2 0 0 0 2 2h1" /><path d="M14 7h1a2 2 0 0 1 2 2v1" /></Icon>
+);
 // A paintbrush: the pen styles of the selection menu's Style button.
 export const BrushIcon = (p) => (
   <Icon {...p}><path d="m14.6 4.4 5 5" /><path d="M20.5 3.5a2.1 2.1 0 0 0-3 0L9 12l3 3 8.5-8.5a2.1 2.1 0 0 0 0-3Z" /><path d="M9 12c-3 0-5 2-5 5 0 1.5-1 3-2 3 3 0 7 0 8-3a3.3 3.3 0 0 0-1-5Z" /></Icon>

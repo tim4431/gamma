@@ -7,7 +7,7 @@ import { useEffect, useRef } from "react";
 import { createPortal } from "react-dom";
 import {
   CheckIcon, ChevronLeftIcon, ChevronRightIcon, DuplicateIcon, ErasePartialIcon, EraserIcon, EraseStrokeIcon, EyeIcon, EyeOffIcon, HandIcon,
-  HighlightIcon, HistoryIcon, LassoIcon, MinusIcon, MoreIcon, PaintBucketIcon, PenIcon, PlusIcon, RectSelectIcon, RedoIcon, RulerIcon,
+  HighlightIcon, HistoryIcon, ImageIcon, LassoIcon, MinusIcon, MoreIcon, PaintBucketIcon, PenIcon, PlusIcon, RectSelectIcon, RedoIcon, RulerIcon,
   SettingsIcon, ShapeArrowIcon, ShapeEllipseIcon, ShapeLineIcon, ShapeRectIcon, ShapesIcon, StampLineIcon, TrashIcon, TypeIcon, UndoIcon,
   XIcon, ZoomWindowIcon,
 } from "../shared/ui/Icons";
@@ -30,7 +30,8 @@ const SIZE_LABELS = [t("Small"), t("Medium"), t("Large")];
 
 // The tool strip above the page, Notability-style: a row of tool presets
 // (each pen / highlighter with its own colour and width), the eraser, the
-// lasso, the Text tool, a hand, More (⋯) and close, Undo / Redo last.
+// lasso, the Text tool, the Picture button, a hand, More (⋯) and close,
+// Undo / Redo last.
 // Tapping the armed tool again opens its options row — for a preset three
 // captioned sub-rows, Style (a pen's Style picker — Pen, Ballpoint, Brush,
 // Pencil, Calligraphy, ink/InkStylePicker.jsx — or a highlighter's Straight trio, then
@@ -47,8 +48,11 @@ const SIZE_LABELS = [t("Small"), t("Medium"), t("Large")];
 // the selected box's). onChangeTools(list | fn) writes the preset list
 // (ids stable; a pill's deferred action passes an updater). Undo / Redo
 // step the stroke history, or with `blockHistory` the page's block history
-// (the Text tool armed, a box selected or edited; the strip's keys,
-// ink/useStripKeys.js, route Ctrl+Z the same way). onStatus(text,
+// (the Text tool armed, a box selected or edited, a picture selected; the
+// strip's keys, ink/useStripKeys.js, route Ctrl+Z the same way).
+// onPicture(): the Picture button, not a tool that stays armed: the file
+// picker for a picture on the surface in view (markup/usePictures.js);
+// no button without it (a read-only page). onStatus(text,
 // action?) is App's setStatus; cmdCtx and
 // bindings feed the More menu's command rows (app/CommandMenuItem.jsx);
 // onOpenSettings() opens Settings at its Handwriting section.
@@ -147,6 +151,7 @@ function movedStatus(tools, id) {
 
 export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, eraserReturn = false, eraserFilter = "all", lassoMode,
   textStyle, blockHistory, onPick, onToggleOptions, onChangeTools, onEraser, onLasso, onTextStyle, onClose, onUndo, onRedo, canUndo, canRedo,
+  onPicture,
   onOpenSettings, onStatus, cmdCtx, bindings,
   ruler = null, rulerUnits = "pt", onToggleRuler, onRulerOptions, onStampLine,
   shapeKind = "line", shapeFill = false, onShape, onToggleShape, stylusPen = null,
@@ -270,6 +275,10 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
         {btn("eraser", t("Eraser (E) — the pen's eraser end and barrel button erase too"), <EraserIcon size={16} />)}
         {btn("select", t("Lasso (L): circle strokes to select them, then drag the box to move or press Delete"), <LassoIcon size={16} />)}
         {btn("text", t("Text (T): tap the page to type, or drag to set the width"), <TypeIcon size={16} />)}
+        {onPicture ? (
+          <button type="button" className="ctlBtn inkToolBtn" onClick={onPicture} aria-label={t("Picture")}
+            title={t("Picture (I): add a photo or an image to the page")}><ImageIcon size={16} /></button>
+        ) : null}
         {/* The modifiers, each only while on (More turns them on): a tap opens the ruler's row, the Shapes tool's row, or closes the zoom window. */}
         {ruler ? (
           <button type="button" className="ctlBtn inkToolBtn modeActive" aria-pressed="true" aria-label={t("Ruler")}

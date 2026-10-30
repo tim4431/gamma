@@ -19,6 +19,9 @@ import { isRecordingBlock } from "../recording/recording.js";
 import { useRecordings } from "../recording/RecordingContext.js";
 import { useBlockFrame } from "../replay/useFrame.js";
 import { isTextBox } from "../markup/textBox.js";
+import { isPicture, pictureMarkdown } from "../markup/picture.js";
+import { PictureCard } from "../markup/PictureLayer";
+import { picturesDrag } from "../markup/pictureUpload.js";
 import { isSheet } from "../notebook/notebook";
 import { NoteSheet } from "../notebook/NoteSheet";
 import { CitationPill, GammaLinkCard, handleMarkdownCopy, useDockFolded } from "../shared/ui/Widgets";
@@ -28,7 +31,7 @@ import { mapOutsideCodeFences, remarkDiagrams, scanDiagramFences, setDiagramWidt
 import { MdObject, ObjectMenuButton, findObject } from "./MdObject";
 import { cutObject } from "./mdObjects";
 import { blockSpans, parseTable, protectedSpans, scanMathSpans, scanTables } from "./mdScan";
-import { LinkIcon, LocateIcon, MicIcon, PenIcon, PlayIcon, TypeIcon, XIcon } from "../shared/ui/Icons";
+import { ImageIcon, LinkIcon, LocateIcon, MicIcon, PenIcon, PlayIcon, TypeIcon, XIcon } from "../shared/ui/Icons";
 import { FileChip, parseUploadUrl, postFile, uploadFilesAsLines } from "../transfers/FileChip";
 import { findMathAtCursor, LatexAcPopup, MathLivePreview } from "./LatexEditor";
 import { useMathUi } from "./useMathUi.js";
@@ -1043,20 +1046,24 @@ const BlockRow = React.memo(function BlockRow({
   const recentHighlight = useIsRecent("highlight", block.id);
   // A handwriting group (docs/dev/handwriting.md): pen marker + the strokes
   // as a card; its content is the caption. A text box
-  // (docs/dev/text_boxes.md): a T marker; its content is the box's text.
+  // (docs/dev/text_boxes.md): a T marker; its content is the box's text. A
+  // picture (docs/dev/pictures.md): a picture marker + the picture as placed
+  // as a card; its content is the caption.
   const isInk = block.properties?.ink_url !== undefined;
   const isBox = !isInk && isTextBox(block);
+  const isPic = isPicture(block);
   // A recording (docs/dev/recording.md): a mic marker, its content the
   // title, the card under it the player. Any block written during a
   // recording carries `t0`: while that recording plays the row is shaded
   // until its moment is reached, and a glyph in the margin plays from it.
-  const isRec = !isInk && !isBox && isRecordingBlock(block);
+  const isRec = !isInk && !isBox && !isPic && isRecordingBlock(block);
   const recordings = useRecordings();
   const replayState = useBlockFrame(block.properties?.t0);
   const recorded = recordings?.covers(block.properties?.t0);
-  // A box under a sheet is on that sheet, whatever pdf_page it still
-  // carries (markup/textBox.js textBoxesBySurface): it names no PDF page.
-  const shownPage = isBox && onSheet ? null : block.page;
+  // A box or a picture under a sheet is on that sheet, whatever pdf_page it
+  // still carries (markup/textBox.js textBoxesBySurface, picture.js
+  // picturesBySurface): it names no PDF page.
+  const shownPage = (isBox || isPic) && onSheet ? null : block.page;
   const hasChildren = (block.children?.length || 0) > 0;
 
   function trackGapLine(e) {
@@ -1077,7 +1084,9 @@ const BlockRow = React.memo(function BlockRow({
     if (!hasFile) return;
     e.preventDefault();
     e.dataTransfer.dropEffect = "copy";
-    setFileDragOver(true);
+    // Images over the sheet this row draws are its pictures: the sheet takes
+    // that drop (markup/PictureLayer.jsx), so the row shows no outline.
+    setFileDragOver(readOnly || !picturesDrag(e));
   }
 
   function handleFileDragLeave(e) {
@@ -1553,15 +1562,18 @@ const BlockRow = React.memo(function BlockRow({
           </>
         ) : isRec && !editing ? (
           <span className="dotSlot" title={t("Recording")}><span className="recordingMarker"><MicIcon size={9} /></span></span>
-        ) : (isInk || isBox) && !editing ? (
+        ) : (isInk || isBox || isPic) && !editing ? (
           <button
             className="collapseBtn highlightDotBtn dotSlot"
             onClick={(e) => { e.stopPropagation(); onShowOnPage?.(block.id); }}
             title={isInk
               ? (shownPage ? t("Handwriting on page {page} — click to show it", { page: shownPage }) : t("Handwriting"))
+              : isPic ? (shownPage ? t("Picture on page {page} — click to show it", { page: shownPage }) : t("Picture — click to show it"))
               : shownPage ? t("Text box on page {page} — click to show it", { page: shownPage }) : t("Text box — click to show it")}
           >
-            {isInk ? <span className="inkMarker"><PenIcon size={9} /></span> : <span className="textBoxMarker"><TypeIcon size={9} /></span>}
+            {isInk ? <span className="inkMarker"><PenIcon size={9} /></span>
+              : isPic ? <span className="pictureMarker"><ImageIcon size={9} /></span>
+              : <span className="textBoxMarker"><TypeIcon size={9} /></span>}
           </button>
         ) : (
           <span className="dotSlot dotSlotEmpty"><span className="noteBulletDot" /></span>
@@ -1762,6 +1774,7 @@ const BlockRow = React.memo(function BlockRow({
           ) : null}
           {inlineSheets && isSheet(block) ? <NoteSheet block={block} number={sheetNumber} /> : null}
           {isInk ? <InkCard block={block} onJump={onShowOnPage} /> : null}
+          {isPic ? <PictureCard block={block} onJump={onShowOnPage} /> : null}
           {isRec ? <RecordingCard block={block} editable={!readOnly} /> : null}
           {(block.properties?.link_url || block.properties?.link_page_id) ? (
             <button
@@ -1833,11 +1846,15 @@ const BlockRow = React.memo(function BlockRow({
   );
 });
 
+// A block's Markdown: its content, or for a picture its image line
+// (markup/picture.js pictureMarkdown: the caption as the alt text).
+const blockMarkdown = (b) => (isPicture(b) ? pictureMarkdown(b.content, b.properties.picture) : b.content || "");
+
 // Block subtree → a markdown outline: each block one "- " bullet (extra
 // content lines hang under it), children indented two spaces deeper.
 function subtreeMarkdown(b, depth) {
   const indent = "  ".repeat(depth);
-  const own = (b.content || "").split("\n")
+  const own = blockMarkdown(b).split("\n")
     .map((l, i) => (i === 0 ? `${indent}- ` : `${indent}  `) + l)
     .join("\n");
   return [own, ...(b.children || []).map((c) => subtreeMarkdown(c, depth + 1))].join("\n");
@@ -1928,7 +1945,7 @@ const SortableBlockRow = React.memo(function SortableBlockRow({ block, ...rowPro
             icon={CopyIcon}
             title={t("Copy this block's markdown source (sub-blocks become an indented list)")}
             onClick={() => copy(
-              block.children?.length ? subtreeMarkdown(block, 0) : block.content || "",
+              block.children?.length ? subtreeMarkdown(block, 0) : blockMarkdown(block),
               t("Copied block as markdown"),
             )}
           >{t("Copy as markdown")}</MenuItem>

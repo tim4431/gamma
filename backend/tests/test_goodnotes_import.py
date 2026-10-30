@@ -133,7 +133,8 @@ def test_a_notebook_of_papers_becomes_sheets(accounts):
     group, box, shown = ruled["children"]
     assert ink_of(ws, group)["space"] == {"kind": "canvas", "width": 455.04, "height": 588.45}
     assert box["content"] == "Plain and **bold**" and "pdf_page" not in box["properties"]
-    assert shown["content"].startswith("![](/api/uploads/") and stored(ws, shown["content"][4:-1]) == fx.png(60, 30)
+    assert shown["content"] == "" and list(shown["properties"]) == ["picture"]
+    assert stored(ws, shown["properties"]["picture"]["url"]) == fx.png(60, 30)
 
 
 def test_a_notebook_on_one_pdf_keeps_it(accounts):
@@ -196,8 +197,53 @@ def test_a_sticker_is_a_picture_of_its_art(accounts):
     assert result["pictures_imported"] == 1, reasons(result)
     [sheet] = subtree(owner, result["pages"][0]["id"])["children"]
     [shown] = sheet["children"]
-    picture = Image.open(io.BytesIO(stored(ws, shown["content"][4:-1])))
-    assert picture.format == "PNG" and picture.mode == "RGBA" and picture.size == (200, 120)
+    placed = shown["properties"]["picture"]
+    assert (placed["x"], placed["y"], placed["w"], placed["h"]) == pytest.approx((27.27, 27.27, 100, 60), abs=0.01)
+    picture = Image.open(io.BytesIO(stored(ws, placed["url"])))
+    assert placed["url"].endswith(".png") and (picture.format, picture.mode, picture.size) == ("PNG", "RGBA", (200, 120))
+
+
+def test_a_sticker_shown_twice_is_rendered_once_for_its_largest_frame(accounts):
+    """A sticker shown small, then large, is one PNG for both, twice the
+    large frame's 400 pt: not the small one's, drawn blurred at the large."""
+    pytest.importorskip("pymupdf")
+    from PIL import Image
+
+    owner, ws = accounts["gni_other"], workspace_of("gni_other")
+    n = gx.Notebook("Resized sticker", seed=21)
+    sticker = n.attach(gx.sticker_pdf((100, 60)))
+    n.page(n.paper(), [gx.image("S", sticker, (50, 50, 36.67, 22), kind=3),
+                       gx.image("T", sticker, (50, 300, 733.33, 440), kind=3)])
+    result = imported(owner, n.bytes(), "Resized.goodnotes")
+    assert result["pictures_imported"] == 2, reasons(result)
+    [sheet] = subtree(owner, result["pages"][0]["id"])["children"]
+    small, large = (b["properties"]["picture"] for b in sheet["children"])
+    assert (small["w"], large["w"]) == pytest.approx((20, 400), abs=0.01) and small["url"] == large["url"]
+    assert Image.open(io.BytesIO(stored(ws, large["url"]))).size == (800, 480)
+
+
+def test_a_picture_is_a_picture_block_of_its_file_as_it_came(accounts):
+    """A picture comes in as a picture block, its file never decoded: its
+    frame (#2) through the page's, its turn (#3.#3, radians) in degrees,
+    the file stored once however many pictures show it. One GoodNotes
+    shows cropped comes in whole (counted)."""
+    owner, ws = accounts["gni_other"], workspace_of("gni_other")
+    photo = fx.jpeg(80, 40)
+    n = gx.Notebook("Turned pictures", seed=20)
+    picture = n.attach(photo)
+    n.page(n.paper(), [gx.image("A", picture, (110, 220, 160, 80), turn=0.5),
+                       gx.image("B", picture, (110, 440, 160, 80), shown=(190, 480, 80, 80))])
+    result = imported(owner, n.bytes(), "Turned.goodnotes")
+    assert result["pictures_imported"] == 2 and reasons(result) == ["1 cropped picture is shown whole"]
+    [sheet] = subtree(owner, result["pages"][0]["id"])["children"]
+    turned, cropped = (b["properties"]["picture"] for b in sheet["children"])
+    assert turned["url"] == cropped["url"] and turned["url"].endswith(".jpg") and stored(ws, turned["url"]) == photo
+    k = 6 / 11
+    assert (turned["x"], turned["y"], turned["w"], turned["h"]) == pytest.approx((110 * k, 220 * k, 160 * k, 80 * k),
+                                                                                abs=0.01)
+    assert (turned["angle"], turned["flip_h"], turned["flip_v"]) == (28.65, False, False)
+    assert (cropped["angle"], cropped["crop"], cropped["y"]) == (0, {"x": 0, "y": 0, "w": 1, "h": 1},
+                                                                 pytest.approx(440 * k, abs=0.01))
 
 
 # --- the key, the folders, what is refused ---------------------------------------------------

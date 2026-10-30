@@ -97,11 +97,11 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     assertEq((await page.$$(".pdfInkBar .inkToolInk")).length, 7, "the default presets: four pens, three highlighters");
     const buttons = await page.locator(".pdfInkRow button").evaluateAll((els) => els.map((el) => el.getAttribute("aria-label")));
     assertEq(JSON.stringify(buttons.slice(-2)), JSON.stringify(["Undo ink", "Redo ink"]), "history controls are last");
-    // Five groups split by rules: presets | eraser, lasso, text | hand | More, close | undo, redo.
+    // Five groups split by rules: presets | eraser, lasso, text, picture | hand | More, close | undo, redo.
     const groups = await page.locator(".pdfInkRow").evaluate((row) => [...row.children].map((el) =>
       el.classList.contains("pdfInkSep") ? "|" : el.classList.contains("pdfInkHistory") ? "history"
         : el.hasAttribute("data-order-id") ? "preset" : (el.getAttribute("aria-label") || "").split(" ")[0]).join(" "));
-    assertEq(groups, "preset preset preset preset preset preset preset | Eraser Lasso Text | Hand | More Close | history", "the row's five groups");
+    assertEq(groups, "preset preset preset preset preset preset preset | Eraser Lasso Text Picture | Hand | More Close | history", "the row's five groups");
     box = await page.locator('[data-page="1"]').boundingBox();
     await drawLine(page, [box.x + 100, box.y + 150], [box.x + 250, box.y + 170]);
     await drawLine(page, [box.x + 100, box.y + 250], [box.x + 250, box.y + 280]);

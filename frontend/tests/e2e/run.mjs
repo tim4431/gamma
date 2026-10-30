@@ -50,6 +50,7 @@ import { inkScenarios } from "./scenarios/ink.mjs";
 import { notebookScenarios } from "./scenarios/notebooks.mjs";
 import { recordingScenarios } from "./scenarios/recording.mjs";
 import { textBoxScenarios } from "./scenarios/textBoxes.mjs";
+import { pictureScenarios } from "./scenarios/pictures.mjs";
 import { guideScenarios } from "./scenarios/guide.mjs";
 import { contextualGuideScenarios } from "./scenarios/contextualGuide.mjs";
 import { triggeredGuideScenarios } from "./scenarios/triggeredGuide.mjs";
@@ -88,6 +89,7 @@ const RUNNERS = {
   "notebooks": notebookScenarios,
   "recording": recordingScenarios,
   "textbox": textBoxScenarios,
+  "pictures": pictureScenarios,
   "pdf-touch": pdfTouchScenarios,
   "publish": publishScenarios,
   "chat-navigation": chatNavigationScenarios,

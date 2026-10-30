@@ -27,6 +27,7 @@ export const GROUPS = [
   { id: "touch", files: ["touch.mjs"], s: 63 },
   { id: "guide", files: ["guide.mjs"], s: 61 },
   { id: "contextual-guide", files: ["contextualGuide.mjs"], s: 60 },
+  { id: "pictures", files: ["pictures.mjs"], s: 46 },
   { id: "transfers", files: ["transfers.mjs"], s: 45 },
   { id: "textbox", files: ["textBoxes.mjs"], s: 42 },
   { id: "ipad", files: ["ipad.mjs"], s: 37 },
@@ -75,12 +76,12 @@ const ALL = "all";
 const GUIDES = ["guide", "contextual-guide", "triggered-guide"];
 const CHAT = ["chat-navigation", "mentions", "contextual-guide", "triggered-guide", "notes-pdf-share", "touch"];
 // every group that opens a PDF in the viewer
-const PDF_VIEW = ["notes-pdf-share", "translation", "pdf-load", "pdf-touch", "ink", "ink-editing", "ink-shapes", "ink-zoom", "textbox", "collab", "comments", "files", "transfers", "touch", ...GUIDES];
+const PDF_VIEW = ["notes-pdf-share", "translation", "pdf-load", "pdf-touch", "ink", "ink-editing", "ink-shapes", "ink-zoom", "textbox", "pictures", "collab", "comments", "files", "transfers", "touch", ...GUIDES];
 const EXPORTS = ["transfers", "files", "ink", "diagrams"];
-// what a change to the handwriting (src/ink/) can break: a text box's menu is
-// placed and labelled by the ink layer's helpers; ipad: the host claim path;
-// comments: a press with a pen or the Text tool armed leaves a margin card alone
-const INK = ["ink", "ink-editing", "ink-shapes", "ink-zoom", "pdf-touch", "triggered-guide", "notebooks", "textbox", "touch", "ipad", "comments"];
+// what a change to the handwriting (src/ink/) can break: a text box's menu and a
+// picture's are placed and labelled by the ink layer's helpers; ipad: the host
+// claim path; comments: a press with a pen or the Text tool armed leaves a margin card alone
+const INK = ["ink", "ink-editing", "ink-shapes", "ink-zoom", "pdf-touch", "triggered-guide", "notebooks", "textbox", "pictures", "touch", "ipad", "comments"];
 
 // [glob, groups], first match wins. `**` spans folders, `*` stays in one.
 // ALL is for what every scenario goes through (the app shell, shared UI,
@@ -123,9 +124,9 @@ export const RULES = [
   ["frontend/src/ink/useInkSurfaces.js", [...INK, "recording"]], // the player's ink groups
   ["frontend/src/ink/inkSurfaces.js", [...INK, "recording"]],
   ["frontend/src/ink/**", INK], // inkCommands.js too: the commands' keys are ink-editing's and ipad's steps
-  // what a page surface carries (ink and text boxes) and the tool strip, whose anchors the ink tour uses
-  ["frontend/src/markup/**", ["ink", "ink-editing", "ink-shapes", "ink-zoom", "pdf-touch", "triggered-guide", "notebooks", "textbox", "touch", "comments"]],
-  ["frontend/src/notebook/**", ["notebooks", "textbox", "touch"]],
+  // what a page surface carries (ink, text boxes and pictures) and the tool strip, whose anchors the ink tour uses
+  ["frontend/src/markup/**", ["ink", "ink-editing", "ink-shapes", "ink-zoom", "pdf-touch", "triggered-guide", "notebooks", "textbox", "pictures", "touch", "comments"]],
+  ["frontend/src/notebook/**", ["notebooks", "textbox", "pictures", "touch"]],
   // the replay store every handwriting replay and a recording's player run on
   ["frontend/src/replay/**", ["ink", "ink-editing", "notebooks", "recording"]],
   ["frontend/src/recording/**", ["recording"]],
@@ -140,7 +141,7 @@ export const RULES = [
   ["frontend/src/editor/MentionMenu.jsx", ["note-mentions", "notes-pdf-share", "inbox"]],
   // the @ menu's state and keys, a note row's and a comment field's
   ["frontend/src/editor/useMentionMenu.js", ["note-mentions", "notes-pdf-share", "comments", "inbox"]],
-  ["frontend/src/editor/**", ["notes-pdf-share", "diagrams", "files", "collab", "comments", "transfers", "mcp", "guide", "triggered-guide", "textbox", "touch"]],
+  ["frontend/src/editor/**", ["notes-pdf-share", "diagrams", "files", "collab", "comments", "transfers", "mcp", "guide", "triggered-guide", "textbox", "pictures", "touch"]],
   ["frontend/src/chat/**", [...CHAT, "ink-zoom"]], // ink-zoom: a selection's Transcribe reaches the chat's request
   // the Inbox notifications row
   ["frontend/src/settings/SettingsAppearance.jsx", ["settings", "i18n", "mirror", "cloud-sign-in", "mcp", "publish", "triggered-guide", "ipad", "inbox"]],
@@ -198,7 +199,9 @@ export const RULES = [
   ["backend/gamma/recording.py", ["recording", ...EXPORTS]],
   ["backend/gamma/routers/recordings.py", ["recording"]],
   // what the exports, the notebook PDF and the agent's outline read of a text box
-  ["backend/gamma/text_box.py", [...EXPORTS, "notebooks", "textbox", ...CHAT]],
+  ["backend/gamma/text_box.py", [...EXPORTS, "notebooks", "textbox", "pictures", ...CHAT]],
+  // the picture rules the server keeps (the kind, the merge), and what the exports and the AI read of one
+  ["backend/gamma/picture.py", [...EXPORTS, "notebooks", "pictures", ...CHAT]],
   ["backend/gamma/pdf_meta.py", PDF_VIEW],
   ["backend/gamma/pdf_text.py", PDF_VIEW],
   ["backend/gamma/pdf_index.py", ["notes-pdf-share", "quick-open"]],
