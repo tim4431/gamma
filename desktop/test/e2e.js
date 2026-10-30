@@ -783,6 +783,80 @@ async function main() {
       return `${links[0].dest} from ${links[0].remote_url}, then dropped`;
     });
 
+    await step('file on this computer: a page follows a PDF on disk; a new version is sent and the panel says so', async () => {
+      await hook(app, (s, id) => s.openServer(id), ids.alpha);
+      await waitLoggedIn(content);
+      const ws = (await waitFor(async () => hook(app, (s) => s.gamma()), 'workspaces read', 15_000)).current;
+      const page = await serverCall(app, '/api/blocks', { ws, method: 'POST', body: { parent_id: 'root', content: 'Followed draft' } });
+      const docOf = async () => (await serverCall(app, `/api/blocks/${page.id}`, { ws })).properties.doc_id || '';
+      // A build's output, dated a while back so that it reads as finished
+      // (settled: a few seconds old, %%EOF at its end): its doc_id.
+      const pdf = path.join(profile, 'build', 'main.pdf');
+      fs.mkdirSync(path.dirname(pdf), { recursive: true });
+      const build = (text) => {
+        const bytes = minimalPdf(text);
+        fs.writeFileSync(pdf, bytes);
+        const past = new Date(Date.now() - 10_000);
+        fs.utimesSync(pdf, past, past);
+        return crypto.createHash('sha256').update(bytes).digest('hex').slice(0, 24);
+      };
+      const first = build('Followed draft, first build');
+      await hook(app, (s, f) => { process.env.GAMMA_SHELL_PICK_FILE = f; }, pdf); // the file picker's answer
+      const link = await hook(app, (s, [w, p]) => s.followFile(w, p), [ws, page.id]);
+      assert.equal(link.kind, 'file');
+      assert.equal(link.page_id, page.id);
+      assert.equal(fs.realpathSync(link.dest).toLowerCase(), fs.realpathSync(pdf).toLowerCase(), 'the file the picker said');
+      await waitFor(async () => /follows main\.pdf: each new version is sent to Gamma/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
+      await waitFor(async () => (await docOf()) === first, 'the page carries the first build', 30_000, 500);
+      // Asked again for the same page, it shows the file instead.
+      await hook(app, (s, [w, p]) => s.followFile(w, p), [ws, page.id]);
+      const opened = await hook(app, (s) => s.externalOpens[s.externalOpens.length - 1]);
+      assert.equal(fs.realpathSync(opened).toLowerCase(), fs.realpathSync(pdf).toLowerCase(), 'the file is shown');
+      // A new build: the row's "sync" sends it now (the server's own loop would, within its 30 s tick).
+      const second = build('Followed draft, second build with more text');
+      const row = await keptRow(app, bar, 'file', 'Followed draft');
+      assert.equal(await bar.locator('#syncPanel .menuLabel', { hasText: 'Files followed' }).count(), 1, 'under its own heading');
+      for (const act of ['pause', 'sync', 'stop']) assert(await row.locator(`[data-act="${act}"]`).isVisible(), `"${act}" shown`);
+      await row.locator('[data-act="sync"]').click();
+      await waitFor(async () => (await docOf()) === second, 'the page carries the second build', 60_000, 500);
+      await waitFor(async () => /main\.pdf( was sent to Gamma|: nothing new to send)/.test((await hook(app, (s) => s.notice())) || ''), 'the sync reported', 15_000);
+      await panelStaysOpen(app, bar);
+      await waitFor(async () => (await row.locator('.state').textContent()).startsWith('Sent'), 'the row reads Sent', 15_000);
+      // "stop" drops the link; the file stays as it is.
+      await row.locator('[data-act="stop"]').click();
+      await menuClosed(bar);
+      await waitFor(async () => {
+        await hook(app, (s) => s.refreshKeeping());
+        return !(await hook(app, (s) => s.keeping().items.some((i) => i.kind === 'file')));
+      }, 'the link is gone', 15_000);
+      assert(fs.existsSync(pdf), 'the file stays');
+      assert.equal(await docOf(), second, 'the page keeps the last build');
+      await waitFor(async () => /no longer follows main\.pdf/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
+      return `${page.id} followed ${link.dest}: ${first}, then ${second}`;
+    });
+
+    await step('sending back from a kept folder: the folder row\'s upload arrow turns it on and off', async () => {
+      const row = await keptRow(app, bar, 'folder', 'Kept lab');
+      const pushOf = async () => {
+        await hook(app, (s) => s.refreshKeeping());
+        return (await hook(app, (s) => s.keeping().items.find((i) => i.kind === 'folder' && i.name === 'Kept lab'))).push;
+      };
+      const toggle = (act, pressed) => row.locator(`[data-act="${act}"][aria-pressed="${pressed}"]`);
+      assert.equal(await toggle('push-on', false).count(), 1, 'off until asked for');
+      await toggle('push-on', false).click();
+      await waitFor(async () => (await toggle('push-off', true).count()) === 1, 'shown on', 15_000);
+      await panelStaysOpen(app, bar);
+      assert.equal(await pushOf(), true, 'on, on the server');
+      await waitFor(async () => /sends PDFs you change there back to Gamma/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
+      await toggle('push-off', true).click();
+      await waitFor(async () => (await toggle('push-on', false).count()) === 1, 'shown off', 15_000);
+      assert.equal(await pushOf(), false, 'off, on the server');
+      await waitFor(async () => /no longer sends PDFs back/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
+      await bar.keyboard.press('Escape');
+      await menuClosed(bar);
+      return 'on, then off';
+    });
+
     await step('background: with "keep running" on, closing the window leaves the servers up and the tray in place; the window comes back', async () => {
       const live = Object.values(pids).filter(Boolean);
       assert(live.length, 'have sidecar pids');

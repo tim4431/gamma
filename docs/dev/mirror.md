@@ -73,7 +73,12 @@ the frontend changes: editing a mirror is editing a workspace.
   does not echo the kind (an older server) gets it whole. Every fetched tree's files are checked, not only the
   changed blocks', and each round ends with a sweep for files the copy's
   pages name but lack (`missing_uploads`), so a round cut short after a
-  page landed but before its PDF did heals by itself. A fetched file is
+  page landed but before its PDF did heals by itself. The files that
+  travel are the ones the pages show (`storage.upload_refs` with
+  `held=False`): the older PDF a pending highlight holds after a
+  replacement ([highlight_relocation.md](highlight_relocation.md)) stays
+  on the copy that has it, so a page published to the share host never
+  carries it. A fetched file is
   stored only when it is what its name says (`storage.matches_name`: a PDF
   must be a PDF, anything else must hash to its name); a captive portal's
   page is dropped with a warning and fetched again next round. It must
@@ -1038,9 +1043,10 @@ the Gamma server it runs on the device keeps clones like any other
 
 The folder sync ([folder_sync.md](folder_sync.md)) keeps no copy of the
 workspace either: it writes one folder's pages to a directory
-on a PC as files, one way from Gamma to disk, through
+on a PC as files, from Gamma to disk, through
 `GET /api/sync/folders/{id}` (the manifest) and `…/notes` beside the change
-feed.
+feed. Only PDFs go back, each one as its page's new file through the
+replacement route, never as a merge.
 
 ## Limits and next steps
 

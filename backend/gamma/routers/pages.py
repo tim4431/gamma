@@ -16,9 +16,9 @@ import re
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from .. import highlight_relocate, jobs, pdf_index, publish
+from .. import highlight_relocate, jobs, pdf_index, publish, upload_gc
 from ..auth import actor_of, require_user_id, require_ws
 from ..blocks_store import (
     BLOCK_COLUMNS,
@@ -36,7 +36,7 @@ from ..blocks_store import (
 from ..db import connect_pages_db, get_profile, safe_doc_id
 from ..markdown_zip_import import markdown_page
 from ..logbuf import log
-from ..storage import find_upload_file
+from ..storage import UNSTORED, find_upload_file
 from ..ops import MAX_OPS, OpError, after_commit, after_commits, apply_batches, apply_ops, props_patch
 from .imports import originals_gone
 
@@ -58,6 +58,8 @@ class AttachRequest(BaseModel):
     doc_id: str = ""              # content hash of an uploaded PDF, or the URL hash a proxied one gets
     source_url: str = ""          # where the viewer loads it from (not stored when it is doc_id's own upload path)
     original_filename: str = ""   # display name; becomes the title while it is still automatic
+    # PUT: the stored file let go of lives this many days once nothing references it, not 30 (a sync's older build)
+    keep_old_days: int | None = Field(default=None, ge=1, le=30)
 
 
 def _load_page(conn, page_id: str):
@@ -174,16 +176,26 @@ def _attachment_body(payload: AttachRequest) -> tuple[str, str]:
     return doc_id, source_url
 
 
-def _held_elsewhere(conn, doc_id: str):
-    """The 409 for a ``doc_id`` a page carries already (``{"detail",
-    "page_id"}``, so the client can offer to open that page), else None.
-    Callers ask only for a ``doc_id`` the page itself does not carry, so
-    any page found is another."""
+class HeldElsewhere(HTTPException):
+    """The 409 for a ``doc_id`` another page, ``page_id``, carries already.
+    The routes answer it with that page's id beside the detail
+    (``response``), so the client can offer to open that page."""
+
+    def __init__(self, page_id: str):
+        super().__init__(status_code=409, detail="attachment belongs to another page")
+        self.page_id = page_id
+
+    def response(self) -> JSONResponse:
+        return JSONResponse(status_code=409, content={"detail": self.detail, "page_id": self.page_id})
+
+
+def _held_elsewhere(conn, doc_id: str) -> None:
+    """``HeldElsewhere`` for a ``doc_id`` a page carries already. Callers
+    ask only for a ``doc_id`` the page itself does not carry, so any page
+    found is another."""
     other = page_for_doc(conn, doc_id) if doc_id else None
     if other:
-        return JSONResponse(status_code=409, content={
-            "detail": "attachment belongs to another page", "page_id": other[0]})
-    return None
+        raise HeldElsewhere(other[0])
 
 
 def _attachment_op(page: dict, doc_id: str, source_url: str, original_filename: str) -> tuple[dict, str, dict, bool]:
@@ -234,9 +246,10 @@ def attach_pdf(page_id: str, payload: AttachRequest, request: Request):
         page = _load_page(conn, page_id)
         if page_attachment(page["properties"]):
             raise HTTPException(status_code=409, detail="page already has an attachment")
-        conflict = _held_elsewhere(conn, doc_id)
-        if conflict:
-            return conflict
+        try:
+            _held_elsewhere(conn, doc_id)
+        except HeldElsewhere as e:
+            return e.response()
         op, content, props, _moved = _attachment_op(page, doc_id, source_url, payload.original_filename)
         result = after_commit(ws, conn, apply_ops(conn, page_id, [op], actor=actor_of(request)))
     return {**page, "content": content, "properties": props, "updated_at": result["at"]}
@@ -264,7 +277,7 @@ def replace_pdf(page_id: str, payload: AttachRequest, request: Request):
     has highlights placed on its PDF, the same transaction writes the
     outgoing file's id as ``pdf_position.doc_id`` on each of them that
     names no file yet (the file its rectangles were measured on;
-    ``highlight_relocate.UNSTORED`` for a page that showed its file from a
+    ``storage.UNSTORED`` for a page that showed its file from a
     URL alone) and drops a lost one's ``closest`` (a place in the outgoing
     file), and after the commit the ``relocate-highlights`` job starts
     (``_start_relocation``): each highlight is found again in the new file
@@ -274,20 +287,41 @@ def replace_pdf(page_id: str, payload: AttachRequest, request: Request):
     background tasks are full (the Document menu's Find highlights in this
     PDF places the highlights later), or the new PDF is shown from a URL
     alone (``NOT_STORED``: no file to read). The replacement stands
-    either way."""
+    either way.
+
+    ``keep_old_days`` (1 to 30) shortens the life of the stored file the
+    page let go of, once nothing references it, from 30 days to that many
+    (``upload_gc.retain``): a sync sending each new build keeps one day of
+    the builds before (gamma/gamma_sync.py ``KEEP_OLD_DAYS``)."""
     ws = require_ws(request, write=True)
     doc_id, source_url = _attachment_body(payload)
+    try:
+        return replace_attachment(ws, page_id, doc_id, source_url, payload.original_filename, actor=actor_of(request),
+                                  owner=request.state.user_id, keep_old_days=payload.keep_old_days)
+    except HeldElsewhere as e:
+        return e.response()
+
+
+def replace_attachment(ws: str, page_id: str, doc_id: str, source_url: str | None, original_filename: str, *,
+                       actor: str, owner: str, keep_old_days: int | None = None) -> dict:
+    """The replacement ``PUT /pages/{id}/attachment`` makes (``replace_pdf``),
+    without a request: what the desktop app's own server calls for a PDF
+    changed on disk (gamma/folder_links.py ``LocalSink``). ``doc_id`` and
+    ``source_url`` as ``_attachment_body`` checks them; ``actor`` is who the
+    ops are written by, ``owner`` the account whose relocation run starts.
+    → the answer ``replace_pdf`` gives; HTTPException for a page that is not
+    there or not a page, ``HeldElsewhere`` for a ``doc_id`` another page
+    carries."""
+    source_url = source_url or ""
     with connect_pages_db(ws) as conn:
         write_lock(conn)  # the checks and the write as one step, like attach_pdf
         try:
             page = _load_page(conn, page_id)
             old = str(page["properties"].get("doc_id") or "")
-            conflict = _held_elsewhere(conn, doc_id) if doc_id != old else None
-            if conflict:
-                conn.rollback()
-                return conflict
+            if doc_id != old:
+                _held_elsewhere(conn, doc_id)
             had = page_attachment(page["properties"]) is not None
-            op, content, props, moved = _attachment_op(page, doc_id, source_url, payload.original_filename)
+            op, content, props, moved = _attachment_op(page, doc_id, source_url, original_filename)
             if not op["props"] and "content" not in op:
                 conn.rollback()  # nothing to write: let go of the lock
                 return page
@@ -302,14 +336,14 @@ def replace_pdf(page_id: str, payload: AttachRequest, request: Request):
                 # that is a place in the outgoing file (the run finds the new file's)
                 stamped = {k: v for k, v in p["pdf_position"].items() if k != "closest"}
                 if not stamped.get("doc_id"):
-                    stamped["doc_id"] = outgoing or highlight_relocate.UNSTORED
+                    stamped["doc_id"] = outgoing or UNSTORED
                 if stamped != p["pdf_position"]:
                     stamps.append({"op": "set", "id": bid, "props": {"pdf_position": stamped}})
             batches = [(page_id, [op])]
             for extra in (marks, stamps):
                 batches += [(page_id, extra[i:i + MAX_OPS]) for i in range(0, len(extra), MAX_OPS)]
             try:
-                results = apply_batches(conn, batches, actor=actor_of(request))
+                results = apply_batches(conn, batches, actor=actor)
             except OpError as e:
                 raise HTTPException(status_code=e.status, detail=e.detail)
             conn.commit()
@@ -319,9 +353,14 @@ def replace_pdf(page_id: str, payload: AttachRequest, request: Request):
         after_commits(ws, conn, results)
         if old and old != doc_id:
             pdf_index.purge_unused(ws, conn)
+    if keep_old_days and outgoing and outgoing != incoming:
+        try:
+            upload_gc.retain(ws, f"{outgoing}.pdf", keep_old_days * 86400)
+        except Exception as e:  # the replacement stands either way
+            log.warning(f"[replace] {page_id}: {outgoing}.pdf keeps the usual 30 days ({e!r})")
     answer = {**page, "content": content, "properties": props, "updated_at": results[0]["at"]}
     if placed:
-        job, reason = (_start_relocation(request, ws, page["id"], content, incoming, outgoing=outgoing)
+        job, reason = (_start_relocation(owner, ws, page["id"], content, incoming, outgoing=outgoing)
                        if incoming else (None, NOT_STORED))
         if job:
             answer["job"] = job
@@ -330,11 +369,11 @@ def replace_pdf(page_id: str, payload: AttachRequest, request: Request):
     return answer
 
 
-def _start_relocation(request: Request, ws: str, page_id: str, title: str, new_doc: str, *,
+def _start_relocation(owner: str, ws: str, page_id: str, title: str, new_doc: str, *,
                       outgoing: str | None = None, quiet: bool = True) -> tuple[dict | None, str]:
     """Start the ``relocate-highlights`` job that places the page's
     highlights in its PDF ``new_doc`` (gamma/highlight_relocate.py
-    ``relocate``), owned by the account behind the request. One run per
+    ``relocate``), owned by the account ``owner``. One run per
     page and file: its key is ``<page id>:<new_doc>``, and a start while a
     run for the same page and file is going answers that run. A
     replacement (``outgoing``: the file it replaced) first stops the same
@@ -353,7 +392,6 @@ def _start_relocation(request: Request, ws: str, page_id: str, title: str, new_d
     ``min_match`` (a fraction) and ``exact_chars``, and its result echoes:
     a setting changed later leaves the runs already started as they
     are."""
-    owner = request.state.user_id
     name = " ".join((title or "").split())[:80] or "Untitled"
     limits = highlight_relocate.thresholds(get_profile(owner)[0])
     params = {"page_id": page_id, "title": name, "doc_id": new_doc, **limits}
@@ -416,7 +454,7 @@ def relocate_highlights(payload: RelocateRequest, request: Request):
         raise HTTPException(status_code=400, detail=NOT_STORED)
     if not placed:
         raise HTTPException(status_code=400, detail="the page has no highlights placed on its PDF")
-    job, _reason = _start_relocation(request, ws, page["id"], page["content"], new_doc, quiet=False)
+    job, _reason = _start_relocation(request.state.user_id, ws, page["id"], page["content"], new_doc, quiet=False)
     return job
 
 

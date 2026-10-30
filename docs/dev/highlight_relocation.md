@@ -148,7 +148,7 @@ The replacement writes it, in the transaction that changes the attachment
 in batches of `MAX_OPS` the same way): the outgoing file's id on every
 placed highlight of the page whose position names no file yet (a
 duplicated page's: the upload its address serves), or `unstored`
-(`highlight_relocate.UNSTORED`; uploads are named by their content hash, so
+(`storage.UNSTORED`; uploads are named by their content hash, so
 it names none) for a page that showed its old file from another URL alone.
 A position that already names a file keeps it. The same write drops a lost
 highlight's `closest` ([What a run writes](#what-a-run-writes)): that is a
@@ -165,9 +165,17 @@ one, else the stored file, looked for among the workspace's uploads only
 (`find_upload_file`, never fetched), each file opened once. A `doc_id` that
 is no file name names no file. A file no longer stored logs `[relocate]
 <page>: the file <id> is no longer stored; its highlights are placed by
-their quotes`, and so they are, without context. The stamp is no reference
-to the file: it is purged 30 days after nothing else references it, as any
-replaced file ([user_db.md](user_db.md) "Stored files"). A position without
+their quotes`, and so they are, without context. The stamp is a reference
+to the file, and so is a `prev`'s `doc_id` (`storage.upload_refs`): the file
+a pending highlight was measured on stays stored while the highlight names
+it, and goes to the orphan bookkeeping once Accept, Use closest match, a
+move or a run that places it solid drops the name. It is then purged 30
+days after nothing references it, or after the day a sync's replacement
+asked for (`keep_old_days`, [user_db.md](user_db.md) "Stored files"). The
+file stays on the copy that holds it: a mirror and an export through a
+share carry only the files the pages show. A
+file is no longer stored when it was purged before pending highlights held
+their files, or removed some other way. A position without
 `doc_id` is read from the page's new file, unless it is `lost`: it was not
 found in that file, so only its quote is looked for. A text highlight's
 stored quote and the text read under its rectangles agree when, both
@@ -726,9 +734,10 @@ colour where they fall in the crop (`rectsInCrop`). While it loads, a
 placeholder of the crop's shape (`cropAspect`). The picture takes the
 page's paper and the theme's treatment of it, flipped on a flipped page, as
 the viewer's pages and the zoom window do. When it cannot be had (a file no
-longer stored answers 404; a `doc_id` that is no file name, such as
-`unstored`, asks for none) one line says "The previous version of this PDF
-is no longer stored.", and the old quote follows (ending in "…" when
+longer stored answers 404, which a highlight that holds its file meets only
+when the file was purged before that rule or removed some other way; a
+`doc_id` that is no file name, such as `unstored`, asks for none) one line
+says "The previous version of this PDF is no longer stored.", and the old quote follows (ending in "…" when
 clipped, below). A share view asks for no picture (`beforeCrop`): the
 route is a workspace member's and reads no share token, and its box is the
 asker's to choose, so opening it to a share link would let one cut whole

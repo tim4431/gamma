@@ -14,7 +14,7 @@ import pytest
 from conftest import guest_name, workspace_of
 
 from gamma import highlight_relocate as hr
-from gamma import jobs
+from gamma import jobs, storage
 from gamma.highlights import from_scaled, previous_place
 from gamma.pdf_text import GlyphPages, has_box
 
@@ -1778,7 +1778,7 @@ def test_the_highlights_of_a_page_shown_from_a_url_alone_are_placed_by_their_quo
         m.setattr(jobs, "MAX_ACTIVE_PER_ACCOUNT", 0)
         _replace(guest, page["id"], _pdf([[(72, 100, "A new front page")], [(72, 300, LINE_A)]]))
     # no stored file to read it from: named as such, so no run reads the new file under its rects
-    assert _props(guest, hl)["pdf_position"]["doc_id"] == hr.UNSTORED
+    assert _props(guest, hl)["pdf_position"]["doc_id"] == storage.UNSTORED
     job = guest.post("/api/jobs/relocate-highlights", json={"page_id": page["id"]}).json()
     assert _done(guest, job) == {**NOTHING, "highlights": 1, "moved": 1}
     pos = _props(guest, hl)["pdf_position"]
@@ -1834,7 +1834,7 @@ def test_a_pdf_shown_from_a_url_alone_starts_no_run(guest):
     body = r.json()
     assert body["properties"]["source_url"] == "https://example.org/paper-v2.pdf" and "job" not in body
     assert body["relocation_error"] == "the PDF is not stored on the server"
-    assert _props(guest, hl)["pdf_position"]["doc_id"] == hr.UNSTORED
+    assert _props(guest, hl)["pdf_position"]["doc_id"] == storage.UNSTORED
 
 
 def test_the_manual_run_after_a_skipped_one_reads_the_old_file(guest, monkeypatch):

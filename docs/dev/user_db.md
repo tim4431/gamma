@@ -127,13 +127,17 @@ All state is SQLite + files on disk under a data directory (env
     the remote's address and workspace, the write token (Fernet-encrypted
     with the data directory's key), the feed cursors, the last round's
     status and the `page_filter` of a publication ([mirror.md](mirror.md));
-  - `folder_links` — the folders the desktop app's own server keeps as
-    directories on this computer: workspace, folder (a block id, or `root`), the directory's path
-    on this computer, whether notes files are written, the
-    change-log seq the last round saw and its status, and for a folder on
-    another Gamma server that server's address, a token of it
-    (Fernet-encrypted like the mirrors') and the token's id
-    ([folder_sync.md](folder_sync.md) "Folders kept by the desktop app");
+  - `folder_links` — what the desktop app's own server keeps in step with
+    this computer's disk, by `kind`: a folder kept as a directory
+    (`folder`: workspace, folder, a block id or `root`, the directory's
+    path, whether notes files are written, whether PDFs changed there go
+    back, `push`) or a page that follows one PDF file (`file`: workspace,
+    `page_id`, the file's path, `push` always 1, and in `state` what its
+    rounds know of the file). Both keep the change-log seq the last round
+    saw and its status, and for a folder or page on another Gamma server
+    that server's address, a token of it (Fernet-encrypted like the
+    mirrors') and the token's id ([folder_sync.md](folder_sync.md)
+    "Folders kept by the desktop app");
   - `jobs` — background jobs (exports, backups, restores, imports, the
     search indexer): owner (an account id, `''` for a workspace's own
     work), workspace, kind, parameters, state, last progress, result, error, the produced
@@ -224,6 +228,9 @@ All state is SQLite + files on disk under a data directory (env
     ([mirror.md](mirror.md); empty in a workspace that mirrors nothing);
   - `upload_orphans` — the stored files nothing references
     (`name`, `since`; "Stored files" below);
+  - `upload_retention` — the stored files kept for less than 30 days once
+    nothing references them (`name`, `keep_s`, `since`; "Stored files"
+    below);
   - `chats` / `chat_history` — the AI chat
     ([chat_history.md](chat_history.md)): one active conversation per `bucket` (a page's id, a
     folder's id, or `home`) with its `title` and its version
@@ -546,9 +553,22 @@ track of the ones nothing uses.
   remote announced is refused before the check ([mirror.md](mirror.md)).
 - **What counts as a reference.** `storage.upload_refs`, the one grammar:
   `/api/uploads/<name>` anywhere in a block's content or properties (images,
-  file chips, `ink_url`, a picture's `picture.url`, `source_url`) and a
-  block's `doc_id` (its PDF, `<doc_id>.pdf`). A mirror's file transfer and
-  a page export's file list read references through it too. A saved AI
+  file chips, `ink_url`, a picture's `picture.url`, `source_url`), a
+  block's `doc_id` (its PDF, `<doc_id>.pdf`), and a highlight's
+  `pdf_position.doc_id` and `pdf_position.prev.doc_id`. Those two name the
+  file a highlight's rectangles were measured on, after a replacement, and
+  stay until the highlight is resolved (Accept, Use closest match, a move,
+  or a run that places it solid). So **a pending highlight holds its
+  file**: its review card's Before picture and a later run read it
+  ([highlight_relocation.md](highlight_relocation.md)). `unstored` names no
+  file. A mirror's file transfer and
+  a page export's file list read references through it too, with
+  `held=False` where a copy goes elsewhere: a mirror (and a page published
+  to the share host) and an export through a share carry what the pages
+  show, not the older PDF a pending highlight holds, which a share would
+  not serve (`GET /api/uploads/<name>?share=` answers only a page's own
+  file and the `/api/uploads/` names in it). The owner's own export and a
+  backup carry it. A saved AI
   conversation's pictures count as well: `/api/uploads/<name>` in the
   `chats` and `chat_history` messages ([ai.md](ai.md#pictures));
   `upload_gc.referenced` reads both.
@@ -566,6 +586,24 @@ track of the ones nothing uses.
   either before the check (the file stays) or after the delete (the bytes
   are written again). Until it is purged, an unreferenced file counts against
   the quota like any other.
+- **A shorter life.** `upload_gc.retain(ws, name, keep_s)` keeps one file
+  for `keep_s` seconds instead of 30 days once nothing references it: a
+  row of `upload_retention` (`name`, `keep_s`, `since`). The replacement
+  writes it for the file a page let go of when it was asked
+  `keep_old_days` ([api.md](api.md) `PUT /pages/{page_id}/attachment`),
+  which every PDF sent back from disk asks, for a day
+  ([folder_sync.md](folder_sync.md#sending-pdfs-back)). A file nothing
+  references then gets its `upload_orphans` record at once, past no upload
+  grace (it was attached, not just uploaded). A file only pending
+  highlights hold keeps its row for when the last of them goes, and then
+  goes after its own keep. A file some block still shows (another page's
+  `doc_id`, a duplicated page's `source_url`, an image) gets no row: it is
+  no build let go of, and keeps its 30 days for when that reference goes
+  too. The keep counts from both the record and the mtime, as the 30 days
+  do. A reference written to the file again removes the row
+  (`upload_gc.claim`), and the purge and the full pass drop the rows of
+  the files they delete or no longer find, and the full pass those of
+  files a block shows again (a writer past the op path).
 - **Who notices.** An op batch knows the names it stopped referencing
   (`dropped_uploads` on `apply_ops`'s result; `ops.delete_page` and the
   subtree replace likewise). It hands them to `upload_gc.schedule`, a check
@@ -584,8 +622,9 @@ track of the ones nothing uses.
   and purges. A workspace whose
   pages.db cannot be opened is logged as an error and the pass goes on to
   the next.
-- **The purge.** A file whose record and mtime are both more than 30 days
-  old is deleted (`storage.delete`). The references are read again under
+- **The purge.** A file whose record and mtime are both older than its
+  keep (30 days, or its `upload_retention` row's) is deleted
+  (`storage.delete`). The references are read again under
   the workspace's write lock first, so no batch can add one meanwhile, and
   each due file's date with them, one file at a time (`storage.stat`,
   never a listing of the workspace while writers wait; once the purge is
@@ -594,7 +633,8 @@ track of the ones nothing uses.
   no root row, no pages, a failing `PRAGMA quick_check`, or more files at
   once than one purge may take (over 100, or over 10 and a fifth of the
   workspace's files). A restore starts the restored records' 30 days over
-  (`upload_gc.restart_clocks`), so it never makes a file due at once.
+  and drops the shorter lives (`upload_gc.restart_clocks`), so it never
+  makes a file due soon.
 - **Elsewhere.** A workspace's deletion removes its files with its
   directory (`workspaces.remove_files`, `storage.delete_workspace`). A
   backup zip reads the files through the store, and a restore puts the ones

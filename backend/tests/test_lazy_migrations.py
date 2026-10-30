@@ -124,7 +124,7 @@ def test_the_startup_snapshot_leaves_the_workspaces_to_their_steps(step):
     with closing(sqlite3.connect(str(config.USERS_DB))) as conn:
         conn.execute("PRAGMA user_version = 32")
     result = migrations.ensure_current()
-    assert result["applied"] == ["page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done", "comments_inbox", "cloud_invitations", "email_invites"]
+    assert result["applied"] == ["page_ops_batch_id", "folder_links", "folder_links_remote", "reminders_done", "comments_inbox", "cloud_invitations", "email_invites", "folder_links_push"]
     snap = backups.info(Path(result["backup"]).name)
     assert "workspaces/lzUntouched/pages.db" in snap["files"] and snap["workspaces"] is True
     assert stamp_of(pages_db("lzUntouched")) == 33  # stamped by the walk, still behind on step V

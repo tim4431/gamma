@@ -44,7 +44,7 @@ from .textnorm import normalize_text
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 44
+SCHEMA_VERSION = 45
 # A workspace's pages.db keeps a version of its own (its ``PRAGMA
 # user_version``): the newest step whose per-workspace part has run on it
 # (gamma/migrations.py WORKSPACE_STEPS). One stamped 0 is at this version:
@@ -161,14 +161,19 @@ USERS_SCHEMA = [
         on_change INTEGER NOT NULL DEFAULT 1,
         page_filter TEXT
     )""",
-    # folder_links = folders the desktop app's own server keeps as
-    # directories on this computer (gamma/folder_links.py): the workspace, the folder (a folder block id,
-    # or 'root' for the whole library), the directory's full path on this computer,
-    # whether notes files are written, the change-log seq the last round
-    # saw, and that round's status as JSON. A link whose folder is on
-    # another Gamma server names it (remote_url; workspace_id is then its
-    # workspace there) with a token of it, Fernet-encrypted, and that
-    # token's id for whoever revokes it there.
+    # folder_links = what the desktop app's own server keeps in step with
+    # this computer's disk (gamma/folder_links.py). A folder link (kind
+    # 'folder') keeps a folder (a folder block id, or 'root' for the whole
+    # library) as the directory at `path`: whether notes files are written,
+    # whether PDFs changed there are sent back (`push`), the change-log seq
+    # the last round saw, and that round's status as JSON. A file link
+    # (kind 'file') makes the PDF at `path` the page `page_id`'s file each
+    # time it changes, `push` always 1; `state` holds what its rounds know of
+    # the file ({doc, size, mtime, ...}; a folder link's live in its
+    # directory's state file). A link whose folder or page is on another
+    # Gamma server names it (remote_url; workspace_id is then its workspace
+    # there) with a token of it, Fernet-encrypted, and that token's id for
+    # whoever revokes it there.
     """CREATE TABLE IF NOT EXISTS folder_links (
         id TEXT PRIMARY KEY,
         workspace_id TEXT NOT NULL,
@@ -181,7 +186,11 @@ USERS_SCHEMA = [
         status TEXT NOT NULL DEFAULT '{}',
         remote_url TEXT NOT NULL DEFAULT '',
         token TEXT NOT NULL DEFAULT '',
-        token_id TEXT NOT NULL DEFAULT ''
+        token_id TEXT NOT NULL DEFAULT '',
+        kind TEXT NOT NULL DEFAULT 'folder',
+        page_id TEXT NOT NULL DEFAULT '',
+        push INTEGER NOT NULL DEFAULT 0,
+        state TEXT NOT NULL DEFAULT '{}'
     )""",
     """CREATE TABLE IF NOT EXISTS publisher_sessions (
         user_id TEXT NOT NULL,
@@ -749,6 +758,16 @@ PAGES_SCHEMA = [
     # row, and a file still unreferenced 30 days on is purged.
     """CREATE TABLE IF NOT EXISTS upload_orphans (
         name TEXT PRIMARY KEY,
+        since TEXT NOT NULL
+    )""",
+    # upload_retention = stored files kept for less than the usual 30 days
+    # once nothing references them (gamma/upload_gc.py ``retain``): a PDF a
+    # sync replaced with a newer build, `keep_s` seconds counted like the
+    # 30 days, since `since`. A reference written to the file again
+    # removes the row. Additive: no step (docs/dev/migrations.md rule 2).
+    """CREATE TABLE IF NOT EXISTS upload_retention (
+        name TEXT PRIMARY KEY COLLATE NOCASE,
+        keep_s INTEGER NOT NULL,
         since TEXT NOT NULL
     )""",
     # page_ops = the per-page operation log (gamma/ops.py): one row per

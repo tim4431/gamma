@@ -220,7 +220,10 @@ def test_replace_swaps_the_pdf_and_keeps_the_page(guest, no_grace):
     # by attachment, the page is the new file's and no longer the old one's
     assert guest.get(f"/api/blocks/by-doc/{new}").json()["id"] == page["id"]
     assert guest.get(f"/api/blocks/by-doc/{old}").status_code == 404
-    # the old file stays stored, recorded as unreferenced; the new one is in use
+    # the old file stays stored and in use while the highlight names it; the new one is the page's
+    assert not {f"{old}.pdf", f"{new}.pdf"} & _orphans(ws)
+    # the highlight drawn where it is (as Accept does): the old file is left to the orphan bookkeeping
+    assert guest.put(f"/api/blocks/{hl['id']}", json={"properties": {"pdf_position": position}}).status_code == 200
     orphans = _orphans(ws)
     assert f"{old}.pdf" in orphans and f"{new}.pdf" not in orphans
     assert (ws_uploads_dir(ws) / f"{old}.pdf").is_file()
