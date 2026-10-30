@@ -78,7 +78,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-from . import config, migrations, ops, pdf_meta, storage, textmerge, workspaces
+from . import migrations, pdf_meta, storage, sync_clock, textmerge, workspaces
 from . import ink as inkmod
 from fractional_indexing import FIError, generate_key_between, validate_order_key
 
@@ -101,7 +101,7 @@ ACTOR = MIRROR_ACTOR       # ...and its actor (the remote's per-op authors are n
 MODES = ("two-way", "pull", "off")   # off = detached: the link (token, cursors, bases) is kept, no round runs
 ADOPT = ("theirs", "mine")           # whose version a never-reconciled page takes (a linked workspace, a force)
 DEBOUNCE_S = 1.0                     # a local edit → a round once things have been quiet this long (the loop wakes for it)
-TICK_S = 1                           # the loop's clock
+TICK_S = sync_clock.TICK_S           # the loop's clock (gamma/sync_clock.py)
 WHOAMI_TTL_S = 900                   # how long a round trusts the remote's last whoami (a failed round asks again)
 UNKNOWN_SEQ = -1                     # a base saved before the remote's answer was read: the next round fetches the page
 STREAM_CHUNK = 256 * 1024
@@ -368,7 +368,7 @@ def _parse_filter(raw) -> list[str] | None:
 def _row_info(row, *, with_token=False) -> dict:
     info = {"workspace_id": row[0], "remote_url": row[1], "remote_ws": row[2], "remote_name": row[3],
             "owner": row[5], "mode": row[6], "remote_cursor": row[7], "local_cursor": row[8],
-            "status": json.loads(row[9] or "{}"), "created_at": row[10],
+            "status": sync_clock.json_dict(row[9]), "created_at": row[10],
             "poll_s": int(row[11] if row[11] is not None else 30), "on_change": bool(row[12] if row[12] is not None else 1),
             "page_filter": _parse_filter(row[13])}
     if with_token:
@@ -397,39 +397,23 @@ def _clear_bases(ws: str) -> None:
         conn.commit()
 
 
+# The mirrors' table (gamma/sync_clock.py LinkTable, the Zotero link's too): a row's
+# fields saved, its status patched — one read-modify-write under the table's lock, so a
+# round and the actions taken while it runs (detach, a force, the filter, a direction
+# change) never overwrite each other's keys — its stored mode, and the clock's rows and
+# startup reset below.
+_links = sync_clock.LinkTable("mirrors", "mirror")
+_status_guard = _links.guard  # every read-modify-write of a mirror's status JSON (and its cursors)
+_patch_status = _links.patch_status
+_stored_mode = _links.stored_mode
+
+
 def _save(ws: str, **fields) -> None:
-    if "status" in fields and not isinstance(fields["status"], str):
-        fields["status"] = json.dumps(fields["status"])
+    """Write ``fields`` into the mirror's row; a new page filter is read
+    again at its next use."""
     if "page_filter" in fields:
         _filters.pop(ws, None)
-    sets = ", ".join(f"{k} = ?" for k in fields)
-    with connect_users_db() as conn:
-        conn.execute(f"UPDATE mirrors SET {sets} WHERE workspace_id = ?", (*fields.values(), ws))
-        conn.commit()
-
-
-_status_guard = threading.Lock()  # every read-modify-write of a mirror's status JSON (and its cursors)
-
-
-def _patch_status(ws: str, patch, *, drop=()) -> dict:
-    """Change some keys of the mirror's stored status and leave the rest as
-    they are now — one read-modify-write under a lock, so a round and the
-    actions taken while it runs (detach, a force, the filter, a direction
-    change) never overwrite each other's keys. ``patch`` is a dict laid over
-    the status, or a function of the current status returning the new one;
-    ``drop`` names keys to remove first. Returns the status as saved."""
-    with _status_guard:
-        mirror = get_mirror(ws)
-        status = {k: v for k, v in (mirror["status"] if mirror else {}).items() if k not in drop}
-        status = patch(status) if callable(patch) else {**status, **patch}
-        _save(ws, status=status)
-    return status
-
-
-def _stored_mode(ws: str) -> str:
-    with connect_users_db() as conn:
-        row = conn.execute("SELECT mode FROM mirrors WHERE workspace_id = ?", (ws,)).fetchone()
-    return row[0] if row else "off"
+    _links.save(ws, **fields)
 
 
 def whoami(remote: Remote) -> dict:
@@ -488,8 +472,10 @@ def create_mirror(owner: str, remote_url: str, token: str, *, name: str = "", mo
     existing personal workspace of the owner's (an imported backup, a copy detached
     and forgotten): its pages that exist on both sides have no common base,
     so the first round adopts ``adopt``'s version of each and records what
-    differed as ``diverged`` conflicts. Talks to the remote first
-    (``whoami``), so a bad URL or token fails before anything is created.
+    differed as ``diverged`` conflicts; a workspace a Zotero link keeps
+    (gamma/zotero_sync.py), detached or not, cannot be one. Talks to the
+    remote first (``whoami``), so a bad URL or token fails before anything
+    is created.
     ``page_filter`` limits the mirror to those pages (several filtered
     mirrors of one remote workspace may coexist: each moves only its own).
     Returns the mirror's info (run ``sync_workspace`` for the first fill)."""
@@ -513,6 +499,9 @@ def create_mirror(owner: str, remote_url: str, token: str, *, name: str = "", mo
             raise ValueError("that is not a workspace of yours")
         if get_mirror(workspace_id):
             raise ValueError("that workspace already mirrors something — detach or forget it first")
+        with connect_users_db() as conn:  # (gamma/zotero_sync.py imports this module: plain SQL here)
+            if conn.execute("SELECT 1 FROM zotero_links WHERE workspace_id = ?", (workspace_id,)).fetchone():
+                raise ValueError("that workspace is kept in step with a Zotero library — remove that link first")
         status["adopt"] = adopt
         _clear_bases(workspace_id)
     else:
@@ -583,7 +572,7 @@ def set_cadence(ws: str, *, poll_s: int | None = None, on_change: bool | None = 
     edit), ``mode`` (two-way / pull)."""
     fields = {}
     if poll_s is not None:
-        fields["poll_s"] = max(0, min(int(poll_s), 86400))
+        fields["poll_s"] = max(0, min(int(poll_s), sync_clock.POLL_MAX_S))
     if on_change is not None:
         fields["on_change"] = 1 if on_change else 0
     with _status_guard:  # the cursor reset must not race a round's cursor save
@@ -705,20 +694,23 @@ def remove_mirror(ws: str) -> None:
 # --- conflicts -----------------------------------------------------------------------
 
 def _conflict(conn, page_id: str, block_id: str, kind: str, mine="", theirs="", result="", base="", *,
-              once: bool = False) -> None:
+              once: bool = False, resolved: bool = False) -> int | None:
     """One row to look at. ``base`` is the text before either side edited it
     (a ``merged`` block), so the resolver can show what each side did; for a
     ``dropped`` one it names the block it was under. ``once``: not again
-    while the same row is open (a replace cut short and run again)."""
+    while the same row is open (a replace cut short and run again).
+    ``resolved``: written resolved, for the record (a difference a force
+    decided). Returns the row's id; None when ``once`` wrote none."""
     if once and conn.execute(
             "SELECT 1 FROM sync_conflicts WHERE resolved = 0 AND page_id = ? AND block_id = ? AND kind = ? "
             "AND mine = ? AND theirs = ?", (page_id, block_id, kind, mine or "", theirs or "")).fetchone():
-        return
-    conn.execute(
-        "INSERT INTO sync_conflicts (page_id, block_id, kind, mine, theirs, result, base, at) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
-        (page_id, block_id, kind, mine or "", theirs or "", result or "", base or "", page_now()))
+        return None
+    cur = conn.execute(
+        "INSERT INTO sync_conflicts (page_id, block_id, kind, mine, theirs, result, base, at, resolved) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (page_id, block_id, kind, mine or "", theirs or "", result or "", base or "", page_now(), int(resolved)))
     conn.commit()
+    return cur.lastrowid
 
 
 def _outline(tree: dict, top: str, only: set | None = None) -> str:
@@ -2141,19 +2133,24 @@ def _local_feed_all(ws: str, cursor: str) -> tuple[set, set, str]:
 def sync_workspace(ws: str, *, fetch=None) -> dict:
     """One round for the mirror ``ws``. Returns the status saved on the
     mirror (``{last_sync, last_error, pages_pulled, pages_pushed, ...}``).
-    Rounds for one workspace never overlap; a second caller waits — and
-    reads the mirror only once it holds the lock, so what changed while it
-    waited (a page unpublished, a detach, a force) is what it runs with."""
-    lock = _lock(ws)
-    with lock:
-        mirror = get_mirror(ws, with_token=True)
-        if not mirror:
-            raise ValueError("not a mirror")
-        _left[ws] = {}
-        try:
-            return _round(ws, mirror, fetch)
-        finally:
-            _left.pop(ws, None)
+    Rounds for one workspace never overlap; a second caller waits (the
+    clock never does: it passes over a workspace whose round is running) —
+    and reads the mirror only once it holds the lock, so what changed while
+    it waited (a page unpublished, a detach, a force) is what it runs with."""
+    with _lock(ws):
+        return _held_round(ws, fetch)
+
+
+def _held_round(ws: str, fetch=None) -> dict:
+    """``sync_workspace`` with the round lock held: the clock's ``run``."""
+    mirror = get_mirror(ws, with_token=True)
+    if not mirror:
+        raise ValueError("not a mirror")
+    _left[ws] = {}
+    try:
+        return _round(ws, mirror, fetch)
+    finally:
+        _left.pop(ws, None)
 
 
 def _round(ws: str, mirror: dict, fetch) -> dict:
@@ -2267,8 +2264,8 @@ def _round(ws: str, mirror: dict, fetch) -> dict:
             return current
 
         status = _patch_status(ws, finish, drop=("progress", "version_gap"))
-        if not errors and _dirty.get(ws, float("inf")) <= started:
-            _dirty.pop(ws, None)  # everything written before the round started went out with it
+        if not errors:
+            _clock.settle(ws, started)  # everything written before the round started went out with it
     except Exception as e:  # noqa: BLE001 — whatever happens, the running flag comes down
         # a format mismatch is kept apart from the error's words: the pill and Settings say which side to update
         gap = {"version_gap": {"here": e.here, "remote": e.remote}} if isinstance(e, FormatMismatch) else {}
@@ -2332,50 +2329,20 @@ def sync_in_background(ws: str) -> None:
     threading.Thread(target=run, name=f"mirror-{ws}", daemon=True).start()
 
 
-def reset_interrupted() -> None:
-    """At startup: a mirror the previous process left ``running`` (the server
-    was stopped in the middle of a round) is not running any more; the
-    round's progress is dropped and the next round picks up where it was —
-    nothing is lost, a round is idempotent."""
-    with connect_users_db() as conn:
-        for ws, raw in conn.execute("SELECT workspace_id, status FROM mirrors").fetchall():
-            status = json.loads(raw or "{}")
-            if not status.get("running"):
-                continue
-            status.update(running=False, interrupted=True)
-            status.pop("progress", None)
-            conn.execute("UPDATE mirrors SET status = ? WHERE workspace_id = ?", (json.dumps(status), ws))
-            log.warning(f"[mirror] {ws}: the last round was interrupted; it continues at the next one")
-        conn.commit()
+# At startup a mirror the previous process left ``running`` (the server was stopped in the middle of a
+# round) is marked interrupted, its progress dropped; the next round picks up where it was (a round is
+# idempotent).
+reset_interrupted = _links.reset_interrupted
 
 
-FIRST_PASS_S = 5  # the loop's first round after startup (a copy interrupted mid-fill continues at once)
-_pending: dict[str, float] = {}   # ws -> earliest monotonic time a requested round may run
-_last_run: dict[str, float] = {}  # ws -> monotonic time of the last round the loop started
-_wants_change: dict[str, bool] = {}  # ws -> a round after a local edit (mode on, on_change set)
-_dirty: dict[str, float] = {}     # ws -> monotonic time of the last local write no round has pushed yet
+# the loop's first round after startup (a copy interrupted mid-fill continues at once)
+FIRST_PASS_S = sync_clock.FIRST_PASS_S
 _filters: dict[str, frozenset | None] = {}  # ws -> its mirror's page filter (None: every page), read on first use
 # ws -> {block id: its base entry} while a round runs: blocks the remote no
 # longer holds in their page that stayed here (an edit here beat their
 # deletion there — or they moved to another page there, which a later page
 # of the round finds out and moves them over from what they were)
 _left: dict[str, dict] = {}
-_wake = threading.Event()         # set by request_sync so the loop looks again at once
-
-
-def request_sync(ws: str, delay: float = DEBOUNCE_S) -> None:
-    """A round for ``ws`` once things have been quiet for ``delay`` seconds
-    (the loop wakes for it; every further request within the delay pushes it
-    back — a typing burst is one round)."""
-    _pending[ws] = time.monotonic() + delay
-    _wake.set()
-
-
-def has_local_changes(ws: str) -> bool:
-    """Whether a local write happened since the last round that could push
-    it (the pill's "edits waiting" state). In memory: a restart runs a round
-    anyway."""
-    return ws in _dirty
 
 
 def pending_local(mirror: dict) -> bool:
@@ -2395,79 +2362,41 @@ def _filter_of(ws: str) -> frozenset | None:
     return _filters[ws]
 
 
-def _on_commit(ws: str, client: str, page_id: str = "") -> None:
-    """``ops.commit_listeners``: a local write marks the copy dirty and, in
-    a copy set to sync on change, asks for a round; the engine's own writes
-    (client ``sync``) do neither, nor does a write to a page outside the
-    mirror's page filter."""
-    if client == CLIENT:
-        return
+def _counts(ws: str, page_id: str) -> bool:
+    """Whether a write to ``page_id`` concerns ``ws``'s mirror: any write,
+    unless the mirror's page filter leaves that page out."""
     page_filter = _filter_of(ws)
-    if page_filter is not None and page_id and page_id not in page_filter:
-        return
-    _dirty[ws] = time.monotonic()
-    if _wants_change.get(ws):
-        request_sync(ws)
+    return page_filter is None or not page_id or page_id in page_filter
 
 
-ops.commit_listeners.append(_on_commit)
+_rows = _links.rows  # the clock's rows: (ws, mode, poll_s, on_change) of every mirror whose workspace exists
 
 
-def _refresh_wants() -> list[tuple]:
-    with connect_users_db() as conn:
-        rows = conn.execute("SELECT workspace_id, mode, poll_s, on_change FROM mirrors").fetchall()
-    _wants_change.clear()
-    for ws, mode, _, on_change in rows:
-        _wants_change[ws] = mode != "off" and bool(on_change)
-    return rows
+# The mirror's clock (gamma/sync_clock.py): its loop takes the round lock without
+# waiting and runs ``_held_round``. The lock is looked up at each use, since the
+# tests replace ``_lock``.
+_clock = sync_clock.register("mirror", rows=_rows, run=_held_round, client=CLIENT, lock=lambda ws: _lock(ws),
+                             reset=reset_interrupted, counts=_counts, debounce=DEBOUNCE_S)
+# the clock's state and calls under the names the engine and its tests have always used: the same objects
+_pending, _last_run, _wants_change, _dirty, _wake = (
+    _clock.pending, _clock.last_run, _clock.wants_change, _clock.dirty, _clock.wake)
+_on_commit = _clock.on_commit  # in ops.commit_listeners: a write here marks the copy dirty, maybe asks for a round
+_refresh_wants = _clock.refresh
+due_now = _clock.due_now
+has_local_changes = _clock.has_local_changes
 
 
-def due_now(ws: str, mode: str, poll_s: int, now: float) -> bool:
-    """Whether the loop runs ``ws`` this tick: a requested round whose
-    quiet time is over, or the mirror's own cadence come round (``poll_s``
-    0 = never by itself)."""
-    if mode == "off":
-        return False
-    if ws in _pending and _pending[ws] <= now:
-        return True
-    return poll_s > 0 and now - _last_run.get(ws, float("-inf")) >= poll_s
+def request_sync(ws: str, delay: float = DEBOUNCE_S) -> None:
+    """A round for ``ws`` once things have been quiet for ``delay`` seconds
+    (``sync_clock.Engine.request``)."""
+    _clock.request(ws, delay)
 
 
 def start_loop() -> None:
-    """The engine's clock: every ``TICK_S`` seconds, each mirror that is due
-    — its own ``poll_s`` come round, or a local edit ``DEBOUNCE_S`` ago
-    (``request_sync``) — gets a round; the first pass ``FIRST_PASS_S`` after
-    startup. Started once at app startup; ``GAMMA_SYNC_INTERVAL=0`` turns the
-    loop off (the tests; the interrupted flags are still reset)."""
-    reset_interrupted()
-    if config.sync_interval_s() <= 0:
-        return
-
-    def run():
-        time.sleep(FIRST_PASS_S)
-        while True:
-            try:
-                rows = _refresh_wants()
-            except Exception as e:  # noqa: BLE001 — the loop must survive anything
-                log.warning(f"[mirror] loop: {e}")
-                time.sleep(TICK_S)
-                continue
-            now = time.monotonic()
-            for ws, mode, poll_s, _ in rows:
-                if not due_now(ws, mode, int(poll_s or 0), now):
-                    continue
-                _pending.pop(ws, None)
-                _last_run[ws] = now
-                try:
-                    sync_workspace(ws)
-                except Exception as e:  # noqa: BLE001
-                    log.warning(f"[mirror] {ws}: {e}")
-            # sleep until the next tick, or until the earliest requested round is due, or a request comes in
-            now = time.monotonic()
-            wait = TICK_S
-            for due in _pending.values():
-                wait = min(wait, max(0.05, due - now))
-            _wake.wait(wait)
-            _wake.clear()
-
-    threading.Thread(target=run, name="mirror-loop", daemon=True).start()
+    """At app startup: the sync engines' clocks (``sync_clock.start``). Each
+    mirror that is due gets a round, either because its own ``poll_s`` has
+    come round or because a local edit came ``DEBOUNCE_S`` ago
+    (``request_sync``). The first pass comes ``FIRST_PASS_S`` after
+    startup. ``GAMMA_SYNC_INTERVAL=0`` turns the loops off, as in the tests;
+    the interrupted flags are still reset."""
+    sync_clock.start()

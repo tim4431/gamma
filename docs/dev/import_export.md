@@ -499,6 +499,12 @@ destination's id.
 
 `POST /api/import/zotero` (View menu ≡ → Import… → Zotero library): a zip of
 Zotero's File → Export Library → "Zotero RDF" (with Export Files/Notes).
+A workspace a Zotero link keeps in step with a library through the Web API
+([zotero_sync.md](zotero_sync.md)), detached or not, takes no RDF import:
+the review's upload (whole or in parts), the preview and the commit answer
+409 "This workspace is kept in step with <library>; its items arrive by
+themselves." (`imports._refuse_linked`), since the link brings the items
+and the import's copies would go back to Zotero as doubles.
 `gamma/zotero_import.py` parses the RDF (items with their item type,
 publisher and ISBN, journal and book records carrying the DOI, collections,
 tags, HTML notes, standalone notes, and what Gamma's record has no place
@@ -534,13 +540,22 @@ Zotero writes each of its kinds as a standard annotation
 ([research/zotero-annotations.md](../research/zotero-annotations.md)): a
 highlight and an underline become highlights (Gamma has no underline; the
 quote is the text under it), an image an area highlight, ink handwriting, a
-text annotation and a note text boxes. A text annotation turned in Zotero
+note a text box, and a text annotation a Zotero box, a text box laid out as
+Zotero's reader lays it out ([text_boxes.md](text_boxes.md#zotero-boxes)). A text
+annotation turned in Zotero
 is its unturned `/Zotero:Rect` upright on the same centre, since a box
 cannot turn. Zotero writes no `/CA` on markup, so its colours take the
 importer's 0.45; its annotation tags (`/Zotero:Tags`) are not kept. A
 block made from an annotation Zotero wrote keeps its `/Zotero:Key` (when
 it is a valid key, never Gamma's own `/NM`) as
 `properties.zotero_annotation`, so the annotation it came from stays named.
+In a workspace a Zotero link keeps, an annotation whose `/Zotero:Key` the
+link already holds (a `zotero_objects` row) makes no block when the PDF's
+embedded annotations are imported (`/api/import/pdf-annotations`, the
+import on open): the link brings that annotation itself
+([zotero_sync.md](zotero_sync.md#annotations)). Rows no
+link keeps (a linked workspace's backup restored where there is no link)
+hold nothing back.
 Nothing writes it back: Gamma's copies name annotations by block id, and a
 key Zotero knows would let it re-parent its own annotation. A duplicated
 block drops it, as it drops `imported_annot`.

@@ -6,6 +6,8 @@ PDF. Normalization itself is pinned by tests/shared/textbox.json."""
 
 import io
 import json
+import re
+from pathlib import Path
 
 import pytest
 from conftest import make_page, require_math_renderer
@@ -17,7 +19,8 @@ from PyPDF2.generic import (ArrayObject, DictionaryObject, FloatObject, NameObje
 from test_pdf_export import _open, _page_text
 
 from gamma import notebook, text_box
-from gamma.pdf_export import annotate_pdf, highlight_note_text, page_frame, zotero_annot_key
+from gamma.pdf_export import (annotate_pdf, display_size, highlight_note_text, page_frame, pdf_point_to_viewer,
+                              zotero_annot_key)
 from gamma.routers.imports import _extract_pdf_annotations
 
 PAGE_W, PAGE_H = 612, 792
@@ -274,19 +277,34 @@ def test_a_foreign_free_text_becomes_a_fixed_box_in_its_style():
 
 
 @pytest.mark.parametrize("rotation", [0, 90, 180, 270])
-def test_zotero_reads_the_box_as_its_own_text_annotation(rotation):
+@pytest.mark.parametrize("kind", ["zotero", "auto", "fixed"])
+def test_zotero_reads_the_box_as_its_own_text_annotation(rotation, kind):
     """Zotero 7+ takes a /FreeText for a text annotation only with its own
-    keys (pdf-worker's readRawAnnotation drops it otherwise): the box as
-    shown around the drawn box's centre, the page's turn (Zotero draws the
-    text turned by the page's rotation less this, so upright), the size and
-    the text's colour, not the /C fill."""
-    tb = _tb(size=16, color="#c0392b", bg="#fff4b8")
-    [a] = _free_texts(annotate_pdf(_pdf(rotation, CROP), [], text_boxes=[tb])[0])
+    keys (pdf-worker's readRawAnnotation drops it otherwise): the drawn box
+    as a Zotero box, unturned, around its centre (a Zotero box's is the box
+    itself; a Gamma box's its text area, the padding off, an auto box's
+    width kept, its lines at Zotero's line height), the page's turn (Zotero
+    draws the text turned by the page's rotation less this, so upright),
+    the size and the text's colour, not the /C fill."""
+    extra = {"zotero": True} if kind == "zotero" else {"auto": False, "w": 150} if kind == "fixed" else {}
+    tb = _tb(size=16, color="#c0392b", bg="#fff4b8", **extra)
+    out = annotate_pdf(_pdf(rotation, CROP), [], text_boxes=[tb])[0]
+    [a] = _free_texts(out)
     x0, y0, x1, y1 = (float(v) for v in a["/Rect"])
     zx0, zy0, zx1, zy1 = (float(v) for v in a["/Zotero:Rect"])
     w, h = (float(v) for v in a["/AP"]["/N"].get_object()["/BBox"][2:])
-    assert (zx1 - zx0, zy1 - zy0) == pytest.approx((w, h), abs=0.001)
-    assert ((zx0 + zx1) / 2, (zy0 + zy1) / 2) == pytest.approx(((x0 + x1) / 2, (y0 + y1) / 2), abs=0.001)
+    if kind == "zotero":
+        assert (zx1 - zx0, zy1 - zy0) == pytest.approx((w, h), abs=0.001)
+        assert ((zx0 + zx1) / 2, (zy0 + zy1) / 2) == pytest.approx(((x0 + x1) / 2, (y0 + y1) / 2), abs=0.001)
+    else:
+        pad = text_box.PAD
+        fw, fh = (w if kind == "auto" else w - 2 * pad), (h - 2 * pad) * text_box.ZOTERO_LINE / text_box.LINE
+        assert (zx1 - zx0, zy1 - zy0) == pytest.approx((fw, fh), abs=0.01)
+        crop, turn = page_frame(PdfReader(io.BytesIO(out)).pages[0])
+        dw, dh = display_size(crop, turn)
+        u, v = pdf_point_to_viewer((zx0 + zx1) / 2, (zy0 + zy1) / 2, turn, crop)
+        box = tb["box"]  # the text area's centre where the box is drawn
+        assert (u * dw, v * dh) == pytest.approx((box["x"] + pad + fw / 2, box["y"] + pad + fh / 2), abs=0.01)
     assert a["/Zotero:Rotation"] == rotation and a["/Zotero:FontSize"] == 16
     assert [float(v) for v in a["/Zotero:Color"]] == pytest.approx([0xC0 / 255, 0x39 / 255, 0x2B / 255], abs=1e-4)
     assert a["/NM"].startswith("Zotero-")                     # the id Zotero needs too
@@ -295,14 +313,67 @@ def test_zotero_reads_the_box_as_its_own_text_annotation(rotation):
 def test_a_turned_zotero_text_annotation_imports_upright_on_its_centre():
     """Zotero writes a text annotation the user turned with its /Rect around
     the turned text and the text's own box in /Zotero:Rect. A box can't turn:
-    it is that box upright, on the same centre, in the /DA's size and colour."""
+    it is that box upright, on the same centre, in the /DA's size and colour,
+    a Zotero box, its rect the text area."""
     found = _imported(_pdf(annots=[
         _annot("/FreeText", (100, 300, 140, 500), Contents="Turned in Zotero", NM="Zotero-TRAAAAAA",
                DA="/Helvetica 12 Tf 0 0 1 rg", **{"Zotero:Rect": (20, 380, 220, 420), "Zotero:Rotation": 90,
                                                   "Zotero:FontSize": 12}),
     ]))
     assert found[0]["box"] == {"x": 20, "y": 372, "w": 200, "h": 40, "auto": False,
-                               "size": 12, "color": "#0000ff", "bg": None}
+                               "size": 12, "color": "#0000ff", "bg": None, "zotero": True}
+
+
+_ZOTERO_TEXT = json.loads((Path(__file__).resolve().parents[2] / "tests" / "shared" / "zoterotext.json")
+                          .read_text(encoding="utf-8"))
+
+
+def _paper(width, height, annots=()):
+    w = PdfWriter()
+    w.add_blank_page(width=width, height=height)
+    for annot in annots:
+        w.add_annotation(page_number=0, annotation=annot)
+    buf = io.BytesIO()
+    w.write(buf)
+    return buf.getvalue()
+
+
+@pytest.mark.parametrize("item", _ZOTERO_TEXT["items"], ids=lambda it: it["data"]["key"])
+def test_a_zotero_free_text_imports_as_the_zotero_box_the_link_makes(item):
+    """Zotero's PDF export of a text annotation (/Zotero:Rect, no
+    /GammaTextBox) comes in as the box a Zotero link makes of it: the rect
+    is the box, a Zotero box at the annotation's size."""
+    page, data = item["page"], item["data"]
+    color = " ".join(f"{int(data['annotationColor'][i:i + 2], 16) / 255:.4f}" for i in (1, 3, 5))
+    found = _imported(_paper(page["width"], page["height"], [
+        _annot("/FreeText", item["rect"], Contents=data["annotationComment"], NM=f"Zotero-{data['key']}",
+               DA=f"/Helvetica {item['fontSize']} Tf {color} rg",
+               **{"Zotero:Rect": tuple(item["rect"]), "Zotero:Rotation": 0, "Zotero:FontSize": item["fontSize"]}),
+    ]))
+    [record] = found
+    assert record["content"] == item["content"]
+    assert record["box"] == item["box"]
+
+
+def test_a_gamma_export_comes_back_as_written_and_a_foreign_free_text_as_a_gamma_box():
+    """/GammaTextBox restores the box as written, a Zotero box with its key
+    and a Gamma box without; a /FreeText with no Zotero keys stays a Gamma
+    box over its text area."""
+    boxes = [_tb("Zotero's", bid="z", zotero=True, auto=False, w=80), _tb("Gamma's", bid="g", y=200)]
+    found = _imported(annotate_pdf(_pdf(), [], text_boxes=boxes)[0])
+    assert [f["box"] for f in found] == [b["box"] for b in boxes]
+    [foreign] = _imported(_pdf(annots=[_annot("/FreeText", (100, 600, 300, 650), Contents="elsewhere")]))
+    assert "zotero" not in foreign["box"]
+
+
+def test_a_zotero_boxs_blank_lines_go_into_the_pdf_and_come_back():
+    """A Zotero box's /Contents keeps its blank lines, as Zotero holds them;
+    a Gamma box's drops them, as its read mode shows none. Both come back
+    as written."""
+    out = annotate_pdf(_pdf(), [], text_boxes=[_tb("a\n\nb", bid="z", zotero=True), _tb("a\n\nb", bid="g", y=200)])[0]
+    [z, g] = _free_texts(out)
+    assert (str(z["/Contents"]), str(g["/Contents"])) == ("a\n\nb", "a\nb")
+    assert [f["content"] for f in _imported(out)] == ["a\n\nb", "a\n\nb"]
 
 
 def test_a_sticky_note_becomes_a_yellow_box_at_its_icon():
@@ -685,3 +756,116 @@ def test_a_sheets_text_boxes_as_the_notebook_pdf_takes_them():
     ]
     [(content, box)] = notebook.sheet_text_boxes(blocks)
     assert content == "typed" and box == text_box.normalize_text_box({"x": 1.234, "size": 200})
+
+
+# --- Zotero boxes ----------------------------------------------------------------------
+# tests/shared/zoterotext.json: three text annotations of a real Zotero library,
+# the boxes they make and the rows each box lays out in (textBox.test.mjs reads
+# the same file).
+
+ZOTERO = json.loads((Path(__file__).resolve().parents[2] / "tests" / "shared" / "zoterotext.json")
+                    .read_text(encoding="utf-8"))
+
+
+@pytest.mark.parametrize("item", ZOTERO["items"], ids=[i["data"]["key"] for i in ZOTERO["items"]])
+def test_a_zotero_text_annotation_is_a_box_on_its_rect_and_back(item):
+    """Zotero's rect is the Zotero box itself, both ways: upright on the
+    rect's centre, its size the rect's, and the box's rect the item's to the
+    hundredth."""
+    from gamma.pdf_export import pdf_point_to_viewer, viewer_point_to_pdf
+
+    page = item["page"]
+    view, rotation = (0, 0, page["width"], page["height"]), page["rotation"]
+    position = json.loads(item["data"]["annotationPosition"])
+    [rect] = position["rects"]
+    assert rect == item["rect"] and position["fontSize"] == item["fontSize"] == item["box"]["size"]
+    box = item["box"]
+    assert text_box.normalize_text_box(box) == box and box["zotero"] is True and text_box.pad_of(box) == 0
+    assert text_box.normalize_text_box(item["linked"]) == item["linked"]
+    assert {k: item["linked"][k] for k in "xywh"} == {k: box[k] for k in "xywh"}
+    u, v = pdf_point_to_viewer((rect[0] + rect[2]) / 2, (rect[1] + rect[3]) / 2, rotation, view)
+    w, h = rect[2] - rect[0], rect[3] - rect[1]
+    assert [box["x"], box["y"], box["w"], box["h"]] == pytest.approx(
+        [u * page["width"] - w / 2, v * page["height"] - h / 2, w, h], abs=0.005)
+    (ax, ay), (bx, by) = (viewer_point_to_pdf(x / page["width"], y / page["height"], rotation, view)
+                          for x, y in ((box["x"], box["y"]), (box["x"] + box["w"], box["y"] + box["h"])))
+    cx, cy = (ax + bx) / 2, (ay + by) / 2
+    back = [cx - box["w"] / 2, cy - box["h"] / 2, cx + box["w"] / 2, cy + box["h"] / 2]
+    assert back == pytest.approx(item["rect"], abs=0.005)
+    comment = item["data"]["annotationComment"]
+    assert text_box.markdown_of(comment) == item["content"]
+    assert text_box.plain_text(item["content"], gaps=True) == comment
+
+
+def _rows(md, box, surface_width):
+    rows, w, h = text_box._layout(md, box, surface_width)
+    return ([["".join(p for _k, p, *_ in spans), round(x, 2), round(base, 2)] for _kind, x, base, spans, _fs in rows],
+            [round(w, 2), round(h, 2)])
+
+
+@pytest.mark.parametrize("case", ZOTERO["layout"], ids=[c["note"] for c in ZOTERO["layout"]])
+def test_a_zotero_box_lays_out_in_its_rect_and_a_gamma_box_inside_its_padding(case):
+    """The server's rows for the same numbers as a Zotero box (no padding,
+    each blank line a line) and as a Gamma box, which lays out as it always
+    has; ``measure`` gives the natural size."""
+    for kind, zotero in (("zotero", True), ("gamma", False)):
+        box = text_box.normalize_text_box({**case["box"], "zotero": zotero})
+        rows, size = _rows(case["md"], box, case["surface_width"])
+        assert {"rows": rows, "size": size} == case[kind], kind
+        assert [round(v, 2) for v in text_box.measure(case["md"], box, case["surface_width"])] == size
+
+
+@pytest.mark.parametrize("case", ZOTERO["frame"], ids=[c["note"] for c in ZOTERO["frame"]])
+def test_a_gamma_box_becomes_a_zotero_box_with_its_text_where_it_was(case):
+    assert text_box.zotero_frame(case["box"], *case["surface"]) == case["frame"]
+    assert text_box.zotero_frame(case["frame"], *case["surface"]) == case["frame"]     # a Zotero box is its own
+
+
+def test_a_frame_off_any_surface_and_of_no_box():
+    frame = text_box.zotero_frame({"x": 580, "y": 790, "w": 75.34, "h": 22.99, "size": 12})
+    assert (frame["x"], frame["y"], frame["w"], frame["h"]) == (584, 794, 75.34, 16.79)
+    assert text_box.zotero_frame("box") is None and text_box.zotero_frame(None) is None
+
+
+@pytest.mark.parametrize("case", ZOTERO["merge"], ids=[c["note"] for c in ZOTERO["merge"]])
+def test_two_writers_and_the_zotero_key(case):
+    got = json.dumps(text_box.merge_text_box(case["stored"], case["mine"], case["base"]), sort_keys=True)
+    assert got == json.dumps(case["result"], sort_keys=True)
+
+
+def test_padding_is_none_only_for_a_zotero_box():
+    assert text_box.pad_of({"zotero": True}) == 0
+    for box in ({}, {"zotero": False}, {"zotero": 1}, {"zotero": "yes"}):
+        assert text_box.pad_of(box) == text_box.PAD
+    assert (text_box.ZOTERO_LINE, text_box.ZOTERO_SLACK) == (1.4, 1)
+
+
+@pytest.mark.parametrize("text", ["a\n\nb", "a\n\n\nb", "one\n\n\n\ntwo\nthree", "# Head\n\nbody"])
+def test_a_zotero_boxs_blank_lines_read_back_as_they_are_written(text):
+    assert text_box.plain_text(text, gaps=True) == text.replace("# ", "")
+    assert "\n\n" not in text_box.plain_text(text)                   # a Gamma box's text: no blank lines
+
+
+def test_display_math_in_a_zotero_box_takes_its_whole_width():
+    """Display math too wide for the box shrinks to the room inside the
+    padding, which a Zotero box has none of, and starts at its left edge."""
+    from gamma.pdf_glyphs import GlyphFonts
+
+    require_math_renderer()
+    md = "$$x_1 + x_2 + x_3 + x_4 + x_5 + x_6 + x_7 + x_8$$"
+    for zotero, pad in ((True, 0), (False, text_box.PAD)):
+        box = text_box.normalize_text_box({"w": 60, "auto": False, "size": 12, "zotero": zotero})
+        [(kind, width, top, _drawing, _scale)] = text_box._layout(md, box, 612)[0]
+        assert kind == "math" and width == pytest.approx(60 - 2 * pad) and top == pad
+        ops, _w, _h = text_box.pdf_ops(md, box, 612, GlyphFonts(PdfWriter()), set())
+        [(x, y)] = re.findall(rb"q [\d.]+ 0 0 [\d.]+ ([-\d.]+) ([-\d.]+) cm", ops)
+        assert (float(x), float(y)) == pytest.approx((pad, pad), abs=0.01)
+
+
+def test_a_zotero_boxs_appearance_starts_at_its_corner():
+    """The PDF draws a Zotero box's text from the box's left and top, with
+    no padding."""
+    tb = _tb("HELLO", size=24, w=300, h=100, auto=False, zotero=True)
+    left, top, right, bottom = _dark_box(annotate_pdf(_pdf(), [], text_boxes=[tb])[0])
+    assert 100 <= left <= 103 and 50 <= top and bottom <= 50 + 24 * text_box.LINE
+    assert right - left > 3 * (bottom - top)

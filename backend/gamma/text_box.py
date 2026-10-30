@@ -4,19 +4,24 @@
 A text box is a block whose ``content`` is its text, Markdown like any
 note, so search, the text merge, exports and the AI tools read it as one.
 One property places it: ``text_box: {x, y, w, h, auto, size, color, bg}``
-in points on its surface. A box under a sheet is on the nearest sheet
-above it (gamma/notebook.py), points from its top-left; any other box with
-``pdf_page`` (made at the page's top level, like an ink group) is on that
-PDF page, in the frame ink files use (the pdf.js viewport at scale 1,
-rotation applied, origin top-left, y down).
+(and ``zotero``, below) in points on its surface. A box under a sheet is on
+the nearest sheet above it (gamma/notebook.py), points from its top-left;
+any other box with ``pdf_page`` (made at the page's top level, like an ink
+group) is on that PDF page, in the frame ink files use (the pdf.js viewport
+at scale 1, rotation applied, origin top-left, y down).
 ``x``, ``y`` is the outer top-left corner and ``w``, ``h`` the outer size,
 padding included; ``h`` is as the client last measured it. ``auto`` makes
 the width follow the text; otherwise the text wraps inside ``w``. ``size``
 is the font size, ``color`` the text colour, ``bg`` the fill or None.
-Stored values are read through ``normalize_text_box``, never trusted.
+``zotero: true`` (stored only when true) makes a Zotero box, one laid out
+as Zotero's reader lays out a text annotation: no padding, so ``x``, ``y``,
+``w``, ``h`` are the text area itself and equal Zotero's rect, each blank
+source line a line, and on screen the reader's font stack at its normal
+line height. Stored values are read through ``normalize_text_box``, never
+trusted.
 frontend/src/markup/textBox.js is the twin of the rules here;
-tests/shared/textbox.json pins both. The second half lays a box out for
-the PDF writers.
+tests/shared/textbox.json and tests/shared/zoterotext.json pin both. The
+second half lays a box out for the PDF writers.
 """
 
 import math
@@ -24,6 +29,12 @@ import re
 
 PAD = 4  # inner padding on every side, in points
 LINE = 1.25  # line height, as a multiple of the font size
+# A Zotero box on screen takes up to ZOTERO_LINE em a line (the reader's
+# Segoe UI at line-height normal, 1.33 em, in Chrome's whole-pixel line
+# boxes), and an auto one is sent ZOTERO_SLACK points wider than its text,
+# as Zotero sizes a text annotation (text-annotation.js measureWidth).
+ZOTERO_LINE = 1.4
+ZOTERO_SLACK = 1
 TEXT_SIZES = (9, 12, 16, 24, 36)
 DEFAULT_COLOR = "#1f1f1f"
 TEXT_BACKGROUNDS = (None, "#ffffff", "#fff4b8", "#dcecff")  # none, white, note yellow, light blue
@@ -65,12 +76,13 @@ def normalize_text_box(value) -> dict | None:
     """A complete text box from a stored ``text_box``, or None when it is
     not an object: each missing or bad key takes its default, numbers
     clamped and rounded to hundredths, colours lowercase ``#rrggbb``,
-    unknown keys dropped. ``h`` defaults to one line of the box's size."""
+    unknown keys dropped, ``zotero`` kept only when it is ``True``. ``h``
+    defaults to one line of the box's size."""
     if not isinstance(value, dict):
         return None
     size = _num(value.get("size"), MIN_SIZE, MAX_SIZE, DEFAULT_SIZE)
     auto = value.get("auto")
-    return {
+    box = {
         "x": _num(value.get("x"), 0, MAX_COORD, 0),
         "y": _num(value.get("y"), 0, MAX_COORD, 0),
         "w": _num(value.get("w"), MIN_WIDTH, MAX_COORD, DEFAULT_WIDTH),
@@ -80,6 +92,30 @@ def normalize_text_box(value) -> dict | None:
         "color": _color(value.get("color"), DEFAULT_COLOR),
         "bg": _color(value.get("bg"), None),
     }
+    if value.get("zotero") is True:
+        box["zotero"] = True
+    return box
+
+
+def pad_of(box: dict) -> float:
+    """The box's inner padding on every side: none for a Zotero box."""
+    return 0 if box.get("zotero") is True else PAD
+
+
+def zotero_frame(box, width: float | None = None, height: float | None = None) -> dict | None:
+    """``box`` as a Zotero box with its text where it was: a Zotero box as
+    it is; a Gamma box's text area, its padding taken off (an auto box keeps
+    its width, the padding becoming room for Zotero's wider face) and its
+    lines' height at ``ZOTERO_LINE``. Normalized, and kept on a surface of
+    ``width`` × ``height`` when that is given; None when it is no box."""
+    box = normalize_text_box(box)
+    if box is None:
+        return None
+    if not box.get("zotero"):
+        box = normalize_text_box({
+            **box, "x": box["x"] + PAD, "y": box["y"] + PAD, "w": box["w"] if box["auto"] else box["w"] - 2 * PAD,
+            "h": max(0, box["h"] - 2 * PAD) * ZOTERO_LINE / LINE, "zotero": True})
+    return box if width is None or height is None else keep_on_surface(box, width, height)
 
 
 def keep_on_surface(box: dict, width: float, height: float) -> dict:
@@ -132,7 +168,7 @@ def merge_text_box(stored, mine, base):
     now, was = normalize_text_box(stored), normalize_text_box(base)
     if now is None or was is None:
         return ours
-    return {**now, **{k: v for k, v in ours.items() if v != was[k]}}
+    return {**now, **{k: v for k, v in ours.items() if v != was.get(k)}}
 
 
 # --- the box in a PDF -----------------------------------------------------------------
@@ -141,7 +177,9 @@ def merge_text_box(stored, mine, base):
 # content (gamma/notebook.py). The layout follows the box's read mode on
 # screen (frontend/src/markup/markup.css), rendered Markdown with compact
 # styles in the box's size and colour: no paragraph margins, one line per
-# source line, headings a little larger, lists as CSS draws them.
+# source line, headings a little larger, lists as CSS draws them. A Zotero
+# box has no padding, and each blank source line is a line of its own, as
+# the text is in Zotero's textarea.
 
 # Where CSS puts the baseline in a line LINE high of Arial or Liberation Sans,
 # the fonts the screen stack resolves Helvetica to: the leading beyond their
@@ -152,9 +190,11 @@ _DISPLAY_MATH_SCALE = 1.21  # KaTeX sets math at 1.21 em
 _NEST = 1.5  # em a list item's text is indented per level
 
 
-def _paragraphs(md: str, resolve_ref=None) -> list:
+def _paragraphs(md: str, resolve_ref=None, gaps: bool = False) -> list:
     """The box's Markdown as drawable paragraphs, in order: ``("math", tex)``
-    for display math, else ``("text", spans, scale, level, marker)``, the
+    for display math, ``("gap",)`` for a blank line between two others
+    when ``gaps``, else
+    ``("text", spans, scale, level, marker)``, the
     spans styled as ``pdf_typeset`` draws them, ``scale`` the heading size,
     ``level`` the list nesting (1 for a top-level item, 0 outside a list)
     and ``marker`` the list or todo marker. ``resolve_ref`` (the notes PDF's
@@ -184,18 +224,31 @@ def _paragraphs(md: str, resolve_ref=None) -> list:
         elif kind in ("image", "embed"):
             label = _ref_label(c["id"], resolve_ref) if kind == "embed" else c.get("alt") or "image"
             out.append(("text", [(TEXT, label, 0, Style(ITALIC, None))], 1, 0, ""))
-        # blank lines and rules: the compact styles give them no height
+        elif kind == "gap" and gaps:
+            out.append(("gap",))
+        # rules, and blank lines in a Gamma box: the compact styles give them no height
+    # A Zotero box's text has no blank line at either end: plain_text strips
+    # them from what Zotero is sent, and read mode shows none.
+    while out and out[0][0] == "gap":
+        out.pop(0)
+    while out and out[-1][0] == "gap":
+        out.pop()
     return out
 
 
-def plain_text(md: str, resolve_ref=None) -> str:
+def plain_text(md: str, resolve_ref=None, gaps: bool = False) -> str:
     """The box's text as a reader sees it, Markdown marks dropped (a
     /FreeText's /Contents): a line per paragraph, math as its TeX source,
-    references as ``_paragraphs`` reads them."""
+    references as ``_paragraphs`` reads them. ``gaps`` (a Zotero box's
+    text) keeps each blank source line as an empty line, so ``a\n\nb``
+    reads back as it is written."""
     from .note_markup import TEXT
 
     lines = []
-    for p in _paragraphs(md, resolve_ref):
+    for p in _paragraphs(md, resolve_ref, gaps):
+        if p[0] == "gap":
+            lines.append("")
+            continue
         if p[0] == "math":
             lines.append(f"$${p[1]}$$")
             continue
@@ -251,15 +304,19 @@ def _layout(md: str, box: dict, surface_width: float, resolve_ref=None):
     """The laid-out rows and the natural outer size, in points from the
     box's top-left: ``("text", x, baseline, spans, size)`` or ``("math",
     width, top, drawing, scale)``. A fixed box wraps inside its width; an
-    auto box only at the surface's right edge, as on screen."""
+    auto box only at the surface's right edge, as on screen. The padding is
+    ``pad_of``'s; a Zotero box gives each blank line a line's height."""
     from . import vector_text
     from .note_markup import TEXT, latex_spans
     from .pdf_typeset import PLAIN, plain, resolve, span_width, spans_width, wrap
 
-    size = box["size"]
-    room = (max(box["w"], surface_width - box["x"]) if box["auto"] else box["w"]) - 2 * PAD
-    rows, y, widest = [], PAD, 0.0
-    for p in _paragraphs(md, resolve_ref):
+    size, pad = box["size"], pad_of(box)
+    room = (max(box["w"], surface_width - box["x"]) if box["auto"] else box["w"]) - 2 * pad
+    rows, y, widest = [], pad, 0.0
+    for p in _paragraphs(md, resolve_ref, gaps=box.get("zotero") is True):
+        if p[0] == "gap":
+            y += size * LINE
+            continue
         if p[0] == "math":
             drawn = vector_text.math(p[1], size * _DISPLAY_MATH_SCALE)
             if drawn:
@@ -280,15 +337,18 @@ def _layout(md: str, box: dict, surface_width: float, resolve_ref=None):
         for n, (offset, line) in enumerate(wrap(resolve(spans, fs, room - indent), room - indent, fs, hang=0)):
             ascent, height = _line_metrics(line, fs)
             if level and marker and not n:
-                rows.append(("text", PAD + indent - span_width(marker, fs), y + ascent, [(TEXT, marker, 0, PLAIN)], fs))
-            rows.append(("text", PAD + indent + offset, y + ascent, line, fs))
+                rows.append(("text", pad + indent - span_width(marker, fs), y + ascent, [(TEXT, marker, 0, PLAIN)], fs))
+            rows.append(("text", pad + indent + offset, y + ascent, line, fs))
             y += height
             widest = max(widest, indent + offset + spans_width(line, fs))
-    return rows, widest + 2 * PAD, y + PAD
+    return rows, widest + 2 * pad, y + pad
 
 
 def measure(md: str, box: dict, surface_width: float) -> tuple[float, float]:
-    """The outer size the box's text needs, for a box made on the server."""
+    """The outer size the box's text needs, for a box made on the server:
+    its text's own size for a Zotero box, which has no padding. The lines
+    are ``LINE`` high, as in the PDF; a rect made for Zotero's screen allows
+    ``ZOTERO_LINE`` a line (``zotero_frame``)."""
     _rows, width, height = _layout(md, box, surface_width)
     return width, height
 
@@ -314,7 +374,8 @@ def pdf_ops(md: str, box: dict, surface_width: float, glyphs, fonts: set, resolv
     color = parse_css_color(box["color"])[:3]
     for kind, a, y, payload, size in rows:
         if kind == "math":  # display math, centred as KaTeX centres it
-            x = PAD + max(0.0, (width - 2 * PAD - a) / 2)
+            pad = pad_of(box)
+            x = pad + max(0.0, (width - 2 * pad - a) / 2)
             ops += [b"q %s 0 0 %s %s %s cm" % (num(size), num(size), num(x), num(y)),
                     glyphs.draw(payload, color), b"Q"]
         else:

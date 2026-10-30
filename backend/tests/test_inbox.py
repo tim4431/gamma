@@ -148,12 +148,19 @@ def test_a_mention_typed_elsewhere_or_by_no_account_tells_no_one(own, edi, lab):
                    actor="mirror")
     ops.commit_ops(lab, page, [{"op": "insert", "id": "ibLink", "parent": page, "content": "@ib_edi"}],
                    actor="link:Otter")
+    # a Zotero link's writes: the name was typed in Zotero (its own client), or a
+    # conflict's "theirs" taken from there (its actor, a person's client)
+    ops.commit_ops(lab, page, [{"op": "insert", "id": "ibZcli", "parent": page, "content": "@ib_edi"}],
+                   actor=by, client=inbox.ZOTERO_CLIENT)
+    ops.commit_ops(lab, page, [{"op": "insert", "id": "ibZact", "parent": page, "content": "@ib_edi"}],
+                   actor="zotero")
     # a block inserted and deleted in one batch mentions no one either
     ops.commit_ops(lab, page, [{"op": "insert", "id": "ibGone", "parent": page, "content": "@ib_edi"},
                                {"op": "delete", "id": "ibGone"}], actor=by)
     assert _items(edi, page_id=page) == []
-    from gamma import sync_engine
+    from gamma import auth, sync_engine, zotero_sync_rows
     assert inbox.SYNC_CLIENT == sync_engine.CLIENT
+    assert inbox.ZOTERO_CLIENT == zotero_sync_rows.CLIENT and auth.ZOTERO_ACTOR == "zotero"
 
 
 def test_the_ais_batch_is_its_chat_owners_and_a_replay_tells_no_one_twice(own, edi, lab):

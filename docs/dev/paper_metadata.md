@@ -137,7 +137,10 @@ types a paper library holds are kept. Every source lands on one of them:
 - The AI classifier picks from the list (its default prompt names it); the
   popover's **Type** row picks from the same list.
 - A Zotero import reads `z:itemType`; any Zotero type outside the list
-  becomes `document`, and an attachment-only item names none.
+  becomes `document`, and an attachment-only item names none. A Zotero
+  link reads the item's type the same way (`gamma/zotero_fields.py`), and
+  an item of another type keeps it in Zotero until Gamma's kind changes
+  ([zotero_sync.md](zotero_sync.md#merging)).
 
 A record naming no type, or one of the kinds stored before these names, is
 read through `item_types.item_type`, and nothing in storage is rewritten:

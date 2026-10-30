@@ -8,6 +8,7 @@ form; the purge deletes only what is still unreferenced and refuses a
 database that looks wrong."""
 
 import io
+import json
 import os
 import time
 from contextlib import closing
@@ -17,7 +18,7 @@ import pytest
 
 from conftest import login, make_folder, make_user, workspace_of
 from gamma import ops, pdf_index, storage, upload_gc
-from gamma.db import connect_pages_db, ws_uploads_dir
+from gamma.db import connect_pages_db, page_now, ws_uploads_dir
 
 PNG = (b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06\x00\x00\x00"
        b"\x1f\x15\xc4\x89\x00\x00\x00\nIDATx\x9cc\x00\x01\x00\x00\x05\x00\x01\r\n-\xb4\x00\x00\x00\x00IEND\xaeB`\x82")
@@ -205,6 +206,23 @@ def test_reconcile_knows_every_reference_form(ann):
     assert names["stray"] in orphans
     assert not {n for t, n in names.items() if t != "stray"} & set(orphans)
     assert not (partial / "dead-write").exists()
+
+
+def test_only_an_open_zotero_file_conflict_holds_the_pdf_it_names(client):
+    ws = make_user("gc_zotero_rows", "pw-gc_zotero_rows")
+    rows = [("zotero_file", 0, json.dumps({"doc_id": "keptOpen", "md5": "a"})),
+            ("zotero_file", 1, json.dumps({"doc_id": "keptResolved"})),
+            ("zotero_field", 0, json.dumps({"doc_id": "notAFile"})),
+            ("zotero_file", 0, "{not json"),
+            ("zotero_file", 0, json.dumps({"doc_id": "../outside"})),
+            ("zotero_file", 0, json.dumps({"doc_id": ""}))]
+    with closing(connect_pages_db(ws)) as conn:
+        conn.executemany("INSERT INTO sync_conflicts (page_id, block_id, kind, base, at, resolved) "
+                         "VALUES ('p', 'p', ?, ?, ?, ?)", [(k, b, page_now(), r) for k, r, b in rows])
+        conn.commit()
+        refs = upload_gc.referenced(conn)
+    assert "keptopen.pdf" in refs
+    assert not {"keptresolved.pdf", "notafile.pdf", "../outside.pdf", ".pdf"} & refs
 
 
 # --- the purge ------------------------------------------------------------------------

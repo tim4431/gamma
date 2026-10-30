@@ -33,7 +33,7 @@ import time
 from dataclasses import asdict, dataclass, field
 
 from . import (backup_schedule, cloud_auth, cloud_sync, hosted, integrity, join_requests, logbuf, server_settings,
-               sync_engine, translate_engines, version)
+               sync_engine, translate_engines, version, zotero_sync)
 from .db import NOTICES_SEEN_PREF_KEY, connect_users_db, get_pref, update_pref
 from .server_settings import MB
 
@@ -130,20 +130,25 @@ def backup_failed(user_id):
     return notice("backup-failed", mark, "error", "backups", "{n} backup tasks failed", n=len(failed))
 
 
-def _conflict_marks(user_id, publications):
-    """Per clone (or per publication), the open conflict count and newest
-    conflict id, folded into one short digest (a fingerprint is capped at
-    200 characters, which a dozen clones with conflicts would pass); a
-    mirror with a page filter is a publication."""
+def _marks_of(workspace_ids):
+    """The open conflict count and newest conflict id of each workspace,
+    folded into one short digest (a fingerprint is capped at 200
+    characters, which a dozen clones with conflicts would pass), and their
+    total."""
     marks, total = [], 0
-    for mirror in sync_engine.list_mirrors(user_id):
-        if (mirror.get("page_filter") is not None) != publications:
-            continue
-        count, newest = sync_engine.open_conflict_mark(mirror["workspace_id"])
+    for ws in workspace_ids:
+        count, newest = sync_engine.open_conflict_mark(ws)
         if count:
-            marks.append(f"{mirror['workspace_id']}:{count}:{newest}")
+            marks.append(f"{ws}:{count}:{newest}")
             total += count
     return hashlib.sha1(",".join(marks).encode("utf-8")).hexdigest()[:16], total
+
+
+def _conflict_marks(user_id, publications):
+    """``_marks_of`` the account's clones (or its publications: a mirror
+    with a page filter is one)."""
+    return _marks_of(m["workspace_id"] for m in sync_engine.list_mirrors(user_id)
+                     if (m.get("page_filter") is not None) == publications)
 
 
 @source()
@@ -158,6 +163,18 @@ def mirror_conflicts(user_id):
     return notice("mirror-conflicts", mark, "warn", "workspaces",
                   "{n} sync conflict to look at in your clones" if total == 1
                   else "{n} sync conflicts to look at in your clones", n=total)
+
+
+@source()
+def zotero_conflicts(user_id):
+    """Open conflicts in the account's Zotero links (Settings → Workspaces,
+    the links after the clones), fingerprinted like the clones'."""
+    mark, total = _marks_of(link["workspace_id"] for link in zotero_sync.list_links(user_id))
+    if not total:
+        return None
+    return notice("zotero-conflicts", mark, "warn", "workspaces",
+                  "{n} sync conflict to look at in your Zotero link" if total == 1
+                  else "{n} sync conflicts to look at in your Zotero link", n=total)
 
 
 @source()

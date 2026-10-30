@@ -519,10 +519,13 @@ def _text_box_annotation(writer, glyphs, tb, rotation, crop, author, resolve_ref
     a free-text background), for a viewer that rebuilds the look after an
     edit, and ``/Rotate`` (Adobe's key, read by pdf.js and MuPDF) keeps that
     rebuilt text upright too. ``/BS /W 0``: no border. ``/Contents`` is the
-    plain text, references read through ``resolve_ref``; the private
-    ``/GammaTextBox`` holds the Markdown, the box and that text, for a
-    lossless re-import that can tell another viewer's edit of /Contents
-    from a reference label."""
+    plain text, references read through ``resolve_ref`` (a Zotero box's
+    blank lines kept, as Zotero holds them); the private ``/GammaTextBox``
+    holds the Markdown, the box and that text, for a lossless re-import
+    that can tell another viewer's edit of /Contents from a reference
+    label. ``/Zotero:Rect`` is the drawn box as a Zotero box
+    (``text_box.zotero_frame``): a Zotero box itself, a Gamma box's text
+    area, so Zotero puts the text where it is drawn here, at its width."""
     from . import text_box
     from .pdf_typeset import num
 
@@ -530,7 +533,7 @@ def _text_box_annotation(writer, glyphs, tb, rotation, crop, author, resolve_ref
     disp_w, disp_h = display_size(crop, rotation)
     fonts = set()
     ops, w, h = text_box.pdf_ops(md, box, disp_w, glyphs, fonts, resolve_ref)
-    text = text_box.plain_text(md, resolve_ref)
+    text = text_box.plain_text(md, resolve_ref, gaps=box.get("zotero") is True)
     w, h = round(w, 2), round(h, 2)
     (ax, ay), (bx, by) = (viewer_point_to_pdf(x / disp_w, y / disp_h, rotation, crop)
                           for x, y in ((box["x"], box["y"]), (box["x"] + w, box["y"] + h)))
@@ -561,14 +564,17 @@ def _text_box_annotation(writer, glyphs, tb, rotation, crop, author, resolve_ref
             {"v": 1, "md": md, "box": box, "text": text}, ensure_ascii=False, separators=(",", ":"))),
     })
     # Zotero 7+ reads a /FreeText as its own text annotation only with these
-    # keys (pdf-worker's readRawAnnotation drops one without them): the box
-    # as shown, unturned, around the drawn box's centre; the page's turn,
-    # since Zotero draws the text turned by the page's rotation less this
-    # one, so it stands upright as here; the size; the text colour, which
-    # Zotero would otherwise take from /C, the fill.
-    cx, cy = (ax + bx) / 2, (ay + by) / 2
+    # keys (pdf-worker's readRawAnnotation drops one without them): the drawn
+    # box as a Zotero box (its text area, for a Gamma box), unturned, around
+    # that area's centre; the page's turn, since Zotero draws the text turned
+    # by the page's rotation less this one, so it stands upright as here; the
+    # size; the text colour, which Zotero would otherwise take from /C, the
+    # fill.
+    frame = text_box.zotero_frame({**box, "w": w, "h": h})
+    fw, fh = frame["w"], frame["h"]
+    cx, cy = viewer_point_to_pdf((frame["x"] + fw / 2) / disp_w, (frame["y"] + fh / 2) / disp_h, rotation, crop)
     annot[NameObject("/Zotero:Rect")] = ArrayObject(
-        FloatObject(round(v, 3)) for v in (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2))
+        FloatObject(round(v, 3)) for v in (cx - fw / 2, cy - fh / 2, cx + fw / 2, cy + fh / 2))
     annot[NameObject("/Zotero:Rotation")] = NumberObject(rotation)
     annot[NameObject("/Zotero:FontSize")] = FloatObject(box["size"])
     annot[NameObject("/Zotero:Color")] = ArrayObject(FloatObject(round(v, 4)) for v in parse_css_color(box["color"])[:3])

@@ -1,0 +1,29 @@
+/* A Zotero link's marks on a page (collaboration/ZoteroPage.jsx) and its
+   pill's own lines (collaboration/MirrorPopover.jsx). */
+
+/* A page's PDF in Zotero, in the attach popover. */
+.zoteroPdfCard { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; max-width: 320px; }
+.zoteroPdfCard .popoverHint { padding: 0; }
+.zoteroPdfName { display: flex; align-items: center; gap: 5px; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.zoteroPdfName > svg { flex-shrink: 0; }
+.zoteroPdfState { display: inline-flex; align-items: center; gap: 6px; }
+
+/* A block Gamma will not write back to Zotero: a badge on the row's corner,
+   left of a merge chip when one is there; on a note page whose note it is,
+   the same badge among the page's header buttons. */
+.zoteroReadonly {
+  position: absolute; right: 4px; top: 2px; z-index: 3;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 18px; height: 18px; border-radius: 50%;
+  border: 1px solid var(--border); background: var(--bg-elevated); color: var(--text-muted);
+}
+.zoteroReadonly.besideChip { right: 26px; }
+.zoteroReadonly.onPage { position: static; flex-shrink: 0; align-self: center; }
+
+/* The page's record conflicts, beside its metadata button. */
+.zoteroRecordChip { position: relative; display: inline-flex; }
+.zoteroRecordChip .mergeChipWrap { position: relative; right: auto; top: auto; }
+
+/* What the link's key may not do, under the pill's state. */
+.zoteroLimits { display: flex; align-items: center; gap: 5px; min-width: 0; }
+.zoteroLimits > svg { flex-shrink: 0; }

@@ -78,7 +78,11 @@ All state is SQLite + files on disk under a data directory (env
     under workspace `''`: the account-wide keys (`db.USER_PREF_KEYS`: the
     preference `profile` and its sync base `profile-base`, the active AI
     provider, the AI provider entries, the machine-translation and online
-    search services with their secrets, the seen notices).
+    search services with their secrets, the seen notices, and the connected
+    Zotero account, `zotero-account`: the Zotero user, a hint of the key,
+    what it could do, how it came and the key itself, sealed with the data
+    directory's key; never served by `/api/prefs`, never in the synced
+    profile; [zotero_sync.md](zotero_sync.md#accounts-and-access)).
     Everything that names a workspace's pages (open tabs, recents, reading
     positions) is kept in that workspace's pages.db (`workspace_prefs`,
     below) from migration step 34 on. The rows here with a workspace id are
@@ -127,6 +131,19 @@ All state is SQLite + files on disk under a data directory (env
     the remote's address and workspace, the write token (Fernet-encrypted
     with the data directory's key), the feed cursors, the last round's
     status and the `page_filter` of a publication ([mirror.md](mirror.md));
+  - `zotero_links` — the personal workspaces kept in step with a Zotero
+    library: the workspace (the key), its `owner` (an account id: the link
+    syncs with that account's Zotero connection), the `library`
+    (`users/<id>` or `groups/<id>`) and its `library_name`, the direction
+    (`mode`: `two-way`, `pull`, or `off` while detached), which PDFs come
+    (`download`: `all`, or `open` as their pages are opened), whether PDFs
+    Zotero lacks go up (`upload`), whether Zotero's automatic tags become
+    labels (`auto_tags`), whether PDF pages without a record go as
+    documents (`send_unrecorded`), the cadence (`poll_s`, 5 = Live, 0 =
+    only by hand; `on_change`), the last round's `status` JSON and
+    `created_at`. A unique index on `(owner, library)`: an owner links a
+    library once. The row goes with its workspace and its owner's account
+    (migration step 45; [zotero_sync.md](zotero_sync.md#data));
   - `folder_links` — the folders the desktop app's own server keeps as
     directories on this computer: workspace, folder (a block id, or `root`), the directory's path
     on this computer, whether notes files are written, the
@@ -221,7 +238,28 @@ All state is SQLite + files on disk under a data directory (env
     one it never had;
   - `sync_pages` / `sync_conflicts` / `sync_log` — a mirror's per-page base
     tree, the merges it decided on its own and what its rounds did
-    ([mirror.md](mirror.md); empty in a workspace that mirrors nothing);
+    ([mirror.md](mirror.md); empty in a workspace that mirrors nothing); a
+    Zotero link records its conflicts and log lines in the last two;
+  - `zotero_objects` / `zotero_queue` / `zotero_state` — a Zotero link's
+    state ([zotero_sync.md](zotero_sync.md#data); empty in a workspace no
+    link keeps), kept here so a workspace backup restores it with the
+    pages it describes. `zotero_objects` is a row per Zotero object the
+    link knows, by its key: its kind, the page and block it is, its
+    parent's key, Zotero's type, the version last seen or written (`-1`
+    while a create is sent and not confirmed), its state, the two bases of
+    the field-by-field merge (`zbase` Zotero's side, `gbase` Gamma's) and
+    the signature `gbase` was taken at, with indexes on `block_id`,
+    `page_id`, `(parent, version)` and `(kind, state)`. `zotero_queue` is
+    what the rounds still have to visit (Zotero objects listed and not
+    applied, `page:<page id>`, `file:<attachment key>`), each with its
+    priority, backoff and, for a child, its parent once read, indexed in
+    the order a round takes it (`priority DESC, version DESC, id`) and by
+    parent for the children. `zotero_state` is the link's one row: the
+    library its rows belong to, the Zotero version every change at or below
+    which is listed, the local change feed's cursor, the labels as last
+    reconciled, a first link in progress, the last restore it has seen and
+    the version of the last listing from the start. All three come from
+    `db.PAGES_SCHEMA` as the file opens (no workspace step);
   - `upload_orphans` — the stored files nothing references
     (`name`, `since`; "Stored files" below);
   - `chats` / `chat_history` — the AI chat
@@ -551,7 +589,12 @@ track of the ones nothing uses.
   a page export's file list read references through it too. A saved AI
   conversation's pictures count as well: `/api/uploads/<name>` in the
   `chats` and `chat_history` messages ([ai.md](ai.md#pictures));
-  `upload_gc.referenced` reads both.
+  `upload_gc.referenced` reads both. So does the PDF an open `zotero_file`
+  conflict keeps (its `base`'s `doc_id`): Zotero's file, kept when Gamma's
+  went over it, for that conflict's "theirs"
+  ([zotero_sync.md](zotero_sync.md#pdfs)). Once the conflict is kept or the
+  link is removed it is an ordinary file again; "theirs" makes it the
+  page's PDF.
 - **Unreferenced files are kept for 30 days.** When the last reference to a
   file goes (its block deleted, a page's PDF detached or replaced by a new
   version), the file stays on disk and is served as before. Its name is

@@ -501,12 +501,34 @@ def begin(request, *, link_user: str | None, next_path: str, app: dict | None = 
     return doc["authorization_endpoint"] + "?" + urllib.parse.urlencode(params)
 
 
-def _connect_endpoint(issuer: str, key: str) -> str:
+CANNOT_CONNECT = ("This account server cannot connect servers. Ask its admin for a client id and "
+                  "secret and enter them here.")
+NO_ZOTERO_BROKER = "Gamma Cloud does not connect Zotero accounts at the moment. Use an API key instead."
+
+
+def _connect_endpoint(issuer: str, key: str, missing: str = CANNOT_CONNECT) -> str:
+    """The discovery document's ``key``: an endpoint the account server
+    offers beyond OpenID Connect, which must be under its issuer;
+    CloudAuthError ``missing`` when it offers none."""
     endpoint = str(discovery(issuer).get(key) or "")
     if not endpoint.startswith(issuer + "/"):
-        raise CloudAuthError("This account server cannot connect servers. Ask its admin for a client id and "
-                             "secret and enter them here.")
+        raise CloudAuthError(missing)
     return endpoint
+
+
+def zotero_broker() -> tuple[str, str]:
+    """Gamma Cloud's Zotero broker (cloud/gammacloud/zotero.py), which
+    connects a person's Zotero account for a server without a Zotero app of
+    its own (gamma/routers/zotero.py): ``(connect page, token endpoint)``
+    from discovery. Only the issuer is needed, not a connected client.
+    CloudAuthError when cloud sign-in is off, the account server cannot be
+    reached, or it offers no broker (``NO_ZOTERO_BROKER``: its admin set up
+    no Zotero app)."""
+    cfg = settings()
+    if not cfg["enabled"]:
+        raise CloudAuthError("Cloud sign-in is not set up on this server.")
+    return (_connect_endpoint(cfg["issuer"], "gamma_zotero_connect_endpoint", NO_ZOTERO_BROKER),
+            _connect_endpoint(cfg["issuer"], "gamma_zotero_token_endpoint", NO_ZOTERO_BROKER))
 
 
 def connect_begin(*, next_path: str) -> str:

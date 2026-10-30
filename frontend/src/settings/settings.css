@@ -346,6 +346,10 @@
 .settingsForm { display: flex; flex-direction: column; }
 .settingsForm > .quotaMeter { margin-bottom: 8px; }
 .settingsForm .reportModalBtns { margin-top: 10px; }
+/* The Zotero link dialog's counts once it gave up asking a busy Zotero:
+   the sentence beside Try again (ZoteroLinkDialog.jsx). */
+.zoteroCountsFailed { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.zoteroCountsFailed .settingsPaneHint { flex: 1 1 200px; min-width: 0; }
 /* Numbered stage of a dialog flow (the add/edit-key wizard). */
 .setStep { display: flex; flex-direction: column; gap: 7px; margin-bottom: 14px; }
 .setStep:last-of-type { margin-bottom: 4px; }

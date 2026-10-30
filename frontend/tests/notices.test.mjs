@@ -47,6 +47,7 @@ test("a notice's sentence is its message with the params filled in, else the ser
 test("each notice's action names what its pane does, with a plain fallback", () => {
   assert.equal(noticeAction({ id: "storage" }), "Review storage");
   assert.equal(noticeAction({ id: "backup-failed" }), "Review backups");
+  assert.equal(noticeAction({ id: "zotero-conflicts" }), "Resolve the conflicts");
   assert.equal(noticeAction({ id: "something-else" }), "Open settings");
 });
 

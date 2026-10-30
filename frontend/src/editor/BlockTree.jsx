@@ -5,6 +5,7 @@ import { textOf } from "../shared/lib/textOf";
 import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import remarkBreaks from "remark-breaks";
 import { MergeChip } from "../collaboration/MergeResolver";
+import { ZoteroReadonlyBadge, warnOnce, zoteroReadonlyWords } from "../collaboration/ZoteroPage.jsx";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import rehypeKatex from "rehype-katex";
@@ -711,6 +712,11 @@ const BlockRow = React.memo(function BlockRow({
   mergeOpen,
   onMergeOpen,
   mergeNav,
+  // The root of the Zotero region this row is in whose edits Gamma will not
+  // write back (a block with `zotero_readonly` and its subtree, or a note
+  // page's root with it and the whole page, docs/dev/zotero_sync.md), ""
+  // outside one: the editor warns once.
+  zoteroLock = "",
   keybindings,
   getTree, // the page's tree, at event time (the block commands' context)
   onHop,
@@ -758,6 +764,15 @@ const BlockRow = React.memo(function BlockRow({
   // rendered view.
   const renderedRef = useRef(null);
   const rowPeers = peers?.length ? peers.filter((p) => p.block === block.id) : null;
+  // A Zotero note Gamma cannot rebuild, another member's annotation: its
+  // badge, and the warning as its region's editor first opens.
+  const readonlyHere = Boolean(block.properties?.zotero_readonly);
+  const lockRoot = readonlyHere ? block.id : zoteroLock;
+  useEffect(() => {
+    if (!editing || !lockRoot || !warnOnce(lockRoot)) return;
+    const root = lockRoot === block.id ? block : lookupBlock?.(lockRoot);
+    onStatus?.(zoteroReadonlyWords(root?.properties).warning);
+  }, [editing, lockRoot]); // eslint-disable-line react-hooks/exhaustive-deps -- once, as the editor opens
   const peerEditing = rowPeers?.find((p) => p.anchor >= 0) || null;
   const remoteCursors = peerEditing
     ? rowPeers.filter((p) => p.anchor >= 0).map((p) => ({
@@ -1393,6 +1408,7 @@ const BlockRow = React.memo(function BlockRow({
       }}
     >
       {rowPeers?.length ? <PeerChips peers={rowPeers} /> : null}
+      {readonlyHere ? <ZoteroReadonlyBadge props={block.properties} besideChip={Boolean(merges?.get(block.id))} /> : null}
       {merges?.get(block.id) ? (
         <MergeChip conflict={merges.get(block.id)} onResolve={onResolveMerge} nav={mergeNav?.(block.id)}
           open={mergeOpen === block.id} onOpenChange={(v) => onMergeOpen?.(v ? block.id : null)} />
@@ -2083,7 +2099,7 @@ function AiGhostRow({ content, depth }) {
 // A fold of more blocks than this opens and shuts at once.
 const FOLD_MOVES_MOST = 60;
 
-function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = false }) {
+function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = false, zoteroLock = "" }) {
   // Every row takes its own entry of the labels map, never the map itself
   // (a new one on every tree change would re-render each memoized row).
   // So too the comment counts: each row its own number, and whether its
@@ -2127,10 +2143,10 @@ function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = 
               removed beside it, is the same block at another place. */}
           {!readOnly ? (
             <SortableBlockRow block={block} depth={depth} sheetNumber={sheetNumber} onSheet={onSheet} refLabels={refLabels}
-              commentCount={commentCount} commentOpen={commentOpen} place={idx} siblings={list.length} {...rowRest} />
+              commentCount={commentCount} commentOpen={commentOpen} place={idx} siblings={list.length} zoteroLock={zoteroLock} {...rowRest} />
           ) : (
             <BlockRow block={block} depth={depth} sheetNumber={sheetNumber} onSheet={onSheet} refLabels={refLabels}
-              commentCount={commentCount} commentOpen={commentOpen} place={idx} siblings={list.length} {...rowRest} />
+              commentCount={commentCount} commentOpen={commentOpen} place={idx} siblings={list.length} zoteroLock={zoteroLock} {...rowRest} />
           )}
           {/* The children fold under their row: the person's own toggle
               moves (foldMoving), anything else that folds or opens them (a
@@ -2141,7 +2157,7 @@ function BlockTree({ blocks, readOnly, rowProps, depth = 0, parentId, onSheet = 
               still={foldMoving !== block.id || countBlocks(block.children, FOLD_MOVES_MOST) > FOLD_MOVES_MOST}>
               <div className="blockChildren" data-motion-key={`under:${block.id}`}>
                 <BlockTree blocks={block.children} readOnly={readOnly} rowProps={rowProps} depth={depth + 1} parentId={block.id}
-                  onSheet={onSheet || isSheet(rawBlock)} />
+                  onSheet={onSheet || isSheet(rawBlock)} zoteroLock={rawBlock.properties?.zotero_readonly ? rawBlock.id : zoteroLock} />
               </div>
             </Collapse>
           ) : null}

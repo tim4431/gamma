@@ -88,9 +88,10 @@ jobs:
           npm ci
           npm test
           npm run build
-      # the desktop shell's pure module (desktop/lib/keeping.js): no
-      # dependencies, so no install; the Electron suite itself is run by hand
-      - run: node --test desktop/test/keeping.test.js
+      # the desktop shell's pure modules (desktop/lib/keeping.js, registry.js)
+      # and main.js under a stand-in for Electron: no dependencies, so no
+      # install; the Electron suite itself is run by hand
+      - run: node --test desktop/test/keeping.test.js desktop/test/registry.test.js desktop/test/main.test.js
 
   # The browser suite (frontend/tests/e2e): a real backend from this
   # checkout over a throwaway data dir, Playwright's Chromium driving the

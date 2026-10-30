@@ -2474,6 +2474,9 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .mirrorSetActions { display: flex; gap: 6px; flex-wrap: wrap; padding: 6px 4px; }
 .mirrorConfirm { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 4px; font-size: var(--fs-xs); color: var(--text-secondary); }
 .mirrorConfirm > svg { color: var(--warn); flex-shrink: 0; }
+/* why the sync settings' last change was refused, and Reconnect when a connection mends it */
+.mirrorRefused { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 2px 4px 6px; }
+.mirrorRefused .settingsPaneHint { padding: 0; flex: 1 1 200px; min-width: 0; }
 .mirrorConfirmBtns { display: inline-flex; gap: 6px; margin-left: auto; }
 /* The merge chip on a block row and the conflict card (MergeResolver.jsx):
    one card for the chip's popover, the sync pill's list and Settings — the
@@ -2491,6 +2494,8 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .mergePage { font-weight: 500; color: var(--text-muted); }
 .mergeNav { display: inline-flex; align-items: center; gap: 2px; flex-shrink: 0; }
 .mergeNavCount { font-size: var(--fs-2xs); color: var(--text-muted); font-variant-numeric: tabular-nums; min-width: 34px; text-align: center; }
+/* a Zotero row's own sentence (a refusal, a give-up, an annotation back) */
+.mergeReason { padding: 0 4px; white-space: pre-wrap; word-break: break-word; }
 .mergeVersions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .mergeVersions.one, .mirrorPopover .mergeVersions { grid-template-columns: 1fr; }
 .mergeVersions .mergeVersion.result { grid-column: 1 / -1; }
@@ -5386,7 +5391,11 @@ a.shareBrand:hover { background: var(--bg-hover); }
    the previous file's page, so it takes the page's paper and the theme's
    treatment of it, as the viewer's pages and the zoom window do; the old
    rectangles over it are drawn in the highlight's colour, the dark-page
-   one where the page is flipped. */
+   one where the page is flipped. 360 px holds a lost card's row (Use
+   closest match, Move…, Discard, Previous, the count, Next) on one line,
+   in English and in Chinese; on a phone narrower than 376 px, where the
+   card is narrower too, its sides and the row are tighter (below), so the
+   row stays on one line down to a 360 px phone. */
 .hlReviewCard {
   position: fixed;
   z-index: var(--z-popover);
@@ -5394,7 +5403,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-  width: min(340px, calc(100vw - 16px));
+  width: min(360px, calc(100vw - 16px));
   max-height: min(70vh, 520px);
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -5403,8 +5412,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
   line-height: 1.45;
   color: var(--text-primary);
 }
-/* it takes the focus as a whole (opened by a tap, Next or the Document
-   menu) only so the keys reach its buttons: no ring of its own */
+/* it takes the focus as a whole (opened by a tap or the Document menu)
+   only so the keys reach its buttons: no ring of its own */
 .hlReviewCard:focus { outline: none; }
 .hlReviewHead { font-weight: 600; }
 .hlReviewLabel { margin-bottom: var(--space-2); font-size: var(--fs-2xs); color: var(--text-muted); }
@@ -5463,10 +5472,28 @@ a.shareBrand:hover { background: var(--bg-hover); }
 /* a lost highlight's closest match: its percentage beside Show, then the comparison */
 .hlReviewClosestHead { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-2); }
 .hlReviewClosestHead .hlReviewLabel { margin-bottom: 0; }
-.hlReviewDone { color: var(--text-secondary); }
+/* The steps, then Previous, the count and Next at the end, on one line
+   (wrapping only under a larger interface font). Nothing in the row moves
+   when a step is taken or undone: a step's button holds both its faces,
+   before and after (.hlReviewFace, one cell, the one not shown hidden as
+   .hlReviewRoom), and the count holds the room of "All reviewed" too. */
 .hlReviewActions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
-.hlReviewCount { margin-left: auto; font-size: var(--fs-xs); color: var(--text-muted); font-variant-numeric: tabular-nums; }
-.hlReviewSpacer { margin-left: auto; }
+.hlReviewActions .uiBtn.sm:not(.iconSq) { padding-inline: var(--space-4); }
+.uiBtn.hlReviewStep { display: inline-grid; }
+.hlReviewStep > .hlReviewFace { grid-area: 1 / 1; display: inline-flex; align-items: center; justify-content: center; gap: var(--space-3); }
+.hlReviewRoom { visibility: hidden; }
+.hlReviewNav { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; flex-shrink: 0; }
+.hlReviewCountBox { display: inline-grid; justify-items: center; }
+.hlReviewCountBox > .hlReviewCount { grid-area: 1 / 1; }
+.hlReviewCount { font-size: var(--fs-2xs); color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* a window narrower than 376 px makes the card narrower than 360 px: its
+   sides, the row's gaps and the labelled buttons' padding give the room
+   back, so a lost card's row stays on one line down to a 360 px phone */
+@media (max-width: 375px) {
+  .hlReviewCard { padding-inline: var(--space-4); }
+  .hlReviewActions { gap: var(--space-2); }
+  .hlReviewActions .uiBtn.sm:not(.iconSq) { padding-inline: var(--space-3); }
+}
 
 /* --- area notes (Ctrl+drag rectangle selection on the PDF) --- */
 /* pinch-preview transform target. Origin 0 0 = the layer's top-left, which

@@ -195,41 +195,76 @@ background mode (below), since both sync only while Gamma runs.
 ### Kept on this computer
 
 The **sync button** at the bar's right end sums up everything this
-computer keeps of Gamma: the clones and the folders on disk, of every
-running local server, whichever server the window shows. It reads
-*Synced*, *Syncing…*, *Conflicts*, *n problems* and the like, with a
-matching icon and colour, and shows once a server is open or anything is
-kept. Its **panel** lists the clones, then the folders on disk, each a row
-with its name over its state and where it is, a state dot, and its round
-action buttons, always shown (each named by its tooltip):
+computer keeps of Gamma: the clones, the Zotero links and the folders on
+disk, of every running local server, whichever server the window shows.
+It reads *Synced*, *Syncing…*, *Conflicts*, *n problems*, *Waiting*,
+*Changes queued* and the like, with a matching icon and colour, and shows
+once a server is open or anything is kept. Its **panel** lists the clones,
+then the Zotero links, then the folders on disk, each a row with its name
+over its state and where it is, a state dot, and its round action buttons,
+always shown (each named by its tooltip):
 
-- A click on the row opens it: a clone in the window (`openServer`, then
-  `openGammaWorkspace`), a folder's directory (`openDirectory`).
+- A click on the row opens it: a clone or a Zotero link's workspace in the
+  window (`openServer`, then `openGammaWorkspace`), a folder's directory
+  (`openDirectory`).
 - *pause* and *resume* swap with the item's state, and the panel stays
   open on the new one. For a clone they are `POST /api/mirrors/<ws>/detach`
   and `/relink` (the stored token; what both sides did meanwhile merges),
-  so a paused clone reads *Detached*, as in Gamma's pill. For a folder they
-  are `pauseFolder`, `PATCH /api/folder-links/<id> {paused}`: the server's
-  tick leaves a paused folder alone, and resuming runs a round.
-- *sync* runs a round now, the panel staying open as for *pause*. For a clone that is `POST
-  /api/mirrors/<ws>/sync` on its local server, shut while it is detached.
+  so a paused clone reads *Detached*, as in Gamma's pill; for a Zotero
+  link `POST /api/zotero/links/<ws>/detach` and `/relink`, the same way.
+  For a folder they are `pauseFolder`,
+  `PATCH /api/folder-links/<id> {paused}`: the server's tick leaves a
+  paused folder alone, and resuming runs a round.
+- *sync* runs a round now, the panel staying open as for *pause*. For a
+  clone that is `POST /api/mirrors/<ws>/sync` on its local server, for a
+  Zotero link `POST /api/zotero/links/<ws>/sync`, shut while either is
+  detached.
   For a folder it is `syncFolder`, which asks first whether to replace
   files changed on disk when there are any, and reports the round in the
   bar. A paused folder syncs too and stays paused.
 - *stop* (a folder) is `dropFolder`, which asks whether to keep the files
   or take back what the sync wrote.
 
-A detached clone or a paused folder never raises the button's summary;
-when everything is, it reads *Paused*. The panel ends with the chooser
-above. Conflicts and a clone's cadence stay in Gamma's own sync pill, in
-the clone.
+A detached clone or link or a paused folder never raises the button's
+summary; when everything is, it reads *Paused*. A Zotero link's PDFs that
+wait on something outside Gamma (a full storage, files Zotero does not
+serve) read *Waiting*, and its changes queued for a later round *Changes
+queued*: they only say so, ranked with a first sync not yet run, below
+anything that asks for a look. The panel ends with the chooser above.
+Conflicts and a clone's or link's cadence stay in Gamma's own sync pill, in
+the workspace.
 
-`refreshKeeping` reads every running local server's `GET /api/mirrors` and
+A Zotero link syncs only while its local server runs, so a server that
+holds one starts at launch, as the clones' hosts and the folder host do:
+`startBackgroundHosts` starts the servers `registry.launchHosts` names,
+best effort, a failure logged. The registry records such a server as
+`zoteroHost` on its entry (`registry.setZoteroHost`, written only when it
+changes). Each reading below sets it while the server's list holds a link
+that is not detached, and clears it once its links all went or were
+detached; *resume* on a link's row sets it at once. A list that does not
+come (a server from before the Zotero links, or one that did not answer)
+leaves it as it was. The list is the one the shell's own sign-in, the
+server's seeded admin, gets, so a link another account on that server made
+does not count. A server the user opens while its launch start is still
+under way waits for that start (`startLocal` runs one start per server at
+a time), so two processes never race for its port and data directory
+(`test/main.test.js` and `test/registry.test.js`, `npm test`).
+
+`refreshKeeping` reads every running local server's `GET /api/mirrors`,
+`GET /api/zotero/links` (none from a server that has no such list) and
 `GET /api/folder-links` every 15 s, every 2 s while something syncs, when
-the panel opens and after each action. `lib/keeping.js` turns the rows into
+the panel opens and after each action. A call while a reading runs gets the
+reading that starts once that one ends, and the running reading's result is
+dropped: an action calls it right after changing something on a server,
+which that reading may have read before the change. A timer that comes due
+during a reading leaves it be. `lib/keeping.js` turns the rows into
 items and the button's summary, with no Electron in it
-(`test/keeping.test.js`, `npm test`). A clone reads as Gamma's sync pill
-reads it (`mirrorState` in `frontend/src/collaboration/MirrorPopover.jsx`):
+(`test/keeping.test.js`, `npm test`). A clone and a Zotero link read as
+Gamma's sync pill reads them (`mirrorState` in
+`frontend/src/collaboration/MirrorPopover.jsx`, a link's errors by
+`status.error_kind` and its waiting files as
+`frontend/src/collaboration/syncLinks.js` reads them,
+[docs/dev/zotero_sync.md](../../docs/dev/zotero_sync.md#frontend)):
 the same states in the same order, so the two never disagree. Change both
 together. The result is the shell state's `keeping` (`{items, summary}`).
 The panel's rows act through `shell:keeping-action` (kind, server, id,
@@ -464,10 +499,11 @@ menu, the tray menu, or `offerBackground`, the offer made when a clone or a
 folder on disk is first created. On, `window-all-closed` leaves the app
 running with a tray icon (`ensureTray`: *Open Gamma*, the two switches,
 *Quit Gamma*). At launch `startBackgroundHosts` then starts every local
-server instead of only the clones' hosts, so clones and folders on disk
-keep syncing with no window. The tray's click or *Open Gamma* brings the
-window back where the user left off (`showWindow`). Turning the setting off
-from the tray with no window quits.
+server instead of only the hosts of clones, of remote folders and of Zotero
+links, so clones, Zotero links and folders on disk keep syncing with no
+window. The tray's click or *Open Gamma* brings the window back where the
+user left off (`showWindow`). Turning the setting off from the tray with no
+window quits.
 
 **Start at login** (`settings.openAtLogin`) registers the OS login item
 with `--hidden`, so a login start makes no window and goes straight to the
@@ -518,7 +554,9 @@ the Mac App Store build's is in its container,
 `~/Library/Containers/net.blitzbuild.gamma/Data/Library/Application Support/gamma-desktop`):
 
 - `servers.json` — the registry: server list (a local server with its
-  admin credentials and last `port`), `lastOpened`, `windowBounds`,
+  admin credentials, last `port`, and `zoteroHost` while it holds a Zotero
+  link that is not detached, "Kept on this computer"), `lastOpened`,
+  `windowBounds`,
   and `settings` (`openLastOnLaunch`, `lastTheme`, `dataRoot`, `background`
   and `openAtLogin` (the tray, above), `folderHost` (the local server that
   keeps folders of remote servers), the dev-mode
@@ -586,7 +624,9 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
 - `ui/bar.html` — the shell bar. `ui/launcher.html` — the server picker.
   Both plain HTML, no build step, and the iPad app's chrome as well.
 - `lib/registry.js` — `servers.json` load/save, add/rename/remove,
-  last-opened, settings, window bounds, data-dir size.
+  last-opened, settings, window bounds, data-dir size, the local servers
+  started at launch (`launchHosts`); no Electron, unit tested by
+  `test/registry.test.js`.
 - `lib/sidecar.js` — local server lifecycle: the port (`pickPort`, "A local
   server's address"; `test/sidecar.test.js`), spawn, health poll
   (`/api/health`, 60 s budget for frozen cold starts), log capture,
@@ -650,6 +690,10 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
 - `assets/appx/` and `assets/store/` — tracked Store package/listing images;
   `scripts/store-art.js` regenerates them. The packager's build-resources
   directory is `assets/`; `build/` holds generated PyInstaller intermediates.
+- `test/main.test.js` — `main.js` under plain Node, Electron replaced by a
+  stand-in and the local servers by fakes (the `GAMMA_SHELL_TEST` hook):
+  the launch record a keeping reading writes, a resume made during a
+  reading, one start per server (`npm test`).
 - `test/e2e.js` — the Playwright-driven end-to-end suite (see
   [checklist.md](checklist.md)). `test/smoke.js` — runs the app's `--smoke`
   self-test (dev or `--packaged`).

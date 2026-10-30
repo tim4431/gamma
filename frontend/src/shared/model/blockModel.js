@@ -182,8 +182,8 @@ export function sameJson(a, b) {
   return keys.length === Object.keys(b).length && keys.every((k) => k in b && sameJson(a[k], b[k]));
 }
 
-// A highlight's properties with a review step taken back (the review
-// card's Undo, after Accept, Use closest match or a move): `step` is
+// A highlight's properties with a review step taken back (the step's
+// button on the review card pressed again: Accepted, Placed, Moved): `step` is
 // {before: {position, quote?}, after}, the position before the step and
 // the one it wrote; a quote in `before` is the step's to restore too (""
 // drops it). The same object when the position is no longer the one the
@@ -263,7 +263,7 @@ export function removeBlockTree(blocks, id) {
 // Where block `id` stands in the tree: {parentId, index}, its parent's id
 // (null for a block at the top) and its index among its siblings; null
 // when it is not in the tree. With insertBlockAt, a removed block is put
-// back where it was (a review card's Undo of a Discard).
+// back where it was (a review card's Discarded pressed again).
 export function blockPlace(blocks, id, parentId = null) {
   const list = blocks || [];
   for (let i = 0; i < list.length; i++) {

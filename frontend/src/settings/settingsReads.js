@@ -9,6 +9,7 @@
 // visit shows what the first read at once and reads it again in place.
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
+import { LINK_BASES } from "../collaboration/syncLinks.js";
 
 // An answer this recent is current: a section mounting this soon after its
 // pane's reads went out (the click, the hover) takes it rather than asking
@@ -27,9 +28,9 @@ const NONE = Object.freeze({ data: undefined, error: "", at: 0 });
 export const LOG_START = "/admin/logs?after=0";
 export const PANE_READS = {
   account: ({ admin, signedIn }) => [admin && "/admin/users", admin && "/admin/settings",
-    signedIn && "/auth/cloud/status", signedIn && "/mirrors"],
+    signedIn && "/auth/cloud/status", signedIn && LINK_BASES.mirror, signedIn && { path: "/zotero/account", later: true }],
   users: () => ["/admin/users", "/admin/settings", "/admin/workspaces", { path: "/admin/invitations", later: true }],
-  workspaces: ({ signedIn }) => ["/workspaces/mine", signedIn && "/mirrors", { path: "/accounts", later: true },
+  workspaces: ({ signedIn }) => ["/workspaces/mine", signedIn && LINK_BASES.mirror, signedIn && LINK_BASES.zotero, { path: "/accounts", later: true },
     { path: "/server-config", later: true }],
   backups: ({ admin }) => [{ path: "/workspaces/mine", then: (d) => (d?.workspaces || []).map((w) => backupsOf(w.id)) },
     "/backup-tasks", admin && "/admin/offsite"],

@@ -182,14 +182,22 @@ def list_for_user(user_id: str) -> list[dict]:
     """Every workspace the account can open — its memberships plus, for a
     non-guest account, every public workspace: ``[{id, name, kind, role,
     access, public_role, created_by, created_at, members, personal,
-    default, mirror_of, publishing}]``, personal ones first (the default at
-    the top), then by name. ``members`` counts explicit members; ``mirror_of``
-    names the remote workspace a mirror follows ("" otherwise);
-    ``publishing`` is true for a workspace that publishes pages to the share
-    host (a filtered mirror with at least one page in its filter,
-    gamma/publish.py), which is not a clone: ``mirror_of`` stays "" for it.
+    default, mirror_of, mirror_detached, publishing, zotero_of,
+    zotero_detached}]``, personal ones first (the default at the top), then
+    by name. ``members`` counts explicit members; ``mirror_of`` names the
+    remote workspace a mirror follows ("" otherwise, and while it is
+    detached); ``mirror_detached`` is true for a whole-workspace clone that
+    is detached (its pages' Zotero PDFs still come once it is reattached,
+    so routers/pages._zotero_keeps refuses an attach meanwhile, as for a
+    detached Zotero link); ``publishing`` is true for a workspace that
+    publishes pages to the share host (a filtered mirror with at least one
+    page in its filter, gamma/publish.py), which is not a clone:
+    ``mirror_of`` stays "" for it.
     A publication whose last page was unpublished keeps its mirror row (the
-    token, for the next publish) but is invisible: nothing is published."""
+    token, for the next publish) but is invisible: nothing is published.
+    ``zotero_of`` names the Zotero library a link keeps the workspace in
+    step with (gamma/zotero_sync.py), "" when there is none or it is
+    detached; ``zotero_detached`` is true for a detached one."""
     with connect_users_db() as conn:
         me = conn.execute(
             "SELECT default_workspace, is_guest FROM users WHERE id = ?", (user_id,)).fetchone()
@@ -200,7 +208,11 @@ def list_for_user(user_id: str) -> list[dict]:
             "(SELECT remote_name FROM mirrors mi WHERE mi.workspace_id = w.id AND mi.mode != 'off' "
             "AND mi.page_filter IS NULL), "
             "EXISTS (SELECT 1 FROM mirrors mp WHERE mp.workspace_id = w.id AND mp.mode != 'off' "
-            "AND mp.page_filter IS NOT NULL AND mp.page_filter != '[]') "
+            "AND mp.page_filter IS NOT NULL AND mp.page_filter != '[]'), "
+            "(SELECT library_name FROM zotero_links z WHERE z.workspace_id = w.id AND z.mode != 'off'), "
+            "EXISTS (SELECT 1 FROM zotero_links zd WHERE zd.workspace_id = w.id AND zd.mode = 'off'), "
+            "EXISTS (SELECT 1 FROM mirrors md WHERE md.workspace_id = w.id AND md.mode = 'off' "
+            "AND md.page_filter IS NULL) "
             f"FROM {_FROM} WHERE w.access = 'public' "
             "OR EXISTS (SELECT 1 FROM workspace_members m WHERE m.workspace_id = w.id AND m.user_id = ?)",
             (user_id, user_id)).fetchall()
@@ -212,7 +224,8 @@ def list_for_user(user_id: str) -> list[dict]:
         if not role:
             continue
         out.append({**info, "role": role, "members": r[9], "personal": info["kind"] == "personal",
-                    "default": info["id"] == default, "mirror_of": r[10] or "", "publishing": bool(r[11])})
+                    "default": info["id"] == default, "mirror_of": r[10] or "", "mirror_detached": bool(r[14]),
+                    "publishing": bool(r[11]), "zotero_of": r[12] or "", "zotero_detached": bool(r[13])})
     out.sort(key=lambda w: (not w["personal"], not w["default"], w["name"].lower()))
     return out
 
@@ -366,7 +379,11 @@ def update(ws: str, changes: dict, *, default_for: str = "") -> dict:
     edit; callers must authorize all supplied fields before calling this.
     The write lock also keeps the membership/default checks consistent.
     A workspace made personal loses its invitations, and those by e-mail
-    their mailed links.
+    their mailed links. A workspace a Zotero link or a clone keeps (detached
+    too), or that publishes pages, does not change its kind: the link works
+    with its owner's key or token, for a personal workspace of theirs alone.
+    (A publication whose last page was unpublished keeps its row, unseen in
+    Settings: it is no refusal.)
     """
     from . import email_invites  # local: email_invites imports this module
 
@@ -385,6 +402,12 @@ def update(ws: str, changes: dict, *, default_for: str = "") -> dict:
             if not info["name"]:
                 raise ValueError("workspace name cannot be empty")
         people = _members_of(conn, ws)
+        if kind != info["kind"]:
+            if conn.execute("SELECT 1 FROM zotero_links WHERE workspace_id = ?", (ws,)).fetchone():
+                raise ValueError("this workspace is kept in step with a Zotero library — remove that link first")
+            if conn.execute("SELECT 1 FROM mirrors WHERE workspace_id = ? AND (page_filter IS NULL "
+                            "OR page_filter != '[]')", (ws,)).fetchone():
+                raise ValueError("this workspace is a clone or publishes pages — forget that link first")
         if kind != info["kind"] and kind == "personal":
             if len(people) != 1:
                 raise ValueError("only a workspace with a single member can become personal")
@@ -736,6 +759,7 @@ def _delete_rows(conn, ws: str) -> list[tuple[str, str, str]]:
     conn.execute("DELETE FROM user_prefs WHERE workspace_id = ?", (ws,))
     conn.execute("DELETE FROM reminders_done WHERE workspace_id = ?", (ws,))
     conn.execute("DELETE FROM inbox_items WHERE workspace_id = ?", (ws,))
+    conn.execute("DELETE FROM zotero_links WHERE workspace_id = ?", (ws,))  # its link state went with pages.db
     conn.execute("DELETE FROM workspaces WHERE id = ?", (ws,))
     return links
 
@@ -840,7 +864,7 @@ def delete_account_workspaces(user_id: str, *, wait: bool = False) -> list[str]:
     members lose them — the admin UI says so before). Its prefs go from
     every workspace that stays where it could keep some: those it was a
     member of, and the public ones (a guest has no public access), and so
-    does its Inbox. The mailed links of the deleted workspaces' invitations
+    does its Inbox, and its Zotero links. The mailed links of the deleted workspaces' invitations
     by e-mail are withdrawn in the background, or before this returns with
     ``wait`` (``email_invites.cancel_links``). Returns the deleted
     workspace ids."""
@@ -857,6 +881,7 @@ def delete_account_workspaces(user_id: str, *, wait: bool = False) -> list[str]:
         conn.execute("DELETE FROM share_users WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM integration_tokens WHERE user_id = ?", (user_id,))
         conn.execute("DELETE FROM publisher_sessions WHERE user_id = ?", (user_id,))
+        conn.execute("DELETE FROM zotero_links WHERE owner = ?", (user_id,))  # its Zotero connection goes too
         for ws in deleted:
             links += _delete_rows(conn, ws)
         conn.execute("DELETE FROM user_prefs WHERE user_id = ?", (user_id,))
@@ -875,7 +900,8 @@ def delete_account(user_id: str, *, release_now: bool = False, by: str = "") -> 
     """Delete an account and everything that is only its: sessions, the
     Gamma Cloud identity (its grant released — off the person's server
     list, refresh token revoked), integration tokens, publisher sessions,
-    prefs, done reminders, Inbox items, the workspaces
+    prefs (a Zotero key Gamma had Zotero make revoked there first, as a
+    disconnect does), done reminders, Inbox items, the workspaces
     ``delete_account_workspaces`` removes (the mailed links of their
     invitations by e-mail withdrawn at the account server), its background
     jobs and their files, its AI usage rows and the users row. The grant's
@@ -888,7 +914,7 @@ def delete_account(user_id: str, *, release_now: bool = False, by: str = "") -> 
     (gamma/guests.py) all come here. Returns the deleted workspace ids; []
     for an unknown account. ``user_id`` the account, ``by`` who deletes
     it. The callers check who may be deleted."""
-    from . import cloud_auth, cloud_sync  # local: cloud_auth imports this module
+    from . import cloud_auth, cloud_sync, zotero_account  # local: cloud_auth imports this module
 
     with connect_users_db() as conn:
         if not conn.execute("SELECT 1 FROM users WHERE id = ?", (user_id,)).fetchone():
@@ -902,6 +928,10 @@ def delete_account(user_id: str, *, release_now: bool = False, by: str = "") -> 
         conn.commit()
     if subject:
         (cloud_sync.release if release_now else cloud_sync.release_later)(subject, held)
+    try:  # not left valid at Zotero behind an account that is gone
+        zotero_account.disconnect(user_id)
+    except Exception as e:  # noqa: BLE001 — Zotero never stops a deletion
+        log.warning(f"[zotero] could not revoke the Zotero key of the account being deleted: {e}")
     deleted = delete_account_workspaces(user_id, wait=release_now)
     jobs.forget_account(user_id)
     with connect_users_db() as conn:

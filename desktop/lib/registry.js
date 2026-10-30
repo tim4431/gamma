@@ -21,6 +21,11 @@
 // sync state and no token — only this map, for the switcher's cross-links
 // and for starting the servers that hold copies at launch.
 //
+// `zoteroHost` on a local server's entry: that server holds a Zotero link
+// that is not detached (docs/dev/zotero_sync.md), as the shell last read
+// its `/api/zotero/links`. A link syncs only while its server runs, so
+// those servers start at launch like the clones' hosts (`launchHosts`).
+//
 // `access` is the Mac App Store build's alone: the folders outside its
 // sandbox the user picked, as security-scoped bookmarks
 // (lib/folderAccess.js).
@@ -351,6 +356,29 @@ function setPort(id, port) {
   save(state);
 }
 
+// Whether local server `id` holds a Zotero link that is not detached, as
+// the shell last read its links (main.js refreshKeeping); such a server
+// starts at launch. Written only when it changes.
+function setZoteroHost(id, on) {
+  const state = load();
+  const srv = state.servers.find((s) => s.id === id && s.type === 'local');
+  if (!srv || Boolean(srv.zoteroHost) === Boolean(on)) return;
+  if (on) srv.zoteroHost = true;
+  else delete srv.zoteroHost;
+  save(state);
+}
+
+// The local servers to run for as long as the app does (main.js
+// startBackgroundHosts): the hosts of clones, of folders kept of remote
+// servers (`settings.folderHost`) and of Zotero links, which all sync only
+// while their server runs; in background mode, every local server.
+function launchHosts(state = load()) {
+  const hosts = new Set(state.mirrors.map((m) => m.server));
+  if (state.settings.folderHost) hosts.add(state.settings.folderHost);
+  const all = Boolean(state.settings.background);
+  return state.servers.filter((s) => s.type === 'local' && (all || hosts.has(s.id) || Boolean(s.zoteroHost)));
+}
+
 // Remember which server is open (reopened at next launch).
 function markOpened(id) {
   const state = load();
@@ -462,7 +490,8 @@ function dirSize(dir) {
 }
 
 module.exports = {
-  init, load, get, addLocal, addRemote, setRemoteUrl, withScheme, rename, remove, setPort, markOpened, getLastOpened,
+  init, load, get, addLocal, addRemote, setRemoteUrl, withScheme, rename, remove, setPort, setZoteroHost, launchHosts,
+  markOpened, getLastOpened,
   getSettings, setSettings, getWindowBounds, setWindowBounds, getAccess, setAccess, dirSize,
   defaultDataRoot, dataRoot, localsUnderRoot, setDataRoot,
   originOf, findMirror, mirrorOf, addMirror, setServerMirrors,

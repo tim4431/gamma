@@ -390,6 +390,29 @@ fixtures in `tests/ai_fixtures.py`. Its `org` fixture creates one account
 per test module (the module's name is in the username), so the files never
 see each other's pages or provider entries.
 
+The Zotero link's tests ([zotero_sync.md](zotero_sync.md#tests)) never
+reach zotero.org: they run against an in-memory Zotero,
+`tests/zotero_fake.py`'s `FakeZotero` (the Web API, zotero.org's OAuth
+steps and the file storage, with Zotero's versions and refusals), which
+`install(monkeypatch)` points the server at, serving
+`tests/zotero_fixtures.py`'s `standard_library`. `conftest.py` drops every
+`GAMMA_ZOTERO_*` variable at import, so a developer's stand-in address or
+Zotero app never reaches a test. The engine's suites,
+`test_zotero_sync*.py` (the registry and the API, folders, items, PDFs,
+the first link, annotations, notes, large libraries, hardening, crashes,
+the fuzz), share one harness, `tests/zotero_engine.py`, loaded as
+`ai_fixtures.py` is: each file imports the fixtures it uses by name
+(`# noqa: F401  (fixtures)`) and keeps its own `USER` and `PASSWORD`, which
+`owner_id` and `me` read; never through `pytest_plugins`, which would
+reach every test of the session with its autouse fixtures (`background`,
+which records the background rounds asked for instead of running them, and
+`no_relocation`). Rounds run when a test asks, with the budget lifted.
+`me` checks the owner's links before it removes them: one more round
+writes nothing on either side (`tests/zotero_idle.py`; a test that leaves
+a link unsettled on purpose says so with `idle.skip(reason)`). The fuzz
+runs 8 seeds by default: `ZOTERO_FUZZ_SEEDS=2000 ZOTERO_FUZZ_STEPS=100`
+runs more, and `ZOTERO_FUZZ_TRACE=<key>` follows one object round by round.
+
 Rules the frontend mirrors — search normalization (`gamma/textnorm.py` ↔
 `frontend/src/shared/lib/textnorm.js`), published pages' slugs
 (`gamma/publish.py` ↔ `frontend/src/shared/lib/slug.js`), text boxes
@@ -564,7 +587,9 @@ note the transfers scenario imports writes its strokes through the first
 and paints its paper page with the second's paper. The chat's
 pictures of handwriting (`backend/gamma/ink_view.py`) go to the groups of
 the AI modules (`ai_*.py`: the chat's, settings and ink-zoom).
-Docs, desktop, extension and backend tests go to none, and what every
+Docs, desktop, extension and backend tests go to none (but the fixtures a
+scenario imports or serves: the Notability and GoodNotes notes, the fake
+Zotero and its library), and what every
 scenario goes through
 (`src/app/`, `src/shared/`, the home library, the page's live session, the
 backend core: auth, db, blocks, ops, uploads) to all of them. A changed
@@ -661,12 +686,44 @@ The scenarios live in `tests/e2e/scenarios/`:
   host anonymously, changes the cloud share's audience, syncs, checks the
   pill and Settings' Publishing row, unpublishes, and stops publishing
   from Settings. `--only publish`.
-- `mirror.mjs`: Settings → Workspaces → Clones — the server clones one of
+- `mirror.mjs`: Settings → Workspaces → Clones and Zotero links — the server clones one of
   its own workspaces through the dialog with a write token made via the
   API: Sync, the empty conflicts list, opening the clone, the sync pill's
   log and settings (cadence, detach, reattach), a same-block conflict
   resolved on its row chip, Remove origin ([mirror.md](mirror.md)).
   `--only mirror`.
+- `zotero-link.mjs`: a Zotero link on the clone's surfaces. A second Gamma
+  talks to the fake Zotero (`backend/tests/zotero_fake.py --port 0`, over
+  HTTP, serving `zotero_fixtures.standard_library`) through
+  `GAMMA_ZOTERO_API_BASE` / `GAMMA_ZOTERO_WEB_BASE`, and to a stream
+  address that refuses connections (`GAMMA_ZOTERO_STREAM_URL`), so nothing
+  reaches zotero.org. An account connects with a pasted API key (Account &
+  sync → Zotero), links My Library into a new workspace from Workspaces →
+  Clones and Zotero links, which closes Settings and opens that workspace,
+  its pill showing the first sync from its first read (running or done,
+  never "Not synced yet"), then syncs it from its row (a Zotero row, no
+  "clone of", tagged open); the pill reads
+  `waiting` on the library's linked file until Zotero trashes it, then
+  `ok`; the paper has its PDF, highlight, ink group and text box, the
+  collections and manual tags are folders and labels. The pill's settings
+  turn the cadence to Manual and a round after an edit off, so each round
+  is a Sync now the step presses: a highlight's note edited here reaches
+  the fake (read back through its API with the key), a colour patched
+  there is redrawn here, and a volume changed on both sides is a conflict
+  on the pill and on the page's record chip, taken from Zotero. A group
+  library linked "When opened" into the open workspace (50 newer items
+  added first, so the paper is not among the newest) closes Settings on it,
+  gives it its pill without a reload, and shows the PDF card while the
+  page's own fetch is held, then draws the PDF and a read-only badge on another member's
+  annotation; a paper whose PDF is a linked file takes a PDF attached in
+  Gamma, under the card that says why. Detach and reattach from the pill,
+  Remove link from Settings
+  ([zotero_sync.md](zotero_sync.md)). `--group zotero-link`. Its `RULES`
+  route the link's modules (`backend/gamma/zotero_*`, `routers/zotero*.py`,
+  the Zotero files under `frontend/src/collaboration/` and `settings/`),
+  the fake and its fixtures to it; the Zotero import's note and record
+  modules, the clones' surfaces and clock, the PDF viewer, the editor and
+  Settings select it beside their own groups.
 
 - `notes.mjs`: New page → title → first block (the seed-block insert),
   Shift+Enter / Tab / Shift+Tab / Backspace, Enter as a line break vs the
@@ -684,18 +741,30 @@ The scenarios live in `tests/e2e/scenarios/`:
   text": the job's result, a highlight left hollow (on a flipped page and
   in the notes too), attach mode and move mode ending each other, two
   renumbered citations matched roughly and drawn dashed, their review card
-  on hover (the before picture, the changed words, Next, Accept leaving the
-  card open with Undo and Next, staying while another is hovered, a move
-  from it and that move's Undo back to it), the hollow one's card (the picture of the
-  first file, Next walking the dashed and the hollow ones in document
-  order, Move… reopening it as moved, its Undo) and the Document menu's
+  on hover (the before picture, the changed words, the row on one line,
+  Next; Accept leaving the card as it was within a pixel, Accepted pressed,
+  pressed again making it dashed again, staying while another is hovered,
+  a move from it, Ctrl+Z taking the move back to Accepted pressed with the
+  count kept and Ctrl+Y bringing Moved back, and that move's undo back to
+  Accepted), the hollow one's
+  card (the picture of the first file, Previous and Next walking the dashed
+  and the hollow ones in document order and round, the accepted one kept
+  in the walk and the count with it, Move… reopening it Moved and "All
+  reviewed", Moved pressed again) and the Document menu's
   Review and Accept, the move to a selection by hand with no translation of
   it, a second move by an area drag clearing the quote and putting no
   picture in the chat, and an account that applies only exact matches
   getting a renumbered citation back lost with its closest match, which
-  its card shows, outlines and places; then a hollow highlight's card
-  following Show to a closest match pages away, and one lost from a page
-  the new version dropped reached by Next, its card standing in the viewer
+  its card shows, outlines and places, the card the same after it; then a
+  hollow highlight's card scrolled out of sight and back, Discard
+  deleting a bare one or keeping one with a note off the PDF, the card the
+  same after it and Discarded pressed again bringing it back, the
+  discarded one kept in the walk; then a hollow highlight's card
+  following Show to a closest match pages away, one lost from a page
+  the new version dropped reached by Next, its card standing in the viewer,
+  Enter on Use closest match to that far page and Enter again with the
+  focus kept on the button through the card's hiding, and the lost card's
+  row on one line on a 360 px phone in English and Chinese
   ([highlight_relocation.md](highlight_relocation.md)).
 - `translation.mjs`: a two-column page whose paragraph runs over the column
   break: the request carries one text with `{br}`, the formulas and the

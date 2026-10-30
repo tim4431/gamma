@@ -1,7 +1,9 @@
 """Per-workspace backups (/api/workspaces/{ws}/backups*, gamma/ws_backup.py):
 take a snapshot, list, download, restore in place (replace / merge), delete;
-who may do what; the cap; snapshots go with the workspace. Plus /export-all
-(every personal workspace of an account in one zip) and /workspaces/mine."""
+who may do what; the cap; snapshots go with the workspace; a Zotero-linked
+workspace's backup restored where no link is brings none of the link's
+rows. Plus /export-all (every personal workspace of an account in one zip)
+and /workspaces/mine."""
 
 import io
 import json
@@ -13,7 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from conftest import login, make_page, make_user, workspace_of, guest_name
+from conftest import account_of, login, make_page, make_user, workspace_of, guest_name
+from zotero_engine import LIB, drop_link_row, link_row
 
 
 @pytest.fixture(scope="module")
@@ -174,6 +177,49 @@ def test_no_zip_carries_anyones_prefs_and_a_restore_keeps_them(owner):
                        files={"file": ("planted.zip", buf.getvalue(), "application/zip")})
         assert r.status_code == 200, r.text
         assert owner.get("/api/prefs/open-tabs").json()["value"] == later, mode
+
+
+def _zotero_rows(ws) -> dict:
+    from gamma.db import connect_pages_db
+    with closing(connect_pages_db(ws)) as conn:
+        return {table: conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+                for table in ("zotero_objects", "zotero_queue", "zotero_state")} | {
+            "conflicts": conn.execute("SELECT COUNT(*) FROM sync_conflicts WHERE kind LIKE 'zotero%'").fetchone()[0]}
+
+
+def test_a_linked_workspaces_backup_restored_where_no_link_is_brings_no_link_rows(client):
+    from gamma import ws_backup
+    from gamma import zotero_remote as zr
+    from gamma.db import connect_pages_db, connect_users_db, page_now
+    linked = make_user("bk_zotero_linked", "pw-bk_zotero_linked")
+    plain = make_user("bk_zotero_plain", "pw-bk_zotero_plain")
+    link_row(linked, account_of("bk_zotero_linked"))
+    try:
+        with closing(connect_pages_db(linked)) as conn:
+            zr.set_state(conn, library=LIB, version=7)
+            conn.execute("INSERT INTO zotero_objects (key, kind, state) VALUES ('ABCD2345', 'item', 'live')")
+            zr.enqueue(conn, [{"id": "ABCD2346", "kind": "top"}])
+            conn.execute("INSERT INTO sync_conflicts (page_id, block_id, kind, base, at) VALUES "
+                         "('p', 'p', 'zotero_file', ?, ?)", (json.dumps({"doc_id": "keptHere"}), page_now()))
+            conn.commit()
+        made = ws_backup.create(linked, label="while-linked")
+        zpath = ws_backup.backup_path(linked, made["name"])
+        ws_backup.restore_zip(plain, zpath, "replace")
+        assert _zotero_rows(plain) == {"zotero_objects": 0, "zotero_queue": 0, "zotero_state": 0, "conflicts": 0}
+        # where the link is (detached too: a reattach goes on from them), the backup's rows come back, marked restored
+        with connect_users_db() as conn:
+            conn.execute("UPDATE zotero_links SET mode = 'off' WHERE workspace_id = ?", (linked,))
+            conn.commit()
+        with closing(connect_pages_db(linked)) as conn:
+            zr.clear(conn)
+            conn.commit()
+        ws_backup.restore_zip(linked, zpath, "replace")
+        assert _zotero_rows(linked) == {"zotero_objects": 1, "zotero_queue": 1, "zotero_state": 1, "conflicts": 1}
+        with closing(connect_pages_db(linked)) as conn:
+            state = zr.get_state(conn)
+        assert state["library"] == LIB and state["version"] == 7 and state["restored_at"]
+    finally:
+        drop_link_row(linked)
 
 
 def test_cap_and_guest(owner, guest, monkeypatch):

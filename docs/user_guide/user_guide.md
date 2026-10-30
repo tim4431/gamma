@@ -21,6 +21,7 @@ Read papers, keep what you learn. This guide shows each part of Gamma in a short
 | [Workspaces](#workspaces) | Personal and shared libraries, editing together |
 | [Comments and inbox](#comments-and-inbox) | Threads on notes, highlights and pages; mentions, replies and shares in one inbox |
 | [Offline copies](#offline-copies) | A synced copy on your laptop or iPad |
+| [Zotero link](#zotero-link) | A workspace in step with a Zotero library, both ways; what travels, PDFs, conflicts |
 | [Gamma Connector](#gamma-connector) | Save papers from the browser |
 | [Assistants](#assistants) | Codex, Claude Code, DeepSeek Harness and other MCP clients; the tools they get |
 | [Import and export](#import-and-export) | Zotero, Notability, Obsidian, Notion, PDF, BibTeX |
@@ -51,7 +52,7 @@ A new account starts with a **Welcome** page to practise on, and a **Sketchbook*
 - **A new version of the PDF**: the paperclip menu's *Replace the PDF…* swaps the file and finds each highlight's text in the new one, moving the highlight there (an area highlight follows the caption or figure the PDF draws inside it). *Find highlights in this PDF* in the same menu runs the search again at any time, and places the highlights when the status says they were not placed.
 - **A dashed highlight** is one whose text changed a little in the new version (a renumbered citation, a reworded phrase), or an area whose place is an estimate: it sits where the closest match is, for you to check. Hover it (tap it on a touch screen) to see how closely it matched, a picture of where it was in the previous version (on a page opened through a share link, its old text instead) and the words that changed. **Accept** keeps it where it is and draws it solid, and **Move…** puts it on your next selection. Right-clicking a dashed highlight offers *Accept* too. How alike a changed passage must read to be moved, and how short a passage must match exactly, are set in Settings → Reading & editing › Replacing a PDF.
 - **A hollow highlight**'s text was not found in the new version, so it stays where it was. Hover or tap it for its card: a picture of where it was in the previous version and its text. When the new version has a passage that reads at least half like it, but not alike enough to be moved, the card shows that **closest match**, how alike it reads and the words that differ: **Show** outlines it on the page, and **Use closest match** puts the highlight there and takes its text. Otherwise **Move…** on the card, or *Move to a selection…* when you right-click it (or the same button beside its row in the notes), lets you select the text where it belongs, or drag an area, and press *Move the highlight here* in the bar that opens. *Move to a selection…* also fixes any highlight that sits wrong. If you no longer want it on the PDF, **Discard** on its card takes it off: a highlight with no note, nothing written under it and no comments is deleted; one that has any of these stays in your notes with its quote, and only leaves the PDF. Hover Discard to see which it will do.
-- **Reviewing them in turn**: the card stays open after Accept, Use closest match, Discard or a move from it, saying what it did. **Undo** puts the highlight back as it was, and **Next** goes to the page's next dashed or hollow highlight, until the card says every highlight on the page is reviewed. While its highlight is scrolled out of view, the card hides, and it comes back when you scroll back. A highlight from a page the new version no longer has is reached this way too: its card says the page is gone and still offers its picture, its closest match and **Move…**. The paperclip menu shows *Review 3 highlights* while a page has some, which opens the first one's card, and *Accept all 3 rough matches*, which accepts every dashed one on the page at once (Undo takes it back).
+- **Reviewing them in turn**: after Accept, Use closest match, Discard or a move from it, the card stays open and looks the same, so nothing jumps under the pointer. Only the button you pressed changes: it shows a check and reads *Accepted*, *Placed*, *Discarded* or *Moved*, and pressing it again undoes that step. On a hollow highlight's card with a closest match, **Move…** and **Discard** are icons only, so pressed they show the check alone; hover one to see its name. Buttons that no longer apply are greyed out. The arrows beside the count go to the page's previous and next dashed or hollow highlight, round from the last to the first. The ones you already handled stay in that list where they were, so the count does not change, and you can go back to one and undo it. When none is left to check, the count reads *All reviewed*. While its highlight is scrolled out of view, the card hides, and it comes back when you scroll back. A highlight from a page the new version no longer has is reached this way too: its card says the page is gone and still offers its picture, its closest match and **Move…**. The paperclip menu shows *Review 3 highlights* while a page has some left to check, which opens the first one's card, and *Accept all 3 rough matches*, which accepts every dashed one on the page at once (Undo takes it back).
 - **Zoom** with Ctrl+wheel or pinch; **dark pages** in Settings → Appearance.
 
 ## Draw and type on the page
@@ -255,7 +256,7 @@ Neither one copies a paper, and a paper can have as many labels and folders as y
 
 A simple test: if you'd type it into search, make it a label. If you'd open it and work through it, make it a folder.
 
-Coming from Zotero? A folder is a collection (subfolders are subcollections) and a label is a tag. A [Zotero import](#import-and-export) turns collections into folders and tags into labels, and a Zotero export turns them back. One difference: Zotero keeps an item in the parent collection when you add it to a subcollection, while Gamma moves it down into the subfolder.
+Coming from Zotero? A folder is a collection (subfolders are subcollections) and a label is a tag. A [Zotero import](#import-and-export) turns collections into folders and tags into labels, and a Zotero export turns them back; a [Zotero link](#zotero-link) keeps the two in step. One difference: Zotero keeps an item in the parent collection when you add it to a subcollection, while Gamma moves it down into the subfolder.
 
 ## Search
 
@@ -337,7 +338,91 @@ Your library lives on your server. For the train or a lab without Wi-Fi, keep an
 - **Update both sides.** When an update changes how Gamma stores a library, a copy and its server on different versions pause, and the sync pill says which one to update. Edits made meanwhile wait and go once both are updated.
 - **A folder on this computer** (desktop app): right-click a folder in the library and choose *Keep on this computer…*, or use *Keep a folder…* in the sync button's panel at the right of the title bar. Pick a directory, and the folder is kept there as PDFs beside Markdown notes. On your NAS's workspace this needs no clone: only that folder's files come down, read with a key the app makes for it. The sync button shows how your clones and folders stand.
 - **The sync panel** lists each clone and kept folder with *pause* (then *resume*), *sync* and, for a folder, *stop*. A paused folder isn't touched until you resume or sync it; pausing a clone detaches it, and resuming merges what both sides did meanwhile. *Stop* asks whether to keep or remove the files.
-- **Keep running in the background**: a switch in the launcher's settings and the tray. Gamma then stays in the tray when the window closes, so clones and folders on disk keep syncing; *Start at login* starts it there.
+- **Keep running in the background**: a switch in the launcher's settings and the tray. Gamma then stays in the tray when the window closes, so clones, Zotero links and folders on disk keep syncing; *Start at login* starts it there.
+
+## Zotero link
+
+<!-- Animation to come: a tools/user_guide scene, zotero-link.svg. Link a Zotero library… shows its counts, a highlight made in Gamma appears in a Zotero reader, and a colour changed there is redrawn here. -->
+
+A Zotero link keeps a workspace in step with a Zotero library through zotero.org, both ways: what you read, highlight and file in Gamma shows up in Zotero and on your other computers, and what you change in Zotero arrives here. Zotero stays the catalogue and Gamma becomes its PDF reader. Zotero itself need not be open, or even installed.
+
+### Connect your Zotero account
+
+Settings → Account & sync › **Zotero**; the link dialog offers the same buttons when no account is connected yet.
+
+- **Connect Zotero** opens zotero.org in a new tab: approve the key there, and the row updates by itself. It is offered on the desktop app, and on a server that uses Gamma Cloud sign-in (or has a Zotero app of its own) and whose Public server URL is confirmed in Settings → Server.
+- **Use an API key…** works everywhere: create a key at [zotero.org/settings/keys/new](https://www.zotero.org/settings/keys/new), tick *Allow library access*, *Allow notes access* and *Allow write access*, choose *Read/Write* under *Default Group Permissions*, and paste it. Gamma checks it with Zotero first. The key stays on the server.
+- The row then names your Zotero user and what the key may do: Read · Notes · Write · Files · Groups. Without **write** access a link only receives (*receive only · your Zotero key cannot write*), as it does in a group the key may only read, or whose own settings do not let you edit it; without **notes** access notes travel neither way; without **file** access the PDFs stay in Zotero.
+- **Connect again** (where signing in is offered) or **Use an API key…** replaces the key, for one with more access or after Zotero stopped taking it (*key no longer works*). **Disconnect** pauses every link until you connect again; nothing is deleted.
+
+### Link a library
+
+Settings → Workspaces › Clones and Zotero links → **Link a Zotero library…**
+
+- **Library**: My Library or one of your groups. The line under it says what the library holds, such as *1,930 PDFs · 8.1 GB in Zotero Storage · 120 linked files Gamma cannot download* ("at least" for a library too large to count ahead), and what the key may not do there.
+- **Into**: a new workspace, named after the group (*Zotero* for My Library) unless you fill in **Name here**, or one of your personal workspaces. There its papers pair with Zotero's items by Zotero key, DOI, arXiv id or the PDF itself, then by title and year, and its folders with collections of the same name and nesting. The dialog says what the first sync will do: *412 papers match, 37 will be added to Zotero (210 MB)*, and *Also sent to Zotero: 3 folders as collections · 120 tags from your labels on matching papers · 40 pages' notes as Zotero notes · 812 highlights as annotations*. **If a page differs** picks the side that wins where a matched paper differs: **Take Zotero's** or **Keep Gamma's**. The log counts what it replaces, and a Zotero PDF that Gamma's goes over is kept under Conflicts. Zotero's version still wins for a note holding what Gamma cannot write back (citations, tables, colours…) and for a PDF whose Zotero annotations Gamma cannot carry over.
+- Then **Direction** (below), **PDFs from Zotero** ([below](#pdfs-from-zotero)), **Send PDFs to Zotero** (on for a new workspace, off for an existing one: a PDF added or replaced here goes to Zotero, unless the paper's PDF there is a linked file or not in Zotero Storage; off, your PDFs stay in Gamma), **Automatic tags as labels** (Zotero's automatic tags, publishers' keywords among them; off, they stay in Zotero untouched) and, into an existing workspace, **PDFs without a record**: a PDF whose paper record is not found stays in Gamma (**Keep in Gamma**) or goes to Zotero as a document (**Send as documents**).
+- **Link** opens the linked workspace and starts the first sync in the background: the workspace fills as you watch, and the pill says how far it is. A large library comes in many short rounds: the pill counts them (*First sync 300 / 2,000*) and its popover the PDFs (*PDFs 1.2 GB / 8.0 GB*).
+
+### Directions and the sync pill
+
+- **Two-way**: your changes go to Zotero and Zotero's arrive here. **Receive only**: Zotero's changes arrive, and yours stay here until you switch back to two-way, when they go. **Detach** stops both for now, and **Reattach** merges what both sides did meanwhile.
+- The **sync pill** in the page header reads the link as it reads a clone (*Up to date · 14:02*, *Local edits not synced yet*, *3 changes queued · 14:02*, a badge for conflicts) and says when something needs you: *Reconnect Zotero*, whose **Reconnect** opens your Zotero account, *Zotero unreachable · your edits wait here*, *This key no longer reaches Lab papers*, *Zotero storage is full · 4 PDFs wait*, *12 PDFs not in Zotero Storage*. Its log lists what each round pulled from Zotero and pushed to it.
+- The pill's gear holds the link's settings: **Automatic sync**, when Zotero's changes come in (**Live**, the default: Zotero tells Gamma when something changes; or every 30 s, every 5 min, or **Manual**: no schedule, Zotero's changes come with the next round, on **Sync**, after an edit or for a change still queued), **Sync after an edit** (a round 3 s after your last change; a page's *Notes from Gamma* note goes once the page has been still for 60 s), **Direction**, the PDF and tag settings, **Force pull**, **Force push**, **Detach** and **Remove link**. The link's row in Settings → Workspaces › Clones and Zotero links has the same under **More** (the settings behind **Link settings…**).
+- On the **desktop app** the sync button in the title bar lists Zotero links beside clones, with pause, resume and sync, and a local server that holds a link starts when the app does, so the link syncs without opening that server.
+
+### What travels
+
+| Gamma | Zotero | |
+|---|---|---|
+| Folders | Collections | Names, nesting and filing |
+| Labels | Tags | Your own tags; automatic ones with **Automatic tags as labels** |
+| A paper and its record | An item and its fields | Field by field |
+| A page from a standalone PDF (a PDF and no record) | That standalone PDF | Gets a parent item once you save its record under the **(i) button**, or press **Verify** there |
+| The paper's PDF | The item's PDF | The one Zotero's reader opens |
+| A note from Zotero, as blocks in the notes | That note | Block by block |
+| The paper's other notes | One note, *Notes from Gamma* | Sent once the page has been still for a minute |
+| A note page from Zotero | A standalone note | Note pages made in Gamma stay in Gamma |
+| Highlights, area highlights | Highlights (an underline comes in as a highlight), image annotations | Colour, place and text; a highlight's notes are its comment, bold and italic kept |
+| Handwriting on a PDF page | Ink annotations | One per colour and width, without pressure or timing |
+| Text boxes on a PDF page | Text annotations (a sticky note comes in as a yellow box) | The text, without Markdown |
+| Recently deleted | Zotero's trash | Both ways |
+
+- **A paper you add** in Gamma becomes a Zotero item once its record is found, in the collections of its folders and with its PDF when **Send PDFs to Zotero** is on.
+- **Deleting** a page sends its item to Zotero's trash, and an item trashed in Zotero goes to Recently deleted here; restoring either brings it back on both. A folder, a note or an annotation deleted on one side goes on the other too, into Zotero's trash when you deleted it in Gamma: Gamma never removes anything from Zotero for good. Something edited on one side while deleted on the other is kept on both (*Kept: edited after a delete*; a page whose item Zotero removed for good after you changed it goes back to Zotero as a new one where it can), and a folder whose collection Zotero trashes stays here while it is shared or kept on disk.
+- **A text box synced with Zotero** takes Zotero's font and no padding, so it wraps as Zotero shows it, at the same words, blank lines included. A box you type on a linked paper starts out that way; one made before the link moves its edge to its text the first time it syncs. Markdown still shows here, and Zotero gets the plain text.
+- **Annotations travel while both sides hold the same PDF.** One waits while its PDF is not here yet, while the two PDFs differ, or while it is dashed after a PDF replacement (until you accept it); the pill's tooltip counts what waits, and why.
+- **What stays where it is**: in Gamma, comment threads (*Discussion threads stay in Gamma*), AI chats, note pages made in Gamma, notebooks and sheets, recordings, pictures placed on a PDF page, and the pictures you add to notes (Zotero's note pictures come here and go back); in Zotero, an item's other attachments (a second PDF, a web snapshot, a link) and their annotations.
+
+### PDFs from Zotero
+
+- **All** brings every PDF in Zotero Storage with its annotations. **When opened** brings the records, notes, folders and labels whole, a PDF and its annotations when you open its page, and the 50 newest at once; it is the default above 1,000 PDFs, for a library too large to count ahead, and on the iPad app's own server.
+- Until its PDF is here, a paper's paperclip is a cloud whose card reads *PDF in Zotero · 2.4 MB*, with **Download now**; opening the page puts its PDF first in line. Gamma takes Zotero's file rather than one you attach, so the annotations on both sides stay on one PDF.
+- A PDF Gamma cannot download stays in Zotero with its annotations, and its card says why (*a linked file in Zotero*, *not in Zotero Storage (WebDAV)*, *your Zotero key cannot read files*). You can attach your own copy there. For a linked file or one not in Zotero Storage, it stays in Gamma and is not sent to Zotero. When the PDF only waits (a download that failed, a key without file access, this server's storage full), your copy goes to Zotero once Gamma can read Zotero's file, with **Send PDFs to Zotero** on, and Zotero's is kept under Conflicts.
+- **Replace the PDF…** in Gamma sends the new file to Zotero when **Send PDFs to Zotero** is on: it waits while your highlights are moved onto it (the pill's tooltip says so), then goes over Zotero's file with them. When highlights are left dashed or lost, or the old file carries annotations Gamma may not move (another group member's), the new one goes beside it instead. A paper whose Zotero PDF is a linked file or not in Zotero Storage keeps the new file in Gamma. A PDF replaced in Zotero comes here, and Gamma's highlights move onto it.
+
+### Conflicts
+
+- When both sides changed the same thing (a field of the record, a note, a highlight's colour or comment, the PDF), Gamma's version is kept on both sides and Zotero's waits beside it, so nothing is lost. The pill counts them, the block or the paper's record carries a chip, and the account menu says *2 sync conflicts to look at in your Zotero link*.
+- The card shows **Gamma** (*changed here*) and **Zotero** (*changed in Zotero*). Pick Zotero and press **Apply** to take its version, here and in Zotero; **Apply** with Gamma's picked keeps it and marks the conflict resolved. **Keep all** in the pill's Conflicts view keeps Gamma's for every one. For a PDF replaced on both sides, Gamma's went to Zotero and Zotero's file is kept here to take instead; when Gamma's went beside Zotero's as a second PDF, taking Zotero's puts the paper back on Zotero's own PDF, its newest file. If Zotero changed the thing again since, its newer version has already come here, and taking the old one is refused.
+- On a **receive-only** link, Gamma's version stays in Gamma and goes to Zotero once the link sends changes again; the card says so.
+- **Kept in Gamma**: a Zotero note with citations, tables or colours that Gamma cannot write back carries a badge (*Zotero note with citations: edits stay in Gamma*), and the editor warns before your first edit. Its card offers **Send to Zotero anyway**, losing what Gamma cannot hold, or Zotero's version. A conflict that only reports something (*Kept: edited after a delete*, *Another member's annotation*, *Change not synced*, which says why Zotero refused) has **OK**.
+- **Force pull** takes Zotero's version of everything both sides have, its trash included: a page whose item is in Zotero's trash goes to Recently deleted, where you can restore it for 30 days, and a note or annotation Zotero trashed is deleted here, even one edited here. **Force push** sends Gamma's, and an item whose page is in Recently deleted goes to Zotero's trash; a note Gamma cannot write back and a PDF whose Zotero annotations Gamma cannot carry over still take Zotero's version. Each asks first. What a force replaces is counted in the log, not listed under Conflicts, except a Zotero PDF a push writes over, which is kept under Conflicts. Gamma keeps no earlier version of a page: only a backup made before brings one back.
+
+### Detach, remove, link again
+
+- **Detach** pauses the link and **Reattach** resumes it, merging what both sides did meanwhile. A PDF still in Zotero waits for the reattach.
+- **Remove link** ends it for good: the workspace stays an ordinary workspace of yours and the library stays in Zotero. A PDF that never came stays in Zotero, and the page takes one you attach. To link the library again later, pick that workspace under **Into**: its papers pair with their items by Zotero key, so nothing is doubled.
+- **Rolling back** a linked workspace from a snapshot (Settings → Backups) sends the restored version to Zotero; what Zotero changed meanwhile waits under Conflicts.
+
+### Limits
+
+- **Zotero Storage only.** PDFs kept on WebDAV and linked files cannot be downloaded through zotero.org, so they and their annotations stay in Zotero. When Zotero's storage is full, the PDFs it lacks wait: Gamma tries again after a day, on **Sync now**, or when the link's settings change, and more room is at [zotero.org/storage](https://www.zotero.org/storage).
+- **Group libraries**: Zotero lets no one edit another member's annotations. Gamma shows them with a badge (*Maya's annotation: read-only in Zotero*), keeps your changes to them in Gamma, and puts back one you delete. What Gamma writes into a group is yours in Zotero.
+- **Notes**: after an edit in Gamma, a Zotero note's paragraphs go back as list items.
+- **Text boxes** wrap as Zotero's do when both draw the same font on one computer: checked on Windows, not yet on macOS, Linux or the iPad.
+- **Annotations** travel on a paper's own PDF only: a second PDF, an EPUB or a web snapshot keeps its annotations in Zotero, and a highlight that runs onto the next page comes in on its first page only.
+- **One link per workspace**: only a personal workspace links, a library links into one workspace of yours, and a clone cannot be linked. *Import → Zotero library* into a linked workspace is refused, since its items arrive by themselves. An offline copy of a linked workspace works as any clone: its edits reach Zotero through the server's link.
 
 ## Gamma Connector
 
@@ -392,7 +477,7 @@ The first ten are the chat's own reading tools. An assistant never gets the writ
 
 <img alt="The View menu's Export dialog lists Annotated PDF, Notes as PDF, Markdown, BibTeX and Obsidian vault; a file flies out; arrows arrive from Zotero, Obsidian, Notion and PDF annotations" src="assets/export.svg" width="100%">
 
-Both are in the **View menu (≡)**, on a page or on the home library (with a folder open, Export takes the whole folder).
+Both are in the **View menu (≡)**, on a page or on the home library (with a folder open, Export takes the whole folder). To keep a Zotero library and Gamma in step instead of moving files between them, use a [Zotero link](#zotero-link).
 
 - **Import**: a Zotero library (RDF with files: pick or drop the export folder, or a .zip of it), Notability notes, GoodNotes notebooks, an Obsidian vault or Notion export, Markdown, Logseq, annotations embedded in a PDF (an image stamp becomes a picture), or a Gamma export from another Gamma. For a Zotero library, Notability notes, GoodNotes notebooks, Markdown (an Obsidian vault or Notion export too) or a Gamma export, a review lists what you uploaded beside the library it will make, in the same order, before anything is imported; click a name on either side to find its match on the other.
 - **From Notability**: export the notes with File Format **Note** or **NTB** (in a note: the options icon → Export Options; in the library: press and hold a note → Export Options). Then pick the .note or .ntb files, or a .zip of them, under **Notability notes**. Each note becomes a page. A note with PDF pages keeps them as its PDF, its paper pages printed into it; a note on paper alone becomes a notebook. Handwriting, shapes, sticky notes, text boxes, math, pictures (with their crop, turn, flips and caption) and recordings come along (from an NTB export, all but its recordings), and the text typed on the page itself becomes the page's notes. A recording plays, but the handwriting does not replay with it. Notes already imported are skipped.
@@ -423,13 +508,13 @@ Account menu → **Settings**, or **Ctrl+,**; the card with your name at the top
 
 | Pane | What's there |
 |---|---|
-| Account & sync | Your account, storage, the Gamma Cloud link, settings sync |
+| Account & sync | Your account, storage, the Gamma Cloud link, your Zotero account, settings sync |
 | Appearance | Theme, dark PDF pages, library cards, interface size, Inbox notifications, the top bar's buttons, the viewer's tools |
 | Reading & editing | Imported annotations, open-access fallback, how a new version of a PDF moves its highlights, handwriting, how search opens |
 | Language and Translation | Interface language, what translates and into what |
 | Keyboard | Every shortcut, rebindable; what Enter makes |
 | AI → Connections, Chat, Tool usage, Integrations | Providers and keys, defaults, agent permissions, assistants |
-| Workspaces, Backups, Maintenance | Workspaces and clones, snapshots, storage and index health |
+| Workspaces, Backups, Maintenance | Workspaces, clones and Zotero links, snapshots, storage and index health |
 | Users, Server (administrators) | Accounts and invitations by e-mail, public URL, Gamma Cloud sign-in and requests to join, shared workspaces, server backups, the log |
 | Help & diagnostics | Session log, **Report a problem…** (adds what a maintainer needs, never your notes) |
 

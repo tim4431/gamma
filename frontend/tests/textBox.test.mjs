@@ -3,8 +3,8 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { test } from "node:test";
 import {
-  LINE, MIN_WIDTH, PAD, isTextBox, mergeTextBox, moveBox, normalizeTextBox, placeBox, refitBox, resizeBox, textBoxesBySurface,
-  textStyle,
+  LINE, MIN_WIDTH, PAD, ZOTERO_LINE, ZOTERO_SLACK, isTextBox, mergeTextBox, moveBox, normalizeTextBox, padOf, placeBox,
+  refitBox, resizeBox, textBoxesBySurface, textStyle,
 } from "../src/markup/textBox.js";
 
 // tests/shared/textbox.json: the same cases gamma/text_box.py passes
@@ -135,4 +135,85 @@ test("the width handle fixes the width, from the least width to the surface's ed
   assert.deepEqual(resizeBox(box, 90.456, page), { ...box, w: 90.46, auto: false });
   assert.equal(resizeBox(box, 5, page).w, MIN_WIDTH);
   assert.equal(resizeBox(box, 400, page).w, 112, "no further than the right edge");
+});
+
+// tests/shared/zoterotext.json: Zotero boxes on a real library's numbers
+// (gamma/text_box.py reads the same cases in backend/tests/test_text_box.py).
+const ZOTERO = JSON.parse(readFileSync(new URL("../../tests/shared/zoterotext.json", import.meta.url), "utf8"));
+
+test("the constants are the server's", () => {
+  assert.equal(ZOTERO_LINE, 1.4);
+  assert.equal(ZOTERO_SLACK, 1);
+});
+
+for (const item of ZOTERO.items) {
+  test(`zotero box ${item.data.key}: the box it makes, and the linked block's, read as stored, with no padding`, () => {
+    for (const box of [item.box, item.linked]) {
+      assert.deepEqual(normalizeTextBox(box), box);
+      assert.equal(padOf(normalizeTextBox(box)), 0);
+    }
+    const { zotero, ...gamma } = item.box;
+    assert.equal(zotero, true);
+    assert.deepEqual(normalizeTextBox(gamma), gamma, "the same box without the key is a Gamma box");
+    assert.equal(padOf(gamma), PAD);
+  });
+}
+for (const c of ZOTERO.refit) {
+  test(`zotero refit: ${c.note}`, () => {
+    const box = normalizeTextBox(c.box);
+    const got = refitBox(box, c.shown, c.surface_width);
+    if (c.result === "same") assert.equal(got, box);
+    else assert.deepEqual(got, c.result);
+  });
+}
+for (const c of ZOTERO.merge) {
+  test(`zotero merge: ${c.note}`, () => assert.deepEqual(mergeTextBox(c.stored, c.mine, c.base), c.result));
+}
+
+test("padding: none for a Zotero box, PAD for any other", () => {
+  assert.equal(padOf({ zotero: true }), 0);
+  for (const box of [{}, { zotero: false }, { zotero: 1 }, { zotero: "yes" }, null, undefined]) assert.equal(padOf(box), PAD);
+});
+
+const zStyle = { size: 14, color: "#ffd400", bg: null };
+const zLine = 14 * ZOTERO_LINE; // one line of 14 pt text in Zotero's reader, no padding
+
+test("a tap makes a Zotero box whose text starts at the point, one Zotero line high", () => {
+  const box = placeBox(page, { x: 100, y: 200 }, null, zStyle, { zotero: true });
+  assert.deepEqual(box, {
+    x: 100, y: Math.round((200 - zLine / 2) * 100) / 100, w: MIN_WIDTH, h: 19.6, auto: true, size: 14, color: "#ffd400", bg: null,
+    zotero: true,
+  });
+});
+
+test("a drag makes a Zotero box that spans the drag", () => {
+  const box = placeBox(page, { x: 260, y: 200 }, { x: 100, y: 230 }, zStyle, { zotero: true });
+  assert.deepEqual([box.x, box.y, box.w, box.h, box.auto, box.zotero], [100, 190.2, 160, 19.6, false, true]);
+  const far = placeBox(page, { x: 611, y: 791 }, null, zStyle, { zotero: true });
+  assert.deepEqual([far.x, far.y], [612 - MIN_WIDTH, 792 - 19.6], "kept inside the surface");
+});
+
+test("without the option a new box is a Gamma box, as before", () => {
+  assert.deepEqual(placeBox(page, { x: 100, y: 200 }, null, style, { zotero: false }), placeBox(page, { x: 100, y: 200 }, null, style));
+  assert.equal("zotero" in placeBox(page, { x: 100, y: 200 }, null, style), false);
+});
+
+test("an auto Zotero box stores its measured width + 1; a fixed one keeps its width; a Gamma box's rules stay", () => {
+  const auto = normalizeTextBox({ x: 433.57, y: 127.85, w: 24, h: 16.8, auto: true, size: 12, zotero: true });
+  assert.equal(refitBox(auto, { w: 68.53, h: 16 }, 607.54).w, 69.53);
+  const fixed = { ...auto, auto: false, w: 74.2 };
+  assert.deepEqual(refitBox(fixed, { w: 70, h: 37.24 }, 607.54), { ...fixed, h: 37.24 });
+  const gamma = normalizeTextBox({ x: 100, y: 10, w: 24, h: line, auto: true, size: 16 });
+  assert.deepEqual(refitBox(gamma, { w: 80.12, h: 16 * LINE + 2 * PAD }, 612), { ...gamma, w: 80.12 });
+});
+
+test("markup.css draws a Zotero box in Zotero's reader font, unpadded, at its normal line height", () => {
+  const css = readFileSync(new URL("../src/markup/markup.css", import.meta.url), "utf8").replace(/\/\*[\s\S]*?\*\//g, "");
+  const rule = css.match(/\.textBox\.zotero\s+\.textBoxBody\s*\{([^}]*)\}/);
+  assert.ok(rule, "a .textBox.zotero .textBoxBody rule");
+  const decl = Object.fromEntries(rule[1].split(";").map((d) => d.split(":")).filter((d) => d.length > 1)
+    .map(([k, ...v]) => [k.trim(), v.join(":").trim().replace(/\s+/g, " ")]));
+  assert.equal(decl.padding, "0");
+  assert.equal(decl["line-height"], "normal");
+  assert.equal(decl["font-family"], TEXTBOX.zotero_font);
 });

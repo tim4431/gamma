@@ -12,7 +12,7 @@ Where every setting lives, and how the Settings dialog is built.
 | Per account, synced | `/api/prefs/{key}` (small JSON KV: the account-wide keys in `users.db` `user_prefs`, the others in the workspace's `pages.db` `workspace_prefs`, [user_db.md](user_db.md)) | per account AND workspace, kept in that workspace and left out of its exports and backups: open tabs (`open-tabs`), the recently-viewed queue (`recent-views`), reading positions (`read-pos`) — they name one workspace's pages (pins are no pref: a pinned page or folder carries `properties.pinned` on its block, [home_library.md](home_library.md) "Pinned"); account-wide: active AI key (`ai-provider`) and the preference profile (`profile`, previous row). Server wins on load, localStorage (keyed `user@workspace`) is the instant-paint cache. The recents-card cover thumbnails are workspace data, through their own `/api/page-snaps` store (`page_snaps` in the workspace's `data.db` — over the prefs size cap) |
 | Per account, seen notices | the account-wide `notices-seen` prefs key (`db.NOTICES_SEEN_PREF_KEY`), `{notice id: fingerprint}`, written only by `POST /api/notices/{id}/seen` (below, "Notices") | which release and which log error the account has already looked at |
 | Per account, done reminders | `users.db` `reminders_done`, a row per dismissed reminder (its key, the workspace it was last found in, when), written by `POST /api/reminders/done` and kept while the reminder exists ([mentions.md](mentions.md) "Reminders"); no pref, as there may be thousands (the `reminders-done` prefs key held them before migration step 39) | which of the account's reminders it has dismissed, in every browser |
-| Per account, server-only | AI provider entries (keys/OAuth tokens) under the reserved `ai-settings` prefs key (account-wide), managed via `/api/ai/providers*`; the browser only ever sees a masked hint. The server's shared entries (next row) are listed after them read-only. Machine-translation keys live the same way under the reserved `translate-engines` key (`/api/translate/engines*`, [translation.md](translation.md)), and the online search settings under the reserved `search-services` key (`/api/ai/search-services*`, [ai_tools.md](ai_tools.md) "search_web") | API keys, ChatGPT OAuth, Google / Youdao translation keys, the web search engine with Brave / SearXNG / OpenAlex settings |
+| Per account, server-only | AI provider entries (keys/OAuth tokens) under the reserved `ai-settings` prefs key (account-wide), managed via `/api/ai/providers*`; the browser only ever sees a masked hint. The server's shared entries (next row) are listed after them read-only. Machine-translation keys live the same way under the reserved `translate-engines` key (`/api/translate/engines*`, [translation.md](translation.md)), and the online search settings under the reserved `search-services` key (`/api/ai/search-services*`, [ai_tools.md](ai_tools.md) "search_web"), and the connected Zotero account with its sealed API key under the reserved `zotero-account` key (`/api/zotero/account`, [zotero_sync.md](zotero_sync.md#accounts-and-access)) | API keys, ChatGPT OAuth, Google / Youdao translation keys, the web search engine with Brave / SearXNG / OpenAlex settings |
 | Per workspace | `workspaces` / `workspace_members` in `users.db`, via `/api/workspaces*` ([workspaces.md](workspaces.md)) | name, kind (personal / shared), members and roles, access (private / public + the public role) and a shared workspace's own quota (admins), the account's default workspace, which workspace this tab works in (`?ws=` in the URL, `gamma-last-ws:<user>` remembers the last one) |
 | Server-wide (admin) | `settings` KV in `users.db` via `GET/PUT /api/admin/settings`, plus nullable per-user override columns; the shared AI entries under the `ai_providers` key via `/api/admin/ai-providers*` (keys encrypted with the data directory's key, like the cloud client secret) | default storage quota, public URL, cloud sign-in (and whether this server is the share host), how long guest workspaces last (`guest_ttl_hours`) and demo mode (`demo_mode`, [guests.md](guests.md)), shared AI provider entries, whether guests may use them and the shared AI allowance per account / per guest, the off-site copies (the `offsite` key via `/api/admin/offsite`, its secret key encrypted the same way), a hosted container's last plan answer (`hosted_limits`, written only by the sync, [cloud_accounts.md](cloud_accounts.md) "Hosted containers") and the time of its last write (`hosted_last_write`, saved by the sync) |
 
@@ -218,6 +218,7 @@ and integration tokens get an empty list. The sources:
 | `db-damage` | admins | Server | error | the latest integrity check of a database file failed — a snapshot's copy, or Server → Databases → Check now (`integrity.failures()`, one small JSON file) | a digest of the damaged files and when each was found; a file that passes a later check drops out |
 | `backup-failed` | everyone | Backups | error | a backup task of the account is in state `failed` (`backup_schedule.list_tasks`) | each failed task's id + its last run |
 | `mirror-conflicts` | everyone | Workspaces | warn | a clone the account owns has open sync conflicts (`sync_engine.open_conflict_mark`) | a digest of, per clone, the count + the newest conflict id — resolving old ones never brings it back; a digest, so any number of clones fits the fingerprint's 200 characters |
+| `zotero-conflicts` | everyone | Workspaces | warn | a Zotero link the account owns has open sync conflicts ([zotero_sync.md](zotero_sync.md#conflicts-and-the-log)) | per link, as `mirror-conflicts` |
 | `publish-conflicts` | everyone | Account | warn | a workspace publishing pages to Gamma Cloud has open sync conflicts | per publication, as `mirror-conflicts` |
 | `cloud-sync` | everyone | Account | warn | the account's Gamma Cloud sync is in its `error` state (`cloud_sync.profile_status`) | the failure's timestamp |
 | `cloud-sync-choice` | everyone | Account | warn | the first settings sync with Gamma Cloud found two different copies and waits for Fetch from cloud / Push to cloud (state `choose`) | constant: seen once |
@@ -278,8 +279,21 @@ The account card:
   (`PublishingSection` in SettingsMirrors.jsx: the count of pages, the
   state, Conflicts when any wait, a "more" menu with Sync now and Stop
   publishing all; an empty state for the signed-in with nothing published).
-  It is hidden for the guest. Clones are listed under Workspaces, and the
-  sync pill's place in the topbar is under Appearance › Top bar.
+  It is hidden for the guest. Clones and Zotero links are listed under
+  Workspaces, and the sync pill's place in the topbar is under Appearance ›
+  Top bar. The account's **Zotero** row (`ZoteroAccountRow` in
+  [SettingsZotero.jsx](../../frontend/src/settings/SettingsZotero.jsx),
+  not for the guest) connects a zotero.org account, which every Zotero link
+  of the account syncs with ([zotero_sync.md](zotero_sync.md#accounts-and-access)):
+  *Connect Zotero* where the server can sign in at zotero.org (its own
+  Zotero app or Gamma Cloud's broker; zotero.org opens in a new tab and the
+  row asks the server every few seconds until the key has arrived), and
+  *Use an API key…* always. Connected, the row names the Zotero user, says
+  how the key came and what it may do, asks Zotero whether the key still
+  works (*key no longer works* when it does not), and offers *Connect again*
+  (where it can sign in) and *Use an API key…*, either of which replaces the
+  key, and *Disconnect*, confirmed: the links pause until a connection comes
+  back, nothing is deleted.
 
 Preferences:
 
@@ -570,7 +584,7 @@ Library:
   (`workspaces/<id>`) shows to admins only. The empty Shared section offers
   admins "New shared workspace" (a jump to Server). The account popover's
   "Workspaces…" opens this pane. Last, for everyone but the guest, come
-  **Clones** (`MirrorsSection` in
+  **Clones and Zotero links** (`MirrorsSection` in
   [SettingsMirrors.jsx](../../frontend/src/settings/SettingsMirrors.jsx)),
   the account's mirrors of remote workspaces in git's words, kept out of
   the Personal list. Each row has a status line, Open, Sync or Reattach,
@@ -584,6 +598,32 @@ Library:
   The clone's own settings (cadence, direction, force pull / push, detach /
   reattach, remove origin) live in that pill's gear view, stored on the
   server per mirror (`mirrors.poll_s`, `on_change`, `mode`).
+  The account's **Zotero links** follow the clones in the same section,
+  also kept out of the Personal list (`zotero_of`): a row each, *Zotero ·
+  library · Zotero user* where a clone says *clone of*, with the same
+  state, Open, Sync or Reattach (*Reconnect* when only a new connection
+  mends it), Conflicts, and a "more" menu with *Link settings…*, the
+  forces, Detach and *Remove link*. The section's second
+  action, *Link a Zotero library…* (like the first, waiting until the
+  clones and links are read), opens
+  [ZoteroLinkDialog.jsx](../../frontend/src/settings/ZoteroLinkDialog.jsx):
+  it connects first, in place, when the account has no Zotero key yet,
+  lists the libraries the key reaches, shows what a link would move (the
+  counts of `GET /api/zotero/links/preview`, read by `zoteroPreview.js`),
+  then asks into a new workspace or an existing one (and which side wins
+  where a page differs), the name, the direction, which PDFs come (*All*
+  or *When opened*, the default above 1,000 PDFs, for a library too large
+  to count whole and on the iPad's own server), *Send PDFs to Zotero*
+  (off by default into an existing workspace), *Automatic tags as labels*
+  and *PDFs without a record*. *Link* closes Settings and opens the linked
+  workspace, as a row's Open does; a link into the workspace already open
+  leaves it open and reads the session again (its pill, its pages' PDF
+  cards). A link's pill gear has the clone's cadence tiles (Live is
+  Zotero's streaming API), *Sync after an edit*, the direction and those
+  PDF and tag settings, then the forces, Detach /
+  Reattach and *Remove link*, stored per link in users.db `zotero_links`
+  ([zotero_sync.md](zotero_sync.md#frontend)). Its open conflicts raise the
+  `zotero-conflicts` notice on this pane.
 - **Backups** ([SettingsBackups.jsx](../../frontend/src/settings/SettingsBackups.jsx)):
   the task table first ([BackupTasks.jsx](../../frontend/src/settings/BackupTasks.jsx):
   Add task opens the editor `SubDialog`; each row has an Enabled switch and
@@ -812,8 +852,8 @@ again, unless it was edited since.
 top of the pane shows first, since the browser keeps six requests in
 flight to the server. A read may lead to others once it lands (Backups: each
 workspace's snapshots), and one marked `later` (the server log, the account
-pickers' directory, the Users pane's invitations) goes out with the rest
-without being waited for. They
+pickers' directory, the Users pane's invitations, the Account pane's Zotero
+connection) goes out with the rest without being waited for. They
 start together from the pointer or the focus reaching a pane's sidebar
 button, so a click mostly finds them in, and from the click itself. A
 pane asked for from the sidebar or a search result keeps the one before on

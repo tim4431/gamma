@@ -35,6 +35,7 @@ globalThis.fetch = async (url) => {
 const gate = (path) => { let open; gates.set(path, new Promise((resolve) => { open = resolve; })); return () => { gates.delete(path); open(); }; };
 
 const { createSettingsReads, PANE_READS, backupsOf } = await import("../src/settings/settingsReads.js");
+const { LINK_BASES } = await import("../src/collaboration/syncLinks.js");
 
 test("sections asking for one path together make one request, and a fresh answer is taken, not asked for again", async () => {
   asked = [];
@@ -102,7 +103,12 @@ test("every path a section reads through the store is one of a pane's reads", as
     for (const [, read] of source.matchAll(/useSettingsRead\((?:[^"()]*\? )?"([^"]+)"/g)) {
       assert.ok(listed.has(read), `${file} reads ${read}, which no pane names in PANE_READS`);
     }
+    // the clones' and the links' lists, read by their API base (syncLinks.js LINK_BASES)
+    for (const [, kind] of source.matchAll(/useSettingsRead\([^()]*LINK_BASES\.(\w+)/g)) {
+      assert.ok(listed.has(LINK_BASES[kind]), `${file} reads LINK_BASES.${kind}, which no pane names in PANE_READS`);
+    }
   }
+  assert.deepEqual(PANE_READS.workspaces(who).filter((read) => Object.values(LINK_BASES).includes(read)), ["/mirrors", "/zotero/links"]);
 });
 
 test("a read asked for again after a change supersedes the one on its way, which lands for nothing", async () => {

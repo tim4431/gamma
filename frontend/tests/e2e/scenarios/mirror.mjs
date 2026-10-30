@@ -1,10 +1,10 @@
-// Clones (docs/dev/mirror.md): Settings → Workspaces → Clones. The server
-// clones one of its own workspaces over its real HTTP API with a write
-// token made through the API: the dialog, the row and its status, Sync,
-// the (empty) conflicts list, opening the clone, the sync pill with
-// its settings (cadence, detach, reattach), the pause a remote on another
-// data format causes, a merge conflict resolved on its block, removing the
-// origin.
+// Clones (docs/dev/mirror.md): Settings → Workspaces → Clones and Zotero
+// links. The server clones one of its own workspaces over its real HTTP API
+// with a write token made through the API: the dialog, the row and its
+// status, Sync, the (empty) conflicts list, opening the clone, the sync
+// pill with its settings (cadence, detach, reattach), the pause a remote on
+// another data format causes, a merge conflict resolved on its block,
+// removing the origin.
 import { Account, wanted } from "../harness.mjs";
 
 export async function mirrorScenarios(env) {
@@ -26,7 +26,7 @@ export async function mirrorScenarios(env) {
       await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
       await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
       await page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Workspaces", exact: true }).click();
-      await page.getByText("No clones yet.", { exact: true }).waitFor();
+      await page.getByText("No clones or Zotero links yet.", { exact: true }).waitFor();
 
       await page.getByRole("button", { name: "Clone a remote workspace", exact: true }).click();
       const dlg = page.getByRole("dialog", { name: "Clone a remote workspace", exact: true });
@@ -159,7 +159,7 @@ export async function mirrorScenarios(env) {
       await page.locator(".aiProvRow", { hasText: "clone of" }).getByRole("button", { name: "More", exact: true }).click();
       await page.getByRole("menuitem", { name: "Remove origin", exact: true }).click(); // the menu row
       await page.getByRole("button", { name: "Remove origin", exact: true }).click(); // the confirm
-      await page.getByText("No clones yet.", { exact: true }).waitFor();
+      await page.getByText("No clones or Zotero links yet.", { exact: true }).waitFor();
       assertEq((await user.api("/api/mirrors")).mirrors.length, 0);
       assert((await user.api("/api/workspaces/mine")).workspaces.some((w) => w.id === copy.workspace_id), "the workspace stays");
       assertNoProblems(page);

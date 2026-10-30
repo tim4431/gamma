@@ -294,35 +294,40 @@
     const sum = (state.keeping && state.keeping.summary) || { state: 'none', text: '', title: '' };
     const b = $('syncBtn');
     b.dataset.state = sum.state;
-    b.title = sum.state === 'none' ? 'Clones and folders kept on this computer: none yet' : sum.title;
+    b.title = sum.state === 'none' ? 'Clones, Zotero links and folders kept on this computer: none yet' : sum.title;
     $('syncIco').innerHTML = sum.state === 'busy' ? '<span class="spin"></span>'
       : sum.state === 'error' || sum.state === 'conflicts' ? ICONS.alert : ICONS.cloud;
     $('syncText').textContent = sum.text;
     b.hidden = !state.keeping || (!state.current && sum.state === 'none');
   }
 
-  // A kept clone or folder in the panel: its name over its state, a dot for
-  // the state, and its actions, always shown. A click opens it (the clone in
-  // the window, the folder's directory); "pause" stops its rounds (a clone
-  // detaches) and "resume" starts them again; "sync" runs a round now (a
-  // detached clone has none), the panel staying open on the new state after
-  // each of the three; "stop" (a folder) ends it, the shell asking about the
-  // files.
-  const TONE = { ok: 'on', error: 'off', conflicts: 'warn', pending: 'warn', busy: 'busy' };
+  // A kept clone, Zotero link or folder in the panel: its name over its
+  // state, a dot for the state, and its actions, always shown. A click opens
+  // it (a clone or a link's workspace in the window, the folder's
+  // directory); "pause" stops its rounds (a clone or a link detaches) and
+  // "resume" starts them again; "sync" runs a round now (a detached clone or
+  // link has none), the panel staying open on the new state after each of
+  // the three; "stop" (a folder) ends it, the shell asking about the files.
+  const TONE = { ok: 'on', error: 'off', conflicts: 'warn', pending: 'warn', waiting: 'warn', queued: 'busy', busy: 'busy' };
+  const KEPT_ICON = { clone: 'local', zotero: 'library', folder: 'folder' };
   function keptRow(i) {
     const b = document.createElement('button');
     b.className = 'item keepItem';
     b.dataset.kind = i.kind;
     b.title = `${i.kind === 'folder' ? `${i.dest}, from ${i.from}` : i.where}\n${i.title}`;
     const clone = i.kind === 'clone';
+    const link = i.kind === 'zotero';
     const acts = [ // [action, icon, title, disabled]
       i.paused
-        ? ['resume', ICONS.play, clone ? 'Resume: follow the origin again; what both sides did meanwhile merges' : 'Resume: keep it up to date again']
-        : ['pause', ICONS.pause, clone ? 'Pause: nothing is pulled or pushed until you resume it; nothing is lost' : 'Pause: nothing here changes until you resume it'],
-      clone && i.paused ? ['sync', ICONS.sync, 'Paused: resume it to sync', true] : ['sync', ICONS.sync, 'Bring it up to date now'],
-      ...(clone ? [] : [['stop', ICONS.stop, 'Stop keeping it on this computer']]),
+        ? ['resume', ICONS.play, clone ? 'Resume: follow the origin again; what both sides did meanwhile merges'
+          : link ? 'Resume: sync with Zotero again; what both sides did meanwhile merges' : 'Resume: keep it up to date again']
+        : ['pause', ICONS.pause, clone ? 'Pause: nothing is pulled or pushed until you resume it; nothing is lost'
+          : link ? 'Pause: nothing goes to or comes from Zotero until you resume it; nothing is lost' : 'Pause: nothing here changes until you resume it'],
+      (clone || link) && i.paused ? ['sync', ICONS.sync, 'Paused: resume it to sync', true]
+        : ['sync', ICONS.sync, link ? 'Sync with Zotero now' : 'Bring it up to date now'],
+      ...(clone || link ? [] : [['stop', ICONS.stop, 'Stop keeping it on this computer']]),
     ];
-    b.innerHTML = `<span class="ico">${clone ? ICONS.local : ICONS.folder}</span>` +
+    b.innerHTML = `<span class="ico">${ICONS[KEPT_ICON[i.kind]] || ICONS.folder}</span>` +
       `<span class="lines"><span class="label"></span><span class="state"></span></span>` +
       `<span class="dot ${TONE[i.state] || ''}"></span>` +
       `<span class="acts">${acts.map(([act, icon, title, off]) =>
@@ -342,8 +347,9 @@
     return b;
   }
 
-  // The sync panel: the clones and the folders on disk, each with its state,
-  // then keeping a folder of the open workspace (the chooser, its second level).
+  // The sync panel: the clones, the Zotero links and the folders on disk,
+  // each with its state, then keeping a folder of the open workspace (the
+  // chooser, its second level).
   function renderSync() {
     const panel = $('syncPanel');
     panel.innerHTML = '';
@@ -352,7 +358,7 @@
       return;
     }
     const items = (state.keeping && state.keeping.items) || [];
-    const groups = [['clone', 'Clones'], ['folder', 'Folders on this computer']];
+    const groups = [['clone', 'Clones'], ['zotero', 'Zotero links'], ['folder', 'Folders on this computer']];
     for (const [kind, title] of groups) {
       const rows = items.filter((i) => i.kind === kind);
       if (!rows.length) continue;
@@ -362,7 +368,7 @@
     if (!items.length) {
       const none = document.createElement('div');
       none.className = 'menuEmpty';
-      none.textContent = 'Nothing kept on this computer yet. Clone a workspace from the workspace menu, or right-click a folder in the library and choose Keep on this computer.';
+      none.textContent = 'Nothing kept on this computer yet. Clone a workspace from the workspace menu, link a Zotero library in Settings › Workspaces, or right-click a folder in the library and choose Keep on this computer.';
       panel.appendChild(none);
     }
     const ws = currentWorkspace();

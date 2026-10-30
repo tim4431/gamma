@@ -94,6 +94,21 @@ def _review_source(source):
     return sources[source]
 
 
+def _refuse_linked(ws: str, source: str = "zotero") -> None:
+    """A Zotero library export is not imported into a workspace a Zotero link
+    keeps in step with a library: its items arrive by themselves, and the
+    import's copies would come back to Zotero as doubles of the annotated ones.
+    409, detached links included."""
+    if source != "zotero":
+        return
+    from ..zotero_sync import get_link  # local: the engine reads the routers' change feed
+    link = get_link(ws)
+    if link:
+        name = link["library_name"] or link["library"]
+        raise HTTPException(status_code=409,
+                            detail=f"This workspace is kept in step with {name}; its items arrive by themselves.")
+
+
 def _preview_staged(ws, user_id, token):
     """The staged upload's preview with the review's ``review_id``, its
     ``stage`` kept with the review for the commit; a preview that fails
@@ -119,6 +134,7 @@ def upload_import_review(request: Request, file: UploadFile = File(...), source:
     ``review_id``: nothing is imported until ``POST /api/jobs/import``."""
     ws = require_ws(request, write=True)
     _review_source(source)
+    _refuse_linked(ws, source)
     token = import_staging.create(file, user_id=request.state.user_id, ws=ws, source=source, folder=folder, strip=strip)
     return _preview_staged(ws, request.state.user_id, token)
 
@@ -141,6 +157,7 @@ def open_import_review_parts(payload: ImportParts, request: Request):
     the token becomes the review's ``review_id``."""
     ws = require_ws(request, write=True)
     _review_source(payload.source)
+    _refuse_linked(ws, payload.source)
     if payload.source == "gamma" and is_guest_workspace(ws):  # refused before the bytes travel
         raise HTTPException(status_code=403, detail="a guest workspace cannot import backups")
     token = import_staging.open_parts(user_id=request.state.user_id, ws=ws, source=payload.source,
@@ -756,10 +773,11 @@ def _text_box_from_annotation(obj, subtype: str, pnum: int, page, contents: str)
     Markdown that shows it as written (``text_box.markdown_of``). A foreign
     /FreeText is a fixed-width box over its text area (``_text_area``),
     with the /DA size and colour and the /C fill; its text is /Contents, or
-    /RC reduced to text. A Zotero text annotation may be turned, which a
-    box is not: it is its unturned ``/Zotero:Rect`` upright, on the same
-    centre. A /Text sticky note becomes a note-yellow box at its icon's
-    top-left, as wide as its text."""
+    /RC reduced to text. A Zotero text annotation (``/Zotero:Rect``) is a
+    Zotero box (``zotero: true``, its rect its text area), and may be
+    turned, which a box is not: it is its unturned ``/Zotero:Rect``
+    upright, on the same centre. A /Text sticky note becomes a note-yellow
+    box at its icon's top-left, as wide as its text."""
     rect = first_rect(obj)
     if not rect:
         return None
@@ -790,7 +808,7 @@ def _text_box_from_annotation(obj, subtype: str, pnum: int, page, contents: str)
             if zotero:
                 u, v = pdf_point_to_viewer((zotero[0] + zotero[2]) / 2, (zotero[1] + zotero[3]) / 2, rotation, crop)
                 w, h = zotero[2] - zotero[0], zotero[3] - zotero[1]
-                box.update(x=u * disp_w - w / 2, y=v * disp_h - h / 2, w=w, h=h)
+                box.update(x=u * disp_w - w / 2, y=v * disp_h - h / 2, w=w, h=h, zotero=True)
     if not md.strip():
         return None
     return {"key": key, "page": pnum, "content": md, "kind": "text_box",
@@ -1295,11 +1313,15 @@ def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, a
     as this import read it, holds the original again (a replacement file
     carrying the old one's annotations, ``originals_gone``). A block made
     from a copy of a Zotero annotation names it (``zotero_annotation``, its
-    ``/Zotero:Key``); a block there already is left as it is. ``found``
+    ``/Zotero:Key``); a block there already is left as it is, and so is one
+    the workspace's Zotero link keeps (its key has a ``zotero_objects``
+    row). ``found``
     counts the annotations that make blocks, replies included. Shared by
     the per-paper endpoint below and the Zotero library import.
     ``pdf_path``: the stored file's path (``storage.find_upload_file``)."""
     from PyPDF2 import PdfReader
+
+    from ..zotero_sync import get_link  # local: the engine reads the routers' change feed
     read_as = stored_stat(ws, pdf_path.name)  # the file ``found`` describes; a strip rewrites it
     reader = PdfReader(os.fspath(pdf_path))
     with GlyphPages(os.fspath(pdf_path)) as glyphs:
@@ -1358,7 +1380,13 @@ def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, a
                 if bid and reply["replies"]:
                     add_replies(bid, reply["replies"])
 
-        todo = [f for f in found if f["key"] not in existing]
+        # an annotation a Zotero link keeps (a row under its /Zotero:Key) is
+        # that link's, never a second copy; rows no link keeps (a linked
+        # workspace's backup restored elsewhere) hold nothing back
+        linked = {row[0] for row in conn.execute(
+            "SELECT key FROM zotero_objects WHERE key IN (SELECT value FROM json_each(?))",
+            (json.dumps([f["zotero_key"] for f in found if f.get("zotero_key")]),))} if get_link(ws) else set()
+        todo = [f for f in found if f["key"] not in existing and f.get("zotero_key") not in linked]
         if todo:
             positions = generate_n_keys_between(last_child_position(conn, block_id), None, n=len(todo))
             for f, pos in zip(todo, positions):
@@ -1389,7 +1417,7 @@ def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, a
                 insert(f, block_id, pos, props)
         for f in found:
             parent = made.get(id(f)) or existing.get(f["key"])
-            if f.get("replies") and parent:  # none for a picture left out
+            if f.get("replies") and parent:  # none for a picture left out or an annotation the Zotero link keeps
                 add_replies(parent, f["replies"])
         if inserted:
             note_reload(ws, conn, page_id, actor)  # logs the reload, touches the page, commits: one transaction
@@ -1930,6 +1958,7 @@ def _preview_zotero(ws, data, meta):
     its ``notes`` are); a standalone note's is a page with no PDF to miss.
     ``stage`` is the plan's PDF digests (``zotero_digests``), which spare a
     review's commit hashing the PDFs again."""
+    _refuse_linked(ws)
     with _open_zotero_zip(data) as zf:
         plan = _zotero_plan(zf)
     pages, by_digest, by_key, by_id = {}, {}, {}, {}
@@ -2018,6 +2047,7 @@ def _commit_zotero(ws, actor, data, meta, selection, progress=jobs.no_progress):
     annotations embedded in their PDFs. A stopped job keeps what it wrote
     (the staged new pages are written first). A review's commit hashes no
     PDF its preview hashed (``meta["zotero_digests"]``, its ``stage``)."""
+    _refuse_linked(ws)
     strip = bool(meta.get("strip"))
     with _open_zotero_zip(data) as zf:
         plan = _zotero_plan(zf, meta.get("zotero_digests"))
