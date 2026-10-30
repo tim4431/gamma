@@ -557,7 +557,11 @@ to place it:
   overrides: nothing inside such a surface sets it, or that child shows
   alone where the surface stands. A child kept unseen for a while (a
   picture until it loads) is hidden by a rule that lets go of it after,
-  so it inherits again (`.hlReviewShot:not(.loaded) img`).
+  so it inherits again (`.hlReviewShot:not(.loaded) img`). The browser
+  also takes the focus from what it hides, dropping it to the page: a
+  surface that holds the focus and hides while its anchor scrolls (the
+  review card, `pdf/HighlightReview.jsx`) remembers the control the focus
+  was on, and puts it back once shown when the focus is still on nothing.
 
 The rule behind the second half: a state update from a ResizeObserver, a
 scroll listener, a `requestAnimationFrame` or a passive effect renders
