@@ -176,12 +176,12 @@ def test_a_lost_push_of_a_picture_goes_again_with_the_frame_the_merge_makes(gues
     from gamma import sync_engine
     from gamma.picture import merge_picture
 
-    page = _picture_page(guest, "Picture resend", "pr1")
-    base = {"pr1": {"parent": page, "position": "a0", "content": "A figure", "props": {"picture": PIC, "pdf_page": 1}}}
+    page = _picture_page(guest, "Picture resend", "presend1")
+    base = {"presend1": {"parent": page, "position": "a0", "content": "A figure", "props": {"picture": PIC, "pdf_page": 1}}}
 
     def unlanded(mine, now):
-        op = {"op": "set", "id": "pr1", "props": {"picture": mine}, "base_props": {"picture": PIC}}
-        return sync_engine._unlanded(op, base, {"pr1": {**base["pr1"], "props": {"picture": now, "pdf_page": 1}}})
+        op = {"op": "set", "id": "presend1", "props": {"picture": mine}, "base_props": {"picture": PIC}}
+        return sync_engine._unlanded(op, base, {"presend1": {**base["presend1"], "props": {"picture": now, "pdf_page": 1}}})
 
     # a resize about the centre, lost while the remote moved the picture:
     # the new size goes again about the moved centre, not at the old top
@@ -189,13 +189,13 @@ def test_a_lost_push_of_a_picture_goes_again_with_the_frame_the_merge_makes(gues
     moved = {**PIC, "x": 200}
     landed, rest = unlanded(resized, moved)
     sent = {**moved, "x": 225, "y": 30, "w": 50, "h": 40}
-    assert landed is None and rest == {"op": "set", "id": "pr1", "props": {"picture": sent},
+    assert landed is None and rest == {"op": "set", "id": "presend1", "props": {"picture": sent},
                                        "base_props": {"picture": moved}}
     assert sent == merge_picture(moved, resized, PIC)
     # and the remote takes it as sent
-    _ops(guest, page, [{"op": "set", "id": "pr1", "props": {"picture": moved}}], "bob")
+    _ops(guest, page, [{"op": "set", "id": "presend1", "props": {"picture": moved}}], "bob")
     _ops(guest, page, [rest], "sync")
-    assert _picture(guest, "pr1") == sent
+    assert _picture(guest, "presend1") == sent
     # a move lost while the remote resized the picture about its centre:
     # the move goes again, onto the resized picture
     landed, rest = unlanded({**PIC, "x": 110}, resized)
@@ -203,7 +203,7 @@ def test_a_lost_push_of_a_picture_goes_again_with_the_frame_the_merge_makes(gues
     assert rest["props"]["picture"] == merge_picture(resized, {**PIC, "x": 110}, PIC)
     # two moves: the remote's place may be the later one, so ours has landed
     assert unlanded({**PIC, "x": 110}, {**PIC, "x": 300}) == (
-        {"op": "set", "id": "pr1", "props": {"picture": {**PIC, "x": 110}}}, None)
+        {"op": "set", "id": "presend1", "props": {"picture": {**PIC, "x": 110}}}, None)
     # the remote shows our resize, moved since: landed
     landed, rest = unlanded(resized, {**resized, "x": 300})
     assert rest is None and landed["props"]["picture"] == resized
