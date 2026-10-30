@@ -982,6 +982,10 @@ raises the Handwriting tour (`ink.stroke`) like any first stroke.
     (`GLYPHS`), each letter a little turned and lifted.
   - The controls are Ballpoint lines, their pressed grounds one opaque
     zigzag each, drawn before what stands on them.
+  - A drawing made of corners (a star, an arrowhead, a ground's zigzag) is
+    sampled along its sides too (`_along`), never handed over as bare
+    corners: the screen's outline trails each long step and would cut
+    across the corners at both of its ends.
   - The step texts are text boxes, measured with `text_box.measure`.
 - **The strokes are ordinary.** A pen line presses in and lifts off (`p`),
   with the plain Pen's `w = 1 + (p − 0.5)` from the brush table

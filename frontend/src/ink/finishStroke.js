@@ -137,7 +137,12 @@ function simulatedPressure(samples, size) {
 // 2 sizes, the end taper while the rest is under 3 sizes, each at most half
 // the stroke's length, so a short mark keeps its width in the middle, and
 // neither on a stroke of no length (a tap draws the law's width, as
-// perfect-freehand draws a lone point at its untapered radius); its
+// perfect-freehand draws a lone point at its untapered radius) nor on a
+// finished stroke of two samples, which has no middle to keep, or one
+// shorter than its size, whose middle the outline's start drop skips:
+// tapered, every renderer would draw a hairline between two floors (a quick
+// flick, a dot, a short mark under Smoothing, which commits only its two
+// ends); its
 // pressure is the samples' own, else (no pressure: a mouse or finger, the
 // pressure preference off, a stroke without p) the speed law. A style with
 // a `shape` has no law (widthLaw), so a snapped stroke gets null here. The
@@ -159,7 +164,7 @@ export function brushWidths(samples, style, { live = false } = {}) {
   const size = Math.max(0.01, style.size ?? DEFAULT_SIZE);
   const simulated = hasPressure(style, samples) ? null : simulatedPressure(samples, size);
   const arc = arcLengths(samples);
-  const total = arc[arc.length - 1], most = live ? Infinity : total / 2;
+  const total = arc[arc.length - 1], most = live ? Infinity : samples.length < 3 || total < size ? 0 : total / 2;
   const start = Math.min(b.taper.start * size, most), end = Math.min(b.taper.end * size, most);
   return samples.map((s, i) => {
     const ts = arc[i] < start ? easeOutSine(arc[i] / start) : 1;

@@ -331,9 +331,10 @@ INKOUTLINE = _load("inkoutline.json")
 
 @pytest.mark.parametrize("case", INKOUTLINE["strokes"], ids=[c["note"] for c in INKOUTLINE["strokes"]])
 def test_ink_whole_outline(case):
-    """pen_outline is penOutline: perfect-freehand at the page's own scale,
-    so the SVG export's outline is the screen's, number for number (each
-    written to the hundredth; toFixed and Python round a tie apart)."""
+    """pen_outline is penOutline: perfect-freehand at ten times the page's
+    scale, both ends round, so the SVG export's outline is the screen's,
+    number for number (each written to the hundredth; toFixed and Python
+    round a tie apart)."""
     ink = inkmod.parse_ink({"format": "gamma-ink", "version": 2, "space": NIB_SPACE, "strokes": [case["stroke"]]})
     (d,) = re.findall(r'<path d="([^"]*)"', inkmod.to_svg(ink))
     got, want = ([float(v) for v in re.findall(_NUM, path)] for path in (d, case["d"]))
