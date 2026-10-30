@@ -97,13 +97,30 @@
     "source": "compositions/hero-light.svg",
     "destination": "docs/assets/branding/gamma-hero-light.svg",
     "kind": "hero",
-    "theme": "light"
+    "theme": "light",
+    "png": [1920, 1080]
+  },
+  {
+    "source": "compositions/banner-light.svg",
+    "destination": "docs/assets/branding/gamma-banner-light.svg",
+    "kind": "hero",
+    "theme": "light",
+    "png": [2560, 1440]
+  },
+  {
+    "source": "compositions/banner-light.svg",
+    "destination": "docs/assets/branding/gamma-banner-crop-light.svg",
+    "kind": "crop",
+    "theme": "light",
+    "box": [570, 376, 1420, 700],
+    "png": [2840, 1400]
   },
   {
     "source": "compositions/logo.svg",
     "destination": "docs/assets/branding/gamma-logo.svg",
     "kind": "logo",
-    "theme": "light"
+    "theme": "light",
+    "png": [2040, 336]
   },
   {
     "source": "compositions/hero-light.svg",

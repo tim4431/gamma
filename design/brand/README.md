@@ -39,9 +39,14 @@ SVG artwork retains its explicit colors for portability; when changing the
 palette, update the reference tokens and relevant vector sources together.
 These brand tokens do not replace the app's independent theme tokens.
 
-Use `docs/assets/branding/gamma-logo.svg` for the standalone logo on light
-backgrounds. Its layout is shared with all README headers and Store posters; edit
-`compositions/logo.svg` to change it. The unused Gamma/PDF Annotator wordmarks
+Use `docs/assets/branding/gamma-logo.svg` (or the transparent 2040 × 336
+`gamma-logo.png`) for the standalone one-line logo on light backgrounds. Its
+layout is shared with all README headers and Store posters; edit
+`compositions/logo.svg` to change it. `compositions/banner-light.svg` is a
+2560 × 1440 banner on the hero's warm paper (the logo centred over a standing
+wave, the promise below), published as `gamma-banner-light.svg` and `.png`,
+and cropped close around the text as `gamma-banner-crop-light` (1420 × 700,
+its PNG at 2×). The unused Gamma/PDF Annotator wordmarks
 and their templates have been removed.
 
 ## Published copies and provenance
