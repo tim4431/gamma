@@ -515,13 +515,16 @@ async function fetchPdfData(url, onLoadState, isCancelled) {
 // onMoveHighlight(id, step) (`step` the card's, when it had taken one),
 // onDiscardHighlight(id) (a lost one taken off the page: the step taken,
 // or null), discardOf(id) (what that Discard would do) and
-// onUndoReview(id, step) are its actions, an
-// editor's; `fileId` is the stored file the page shows (a lost one's
-// picture is of the file its rectangles were measured on, when that is
-// another); reviewRef.current(id, {done, scroll}) scrolls to that one and
-// opens its card (the Document menu's Review; App after a move started
+// onUndoReview(id, step) (a step's button pressed again) are its actions,
+// an editor's; reviewPosition(id) is the block's stored pdf_position (null
+// when there is no such block), which says whether a step taken on a card
+// is still in effect; `fileId` is the stored file the page shows (a lost
+// one's picture is of the file its rectangles were measured on, when that
+// is another) and `pageId` the page: another of either starts the card's
+// walk afresh; reviewRef.current(id, {done, scroll}) scrolls to that one
+// and opens its card (the Document menu's Review; App after a move started
 // from the card, `done` what it did and scroll false).
-function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, areaKey = "Mod", peekKey = "Alt", hideEmbeddedAnnots, darkPage = false, translateKey = "", translateScope = null, translateParallel = 3, onTranslate, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", selComment = false, highlighter = "", moveMode = false, marks, flashHighlightId = null, smoothWheel = false, commentMargin = null, marginRef = null, onMarginLost, onPageInView, zoomHeight = 200, onZoomHeight, onZoomChange, onAcceptHighlight, onPlaceHighlight, onMoveHighlight, onDiscardHighlight, discardOf, onUndoReview, fileId = "", reviewRef = null }) {
+function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, areaKey = "Mod", peekKey = "Alt", hideEmbeddedAnnots, darkPage = false, translateKey = "", translateScope = null, translateParallel = 3, onTranslate, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", selComment = false, highlighter = "", moveMode = false, marks, flashHighlightId = null, smoothWheel = false, commentMargin = null, marginRef = null, onMarginLost, onPageInView, zoomHeight = 200, onZoomHeight, onZoomChange, onAcceptHighlight, onPlaceHighlight, onMoveHighlight, onDiscardHighlight, discardOf, onUndoReview, reviewPosition = null, fileId = "", pageId = "", reviewRef = null }) {
   const tools = usePageTools(), { ink, text } = tools;
   const viewerRef = useRef(null);
   const [pdfDoc, setPdfDoc] = useState(null);
@@ -1309,24 +1312,28 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   }, [scrollRef, scale, pdfDoc]);
 
   // The review card of a dashed or hollow highlight (HighlightReview.jsx):
-  // opened by hovering or tapping its rectangles (PdfPage), by its Next and
-  // Undo, from the Document menu (reviewRef), which scroll to the highlight
-  // first (to `position` when given: an Undo puts it back there), and by App
-  // after a move started from it (`done`, no scroll: the selection is in
-  // sight). A place past the last page (a lost one from a page the PDF no
-  // longer has) is not scrolled to: its card stands in the viewer. Another
-  // document closes it.
-  const { card: reviewCard, review, drawn: reviewDrawn } = useHighlightReview();
-  const openReview = (id, { done = null, scroll = true, position = null } = {}) => {
-    const h = displayedUrl === url ? (highlights || []).find((x) => x.id === id) : null;
-    if (!h) return;
-    const to = position || h.position;
+  // opened by hovering or tapping its rectangles (PdfPage), by its Previous
+  // and Next and its steps, from the Document menu (reviewRef), which
+  // scroll to the highlight first (to `position` when given: a discarded
+  // one, drawn no more, where it stood; an undo puts it back there), and by
+  // App after a move started from it (`done`, the step, which the card
+  // records; no scroll: the selection is in sight). A place past the last
+  // page (a lost one from a page the PDF no longer has) is not scrolled to:
+  // its card stands in the viewer. Another page or file closes it and
+  // starts the card's walk afresh (the steps taken on cards).
+  const { card: reviewCard, steps: reviewSteps, review, drawn: reviewDrawn } = useHighlightReview();
+  const openReview = (id, { done = null, scroll = true, position = null, walked = "" } = {}) => {
+    if (displayedUrl !== url) return;
+    const h = (highlights || []).find((x) => x.id === id) || null;
+    if (done) review.record(id, done, h, discardOf?.(id) || null);
+    const to = position || h?.position;
+    if (!to) return;
     if (scroll && !pastLastPage(to, numPages)) scrollToPositionRef.current?.({ position: to });
-    review.open(id, done);
+    review.open(id, { walked });
   };
   if (reviewRef) reviewRef.current = openReview;
   useEffect(() => () => { if (reviewRef) reviewRef.current = null; }, [reviewRef]);
-  useEffect(() => { review.close(); }, [url, review]);
+  useEffect(() => { review.reset(); }, [url, fileId, pageId, review]);
   // A lost highlight's closest match, outlined on its page while its card
   // shows it (Show), which scrolls there.
   const ghostOf = reviewCard?.ghost && displayedUrl === url ? (highlights || []).find((x) => x.id === reviewCard.id) : null;
@@ -2148,7 +2155,8 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
         </TipFrame>
       )}
       </div>
-      <HighlightReview card={reviewCard} review={review} drawn={reviewDrawn} highlights={displayedUrl === url ? highlights : null}
+      <HighlightReview card={reviewCard} steps={reviewSteps} review={review} drawn={reviewDrawn}
+        highlights={displayedUrl === url ? highlights : null} positionOf={reviewPosition}
         viewerRef={viewerRef} darkPage={darkPage} fileId={fileId} pageCount={displayedUrl === url ? numPages : 0}
         onAccept={onAcceptHighlight} onPlace={onPlaceHighlight}
         onMove={onMoveHighlight} onDiscard={onDiscardHighlight} discardOf={discardOf}

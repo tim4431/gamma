@@ -7168,10 +7168,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setAttachModeBlockId(blockId);
   }, []);
   // A move started from a highlight's review card (its Move…) is
-  // remembered, {id, prior} (prior: the step the card had taken, when it
-  // was resolved already): once the selection has moved the highlight, the
-  // card opens on it again, saying so, with Undo and Next
-  // (pdf/HighlightReview.jsx). Any other start of a move forgets it.
+  // remembered, {id, prior} (prior: the card's step in effect, when it had
+  // one): once the selection has moved the highlight, the card opens on it
+  // again, as it was, its Move… pressed ("Moved"), pressing it again
+  // undoing the move (pdf/HighlightReview.jsx). Any other start of a move
+  // forgets it.
   const moveFromReviewRef = useRef(null);
   const startHighlightMove = useCallback((blockId) => {
     moveFromReviewRef.current = null;
@@ -7203,9 +7204,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // placed by estimate goes with the old position. An area drag has no
   // text, so the highlight becomes an area with no quote, as one made the
   // usual way (null drops the key). A move started from the review card
-  // opens it again on the highlight, resolved ("Moved"), with what the
-  // move changed for its Undo (reviewStep), and the card's step before it
-  // when it had one, which that Undo goes back to.
+  // opens it again on the highlight, "Moved", with what the move changed
+  // for its undo (reviewStep), and the card's step before it when it had
+  // one, which that undo goes back to.
   function moveHighlightTo(blockId, position, content) {
     setMoveHighlightId(null);
     const from = moveFromReviewRef.current;
@@ -7247,7 +7248,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // menu's Delete deletes it; one that carries any stays as a note, its
   // position its page alone, so it leaves the PDF and the review queue. One
   // tree edit either way (ops, undo). The step goes back to the card, for
-  // its Undo; `discardOf` says which of the two it would be, for its title.
+  // its undo (Discarded pressed again); `discardOf` says which of the two it
+  // would be, for its title.
   const discardThreads = (blockId) => comments.threadsByBlock.get(blockId)?.length || 0;
   const discardOf = (blockId) => discardKind(findBlock(blocks, blockId), discardThreads(blockId));
   function discardLostHighlight(blockId) {
@@ -7257,10 +7259,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return step;
   }
 
-  // The review card's Undo: the step it took (Accept, Use closest match, a
-  // move started from it, Discard) taken back, one more tree edit, so the
-  // app's own undo takes the Undo back in turn. Nothing when the highlight
-  // changed since (reviewUndone; a discarded one back already).
+  // A step's button pressed again on the review card: the step it took
+  // (Accept, Use closest match, a move started from it, Discard) taken
+  // back, one more tree edit, so the app's own undo takes that back in
+  // turn. Nothing when the highlight changed since (reviewUndone; a
+  // discarded one back already). `reviewPosition(id)`, the block's stored
+  // pdf_position (null for no such block), tells the card whether its step
+  // is still in effect (highlightReview.js stepInEffect): a deletion by
+  // someone else, or a change, ends it.
+  const reviewPosition = useCallback((blockId) => findBlock(blocks, blockId)?.properties?.pdf_position ?? null, [blocks]);
   function undoReviewStep(blockId, step) {
     if (readOnly) return;
     if (step?.kind === "discarded") {
@@ -11992,7 +11999,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               onDiscardHighlight={readOnly ? undefined : discardLostHighlight}
               discardOf={readOnly ? undefined : discardOf}
               onUndoReview={readOnly ? undefined : undoReviewStep}
+              reviewPosition={reviewPosition}
               fileId={attachmentFile(pageAttach)}
+              pageId={focusedBlockId || ""}
               reviewRef={pdfReviewRef}
               onSelectionFinished={readOnly ? undefined : (position, content, hideTip, extras) => {
                 if (moveHighlightIdRef.current) {
