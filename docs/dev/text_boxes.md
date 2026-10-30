@@ -66,11 +66,12 @@ imported from the PDF's own `/FreeText` or `/Text` also carries
 |---|---|---|
 | `x`, `y` | the outer top-left corner, padding included | 0 |
 | `w` | the outer width, at least 24 (`MIN_WIDTH`) | 200 |
-| `h` | the outer height as a client last measured it | one line, `size × LINE + 2 × PAD` |
+| `h` | the outer height as a client last measured it | one line, `size × LINE + 2 × PAD`, a Zotero box's too |
 | `auto` | the width follows the text up to the surface's edge; false is fixed | true |
 | `size` | the font size in pt, 6 to 96; `TEXT_SIZES` offers 9 to 36 | 12 |
 | `color` | the text colour, `#rrggbb` | `#1f1f1f` |
 | `bg` | the fill, `#rrggbb`; `TEXT_BACKGROUNDS` offers white, note yellow, light blue | `null` |
+| `zotero` | `true`: a [Zotero box](#zotero-boxes), with no padding, so `x`, `y`, `w`, `h` are its text area | absent |
 
 `PAD` is 4 pt and `LINE` 1.25 times the size. Every value is at most
 `MAX_COORD`, 14 400 pt, the largest page side a PDF allows (ISO 32000-1,
@@ -89,10 +90,13 @@ no text box. The two sides must agree on these details:
 - A non-finite number takes the default, not the bound. So does an integer
   too long for a double, which `JSON.parse` reads as Infinity.
 - Only a real boolean is an `auto`: "false", 0 and null read as true.
+  Only `true` is a `zotero`; any other value leaves the key out, so a
+  Gamma box is stored as it was before the key existed.
 - A colour matches whole (Python's `fullmatch`: `$` also matches before a
   trailing newline). A whole number stays an integer (23, not 23.0).
 
-`tests/shared/textbox.json` pins both. `test_shared_fixtures.py` compares
+`tests/shared/textbox.json` pins both, and `tests/shared/zoterotext.json`
+the Zotero box's rules. `test_shared_fixtures.py` compares
 JSON text, because Python's `True == 1` and `23 == 23.0` would hide a bad
 value.
 
@@ -125,9 +129,11 @@ hair apart would otherwise write the size back and forth.
 
 So a stored `h` can be stale, and nothing on screen reads it. A box is
 drawn as tall as its text, and the PDF writers grow a box to its text.
-`refitBox` writes nothing within half a point. The screen's font stack
-(`Helvetica, Arial, "Liberation Sans", "Noto Sans", sans-serif`) is
-metric-compatible with PDF Helvetica, so a box wraps alike in both.
+`refitBox` writes nothing within half a point. A Gamma box's screen font
+stack (`Helvetica, Arial, "Liberation Sans", "Noto Sans", sans-serif`) is
+metric-compatible with PDF Helvetica, so it wraps alike in both. A Zotero
+box draws in Zotero's reader's stack instead, and an auto one stores its
+measured width plus `ZOTERO_SLACK` ([Zotero boxes](#zotero-boxes)).
 
 **Merge.** Every change sends the whole `text_box`, since a keystroke
 stores the measured size. Taken as one value, someone typing would undo
@@ -141,8 +147,15 @@ it was changed from merges key by key.
   changed.
 - A writer that names no base box replaces it: an import, the agent's
   tools, a `PUT /blocks/{id}` without `base_properties`.
+- The `zotero` key compares against the base's own (`was.get(k)`), so a
+  writer whose base and box both lack it, such as an older client whose
+  normalizer drops it, keeps the stored key, and one that adds it sets
+  it. No merge removes it; a writer that names no base box replaces the
+  box, key and all, and a Zotero link adds the key back
+  ([zotero_sync.md](zotero_sync.md#text-boxes)).
 - `mergeTextBox` (`markup/textBox.js`) is the twin;
-  `tests/shared/textboxmerge.json` pins both.
+  `tests/shared/textboxmerge.json` pins both, and the `merge` cases of
+  `tests/shared/zoterotext.json` the `zotero` key.
 - The browser names the base on every change ([collab.md](collab.md)
   "same-box merge"). So does the mirror, which
   also judges a lost push key by key ([mirror.md](mirror.md)).
@@ -162,9 +175,12 @@ it was changed from merges key by key.
 is a PDF page number or a sheet id, the key ink uses. The parts shared with
 ink are in [handwriting.md](handwriting.md#client).
 
-- `PageTools.jsx`: `PageToolsContext` carries `text: {armed, style}` beside
-  the ink tools, and the text-box actions among its `actions`. `ink.tool`
-  and `ink.penTool` are null while the Text tool is armed.
+- `PageTools.jsx`: `PageToolsContext` carries `text: {armed, style, zotero}`
+  beside the ink tools, and the text-box actions among its `actions`.
+  `ink.tool` and `ink.penTool` are null while the Text tool is armed.
+  `text.zotero` is App's `zoteroLinked`: the workspace has a Zotero link
+  that is not detached (`syncLinks.js` `zoteroPdfSource`), outside a share
+  link's view.
 - `MarkupLayers.jsx`: the picture layer comes first, then the text-box
   layer and the ink layer over them, all at z-index 6, above a PDF page's
   highlights (2), note badges (4) and link boxes (5). A box takes its own
@@ -173,7 +189,9 @@ ink are in [handwriting.md](handwriting.md#client).
 - `MarkupToolbar.jsx`: a press on the Text tool, its options row or Undo /
   Redo keeps an open editor focused.
 - `textBox.js`: the pure rules and the geometry (`placeBox`, `refitBox`,
-  `moveBox`, `resizeBox`). Its relative imports carry `.js`, so node loads it.
+  `moveBox`, `resizeBox`, `padOf`), and `shownText`, the Markdown a Zotero
+  box's read mode renders. Its relative imports carry `.js`, so node loads
+  it.
 - `placed.js` (pure): the two tree edits a box and a picture share.
   - `withPlaced(tree, id, key, fn)` replaces a block's `text_box` or
     `picture` with `fn` of its normalized value. It gives the same tree
@@ -195,6 +213,10 @@ ink are in [handwriting.md](handwriting.md#client).
   - A press on a box (`begin`) takes the pointer at once on the band and the
     handle. On the text it waits for a move, so Ctrl+click reaches a link.
   - Another contact marks the press `dead`, a pinch, until its pointer lifts.
+  - With `text.zotero`, a box placed on a PDF page (`typeof surface ===
+    "number"`) is placed as a Zotero box. A box with `zotero` takes the
+    `zotero` class, and its read mode renders `shownText(content, box)`;
+    the editor, the stored text and click-to-source read the content.
   - After an edit here, a box's layout effect reports its rendered size
     (`wantsMeasure`, `onBoxMeasured`). The editor opens with `pinScroll`,
     so opening it scrolls nothing.
@@ -212,7 +234,8 @@ ink are in [handwriting.md](handwriting.md#client).
   - While a box is edited, a capture-phase listener notes which row a press
     lands on. The box's editor loses focus before that row's editor opens,
     so an empty box whose own row was pressed is kept.
-- `markup.css`: the layer, frame, band, handle and read mode. The fixed
+- `markup.css`: the layer, frame, band, handle and read mode, and a
+  Zotero box's face and its inline links ([Zotero boxes](#zotero-boxes)). The fixed
   code, link and mark colours sit in a `ds-allow` block
   ([ui-design.md](ui-design.md#ratchets)). The dark-page filter is ink's
   rule in `app.css`, extended to `.textBoxBody`. In a fixed-width box a
@@ -259,6 +282,8 @@ per source line (`remark-breaks`), with headings at 1.45, 1.25 and 1.1 em
 on the box's leading. Lists are 1.5 em per level with the marker hanging in
 the indent, a to-do's box too. Code is Courier; the code tint, link blue
 and mark yellow are the export's. A change to one side needs the other.
+A Zotero box's screen face is Zotero's, not the PDF's
+([Zotero boxes](#zotero-boxes)).
 
 ## Server and interchange
 
@@ -266,9 +291,20 @@ and mark yellow are the export's. A change to one side needs the other.
   PDF writers draw with. `_paragraphs` reads the Markdown through
   `pdf_document.chunks`, the shared engine
   ([pdf_typesetting.md](pdf_typesetting.md#the-shared-typesetting-engine)).
-  - `plain_text` is the text without marks, math as TeX. `measure` is the
-    size a box's text needs, for a box made on the server. `pdf_ops` draws
-    a box from its top-left in a y-down frame and returns the drawn size.
+  - `plain_text` is the text without marks, math as TeX. With `gaps` (a
+    Zotero box's text) each blank source line between two others is an
+    empty line, so `a\n\nb` and `a\n\n\nb` read back as written; blank
+    lines at either end go. `measure` is the size a box's text needs, for
+    a box made on the server. `pdf_ops` draws a box from its top-left in a
+    y-down frame and returns the drawn size.
+  - `zotero_frame(box, width, height)` is a box as a Zotero box with its
+    text where it was: a Zotero box as it is; a Gamma box's text area,
+    `x + PAD`, `y + PAD`, `w − 2 × PAD` (fixed) or `w` (auto: the padding
+    becomes room for Zotero's face, which the client measures again at the
+    box's next edit), and `(h − 2 × PAD) × ZOTERO_LINE / LINE`, the same
+    lines at Zotero's line height. Kept on a surface of `width` ×
+    `height` when both are given. The PDF export's `/Zotero:Rect` and the
+    Zotero link's first send use it.
   - `plain_text` and `pdf_ops` take the notes PDF's `resolve_ref`
     (`_block_ref_resolver`), so a `[[ref]]` reads as its chip does.
   - `markdown_of` escapes plain text another app wrote (`escape_markdown`),
@@ -278,11 +314,20 @@ and mark yellow are the export's. A change to one side needs the other.
     line height 1.25 for Arial or Liberation Sans (0.905 em ascent, 0.212 em
     descent). The screen stack resolves Helvetica to those on Windows and
     Linux.
-  - A fixed box wraps at `w − 2 × PAD`. An auto box wraps only at the
-    page's edge and widens to its widest line, so a small metric difference
-    widens the box instead of adding a line. Any box grows downward.
-  - Display math is 1.21 em (KaTeX's size), scaled down to fit. A table is a
-    line per row, an image its alt text. Blank lines take no height.
+  - The padding is `pad_of(box)`: `PAD` for a Gamma box, 0 for a Zotero
+    box. It sets the room, each row's x, the first line's top and the
+    natural size.
+  - A fixed box wraps at `w − 2 × pad_of(box)`. An auto box wraps only at
+    the page's edge and widens to its widest line, so a small metric
+    difference widens the box instead of adding a line. Any box grows
+    downward.
+  - Display math is 1.21 em (KaTeX's size), scaled down to fit and centred
+    inside the padding. A table is a line per row, an image its alt text.
+    Blank lines take no height in a Gamma box; in a Zotero box each blank
+    line between two others takes a line, `size × LINE` (`_paragraphs`'
+    `gap`), and those at either end are dropped.
+  - Rows are `LINE` high in a Zotero box too: the server cannot know the
+    screen's line height, and the PDF only has to fit its own appearance.
   - `pdf_typeset.draw_spans` passes the box's colour to `GlyphFonts.draw`
     and `vector_text.header`, so math and CJK take it too.
 
@@ -325,7 +370,8 @@ over both.
 - `/Rect`: the drawn box, grown to its text, through the view-box- and
   rotation-aware `viewer_point_to_pdf`. The view box (`page_frame`) is what
   pdf.js, pdfium and MuPDF show: the crop box clipped to the media box.
-- `/Contents`: `plain_text`. `/DA`: `/Helv <size> Tf r g b rg`, which
+- `/Contents`: `plain_text`, with a Zotero box's blank lines (`gaps`).
+  `/DA`: `/Helv <size> Tf r g b rg`, which
   pdf.js, MuPDF and Acrobat read to rebuild the look. No AcroForm `/DR`:
   adding a form to a PDF without one has side effects.
 - `/C`: the fill, only when `bg` is set; Acrobat, MuPDF and pypdf read it as
@@ -346,10 +392,14 @@ over both.
   without them Zotero (7+) drops a `/FreeText` instead of importing it as
   its text annotation (pdf-worker's `readRawAnnotation`;
   [research/zotero-annotations.md](../research/zotero-annotations.md)).
-  The rect is the box as shown, `w × h` in points, unturned, around the
-  `/Rect`'s centre. The rotation is the page's: Zotero draws the text
-  turned by the page's rotation less this one, so it stands upright, and
-  its own writer rebuilds the same `/Rect` from the two. The colour is the
+  The rect is the drawn box as a Zotero box (`zotero_frame` of the box at
+  its drawn `w × h`), in points, unturned, around that frame's centre: a
+  Zotero box's is the drawn box itself, and a Gamma box's its text area,
+  `[x + 4, y + 4, w − 8 (fixed) or w (auto), (h − 8) × 1.12]`, so Zotero
+  puts the text where Gamma draws it, at its width. Like `/Rect`, it is
+  not kept inside the page. The rotation is the page's: Zotero draws the
+  text turned by the page's rotation less this one, so it stands upright,
+  and its own writer rebuilds a `/Rect` from the two. The colour is the
   text's; Zotero would take `/C`, the fill, without it. With the `/NM`,
   that is all Zotero needs; it shows the plain `/Contents` in its own font.
 - Not written: `/RC` and `/DS`, which could disagree with the appearance,
@@ -363,16 +413,19 @@ replies and hidden annotations are in
 - A `/FreeText` or `/Text` becomes a text box. Its place comes from `/Rect`
   through `pdf_point_to_viewer`, the exact inverse of the export's mapping,
   and `text_box.keep_on_surface` keeps it inside the page.
-- With `/GammaTextBox`, the Markdown, size and style come from it and `x`,
-  `y` from `/Rect`, so a move in another viewer holds. When `/Contents`
+- With `/GammaTextBox`, the Markdown, size and style come from it (its
+  `zotero` key with them) and `x`, `y` from `/Rect`, so a move in another
+  viewer holds. When `/Contents`
   (`\r` read as `\n`) differs from the `text` written, `/Contents` wins.
 - Other text is plain text: `markdown_of` escapes it, so "$5 and $10" reads
   as the other app showed it.
 - A foreign `/FreeText` is a fixed box over its text area, the `/Rect` less
   the `/RD` margins. Its size and colour come from `/DA`, its fill from `/C`,
-  its text from `/Contents`, else `/RC` reduced by `_rc_text`. A Zotero
-  text annotation (`/Zotero:Rect`) may be turned, which a box is not: it is
-  that unturned rect upright, on its centre (`_zotero_rect`).
+  its text from `/Contents`, else `/RC` reduced by `_rc_text`.
+- A Zotero text annotation (`/Zotero:Rect`, no `/GammaTextBox`) is a
+  [Zotero box](#zotero-boxes) at its rect: a PDF Zotero exported, or its
+  copy in an RDF import. It may be turned, which a box is not: it is that
+  unturned rect upright, on its centre (`_zotero_rect`).
 - A `/Text` sticky note is a note-yellow auto box at its icon's top-left,
   sized by `measure`.
 - The key (`annotation_key`: page, subtype, the rounded corners of the
@@ -399,13 +452,14 @@ pictures and boxes. The AI's picture of a PDF page draws them through it
 too (`pdf_export.page_with_ink`), under the ink.
 
 **A Zotero link** (`gamma/zotero_annotations.py`,
-[zotero_sync.md](zotero_sync.md#annotations)): a box on a PDF page, not on
-a sheet, is a `text` annotation of the page's PDF in Zotero, its text plain,
-and Zotero's `text` and `note` annotations come here as boxes, a turned
-one upright on its centre as the import makes it, a sticky note's at its
-icon in note yellow. What one side holds that the other cannot (a turned
-annotation, a box's Markdown, fill or width) never reads as a change on
-either side.
+[zotero_sync.md](zotero_sync.md#text-boxes)): a box on a PDF page, not on
+a sheet, is a `text` annotation of the page's PDF in Zotero, its text
+plain and its rect the box, a [Zotero box](#zotero-boxes); a Gamma box is
+made one the first time it goes. Zotero's `text` annotations come here as
+Zotero boxes, a turned one upright on its centre as the import makes it,
+and its `note` annotations as Gamma boxes at the icon in note yellow. What
+one side holds that the other cannot (a turned annotation, a box's
+Markdown or fill) never reads as a change on either side.
 
 **The other readers** treat a box as a note and never as an area
 highlight, placed by the nearest-sheet rule.
@@ -424,10 +478,108 @@ highlight, placed by the nearest-sheet rule.
   "text_box"` (the block table's generated `kind`); the search panel lists
   it with the notes.
 
+## Zotero boxes
+
+A box with `zotero: true` is laid out as Zotero's reader lays out a text
+annotation, so a box synced with Zotero breaks its lines at the same words
+in both apps on one machine. The reader draws a text annotation as a
+`<textarea>` exactly as wide and tall as its rect, with no padding, in its
+body's font stack at `line-height: normal`, and its rect is the text's own
+extent ([research/zotero-text-layout.md](../research/zotero-text-layout.md)).
+A Zotero box is that textarea's twin.
+
+- **Geometry.** No padding (`text_box.pad_of`, `textBox.js` `padOf`), so
+  `x`, `y`, `w`, `h` are the text area and equal Zotero's rect, which maps
+  to the box and back as the identity, to hundredths of a point
+  ([zotero_sync.md](zotero_sync.md#text-boxes)).
+- **On screen** (`.textBox.zotero .textBoxBody` in `markup.css`): padding
+  0, the reader body's stack copied verbatim (`-apple-system,
+  BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Helvetica, Arial,
+  sans-serif`, `zotero_font` in `tests/shared/textbox.json`),
+  `line-height: normal`, and the values a textarea resets that a style
+  around the box could change (weight 400, normal style, normal letter and
+  word spacing, no indent or text transform, start alignment). It wraps by
+  the box's `overflow-wrap: anywhere`, which is what the textarea's
+  `word-break: break-word` computes to, a line per source line.
+- **Read mode** renders `shownText(content, box)`: what Zotero shows of the
+  text `plain_text(…, gaps=True)` sends it. The stored text and
+  click-to-source are unchanged.
+  - Blank lines at either end are dropped, as `plain_text` and `_layout`
+    drop them.
+  - A line of only what Python's `str.strip()` removes, a no-break or
+    full-width space among it, is blank, as the server reads it.
+  - Each blank line between two others takes a line. The renderer already
+    shows every blank line of a run but its first, the paragraph break
+    (`editor/mdMarks.js` `expandBlankLines`), so a paragraph holding a
+    no-break space goes before each run. Fenced code (```` ``` ```` and
+    `~~~`, as the renderer reads them) and display math are left as they
+    are.
+  - A bare URL is split by an empty `<span>` after its `http`, `https` or
+    `www`, so it stays text rather than becoming a link chip, and a link
+    labelled with its own URL reads as its label. Nothing is inserted in
+    code, math, a raw HTML tag, a link's destination or a reference
+    definition.
+  - A link's label, a `[[ref]]` and a citation draw as their text, inline,
+    with no chip around it; a written link still opens with Ctrl+click.
+- **Placing** (`placeBox(…, {zotero: true})`). While the workspace has a
+  Zotero link that is not detached (`text.zotero`), a box made on a PDF
+  page is a Zotero box from its first keystroke, so it is measured in
+  Zotero's face and never changes face later. A tap puts its text at the
+  pointer, its first line `size × ZOTERO_LINE` high (1.4 em, 19.6 pt at
+  14 pt); a drag spans the drag. A box on a sheet never goes to Zotero and
+  stays a Gamma box. This holds under receive only too, since the box goes
+  once the link is two-way.
+- **Width** (`refitBox`). An auto Zotero box is drawn at its text's width,
+  as any auto box is, and after a local edit stores that width plus
+  `ZOTERO_SLACK` (1 pt, as Zotero's `measureWidth` adds 1), up to the
+  page's edge. Zotero has no auto width: it wraps at that width, where
+  every line fits as here. A fixed Zotero box keeps its `w`; the layer
+  measures its `h` at the screen's line height, which on one machine is
+  Zotero's.
+- **On the server** (`_layout`, `measure`, `pdf_ops`): no padding, and
+  each blank line between two others a line. Rows stay `LINE` high in
+  Helvetica's widths, so the PDF's appearance can break otherwise than the
+  screen where a line nearly fills the box; Zotero reads `/Zotero:Rect`,
+  not the appearance. `measure` gives the text's own size, and a rect the
+  server makes for Zotero allows `ZOTERO_LINE` a line (`zotero_frame`).
+- **Which boxes.** A box that comes from Zotero (the link's text
+  annotation, the import of a Zotero `/FreeText`), a box placed while a
+  link is live, and any other box the link sends to Zotero, which it
+  converts first. A box keeps the key when the link goes, and when it is
+  copied, exported or moved to another workspace: its look is its own. A
+  workspace with no Zotero link makes Zotero boxes only by importing a PDF
+  Zotero wrote.
+- **What does not match.** Markdown (bold, headings, lists, code, math)
+  renders here and goes as plain text, so it can move a break. A `~~~`
+  fence is code here and text in Zotero. An @mention draws as its chip,
+  while Zotero gets the raw `@…`; an id-only `[[ref]]` shows its id, as
+  `plain_text` sends it. Leading spaces and runs of spaces, which Zotero
+  keeps, collapse here. A bare URL is not clickable in read mode. The
+  editor shows the source with `white-space: break-spaces`, so a box can
+  wrap otherwise while it is typed in; read mode is what matches. A fill
+  hugs the text, since there is no padding; Zotero shows none.
+- **Platforms.** The match holds where both apps resolve the stack to the
+  same face at the same width. It is measured on Windows only, Chromium
+  against Chromium (Segoe UI), by the browser suite's reference textarea.
+  macOS (SF), Linux (a Helvetica clone through fontconfig) and the iPad
+  (whose Zotero app may not draw PDFs with the web reader) are not
+  verified, and neither is Zotero desktop's Gecko engine. Zotero desktop
+  7.0 to 10.0.x pads its textarea 2 CSS px and so wraps 4 px narrower than
+  its rect; Gamma follows the web library and Zotero's reader since. Two
+  machines whose stacks resolve to different faces cannot match, as
+  Zotero's own clients do not.
+
 ## Tests
 
 - `frontend/tests/textBox.test.mjs`: the shared cases, `textBoxesBySurface`
   (nested sheets, a stale `pdf_page`, identity), `textStyle`, the geometry.
+  For a Zotero box: the cases of `tests/shared/zoterotext.json` (its
+  items, `refitBox`'s slack, the merge), `placeBox`'s `zotero` option, and
+  a pin of `markup.css`'s Zotero rule (padding 0, `line-height: normal`,
+  the `zotero_font` stack). `textBoxShown.test.mjs`: `shownText` on its
+  own, and the cases of `tests/shared/zoteroshown.json` rendered through
+  react-markdown with the app's plugins, each with the lines it shows, its
+  text and no link.
   `blockHistory.test.mjs`: the labels, folds, runs and the key-by-key
   rebase. Also `blockOps.test.mjs` and `collabSession.test.mjs`
   ([collab.md](collab.md#testing)). `placed.test.mjs`: `withPlaced` and
@@ -438,13 +590,25 @@ highlight, placed by the nearest-sheet rule.
   geometry at every rotation, with a MuPDF pixel check, the layout and
   the round trip to 0.01 pt. Also edits in another viewer, foreign boxes,
   sticky notes and threads, replaced originals, the switches and the
-  notebook PDF.
+  notebook PDF. For a Zotero box: `zoterotext.json`'s layout, frames,
+  rect round trip and merge, `/Zotero:Rect` of both kinds at every
+  rotation, a Zotero `/FreeText`'s import, and blank lines in `/Contents`.
+  `test_text_box_shown.py`: `zoteroshown.json` from the server's side, the
+  lines `_layout` gives and the text `plain_text(gaps=True)` sends.
 - `backend/tests/test_shared_fixtures.py`, and label checks in the export,
   Obsidian, Zotero, notes PDF, block and AI tool tests.
 - Browser: `textBoxes.mjs`, group `textbox`
   ([debugging.md](debugging.md#browser-end-to-end-suite)). `select.mjs`
   runs it for changes under `frontend/src/markup/`, `ink/`, `notebook/`,
-  `editor/`, `pdf/` and `backend/gamma/text_box.py`.
+  `editor/`, `pdf/` and `backend/gamma/text_box.py`. Its step "a Zotero
+  box wraps as Zotero's reader" puts `zoterotext.json`'s boxes on a page
+  as Zotero boxes and as Gamma boxes, with blank lines, a URL and a sweep
+  (10 sentences, widths 40 to 300 pt in steps of 13, sizes 10 and 14), and
+  compares each Zotero box's lines with a hidden textarea styled by the
+  reader's `.textAnnotation` rule, at 100% and 150%. The reference resolves
+  the same stack as the box, so the step holds on any machine.
+  `zotero-link.mjs` checks a synced text annotation and a box typed on a
+  linked paper ([zotero_sync.md](zotero_sync.md#tests)).
 
 ## Not built yet
 
@@ -470,14 +634,17 @@ highlight, placed by the nearest-sheet rule.
 - With *Keep originals* (not the default), a box imported from the file and
   deleted here leaves its embedded original in the export: nothing records
   a deleted block. The default strips the original at import, so it goes.
-- Import drops a callout's line and arrow. A foreign text's blank lines and
-  leading spaces take no room in a box and leave the next `/Contents`.
+- Import drops a callout's line and arrow. A foreign text's leading
+  spaces, and its blank lines outside a Zotero box, take no room in a box
+  and leave the next `/Contents`.
 - A reply's text is kept as written, as a highlight's comment is, so
   Markdown-looking text there renders as Markdown.
 - A `/Text` or `/FreeText` stored as a highlight block stays one, which the
   AI and the Logseq export read as an area highlight; there is no migration.
-- In Zotero a box is plain text in Zotero's font, size and colour: no
-  Markdown, math, fill or fixed width, and Zotero 6 drops it. The Zotero
+- In Zotero a box is plain text in Zotero's font, size and colour,
+  wrapped at its rect's width: no Markdown, math or fill, and Zotero 6
+  drops it. A Zotero box matches Zotero's lines on Windows; macOS, Linux
+  and the iPad are not verified ([Zotero boxes](#zotero-boxes)). The Zotero
   note a box becomes without a PDF copy labels it by its page only as the
   note's top block. The Obsidian export does not say which sheet a box was
   on.

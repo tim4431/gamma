@@ -16,7 +16,12 @@ stubbed to run until the fuzz ends it (``placing``), written while it still
 runs or not at all, and no new attachment of Gamma's goes beside Zotero's
 PDF while they are placed, nor when each of its annotations could move
 with Gamma's file (``_needless_beside``); a note page edited here may have
-its note removed for good in Zotero. More runs: ``ZOTERO_FUZZ_SEEDS=2000 ZOTERO_FUZZ_STEPS=100``;
+its note removed for good in Zotero. Text boxes go both ways: Gamma's own
+(auto and fixed width, made Zotero boxes as they first go), Zotero's text
+annotations, each retyped (blank lines too) or resized on either side,
+moved in Zotero, and now and then written back here without their
+``zotero`` key, as a writer that knows none does; each settles a Zotero box
+on its rect. More runs: ``ZOTERO_FUZZ_SEEDS=2000 ZOTERO_FUZZ_STEPS=100``;
 ``ZOTERO_FUZZ_TRACE=<key>`` follows one object round by round. Accounts are
 ``zf_…``."""
 
@@ -28,9 +33,10 @@ import pytest
 from zotero_engine import (LIB, WRITES, Crash, _block, _conflict_count, _due_now, _rows, _stored_pdf,  # noqa: F401
                            _sync, asked_soon, background, drop_pending, fake, idle, me, no_relocation, owner_id,
                            quiet)
-from zotero_fixtures import _annotation, _note, _position, generated_library, pdf_bytes
+from zotero_fixtures import PAGE_SIZE, _annotation, _note, _position, generated_library, pdf_bytes
 
-from gamma import highlight_relocate, ops, storage, zotero_local, zotero_sync, zotero_sync_blocks, zotero_sync_pdfs
+from gamma import (highlight_relocate, ops, storage, text_box, zotero_local, zotero_sync, zotero_sync_blocks,
+                   zotero_sync_pdfs)
 from gamma import zotero_annotations as za
 from gamma import zotero_sync_rows
 from gamma.blocks_store import FOLDERS, LABELS, TRASH, label_names, tree_rows
@@ -332,6 +338,99 @@ class _Edits:
         self._gamma(page, [{"op": "insert", "id": block_id, "parent": page, "content": f"Gamma made {self.word()}",
                             "props": props}])
 
+    # text boxes, on either side
+
+    def _boxes(self) -> list:
+        """The text box blocks the run made or Zotero's text annotations
+        brought here."""
+        rows = _rows(self.ws, "annotation")
+        out = [block_id for block_id, _n in self.made["gamma_boxes"]]
+        out += [rows[key]["block_id"] for key in self.made["zotero_texts"] if key in rows and rows[key]["block_id"]]
+        return [block_id for block_id in out if _block(self.ws, block_id)]
+
+    def _text(self, who) -> str:
+        """A box's text, now and then over lines with a blank one between."""
+        if self.rnd.random() < 0.3:
+            return f"{who} {self.word()}\n\n{self.word()}"
+        return f"{who} {self.word()}"
+
+    def g_new_box(self):
+        """A Gamma box typed here (no ``zotero`` key), of either width
+        mode."""
+        n = self.rnd.randrange(len(self.made["pdfs"]))
+        page = self._page(self.made["items"][n])
+        if not page:
+            return
+        auto = self.rnd.random() < 0.5
+        box = {"x": 40.0 + 40 * self.rnd.randint(0, 8), "y": 40.0 + 50 * self.rnd.randint(0, 12),
+               "w": self.rnd.choice((60.0, 120.0, 200.0)), "h": 23.0, "auto": auto, "size": 12}
+        block_id = f"zfBox{self.n}x{self.rnd.randint(0, 10 ** 6)}"
+        self.made["gamma_boxes"].append((block_id, n))
+        self.note("g_new_box", block_id, box)
+        self._gamma(page, [{"op": "insert", "id": block_id, "parent": page, "content": self._text("Gamma typed"),
+                            "props": {"text_box": box, "pdf_page": 1}}])
+
+    def g_box(self):
+        """A box retyped, resized with its width handle (fixed from then on)
+        or written back whole without its ``zotero`` key."""
+        boxes = self._boxes()
+        if not boxes:
+            return
+        block_id = self.rnd.choice(boxes)
+        block = _block(self.ws, block_id)
+        box = dict(block["props"]["text_box"])
+        what = self.rnd.choice(("text", "resize", "drop_key"))
+        if what == "text":
+            batch = [{"op": "set", "id": block_id, "content": self._text("Gamma retyped")}]
+        elif what == "resize":
+            box.update(w=min(self.rnd.choice((50.0, 90.0, 160.0)), PAGE_SIZE[0] - box["x"]), auto=False)
+            batch = [{"op": "set", "id": block_id, "props": {"text_box": box}}]
+        else:
+            box.pop("zotero", None)
+            batch = [{"op": "set", "id": block_id, "props": {"text_box": box}}]
+        self.note(f"g_box_{what}", block_id, batch[0].get("content") or box)
+        self._gamma(block["page"], batch)
+
+    def z_new_text(self):
+        """A text annotation typed in Zotero's reader."""
+        n = self.rnd.randrange(len(self.made["pdfs"]))
+        x0, top = 300.0 + 20 * self.rnd.randint(0, 5), 100.0 + 40 * self.rnd.randint(0, 12)
+        key = self.fake.add_item(LIB, _annotation(
+            self.made["pdfs"][n], "text", self.rnd.choice(COLOURS), f"00000|{self.n:06d}|{int(792 - top - 19):05d}",
+            _position(0, fontSize=14, rotation=0, rects=[[x0, top, x0 + 90.0, top + 19.0]]),
+            comment=self._text("Zotero typed")))
+        self.made["zotero_texts"].append(key)
+        self.note("z_new_text", key)
+
+    def z_box(self):
+        """A box's text annotation retyped, resized or moved in Zotero."""
+        rows = _rows(self.ws, "annotation")
+        boxes = set(self._boxes())
+        keys = [key for key, row in rows.items() if row["block_id"] in boxes and row["zotero_type"] == "text"
+                and row["state"] in ("live", "readonly")]
+        if not keys:
+            return
+        key = self.rnd.choice(sorted(keys))
+        data = self.fake.data(LIB, key)
+        if data.get("deleted"):
+            return
+        what = self.rnd.choice(("text", "resize", "move"))
+        if what == "text":
+            fields = {"annotationComment": self._text("Zotero retyped")}
+        else:
+            pos = json.loads(data["annotationPosition"])
+            x0, y0, x1, y1 = pos["rects"][0]
+            if what == "resize":
+                x1 = min(x0 + self.rnd.choice((40.0, 80.0, 150.0)), PAGE_SIZE[0])
+            else:
+                dx = max(-x0, min(PAGE_SIZE[0] - x1, self.rnd.choice((-20.0, 15.0, 30.0))))
+                dy = max(-y0, min(PAGE_SIZE[1] - y1, self.rnd.choice((-25.0, 10.0, 40.0))))
+                x0, y0, x1, y1 = x0 + dx, y0 + dy, x1 + dx, y1 + dy
+            pos["rects"] = [[round(v, 3) for v in (x0, y0, x1, y1)]]
+            fields = {"annotationPosition": json.dumps(pos, separators=(",", ":"))}
+        self.note(f"z_box_{what}", key, fields)
+        self.fake.edit(LIB, key, **fields)
+
     def g_delete_folder(self):
         with connect_pages_db(self.ws) as conn:
             folders = [fid for fid, _, _, _ in tree_rows(conn, FOLDERS)]
@@ -581,6 +680,25 @@ def _converged(ws, fake, made, edits) -> None:
         data = items[found[0][0]]
         assert not data.get("deleted") and (block["props"]["color"][:7], block["content"]) == (
             data["annotationColor"], data["annotationComment"]), f"{block_id}\n{edits.history(block_id)}"
+    boxes = [block_id for block_id, _n in made["gamma_boxes"]]
+    boxes += [rows[key]["block_id"] for key in made["zotero_texts"] if key in rows and rows[key]["block_id"]]
+    for block_id in boxes:  # each box a Zotero box, its text annotation's rect, text and size
+        block = _block(ws, block_id)
+        if block is None or _block(ws, block["page"])["parent"] == TRASH:
+            continue
+        found = [(k, r) for k, r in rows.items() if r["kind"] == "annotation" and r["block_id"] == block_id
+                 and r["parent"] == bound.get(block["page"])]
+        where = f"{block_id}: {found}\n{edits.history(block_id)}"
+        assert len(found) == 1 and found[0][1]["state"] == "live" and found[0][0] in items, where
+        key = found[0][0]
+        data, box = items[key], block["props"]["text_box"]
+        where += "\n" + edits.history(key)
+        assert not data.get("deleted") and box.get("zotero") is True, where
+        assert data["annotationComment"] == text_box.plain_text(block["content"], gaps=True), where
+        pos = json.loads(data["annotationPosition"])
+        rect = (box["x"], PAGE_SIZE[1] - box["y"] - box["h"], box["x"] + box["w"], PAGE_SIZE[1] - box["y"])
+        assert all(abs(a - b) <= 0.02 for a, b in zip(pos["rects"][0], rect)), f"{pos['rects']} {box}\n{where}"
+        assert pos["fontSize"] == box["size"], where
     for page_id in made["gamma_papers"]:  # each paper made here is one item, alike on both sides
         page = _block(ws, page_id)
         found = [(k, r) for k, r in rows.items() if r["kind"] == "item" and r["page_id"] == page_id]
@@ -733,7 +851,7 @@ def test_random_edits_on_both_sides_settle_with_both_sides_alike(me, fake, owner
 
     monkeypatch.setattr(zotero_sync_pdfs.UnitPdf, "_new_attachment", beside)
     made = {**generated_library(fake, 12, pdfs=6, annotations=2, notes=6, collections=5), "gamma_highlights": [],
-            "gamma_papers": [], "gone_note_pages": [], "note_pages": [
+            "gamma_papers": [], "gone_note_pages": [], "gamma_boxes": [], "zotero_texts": [], "note_pages": [
                 fake.add_item(LIB, {"itemType": "note", "note": _note(f"<h1>Standalone {n}</h1><p>First line.</p>")})
                 for n in range(2)]}
     r = me.post("/api/zotero/links", json={"library": LIB})

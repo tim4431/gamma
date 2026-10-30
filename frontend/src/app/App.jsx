@@ -7604,11 +7604,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       eraserSize: inkEraserSize, eraserFilter: inkEraserFilter, drawHold: inkDrawHold,
       scribble: inkScribbleErase, fingerUndo: inkFingerUndo, lassoMode: inkLassoMode, clip: inkClip, keys: inkKeys,
       hoverPreview: inkHoverPreview, ruler: readOnly ? null : inkRuler, rulerUnits: inkRulerUnits, zoom: readOnly ? null : inkZoom },
-    text: { armed: textArmed, style: textBoxStyle },
+    text: { armed: textArmed, style: textBoxStyle, zotero: zoteroLinked },
     actions: pageActions,
   }), [readOnly, inkTool, inkPenTool, inkPenOnly, inkPressure, inkEraserMode, inkEraserSize, inkEraserFilter, inkClip, inkKeys,
-    inkDrawHold, inkScribbleErase, inkFingerUndo, inkLassoMode, inkHoverPreview, textArmed, textBoxStyle, pageActions, inkRuler, inkRulerUnits,
-    inkZoom]);
+    inkDrawHold, inkScribbleErase, inkFingerUndo, inkLassoMode, inkHoverPreview, textArmed, textBoxStyle, zoteroLinked, pageActions, inkRuler,
+    inkRulerUnits, inkZoom]);
   // --- Recordings (docs/dev/recording.md) ---------------------------------------
   // The page's recording blocks and every block stamped with the moment it
   // was written, each list kept while its contents are the same, so the

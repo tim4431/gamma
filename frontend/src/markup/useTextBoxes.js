@@ -6,7 +6,9 @@
 // wires the actions into PageToolsContext and the state into the page
 // marks; markup/TextBoxLayer.jsx draws the boxes and reports their size.
 //
-// A box's `w` (auto width) and `h` are what it measured at on this screen.
+// A box's `w` (auto width) and `h` are what it measured at on this screen,
+// a Zotero box's auto width ZOTERO_SLACK more (textBox.js refitBox), the
+// width Zotero wraps it at.
 // They are written only after an edit here changed the box or its text,
 // folded into that edit's undo step (`foldBlocks`). A passive render (a
 // page opening, another client's edit arriving) never writes, so two

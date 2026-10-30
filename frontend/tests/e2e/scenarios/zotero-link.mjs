@@ -13,10 +13,12 @@
 // on the library's linked file until Zotero trashes it, the paper has its
 // PDF, its highlight, ink and text box, the collections and tags came as
 // folders and labels. A highlight's note edited here reaches Zotero on Sync
-// now, a colour changed in Zotero comes back, and a record field both sides
-// changed is a conflict on the pill and on the page's record, resolved with
-// Zotero's value. A group library linked "When opened" into the open
-// workspace (once the dialog has asked again for the account it could not
+// now, a colour changed in Zotero comes back; its text annotation is a
+// Zotero box that breaks its lines where Zotero's reader does, and a box
+// typed on the paper is one, sent on Sync now with the box as its rect; a
+// record field both sides changed is a conflict on the pill and on the
+// page's record, resolved with Zotero's value. A group library linked
+// "When opened" into the open workspace (once the dialog has asked again for the account it could not
 // read) closes Settings on that workspace, gives it its pill at once, and
 // shows its paper's PDF card until the page, opened, brings the PDF; a
 // paper whose PDF is a linked file takes a PDF attached in Gamma, under the
@@ -28,6 +30,7 @@ import net from "node:net";
 import { Account, PYTHON, ROOT, Server, makePdf, wanted } from "../harness.mjs";
 import { closeEditor, row as blockRow } from "./notes.mjs";
 import { waitForPdf } from "./pdf.mjs";
+import { zoteroLines } from "./textBoxes.mjs";
 
 const LIB = "users/123"; // the fake's account "tim"
 const GROUP = "groups/9"; // its group "Lab"
@@ -381,6 +384,82 @@ export async function zoteroLinkScenarios(env) {
         await syncFromPopover(page);
         await until(async () => (await colour()).startsWith("#ff6666"), { what: "the highlight redrawn red" });
         assert((await inWs(linkWs).api(`/api/blocks/${highlight.id}`)).properties.color.startsWith("#ff6666"), "the block keeps Zotero's colour");
+        assertNoProblems(page);
+      } finally {
+        await page.close();
+      }
+    });
+
+    // Zotero's text annotation is a Zotero box, its rect the box, and it
+    // shows the lines Zotero's reader shows at that rect. A box typed on
+    // the linked paper is a Zotero box from its first keystroke; Sync now
+    // sends it with the box itself as its rect, an auto box's width its
+    // text's + 1 as Zotero sizes one, and the reader shows it on one line.
+    await step("zotero link: Zotero's text annotation is a Zotero box that wraps as Zotero's reader; a box typed on the paper is one, and Sync now sends it as its frame", async () => {
+      assert(paperId, "the workspace step ran");
+      const page = await openPage(ctx, `${zotero.base}/?page=${paperId}&ws=${linkWs}`);
+      const near = (a, b, what, within = 0.02) => assert(Math.abs(a - b) <= within, `${what}: ${a}, not ${b}`);
+      const rectOf = (annotation) => {
+        const p = annotation.data.annotationPosition;
+        return (typeof p === "string" ? JSON.parse(p) : p).rects[0];
+      };
+      try {
+        await waitForPdf(page);
+        const kids = (await inWs(linkWs).api(`/api/blocks/${paperId}/subtree`)).block.children;
+        const fromZotero = kids.find((c) => c.properties?.text_box && c.content === "A text box");
+        const tb = fromZotero.properties.text_box;
+        assertEq(tb.zotero, true, "the text annotation came as a Zotero box");
+        const theirs = await item(LIB, fromZotero.properties.zotero_annotation);
+        const [x0, y0, x1, y1] = rectOf(theirs);
+        for (const [a, b, what] of [[tb.x, x0, "x"], [tb.y, 792 - y1, "y"], [tb.w, x1 - x0, "width"], [tb.h, y1 - y0, "height"]]) {
+          near(a, b, `the box is the rect: its ${what}`);
+        }
+        await page.locator(`[data-page="1"] [data-box-id="${fromZotero.id}"].zotero`).waitFor({ timeout: 15000 });
+        const there = (await zoteroLines(page, 1, 612, [{ id: fromZotero.id, text: theirs.data.annotationComment, w: tb.w, size: tb.size }]))
+          .out[fromZotero.id];
+        assertEq(there.lines, there.ref, `the lines Zotero's reader shows at its rect (${there.starts})`);
+
+        // a box typed on the linked paper
+        await page.click("button[aria-label='Handwriting tools']");
+        await page.waitForSelector(".pdfInkBar");
+        await page.click(".pdfInkBar button[title^='Text (T)']");
+        await page.waitForSelector(".pdfInkBar button[title^='Text (T)'].modeActive", { timeout: 5000 });
+        const pg = await page.locator('[data-page="1"]').boundingBox();
+        const k = pg.width / 612;
+        await page.mouse.click(pg.x + 420 * k, pg.y + 380 * k); // clear of the paper's annotations
+        await page.waitForSelector(".textBox.editing .cm-content", { timeout: 5000 });
+        assert(await page.$(".textBox.editing.zotero"), "a Zotero box from its first keystroke");
+        await page.keyboard.type("from gamma");
+        await page.click(".pdfInkBar button[aria-label='Hand']"); // a click outside the box commits it
+        const typed = await until(async () => {
+          const found = (await inWs(linkWs).api(`/api/blocks/${paperId}/subtree`)).block.children
+            .find((c) => c.properties?.text_box && c.content === "from gamma");
+          return found?.properties.text_box.w > 30 ? found : null;
+        }, { what: "the typed box, measured, on the server" });
+        const mine = typed.properties.text_box;
+        assertEq(`${mine.zotero}/${mine.auto}`, "true/true", "a Zotero box of auto width");
+        const drawn = await page.locator(`[data-box-id="${typed.id}"]`).evaluate((el) => {
+          const r = el.getBoundingClientRect(), layer = el.parentElement.getBoundingClientRect();
+          return { w: r.width / (layer.width / 612), h: r.height / (layer.width / 612) };
+        });
+        near(mine.w, drawn.w + 1, "its width the drawn text's + 1");
+        await pillState(page, "pending", "the pill counts the box unsent");
+        await syncFromPopover(page);
+        const annotation = (await fakeApi(`${LIB}/items?limit=100`))
+          .find((i) => i.data.itemType === "annotation" && i.data.annotationComment === "from gamma");
+        assert(annotation, "the box reached Zotero");
+        assertEq(annotation.data.annotationType, "text", "as a text annotation");
+        const [a0, b0, a1, b1] = rectOf(annotation);
+        const now = (await inWs(linkWs).api(`/api/blocks/${typed.id}`)).properties.text_box;
+        assertEq(JSON.stringify(now), JSON.stringify(mine), "the box unchanged by the round");
+        near(a0, mine.x, "its rect is the box: x");
+        near(792 - b1, mine.y, "y");
+        near(a1 - a0, drawn.w + 1, "its width the drawn text's + 1");
+        assert(b1 - b0 >= drawn.h - 0.02, `as tall as the text at least (${b1 - b0} for ${drawn.h})`);
+        const reader = (await zoteroLines(page, 1, 612, [{ id: typed.id, text: annotation.data.annotationComment, w: a1 - a0, size: mine.size }]))
+          .out[typed.id];
+        assertEq(`${reader.ref}/${reader.lines}`, "1/1", "one line in Zotero's reader at that rect, as here");
+        await pillState(page, "ok");
         assertNoProblems(page);
       } finally {
         await page.close();

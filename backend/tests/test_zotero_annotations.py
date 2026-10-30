@@ -8,6 +8,7 @@ what the block already reads as changes nothing."""
 import hashlib
 import json
 import re
+from pathlib import Path
 
 import pymupdf
 import pytest
@@ -32,6 +33,11 @@ FRAMES = {
     "offset-crop-rot270": {"media": (50, 100, 662, 892), "crop": (60, 110, 600, 800), "rotate": 270},
 }
 SORT_RE = re.compile(r"^\d{5}\|\d{6}\|\d{5}$")
+# The test server's text annotations as Zotero's Web API sent them, the box
+# each makes and its rect back (tests/shared/zoterotext.json, shared with
+# frontend/tests/textBox.test.mjs).
+ZOTERO_TEXT = json.loads((Path(__file__).resolve().parents[2] / "tests" / "shared" / "zoterotext.json")
+                         .read_text(encoding="utf-8"))
 COLOR_RE = re.compile(r"^#[0-9a-f]{6}$")
 
 
@@ -513,6 +519,7 @@ def test_from_item_reads_every_kind(framed):
     assert text["content"] == "typed text" and text["props"]["text_box"]["bg"] is None
     assert text["props"]["text_box"]["size"] == 14 and text["props"]["text_box"]["color"] == "#e56eee"
     assert text["props"]["pdf_page"] == note["props"]["pdf_page"] == 1
+    assert text["props"]["text_box"]["zotero"] is True and "zotero" not in note["props"]["text_box"]
 
 
 def test_from_item_takes_a_quote_from_the_page_when_zotero_sent_none():
@@ -778,9 +785,109 @@ def test_apply_position_moves_a_box_and_keeps_what_zotero_has_no_place_for(frame
     old = block["properties"]["text_box"]
     assert (box["bg"], box["auto"], box["color"], box["size"]) == (old["bg"], old["auto"], old["color"], 24)
     assert (box["w"], box["h"]) == (old["w"], old["h"]) and (box["x"], box["y"]) != (old["x"], old["y"])
+    assert box["zotero"] is True                                     # a text annotation's box is a Zotero box
+    pos["rects"] = [[x1, y1, x2 - 30, y2]]                           # narrowed in Zotero: wraps at the new width
+    narrowed = za.apply_fields(block, page, {"position": pos}, zotero_type="text")["props"]["text_box"]
+    assert narrowed["w"] == old["w"] - 30 and narrowed["zotero"] is True
     note = za.apply_fields(block, page, {"position": {"pageIndex": 0, "rects": [[x1 + 5, y1 + 5, x1 + 27, y1 + 27]]}},
                            zotero_type="note")["props"]["text_box"]
     assert (note["w"], note["h"], note["size"]) == (old["w"], old["h"], old["size"])
+    assert "zotero" not in note
+
+
+# --- Zotero boxes ------------------------------------------------------------------------------------
+
+def _paper(item) -> za.Page:
+    page = item["page"]
+    return _page(view=(0, 0, page["width"], page["height"]), rotation=page["rotation"], number=page["number"])
+
+
+@pytest.mark.parametrize("item", ZOTERO_TEXT["items"], ids=lambda it: it["data"]["key"])
+def test_a_zotero_text_annotation_is_a_zotero_box_on_its_rect_and_back(item):
+    """The test server's text annotations: each makes the fixture's box (the
+    rect is the box, a Zotero box, fixed), and the box gives the rect back
+    exactly, so its projection is the item's and nothing reads as lossy.
+    The linked block, the same box stored without the key, gives the same
+    rect once it has it."""
+    page, data = _paper(item), item["data"]
+    made = za.from_item(data, page)
+    assert made["content"] == item["content"] and made["props"]["text_box"] == item["box"]
+    for box in (item["box"], item["linked"]):
+        (back,) = za.to_items({"id": "z", "content": made["content"], "properties": {**made["props"], "text_box": box}},
+                              page, zotero_type="text")
+        _accepted(back.fields)
+        pos = json.loads(back.fields["annotationPosition"])
+        assert pos["rects"] == [item["rect"]]
+        assert (pos["fontSize"], pos["rotation"]) == (item["fontSize"], item["rotation"])
+        assert za.projection(back.fields) == za.projection(data)
+
+
+def test_a_zotero_boxs_blank_lines_go_and_come_as_zotero_holds_them():
+    """Zotero shows each blank line; a Zotero box sends them and keeps the
+    ones Zotero sends, where a Gamma box's plain text has none."""
+    page = _page()
+    item = {"key": "TTTTTTT4", "annotationType": "text", "annotationColor": "#000000",
+            "annotationComment": "a\n\nb\n\n\nc",
+            "annotationPosition": json.dumps({"pageIndex": 0, "fontSize": 12, "rotation": 0,
+                                              "rects": [[100, 300, 200, 390]]})}
+    made = za.from_item(item, page)
+    assert made["content"] == "a\n\nb\n\n\nc"
+    (back,) = za.to_items(_block(made), page, zotero_type="text")
+    assert back.fields["annotationComment"] == item["annotationComment"]
+    gamma_block = {**_box_block(page), "content": "a\n\nb"}
+    (gamma,) = za.to_items(gamma_block, page)
+    assert gamma.fields["annotationComment"] == "a\nb"
+    pulled = za.apply_fields(_block(made), page, {"comment": "a\n\n\nd"}, zotero_type="text")
+    assert pulled["content"] == "a\n\n\nd"
+
+
+def _auto_box():
+    item = ZOTERO_TEXT["items"][2]                                  # "from gamma", an auto Zotero box
+    return {"id": "a1", "content": item["content"], "properties": {"text_box": dict(item["linked"]), "pdf_page": 1}}
+
+
+def test_a_pull_that_moves_an_auto_zotero_box_keeps_its_width_mode():
+    page = _paper(ZOTERO_TEXT["items"][2])
+    block = _auto_box()
+    (item,) = za.to_items(block, page, zotero_type="text")
+    pos = json.loads(item.fields["annotationPosition"])
+    x1, y1, x2, y2 = pos["rects"][0]
+    moved = za.apply_fields(block, page, {"position": {**pos, "rects": [[x1 - 40, y1 - 20, x2 - 40, y2 - 20]]}},
+                            zotero_type="text")["props"]["text_box"]
+    assert (moved["auto"], moved["zotero"]) == (True, True)
+    assert moved["x"] == block["properties"]["text_box"]["x"] - 40
+    # within half a point of its width: the same box
+    nudged = za.apply_fields(block, page, {"position": {**pos, "rects": [[x1, y1, x2 + 0.4, y2]]}},
+                             zotero_type="text")["props"]["text_box"]
+    assert nudged["auto"] is True
+
+
+def test_a_pull_that_changes_an_auto_zotero_boxs_width_text_or_size_fixes_its_width():
+    """Zotero has no auto width: it wraps at its rect's width, so once that
+    width, the text or the font size changes there, Gamma draws the box at
+    Zotero's width."""
+    page = _paper(ZOTERO_TEXT["items"][2])
+    block = _auto_box()
+    (item,) = za.to_items(block, page, zotero_type="text")
+    pos = json.loads(item.fields["annotationPosition"])
+    x1, y1, x2, y2 = pos["rects"][0]
+    narrowed = za.apply_fields(block, page, {"position": {**pos, "rects": [[x1, y1 - 15, x2 - 30, y2]]}},
+                               zotero_type="text")["props"]["text_box"]
+    assert (narrowed["auto"], narrowed["w"], narrowed["zotero"]) == (False, round(x2 - 30 - x1, 2), True)
+    edited = za.apply_fields(block, page, {"comment": "from gamma, edited in zotero"}, zotero_type="text")
+    assert edited["content"] == "from gamma, edited in zotero" and edited["props"]["text_box"]["auto"] is False
+    assert edited["props"]["text_box"]["w"] == block["properties"]["text_box"]["w"]
+    larger = za.apply_fields(block, page, {"position": {**pos, "fontSize": 16}}, zotero_type="text")
+    larger = larger["props"]["text_box"]
+    assert (larger["size"], larger["auto"], larger["w"]) == (16, False, block["properties"]["text_box"]["w"])
+    # the same text, as the block reads it: no change, auto stays
+    assert za.apply_fields(block, page, {"comment": "from gamma"}, zotero_type="text") == {"props": {}}
+    # a fixed box and a note take no width mode from a pull
+    fixed = {**block, "properties": {**block["properties"], "text_box": {**block["properties"]["text_box"],
+                                                                         "auto": False}}}
+    assert "text_box" not in za.apply_fields(fixed, page, {"comment": "edited"}, zotero_type="text")["props"]
+    note = za.apply_fields(block, page, {"comment": "edited"}, zotero_type="note")
+    assert "text_box" not in note["props"]
 
 
 def test_apply_to_ink_restyles_or_replaces_only_the_items_strokes():

@@ -25,9 +25,10 @@ import pytest
 from zotero_engine import (GROUP, LIB, _block, _block_of, _conflicts, _due, _edit, _force, _highlight,  # noqa: F401
                            _kids, _link, _page_of, _pages, _rows, _sent_keys, _sync, _writes, background, fake, idle,
                            made, me, no_relocation, owner_id, quiet)
-from zotero_fixtures import CAROL, HIGHLIGHT_RECT, TITLE_RECT, pdf_bytes
+from zotero_fixtures import CAROL, HIGHLIGHT_RECT, PAGE_SIZE, TITLE_RECT, pdf_bytes
 
-from gamma import storage, ws_backup, zotero_local, zotero_sync, zotero_sync_blocks, zotero_sync_pdfs, zotero_sync_rows
+from gamma import (storage, text_box, ws_backup, zotero_local, zotero_sync, zotero_sync_blocks, zotero_sync_pdfs,
+                   zotero_sync_rows)
 from gamma import zotero_annotations as za
 from gamma import zotero_remote as zr
 from gamma.blocks_store import write_lock
@@ -1135,6 +1136,273 @@ def test_a_text_box_goes_as_a_text_annotation_with_its_plain_text(me, made, fake
     data = fake.data(LIB, key)
     assert data["annotationType"] == "text" and data["annotationComment"] == "Bold words"
     assert json.loads(data["annotationPosition"])["fontSize"] == 12
+    calls = len(fake.calls)
+    _sync(me, ws)
+    assert _writes(fake, calls) == []
+
+
+def _rect_box(data) -> dict:
+    """An annotation's rect read as a box on the standard paper (unturned,
+    its view box at the origin): x, y from the top-left, w, h."""
+    x0, y0, x1, y1 = json.loads(data["annotationPosition"])["rects"][0]
+    return {"x": round(x0, 2), "y": round(PAGE_SIZE[1] - y1, 2), "w": round(x1 - x0, 2), "h": round(y1 - y0, 2)}
+
+
+@pytest.mark.parametrize("box, frame", [
+    ({"x": 50, "y": 50, "w": 150, "h": 40, "auto": False, "size": 12}, {"x": 54, "y": 54, "w": 142, "h": 35.84}),
+    ({"x": 433.57, "y": 127.85, "w": 75.34, "h": 22.99, "auto": True, "size": 12},
+     {"x": 437.57, "y": 131.85, "w": 75.34, "h": 16.79}),
+], ids=["fixed", "auto"])
+def test_a_gamma_box_goes_to_zotero_as_a_zotero_box_with_its_text_where_it_was(me, made, fake, owner_id, box, frame):
+    """A box made before the link (or by an older client) becomes its text
+    area as it first goes: the padding off, an auto box keeping its width as
+    room for Zotero's face, its lines at Zotero's line height. The block
+    holds that box, the item is its rect, and the next round sends nothing."""
+    keys = made["keys"]
+    ws = _link(me)
+    _sync(me, ws)
+    page = _page_of(ws, keys["attention"])
+    _edit(ws, owner_id, page, [{"op": "insert", "id": "zaGammaBox", "parent": page, "content": "typed in Gamma",
+                                "props": {"text_box": box, "pdf_page": 1}}])
+    _sync(me, ws)
+    key = object_key(ws, LIB, "annotation", keys["pdf"], "zaGammaBox", "")
+    stored = _block(ws, "zaGammaBox")["props"]["text_box"]
+    assert stored == text_box.zotero_frame(box, *PAGE_SIZE)
+    assert {k: stored[k] for k in frame} == frame and stored["zotero"] is True and stored["auto"] == box["auto"]
+    assert _rect_box(fake.data(LIB, key)) == frame
+    assert _rows(ws, "annotation")[key]["state"] == "live" and not _dirty(ws, page)  # its signature the new box's
+    calls = len(fake.calls)
+    _sync(me, ws)
+    assert _writes(fake, calls) == [] and _block(ws, "zaGammaBox")["props"]["text_box"] == stored
+
+
+def _drop_key(ws, owner_id, page, block_id) -> dict:
+    """The box of ``block_id`` written back without ``zotero``, as a writer
+    that knows no Zotero boxes writes it whole: the box as it now stands."""
+    box = {k: v for k, v in _block(ws, block_id)["props"]["text_box"].items() if k != "zotero"}
+    _edit(ws, owner_id, page, [{"op": "set", "id": block_id, "props": {"text_box": box}}])
+    return box
+
+
+def _stored_without_the_key(ws, page, key, comment=None, content=None) -> dict:
+    """``key``'s box stored without ``zotero``, with no change of its page
+    (so the local feed lists none), and its row as one synced with that
+    block: its signature the block's, its Gamma base's comment ``comment``
+    when given, the block's text ``content`` when given. The box as it now
+    stands."""
+    bid = _block_of(ws, key)
+    with connect_pages_db(ws) as conn:
+        write_lock(conn)
+        conn.execute("UPDATE unified_blocks SET properties = json_remove(properties, '$.text_box.zotero')"
+                     + (", content = ?" if content is not None else "") + " WHERE id = ?",
+                     ((content,) if content is not None else ()) + (bid,))
+        row = zotero_sync_rows.read_rows(conn, "key = ?", (key,))[key]
+        view = zotero_local.read_page(conn, page, notes=False)
+        ann = next(a for a in view.annotations if a.block["id"] == bid)
+        row["gsig"] = za.block_sig(ann.block, ann.nested)
+        if comment is not None:
+            row["gbase"] = {**row["gbase"], "comment": comment}
+        zotero_sync_rows.write_rows(conn, [row])
+        conn.commit()
+    box = _block(ws, bid)["props"]["text_box"]
+    assert "zotero" not in box
+    return box
+
+
+@pytest.mark.parametrize("dropped", [False, True], ids=["stored-without-the-key", "key-dropped"])
+def test_a_linked_box_without_the_key_gains_it_with_no_request(me, made, fake, owner_id, dropped):
+    """A text annotation's box that lacks the key gains the key alone on the
+    next round: one stored so, its page unchanged since, which the local
+    feed never lists (``box_checks`` brings it once), and one written back
+    by a writer that drops the key. Its geometry stays, its rect being the
+    box already, so Zotero hears nothing, and the round after has nothing
+    to do."""
+    keys = made["keys"]
+    ws = _link(me)
+    _sync(me, ws)
+    page = _page_of(ws, keys["attention"])
+    key = keys["text_annotation"]
+    bid = _block_of(ws, key)
+    assert _block(ws, bid)["props"]["text_box"]["zotero"] is True       # pulled as a Zotero box
+    rect = _rect_box(fake.data(LIB, key))
+    box = _drop_key(ws, owner_id, page, bid) if dropped else _stored_without_the_key(ws, page, key)
+    assert _dirty(ws, page)
+    calls = len(fake.calls)
+    _sync(me, ws)
+    assert _writes(fake, calls) == []
+    after = _block(ws, bid)["props"]["text_box"]
+    assert after == {**box, "zotero": True} and {k: after[k] for k in rect} == rect
+    assert _rows(ws, "annotation")[key]["state"] == "live" and not _dirty(ws, page)
+    calls = len(fake.calls)
+    _sync(me, ws)
+    assert _writes(fake, calls) == [] and _block(ws, bid)["props"]["text_box"] == after
+
+
+@pytest.mark.parametrize("case", ["pulled", "typed-here", "trashed-in-zotero"])
+def test_a_box_stored_without_the_key_with_a_blank_line_gains_it_and_nothing_else(me, made, fake, owner_id, case):
+    """A box with no key goes to Zotero with its blank lines dropped, so its
+    row's base holds its text without them; with the key, that base reads
+    as the text with them. Zotero's text with a blank line pulled into such
+    a box sends nothing back, and goes when Zotero trashes it; Gamma's text
+    with one, which Zotero holds without it, stays so in Zotero, its rect
+    sized for the lines Zotero has."""
+    keys = made["keys"]
+    ws = _link(me)
+    _sync(me, ws)
+    page = _page_of(ws, keys["attention"])
+    key = keys["text_annotation"]
+    fake.edit(LIB, key, annotationComment="A text\nbox" if case == "typed-here" else "A text\n\nbox")
+    _sync(me, ws)
+    bid = _block_of(ws, key)
+    _stored_without_the_key(ws, page, key, "A text\nbox", "A text\n\nbox" if case == "typed-here" else None)
+    assert _block(ws, bid)["content"] == "A text\n\nbox"
+    if case == "trashed-in-zotero":
+        fake.trash(LIB, key)
+    calls = len(fake.calls)
+    _sync(me, ws)
+    assert _writes(fake, calls) == []
+    assert not _conflicts(me, ws, "zotero_deleted_edited")
+    if case == "trashed-in-zotero":
+        assert fake.data(LIB, key).get("deleted") and _block(ws, bid) is None
+        return
+    assert _block(ws, bid)["props"]["text_box"]["zotero"] is True
+    assert fake.data(LIB, key)["annotationComment"] == ("A text\nbox" if case == "typed-here" else "A text\n\nbox")
+    assert _rows(ws, "annotation")[key]["gbase"]["comment"] == "A text\n\nbox" and not _dirty(ws, page)
+    calls = len(fake.calls)
+    _sync(me, ws)
+    assert _writes(fake, calls) == []
+
+
+def test_a_gamma_boxs_blank_line_takes_a_line_of_its_zotero_rect(me, made, fake, owner_id):
+    """A Gamma box gives a blank line no height, Zotero a line of its own:
+    the box as it first goes is a line taller for each, so Zotero shows
+    every line of the text it is sent."""
+    keys = made["keys"]
+    ws = _link(me)
+    _sync(me, ws)
+    page = _page_of(ws, keys["attention"])
+    box = {"x": 50, "y": 50, "w": 150, "h": 38, "auto": False, "size": 12}  # two lines as Gamma draws it
+    _edit(ws, owner_id, page, [{"op": "insert", "id": "zaGap", "parent": page, "content": "typed\n\nin Gamma",
+                                "props": {"text_box": box, "pdf_page": 1}}])
+    _sync(me, ws)
+    key = object_key(ws, LIB, "annotation", keys["pdf"], "zaGap", "")
+    frame = text_box.zotero_frame(box, *PAGE_SIZE)
+    stored = _block(ws, "zaGap")["props"]["text_box"]
+    assert stored == {**frame, "h": round(frame["h"] + 12 * text_box.ZOTERO_LINE, 2)}
+    assert stored["h"] == 50.4                                        # three lines of 16.8
+    data = fake.data(LIB, key)
+    assert data["annotationComment"] == "typed\n\nin Gamma"
+    assert _rect_box(data) == {k: stored[k] for k in ("x", "y", "w", "h")}
+    assert not _dirty(ws, page)
+    calls = len(fake.calls)
+    _sync(me, ws)
+    assert _writes(fake, calls) == []
+
+
+def test_a_box_changed_here_without_the_key_and_trashed_in_zotero_comes_back_as_a_zotero_box(
+        me, made, fake, owner_id):
+    """Zotero's trash of a box changed here brings it back there: the box,
+    written back without the key, gains it in that round, and its row's
+    signature is the box's with the key, so the page reads as synced."""
+    keys = made["keys"]
+    ws = _link(me)
+    _sync(me, ws)
+    page = _page_of(ws, keys["attention"])
+    key = keys["text_annotation"]
+    bid = _block_of(ws, key)
+    box = {k: v for k, v in _block(ws, bid)["props"]["text_box"].items() if k != "zotero"}
+    _edit(ws, owner_id, page, [{"op": "set", "id": bid, "content": "kept here", "props": {"text_box": box}}])
+    fake.trash(LIB, key)
+    calls = len(fake.calls)
+    _sync(me, ws)
+    assert [m for m, _ in _writes(fake, calls)] == ["POST"]
+    data = fake.data(LIB, key)
+    assert not data.get("deleted") and data["annotationComment"] == "kept here"
+    assert _block(ws, bid)["props"]["text_box"] == {**box, "zotero": True} and not _dirty(ws, page)
+    calls = len(fake.calls)
+    _sync(me, ws)
+    assert _writes(fake, calls) == []
+
+
+def test_a_refused_box_written_back_without_the_key_goes_again_as_it_stands(me, made, fake, owner_id):
+    """A box Zotero refused to create is a Zotero box already; written back
+    without the key, it gains the key alone as it goes again (its text area
+    is not taken a second time), and its row's signature is that box's."""
+    keys = made["keys"]
+    ws = _link(me)
+    _sync(me, ws)
+    page = _page_of(ws, keys["attention"])
+    _edit(ws, owner_id, page, [{"op": "insert", "id": "zaRefused", "parent": page, "content": "refused",
+                                "props": {"text_box": {"x": 50, "y": 50, "w": 150, "h": 23, "auto": False,
+                                                       "size": 12}, "pdf_page": 1}}])
+    fake.fail_next(400, f"/{LIB}/items", method="POST")
+    _sync(me, ws)
+    key = object_key(ws, LIB, "annotation", keys["pdf"], "zaRefused", "")
+    assert _rows(ws, "annotation")[key]["state"] == "rejected"
+    framed = _block(ws, "zaRefused")["props"]["text_box"]
+    assert framed["zotero"] is True and (framed["x"], framed["w"]) == (54, 142)
+    box = {k: v for k, v in framed.items() if k != "zotero"}
+    _edit(ws, owner_id, page, [{"op": "set", "id": "zaRefused", "content": "accepted", "props": {"text_box": box}}])
+    _sync(me, ws)
+    data = fake.data(LIB, key)
+    assert data["annotationComment"] == "accepted" and _rect_box(data) == {k: framed[k] for k in ("x", "y", "w", "h")}
+    assert _block(ws, "zaRefused")["props"]["text_box"] == framed
+    assert _rows(ws, "annotation")[key]["state"] == "live" and not _dirty(ws, page)
+    calls = len(fake.calls)
+    _sync(me, ws)
+    assert _writes(fake, calls) == []
+
+
+def test_a_text_merged_from_both_sides_fixes_an_auto_zotero_boxs_width(me, made, fake, owner_id):
+    """Both sides' edits merged into an auto Zotero box's text are a text
+    change Zotero wraps at its rect's width, as one pulled is."""
+    keys = made["keys"]
+    ws = _link(me)
+    _sync(me, ws)
+    page = _page_of(ws, keys["attention"])
+    key = keys["text_annotation"]
+    bid = _block_of(ws, key)
+    fake.edit(LIB, key, annotationComment="first line\nsecond line")
+    _sync(me, ws)
+    box = {**_block(ws, bid)["props"]["text_box"], "auto": True}
+    _edit(ws, owner_id, page, [{"op": "set", "id": bid, "props": {"text_box": box}}])
+    _sync(me, ws)
+    _edit(ws, owner_id, page, [{"op": "set", "id": bid, "content": "First line\nsecond line"}])
+    fake.edit(LIB, key, annotationComment="first line\nsecond line, there")
+    _sync(me, ws)
+    merged = _block(ws, bid)
+    assert merged["content"] == "First line\nsecond line, there"
+    assert fake.data(LIB, key)["annotationComment"] == "First line\nsecond line, there"
+    assert merged["props"]["text_box"] == {**box, "auto": False}
+    calls = len(fake.calls)
+    _sync(me, ws)
+    assert _writes(fake, calls) == []
+
+
+def test_a_box_pulled_narrower_in_zotero_wraps_at_zoteros_width(me, made, fake, owner_id):
+    """An auto Zotero box whose width Zotero changed is drawn at that width
+    (Zotero has no auto width); one only moved there keeps its width mode."""
+    keys = made["keys"]
+    ws = _link(me)
+    _sync(me, ws)
+    page = _page_of(ws, keys["attention"])
+    key = keys["text_annotation"]
+    bid = _block_of(ws, key)
+    box = {**_block(ws, bid)["props"]["text_box"], "auto": True}
+    _edit(ws, owner_id, page, [{"op": "set", "id": bid, "props": {"text_box": box}}])
+    _sync(me, ws)
+    pos = json.loads(fake.data(LIB, key)["annotationPosition"])
+    x0, y0, x1, y1 = pos["rects"][0]
+    fake.edit(LIB, key, annotationPosition=json.dumps({**pos, "rects": [[x0 + 20, y0, x1 + 20, y1]]}))
+    _sync(me, ws)
+    moved = _block(ws, bid)["props"]["text_box"]
+    assert (moved["auto"], moved["w"], moved["x"]) == (True, box["w"], box["x"] + 20)
+    fake.edit(LIB, key, annotationPosition=json.dumps({**pos, "rects": [[x0 + 20, y0, x1 - 40, y1]]}))
+    calls = len(fake.calls)
+    _sync(me, ws)
+    narrowed = _block(ws, bid)["props"]["text_box"]
+    assert (narrowed["auto"], narrowed["w"], narrowed["zotero"]) == (False, round(x1 - x0 - 60, 2), True)
+    assert _writes(fake, calls) == []                                  # Zotero's change, nothing to send back
     calls = len(fake.calls)
     _sync(me, ws)
     assert _writes(fake, calls) == []

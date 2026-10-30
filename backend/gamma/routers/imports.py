@@ -773,10 +773,11 @@ def _text_box_from_annotation(obj, subtype: str, pnum: int, page, contents: str)
     Markdown that shows it as written (``text_box.markdown_of``). A foreign
     /FreeText is a fixed-width box over its text area (``_text_area``),
     with the /DA size and colour and the /C fill; its text is /Contents, or
-    /RC reduced to text. A Zotero text annotation may be turned, which a
-    box is not: it is its unturned ``/Zotero:Rect`` upright, on the same
-    centre. A /Text sticky note becomes a note-yellow box at its icon's
-    top-left, as wide as its text."""
+    /RC reduced to text. A Zotero text annotation (``/Zotero:Rect``) is a
+    Zotero box (``zotero: true``, its rect its text area), and may be
+    turned, which a box is not: it is its unturned ``/Zotero:Rect``
+    upright, on the same centre. A /Text sticky note becomes a note-yellow
+    box at its icon's top-left, as wide as its text."""
     rect = first_rect(obj)
     if not rect:
         return None
@@ -807,7 +808,7 @@ def _text_box_from_annotation(obj, subtype: str, pnum: int, page, contents: str)
             if zotero:
                 u, v = pdf_point_to_viewer((zotero[0] + zotero[2]) / 2, (zotero[1] + zotero[3]) / 2, rotation, crop)
                 w, h = zotero[2] - zotero[0], zotero[3] - zotero[1]
-                box.update(x=u * disp_w - w / 2, y=v * disp_h - h / 2, w=w, h=h)
+                box.update(x=u * disp_w - w / 2, y=v * disp_h - h / 2, w=w, h=h, zotero=True)
     if not md.strip():
         return None
     return {"key": key, "page": pnum, "content": md, "kind": "text_box",
