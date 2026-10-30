@@ -15,7 +15,6 @@ import React, { createContext, useContext, useEffect, useId, useLayoutEffect, us
 import { createPortal, flushSync } from "react-dom";
 import { ContextMenu, MenuItem, useMenuTrigger } from "../shared/ui/Menus";
 import { IconSwap } from "../shared/ui/MotionWidgets";
-import { getStroke } from "perfect-freehand";
 import {
   ClipboardIcon, CopyIcon, DuplicateIcon, FileTextIcon, FlipHIcon, FlipVIcon, HighlightIcon, LineWidthIcon, MergeIcon, MoreIcon, NotebookPenIcon,
   PaletteIcon, PenIcon, PlayIcon, RectSelectIcon, ScissorsIcon, StopIcon, TrashIcon, BrushIcon, SparklesIcon,
@@ -23,9 +22,9 @@ import {
 } from "../shared/ui/Icons";
 import {
   MAX_STROKE_SIZE, boundsOf, byBand, cachedStrokePath, dashDots, dashPattern, dashRuns, encodeStroke, eraserKeep, isDash,
-  inkBounds, inkFeatures, inkUntil, lerpSample, nearestInkStroke, opacityBand, outlineOptions, outlinePressure, runOutline,
+  inkBounds, inkFeatures, inkUntil, lerpSample, nearestInkStroke, opacityBand, outlineOptions, penOutline, runOutline,
   sizesFor, strokeBounds, strokeId, strokeMaxWidth, strokeMultiplies, strokePath, strokePlaceholder, strokePlane, strokeWalls,
-  strokesInLasso, svgPathFromPoints, transformPoint, unionBox, INK_PLANE, PLANES, planeMultiplies,
+  strokesInLasso, transformPoint, unionBox, INK_PLANE, PLANES, planeMultiplies,
   CLOSED_SHAPES, DEFAULT_NIB, FILL_OPACITY, NIB_HAIR, encodedStyle, isClosedShape, nibOutline, strokeNib,
 } from "./ink";
 import { brushOpacities, brushWidths, finishStroke, strokeChannels, widthLaw } from "./finishStroke.js";
@@ -392,7 +391,6 @@ function paintLiveStroke(ctx, samples, use, { color = use.color, flash = false, 
   if (dash && !ws) { strokeCentreline(ctx, pts, color, use.size, dash); return; }
   ctx.fillStyle = color;
   const opts = outlineOptions({ size: use.size });
-  const outline = (run) => svgPathFromPoints(getStroke(run.map((s) => [s.x, s.y, outlinePressure(s)]), opts));
   if (dash && use.dash === "dotted") {
     const path = new Path2D();
     for (const q of dashDots(pts, use)) {
@@ -405,8 +403,8 @@ function paintLiveStroke(ctx, samples, use, { color = use.color, flash = false, 
   }
   // every dash outlined on its own as the SVG's are, the first while it is
   // the only one too (ink.js runOutline: a run shorter than 3 pt, or of two
-  // samples, would otherwise not draw its width)
-  ctx.fill(new Path2D(dash ? dashRuns(pts, use).map((run) => runOutline(run, opts)).join(" ") : outline(pts)));
+  // samples, would otherwise not draw its width), a solid line whole
+  ctx.fill(new Path2D(dash ? dashRuns(pts, use).map((run) => runOutline(run, opts)).join(" ") : penOutline(pts, opts)));
 }
 // A closed shape's inside on the live canvas: `use.fill` ({color,
 // opacity?}) on a `use.shape` of a closed kind (CLOSED_SHAPES), the

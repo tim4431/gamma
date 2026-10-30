@@ -534,10 +534,12 @@ def opacity_band(o: float) -> float:
 
 
 def _arcs(samples: list[dict]) -> list[float]:
-    """The arc length at each sample, from 0."""
+    """The arc length at each sample, from 0, summed as the client's
+    ``arcLengths`` sums them (``_js_hypot``, V8's ``Math.hypot``), so a
+    dash or a band is cut at the same length to the last bit."""
     out, total = [0.0], 0.0
     for a, b in zip(samples, samples[1:]):
-        total += math.hypot(b["x"] - a["x"], b["y"] - a["y"])
+        total += _js_hypot(b["x"] - a["x"], b["y"] - a["y"])
         out.append(total)
     return out
 
@@ -656,12 +658,15 @@ def stroke_bands(stroke: Stroke, samples: list[dict] | None = None) -> list[tupl
 
 # perfect-freehand 1.2.2 (MIT, Steve Ruiz) — the client's outline — at its
 # ``outlineOptions``: thinning 1, smoothing 0.5, streamline 0.4, no
-# simulated pressure, no tapers, round caps, ``last``. A whole stroke is
-# outlined at the page's scale, as the screen's ``penOutline`` does; a run
-# of one (a band, a dash) at ten times it, as ``runOutline`` does: the one
-# absolute constant, the 3 units at the end of a path whose points it
-# drops, would otherwise blot a run shorter than 3 pt into a disc about its
-# length across.
+# simulated pressure, no tapers, round caps, ``last``. Everything is
+# outlined at ten times the page's scale, a whole stroke (the screen's
+# ``penOutline``) as a run of one (a band, a dash; ``runOutline``). Its
+# three absolute constants would otherwise straighten every stroke's last
+# 3 pt (a hook flattened, a small circle closed by a chord) and blot a run
+# shorter than 3 pt into a disc about its length across (the 3 units at a
+# path's end whose points it drops), draw a stroke of one sample as an
+# off-centre blob (the (1, 1) offset it adds to a lone point) and floor the
+# radius at 0.01; every other option scales with the size.
 _PF_SCALE = 10.0
 _PF_T = 0.15 + (1 - 0.4) * 0.85      # getStrokePoints' step toward each point at streamline 0.4
 _PF_PI = math.pi + 1e-4
@@ -797,17 +802,62 @@ def _pf_outline(points: list, size: float, caps: tuple = (True, True)) -> list:
     return left + end_cap + right[::-1] + start_cap
 
 
+STRAIGHT_STEP = 0.25
+STRAIGHT_END_STEPS = 24
+_STRAIGHT_TURN = 0.0524077792830412  # tan 3°, the literal ink.js writes, so both read one double
+
+
+def _dense_straights(samples: list[dict]) -> list[dict]:
+    """A run's straight runs cut into steps of ``STRAIGHT_STEP`` before it is
+    outlined, as ink.js ``denseStraights`` cuts them. A sample is straight
+    where the run turns by less than 3° there and so does a neighbour, or
+    it is next to an end of the run; a segment longer than the step that
+    starts or ends at a straight sample is cut into equal steps of lerped
+    samples (``_lerp``), only ``STRAIGHT_END_STEPS`` of them at each end.
+    The streamline trails about half a sample gap behind the samples and
+    cuts every corner by that much; along a straight run it has nothing to
+    smooth, so dense samples there carry the line into its corner (a
+    shape's sides, sampled every 2 pt), while a curve keeps its smoothing.
+    Lengths are ``_js_hypot``'s, so a step count never differs from the
+    screen's by an ulp. → ``samples`` itself when nothing is cut."""
+    n = len(samples)
+    if n < 3:
+        return samples
+    dx = [samples[i + 1]["x"] - samples[i]["x"] for i in range(n - 1)]
+    dy = [samples[i + 1]["y"] - samples[i]["y"] for i in range(n - 1)]
+    gentle = [False] * n  # the run turns by less than 3° at sample k
+    for k in range(1, n - 1):
+        dot = dx[k - 1] * dx[k] + dy[k - 1] * dy[k]
+        gentle[k] = dot > 0 and abs(dx[k - 1] * dy[k] - dy[k - 1] * dx[k]) <= _STRAIGHT_TURN * dot
+
+    def straight(k: int) -> bool:
+        return gentle[k] and (k == 1 or k == n - 2 or gentle[k - 1] or gentle[k + 1])
+
+    out = None
+    for i in range(n - 1):
+        length = _js_hypot(dx[i], dy[i])
+        cut = length > STRAIGHT_STEP and (straight(i) or straight(i + 1))
+        m = math.ceil(length / STRAIGHT_STEP) if cut else 1
+        if m > 1:
+            if out is None:
+                out = samples[: i + 1]
+            a, b = samples[i], samples[i + 1]
+            head = min(STRAIGHT_END_STEPS, m - 1)
+            out += [_lerp(a, b, j / m) for j in range(1, head + 1)]
+            out += [_lerp(a, b, j / m) for j in range(max(head + 1, m - STRAIGHT_END_STEPS), m)]
+        if out is not None:
+            out.append(samples[i + 1])
+    return samples if out is None else out
+
+
 def pen_outline(stroke: Stroke, samples: list[dict] | None = None) -> list[tuple[float, float]]:
     """The filled outline polygon of a whole stroke without ``o`` as the
-    screen draws it (the client's ``penOutline``): perfect-freehand at the
-    page's own scale, its radius ``size × w / 2`` (``size / 2`` without
-    ``w``), round caps, so a hook in its last 3 pt is dropped as on the
-    screen. ``tests/shared/inkoutline.json`` pins it."""
-    samples = decode_stroke(stroke) if samples is None else samples
-    if not samples:
-        return []
-    pts = [(s["x"], s["y"], s["w"] / 2 if "w" in s else 0.5) for s in samples]
-    return _pf_outline(_pf_points(pts, stroke.size), stroke.size)
+    screen draws it (the client's ``penOutline``): ``stroke_outline`` with
+    both ends its own, round, its radius ``size × w / 2`` (``size / 2``
+    without ``w``), at ten times the page's scale, so its last 3 pt keep
+    their hook as on the screen. ``tests/shared/inkoutline.json`` pins
+    it."""
+    return stroke_outline(stroke, samples)
 
 
 def stroke_outline(stroke: Stroke, samples: list[dict] | None = None,
@@ -823,6 +873,7 @@ def stroke_outline(stroke: Stroke, samples: list[dict] | None = None,
         return []
     if len(samples) == 2:
         samples = [samples[0], _at(samples, [0.0, 1.0], 0.5), samples[1]]
+    samples = _dense_straights(samples)
     k = _PF_SCALE
     pts = [(s["x"] * k, s["y"] * k, s["w"] / 2 if "w" in s else 0.5) for s in samples]
     size = stroke.size * k

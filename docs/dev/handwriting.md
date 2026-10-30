@@ -832,10 +832,21 @@ sweep along a stroke from its angle and size ("The brush table").
   arc length and kept between 0.1 and 2.0.
   - The start taper is two sizes long and the end taper three sizes long,
     each at most half the stroke's length, both eased out as a sine.
-  - So a mark shorter than the two tapers (a comma) still reaches `2p` in
-    its middle. A stroke of no length (a tap, a dot) is not tapered at all
-    and draws `2p`, as perfect-freehand draws a lone point at its
+  - So a mark shorter than the two tapers (a comma) still reaches `2p` at
+    its middle sample. A stroke of no length (a tap, a dot) is not tapered
+    at all and draws `2p`, as perfect-freehand draws a lone point at its
     untapered radius.
+  - Nor is a finished mark of two samples, which has no middle sample, or
+    one shorter than its size. The outline skips a stroke's first samples
+    until their streamlined distances from the start add up to the size
+    (perfect-freehand's start drop), so of a mark that short it draws only
+    the first and last samples. Tapered, both would sit at the 0.1 floor
+    and the mark would draw as a hairline.
+  - A quick flick commits two samples, and so does a short mark under
+    Smoothing, whose stabilizer commits only its two ends. A Smoothing mark
+    between half the string and the string's length commits three, the
+    middle one a quarter of the way along, so it peaks at about 0.7 of the
+    width.
   - The stroke in progress keeps the full start taper (its length is not
     known yet) and has no end taper. Both are settled at the lift.
   - When the pointer reports no pressure (a mouse or finger, or the
@@ -1428,22 +1439,72 @@ reach.
       (`tests/shared/inkdash.json` pins the runs).
     - A piece of a stroke is outlined by `runOutline(samples, opts, first,
       last)`: perfect-freehand at ten times the page's scale, a two-sample
-      piece with its midpoint added first, as the server's
-      `stroke_outline` does.
-    - Perfect-freehand drops the points within 3 units of a path's end, so
-      a piece shorter than 3 pt (a thin pen's dash, a short shade) would
-      outline as a disc about its length across. It also draws the points
-      it puts between two at pressure 0.5, the nominal size.
+      piece with its midpoint added first and its straight runs then cut
+      finer (`denseStraights`, below), as the server's `stroke_outline`
+      does.
+    - Perfect-freehand has three absolute constants, which do not scale
+      with the size, and at ten times the page's scale each is a tenth:
+      - It drops the points within 3 units of a path's end and joins the
+        last kept one straight to the end. At the page's own scale a piece
+        shorter than 3 pt (a thin pen's dash, a short shade) would outline
+        as a disc about its length across, and every stroke's last 3 pt
+        would straighten: a hook at the end of a letter flattened, a 7 pt
+        circle closed by a chord, a 4 pt chevron collapsed into a bar (the
+        Sketchbook's drawn icons and a Notability import's small
+        handwriting both showed it). Now it is the last 0.3 pt.
+      - It offsets a lone point by (1, 1) units to give it a direction. A
+        stroke of one sample drew as an off-centre blob about 1.4 pt plus
+        the pen's width across; now it is a round dot of diameter `size ×
+        w`, within about 0.1 pt of its sample, as the exporters'
+        round-capped segment draws it.
+      - It floors the radius at 0.01, now 0.001 pt.
+    - It also draws the points it puts between two at pressure 0.5, the
+      nominal size, which the two-sample midpoint avoids.
+    - **Straight runs** (`denseStraights(run)`): perfect-freehand's
+      streamline moves each point 0.66 of the way to the next sample, so
+      the line trails about half a sample gap behind the samples and cuts
+      every corner by that much. A shape sampled every 2 pt (shapes.js
+      `SAMPLE_PT`, a Notability or GoodNotes shape, the Sketchbook's lines)
+      lost about 1 pt at each corner, its vertex outside the ink.
+      - A sample is straight where the piece turns by less than 3° there
+        and so does a neighbouring sample, or it is next to an end of the
+        piece. A lone gentle turn among sharper ones (the inflection of a
+        fast curve) is not a run.
+      - Before a piece is outlined, every segment longer than
+        `STRAIGHT_STEP` (0.25 pt) that starts or ends at a straight sample
+        is cut into equal steps of lerped samples (`lerpSample`), but only
+        `STRAIGHT_END_STEPS` (24) of them at each end. The streamline
+        closes 0.66 of what is left at every step, so 24 steps draw it in
+        to well under a hundredth of a point even after a jump across the
+        largest page, and a long straight step costs no more than a short
+        one (a 1000 pt line of two samples gets 99 samples).
+      - Samples a quarter point apart carry the line into the corner the
+        run leads to. A curve turns at every sample and is left to the
+        streamline, so a fast hand's sparse samples still draw a curve. A
+        chord turning less than 3° at its ends lies within about 0.03 pt
+        of the arc even 4 pt long, so the cut never shows where a run
+        bends gently.
+      - Corners whose turn is up to about 120° are then bevelled by
+        perfect-freehand's outline (0.29 of the radius at a turn of 90°),
+        sharper ones get its round cap; both stay under the line's width.
+      - It costs: a page of imported handwriting outlines in 1.6 to 2.5
+        times the time and its paths are 19 to 43 % longer, once per stroke
+        (`strokePath` caches it); the live canvas outlines the whole stroke
+        in progress each frame, under about 1.2 ms for the longest strokes
+        of the Notability sample.
     - Every dash of a dashed pressure stroke is such a piece, the only dash
       of a stroke shorter than one dash and a gap included. A solid stroke
-      is outlined whole at the page's scale (`penOutline`).
-    - The live canvas outlines its dashes the same way, its first while it
-      is the only one too.
+      is outlined whole the same way (`penOutline` is `runOutline` with
+      both ends its own), so nothing is outlined at the page's own scale.
+    - The live canvas outlines its dashes and its solid line the same way,
+      a dash while it is the only one too.
   - A **pencil** stroke's `d` is three paths, one per opacity band: `o`
     quantised up to 0.33, 0.66 or 1 (`opacityBand`).
     - Consecutive samples of one band form a run with lerped boundaries
       like a dash (`bandRuns`, which leaves out a run of no length, as the
-      server's `stroke_bands` does).
+      server's `stroke_bands` does). A boundary that falls on a sample (its
+      `o` right on an edge) is that sample, never a copy beside it, so a
+      short run reaches the outline in the server's form.
     - Each is filled with the layer's grain pattern at `fill-opacity` band
       × `opacity`. `strokePath` returns `{bands: [{d, alpha}]}` for it, the
       runs' inner ends flat so the shades meet without overlapping.
@@ -4284,15 +4345,22 @@ reach.
     stroke that turns back on itself.
     - It is driven by pressure `w / 2`, so its half-width is `size × w /
       2`.
-    - It runs at ten times the page's scale, since perfect-freehand drops
-      every point within 3 units of a path's end and a dash or band run
-      shorter than 3 pt would outline as a blot.
+    - It runs at ten times the page's scale, since perfect-freehand's
+      three absolute constants would otherwise blot a dash or band run
+      shorter than 3 pt, straighten a whole stroke's last 3 pt and draw a
+      stroke of one sample as an off-centre blob.
     - A run of two samples gets a midpoint first, since its two-point path
-      reads their pressure as 0.5.
+      reads their pressure as 0.5. Then its straight runs are cut into
+      quarter-point steps (`_dense_straights`, the client's
+      `denseStraights`: its tangent the same literal, its lengths
+      `_js_hypot`'s, so a step count never differs by an ulp).
+    - The arc lengths that place a dash's or a band's cuts (`_arcs`) are
+      summed with `_js_hypot` too, so a cut falls where the client's
+      `arcLengths` puts it, to the last bit.
   - `pen_outline(stroke)` is the whole of a stroke without `o` as the
     client's `penOutline` draws it (`tests/shared/inkoutline.json` pins
-    it). It is at the page's own scale, so a hook in its last 3 pt drops as
-    on the screen, with perfect-freehand's own points between two samples.
+    it): `stroke_outline` with both ends round, so its last 3 pt keep their
+    hook, as on the screen.
   - The calligraphy nib, as the screen draws it: `NIB_HAIR` (0.12),
     `DEFAULT_NIB` (45), `nib_outline(samples, size, nib)` and
     `nib_shape(stroke)`.

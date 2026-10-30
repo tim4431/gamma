@@ -1259,3 +1259,19 @@ def test_the_annotated_pdf_keeps_a_filled_shape_as_ink_and_brings_the_fill_back(
     assert json.loads(str(annots[0]["/GammaInk"]))["strokes"][0]["fill"] == {"color": "#fde047", "opacity": 0.4}
     back = _extract_pdf_annotations(reader)[0]["ink"].strokes[0]
     assert back.fill.color == "#fde047" and back.fill.opacity == 0.4 and back.shape.kind == "rect"
+
+
+def test_a_band_edge_on_a_sample_cuts_there_without_a_copy():
+    """stroke_bands cuts a pencil where its o crosses a band's edge; an edge
+    that falls on a sample is that sample, as the client's bandRuns cuts it
+    (frontend/tests/ink.test.mjs), so a short run of one band reaches the
+    outline in the same form on both sides."""
+    samples = [{"x": 100.0, "y": 100.0, "o": 1.0}, {"x": 102.0, "y": 100.0, "o": 0.33},
+               {"x": 104.0, "y": 100.0, "o": 0.33}, {"x": 106.0, "y": 100.0, "o": 1.0}]
+    stroke = inkmod.Stroke.model_validate({"id": "e", "tool": "pen", "brush": "pencil", "color": "#111827", "size": 2,
+                                           "ch": "xyo", "pts": inkmod.encode_points(samples, "xyo")})
+    runs = inkmod.stroke_bands(stroke, samples)
+    assert [band for band, _ in runs] == [1.0, 0.66, 0.33, 0.66, 1.0]
+    assert [[round(s["x"], 3) for s in run] for _, run in runs] == [
+        [100, 101.015], [101.015, 102], [102, 104], [104, 104.985], [104.985, 106]]
+

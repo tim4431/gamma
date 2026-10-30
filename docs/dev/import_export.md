@@ -776,7 +776,9 @@ curve becomes one gamma-ink v2 stroke ([handwriting.md](handwriting.md)
   decimates. The client's pen outline (perfect-freehand at streamline 0.4)
   moves each point only part of the way to the next sample, and its own
   input arrives about a point apart: sparser samples would round off a
-  written corner.
+  written corner. A shape's sides, sampled every 2 pt (`SHAPE_STEP`), keep
+  their corners because the outline cuts a straight run finer before it
+  draws it ([handwriting.md](handwriting.md) "Straight runs").
 - **Channels.** `w` is the fractional widths, linear between anchors. `p`
   (force ÷ the Pencil's maximum, 25/6) and `a`/`z` (the tilt) are written
   only where the note has real values (1.0, π/2 and (1, 0) are its

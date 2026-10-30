@@ -48,6 +48,174 @@ inside pdf.js's `PDFViewer` / annotation-editor layer, which Gamma's custom
 viewer does not use; its serialisation targets `/Ink` (constant width). It is
 a reference for the pointer plumbing, not a component to embed.
 
+### Where perfect-freehand's outline bends a stroke (survey 2026-10-29)
+
+Surveyed when the Sketchbook's drawn toolbar icons (1.1 pt Ballpoint lines
+tracing the app's 24-unit icon paths at 0.47 pt a unit) came out with dented
+corners, and a Notability import's handwriting and shapes showed the same.
+perfect-freehand 1.2.2, read from its source (`getStrokePoints`,
+`getStrokeOutlinePoints`), and measured on the Sketchbook's four sheets and
+the Notability and GoodNotes samples in `backend/tests/samples/`:
+
+- **Three absolute constants.** Everything else in the library scales with
+  `size` (the minimum spacing of outline points, `(size × smoothing)²`; the
+  start drop; the streamline's step, a fraction; the sharp-corner test, the
+  sign of a dot product), so outlining at ten times the page's scale and
+  dividing back changes exactly these three, each to a tenth:
+  - The outline skips every input point whose remaining running length is
+    under 3 units and joins the last kept point straight to the end. In page
+    units that was the last 3 pt of every stroke: a 7-unit lens circle
+    (3.3 pt radius) lost a 53° arc to a chord, the fit-width icon's 4 pt
+    chevrons collapsed into bars, the tail of a lettered "S" became a
+    straight stub with a blob, and a stroke under 3 pt kept only its ends.
+  - A lone input point gets a second point at (1, 1) units, so a stroke of
+    one sample drew as an off-centre blob about 1.4 pt plus the pen's width
+    across (6.35 pt at size 5, where the pen is 5 pt). At ten times the
+    scale it is a round dot of the pen's width, as the exporters draw it.
+  - The radius is floored at 0.01 units, invisible either way.
+- Dashes and pencil shades were already outlined at ten times the scale
+  (`runOutline`, the server's `stroke_outline`); whole strokes now are too
+  (`penOutline`, `pen_outline`).
+- **The start.** `getStrokePoints` skips samples while the distances of
+  their streamlined points from the start add up to less than `size`, and
+  joins the first sample straight to the first point it keeps, which lies
+  0.66 of the way to the sample that produced it. With the straight-run
+  cut, on the Notability sample's strokes that point lies 0.52 × size along
+  the samples at the median and at most 2.2 × size (0.84 and 2.8 before
+  the cut: denser samples shorten the drop, since each skipped one adds
+  less). It scales with the size and hides the tiny hooks a stylus leaves
+  at pen-down (the largest gap it leaves against an outline without it is
+  0.65 of the line's width, 0.19 pt), so it was left as it is. It is also
+  why a Brush mark shorter than its size drew only its two tapered ends,
+  both at the floor: such a mark is no longer tapered (below).
+- **Corners: the streamline's lag.** With `streamline` 0.4 each point moves
+  0.66 of the way from the previous output point to its sample (`0.15 +
+  (1 − streamline) × 0.85`), so the line trails about 0.515 of a sample gap
+  behind and cuts every corner by that much: about 0.4 pt on handwriting
+  sampled 0.8 pt apart, which reads as a round join, but about 1 pt on
+  shapes sampled every 2 pt (shapes.js `SAMPLE_PT`, `ink.SHAPE_STEP`, the
+  Notability and GoodNotes shapes, the Sketchbook's lettering), whose
+  vertices fell outside the ink, and more on drawings handed over as bare
+  corners (the Sketchbook's star, 14 pt between tips, and its pressed
+  grounds). The quadratics through the outline's midpoints round it a
+  little further.
+  - Resampling every run to 0.25 pt removes it (on the Notability sample,
+    spots off the ideal line by half its width or more: 295 to 3), but it
+    also removes the streamline's smoothing where a fast hand's samples are
+    4 pt apart: a quick circle drew as a polygon. Declined.
+  - Built instead: only straight runs are cut finer (`denseStraights`,
+    `_dense_straights`). A straight run has nothing to smooth; dense
+    samples there carry the line into its corner, and a curve keeps its
+    smoothing. Measured, the same spots: Notability 395 on dev, 295 after
+    the ten-times scale, 5 with straight runs; GoodNotes 14 to 2; the
+    Sketchbook's sheets 31, 40, 40 and 50 (at the ten-times scale) to 0,
+    once the Sketchbook samples its star, arrowheads and pressed grounds
+    along their sides (`_along`).
+  - A first version cut a segment wherever the stroke turned by less than
+    3° at either of its ends, along its whole length. A review found two
+    faults. A lone gentle turn at the inflection of a fast, sparse curve
+    (samples 4 to 7 pt apart) drew the segment after it as a straight chord
+    with corners at both ends; on test sines 104 and 407 such kinks. And
+    the cost grew with length, about four samples a point, so one crafted
+    stroke spanning the largest coordinates could stall an export or a
+    tab. Now a sample is straight only when a neighbour is too or it is
+    next to an end (kinks 104 to 7 and 407 to 21, the census still 5), and
+    a cut segment gets only 24 quarter-point steps at each end: the
+    streamline closes 0.66 of what is left at every step, so 24 steps
+    draw in even a jump of the largest page's span, and a 1000 pt line
+    of two samples gets 99 samples instead of 4000.
+  - It still costs: a page of imported handwriting outlines in 1.6 to 2.5
+    times the time with paths 19 to 43 % longer, once per stroke (the
+    outline is cached); 70 % of the Notability sample's freehand segments
+    are cut, its near-straight stretches. Jittery, nearly straight mouse
+    lines follow their jitter a little more (worst 0.54 to 0.71 pt off the
+    true line), not visible at 10 to 24 times.
+  - What is left is under the line's width: corners up to about 120° are
+    bevelled by the outline (0.29 of the radius at 90°), and arcs smaller
+    than half the line's width become chords (the minimum outline spacing),
+    so the Play icon's tip, the More icon's dots and the small loops of the
+    lasso stay a little small. The lettering's bowls and the icons' small
+    circles, sampled every 2 pt and 0.8 pt, still shrink by up to 6.5 % (19
+    % for the lasso's 0.9 pt loop); sampling them by turning angle would
+    fix it at the cost of about 40 KB a sheet.
+- **A regression the ten-times scale exposed.** At the page's scale a
+  two-sample stroke drew perfect-freehand's own in-between points at
+  pressure 0.5, whatever its `w`. With its midpoint lerped, it draws its
+  baked widths, which is right for every brush but the Brush: its tapers
+  put both samples of a two-sample mark at the 0.1 floor (a quick flick, or
+  any mark under Smoothing shorter than half its string, which commits only
+  its two ends), so it became a hairline where it had been a teardrop. A
+  finished two-sample Brush mark is no longer tapered, nor one shorter than
+  its size, whose middle the start drop skips (a dot written with a little
+  travel had become a 0.2 pt speck) (`finishStroke.brushWidths`, the
+  iPad's `InkWidth.widths`, `tests/shared/inkwidth.json`); one baked before
+  keeps its floors until it is restyled. A Smoothing mark between half the
+  string and the string's length still commits three samples, the middle
+  one a quarter of the way along, and peaks at about 0.7 of the width;
+  spacing the stabilizer's catch-up evenly would fix it.
+- **Parity.** The server's port matched the screen number for number on
+  4 800 fuzzed pencil and translucent strokes and every stroke of the
+  samples, and `denseStraights` and `_dense_straights` agreed to the bit on
+  36 300 runs, the 3° threshold included. Two older differences in how a
+  pencil is cut into bands showed up once the step counts made them
+  visible, and were fixed: the client copied a sample when its `o` sat
+  exactly on a band's edge (the server did not), and the server summed arc
+  lengths with Python's `math.hypot`, which differs from V8's `Math.hypot`
+  by up to 2 ulp on about a third of inputs (now `_js_hypot`, as the
+  shapes already were). Left: `_pf_points` still measures with
+  `math.hypot`, so a running length that ties the start drop's threshold
+  to the last bit keeps a point on one side only (a contrived 0.15 pt
+  pencil stroke); and where `o` touches an edge at a sample and turns
+  back, the server's float cut can leave a run of almost no length that it
+  draws as a dot the screen leaves out.
+- **How it was measured.** The sheets and the imported samples were drawn
+  through `strokePath` from dev and from the branch into SVG and
+  screenshotted with headless Chrome at 3× to 48×, against the icons' own
+  SVG stroked with round joins and against each stroke's samples drawn as
+  a round-capped polyline at its width; the census counts the spots where
+  the outline strays from that ideal by at least half the line's width.
+
+### Why Gamma's ink looks smoother than Zotero's (survey 2026-10-29)
+
+Asked when a page synced to Zotero showed its handwriting less smooth in
+Zotero's reader than in Gamma. Read from zotero/reader at 293d7e1
+(`src/pdf/lib/render.js`, `src/pdf/page.js` `_pushInk`,
+`src/pdf/lib/path.js`, `src/pdf/pdf-view.js`) and zotero/pdf-worker
+(`src/pdf/annotations/read.js`), against Gamma's `/Ink` writer
+(`gamma/pdf_export.py` `_ink_annotations`):
+
+- **What Zotero receives.** Gamma writes each look bucket (tool, colour,
+  size, opacity) as one `/Ink`: `/InkList` is every stroke's stored samples
+  as they are, `/BS /W` the mean drawn width of the whole bucket. The
+  pdf-worker reads `/InkList` and `/BS /W` only, rounded to a thousandth;
+  it ignores `/BS /S /D` and any `/AP`, so a dashed pen arrives solid and
+  an appearance stream would not reach it.
+- **How Zotero draws it.** Straight `lineTo` segments between the points,
+  one `lineWidth`, round caps and joins. Its own smoothing (two Chaikin
+  passes, then points closer than 1 unit dropped) runs only on a stroke
+  drawn in its reader, when it is finished; imported ink is never
+  smoothed.
+- **How Gamma draws the same samples.** The preset's Smoothing (the
+  stabilizer) and the 0.1 pt decimation are baked into the samples, so
+  Zotero has them too. What Zotero lacks is the renderer's: perfect-
+  freehand's streamline (each point moved 0.66 of the way to the next
+  sample, a lag of about half the sample spacing, about 0.4 pt on a
+  Notability import whose samples are 0.82 pt apart), outline points closer
+  than half the width dropped, the outline drawn as quadratic curves
+  through its points' midpoints, and each sample's own width.
+- **Measured** on the Notability example note's first page (531 strokes,
+  22 492 samples, spacing median 0.82 pt, 99th percentile 1.99 pt, longest
+  27 pt): at 6 to 10 times, Zotero's rendering shows the polyline's kinks at
+  every turn, keeps the corners of drawn shapes sharp where Gamma rounds
+  them, draws a pressure line at one width, and draws dotted and dashed
+  pens solid.
+- **What would bring Zotero closer.** Writing the renderer's smoothed
+  centreline into `/InkList` (the streamline applied and each curve
+  subdivided) while `/GammaInk` keeps the raw samples for a Gamma
+  re-import; and one `/Ink` per stroke, so each carries its own mean width.
+  A width that varies along a stroke cannot reach Zotero, whose ink has one
+  width.
+
 ## Stylus input per platform (browser)
 
 The W3C Pointer Events API is the one input path that covers every platform

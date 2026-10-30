@@ -1492,25 +1492,96 @@ export function outlineOptions(stroke) {
 }
 export const outlinePressure = (sample) => (sample.w != null ? sample.w / 2 : 0.5);
 
-// samples → the filled outline path for a pen stroke.
+// samples → the filled outline path for a whole pen stroke: a run with
+// both ends its own (runOutline below), so it is outlined at RUN_SCALE
+// too. perfect-freehand drops every point within 3 units of a path's end
+// and joins the last kept one straight to the end; at the page's own
+// scale that was the last 3 pt of every stroke — a hook at the end of a
+// letter flattened, a 7 pt circle closed by a chord, a 4 pt chevron
+// collapsed into a bar (the Sketchbook's drawn icons showed it first, a
+// Notability import's small handwriting the same) — at RUN_SCALE it is
+// the last 0.3 pt, under the pen's own width.
 export function penOutline(samples, opts) {
-  return svgPathFromPoints(getStroke(samples.map((s) => [s.x, s.y, outlinePressure(s)]), opts));
+  return runOutline(samples, opts);
 }
 
 // A piece of a pressure stroke outlined on its own — a dash, a dotted
-// pencil's dab, a pencil's shade: `first` / `last` whether its start / end
-// is one of the stroke's own ends (round) or a cut between two pieces
-// (flat, so neighbouring shades meet without overlapping; a dash is round at
-// both). perfect-freehand has one absolute constant, the 3 units at the end
-// of a path whose points it drops, so a piece shorter than 3 pt (a thin
-// pen's dash, a short shade) would outline as a disc about its length
-// across: a piece is outlined at RUN_SCALE times the page's scale. And a
-// path of two points gets its in-between points at pressure 0.5, the
-// nominal width, so a two-sample piece gets its midpoint first.
-// gamma/ink.py stroke_outline outlines a piece the same way.
+// pencil's dab, a pencil's shade — or a whole stroke (penOutline): `first`
+// / `last` whether its start / end is one of the stroke's own ends (round)
+// or a cut between two pieces (flat, so neighbouring shades meet without
+// overlapping; a dash is round at both). perfect-freehand has three
+// absolute constants, which do not scale with the size: the 3 units at the
+// end of a path whose points it drops, the (1, 1) offset it adds to a lone
+// point, and the 0.01 floor on the radius. At the page's scale a piece
+// shorter than 3 pt (a thin pen's dash, a short shade) would outline as a
+// disc about its length across, every stroke's last 3 pt would straighten,
+// and a stroke of one sample would be an off-centre blob about 1.4 pt plus
+// the pen's width across: everything is outlined at RUN_SCALE times the
+// page's scale, where they are 0.3 pt, 0.14 pt and 0.001 pt, and every
+// other option (the size, the smoothing's reach, the streamline's step)
+// scales with it. A path of two points gets its in-between points at
+// pressure 0.5, the nominal width, so a two-sample piece gets its midpoint
+// first; then its straight runs are cut finer (denseStraights). gamma/ink.py
+// stroke_outline outlines a piece the same way.
 const RUN_SCALE = 10;
+// A piece's straight runs cut into steps of STRAIGHT_STEP before it is
+// outlined. perfect-freehand's streamline moves each point 0.66 of the way
+// to the next sample, so the line trails about half a sample gap behind the
+// samples and cuts every corner by that much: a shape's corners, sampled
+// every 2 pt (shapes.js SAMPLE_PT, a Notability or GoodNotes shape, the
+// Sketchbook's lines), were cut by about 1 pt. Along a straight run it has
+// nothing to smooth, and samples a quarter point apart carry the line into
+// the corner the run leads to.
+// - A sample is straight where the piece turns by less than 3° there
+//   (STRAIGHT_TURN, the tangent) and so does a neighbour, or it is next to
+//   an end of the piece: a lone gentle turn among sharper ones (an
+//   inflection of a fast curve) is not a run, and cutting there would kink
+//   the curve.
+// - A segment longer than STRAIGHT_STEP that starts or ends at a straight
+//   sample is cut into equal steps of lerped samples (lerpSample), but only
+//   STRAIGHT_END_STEPS of them at each end: the streamline closes 0.66 of
+//   what is left at every step, so after 24 steps even a jump across the
+//   largest page has drawn in to well under a hundredth of a point, and
+//   the middle of a long straight step costs nothing (a ruler line
+//   1000 pt long gets 99 samples, not 4000).
+// - A curve, which turns at every sample, keeps the streamline's smoothing,
+//   so a fast hand's sparse samples still draw a curve. A chord turning
+//   less than 3° at its ends lies within about 0.03 pt of the arc even
+//   4 pt long, so the cut never shows where a run bends gently.
+// gamma/ink.py _dense_straights cuts the same, its tangent the same literal
+// and its lengths those of V8's Math.hypot. → the samples, or `run` itself
+// when nothing is cut.
+export const STRAIGHT_STEP = 0.25;
+export const STRAIGHT_END_STEPS = 24;
+const STRAIGHT_TURN = 0.0524077792830412;
+export function denseStraights(run) {
+  const n = run.length;
+  if (n < 3) return run;
+  const dx = new Array(n - 1), dy = new Array(n - 1);
+  for (let i = 0; i < n - 1; i++) { dx[i] = run[i + 1].x - run[i].x; dy[i] = run[i + 1].y - run[i].y; }
+  // gentle[k]: the piece turns by less than 3° at sample k (between segments k - 1 and k)
+  const gentle = new Array(n).fill(false);
+  for (let k = 1; k < n - 1; k++) {
+    const dot = dx[k - 1] * dx[k] + dy[k - 1] * dy[k];
+    gentle[k] = dot > 0 && Math.abs(dx[k - 1] * dy[k] - dy[k - 1] * dx[k]) <= STRAIGHT_TURN * dot;
+  }
+  const straight = (k) => gentle[k] && (k === 1 || k === n - 2 || gentle[k - 1] || gentle[k + 1]);
+  let out = null;
+  for (let i = 0; i < n - 1; i++) {
+    const len = Math.hypot(dx[i], dy[i]);
+    const m = len > STRAIGHT_STEP && (straight(i) || straight(i + 1)) ? Math.ceil(len / STRAIGHT_STEP) : 1;
+    if (m > 1) {
+      out ??= run.slice(0, i + 1);
+      const head = Math.min(STRAIGHT_END_STEPS, m - 1);
+      for (let j = 1; j <= head; j++) out.push(lerpSample(run[i], run[i + 1], j / m));
+      for (let j = Math.max(head + 1, m - STRAIGHT_END_STEPS); j < m; j++) out.push(lerpSample(run[i], run[i + 1], j / m));
+    }
+    if (out) out.push(run[i + 1]);
+  }
+  return out || run;
+}
 export function runOutline(samples, opts, first = true, last = true) {
-  const run = samples.length === 2 ? [samples[0], lerpSample(samples[0], samples[1], 0.5), samples[1]] : samples;
+  const run = denseStraights(samples.length === 2 ? [samples[0], lerpSample(samples[0], samples[1], 0.5), samples[1]] : samples);
   const k = RUN_SCALE;
   const pts = getStroke(run.map((s) => [s.x * k, s.y * k, outlinePressure(s)]),
     { ...opts, size: opts.size * k, start: { cap: first, taper: 0 }, end: { cap: last, taper: 0 } });
@@ -1641,13 +1712,16 @@ function cutBands(samples) {
     const a = samples[i - 1], b = samples[i], oa = a.o ?? 1, ob = b.o ?? 1, next = bandIndex(ob);
     while (band !== next) {
       const up = next > band, edge = BAND_EDGES[up ? band : band - 1];
-      const cut = lerpSample(a, b, ob !== oa ? clamp01((edge - oa) / (ob - oa)) : 0);
-      run.push(cut);
+      // a cut that falls on a sample (its o right on the edge) is that
+      // sample, never a copy beside it, as the server's stroke_bands cuts
+      const f = ob !== oa ? clamp01((edge - oa) / (ob - oa)) : 0;
+      const cut = f === 0 ? a : f === 1 ? b : lerpSample(a, b, f);
+      if (run.at(-1) !== cut) run.push(cut);
       runs.push({ band: OPACITY_BANDS[band], samples: run });
       band += up ? 1 : -1;
       run = [cut];
     }
-    run.push(b);
+    if (run.at(-1) !== b) run.push(b);
   }
   runs.push({ band: OPACITY_BANDS[band], samples: run });
   return runs;
