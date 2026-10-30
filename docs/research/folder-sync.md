@@ -6,7 +6,8 @@ people's own computers, and what to do about Gamma's folders not being a
 file tree. Status: **the one-way half, Gamma to disk, is built**. The
 desktop app keeps folders on the PC it runs on, and the same rounds run as
 a one-file client ([dev/folder_sync.md](../dev/folder_sync.md)). The way
-back is the open item at the end.
+back is built for PDFs ([disk-to-gamma.md](disk-to-gamma.md)); for notes
+files it is the open item at the end.
 
 ## Why not rsync, Syncthing or a mount
 
@@ -100,7 +101,12 @@ client only ever touches files it wrote.
 
 ## Still open
 
-- **The way back.** Disk to Gamma: a new PDF dropped in a directory
+- **The way back.** For PDFs it is built
+  ([disk-to-gamma.md](disk-to-gamma.md),
+  [dev/folder_sync.md](../dev/folder_sync.md#sending-pdfs-back)): a kept
+  folder that sends changed PDFs back when asked, and a page that follows
+  one file on disk, both through the replacement route. For notes files
+  it is open. Disk to Gamma in full: a new PDF dropped in a directory
   becomes a page filed in that folder; a new `.md` goes through the
   Markdown importer; an edited `.md` is parsed into blocks, matched by the
   anchors the vault dialect already carries, diffed against the page's

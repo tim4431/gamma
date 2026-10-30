@@ -163,12 +163,6 @@ NAP = 0.002               # ...and how long one lasts
 INF = float("inf")
 
 CLIENT = "relocate"       # the writer named on the batches
-# The doc_id a replacement writes on the highlights of a page that showed its
-# file from a URL alone (blocks_store.attachment_file gives ""; a duplicated
-# page's /api/uploads/ address is its stored file): no stored file to read
-# them from, and no upload has this name (uploads are named by content hash),
-# so the run places them by their quotes, as for a stored file that is gone.
-UNSTORED = "unstored"
 
 _DASHES = "‐‑‒–—―−"
 _QUOTES = {"‘": "'", "’": "'", "‚": "'", "′": "'",

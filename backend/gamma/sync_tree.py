@@ -202,11 +202,12 @@ def moved(base: dict, target: dict) -> set[str]:
     return out
 
 
-def upload_refs(blocks) -> set[str]:
+def upload_refs(blocks, *, held: bool = True) -> set[str]:
     """The upload file names a set of blocks (snapshot values or op dicts)
-    reference: ``/api/uploads/<name>`` in content or properties, and a
-    page's ``doc_id`` (its PDF) — ``storage.upload_refs`` per block."""
+    reference: ``/api/uploads/<name>`` in content or properties, a page's
+    ``doc_id`` (its PDF), and with ``held`` the files highlights hold —
+    ``storage.upload_refs`` per block."""
     names = set()
     for b in blocks:
-        names |= storage.upload_refs(b.get("content") or "", b.get("props") or {})
+        names |= storage.upload_refs(b.get("content") or "", b.get("props") or {}, held=held)
     return names

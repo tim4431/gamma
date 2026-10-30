@@ -134,18 +134,36 @@ def upload_extension(name: str) -> str:
 
 # How a block names a stored file: ``/api/uploads/<name>`` anywhere in its
 # content or properties (an image, a file chip, ``ink_url``, a page's
-# ``source_url``), and a page's ``doc_id`` (its PDF, ``<doc_id>.pdf``). The
-# one grammar the orphan bookkeeping (gamma/upload_gc.py), a mirror's file
-# transfer and a backup's file list read references with. A name is the whole
-# ``<stem>.<ext>`` run: what follows it ("….png." ending a sentence,
-# "?ws=…", "#page=2") is not part of it.
+# ``source_url``), a page's ``doc_id`` (its PDF, ``<doc_id>.pdf``), and a
+# highlight's ``pdf_position.doc_id`` and ``pdf_position.prev.doc_id``: the
+# file its rectangles were measured on, which a relocation run reads them
+# from, and the one a dashed placement's review card shows as Before
+# (docs/dev/highlight_relocation.md). So a pending highlight holds its file
+# until Accept, Use closest match, a move or a run that places it solid
+# drops the name. The one grammar the orphan bookkeeping (gamma/upload_gc.py),
+# a mirror's file transfer, a .gamma export and a backup's file list read
+# references with. The highlights' names are **held** files, kept but not
+# shown: what travels with a page to another copy (a mirror, an export
+# through a share, which serves only what the pages show) leaves them out
+# (``held=False``). A name is the whole ``<stem>.<ext>`` run: what follows it
+# ("….png." ending a sentence, "?ws=…", "#page=2") is not part of it.
 UPLOAD_REF_RE = re.compile(r"/api/uploads/([0-9A-Za-z_-]+\.[0-9A-Za-z]{1,12})(?![0-9A-Za-z])")
 _DOC_STEM_RE = re.compile(r"^[0-9A-Za-z_-]{1,128}$")
+# The doc_id a PDF replacement (routers/pages.py) writes on the highlights
+# of a page that showed its file from a URL alone (blocks_store.attachment_file
+# gives ""; a duplicated page's /api/uploads/ address is its stored file): no
+# stored file to read them from, and no upload has this name (uploads are
+# named by content hash), so it is no reference, and the relocation run
+# places them by their quotes, as for a stored file that is gone
+# (gamma/highlight_relocate.py).
+UNSTORED = "unstored"
 
 
-def upload_refs(content: str, props) -> set[str]:
+def upload_refs(content: str, props, *, held: bool = True) -> set[str]:
     """The stored file names one block references. ``props`` is the
-    properties dict or its stored JSON text."""
+    properties dict or its stored JSON text. ``held=False`` leaves out the
+    files a highlight's position holds (``_doc_ids``): only what the block
+    shows."""
     raw = props if isinstance(props, str) else json.dumps(props or {})
     names = set(UPLOAD_REF_RE.findall(content or "")) if "/api/uploads/" in (content or "") else set()
     if "/api/uploads/" in raw:
@@ -156,10 +174,23 @@ def upload_refs(content: str, props) -> set[str]:
                 props = json.loads(props)
             except ValueError:
                 props = {}
-        doc = props.get("doc_id") if isinstance(props, dict) else None
-        if isinstance(doc, str) and _DOC_STEM_RE.match(doc):
-            names.add(f"{doc}.pdf")
+        if isinstance(props, dict):
+            names.update(f"{doc}.pdf" for doc in _doc_ids(props, held))
     return names
+
+
+def _doc_ids(props: dict, held: bool = True):
+    """The stored PDFs a block's properties name by id: a page's
+    ``doc_id``, and (``held``) a highlight's ``pdf_position.doc_id`` and
+    ``pdf_position.prev.doc_id``. Malformed ids and ``UNSTORED`` name
+    none."""
+    position = props.get("pdf_position") if held else None
+    position = position if isinstance(position, dict) else {}
+    prev = position.get("prev")
+    prev = prev if isinstance(prev, dict) else {}
+    for doc in (props.get("doc_id"), position.get("doc_id"), prev.get("doc_id")):
+        if isinstance(doc, str) and doc != UNSTORED and _DOC_STEM_RE.match(doc):
+            yield doc
 
 
 # Upload filenames are the content sha256 truncated to this many hex chars

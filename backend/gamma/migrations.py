@@ -1472,6 +1472,29 @@ def _v36_folder_links_remote(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+# The columns a link to disk gained with files followed and PDFs sent back
+# (gamma/folder_links.py): its kind, a file link's page and what it knows
+# of the file, and whether PDFs changed on disk go back to Gamma.
+_V46_COLUMNS = (("kind", "TEXT NOT NULL DEFAULT 'folder'"), ("page_id", "TEXT NOT NULL DEFAULT ''"),
+                ("push", "INTEGER NOT NULL DEFAULT 0"), ("state", "TEXT NOT NULL DEFAULT '{}'"))
+
+
+def _v46_folder_links_push(conn: sqlite3.Connection) -> None:
+    """``folder_links`` gains ``kind`` (``folder``, what every link so far
+    is, or ``file``), ``page_id``, ``push`` and ``state``
+    (``_V46_COLUMNS``): a link may now follow one PDF on disk into a page,
+    and a folder link may send PDFs changed on disk back. The table is
+    created first where it is missing, in step 35's frozen shape with step
+    36's columns. Re-runnable: a column is added only where ``_columns()``
+    lacks it. No workspace is touched."""
+    conn.execute(_V35_FOLDER_LINKS)
+    have = _columns(conn, "folder_links")
+    for name, decl in _V36_COLUMNS + _V46_COLUMNS:
+        if name not in have:
+            conn.execute(f"ALTER TABLE folder_links ADD COLUMN {name} {decl}")
+    conn.commit()
+
+
 def _v37_highlight_colors(ws: str, pages: sqlite3.Connection, data) -> None:
     """A block's ``properties.color`` (a highlight's, gamma/colors.py) is
     ``#rrggbbaa``: every stored ``rgba(…)`` / ``#rrggbb`` string takes that
@@ -1805,6 +1828,7 @@ STEPS = [
     (42, "cloud_invitations", _v42_cloud_invitations),
     (43, "email_invites", _v43_email_invites),
     (45, "zotero_links", _v45_zotero_links),
+    (46, "folder_links_push", _v46_folder_links_push),
 ]
 
 # The workspace parts of the steps from version 34 on: (version, name,

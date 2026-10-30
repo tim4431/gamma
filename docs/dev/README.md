@@ -68,7 +68,7 @@ These describe the implementation unless explicitly marked as plans.
 | Block operations, page sockets, reconciliation, and undo | [Collaboration](collab.md) |
 | Offline workspace copies and sync conflicts | [Mirrors](mirror.md) |
 | A personal workspace kept in step with a Zotero library through Zotero's Web API: what syncs, the round, merging, PDFs, notes, annotations, conflicts, connecting the account | [Zotero link](zotero_sync.md) |
-| A folder of the workspace as a folder on disk: the layout, the desktop app's links, the gamma-sync client | [Folders on disk](folder_sync.md) |
+| A folder of the workspace as a folder on disk, and a page that follows a PDF on disk: the layout, PDFs sent back, the desktop app's links, the gamma-sync client | [Folders and files on disk](folder_sync.md) |
 | PDF transport, manifests, caching, and load timing | [PDF loading](pdf_loading.md) |
 | Ink format, input, editing, merging, and PDF ink import/export | [Handwriting](handwriting.md) |
 | Sheets of paper in a page, the notes and notebook views, paper | [Notebooks](notebooks.md) |

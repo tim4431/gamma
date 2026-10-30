@@ -2,9 +2,10 @@
 // sync button and its panel (docs/architecture.md "Kept on this
 // computer"): the clones (a local server's mirrors of remote workspaces),
 // the Zotero links (a local server's workspaces kept in step with a Zotero
-// library) and the folders on disk (a local server's folder links). Pure:
-// main.js reads the rows off each running local server and hands them
-// here, and the bar only renders what comes back.
+// library), the folders on disk and the files followed (a local server's
+// folder links, of kind folder and file). Pure: main.js reads the rows off
+// each running local server and hands them here, and the bar only renders
+// what comes back.
 //
 // A clone and a Zotero link read as Gamma's own sync pill reads them
 // (mirrorState in frontend/src/collaboration/MirrorPopover.jsx, a link's
@@ -13,14 +14,19 @@
 // Change both.
 
 // How much a state asks of the user, least first; the button shows the
-// worst. A detached clone or link or a paused folder is the user's own
-// choice and never raises it; PDFs that wait on Zotero's side (a full
-// storage, files Zotero does not serve) and a link's changes queued for a
-// later round only say so.
+// worst. A detached clone or link or a paused folder or file is the
+// user's own choice and never raises it; PDFs that wait on Zotero's side (a
+// full storage, files Zotero does not serve) and a link's changes queued
+// for a later round only say so.
 const RANK = { ok: 0, new: 1, waiting: 1, queued: 1, pending: 2, busy: 3, conflicts: 4, error: 5 };
 const QUIET = ['detached', 'paused'];
 
 const plural = (n, word) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+// "a", "a and b", "a, b and c".
+const listed = (parts) => (parts.length > 1 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts.join(''));
+
+const baseName = (p) => String(p || '').split(/[\\/]/).pop();
 
 // A stamp as the bar shows it: the time today, the day before that.
 function clock(iso) {
@@ -196,16 +202,23 @@ function zotero(server, info) {
   return { ...item, state: 'ok', text: `Up to date · ${clock(s.last_sync)}`, title: `Up to date since ${clock(s.last_sync)}.` };
 }
 
-// A folder kept on disk by local server `server`: one row of its `GET /api/folder-links`.
+// A folder kept on disk by local server `server`: one row of its `GET
+// /api/folder-links`. `push`: the PDFs changed in it go back to Gamma.
+// Of the files the last round kept, `changed` counts the ones a forced
+// Sync replaces with Gamma's (their entry's `force`), `held` the rest: a
+// PDF a send could not deliver, a file in the way.
 function folder(server, link, servers) {
   const s = link.status || {};
   const names = s.folder_path || [];
-  const changed = (s.kept || []).length;
+  const kept = s.kept || [];
+  const changed = kept.filter((k) => k.force).length;
+  const held = kept.filter((k) => !k.force);
+  const sent = (s.counts || {}).sent || 0;
   const item = {
     kind: 'folder', key: `folder:${server.id}:${link.id}`, server: server.id, id: link.id,
-    name: link.folder_id === 'root' ? 'Whole library' : names.length ? names[names.length - 1] : String(link.dest || '').split(/[\\/]/).pop(),
+    name: link.folder_id === 'root' ? 'Whole library' : names.length ? names[names.length - 1] : baseName(link.dest),
     where: link.dest, dest: link.dest, from: link.remote_url ? nameOf(link.remote_url, servers) : server.name,
-    changed, paused: Boolean(s.paused_at),
+    changed, held: held.length, push: Boolean(link.push), paused: Boolean(s.paused_at),
   };
   if (s.running) return { ...item, state: 'busy', text: 'Syncing…', title: 'A round is running.' };
   if (item.paused) {
@@ -213,27 +226,54 @@ function folder(server, link, servers) {
   }
   if (s.last_error) return { ...item, state: 'error', text: 'Sync problem', title: s.last_error };
   if (!s.last_sync) return { ...item, state: 'new', text: 'Not written yet', title: 'The first round runs in a moment.' };
-  return { ...item, state: 'ok', text: `Up to date · ${clock(s.last_sync)}${changed ? ` · ${changed} changed here` : ''}`,
-    title: `Up to date since ${clock(s.last_sync)}.${changed ? ` ${plural(changed, 'file')} you changed on this computer ${changed === 1 ? 'is' : 'are'} left alone; Sync can replace ${changed === 1 ? 'it' : 'them'}.` : ''}` };
+  const text = [`Up to date · ${clock(s.last_sync)}`, item.push && 'sends back', sent && `${sent} sent`, changed && `${changed} changed here`,
+    held.length && `${held.length} not synced`];
+  return { ...item, state: 'ok', text: text.filter(Boolean).join(' · '),
+    title: `Up to date since ${clock(s.last_sync)}.` +
+      (item.push ? ` PDFs you change here are sent back to Gamma${sent ? `; the last round sent ${sent}` : ''}.` : '') +
+      (changed ? ` ${plural(changed, 'file')} you changed on this computer ${changed === 1 ? 'is' : 'are'} left alone; Sync can replace ${changed === 1 ? 'it' : 'them'}.` : '') +
+      (held.length ? ` Not synced: ${held.slice(0, 3).map((k) => `${k.path} (${k.why})`).join('; ')}${held.length > 3 ? `; ${held.length - 3} more` : ''}.` : '') };
+}
+
+// A file followed by local server `server`: one row of its `GET
+// /api/folder-links` of kind file, a page whose PDF each new version of
+// the file on disk becomes. Named after the page.
+function file(server, link, servers) {
+  const s = link.status || {};
+  const item = {
+    kind: 'file', key: `file:${server.id}:${link.id}`, server: server.id, id: link.id,
+    name: link.title || s.title || baseName(link.dest),
+    where: link.dest, dest: link.dest, from: link.remote_url ? nameOf(link.remote_url, servers) : server.name,
+    paused: Boolean(s.paused_at),
+  };
+  if (s.running) return { ...item, state: 'busy', text: 'Sending…', title: 'A round is running.' };
+  if (item.paused) {
+    return { ...item, state: 'paused', text: `Paused · ${clock(s.paused_at)}`, title: 'Nothing is sent until you resume it; Sync sends the file now.' };
+  }
+  if (s.last_error) return { ...item, state: 'error', text: 'Problem', title: s.last_error };
+  if (s.waiting) return { ...item, state: 'pending', text: 'Waiting for the file to finish', title: s.waiting };
+  if (!s.last_sync) return { ...item, state: 'new', text: 'Not sent yet', title: 'The first round runs in a moment.' };
+  const moved = s.relocation_error ? ` The highlights were not moved: ${s.relocation_error}` : '';
+  return s.last_sent
+    ? { ...item, state: 'ok', text: `Sent · ${clock(s.last_sent)}`, title: `Sent to Gamma at ${clock(s.last_sent)}; each new version is sent.${moved}` }
+    : { ...item, state: 'ok', text: `Up to date · ${clock(s.last_sync)}`, title: `Up to date since ${clock(s.last_sync)}: Gamma shows this version of the file.${moved}` };
 }
 
 // Everything one local server keeps: its answers to the three reads
-// (`zotero`, its Zotero links: none from a server that has no such list).
+// (`zotero`, its Zotero links: none from a server that has no such list),
+// its folder links split by kind.
 function itemsOf(server, { mirrors = [], links = [], zotero: zoteroLinks = [] } = {}, servers = []) {
   return [...mirrors.map((m) => clone(server, m, servers)), ...(zoteroLinks || []).map((z) => zotero(server, z)),
-    ...links.map((l) => folder(server, l, servers))];
+    ...links.map((l) => (l.kind === 'file' ? file : folder)(server, l, servers))];
 }
-
-// "a", "a and b", "a, b and c".
-const listed = (parts) => (parts.length > 2 ? `${parts.slice(0, -1).join(', ')} and ${parts[parts.length - 1]}` : parts.join(' and '));
 
 // The sync button's reading of all of it: the worst state, a word or two,
 // and a tooltip with the counts.
 function summarize(items) {
-  const clones = items.filter((i) => i.kind === 'clone').length;
-  const links = items.filter((i) => i.kind === 'zotero').length;
-  const folders = items.length - clones - links;
-  const what = listed([clones && plural(clones, 'clone'), links && plural(links, 'Zotero link'), folders && plural(folders, 'folder on disk')].filter(Boolean));
+  const kinds = (kind) => items.filter((i) => i.kind === kind).length;
+  const [clones, links, folders, files] = [kinds('clone'), kinds('zotero'), kinds('folder'), kinds('file')];
+  const what = listed([clones && plural(clones, 'clone'), links && plural(links, 'Zotero link'),
+    folders && `${plural(folders, 'folder')} on disk`, files && `${plural(files, 'file')} followed`].filter(Boolean));
   if (!items.length) return { state: 'none', text: '', title: 'Nothing is kept on this computer yet' };
   const live = items.filter((i) => !QUIET.includes(i.state));
   if (!live.length) return { state: 'paused', text: 'Paused', title: `${what} on this computer: paused` };
@@ -253,4 +293,4 @@ function summarize(items) {
   return { state, text, title: `${what} on this computer: ${text.replace(/^[A-Z][a-z]/, (s) => s.toLowerCase())}` };
 }
 
-module.exports = { clone, zotero, folder, itemsOf, summarize };
+module.exports = { clone, zotero, folder, file, itemsOf, summarize };

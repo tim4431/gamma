@@ -35,6 +35,10 @@ other; deleted-and-edited pages come back.
 
 Files travel by content hash: uploads a page references are fetched when
 missing here and uploaded when missing there, so a re-run never duplicates.
+What travels is what the pages show (``storage.upload_refs`` with
+``held=False``): the older PDF a pending highlight holds after a
+replacement stays on the copy that has it, and a page published to the
+share host never carries it.
 
 The folder and label trees travel as two more pages, the pseudo-pages
 ``folders`` / ``labels`` (gamma/blocks_store.py ``TREES``): the feeds list
@@ -948,8 +952,8 @@ def _pull_files(ws: str, remote: Remote, names: set[str], report: dict) -> None:
 
 
 def missing_uploads(ws: str, pages=None) -> set[str]:
-    """The upload names the workspace's blocks reference (content, props, a
-    page's ``doc_id``) that it does not store (one listing of its files,
+    """The upload names the workspace's blocks show (content, props, a
+    page's ``doc_id``; not the files highlights hold) that it does not store (one listing of its files,
     ``storage.list``); only those of ``pages`` (page ids) when given."""
     with connect_pages_db(ws) as conn:
         if pages is None:
@@ -963,7 +967,7 @@ def missing_uploads(ws: str, pages=None) -> set[str]:
         except ValueError:
             blocks.append({"content": content or "", "props": {}})
     stored = {name for name, _, _ in storage.list(ws)}
-    return {n for n in upload_refs(blocks) if UPLOAD_NAME_RE.match(n) and n not in stored}
+    return {n for n in upload_refs(blocks, held=False) if UPLOAD_NAME_RE.match(n) and n not in stored}
 
 
 def _draws(block: dict, name: str) -> bool:
@@ -1710,7 +1714,7 @@ def _pull_whole(ws: str, remote: Remote, page_id: str, remote_tree: dict, seq: i
     goes on as a three-way merge, never as a page with no base — then the
     remote tree laid in and the state saved. The page takes the remote's
     place in the library when no page here holds that key."""
-    _pull_files(ws, remote, upload_refs(remote_tree.values()), report)
+    _pull_files(ws, remote, upload_refs(remote_tree.values(), held=False), report)
     with connect_pages_db(ws) as conn:
         create_page(conn, remote_tree[page_id]["content"], remote_tree[page_id]["props"], actor=ACTOR,
                     block_id=page_id, position=_free_page_key(conn, remote_tree[page_id]["position"]))
@@ -1752,7 +1756,7 @@ def _push_whole(ws: str, remote: Remote, page_id: str, local: dict, report: dict
     root = _create_remote_page(remote, page_id, local)
     with connect_pages_db(ws) as conn:
         _save_state(conn, page_id, UNKNOWN_SEQ, {page_id: root})
-    refused = _push_files(ws, remote, upload_refs(local.values()), report, page_id=page_id, blocks=local)
+    refused = _push_files(ws, remote, upload_refs(local.values(), held=False), report, page_id=page_id, blocks=local)
     after = _send(ws, remote, page_id, UNKNOWN_SEQ, {page_id: root},
                   _without_files(diff({page_id: local[page_id]}, local, page_id, with_base=False), refused, local))
     with connect_pages_db(ws) as conn:
@@ -1923,7 +1927,7 @@ def _sync_page(ws: str, remote: Remote, page_id: str, *, remote_seq_hint: int | 
     if remote_changed:
         # the whole tree's files, not only the changed blocks': a round cut short
         # after the page landed but before its PDF did is repaired here
-        _pull_files(ws, remote, upload_refs(remote_tree.values()), report)
+        _pull_files(ws, remote, upload_refs(remote_tree.values(), held=False), report)
         sent = {op["id"]: op for op in remote_ops if op["op"] == "set" and "content" in op}
         # (blocks moved here from another page bring what this copy changed in them into ``edits``)
         applied = _apply_local(ws, page_id, remote_ops, remote_tree, edits)
@@ -1968,11 +1972,11 @@ def _sync_page(ws: str, remote: Remote, page_id: str, *, remote_seq_hint: int | 
     push_ops = _split(diff(remote_tree, local_now, page_id), edits, touched) if push_allowed else []
     if not push_ops:
         return
-    files = upload_refs(push_ops)
+    files = upload_refs(push_ops, held=False)
     if unsettled:
         # after a round cut short the remote may lack a file of a block that
         # is not pushed again — the page's own PDF above all
-        files |= upload_refs(local_now.values())
+        files |= upload_refs(local_now.values(), held=False)
     refused = _push_files(ws, remote, files, report, page_id=page_id, blocks=local_now)
     push_ops = _without_files(push_ops, refused, local_now)
     if not push_ops:
@@ -2039,7 +2043,7 @@ def _adopt_page(ws: str, remote: Remote, page_id: str, local: dict, remote_tree:
         _dropped(conn, page_id, loser, winner, side)
     if policy == "mine":
         push_ops = diff(remote_tree, local, page_id, with_base=False)
-        refused = _push_files(ws, remote, upload_refs(push_ops), report, page_id=page_id, blocks=local)
+        refused = _push_files(ws, remote, upload_refs(push_ops, held=False), report, page_id=page_id, blocks=local)
         push_ops = _without_files(push_ops, refused, local)
         after = _send(ws, remote, page_id, seq, remote_tree, push_ops)
         with connect_pages_db(ws) as conn:
@@ -2053,7 +2057,7 @@ def _adopt_page(ws: str, remote: Remote, page_id: str, local: dict, remote_tree:
         _deferred_files(page_id, refused)
         return
     ops_ = diff(local, remote_tree, page_id, with_base=False)
-    _pull_files(ws, remote, upload_refs(remote_tree.values()), report)
+    _pull_files(ws, remote, upload_refs(remote_tree.values(), held=False), report)
     if ops_:
         _apply_local(ws, page_id, ops_, remote_tree, carry=False)
     with connect_pages_db(ws) as conn:

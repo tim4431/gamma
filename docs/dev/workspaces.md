@@ -566,10 +566,12 @@ syncs, the round, merging, PDFs, notes, annotations, conflicts — is
 
 The desktop app keeps a folder of a workspace as a directory on the
 computer it runs on: each paper's PDF beside a Markdown note of its
-highlights and notes, one way, kept up to date. A folder's *Keep on this
-computer…* or the desktop app's sync panel starts it. The layout, the rounds,
-the links and the client that does the same without the app are
-[folder_sync.md](folder_sync.md).
+highlights and notes, kept up to date, and when asked, the PDFs changed
+there sent back. A page can follow one PDF on that computer, each new
+version becoming its PDF. A folder's *Keep on this computer…*, a page's
+*Follow a file on this computer…* or the desktop app's sync panel starts
+them. The layout, the rounds, the links and the client that does the same
+without the app are [folder_sync.md](folder_sync.md).
 
 ## Current limits
 

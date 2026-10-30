@@ -829,8 +829,10 @@ class _GammaBuilder(_Builder):
             # Referenced uploads: any /api/uploads/<file> in content or
             # properties (source_url, pasted images), plus a doc_id's PDF —
             # the one reference rule (storage.upload_refs) the orphan
-            # bookkeeping keeps files by.
-            self.upload_names |= upload_refs(row[3] or "", row[4] or "{}")
+            # bookkeeping keeps files by. Through a share, only what the
+            # pages show (held=False): the older PDF a pending highlight
+            # holds is no file the share serves (routers/uploads.py).
+            self.upload_names |= upload_refs(row[3] or "", row[4] or "{}", held=not self.opts.get("share"))
 
     def _shared_trees(self, src, share, subtree: set) -> dict:
         """The folder and label blocks a share-scoped export carries, as

@@ -9339,6 +9339,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                               title={t("Upload a new version of this PDF: the notes and highlights stay, and each highlight moves to where its text is in the new file")}>
                               {t("Replace the PDF…")}
                             </MenuItem>
+                            {/* In the desktop app: its page preload passes the message to the app, which
+                                asks for the file and sends each new version of it here (desktop/docs/architecture.md). */}
+                            {IS_DESKTOP ? (
+                              <MenuItem icon={HardDriveIcon}
+                                title={t("Each time a PDF on this computer changes, it becomes this page's PDF: the notes and highlights stay, and each highlight moves to where its text is")}
+                                onClick={() => {
+                                  setOpenPopover(null);
+                                  window.postMessage({ source: "gamma-app", type: "follow-file-on-disk", ws: getCurrentWorkspace(), page: focusedBlockId }, window.location.origin);
+                                }}>{t("Follow a file on this computer…")}</MenuItem>
+                            ) : null}
                             <MenuItem icon={LocateIcon} disabled={loading || relocating || !pdfStored} onClick={relocateHighlights}
                               title={!pdfStored ? t("This PDF is shown from its link and not stored on the server, so its highlights cannot be placed in it")
                                 : relocating ? t("This page's highlights are being placed — see Background tasks")

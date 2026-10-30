@@ -16,9 +16,9 @@ import re
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from .. import highlight_relocate, jobs, pdf_index, publish
+from .. import highlight_relocate, jobs, pdf_index, publish, upload_gc
 from ..auth import actor_of, require_user_id, require_ws
 from ..blocks_store import (
     BLOCK_COLUMNS,
@@ -36,7 +36,7 @@ from ..blocks_store import (
 from ..db import connect_pages_db, connect_users_db, get_profile, safe_doc_id
 from ..markdown_zip_import import markdown_page
 from ..logbuf import log
-from ..storage import find_upload_file
+from ..storage import UNSTORED, find_upload_file
 from ..ops import MAX_OPS, OpError, after_commit, after_commits, apply_batches, apply_ops, props_patch
 from .imports import originals_gone
 
@@ -62,6 +62,9 @@ class AttachRequest(BaseModel):
     doc_id: str = ""              # content hash of an uploaded PDF, or the URL hash a proxied one gets
     source_url: str = ""          # where the viewer loads it from (not stored when it is doc_id's own upload path)
     original_filename: str = ""   # display name; becomes the title while it is still automatic
+    # PUT only: how long the replaced stored file is kept once nothing needs it
+    # (upload_gc.retain; a sync sending each new build keeps a day of the ones before)
+    keep_old_days: int | None = Field(default=None, ge=1, le=30)
 
 
 class HeldElsewhere(OpError):
@@ -321,11 +324,21 @@ def replace_pdf(page_id: str, payload: AttachRequest, request: Request):
     doc_id, source_url = _attachment_body(payload)
     try:
         done = replace_attachment(ws, page_id, doc_id, source_url, payload.original_filename,
-                                  actor=actor_of(request), owner=request.state.user_id)
+                                  actor=actor_of(request), owner=request.state.user_id,
+                                  keep_old_days=payload.keep_old_days)
     except HeldElsewhere as e:
         return JSONResponse(status_code=409, content={"detail": e.detail, "page_id": e.page_id})
     except OpError as e:
         raise HTTPException(status_code=e.status, detail=e.detail)
+    return replaced_answer(done)
+
+
+def replaced_answer(done: dict) -> dict:
+    """What ``PUT /pages/{id}/attachment`` answers for ``replace_attachment``'s
+    result: the updated block, with the relocation run as ``job`` or why none
+    started as ``relocation_error``; the page as it was when nothing changed.
+    The desktop app's own server answers a PDF sent from disk the same way
+    (gamma/folder_links.py ``LocalSink``)."""
     if not done["results"]:
         return done["page"]
     answer = {**done["page"], "content": done["content"], "properties": done["props"],
@@ -339,7 +352,8 @@ def replace_pdf(page_id: str, payload: AttachRequest, request: Request):
 
 def replace_attachment(ws: str, page_id: str, doc_id: str, source_url: str = "", original_filename: str = "", *,
                        actor: str, client: str = "", owner, check_held: bool = True, props: dict | None = None,
-                       check=None, rows=None, check_zotero: bool = True) -> dict | None:
+                       check=None, rows=None, check_zotero: bool = True,
+                       keep_old_days: int | None = None) -> dict | None:
     """Make ``doc_id`` / ``source_url`` the page's PDF, in place of what it
     carries (or as its first), in one transaction under the write lock,
     then start placing its highlights. PUT /pages/{id}/attachment and the
@@ -366,16 +380,18 @@ def replace_attachment(ws: str, page_id: str, doc_id: str, source_url: str = "",
     ``/api/uploads/<doc id>.pdf`` address is its stored file) and the page
     has highlights placed on its PDF, each of them that names no file yet
     gets the outgoing file's id as ``pdf_position.doc_id`` (the file its
-    rectangles were measured on; ``highlight_relocate.UNSTORED`` for a page
+    rectangles were measured on; ``storage.UNSTORED`` for a page
     that showed its file from a URL alone), and a lost one's ``closest`` (a
     place in the outgoing file) goes. ``rows(conn)`` runs last, for a
     caller's own rows in the same transaction. The batches are logged under
     ``actor`` and ``client``. After the commit (inside the connection's
     block) the room hears the batches, and when the stored file changed the
     old file's search rows and manifest go; unless something else
-    references it the file is purged after 30 days (gamma/upload_gc.py).
-    The same attachment again writes no op (only ``rows``) and answers
-    ``results`` [].
+    references it the file is purged after 30 days (gamma/upload_gc.py), or
+    ``keep_old_days`` (1 to 30) after (``upload_gc.retain``: a sync sending
+    each new build keeps a day of the builds before, gamma/gamma_sync.py
+    ``KEEP_OLD_DAYS``). The same attachment again writes no op (only
+    ``rows``) and answers ``results`` [].
 
     Then, when highlights were stamped and the new file is stored, the
     ``relocate-highlights`` job owned by ``owner`` starts
@@ -433,7 +449,7 @@ def replace_attachment(ws: str, page_id: str, doc_id: str, source_url: str = "",
                 # that is a place in the outgoing file (the run finds the new file's)
                 stamped = {k: v for k, v in p["pdf_position"].items() if k != "closest"}
                 if not stamped.get("doc_id"):
-                    stamped["doc_id"] = outgoing or highlight_relocate.UNSTORED
+                    stamped["doc_id"] = outgoing or UNSTORED
                 if stamped != p["pdf_position"]:
                     stamps.append({"op": "set", "id": bid, "props": {"pdf_position": stamped}})
             batches = [(page_id, [op])]
@@ -449,6 +465,11 @@ def replace_attachment(ws: str, page_id: str, doc_id: str, source_url: str = "",
         after_commits(ws, conn, results)
         if old and old != doc_id:
             pdf_index.purge_unused(ws, conn)
+    if keep_old_days and outgoing and outgoing != incoming:
+        try:  # after the commit: retain takes the purge's lock, which never waits on the write lock
+            upload_gc.retain(ws, f"{outgoing}.pdf", keep_old_days * 86400)
+        except Exception as e:  # noqa: BLE001 — a shorter life missed is no failed replacement
+            log.warning(f"[uploads] {page_id}: could not shorten the life of {outgoing}.pdf: {e}")
     job, reason = None, ""
     if placed:
         job, reason = (_start_relocation(owner, ws, page["id"], content, incoming, outgoing=outgoing)
