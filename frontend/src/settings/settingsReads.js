@@ -35,7 +35,7 @@ export const PANE_READS = {
     "/backup-tasks", admin && "/admin/offsite"],
   server: () => ["/admin/server-info", "/admin/settings", "/admin/join-requests", "/admin/ai-providers", "/admin/workspaces",
     "/admin/backups", { path: "/accounts", later: true }, { path: LOG_START, later: true }],
-  translation: () => ["/translate/engines"],
+  translation: () => ["/translate/engines", "/translations/stats"],
   tools: () => ["/ai/search-services"],
   maintenance: () => ["/quota", "/metadata/status"],
 };

@@ -447,17 +447,17 @@ export function chunkUnits(units, { maxUnits = CHUNK_UNITS, maxChars = CHUNK_CHA
 }
 
 // The fields a request adds to /api/ai/translate for its context, from the
-// viewer's names: the page being translated (`pageId`: the server makes the
-// paper's brief from its stored PDF), the document's opening text when the
-// page has none stored (`head`), `quick` for a one-off text that must not
-// wait for the brief, and the chunk's `before`, `after` and `section`. The
-// viewer's onTranslate and the bench both send these, so the bench
-// measures the requests the viewer makes.
-export function requestFields({ pageId = "", head = "", quick = false, before = "", after = "", section = "" } = {}) {
-  const out = {};
+// viewer's names: the page being translated (`pageId`, which names the paper
+// and its brief), the document's opening text when there is no page to name
+// it by (`head`), `waitBrief: false` for a text that must not wait while the
+// paper's brief is being made (a job's first chunk, a selection), `keep`
+// (whether the server may keep the translations in the workspace) and the
+// chunk's `before`, `after` and `section`. The viewer's onTranslate and the
+// bench both send these, so the bench measures the requests the viewer makes.
+export function requestFields({ pageId = "", head = "", waitBrief = true, keep = true, before = "", after = "", section = "" } = {}) {
+  const out = { wait_brief: waitBrief !== false, keep: keep !== false };
   if (pageId) out.page_id = pageId;
   if (head) out.head = head;
-  if (quick) out.build_brief = false;
   if (before) out.before = before;
   if (after) out.after = after;
   if (section) out.section = section;

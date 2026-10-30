@@ -16,7 +16,7 @@ import json
 import sqlite3
 from contextlib import contextmanager
 
-from . import pdf_meta
+from . import pdf_meta, translate_store
 from .db import connect_data_db, page_now
 from .logbuf import log
 from .textnorm import INDEX_VERSION
@@ -120,10 +120,10 @@ def drop_docs(conn: sqlite3.Connection, doc_ids) -> None:
 def purge_unused(ws: str, pages_conn: sqlite3.Connection) -> None:
     """Sweep data.db after a PDF may have left the workspace (a page deleted
     for good, a block carrying a PDF deleted, a PDF detached, a restore):
-    the index rows and the manifests of papers no block carries any more —
-    nothing else cleans them up. Costs a scan of the ``doc_id`` index, so
-    callers run it only when a PDF may have gone. Never raises (derived
-    data)."""
+    the index rows, the manifests and the kept translations of papers no
+    block carries any more — nothing else cleans them up. Costs a scan of
+    the ``doc_id`` index, so callers run it only when a PDF may have gone.
+    Never raises (derived data)."""
     try:
         live = {r[0] for r in pages_conn.execute(
             "SELECT DISTINCT doc_id FROM unified_blocks WHERE doc_id IS NOT NULL")}
@@ -131,6 +131,7 @@ def purge_unused(ws: str, pages_conn: sqlite3.Connection) -> None:
             ensure_schema(conn)
             drop_docs(conn, [r[0] for r in conn.execute("SELECT doc_id FROM pdf_fts_docs") if r[0] not in live])
             pdf_meta.purge(conn, live)
+            translate_store.purge(conn, live)
             conn.commit()
     except Exception as e:  # noqa: BLE001 — derived data: the next sweep tries again
         log.warning(f"[pdf_index] cleanup of unused papers failed: {e}")

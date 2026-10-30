@@ -177,6 +177,9 @@ class OpenAIChat(Protocol):
             raise RuntimeError(f"empty response (finish_reason={reason} — {EMPTY_REPLY_HINT})")
         return text
 
+    def stop_reason(self, data):
+        return str(((data.get("choices") or [{}])[0] or {}).get("finish_reason") or "")
+
     def usage(self, raw):
         if not isinstance(raw, dict):
             return None

@@ -88,6 +88,8 @@ search_services.py the services behind the agent's web search (search_web)
 paper_links.py     the links on a web page that may lead to a paper's full text, ranked
 fetch_handoff.py   fetches handed to the user's browser when a paper is behind a wall
 publisher_sessions.py  publisher cookies the Connector imports, stored encrypted
+translate.py       the PDF translated view's paragraph cache: a translation's key, the in-memory LRU, one request's texts against it and the kept ones
+translate_store.py the kept translations and briefs of stored papers, in the workspace's data.db
 translate_engines.py  machine translation for the PDF's translated view (Microsoft, Google, Youdao)
 
 # Assistants (MCP)

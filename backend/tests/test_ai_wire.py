@@ -191,7 +191,7 @@ def test_sse_events_anthropic_tool_use():
 
 
 def test_partial_tool_args_preview():
-    from gamma.ai_client import partial_json_object, partial_json_strings
+    from gamma.ai_client import partial_json_object
     # A streaming edit_block call: the id is complete, the content half-written.
     raw = '{"block_id": "b1", "content": "## Summary\\nThe paper sho'
     assert partial_json_object(raw) == {"block_id": "b1", "content": "## Summary\nThe paper sho"}
@@ -203,11 +203,6 @@ def test_partial_tool_args_preview():
     assert partial_json_object('{"n": 3, "after_id": "z", "content": "hi') == {"after_id": "z", "content": "hi"}
     assert partial_json_object("") == {}
     assert partial_json_object('{"content": "ab"}') == {"content": "ab"}
-    # Translation replies: a JSON array of strings, possibly fenced.
-    assert partial_json_strings('```json\n["第一段", "第二') == ["第一段", "第二"]
-    assert partial_json_strings('["a", "b"]') == ["a", "b"]
-    assert partial_json_strings('["a", null, "b"]') == ["a"]
-    assert partial_json_strings("Sure: [") == []
 
 
 def test_sse_events_openai_tool_calls_accumulate():
@@ -729,6 +724,44 @@ def test_whole_replies_report_the_speed_the_provider_served():
     assert served_speed_name("standard") == "" and served_speed_name("default") == ""
     assert served_speed_name("scale") == ""
     assert served_speed_name("") is None and served_speed_name(None) is None and served_speed_name(3) is None
+
+
+def test_whole_and_streamed_replies_report_their_stop_reason():
+    """A caller that reads a reply whole (call_ai) or by its deltas
+    (sse_deltas) hears the provider's stop reason, so a translation tells a
+    reply the output cap cut off from one that ended on its own."""
+    from gamma.ai_client import read_reply, sse_deltas
+    from gamma.ai_protocols.base import truncated_stop
+
+    class Body:
+        def __init__(self, data):
+            self._data = json.dumps(data).encode()
+
+        def read(self):
+            return self._data
+
+    def whole(wire, data):
+        heard = []
+        text = read_reply(Body(data), wire, on_stop=heard.append)
+        return text, heard
+
+    assert whole("anthropic", {"content": [{"type": "text", "text": "hal"}], "stop_reason": "max_tokens"}) \
+        == ("hal", ["max_tokens"])
+    assert whole("openai", {"choices": [{"message": {"content": "hal"}, "finish_reason": "length"}]}) \
+        == ("hal", ["length"])
+    # A body that names no reason says nothing.
+    assert whole("openai", {"choices": [{"message": {"content": "hi"}}]}) == ("hi", [])
+    # The Responses API always streams, read whole or not.
+    heard = []
+    stream = sse({"type": "response.output_text.delta", "delta": "hal"},
+                 {"type": "response.incomplete", "response": {"status": "incomplete"}})
+    assert read_reply(stream, "openai-responses", on_stop=heard.append) == "hal" and heard == ["incomplete"]
+    heard = []
+    stream = sse({"type": "message_start", "message": {"usage": {"input_tokens": 5}}},
+                 {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "hal"}},
+                 {"type": "message_delta", "delta": {"stop_reason": "max_tokens"}, "usage": {"output_tokens": 2}})
+    assert "".join(sse_deltas(stream, "anthropic", on_stop=heard.append)) == "hal" and heard == ["max_tokens"]
+    assert all(truncated_stop(r) for r in ("max_tokens", "length", "incomplete"))
 
 
 # --- other OpenAI-compatible services --------------------------------------------

@@ -1010,6 +1010,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
 
   // The translate endpoint, answered locally: every text comes back as
   // "译:<text>" in one final NDJSON line (a translation service's shape).
+  // The paper's brief, which a job asks for as it starts, is there at once.
   async function mockTranslate(requests) {
     await page.route("**/api/ai/translate", async (route) => {
       const body = route.request().postDataJSON();
@@ -1017,6 +1018,9 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await route.fulfill({ contentType: "application/x-ndjson",
         body: `${JSON.stringify({ translations: body.texts.map((t) => `译:${t}`), model: "engine:google", cached: false })}\n` });
     });
+    await page.unroute("**/api/ai/translate/brief");
+    await page.route("**/api/ai/translate/brief", (route) => route.fulfill({ contentType: "application/x-ndjson",
+      body: `${JSON.stringify({ ready: true })}\n` }));
   }
 
   await step("pdf: the translate button translates the page being read, and shows/hides only on a translated one", async () => {
@@ -1080,7 +1084,8 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       assertEq(JSON.stringify(requests.at(-1).texts), JSON.stringify(["says hello"]));
       // The page rides along for the paper's brief, never waited for.
       assertEq(requests.at(-1).page_id, pageId, "the selection names its page");
-      assertEq(requests.at(-1).build_brief, false, "a selection does not wait for the brief");
+      assertEq(requests.at(-1).wait_brief, false, "a selection does not wait for the brief");
+      assertEq(requests.at(-1).keep, true, "its translation may be kept");
       assertEq(await corner(), opened, "the popup stays put on Translate");
       // The header folds the result; clicking into the text keeps the popup.
       await page.locator(".selTransToggle").click();

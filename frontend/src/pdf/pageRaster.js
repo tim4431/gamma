@@ -235,7 +235,7 @@ export const showsKept = (wrap) => !!RASTERS.get(wrap)?.kept();
 // The canvas showing a page box's whole page, once it holds the page's
 // pixels (a paint of its own, or the copy from its last visit); null before
 // that or after they were released. The translated view crops formulas from
-// it (pdf/PdfViewer.jsx TransMath) and the recents cards take their cover
+// it (pdf/TransOverlay.jsx TransMath) and the recents cards take their cover
 // from it (app/App.jsx captureViewerSnapshot); `onBase` says when it changed. The
 // canvas element itself changes at every repaint (see `pair`), so callers
 // ask again rather than keep it.

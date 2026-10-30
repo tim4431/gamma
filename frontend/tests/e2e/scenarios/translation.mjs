@@ -7,7 +7,12 @@
 // request names the page (for the paper's brief), the section heading and
 // the text around its texts. "Translate whole document" then does the two
 // pages after it, each request with the text before and after it across
-// the page breaks. The translate endpoint is answered locally.
+// the page breaks. A job asks for the paper's brief as it starts, sends its
+// first chunk without waiting for it, runs on when the reader leaves the
+// PDF, and asks again for what went without the brief. Settings keeps
+// translations and clears them, the viewer's included; "Forget this
+// translation" forgets one paper's. A viewer of the workspace is offered neither. The translate
+// endpoints and the kept translations' are answered locally.
 import { FAKE_AI_MODELS, fakeAiModels, wanted } from "../harness.mjs";
 import { waitForPdf } from "./pdf.mjs";
 
@@ -66,12 +71,38 @@ function thirdPage() {
   return { runs };
 }
 
+// Twelve short paragraphs: two chunks, of ten and of two.
+const COUNTED = ["one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve"];
+function longPage() {
+  const runs = [];
+  const line = (x, y, text) => runs.push({ x, y, size: 10, font: "F2", text });
+  COUNTED.forEach((name, k) => {
+    line(82, 724 - 36 * k, `Paragraph ${name} says how the atoms in the lattice`);
+    line(72, 712 - 36 * k, "move once the drive is switched on and off.");
+  });
+  return { runs };
+}
+
 export async function translationScenarios({ server, browser, alice, makePdf, step, until, assert, assertEq, assertNoProblems, openPage }) {
   if (!wanted("translation")) return;
-  let page, pageId;
+  let page, pageId, stubbornDoc;
   const requests = [];
   // A step's own answer for the translate endpoint (route, body), when set.
   let respond = null;
+  // The brief's requests, and the kept translations' DELETEs (their paths);
+  // what GET /api/translations/stats answers.
+  const briefs = [];
+  const forgotten = [];
+  let kept = { documents: 2, paragraphs: 42, bytes: 37 * 1024 };
+  let asViewer = false;
+
+  // Settings → Language and Translation.
+  const openTranslation = async () => {
+    await page.locator('[data-guide="header.account"]').click();
+    await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
+    await page.getByRole("navigation", { name: "Settings categories" })
+      .getByRole("button", { name: "Language and Translation", exact: true }).click();
+  };
 
   await step("translation: setup, a paper whose first page's paragraph runs over the column break", async () => {
     const pdf = makePdf([twoColumnPage(), secondPage(), thirdPage()]);
@@ -91,17 +122,31 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
       await route.fulfill({ contentType: "application/x-ndjson",
         body: `${JSON.stringify({ translations, model: "demo:model", cached: false })}\n` });
     });
+    // The paper's brief is there at once.
+    await ctx.route("**/api/ai/translate/brief", async (route) => {
+      briefs.push(route.request().postDataJSON());
+      await route.fulfill({ contentType: "application/x-ndjson", body: `${JSON.stringify({ ready: true })}\n` });
+    });
+    await ctx.route((url) => url.pathname.startsWith("/api/translations"), async (route) => {
+      const { pathname } = new URL(route.request().url());
+      if (route.request().method() === "GET") return route.fulfill({ json: kept });
+      forgotten.push(pathname);
+      if (pathname === "/api/translations") kept = { documents: 0, paragraphs: 0, bytes: 0 };
+      return route.fulfill({ json: { removed: 3 } });
+    });
+    // While `asViewer`, the session says Alice only views her workspace.
+    await ctx.route("**/api/session", async (route) => {
+      if (!asViewer) return route.fallback();
+      const response = await route.fetch();
+      const json = await response.json();
+      for (const w of json.workspaces || []) if (w.id === alice.ws) w.role = "viewer";
+      await route.fulfill({ response, json });
+    });
     page = await openPage(ctx, `${server.base}/?page=${pageId}&ws=${alice.ws}`);
     await waitForPdf(page, 1);
   });
 
   await step("translation: speed is chosen independently of chat and persists after reload", async () => {
-    const openTranslation = async () => {
-      await page.locator('[data-guide="header.account"]').click();
-      await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
-      await page.getByRole("navigation", { name: "Settings categories" })
-        .getByRole("button", { name: "Language and Translation", exact: true }).click();
-    };
     await openTranslation();
     const speed = page.getByRole("button", { name: "Translation speed", exact: true });
     assertEq(await speed.innerText(), "Default");
@@ -121,52 +166,8 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     assertNoProblems(page);
   });
 
-  await step("translation: while the server reads the paper for its brief, the pill says so; leaving the PDF takes it down", async () => {
-    // A held request answers as the server does while it makes the paper's
-    // brief: a "brief" stage line, then nothing until window.__makeBrief().
-    // A route can only answer whole, so the page's fetch is wrapped:
-    // released, the request goes on to the route above. window.__hold arms
-    // it for the next translate request.
-    await page.evaluate(() => {
-      const fetchFirst = window.fetch;
-      window.fetch = function (url, opts) {
-        if (!window.__hold || !String(url).includes("/ai/translate")) return fetchFirst.apply(this, arguments);
-        window.__hold = false;
-        const made = new Promise((resolve) => { window.__makeBrief = resolve; });
-        const line = (s) => new TextEncoder().encode(`${s}\n`);
-        const body = new ReadableStream({
-          async start(out) {
-            opts.signal?.addEventListener("abort", () => out.error(new DOMException("Aborted", "AbortError")));
-            out.enqueue(line('{"stage": "brief"}'));
-            await made;
-            out.enqueue(line('{"stage": "translate"}'));
-            const res = await fetchFirst.call(window, url, opts);
-            out.enqueue(new Uint8Array(await res.arrayBuffer()));
-            out.close();
-          },
-        });
-        return Promise.resolve(new Response(body, { headers: { "Content-Type": "application/x-ndjson" } }));
-      };
-      window.__hold = true;
-    });
-    const pill = page.locator(".statusPill .pillText", { hasText: "Reading the paper first" });
-    await page.getByRole("button", { name: "Translate", exact: true }).click();
-    await pill.waitFor({ timeout: 5000 });
-    // Home: the viewer goes, its job stops, and the pill with it.
-    await page.locator('[data-guide="header.home"]').first().click();
-    await pill.waitFor({ state: "detached", timeout: 5000 });
-    // Back on the paper, a new job reads it again; made, the pill goes.
-    await page.locator(".tabStrip .tab", { hasText: "Two columns" }).first().click();
-    await waitForPdf(page, 1);
-    await page.evaluate(() => { window.__hold = true; });
-    await page.getByRole("button", { name: "Translate", exact: true }).click();
-    await pill.waitFor({ timeout: 5000 });
-    await page.evaluate(() => window.__makeBrief());
-    await pill.waitFor({ state: "detached", timeout: 5000 });
-    assertNoProblems(page);
-  });
-
   await step("translation: the cut paragraph goes as one text with its formulas as tokens, and fills both columns", async () => {
+    await page.getByRole("button", { name: "Translate", exact: true }).click();
     const boxes = page.locator('[data-page="1"] .pdfTransPara .pdfTransText');
     await until(async () => (await boxes.allTextContents()).some((t) => /^译:\s*continues/.test(t)),
       { what: "the right column's box shows the paragraph's second piece" });
@@ -180,7 +181,16 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     assert(!sent.some((t) => t.includes("optical tweezers")), "only the page being read was translated");
     const withJoin = requests.find((r) => r.texts.includes(joined));
     assertEq(withJoin.page_id, pageId, "the request names its page");
+    assert(!("head" in withJoin), "a stored PDF's requests name the page alone");
     assertEq(withJoin.speed, "fast", "translation requests carry their own speed setting");
+    assertEq(withJoin.wait_brief, false, "the job's first chunk does not wait for the paper's brief");
+    assertEq(withJoin.keep, true, "its translations may be kept, the default");
+    // The job asked for the paper's brief as it started.
+    assertEq(briefs.length, 1, "one request for the brief");
+    assertEq(briefs[0].page_id, pageId);
+    assert(!("head" in briefs[0]), "the server reads its own copy");
+    assertEq(briefs[0].speed, "fast");
+    assertEq(briefs[0].keep, true);
     // The section heading rides along: as the request's section, or as one
     // of its texts when the request starts with it.
     assert(withJoin.section === "1 Introduction" || withJoin.texts.includes("1 Introduction"), JSON.stringify(withJoin));
@@ -234,6 +244,10 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     const third = sentWith("sixth");
     assertEq(third.section, "2 Model", "the third page sits under the second page's heading");
     assert(/interaction terms in it\.$/.test(third.before || ""), `before: ${JSON.stringify(third.before)}`);
+    // A new job asks for the brief again, and only its first chunk goes
+    // without waiting for it.
+    assertEq(briefs.length, 2, "each job asks for the paper's brief as it starts");
+    assertEq(JSON.stringify(later().map((r) => r.wait_brief)), JSON.stringify(later().map((_, n) => n > 0)));
     await page.locator('[data-page="2"]').scrollIntoViewIfNeeded();
     const boxes = page.locator('[data-page="2"] .pdfTransPara .pdfTransText');
     await until(async () => (await boxes.allTextContents()).some((t) => t.startsWith("译:Here the atoms sit")),
@@ -241,8 +255,102 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     assertNoProblems(page);
   });
 
+  await step("translation: the first chunk lands while the paper's brief is made; the job runs on after leaving the PDF, its row reaching 100%, and asks again for the chunk that went without the brief", async () => {
+    const up = await alice.upload("/api/uploads", makePdf([longPage()]), "long.pdf", "application/pdf");
+    const created = await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Long paper", source_url: up.source_url } });
+    await page.goto(`${server.base}/?page=${created.id}&ws=${alice.ws}`);
+    await waitForPdf(page, 1);
+    // The server as it is while it makes the paper's brief, until
+    // window.__makeBrief(): the brief's request and a chunk that waits for
+    // it answer a "brief" stage line, then nothing until it is made; a
+    // chunk that does not wait goes on to the route above at once. A route
+    // can only answer whole, so the page's fetch is wrapped: released, a
+    // request goes on to the routes above.
+    await page.evaluate(() => {
+      const fetchFirst = window.fetch;
+      let make = null;
+      const made = new Promise((resolve) => { make = resolve; });
+      window.__makeBrief = () => { window.__briefMade = true; make(); };
+      window.fetch = function (url, opts) {
+        if (!String(url).includes("/ai/translate")) return fetchFirst.apply(this, arguments);
+        const brief = String(url).includes("/ai/translate/brief");
+        if (!brief && (JSON.parse(opts.body).wait_brief === false || window.__briefMade)) return fetchFirst.apply(this, arguments);
+        const line = (s) => new TextEncoder().encode(`${s}\n`);
+        const body = new ReadableStream({
+          async start(out) {
+            opts.signal?.addEventListener("abort", () => out.error(new DOMException("Aborted", "AbortError")));
+            out.enqueue(line('{"stage": "brief"}'));
+            await made;
+            if (!brief) out.enqueue(line('{"stage": "translate"}'));
+            const res = await fetchFirst.call(window, url, opts);
+            out.enqueue(new Uint8Array(await res.arrayBuffer()));
+            out.close();
+          },
+        });
+        return Promise.resolve(new Response(body, { headers: { "Content-Type": "application/x-ndjson" } }));
+      };
+    });
+    // The server's answer says whether the brief was there; a chunk asked
+    // again comes back in new words ("再译:").
+    let briefMade = false;
+    const answered = new Set();
+    respond = (route, body) => {
+      const again = answered.has(JSON.stringify(body.texts));
+      answered.add(JSON.stringify(body.texts));
+      const translations = body.texts.map((t) => `${again ? "再译" : "译"}:${t}`);
+      return route.fulfill({ contentType: "application/x-ndjson",
+        body: `${JSON.stringify({ translations, model: "demo:model", cached: false, failed: [], brief: briefMade })}\n` });
+    };
+    const start = requests.length;
+    const briefsBefore = briefs.length;
+    await page.getByRole("button", { name: "Translate", exact: true }).click();
+    const boxes = page.locator('[data-page="1"] .pdfTransPara .pdfTransText');
+    await until(async () => (await boxes.allTextContents()).some((t) => t.startsWith("译:Paragraph one")),
+      { what: "the first chunk's text, while the brief is being made" });
+    const pill = page.locator(".statusPill .pillText", { hasText: "Reading the paper first" });
+    await pill.waitFor({ timeout: 5000 });
+    const first = requests.slice(start);
+    assertEq(first.length, 1, "the second chunk waits for the brief");
+    assertEq(first[0].wait_brief, false);
+    assertEq(first[0].texts.length, 10);
+    // Home: the viewer goes and the pill with it; the job runs on.
+    await page.locator('[data-guide="header.home"]').first().click();
+    await pill.waitFor({ state: "detached", timeout: 5000 });
+    await page.click("button[aria-label='Background tasks']");
+    const row = page.locator(".taskRow", { hasText: "Translate p.1" });
+    await row.waitFor();
+    assert(!(await row.evaluate((el) => el.classList.contains("done"))), "the job still runs");
+    assert((await row.innerText()).includes("reading the paper"), await row.innerText());
+    // Made: the waiting chunk translates with the brief, and the first is
+    // asked again, with it.
+    briefMade = true;
+    await page.evaluate(() => window.__makeBrief());
+    await until(() => row.evaluate((el) => el.classList.contains("done")), { what: "the job's row done" });
+    assert((await row.innerText()).includes("100%"), await row.innerText());
+    const sent = requests.slice(start);
+    assertEq(sent.length, 3, `the two chunks and the first again: ${JSON.stringify(sent.map((r) => r.texts.length))}`);
+    assertEq(sent[1].wait_brief, true);
+    assertEq(sent[1].texts.length, 2);
+    assertEq(JSON.stringify(sent[2].texts), JSON.stringify(sent[0].texts), "the chunk that went without the brief is asked again");
+    assertEq(sent[2].wait_brief, true);
+    assertEq(briefs.length - briefsBefore, 1, "the brief was asked for once");
+    // Back on the paper, its translation is there without a click, the
+    // first chunk's in its new words.
+    await page.keyboard.press("Escape");
+    await page.locator(".tabStrip .tab", { hasText: "Long paper" }).first().click();
+    await waitForPdf(page, 1);
+    await until(async () => {
+      const texts = await boxes.allTextContents();
+      return texts.some((t) => t.startsWith("再译:Paragraph one")) && texts.some((t) => t.startsWith("译:Paragraph twelve"));
+    }, { what: "the paper's translation, back on it" });
+    await page.getByRole("button", { name: "Hide translation", exact: true }).waitFor();
+    respond = null;
+    assertNoProblems(page);
+  });
+
   await step("translation: a refusal of a busy account waits instead of stopping; a paragraph the server could not translate shows the original until Try again", async () => {
     const up = await alice.upload("/api/uploads", makePdf([stubbornPage()]), "stubborn.pdf", "application/pdf");
+    stubbornDoc = up.doc_id;
     const created = await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Stubborn", source_url: up.source_url } });
     await page.goto(`${server.base}/?page=${created.id}&ws=${alice.ws}`);
     await waitForPdf(page, 1);
@@ -282,5 +390,82 @@ export async function translationScenarios({ server, browser, alice, makePdf, st
     assertEq(again.length, 1, "one request");
     assertEq(JSON.stringify(again[0].texts.map((t) => t.slice(0, 11))), JSON.stringify(["A stubborn "]), "for the stubborn paragraph alone");
     assertNoProblems(page, ["POST /api/ai/translate -> 429"]);
+  });
+
+  await step("translation: Settings keeps translations by default, says what the workspace keeps, and clears it, the viewer's too", async () => {
+    const boxes = page.locator('[data-page="1"] .pdfTransPara .pdfTransText');
+    assert((await boxes.count()) > 0, "the stubborn paper is translated");
+    await openTranslation();
+    const keep = page.getByRole("checkbox", { name: "Keep translations", exact: true });
+    assertEq(await keep.isChecked(), true, "on by default");
+    const stats = page.locator('.settingRow[data-setting="Kept in this workspace"]');
+    await until(async () => (await stats.innerText()).includes("42 paragraphs in 2 documents (37 KB)"),
+      { what: "what the workspace keeps" });
+    await stats.getByRole("button", { name: "Clear", exact: true }).click();
+    await page.locator(".confirmModal .reportModalBtns button", { hasText: "Clear" }).click();
+    await until(() => forgotten.includes("/api/translations"), { what: "the DELETE of the workspace's kept translations" });
+    await until(async () => (await stats.innerText()).includes("Nothing kept yet"), { what: "nothing kept any more" });
+    assert(await stats.getByRole("button", { name: "Clear", exact: true }).isDisabled(), "nothing left to clear");
+    await keep.uncheck();
+    await until(async () => (await alice.api("/api/prefs/profile")).value?.translateKeep === false,
+      { what: "the switch saved to the account" });
+    await page.getByRole("button", { name: "Close settings", exact: true }).click();
+    // What the viewer showed of the cleared translations goes too, so the
+    // next click asks the server again.
+    await until(async () => (await boxes.count()) === 0, { what: "the translation gone from the page" });
+    const start = requests.length;
+    await page.getByRole("button", { name: "Translate", exact: true }).click();
+    await until(async () => (await boxes.allTextContents()).some((t) => t.startsWith("译:A willing")),
+      { what: "the paper translated again" });
+    assert(requests.length > start, "asked the server again");
+    assertNoProblems(page);
+  });
+
+  await step("translation: Forget this translation asks the server to forget the paper, and the next click translates it afresh", async () => {
+    const boxes = page.locator('[data-page="1"] .pdfTransPara .pdfTransText');
+    assert((await boxes.count()) > 0, "the stubborn paper is translated");
+    const start = requests.length;
+    try {
+      await page.getByRole("button", { name: "Hide translation", exact: true }).click({ button: "right" });
+      await page.getByRole("menuitem", { name: "Forget this translation" }).click();
+      await until(() => forgotten.includes(`/api/translations/${stubbornDoc}`), { what: "the DELETE of the paper's kept translations" });
+      await until(async () => (await boxes.count()) === 0, { what: "the translation gone from the page" });
+      await page.getByRole("button", { name: "Translate", exact: true }).click();
+      await until(async () => (await boxes.allTextContents()).some((t) => t.startsWith("译:A willing")),
+        { what: "the paper translated again" });
+      const again = requests.slice(start);
+      assert(again.length > 0, "asked the server again");
+      assert(again.every((r) => r.keep === false), `not to be kept, the switch being off: ${JSON.stringify(again.map((r) => r.keep))}`);
+      assertNoProblems(page);
+    } finally {
+      await alice.api("/api/prefs/profile", { method: "PATCH", body: { set: { translateKeep: true } } });
+    }
+  });
+
+  await step("translation: a viewer of the workspace translates, but is offered neither Forget this translation nor Clear", async () => {
+    kept = { documents: 1, paragraphs: 3, bytes: 2048 };
+    asViewer = true;
+    try {
+      await page.reload();
+      await waitForPdf(page, 1);
+      const boxes = page.locator('[data-page="1"] .pdfTransPara .pdfTransText');
+      await page.getByRole("button", { name: "Translate", exact: true }).click();
+      await until(async () => (await boxes.count()) > 0, { what: "the paper translated for a viewer" });
+      await page.getByRole("button", { name: "Hide translation", exact: true }).click({ button: "right" });
+      const menu = page.getByRole("menu", { name: "Translate" });
+      await menu.getByRole("menuitem", { name: "Show original" }).waitFor();
+      assertEq(await menu.getByRole("menuitem", { name: "Forget this translation" }).count(), 0, "no Forget for a viewer");
+      await page.keyboard.press("Escape");
+      await openTranslation();
+      const stats = page.locator('.settingRow[data-setting="Kept in this workspace"]');
+      await until(async () => (await stats.innerText()).includes("3 paragraphs in 1 document"), { what: "what the workspace keeps" });
+      assertEq(await stats.getByRole("button", { name: "Clear", exact: true }).count(), 0, "no Clear for a viewer");
+      await page.getByRole("button", { name: "Close settings", exact: true }).click();
+      assertNoProblems(page);
+    } finally {
+      asViewer = false;
+      await page.reload();
+      await waitForPdf(page, 1);
+    }
   });
 }
