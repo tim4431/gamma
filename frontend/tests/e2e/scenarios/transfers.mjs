@@ -166,7 +166,8 @@ open(os.path.join(root, 'files', '3', 'Vaswani - 2017 - Attention.pdf'), 'wb').w
       }, [...fs.readFileSync(zip)]);
       const area = dialog.locator(".importDropArea");
       await area.dispatchEvent("dragover", { dataTransfer: transfer });
-      assert(await dialog.locator(".importDrop.over").isVisible(), "the drop line lights up");
+      // The drop line lights up once React renders the dragover, a moment after it.
+      await until(() => dialog.locator(".importDrop.over").isVisible(), { what: "the drop line lights up" });
       if (flags.keep) await dialog.screenshot({ path: `${server.dir}/zotero-drop.png` });
       await area.dispatchEvent("drop", { dataTransfer: transfer });
       review = page.getByRole("dialog", { name: "Review Zotero import", exact: true });
