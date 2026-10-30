@@ -5427,9 +5427,13 @@ a.shareBrand:hover { background: var(--bg-hover); }
   background: var(--bg-deeper); /* the placeholder, until the picture is in */
   isolation: isolate; /* the rectangles' blend stays on the picture */
 }
-/* the frame's shape is its aspect-ratio alone (the box's, then the picture's own) */
-.hlReviewShot img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; visibility: hidden; }
-.hlReviewShot.loaded img { visibility: visible; }
+/* the frame's shape is its aspect-ratio alone (the box's, then the picture's own).
+   The picture is unseen until it is in, and then takes the card's own
+   visibility, never a `visible` of its own: the card stands hidden while
+   its highlight is out of the viewer's sight, and a picture set visible
+   showed through it, alone over the page */
+.hlReviewShot img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+.hlReviewShot:not(.loaded) img { visibility: hidden; }
 .hlReviewRect { position: absolute; border-radius: 1px; background: var(--hl); mix-blend-mode: multiply; pointer-events: none; }
 /* ds-allow-start: the page's paper and the themes' treatment of it, as .pdfViewer's pages take them */
 .hlReviewShot.loaded { background: #fff; }

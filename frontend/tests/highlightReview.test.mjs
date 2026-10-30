@@ -1,14 +1,16 @@
 // The review card's arithmetic (pdf/highlightReview.js): which highlights
 // are pending or lost and in what order, which comes next, what the card
-// shows for each and what its steps change, the before picture's box and
-// the old rectangles in it, and the old quote against the current one.
+// shows for each and what its steps change (a lost one's Discard too), the
+// before picture's box and the old rectangles in it, and the old quote
+// against the current one.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  PAGE_ASPECT, PREV_QUOTE_MAX, beforeCrop, cropAspect, cropBox, lostPlace, pastLastPage, pendingInOrder, quoteDiff, rectsInCrop,
+  PAGE_ASPECT, PREV_QUOTE_MAX, beforeCrop, cropAspect, cropBox, discardApplied, discardKind, discardStep, discardUndone,
+  discardedPosition, lostPlace, pastLastPage, pendingInOrder, placeBox, quoteDiff, rectsInCrop,
   reviewCardState, reviewPlace, reviewPrev, reviewQueue, reviewStep,
 } from "../src/pdf/highlightReview.js";
-import { acceptedPosition, closestPlacement } from "../src/shared/model/blockModel.js";
+import { acceptedPosition, blockPlace, blocksToHighlights, closestPlacement, findBlock, insertBlockAt } from "../src/shared/model/blockModel.js";
 
 const at = (id, pageNumber, y, x = 72, extra = {}) => ({
   id, position: { pageNumber, width: 612, height: 792, boundingRect: { x1: x, y1: y, x2: x + 100, y2: y + 12 },
@@ -319,4 +321,130 @@ test("an old quote clipped to a prev's length is compared only as far as it goes
     [["del", "word137"], ["add", "WORD137"]]);
   // a clipped quote that is one word cut short leaves nothing to compare
   assert.equal(quoteDiff("x".repeat(PREV_QUOTE_MAX), "x".repeat(2000), { clipped: true }), null);
+});
+
+// --- Discard ------------------------------------------------------------------
+
+// A page's tree (App's blocks: the page's children) with a lost highlight
+// `l` among other notes, as the store keeps them.
+const lostPos = { ...at("l", 1, 50, 72, { lost: true, doc_id: "ab12", closest: { pageNumber: 1, width: 612, height: 792,
+  rects: [{ x1: 72, y1: 300, x2: 400, y2: 312 }], match: 0.6, quote: "near" } }).position };
+const hl = (extra = {}) => ({ id: "l", content: "", children: [], properties: { quote: "This sentence is gone", color: "#ffe28f66",
+  pdf_position: lostPos }, ...extra });
+const page = (l = hl()) => [
+  { id: "a", content: "First note", children: [], properties: {} },
+  { id: "b", content: "Section", children: [{ id: "b1", content: "inside", children: [], properties: {} }, l], properties: {} },
+  { id: "c", content: "Last note", children: [], properties: {} },
+];
+
+test("Discard deletes a lost highlight that holds nothing of its own, and keeps one with a note, children or comments", () => {
+  assert.equal(discardKind(hl()), "delete");
+  assert.equal(discardKind(hl({ content: "   " })), "delete", "a note of spaces is no note");
+  assert.equal(discardKind(hl({ content: "Why did this go?" })), "unplace", "its own note");
+  assert.equal(discardKind(hl({ children: [{ id: "k", content: "", children: [], properties: {} }] })), "unplace", "a child block, even empty");
+  assert.equal(discardKind(hl(), 1), "unplace", "a comment thread");
+  // only a lost one is discarded
+  assert.equal(discardKind(hl({ properties: { pdf_position: at("s", 1, 10).position } })), null, "a solid highlight");
+  assert.equal(discardKind(hl({ properties: { pdf_position: { ...lostPos, lost: false, approx: true } } })), null, "a dashed one");
+  assert.equal(discardKind(hl({ properties: { pdf_position: { ...lostPos, pageNumber: 0 } } })), null, "no page to keep");
+  assert.equal(discardKind(null), null);
+  // kept as a note: its page alone, the shape of a highlight whose place is not known
+  assert.deepEqual(discardedPosition(lostPos), { pageNumber: 1 });
+});
+
+test("Discard of a bare one deletes it as one tree edit, and its Undo puts it back where it was, lost", () => {
+  const tree = page();
+  const step = discardStep(tree, "l");
+  assert.deepEqual([step.kind, step.deleted, step.removed.parentId, step.removed.index], ["discarded", true, "b", 1]);
+  assert.equal(step.before.position, lostPos);
+  const gone = discardApplied(tree, "l", step);
+  assert.equal(findBlock(gone, "l"), null, "deleted");
+  assert.deepEqual(gone[1].children.map((b) => b.id), ["b1"]);
+  // the queue and the page's highlights no longer have it
+  assert.deepEqual(reviewQueue(blocksToHighlights(gone)), []);
+  const back = discardUndone(gone, "l", step);
+  assert.deepEqual(back[1].children.map((b) => b.id), ["b1", "l"], "back in its place");
+  assert.deepEqual(findBlock(back, "l"), hl(), "as it was: lost, its quote, its rectangles and its file");
+  assert.deepEqual(reviewQueue(blocksToHighlights(back)).map((h) => h.id), ["l"], "in the queue again");
+  assert.equal(discardUndone(back, "l", step), back, "back already: nothing to do");
+  // its parent gone since: at the top's end
+  const orphan = discardUndone(gone.filter((b) => b.id !== "b"), "l", step);
+  assert.deepEqual(orphan.map((b) => b.id), ["a", "c", "l"]);
+  assert.equal(discardApplied(gone, "l", step), gone, "a discard of one gone already changes nothing");
+});
+
+test("Discard of one with a note keeps the note off the PDF, and its Undo puts it back on the page", () => {
+  const noted = hl({ content: "Why did this go?", children: [{ id: "k", content: "a reply", children: [], properties: {} }] });
+  const tree = page(noted);
+  const step = discardStep(tree, "l");
+  assert.deepEqual([step.deleted, step.after], [false, { pageNumber: 1 }]);
+  assert.ok(!("removed" in step));
+  const off = discardApplied(tree, "l", step);
+  const kept = findBlock(off, "l");
+  assert.deepEqual(kept.properties, { quote: "This sentence is gone", color: "#ffe28f66", pdf_position: { pageNumber: 1 } },
+    "its quote and colour kept; lost, closest, doc_id and the rectangles gone");
+  assert.deepEqual([kept.content, kept.children.map((b) => b.id)], ["Why did this go?", ["k"]], "its note and children stay");
+  assert.equal(off[0], tree[0], "the rest of the tree keeps its identity");
+  // drawn nowhere, so out of the page's highlights and the queue
+  assert.deepEqual(blocksToHighlights(off).map((h) => h.id), []);
+  assert.deepEqual(reviewQueue(blocksToHighlights(off)), []);
+  const back = discardUndone(off, "l", step);
+  assert.deepEqual(findBlock(back, "l").properties.pdf_position, lostPos, "lost on its page again");
+  assert.deepEqual(reviewQueue(blocksToHighlights(back)).map((h) => h.id), ["l"]);
+  // changed since (moved by hand): the Undo leaves it
+  const moved = discardApplied(tree, "l", step).map((b) => (b.id !== "b" ? b : { ...b, children: b.children.map((x) => (x.id !== "l" ? x
+    : { ...x, properties: { ...x.properties, pdf_position: at("m", 2, 10).position } })) }));
+  assert.equal(discardUndone(moved, "l", step), moved);
+  // and a Discard whose highlight changed before it applied changes nothing
+  assert.equal(discardApplied(moved, "l", step), moved);
+});
+
+test("the comment threads decide, and only a lost highlight is discarded", () => {
+  const tree = page();
+  assert.equal(discardStep(tree, "l", 2).deleted, false, "threads keep it as a note");
+  assert.equal(discardStep(tree, "a"), null, "a plain note");
+  assert.equal(discardStep(tree, "nope"), null);
+  assert.equal(discardUndone(tree, "l", null), tree);
+  assert.equal(discardUndone(tree, "l", reviewStep("accepted", { position: { ...lostPos, approx: true, lost: false } })), tree,
+    "another kind of step is not a discard's");
+});
+
+test("after Discard the card stays, Discarded, with Next going on from where the highlight stood", () => {
+  const tree = page();
+  const step = discardStep(tree, "l");
+  // the highlight is drawn no more (deleted, or a note with its page alone): the card says it was discarded
+  assert.deepEqual(reviewCardState(null, { done: step }), { kind: "resolved", step: "discarded" });
+  assert.equal(reviewCardState(null, { done: reviewStep("accepted", { position: { ...lostPos, approx: true, lost: false } }) }), null,
+    "any other step on a highlight gone: nothing to show");
+  // back (its Undo, the app's undo): lost again, whatever the step says
+  const h = blocksToHighlights(tree)[0];
+  assert.equal(reviewCardState(h, { done: step }).kind, "lost");
+  // drawn solid somewhere since (moved by hand): nothing of the discard to show
+  assert.equal(reviewCardState({ ...h, position: at("m", 2, 10).position }, { done: step }), null);
+  // Next: the first one left after the place it stood, the first again after the last
+  const queue = reviewQueue([at("top", 1, 20, 72, { lost: true }), at("low", 1, 400, 72, { approx: true }), at("p2", 2, 30, 72, { lost: true })]);
+  assert.equal(reviewPlace(queue, h, step).next.id, "low");
+  assert.equal(reviewPlace([], h, step).next, null, "nothing left: Close");
+});
+
+test("a discarded one's card stays anchored where its rectangles were on its page", () => {
+  const pos = { pageNumber: 1, width: 612, height: 792, rects: [{ x1: 72, y1: 100, x2: 300, y2: 112 }, { x1: 72, y1: 114, x2: 200, y2: 126 }] };
+  // the page drawn at twice its size, 40 px from the left and scrolled 300 px up
+  assert.deepEqual(placeBox({ left: 40, top: -300, width: 1224, height: 1584 }, pos), { left: 184, top: -100, right: 640, bottom: -48 });
+  assert.equal(placeBox(null, pos), null);
+  assert.equal(placeBox({ left: 0, top: 0, width: 612, height: 792 }, { pageNumber: 1 }), null, "a position with no rectangle");
+});
+
+test("a block's place in the tree, and a block put back there", () => {
+  const tree = page();
+  assert.deepEqual(blockPlace(tree, "c"), { parentId: null, index: 2 });
+  assert.deepEqual(blockPlace(tree, "b1"), { parentId: "b", index: 0 });
+  assert.equal(blockPlace(tree, "nope"), null);
+  const x = { id: "x", content: "", children: [], properties: {} };
+  assert.deepEqual(insertBlockAt(tree, null, 1, x).map((b) => b.id), ["a", "x", "b", "c"]);
+  assert.deepEqual(insertBlockAt(tree, null, 99, x).map((b) => b.id), ["a", "b", "c", "x"], "past the last: at the end");
+  const under = insertBlockAt(tree, "b", 0, x);
+  assert.deepEqual(under[1].children.map((b) => b.id), ["x", "b1", "l"]);
+  assert.equal(under[0], tree[0], "only the path to the parent is copied");
+  assert.equal(insertBlockAt(tree, "nope", 0, x), tree, "no such parent: the same tree");
 });
