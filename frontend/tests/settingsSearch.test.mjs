@@ -22,7 +22,7 @@ const PANE_FILES = {
   assistant: ["SettingsDialog.jsx"],
   tools: ["SettingsDialog.jsx", "AssistantTools.jsx", "OnlineSearch.jsx"],
   integrations: ["SettingsIntegrations.jsx"],
-  account: ["SettingsUsers.jsx", "SettingsSync.jsx", "SettingsMirrors.jsx", "SettingsCloudSignIn.jsx"],
+  account: ["SettingsUsers.jsx", "SettingsSync.jsx", "SettingsMirrors.jsx", "SettingsCloudSignIn.jsx", "SettingsZotero.jsx"],
   workspaces: ["SettingsWorkspace.jsx", "SettingsMirrors.jsx"],
   backups: ["SettingsBackups.jsx", "BackupTasks.jsx", "OffsiteCopies.jsx"],
   maintenance: ["SettingsDialog.jsx"],
@@ -74,6 +74,10 @@ test("labels that hold the query come first; hints and synonyms find the rest", 
   assert.equal(searchSettings("enter key", all)[0].label, "Enter makes");
   assert.equal(searchSettings("delete", all)[0].target, "Personal", "a Manage-page setting jumps to the list it sits under");
   assert.ok(searchSettings("microsoft", all).some((r) => r.label === "Translation services"), "the hint is searched");
+  // the Zotero account's row, and the section that lists the clones and the links
+  const zotero = searchSettings("zotero", all).map((r) => `${r.pane}/${r.label}`);
+  assert.deepEqual(zotero.slice(0, 1), ["account/Zotero"]);
+  assert.ok(zotero.includes("workspaces/Clones and Zotero links"), zotero.join(", "));
 });
 
 test("an admin-only section is found only by admins (the Server pane is theirs alone)", () => {

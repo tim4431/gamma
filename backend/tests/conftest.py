@@ -20,8 +20,9 @@ for var in ("GAMMA_STATIC_DIR", "GAMMA_AI_ANTHROPIC_API_KEY", "GAMMA_AI_OPENAI_A
             "GAMMA_ADMIN_USER", "GAMMA_ADMIN_PASSWORD"):
     os.environ.pop(var, None)
 # Nor a developer's off-site bucket: a test server's startup round must never
-# copy into it (gamma/offsite.py reads these at every round).
-for var in [name for name in os.environ if name.startswith(("GAMMA_S3_", "GAMMA_OFFSITE"))]:
+# copy into it (gamma/offsite.py reads these at every round). Nor a Zotero
+# stand-in or OAuth app: Zotero tests install the fake (tests/zotero_fake.py).
+for var in [name for name in os.environ if name.startswith(("GAMMA_S3_", "GAMMA_OFFSITE", "GAMMA_ZOTERO_"))]:
     os.environ.pop(var)
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))

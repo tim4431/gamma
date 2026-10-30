@@ -1,5 +1,6 @@
 """Shared PDF reading: page text, page sizes, the outline, a page as a
-picture, and the glyph boxes under a highlight — through PyMuPDF (import
+picture, the glyph boxes under a highlight, and the page labels as pdf.js
+reads them (``read_page_labels``) — through PyMuPDF (import
 name ``pymupdf``), with PyPDF2 as the fallback for text and sizes, but only
 when PyMuPDF is not installed or can't open the file at all: an empty
 result is an answer (scanned pages have no text layer for PyPDF2 to find
@@ -24,6 +25,7 @@ import threading
 import zlib
 from collections import OrderedDict
 from contextlib import contextmanager
+from typing import NamedTuple
 
 from .logbuf import log
 
@@ -724,7 +726,8 @@ class GlyphPages:
     """A PDF's glyphs page by page, each with its box, for the text under a
     highlight's quads (``quote_under``), and for the highlight relocation
     (gamma/highlight_relocate.py) a page's frame and pictures and the page
-    count. Opens the file with PyMuPDF on the first page asked for and
+    count, and for Zotero's annotations the page labels (``label``). Opens
+    the file with PyMuPDF on the first page asked for and
     reads each page's glyphs once (``page``); a file it can't open, or a
     page without a text layer, has no glyphs, so its highlights import
     without a quote. A context manager; close it when done. Each page's
@@ -744,6 +747,7 @@ class GlyphPages:
         self._pdf = None
         self._failed = False
         self._pages = {}
+        self._labels = None
 
     def __enter__(self):
         return self
@@ -783,6 +787,29 @@ class GlyphPages:
         put a glyph's box in the viewer's frame. A US Letter page, unrotated,
         when the page can't be read."""
         return self._read(page_no, _frame, "frame") or ((0.0, 0.0, 612.0, 792.0), 0)
+
+    def label(self, page_no: int) -> str:
+        """Page ``page_no``'s label as pdf.js reads the file's /PageLabels
+        (``read_page_labels``: "iv", "12", "A-3"); "" when they give it none,
+        the file has none or they can't be read. Zotero's reader shows these
+        labels, and Zotero's annotations carry them
+        (gamma/zotero_annotations.py). The file's labels are read once, on
+        the first page asked for."""
+        if self._labels is None:
+            self._labels = ()
+            if self._open():
+                with _lock:
+                    self._labels = tuple(read_page_labels(self._pdf) or ())
+        return self._labels[page_no - 1] if 1 <= page_no <= len(self._labels) else ""
+
+    def mupdf_label(self, page_no: int) -> str:
+        """Page ``page_no``'s label as PyMuPDF's page.get_label reads it: a
+        prefix as the file spells it, undecoded (a UTF-16 prefix comes out
+        as "<FEFF0031>"). Not a label to show: it is the label the create of
+        a link row without ``detail.labels`` may have carried to Zotero,
+        which gamma/zotero_sync_blocks.py recognises to send ``label`` in its
+        place."""
+        return self._read(page_no, _mupdf_label, "label") or ""
 
     def images(self, page_no: int) -> list:
         """The pictures page ``page_no`` draws: ``(key, box)`` each, the key
@@ -856,6 +883,11 @@ def _frame(page):
     return (box.x0, box.y0, box.x1, box.y1), rotation
 
 
+def _mupdf_label(page) -> str:
+    """``GlyphPages.mupdf_label``'s read of one page."""
+    return page.get_label() or ""
+
+
 def _images(page) -> list:
     """``GlyphPages.images``'s read of one page: each drawn image's identity
     and box, the box in the glyphs' space like the chars' (the page read
@@ -918,3 +950,313 @@ def quote_under(glyphs, quads, limit: int = 1000) -> str:
         elif parts:
             gap = True
     return re.sub(r"\s+", " ", "".join(parts)).strip()[:limit]
+
+
+# --- Page labels -------------------------------------------------------------
+
+LABEL_CHARS = 256          # where a page label is cut (Zotero keeps 50 of one)
+_MISSING = object()        # a /Nums key without its value (an odd-length array)
+_STREAM = object()         # an object that is a stream, which is no dictionary here
+# PDFDocEncoding's differences from Latin-1, as pdf.js decodes a text string
+# (src/core/string_utils.js, PDFStringTranslateTable)
+_PDF_DOC = {0x18: 0x2D8, 0x19: 0x2C7, 0x1A: 0x2C6, 0x1B: 0x2D9, 0x1C: 0x2DD, 0x1D: 0x2DB, 0x1E: 0x2DA, 0x1F: 0x2DC,
+            0x80: 0x2022, 0x81: 0x2020, 0x82: 0x2021, 0x83: 0x2026, 0x84: 0x2014, 0x85: 0x2013, 0x86: 0x192,
+            0x87: 0x2044, 0x88: 0x2039, 0x89: 0x203A, 0x8A: 0x2212, 0x8B: 0x2030, 0x8C: 0x201E, 0x8D: 0x201C,
+            0x8E: 0x201D, 0x8F: 0x2018, 0x90: 0x2019, 0x91: 0x201A, 0x92: 0x2122, 0x93: 0xFB01, 0x94: 0xFB02,
+            0x95: 0x141, 0x96: 0x152, 0x97: 0x160, 0x98: 0x178, 0x99: 0x17D, 0x9A: 0x131, 0x9B: 0x142, 0x9C: 0x153,
+            0x9D: 0x161, 0x9E: 0x17E, 0xA0: 0x20AC}
+_BOMS = ((b"\xfe\xff", "utf-16-be"), (b"\xff\xfe", "utf-16-le"), (b"\xef\xbb\xbf", "utf-8"))
+_LANGUAGE_CODE = re.compile("\x1b[^\x1b]*(?:\x1b|\\Z)")   # a text string's language escape, ESC to ESC
+_ROMAN = (("", "C", "CC", "CCC", "CD", "D", "DC", "DCC", "DCCC", "CM"),
+          ("", "X", "XX", "XXX", "XL", "L", "LX", "LXX", "LXXX", "XC"),
+          ("", "I", "II", "III", "IV", "V", "VI", "VII", "VIII", "IX"))
+_PDF_SPACE = " \t\r\n\f\x00"
+_PDF_DELIMITERS = "()<>[]{}/%" + _PDF_SPACE
+_OCTAL = "01234567"
+_ESCAPES = {"n": "\n", "r": "\r", "t": "\t", "b": "\b", "f": "\f"}
+
+
+def pdf_text_string(raw: bytes) -> str:
+    """A PDF text string's bytes as text, as pdf.js decodes one
+    (``stringToPDFString``): UTF-16BE or UTF-16LE after its byte order mark
+    (an odd last byte dropped), UTF-8 after its mark (PDF 2.0), otherwise
+    PDFDocEncoding; a string whose mark promises what its bytes break is
+    read as PDFDocEncoding, mark and all (a UTF-16 one still without its
+    odd last byte). Language escapes (ESC to ESC) are left out."""
+    for bom, codec in _BOMS:
+        if raw.startswith(bom):
+            if codec != "utf-8" and len(raw) % 2:
+                raw = raw[:-1]
+            try:
+                return _LANGUAGE_CODE.sub("", raw[len(bom):].decode(codec))
+            except UnicodeDecodeError:
+                break
+    return _LANGUAGE_CODE.sub("", raw.decode("latin-1")).translate(_PDF_DOC)
+
+
+class _Ref(NamedTuple):
+    """An indirect reference, ``num gen R``."""
+
+    num: int
+    gen: int
+
+
+class _Name(str):
+    """A PDF name, without its slash, its #xx escapes read."""
+
+
+class _Syntax:
+    """One PDF object in the syntax MuPDF prints it in (``xref_object``,
+    ``xref_get_key``): a dictionary as a dict of ``_Name`` keys, an array as
+    a list, a string as its bytes, a name as a ``_Name``, a number as an
+    int or a float, true, false and null as Python's, a reference as a
+    ``_Ref``. ValueError for what does not parse."""
+
+    def __init__(self, text: str):
+        self.s, self.i = text, 0
+
+    def parse(self):
+        value = self._value()
+        self._space()
+        if self.i != len(self.s):
+            raise ValueError("text after the object")
+        return value
+
+    def _space(self) -> None:
+        s, n = self.s, len(self.s)
+        while self.i < n:
+            if s[self.i] in _PDF_SPACE:
+                self.i += 1
+            elif s[self.i] == "%":
+                while self.i < n and s[self.i] not in "\r\n":
+                    self.i += 1
+            else:
+                return
+
+    def _value(self):
+        self._space()
+        s, i = self.s, self.i
+        if i >= len(s):
+            raise ValueError("no object")
+        if s.startswith("<<", i):
+            self.i += 2
+            out = {}
+            while True:
+                self._space()
+                if self.s.startswith(">>", self.i):
+                    self.i += 2
+                    return out
+                key = self._value()
+                if not isinstance(key, _Name):
+                    raise ValueError("a dictionary key that is no name")
+                out[key] = self._value()
+        if s[i] == "[":
+            self.i += 1
+            out = []
+            while True:
+                self._space()
+                if self.s.startswith("]", self.i):
+                    self.i += 1
+                    return out
+                out.append(self._value())
+        if s[i] == "<":
+            end = s.index(">", i)
+            digits = "".join(s[i + 1:end].split())
+            self.i = end + 1
+            return bytes.fromhex(digits + "0" * (len(digits) % 2))
+        if s[i] == "(":
+            return self._literal()
+        if s[i] == "/":
+            word = self._word(i + 1)
+            return _Name(re.sub("#([0-9A-Fa-f]{2})", lambda m: chr(int(m.group(1), 16)), word))
+        word = self._word(i)
+        if word in ("true", "false"):
+            return word == "true"
+        if word == "null":
+            return None
+        try:
+            number = int(word)
+        except ValueError:
+            return float(word)  # (ValueError for any other word)
+        after = self.i
+        self._space()
+        gen = self._word(self.i)
+        if gen.isdigit():
+            self._space()
+            if self._word(self.i) == "R":
+                return _Ref(number, int(gen))
+        self.i = after
+        return number
+
+    def _word(self, start: int) -> str:
+        s, end = self.s, start
+        while end < len(s) and s[end] not in _PDF_DELIMITERS:
+            end += 1
+        self.i = end
+        return s[start:end]
+
+    def _literal(self) -> bytes:
+        s, n = self.s, len(self.s)
+        i, depth, out = self.i + 1, 1, []
+        while i < n:
+            c = s[i]
+            i += 1
+            if c == "\\":
+                if i >= n:
+                    break
+                c = s[i]
+                i += 1
+                if c in _OCTAL:
+                    digits = c
+                    while len(digits) < 3 and i < n and s[i] in _OCTAL:
+                        digits += s[i]
+                        i += 1
+                    out.append(chr(int(digits, 8) & 0xFF))
+                elif c == "\r":
+                    if i < n and s[i] == "\n":
+                        i += 1
+                elif c != "\n":
+                    out.append(_ESCAPES.get(c, c))
+                continue
+            if c == "(":
+                depth += 1
+            elif c == ")":
+                depth -= 1
+                if not depth:
+                    self.i = i
+                    return "".join(out).encode("latin-1")
+            out.append(c)
+        raise ValueError("an unclosed string")
+
+
+def _number(value) -> bool:
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def _numbering(style, n: int) -> str:
+    """The number part of a page label: page ``n`` of its range in
+    ``style`` (pdf.js's ``Catalog.#readPageLabels``), at most
+    ``LABEL_CHARS`` long; none for no style or the empty name, which pdf.js
+    takes for none. ValueError for a style pdf.js refuses."""
+    if not style:
+        return ""
+    if style == "D":
+        return str(n)
+    if style in ("R", "r"):
+        roman = ("M" * min(n // 1000, LABEL_CHARS) + _ROMAN[0][n % 1000 // 100] + _ROMAN[1][n % 100 // 10]
+                 + _ROMAN[2][n % 10])
+        return roman.lower() if style == "r" else roman
+    if style in ("A", "a"):
+        return chr(ord(style) + (n - 1) % 26) * min((n - 1) // 26 + 1, LABEL_CHARS)
+    raise ValueError(f"a page label style {style!r}")
+
+
+class _LabelTree:
+    """``read_page_labels``'s walk of one document's /PageLabels."""
+
+    def __init__(self, pdf):
+        self.pdf = pdf
+        self.objects: dict = {}
+
+    def fetch(self, value):
+        """``value``, a reference resolved: None for an object the file
+        does not have, as pdf.js reads one; ``_STREAM`` for a stream."""
+        if not isinstance(value, _Ref):
+            return value
+        if value not in self.objects:
+            try:
+                stream = self.pdf.xref_is_stream(value.num)
+                text = self.pdf.xref_object(value.num, compressed=True)
+            except Exception:  # noqa: BLE001 — a number past the file's objects
+                self.objects[value] = None
+            else:
+                self.objects[value] = _STREAM if stream else _Syntax(text).parse()
+        return self.objects[value]
+
+    def numbers(self, root) -> dict:
+        """The number tree under ``root`` as pdf.js's ``NumberTree.getAll``
+        reads it: breadth first, a node with /Kids taken for its kids
+        alone, a kid referenced twice an error; each /Nums key resolved, a
+        later pair over an earlier one of the same key; each value as
+        written (``_MISSING`` for none), resolved as it is used."""
+        out: dict = {}
+        seen = {root} if isinstance(root, _Ref) else set()
+        queue = [root]
+        for node in queue:
+            obj = self.fetch(node)
+            if not isinstance(obj, dict):
+                continue
+            if "Kids" in obj:
+                kids = self.fetch(obj["Kids"])
+                for kid in kids if isinstance(kids, list) else ():
+                    if isinstance(kid, _Ref):
+                        if kid in seen:
+                            raise ValueError("a /PageLabels node twice in the tree")
+                        seen.add(kid)
+                    queue.append(kid)
+                continue
+            entries = self.fetch(obj.get("Nums"))
+            if not isinstance(entries, list):
+                continue
+            for k in range(0, len(entries), 2):
+                key = self.fetch(entries[k])
+                if _number(key):
+                    out[key] = entries[k + 1] if k + 1 < len(entries) else _MISSING
+        return out
+
+    def labels(self) -> list[str] | None:
+        kind, text = self.pdf.xref_get_key(-1, "Root/PageLabels")
+        if kind not in ("xref", "dict", "array"):
+            return None
+        nums = self.numbers(_Syntax(text).parse())
+        out, style, prefix, current = [], None, "", 1
+        for i in range(self.pdf.page_count):
+            entry = nums.get(i, _MISSING)
+            if entry is not _MISSING:
+                entry = self.fetch(entry)
+                if not isinstance(entry, dict):
+                    return None
+                if "Type" in entry and self.fetch(entry["Type"]) != _Name("PageLabel"):
+                    return None
+                style = self.fetch(entry["S"]) if "S" in entry else None
+                if "S" in entry and not isinstance(style, _Name):
+                    return None
+                prefix = self.fetch(entry["P"]) if "P" in entry else b""
+                if not isinstance(prefix, bytes):
+                    return None
+                prefix = pdf_text_string(prefix)[:LABEL_CHARS]
+                current = self.fetch(entry["St"]) if "St" in entry else 1
+                if not (_number(current) and current >= 1 and float(current).is_integer()):
+                    return None
+                current = int(current)
+            out.append((prefix + _numbering(style, current))[:LABEL_CHARS])
+            current += 1
+        return out
+
+
+def read_page_labels(pdf) -> list[str] | None:
+    """The page labels of ``pdf`` (an open PyMuPDF document) as pdf.js
+    gives them (``getPageLabels``: its catalog's ``pageLabels``, which
+    Zotero's reader labels pages and annotations by): one string per page,
+    or None when pdf.js gives none. Under the lock.
+
+    The /PageLabels number tree is walked as pdf.js walks it
+    (``_LabelTree.numbers``); each page that starts a range takes its label
+    dictionary: /Type, when there, the name PageLabel; /S a name, D
+    (decimal), R or r (roman), A or a (letters: 26 is Z, 27 AA, 53 AAA) or
+    none, or the empty name (no number: the prefix alone); /P a text string
+    (``pdf_text_string``); /St an integer of at least 1, 1 without it. Each
+    later page counts on from it, with the same prefix and style. A page
+    no range covers has the label "". A dictionary that breaks one of these
+    rules, a style pdf.js does not know, a node twice in the tree, a tree
+    that does not read: None, as pdf.js then reads no label at all. None too
+    for a /PageLabels that is no tree (a number, a name), where pdf.js gives
+    every page "": either way the reader numbers the pages itself. Read
+    from the objects MuPDF parsed (an encrypted file's strings decrypted),
+    so a number written with an exponent, which MuPDF does not read and
+    pdf.js does, is no number here."""
+    try:
+        return _LabelTree(pdf).labels()
+    except Exception as e:  # noqa: BLE001 — pdf.js reads no labels from a tree it can't read
+        log.warning(f"[pdf-text] page labels not read: {e}")
+        return None

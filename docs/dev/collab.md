@@ -210,10 +210,13 @@ spot.
 collides). `actor` is the id of the account that made the change (a share
 editor's own; [user_db.md](user_db.md) "Accounts are named by id"), or a
 label for a writer that is no account: `link:<name>` for a link visitor,
-`mirror` for a mirror's round; `''` for the server's own writes. An actor is
+`mirror` for a mirror's round, `zotero` for a Zotero link's round
+(`auth.ZOTERO_ACTOR`, shown as "Zotero"); `''` for the server's own writes. An actor is
 shown by name only where a list shows people (`auth.actor_names`, Recently
 deleted's `deleted_by`); the log, the batches on the socket and the change
-feed carry it as stored. `client` the tab's id, `"ai"` (the agent's tools), `"revert"` (the
+feed carry it as stored. `client` the tab's id, `"ai"` (the agent's tools),
+`"sync"` (a mirror's round and the pushes it sends), `"zotero"` (a Zotero
+link's writes, [zotero_sync.md](zotero_sync.md#writing-to-gamma)), `"revert"` (the
 user taking an agent change back from the chat, [ai_tools.md](ai_tools.md)
 "Reverting a note change") or `"meta"` (the
 paper-metadata worker's property writes — the one content write opening a
@@ -262,10 +265,13 @@ would be counted but missing from the tree).
 `ops.notify_commit` calls after every committed write: a batch
 (`after_commit`), a page deletion, trashing or restore, a cross-page move's
 `record_ops`, a `note_reload`, and a backup restore (`page_id` "",
-`ws_backup._announce`). One registers
-at import: an offline copy's engine (`sync_engine._on_commit`, its
-sync-on-change). A listener that raises is logged and never breaks
-the write.
+`ws_backup._announce`). `record_ops`, `move_across_pages` and
+`note_reload` take the writer's `client` as a batch does, so a sync
+engine's own cross-page move or reload is known as its own. Each sync
+engine's clock registers one at import (`sync_clock.register`: the
+mirror's and the Zotero link's, [mirror.md](mirror.md) "Rounds and
+cadence"), for its dirty marks and its sync-on-change. A listener that
+raises is logged and never breaks the write.
 
 ## The change feed (`gamma/routers/sync.py`)
 
@@ -297,7 +303,8 @@ seq order, at most `limit`: a live page with its latest op `seq` (`pages`),
 a deleted one as a tombstone (`deleted`, its `at` and `actor`), `cursor`
 the highest seq listed (or `since`), `more` while rows remain. It exists
 for anything that keeps a copy of a workspace in step (a mirror,
-[mirror.md](mirror.md)) so it can
+[mirror.md](mirror.md); a Zotero link reads it in-process,
+[zotero_sync.md](zotero_sync.md#the-round)) so it can
 find out *which* pages to look at without walking the library; what
 actually changed on a page is still its op log (`seq`,
 `GET /pages/{id}/ops?since=`), and a page whose log no longer reaches back

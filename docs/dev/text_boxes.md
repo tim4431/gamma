@@ -344,6 +344,15 @@ A turned text box stands upright on its centre.
 each sheet's boxes with text are page content, selectable text, after the
 paper and before the ink.
 
+**A Zotero link** (`gamma/zotero_annotations.py`,
+[zotero_sync.md](zotero_sync.md#annotations)): a box on a PDF page, not on
+a sheet, is a `text` annotation of the page's PDF in Zotero, its text plain,
+and Zotero's `text` and `note` annotations come here as boxes, a turned
+one upright on its centre as the import makes it, a sticky note's at its
+icon in note yellow. What one side holds that the other cannot (a turned
+annotation, a box's Markdown, fill or width) never reads as a change on
+either side.
+
 **The other readers** treat a box as a note and never as an area
 highlight, placed by the nearest-sheet rule.
 

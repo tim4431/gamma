@@ -108,12 +108,15 @@ def _attr(text: str) -> str:
 _HTML_WS = " \t\n\f"
 
 
-def _content(node: dict) -> str:
+def block_text(node: dict) -> str:
+    """A block's text as note HTML writes it: its line breaks as one kind,
+    trimmed of the whitespace HTML collapses (the note merge reads a
+    block's text by this rule too)."""
     return (node.get("content") or "").replace("\r\n", "\n").replace("\r", "\n").strip(_HTML_WS)
 
 
 def _empty(node: dict) -> bool:
-    return not _content(node) and all(_empty(c) for c in node.get("children") or [])
+    return not block_text(node) and all(_empty(c) for c in node.get("children") or [])
 
 
 def _cells(line: str) -> list[str]:
@@ -336,7 +339,7 @@ class _Render:
         for node in nodes:
             if _empty(node):
                 continue
-            content = _content(node)
+            content = block_text(node)
             ordered = _ORDERED_RE.match(content)
             number = int(ordered.group(1)) if ordered else None
             want = "ol" if ordered else "ul"
@@ -364,7 +367,7 @@ def note_html(node: dict, resolve_image=None, resolve_ref=None) -> str:
     [[ref]] as the text of the block it names. The exact inverse of
     ``note_tree`` for every tree that returns."""
     render = _Render(resolve_image, resolve_ref)
-    content = _content(node)
+    content = block_text(node)
     children = node.get("children") or []
     if not content:
         return render.lists(children)

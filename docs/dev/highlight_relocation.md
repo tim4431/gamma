@@ -3,7 +3,8 @@
 A page's PDF can be replaced by another file: a paper compiled again from
 its TeX, the published version in place of the arXiv one (`PUT
 /pages/{id}/attachment`, the Document menu's **Replace the PDF…**, a build
-script, [api.md](api.md) "Pages"). A highlight's place is a page and
+script, [api.md](api.md) "Pages"), or a Zotero link bringing the file
+Zotero's item holds now ([zotero_sync.md](zotero_sync.md#pdfs)). A highlight's place is a page and
 rectangles in that page's frame (`pdf_position`, [api.md](api.md) "The
 highlight shape"), good for the file it was made on: in the new file every
 line has moved. What stays is the text. So after a replacement each
@@ -18,7 +19,8 @@ where it was, until the person moves it or a later run finds it.
 Code: `gamma/highlight_relocate.py` (the search and the write),
 `gamma/highlights.py` (the position's flags and `prev`: `previous_place`,
 `valid_prev`, `from_scaled`), `pdf_text.GlyphPages` (the glyphs, a page's
-frame and pictures), `routers/pages.py` (`replace_pdf`,
+frame and pictures), `routers/pages.py` (`replace_pdf` over
+`replace_attachment`, which the Zotero link calls too,
 `_start_relocation`, `POST /api/jobs/relocate-highlights`),
 `blocks_store.attachment_file` (the stored file a page shows); in the web
 app `pdf/PdfViewer.jsx` (the dashed and hollow looks, the tip's move
@@ -58,9 +60,17 @@ stored on the server", the manual start answers 400 with it, and the
 Document menu's row is disabled with a title that says why.
 
 The job's owner is the account behind the request, a session's or a
-write-scope integration token's. A token's run shows in its account's
+write-scope integration token's, or for a file a Zotero link brought, the
+link's owner. A token's run shows in its account's
 Background tasks, while the token itself reads no jobs (`/api/jobs`
-answers it 403). A share link never reaches the endpoint. The job's params
+answers it 403). A Zotero link sends a highlight to Zotero only once it is
+placed: one still measured on the old file (`pdf_position.doc_id`), a
+dashed one and a lost one are held ("being placed in the new PDF", "dashed
+in Gamma until accepted", "not found in the new PDF"), counted under the
+link's waiting annotations ([zotero_sync.md](zotero_sync.md#annotations)). However a run ends, written or not, the link is told
+(`zotero_sync_pdfs.relocation_ended`): a PDF replaced here waits to go to
+Zotero until its highlights are placed, and is decided then
+([zotero_sync.md](zotero_sync.md#the-plan)). A share link never reaches the endpoint. The job's params
 are `{page_id, title, doc_id, min_match, exact_chars}`, the file it places
 for and the thresholds it goes by ([The thresholds](#the-thresholds)), and
 its key is `<page id>:<doc_id>`: one run per page and file. A replacement

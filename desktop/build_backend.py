@@ -52,6 +52,8 @@ def main():
         "--add-data", f"{REPO / 'backend' / 'gamma' / 'mcp_icon.png'}{sep}gamma",
         # The seeded Welcome page (gamma/seed.py reads it next to the package).
         "--add-data", f"{REPO / 'backend' / 'gamma' / 'onboarding' / 'welcome.md'}{sep}gamma/onboarding",
+        # Zotero's item types and fields (gamma/zotero_fields.py reads it next to the module).
+        "--add-data", f"{REPO / 'backend' / 'gamma' / 'zotero_schema.json'}{sep}gamma",
         # uvicorn resolves loop/protocol classes from strings at runtime.
         "--collect-all", "uvicorn",
         "--collect-all", "websockets",  # uvicorn loads its websocket protocol lazily

@@ -203,6 +203,13 @@ Administrators can convert between kinds:
   owner, reset access to private and the public role to viewer, and remove
   the workspace quota.
 
+Neither is allowed while a Zotero link, a clone or a publication with
+pages keeps the workspace, detached ones included: a link works with its
+owner's Zotero key and a clone with its owner's token, for a personal
+workspace of theirs alone. A publication whose last page was unpublished
+keeps its row, unseen in Settings, and refuses nothing; a Zotero link
+made into the workspace forgets it ([zotero_sync.md](zotero_sync.md#refusals)).
+
 Workspace updates are atomic. A request combining a rename, conversion,
 access change or default change either applies all fields or changes
 nothing. Authorization happens before mutation; validation uses the resulting
@@ -242,7 +249,12 @@ first three in the workspace's pages.db (`workspace_prefs`), and an
 account's go when it leaves the workspace or is deleted. Inbox items are
 the account's too, in users.db: an account's go when it leaves the
 workspace or is deleted, and a workspace's go with it
-(`workspaces._delete_rows`).
+(`workspaces._delete_rows`). So does a workspace's Zotero link
+(users.db `zotero_links`; what the link holds of each object is in the
+workspace's pages.db, [zotero_sync.md](zotero_sync.md#data)), and an
+account's links go with the account. Deleting an account also revokes,
+at Zotero, a Zotero key Gamma had Zotero make for it, as a disconnect does
+(a failure there is logged and never stops the deletion).
 Their browser caches use `user@workspace`; another account opening the same
 shared library gets its own reading state. Unscoped legacy session caches are
 not restored because their owner is unknown.
@@ -413,6 +425,14 @@ its rows (it may have been built under other normalization rules).
   rows through its triggers — and data.db with the backup API. The pre-restore snapshot shows as "Before restore"; the
   newest three stay (`PRE_RESTORE_KEEP`) and do not count against the cap.
   The restore is refused when that snapshot cannot be taken.
+- **A Zotero link's state** comes back with the pages it describes. In a
+  workspace a link keeps (a `zotero_links` row, detached included), the
+  same transaction stamps `zotero_state.restored_at`, and the link's next
+  round lets the restored pages win their differences
+  ([zotero_sync.md](zotero_sync.md#backup-restore)). Into a workspace no
+  link keeps, the backup of a linked workspace brings none of the link's
+  rows (its objects, queue, state and Zotero conflicts), which a later link
+  of it would otherwise read as its own.
 - **Files.** The backup's files the workspace lacks are copied in. Files
   only the old pages used are left to the orphan cleanup, and the
   pre-restore snapshot still has them.
@@ -515,12 +535,32 @@ server — a *clone* of its *origin* in the UI's git vocabulary: it holds a
 copy, edits made in it are pushed to the origin when it is reachable, and
 edits made there are pulled. The desktop app makes one from the switcher
 (the *clone* chip on a remote workspace's row); any Gamma makes one from
-Settings → Workspaces → Clones with the server's address and a write-scope
+Settings → Workspaces → Clones and Zotero links with the server's address and a write-scope
 integration token made there. `GET /workspaces/mine` marks such a workspace
 with `mirror_of`; a workspace that publishes pages to Gamma Cloud (a
 filtered mirror of the share host) is not a clone and is marked
-`publishing` instead. The whole design — the change feed, the three-way merge,
+`publishing` instead, and a detached clone is marked `mirror_detached`
+(`mirror_of` is empty while it is detached). The whole design — the change feed, the three-way merge,
 edit-beats-delete, the conflict list — is [mirror.md](mirror.md).
+
+## Zotero links
+
+A personal workspace can instead be kept in step with a Zotero library
+(My Library or a group) through Zotero's Web API: its papers, notes,
+annotations, folders and labels become Zotero's items, notes, annotations,
+collections and tags, and back. Settings → Workspaces → Clones and Zotero
+links → *Link a Zotero library…* makes one, into a new workspace or an existing personal
+one of the account's, with the account's Zotero connection (Settings →
+Account & sync → Zotero). `GET /workspaces/mine` (and `/session`) marks
+such a workspace with `zotero_of`, the library's name, empty while the link
+is detached, and a detached one with `zotero_detached`; Settings lists it
+after the clones and leaves it out of the Personal list. A workspace is a
+clone, a publication or a Zotero link, never two of these, and its kind
+does not change while a link keeps it (above). The link's row goes with
+its workspace and its owner's account (above), and a backup restore brings
+its state back with the pages ("Export and backups"). The design — what
+syncs, the round, merging, PDFs, notes, annotations, conflicts — is
+[zotero_sync.md](zotero_sync.md).
 
 ## Folders on disk
 

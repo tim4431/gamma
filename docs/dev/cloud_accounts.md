@@ -35,6 +35,7 @@ under "The Gamma side" below.
 | outside sign-in | Google (OIDC + the one-tap prompt) and GitHub (OAuth), linked to accounts |
 | portal | sign in / register / verify / reset, then Overview, Plan & billing ([billing.md](billing.md)), Devices, Settings and (admins) Admin — server-rendered HTML over the JSON API |
 | identity for Gamma servers | an OIDC provider: authorize (PKCE), token, userinfo, JWKS, revoke, discovery; a self-hosted server connects itself for a client of its own |
+| Zotero broker | Gamma Cloud's Zotero app, through which a Gamma server or desktop sidecar without one of its own gets the Zotero API key its Zotero links use; it keeps nothing past the hand-over |
 | preference profile | a person's settings as a few JSON values the Gamma servers they sign in to pull and push |
 | server list | the Gamma servers a person linked their identity on |
 | e-mail invitations | the mail a Gamma server has sent to someone who is not on it yet, the invitation's page, and a one-use invite code where the operator allows one |
@@ -63,6 +64,9 @@ every variable), fixed for the life of the container:
 - the desktop client id;
 - the Google and GitHub OAuth clients — a provider is off until both its
   id and secret are set; setup in the deploy README;
+- the Zotero app (`GAMMA_CLOUD_ZOTERO_CLIENT_KEY` / `_SECRET`) the Zotero
+  broker works through — off until both are set ("Connecting Zotero");
+  setup in the deploy README;
 - the free share host's address (`GAMMA_CLOUD_SHARE_HOST_URL`, empty = none),
   which Gamma servers read to know where pages are published (below), and
   the same server's address for people (`GAMMA_CLOUD_APP_URL`, default the
@@ -74,7 +78,8 @@ section (`config.admin_view`, `GET /api/admin/config`). Each variable is
 says where a missing value stops something (no shared server address: no
 Lite or Plus). The section also shows Stripe's test or live mode, from the
 key's prefix, and the schema version. A secret (the Stripe keys, the SMTP
-user and password, the OAuth client secrets) shows only whether it is set.
+user and password, the OAuth client secrets, the Zotero app) shows only
+whether it is set.
 *Send test mail* (`POST /api/admin/test-mail`, five in ten minutes per
 admin) sends a short message to the admin's own address through
 `mail.send_test` and says what became of it: logged by the `console`
@@ -148,6 +153,8 @@ the signing keys and every token hash.
 | `settings` | what an admin edits on the Settings and Servers tabs (`settings.DEFAULTS`): the sign-up gate, the plans on sale, the alerts, the fleet's default tag and automatic upgrades; and two rows read on their own, the fleet's extra environment (`settings.FLEET_ENV_KEY`) and billing's last reconcile time (`billing.RECONCILED_KEY`). A row for any other key is ignored, so a rollback leaves nothing behind |
 | `oauth_clients` | confidential OIDC clients with exact redirect URIs: share-host and container ones an admin made, and `server` ones a person connected (`owner_account_id`, step 5); the desktop client is built in, not a row |
 | `server_connects` | a server connection a person approved, waiting for the server to fetch its client: the code's hash, the account, the server's address, the PKCE challenge (2 min, single use; step 5) |
+| `zotero_requests` | a Zotero connection while the browser is at zotero.org: the request token's hash, its secret sealed with a key derived from the token, the Gamma server's address, its state and PKCE challenge (9 min, single use; step 14) |
+| `zotero_codes` | a person's approval at zotero.org waiting for its Gamma server: the one-time code's hash, the request token, its secret and Zotero's verifier sealed with a key derived from the code, the server's address, the PKCE challenge (5 min, single use; step 14). No key exists yet: Zotero makes it when the server redeems the code |
 | `server_invitations` | an e-mail invitation a Gamma server asked this server to send: the hash of the mailed link's token, the server's address (`server_url`) and name, its own id for the invitation (`invite_id`; one row per server and id), the sign-in client it came through (`client_id`), the kind (`server` / `workspace` / `page` / `folder`), what it is to (`what`), the path there to land on (`next`), the address as typed and its inbox (`email_canon`), the inviter, the invite code minted for it ('' for none), `created_at`, `expires_at` (14 days on) and `accepted_at` (step 13) |
 | `oauth_requests` | a sign-in in progress on the authorize page (10 min) |
 | `oauth_codes` | authorization codes (2 min, single use) and what the exchange issued (`grant_id`, `access_hash`), so a replay revokes exactly that |
@@ -162,8 +169,11 @@ the signing keys and every token hash.
 | `subscriptions`, `billing_events` | the account server's copy of each Stripe subscription, and the webhook events it has seen (step 9; [billing.md](billing.md)). `accounts.granted_plan` is the plan an admin or an invite gave; `accounts.plan` is the effective one |
 
 Every secret at rest is a SHA-256 of a long random token
-(`db.token_hash`); nothing in the file can be replayed. Timestamps are
-fixed-width UTC strings with a `Z`, so they compare as strings.
+(`db.token_hash`); nothing in the file can be replayed. The Zotero broker's
+rows hold what Zotero issued, so they carry it sealed (Fernet) under a key
+derived from a token the file does not hold: the request token, or the
+one-time code. Timestamps are fixed-width UTC strings with a `Z`, so they
+compare as strings.
 
 ## Deploying
 
@@ -737,10 +747,11 @@ link with the raw URL under it, inline styles only).
 `oidc.py` is the logic, `routers/oidc.py` the wire: discovery at
 `/.well-known/openid-configuration`, `/jwks`, `/authorize`, `/token`,
 `/userinfo`, `/revoke`. Authorization code with PKCE S256, required for
-every client; `response_type=code` only. The discovery document carries one
-key outside OIDC, `gamma_share_host`: the share host's address (""
+every client; `response_type=code` only. The discovery document carries
+keys outside OIDC: `gamma_share_host`, the share host's address (""
 without one), which is how a Gamma server learns where to publish without a
-token.
+token; the two endpoints of a server connection ("Connecting a server");
+and, while the Zotero broker is on, its two ("Connecting Zotero").
 
 **Clients.** The *desktop* client (`GAMMA_CLOUD_DESKTOP_CLIENT_ID`,
 default `gamma-desktop`) is public and built in: every local Gamma sidecar
@@ -951,6 +962,108 @@ and not a loopback one: a server on this computer is the desktop client.
 A client outlives its owner's deletion; admins see the owner in the
 Clients tab and can delete it there.
 
+### Connecting Zotero
+
+`zotero.py` + `routers/zotero.py`. A Zotero link
+([zotero_sync.md](zotero_sync.md)) works with the person's Zotero API key,
+which Zotero hands out through OAuth 1.0a to an app registered on
+zotero.org. A desktop sidecar answers on a loopback port that changes from
+run to run, and a self-hosted server would need its admin to register an
+app, so Gamma Cloud registers one and relays the sign-in for any Gamma
+server without one of its own (a server whose admin set its own app runs
+the steps itself). The broker is on only while
+`GAMMA_CLOUD_ZOTERO_CLIENT_KEY` and `_SECRET` are both set; until then
+every route below answers 404 and the discovery document does not name it.
+
+1. Gamma sends the browser to
+   `/zotero/connect?server=<origin>&state=…&code_challenge=…`
+   (`gamma_zotero_connect_endpoint` in the discovery document). The broker
+   checks the request (an address by `servers.norm_url`, an S256
+   challenge, a state of at most 512 characters) and that it knows the
+   server, fetches a request token from zotero.org with its callback
+   `<public url>/zotero/callback`, keeps it (`zotero_requests`,
+   `ZOTERO_REQUEST_TTL`: 9 min, inside the 10 the Gamma server waits, so
+   the broker never sends back a browser the server gave up on) and sends
+   the browser to Zotero's authorize page. That page asks for what a link
+   needs, read and write access to My Library and every group, notes
+   included (`zotero.ACCESS`: `library_access=1`, `notes_access=1`,
+   `write_access=1`, `all_groups=write`), and names the new key *Gamma at
+   host*, or *Gamma desktop app* for a loopback server. A refused request
+   is an error page.
+2. Zotero sends the browser back to
+   `/zotero/callback?oauth_token=…&oauth_verifier=…`. The request is taken
+   (it works once) and the approval (the request token, its secret and
+   Zotero's verifier) kept under a one-time code (`zotero_codes`,
+   `ZOTERO_CODE_TTL`: 5 min, longer than the 4 the Gamma server's
+   confirmation page waits). The browser goes on to
+   `<origin>/api/zotero/oauth/callback?code=…&state=…`, or with
+   `error=access_denied&state=…` when the person did not allow access. An
+   unknown, used or expired request is an error page.
+3. The server posts the code, its PKCE verifier and its own address to
+   `POST /api/zotero/connect/token` (`gamma_zotero_token_endpoint`; a form,
+   from anywhere, no cookie). As with a server connection, the code is
+   spent by its first try, and an expired code, another address or a
+   verifier that does not match is a 400. Only then does the broker trade
+   the approval for the key at zotero.org, which is when Zotero makes it,
+   and answer `{api_key, user_id, username}`; a failure there is a 502
+   whose `detail` the server shows. A completed connection is audited as
+   `zotero.connect` (the Zotero user id and the server's address).
+
+So an approval its server never redeems (the server gave up waiting, the
+account that started is gone, the person did not confirm) never becomes a
+key left unused in the person's list on zotero.org.
+
+**Who may ask.** A server the broker knows (`zotero.known`): one on the
+browser's own computer (a loopback origin: every sidecar), one with a
+client of its own here (a connected server, a hosted container, the share
+host: an `oauth_clients` row with a redirect URI on that origin) or a live
+hosted server (`hosted.is_server_url`). The code travels only to that
+origin, and only the verifier of the server that started redeems it. No
+Gamma Cloud account is involved: the person signs in at zotero.org, and the
+key belongs to their Zotero account.
+
+That list says where a key may go, not whom to trust: anyone with a
+confirmed account can connect an https server of their own (`connect.py`).
+Two things stand between such a server and a person's key. Zotero's
+consent page names the key after the server. And the Gamma server connects
+the key only for the browser that started the round trip, asking on a page
+of its own naming the Gamma account and server when it cannot tell
+(`backend/gamma/routers/zotero.py`: by a cookie set when the round trip
+starts; only the desktop app's own server skips it, for a round trip
+started from the computer itself on a loopback address, since on any other
+server behind an SSH tunnel or a port forward every person's requests come
+from loopback), so an approval link passed on to
+someone else does not hand their key to whoever started it. The broker
+shows no page of its own before Zotero's: it would only repeat the key's
+name.
+
+**Limits.** Each route takes 30 requests per 10 minutes per IP; on the two
+browser pages the refusal is the broker's own page with a `Retry-After`,
+never JSON. What the broker lends is its app's standing with Zotero, so one
+server receives at most `PER_SERVER_HOURLY` (30) keys an hour through it (a
+server with more people registers a Zotero app of its own). Past that the
+token endpoint answers 429 with a `Retry-After` and a `detail` the server
+shows, before Zotero makes another key. Only a key Zotero made counts
+(`ratelimit.full` before the trade, `ratelimit.check` after it): the
+request token is in the connect page's redirect and Zotero checks the
+verifier only when the broker trades it, so counting a visit or a callback
+with a made-up verifier would let anyone lock a server's people out for the
+hour. A loopback server and one that runs Gamma Cloud's own code
+(`zotero.ours`: a live hosted server, a `container` or `share-host`
+client), whose check of the returning browser nobody can change, are not
+capped. A request token an anonymous client had fetched grants nothing, and
+its row is purged within the hour.
+
+The broker signs its two calls to zotero.org itself (HMAC-SHA1,
+`zotero.signature`) with urllib, so it needs no OAuth library. Zotero keys
+do not expire; a person revokes one on zotero.org, and Gamma revokes a key
+it had made when the person disconnects or their Gamma account is deleted.
+What must stay in step with the Gamma side (`backend/gamma/routers/zotero.py`,
+`zotero_oauth.py`): `RETURN_PATH` is its `CALLBACK_PATH`;
+`ZOTERO_REQUEST_TTL` (540 s) is shorter than its `PENDING_TTL` (600 s) and
+`ZOTERO_CODE_TTL` (300 s) longer than its `CONFIRM_TTL` (240 s); `ACCESS`
+is what its `authorize_url` asks for.
+
 ## Admin
 
 `manage.py`: `setup`, `migrate`, `backup`, `list-accounts`,
@@ -1047,6 +1160,15 @@ and the CLI call the same functions.
   refusals, the code's single use and PKCE, the client it makes, reconnect
   rotating the secret while grants live on, the per-account limit,
   disconnect, and the Devices page's one list of servers.
+- `test_zotero.py`: the Zotero broker with zotero.org faked — off until
+  both app credentials are set, the round trip with each call's signature
+  checked, the key's name, the code's single use and PKCE, which servers
+  may ask, the keys one server receives an hour (only a key Zotero made
+  counts; a sidecar, the share host and a hosted server are not capped), a
+  per-IP limit's refusal as the broker's own page, a refusal and a failure
+  at Zotero, no key made for a code never redeemed, nothing replayable in
+  cloud.db, the hourly purge, the Admin page's entry, the signature against
+  a published example, the wire, the step-14 upgrade.
 - `test_profile.py`: the preference profile (the scope or the portal
   session, last-writer-wins and its 409, time normalization and clamping,
   the caps, the write limit), a confidential client's refresh token with
@@ -1142,6 +1264,10 @@ of its own:
 - the login page shows no cloud button, and `start` sends the browser back
   with "not connected yet" as `?cloud_error=`;
 - the Account pane's Link row says an admin connects the server first;
+- the Account pane's Zotero row does not offer signing in at zotero.org
+  through Gamma Cloud's broker ("Connecting Zotero" above), which sends
+  the browser back only to a server it knows; a pasted Zotero key still
+  works ([zotero_sync.md](zotero_sync.md#accounts-and-access));
 - the Server pane's *Server client* row offers *Connect*: the round trip
   under "Connecting a server" above, through
   `GET /api/auth/cloud/connect/start?next=` and `…/connect/callback`

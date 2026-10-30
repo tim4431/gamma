@@ -33,7 +33,7 @@ from ..blocks_store import (
     valid_block_id,
     write_lock,
 )
-from ..db import connect_pages_db, get_profile, safe_doc_id
+from ..db import connect_pages_db, connect_users_db, get_profile, safe_doc_id
 from ..markdown_zip_import import markdown_page
 from ..logbuf import log
 from ..storage import find_upload_file
@@ -45,6 +45,10 @@ router = APIRouter(prefix="/api", tags=["pages"])
 ATTACHMENT_KEYS = ("doc_id", "source_url", "original_filename")
 RELOCATE = "relocate-highlights"  # the job that places a replaced PDF's highlights (_start_relocation)
 NOT_STORED = "the PDF is not stored on the server"  # why no run places the highlights of a PDF shown from a URL alone
+# Why a page of a Zotero link takes no PDF from a person while the link brings Zotero's (its ``zotero_pdf``
+# is anything but "unavailable", gamma/zotero_sync.py): the two files would part, and Zotero's annotations
+# with them. A detached link's page waits for the reattach, a clone's for its origin.
+ZOTERO_PDF_COMING = "This page's PDF is in Zotero and comes from there: use Download now on the page"
 
 
 class PageCreate(BaseModel):
@@ -60,14 +64,32 @@ class AttachRequest(BaseModel):
     original_filename: str = ""   # display name; becomes the title while it is still automatic
 
 
-def _load_page(conn, page_id: str):
+class HeldElsewhere(OpError):
+    """The refusal of a ``doc_id`` another page carries already (409):
+    ``page_id`` names that page, so a client can offer to open it."""
+
+    def __init__(self, page_id: str):
+        super().__init__(409, "attachment belongs to another page")
+        self.page_id = page_id
+
+
+def _page(conn, page_id: str) -> dict:
+    """The page ``page_id`` as a block dict; OpError 404 when there is none
+    or it is in Recently deleted, 400 for a block that is no page."""
     row = conn.execute(
         f"SELECT {BLOCK_COLUMNS} FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
     if not row or row[1] == TRASH:
-        raise HTTPException(status_code=404, detail="page not found")
+        raise OpError(404, "page not found")
     if row[1] != "root":
-        raise HTTPException(status_code=400, detail="not a page (only root blocks carry attachments)")
+        raise OpError(400, "not a page (only root blocks carry attachments)")
     return block_to_dict(row)
+
+
+def _load_page(conn, page_id: str):
+    try:
+        return _page(conn, page_id)
+    except OpError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
 
 
 @router.post("/pages")
@@ -186,6 +208,35 @@ def _held_elsewhere(conn, doc_id: str):
     return None
 
 
+def _zotero_marked(page: dict) -> bool:
+    """Whether the page, which has no PDF, carries the mark of the one its
+    Zotero item holds (a ``zotero_pdf`` whose state is not ``unavailable``)."""
+    props = page.get("properties") or {}
+    mark = props.get("zotero_pdf")
+    return not page_attachment(props) and isinstance(mark, dict) and mark.get("state") != "unavailable"
+
+
+def _zotero_keeps(ws: str) -> bool:
+    """Whether something still brings the workspace's Zotero PDFs: its
+    Zotero link, detached included (a reattach brings them, and a PDF
+    attached meanwhile would go over Zotero's file then), or the origin a
+    whole-workspace clone copies (the attach would reach it). Not once the
+    link is removed, or in a workspace whose pages came with a backup."""
+    with connect_users_db() as conn:
+        return conn.execute("SELECT 1 FROM zotero_links WHERE workspace_id = ? UNION ALL SELECT 1 FROM mirrors "
+                            "WHERE workspace_id = ? AND page_filter IS NULL LIMIT 1", (ws, ws)).fetchone() is not None
+
+
+def _zotero_pdf_refusal(ws: str, page: dict) -> str | None:
+    """``ZOTERO_PDF_COMING`` while something brings the PDF the page's Zotero
+    item holds (``_zotero_keeps``): a person's PDF is refused on it; "" when
+    the page carries a mark nothing honours any more (the attach goes, and
+    takes the mark with it); None when it carries none."""
+    if not _zotero_marked(page):
+        return None
+    return ZOTERO_PDF_COMING if _zotero_keeps(ws) else ""
+
+
 def _attachment_op(page: dict, doc_id: str, source_url: str, original_filename: str) -> tuple[dict, str, dict, bool]:
     """The op that makes ``doc_id`` / ``source_url`` / ``original_filename``
     the page's attachment, whatever it carried before, with the page's
@@ -222,9 +273,11 @@ def attach_pdf(page_id: str, payload: AttachRequest, request: Request):
     """Attach a PDF to an existing page that has none. Body: ``doc_id``
     and/or ``source_url``, plus an optional ``original_filename``
     (``_attachment_body``). 409 when the page already carries an attachment
-    (``PUT`` replaces one), or when another page already carries this
-    ``doc_id`` (``_held_elsewhere``). An automatic title becomes the file
-    name (``_attachment_op``). Returns the updated block."""
+    (``PUT`` replaces one), when another page already carries this
+    ``doc_id`` (``_held_elsewhere``), or while something brings the PDF its
+    Zotero item holds (``_zotero_pdf_refusal``: a page whose mark nothing
+    honours any more takes the PDF, and loses the mark). An automatic title
+    becomes the file name (``_attachment_op``). Returns the updated block."""
     ws = require_ws(request, write=True)
     doc_id, source_url = _attachment_body(payload)
     with connect_pages_db(ws) as conn:
@@ -234,10 +287,16 @@ def attach_pdf(page_id: str, payload: AttachRequest, request: Request):
         page = _load_page(conn, page_id)
         if page_attachment(page["properties"]):
             raise HTTPException(status_code=409, detail="page already has an attachment")
+        refusal = _zotero_pdf_refusal(ws, page)
+        if refusal:
+            raise HTTPException(status_code=409, detail=refusal)
         conflict = _held_elsewhere(conn, doc_id)
         if conflict:
             return conflict
         op, content, props, _moved = _attachment_op(page, doc_id, source_url, payload.original_filename)
+        if refusal == "":  # a Zotero mark nothing honours any more goes with the attach
+            props.pop("zotero_pdf", None)
+            op["props"] = props_patch(page["properties"], props)
         result = after_commit(ws, conn, apply_ops(conn, page_id, [op], actor=actor_of(request)))
     return {**page, "content": content, "properties": props, "updated_at": result["at"]}
 
@@ -248,51 +307,123 @@ def replace_pdf(page_id: str, payload: AttachRequest, request: Request):
     (a new version of the file: a paper compiled again from its TeX). Body
     and 409s as ``POST``'s; a page without an attachment gets this one as
     ``POST`` would give it. The page keeps its id, title, notes and
-    highlights. The same attachment again changes nothing.
+    highlights. The same attachment again changes nothing. The work,
+    described there, is ``replace_attachment``'s, which the Zotero link
+    calls too.
 
-    When the file changes (whatever the page showed it from: a ``doc_id``,
-    or only a ``source_url`` as on a duplicated document page), the blocks
-    imported from the old file's embedded annotations are marked gone from
-    the file in the same transaction (``imports.originals_gone``), so PDF
-    export draws them again, and a failed metadata lookup's marker goes
-    (``_attachment_op``). The old file is no longer the page's: its search
-    rows and manifest go now, and unless something else references it the
-    file is purged after 30 days (gamma/upload_gc.py).
-
-    When the stored file changes (``attachment_file``: a duplicated page's
-    ``/api/uploads/<doc id>.pdf`` address is its stored file) and the page
-    has highlights placed on its PDF, the same transaction writes the
-    outgoing file's id as ``pdf_position.doc_id`` on each of them that
-    names no file yet (the file its rectangles were measured on;
-    ``highlight_relocate.UNSTORED`` for a page that showed its file from a
-    URL alone), and after the commit the ``relocate-highlights`` job starts
-    (``_start_relocation``): each highlight is found again in the new file
-    by its text and moved there; until it is done they sit where they
-    were. Returns the updated block, with the job as ``job``, or, when no
-    run started, the reason as ``relocation_error``: the account's
+    Returns the updated block, with the relocation job as ``job``, or,
+    when no run started, the reason as ``relocation_error``: the account's
     background tasks are full (the Document menu's Find highlights in this
     PDF places the highlights later), or the new PDF is shown from a URL
     alone (``NOT_STORED``: no file to read). The replacement stands
     either way."""
     ws = require_ws(request, write=True)
     doc_id, source_url = _attachment_body(payload)
+    try:
+        done = replace_attachment(ws, page_id, doc_id, source_url, payload.original_filename,
+                                  actor=actor_of(request), owner=request.state.user_id)
+    except HeldElsewhere as e:
+        return JSONResponse(status_code=409, content={"detail": e.detail, "page_id": e.page_id})
+    except OpError as e:
+        raise HTTPException(status_code=e.status, detail=e.detail)
+    if not done["results"]:
+        return done["page"]
+    answer = {**done["page"], "content": done["content"], "properties": done["props"],
+              "updated_at": done["results"][0]["at"]}
+    if done["job"]:
+        answer["job"] = done["job"]
+    elif done["relocation_error"]:
+        answer["relocation_error"] = done["relocation_error"]
+    return answer
+
+
+def replace_attachment(ws: str, page_id: str, doc_id: str, source_url: str = "", original_filename: str = "", *,
+                       actor: str, client: str = "", owner, check_held: bool = True, props: dict | None = None,
+                       check=None, rows=None, check_zotero: bool = True) -> dict | None:
+    """Make ``doc_id`` / ``source_url`` the page's PDF, in place of what it
+    carries (or as its first), in one transaction under the write lock,
+    then start placing its highlights. PUT /pages/{id}/attachment and the
+    Zotero link (gamma/zotero_local.py, ``check_held=False``: linked items
+    may share one PDF, and ``page_for_doc`` then answers the oldest page)
+    both go through here.
+
+    In the transaction: ``check(conn)``, a caller's compare-and-set, runs
+    first (False: nothing is written, and the answer is None); the page is
+    read (OpError 404 when it is gone or trashed, 400 for a block that is
+    no page; unless ``check_zotero`` is False, 409 while something brings
+    its Zotero item's PDF, ``_zotero_pdf_refusal``, and a mark nothing
+    honours any more is dropped with the write); unless ``check_held`` is
+    False, a ``doc_id`` another page carries is refused (``HeldElsewhere``,
+    409); the attachment op (``_attachment_op``: an automatic title becomes
+    the file name, a failed lookup's ``meta_error`` goes when the file
+    changes) is written, with ``props`` (a page property patch the caller
+    adds, such as dropping ``zotero_pdf``) merged into it. When the file
+    changes (whatever the page showed it from: a ``doc_id``, or only a
+    ``source_url`` as on a duplicated document page), the blocks imported
+    from the old file's embedded annotations are marked gone from the file
+    (``imports.originals_gone``), so PDF export draws them again. When the
+    stored file changes (``attachment_file``: a duplicated page's
+    ``/api/uploads/<doc id>.pdf`` address is its stored file) and the page
+    has highlights placed on its PDF, each of them that names no file yet
+    gets the outgoing file's id as ``pdf_position.doc_id`` (the file its
+    rectangles were measured on; ``highlight_relocate.UNSTORED`` for a page
+    that showed its file from a URL alone). ``rows(conn)`` runs last, for a
+    caller's own rows in the same transaction. The batches are logged under
+    ``actor`` and ``client``. After the commit (inside the connection's
+    block) the room hears the batches, and when the stored file changed the
+    old file's search rows and manifest go; unless something else
+    references it the file is purged after 30 days (gamma/upload_gc.py).
+    The same attachment again writes no op (only ``rows``) and answers
+    ``results`` [].
+
+    Then, when highlights were stamped and the new file is stored, the
+    ``relocate-highlights`` job owned by ``owner`` starts
+    (``_start_relocation``): each highlight is found again in the new file
+    by its text and moved there; until it is done they sit where they were.
+
+    → ``{page (as read), content, props (the page's title and properties
+    after), results (the batches' results), placed ([(block id, props)] of
+    the highlights stamped), incoming, outgoing (the stored files' doc ids,
+    "" for none), job (the run, or None), relocation_error (why no run
+    started; "" when one did or none was needed)}``."""
     with connect_pages_db(ws) as conn:
-        write_lock(conn)  # the checks and the write as one step, like attach_pdf
+        write_lock(conn)  # the checks and the write as one step
         try:
-            page = _load_page(conn, page_id)
-            old = str(page["properties"].get("doc_id") or "")
-            conflict = _held_elsewhere(conn, doc_id) if doc_id != old else None
-            if conflict:
+            if check is not None and not check(conn):
                 conn.rollback()
-                return conflict
+                return None
+            page = _page(conn, page_id)
+            refusal = _zotero_pdf_refusal(ws, page) if check_zotero else None
+            if refusal:
+                raise OpError(409, refusal)
+            if refusal == "":  # a Zotero mark nothing honours any more goes with the replacement
+                props = {**(props or {}), "zotero_pdf": None}
+            old = str(page["properties"].get("doc_id") or "")
+            if check_held and doc_id and doc_id != old:
+                other = page_for_doc(conn, doc_id)
+                if other:
+                    raise HeldElsewhere(other[0])
             had = page_attachment(page["properties"]) is not None
-            op, content, props, moved = _attachment_op(page, doc_id, source_url, payload.original_filename)
-            if not op["props"] and "content" not in op:
-                conn.rollback()  # nothing to write: let go of the lock
-                return page
-            marks = originals_gone(conn, page_id) if had and moved else []
+            op, content, after, moved = _attachment_op(page, doc_id, source_url, original_filename)
+            if props:
+                for key, value in props.items():
+                    if value is None:
+                        after.pop(key, None)
+                    else:
+                        after[key] = value
+                op["props"] = props_patch(page["properties"], after)
             outgoing = attachment_file(page_attachment(page["properties"]))
-            incoming = attachment_file(page_attachment(props))
+            incoming = attachment_file(page_attachment(after))
+            if not op["props"] and "content" not in op:
+                if rows is not None:
+                    rows(conn)
+                    conn.commit()
+                else:
+                    conn.rollback()  # nothing to write: let go of the lock
+                return {"page": page, "content": page["content"], "props": page["properties"], "results": [],
+                        "placed": [], "incoming": incoming, "outgoing": outgoing, "job": None,
+                        "relocation_error": ""}
+            marks = originals_gone(conn, page_id) if had and moved else []
             swapped = had and moved and not (outgoing and outgoing == incoming)  # another file, not another address
             placed = highlight_relocate.page_highlights(conn, page_id) if swapped else []
             stamps = [{"op": "set", "id": bid, "props": {"pdf_position": {
@@ -301,10 +432,9 @@ def replace_pdf(page_id: str, payload: AttachRequest, request: Request):
             batches = [(page_id, [op])]
             for extra in (marks, stamps):
                 batches += [(page_id, extra[i:i + MAX_OPS]) for i in range(0, len(extra), MAX_OPS)]
-            try:
-                results = apply_batches(conn, batches, actor=actor_of(request))
-            except OpError as e:
-                raise HTTPException(status_code=e.status, detail=e.detail)
+            results = apply_batches(conn, batches, actor=actor, client=client)
+            if rows is not None:
+                rows(conn)
             conn.commit()
         except BaseException:
             conn.rollback()
@@ -312,22 +442,20 @@ def replace_pdf(page_id: str, payload: AttachRequest, request: Request):
         after_commits(ws, conn, results)
         if old and old != doc_id:
             pdf_index.purge_unused(ws, conn)
-    answer = {**page, "content": content, "properties": props, "updated_at": results[0]["at"]}
+    job, reason = None, ""
     if placed:
-        job, reason = (_start_relocation(request, ws, page["id"], content, incoming, outgoing=outgoing)
+        job, reason = (_start_relocation(owner, ws, page["id"], content, incoming, outgoing=outgoing)
                        if incoming else (None, NOT_STORED))
-        if job:
-            answer["job"] = job
-        elif reason:
-            answer["relocation_error"] = reason
-    return answer
+    return {"page": page, "content": content, "props": after, "results": results, "placed": placed,
+            "incoming": incoming, "outgoing": outgoing, "job": job, "relocation_error": "" if job else reason}
 
 
-def _start_relocation(request: Request, ws: str, page_id: str, title: str, new_doc: str, *,
+def _start_relocation(owner: str, ws: str, page_id: str, title: str, new_doc: str, *,
                       outgoing: str | None = None, quiet: bool = True) -> tuple[dict | None, str]:
     """Start the ``relocate-highlights`` job that places the page's
     highlights in its PDF ``new_doc`` (gamma/highlight_relocate.py
-    ``relocate``), owned by the account behind the request. One run per
+    ``relocate``), owned by the account ``owner`` (the request's, or a
+    Zotero link's owner). One run per
     page and file: its key is ``<page id>:<new_doc>``, and a start while a
     run for the same page and file is going answers that run. A
     replacement (``outgoing``: the file it replaced) first stops the same
@@ -345,8 +473,10 @@ def _start_relocation(request: Request, ws: str, page_id: str, title: str, new_d
     relocateMinMatch and relocateExactChars), which its params record as
     ``min_match`` (a fraction) and ``exact_chars``, and its result echoes:
     a setting changed later leaves the runs already started as they
-    are."""
-    owner = request.state.user_id
+    are. However a run ends, written or not, the workspace's Zotero link
+    is told (``zotero_sync_pdfs.relocation_ended``): a PDF of the page
+    that waited for its highlights to be placed, and the annotations held
+    for them, are decided again."""
     name = " ".join((title or "").split())[:80] or "Untitled"
     limits = highlight_relocate.thresholds(get_profile(owner)[0])
     params = {"page_id": page_id, "title": name, "doc_id": new_doc, **limits}
@@ -359,7 +489,14 @@ def _start_relocation(request: Request, ws: str, page_id: str, title: str, new_d
                 pass  # past its last stop: it finishes, and its write is refused (the page carries another file)
 
     def run(job):
-        return highlight_relocate.relocate(ws, page_id, new_doc, actor=owner, progress=job.progress, **limits)
+        try:
+            return highlight_relocate.relocate(ws, page_id, new_doc, actor=owner, progress=job.progress, **limits)
+        finally:
+            from ..zotero_sync_pdfs import relocation_ended  # local: the Zotero engine imports this router
+            try:
+                relocation_ended(ws, page_id)
+            except Exception as e:  # noqa: BLE001 — the run's own outcome stands
+                log.warning(f"[relocate] {page_id}: the Zotero link was not told the run ended: {e}")
 
     try:
         return jobs.start(RELOCATE, owner=owner, ws=ws, key=f"{page_id}:{new_doc}", params=params, run=run,
@@ -409,7 +546,8 @@ def relocate_highlights(payload: RelocateRequest, request: Request):
         raise HTTPException(status_code=400, detail=NOT_STORED)
     if not placed:
         raise HTTPException(status_code=400, detail="the page has no highlights placed on its PDF")
-    job, _reason = _start_relocation(request, ws, page["id"], page["content"], new_doc, quiet=False)
+    job, _reason = _start_relocation(request.state.user_id, ws, page["id"], page["content"], new_doc,
+                                     quiet=False)
     return job
 
 

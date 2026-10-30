@@ -44,7 +44,7 @@ from .textnorm import normalize_text
 # The data-directory schema version this code expects (users.db
 # ``PRAGMA user_version``). Bump it together with a new step in
 # gamma/migrations.py — never without one, never without bumping.
-SCHEMA_VERSION = 43
+SCHEMA_VERSION = 44
 # A workspace's pages.db keeps a version of its own (its ``PRAGMA
 # user_version``): the newest step whose per-workspace part has run on it
 # (gamma/migrations.py WORKSPACE_STEPS). One stamped 0 is at this version:
@@ -161,6 +161,34 @@ USERS_SCHEMA = [
         on_change INTEGER NOT NULL DEFAULT 1,
         page_filter TEXT
     )""",
+    # zotero_links = personal workspaces kept in step with one Zotero library
+    # (gamma/zotero_sync.py): whose link it is (owner, an account id; the API
+    # key is that account's Zotero connection, gamma/zotero_account.py), the
+    # library ("users/<id>" | "groups/<id>") and its name, the direction
+    # (mode: two-way | pull | off = detached), which PDFs come (download:
+    # all | open, when the page is opened), whether PDFs Zotero lacks go up
+    # (upload), whether Zotero's automatic tags become labels (auto_tags),
+    # whether PDF pages without a record go as documents (send_unrecorded),
+    # the cadence (poll_s: 5 = Live, 0 = only by hand; on_change), and the
+    # last round's status as JSON. What the link holds of each object is in
+    # the workspace's pages.db (zotero_objects, zotero_queue, zotero_state).
+    """CREATE TABLE IF NOT EXISTS zotero_links (
+        workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id),
+        owner TEXT NOT NULL,
+        library TEXT NOT NULL,
+        library_name TEXT NOT NULL DEFAULT '',
+        mode TEXT NOT NULL DEFAULT 'two-way',
+        download TEXT NOT NULL DEFAULT 'all',
+        upload INTEGER NOT NULL DEFAULT 1,
+        auto_tags INTEGER NOT NULL DEFAULT 0,
+        send_unrecorded INTEGER NOT NULL DEFAULT 0,
+        poll_s INTEGER NOT NULL DEFAULT 5,
+        on_change INTEGER NOT NULL DEFAULT 1,
+        status TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL
+    )""",
+    # an owner links a library once (gamma/zotero_sync.py create_link checks it; this is the backstop)
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_zotero_links_owner_library ON zotero_links(owner, library)",
     # folder_links = folders the desktop app's own server keeps as
     # directories on this computer (gamma/folder_links.py): the workspace, the folder (a folder block id,
     # or 'root' for the whole library), the directory's full path on this computer,
@@ -741,6 +769,74 @@ PAGES_SCHEMA = [
         at TEXT NOT NULL,
         resolved INTEGER NOT NULL DEFAULT 0
     )""",
+    # zotero_objects / zotero_queue / zotero_state: a Zotero link's state
+    # (gamma/zotero_sync.py, docs/dev/zotero_sync.md), kept here so a
+    # workspace backup restores it with the pages it describes. Empty in a
+    # workspace that links no library. zotero_objects = one row per Zotero
+    # object the link knows (by its key): the Gamma block it is, the
+    # version last seen or written, its state and the two bases of its
+    # field-by-field merge (zbase Zotero's projection, gbase Gamma's).
+    """CREATE TABLE IF NOT EXISTS zotero_objects (
+        key TEXT PRIMARY KEY,                 -- the Zotero key
+        kind TEXT NOT NULL,                   -- collection | item | attachment | note | annotation | image
+        page_id TEXT NOT NULL DEFAULT '',
+        block_id TEXT NOT NULL DEFAULT '',    -- folder id | page id | note region root | annotation block | ''
+        slot TEXT NOT NULL DEFAULT '',        -- 'page' for the "Notes from Gamma" region; an ink row; a split piece
+        parent TEXT NOT NULL DEFAULT '',      -- Zotero parent key
+        zotero_type TEXT NOT NULL DEFAULT '', -- itemType / annotationType as Zotero holds it
+        version INTEGER NOT NULL DEFAULT 0,   -- Zotero's version as last seen or written; -1 = create sent, unconfirmed
+        state TEXT NOT NULL DEFAULT 'live',   -- live|pending|held|waiting|trashed|rejected|readonly|skipped
+        zbase TEXT NOT NULL DEFAULT '{}',     -- Zotero's projection as last seen or written
+        gbase TEXT NOT NULL DEFAULT '{}',     -- Gamma's projection (in Zotero's terms) as last synced
+        gsig TEXT NOT NULL DEFAULT '',        -- the cheap Gamma signature gbase was taken at
+        detail TEXT NOT NULL DEFAULT '{}',    -- per state: first, adopt, reason, sent, file, md5, stroke_ids…
+        synced_at TEXT NOT NULL DEFAULT ''
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_zotero_objects_block ON zotero_objects(block_id)",
+    "CREATE INDEX IF NOT EXISTS idx_zotero_objects_page ON zotero_objects(page_id)",
+    # a parent's rows (its annotations, its pictures), and the newest top-level rows ("When opened": the
+    # NEWEST_FILES newest items, gamma/zotero_sync_pdfs.py ``_wants_download``) walked to their bound
+    "CREATE INDEX IF NOT EXISTS idx_zotero_objects_parent_version ON zotero_objects(parent, version)",
+    # every round's own look at the rows (what waits, the quota, the collections due, the collection map)
+    # names a kind and a state: an idle round reads a few rows, not the table
+    "CREATE INDEX IF NOT EXISTS idx_zotero_objects_kind ON zotero_objects(kind, state)",
+    # zotero_queue = what the link's rounds still have to visit
+    # (gamma/zotero_remote.py): Zotero objects listed and not yet applied
+    # (by key), Gamma pages ("page:<page id>") and PDF transfers
+    # ("file:<attachment key>"), the highest priority first, each with its
+    # failures' backoff; a child's parent once a round has read it, so a
+    # fill reads an item's children with it (zotero_remote.set_parents).
+    """CREATE TABLE IF NOT EXISTS zotero_queue (
+        id TEXT PRIMARY KEY,                  -- a Zotero key, "page:<page id>" or "file:<attachment key>"
+        kind TEXT NOT NULL DEFAULT '',        -- top | child | collection | page | file
+        version INTEGER NOT NULL DEFAULT 0,   -- the version listed (Zotero objects)
+        priority INTEGER NOT NULL DEFAULT 0,  -- higher first: an opened page > Gamma pages > newest items > the rest
+        attempts INTEGER NOT NULL DEFAULT 0,
+        next_at TEXT NOT NULL DEFAULT '',     -- not before (a backoff)
+        reason TEXT NOT NULL DEFAULT '',
+        parent TEXT NOT NULL DEFAULT ''       -- a child's parentItem as read at its version ('' until read)
+    )""",
+    # the queue in the order a round takes it (zotero_remote.take: priority DESC, version DESC, id), walked
+    # to its LIMIT with no sort; no index on kind, which the planner would take and sort after
+    "CREATE INDEX IF NOT EXISTS idx_zotero_queue_order ON zotero_queue(priority DESC, version DESC, id)",
+    # the queued children of an item, and those whose parent is not read yet in key order
+    # (zotero_remote.children_of, unread_children)
+    "CREATE INDEX IF NOT EXISTS idx_zotero_queue_parent ON zotero_queue(parent, id) WHERE kind = 'child'",
+    # zotero_state = the link's one row: the library its rows belong to,
+    # the Zotero version every change at or below which is listed, the
+    # local change feed's cursor, the labels as last reconciled, a first
+    # link in progress, the last workspace restore it has seen and the
+    # version of the last listing from the start.
+    """CREATE TABLE IF NOT EXISTS zotero_state (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        library TEXT NOT NULL DEFAULT '',     -- "users/<id>" | "groups/<id>"; another library wipes the rows
+        version INTEGER NOT NULL DEFAULT 0,
+        local_cursor TEXT NOT NULL DEFAULT '',
+        labels TEXT NOT NULL DEFAULT '{}',    -- {label_id: name}
+        first TEXT NOT NULL DEFAULT '',       -- '' | 'new' | 'existing' | 'notes'
+        restored_at TEXT NOT NULL DEFAULT '',
+        whole_version INTEGER NOT NULL DEFAULT 0  -- every child is queued with its item: zotero_remote.get_state
+    )""",
     # upload_orphans = stored files nothing references any more
     # (gamma/upload_gc.py): the file name and since when. The file stays on
     # disk and is served as before; a reference that comes back clears the
@@ -1287,7 +1383,11 @@ NOTICES_SEEN_PREF_KEY = "notices-seen"  # gamma/notices.py: {notice id: fingerpr
 REMINDERS_DONE_PREF_KEY = "reminders-done"
 USER_PREF_KEYS = frozenset({"ai-settings", "ai-provider", "translate-engines", "search-services",
                             PROFILE_PREF_KEY, PROFILE_BASE_PREF_KEY, NOTICES_SEEN_PREF_KEY,
-                            REMINDERS_DONE_PREF_KEY})
+                            REMINDERS_DONE_PREF_KEY,
+                            # gamma/zotero_account.py PREF_KEY: the connected
+                            # Zotero account, its API key sealed; never served
+                            # by /api/prefs, never in the synced profile.
+                            "zotero-account"})
 
 
 def pref_scope(key: str, ws: str) -> str:

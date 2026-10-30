@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from conftest import account_of, guest_name, login, make_page, make_user, workspace_of
+from zotero_engine import drop_link_row, link_row
 
 
 @pytest.fixture(scope="module")
@@ -226,6 +227,131 @@ def test_admin_converts_between_kinds(boss, ann, ben):
     assert r.status_code == 200 and r.json()["personal_of"] == "ws_ann"
     assert ann.put(f"/api/workspaces/{home}", json={"default": True}).status_code == 200
     assert ann.delete(f"/api/workspaces/{work}").status_code == 200
+
+
+def test_a_workspace_a_zotero_link_or_a_clone_keeps_cannot_change_its_kind(client):
+    from gamma import workspaces
+    from gamma.db import connect_users_db, page_now
+    make_user("ws_zotero_kind", "pw-ws_zotero_kind")
+    owner = account_of("ws_zotero_kind")
+    ws = workspaces.create("Linked", owner)["id"]  # not the account's only personal workspace
+    try:
+        for mode in ("two-way", "off"):  # detached too: a reattach would go on with the owner's key
+            link_row(ws, owner, mode=mode)
+            with pytest.raises(ValueError, match="Zotero"):
+                workspaces.update(ws, {"kind": "shared"})
+            assert workspaces.get(ws)["kind"] == "personal"
+            drop_link_row(ws)
+        with connect_users_db() as conn:
+            conn.execute("INSERT INTO mirrors (workspace_id, remote_url, remote_ws, token, owner, mode, status, "
+                         "created_at) VALUES (?, 'http://testserver', 'r', '', ?, 'off', '{}', ?)",
+                         (ws, owner, page_now()))
+            conn.commit()
+        for page_filter in (None, '["p1"]'):  # a clone (detached too), a publication with a page
+            with connect_users_db() as conn:
+                conn.execute("UPDATE mirrors SET page_filter = ? WHERE workspace_id = ?", (page_filter, ws))
+                conn.commit()
+            with pytest.raises(ValueError, match="clone or publishes"):
+                workspaces.update(ws, {"kind": "shared"})
+        with connect_users_db() as conn:  # a publication whose last page went: its row stays, unseen
+            conn.execute("UPDATE mirrors SET page_filter = '[]' WHERE workspace_id = ?", (ws,))
+            conn.commit()
+        assert workspaces.update(ws, {"name": "Linked again"})["name"] == "Linked again"  # other edits stand
+        assert workspaces.update(ws, {"kind": "shared"})["kind"] == "shared"  # once nothing keeps it
+    finally:
+        drop_link_row(ws)
+        with connect_users_db() as conn:
+            conn.execute("DELETE FROM mirrors WHERE workspace_id = ?", (ws,))
+            conn.commit()
+        workspaces.delete(ws)
+
+
+def test_the_workspace_list_says_whether_a_zotero_link_is_detached(client):
+    from gamma import workspaces
+    from gamma.db import connect_users_db
+    make_user("ws_zotero_detached", "pw-ws_zotero_detached")
+    owner = account_of("ws_zotero_detached")
+    ws = workspaces.create("Detached", owner)["id"]
+
+    def listed():
+        w = next(w for w in workspaces.list_for_user(owner) if w["id"] == ws)
+        return w["zotero_detached"], w["zotero_of"]
+
+    try:
+        assert listed() == (False, "")
+        link_row(ws, owner)
+        with connect_users_db() as conn:
+            conn.execute("UPDATE zotero_links SET library_name = 'My Library' WHERE workspace_id = ?", (ws,))
+            conn.commit()
+        assert listed() == (False, "My Library")
+        with connect_users_db() as conn:
+            conn.execute("UPDATE zotero_links SET mode = 'off' WHERE workspace_id = ?", (ws,))
+            conn.commit()
+        assert listed() == (True, "")
+    finally:
+        drop_link_row(ws)
+        workspaces.delete(ws)
+
+
+def test_the_workspace_list_says_whether_a_clone_is_detached_wherever_the_pdf_refusal_counts_one(client):
+    """``mirror_detached``: a whole-workspace clone whose mode is off still
+    brings its pages' Zotero PDFs once reattached, so the attach refusal
+    (routers/pages._zotero_keeps) counts it, while ``mirror_of`` names live
+    clones only. In every state the row names a link (live or detached, a
+    Zotero link or a clone) exactly when the refusal counts one, so the
+    page's PDF card offers no attach the server refuses (frontend
+    syncLinks.zoteroPdfSource)."""
+    from gamma import workspaces
+    from gamma.db import connect_users_db, page_now
+    from gamma.routers import pages
+
+    make_user("ws_clone_off", "pw-ws_clone_off")
+    owner = account_of("ws_clone_off")
+    ws = workspaces.create("Clone off", owner)["id"]
+
+    def row():
+        return next(w for w in workspaces.list_for_user(owner) if w["id"] == ws)
+
+    def agrees():
+        w = row()
+        named = bool(w["zotero_of"] or w["zotero_detached"] or w["mirror_of"] or w["mirror_detached"])
+        assert named == pages._zotero_keeps(ws), w
+        return w["mirror_detached"], w["mirror_of"], w["publishing"]
+
+    def mirror(mode, page_filter):
+        with connect_users_db() as conn:
+            conn.execute("DELETE FROM mirrors WHERE workspace_id = ?", (ws,))
+            conn.execute("INSERT INTO mirrors (workspace_id, remote_url, remote_ws, remote_name, token, owner, mode, "
+                         "status, created_at, page_filter) "
+                         "VALUES (?, 'http://testserver', 'r', 'Lab', '', ?, ?, '{}', ?, ?)",
+                         (ws, owner, mode, page_now(), page_filter))
+            conn.commit()
+
+    try:
+        assert agrees() == (False, "", False)  # nothing
+        for mode in ("two-way", "off"):  # a live Zotero link, a detached one
+            link_row(ws, owner, mode=mode)
+            with connect_users_db() as conn:
+                conn.execute("UPDATE zotero_links SET library_name = 'My Library' WHERE workspace_id = ?", (ws,))
+                conn.commit()
+            assert agrees() == (False, "", False)
+            drop_link_row(ws)
+        mirror("two-way", None)  # a live clone
+        assert agrees() == (False, "Lab", False)
+        mirror("pull", None)
+        assert agrees() == (False, "Lab", False)
+        mirror("off", None)  # a detached clone
+        assert agrees() == (True, "", False)
+        mirror("two-way", '["p1"]')  # a publication brings no PDF here, live or detached
+        assert agrees() == (False, "", True)
+        mirror("off", '["p1"]')
+        assert agrees() == (False, "", False)
+    finally:
+        with connect_users_db() as conn:
+            conn.execute("DELETE FROM mirrors WHERE workspace_id = ?", (ws,))
+            conn.commit()
+        drop_link_row(ws)
+        workspaces.delete(ws)
 
 
 def test_guest_cannot_create_or_join(guest):

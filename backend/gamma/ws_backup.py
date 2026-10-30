@@ -46,7 +46,7 @@ from contextlib import closing
 from datetime import datetime, timezone
 from pathlib import Path
 
-from . import comments, config, integrity, jobs, pdf_index, storage, upload_gc
+from . import comments, config, integrity, jobs, pdf_index, storage, upload_gc, zotero_remote
 from .backups import snapshot_db
 from .blocks_store import (BLOCK_COLUMNS, FOLDERS, IN_LIBRARY, LABELS, PATH_SEP, STORED_COLUMNS, TRASH, TREES,
                            delete_subtree, existing_in, fetch_subtree, filing, folder_paths, last_child_position,
@@ -57,6 +57,7 @@ from .logbuf import log
 from .normalize import (block_columns, block_fts, folder_blocks, highlight_shape, normalize_data_db,
                         normalize_pages_db, page_changes, page_ops_batch_id, pages_db_chats)
 from .seed import create_workspace_files
+from .zotero_sync_rows import CONFLICT_KINDS
 
 FORMAT = "gamma-backup-1"
 # pages.db tables that hold each account's own state, not the library's
@@ -431,8 +432,13 @@ def _replace(ws: str, root: Path, tdir: Path, by: str) -> dict:
     backup's log has as deleted — is touched ``deleted`` unless it already
     is. The chats come with the pages (the backup's replace the live ones),
     and the notes index follows the copied rows (its triggers). The
-    accounts' own tables (``PRIVATE_TABLES``) stay the live ones too. data.db
-    follows through the sqlite backup API."""
+    accounts' own tables (``PRIVATE_TABLES``) stay the live ones too. A Zotero
+    link's state is marked restored (``zotero_state.restored_at``), which its
+    next round handles (gamma/zotero_sync.py); a workspace no link keeps
+    (users.db ``zotero_links``, detached ones included) takes none of a
+    link's rows (its objects, queue, state and conflicts), which a later link
+    of it would otherwise read as its own. data.db follows through the
+    sqlite backup API."""
     from . import ops
 
     with connect_pages_db(ws) as live:
@@ -443,6 +449,17 @@ def _replace(ws: str, root: Path, tdir: Path, by: str) -> dict:
             live_pages = {r[0] for r in live.execute("SELECT id FROM unified_blocks WHERE parent_id = 'root'")}
             live_ids = {r[0] for r in live.execute("SELECT id FROM unified_blocks")}
             _copy_tables(live, "restored", keep=("page_changes", *PRIVATE_TABLES))
+            with connect_users_db() as users:
+                linked = users.execute("SELECT 1 FROM zotero_links WHERE workspace_id = ?", (ws,)).fetchone()
+            if linked:
+                # a Zotero link's next round sees the restore: its rows (or their absence) are the backup's,
+                # and the restored pages are to win over them (docs/dev/zotero_sync.md#backup-restore)
+                live.execute("INSERT INTO zotero_state (id, restored_at) VALUES (1, ?) "
+                             "ON CONFLICT(id) DO UPDATE SET restored_at = excluded.restored_at", (page_now(),))
+            else:  # the backup of a linked workspace, restored where no link is: nothing of that link comes
+                zotero_remote.clear(live)
+                live.execute(f"DELETE FROM sync_conflicts WHERE kind IN ({', '.join('?' * len(CONFLICT_KINDS))})",
+                             CONFLICT_KINDS)
             pages = [r[0] for r in live.execute("SELECT id FROM unified_blocks WHERE parent_id = 'root'")] + [
                 tree for tree in TREES if live.execute("SELECT 1 FROM unified_blocks WHERE id = ?", (tree,)).fetchone()]
             for page in pages:

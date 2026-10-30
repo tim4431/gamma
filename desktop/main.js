@@ -447,18 +447,15 @@ async function openOriginal(wsId) {
 }
 
 // Local servers to run for as long as the app does, whichever server the
-// window shows: the hosts of offline copies and of folders kept of remote
-// servers (both sync only while their server runs) and, in background mode,
-// every local server, since a folder kept of a local workspace is its own
+// window shows (registry.launchHosts): the hosts of offline copies, of
+// folders kept of remote servers and of Zotero links that are not detached
+// (all sync only while their server runs) and, in background mode, every
+// local server, since a folder kept of a local workspace is its own
 // server's job. Best effort, after the window is up; a server already
 // running (the one just opened) is left alone.
 function startBackgroundHosts() {
-  const state = registry.load();
-  const hosts = new Set(state.mirrors.map((m) => m.server));
-  if (state.settings.folderHost) hosts.add(state.settings.folderHost);
-  const all = Boolean(state.settings.background);
-  for (const srv of state.servers) {
-    if (srv.type !== 'local' || (!all && !hosts.has(srv.id)) || sidecar.status(srv.id)) continue;
+  for (const srv of registry.launchHosts()) {
+    if (sidecar.status(srv.id)) continue;
     startLocal(srv)
       .then(() => pushState())
       .catch((e) => console.error(`[shell] could not start ${srv.name} for what it keeps in the background: ${e.message || e}`));
@@ -549,8 +546,22 @@ function revokeToken(api, origin, wsId, tokenId) {
 // A local server's sidecar, started (or the one already running). It gets
 // the port it had last time when that is free and remembers the one it got,
 // so the server keeps its address — the one the Gamma Connector was set to
-// — across launches.
-async function startLocal(srv) {
+// — across launches. A call while that server is still starting (the user
+// opening a server that startBackgroundHosts started at launch) waits for
+// the same start: a second process on its port and data directory would
+// either fail to bind or leave one the shell no longer tracks.
+const starting = new Map(); // server id -> its start in flight
+
+function startLocal(srv) {
+  let start = starting.get(srv.id);
+  if (!start) {
+    start = startLocalNow(srv).finally(() => starting.delete(srv.id));
+    starting.set(srv.id, start);
+  }
+  return start;
+}
+
+async function startLocalNow(srv) {
   const state = registry.load();
   const ws = registry.get(srv.id) || srv;
   if (folderAccess && !folderAccess.reachable(ws.dataDir)) throw accessError(ws);
@@ -893,39 +904,66 @@ async function dropFolder(serverId, linkId, how) {
 
 // ------------------------------------------------- kept on this computer -----
 // The bar's sync button and its panel (docs/architecture.md "Kept on this
-// computer"): every clone and folder on disk the running local servers
-// keep, read from each with the default session (signed in on first use),
-// turned into states and one summary by lib/keeping.js, and pushed in the
-// shell state as `keeping`. Read every KEEPING_MS, every KEEPING_BUSY_MS
-// while something syncs, on the panel's opening and after each action. A
-// row names its server, so the panel acts whichever server the window shows.
+// computer"): every clone, Zotero link and folder on disk the running local
+// servers keep, read from each in its own session (localServer, signed in
+// on first use), turned into states and one summary by lib/keeping.js, and
+// pushed in the shell state as `keeping`. Read every KEEPING_MS, every
+// KEEPING_BUSY_MS while something syncs, on the panel's opening and after
+// each action. A row names its server, so the panel acts whichever server
+// the window shows. Each reading also records which servers hold a Zotero
+// link that is not detached (registry.setZoteroHost), the ones
+// startBackgroundHosts starts.
 
 const KEEPING_MS = 15_000;
 const KEEPING_BUSY_MS = 2_000;
 let keepingState = { items: [], summary: keeping.summarize([]) };
 let keepingTimer = null;
-let keepingRead = null;
+let keepingRead = null; // the reading in flight
+let keepingNext = null; // the reading asked for while it ran, which follows it
 
+// A timer that comes due while a reading runs leaves it be: that reading
+// schedules the next when it ends.
 function scheduleKeeping(ms) {
   clearTimeout(keepingTimer);
-  keepingTimer = setTimeout(() => refreshKeeping().catch(() => {}), ms);
+  keepingTimer = setTimeout(() => keepingRead || refreshKeeping().catch(() => {}), ms);
 }
 
+// A call while a reading runs is answered by a reading that starts once
+// that one ends. An action calls it right after changing something on a
+// server, which the running reading may have read before the change: that
+// reading's result is dropped, and the panel and the launch record wait
+// for the one that follows.
 function refreshKeeping() {
-  if (keepingRead) return keepingRead;
+  if (keepingRead) {
+    keepingNext ||= keepingRead.catch(() => {}).then(() => {
+      keepingNext = null;
+      return refreshKeeping();
+    });
+    return keepingNext;
+  }
   keepingRead = (async () => {
     const { servers } = registry.load();
     const items = [];
+    const zoteroHosts = new Map(); // server id -> holds a link that is not detached
     for (const srv of servers) {
       if (srv.type !== 'local' || !sidecar.status(srv.id)) continue;
       try {
         const { origin, api } = await localServer(srv.id);
-        const [m, f] = await Promise.all([api(origin, '/api/mirrors'), api(origin, '/api/folder-links')]);
-        items.push(...keeping.itemsOf(srv, { mirrors: m.mirrors, links: f.links }, servers));
+        // (a server from before the Zotero links has no list of them: none)
+        const [m, f, z] = await Promise.all([api(origin, '/api/mirrors'), api(origin, '/api/folder-links'),
+          api(origin, '/api/zotero/links').catch(() => null)]);
+        const kept = keeping.itemsOf(srv, { mirrors: m.mirrors, links: f.links, zotero: z ? z.links : [] }, servers);
+        // A server with a link that is not detached starts at launch; one
+        // whose links all went or were detached no longer does. A list that
+        // did not come leaves that as it was.
+        if (z) zoteroHosts.set(srv.id, kept.some((i) => i.kind === 'zotero' && !i.paused));
+        items.push(...kept);
       } catch {
         // a server that does not answer now is left out of this reading
       }
     }
+    if (keepingNext) return;
+    for (const [id, on] of zoteroHosts) registry.setZoteroHost(id, on);
     keepingState = { items, summary: keeping.summarize(items) };
     pushState();
   })().finally(() => {
@@ -935,13 +973,14 @@ function refreshKeeping() {
   return keepingRead;
 }
 
-// What a panel row does: a clone opens, pauses (detaches) or resumes
-// (reattaches, what both sides did meanwhile merging), or syncs; a folder
-// opens its directory, pauses or resumes, syncs, or stops.
+// What a panel row does: a clone or a Zotero link opens, pauses (detaches)
+// or resumes (reattaches, what both sides did meanwhile merging), or syncs;
+// a folder opens its directory, pauses or resumes, syncs, or stops.
 async function keepingAction(kind, serverId, id, action) {
   const item = keepingState.items.find((i) => i.kind === kind && i.server === serverId && i.id === id);
   if (!item) throw new Error('That is no longer kept on this computer');
-  if (kind === 'clone' && action === 'open') {
+  const link = `/api/zotero/links/${encodeURIComponent(id)}`;
+  if ((kind === 'clone' || kind === 'zotero') && action === 'open') {
     await openServer(serverId);
     await openGammaWorkspace(id);
     buildMenu();
@@ -956,6 +995,19 @@ async function keepingAction(kind, serverId, id, action) {
     const { origin, api } = await localServer(serverId);
     await api(origin, `/api/mirrors/${encodeURIComponent(id)}/sync`, { method: 'POST' });
     showNotice(`Syncing ${item.name}…`);
+  } else if (kind === 'zotero' && (action === 'pause' || action === 'resume')) {
+    const { origin, api } = await localServer(serverId);
+    await api(origin, `${link}/${action === 'pause' ? 'detach' : 'relink'}`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}',
+    });
+    // a resumed link starts its server at launch again (a pause is settled by the reading below)
+    if (action === 'resume') registry.setZoteroHost(serverId, true);
+    showNotice(action === 'pause' ? `${item.name} is paused: nothing goes to or comes from Zotero until you resume it.`
+      : `${item.name} syncs with Zotero again; what both sides did meanwhile merges.`);
+  } else if (kind === 'zotero' && action === 'sync') {
+    const { origin, api } = await localServer(serverId);
+    await api(origin, `${link}/sync`, { method: 'POST' });
+    showNotice(`Syncing ${item.name} with Zotero…`);
   } else if (kind === 'folder' && action === 'open') {
     openDirectory(item.dest);
   } else if (kind === 'folder' && (action === 'pause' || action === 'resume')) {
@@ -1778,7 +1830,8 @@ app.whenReady().then(async () => {
   applyLoginItem();
   const files = [...earlyPdfs.splice(0), ...openFiles.pdfPaths(process.argv.slice(1), process.cwd())];
   // Started at login (`--hidden`; macOS says so itself): no window, the
-  // servers run in the background for the clones and the folders on disk.
+  // servers run in the background for the clones, the Zotero links and the
+  // folders on disk.
   const hidden = !files.length && Boolean(settings.background) && (process.argv.includes('--hidden') ||
     (process.platform === 'darwin' && app.getLoginItemSettings().wasOpenedAsHidden));
   if (hidden) startBackgroundHosts();
@@ -1840,6 +1893,8 @@ if (process.env.GAMMA_SHELL_TEST) {
     refreshKeeping,
     keepingAction,
     keeping: () => keepingState,
+    startLocal,
+    startBackgroundHosts,
     openPdfFiles,
     // Gamma's API on the open server in a named workspace, as the shell calls
     // it. A page's own fetch cannot do that: Gamma's wrapper stamps the

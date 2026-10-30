@@ -24,6 +24,10 @@ are not: an admin edits them on the Admin page and they live in cloud.db
   is offered only when both of its values are set. Their callback URLs are
   ``<public url>/oauth/<provider>/callback``. ``GAMMA_CLOUD_GOOGLE_ONE_TAP=0``
   turns off Google's sign-in prompt on the sign-in pages.
+- ``GAMMA_CLOUD_ZOTERO_CLIENT_KEY`` + ``_SECRET`` — the Zotero app
+  (zotero.org/oauth/apps) through which Gamma servers without one of their
+  own get a person's Zotero key (``zotero.py``); on only when both are set.
+  Its callback URL is ``<public url>/zotero/callback``.
 - ``GAMMA_CLOUD_SHARE_HOST_URL`` — where Gamma servers publish pages: the
   shared server (a Gamma with ``GAMMA_CLOUD_SHARE_HOST=1``) under the
   address publishing has always used. Handed to Gamma servers as
@@ -79,6 +83,8 @@ GOOGLE_CLIENT_SECRET = os.environ.get("GAMMA_CLOUD_GOOGLE_CLIENT_SECRET", "").st
 GOOGLE_ONE_TAP = os.environ.get("GAMMA_CLOUD_GOOGLE_ONE_TAP", "1") not in ("0", "false", "no")
 GITHUB_CLIENT_ID = os.environ.get("GAMMA_CLOUD_GITHUB_CLIENT_ID", "").strip()
 GITHUB_CLIENT_SECRET = os.environ.get("GAMMA_CLOUD_GITHUB_CLIENT_SECRET", "").strip()
+ZOTERO_CLIENT_KEY = os.environ.get("GAMMA_CLOUD_ZOTERO_CLIENT_KEY", "").strip()
+ZOTERO_CLIENT_SECRET = os.environ.get("GAMMA_CLOUD_ZOTERO_CLIENT_SECRET", "").strip()
 
 # Lifetimes (seconds).
 PORTAL_SESSION_TTL = 30 * 86400        # sliding: refreshed on use
@@ -86,6 +92,8 @@ VERIFY_TOKEN_TTL = 24 * 3600
 RESET_TOKEN_TTL = 3600
 AUTHORIZE_REQUEST_TTL = 600            # a pending sign-in on the authorize page
 EXTERNAL_LOGIN_TTL = 900               # a Google/GitHub round trip, or the signup form after it
+ZOTERO_REQUEST_TTL = 540               # a browser at zotero.org: inside the Gamma server's own 600 s wait
+ZOTERO_CODE_TTL = 300                  # an approval awaiting its server: outlasts the server's 240 s confirm page
 AUTH_CODE_TTL = 120
 ACCESS_TOKEN_TTL = 3600
 ID_TOKEN_TTL = 600
@@ -220,6 +228,7 @@ def admin_view(schema_version: int) -> list[dict]:
         stripe.append(_value(f"{plan.capitalize()} {'monthly' if interval == 'month' else 'yearly'} price",
                              f"GAMMA_CLOUD_STRIPE_PRICE_{key.upper()}", price_id))
     google = bool(GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET)
+    zotero = bool(ZOTERO_CLIENT_KEY and ZOTERO_CLIENT_SECRET)
     half = "needs both the client id and the secret"
     return [
         {"name": "Server", "items": [
@@ -264,5 +273,10 @@ def admin_view(schema_version: int) -> list[dict]:
             _switch("GitHub", "GAMMA_CLOUD_GITHUB_CLIENT_ID + _SECRET", bool(GITHUB_CLIENT_ID and GITHUB_CLIENT_SECRET),
                     half if bool(GITHUB_CLIENT_ID) != bool(GITHUB_CLIENT_SECRET) else ""),
             _value("Desktop client id", "GAMMA_CLOUD_DESKTOP_CLIENT_ID", DESKTOP_CLIENT_ID),
+        ]},
+        {"name": "Zotero", "items": [
+            _switch("Connect for Gamma servers", "GAMMA_CLOUD_ZOTERO_CLIENT_KEY + _SECRET", zotero,
+                    "needs both the client key and the secret" if bool(ZOTERO_CLIENT_KEY) != bool(ZOTERO_CLIENT_SECRET)
+                    else "" if zotero else "Gamma servers without a Zotero app of their own take a pasted API key"),
         ]},
     ]

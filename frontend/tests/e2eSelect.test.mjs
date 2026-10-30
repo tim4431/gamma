@@ -91,6 +91,17 @@ test("a change selects the groups that exercise it", () => {
   assert.ok(pick(["frontend/src/notebook/notebook.js"]).includes("notebooks"));
   // the chat's pictures of handwriting are the AI modules' groups
   assert.deepEqual(pick(["backend/gamma/ink_view.py"]).sort(), pick(["backend/gamma/ai_context.py"]).sort());
+  // the Zotero link: its engine, its Zotero client, its page surfaces and the fake Zotero with the
+  // library it serves are the zotero-link scenario's alone; the surfaces it shares with the clones,
+  // the account row Settings draws and the import's note rules the engine reads select it too
+  for (const file of ["backend/gamma/zotero_sync_items.py", "backend/gamma/zotero_schema.json", "backend/gamma/zotero_stream.py",
+    "backend/tests/zotero_fake.py", "backend/tests/zotero_fixtures.py", "frontend/src/collaboration/ZoteroPage.jsx",
+    "frontend/src/settings/ZoteroLinkDialog.jsx"]) assert.deepEqual(pick([file]), ["zotero-link"], file);
+  for (const file of ["frontend/src/collaboration/MirrorPopover.jsx", "frontend/src/collaboration/MergeResolver.jsx",
+    "frontend/src/settings/SettingsZotero.jsx", "frontend/src/transfers/zoteroApi.js", "backend/gamma/sync_clock.py",
+    "backend/gamma/routers/zotero_sync.py", "backend/gamma/zotero_notes.py"]) assert.ok(pick([file]).includes("zotero-link"), file);
+  assert.ok(pick(["backend/gamma/zotero_sync.py"]).includes("transfers"), "an import asks whether a link keeps its workspace");
+  assert.ok(!pick(["backend/gamma/zotero_export.py"]).includes("zotero-link"), "the export is no part of the link");
   // a scenario helper selects the scenarios importing it
   const notes = pick(["frontend/tests/e2e/scenarios/notes.mjs"]);
   for (const id of ["notes-pdf-share", "collab", "files", "diagrams"]) assert.ok(notes.includes(id), id);

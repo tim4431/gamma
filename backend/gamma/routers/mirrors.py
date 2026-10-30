@@ -5,7 +5,7 @@ merges it decided on its own. Session-only, the mirror's owner only."""
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
-from .. import config, sync_engine, workspaces
+from .. import config, sync_clock, sync_engine, workspaces
 from ..auth import require_personal_user_id
 from ..ops import OpError
 
@@ -22,7 +22,7 @@ class MirrorCreate(BaseModel):
 
 
 class MirrorPatch(BaseModel):
-    poll_s: int | None = Field(default=None, ge=0, le=86400)
+    poll_s: int | None = Field(default=None, ge=0, le=sync_clock.POLL_MAX_S)
     on_change: bool | None = None
     mode: str | None = Field(default=None, pattern="^(two-way|pull)$")
 

@@ -1732,6 +1732,45 @@ def _v43_email_invites(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+# users.db ``zotero_links`` and its owner-library index as schema version 44
+# shaped them, frozen: step 44 creates them from these.
+_V44_ZOTERO_LINKS = [
+    """CREATE TABLE IF NOT EXISTS zotero_links (
+        workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id),
+        owner TEXT NOT NULL,
+        library TEXT NOT NULL,
+        library_name TEXT NOT NULL DEFAULT '',
+        mode TEXT NOT NULL DEFAULT 'two-way',
+        download TEXT NOT NULL DEFAULT 'all',
+        upload INTEGER NOT NULL DEFAULT 1,
+        auto_tags INTEGER NOT NULL DEFAULT 0,
+        send_unrecorded INTEGER NOT NULL DEFAULT 0,
+        poll_s INTEGER NOT NULL DEFAULT 5,
+        on_change INTEGER NOT NULL DEFAULT 1,
+        status TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL
+    )""",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_zotero_links_owner_library ON zotero_links(owner, library)",
+]
+
+
+def _v44_zotero_links(conn: sqlite3.Connection) -> None:
+    """users.db gains ``zotero_links`` (personal workspaces kept in step
+    with a Zotero library, gamma/zotero_sync.py) and its unique index on
+    (owner, library), from the step's frozen statements. Re-runnable: both
+    are ``IF NOT EXISTS``, and a table an earlier shape of this step made
+    without the index keeps, of the links one owner made of one library,
+    the oldest. No workspace is touched (the link's per-object tables are
+    additive in pages.db)."""
+    conn.execute(_V44_ZOTERO_LINKS[0])
+    conn.execute("DELETE FROM zotero_links WHERE EXISTS (SELECT 1 FROM zotero_links o WHERE o.owner = "
+                 "zotero_links.owner AND o.library = zotero_links.library AND (o.created_at, o.rowid) < "
+                 "(zotero_links.created_at, zotero_links.rowid))")
+    for stmt in _V44_ZOTERO_LINKS[1:]:
+        conn.execute(stmt)
+    conn.commit()
+
+
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
@@ -1754,6 +1793,7 @@ STEPS = [
     (40, "comments_inbox", _v40_comments_inbox),
     (42, "cloud_invitations", _v42_cloud_invitations),
     (43, "email_invites", _v43_email_invites),
+    (44, "zotero_links", _v44_zotero_links),
 ]
 
 # The workspace parts of the steps from version 34 on: (version, name,

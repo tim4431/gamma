@@ -39,7 +39,7 @@ portal), [billing.md](billing.md) (plans and Stripe) and
 
 | piece | what it is | where it runs | its state |
 |---|---|---|---|
-| **Account server** | `cloud/`, package `gammacloud`: accounts, the sign-in portal, an OpenID Connect provider, plans and billing, the hosts and the job queue, the Admin page. It holds no notes or files. | `/root/Container/gamma-account/` on the VPS, image `ghcr.io/tim4431/gamma-cloud` | `data/cloud.db` — the secret: signing keys and every token hash |
+| **Account server** | `cloud/`, package `gammacloud`: accounts, the sign-in portal, an OpenID Connect provider, plans and billing, the hosts and the job queue, the Admin page, and the Zotero app Gamma servers without one of their own connect people's Zotero accounts through. It holds no notes or files. | `/root/Container/gamma-account/` on the VPS, image `ghcr.io/tim4431/gamma-cloud` | `data/cloud.db` — the secret: signing keys and every token hash |
 | **Shared server** | one ordinary Gamma (`ghcr.io/tim4431/gamma`) in cloud mode: everyone may sign in, published pages live here, a Lite or Plus plan is an allowance on an account here | the same compose project, service `share` | `share-data/` |
 | **Hosted servers** | one Gamma container per Pro account, `gamma-<label>`, which its owner administers | on a fleet host, started by the agent | `/srv/gamma/<label>/data`, plus hourly copies in the bucket under `hosted/<account id>/` |
 | **Fleet agent** | `cloud/fleet/`, package `gammafleet`: creates, starts, stops, upgrades, rebuilds and removes those containers, reports every five minutes. Calls out only. | `/root/Container/gamma-fleet/` on each host, image `ghcr.io/tim4431/gamma-fleet` | `container.json` per server (what it was started with) |
@@ -80,6 +80,15 @@ server mints its ordinary session from it. An unconfirmed e-mail address
 is the gate: such an account can use the portal but cannot sign in to
 any Gamma. A Gamma server never calls the account server on a data
 request.
+
+**Connecting Zotero.** A Gamma server's Zotero link
+([zotero_sync.md](zotero_sync.md)) syncs with the person's Zotero API key,
+which zotero.org hands out to a registered app. A desktop sidecar or a
+self-hosted server has none, so the account server holds one and relays
+the sign-in at zotero.org for any server it knows, handing the key to that
+server alone and keeping nothing once it has. It needs no Gamma Cloud
+account, and is off until the operator sets the app's two values. Without
+it, people paste a key made on zotero.org.
 
 **Registering.** The operator decides who may: `open`, by `invite` code,
 or `closed`, on the Admin page and with effect at once. Turnstile, one
@@ -173,7 +182,7 @@ override) reserves.
 | kind | examples | changed by |
 |---|---|---|
 | **settings** in `cloud.db`, effect at once | registration mode, Turnstile, blocked and allowed mail domains, whose e-mail invitations carry an invite code (`invitation_signup`), plans on sale, alerts and their address, the default image tag, automatic upgrades, fleet-wide environment | Admin → Settings and Servers, or `manage.py settings` |
-| **environment** of the account server | the public URL, mail, Stripe keys and price ids, the shared server's addresses, the hosting domain and suffix, the fleet image, Google/GitHub, the Cloudflare DNS token | `.env` on the VPS and a restart; the Settings tab shows each as set, missing or off |
+| **environment** of the account server | the public URL, mail, Stripe keys and price ids, the shared server's addresses, the hosting domain and suffix, the fleet image, Google/GitHub, the Zotero app, the Cloudflare DNS token | `.env` on the VPS and a restart; the Settings tab shows each as set, missing or off |
 | **code** | what a plan contains and costs, the container size per plan, the grace, read-only and deletion periods, the alert kinds and their delays | `config.py`, `alerts.py`; a new image |
 | **per server** | its own quota, seats and size, its own environment variables, suspend | the Servers tab's Actions |
 
@@ -204,7 +213,10 @@ page, the CLI and the `/api/admin/*` API call the same functions.
   holds the socket and is told what to do; whoever holds a host's token
   receives that host's jobs, client secrets included, so the token and
   the agent's `.env` are secrets.
-- Every secret at rest in `cloud.db` is a hash of a random token. A
+- Every secret at rest in `cloud.db` is a hash of a random token, but for
+  what Zotero issues during a Zotero connection, which is sealed under a
+  key derived from a token the file does not hold, and expires within
+  minutes. A
   container's client secret exists in clear only in the job that creates
   it, and is blanked when the job ends; so are environment values.
 - Each hosted container trusts `X-Forwarded-For` from the fleet network's
@@ -240,7 +252,7 @@ build.
 
 - [cloud_accounts.md](cloud_accounts.md): the portal, registration, the
   OIDC provider, the entrance, the preference profile, the Gamma side of
-  sign-in, the share host.
+  sign-in, the share host, the Zotero broker ("Connecting Zotero").
 - [billing.md](billing.md): the effective-plan rule, Stripe, the Plan
   page, the Billing tab, running it locally in test mode.
 - [hosted.md](hosted.md): the tables, server states and the lifecycle, the

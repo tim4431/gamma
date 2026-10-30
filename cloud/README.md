@@ -2,7 +2,10 @@
 
 The service behind `account.gammapdf.com`: accounts, the sign-in portal,
 and the OpenID Connect provider every Gamma server (a desktop sidecar, the
-free share host, a paid container) signs people in through. It holds no
+free share host, a paid container) signs people in through, and the Zotero
+app through which a Gamma server without one of its own connects a
+person's Zotero account ([Connecting Zotero](../docs/dev/cloud_accounts.md#connecting-zotero),
+off until `GAMMA_CLOUD_ZOTERO_CLIENT_KEY` and `_SECRET` are set). It holds no
 notes or files and imports nothing from `backend/`.
 
 The map of the whole service (the pieces, the names, what happens on a

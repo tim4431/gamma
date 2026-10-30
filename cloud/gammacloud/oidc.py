@@ -109,8 +109,9 @@ def jwks(conn) -> dict:
 
 
 def discovery() -> dict:
+    from . import zotero  # local: zotero.py imports this module
     base = config.PUBLIC_URL
-    return {
+    doc = {
         "issuer": base,
         "authorization_endpoint": f"{base}/authorize",
         "token_endpoint": f"{base}/token",
@@ -132,6 +133,12 @@ def discovery() -> dict:
         "gamma_server_connect_endpoint": f"{base}/connect-server",
         "gamma_server_connect_token_endpoint": f"{base}/api/servers/connect/token",
     }
+    if zotero.enabled():
+        # not OIDC: how a Gamma server gets a Zotero key (zotero.py), named
+        # only while the broker has its Zotero app
+        doc["gamma_zotero_connect_endpoint"] = f"{base}/zotero/connect"
+        doc["gamma_zotero_token_endpoint"] = f"{base}/api/zotero/connect/token"
+    return doc
 
 
 # --- clients ------------------------------------------------------------------

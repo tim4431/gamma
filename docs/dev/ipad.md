@@ -991,8 +991,8 @@ The iPad's switcher is the desktop's bar without its clone chips
 one ([mirror.md](mirror.md#making-one)):
 
 1. On the other server, Settings → Integrations: a read-and-write token.
-2. On This iPad, Settings → Workspaces → Clones → *Clone a remote
-   workspace*, with that server's address and the token.
+2. On This iPad, Settings → Workspaces → Clones and Zotero links →
+   *Clone a remote workspace*, with that server's address and the token.
 
 From then on the sync pill, the merge chips and the conflict cards are the
 web app's. A clone syncs only while the local server runs, that is, while

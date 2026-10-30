@@ -68,6 +68,7 @@ import { cloudSignInScenarios } from "./scenarios/cloudSignIn.mjs";
 import { publishScenarios } from "./scenarios/publish.mjs";
 import { i18nScenarios } from "./scenarios/i18n.mjs";
 import { authScenarios } from "./scenarios/auth.mjs";
+import { zoteroLinkScenarios } from "./scenarios/zotero-link.mjs";
 import { GROUPS, changedFromGit, selectGroups, shardOf } from "./select.mjs";
 
 const RUNNERS = {
@@ -98,6 +99,7 @@ const RUNNERS = {
   "inbox": inboxScenarios,
   "collab": collabScenarios,
   "mirror": mirrorScenarios,
+  "zotero-link": zoteroLinkScenarios,
   "transfers": transferScenarios,
   "mcp": mcpScenarios,
   "files": fileScenarios,
