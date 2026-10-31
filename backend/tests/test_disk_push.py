@@ -424,8 +424,11 @@ def test_a_followed_file_must_be_a_pdf_that_is_there_outside_the_data_directory(
     r = owner.post("/api/folder-links", json={"kind": "file", "path": str(disk / "fine.pdf")})
     assert r.status_code == 400
     link = _create(owner, kind="file", page=page["id"], path=str(disk / "fine.pdf"))
-    r = owner.post("/api/folder-links", json={"kind": "file", "page": page["id"], "path": str(disk / "FINE.pdf")})
-    assert r.status_code == 400 and "Another link" in r.json()["detail"]       # one file feeds one page
+    # one file feeds one page, under every spelling the filesystem takes for it
+    # (FINE.pdf is that file only where names ignore case: Windows, not CI's Linux)
+    for name in ("fine.pdf", "FINE.pdf") if (disk / "FINE.pdf").is_file() else ("fine.pdf",):
+        r = owner.post("/api/folder-links", json={"kind": "file", "page": page["id"], "path": str(disk / name)})
+        assert r.status_code == 400 and "Another link" in r.json()["detail"], name
     owner.delete(f"/api/folder-links/{link['id']}").raise_for_status()
 
 

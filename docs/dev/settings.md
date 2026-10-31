@@ -243,8 +243,9 @@ one tinted row per notice under the identity card (itself a button into
 Account & sync): `noticeText` (the
 message translated with its params, or the server's title for a message
 this build does not know) and a link (`noticeAction`, "Review storage →")
-that opens the notice's pane. "Settings…" opens on `firstPane`; every other
-opener keeps its pane. Showing a pane calls
+that opens the notice's pane. "Settings…" opens on `firstPane`, else on
+Account & sync (as Ctrl+, does; Appearance when the account pane is not
+shown); every other opener keeps its pane. Showing a pane calls
 `markSeen(pane)`: its notices leave the list at once and each ack is posted
 to `POST /api/notices/{id}/seen`, so other tabs and browsers agree on their
 next poll. The browser flow is the last step of `e2e/scenarios/settings.mjs`,
@@ -844,7 +845,10 @@ answer is less than three seconds old, or one already on its way, is taken
 rather than sent again, and only the newest read sent lands: one asked for
 again after a change goes out at once, and an answer that lands after a
 write to the same path is older than what the write brought, so it is
-dropped. A form over
+dropped. A write that changes another path's answer reads that path again
+at once: saving the Server pane's sign-in reads `/auth/cloud/status`,
+which the dialog, opening on Account & sync, read a moment before and would
+otherwise still take as fresh. A form over
 read values (`useDraftOf`, SettingsKit.jsx) follows them as they are read
 again, unless it was edited since.
 

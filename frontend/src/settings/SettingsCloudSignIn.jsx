@@ -19,7 +19,7 @@
 import React from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { Row, Segmented, PasswordInput, SettingsSyncContext, Toggle, useDraftOf, useSettingsDraft } from "./SettingsKit";
-import { useSettingsRead } from "./settingsReads.js";
+import { useSettingsRead, useSettingsStore } from "./settingsReads.js";
 import { cloudSyncHint } from "./syncState.js";
 import { REOPEN_SETTINGS_KEY } from "./settingsNavigation.js";
 import { formatRelativeTime } from "../library/libraryUtils";
@@ -50,11 +50,14 @@ function takeConnectResult() {
 
 // `action` receives the Save button (present while the draft is dirty) so
 // the Server pane can put it on its Sign-in section rule. The settings are
-// the Server pane's one read of /api/admin/settings (settingsReads.js).
+// the Server pane's one read of /api/admin/settings (settingsReads.js); a
+// save also reads the account pane's /auth/cloud/status again, which they
+// decide and which the dialog, opening on that pane, read moments before.
 const NO_CLOUD_DRAFT = { issuer: "", client_id: "", secret: "", policy: "refuse", share_host: false };
 const fromSaved = (c) => ({ issuer: c.issuer || "", client_id: c.client_id === "gamma-desktop" ? "" : (c.client_id || ""),
   secret: "", policy: c.policy || "refuse", share_host: !!c.share_host });
 export function CloudSignInSettings({ setStatus, action }) {
+  const reads = useSettingsStore();
   const settings = useSettingsRead("/admin/settings");
   const saved = settings.data?.cloud || null; // the `cloud` object of /api/admin/settings
   const [draft, setDraft] = useDraftOf(saved, fromSaved, NO_CLOUD_DRAFT);
@@ -86,6 +89,7 @@ export function CloudSignInSettings({ setStatus, action }) {
         method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
       });
       settings.set(value); setDraft(fromSaved(value.cloud));
+      reads.read("/auth/cloud/status", { force: true }).catch(() => {});
       setStatus(value.cloud.enabled ? t("Cloud sign-in saved. The login page now offers it.") : t("Cloud sign-in turned off."));
     } catch (err) { setError(err.message); }
     finally { setBusy(false); }

@@ -1413,6 +1413,9 @@ Only an iPad can show these, and none has been run yet:
   `ipad-test-release-NNN` marker. Every desktop release from `main`
   pushes one, and the `release-ipad` skill sends one between releases
   ([github_actions.md](github_actions.md#the-ipad-testflight-release)).
+  Anyone joins the beta through the public link
+  <https://testflight.apple.com/join/nTmSHDx6>, which the README, the
+  website and every release's notes carry.
   They go to the App Store Connect record the Mac App Store build shares,
   `net.blitzbuild.gamma` of team `A436A36DDC`
   ([research/mac-app-store.md](../research/mac-app-store.md)).

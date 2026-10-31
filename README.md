@@ -7,6 +7,7 @@
 [![Release](https://img.shields.io/github/v/release/tim4431/Gamma?filter=v%2A&style=flat&label=release&color=2563eb)](https://github.com/tim4431/Gamma/releases/latest)
 [![GitHub stars](https://img.shields.io/github/stars/tim4431/Gamma?style=flat&logo=github&color=eab308)](https://github.com/tim4431/Gamma/stargazers)
 [![GitHub forks](https://img.shields.io/github/forks/tim4431/Gamma?style=flat&logo=github&color=8b5cf6)](https://github.com/tim4431/Gamma/forks)
+[![iPad app on TestFlight](https://img.shields.io/badge/iPad-TestFlight%20beta-0D96F6?style=flat&logo=apple&logoColor=white)](https://testflight.apple.com/join/nTmSHDx6)
 
 <a href="https://apps.microsoft.com/detail/9N8WGWR2J2MV"><img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Download Gamma from the Microsoft Store" width="240"></a>
 <a href="https://chromewebstore.google.com/detail/gamma-connector/njpeklephhndnpakmlaancinpnabcomn"><img src="./docs/assets/badges/chrome-web-store.png" alt="Get the Gamma Connector browser extension from the Chrome Web Store" width="218"></a>
@@ -36,7 +37,7 @@ Every picture below is clickable and opens the matching part of the [user guide]
 Your library lives on your server and opens from any browser: the office desktop, the iPad (with the Pencil), your phone. Reading position, open tabs and zoom follow your account from device to device.
 
 - **Offline copy** — keep a full copy of a workspace on your laptop with the desktop app (one click on the workspace's *clone* chip) or on any second Gamma. Read and write it on the train; it syncs itself when the connection returns — edits merge block by block, and the rare conflict is shown on its block with both versions rather than lost.
-- **Install it** — Safari → *Add to Home Screen* on the iPad, *Install Gamma* in Chrome or Edge, or the desktop app for Windows, macOS and Linux.
+- **Install it** — the [iPad app](https://testflight.apple.com/join/nTmSHDx6) (a TestFlight beta) or Safari → *Add to Home Screen* on the iPad, *Install Gamma* in Chrome or Edge, or the desktop app for Windows, macOS and Linux.
 
 → Guide: [Offline copies](./docs/user_guide/user_guide.md#offline-copies) · [Install as an app](./docs/user_guide/user_guide.md#install-as-an-app)
 
@@ -128,9 +129,10 @@ Coming from Zotero? A folder is a collection and a label is a tag. Importing or 
 
 ### Downloads
 
-Get the Windows app from the [**Microsoft Store**](https://apps.microsoft.com/detail/9N8WGWR2J2MV), or download standalone installers from [**GitHub Releases**](https://github.com/tim4431/Gamma/releases/latest).
+Get the Windows app from the [**Microsoft Store**](https://apps.microsoft.com/detail/9N8WGWR2J2MV), the iPad app from [**TestFlight**](https://testflight.apple.com/join/nTmSHDx6), or download standalone installers from [**GitHub Releases**](https://github.com/tim4431/Gamma/releases/latest).
 
 - **Desktop app** (Windows installer, macOS dmg, Debian/Ubuntu deb) — a self-contained Gamma with local libraries on your disk, no Docker, Python or Node. It also opens any Gamma server you host (the NAS, a VPS) and keeps [offline copies](./docs/user_guide/user_guide.md#offline-copies) of its workspaces. Details: [desktop/](./desktop/). Builds are not notarized: Windows SmartScreen → *More info → Run anyway*; macOS says *Apple could not verify Gamma* on first launch → *System Settings → Privacy & Security → Open Anyway* (once); Linux: `sudo apt install ./Gamma-<version>-linux-amd64.deb`. Windows and Linux apps update themselves.
+- **iPad app** (beta) — join on [**TestFlight**](https://testflight.apple.com/join/nTmSHDx6): install Apple's TestFlight app, then open the link on the iPad. It opens your servers with the Pencil captured natively, and keeps a workspace on the iPad itself, so it works with no connection. Details: [ipad/](./ipad/).
 - **iPad, phone, any browser** — open your server and install it from the browser; see [Install as an app](./docs/user_guide/user_guide.md#install-as-an-app).
 - **Gamma Connector** browser extension — from the [**Chrome Web Store**](https://chromewebstore.google.com/detail/gamma-connector/njpeklephhndnpakmlaancinpnabcomn) for Chrome, Edge and other Chromium browsers; it updates itself. Or take `gamma-connector-<version>.zip` from the [GitHub release](https://github.com/tim4431/Gamma/releases/latest), unzip it, then `chrome://extensions` → *Developer mode* → *Load unpacked*.
 - **Server** — the Docker image below, built from `main` on every merge.
