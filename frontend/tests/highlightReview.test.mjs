@@ -1,17 +1,20 @@
 // The review card's arithmetic (pdf/highlightReview.js): which highlights
 // are pending or lost and in what order; what the card's Previous and Next
 // walk, the ones resolved on a card standing where they stood, round from
-// the last to the first; what the card shows for each, the same after a
-// step as before it, its buttons and which are pressed or disabled; what
-// its steps change (a lost one's Discard too) and whether a step is still
-// in effect; the before picture's box and the old rectangles in it, and
-// the old quote against the current one.
+// the last to the first, and the one it goes on to after a decision; what
+// the card shows for each, the same after a step as before it, the note
+// its highlight carries, its one row of buttons and which are pressed or
+// disabled; what its steps change (Discard on a dashed or a lost one, an
+// Accept confirming a move's place) and whether a step is still in
+// effect; the before picture's box and the old rectangles in it, and the
+// old quote against the current one.
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  PAGE_ASPECT, PREV_QUOTE_MAX, beforeCrop, cropAspect, cropBox, discardApplied, discardKind, discardStep, discardUndone,
-  discardedPosition, entryPosition, lostPlace, pastLastPage, pendingInOrder, placeBox, quoteDiff, rectsInCrop,
-  reviewActions, reviewCardState, reviewList, reviewPlace, reviewPrev, reviewQueue, reviewStep, stepInEffect, stepOrigin,
+  PAGE_ASPECT, PREV_QUOTE_MAX, beforeCrop, carriesNote, cropAspect, cropBox, decided, discardApplied, discardKind, discardOutcome, discardStep, discardUndone,
+  discardedPosition, entryPosition, lostPlace, nextToCheck, noteSummary, pastLastPage, pendingInOrder, placeBox, quoteDiff, rectsInCrop,
+  reviewActions, reviewCardState, reviewList, reviewMenu, reviewPlace, reviewPrev, reviewQueue, reviewStep, stepInEffect, stepOrigin,
+  waitingForAccept,
 } from "../src/pdf/highlightReview.js";
 import { acceptedPosition, blockPlace, blocksToHighlights, closestPlacement, findBlock, insertBlockAt } from "../src/shared/model/blockModel.js";
 
@@ -102,13 +105,21 @@ test("a step changes neither the count nor the walk: a resolved one stands where
   list = reviewList(all, steps);
   assert.deepEqual(ids(list), ["A", "B", "C", "D"]);
   assert.deepEqual(stepOrigin(moved), { position: C.position, quote: "q" }, "the move's origin is Accept's");
-  // all of them resolved: nothing left to check ("All reviewed"), the walk the same
+  // a move and Use closest match wait for Accept: all four placed, all four still to check, the walk the same
   const a = reviewStep("moved", { position: A.position, quote: "" }, at("a2", 4, 10).position);
   const d = reviewStep("moved", { position: D.position, quote: "" }, at("d2", 4, 20).position);
   all = withPos(withPos(all, "A", a.after), "D", d.after);
   steps = new Map(steps).set("A", { step: a, h: A }).set("D", { step: d, h: D });
   list = reviewList(all, steps);
   assert.deepEqual(ids(list), ["A", "B", "C", "D"]);
+  assert.deepEqual([reviewPlace(list, "D").left, reviewPlace(list, "D").total, reviewPlace(list, "D").next.id], [4, 4, "A"]);
+  // Accept on each confirms its place: nothing left to check ("All reviewed"), the walk the same
+  for (const [id, s] of [["A", a], ["B", placed], ["C", moved], ["D", d]]) {
+    steps = new Map(steps).set(id, { step: reviewStep("accepted", { position: s.after, prior: s }), h: steps.get(id).h });
+  }
+  list = reviewList(all, steps);
+  assert.deepEqual(ids(list), ["A", "B", "C", "D"]);
+  assert.ok(list.every((e) => e.step.kind === "accepted" && e.step.confirms));
   assert.deepEqual([reviewPlace(list, "D").left, reviewPlace(list, "D").total, reviewPlace(list, "D").next.id], [0, 4, "A"]);
 });
 
@@ -212,23 +223,124 @@ test("after a step the card shows what it showed before it, drawn from where the
   assert.deepEqual(reviewCardState(lost, { done: discarded, fileId: "cd34" }), { ...lostBefore, step: "discarded" });
 });
 
-test("the card's buttons stay in their places across a step: its own pressed, those that no longer apply disabled", () => {
-  const row = (state, opts) => reviewActions(state, opts).map((a) => `${a.key}${a.pressed ? "*" : ""}${a.disabled ? "-" : ""}`).join(" ");
+test("every card has one row in one order, its buttons in their places across a step: its own pressed, those that do not apply disabled", () => {
+  const row = (state, opts = { discard: true }) => reviewActions(state, opts).map((a) => `${a.key}${a.pressed ? "*" : ""}${a.disabled ? "-" : ""}`).join(" ");
   const pending = { kind: "pending", step: null };
   const lost = { kind: "lost", closest: { percent: 70 }, step: null };
-  assert.equal(row(pending), "accept move");
-  assert.equal(row({ ...pending, step: "accepted" }), "accept* move", "Move… still moves an accepted one");
-  assert.equal(row({ ...pending, step: "moved" }), "accept- move*");
-  assert.equal(row(lost, { discard: "delete" }), "place move discard");
-  assert.equal(row({ ...lost, step: "placed" }, { discard: "delete" }), "place* move discard-", "nothing lost to discard");
-  assert.equal(row({ ...lost, step: "discarded" }, { discard: "unplace" }), "place- move- discard*", "nothing on the page to place or move");
-  assert.equal(row({ ...lost, step: "moved" }, { discard: "delete" }), "place- move* discard-");
-  // no closest match, or no Use closest match for this viewer; Discard only when what it does is known
-  assert.equal(row({ ...lost, closest: null }, { discard: "delete" }), "move discard");
-  assert.equal(row(lost, { place: false }), "move");
+  const bare = { ...lost, closest: null };
+  // dashed: Accept, Move…, Discard
+  assert.equal(row(pending), "accept move discard");
+  assert.equal(row({ ...pending, step: "accepted" }), "accept* move discard-", "Move… still moves an accepted one; nothing to discard");
+  assert.equal(row({ ...pending, step: "moved" }), "accept move* discard-", "Accept takes the place the move gave it");
+  assert.equal(row({ ...pending, step: "discarded" }), "accept- move- discard*", "nothing on the page to accept or move");
+  // lost with a closest match: Accept waits for a place, Use closest match, Move…, Discard
+  assert.equal(row(lost), "accept- place move discard");
+  assert.ok(reviewActions(lost, { discard: true })[0].unplaced, "Accept: nothing placed yet");
+  assert.equal(row({ ...lost, step: "placed" }), "accept place* move discard-", "Accept after Use closest match; nothing lost to discard");
+  assert.equal(row({ ...lost, step: "moved" }), "accept place- move* discard-", "Accept after a move");
+  assert.equal(row({ ...lost, step: "accepted" }), "accept* place- move discard-", "the place accepted");
+  assert.equal(row({ ...lost, step: "discarded" }), "accept- place- move- discard*", "nothing on the page to accept, place or move");
+  assert.ok(!reviewActions({ ...lost, step: "moved" }, { discard: true })[0].unplaced);
+  // lost with nothing close: the same row without Use closest match
+  assert.equal(row(bare), "accept- move discard");
+  assert.equal(row({ ...bare, step: "moved" }), "accept move* discard-");
+  // the same set on a dashed card and a lost one without a closest match
+  assert.deepEqual(reviewActions(pending, { discard: true }).map((a) => a.key), reviewActions(bare, { discard: true }).map((a) => a.key));
+  // no Use closest match for this viewer; Discard only when the editor may
+  assert.equal(row(lost, { place: false, discard: true }), "accept- move discard");
+  assert.equal(row(pending, {}), "accept move");
   assert.deepEqual(reviewActions(null), []);
   // each button's step
-  assert.deepEqual(reviewActions(lost, { discard: "delete" }).map((a) => a.step), ["placed", "moved", "discarded"]);
+  assert.deepEqual(reviewActions(lost, { discard: true }).map((a) => a.step), ["accepted", "placed", "moved", "discarded"]);
+});
+
+test("Accept after a move or Use closest match on the card confirms that place, writing nothing", () => {
+  const [, B, C] = walkPage();
+  const to = at("m", 3, 10).position;
+  // a lost one moved from its card: Accept confirms the move, its undo back on Moved
+  const moved = reviewStep("moved", { position: B.position, quote: "old" }, to);
+  const ok = reviewStep("accepted", { position: to, prior: moved });
+  assert.deepEqual(ok, { kind: "accepted", before: { position: to }, after: to, prior: moved, confirms: true });
+  assert.equal(stepInEffect(ok, { ...B, position: to }), true);
+  assert.deepEqual(stepOrigin(ok), { position: B.position, quote: "old" }, "the card as it was before the move");
+  assert.deepEqual(reviewCardState({ ...B, position: to }, { done: ok }), { ...reviewCardState(B), step: "accepted" });
+  // Use closest match, then Accept
+  const placed = reviewStep("placed", { position: B.position, quote: "old" });
+  assert.equal(reviewStep("accepted", { position: placed.after, prior: placed }).confirms, true);
+  // nothing placed it, or it moved on since: nothing to accept
+  assert.equal(reviewStep("accepted", { position: B.position }), null, "a lost one, unplaced");
+  assert.equal(reviewStep("accepted", { position: to }), null, "a solid one with no step");
+  assert.equal(reviewStep("accepted", { position: at("x", 4, 10).position, prior: moved }), null, "not where the move put it");
+  // a dashed one moved from its card: the same; Accept on it unmoved writes its acceptance
+  const movedC = reviewStep("moved", { position: C.position, quote: "q" }, to);
+  assert.equal(reviewStep("accepted", { position: to, prior: movedC }).confirms, true);
+  assert.ok(!("confirms" in reviewStep("accepted", { position: C.position })));
+  // the app's undo of the move: the confirming Accept is not in effect, nor the move; C is to check again
+  const steps = new Map([["C", { step: reviewStep("accepted", { position: to, prior: movedC }), h: C }]]);
+  assert.deepEqual(reviewList([C], steps).map((e) => [e.id, e.step]), [["C", null]]);
+  // and while the move stands, Accept's undo (back to its prior) leaves the move in effect
+  const back = new Map([["C", { step: movedC, h: C }]]);
+  assert.equal(reviewList([{ ...C, position: to }], back)[0].step, movedC);
+});
+
+test("a decision goes on to the next one still to check, after it in document order and round", () => {
+  const [A, B, C, D] = walkPage();
+  // the page as the steps left it: each where its step put it, a discarded one drawn no more
+  const list = (steps) => reviewList([A, B, C, D].filter((h) => steps.get(h.id)?.step.kind !== "discarded").map((h) => {
+    const s = steps.get(h.id)?.step;
+    return s?.after ? { ...h, position: s.after } : h;
+  }), steps);
+  // Accept on C (dashed): the next to check is D
+  const acceptC = reviewStep("accepted", { position: C.position });
+  let steps = new Map([["C", { step: acceptC, h: C }]]);
+  assert.equal(nextToCheck(list(steps), "C").id, "D");
+  // D discarded too: round to A
+  const discardD = { kind: "discarded", deleted: false, before: { position: D.position }, after: { pageNumber: 3 } };
+  steps = new Map(steps).set("D", { step: discardD, h: D });
+  assert.equal(nextToCheck(list(steps), "D").id, "A");
+  // a move waits for Accept: A moved is still to check, so Accept on B goes to it
+  const moveA = reviewStep("moved", { position: A.position, quote: "" }, at("a2", 1, 5).position);
+  const acceptB = reviewStep("accepted", { position: at("b2", 1, 400).position, prior: reviewStep("moved", { position: B.position, quote: "old" }, at("b2", 1, 400).position) });
+  steps = new Map(steps).set("A", { step: moveA, h: A }).set("B", { step: acceptB, h: B });
+  assert.equal(nextToCheck(list(steps), "B").id, "A");
+  assert.equal(reviewPlace(list(steps), "B").left, 1, "A alone is left");
+  // A accepted as well: none left, the card stays
+  steps = new Map(steps).set("A", { step: reviewStep("accepted", { position: moveA.after, prior: moveA }), h: A });
+  assert.equal(nextToCheck(list(steps), "A"), null);
+  assert.equal(reviewPlace(list(steps), "A").left, 0, "All reviewed");
+  // the decided are Accept and Discard; a move and Use closest match are not
+  assert.deepEqual([acceptC, discardD, moveA, reviewStep("placed", { position: B.position })].map(decided), [true, true, false, false]);
+  assert.equal(decided(null), false);
+  // not in the list: the first one to check; an empty list: none
+  assert.equal(nextToCheck(reviewList([A, B]), "gone").id, "A");
+  assert.equal(nextToCheck([], "A"), null);
+  assert.equal(nextToCheck(reviewList([A]), "A"), null, "itself alone is not the next");
+});
+
+test("the Document menu counts what the card counts left: one moved or placed on its card waits for Accept there too", () => {
+  const [A, B, C, D] = walkPage();
+  const to = at("a2", 2, 500).position;
+  // A moved on its card (solid now) and not accepted, B placed on its closest match, C accepted
+  const moveA = reviewStep("moved", { position: A.position, quote: "" }, to);
+  const placeB = reviewStep("placed", { position: B.position, quote: "old" });
+  const acceptC = reviewStep("accepted", { position: C.position });
+  const page = [{ ...A, position: to }, { ...B, position: placeB.after }, { ...C, position: acceptedPosition(C.position) }, D];
+  const steps = new Map([["A", { step: moveA, h: A }], ["B", { step: placeB, h: B }], ["C", { step: acceptC, h: C }]]);
+  const list = reviewList(page, steps);
+  assert.deepEqual(waitingForAccept(list), ["A", "B"]);
+  assert.deepEqual(ids(reviewQueue(page)), ["D"], "the queue alone no longer sees them");
+  const menu = reviewMenu(page, waitingForAccept(list));
+  assert.equal(menu.length, reviewPlace(list, "D").left, "the menu's count is the card's left");
+  assert.deepEqual(ids(menu), ["A", "D", "B"], "in document order where they are now: A on page 2, B on its match on page 5");
+  // Accept on A: it leaves both
+  const done = new Map(steps).set("A", { step: reviewStep("accepted", { position: to, prior: moveA }), h: A });
+  const after = reviewList(page, done);
+  assert.deepEqual(ids(reviewMenu(page, waitingForAccept(after))), ["D", "B"]);
+  assert.equal(reviewPlace(after, "D").left, 2);
+  // the walk started afresh (another page or file, a reload): the moved one counts as resolved
+  assert.deepEqual(ids(reviewMenu(page, [])), ["D"]);
+  assert.deepEqual(ids(reviewMenu(page, ["gone"])), ["D"], "an id the page no longer has is not counted");
+  assert.deepEqual(reviewMenu(null, ["A"]), []);
 });
 
 test("a step is in effect only while the highlight is as the step left it", () => {
@@ -255,7 +367,7 @@ test("a step is in effect only while the highlight is as the step left it", () =
 
 test("the app's own undo of a move started from an accepted or placed card leaves that card's step in effect", () => {
   const [A, B, C, D] = walkPage();
-  const row = (state) => reviewActions(state, { discard: "delete" }).map((a) => `${a.key}${a.pressed ? "*" : ""}${a.disabled ? "-" : ""}`).join(" ");
+  const row = (state) => reviewActions(state, { discard: true }).map((a) => `${a.key}${a.pressed ? "*" : ""}${a.disabled ? "-" : ""}`).join(" ");
   // Accept on C, then Move… from its accepted card: the steps hold the move, its prior the Accept
   const accepted = reviewStep("accepted", { position: C.position });
   const moved = reviewStep("moved", { position: accepted.after, quote: "q", prior: accepted }, at("m", 1, 5).position);
@@ -275,7 +387,7 @@ test("the app's own undo of a move started from an accepted or placed card leave
   assert.deepEqual([reviewPlace(list, "B").next.id, reviewPlace(list, "D").prev.id], ["C", "C"], "Previous and Next still reach it");
   const state = reviewCardState(list[2].h, { done: list[2].step });
   assert.deepEqual(state, { ...reviewCardState(C), step: "accepted" }, "the pending card, Accept pressed");
-  assert.equal(row(state), "accept* move", "Move… usable again");
+  assert.equal(row(state), "accept* move discard-", "Move… usable again");
   // and by the drawn highlight alone, its stored position not known
   assert.equal(reviewList(all, steps)[2].step, accepted);
   // a redo (Ctrl+Y) of the move: Moved again
@@ -289,7 +401,7 @@ test("the app's own undo of a move started from an accepted or placed card leave
   const back = withPos([A, B, C, D], "B", placed.after, { content: { text: "new" } });
   list = reviewList(back, new Map([["B", { step: movedOn, h: B }]]), (id) => (id === "B" ? placed.after : undefined));
   assert.deepEqual(list.map((e) => [e.id, e.step?.kind || null]), [["A", null], ["B", "placed"], ["C", null], ["D", null]]);
-  assert.equal(row(reviewCardState(list[1].h, { done: list[1].step })), "place* move discard-");
+  assert.equal(row(reviewCardState(list[1].h, { done: list[1].step })), "accept place* move discard-");
 });
 
 test("each step on the card says what it changes, for its undo", () => {
@@ -474,9 +586,9 @@ test("Discard deletes a lost highlight that holds nothing of its own, and keeps 
   assert.equal(discardKind(hl({ content: "Why did this go?" })), "unplace", "its own note");
   assert.equal(discardKind(hl({ children: [{ id: "k", content: "", children: [], properties: {} }] })), "unplace", "a child block, even empty");
   assert.equal(discardKind(hl(), 1), "unplace", "a comment thread");
-  // only a lost one is discarded
+  // only a highlight to review is discarded: a lost one, a dashed one
   assert.equal(discardKind(hl({ properties: { pdf_position: at("s", 1, 10).position } })), null, "a solid highlight");
-  assert.equal(discardKind(hl({ properties: { pdf_position: { ...lostPos, lost: false, approx: true } } })), null, "a dashed one");
+  assert.equal(discardKind(hl({ properties: { pdf_position: { ...lostPos, lost: false, approx: true } } })), "delete", "a dashed one too");
   assert.equal(discardKind(hl({ properties: { pdf_position: { ...lostPos, pageNumber: 0 } } })), null, "no page to keep");
   assert.equal(discardKind(null), null);
   // kept as a note: its page alone, the shape of a highlight whose place is not known
@@ -530,7 +642,7 @@ test("Discard of one with a note keeps the note off the PDF, and its Undo puts i
   assert.equal(discardApplied(moved, "l", step), moved);
 });
 
-test("the comment threads decide, and only a lost highlight is discarded", () => {
+test("the comment threads decide, and only a highlight to review is discarded", () => {
   const tree = page();
   assert.equal(discardStep(tree, "l", 2).deleted, false, "threads keep it as a note");
   assert.equal(discardStep(tree, "a"), null, "a plain note");
@@ -538,6 +650,61 @@ test("the comment threads decide, and only a lost highlight is discarded", () =>
   assert.equal(discardUndone(tree, "l", null), tree);
   assert.equal(discardUndone(tree, "l", reviewStep("accepted", { position: { ...lostPos, approx: true, lost: false } })), tree,
     "another kind of step is not a discard's");
+  // what Discard would do, by what the highlight carries, whatever its place (the card's title after a step)
+  assert.deepEqual([discardOutcome(hl()), discardOutcome(hl({ content: "a note" })), discardOutcome(hl(), 1), discardOutcome(null)],
+    ["delete", "unplace", "unplace", null]);
+  assert.equal(discardOutcome(hl({ properties: { pdf_position: at("s", 1, 10).position } })), "delete", "a solid one too");
+});
+
+test("Discard on a dashed highlight: a bare one deleted, one with a note kept off the PDF, each undone", () => {
+  const prev = { doc_id: "ab12", pageNumber: 1, rects: [[0.1, 0.2, 0.5, 0.22]], quote: "measured by Hahn [27]" };
+  const dashed = { ...at("l", 2, 100, 72, { approx: true, match: 0.87, prev, doc_id: "ab12" }).position };
+  const rough = (extra = {}) => hl({ properties: { quote: "measured by Hahn [25]", color: "#ffe28f66", pdf_position: dashed }, ...extra });
+  // bare: deleted, put back dashed where it was
+  let tree = page(rough());
+  let step = discardStep(tree, "l");
+  assert.deepEqual([step.deleted, step.before.position], [true, dashed]);
+  let off = discardApplied(tree, "l", step);
+  assert.equal(findBlock(off, "l"), null);
+  assert.deepEqual(findBlock(discardUndone(off, "l", step), "l"), rough(), "back as it was, dashed, its prev kept");
+  // the card after it: the dashed card as it was, Discarded pressed, Accept and Move… off; it stays in the walk
+  const seen = blocksToHighlights(tree)[0];
+  const list = reviewList(blocksToHighlights(off), new Map([["l", { step, h: seen }]]), () => null);
+  assert.deepEqual(list.map((e) => [e.id, e.step]), [["l", step]]);
+  const state = reviewCardState(list[0].h, { done: list[0].step });
+  assert.deepEqual(state, { ...reviewCardState(seen), step: "discarded" });
+  assert.equal(reviewActions(state, { discard: true }).map((a) => `${a.key}${a.pressed ? "*" : ""}${a.disabled ? "-" : ""}`).join(" "),
+    "accept- move- discard*");
+  // with a note: kept, its page alone, its quote and note; undone, dashed again
+  tree = page(rough({ content: "Is [25] the same paper?" }));
+  step = discardStep(tree, "l");
+  off = discardApplied(tree, "l", step);
+  assert.deepEqual([step.deleted, findBlock(off, "l").properties.pdf_position, findBlock(off, "l").content],
+    [false, { pageNumber: 2 }, "Is [25] the same paper?"]);
+  assert.deepEqual(reviewQueue(blocksToHighlights(off)), [], "off the PDF and out of the queue");
+  assert.deepEqual(findBlock(discardUndone(off, "l", step), "l").properties.pdf_position, dashed);
+  assert.deepEqual(reviewQueue(blocksToHighlights(discardUndone(off, "l", step))).map((h) => h.id), ["l"]);
+});
+
+test("the note a highlight carries, as its card shows it", () => {
+  const block = hl({
+    content: "Check whether **[25]** is the [[Hahn 1950|same paper]].\n\n## Why\n- the numbering moved",
+    children: [{ id: "k", content: "Hahn 1950", children: [{ id: "k1", content: "", children: [], properties: {} }], properties: {} }],
+  });
+  assert.deepEqual(noteSummary(block, 2), { text: "Check whether [25] is the same paper.\nWhy\nthe numbering moved", under: 2, threads: 2 },
+    "its words line by line, the blocks under it at any depth, its threads");
+  assert.ok(carriesNote(noteSummary(block)));
+  // nothing of its own: nothing to show
+  const bare = noteSummary(hl());
+  assert.deepEqual(bare, { text: "", under: 0, threads: 0 });
+  assert.equal(carriesNote(bare), false);
+  assert.equal(carriesNote(noteSummary(hl({ content: "   " }))), false, "spaces are no note");
+  // a thread, or a block under it, alone
+  assert.ok(carriesNote(noteSummary(hl(), 1)));
+  assert.deepEqual(noteSummary(hl({ children: [{ id: "k", content: "", children: [], properties: {} }] })), { text: "", under: 1, threads: 0 });
+  // no block (deleted): none
+  assert.equal(noteSummary(null), null);
+  assert.equal(carriesNote(null), false);
 });
 
 test("after Discard the card stays as it was, Discarded; one it deleted stays in the walk, one deleted by others leaves it", () => {

@@ -39,7 +39,7 @@ import { useRecentIn } from "../guide/recent.js";
 import { DEFAULT_HIGHLIGHT, colorName, darkPageColor, darkPageLine, normalizeColor, pickerColors, swatchCss } from "../shared/model/palette.js";
 import { closestPlace, placedToCheck } from "../shared/model/blockModel.js";
 import { HighlightReview, useHighlightReview } from "./HighlightReview.jsx";
-import { pastLastPage } from "./highlightReview.js";
+import { pastLastPage, reviewList, waitingForAccept } from "./highlightReview.js";
 import { usePalette } from "../shared/ui/paletteContext.js";
 import { placeFloating, useFloatingPosition } from "../shared/ui/placement.js";
 import { t, tn } from "../shared/i18n/i18n.js";
@@ -520,18 +520,25 @@ async function fetchPdfData(url, onLoadState, isCancelled) {
 // lost) has a review card (HighlightReview.jsx): onAcceptHighlight(id),
 // onPlaceHighlight(id) (a lost one's closest match applied),
 // onMoveHighlight(id, step) (`step` the card's, when it had taken one),
-// onDiscardHighlight(id) (a lost one taken off the page: the step taken,
-// or null), discardOf(id) (what that Discard would do) and
+// onDiscardHighlight(id) (one taken off the page: the step taken, or
+// null), discardOf(id) (what that Discard would do) and
 // onUndoReview(id, step) (a step's button pressed again) are its actions,
 // an editor's; reviewPosition(id) is the block's stored pdf_position (null
 // when there is no such block), which says whether a step taken on a card
-// is still in effect; `fileId` is the stored file the page shows (a lost
+// is still in effect; reviewNote(id) the note the block carries
+// (highlightReview.js noteSummary, null for no block), which the card
+// shows; onReviewFollow(id) has the notes panel follow a card that went to
+// that highlight (a tap, Previous, Next, the advance after a decision, the
+// Document menu); onReviewWaiting(ids) is told the highlights a card
+// moved or placed on its closest match that wait for its Accept ([] for
+// none; the Document menu counts them); `fileId` is the stored file the page shows (a lost
 // one's picture is of the file its rectangles were measured on, when that
 // is another) and `pageId` the page: another of either starts the card's
-// walk afresh; reviewRef.current(id, {done, scroll}) scrolls to that one
-// and opens its card (the Document menu's Review; App after a move started
-// from the card, `done` what it did and scroll false).
-function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, areaKey = "Mod", peekKey = "Alt", hideEmbeddedAnnots, darkPage = false, translateKey = "", translateScope = null, translateParallel = 3, onTranslate, onTranslateBrief, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", selComment = false, highlighter = "", moveMode = false, marks, flashHighlightId = null, smoothWheel = false, commentMargin = null, marginRef = null, onMarginLost, onPageInView, zoomHeight = 200, onZoomHeight, onZoomChange, onAcceptHighlight, onPlaceHighlight, onMoveHighlight, onDiscardHighlight, discardOf, onUndoReview, reviewPosition = null, fileId = "", pageId = "", reviewRef = null }) {
+// walk afresh; reviewRef.current(id, {done, scroll, follow}) scrolls to
+// that one and opens its card (the Document menu's Review, `follow`; App
+// after a move started from the card, `done` what it did and scroll
+// false).
+function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, areaKey = "Mod", peekKey = "Alt", hideEmbeddedAnnots, darkPage = false, translateKey = "", translateScope = null, translateParallel = 3, onTranslate, onTranslateBrief, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", selComment = false, highlighter = "", moveMode = false, marks, flashHighlightId = null, smoothWheel = false, commentMargin = null, marginRef = null, onMarginLost, onPageInView, zoomHeight = 200, onZoomHeight, onZoomChange, onAcceptHighlight, onPlaceHighlight, onMoveHighlight, onDiscardHighlight, discardOf, onUndoReview, reviewPosition = null, reviewNote = null, onReviewFollow, onReviewWaiting, fileId = "", pageId = "", reviewRef = null }) {
   const tools = usePageTools(), { ink, text } = tools;
   const viewerRef = useRef(null);
   const [pdfDoc, setPdfDoc] = useState(null);
@@ -1327,20 +1334,35 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // records; no scroll: the selection is in sight). A place past the last
   // page (a lost one from a page the PDF no longer has) is not scrolled to:
   // its card stands in the viewer. Another page or file closes it and
-  // starts the card's walk afresh (the steps taken on cards).
-  const { card: reviewCard, steps: reviewSteps, review, drawn: reviewDrawn } = useHighlightReview();
-  const openReview = (id, { done = null, scroll = true, position = null, walked = "" } = {}) => {
+  // starts the card's walk afresh (the steps taken on cards). With
+  // `follow` (Previous, Next, the advance after a decision, the Document
+  // menu) and on a tap, the notes panel follows it (onReviewFollow).
+  const followRef = useRef(null);
+  followRef.current = onReviewFollow || null;
+  const { card: reviewCard, steps: reviewSteps, review, drawn: reviewDrawn } = useHighlightReview(followRef);
+  const openReview = (id, { done = null, scroll = true, position = null, walked = "", follow = false } = {}) => {
     if (displayedUrl !== url) return;
     const h = (highlights || []).find((x) => x.id === id) || null;
-    if (done) review.record(id, done, h, discardOf?.(id) || null);
+    if (done) review.record(id, done, h);
     const to = position || h?.position;
     if (!to) return;
     if (scroll && !pastLastPage(to, numPages)) scrollToPositionRef.current?.({ position: to });
     review.open(id, { walked });
+    if (follow) onReviewFollow?.(id);
   };
   if (reviewRef) reviewRef.current = openReview;
   useEffect(() => () => { if (reviewRef) reviewRef.current = null; }, [reviewRef]);
   useEffect(() => { review.reset(); }, [url, fileId, pageId, review]);
+  // The highlights a card moved or placed on its closest match, waiting
+  // for its Accept (waitingForAccept), told to App (onReviewWaiting), whose
+  // Document menu counts them with the review queue: none once the walk
+  // starts afresh, or once this viewer is gone.
+  const waitingKey = displayedUrl === url && reviewSteps.size
+    ? JSON.stringify(waitingForAccept(reviewList(highlights, reviewSteps, reviewPosition))) : "[]";
+  const waitingRef = useRef(null);
+  waitingRef.current = onReviewWaiting || null;
+  useEffect(() => { waitingRef.current?.(JSON.parse(waitingKey)); }, [waitingKey]);
+  useEffect(() => () => waitingRef.current?.([]), []);
   // A lost highlight's closest match, outlined on its page while its card
   // shows it (Show), which scrolls there.
   const ghostOf = reviewCard?.ghost && displayedUrl === url ? (highlights || []).find((x) => x.id === reviewCard.id) : null;
@@ -1949,7 +1971,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       )}
       </div>
       <HighlightReview card={reviewCard} steps={reviewSteps} review={review} drawn={reviewDrawn}
-        highlights={displayedUrl === url ? highlights : null} positionOf={reviewPosition}
+        highlights={displayedUrl === url ? highlights : null} positionOf={reviewPosition} noteOf={reviewNote}
         viewerRef={viewerRef} darkPage={darkPage} fileId={fileId} pageCount={displayedUrl === url ? numPages : 0}
         onAccept={onAcceptHighlight} onPlace={onPlaceHighlight}
         onMove={onMoveHighlight} onDiscard={onDiscardHighlight} discardOf={discardOf}

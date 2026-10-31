@@ -596,7 +596,7 @@ track of the ones nothing uses.
   `pdf_position.doc_id` and `pdf_position.prev.doc_id`. Those two name the
   file a highlight's rectangles were measured on, after a replacement, and
   stay until the highlight is resolved (Accept, Use closest match, a move,
-  or a run that places it solid). So **a pending highlight holds its
+  Discard, or a run that places it solid). So **a pending highlight holds its
   file**: its review card's Before picture and a later run read it
   ([highlight_relocation.md](highlight_relocation.md)). `unstored` names no
   file. A mirror's file transfer and

@@ -741,16 +741,18 @@ The scenarios live in `tests/e2e/scenarios/`:
   text": the job's result, a highlight left hollow (on a flipped page and
   in the notes too), attach mode and move mode ending each other, two
   renumbered citations matched roughly and drawn dashed, their review card
-  on hover (the before picture, the changed words, the row on one line,
-  Next; Accept leaving the card as it was within a pixel, Accepted pressed,
-  pressed again making it dashed again, staying while another is hovered,
+  on hover (the before picture, the changed words, the steps on one line
+  and the walk's controls under them, Next with the notes following;
+  Accept leaving the card as it was within a pixel, Accepted pressed, then
+  going on to the next one to check, pressed again making it dashed again,
+  a press within the moment keeping the card, staying while another is hovered,
   a move from it, Ctrl+Z taking the move back to Accepted pressed with the
   count kept and Ctrl+Y bringing Moved back, and that move's undo back to
   Accepted), the hollow one's
   card (the picture of the first file, Previous and Next walking the dashed
   and the hollow ones in document order and round, the accepted one kept
-  in the walk and the count with it, Move… reopening it Moved and "All
-  reviewed", Moved pressed again) and the Document menu's
+  in the walk and the count with it, Accept disabled until Move… reopens
+  it Moved, Accept then "All reviewed", Moved pressed again) and the Document menu's
   Review and Accept, the move to a selection by hand with no translation of
   it, a second move by an area drag clearing the quote and putting no
   picture in the chat, and an account that applies only exact matches
@@ -759,12 +761,19 @@ The scenarios live in `tests/e2e/scenarios/`:
   hollow highlight's card scrolled out of sight and back, Discard
   deleting a bare one or keeping one with a note off the PDF, the card the
   same after it and Discarded pressed again bringing it back, the
-  discarded one kept in the walk; then a hollow highlight's card
+  discarded one kept in the walk, each Discard going on to the next one;
+  then a review card's note and counts, the notes panel following Next and
+  the advance to its block with the focus kept in the card, the same row
+  on a dashed card and a hollow one, Accept after Move… going on to the
+  next one to check, and Discard on dashed ones deleting a bare one or
+  keeping one with a note, undone in place; then a card on a short window
+  giving the note's room before its comparison's, and the Document menu
+  counting one moved on its card until Accept; then a hollow highlight's card
   following Show to a closest match pages away, one lost from a page
   the new version dropped reached by Next, its card standing in the viewer,
   Enter on Use closest match to that far page and Enter again with the
   focus kept on the button through the card's hiding, and the lost card's
-  row on one line on a 360 px phone in English and Chinese
+  steps on one line on a 360 px phone in English and Chinese
   ([highlight_relocation.md](highlight_relocation.md)).
 - `translation.mjs`: a two-column page whose paragraph runs over the column
   break: the request carries one text with `{br}`, the formulas and the
