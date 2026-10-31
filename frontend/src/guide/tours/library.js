@@ -34,7 +34,7 @@ export default {
       title: T("Type to filter by title or label"),
       body: T("With no match, {key:Enter} searches inside notes and PDFs."),
       scene: [{ click: "home.filter", at: [0.3, 0.5] }, { type: "home.filter" }] },
-    { id: "lib-select", anchor: "home.select", placement: "bottom",
+    { id: "lib-select", anchor: "home.select", placement: "bottom", media: "library-select",
       title: T("**Select** to move or label many at once"),
       body: T("{key:Mod}+click or {key:Shift}+click works too.") },
     { id: "lib-find", anchor: null,

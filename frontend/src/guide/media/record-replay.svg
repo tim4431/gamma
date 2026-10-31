@@ -1,0 +1,52 @@
+<svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg" focusable="false">
+  <!-- The microphone in the tool column is pressed and lights; the recording
+       pill comes up at the foot of the page, its wave running; the pen
+       writes a word in the margin; the recording lands in Notes and a link
+       draws from the word to it -->
+  <rect class="m-well" x="10" y="10" width="206" height="180" rx="6" />
+  <rect class="m-card" x="16" y="18" width="20" height="70" rx="5" />
+  <path class="m-glyph" d="M21.5 36.5l7-7 2.5 2.5-7 7h-2.5z" />
+  <rect class="m-glyph" x="23.5" y="45" width="5" height="9" rx="2.5" /><path class="m-glyph" d="M21 52a5 5 0 0 0 10 0M26 57v3" />
+  <circle class="m-glyph" cx="25" cy="72" r="4" /><path class="m-glyph" d="M28 75l3 3" />
+  <g class="m-light" style="--m-at: 0.18">
+    <rect class="m-chip-on" x="18.5" y="42" width="15" height="21" rx="4" />
+    <rect class="m-glyph-on" x="23.5" y="45" width="5" height="9" rx="2.5" /><path class="m-glyph-on" d="M21 52a5 5 0 0 0 10 0M26 57v3" />
+  </g>
+  <rect class="m-card" x="44" y="18" width="164" height="172" rx="2" />
+  <rect class="m-line" x="54" y="30" width="70" height="6" rx="3" />
+  <rect class="m-line-dim" x="54" y="44" width="140" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="54" y="51" width="132" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="54" y="58" width="140" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="54" y="65" width="96" height="3.5" rx="1.75" />
+  <rect class="m-well" x="54" y="78" width="140" height="40" rx="2" />
+  <path class="m-glyph" d="M62 110L76 98L88 104L102 90L120 97" />
+  <rect class="m-line-dim" x="54" y="128" width="140" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="54" y="135" width="120" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="54" y="142" width="140" height="3.5" rx="1.75" />
+  <path class="m-ink m-draw" pathLength="1" style="--m-at: 0.4" d="M60 166c3-7 7-7 8 0s5 7 8 0 5-7 8 0 5 7 8 0 5-7 8 0" />
+  <g class="m-appear" style="--m-at: 0.2">
+    <rect class="m-card" x="120" y="160" width="80" height="20" rx="10" />
+    <circle class="m-chip-on" cx="131" cy="170" r="3.5" />
+    <path class="m-glyph" d="M184 166v8M189 166v8" />
+  </g>
+  <path class="m-glyph-on m-draw" pathLength="1" style="--m-at: 0.24" d="M140 170l3-4 3 8 3-10 3 12 3-8 3 6 3-4 3 2" />
+  <rect class="m-card" x="222" y="10" width="88" height="180" rx="6" />
+  <path class="m-glyph" d="M228 15h.01M231 15h.01M228 18h.01M231 18h.01M228 21h.01M231 21h.01" />
+  <rect class="m-line" x="236" y="16" width="24" height="4" rx="2" />
+  <path class="m-rule" d="M222 26H310" />
+  <circle class="m-line-dim" cx="230" cy="37" r="1.6" /><rect class="m-line-dim" x="235" y="35.25" width="60" height="3.5" rx="1.75" />
+  <circle class="m-line-dim" cx="230" cy="49" r="1.6" /><rect class="m-line-dim" x="235" y="47.25" width="48" height="3.5" rx="1.75" />
+  <circle class="m-line-dim" cx="230" cy="61" r="1.6" /><rect class="m-line-dim" x="235" y="59.25" width="56" height="3.5" rx="1.75" />
+  <g class="m-appear" style="--m-at: 0.6">
+    <rect class="m-chip" x="228" y="72" width="76" height="28" rx="5" />
+    <path class="m-glyph-on" d="M235 80v8l7-4z" />
+    <rect class="m-line-dim" x="248" y="79" width="48" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="248" y="87" width="32" height="3.5" rx="1.75" />
+  </g>
+  <path class="m-link m-draw" pathLength="1" style="--m-at: 0.64" d="M102 160C140 132 190 96 227 88" />
+  <circle class="m-ripple m-press" style="--m-at: 0.13" cx="26" cy="52" r="7" />
+  <g class="m-move" style="--m-at: 0.54; --m-dx: -14; --m-dy: 0"><g class="m-move" style="--m-at: 0.47; --m-dx: -13; --m-dy: 0"><g class="m-move" style="--m-at: 0.4; --m-dx: -13; --m-dy: 0">
+  <g class="m-move" style="--m-at: 0.3; --m-dx: -34; --m-dy: -114"><g class="m-move" style="--m-at: 0.02; --m-dx: 124; --m-dy: 68">
+    <g transform="translate(98.76 164.76) scale(0.62)"><path class="m-pointer" d="M2 2 L2 20 L7 15.5 L10.5 23 L14 21.5 L10.5 14 L17 14 Z" /></g>
+  </g></g></g></g></g>
+</svg>

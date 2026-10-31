@@ -1,6 +1,7 @@
 import { T } from "../../shared/i18n/i18n.js";
 // Offered when an AI reply first cites a passage: the demo follows the
-// citation, and the PDF marks the quote it names.
+// citation, and the PDF marks the quote it names. The clip holds still while
+// the demo clicks, then plays the same jump in miniature.
 export default {
   id: "citations",
   version: 1,
@@ -9,7 +10,8 @@ export default {
   offerPlacement: "top",
   offer: { title: T("Answers cite their sources"), line: T("See how a citation opens the exact passage.") },
   steps: [
-    { id: "citation-open", anchor: "chat.citation", placement: "top", title: T("A citation opens what it quotes"),
+    { id: "citation-open", anchor: "chat.citation", placement: "top", media: "citation-jump",
+      title: T("A citation opens what it quotes"),
       body: T("Hover one first to preview the quote."),
       bodyTouch: T("Long-press one first to preview the quote."),
       do: [{ click: "chat.citation" }, { waitFor: { event: "citation.shown" }, timeout: 15000 }, { wait: 400 }] },

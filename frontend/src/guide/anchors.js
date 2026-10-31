@@ -17,7 +17,10 @@
 // table the user just made); the first one otherwise, and when nothing is
 // marked. An anchor inside inert content is none: a folded dock window keeps
 // its body mounted, out of sight and inert (DockWindow), and nothing there
-// can be pointed at until it opens.
+// can be pointed at until it opens. settings: the Settings pane the anchor
+// is in; the engine opens Settings there before its `open` path (a setup
+// guide's steps, guide/triggers.js), and closes it again for a later step
+// outside Settings.
 
 export const ANCHORS = {
   "header.view": { view: "desktop", description: "View menu: reopen closed windows" },
@@ -27,12 +30,16 @@ export const ANCHORS = {
   "chat.grip": { view: "desktop chat", description: "Chat title: drag to dock, double-click to collapse or expand" },
   "notes.grip": { view: "docked notes", description: "Notes title: drag to dock, double-click to collapse or expand" },
   "comments.grip": { view: "docked comments", description: "Comments title: drag to dock, double-click to collapse or expand" },
+  "comments.thread": { view: "comment thread", pick: "last", description: "A comment thread: its comments, the reply field and, on the first, Resolve" },
   "header.home": { view: "any", description: "The Home button in the topbar; on a phone, the bottom bar's Library tab" },
   "header.back": { view: "nav", description: "Back to where you were before a link jump; there only after one" },
   "header.add": { view: "any", description: "Add — new page, PDF by URL / arXiv / DOI, uploads" },
   "header.tasks": { view: "any", description: "Background tasks (exports, backups, restores, imports, indexing, downloads, uploads); a row of the More sheet on a phone, without the anchor" },
   "header.inbox": { view: "any", description: "The Inbox bell with its unread count: mentions, replies, resolved threads, shares and invitations; a row of the More sheet on a phone, without the anchor" },
   "header.search": { view: "any", description: "Workspace search (Ctrl+F)" },
+  "search.panel": { view: "search", open: ["header.search"], description: "The search popover itself" },
+  "search.input": { view: "search", open: ["header.search"], surface: "search.panel", description: "The search box: a query, and the folder and label chips Tab makes" },
+  "search.results": { view: "search", open: ["header.search"], surface: "search.panel", description: "The search's answers, grouped: titles, notes, this PDF, other PDFs" },
   "header.share": { view: "page", description: "The Share button: the open page's, or on the library the open folder's" },
   "header.account": { view: "any", description: "Account & settings menu; on a phone, the bottom bar's More, the same menu with the topbar's other actions on top" },
   "account.menu": { view: "any", open: ["header.account"], description: "The account menu itself" },
@@ -54,6 +61,8 @@ export const ANCHORS = {
   "share.people": { view: "shared page", open: ["header.share"], surface: "share.popover", description: "Who has access: the invite box, you, the workspace's members, each invited person with their own access" },
   "share.stop": { view: "shared page", open: ["header.share"], surface: "share.popover", description: "Stop sharing beside the link, confirmed inline" },
   "pdf.viewer": { view: "pdf", description: "The PDF viewer" },
+  "page.document": { view: "page with a document", description: "The page's Document button: its PDF's menu (hide, download, replace, follow a file)" },
+  "page.follow": { view: "desktop pdf", open: ["page.document"], description: "Follow a file on this computer… in the Document menu: each new version of a PDF on disk becomes the page's" },
   "pdf.page": { view: "pdf", description: "Each rendered PDF page; supports rectangle drags" },
   "pdf.textLayer": { view: "pdf", description: "Selectable text on each rendered PDF page" },
   "pdf.highlightColor": { view: "pdf", open: ["pdf.textLayer"], description: "The first colour in the text selection palette" },
@@ -143,7 +152,13 @@ export const ANCHORS = {
   "chat.tools": { view: "chat", description: "Enable or disable assistant tools" },
   "chat.citation": { view: "citation", pick: "last", description: "A citation link in the newest chat reply" },
   "chat.approval": { view: "approval", pick: "last", description: "The card that asks before the assistant makes a change: what it would do, and the four answers" },
-  "sync.pill": { view: "mirror", description: "The sync pill of a workspace that has an offline copy or a publication" },
+  "sync.pill": { view: "mirror", description: "The sync pill of a workspace that has an offline copy, a publication or a Zotero link" },
+  "settings.zoteroLink": { view: "settings", settings: "workspaces", description: "Settings → Workspaces › Clones and Zotero links: Link a Zotero library…" },
+  "zotero.dialog": { view: "settings", settings: "workspaces", open: ["settings.zoteroLink"], description: "The Link a Zotero library dialog" },
+  "zotero.connect": { view: "settings", settings: "workspaces", open: ["settings.zoteroLink"], surface: "zotero.dialog", description: "The link dialog's Connect Zotero and Use an API key…, while no account is connected" },
+  "zotero.link": { view: "settings", settings: "workspaces", open: ["settings.zoteroLink"], surface: "zotero.dialog", description: "The link dialog's Link button" },
+  "settings.assistantSetup": { view: "settings", settings: "integrations", description: "Settings → Integrations › Connect an assistant: each assistant's setup command" },
+  "settings.assistantAccess": { view: "settings", settings: "integrations", description: "Settings → Integrations › Workspace access: the assistants connected, each to disconnect" },
 };
 
 export const ATTR = "data-guide";

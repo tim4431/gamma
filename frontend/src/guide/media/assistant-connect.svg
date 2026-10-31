@@ -1,0 +1,38 @@
+<svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg" focusable="false">
+  <!-- In a terminal the setup command types out; the browser's approval card
+       for the workspace comes up and the pointer presses Allow; back in the
+       terminal a tick says connected, a question to Gamma types out and the
+       answer arrives with a citation -->
+  <rect class="m-well" x="10" y="14" width="176" height="172" rx="6" />
+  <path class="m-glyph" d="M20 24h.01M26 24h.01M32 24h.01" />
+  <path class="m-rule" d="M10 32H186" />
+  <path class="m-glyph" d="M18 42l4 3-4 3" />
+  <path class="m-text m-draw" pathLength="1" style="--m-at: 0.02" d="M30 45H150" />
+  <path class="m-glyph-on m-draw" pathLength="1" style="--m-at: 0.44" d="M18 62l3 3 6-6" />
+  <rect class="m-line-dim m-appear" style="--m-at: 0.46" x="32" y="61" width="90" height="3.5" rx="1.75" />
+  <path class="m-glyph m-appear" style="--m-at: 0.48" d="M18 80l4 3-4 3" />
+  <path class="m-text m-draw" pathLength="1" style="--m-at: 0.5" d="M30 83H170" />
+  <g class="m-appear" style="--m-at: 0.68">
+    <rect class="m-line-dim" x="18" y="100" width="150" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="18" y="107" width="140" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="18" y="114" width="90" height="3.5" rx="1.75" />
+    <rect class="m-chip-on" x="112" y="112" width="28" height="8" rx="4" />
+    <rect class="m-line-dim" x="18" y="128" width="150" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="18" y="135" width="110" height="3.5" rx="1.75" />
+  </g>
+  <g class="m-appear" style="--m-at: 0.22">
+    <rect class="m-card" x="196" y="30" width="114" height="120" rx="8" />
+    <circle class="m-glyph-on" cx="253" cy="50" r="8" />
+    <rect class="m-line" x="214" y="66" width="78" height="5" rx="2.5" />
+    <rect class="m-line-dim" x="206" y="80" width="94" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="206" y="87" width="80" height="3.5" rx="1.75" />
+    <rect class="m-chip" x="206" y="98" width="94" height="14" rx="5" />
+    <rect class="m-chip" x="206" y="126" width="44" height="14" rx="7" />
+    <rect class="m-chip-on" x="256" y="126" width="44" height="14" rx="7" />
+  </g>
+  <rect class="m-link m-light" style="--m-at: 0.42" x="256" y="126" width="44" height="14" rx="7" />
+  <circle class="m-ripple m-press" style="--m-at: 0.37" cx="278" cy="133" r="7" />
+  <g class="m-move" style="--m-at: 0.26; --m-dx: -28; --m-dy: 57">
+    <g transform="translate(276.76 131.76) scale(0.62)"><path class="m-pointer" d="M2 2 L2 20 L7 15.5 L10.5 23 L14 21.5 L10.5 14 L17 14 Z" /></g>
+  </g>
+</svg>

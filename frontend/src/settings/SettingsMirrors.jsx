@@ -20,6 +20,7 @@
 // of published pages and a "more" menu of Sync now and Stop publishing all
 // (DELETE /api/pages/{id}/publish for each page), never the clone actions.
 import React from "react";
+import { guideEvents } from "../guide/events.js";
 import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { Section, SubDialog, Field, DialogButtons, IconChoices, Segmented, Empty, WorkspaceFolder } from "./SettingsKit";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
@@ -249,6 +250,8 @@ export function MirrorsSection({ mirrors, links, refresh, workspaces, currentId,
     setCreateError("");
     try {
       const link = await createZoteroLink(body);
+      // before the switch below reloads the app: a setup guide resumes there
+      guideEvents.emit("zotero.linked", { workspace: link.workspace_id });
       setCreating(null);
       setStatus?.(t("Syncing with Zotero in the background."));
       closeSettings?.();
@@ -434,7 +437,7 @@ export function MirrorsSection({ mirrors, links, refresh, workspaces, currentId,
             <button className="uiBtn sm" disabled={busy || loading} onClick={() => { setCreateError(""); setCreating("clone"); }}>
               <PlusIcon size={14} /> {t("Clone a remote workspace")}
             </button>
-            <button className="uiBtn sm" disabled={busy || loading} onClick={() => { setCreateError(""); setCreating("zotero"); }}>
+            <button className="uiBtn sm" disabled={busy || loading} data-guide="settings.zoteroLink" onClick={() => { setCreateError(""); setCreating("zotero"); }}>
               <BookIcon size={14} /> {t("Link a Zotero library…")}
             </button>
           </span>

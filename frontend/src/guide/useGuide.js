@@ -12,7 +12,8 @@ import { TOURS } from "./tours/index.js";
 import { previewHighlight } from "./previewHighlight.js";
 import { previewArea } from "./previewArea.js";
 import { typeDemoNote } from "./typeDemoNote.js";
-import { answersOffer, canOffer, createGuideProgress, factsMatch, guideStorage, retiresOffer, stepApplies, triggerMatches } from "./triggers.js";
+import { answersOffer, canOffer, createGuideProgress, createGuideTicks, factsMatch, guideStorage, retiresOffer, setupDone, setupIndex, setupTicks,
+  stepApplies, triggerMatches } from "./triggers.js";
 import { createRunLog, madeItems, recordEvent } from "./finish.js";
 import { t, T } from "../shared/i18n/i18n.js";
 import { chordLabel } from "../shared/lib/hotkeys.js";
@@ -160,10 +161,14 @@ async function revealAnchor(id, cancelled) {
 
 // Where a triggered tour's offer points: its own `offerAnchor` when the
 // first step sits inside a surface that may be closed, else that step's.
-const offerAnchor = (tour) => tour.offerAnchor || tour.steps[0]?.anchor || null;
+// `offerAnchor: null` keeps it in the corner (a setup guide's first step in a
+// Settings pane that is closed).
+const offerAnchor = (tour) => ("offerAnchor" in tour ? tour.offerAnchor : tour.steps[0]?.anchor) || null;
 const TRIGGERED = Object.values(TOURS).filter((tour) => tour.trigger);
 const TRIGGER_EVENTS = new Set(TRIGGERED.flatMap((tour) => [tour.trigger.event, tour.trigger.doneOn?.event, tour.trigger.answeredBy?.event])
   .filter(Boolean));
+// Setup guides (guide/triggers.js): their steps tick from these events wherever the user is.
+const SETUP = Object.values(TOURS).filter((tour) => tour.setup);
 const SETTLE_MS = 3000; // state-triggered offers wait for the app to settle after load
 const CREATES_GRACE_MS = 1500; // what turns up this soon was there already
 
@@ -193,14 +198,29 @@ export function useGuide({ enabled = true, suggest = true, scope = "", synced = 
   const syncedRef = useRef(synced);
   syncedRef.current = synced;
   const progress = useRef(null);
+  const ticks = useRef(null); // a setup guide's checklist, kept beside its progress
   const progressDemo = useRef(demo);
   if (!progress.current || progressDemo.current !== demo) {
     progress.current = createGuideProgress(guideStorage(demo), demo ? null : {
       get: () => (syncedRef.current?.ready ? syncedRef.current.value : null),
       set: (fn) => queueMicrotask(() => { if (syncedRef.current?.ready) syncedRef.current.set(fn); }),
     });
+    ticks.current = createGuideTicks(guideStorage(demo));
     progressDemo.current = demo;
   }
+  // Bumped when a setup guide's step is ticked, so its checklist redraws.
+  const [tickCount, setTickCount] = useState(0);
+  useEffect(() => {
+    if (!enabled || !scope || !SETUP.length) return undefined;
+    return guideEvents.subscribe((name, payload) => {
+      let added = false;
+      for (const tour of SETUP) {
+        const ids = setupTicks(tour, { name, payload });
+        if (ids.length && ticks.current.add(tour, scope, ids)) added = true;
+      }
+      if (added) setTickCount((n) => n + 1);
+    });
+  }, [enabled, scope]);
   // What only this browser knows goes up to the account's copy once it has
   // loaded, and again if a sync replaced it without those entries.
   const syncedReady = !!synced?.ready;
@@ -236,20 +256,22 @@ export function useGuide({ enabled = true, suggest = true, scope = "", synced = 
   // listed nor offered.
   const firstShown = (tour) => stepsFor(tour).find((s) => !s.intro && (!s.optional || anchorElement(s.anchor)));
 
-  const start = useCallback((tourId, at = 0) => {
+  const start = useCallback((tourId, at) => {
     const tour = TOURS[tourId];
     if (!tour) { console.warn(`guide: no tour "${tourId}"`); return false; }
     if (!enabled || tour.hint || !factsMatch(tour.requires, factsRef.current)) return false;
     // A run opens on its first real step: the intro is the offer's (the
     // welcome deck), and whoever starts a tour by name asked for the tour.
+    // A setup guide opens on its first step not done yet.
     const steps = stepsFor(tour).filter((s) => !s.intro);
-    if (!steps.length || at < 0 || at >= steps.length) return false;
+    const index = at ?? (tour.setup ? setupIndex(steps, ticks.current.read(tour, scope)) : 0);
+    if (!steps.length || index < 0 || index >= steps.length) return false;
     if (tour.show) servicesRef.current.show?.(tour.show);
     activity.current = "running";
     log.current = createRunLog();
     setOffer(null);
-    setRun({ tour, scope, steps, index: at, done: false });
-    progress.current.write(tour, scope, { state: "running", step: at });
+    setRun({ tour, scope, steps, index, done: false });
+    progress.current.write(tour, scope, { state: "running", step: index });
     return true;
   }, [enabled, scope]);
 
@@ -263,7 +285,8 @@ export function useGuide({ enabled = true, suggest = true, scope = "", synced = 
     if (!tour || tour.hint || !enabled || !factsMatch(tour.requires, factsRef.current)) return false;
     const first = firstShown(tour);
     if (!first) return false;
-    if (tour.show || !first.anchor) return true;
+    // A step in Settings opens its pane (the anchor's `settings`).
+    if (tour.show || !first.anchor || ANCHORS[first.anchor]?.settings) return true;
     return !!anchorElement([...(ANCHORS[first.anchor]?.open || []), first.anchor][0]);
   };
 
@@ -284,19 +307,25 @@ export function useGuide({ enabled = true, suggest = true, scope = "", synced = 
   // the engine scheduled for one step never moves a later one.
   // Past the last step the tour is done; one with a `finishCard` shows it
   // (still "running", so nothing else is offered meanwhile).
+  // A setup guide passes over the steps already done, and a step of it that
+  // only explains is done once read (Next); one with an event is done by
+  // the event, and skipping it leaves it to come back to.
   const advance = useCallback((from = null) => {
     setSkippedDemo(null);
     setRun((r) => {
       if (!r || (from !== null && r.index !== from)) return r;
       if (r.finishing) { activity.current = null; return null; }
-      if (r.index + 1 >= r.steps.length) {
+      const read = r.tour.setup && r.steps[r.index];
+      if (read && !read.advanceOn && ticks.current.add(r.tour, r.scope, [read.id])) queueMicrotask(() => setTickCount((n) => n + 1));
+      const to = r.tour.setup ? setupIndex(r.steps, ticks.current.read(r.tour, r.scope), r.index) : r.index + 1;
+      if (to < 0 || to >= r.steps.length) {
         progress.current.write(r.tour, r.scope, { state: "done" });
         finished.current = r.tour;
         if (r.tour.finishCard) return { ...r, finishing: true, done: false };
         activity.current = null;
         return null;
       }
-      return { ...r, index: r.index + 1, done: false };
+      return { ...r, index: to, done: false };
     });
   }, []);
   // A tour that ran to its end hands App its `restore` (the handwriting tour
@@ -313,6 +342,11 @@ export function useGuide({ enabled = true, suggest = true, scope = "", synced = 
   const back = useCallback(() => {
     setSkippedDemo(null);
     setRun((r) => (r && r.index > 0 ? { ...r, index: r.index - 1, done: false } : r));
+  }, []);
+  // A setup guide's checklist goes to any of its steps.
+  const goTo = useCallback((i) => {
+    setSkippedDemo(null);
+    setRun((r) => (r && !r.finishing && i >= 0 && i < r.steps.length ? { ...r, index: i, done: false } : r));
   }, []);
 
   const dismiss = useCallback(() => stop("dismissed"), [stop]);
@@ -336,12 +370,15 @@ export function useGuide({ enabled = true, suggest = true, scope = "", synced = 
   // offer, so the tour is not offered again. The deck was this load's one
   // offer; going to the Welcome page hands the load back to the contextual
   // tours, so the first thing done there may offer its own.
+  // A deck card's setup guide closes the deck as Explore on my own does,
+  // and starts.
   const welcomeAction = useCallback((id) => {
     if (id === "tour") { acceptOffer(); return; }
+    if (TOURS[id]?.setup) { closeOffer("dismissed"); start(id); return; }
     closeOffer("done");
     offeredThisLoad.current = false;
     servicesRef.current.openWelcome?.();
-  }, [acceptOffer, closeOffer]);
+  }, [acceptOffer, closeOffer, start]);
 
   useEffect(() => {
     if (!enabled) return undefined;
@@ -374,8 +411,18 @@ export function useGuide({ enabled = true, suggest = true, scope = "", synced = 
         }
       }
     }
-    if (!suggest || offeredThisLoad.current || activity.current || current.guideAvailable === false) return;
+    if (offeredThisLoad.current || activity.current || current.guideAvailable === false) return;
     if (!event && !settled) return;
+    // A setup guide the last load left running comes back as a card in the
+    // corner, whether or not tours are suggested: the user started it.
+    const resumed = !event && SETUP.find((tour) => progress.current.read(tour, scope)?.state === "running" && canStart(tour.id));
+    if (resumed) {
+      offeredThisLoad.current = true;
+      activity.current = "offered";
+      setOffer({ tour: resumed, scope, resume: true });
+      return;
+    }
+    if (!suggest) return;
     const tour = TRIGGERED.find((candidate) => canOffer(candidate, {
       facts: current, progress: progress.current.read(candidate, scope), event, seen: seen.current.get(candidate.id) || 0,
     }) && (candidate.hint || !!firstShown(candidate)));
@@ -402,7 +449,7 @@ export function useGuide({ enabled = true, suggest = true, scope = "", synced = 
   // Losing a prerequisite, switching account or turning suggestions off
   // removes the guide. A shown offer stays remembered.
   const runAvailable = enabled && run?.scope === scope && factsMatch(run?.tour.requires, facts);
-  const offerAvailable = enabled && suggest && offer?.scope === scope && facts.guideAvailable !== false
+  const offerAvailable = enabled && (suggest || !!offer?.resume) && offer?.scope === scope && facts.guideAvailable !== false
     && factsMatch(offer?.tour.requires, facts);
   useEffect(() => {
     if (run && !runAvailable) {
@@ -518,15 +565,22 @@ export function useGuide({ enabled = true, suggest = true, scope = "", synced = 
   // loads its link after it opens).
   const tidyRef = useRef(tidy);
   tidyRef.current = tidy;
+  const settingsOpened = useRef(false); // the last step was in Settings
   useEffect(() => {
-    if (!step) return undefined;
+    if (!step) { settingsOpened.current = false; return undefined; }
     let cancelled = false;
     const needed = step.reveal || step.anchor;
+    // An anchor in Settings opens its pane first; leaving Settings for a
+    // step outside it closes what the guide opened.
+    const pane = ANCHORS[needed]?.settings;
+    if (pane && !anchorElement(needed)) servicesRef.current.openSettings?.(pane);
+    else if (!pane && settingsOpened.current) servicesRef.current.closeSettings?.();
+    settingsOpened.current = !!pane;
     if (ANCHORS[needed]?.open) revealAnchor(needed, () => cancelled);
-    else tidyRef.current?.();
+    else if (!pane) tidyRef.current?.();
     const at = run.index;
     const timer = step.optional
-      ? setTimeout(() => { if (!anchorElement(step.anchor)) advance(at); }, 300) : 0;
+      ? setTimeout(() => { if (!anchorElement(step.anchor)) advance(at); }, pane ? 1500 : 300) : 0;
     const until = performance.now() + CREATES_GRACE_MS;
     const watch = step.creates ? setInterval(() => {
       if (anchorElement(step.creates)) advance(at);
@@ -563,22 +617,36 @@ export function useGuide({ enabled = true, suggest = true, scope = "", synced = 
   // its name), or a hint's one card. Stable while it stays up, so the
   // overlay keeps its anchor tracking.
   const offerTour = offerAvailable ? offer.tour : null;
+  const offerResume = offerAvailable && !!offer.resume;
   const offerCard = useMemo(() => {
     if (!offerTour) return null;
     const steps = stepsFor(offerTour);
     const intro = offerTour.welcome && steps[0]?.intro ? steps[0] : null;
+    // A deck card with a setup guide gets its way in where the guide can start.
     if (intro) return { ...intro, id: offerTour.id, welcome: true, minutes: offerTour.minutes, anchor: null,
-      welcomePage: !!factsRef.current.welcomePage };
+      welcomePage: !!factsRef.current.welcomePage,
+      setups: intro.features.map((f) => f.setup).filter((id) => id && canStart(id)) };
+    // A setup guide's card says how much of it is done; resumed, it is a
+    // card in the corner naming the next step.
+    const ticked = offerTour.setup ? ticks.current.read(offerTour, scope) : null;
+    const doneCount = ticked ? setupDone(steps, ticked).filter(Boolean).length : 0;
+    if (offerResume) {
+      const nextStep = steps[setupIndex(steps, ticked)];
+      return { id: offerTour.id, setup: true, resume: true, title: offerTour.title, anchor: null,
+        body: nextStep ? T("Next: {step}") : null, bodyArgs: nextStep ? { step: nextStep.title } : null,
+        count: steps.length, doneCount };
+    }
     return {
       id: offerTour.id,
       hint: !!offerTour.hint,
+      setup: !!offerTour.setup,
       title: offerTour.hint ? steps[0]?.title : offerTour.offer?.title || offerTour.title,
       body: offerTour.hint ? steps[0]?.body : offerTour.offer?.line,
       anchor: offerTour.hint ? steps[0]?.anchor || null : offerAnchor(offerTour),
       placement: offerTour.hint ? steps[0]?.placement : offerTour.offerPlacement,
-      count: steps.length,
+      count: steps.length, doneCount,
     };
-  }, [offerTour, factsKey]);
+  }, [offerTour, offerResume, factsKey, tickCount]);
   // The finish card: what the run made, and where to go next — "ai" asks
   // the paper (the AI chat tour, or connecting a provider first), "tours"
   // opens the account menu's Tours list.
@@ -601,6 +669,12 @@ export function useGuide({ enabled = true, suggest = true, scope = "", synced = 
       else servicesRef.current.openSettings?.("ai");
     } else if (id === "tours") showToursMenu();
   }, [stop, start]);
+  // A setup guide's card lists every step, each done or not.
+  const checklist = useMemo(() => {
+    if (!run?.tour.setup || run.finishing) return null;
+    const done = setupDone(run.steps, ticks.current.read(run.tour, run.scope));
+    return run.steps.map((s, i) => ({ id: s.id, title: s.title, done: done[i] }));
+  }, [run?.tour, run?.steps, run?.scope, run?.finishing, tickCount]);
   // Where a window would dock on that side, for a scene's drag (App's own
   // drop-preview geometry).
   const dockZone = useCallback((win, side) => servicesRef.current.dockZone?.(win, side) || null, []);
@@ -616,10 +690,13 @@ export function useGuide({ enabled = true, suggest = true, scope = "", synced = 
     index: run?.index ?? 0,
     done: !!run?.done,
     count: steps.length,
+    // A setup guide's steps that wait for their event (Your turn), and its list.
+    waits: !!run?.tour.setup && !!step?.advanceOn,
+    checklist, goTo,
     live: { ...live, busy },
     // next() also skips: a demo's actions stop when its step is left.
     start, next, back, dismiss, skipDemo,
     // The tours the Tours menu lists here, in registry order.
-    startable: () => Object.values(TOURS).filter((tour) => canStart(tour.id)).map(({ id, title }) => ({ id, title })),
+    startable: () => Object.values(TOURS).filter((tour) => canStart(tour.id)).map(({ id, title, setup }) => ({ id, title, setup: !!setup })),
   };
 }

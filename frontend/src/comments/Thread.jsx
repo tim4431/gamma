@@ -129,7 +129,7 @@ export function Thread({ thread, focused = false, active, onActivate, canComment
   };
   return (
     <section ref={ref} className={`commentThread${open ? "" : " resolved"}${focused ? " focused" : ""}${active ? " active" : ""}${canActivate ? " canReply" : ""}${collapsed ? " collapsed" : ""}`}
-      data-thread-id={thread.id}
+      data-thread-id={thread.id} data-guide="comments.thread"
       onClick={activate}
       tabIndex={canActivate ? 0 : undefined}
       aria-label={canActivate ? (canComment ? t("Reply to this thread") : t("Show this thread")) : undefined}

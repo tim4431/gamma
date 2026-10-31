@@ -23,8 +23,8 @@ export default {
     // under it and the corner on its top-left, so a card flipped onto the
     // strip or the corner's other side would cover the table they describe.
     { id: "table-add", anchor: "notes.tableAdd", avoid: "notes.table", placement: "bottom",
-      title: T("+ adds a row or column"), body: T("Hover one for its handle: drag it, or click for options."),
-      scene: [{ click: "notes.tableAdd" }] },
+      media: "table-grow",
+      title: T("+ adds a row or column"), body: T("Hover one for its handle: drag it, or click for options.") },
     { id: "table-whole", anchor: "notes.tableCorner", avoid: "notes.table", placement: "top",
       title: T("The corner selects the whole table"), body: T("Then copy, move or delete it."),
       scene: [{ click: "notes.tableCorner" }], next: T("Done") },

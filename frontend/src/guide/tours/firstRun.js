@@ -17,7 +17,9 @@ import { T } from "../../shared/i18n/i18n.js";
 // `welcome: true`: the first (`intro`) step is the welcome deck, the tour's
 // arrival offer (GuideOverlay's WelcomeDeck): what Gamma does, a card each
 // with its drawing (`media`, guide/media.js) and one line, the first card the
-// hero that carries this tour, then `more`, what has no drawing. Its way in
+// hero that carries this tour, then `more`, what has no drawing. A card whose
+// feature is set up in Settings or another app names its setup guide
+// (`setup`) and the words of its way in (`go`). Its way in
 // (`next`) opens the seeded Welcome page; the hero's button starts the tour.
 // A run never shows the intro: started from the deck, the Tours menu or the
 // library's "Take the 2-minute tour", the tour opens on its first step.
@@ -37,11 +39,14 @@ const WELCOME = {
     { media: "ink-pen", title: T("Write on the page"),
       line: T("Circle, sketch or type; every mark is a note.") },
     { media: "notability-sync", title: T("Notability, both ways"),
-      line: T("Bring notes in with their handwriting still live, and send pages back.") },
+      line: T("Bring notes in with their handwriting still live, and send pages back."),
+      setup: "notability", go: T("Show me how") },
     { media: "zotero-sync", title: T("In sync with Zotero"),
-      line: T("Highlights, notes and folders travel both ways through zotero.org.") },
+      line: T("Highlights, notes and folders travel both ways through zotero.org."),
+      setup: "zotero-link", go: T("Set it up") },
     { media: "assistants-mcp", title: T("Your AI tools, connected"),
-      line: T("Claude Code, Codex or any MCP client can search and read your papers.") },
+      line: T("Claude Code, Codex or any MCP client can search and read your papers."),
+      setup: "assistants", go: T("Connect one") },
   ],
   more: [
     { icon: "share", text: T("Share and edit together") },
