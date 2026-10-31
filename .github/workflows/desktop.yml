@@ -539,6 +539,13 @@ jobs:
               echo "</details>"
               echo
             fi
+            echo "## iPad app"
+            echo
+            btn "Join the TestFlight beta" 0D96F6 apple "https://testflight.apple.com/join/nTmSHDx6"
+            echo
+            echo
+            echo "Install Apple's TestFlight app, then open the link on the iPad. The iPad build of this release reaches TestFlight once it has been built and Apple has processed it."
+            echo
             echo "## Server (Docker)"
             echo
             btn "Docker image" 2496ED docker "https://github.com/$REPO/pkgs/container/${image##*/}"

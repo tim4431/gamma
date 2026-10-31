@@ -85,7 +85,8 @@ demo** button, the header's **Demo** link and the `/demo` short link go to the p
 throwaway guest workspace ([docs/dev/guests.md](../docs/dev/guests.md)).
 
 `_redirects` gives the short links (`/download`, `/download/windows`,
-`/connector` for the Chrome Web Store listing, `/guide`, `/github`, …); its sources must be relative paths, so the
+`/connector` for the Chrome Web Store listing, `/ipad` for the iPad app's
+TestFlight invitation, `/guide`, `/github`, …); its sources must be relative paths, so the
 redirect from `www.` and plain `http://` to `https://gammapdf.com` is the
 Worker script's job. It is one 301 hop, so search engines index only the
 https apex. `_headers` sets the security headers and a one-day cache on
