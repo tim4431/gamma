@@ -29,6 +29,7 @@ from gamma import notability_map as nmap
 from gamma import notability_write as nw
 from gamma import notebook, storage
 from gamma.db import ws_uploads_dir
+from gamma.notability_archive import parse_numbers
 from gamma.picture import is_picture, normalize_picture
 from gamma.text_box import normalize_text_box
 
@@ -498,10 +499,10 @@ def test_the_note_is_written_as_notability_writes_one(sample_trip):
     """Every class the .note shares with Notability's own export of the
     sample is written with the same class chain and the same keys, each
     inline or behind a UID as the app writes it, pointing at what the app's
-    points at: what its unarchiver decodes is where it looks. The app
-    writes three keys this note has no use for (a cropped picture's path,
-    a GIF's web address and the colour that needs it), and the note one of
-    Gamma's own."""
+    points at (a cropped picture's path at data, an uncropped one's at
+    null): what its unarchiver decodes is where it looks. The app writes
+    two keys this note has no use for (a GIF's web address and the colour
+    that needs it), and the note one of Gamma's own."""
     _before, _after, data = sample_trip
     for member in ("Session.plist", "metadata.plist"):
         theirs, their_classes = key_shapes(session_of(SAMPLE_NOTE.read_bytes(), member))
@@ -510,7 +511,7 @@ def test_the_note_is_written_as_notability_writes_one(sample_trip):
             assert our_classes[name] == their_classes[name], name
             keys = theirs[name].keys() | ours[name].keys()
             differ = {k for k in keys if theirs[name].get(k) != ours[name].get(k)}
-            assert differ <= {"$0", "remoteUrl", "UIRed-Double", "UIGreen-Double", "UIBlue-Double",
+            assert differ <= {"remoteUrl", "UIRed-Double", "UIGreen-Double", "UIBlue-Double",
                               nb.PRIVATE_KEY}, (name, differ)
         assert set(theirs) - set(ours) <= {"NSURL"}
     zf = zipfile.ZipFile(io.BytesIO(data))
@@ -626,6 +627,32 @@ def test_a_picture_box_s_obsidian_size_is_no_part_of_its_caption(owner, ws):
         assert surface["boxes"] == [] and [p["caption"] for p in surface["pictures"]] == captions
 
 
+def test_a_sticky_goes_out_over_the_pictures_and_boxes_it_lies_on(owner, ws):
+    """A sticky note, ink, lies over the pictures and boxes of its surface
+    on screen, and so it does in the note: its zIndex is above theirs. The
+    note comes back as it was, nothing said of a picture or box on it."""
+    pid = page(owner, "A sticky over a picture")
+    tag = pid[:6]
+    (sheet,) = insert(owner, pid, pid, [{"id": f"{tag}S", "props": {"sheet": A4}}])
+    space = {"kind": "canvas", "width": A4["width"], "height": A4["height"]}
+    made = shape_stroke("sticky", "rect", {"cx": 150, "cy": 150, "w": 200, "h": 200, "angle": 0}, band=0,
+                        color="#ffee88", size=nmap.STICKY_EDGE, fill={"color": "#ffee88", "opacity": 1})
+    sticky = {k: v for k, v in made.items() if k not in ("t0", "tool", "opacity")}  # as nmap.sticky_stroke makes one
+    insert(owner, pid, sheet, [
+        {"id": f"{tag}Ink", "props": {"ink_url": ink_url(owner, [sticky], space), "ink_strokes": 1}},
+        {"id": f"{tag}P", "content": "under the sticky", "props": {"picture": {
+            "url": stored_url(ws, fx.png(40, 30), ".png"), "x": 100, "y": 100, "w": 40, "h": 30}}},
+        {"id": f"{tag}B", "content": "under it too",
+         "props": {"text_box": {"x": 120, "y": 160, "w": 80, "h": 30, "auto": False}}}])
+    data = export(owner, pid)
+    members = fx_members(data)
+    media = nb.read_note(members, members.find("Session.plist").read(), path="Sticky.note").media
+    assert [m.kind for m in media] == ["picture", "text", "sticky"]  # by zIndex
+    report = reimport(owner, data, "A sticky over a picture.note")
+    assert report["warnings"] == []
+    assert view(owner, ws, report["pages"][0]["id"]) == view(owner, ws, pid)
+
+
 def test_a_picture_is_written_with_its_crop_turn_flips_and_caption():
     """An ImageMediaObject carries the picture's turn (radians), its crop in
     the file's pixels, its flips and its caption, where the reader finds
@@ -643,6 +670,55 @@ def test_a_picture_is_written_with_its_crop_turn_flips_and_caption():
     assert members.find(turned.picture).read() == draft.files["Images/Image 1.png"]
     assert (plain.rotation, plain.crop, plain.flip_h, plain.flip_v, plain.caption) == (0, (0, 0, 120, 80), False,
                                                                                        False, "")
+
+
+def figures(data: bytes) -> list[tuple[tuple, bytes | None]]:
+    """A .note's pictures' crops as their Figures hold them, in the order
+    written: the rectangle (FigureCropRectKey) and the path beside it
+    (``$0``), None when it is null."""
+    objects = plistlib.loads(session_of(data))["$objects"]
+    return [(parse_numbers(objects[o["FigureCropRectKey"].data], 4), objects[o["$0"].data] if o["$0"].data else None)
+            for o in objects if isinstance(o, dict) and "FigureCropRectKey" in o]
+
+
+def test_a_cropped_picture_holds_its_crop_as_the_path_notability_writes():
+    """Beside its crop rectangle a cropped picture's Figure holds the
+    rectangle again as a path, as Notability writes one: for the sample's
+    crop the sample's bytes, an archived CGPath that Gamma's reader reads
+    as the rectangle, closed. A picture shown whole holds none, as 16.1.5
+    writes it, its crop unset or the whole file."""
+    [(crop, path)] = [f for f in figures(SAMPLE_NOTE.read_bytes()) if f[1] is not None]
+    draft = nw.Draft(title="Crop path", width=612.0)
+    for c in (crop, None, (0, 0, 2250, 3000)):
+        draft.media.append(nw.Picture(x=0, y=0, w=90, h=62, image="Images/Image 1.jpg", pixels=(2250, 3000), crop=c))
+    assert figures(nw.note_bytes(draft)) == [(crop, path), ((0, 0, 2250, 3000), None), ((0, 0, 2250, 3000), None)]
+    x, y, w, h = crop
+    assert nb._path(path, nb.IDENTITY) == [([(x, y), (x + w, y), (x + w, y + h), (x, y + h), (x, y)], (1, 1, 1, 1))]
+
+
+def test_an_exported_cropped_picture_carries_its_crop_path(owner, ws):
+    """A cropped picture goes out with its crop path, a 13-byte head and
+    the rectangle's corners from its top-left round and back, whose
+    presence notesconverter takes as the sign of a crop; Gamma's reader
+    takes the crop from the rectangle beside it, as it was. A picture shown
+    whole goes out with none."""
+    pid = page(owner, "Crop paths")
+    tag = pid[:6]
+    (sheet,) = insert(owner, pid, pid, [{"id": f"{tag}S", "props": {"sheet": A4}}])
+    url = stored_url(ws, fx.png(120, 80), ".png")
+    insert(owner, pid, sheet, [
+        {"id": f"{tag}C", "props": {"picture": {"url": url, "x": 60, "y": 80, "w": 72, "h": 40,
+                                                "crop": {"x": 0.1, "y": 0.25, "w": 0.6, "h": 0.5}}}},
+        {"id": f"{tag}W", "props": {"picture": {"url": url, "x": 60, "y": 200, "w": 120, "h": 80}}}])
+    data = export(owner, pid)
+    (crop, path), whole = figures(data)
+    assert (crop, whole) == ((12, 20, 72, 40), ((0, 0, 120, 80), None))
+    x, y, w, h = crop
+    assert path[:13] == bytes.fromhex("25b3e548050000000001010101")
+    assert struct.unpack("<10d", path[13:]) == (x, y, x + w, y, x + w, y + h, x, y + h, x, y)
+    members = fx_members(data)
+    shown = nb.read_note(members, members.find("Session.plist").read(), path="Crop paths.note").media
+    assert [m.crop for m in shown] == [(12, 20, 72, 40), (0, 0, 120, 80)]
 
 
 def test_what_a_note_cannot_hold_is_said(owner, ws):

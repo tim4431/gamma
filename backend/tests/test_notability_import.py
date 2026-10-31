@@ -7,6 +7,7 @@ written (docs/dev/import_export.md "Notability notes")."""
 import hashlib
 import io
 import json
+import struct
 import tempfile
 import threading
 import zipfile
@@ -255,7 +256,7 @@ def at(x: float, y: float) -> tuple[float, float]:
 def test_a_turned_cropped_flipped_picture_keeps_its_file_and_its_numbers(accounts):
     """A picture comes in as a picture block of its file as it came, never
     decoded: the crop as fractions of the image, the turn in degrees, the
-    flips, the frame through the page's and the caption on one line."""
+    flips, the frame through the page's and the caption line by line."""
     owner, ws = accounts["nbi_owner"], workspace_of("nbi_owner")
     photo = fx.jpeg(400, 300)
     data = note("Turned picture", files={"Images/Image .jpg": photo},
@@ -267,7 +268,7 @@ def test_a_turned_cropped_flipped_picture_keeps_its_file_and_its_numbers(account
     sheet = subtree(owner, result["pages"][0]["id"])["children"][0]
     (block,) = sheet["children"]
     picture = block["properties"]["picture"]
-    assert block["content"] == "A \\|300 \\[x\\]" and "text_box" not in block["properties"]
+    assert block["content"] == "A \\|300\n\\[x\\]" and "text_box" not in block["properties"]
     assert stored(ws, picture["url"]) == photo and picture["url"].endswith(".jpg")
     (x, y), k = at(100, 100), 612 / 565
     assert (picture["x"], picture["y"], picture["w"], picture["h"]) == (
@@ -298,11 +299,33 @@ def test_an_animated_gif_comes_in_moving(accounts):
     assert cropped["angle"] == 57.3
 
 
+def test_an_animated_gif_without_its_still_frame_comes_in_as_its_animation(accounts):
+    """A GIF whose still frame the note lacks is its animation alone,
+    shown whole: silently when its crop is all of the still frame (at its
+    origin, with the animation's aspect), else said to be. The still frame
+    is not named missing."""
+    owner, ws = accounts["nbi_owner"], workspace_of("nbi_owner")
+    moving = fx.gif(48, 32, frames=3)
+    shown = {"kind": "picture", "size": (48, 32), "path": "Images/Gone.jpg", "gif": "A1"}
+    pictures = [{**shown, "origin": (10, 10), "crop": (0, 0, 24, 16)},  # the whole of a 24 x 16 still
+                {**shown, "origin": (100, 10), "crop": (0, 0, 12, 16)}]
+    result = imported(owner, note("Animation alone", media=pictures, files={"Assets/A1/media.gif": moving}),
+                      "Alone.note")
+    assert result["pictures_imported"] == 2 and result["pages"][0]["missing"] is False
+    assert reasons(result) == [
+        "1 picture shown cropped comes in whole: the note lacks the image its crop is measured on"]
+    sheet = subtree(owner, result["pages"][0]["id"])["children"][0]
+    for block in sheet["children"]:
+        picture = block["properties"]["picture"]
+        assert stored(ws, picture["url"]) == moving and picture["crop"] == {"x": 0, "y": 0, "w": 1, "h": 1}
+
+
 def test_a_picture_whose_file_is_missing_or_unreadable_is_left_out(accounts, monkeypatch):
-    """A picture whose file the note lacks, that is no PNG, JPEG, GIF or
-    WebP, whose header does not read or that is past MAX_HELD_BYTES is
-    left out, each said once; the rest come in. Nothing is decoded: a
-    picture of five billion pixels by its header is stored as it came."""
+    """A picture whose file the note lacks, that is no PNG, JPEG, GIF,
+    WebP, TIFF, BMP or AVIF, whose header does not read or that is past
+    MAX_HELD_BYTES is left out, each said once; the rest come in. Nothing
+    is decoded: a PNG of five billion pixels by its header is stored as it
+    came."""
     import struct
     import zlib
 
@@ -328,8 +351,8 @@ def test_a_picture_whose_file_is_missing_or_unreadable_is_left_out(accounts, mon
     result = imported(owner, data, "Unreadable.note")
     assert result["pictures_imported"] == 1
     assert sorted(reasons(result)) == sorted([
-        "Picture Text.png is left out: not a readable PNG, JPEG, GIF or WebP picture",
-        "Picture Broken.png is left out: not a readable PNG, JPEG, GIF or WebP picture",
+        "Picture Text.png is left out: not a readable PNG, JPEG, GIF, WebP, TIFF, BMP or AVIF picture",
+        "Picture Broken.png is left out: not a readable PNG, JPEG, GIF, WebP, TIFF, BMP or AVIF picture",
         "Picture Big.png is over 1 MB: left out",
         "Missing picture Images/Gone.png: left out", "Missing picture Images/Lost.png: left out"])
     (block,) = subtree(owner, result["pages"][0]["id"])["children"][0]["children"]
@@ -352,6 +375,144 @@ def test_an_ntb_picture_s_crop_is_in_its_logical_size(accounts):
     (picture,) = [c["properties"]["picture"] for c in sheet["children"] if c["properties"].get("picture")]
     assert stored(ws, picture["url"]) == png
     assert (picture["crop"], picture["angle"]) == ({"x": 0.25, "y": 0, "w": 0.5, "h": 0.5}, 17.19)
+
+
+def tiff(w: int, h: int, orientation: int = 1) -> bytes:
+    """A blue TIFF whose stored top-left 10 x 10 px are red, with an EXIF
+    orientation."""
+    from PIL import Image
+
+    image = Image.new("RGB", (w, h), (30, 90, 200))
+    image.paste((255, 0, 0), (0, 0, 10, 10))
+    out = io.BytesIO()
+    image.save(out, "TIFF", tiffinfo={274: orientation})
+    return out.getvalue()
+
+
+def picture_of(ws: str, url: str):
+    from PIL import Image
+
+    return Image.open(io.BytesIO(stored(ws, url)))
+
+
+def test_a_tiff_bmp_or_avif_picture_is_stored_as_a_png(accounts, monkeypatch):
+    """A TIFF, BMP or AVIF picture, which a page cannot hold, comes in as a
+    PNG of it as shown, turned as its EXIF orientation says, so its crop's
+    fractions hold; one past pdf_image.MAX_DECODED_PIXELS is left out
+    before it is decoded (its pixels cut short, so a decode would find it
+    unreadable), and so are HEIC, SVG and PDF files, each said."""
+    from PIL import Image
+
+    from gamma import pdf_image
+
+    def saved(kind: str) -> bytes:
+        out = io.BytesIO()
+        Image.new("RGB", (20, 10), (0, 160, 60)).save(out, kind)
+        return out.getvalue()
+
+    owner, ws = accounts["nbi_owner"], workspace_of("nbi_owner")
+    names = ["Turned.tif", "Plain.bmp", "Plain.avif", "Big.tif", "Photo.heic", "Drawing.svg", "Page.pdf"]
+    big = tiff(50, 50)
+    files = {"Images/Turned.tif": tiff(40, 30, orientation=6), "Images/Plain.bmp": saved("BMP"),
+             "Images/Plain.avif": saved("AVIF"), "Images/Big.tif": big[:len(big) // 2],
+             "Images/Photo.heic": b"\0\0\0\x18ftypheic\0\0\0\0mif1heic", "Images/Drawing.svg": b"<svg/>",
+             "Images/Page.pdf": fx.pdf()}
+    media = [{"kind": "picture", "origin": (10 + 60 * i, 10), "size": (30, 40), "path": f"Images/{name}"}
+             for i, name in enumerate(names)]
+    media[0]["crop"] = (15, 0, 15, 40)  # the right half of the picture as shown, 30 x 40
+    monkeypatch.setattr(pdf_image, "MAX_DECODED_PIXELS", 2000)
+    result = imported(owner, note("Other picture files", media=media, files=files), "Formats.note")
+    assert result["pictures_imported"] == 3
+    unreadable = "is left out: not a readable PNG, JPEG, GIF, WebP, TIFF, BMP or AVIF picture"
+    assert sorted(reasons(result)) == ["Picture Big.tif is left out: over 2,000 pixels",
+                                       f"Picture Drawing.svg {unreadable}", f"Picture Page.pdf {unreadable}",
+                                       f"Picture Photo.heic {unreadable}"]
+    sheet = subtree(owner, result["pages"][0]["id"])["children"][0]
+    turned, bmp, avif = (b["properties"]["picture"] for b in sheet["children"])
+    shown = picture_of(ws, turned["url"])
+    assert (turned["url"].endswith(".png"), shown.format, shown.size) == (True, "PNG", (30, 40))
+    assert shown.convert("RGB").getpixel((29, 0)) == (255, 0, 0)  # the stored top-left, turned a quarter clockwise
+    assert turned["crop"] == {"x": 0.5, "y": 0, "w": 0.5, "h": 1}
+    assert [(i.format, i.size) for i in (picture_of(ws, p["url"]) for p in (bmp, avif))] == [("PNG", (20, 10))] * 2
+
+
+def tiled_tiff(side: int, tile: int) -> bytes:
+    """A black grey TIFF ``side`` px square kept as one uncompressed tile
+    ``tile`` px square."""
+    tags = [(256, side), (257, side), (258, 8), (259, 1), (262, 1), (277, 1), (322, tile), (323, tile),
+            (324, None), (325, tile * tile)]
+    start = 8 + 2 + 12 * len(tags) + 4  # the tile, after the header and the one directory
+    entries = b"".join(struct.pack("<HHII", tag, 4, 1, start if value is None else value) for tag, value in tags)
+    return b"II*\0" + struct.pack("<IH", 8, len(tags)) + entries + bytes(4) + bytes(tile * tile)
+
+
+def test_a_converted_picture_keeps_its_look_and_a_tiff_s_tile_counts(accounts, monkeypatch):
+    """A converted picture keeps its look: a 16-bit big-endian grey TIFF
+    its 16 bits, a 32-bit one the 16 a PNG holds, a CMYK one its colours
+    but not its CMYK profile, which an RGB PNG cannot use; one of
+    floating-point samples, whose range is not said, is left out. A
+    TIFF's tile, decoded whole, counts against
+    pdf_image.MAX_DECODED_PIXELS as its pixels do."""
+    from PIL import Image
+
+    from gamma import pdf_image
+
+    def saved(image, **options) -> bytes:
+        out = io.BytesIO()
+        image.save(out, "TIFF", **options)
+        return out.getvalue()
+
+    owner, ws = accounts["nbi_owner"], workspace_of("nbi_owner")
+    greys = [257 * (i % 20) + 1 for i in range(200)]  # 20 greys, which 8 bits would not tell apart
+    deep, wide = Image.new("I;16B", (20, 10)), Image.new("I", (20, 10))
+    deep.putdata(greys)
+    wide.putdata(greys)
+    cmyk = bytes(16) + b"CMYK" + bytes(108)  # how a profile of CMYK colours begins
+    files = {"Images/Deep.tif": saved(deep), "Images/Wide.tif": saved(wide),
+             "Images/Print.tif": saved(Image.new("CMYK", (20, 10), (0, 255, 255, 0)), icc_profile=cmyk),
+             "Images/Float.tif": saved(Image.new("F", (20, 10), 0.5)), "Images/Tiled.tif": tiled_tiff(16, 64)}
+    media = [{"kind": "picture", "origin": (10 + 60 * i, 10), "size": (20, 10), "path": path}
+             for i, path in enumerate(files)]
+    monkeypatch.setattr(pdf_image, "MAX_DECODED_PIXELS", 2000)
+    result = imported(owner, note("Deep pictures", media=media, files=files), "Deep.note")
+    assert result["pictures_imported"] == 3
+    assert sorted(reasons(result)) == [
+        "Picture Float.tif is left out: not a readable PNG, JPEG, GIF, WebP, TIFF, BMP or AVIF picture",
+        "Picture Tiled.tif is left out: over 2,000 pixels"]
+    sheet = subtree(owner, result["pages"][0]["id"])["children"][0]
+    *greys_kept, printed = (picture_of(ws, b["properties"]["picture"]["url"]) for b in sheet["children"])
+    assert [(i.mode, sorted(set(i.get_flattened_data()))) for i in greys_kept] == [("I;16", sorted(set(greys)))] * 2
+    assert (printed.mode, printed.getpixel((0, 0)), "icc_profile" in printed.info) == ("RGB", (255, 0, 0), False)
+
+
+def test_an_ntb_s_tiff_picture_is_stored_as_a_png(accounts):
+    """An .ntb's picture asset of type image/tiff comes in as a .note's does."""
+    owner, ws = accounts["nbi_owner"], workspace_of("nbi_owner")
+    image = tiff(40, 30)
+    digest = hashlib.sha512(image).digest()
+    data = _ntb((22, (0, 12), tx.picture(digest, corner=(300, 60), size=(40, 30), mime="image/tiff")),
+                title="A TIFF", assets={f"{digest.hex()}.tiff": image})
+    result = imported(owner, data, "Tiff.ntb")
+    assert result["pictures_imported"] == 1 and not reasons(result)
+    sheet = subtree(owner, result["pages"][0]["id"])["children"][0]
+    (picture,) = [c["properties"]["picture"] for c in sheet["children"] if c["properties"].get("picture")]
+    shown = picture_of(ws, picture["url"])
+    assert (shown.format, shown.size) == ("PNG", (40, 30))
+
+
+def test_an_ntb_picture_on_its_sticky_note_is_said_to_be_covered(accounts):
+    """An .ntb's pictures and sticky notes are placed as a .note's: one
+    Notability draws over a sticky note, which Gamma draws over it, is
+    said to be."""
+    owner = accounts["nbi_owner"]
+    png = fx.png(40, 30)
+    digest = hashlib.sha512(png).digest()
+    data = _ntb((22, (0, 12), tx.sticky(corner=(300, 300))),
+                (22, (0, 13), tx.picture(digest, corner=(320, 320), size=(40, 30), logical=(40, 30))),
+                title="Covered", assets={f"{digest.hex()}.png": png})
+    result = imported(owner, data, "Covered.ntb")
+    assert result["pictures_imported"] == 1
+    assert reasons(result) == ["1 picture lies on a sticky note, which Gamma draws over it"]
 
 
 # --- many notes, re-import, filing ------------------------------------------------------------

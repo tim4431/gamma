@@ -36,7 +36,7 @@ import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .notability import PRIVATE_KEY, STYLE_HIGHLIGHTER, STYLE_PEN, STYLE_PENCIL, utf16_units
+from .notability import PATH_MAGIC, PRIVATE_KEY, STYLE_HIGHLIGHTER, STYLE_PEN, STYLE_PENCIL, utf16_units
 from .notability_archive import APPLE_EPOCH
 
 APP_VERSION = "16.1.5"           # the version whose files this writer copies
@@ -337,6 +337,17 @@ def rect(x: float, y: float, w: float, h: float) -> str:
     return "{{%s, %s}, {%s, %s}}" % (_num(x), _num(y), _num(w), _num(h))
 
 
+def crop_path(x: float, y: float, w: float, h: float) -> bytes:
+    """A crop rectangle as the path a cropped picture's Figure keeps beside
+    it (``$0``), byte for byte as the app writes one: an archived CGPath in
+    ``notability._path``'s layout, a move to the top-left corner and four
+    lines round the rectangle back to it. A picture shown whole has none
+    (null), as 16.1.5 writes it; readers such as notesconverter apply a
+    crop only when its path is there."""
+    corners = (x, y, x + w, y, x + w, y + h, x, y + h, x, y)
+    return PATH_MAGIC + struct.pack("<I5B10d", 5, 0, 1, 1, 1, 1, *corners)
+
+
 def cross_platform(rgba) -> str:
     return ",".join("%.15f" % v for v in rgba)
 
@@ -602,11 +613,14 @@ class _Session:
                 "strokeColor": a.gray(0.0, 1.0), "fillAlpha": 1.0,
                 "strokeColorCrossPlatform": a.string(cross_platform(BLACK)),
                 "rect": a.string(rect(0, 0, 0, 0))}, ("DrawObject",))
+            whole = (0, 0, *item.pixels)
+            crop = item.crop or whole
             fields["figure"] = a.obj("Figure", {
                 "kFigurePrimitiveObjectsArrayKey": a.array([]), "FigureObjectTypeKey": 1,
                 "FigureCanvasSizeKey": a.string(point(0, 0)),
-                "FigureCropRectKey": a.string(rect(*(item.crop or (0, 0, *item.pixels)))),
-                "$0": plistlib.UID(0), "FigureBackgroundObjectKey": image})
+                "FigureCropRectKey": a.string(rect(*crop)),
+                "$0": a.value(crop_path(*crop)) if crop != whole else plistlib.UID(0),
+                "FigureBackgroundObjectKey": image})
             if item.gif:
                 fields["isGif"] = True
                 fields["assetsIdKey"] = a.mutable_string(item.gif)
