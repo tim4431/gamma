@@ -1,0 +1,144 @@
+<svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg" focusable="false">
+  <!-- Arrange windows by their title: the pointer takes Chat by its grip,
+       carries it over the bottom (whose drop zone lights as it passes) and
+       on to the left, and lets go. Chat lands docked on the left, the paper
+       narrows between, and Notes takes the right side's whole height. The
+       places it can go show as dashed outlines while it is carried. The
+       zones are the dock's own: left 26 % of the width, bottom 32 % of the
+       height (App's dockPreviewRect; guide/media.js `shows`). -->
+
+  <!-- before: the paper, Notes above Chat on the right -->
+  <g class="m-leave" style="--m-at: 0.5">
+    <rect class="m-well" x="10" y="10" width="212" height="180" rx="6" />
+    <rect class="m-card" x="36" y="18" width="160" height="172" rx="2" />
+    <rect class="m-line" x="50" y="30" width="92" height="6" rx="3" />
+    <rect class="m-line-dim" x="50" y="44" width="132" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="50" y="51" width="128" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="50" y="58" width="132" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="50" y="65" width="100" height="3.5" rx="1.75" />
+    <rect class="m-well" x="50" y="76" width="64" height="40" rx="2" />
+    <path class="m-glyph" d="M56 108L68 96L80 102L94 86L108 92" />
+    <rect class="m-line-dim" x="120" y="78" width="62" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="120" y="85" width="58" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="120" y="92" width="62" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="120" y="99" width="48" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="50" y="126" width="132" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="50" y="133" width="124" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="50" y="140" width="132" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="50" y="147" width="112" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="50" y="154" width="132" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="50" y="161" width="90" height="3.5" rx="1.75" />
+  </g>
+  <g class="m-leave" style="--m-at: 0.5">
+    <rect class="m-card" x="228" y="10" width="82" height="86" rx="6" />
+    <path class="m-glyph" d="M234 15h.01M237 15h.01M234 18h.01M237 18h.01M234 21h.01M237 21h.01" />
+    <rect class="m-line" x="242" y="16" width="24" height="4" rx="2" />
+    <path class="m-rule" d="M228 26H310" />
+    <circle class="m-line-dim" cx="236" cy="36" r="1.6" />
+    <rect class="m-line-dim" x="241" y="34.25" width="58" height="3.5" rx="1.75" />
+    <circle class="m-line-dim" cx="236" cy="48" r="1.6" />
+    <rect class="m-line-dim" x="241" y="46.25" width="50" height="3.5" rx="1.75" />
+    <circle class="m-line-dim" cx="236" cy="60" r="1.6" />
+    <rect class="m-line-dim" x="241" y="58.25" width="60" height="3.5" rx="1.75" />
+    <circle class="m-line-dim" cx="236" cy="72" r="1.6" />
+    <rect class="m-line-dim" x="241" y="70.25" width="44" height="3.5" rx="1.75" />
+  </g>
+  <g class="m-leave" style="--m-at: 0.5">
+    <rect class="m-card" x="228" y="102" width="82" height="88" rx="6" />
+    <path class="m-glyph" d="M234 107h.01M237 107h.01M234 110h.01M237 110h.01M234 113h.01M237 113h.01" />
+    <rect class="m-line" x="242" y="108" width="20" height="4" rx="2" />
+    <path class="m-rule" d="M228 118H310" />
+    <rect class="m-chip" x="262" y="124" width="42" height="12" rx="6" />
+    <rect class="m-line-dim" x="234" y="144" width="62" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="234" y="151" width="54" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="234" y="158" width="40" height="3.5" rx="1.75" />
+    <rect class="m-chip" x="234" y="174" width="70" height="10" rx="5" />
+  </g>
+
+  <!-- after: Chat on the left, the paper between, Notes the whole right side -->
+  <g class="m-light" style="--m-at: 0.5">
+    <rect class="m-well" x="92" y="10" width="130" height="180" rx="6" />
+    <rect class="m-card" x="104" y="18" width="106" height="172" rx="2" />
+    <rect class="m-line" x="114" y="30" width="62" height="6" rx="3" />
+    <rect class="m-line-dim" x="114" y="44" width="86" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="114" y="51" width="82" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="114" y="58" width="86" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="114" y="65" width="64" height="3.5" rx="1.75" />
+    <rect class="m-well" x="114" y="76" width="42" height="28" rx="2" />
+    <path class="m-glyph" d="M118 99L126 91L134 95L142 84L151 88" />
+    <rect class="m-line-dim" x="160" y="78" width="40" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="160" y="85" width="36" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="160" y="92" width="40" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="114" y="114" width="86" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="114" y="121" width="80" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="114" y="128" width="86" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="114" y="135" width="70" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="114" y="142" width="86" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="114" y="149" width="58" height="3.5" rx="1.75" />
+  </g>
+  <g class="m-light" style="--m-at: 0.5">
+    <rect class="m-card" x="228" y="10" width="82" height="180" rx="6" />
+    <path class="m-glyph" d="M234 15h.01M237 15h.01M234 18h.01M237 18h.01M234 21h.01M237 21h.01" />
+    <rect class="m-line" x="242" y="16" width="24" height="4" rx="2" />
+    <path class="m-rule" d="M228 26H310" />
+    <circle class="m-line-dim" cx="236" cy="36" r="1.6" />
+    <rect class="m-line-dim" x="241" y="34.25" width="58" height="3.5" rx="1.75" />
+    <circle class="m-line-dim" cx="236" cy="48" r="1.6" />
+    <rect class="m-line-dim" x="241" y="46.25" width="50" height="3.5" rx="1.75" />
+    <circle class="m-line-dim" cx="236" cy="60" r="1.6" />
+    <rect class="m-line-dim" x="241" y="58.25" width="60" height="3.5" rx="1.75" />
+    <circle class="m-line-dim" cx="236" cy="72" r="1.6" />
+    <rect class="m-line-dim" x="241" y="70.25" width="44" height="3.5" rx="1.75" />
+    <circle class="m-line-dim" cx="236" cy="84" r="1.6" />
+    <rect class="m-line-dim" x="241" y="82.25" width="54" height="3.5" rx="1.75" />
+    <circle class="m-line-dim" cx="236" cy="96" r="1.6" />
+    <rect class="m-line-dim" x="241" y="94.25" width="60" height="3.5" rx="1.75" />
+    <circle class="m-line-dim" cx="236" cy="108" r="1.6" />
+    <rect class="m-line-dim" x="241" y="106.25" width="38" height="3.5" rx="1.75" />
+  </g>
+  <g class="m-light" style="--m-at: 0.5">
+    <rect class="m-card" x="10" y="10" width="76" height="180" rx="6" />
+    <path class="m-glyph" d="M16 15h.01M19 15h.01M16 18h.01M19 18h.01M16 21h.01M19 21h.01" />
+    <rect class="m-line" x="24" y="16" width="20" height="4" rx="2" />
+    <path class="m-rule" d="M10 26H86" />
+    <rect class="m-chip" x="38" y="32" width="42" height="12" rx="6" />
+    <rect class="m-line-dim" x="16" y="52" width="60" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="16" y="59" width="52" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="16" y="66" width="38" height="3.5" rx="1.75" />
+    <rect class="m-chip" x="16" y="174" width="64" height="10" rx="5" />
+  </g>
+
+  <!-- while it is carried: where it can go, and the zone it is over -->
+  <g class="m-leave" style="--m-at: 0.5">
+    <g class="m-light" style="--m-at: 0.16">
+      <rect class="m-slot" x="12" y="12" width="74" height="176" rx="5" />
+      <rect class="m-slot" x="12" y="134" width="296" height="54" rx="5" />
+    </g>
+  </g>
+  <rect class="m-zone m-blink" style="--m-at: 0.24" x="10" y="132" width="300" height="58" rx="6" />
+  <g class="m-leave" style="--m-at: 0.56">
+    <rect class="m-zone m-light" style="--m-at: 0.4" x="10" y="10" width="78" height="180" rx="6" />
+  </g>
+
+  <!-- the press on Chat's grip -->
+  <circle class="m-ripple m-press" style="--m-at: 0.14" cx="236" cy="110" r="7" />
+
+  <!-- the hand: up to the grip, then carrying Chat's title over the bottom
+       and on to the left; each leg nests inside the next -->
+  <g class="m-move" style="--m-at: 0.36; --m-dx: 152; --m-dy: 142">
+    <g class="m-move" style="--m-at: 0.18; --m-dx: 66; --m-dy: -50">
+      <g class="m-leave" style="--m-at: 0.5">
+        <g class="m-light" style="--m-at: 0.15">
+          <rect class="m-ghost" x="11" y="11" width="58" height="14" rx="4" />
+          <path class="m-glyph-on" d="M16 15h.01M19 15h.01M16 18h.01M19 18h.01M16 21h.01M19 21h.01" />
+          <rect class="m-line" x="24" y="16" width="20" height="4" rx="2" />
+        </g>
+      </g>
+      <g class="m-move" style="--m-at: 0.02; --m-dx: -86; --m-dy: 40">
+        <g transform="translate(16.76 16.76) scale(0.62)">
+          <path class="m-pointer" d="M2 2 L2 20 L7 15.5 L10.5 23 L14 21.5 L10.5 14 L17 14 Z" />
+        </g>
+      </g>
+    </g>
+  </g>
+</svg>

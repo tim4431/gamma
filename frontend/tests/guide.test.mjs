@@ -14,7 +14,7 @@ import { keyNames, keyText, resolveKey } from "../src/guide/keys.js";
 import { createRunLog, madeItems, recordEvent } from "../src/guide/finish.js";
 import { CARD_W, placeCard } from "../src/guide/place.js";
 import { MEDIA, mediaRatio } from "../src/guide/media.js";
-import { DOCK_WINDOWS, DOCK_ZONES, SCENE_KEYS, SCENE_KINDS } from "../src/guide/scene.js";
+import { DOCK_WINDOWS, DOCK_ZONES, POINTER_PATH, SCENE_KEYS, SCENE_KINDS } from "../src/guide/scene.js";
 
 function walk(dir, out = []) {
   for (const name of readdirSync(dir)) {
@@ -68,11 +68,12 @@ test("window tours require desktop controls and only offer after opening a PDF",
   assert.equal(canOffer(tour, { facts, seen: 1 }), false, "mere presence offers nothing");
   assert.equal(factsMatch(tour.requires, { phone: false, view: "home" }), true, "manual start works in the library without AI");
   assert.equal(factsMatch(tour.requires, { phone: true }), false);
-  // Two gestures on Chat's title, each shown by a scene and ticked by doing it.
+  // Two gestures on Chat's title, each shown by a clip on its card and
+  // ticked by doing it.
   assert.deepEqual(tour.steps.map((s) => s.id), ["window-collapse", "window-move"]);
   for (const s of tour.steps) {
     assert.equal(s.anchor, "chat.grip");
-    assert.ok(s.scene?.length && s.advanceOn && !s.required, `${s.id}: shown, light, ticked by the gesture`);
+    assert.ok(MEDIA[s.media]?.shows && s.advanceOn && !s.required, `${s.id}: shown, light, ticked by the gesture`);
   }
 });
 
@@ -197,10 +198,13 @@ test("a step's drawing is a registered id with a file, and every drawing is used
   const used = new Set();
   for (const tour of Object.values(TOURS)) {
     for (const step of tour.steps) {
-      if (!step.media) continue;
-      assert.ok(MEDIA[step.media], `${tour.id}/${step.id}: unregistered media ${step.media}`);
-      assert.ok(files.has(step.media), `${tour.id}/${step.id}: no guide/media/${step.media}.svg`);
-      used.add(step.media);
+      // A step's picture, and the welcome deck's, one per feature card.
+      for (const [where, id] of [[step.id, step.media], ...(step.features || []).map((f) => [`${step.id} card ${f.title}`, f.media])]) {
+        if (!id) continue;
+        assert.ok(MEDIA[id], `${tour.id}/${where}: unregistered media ${id}`);
+        assert.ok(files.has(id), `${tour.id}/${where}: no guide/media/${id}.svg`);
+        used.add(id);
+      }
     }
   }
   for (const id of Object.keys(MEDIA)) {
@@ -216,6 +220,35 @@ test("a step's drawing is a registered id with a file, and every drawing is used
     assert.equal(mediaRatio(id), m.ratio);
   }
   assert.equal(mediaRatio("nope"), 1.6, "an unknown id still gives the box a height");
+});
+
+// A clip draws a gesture and what the app does in answer, so it can go
+// stale when the behaviour changes. Its `shows` names what it depicts, and
+// this test holds both sides to it: the anchors, events and dock zones it
+// draws still exist, and a step showing it points at one of its controls
+// and advances on one of its outcomes. A step shows a clip or a scene,
+// never both: one thing moves at a time.
+test("a clip shows real controls and outcomes, and its steps are the ones it shows", () => {
+  for (const [id, m] of Object.entries(MEDIA)) {
+    if (!m.shows) continue;
+    for (const a of m.shows.anchors || []) assert.ok(ANCHORS[a], `media ${id} shows anchor ${a}, which guide/anchors.js does not register`);
+    for (const e of m.shows.events || []) assert.ok(EVENTS.includes(e), `media ${id} shows event ${e}, which guide/events.js does not catalogue`);
+    for (const z of m.shows.zones || []) assert.ok(DOCK_ZONES.includes(z), `media ${id} shows dock zone ${z}, not one of scene.js's DOCK_ZONES`);
+  }
+  let clips = 0;
+  for (const tour of Object.values(TOURS)) {
+    for (const step of tour.steps) {
+      const where = `${tour.id}/${step.id}`;
+      assert.ok(!(step.media && step.scene), `${where}: a clip or a scene, not both`);
+      const shows = MEDIA[step.media]?.shows;
+      if (!shows) continue;
+      clips++;
+      assert.ok(shows.anchors.includes(step.anchor), `${where} points at ${step.anchor}; its clip ${step.media} does not show it`);
+      if (step.advanceOn) assert.ok((shows.events || []).includes(step.advanceOn.event),
+        `${where} advances on ${step.advanceOn.event}; its clip ${step.media} does not show that event`);
+    }
+  }
+  assert.ok(clips > 0, "some step shows a clip");
 });
 
 // A drawing is inlined into the card, so it is built from guide/media.css's
@@ -247,6 +280,11 @@ test("a drawing keeps its colours and its rules to itself", () => {
   const grammar = new Set(selectors.map((s) => s.match(/^\.guideMedia \.([\w-]+)$/)?.[1]).filter(Boolean));
   assert.ok(grammar.has("m-card") && grammar.has("m-draw"), "media.css: the grammar's .guideMedia .m-… rules");
 
+  // An element takes one motion class (nest <g>s to combine two), and those
+  // that own the transform are placed by a parent's.
+  const MOTIONS = ["m-appear", "m-light", "m-draw", "m-leave", "m-blink", "m-move", "m-press", "m-fold"];
+  const OWNS_TRANSFORM = ["m-appear", "m-move", "m-press", "m-fold"];
+  for (const c of [...MOTIONS, "m-pointer", "m-ripple"]) assert.ok(grammar.has(c), `media.css: no .guideMedia .${c} rule`);
   const SHAPES = new Set(["svg", "g", "path", "rect", "circle", "ellipse", "line", "polyline", "polygon"]);
   const ATTRS = new Set(["xmlns", "viewBox", "focusable", "class", "style", "d", "pathLength", "transform",
     "x", "y", "width", "height", "rx", "ry", "cx", "cy", "r", "x1", "y1", "x2", "y2", "points"]);
@@ -267,15 +305,29 @@ test("a drawing keeps its colours and its rules to itself", () => {
       for (const a of Object.keys(attrs)) assert.ok(ATTRS.has(a), `${where}: ${a}= — paint, ids and handlers stay out; the classes carry the look`);
       const classes = (attrs.class || "").split(/\s+/).filter(Boolean);
       for (const c of classes) assert.ok(grammar.has(c), `${where}: no .guideMedia .${c} rule in media.css`);
-      if (attrs.style !== undefined) {
-        const order = attrs.style.match(/^\s*--m-at:\s*(\d*\.?\d+)\s*;?\s*$/);
-        assert.ok(order, `${where}: the only inline style is the motion order, --m-at`);
-        // the clock reaches 1 at the end of a loop: a later start would not
-        // finish, and the picture would not rest complete
-        assert.ok(+order[1] <= 0.7, `${where}: --m-at ${order[1]} is over 0.7`);
+      // The inline style is the motion's data and nothing else: when it
+      // starts (--m-at), and where a move comes from (--m-dx, --m-dy).
+      const decls = {};
+      for (const part of (attrs.style || "").split(";").map((d) => d.trim()).filter(Boolean)) {
+        const m = part.match(/^(--m-at|--m-dx|--m-dy):\s*(-?\d*\.?\d+)$/);
+        assert.ok(m, `${where}: inline style "${part}" — only --m-at, --m-dx and --m-dy, as numbers`);
+        decls[m[1]] = +m[2];
       }
+      // the clock reaches 1 at the end of a loop: a later start would not
+      // finish, and the picture would not rest complete
+      if ("--m-at" in decls) assert.ok(decls["--m-at"] >= 0 && decls["--m-at"] <= 0.7, `${where}: --m-at ${decls["--m-at"]} is outside 0-0.7`);
+      const motions = classes.filter((c) => MOTIONS.includes(c));
+      assert.ok(motions.length <= 1, `${where}: one motion class per element (${motions.join(", ")}); nest them`);
+      // custom properties inherit: a motion without its own would take a parent's
+      if (motions.length) assert.ok("--m-at" in decls, `${where}: ${motions[0]} needs its own --m-at`);
+      else assert.ok(!Object.keys(decls).length, `${where}: motion data on an element with no motion class`);
+      if (classes.includes("m-move")) assert.ok("--m-dx" in decls && "--m-dy" in decls, `${where}: m-move needs its own --m-dx and --m-dy`);
+      else assert.ok(!("--m-dx" in decls) && !("--m-dy" in decls), `${where}: --m-dx and --m-dy go on an m-move`);
       if (classes.includes("m-draw")) assert.equal(attrs.pathLength, "1", `${where}: m-draw needs pathLength="1"`);
-      if (classes.includes("m-appear")) assert.ok(!attrs.transform, `${where}: m-appear owns the transform; move it to a parent <g>`);
+      for (const c of OWNS_TRANSFORM) if (classes.includes(c)) assert.ok(!attrs.transform, `${where}: ${c} owns the transform; move it to a parent <g>`);
+      // the clip's hand is the scene's: the same pointer, a press its ripple
+      if (classes.includes("m-pointer")) assert.ok(name === "path" && attrs.d === POINTER_PATH, `${where}: m-pointer is a <path> of scene.js's POINTER_PATH`);
+      if (classes.includes("m-ripple")) assert.ok(classes.includes("m-press"), `${where}: m-ripple is a press's ring; give it m-press`);
     }
   }
 });
@@ -603,14 +655,19 @@ test("anyOf: at least one of the trigger's fact sets must hold", () => {
   assert.equal(canOffer(tour, { facts: { view: "page", a: true }, progress: null }), false, "requires still holds");
 });
 
-test("a welcome tour opens on an uncounted intro card, one per situation", () => {
+test("a welcome tour's intro is its welcome deck, one per situation", () => {
   const firstRun = TOURS["first-run"];
   assert.equal(firstRun.welcome, true);
   const intros = firstRun.steps.filter((s) => s.intro);
   assert.deepEqual(intros.map((s) => s.id), ["welcome", "welcome-demo"]);
   for (const s of intros) {
-    assert.equal(s.anchor, null, "the welcome card is centred");
-    assert.equal(s.outline.length, 3);
+    assert.equal(s.anchor, null, "the welcome deck is centred");
+    // Two rows of four, the hero two wide: seven cards, each a drawing over
+    // its title and line, no drawing twice.
+    assert.equal(s.features.length, 7);
+    assert.equal(new Set(s.features.map((f) => f.media)).size, s.features.length);
+    for (const f of s.features) assert.ok(f.media && f.title && f.line, `${s.id}: a card is a drawing, a title and a line`);
+    assert.ok(s.more.every((m) => m.icon && m.text), `${s.id}: what has no drawing is a word strip`);
     assert.ok(s.next && s.later && s.footnote);
   }
   assert.ok(firstRun.steps.slice(2).every((s) => !s.intro), "intro steps come first");

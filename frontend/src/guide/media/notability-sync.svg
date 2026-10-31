@@ -1,0 +1,60 @@
+<svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg" focusable="false">
+  <!-- Notability, both ways: a handwritten page on the iPad, left, comes
+       into Gamma, right, with its handwriting as ink you can keep writing
+       on, and the drawing turns up as a note beside the page. The pen adds
+       a stroke in Gamma, and the page goes back out as a .note with that
+       stroke on it. The accent is what crosses and what was added in
+       Gamma (docs/user_guide/user_guide.md, "Import and export";
+       guide/media.js). -->
+
+  <!-- the iPad, and the handwritten page on it -->
+  <rect class="m-card" x="12" y="28" width="108" height="150" rx="13" />
+  <rect class="m-well" x="20" y="36" width="92" height="134" rx="5" />
+  <rect class="m-card" x="26" y="42" width="80" height="122" rx="2" />
+  <path class="m-rule" d="M30 59.5H102M30 73.5H102M30 87.5H102M30 101.5H102M30 115.5H102M30 129.5H102M30 143.5H102" />
+  <path class="m-ink" d="M34 58c1.5-5.25 4.5-5.25 4.88 0c0.38-5.25 4.5-5.25 4.88 0c0.6 2.25 2.63 2.25 3.75-0.38c1.2-2.63 1.88-9-0.22-9c-1.95 0-1.5 6.75 1.2 9.3c1.8 1.5 4.13-0.15 4.72-2.7c0.45-1.95 3.75-2.25 3.9 0.15c0.15 2.25-3.45 3.15-4.05 0.75c-0.22-1.05 2.55-0.75 4.2 1.5c1.5 1.8 4.2-0.45 4.95-2.55c0.68-1.95 3.15-1.8 3-0.3c-0.15 1.8-2.7 2.55-2.85 1.05c-0.15-1.5 3-1.2 4.65 1.2c1.65 2.4 4.5 0.75 5.7-1.05" />
+  <path class="m-ink" d="M34 72c1.5-5.25 4.5-5.25 4.88 0c0.38-5.25 4.5-5.25 4.88 0c0.6 2.25 2.63 2.25 3.75-0.38c1.2-2.63 1.88-9-0.22-9c-1.95 0-1.5 6.75 1.2 9.3c1.8 1.5 4.13-0.15 4.72-2.7c0.45-1.95 3.75-2.25 3.9 0.15c0.15 2.25-3.45 3.15-4.05 0.75" />
+  <ellipse class="m-ink" cx="60" cy="108" rx="22" ry="9" />
+  <path class="m-ink" d="M36 128c4-4 8 2 12-1s7-3 10 0s8 2 11-1" />
+  <!-- the stroke added in Gamma, back on the iPad -->
+  <path class="m-link m-light" style="--m-at: 0.66" d="M33 77.5C45 81 66 80.5 82 75.5" />
+
+  <!-- in, and back out -->
+  <path class="m-rule" d="M128 90H178M178 114H128" />
+  <path class="m-link m-draw" pathLength="1" style="--m-at: 0.02" d="M128 90H178M173 85.5L178 90L173 94.5" />
+  <path class="m-link m-draw" pathLength="1" style="--m-at: 0.52" d="M178 114H128M133 109.5L128 114L133 118.5" />
+
+  <!-- Gamma: the same page in the viewer, its drawing a note beside it -->
+  <rect class="m-well" x="186" y="28" width="124" height="150" rx="6" />
+  <rect class="m-card" x="192" y="36" width="80" height="134" rx="2" />
+  <g class="m-light" style="--m-at: 0.12">
+    <path class="m-rule" d="M196 53.5H268M196 67.5H268M196 81.5H268M196 95.5H268M196 109.5H268M196 123.5H268M196 137.5H268" />
+    <path class="m-ink" d="M200 52c1.5-5.25 4.5-5.25 4.88 0c0.38-5.25 4.5-5.25 4.88 0c0.6 2.25 2.63 2.25 3.75-0.38c1.2-2.63 1.88-9-0.22-9c-1.95 0-1.5 6.75 1.2 9.3c1.8 1.5 4.13-0.15 4.72-2.7c0.45-1.95 3.75-2.25 3.9 0.15c0.15 2.25-3.45 3.15-4.05 0.75c-0.22-1.05 2.55-0.75 4.2 1.5c1.5 1.8 4.2-0.45 4.95-2.55c0.68-1.95 3.15-1.8 3-0.3c-0.15 1.8-2.7 2.55-2.85 1.05c-0.15-1.5 3-1.2 4.65 1.2c1.65 2.4 4.5 0.75 5.7-1.05" />
+    <path class="m-ink" d="M200 66c1.5-5.25 4.5-5.25 4.88 0c0.38-5.25 4.5-5.25 4.88 0c0.6 2.25 2.63 2.25 3.75-0.38c1.2-2.63 1.88-9-0.22-9c-1.95 0-1.5 6.75 1.2 9.3c1.8 1.5 4.13-0.15 4.72-2.7c0.45-1.95 3.75-2.25 3.9 0.15c0.15 2.25-3.45 3.15-4.05 0.75" />
+    <ellipse class="m-ink" cx="226" cy="102" rx="22" ry="9" />
+    <path class="m-ink" d="M202 122c4-4 8 2 12-1s7-3 10 0s8 2 11-1" />
+  </g>
+  <rect class="m-card" x="276" y="36" width="30" height="134" rx="3" />
+  <g class="m-appear" style="--m-at: 0.2">
+    <rect class="m-chip" x="279" y="44" width="24" height="18" rx="3" />
+    <ellipse class="m-ink" cx="291" cy="53" rx="7" ry="3.5" />
+  </g>
+  <circle class="m-line-dim" cx="283" cy="72" r="1.4" />
+  <rect class="m-line-dim" x="287" y="70.5" width="15" height="3" rx="1.5" />
+  <circle class="m-line-dim" cx="283" cy="82" r="1.4" />
+  <rect class="m-line-dim" x="287" y="80.5" width="11" height="3" rx="1.5" />
+
+  <!-- the pen keeps writing: a stroke under the second line -->
+  <path class="m-link m-draw" pathLength="1" style="--m-at: 0.36" d="M199 71.5C211 75 232 74.5 248 69.5" />
+  <g class="m-move" style="--m-at: 0.47; --m-dx: -24; --m-dy: 4">
+    <g class="m-move" style="--m-at: 0.36; --m-dx: -25; --m-dy: -2">
+      <g class="m-move" style="--m-at: 0.24; --m-dx: 10; --m-dy: 70">
+        <g class="m-light" style="--m-at: 0.22">
+          <g transform="translate(246.76 68.26) scale(0.62)">
+            <path class="m-pointer" d="M2 2 L2 20 L7 15.5 L10.5 23 L14 21.5 L10.5 14 L17 14 Z" />
+          </g>
+        </g>
+      </g>
+    </g>
+  </g>
+</svg>

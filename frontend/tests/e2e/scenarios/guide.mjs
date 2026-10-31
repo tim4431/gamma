@@ -25,18 +25,18 @@ export async function guideScenarios(env) {
     await ctx.addInitScript((url) => localStorage.setItem("gamma-guide-vars", JSON.stringify({ demoUrl: url })), `/api/uploads/${up.doc_id}.pdf`);
     const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}`);
     try {
-      await page.click('[data-guide="header.account"]');
-      await page.click('[data-guide="account.tour"]');
-      await page.click('[data-tour="first-run"]');
-      await page.waitForSelector('[data-guide-overlay="welcome"] .guideCard.guideCardWelcome');
-      assertEq(await page.locator(".guideCard .guideOutline li").count(), 3, "the welcome card outlines the tour");
+      await page.waitForSelector('[data-guide="header.home"]');
       for (const id of anchorsForView("home").filter((id) => !ANCHORS[id].open)) {
         assertEq(await page.locator(`[data-guide="${id}"]`).count(), 1, `anchor ${id} (${ANCHORS[id].description}) present once`);
       }
-      await page.click(".guideCard .uiBtn.primary");
+      // Started by name, a run opens on its first step: the welcome deck is
+      // the tour's offer, never a step of the run.
+      await page.click('[data-guide="header.account"]');
+      await page.click('[data-guide="account.tour"]');
+      await page.click('[data-tour="first-run"]');
       // The demo: Add opens, the link is typed, Enter opens the paper.
       await page.waitForSelector('[data-guide-overlay="add-demo"][data-guide-busy]');
-      assertEq(await page.locator(".guideCard .guideCount").textContent(), "Step 1 of 5", "the welcome card is not counted as a step");
+      assertEq(await page.locator(".guideCard .guideCount").textContent(), "Step 1 of 5", "the run opens on its first step");
       assertEq(await page.locator('.guideCard .guideBtns button').count(), 0, "automatic step has no navigation buttons, including during its initial pause");
       assertEq(await page.locator('.guideCard .guideChip.watch').count(), 1, "a demo says to watch");
       assertEq(await page.locator('.guideCard .guideLink').count(), 0, "the add demo cannot be skipped: every later step needs its paper");
@@ -141,10 +141,8 @@ export async function guideScenarios(env) {
       await page.click('[data-guide="header.account"]');
       await page.click('[data-guide="account.tour"]');
       await page.click('[data-tour="first-run"]');
-      await page.waitForSelector('[data-guide-overlay="welcome"] .guideCard');
       await until(async () => await page.locator(".userPopover").count() === 0);
       // Replaying with the same PDF already open must still complete.
-      await page.click(".guideCard .uiBtn.primary");
       await page.waitForSelector('[data-guide-overlay="highlight"][data-guide-busy] .guideCursor.dragging', { timeout: 30000 });
       assertEq(new URL(page.url()).searchParams.get("block"), paperId, "replay reuses the open paper");
       await page.keyboard.press("Escape");
@@ -160,17 +158,16 @@ export async function guideScenarios(env) {
         properties: { ...block.properties, meta: { ...block.properties.meta, arxiv_id: "1706.03762" } },
       } });
       await page.goto(`${server.base}/?ws=${alice.ws}`);
-      await page.click('[data-guide="header.account"]');
-      await page.click('[data-guide="account.tour"]');
-      await page.click('[data-tour="first-run"]');
-      await page.waitForSelector('[data-guide-overlay="welcome"] .guideCard');
+      await page.waitForSelector('[data-guide="header.home"]');
       await page.evaluate(() => localStorage.removeItem("gamma-guide-vars"));
       const unexpected = [];
       const track = (request) => {
         if (request.url().includes("/api/resolve") || (request.method() === "POST" && /\/api\/(pages(?:\?|$)|blocks\/by-doc\/)/.test(request.url()))) unexpected.push(request.url());
       };
       page.on("request", track);
-      await page.click(".guideCard .uiBtn.primary");
+      await page.click('[data-guide="header.account"]');
+      await page.click('[data-guide="account.tour"]');
+      await page.click('[data-tour="first-run"]');
       await page.waitForSelector('[data-guide-overlay="highlight"][data-guide-busy] .guideCursor.dragging', { timeout: 30000 });
       await page.locator(".guideCard .guideLink", { hasText: "Skip this demo" }).click();
       await page.waitForSelector('[data-guide-overlay="highlight"]:not([data-guide-busy]) .guideCard');
@@ -183,7 +180,6 @@ export async function guideScenarios(env) {
       await page.click('[data-guide="header.account"]');
       await page.click('[data-guide="account.tour"]');
       await page.click('[data-tour="first-run"]');
-      await page.click(".guideCard .uiBtn.primary");
       await page.waitForSelector('[data-guide="add.urlInput"]:focus');
       await page.keyboard.press("Escape");
       await until(async () => await page.locator(".guideCard").count() === 0);
@@ -191,15 +187,19 @@ export async function guideScenarios(env) {
     } finally { await ctx.close(); }
   });
 
-  await step("guide: a new account's empty library is offered the first tour as its welcome card", async () => {
+  await step("guide: a new account's empty library is offered the first tour as its welcome deck", async () => {
     await server.manage("create-user", "newcomer", "newcomer-pw");
     const newcomer = await new Account(server, "newcomer", "newcomer-pw").login();
     const ctx = await newcomer.context(browser, { suggestTours: true });
     const page = await openPage(ctx, `${server.base}/?ws=${newcomer.ws}`);
     try {
-      await page.waitForSelector('[data-guide-offer="first-run"] .guideCard.guideCardWelcome', { timeout: 15000 });
+      await page.waitForSelector('[data-guide-offer="first-run"] .guideCard.welcomeDeck', { timeout: 15000 });
       assertEq(await page.locator(".guideDim").count(), 0, "the arrival offer dims nothing");
       assertEq(await page.locator(".guideCard .guideTitle").textContent(), "Welcome to Gamma");
+      // What Gamma does, a card each with its drawing; the hero carries the tour.
+      assertEq(await page.locator(".welcomeFeature").count(), 7, "seven feature cards");
+      assertEq(await page.locator(".welcomeFeature .guideMedia svg").count(), 7, "each with its drawing");
+      assertEq(await page.locator(".welcomeFeature.hero .welcomeTour").textContent(), "Take the 2-minute tour");
       await page.getByRole("button", { name: "Explore on my own", exact: true }).click();
       await until(async () => await page.locator(".guideCard").count() === 0);
       assertEq(await page.evaluate(() => JSON.parse(localStorage.getItem("gamma-guide:first-run")).state), "dismissed");
@@ -207,6 +207,23 @@ export async function guideScenarios(env) {
       await page.waitForSelector('[data-guide="header.home"]');
       await page.waitForTimeout(4000);
       assertEq(await page.locator("[data-guide-offer]").count(), 0, "offered once per version");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("guide: the welcome deck's way in opens the seeded Welcome page and answers the offer", async () => {
+    await server.manage("create-user", "arrival", "arrival-pw");
+    const arrival = await new Account(server, "arrival", "arrival-pw").login();
+    const ctx = await arrival.context(browser, { suggestTours: true });
+    const page = await openPage(ctx, `${server.base}/?ws=${arrival.ws}`);
+    try {
+      await page.waitForSelector('[data-guide-offer="first-run"] .guideCard.welcomeDeck', { timeout: 15000 });
+      await page.getByRole("button", { name: "Open the Welcome page", exact: true }).click();
+      await until(async () => await page.locator(".guideCard").count() === 0);
+      await until(() => new URL(page.url()).searchParams.has("block"), { what: "a page opens" });
+      const { block } = await arrival.api(`/api/blocks/${new URL(page.url()).searchParams.get("block")}/subtree`);
+      assertEq(block.properties?.seeded, "welcome", "the seeded Welcome page");
+      assertEq(await page.evaluate(() => JSON.parse(localStorage.getItem("gamma-guide:first-run")).state), "done", "it answers the offer");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
