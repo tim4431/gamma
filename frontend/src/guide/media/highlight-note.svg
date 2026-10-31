@@ -1,0 +1,99 @@
+<svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg" focusable="false">
+  <!-- A highlight becomes a note: the pointer drags along a sentence on the
+       paper and the selection grows under it. Let go, and the colour popup
+       opens just under where the button came up (pdf/selectionTip.js, the
+       release point); a press on its first colour makes the highlight. The
+       popup closes, the highlight takes that colour, and a note block for it
+       lands at the end of Notes: a dot in the highlight's colour, the
+       sentence quoted under it (blockModel addHighlightAsBlock, BlockTree's
+       .blockQuote). The accent is that one thread: the sentence, its
+       colour, the link to its note. -->
+
+  <!-- the paper: two paragraphs, the second ending in the sentence, a figure -->
+  <rect class="m-well" x="10" y="10" width="194" height="180" rx="6" />
+  <rect class="m-card" x="24" y="18" width="166" height="172" rx="2" />
+  <rect class="m-line" x="36" y="30" width="84" height="6" rx="3" />
+  <rect class="m-line-dim" x="36" y="44" width="142" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="36" y="51" width="136" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="36" y="58" width="142" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="36" y="65" width="110" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="36" y="77" width="142" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="36" y="84" width="138" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="36" y="91" width="128" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="36" y="98" width="96" height="3.5" rx="1.75" />
+  <rect class="m-well" x="36" y="112" width="58" height="36" rx="2" />
+  <path class="m-glyph" d="M42 141L53 130L64 135L76 121L88 127" />
+  <rect class="m-line-dim" x="100" y="114" width="78" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="100" y="121" width="72" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="100" y="128" width="78" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="100" y="135" width="74" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="100" y="142" width="50" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="36" y="158" width="142" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="36" y="165" width="136" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="36" y="172" width="142" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="36" y="179" width="118" height="3.5" rx="1.75" />
+
+  <!-- Notes: a few notes already, then the highlight's block at the end -->
+  <rect class="m-card" x="212" y="10" width="98" height="180" rx="6" />
+  <path class="m-glyph" d="M218 15h.01M221 15h.01M218 18h.01M221 18h.01M218 21h.01M221 21h.01" />
+  <rect class="m-line" x="226" y="16" width="24" height="4" rx="2" />
+  <path class="m-rule" d="M212 26H310" />
+  <circle class="m-line-dim" cx="220" cy="37" r="1.6" />
+  <rect class="m-line-dim" x="226" y="35.25" width="70" height="3.5" rx="1.75" />
+  <circle class="m-line-dim" cx="228" cy="49" r="1.6" />
+  <rect class="m-line-dim" x="234" y="47.25" width="58" height="3.5" rx="1.75" />
+  <circle class="m-line-dim" cx="228" cy="61" r="1.6" />
+  <rect class="m-line-dim" x="234" y="59.25" width="48" height="3.5" rx="1.75" />
+  <circle class="m-line-dim" cx="220" cy="73" r="1.6" />
+  <rect class="m-line-dim" x="226" y="71.25" width="64" height="3.5" rx="1.75" />
+  <circle class="m-line-dim" cx="228" cy="85" r="1.6" />
+  <rect class="m-line-dim" x="234" y="83.25" width="54" height="3.5" rx="1.75" />
+  <circle class="m-line-dim" cx="220" cy="97" r="1.6" />
+  <rect class="m-line-dim" x="226" y="95.25" width="44" height="3.5" rx="1.75" />
+  <g class="m-appear" style="--m-at: 0.57">
+    <rect class="m-line-dim" x="226" y="109.25" width="12" height="3.5" rx="1.75" />
+    <rect class="m-chip" x="226" y="118" width="77" height="24" rx="2" />
+    <rect class="m-line" x="226" y="118" width="2.5" height="24" rx="1" />
+    <rect class="m-line-dim" x="233" y="124.5" width="62" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="233" y="132" width="34" height="3.5" rx="1.75" />
+  </g>
+
+  <!-- the selection, growing with the drag: the path runs to the end and
+       back, so its stroke reaches the end in half its span, about the time
+       the pointer takes there -->
+  <path class="m-mark m-draw" pathLength="1" style="--m-at: 0.15" d="M58 99.75H132H58" />
+  <!-- the highlight, once a colour is picked -->
+  <path class="m-mark m-light" style="--m-at: 0.53" d="M58 99.75H132" />
+
+  <!-- the popup under the release point: the colours; the first is pressed -->
+  <g class="m-leave" style="--m-at: 0.53">
+    <g class="m-appear" style="--m-at: 0.3">
+      <rect class="m-card" x="129" y="104.75" width="53" height="17" rx="4" />
+      <circle class="m-line-dim" cx="137.5" cy="113.25" r="4.5" />
+      <circle class="m-line-dim" cx="149.5" cy="113.25" r="4.5" />
+      <circle class="m-line-dim" cx="161.5" cy="113.25" r="4.5" />
+      <circle class="m-line-dim" cx="173.5" cy="113.25" r="4.5" />
+      <circle class="m-chip-on m-light" style="--m-at: 0.46" cx="137.5" cy="113.25" r="4.5" />
+    </g>
+  </g>
+
+  <!-- the link: from the highlight to its note, whose dot takes its colour -->
+  <path class="m-link m-draw" pathLength="1" style="--m-at: 0.52" d="M135 99.75C176 99.75 182 111 215.6 111" />
+  <circle class="m-chip-on m-light" style="--m-at: 0.63" cx="220" cy="111" r="3.2" />
+
+  <!-- the presses: at the sentence's start, on the first colour -->
+  <circle class="m-ripple m-press" style="--m-at: 0.13" cx="58" cy="99.75" r="7" />
+  <circle class="m-ripple m-press" style="--m-at: 0.46" cx="137.5" cy="113.25" r="6.5" />
+
+  <!-- the hand: in to the sentence's start, along it to its end, down to
+       the first colour; each leg nests inside the next -->
+  <g class="m-move" style="--m-at: 0.35; --m-dx: -5.5; --m-dy: -13.5">
+    <g class="m-move" style="--m-at: 0.16; --m-dx: -74; --m-dy: 0">
+      <g class="m-move" style="--m-at: 0.02; --m-dx: 54; --m-dy: 68.25">
+        <g transform="translate(136.26 112.01) scale(0.62)">
+          <path class="m-pointer" d="M2 2 L2 20 L7 15.5 L10.5 23 L14 21.5 L10.5 14 L17 14 Z" />
+        </g>
+      </g>
+    </g>
+  </g>
+</svg>

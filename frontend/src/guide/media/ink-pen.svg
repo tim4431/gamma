@@ -1,0 +1,163 @@
+<svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg" focusable="false">
+  <!-- Write on the page: the pointer clicks the pen in the viewer's tool
+       column, which lights, and the markup strip opens at the top of the
+       page with its first pen armed. It circles a phrase and, in a second
+       stroke, draws an arrow out into the margin, the ink laid down under
+       its tip. The strokes are one drawing, and that drawing is a note:
+       after the first stroke a block appears in Notes, its pen marker and
+       the strokes as a picture on a piece of the page, and the arrow joins
+       it as the pen lifts (App's viewer strip, markup/MarkupToolbar.jsx,
+       InkCard in ink/InkLayer.jsx). The pointer's legs overlap, so it
+       rides the curves rather than cornering. -->
+
+  <!-- the viewer: the page, with room in its right margin -->
+  <rect class="m-well" x="10" y="10" width="206" height="180" rx="6" />
+  <rect class="m-card" x="44" y="20" width="140" height="170" rx="2" />
+  <rect class="m-line" x="56" y="38" width="64" height="6" rx="3" />
+  <rect class="m-line-dim" x="56" y="52" width="92" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="56" y="59" width="88" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="56" y="66" width="42" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="102" y="66" width="44" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="56" y="73" width="90" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="56" y="80" width="62" height="3.5" rx="1.75" />
+  <rect class="m-well" x="56" y="92" width="42" height="30" rx="2" />
+  <path class="m-glyph" d="M61 116L69 107L77 111L85 100L93 104" />
+  <rect class="m-line-dim" x="104" y="94" width="42" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="104" y="101" width="38" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="104" y="108" width="42" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="104" y="115" width="28" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="56" y="132" width="92" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="56" y="139" width="86" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="56" y="146" width="92" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="56" y="153" width="80" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="56" y="160" width="92" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="56" y="167" width="88" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="56" y="174" width="56" height="3.5" rx="1.75" />
+
+  <!-- the tool column down the left edge: zoom out, zoom in, fit width,
+       the pen, record -->
+  <rect class="m-card" x="16" y="63" width="20" height="74" rx="5" />
+  <path class="m-glyph" d="M25.2 70.2m-2.8 0a2.8 2.8 0 1 0 5.6 0a2.8 2.8 0 1 0-5.6 0M27.3 72.3L29.6 74.6" />
+  <path class="m-glyph" d="M25.2 84.2m-2.8 0a2.8 2.8 0 1 0 5.6 0a2.8 2.8 0 1 0-5.6 0M27.3 86.3L29.6 88.6M25.2 82.8V85.6" />
+  <path class="m-glyph" d="M21.5 96.5V103.5M30.5 96.5V103.5M23.8 100H28.2" />
+  <path class="m-glyph" d="M29.8 111.6a1.4 1.4 0 0 0-2-2L22.1 115.3l-0.8 2.8 2.8-0.8z" />
+  <rect class="m-glyph" x="24.2" y="124.6" width="3.6" height="5.6" rx="1.8" />
+  <path class="m-glyph" d="M22.6 128.6a3.4 3.4 0 0 0 6.8 0M26 132V133" />
+  <!-- lit as the pen tools open (.modeActive: the accent icon) -->
+  <g class="m-light" style="--m-at: 0.13">
+    <rect class="m-chip-on" x="18.5" y="107.5" width="15" height="13" rx="3.5" />
+    <path class="m-glyph-on" d="M29.8 111.6a1.4 1.4 0 0 0-2-2L22.1 115.3l-0.8 2.8 2.8-0.8z" />
+  </g>
+
+  <!-- the markup strip opens at the top of the page: pens over their
+       colour bars, the first armed, then the eraser, the lasso and text -->
+  <g class="m-appear" style="--m-at: 0.13">
+    <rect class="m-card" x="70" y="13" width="88" height="18" rx="4" />
+    <rect class="m-chip" x="73.5" y="15.5" width="11" height="13" rx="3" />
+    <path class="m-glyph-on" d="M81.5 17.5L76.5 22.5" />
+    <path class="m-glyph" d="M91.5 17.5L86.5 22.5M101.5 17.5L96.5 22.5M111.5 17.5L106.5 22.5" />
+    <rect class="m-line" x="76" y="24.5" width="6" height="2" rx="1" />
+    <rect class="m-line-dim" x="86" y="24.5" width="6" height="2" rx="1" />
+    <rect class="m-line-dim" x="96" y="24.5" width="6" height="2" rx="1" />
+    <rect class="m-line-dim" x="106" y="24.5" width="6" height="2" rx="1" />
+    <path class="m-rule" d="M117 16.5V27.5" />
+    <circle class="m-line-dim" cx="124" cy="22" r="1.8" />
+    <circle class="m-line-dim" cx="133" cy="22" r="1.8" />
+    <circle class="m-line-dim" cx="142" cy="22" r="1.8" />
+    <circle class="m-line-dim" cx="151" cy="22" r="1.8" />
+  </g>
+
+  <!-- the ink: a loop round the phrase, then an arrow into the margin -->
+  <path class="m-ink m-draw" pathLength="1" style="--m-at: 0.24" d="M142.45 60C152.22 62.81 154.36 68.04 146.55 72.39C138.74 76.73 123.9 79.09 111.46 77.37C99.01 75.65 92.46 70.76 96.92 65.63C101.38 60.5 114.87 56.58 129.08 56.91C143.28 57.23 154.01 61.29 153.55 66.83" />
+  <path class="m-ink m-draw" pathLength="1" style="--m-at: 0.46" d="M153.55 66.83C154.15 76.83 160.55 85.83 174.55 88.33L168.96 82.61L174.55 88.33L167.33 91.76" />
+
+  <!-- Notes: the drawing arrives as a block of its own, a pen marker in
+       the bullet's place, the strokes as a picture under its caption -->
+  <rect class="m-card" x="222" y="10" width="88" height="180" rx="6" />
+  <path class="m-glyph" d="M228 15h.01M231 15h.01M228 18h.01M231 18h.01M228 21h.01M231 21h.01" />
+  <rect class="m-line" x="236" y="16" width="24" height="4" rx="2" />
+  <path class="m-rule" d="M222 26H310" />
+  <circle class="m-line-dim" cx="230" cy="36" r="1.6" />
+  <rect class="m-line-dim" x="236" y="34.25" width="60" height="3.5" rx="1.75" />
+  <circle class="m-line-dim" cx="230" cy="48" r="1.6" />
+  <rect class="m-line-dim" x="236" y="46.25" width="48" height="3.5" rx="1.75" />
+  <g class="m-appear" style="--m-at: 0.48">
+    <rect class="m-chip" x="225.5" y="57.5" width="9" height="9" rx="2.5" />
+    <path class="m-glyph" d="M232 60L228 64" />
+    <rect class="m-line-dim" x="236" y="60.25" width="14" height="3.5" rx="1.75" />
+    <rect class="m-card" x="236" y="70" width="66" height="38" rx="3" />
+    <g transform="translate(168.19 33.51) scale(0.75)">
+      <path class="m-ink" d="M142.45 60C152.22 62.81 154.36 68.04 146.55 72.39C138.74 76.73 123.9 79.09 111.46 77.37C99.01 75.65 92.46 70.76 96.92 65.63C101.38 60.5 114.87 56.58 129.08 56.91C143.28 57.23 154.01 61.29 153.55 66.83" />
+      <g class="m-light" style="--m-at: 0.68">
+        <path class="m-ink" d="M153.55 66.83C154.15 76.83 160.55 85.83 174.55 88.33L168.96 82.61L174.55 88.33L167.33 91.76" />
+      </g>
+    </g>
+  </g>
+
+  <!-- the press on the pen -->
+  <circle class="m-ripple m-press" style="--m-at: 0.12" cx="25.63" cy="114.16" r="7" />
+
+  <!-- the hand: to the pen, then onto the page, where it writes; the legs
+       after the press overlap, each starting before the last has ended -->
+  <g class="m-move" style="--m-at: 0.562; --m-dx: 27.5; --m-dy: -13.2">
+  <g class="m-move" style="--m-at: 0.546; --m-dx: -14.3; --m-dy: 9.9">
+  <g class="m-move" style="--m-at: 0.53; --m-dx: -45.1; --m-dy: -22.6">
+  <g class="m-move" style="--m-at: 0.514; --m-dx: 20.9; --m-dy: 23.4">
+  <g class="m-move" style="--m-at: 0.498; --m-dx: 86.5; --m-dy: 49.7">
+  <g class="m-move" style="--m-at: 0.482; --m-dx: -133.1; --m-dy: -93.5">
+  <g class="m-move" style="--m-at: 0.466; --m-dx: 29.2; --m-dy: 16.3">
+  <g class="m-move" style="--m-at: 0.45; --m-dx: 14.2; --m-dy: 8.5">
+  <g class="m-move" style="--m-at: 0.434; --m-dx: -4.8; --m-dy: -1.8">
+  <g class="m-move" style="--m-at: 0.418; --m-dx: 40.9; --m-dy: 23.6">
+  <g class="m-move" style="--m-at: 0.402; --m-dx: -19.1; --m-dy: -30.5">
+  <g class="m-move" style="--m-at: 0.386; --m-dx: -94; --m-dy: -37.8">
+  <g class="m-move" style="--m-at: 0.37; --m-dx: 106.9; --m-dy: 76.6">
+  <g class="m-move" style="--m-at: 0.354; --m-dx: -10.8; --m-dy: -61.2">
+  <g class="m-move" style="--m-at: 0.338; --m-dx: -70; --m-dy: 15.4">
+  <g class="m-move" style="--m-at: 0.322; --m-dx: 6.7; --m-dy: 11.2">
+  <g class="m-move" style="--m-at: 0.306; --m-dx: -46.5; --m-dy: -25.6">
+  <g class="m-move" style="--m-at: 0.29; --m-dx: -6; --m-dy: 32.9">
+  <g class="m-move" style="--m-at: 0.274; --m-dx: 66.2; --m-dy: 62.9">
+  <g class="m-move" style="--m-at: 0.258; --m-dx: 83.6; --m-dy: -46.5">
+  <g class="m-move" style="--m-at: 0.242; --m-dx: -31.5; --m-dy: -58.4">
+  <g class="m-move" style="--m-at: 0.226; --m-dx: -68.1; --m-dy: 26.2">
+  <g class="m-move" style="--m-at: 0.21; --m-dx: 29; --m-dy: 7.1">
+  <g class="m-move" style="--m-at: 0.194; --m-dx: 27.1; --m-dy: 4">
+  <g class="m-move" style="--m-at: 0.178; --m-dx: -39.6; --m-dy: 7.6">
+  <g class="m-move" style="--m-at: 0.162; --m-dx: 50; --m-dy: -40.4">
+  <g class="m-move" style="--m-at: 0.146; --m-dx: -50.9; --m-dy: 31.9">
+  <g class="m-move" style="--m-at: 0.13; --m-dx: -96.6; --m-dy: 46.7">
+  <g class="m-move" style="--m-at: 0.02; --m-dx: 70.4; --m-dy: 51.8">
+  <g transform="translate(166.09 90.52) scale(0.62)">
+  <path class="m-pointer" d="M2 2 L2 20 L7 15.5 L10.5 23 L14 21.5 L10.5 14 L17 14 Z" />
+  </g>
+  </g>
+  </g>
+  </g>
+  </g>
+  </g>
+  </g>
+  </g>
+  </g>
+  </g>
+  </g>
+  </g>
+  </g>
+  </g>
+  </g>
+  </g>
+  </g>
+  </g>
+  </g>
+  </g>
+  </g>
+  </g>
+  </g>
+  </g>
+  </g>
+  </g>
+  </g>
+  </g>
+  </g>
+  </g>
+</svg>

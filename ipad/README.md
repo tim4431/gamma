@@ -214,6 +214,8 @@ changes an iOS wheel needs, each commented there; why each was made is in
   `main` whose message carries a new `ipad-test-release-NNN` marker; every
   desktop release from `main` pushes one
   ([docs/dev/github_actions.md](../docs/dev/github_actions.md#the-ipad-testflight-release)).
+  Anyone joins the beta through the public link
+  <https://testflight.apple.com/join/nTmSHDx6>.
 
 What is not built yet (background running, a store release) is listed in
 [docs/dev/ipad.md](../docs/dev/ipad.md#not-built-yet).

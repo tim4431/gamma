@@ -1,5 +1,5 @@
 /* The guide's drawings (guide/media/*.svg, guide/media.js; docs/dev/
-   onboarding.md, "Illustrations"): one grammar every drawing is built
+   onboarding.md, "Drawings and clips"): one grammar every drawing is built
    from. A drawing is shapes carrying these classes and nothing else, no
    <style> and no colour of its own, so all of them look like one set and
    follow the eight themes. Every rule is scoped under .guideMedia, the box
@@ -23,6 +23,7 @@
    m-well      a sunken area inside a surface: the viewer behind its sheets
    m-line      a line of text that leads (a title, a first block)
    m-line-dim  a quieter line of text
+   m-text      a line of text as a stroke, so m-draw can type it out
    m-rule      a ruled line on a sheet
    m-chip      a pill: a label, a folder
    m-chip-on   the pill the drawing is about
@@ -31,6 +32,10 @@
    m-link      the accent stroke: the connector or outline that says what
                the drawing is about. The accent is for that one thing.
    m-ink       handwriting on a sheet
+   m-mark      a highlight across a line of text: a wide stroke, drawn
+               along the line with m-draw
+   m-scrim     the dimming under a palette or dialog: the guide's own
+               (.guideDimFill), black in every theme
    Tones use fill-opacity, never opacity, which the motion classes own. */
 .guideMedia .m-card { fill: var(--bg-card); stroke: var(--border); stroke-width: 1; }
 .guideMedia .m-well { fill: var(--bg-deeper); stroke: var(--border-subtle); stroke-width: 1; }
@@ -42,11 +47,34 @@
 .guideMedia .m-glyph,
 .guideMedia .m-glyph-on,
 .guideMedia .m-link,
-.guideMedia .m-ink { fill: none; stroke-linecap: round; stroke-linejoin: round; }
+.guideMedia .m-ink,
+.guideMedia .m-text { fill: none; stroke-linecap: round; stroke-linejoin: round; }
 .guideMedia .m-glyph { stroke: var(--text-muted); stroke-width: 1.4; }
 .guideMedia .m-glyph-on { stroke: var(--accent); stroke-width: 1.4; }
 .guideMedia .m-link { stroke: var(--accent); stroke-width: 1.6; }
 .guideMedia .m-ink { stroke: var(--text-secondary); stroke-width: 1.6; }
+.guideMedia .m-text { stroke: var(--text-muted); stroke-opacity: 0.6; stroke-width: 4; }
+.guideMedia .m-scrim { fill: black; fill-opacity: 0.32; }
+.guideMedia .m-mark { fill: none; stroke: var(--accent); stroke-opacity: 0.3; stroke-width: 9; stroke-linecap: butt; }
+
+/* ---- Gestures ----------------------------------------------------------
+   What the user does, in miniature: the pointer, its press, what it
+   carries and where that can land. The look is the scene's own
+   (guide.css, .guideScene*), so the clip on the card and the scene on the
+   real UI read as one hand.
+   m-pointer   the system pointer: a <path> whose d is scene.js's
+               POINTER_PATH, scaled by a parent <g transform>. White with
+               a dark edge in every theme, as .guidePointer is.
+   m-ripple    a press's ring (move it with m-press)
+   m-ghost     the outline the pointer carries while it drags
+   m-slot      a place something can go: a dashed outline
+   m-zone      a place lit as the pointer reaches it: the dock's drop
+               preview (.dockPreview, .guideScenePreview) */
+.guideMedia .m-pointer { fill: white; stroke: black; stroke-width: 1.4; stroke-linejoin: round; }
+.guideMedia .m-ripple { fill: color-mix(in srgb, var(--accent) 22%, transparent); stroke: var(--accent); stroke-width: 1.4; }
+.guideMedia .m-ghost { fill: color-mix(in srgb, var(--accent) 16%, var(--bg-elevated)); stroke: var(--accent); stroke-width: 1.2; stroke-dasharray: 3 2; }
+.guideMedia .m-slot { fill: none; stroke: var(--border-hover); stroke-width: 1; stroke-dasharray: 3 3; }
+.guideMedia .m-zone { fill: color-mix(in srgb, var(--accent-fill) 25%, transparent); stroke: var(--accent-fill); stroke-width: 1.5; }
 
 /* ---- Motion ------------------------------------------------------------
    One clock per drawing: --m-t runs from 0 to 1 over the period, after a
@@ -54,14 +82,24 @@
    element's motion class reads the clock from its --m-at on (an inline
    style="--m-at: 0.3", 0 to 0.7, roughly the fraction of the loop where it
    starts), so a drawing's order is data and its rhythm is the same as
-   every other drawing's.
-   m-appear  fades in and settles 4 units up (it owns the element's
-             transform, so it goes on an element without a transform)
+   every other drawing's. An element takes one motion class; to combine
+   two, nest them (a <g> that moves around a shape that lights).
+   m-appear  fades in and settles 4 units up
    m-draw    a stroke draws along its path (the element needs pathLength="1")
    m-light   fades in where it stands: an accent mark lighting up
+   m-leave   fades out where it stands: what a move leaves behind
+   m-blink   lights and goes out again: a place the pointer passes over
+   m-move    arrives from --m-dx, --m-dy (in the drawing's units) at its
+             place. A path with corners is nested moves, the last leg
+             outermost, each starting as the one inside it ends.
+   m-press   a press: m-ripple's ring grows and fades where it stands
+   m-fold    folds up into its top edge: a window collapsing to its title
+   m-appear, m-move, m-press and m-fold own the element's transform, so
+   they go on an element without one (a <g transform> parent places it).
    Every rule below computes to the finished state at --m-t: 1, so the
    still picture (the rest, reduced motion, a browser without @property)
-   is the complete one. */
+   is the complete one: what has moved stands where it went, what left is
+   gone. */
 @property --m-t {
   syntax: "<number>";
   inherits: true;
@@ -72,9 +110,11 @@
   width: 100%;
   height: 100%;
   --m-t: 1;
-  animation: m-clock var(--m-period) linear 2; /* ds-allow: a drawing's clock runs at an even pace over its own period */
+  /* --m-loops and --m-delay are the host's, never a drawing's: the welcome
+     card staggers its drawings and loops the one under the pointer. */
+  animation: m-clock var(--m-period) linear var(--m-loops, 2); /* ds-allow: a drawing's clock runs at an even pace over its own period */
   /* start at the empty frame: the first loop skips the rewind */
-  animation-delay: calc(var(--m-period) * -0.08);
+  animation-delay: calc(var(--m-period) * -0.08 + var(--m-delay, 0s));
 }
 @keyframes m-clock {
   0% { --m-t: 1; }
@@ -85,7 +125,12 @@
    eased in and out (smoothstep). */
 .guideMedia .m-appear,
 .guideMedia .m-light,
-.guideMedia .m-draw {
+.guideMedia .m-draw,
+.guideMedia .m-leave,
+.guideMedia .m-blink,
+.guideMedia .m-move,
+.guideMedia .m-press,
+.guideMedia .m-fold {
   --m-p: clamp(0, (var(--m-t) - var(--m-at, 0)) / var(--m-span), 1);
   --m-e: calc(var(--m-p) * var(--m-p) * (3 - 2 * var(--m-p)));
 }
@@ -100,11 +145,47 @@
 }
 .guideMedia .m-draw {
   --m-span: 0.22;
-  stroke-dasharray: 1 1;
-  stroke-dashoffset: calc(1 - var(--m-e));
+  /* Lengths, not bare numbers: Firefox computes a unitless calc() here to
+     0, which drew every stroke whole. With pathLength="1" a px is the
+     path's whole length. */
+  stroke-dasharray: 1px 1px;
+  stroke-dashoffset: calc((1 - var(--m-e)) * 1px);
   /* a round cap would leave a dot where the stroke has not started */
   opacity: clamp(0, var(--m-p) * 30, 1);
 }
+.guideMedia .m-leave {
+  --m-span: 0.1;
+  opacity: calc(1 - var(--m-e));
+}
+/* Up fast, held, down: 6p(1-p) passes 1 at a fifth of the span and
+   comes back under it at four fifths. */
+.guideMedia .m-blink {
+  --m-span: 0.2;
+  opacity: clamp(0, var(--m-p) * (1 - var(--m-p)) * 6, 1);
+}
+/* A glide takes scene.js's MOTION.glide (520 ms of the 4.8 s period). */
+.guideMedia .m-move {
+  --m-span: 0.11;
+  transform: translate(calc((1 - var(--m-e)) * var(--m-dx) * 1px), calc((1 - var(--m-e)) * var(--m-dy) * 1px));
+}
+/* MOTION.ripple, 520 ms: the ring grows from half its size as it fades. */
+.guideMedia .m-press {
+  --m-span: 0.11;
+  opacity: calc(var(--m-p) * (1 - var(--m-p)) * 4);
+  transform: scale(calc(0.5 + var(--m-e) * 0.8));
+  transform-box: fill-box;
+  transform-origin: center;
+}
+.guideMedia .m-fold {
+  --m-span: 0.1;
+  opacity: calc(1 - var(--m-e) * 0.6);
+  transform: scaleY(calc(1 - var(--m-e)));
+  transform-box: fill-box;
+  transform-origin: top;
+}
+/* A clip on a demo's card holds its finished picture while the demo acts
+   (GuideOverlay's Media `still`), and plays from the top once it is done. */
+.guideMedia.still svg { animation: none; }
 /* The still picture at once. The app-wide rule in app.css would also run
    the clock for a millisecond and land on it. */
 @media (prefers-reduced-motion: reduce) {

@@ -1,0 +1,105 @@
+<svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg" focusable="false">
+  <!-- Ask the paper about a figure. With the area key held (the card
+       names it, so no cap is drawn), the pointer drags a box from above
+       the figure's left corner to just over its caption, and on release
+       the region joins the typed question: the composer grows a row and
+       the snapshot sits in it as a square thumbnail. Pressing Send closes
+       the area's popup, so the box on the page goes; the question posts
+       with its picture, and the answer arrives as prose ending in a
+       citation pill. Clicking the pill marks the passage it quotes on the
+       page. The accent is the box while it is drawn, then the citation and
+       its passage (PdfViewer's area drag, guide/previewArea.js figureBox,
+       ChatDock's chatImgPreviewRow and chatMsgImages, CitationPill,
+       PdfCitationOverlay). -->
+
+  <!-- the paper: a page with a figure and its caption -->
+  <rect class="m-well" x="10" y="10" width="160" height="180" rx="6" />
+  <rect class="m-card" x="20" y="18" width="140" height="172" rx="2" />
+  <rect class="m-line" x="30" y="28" width="72" height="6" rx="3" />
+  <rect class="m-line-dim" x="30" y="40" width="120" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="47" width="116" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="54" width="120" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="61" width="120" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="68" width="106" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="75" width="120" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="82" width="74" height="3.5" rx="1.75" />
+  <rect class="m-well" x="46" y="96" width="88" height="46" rx="2" />
+  <path class="m-glyph" d="M54 132L68 120L82 125L98 110L114 115L126 104" />
+  <rect class="m-line-dim" x="46" y="150" width="64" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="161" width="120" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="168" width="116" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="175" width="120" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="182" width="96" height="3.5" rx="1.75" />
+
+  <!-- the passage the answer quotes, marked once its citation is opened -->
+  <path class="m-mark m-light" style="--m-at: 0.63" d="M72 62.75H150M30 69.75H112" />
+
+  <!-- the box the drag draws, from the pressed corner to the released one;
+       it goes when Send is pressed -->
+  <g class="m-leave" style="--m-at: 0.39">
+    <path class="m-link m-draw" pathLength="1" style="--m-at: 0.01" d="M40 90H140V146" />
+    <path class="m-link m-draw" pathLength="1" style="--m-at: 0.01" d="M40 90V146H140" />
+  </g>
+
+  <!-- the chat -->
+  <rect class="m-card" x="176" y="10" width="134" height="180" rx="6" />
+  <path class="m-glyph" d="M182 15h.01M185 15h.01M182 18h.01M185 18h.01M182 21h.01M185 21h.01" />
+  <rect class="m-line" x="190" y="16" width="20" height="4" rx="2" />
+  <path class="m-rule" d="M176 26H310" />
+
+  <!-- the composer: the question typed, then empty once it is sent -->
+  <rect class="m-chip" x="184" y="154" width="118" height="30" rx="8" />
+  <path class="m-glyph" d="M189 176h6M192 173v6" />
+  <circle class="m-chip" cx="295" cy="176" r="5" />
+  <path class="m-glyph" d="M295 178.5v-5M292.8 175.7l2.2-2.2l2.2 2.2" />
+  <rect class="m-line m-leave" style="--m-at: 0.39" x="190" y="160" width="86" height="3.5" rx="1.75" />
+  <rect class="m-line-dim m-light" style="--m-at: 0.4" x="190" y="160" width="34" height="3.5" rx="1.75" />
+
+  <!-- the snapshot joins it: the composer grows a row for the thumbnail -->
+  <g class="m-leave" style="--m-at: 0.39">
+    <g class="m-light" style="--m-at: 0.22">
+      <rect class="m-chip" x="184" y="126" width="118" height="58" rx="8" />
+      <path class="m-glyph" d="M189 176h6M192 173v6" />
+      <circle class="m-chip" cx="295" cy="176" r="5" />
+      <path class="m-glyph" d="M295 178.5v-5M292.8 175.7l2.2-2.2l2.2 2.2" />
+      <rect class="m-line" x="190" y="160" width="86" height="3.5" rx="1.75" />
+      <g class="m-appear" style="--m-at: 0.23">
+        <rect class="m-well" x="190" y="131" width="24" height="24" rx="3" />
+        <path class="m-glyph" d="M194 148L197.1 142.9L200.2 145L203.8 138.6L207.3 140.7L210 136" />
+      </g>
+    </g>
+  </g>
+
+  <!-- sent: the question with its picture, then the answer and its citation -->
+  <g class="m-appear" style="--m-at: 0.4">
+    <rect class="m-chip" x="226" y="32" width="76" height="64" rx="8" />
+    <rect class="m-card" x="232" y="38" width="64" height="36" rx="2" />
+    <rect class="m-well" x="235.8" y="41.8" width="56.4" height="29.4" rx="1.5" />
+    <path class="m-glyph" d="M241 64.9L249.9 57.2L258.9 60.4L269.1 50.8L279.4 54L287 47" />
+    <rect class="m-line" x="232" y="80" width="64" height="3.5" rx="1.75" />
+    <rect class="m-line" x="232" y="87" width="26" height="3.5" rx="1.75" />
+  </g>
+  <rect class="m-line-dim m-appear" style="--m-at: 0.44" x="184" y="104" width="118" height="3.5" rx="1.75" />
+  <rect class="m-line-dim m-appear" style="--m-at: 0.44" x="184" y="111" width="108" height="3.5" rx="1.75" />
+  <g class="m-appear" style="--m-at: 0.47">
+    <rect class="m-line-dim" x="184" y="118" width="60" height="3.5" rx="1.75" />
+    <rect class="m-chip-on" x="248" y="115.75" width="22" height="8" rx="4" />
+  </g>
+
+  <!-- the presses: the box's first corner, Send, the citation -->
+  <circle class="m-ripple m-press" style="--m-at: 0.01" cx="40" cy="90" r="7" />
+  <circle class="m-ripple m-press" style="--m-at: 0.38" cx="295" cy="176" r="7" />
+  <circle class="m-ripple m-press" style="--m-at: 0.62" cx="255" cy="120" r="7" />
+
+  <!-- the hand: corner to corner around the figure, on to Send, then up
+       to the citation; each leg nests inside the next -->
+  <g class="m-move" style="--m-at: 0.5; --m-dx: 40; --m-dy: 56">
+    <g class="m-move" style="--m-at: 0.26; --m-dx: -155; --m-dy: -30">
+      <g class="m-move" style="--m-at: 0.07; --m-dx: -100; --m-dy: -56">
+        <g transform="translate(253.76 118.76) scale(0.62)">
+          <path class="m-pointer" d="M2 2 L2 20 L7 15.5 L10.5 23 L14 21.5 L10.5 14 L17 14 Z" />
+        </g>
+      </g>
+    </g>
+  </g>
+</svg>

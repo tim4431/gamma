@@ -177,7 +177,7 @@ allowance work the same on every server.
 - The guide keeps its progress in `sessionStorage` instead of
   `localStorage` (`guideStorage(demo)` in `guide/triggers.js`), so every
   visit starts fresh. **Your first paper** is offered on the library right
-  after the guest lands, as its welcome card ("Welcome to the Gamma demo").
+  after the guest lands, as its welcome deck ("Welcome to the Gamma demo").
   It is a state trigger whose own `requires` / `anyOf` (`demo: true`, or an
   empty library, which is how any new account is invited) gate only the
   offer, so the tour stays manually startable everywhere. Like every offer

@@ -261,6 +261,12 @@ export function isFreshLibrary(pages) {
   return (pages || []).every((page) => page?.properties?.seeded);
 }
 
+// The seeded Welcome page among the library's root pages (gamma/seed.py,
+// properties.seeded), if the user still has it: the welcome deck's way in.
+export function welcomePageOf(pages) {
+  return (pages || []).find((page) => page?.properties?.seeded === "welcome") || null;
+}
+
 export function findPageForUrl(url, pages) {
   const doiMatch = (url || "").match(/10\.\d{4,9}\/[^\s?#]+/);
   const doi = doiMatch ? decodeURIComponent(doiMatch[0]).replace(/[.,;)\]]+$/, "").toLowerCase() : "";

@@ -234,13 +234,15 @@ export function useGuide({ enabled = true, suggest = true, scope = "", synced = 
   // the tour has nothing to show (the PDF tour after the notebook view's,
   // on a paper with no contents and translation off), so it is neither
   // listed nor offered.
-  const firstShown = (tour) => stepsFor(tour).find((s) => !s.optional || anchorElement(s.anchor));
+  const firstShown = (tour) => stepsFor(tour).find((s) => !s.intro && (!s.optional || anchorElement(s.anchor)));
 
   const start = useCallback((tourId, at = 0) => {
     const tour = TOURS[tourId];
     if (!tour) { console.warn(`guide: no tour "${tourId}"`); return false; }
     if (!enabled || tour.hint || !factsMatch(tour.requires, factsRef.current)) return false;
-    const steps = stepsFor(tour);
+    // A run opens on its first real step: the intro is the offer's (the
+    // welcome deck), and whoever starts a tour by name asked for the tour.
+    const steps = stepsFor(tour).filter((s) => !s.intro);
     if (!steps.length || at < 0 || at >= steps.length) return false;
     if (tour.show) servicesRef.current.show?.(tour.show);
     activity.current = "running";
@@ -323,13 +325,23 @@ export function useGuide({ enabled = true, suggest = true, scope = "", synced = 
     activity.current = null;
   }, []);
   const dismissOffer = useCallback(() => closeOffer("dismissed"), [closeOffer]);
-  // A hint's card is the whole guide: accepting it is finishing it. A
-  // welcome offer was the tour's intro card, so the tour starts after it.
+  // A hint's card is the whole guide: accepting it is finishing it.
   const acceptOffer = useCallback(() => {
     if (!offer) return;
     if (offer.tour.hint) closeOffer("done");
-    else start(offer.tour.id, offer.tour.welcome ? Math.max(0, stepsFor(offer.tour).findIndex((s) => !s.intro)) : 0);
+    else start(offer.tour.id);
   }, [offer, start, closeOffer]);
+  // The welcome deck's ways in: "tour" is its Start, the tour; "page" opens
+  // the seeded Welcome page (App's openWelcome service), which answers the
+  // offer, so the tour is not offered again. The deck was this load's one
+  // offer; going to the Welcome page hands the load back to the contextual
+  // tours, so the first thing done there may offer its own.
+  const welcomeAction = useCallback((id) => {
+    if (id === "tour") { acceptOffer(); return; }
+    closeOffer("done");
+    offeredThisLoad.current = false;
+    servicesRef.current.openWelcome?.();
+  }, [acceptOffer, closeOffer]);
 
   useEffect(() => {
     if (!enabled) return undefined;
@@ -416,7 +428,6 @@ export function useGuide({ enabled = true, suggest = true, scope = "", synced = 
 
   // Task-driven completion: the current step's event fires → the step is done.
   const step = run && !run.finishing ? steps[run.index] : null;
-  const intros = steps.filter((s) => s.intro).length;
   // Include the introductory pause: the demo owns navigation from its very
   // first frame, before its first action has started.
   const busy = !!step?.do && (live.stepId !== step.id || (!live.failed && !live.finished));
@@ -556,7 +567,8 @@ export function useGuide({ enabled = true, suggest = true, scope = "", synced = 
     if (!offerTour) return null;
     const steps = stepsFor(offerTour);
     const intro = offerTour.welcome && steps[0]?.intro ? steps[0] : null;
-    if (intro) return { ...intro, id: offerTour.id, welcome: true, minutes: offerTour.minutes, anchor: null };
+    if (intro) return { ...intro, id: offerTour.id, welcome: true, minutes: offerTour.minutes, anchor: null,
+      welcomePage: !!factsRef.current.welcomePage };
     return {
       id: offerTour.id,
       hint: !!offerTour.hint,
@@ -598,14 +610,12 @@ export function useGuide({ enabled = true, suggest = true, scope = "", synced = 
     // Past the last step: the finish card (null otherwise) and its tiles' action.
     finishCard, finishAction,
     offer: offerCard,
-    acceptOffer, dismissOffer,
+    acceptOffer, dismissOffer, welcomeAction,
     tour: run?.tour || null,
     step,
-    // The welcome card (an `intro` step) is not counted: the first real
-    // step reads "Step 1 of n".
-    index: (run?.index ?? 0) - intros,
+    index: run?.index ?? 0,
     done: !!run?.done,
-    count: steps.length - intros,
+    count: steps.length,
     live: { ...live, busy },
     // next() also skips: a demo's actions stop when its step is left.
     start, next, back, dismiss, skipDemo,

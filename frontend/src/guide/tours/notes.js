@@ -16,10 +16,9 @@ export default {
   offer: { title: T("Your notes are growing"), line: T("Move, nest and copy them.") },
   steps: [
     { id: "notes-drag", anchor: "notes.handle", placement: "left",
+      media: "notes-move",
       title: T("Drag ⋮⋮ to move a note"),
-      body: T("Drop it further right to nest it."),
-      // Carried down a row and over to the right: where a nested note lands.
-      scene: [{ drag: "notes.handle", to: { offset: [44, 30] } }] },
+      body: T("Drop it further right to nest it.") },
     { id: "notes-menu", anchor: "notes.handle", placement: "left",
       title: T("Click ⋮⋮ for its menu"),
       body: T("Copy a link to it, duplicate it, or move it to another page."),

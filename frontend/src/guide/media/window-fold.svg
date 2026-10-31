@@ -1,0 +1,115 @@
+<svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg" focusable="false">
+  <!-- Fold a window by its title: the pointer double-clicks Chat's title,
+       two quick presses, and Chat folds down to its title strip. The strip
+       keeps its side of the open window, so it settles at the foot of the
+       column, and Notes, which shares the dock with it, takes the room
+       (App's renderSlotGroup draws a folded window as a bar after the open
+       ones it followed). The app lays the column out again at once; here
+       the edge between the two slides down, so the eye follows where Chat
+       went. The pointer rests on the strip, where a press opens Chat again.
+       Only the right dock and a sliver of the paper are drawn: the paper
+       keeps its width. -->
+
+  <!-- the paper beside the dock, unchanged -->
+  <rect class="m-well" x="10" y="10" width="98" height="180" rx="6" />
+  <rect class="m-card" x="22" y="18" width="74" height="172" rx="2" />
+  <rect class="m-line" x="30" y="30" width="44" height="6" rx="3" />
+  <rect class="m-line-dim" x="30" y="44" width="58" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="51" width="54" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="58" width="58" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="65" width="40" height="3.5" rx="1.75" />
+  <rect class="m-well" x="30" y="76" width="58" height="34" rx="2" />
+  <path class="m-glyph" d="M35 103L45 93L55 98L67 84L82 90" />
+  <rect class="m-line-dim" x="30" y="120" width="58" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="127" width="52" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="134" width="58" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="141" width="46" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="148" width="58" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="155" width="34" height="3.5" rx="1.75" />
+
+  <!-- Notes: its window is an open top and a bottom that slides down with
+       Chat's strip, keeping the gap between them, so Notes grows into the
+       room Chat leaves; neither piece strokes the seam between them -->
+  <path class="m-card" d="M114 90V16a6 6 0 0 1 6-6H300a6 6 0 0 1 6 6V90" />
+  <g class="m-move" style="--m-at: 0.24; --m-dx: 0; --m-dy: -72">
+    <path class="m-card" d="M114 90V162a6 6 0 0 0 6 6H300a6 6 0 0 0 6-6V90" />
+  </g>
+  <path class="m-glyph" d="M120 15h.01M123 15h.01M120 18h.01M123 18h.01M120 21h.01M123 21h.01" />
+  <rect class="m-line" x="128" y="16" width="24" height="4" rx="2" />
+  <path class="m-rule" d="M114 26H306" />
+  <circle class="m-line-dim" cx="122" cy="37" r="1.6" />
+  <rect class="m-line-dim" x="127" y="35.25" width="120" height="3.5" rx="1.75" />
+  <circle class="m-line-dim" cx="122" cy="49" r="1.6" />
+  <rect class="m-line-dim" x="127" y="47.25" width="96" height="3.5" rx="1.75" />
+  <circle class="m-line-dim" cx="132" cy="61" r="1.6" />
+  <rect class="m-line-dim" x="137" y="59.25" width="104" height="3.5" rx="1.75" />
+  <circle class="m-line-dim" cx="132" cy="73" r="1.6" />
+  <rect class="m-line-dim" x="137" y="71.25" width="80" height="3.5" rx="1.75" />
+  <circle class="m-line-dim" cx="122" cy="85" r="1.6" />
+  <rect class="m-line-dim" x="127" y="83.25" width="132" height="3.5" rx="1.75" />
+  <!-- the rows the room uncovers, each as Notes' bottom edge passes it -->
+  <g class="m-appear" style="--m-at: 0.258">
+    <circle class="m-line-dim" cx="132" cy="97" r="1.6" />
+    <rect class="m-line-dim" x="137" y="95.25" width="92" height="3.5" rx="1.75" />
+  </g>
+  <g class="m-appear" style="--m-at: 0.272">
+    <circle class="m-line-dim" cx="122" cy="109" r="1.6" />
+    <rect class="m-line-dim" x="127" y="107.25" width="110" height="3.5" rx="1.75" />
+  </g>
+  <g class="m-appear" style="--m-at: 0.285">
+    <circle class="m-line-dim" cx="132" cy="121" r="1.6" />
+    <rect class="m-line-dim" x="137" y="119.25" width="70" height="3.5" rx="1.75" />
+  </g>
+  <g class="m-appear" style="--m-at: 0.298">
+    <circle class="m-line-dim" cx="122" cy="133" r="1.6" />
+    <rect class="m-line-dim" x="127" y="131.25" width="124" height="3.5" rx="1.75" />
+  </g>
+  <g class="m-appear" style="--m-at: 0.311">
+    <circle class="m-line-dim" cx="122" cy="145" r="1.6" />
+    <rect class="m-line-dim" x="127" y="143.25" width="88" height="3.5" rx="1.75" />
+  </g>
+  <g class="m-appear" style="--m-at: 0.324">
+    <circle class="m-line-dim" cx="132" cy="157" r="1.6" />
+    <rect class="m-line-dim" x="137" y="155.25" width="100" height="3.5" rx="1.75" />
+  </g>
+
+  <!-- Chat, drawn where its strip ends up and carried there from its open
+       place, 72 up: the title strip behind, the body folding into it
+       (bottom edge staying put as the strip comes down over it), the title
+       on top -->
+  <g class="m-move" style="--m-at: 0.24; --m-dx: 0; --m-dy: -72">
+    <rect class="m-card" x="114" y="174" width="192" height="16" rx="6" />
+  </g>
+  <g class="m-move" style="--m-at: 0.24; --m-dx: 0; --m-dy: -72">
+    <g class="m-fold" style="--m-at: 0.245">
+      <path class="m-card" d="M114 184V256a6 6 0 0 0 6 6H300a6 6 0 0 0 6-6V184" />
+      <path class="m-rule" d="M114 190H306" />
+      <rect class="m-chip" x="222" y="196" width="78" height="12" rx="6" />
+      <rect class="m-line-dim" x="120" y="216" width="132" height="3.5" rx="1.75" />
+      <rect class="m-line-dim" x="120" y="223" width="120" height="3.5" rx="1.75" />
+      <rect class="m-line-dim" x="120" y="230" width="84" height="3.5" rx="1.75" />
+      <rect class="m-chip" x="120" y="246" width="180" height="10" rx="5" />
+    </g>
+  </g>
+  <g class="m-move" style="--m-at: 0.24; --m-dx: 0; --m-dy: -72">
+    <path class="m-glyph" d="M120 179h.01M123 179h.01M120 182h.01M123 182h.01M120 185h.01M123 185h.01" />
+    <rect class="m-line" x="128" y="180" width="20" height="4" rx="2" />
+  </g>
+
+  <!-- folded: the strip lights, the thing the clip is about -->
+  <rect class="m-link m-light" style="--m-at: 0.37" x="114" y="174" width="192" height="16" rx="6" />
+
+  <!-- the double-click on Chat's title: two presses in quick succession -->
+  <circle class="m-ripple m-press" style="--m-at: 0.15" cx="144" cy="110" r="7" />
+  <circle class="m-ripple m-press" style="--m-at: 0.2" cx="144" cy="110" r="7" />
+
+  <!-- the hand: in from the paper to Chat's title, then, once Chat has
+       folded, down to its strip; the last leg outermost -->
+  <g class="m-move" style="--m-at: 0.41; --m-dx: 0; --m-dy: -69">
+    <g class="m-move" style="--m-at: 0.02; --m-dx: -80; --m-dy: 40">
+      <g transform="translate(142.76 177.76) scale(0.62)">
+        <path class="m-pointer" d="M2 2 L2 20 L7 15.5 L10.5 23 L14 21.5 L10.5 14 L17 14 Z" />
+      </g>
+    </g>
+  </g>
+</svg>

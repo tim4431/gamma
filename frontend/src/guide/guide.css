@@ -296,37 +296,197 @@
   border-color: var(--border-light);
 }
 
-/* The welcome card: a tour's intro and its arrival offer, centred. As an
-   offer it dims nothing; the dimming starts with the tour. */
-.guideCard.guideCardWelcome {
+/* The finish card's frame: centred and a size up from a tour card. */
+.guideCard.guideCardFinish {
   width: 440px;
   padding: 24px 26px 18px;
   gap: 12px;
   border-top: 1px solid var(--border);
 }
-.guideCardWelcome .guideTitle { font-size: var(--fs-xl); letter-spacing: -0.01em; }
-.guideCardWelcome .guideBody { font-size: var(--fs-md); }
-.guideOutline { list-style: none; margin: 2px 0 4px; padding: 0; display: flex; flex-direction: column; gap: 9px; }
-.guideOutline li {
+.guideCardFinish .guideTitle { font-size: var(--fs-xl); letter-spacing: -0.01em; }
+.guideCardFinish .guideBody { font-size: var(--fs-md); }
+
+/* The welcome deck (GuideOverlay's WelcomeDeck): the first tour's arrival
+   offer, in place of the welcome card. A centred sheet over the finish
+   card's light scrim: the welcome and one line, a bento of what Gamma does
+   (the hero over two columns, six cards, each a drawing over its title and
+   line), the rest as a strip of words, and one way in. Four columns by two
+   rows, so the whole deck fits a 1024 × 700 window; on a phone the cards
+   become rows and the deck scrolls under its own footer. */
+.guideCard.welcomeDeck {
+  width: min(1040px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  overflow-y: auto;
+  padding: 22px 24px 18px;
+  gap: 18px;
+  box-shadow: var(--shadow-3);
+}
+.welcomeHead {
   display: flex;
   align-items: center;
-  gap: 11px;
-  font-size: var(--fs-md);
+  gap: 14px;
 }
-.guideOutlineNum {
+.welcomeMark {
   flex: none;
-  width: 24px;
-  height: 24px;
-  border-radius: 50%;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--accent-bg);
-  color: var(--accent);
-  font-weight: 600;
-  font-size: var(--fs-xs);
+  width: 36px;
+  height: 36px;
+  border-radius: var(--radius-md);
 }
-.guideOutlineKind { margin-left: auto; font-size: var(--fs-xs); color: var(--text-muted); white-space: nowrap; }
+.welcomeIntro { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.welcomeDeck .welcomeIntro .guideTitle { font-size: var(--fs-xl); letter-spacing: -0.01em; line-height: var(--lh-tight); }
+.welcomeDeck .welcomeIntro .guideBody { font-size: var(--fs-md); color: var(--text-muted); }
+.welcomeHead .guideClose { margin: 0 -6px 0 auto; align-self: flex-start; }
+
+/* The cards. Each is one surface, the drawings' own ground (--bg-page), so
+   the drawing and its words read as one thing: its box loses its frame
+   here and the card's edge is the only line. The accent stays inside the
+   drawings, one idea each. */
+.welcomeGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.welcomeFeature {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-lg);
+  background: var(--bg-page);
+  overflow: hidden;
+}
+.welcomeFeature .guideMedia { border: 0; border-radius: 0; background: none; }
+.welcomeText {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 2px 14px 14px;
+}
+.welcomeFeatureTitle { font-size: var(--fs-md); font-weight: 600; line-height: var(--lh-tight); color: var(--text-primary); }
+.welcomeFeatureLine { font-size: var(--fs-sm); line-height: 1.45; color: var(--text-muted); }
+/* The hero: two columns wide, its words beside its drawing, a step up in
+   size, and the guided tour under them. The drawing's column sets its
+   height (the registry's ratio), so the hero never makes its row taller
+   than the cards beside it. */
+.welcomeFeature.hero {
+  grid-column: span 2;
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  grid-template-areas: "text media";
+  align-items: center;
+}
+.welcomeFeature.hero .guideMedia { grid-area: media; }
+.welcomeFeature.hero .welcomeText { grid-area: text; align-self: stretch; gap: 6px; padding: 18px 4px 16px 18px; }
+.welcomeFeature.hero .welcomeFeatureTitle { font-size: var(--fs-lg); }
+.welcomeFeature.hero .welcomeFeatureLine { font-size: var(--fs-md); line-height: 1.5; }
+.welcomeTour { align-self: flex-start; margin-top: auto; }
+.welcomeTour svg { color: var(--accent); }
+
+/* What has no drawing: a strip of words under the cards. */
+.welcomeMore {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 22px;
+  margin: -4px 0 0;
+  padding: 0 4px;
+  font-size: var(--fs-sm);
+  color: var(--text-secondary);
+}
+.welcomeMore ul { display: flex; flex-wrap: wrap; gap: 8px 22px; margin: 0; padding: 0; list-style: none; }
+.welcomeMore li { display: inline-flex; align-items: center; gap: 7px; }
+.welcomeMore svg { flex: none; color: var(--text-muted); }
+.welcomeMoreLabel { font-size: var(--fs-xs); font-weight: 600; color: var(--text-secondary); }
+/* The footer keeps its whole height: .guideFoot's min-height would let the
+   deck's column shrink it, and on a phone, where the deck scrolls under it,
+   its buttons would drop out of sight. */
+.welcomeFoot { margin-top: 0; flex: none; }
+.welcomeFoot .guideBtns { gap: 8px; }
+
+/* The drawings' clock here (media.css, "Motion"). Each plays once as the
+   deck opens, from its empty frame and at its card's turn (--m-delay, set
+   per card, the hero first); the one under the pointer or the keyboard's
+   focus loops from the top. Two layers, so that leaving a card returns it
+   to its finished picture rather than playing it again: the opening runs
+   on the box and never changes, and the drawing takes the box's clock
+   except while it loops on its own. The opening covers what one loop of
+   m-clock does after its rewind (92 % of the period), at the same pace. */
+.welcomeDeck .guideMedia {
+  animation: m-clock-in calc(var(--m-period) * 0.92) linear backwards; /* ds-allow: a drawing's clock runs at an even pace over its own period */
+  animation-delay: var(--m-delay, 0s);
+}
+.welcomeDeck .guideMedia svg { animation: none; --m-t: inherit; }
+.welcomeFeature:is(:hover, :focus-within) .guideMedia svg {
+  animation: m-clock-again var(--m-period) linear infinite; /* ds-allow: a drawing's clock runs at an even pace over its own period */
+  animation-delay: calc(var(--m-period) * -0.08);
+}
+@keyframes m-clock-in {
+  from { --m-t: 0; }
+  to { --m-t: 1; }
+}
+/* m-clock under another name: a new name starts the loop from the top. */
+@keyframes m-clock-again {
+  0% { --m-t: 1; }
+  8% { --m-t: 0; }
+  100% { --m-t: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .welcomeDeck .guideMedia,
+  .welcomeFeature:is(:hover, :focus-within) .guideMedia svg { animation: none; }
+}
+
+/* A phone: the deck fills the screen less a margin, the cards are rows (a
+   small drawing beside its words, the hero's tour under them), and the
+   list scrolls under a footer that stays. */
+@media (max-width: 640px) {
+  .guideCard.welcomeDeck {
+    width: calc(100vw - 24px);
+    max-height: calc(100dvh - 24px);
+    padding: 18px 16px 0;
+    gap: 14px;
+  }
+  .welcomeMark { width: 32px; height: 32px; }
+  .welcomeDeck .welcomeIntro .guideTitle { font-size: var(--fs-lg); }
+  .welcomeDeck .welcomeIntro .guideBody { font-size: var(--fs-sm); }
+  .welcomeGrid { grid-template-columns: minmax(0, 1fr); gap: 8px; }
+  .welcomeFeature,
+  .welcomeFeature.hero {
+    grid-column: auto;
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+    padding: 6px 12px 6px 6px;
+  }
+  .welcomeFeature .guideMedia,
+  .welcomeFeature.hero .guideMedia {
+    flex: none;
+    width: 104px;
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+  }
+  .welcomeText,
+  .welcomeFeature.hero .welcomeText { gap: 2px; padding: 0; }
+  .welcomeFeature.hero .welcomeFeatureTitle { font-size: var(--fs-md); }
+  .welcomeFeature.hero .welcomeFeatureLine { font-size: var(--fs-sm); line-height: 1.45; }
+  .welcomeTour { margin-top: 6px; }
+  .welcomeMore { gap: 6px 16px; margin: 0; padding: 0 2px; font-size: var(--fs-xs); }
+  .welcomeMoreLabel { flex-basis: 100%; }
+  .welcomeFoot {
+    position: sticky;
+    bottom: 0;
+    flex-wrap: wrap;
+    margin: 0 -16px;
+    padding: 10px 16px calc(12px + env(safe-area-inset-bottom));
+    border-top: 1px solid var(--border-subtle);
+    background: var(--bg-elevated);
+  }
+  .welcomeFoot .guideFootnote { flex-basis: 100%; }
+}
+
 .guideFootnote { font-size: var(--fs-xs); color: var(--text-muted); }
 
 /* The finish card, over a light scrim (clicking it closes the card). */
@@ -391,7 +551,7 @@
     bottom: calc(56px + env(safe-area-inset-bottom));
   }
   .guideCardCentered { width: min(340px, calc(100vw - 32px)); }
-  .guideCard.guideCardWelcome { width: min(440px, calc(100vw - 32px)); padding: 20px 18px 16px; }
+  .guideCard.guideCardFinish { width: min(440px, calc(100vw - 32px)); padding: 20px 18px 16px; }
   /* A sheet is not beside its anchor. */
   .guideBeak { display: none; }
   /* Keep lower controls, especially the composer, usable during practice. */

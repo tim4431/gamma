@@ -23,7 +23,8 @@ import { CARD_W, placeCard } from "./place.js";
 import { arriving } from "../shared/ui/motion.js";
 import { POINTER_PATH, playScene } from "./scene.js";
 import { KeyCaps } from "../shared/ui/KeyCaps.jsx";
-import { CheckIcon, HighlightIcon, LabelIcon, PaperIcon, PencilIcon, XIcon } from "../shared/ui/Icons";
+import { BrandMark } from "../shared/ui/BrandMark";
+import { CheckIcon, CloudOffIcon, GlobeIcon, HighlightIcon, LabelIcon, LanguagesIcon, PaperIcon, PencilIcon, UsersIcon, XIcon } from "../shared/ui/Icons";
 import "./guide.css";
 import "./media.css";
 import { t, tn } from "../shared/i18n/i18n.js";
@@ -57,20 +58,22 @@ const REDUCED = () => typeof matchMedia === "function" && matchMedia("(prefers-r
 const pad = (b) => ({ top: b.top - PAD, left: b.left - PAD, right: b.right + PAD, bottom: b.bottom + PAD, width: b.width + PAD * 2, height: b.height + PAD * 2 });
 const holePath = (r) => `M${r.left},${r.top} h${r.width} a8,8 0 0 1 8,8 v${r.height - 16} a8,8 0 0 1 -8,8 h${-r.width} a8,8 0 0 1 -8,-8 v${-(r.height - 16)} a8,8 0 0 1 8,-8 z`;
 
-// A step's illustration (`media`, guide/media.js): the drawing of that id,
-// bundled from guide/media/. It goes into the card as markup rather than an
-// <img> so it reads the theme's tokens — these are this repo's own
+// A step's illustration (`media`, guide/media.js): the drawing or clip of
+// that id, bundled from guide/media/. It goes into the card as markup rather
+// than an <img> so it reads the theme's tokens — these are this repo's own
 // build-time files, never anything a user supplies. The box takes its height
-// from the registry's ratio, so the card is its final size when place.js
-// measures it. The drawing says the same thing as the copy beside it, so it
-// stays out of the accessibility tree.
+// from the registry's ratio (or `ratio`, where a grid wants its boxes even),
+// so the card is its final size when place.js measures it. `still` holds the
+// finished picture while a demo acts, so the card has one thing moving at a
+// time. The picture says the same thing as the copy beside it, so it stays
+// out of the accessibility tree.
 const DRAWINGS = import.meta.glob("./media/*.svg", { eager: true, query: "?raw", import: "default" });
-function Media({ id }) {
+function Media({ id, ratio, still = false }) {
   const svg = DRAWINGS[`./media/${id}.svg`];
   if (!svg) { console.warn(`guide: no drawing for media "${id}"`); return null; }
   return (
-    <div className="guideMedia" data-media={id} aria-hidden="true"
-      style={{ aspectRatio: mediaRatio(id) }} dangerouslySetInnerHTML={{ __html: svg }} />
+    <div className={`guideMedia ${still ? "still" : ""}`} data-media={id} aria-hidden="true"
+      style={{ aspectRatio: ratio || mediaRatio(id) }} dangerouslySetInnerHTML={{ __html: svg }} />
   );
 }
 
@@ -87,34 +90,67 @@ const Beacon = ({ rect }) => (
 // points into open (outside-click checks listen on the document).
 const keepFocus = (e) => { e.preventDefault(); e.stopPropagation(); };
 
-// A welcome tour's intro (and its offer): what the tour does and how long
-// it takes, an outline marking what Gamma shows and what the user tries,
-// Start, and a way out that says the tour stays available.
-function WelcomeContent({ step, minutes, onStart, onLater, bindings }) {
+// The welcome deck: the first tour's arrival offer (its `intro` step, with
+// `features`). What Gamma does, a card each, every card's drawing playing
+// once as the deck opens, one after the other, and looping while the
+// pointer or the keyboard is on its card (guide.css). The first card is the
+// hero, and carries the guided tour. One way in: the seeded Welcome page and
+// its sample PDF (`welcomePage`: the library has it), where the tours offer
+// themselves as each thing is first done; without it the tour is the way
+// in. Explore on my own, × and Esc close the deck, and every tour stays in
+// the account menu. The cards are not buttons: the deck says what Gamma
+// does, and the Welcome page is where it is tried.
+const MORE_ICONS = { share: UsersIcon, offline: CloudOffIcon, connector: GlobeIcon, translate: LanguagesIcon };
+const DECK_RATIO = 1.6; // every card's box, so the titles under them line up
+const DECK_LEAD = 0.3;  // s: the hero's drawing starts as the deck lands
+const DECK_STEP = 0.3;  // s: each next card's starts this much later
+function WelcomeDeck({ step, minutes, welcomePage, onAction, onLater, bindings }) {
+  const tour = minutes ? tn("Take the {n}-minute tour", "Take the {n}-minute tour", minutes) : t("Take the tour");
   return (
     <>
-      <div className="guideHead">
-        {minutes ? <span className="guideChip accent">{tn("{n}-minute tour", "{n}-minute tour", minutes)}</span> : null}
-        <button className="uiClose uiCloseSm guideClose" onClick={onLater} title={t("Dismiss guide (Esc)")} aria-label={t("Dismiss guide")}><XIcon size={14} /></button>
+      <div className="welcomeHead">
+        <BrandMark size={36} className="welcomeMark" />
+        <div className="welcomeIntro">
+          <div className="guideTitle">{renderInline(t(step.title), bindings)}</div>
+          {step.body ? <div className="guideBody">{renderBody(t(step.body), bindings)}</div> : null}
+        </div>
+        <button className="uiClose uiCloseLg guideClose" onClick={onLater} title={t("Dismiss guide (Esc)")} aria-label={t("Dismiss guide")}><XIcon size={16} /></button>
       </div>
-      <div className="guideTitle">{renderInline(t(step.title), bindings)}</div>
-      {step.body ? <div className="guideBody">{renderBody(t(step.body), bindings)}</div> : null}
-      {step.outline?.length ? (
-        <ol className="guideOutline">
-          {step.outline.map((item, i) => (
-            <li key={i}>
-              <span className="guideOutlineNum" aria-hidden="true">{i + 1}</span>
-              <span>{t(item.text)}</span>
-              <span className="guideOutlineKind">{item.kind === "try" ? t("you try") : t("watch")}</span>
-            </li>
-          ))}
-        </ol>
+      <ul className="welcomeGrid">
+        {step.features.map((feature, i) => (
+          <li key={feature.media} className={`welcomeFeature ${i === 0 ? "hero" : ""}`} data-feature={feature.media}
+            style={{ "--m-delay": `${(DECK_LEAD + i * DECK_STEP).toFixed(1)}s` }}>
+            <Media id={feature.media} ratio={DECK_RATIO} />
+            <div className="welcomeText">
+              <div className="welcomeFeatureTitle">{t(feature.title)}</div>
+              <div className="welcomeFeatureLine">{renderInline(t(feature.line), bindings)}</div>
+              {i === 0 && welcomePage ? (
+                <button type="button" className="uiBtn sm welcomeTour" onClick={() => onAction("tour")}><PlayGlyph />{tour}</button>
+              ) : null}
+            </div>
+          </li>
+        ))}
+      </ul>
+      {step.more?.length ? (
+        <div className="welcomeMore">
+          <span className="welcomeMoreLabel">{t("And more")}</span>
+          <ul>
+            {step.more.map((item) => {
+              const Icon = MORE_ICONS[item.icon];
+              return <li key={item.icon}>{Icon ? <Icon size={14} /> : null}{t(item.text)}</li>;
+            })}
+          </ul>
+        </div>
       ) : null}
-      <div className="guideFoot">
-        <button className="uiBtn ghost" onClick={onLater}>{step.later ? t(step.later) : t("Not now")}</button>
-        <span className="guideBtns"><button className="uiBtn primary" onClick={onStart}>{step.next ? t(step.next) : t("Start")}</button></span>
+      <div className="guideFoot welcomeFoot">
+        {step.footnote ? <span className="guideFootnote">{t(step.footnote)}</span> : null}
+        <span className="guideBtns">
+          <button type="button" className="uiBtn ghost" onClick={onLater}>{t(step.later)}</button>
+          <button type="button" className="uiBtn primary" onClick={() => onAction(welcomePage ? "page" : "tour")}>
+            {welcomePage ? t(step.next) : tour}
+          </button>
+        </span>
       </div>
-      {step.footnote ? <div className="guideFootnote">{t(step.footnote)}</div> : null}
     </>
   );
 }
@@ -339,17 +375,30 @@ export default function GuideOverlay({ guide, keybindings }) {
       <div className="guideRoot" ref={rootRef} data-guide-finish={step.id}>
         <div className="guideScrim" onClick={guide.dismiss} aria-hidden="true" />
         {rect ? <Beacon rect={rect} /> : null}
-        <div className="guideCard guideCardCentered guideCardWelcome guideCardFinish" role="dialog" aria-live="polite" aria-label={t(step.title)}
+        <div className="guideCard guideCardCentered guideCardFinish" role="dialog" aria-live="polite" aria-label={t(step.title)}
           onMouseDown={keepFocus} onPointerDown={(e) => e.stopPropagation()}>
           <FinishContent finish={step} onAction={guide.finishAction} onDone={guide.dismiss} />
         </div>
       </div>
     );
   }
+  // The welcome deck: the first tour's arrival offer, centred over the
+  // finish card's light scrim, which closes it as Explore on my own does.
+  // It points at nothing.
+  if (inviting && offer.welcome) {
+    return (
+      <div className="guideRoot" ref={rootRef} data-guide-offer={offer.id}>
+        <div className="guideScrim" onClick={dismiss} aria-hidden="true" />
+        <div className="guideCard guideCardCentered welcomeDeck" role="dialog" aria-live="polite"
+          aria-label={plainText(t(offer.title), keybindings)} onMouseDown={keepFocus} onPointerDown={(e) => e.stopPropagation()}>
+          <WelcomeDeck step={offer} minutes={offer.minutes} welcomePage={offer.welcomePage} bindings={keybindings}
+            onAction={guide.welcomeAction} onLater={dismiss} />
+        </div>
+      </div>
+    );
+  }
   const waiting = anchor && !rect;
-  // The welcome card: a welcome tour's intro step, or its offer.
-  const welcome = inviting ? !!offer.welcome : !!step.intro && !anchor;
-  const centered = !anchor && (!inviting || welcome);
+  const centered = !anchor && !inviting;
   const vw = window.innerWidth, vh = window.innerHeight;
   // The hole is the anchor's surface when it has one; the ring stays on the anchor.
   const hole = rect ? holePath(rect.hole || rect) : "";
@@ -398,7 +447,7 @@ export default function GuideOverlay({ guide, keybindings }) {
       {!waiting || busy ? (
         <div
           ref={cardRef}
-          className={`guideCard ${rect && rect.top > vh / 2 ? "guideCardAbove" : ""} ${centered && !busy ? "guideCardCentered" : ""} ${welcome ? "guideCardWelcome" : ""} ${cardPos ? `side-${cardPos.side}` : ""} ${(busy || inviting) && !cardPos && !centered ? "guideCardCorner" : ""}`}
+          className={`guideCard ${rect && rect.top > vh / 2 ? "guideCardAbove" : ""} ${centered && !busy ? "guideCardCentered" : ""} ${cardPos ? `side-${cardPos.side}` : ""} ${(busy || inviting) && !cardPos && !centered ? "guideCardCorner" : ""}`}
           style={cardPos ? { top: cardPos.top, left: cardPos.left, width: CARD_W } : undefined}
           onMouseDown={keepFocus}
           onPointerDown={(e) => e.stopPropagation()}
@@ -410,64 +459,58 @@ export default function GuideOverlay({ guide, keybindings }) {
             <span className={`guideBeak beak-${cardPos.side}`} aria-hidden="true"
               style={cardPos.beak.x != null ? { left: cardPos.beak.x - 7 } : { top: cardPos.beak.y - 7 }} />
           ) : null}
-          {welcome ? (
-            <WelcomeContent step={step} minutes={inviting ? offer.minutes : guide.tour?.minutes} bindings={keybindings}
-              onStart={next} onLater={dismiss} />
-          ) : (
-            <>
-              <div className="guideHead">
-                {inviting ? (
-                  <span className="guideStep">
-                    {offer.hint ? <span className="guideChip tip">{t("Tip")}</span> : tn("Quick tour · {n} step", "Quick tour · {n} steps", offer.count)}
-                  </span>
-                ) : (
-                  <>
-                    {failed ? <span className="guideChip failed">{t("couldn't finish")}</span>
-                      : done ? <span className="guideChip done guideDone">{t("✓ Done")}</span>
-                      : busy ? <span className="guideChip watch"><PlayGlyph />{t("Watch")}</span>
-                      : yourTurn ? <span className="guideChip turn">{t("Your turn")}</span> : null}
-                    <span className="guideCount">{t("Step {n} of {count}", { n: index + 1, count })}</span>
-                  </>
-                )}
-                <button className="uiClose uiCloseSm guideClose" onClick={dismiss} title={inviting ? t("Dismiss guide (Esc)") : t("Leave the tour (Esc)")} aria-label={inviting ? t("Dismiss guide") : t("Leave the tour")}><XIcon size={14} /></button>
-              </div>
-              {/* The step's drawing leads, its copy explains. An offer and a
-                  hint stay a card of words (guide/media.js). */}
-              {!inviting && step.media ? <Media id={step.media} /> : null}
-              <div className="guideTitle">{renderInline(t(step.title), keybindings)}</div>
-              {t(body) ? <div className="guideBody">{renderBody(t(body), keybindings)}</div> : null}
-              {busy && live?.status ? (
-                <div className="guideWait" role="status">
-                  <span className="guideSpinner" aria-hidden="true" />
-                  <span>
-                    {t(live.status)}
-                    {slow ? <span className="guideWaitSlow">{t("This can take a minute on a slow connection.")}</span> : null}
-                  </span>
-                </div>
-              ) : null}
-              {busy && live?.progress ? (
-                <div className="guideDemoBar" aria-hidden="true"><i style={{ width: `${(100 * live.progress[0]) / Math.max(1, live.progress[1])}%` }} /></div>
-              ) : null}
-              {!inviting ? (
-                <div className="guideSegments" aria-hidden="true">
-                  {Array.from({ length: count }, (_, i) => <i key={i} className={i === index ? "on" : i < index ? "done" : ""} />)}
-                </div>
-              ) : null}
-              {/* The primary button is the call to action only where the step
-                  itself is the action (Next, Done); a demo can be skipped, and on
-                  the user's turn the task is the call, not skipping it. Dismiss
-                  leaves the tour from any step, as × and Esc do. */}
-              <div className="guideFoot">
-                {!inviting ? <button className="uiBtn sm ghost guideDismiss" onClick={dismiss}>{t("Dismiss")}</button>
-                  : !offer.hint ? <button className="uiBtn sm ghost" onClick={dismiss}>{t("Not now")}</button> : null}
-                {showBack ? <button className="uiBtn" onClick={back}>{t("Back")}</button> : null}
-                {link ? <button className="uiBtn sm ghost guideLink" onClick={busy ? guide.skipDemo : next}>{link}</button> : null}
-                <span className="guideBtns">
-                  {showPrimary ? <button className="uiBtn primary" onClick={next}>{primaryLabel}</button> : null}
-                </span>
-              </div>
-            </>
-          )}
+          <div className="guideHead">
+            {inviting ? (
+              <span className="guideStep">
+                {offer.hint ? <span className="guideChip tip">{t("Tip")}</span> : tn("Quick tour · {n} step", "Quick tour · {n} steps", offer.count)}
+              </span>
+            ) : (
+              <>
+                {failed ? <span className="guideChip failed">{t("couldn't finish")}</span>
+                  : done ? <span className="guideChip done guideDone">{t("✓ Done")}</span>
+                  : busy ? <span className="guideChip watch"><PlayGlyph />{t("Watch")}</span>
+                  : yourTurn ? <span className="guideChip turn">{t("Your turn")}</span> : null}
+                <span className="guideCount">{t("Step {n} of {count}", { n: index + 1, count })}</span>
+              </>
+            )}
+            <button className="uiClose uiCloseSm guideClose" onClick={dismiss} title={inviting ? t("Dismiss guide (Esc)") : t("Leave the tour (Esc)")} aria-label={inviting ? t("Dismiss guide") : t("Leave the tour")}><XIcon size={14} /></button>
+          </div>
+          {/* The step's drawing or clip leads, its copy explains; a clip
+              starts once the step's demo has acted. An offer and a hint stay
+              a card of words (guide/media.js). */}
+          {!inviting && step.media ? <Media id={step.media} key={busy ? "still" : "live"} still={busy} /> : null}
+          <div className="guideTitle">{renderInline(t(step.title), keybindings)}</div>
+          {t(body) ? <div className="guideBody">{renderBody(t(body), keybindings)}</div> : null}
+          {busy && live?.status ? (
+            <div className="guideWait" role="status">
+              <span className="guideSpinner" aria-hidden="true" />
+              <span>
+                {t(live.status)}
+                {slow ? <span className="guideWaitSlow">{t("This can take a minute on a slow connection.")}</span> : null}
+              </span>
+            </div>
+          ) : null}
+          {busy && live?.progress ? (
+            <div className="guideDemoBar" aria-hidden="true"><i style={{ width: `${(100 * live.progress[0]) / Math.max(1, live.progress[1])}%` }} /></div>
+          ) : null}
+          {!inviting ? (
+            <div className="guideSegments" aria-hidden="true">
+              {Array.from({ length: count }, (_, i) => <i key={i} className={i === index ? "on" : i < index ? "done" : ""} />)}
+            </div>
+          ) : null}
+          {/* The primary button is the call to action only where the step
+              itself is the action (Next, Done); a demo can be skipped, and on
+              the user's turn the task is the call, not skipping it. Dismiss
+              leaves the tour from any step, as × and Esc do. */}
+          <div className="guideFoot">
+            {!inviting ? <button className="uiBtn sm ghost guideDismiss" onClick={dismiss}>{t("Dismiss")}</button>
+              : !offer.hint ? <button className="uiBtn sm ghost" onClick={dismiss}>{t("Not now")}</button> : null}
+            {showBack ? <button className="uiBtn" onClick={back}>{t("Back")}</button> : null}
+            {link ? <button className="uiBtn sm ghost guideLink" onClick={busy ? guide.skipDemo : next}>{link}</button> : null}
+            <span className="guideBtns">
+              {showPrimary ? <button className="uiBtn primary" onClick={next}>{primaryLabel}</button> : null}
+            </span>
+          </div>
         </div>
       ) : null}
     </div>

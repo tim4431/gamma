@@ -8,7 +8,7 @@ export async function contextualGuideScenarios(env) {
   // Arrange windows: each move is a scene on the real title; the steps are
   // light (Next stays, doing it ticks the step); the drag's scene shows the
   // dock's own drop preview where Chat would land, clear of the card.
-  await step("guide: arrange windows shows each move on the real title, then the user folds and docks Chat", async () => {
+  await step("guide: arrange windows shows each move on its card, then the user folds and docks Chat", async () => {
     const up = await alice.upload("/api/uploads", makePdf([["Arrange your reading windows."]]), "windows.pdf", "application/pdf");
     const paper = await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Window tour", source_url: up.source_url } });
     const ctx = await alice.context(browser);
@@ -24,13 +24,12 @@ export async function contextualGuideScenarios(env) {
       assertEq((await page.locator('.guideCard .primary').textContent()).trim(), "Next", "a light step keeps Next");
       assertEq(await page.locator('.guideCard .guideChip.turn').count(), 0, "and does not wait for the user");
       const grip = page.locator('[data-guide="chat.grip"]');
-      const centre = (b) => ({ x: b.x + b.width / 2, y: b.y + b.height / 2 });
-      const inside = (p, b) => p.x >= b.x - 2 && p.x <= b.x + b.width + 2 && p.y >= b.y - 2 && p.y <= b.y + b.height + 2;
-      // The scene double-clicks the real title, and changes nothing.
-      const ripple = page.locator('[data-guide-scene="window-collapse"] .guideSceneRipple').first();
-      await ripple.waitFor({ state: "attached", timeout: 8000 });
-      assert(inside(centre(await ripple.boundingBox()), await grip.boundingBox()), "the ripple lands on the Chat title");
-      assertEq(await page.locator('.dockWindow.collapsed [data-guide="chat.grip"]').count(), 0, "the scene folds nothing");
+      // The card's clip shows the double-click and the fold; the spotlight
+      // rings the real title, where nothing plays, and nothing folds.
+      await page.waitForSelector('[data-guide-overlay="window-collapse"] .guideMedia[data-media="window-fold"] svg');
+      assertEq(await page.locator("[data-guide-scene]").count(), 0, "a clip on the card, no scene on the real title");
+      assertEq(await page.locator(".guideRing").count(), 1, "the ring marks the real title");
+      assertEq(await page.locator('.dockWindow.collapsed [data-guide="chat.grip"]').count(), 0, "the clip folds nothing");
       // Doing it ticks the step (Done) and moves on; again unfolds.
       await grip.dblclick();
       await page.locator('.guideCard .guideDone').waitFor();
@@ -38,28 +37,21 @@ export async function contextualGuideScenarios(env) {
       await page.waitForSelector('[data-guide-overlay="window-move"] .guideCard');
       await grip.dblclick();
       assertEq(await page.locator('.dockWindow.collapsed [data-guide="chat.grip"]').count(), 0);
-      // The user's pointer in the spotlight holds the scene back; once it
-      // has left a while, the scene plays.
-      await page.mouse.move(300, 300);
-      // The drag scene: the dock's drop preview on the left, clear of the card.
-      const preview = page.locator('[data-guide-scene="window-move"] .guideScenePreview');
-      await preview.waitFor({ timeout: 12000 });
-      await until(async () => Number(await preview.evaluate((el) => getComputedStyle(el).opacity)) > 0.9, { what: "the drop preview shows" });
-      const zone = await preview.boundingBox();
-      const viewer = await page.locator('[data-guide="pdf.viewer"]').boundingBox();
-      assert(zone.x <= viewer.x + 4 && zone.width < viewer.width * 0.6, `the preview is the left dock zone: ${JSON.stringify(zone)}`);
-      const card = await page.locator(".guideCard").boundingBox();
-      assert(zone.x + zone.width <= card.x || card.x + card.width <= zone.x, "the card keeps clear of the preview");
-      if (flags.keep) await page.screenshot({ path: `${server.dir}/windows-drag-scene.png` });
-      // The user's own drag: the sheet lifts while they hold, the scene steps
-      // aside, and the drop ticks the last step.
+      // The drag: the card's clip carries Chat to the dock zones; nothing
+      // plays over the real window.
+      await page.waitForSelector('[data-guide-overlay="window-move"] .guideMedia[data-media="window-dock"] svg');
+      assertEq(await page.locator("[data-guide-scene]").count(), 0, "a clip on the card, no scene on the real title");
+      if (flags.keep) await page.screenshot({ path: `${server.dir}/windows-drag-clip.png` });
+      // The user's own drag: the sheet lifts while they hold, and the drop
+      // ticks the last step. It comes a moment after the double-click that
+      // unfolded Chat, as a hand's would: a press sooner reads as that
+      // double-click's echo (Widgets.jsx, UNFOLD_ECHO_MS).
+      await page.waitForTimeout(1000);
       const box = await grip.boundingBox();
       const viewport = page.viewportSize();
       await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
       await page.mouse.down();
       await page.locator(".guideRoot.acting").waitFor();
-      assertEq(await page.locator('[data-guide-scene] .guideSceneRipple, [data-guide-scene] .guideScenePreview').count(), 0,
-        "the scene steps aside while the user tries it");
       await page.mouse.move(viewport.width * 0.4, viewport.height * 0.85, { steps: 12 });
       await page.mouse.up();
       await page.locator('.guideCard .guideDone').waitFor();

@@ -9,6 +9,7 @@
 (() => {
   const REPO = 'tim4431/Gamma';
   const STORE = 'https://apps.microsoft.com/detail/9N8WGWR2J2MV';
+  const TESTFLIGHT = 'https://testflight.apple.com/join/nTmSHDx6';
 
   // Menu
   const menu = document.querySelector('.top__menu');
@@ -22,16 +23,20 @@
   });
 
   // OS detection — the "platform" hints first, the user agent as a fallback.
+  // An iPad's Safari says it is a Mac; its touch points give it away.
   const ua = navigator.userAgent;
   const platform = (navigator.userAgentData?.platform || navigator.platform || '').toLowerCase();
-  const os = /win/.test(platform) || /Windows/.test(ua) ? 'windows'
-    : /mac/.test(platform) || /Mac OS X/.test(ua) ? 'macos'
+  const mac = /mac/.test(platform) || /Mac OS X/.test(ua);
+  const os = /iPad/.test(ua) || (mac && navigator.maxTouchPoints > 1) ? 'ipad'
+    : /win/.test(platform) || /Windows/.test(ua) ? 'windows'
+    : mac ? 'macos'
     : /linux/.test(platform) || /Linux/.test(ua) ? 'linux'
     : null;
-  const label = { windows: 'Download for Windows', macos: 'Download for macOS', linux: 'Download for Linux' };
+  const label = { windows: 'Download for Windows', macos: 'Download for macOS', linux: 'Download for Linux', ipad: 'Get the iPad beta' };
   if (os) {
     document.querySelectorAll('[data-download-label]').forEach(el => { el.textContent = label[os]; });
-    if (os === 'windows') document.querySelectorAll('[data-download]').forEach(a => { a.href = STORE; });
+    const fixed = { windows: STORE, ipad: TESTFLIGHT }[os];
+    if (fixed) document.querySelectorAll('[data-download]').forEach(a => { a.href = fixed; });
     document.querySelector(`.dl__card[data-os="${os}"]`)?.classList.add('dl__card--mine');
   }
 

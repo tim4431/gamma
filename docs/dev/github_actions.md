@@ -275,7 +275,9 @@ minute; when a commit's message (subject or body) contains a marker
 `ipad-test-release-NNN` it has not seen, it checks that commit out, builds
 the app, runs the tests, signs it and uploads it to TestFlight. Nothing is
 dispatched by hand, and nothing is submitted to the App Store: that step
-stays manual in App Store Connect.
+stays manual in App Store Connect. Testers join through the public link
+<https://testflight.apple.com/join/nTmSHDx6>, which the release notes
+carry (the `iPad app` section `desktop.yml` writes).
 
 Every desktop release from `main` sends one. The `desktop` publish job's
 last step pushes an empty commit, `Gamma <version> to TestFlight

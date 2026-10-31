@@ -1,0 +1,67 @@
+<svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg" focusable="false">
+  <!-- An AI assistant reads your library through Gamma's MCP server: in a
+       terminal, left, a question that mentions Gamma is typed; the
+       assistant searches the library and reads the page (its two tool
+       calls, each crossing the link to Gamma, right, where the passage it
+       reads is marked); then it answers, citing the page. The accent is
+       the mention, the link and what it found (docs/dev/mcp.md;
+       docs/user_guide/user_guide.md, "Assistants"; guide/media.js). -->
+
+  <!-- the terminal: its title dots, the question being typed -->
+  <rect class="m-well" x="10" y="28" width="146" height="150" rx="8" />
+  <circle class="m-line-dim" cx="20" cy="38" r="2.2" />
+  <circle class="m-line-dim" cx="28" cy="38" r="2.2" />
+  <circle class="m-line-dim" cx="36" cy="38" r="2.2" />
+  <path class="m-rule" d="M10 46H156" />
+  <path class="m-glyph-on" d="M19 57l4 3-4 3" />
+  <g class="m-light" style="--m-at: 0.02">
+    <rect class="m-chip-on" x="28" y="55" width="24" height="10" rx="5" />
+  </g>
+  <path class="m-text m-draw" pathLength="1" style="--m-at: 0.04" d="M58 60H144M28 72H112" />
+
+  <!-- the assistant's two tool calls: search the library, read the page -->
+  <g class="m-appear" style="--m-at: 0.24">
+    <circle class="m-glyph" cx="23" cy="88.5" r="3.2" />
+    <path class="m-glyph" d="M25.4 90.9L27.6 93.1" />
+    <rect class="m-line-dim" x="33" y="87" width="62" height="3.5" rx="1.75" />
+  </g>
+  <g class="m-appear" style="--m-at: 0.4">
+    <path class="m-glyph" d="M20 100h5l2 2v6.5h-7z" />
+    <rect class="m-line-dim" x="33" y="103" width="48" height="3.5" rx="1.75" />
+  </g>
+
+  <!-- the answer, citing the page -->
+  <g class="m-appear" style="--m-at: 0.56">
+    <rect class="m-line" x="19" y="122" width="126" height="3.5" rx="1.75" />
+    <rect class="m-line" x="19" y="130" width="118" height="3.5" rx="1.75" />
+    <rect class="m-line" x="19" y="138" width="70" height="3.5" rx="1.75" />
+  </g>
+  <g class="m-light" style="--m-at: 0.64">
+    <rect class="m-chip-on" x="93" y="135" width="22" height="9.5" rx="4.75" />
+    <rect class="m-line" x="98" y="138" width="12" height="3.5" rx="1.75" />
+  </g>
+
+  <!-- the link: Gamma's MCP server at the other end -->
+  <path class="m-rule" d="M156 96H180" />
+  <path class="m-link m-light" style="--m-at: 0.24" d="M156 96H180" />
+  <circle class="m-chip-on m-light" style="--m-at: 0.24" cx="168" cy="96" r="3.5" />
+
+  <!-- Gamma: the library's page, and the passage the assistant reads -->
+  <rect class="m-well" x="180" y="28" width="130" height="150" rx="6" />
+  <rect class="m-card" x="194" y="36" width="102" height="142" rx="2" />
+  <rect class="m-line" x="204" y="48" width="58" height="6" rx="3" />
+  <rect class="m-line-dim" x="204" y="62" width="82" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="204" y="69" width="78" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="204" y="76" width="82" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="204" y="83" width="60" height="3.5" rx="1.75" />
+  <rect class="m-well" x="204" y="94" width="44" height="28" rx="2" />
+  <path class="m-glyph" d="M208 116L216 108L224 112L232 101L242 105" />
+  <rect class="m-line-dim" x="254" y="96" width="32" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="254" y="103" width="28" height="3.5" rx="1.75" />
+  <path class="m-mark m-draw" pathLength="1" style="--m-at: 0.4" d="M204 133.75H286M204 140.75H262" />
+  <rect class="m-line-dim" x="204" y="132" width="82" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="204" y="139" width="58" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="204" y="150" width="82" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="204" y="157" width="76" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="204" y="164" width="82" height="3.5" rx="1.75" />
+</svg>

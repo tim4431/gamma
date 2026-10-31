@@ -31,6 +31,7 @@ export default {
       body: T("Type @ to bring in another one."),
       do: [{ type: "chat.input", text: T("What is the main result, and where is it shown?"), preserveDraft: true }, { wait: 1000 }] },
     { id: "chat-figure", anchor: "pdf.viewer", placement: "inside", requires: { ...ON, pdfChatVisible: true },
+      media: "chat-figure",
       title: T("{key:pdf.areaDrag}+drag a box around a figure"),
       body: T("The snapshot goes with your question."),
       do: [{ previewArea: true, context: true }, { point: "chat.imageContext", wait: 1400 }] },

@@ -1,0 +1,95 @@
+<svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg" focusable="false">
+  <!-- A Zotero link, both ways through zotero.org (the cloud between): a
+       sentence highlighted on the paper in Gamma, left, travels up through
+       the cloud and lands in Zotero, right, as an annotation under the
+       paper's item, the rows below it making room. Then the paper is filed
+       in a collection there, and that comes back the same way as a folder
+       on the page in Gamma. The accent is what travels and where it lands
+       (docs/user_guide/user_guide.md, "Zotero link"; guide/media.js). -->
+
+  <!-- the link: Gamma, zotero.org, Zotero -->
+  <path class="m-rule" d="M70 46C70 30 118 24 146 24M174 24C202 24 250 30 250 46" />
+  <path class="m-glyph" d="M149 29H171A6 6 0 0 0 171.5 17.2A8.5 8.5 0 0 0 155.5 15.5A6.5 6.5 0 0 0 149 29Z" />
+  <path class="m-link m-light" style="--m-at: 0.14" d="M70 46C70 30 118 24 146 24" />
+  <path class="m-link m-light" style="--m-at: 0.25" d="M174 24C202 24 250 30 250 46" />
+
+  <!-- Gamma: the paper, its notes beside it -->
+  <rect class="m-well" x="10" y="46" width="130" height="144" rx="6" />
+  <rect class="m-card" x="20" y="54" width="76" height="136" rx="2" />
+  <rect class="m-line" x="28" y="64" width="44" height="5" rx="2.5" />
+  <rect class="m-line-dim" x="28" y="92" width="60" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="28" y="99" width="56" height="3.5" rx="1.75" />
+  <path class="m-mark m-draw" pathLength="1" style="--m-at: 0" d="M28 107.75H84" />
+  <rect class="m-line-dim" x="28" y="106" width="58" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="28" y="113" width="60" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="28" y="120" width="44" height="3.5" rx="1.75" />
+  <rect class="m-well" x="28" y="131" width="40" height="25" rx="2" />
+  <path class="m-glyph" d="M32 151L40 143L47 147L55 137L63 141" />
+  <rect class="m-line-dim" x="28" y="164" width="60" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="28" y="171" width="52" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="28" y="178" width="58" height="3.5" rx="1.75" />
+  <rect class="m-card" x="102" y="54" width="32" height="136" rx="3" />
+  <circle class="m-line-dim" cx="108" cy="64" r="1.4" />
+  <rect class="m-line-dim" x="112" y="62.5" width="17" height="3" rx="1.5" />
+  <circle class="m-line-dim" cx="108" cy="74" r="1.4" />
+  <rect class="m-line-dim" x="112" y="72.5" width="13" height="3" rx="1.5" />
+  <circle class="m-line-dim" cx="108" cy="84" r="1.4" />
+  <rect class="m-line-dim" x="112" y="82.5" width="16" height="3" rx="1.5" />
+  <!-- the folder that comes back from Zotero -->
+  <g class="m-appear" style="--m-at: 0.66">
+    <rect class="m-chip-on" x="28" y="75" width="38" height="11" rx="5.5" />
+    <path class="m-glyph-on" d="M32 78.6a1 1 0 0 1 1-1h2.2l1.1 1.2h3.6a1 1 0 0 1 1 1v3.6a1 1 0 0 1-1 1h-6.9a1 1 0 0 1-1-1z" />
+    <rect class="m-line" x="44" y="79" width="17" height="3" rx="1.5" />
+  </g>
+
+  <!-- Zotero: its collections, and the items list -->
+  <rect class="m-card" x="180" y="46" width="130" height="144" rx="6" />
+  <rect class="m-well" x="184" y="50" width="40" height="136" rx="4" />
+  <g class="m-light" style="--m-at: 0.42">
+    <rect class="m-chip-on" x="186" y="79" width="36" height="11" rx="3" />
+  </g>
+  <path class="m-glyph" d="M189 58.6a1 1 0 0 1 1-1h2.2l1.1 1.2h3.6a1 1 0 0 1 1 1v3.6a1 1 0 0 1-1 1h-6.9a1 1 0 0 1-1-1zM189 70.6a1 1 0 0 1 1-1h2.2l1.1 1.2h3.6a1 1 0 0 1 1 1v3.6a1 1 0 0 1-1 1h-6.9a1 1 0 0 1-1-1zM189 82.6a1 1 0 0 1 1-1h2.2l1.1 1.2h3.6a1 1 0 0 1 1 1v3.6a1 1 0 0 1-1 1h-6.9a1 1 0 0 1-1-1zM189 94.6a1 1 0 0 1 1-1h2.2l1.1 1.2h3.6a1 1 0 0 1 1 1v3.6a1 1 0 0 1-1 1h-6.9a1 1 0 0 1-1-1z" />
+  <rect class="m-line-dim" x="201" y="59.25" width="18" height="3" rx="1.5" />
+  <rect class="m-line-dim" x="201" y="71.25" width="14" height="3" rx="1.5" />
+  <rect class="m-line-dim" x="201" y="83.25" width="17" height="3" rx="1.5" />
+  <rect class="m-line-dim" x="201" y="95.25" width="12" height="3" rx="1.5" />
+  <rect class="m-line" x="232" y="56" width="30" height="4" rx="2" />
+  <path class="m-rule" d="M228 64H306" />
+  <!-- the paper's item, lit as its annotation comes in -->
+  <g class="m-light" style="--m-at: 0.36">
+    <rect class="m-chip-on" x="229" y="76" width="76" height="11" rx="3" />
+  </g>
+  <path class="m-glyph" d="M233 68.5h4.5l1.5 1.5v5h-6zM233 80.5h4.5l1.5 1.5v5h-6z" />
+  <rect class="m-line-dim" x="243" y="70.25" width="54" height="3" rx="1.5" />
+  <rect class="m-line" x="243" y="82.25" width="48" height="3" rx="1.5" />
+  <!-- its new annotation: a highlight under the item -->
+  <g class="m-appear" style="--m-at: 0.37">
+    <rect class="m-chip-on" x="243" y="93" width="6" height="7" rx="1.5" />
+    <rect class="m-line-dim" x="252" y="95.25" width="40" height="3" rx="1.5" />
+  </g>
+  <!-- the rows after it, moved down a row to make room -->
+  <g class="m-move" style="--m-at: 0.35; --m-dx: 0; --m-dy: -12">
+    <path class="m-glyph" d="M233 104.5h4.5l1.5 1.5v5h-6zM233 116.5h4.5l1.5 1.5v5h-6zM233 128.5h4.5l1.5 1.5v5h-6zM233 140.5h4.5l1.5 1.5v5h-6z" />
+    <rect class="m-line-dim" x="243" y="106.25" width="50" height="3" rx="1.5" />
+    <rect class="m-line-dim" x="243" y="118.25" width="56" height="3" rx="1.5" />
+    <rect class="m-line-dim" x="243" y="130.25" width="44" height="3" rx="1.5" />
+    <rect class="m-line-dim" x="243" y="142.25" width="52" height="3" rx="1.5" />
+  </g>
+
+  <!-- what travels: the highlight, out to Zotero -->
+  <g class="m-move" style="--m-at: 0.24; --m-dx: -86; --m-dy: -73">
+    <g class="m-move" style="--m-at: 0.13; --m-dx: -104; --m-dy: 85">
+      <g class="m-leave" style="--m-at: 0.35">
+        <rect class="m-chip-on m-light" style="--m-at: 0.11" x="239" y="91.5" width="14" height="8" rx="4" />
+      </g>
+    </g>
+  </g>
+  <!-- and the collection, back to Gamma -->
+  <g class="m-move" style="--m-at: 0.55; --m-dx: 113; --m-dy: -58">
+    <g class="m-move" style="--m-at: 0.44; --m-dx: 44; --m-dy: 62">
+      <g class="m-leave" style="--m-at: 0.66">
+        <rect class="m-chip-on m-light" style="--m-at: 0.42" x="40" y="76.5" width="14" height="8" rx="4" />
+      </g>
+    </g>
+  </g>
+</svg>

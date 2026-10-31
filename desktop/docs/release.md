@@ -286,7 +286,11 @@ electron-builder's default (10.0.14316.0) through as a legacy `.appx`, the
 CLI path did not — hence `appx.minVersion: '10.0.17763.0'` (Windows 10
 1809, Electron's own floor) in `electron-builder.cjs`. Only one submission can be in certification at
 a time, so the step is `continue-on-error`: a second release the same day
-logs a warning and the next release submits. Where the secrets come from
+logs a warning and the next release submits. The CLI's exit code is not
+the verdict (after the commit it reads the submission again and can exit 1
+on a transient error); the step takes the CLI's own "Submission commit
+success", else the state `msstore submission status` gives, its colour
+codes stripped, and logs a notice naming the state or the warning. Where the secrets come from
 (set each with `gh secret set NAME` from a terminal):
 
 | Secret | Partner Center |
