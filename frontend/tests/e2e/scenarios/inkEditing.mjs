@@ -480,6 +480,11 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     await page.getByRole("button", { name: "Undo ink", exact: true }).tap();
     await until(async () => await page.locator(paths).count() === 2);
     await page.setViewportSize({ width: 740, height: 620 });
+    // The page fits the narrower viewer a frame or more later (PdfViewer's
+    // ResizeObserver); a tap placed on the page before then lands off the ink.
+    await until(() => page.locator(".pdfViewer").evaluate((el) =>
+      Math.abs(el.querySelector('[data-page="1"]').getBoundingClientRect().width - el.clientWidth) < 1),
+    { what: "the page fitted to the smaller viewer" });
     await page.locator(".pdfViewer").evaluate((el) => { el.scrollTop = 0; });
     await tapInk();
     // The tallest state: both rows and the colour row.

@@ -1,53 +1,66 @@
 // The review card of a highlight after its PDF was replaced
 // (docs/dev/highlight_relocation.md). One the run drew dashed (a rough
 // match, or an area placed by estimate) is pending until the person
-// accepts or moves it; one it drew hollow (lost: its text was not found)
-// waits for a move, or for its closest match to be applied. Hovering
-// either on the page opens, after a moment, a card anchored to it. A
-// pending one's: how alike the texts were, a picture of where it was in
-// the previous file with its old rectangles drawn over it, its old quote
-// against its current one word by word, and for an editor Accept and
-// Move…. A lost one's: where it was (the picture of the file its
+// accepts, moves or discards it; one it drew hollow (lost: its text was
+// not found) waits for a move, or for its closest match to be applied, and
+// then for Accept, or for Discard. Hovering either on the page opens,
+// after a moment, a card anchored to it. A pending one's: how alike the
+// texts were, a picture of where it was in the previous file with its old
+// rectangles drawn over it, and its old quote against its current one word
+// by word. A lost one's: where it was (the picture of the file its
 // rectangles were measured on, else its wording), and when the run found a
-// place below the threshold, how alike that read, the two texts compared,
-// Show (the place outlined on the page) and Use closest match, and
-// Discard, which takes it off the page (deleted when it carries nothing of
-// its own, else kept as a note; highlightReview.js discardKind). Then
-// Previous, "{i} of {n}" and Next, over the page's highlights to review
-// and those resolved on a card (highlightReview.js reviewList).
+// place below the threshold, how alike that read, the two texts compared
+// and Show (the place outlined on the page). Then on both the note the
+// highlight carries (its block's text, and how many notes are under it
+// and comment threads on it: highlightReview.js noteSummary), and for an
+// editor one row of steps in one order: Accept, Use closest match (a lost
+// one's with a closest match), Move… and Discard, which takes it off the
+// page (deleted when it carries nothing of its own, else kept as a note;
+// highlightReview.js discardKind). Under them Previous, "{i} of {n}" and
+// Next, over the page's highlights to review and those resolved on a card
+// (highlightReview.js reviewList).
 //
 // A step taken on the card (Accept, Use closest match, a move started from
 // it, Discard) leaves the card as it was: only its button changes, in
 // place, saying the step is done (Accepted, Placed, Moved, Discarded),
-// pressed; pressing it again undoes the step. A button whose action no
-// longer applies stays in its place, disabled (reviewActions). A step is
-// in effect while the highlight is as it left it (stepInEffect): the
-// app's own undo, someone else's change or a move by hand shows the card
-// as the highlight is now. A discarded one's card stays where the
-// highlight was. A card that took a step stays while the pointer rests on
-// another highlight. The pointer may cross into the card; leaving both
-// closes a hovered one, as the note badge's tip does (PdfViewer.jsx
-// NoteBadge). Touch has no hover, so a tap on such a highlight opens it
-// instead of the tap's usual action (a second tap does that action), and a
-// tap outside closes it; so does Escape. One opened by a tap, by Previous
-// or Next, from the Document menu or by a step stays until then. The card
-// follows its highlight as the page scrolls, and stands hidden, all of it,
-// while the highlight is out of the viewer's sight. A lost one from a page
-// the PDF no longer has, which nothing draws, is reached by Previous, Next
-// and the Document menu, its card standing in the viewer and saying so.
+// pressed; pressing it again undoes the step. A button that does not apply
+// stays in its place, disabled (reviewActions): a lost one's Accept until
+// a move or Use closest match placed it, when Accept takes that place as
+// the decision. Accept and Discard decide (highlightReview.js decided):
+// the card shows its pressed button a moment (ADVANCE_MS), then goes on
+// to the next one still to check (nextToCheck), unless a press on the
+// card, its closing or a change to the highlight came first, or none is
+// left. A step is in effect while the highlight is as it left it
+// (stepInEffect): the app's own undo, someone else's change or a move by
+// hand shows the card as the highlight is now. A discarded one's card
+// stays where the highlight was. A card that took a step stays while the
+// pointer rests on another highlight. The pointer may cross into the card;
+// leaving both closes a hovered one, as the note badge's tip does
+// (PdfViewer.jsx NoteBadge). Touch has no hover, so a tap on such a
+// highlight opens it instead of the tap's usual action (a second tap does
+// that action), and a tap outside closes it; so does Escape. One opened by
+// a tap, by Previous or Next, from the Document menu or by a step stays
+// until then. A card that goes to a highlight (a tap, Previous, Next, the
+// advance after a decision, the Document menu) has the notes panel follow
+// it to that highlight's block (PdfViewer's onReviewFollow); a hovered one
+// leaves the notes where they are. The card follows its highlight as the
+// page scrolls, and stands hidden, all of it, while the highlight is out
+// of the viewer's sight. A lost one from a page the PDF no longer has,
+// which nothing draws, is reached by Previous, Next and the Document menu,
+// its card standing in the viewer and saying so.
 //
 // Only dashed and hollow highlights' rectangles listen for the pointer
 // (PdfPage), so a page of many highlights costs nothing more. The
 // arithmetic is highlightReview.js's.
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { t } from "../shared/i18n/i18n.js";
 import { API, getShareToken, withWorkspace } from "../shared/lib/utils";
 import { lastPointer } from "../shared/lib/pointer.js";
 import { DEFAULT_HIGHLIGHT, darkPageColor, normalizeColor } from "../shared/model/palette.js";
 import { CheckIcon, ChevronLeftIcon, ChevronRightIcon, EyeIcon, LocateIcon, XIcon } from "../shared/ui/Icons";
 import { placeFloating, surfaceSize, useFloatingPosition } from "../shared/ui/placement.js";
-import { PAGE_ASPECT, beforeCrop, cropAspect, entryPosition, pastLastPage, placeBox, rectsInCrop, reviewActions, reviewCardState, reviewList, reviewPlace, reviewStep } from "./highlightReview.js";
+import { t, tn } from "../shared/i18n/i18n.js";
+import { PAGE_ASPECT, beforeCrop, carriesNote, cropAspect, entryPosition, nextToCheck, pastLastPage, placeBox, rectsInCrop, reviewActions, reviewCardState, reviewList, reviewPlace, reviewStep } from "./highlightReview.js";
 
 // The hover's delays: the card shows once the pointer rests on the
 // highlight, and waits a little as it leaves, so the pointer can cross the
@@ -61,21 +74,26 @@ const SHOT_MAX_H = 220;
 // How long a card opened for a highlight not yet drawn (Next, the Document
 // menu: its page still rendering) waits for it.
 const WAIT_TRIES = 40, WAIT_MS = 100;
+// How long a decided card (Accept, Discard) shows its pressed button
+// before it goes on to the next one to check.
+export const ADVANCE_MS = 600;
 
 const NO_STEPS = new Map();
 
 // Which card is open: {id, pinned, walked, ghost} or null (pinned: opened
 // by a tap, by Previous or Next, from the Document menu or by a step, so
-// leaving it does not close it; walked: which of Previous and Next opened
-// it; ghost: its closest match outlined on the page); the steps taken on
-// cards while the viewer shows this page and file (`steps`: Map id →
-// {step, h, discard}, the step last taken on that highlight's card, the
-// highlight as the card had it, and what its Discard does, discardKind's),
-// which keep it in the card's walk (reviewList) and its card as it was;
-// and the handlers PdfPage's rectangles and the card call. `drawn` counts
-// the times PdfPage drew that outline, so the card anchors to it once its
-// page renders. The handlers are stable, so PdfPage's memo holds.
-export function useHighlightReview() {
+// leaving it does not close it; walked: the button of the card it opens
+// that takes the focus, "prev" or "next" for the one that walked there,
+// "accept" after an Accept went on to it; ghost: its closest match
+// outlined on the page); the steps taken on cards while the viewer shows
+// this page and file (`steps`: Map id → {step, h}, the step last taken on
+// that highlight's card and the highlight as the card had it), which keep
+// it in the card's walk (reviewList) and its card as it was; and the
+// handlers PdfPage's rectangles and the card call. `drawn` counts the
+// times PdfPage drew that outline, so the card anchors to it once its page
+// renders. The handlers are stable, so PdfPage's memo holds.
+// `followRef.current(id)` has the notes panel follow a card a tap opened.
+export function useHighlightReview(followRef = null) {
   const [card, setCard] = useState(null);
   const [steps, setSteps] = useState(NO_STEPS);
   const [drawn, setDrawn] = useState(0);
@@ -107,20 +125,20 @@ export function useHighlightReview() {
         clearTimeout(timer.current);
         if (cardRef.current?.id === id) { setCard(null); return false; }
         setCard({ id, pinned: true });
+        followRef?.current?.(id);
         return true;
       },
-      // Opened by Previous or Next (`walked`: "prev" or "next", the button
-      // the card it opens focuses), the Document menu, or after a step (on
-      // the same highlight: Show's outline stays as it was).
+      // Opened by Previous or Next (`walked`: the button the card it opens
+      // focuses), the Document menu, or after a step (on the same
+      // highlight: Show's outline stays as it was).
       open(id, { walked = "" } = {}) {
         clearTimeout(timer.current);
         setCard((now) => (now?.id === id ? { ...now, pinned: true } : { id, pinned: true, walked }));
       },
       // A step taken on highlight `id`'s card (reviewStep's, discardStep's),
-      // `h` the highlight before it, `discard` what its Discard would do
-      // (kept: the card shows Discard the same after the step).
-      record(id, step, h, discard = null) {
-        setSteps((m) => new Map(m).set(id, { step, h: h || m.get(id)?.h || null, discard: discard || m.get(id)?.discard || null }));
+      // `h` the highlight before it.
+      record(id, step, h) {
+        setSteps((m) => new Map(m).set(id, { step, h: h || m.get(id)?.h || null }));
       },
       // `step` undone: the card is back on the one before it (a move's
       // prior), else on the highlight as it was.
@@ -157,15 +175,18 @@ export function useHighlightReview() {
 // `pageCount` its number of pages (0 while not known): a highlight past
 // the last one is not drawn, and its card stands in the viewer. `drawn`
 // (useHighlightReview's) changes when the closest match's outline is
-// drawn. `onAccept(id)`, `onPlace(id)` (Use closest match), `onMove(id,
-// step)` (the card's step in effect, when there is one), `onDiscard(id)`
-// (Discard on a lost one: the step it took, discardStep's, or null),
-// `discardOf(id)` (which of the two Discard would do, discardKind's) and
-// `onUndo(id, step)` are an editor's (absent, the card has no actions);
-// `onOpen(id, {position})` scrolls to that highlight (or that place) and
-// opens its card; `onShow(id)` scrolls to its closest match and outlines
-// it.
-export function HighlightReview({ card, steps = NO_STEPS, review, drawn = 0, highlights, positionOf = null, viewerRef, darkPage = false, fileId = "", pageCount = 0, onAccept, onPlace, onMove, onDiscard, discardOf, onUndo, onOpen, onShow }) {
+// drawn. `noteOf(id)` is the note the highlight's block carries
+// (highlightReview.js noteSummary), null when there is no such block: one
+// Discard deleted keeps the note its card had. `onAccept(id)`,
+// `onPlace(id)` (Use closest match), `onMove(id, step)` (the card's step
+// in effect, when there is one), `onDiscard(id)` (the step it took,
+// discardStep's, or null), `discardOf(id)` (which of the two Discard does,
+// discardOutcome's) and `onUndo(id, step)` are an editor's (absent, the
+// card has no actions); `onOpen(id, {position, walked, follow})` scrolls
+// to that highlight (or that place) and opens its card, the notes panel
+// following it with `follow`; `onShow(id)` scrolls to its closest match
+// and outlines it.
+export function HighlightReview({ card, steps = NO_STEPS, review, drawn = 0, highlights, positionOf = null, noteOf = null, viewerRef, darkPage = false, fileId = "", pageCount = 0, onAccept, onPlace, onMove, onDiscard, discardOf, onUndo, onOpen, onShow }) {
   const list = useMemo(() => reviewList(highlights, steps, positionOf), [highlights, steps, positionOf]);
   const entry = card ? list.find((e) => e.id === card.id) || null : null;
   const h = entry?.h || null;
@@ -176,16 +197,17 @@ export function HighlightReview({ card, steps = NO_STEPS, review, drawn = 0, hig
   // a discarded one, drawn no more, stays where it stood
   const drawnNow = (highlights || []).some((x) => x.id === h.id);
   const stood = !drawnNow && step?.kind === "discarded" ? step.before.position : null;
-  // what Discard does: as the card found it before its step, which may have changed it
-  const discard = state.kind !== "lost" || !onDiscard ? null
-    : step ? steps.get(h.id)?.discard || (step.kind === "discarded" ? (step.deleted ? "delete" : "unplace") : null)
-      : discardOf?.(h.id) || null;
+  // what Discard does (its title): by what the highlight carries; a deleted one's block is gone
+  const discard = !onDiscard ? null
+    : step?.kind === "discarded" ? (step.deleted ? "delete" : "unplace") : discardOf?.(h.id) || "unplace";
+  const note = noteOf?.(h.id) || h.note || null;
   return createPortal(
     <ReviewCard key={h.id} h={h} state={state} step={step} pinned={card.pinned} walked={card.walked || ""}
       ghost={!!card.ghost && !!state.closest && !step} drawn={drawn}
       offPage={pastLastPage(state.position, pageCount)} undrawn={pastLastPage(stood || h.position, pageCount)}
-      stood={stood} place={reviewPlace(list, h.id)} review={review} viewerRef={viewerRef}
-      darkPage={darkPage} actions={onAccept ? reviewActions(state, { place: !!onPlace, discard }) : []}
+      stood={stood} place={reviewPlace(list, h.id)} next={nextToCheck(list, h.id)} note={note}
+      review={review} viewerRef={viewerRef}
+      darkPage={darkPage} actions={onAccept ? reviewActions(state, { place: !!onPlace, discard: !!discard }) : []}
       onAccept={onAccept} onPlace={onPlace} onMove={onMove}
       discard={discard} onDiscard={onDiscard} onUndo={onUndo} onOpen={onOpen} onShow={onShow} />,
     document.body,
@@ -229,12 +251,17 @@ function cardTitle(state) {
 // A step button's faces: its label (and the icon of a secondary step)
 // before the step, and after it the check and what was done, with the
 // titles of both. The check marks a step done, so Accept and Use closest
-// match show none before. `discard` is what Discard does (discardKind's),
-// for its title.
-function stepFaces(key, discard) {
-  switch (key) {
+// match show none before. `discard` is what Discard does (discardOutcome's),
+// for its title; `a` the button (reviewActions'), `placed` whether a move
+// or Use closest match on the card placed the highlight (Accept then
+// takes that place), `closest` whether the card has Use closest match.
+function stepFaces(a, { discard, placed, closest }) {
+  switch (a.key) {
     case "accept": return {
-      icon: null, label: t("Accept"), title: t("Keep the highlight where it is now and draw it solid"),
+      icon: null, label: t("Accept"),
+      title: a.unplaced ? (closest ? t("Nothing to accept until it is placed: use Move… or Use closest match first")
+        : t("Nothing to accept until it is placed: use Move… first"))
+        : placed ? t("Keep the highlight where it was placed") : t("Keep the highlight where it is now and draw it solid"),
       done: t("Accepted"), undo: t("Accepted: press again to undo"),
     };
     case "place": return {
@@ -257,11 +284,11 @@ function stepFaces(key, discard) {
 // One of the card's step buttons (reviewActions' `a`). It keeps its size
 // whether its step is taken or not: both faces share one cell, the one not
 // shown hidden (app.css .hlReviewStep), so nothing on the card moves. A
-// `compact` one shows its icon alone, its label its name and title (a
-// lost card's Move… and Discard beside Use closest match, so the row and
-// Previous, the count and Next fit on one line).
-function StepButton({ a, primary, compact, discard, onPress }) {
-  const f = stepFaces(a.key, discard);
+// `compact` one shows its icon alone, its label its name and title (Move…
+// and Discard beside Use closest match, so the four fit on one line at
+// the card's width). `faces` is stepFaces' second argument.
+function StepButton({ a, primary, compact, faces, onPress }) {
+  const f = stepFaces(a, faces);
   const Icon = f.icon;
   const face = (on) => (
     <span className={on === a.pressed ? "hlReviewFace" : "hlReviewFace hlReviewRoom"} aria-hidden={on === a.pressed ? undefined : true}>
@@ -278,7 +305,7 @@ function StepButton({ a, primary, compact, discard, onPress }) {
   );
 }
 
-function ReviewCard({ h, state, step, pinned, walked, ghost, drawn, offPage, undrawn, stood, place, review, viewerRef, darkPage, actions, onAccept, onPlace, onMove, discard, onDiscard, onUndo, onOpen, onShow }) {
+function ReviewCard({ h, state, step, pinned, walked, ghost, drawn, offPage, undrawn, stood, place, next, note, review, viewerRef, darkPage, actions, onAccept, onPlace, onMove, discard, onDiscard, onUndo, onOpen, onShow }) {
   const ref = useRef(null);
   const [tick, setTick] = useState(0);
   const focusedRef = useRef(false);
@@ -315,17 +342,19 @@ function ReviewCard({ h, state, step, pinned, walked, ghost, drawn, offPage, und
   }, [missing, review]);
   // One opened by a tap, by Previous or Next or from the Document menu
   // takes the focus once it is seen, so the keys reach its buttons (Tab);
-  // reached by Previous or Next, that button of its own, so Enter walks on.
-  // A hovered one leaves the focus where it is. A step keeps it on its
-  // button, which stays (a hovered card that took one is pinned with the
-  // focus in it already), through a scroll the step makes too (below).
+  // reached by Previous or Next, that button of its own, so Enter walks on,
+  // and gone on to after an Accept, its Accept when that applies, so Enter
+  // accepts the next. A hovered one leaves the focus where it is. A step
+  // keeps it on its button, which stays (a hovered card that took one is
+  // pinned with the focus in it already), through a scroll the step makes
+  // too (below).
   const shown = !!pos && !pos.hidden;
   useEffect(() => {
     if (!pinned || !shown || focusedRef.current) return;
     focusedRef.current = true;
     if (ref.current?.contains(document.activeElement)) return;
-    const nav = walked ? ref.current?.querySelector(`[data-review-nav="${walked}"]:not(:disabled)`) : null;
-    (nav || ref.current)?.focus({ preventScroll: true });
+    const own = walked ? ref.current?.querySelector(`:is([data-review-nav="${walked}"], [data-step="${walked}"]):not(:disabled)`) : null;
+    (own || ref.current)?.focus({ preventScroll: true });
   }, [pinned, shown, walked]);
   // The browser takes the focus from what it hides, so a card hidden a
   // moment (the viewer scrolling to where Use closest match took its
@@ -364,56 +393,90 @@ function ReviewCard({ h, state, step, pinned, walked, ghost, drawn, offPage, und
   const color = normalizeColor(h.color) || DEFAULT_HIGHLIGHT;
   const pageAspect = (state.position.height || 0) / (state.position.width || 1) || PAGE_ASPECT;
   const quote = h.content?.text || "";
-  // The steps, each one tree edit (App), recorded for the walk and the
-  // card's look; the card stays open on the highlight, as it was.
+  // Previous, Next and the advance after a decision go to that highlight,
+  // the notes panel following.
+  const walk = (to, dir) => { if (to) onOpen?.(to.id, { position: entryPosition(to), walked: dir, follow: true }); };
+  // A decision (Accept, Discard) shows its pressed button a moment, then
+  // the card goes on to the next one still to check (`next`, read when the
+  // moment is over), the focus on its Accept after an Accept. The moment
+  // starts once the decision is the card's step in effect, and ends with
+  // nothing done when that changes (the app's undo, someone else's edit),
+  // when anything on the card is pressed (its undo among them) or when the
+  // card closes. None left to check: the card stays.
+  const [beat, setBeat] = useState(null);
+  const beatLive = useRef(false);
+  const onRef = useRef(null);
+  onRef.current = () => walk(next, beat?.key === "accept" ? "accept" : "");
+  useEffect(() => {
+    if (!beat) return undefined;
+    if (step !== beat.step) {
+      if (beatLive.current) setBeat(null);
+      return undefined;
+    }
+    beatLive.current = true;
+    const id = setTimeout(() => { setBeat(null); onRef.current(); }, ADVANCE_MS);
+    return () => clearTimeout(id);
+  }, [beat, step]);
+  const decide = (s, key) => { beatLive.current = false; setBeat({ step: s, key }); };
+  // The steps, each one tree edit (App) save Accept's confirming of a
+  // place the card's move or Use closest match gave it, recorded for the
+  // walk and the card's look; the card stays open on the highlight, as it
+  // was.
   const take = {
     accept() {
-      const s = reviewStep("accepted", { position: h.position });
+      const s = reviewStep("accepted", { position: h.position, prior: step });
       if (!s) return;
-      onAccept(h.id);
+      if (!s.confirms) onAccept(h.id);
       review.record(h.id, s, h);
       review.open(h.id);
+      decide(s, "accept");
     },
     // (placed on its closest match, it is shown there, where the card follows it)
     place() {
       const s = reviewStep("placed", { position: h.position, quote });
       if (!s) return;
       onPlace(h.id);
-      review.record(h.id, s, h, discard);
+      review.record(h.id, s, h);
       if (onOpen) onOpen(h.id, { position: s.after });
       else review.open(h.id);
     },
     // (the card makes way for the selection; App opens it again after the
     // move, the step in effect handed on for the move's undo to come back to)
     move() { review.close(); onMove?.(h.id, step); },
-    // (deleted, or kept as a note off the PDF: the card stays where it was)
+    // (deleted, or kept as a note off the PDF: the card stays where it was,
+    // showing the note it had)
     discard() {
       const s = onDiscard?.(h.id);
       if (!s) return;
-      review.record(h.id, s, h, discard);
+      review.record(h.id, s, { ...h, note });
       review.open(h.id);
+      decide(s, "discard");
     },
   };
-  // The pressed button undoes its step (one more tree edit); a step that
-  // moved the highlight scrolls back to where it was. A move started from a
-  // card already resolved goes back to that card's step (reviewStep's
-  // `prior`), its button pressed again. A discarded one comes back where
-  // the card stands.
+  // The pressed button undoes its step (one more tree edit, none for an
+  // Accept that confirmed a place); a step that moved the highlight scrolls
+  // back to where it was. A step taken on a card already resolved goes
+  // back to that card's step (reviewStep's `prior`), its button pressed
+  // again. A discarded one comes back where the card stands.
   const undo = () => {
     onUndo(h.id, step);
     review.undone(h.id, step);
     if (step.kind === "accepted" || step.kind === "discarded" || !onOpen) review.open(h.id);
     else onOpen(h.id, { position: step.before.position });
   };
-  const walk = (to, dir) => { if (to) onOpen?.(to.id, { position: entryPosition(to), walked: dir }); };
-  const many = actions.length > 2;
+  // Move… and Discard as icons beside Use closest match, so the four fit on one line
+  const compact = actions.some((a) => a.key === "place");
+  // the step the card suggests: Accept while it applies, else Use closest match
+  const primary = actions.find((a) => (a.key === "accept" || a.key === "place") && !a.disabled && !a.pressed)?.key || "";
+  const faces = { discard, placed: step?.kind === "moved" || step?.kind === "placed", closest: !!state.closest };
   const count = t("{i} of {n}", { i: place.index + 1, n: place.total });
   const all = t("All reviewed");
   return (
     <div ref={ref} className="hlReviewCard" role="dialog" aria-label={title} data-review-id={h.id} data-review-state={state.kind}
       data-review-step={step?.kind || undefined}
       tabIndex={-1} style={{ left: pos?.left ?? 0, top: pos?.top ?? 0, visibility: pos && !pos.hidden ? undefined : "hidden" }}
-      onMouseEnter={review.hold} onMouseLeave={review.leave} onFocus={focusIn} onBlur={focusOut}>
+      onMouseEnter={review.hold} onMouseLeave={review.leave} onFocus={focusIn} onBlur={focusOut}
+      onClickCapture={() => setBeat(null)}>
       <div className="hlReviewHead">{title}</div>
       {offPage ? <div className="hlReviewOffPage">{t("This version of the PDF has no page {n}.", { n: state.position.pageNumber })}</div> : null}
       {state.before ? <Before prev={state.before} area={state.area} color={color} darkPage={darkPage} pageAspect={pageAspect}
@@ -432,15 +495,18 @@ function ReviewCard({ h, state, step, pinned, walked, ghost, drawn, offPage, und
           {state.diff ? <Diff parts={state.diff} /> : null}
         </div>
       ) : null}
+      {carriesNote(note) ? <Note note={note} /> : null}
       {actions.length ? (
         <div className="hlReviewActions">
-          {actions.map((a, i) => (
-            <StepButton key={a.key} a={a} primary={i === 0 && a.key !== "move"} compact={many && i > 0} discard={discard}
-              onPress={() => (a.pressed ? undo() : take[a.key]())} />
-          ))}
-          {/* Previous, the count and Next: the count keeps the room of both its texts, so a step that
-              leaves nothing to check moves nothing */}
-          <span className="hlReviewNav">
+          <div className="hlReviewSteps">
+            {actions.map((a) => (
+              <StepButton key={a.key} a={a} primary={a.key === primary} compact={compact && (a.key === "move" || a.key === "discard")}
+                faces={faces} onPress={() => (a.pressed ? undo() : take[a.key]())} />
+            ))}
+          </div>
+          {/* Previous, the count and Next, on a line of their own: the count keeps the room of both its
+              texts, so a step that leaves nothing to check moves nothing */}
+          <div className="hlReviewNav">
             <button type="button" className="ctlBtn" data-review-nav="prev" disabled={!place.prev} onClick={() => walk(place.prev, "prev")}
               aria-label={t("Previous highlight")} title={t("The previous highlight to review on this page")}>
               <ChevronLeftIcon size={16} />
@@ -453,18 +519,44 @@ function ReviewCard({ h, state, step, pinned, walked, ghost, drawn, offPage, und
               aria-label={t("Next highlight")} title={t("The next highlight to review on this page")}>
               <ChevronRightIcon size={16} />
             </button>
-          </span>
+          </div>
         </div>
       ) : null}
     </div>
   );
 }
 
-// A word comparison (quoteDiff's parts): the words gone struck through,
-// the words added marked.
-function Diff({ parts }) {
+// The note the highlight carries (noteSummary's): its text as plain words,
+// clipped to a few lines that scroll, and how many notes are under it and
+// comment threads on it.
+function Note({ note }) {
+  const counts = [
+    note.under ? tn("{n} note under it", "{n} notes under it", note.under) : "",
+    note.threads ? tn("{n} comment", "{n} comments", note.threads) : "",
+  ].filter(Boolean).join(" · ");
   return (
-    <div className="hlReviewDiff">
+    <div className={`hlReviewNote${note.text ? " withText" : ""}${counts ? " withCounts" : ""}`}>
+      <div className="hlReviewLabel">{t("Note")}</div>
+      {note.text ? <div className="hlReviewNoteText">{note.text}</div> : null}
+      {counts ? <div className="hlReviewNoteCounts">{counts}</div> : null}
+    </div>
+  );
+}
+
+// A word comparison (quoteDiff's parts): the words gone struck through,
+// the words added marked. Its content's height is its floor's bound
+// (--hl-review-diff-h, app.css): squeezed by a short window, it keeps
+// three lines, or all of a shorter one.
+function Diff({ parts }) {
+  const ref = useRef(null);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    el.style.removeProperty("--hl-review-diff-h");
+    el.style.setProperty("--hl-review-diff-h", `${el.scrollHeight + el.offsetHeight - el.clientHeight}px`);
+  }, [parts]);
+  return (
+    <div ref={ref} className="hlReviewDiff">
       {parts.map((p, i) => (p.tag === "del" ? <del key={i}>{p.text}</del>
         : p.tag === "add" ? <ins key={i}>{p.text}</ins> : <span key={i}>{p.text}</span>))}
     </div>

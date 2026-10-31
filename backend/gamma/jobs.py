@@ -107,13 +107,14 @@ class _Live:
     ``progress`` (always a new dict) and ``artifact``; ``state`` and
     ``started_at`` change under ``_lock``."""
 
-    def __init__(self, row: dict, run):
+    def __init__(self, row: dict, run, ended=None):
         self.id = row["id"]
         self.kind = row["kind"]
         self.owner = row["owner"]
         self.key = row["key"]
         self.created_at = row["created_at"]
         self.run = run
+        self.ended = ended
         self.state = "queued"
         self.started_at = ""
         self.progress: dict = {}
@@ -170,6 +171,7 @@ def no_progress(**_) -> None:
 
 _lock = threading.RLock()
 _live: dict[str, _Live] = {}
+_ending: set[str] = set()  # jobs of this process that read as ended, their ``ended`` hook still running
 
 
 # --- rows ------------------------------------------------------------------------
@@ -256,13 +258,16 @@ def for_account(owner: str, ws: str = "") -> list[dict]:
 # --- starting and running -------------------------------------------------------------
 
 def start(kind: str, *, owner: str, run, ws: str = "", title: str = "", params: dict | None = None,
-          key: str = "", artifact: bool = False) -> dict:
+          key: str = "", artifact: bool = False, ended=None) -> dict:
     """Queue ``run(job)`` as a job of ``kind`` for ``owner`` (an account's
     id, or ``WORKSPACE`` for a workspace's own work) and return it. ``key``: work
     already queued or running for the same owner, kind and key raises
     ``Busy``. ``artifact``: the job writes a file, so it needs room — 507
     when the disk or the account's share of finished files is full. 429
-    when the account already has ``MAX_ACTIVE_PER_ACCOUNT`` jobs going."""
+    when the account already has ``MAX_ACTIVE_PER_ACCOUNT`` jobs going.
+    ``ended(state)``: called once a run that started has ended, however it
+    ended, when the job already reads as ended (``get``, ``latest``), so
+    work it wakes never finds it still running."""
     with _lock:
         if key:
             for other in _live.values():
@@ -281,7 +286,7 @@ def start(kind: str, *, owner: str, run, ws: str = "", title: str = "", params: 
             conn.execute(f"INSERT INTO jobs ({', '.join(row)}) VALUES ({', '.join('?' for _ in row)})",
                          tuple(row.values()))
             conn.commit()
-        live = _Live(row, run)
+        live = _Live(row, run, ended)
         _live[live.id] = live
         _pump()
     return get(live.id)
@@ -371,7 +376,16 @@ def _work(live: _Live) -> None:
         with _lock:
             live.state = state
             _live.pop(live.id, None)
+            if live.ended is not None:
+                _ending.add(live.id)
             _pump()
+    if live.ended is not None:
+        try:
+            live.ended(state)
+        except Exception:  # noqa: BLE001 — the job's own outcome stands
+            log.exception(f"[jobs] {live.kind} {live.id}: its end hook failed")
+        finally:
+            _ending.discard(live.id)
     # A workspace's own job (the indexer) runs on every search and paper set
     # up: only how it ended otherwise is worth a console line.
     routine = live.owner == WORKSPACE and state == "done"
@@ -438,10 +452,11 @@ def mark_downloaded(job_id: str) -> None:
 
 
 def wait(job_id: str, timeout: float = 30.0) -> dict | None:
-    """Block until the job is no longer queued or running here (or
-    ``timeout``); the job with its result. For tests."""
+    """Block until the job is no longer queued or running here and its
+    ``ended`` hook has returned (or ``timeout``); the job with its result.
+    For tests."""
     deadline = time.monotonic() + timeout
-    while job_id in _live and time.monotonic() < deadline:
+    while (job_id in _live or job_id in _ending) and time.monotonic() < deadline:
         time.sleep(0.02)
     return get(job_id, full=True)
 

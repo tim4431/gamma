@@ -724,25 +724,38 @@ bytes, so the yes shows it nothing it did not have.
 format.
 
 - **Import.** A picture becomes a picture block: on a PDF page with its
-  `pdf_page`, on paper under its sheet (`notability_map.picture_block`). The
-  file is stored as it came and never decoded; only its header's size is
-  read (`picture.image_size`), to turn the crop into fractions. The crop,
-  the turn and the flips come in as numbers, and the caption is the content.
-  A GIF is its animation whenever the note has it, cropped or not.
+  `pdf_page`, on paper under its sheet (`notability_map.picture_block`). A
+  PNG, JPEG, GIF or WebP is stored as it came and never decoded; only its
+  header's size is read (`picture.image_size`), to turn the crop into
+  fractions. A TIFF, BMP or AVIF is stored as a PNG of its first frame,
+  turned as its EXIF orientation says (`note_app_import.picture_file`), up
+  to `pdf_image.MAX_DECODED_PIXELS` in its pixels and in a TIFF's tile;
+  one of floating-point samples, and any other file, is left out with a
+  warning. The crop, the turn and the flips come in as numbers, an `.ntb`'s
+  crop mirrored first on a flipped picture, since Notability measures it
+  on the image as flipped. A crop past the image cuts the frame with it,
+  and a frame with a side under `MIN_SIDE` grows about its centre. The
+  caption is the content, its line breaks kept, each line escaped as plain
+  text. A GIF is its animation whenever the note has it, cropped or not.
+  When the note lacks a picture's image, its smaller copy stands in, else
+  a GIF's animation alone, shown whole.
 - The GoodNotes import's pictures become picture blocks through the same
   storing (`note_app_import.AppImport.store_picture`): the frame (`#2`)
   through the page's and the turn (`#3.#3`, in radians) as `angle`, the
-  file as it came, a die-cut sticker's PDF rendered to a PNG first, once
-  for all the pictures that show it (`goodnotes_import._sticker`). A
-  GoodNotes crop is not applied yet: the picture comes in whole, counted
+  file as it came (a TIFF, BMP or AVIF as a PNG), a die-cut sticker's PDF
+  rendered to a PNG first, once for all the pictures that show it
+  (`goodnotes_import._sticker`). A GoodNotes crop is not applied yet: the
+  picture comes in whole, counted
   ([import_export.md](import_export.md#goodnotes-notebooks)).
 - Each file is read and stored once per note, however many pictures show
   it. `copied_picture` takes Gamma's own copy of a picture back when the
   note still shows it as the copy has it.
 - **Export.** A picture block becomes an `ImageMediaObject` with
   `rotationDegrees` from the turn, `FigureCropRectKey` the crop in the file's
-  pixels, the flips, and the caption's plain text as `captionFieldText`.
-  A surface's pictures go under its boxes.
+  pixels and, for a cropped picture, the same rectangle as the path
+  Notability keeps beside it (`$0`, `notability_write.crop_path`), the
+  flips, and the caption's plain text as `captionFieldText`. A surface's
+  pictures go under its boxes, and both under its stickies, as on screen.
 - Pictures imported before pictures were blocks stay text boxes holding an
   image. There is no migration: their pixels were transformed and the crop
   is gone. The export still writes such a box as a picture, which comes back
@@ -792,7 +805,8 @@ format.
   editor's fresh upload.
 - The Notability tests (`test_notability.py`, `test_notability_import.py`,
   `test_notability_export.py`, `test_notability_samples.py`): pictures
-  cropped, stretched, turned, flipped and captioned, both ways.
+  cropped, stretched, turned, flipped and captioned, both ways, and the
+  sample's drawn as Notability drew them in its thumbnail.
   `test_goodnotes_import.py`: a GoodNotes picture as a picture block of its
   file as it came, turned or shown cropped, and a sticker as one PNG of its
   art for its largest frame.
@@ -822,9 +836,10 @@ format.
 - Whether WebKit (Safari, the iPad app) applies a WebP's EXIF is unverified.
   The rule follows Chromium and Firefox, which were measured.
 - Notability: how the app opens a turned, cropped, flipped or captioned
-  picture Gamma wrote is untested, and so is the order of the flips and the
-  turn there. Two pictures that show one file go into a `.note` as two
-  files under `Images/`.
+  picture Gamma wrote is untested. Its own drawing of the sample puts the
+  flips before the turn, as Gamma does; where its crop falls against the
+  flips no sample shows. Two pictures that show one file go into a `.note`
+  as two files under `Images/`.
 - The server's merge does not know the surface, so it cannot keep its
   result on the page. A move to the edge merged with a larger size can stand
   a little off the page until the next edit keeps it on.

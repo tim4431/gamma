@@ -9,16 +9,18 @@
 // Both are reviewed on the card. This module says which highlights are to
 // review, in document order, and what the card's Previous and Next walk:
 // those, with the ones resolved on a card standing where they stood
-// before (reviewList, reviewPlace); what the card shows for one
+// before (reviewList, reviewPlace), and which one the card goes on to
+// after a decision (nextToCheck); what the card shows for one
 // (reviewCardState: a step taken on it leaves it as it was, the step's
-// button pressed, reviewActions) and what its steps change, for their undo
-// (reviewStep; a lost one's Discard, discardStep), and whether a step is
-// still in effect (stepInEffect); the box the before picture is cut from,
-// and where the old rectangles fall in it; and the word comparison of the
-// old quote with the current one. Pure, so node tests it
-// (tests/highlightReview.test.mjs).
+// button pressed, reviewActions; the note it carries, noteSummary) and
+// what its steps change, for their undo (reviewStep; Discard,
+// discardStep), and whether a step is still in effect (stepInEffect); the
+// box the before picture is cut from, and where the old rectangles fall in
+// it; and the word comparison of the old quote with the current one. Pure,
+// so node tests it (tests/highlightReview.test.mjs).
 import { acceptedPosition, blockPlace, closestPlace, closestPlacement, findBlock, insertBlockAt, placeToReview, placedToCheck, removeBlockTree, reviewUndone, roughMatchPercent, sameJson, updateBlockTree } from "../shared/model/blockModel.js";
 import { tokens, wordDiff } from "../shared/lib/wordDiff.js";
+import { plainSnippet } from "../search/snippets.js";
 
 // --- Which highlights are to review, in document order ---------------------
 
@@ -123,21 +125,60 @@ export function reviewList(highlights, steps = null, positionOf = null) {
     .map(([, { at, ...e }]) => e);
 }
 
+// Whether the card's `step` decides its highlight: Accept (on a dashed
+// one, or after a move or Use closest match on the card, which wait for
+// it) and Discard do; a move and Use closest match alone leave it to
+// check, waiting for Accept.
+export const decided = (step) => step?.kind === "accepted" || step?.kind === "discarded";
+
+// The ids of the entries of `list` (reviewList's) that a card moved or
+// placed on its closest match and that wait for its Accept: solid now, so
+// not in the review queue, but left to check while the walk lasts.
+export const waitingForAccept = (list) => (list || []).filter((e) => e.step && !decided(e.step)).map((e) => e.id);
+
+// The Document menu's highlights to review, which Review counts and opens
+// the first of: the review queue's (reviewQueue) and those of `waiting`
+// (waitingForAccept's, from the viewer's walk), in document order where
+// they are now. The same as the card's `left` (reviewPlace) on that walk.
+export function reviewMenu(highlights, waiting = []) {
+  const wait = new Set(waiting || []);
+  return (highlights || [])
+    .filter((h) => placeToReview(h?.position) || (h && wait.has(h.id) && h.position))
+    .map((h) => [orderKey(h), h])
+    .sort(([a], [b]) => compareKeys(a, b))
+    .map(([, h]) => h);
+}
+
 // Where the highlight `id` stands in `list` (reviewList's): its index (-1
 // when it is not in it), how many the list holds and how many of them are
-// left to check (`left`: none, "All reviewed"), and the ones Previous and
-// Next go to, round from the last to the first and back; null when the
-// list holds no other.
+// left to check (`left`, those not decided: none, "All reviewed"), and the
+// ones Previous and Next go to, round from the last to the first and back;
+// null when the list holds no other.
 export function reviewPlace(list, id) {
   const index = list.findIndex((e) => e.id === id);
   const total = list.length;
-  const left = list.filter((e) => !e.step).length;
+  const left = list.filter((e) => !decided(e.step)).length;
   const many = index >= 0 && total > 1;
   return {
     index, total, left,
     prev: many ? list[(index - 1 + total) % total] : null,
     next: many ? list[(index + 1) % total] : null,
   };
+}
+
+// Where the card goes on after a decision on highlight `id` (decided): the
+// next entry of `list` (reviewList's) still to check after it, in document
+// order and round from the last to the first (from the first, when `id`
+// is not in the list); null when none is left, and the card stays.
+export function nextToCheck(list, id) {
+  const all = list || [];
+  const n = all.length;
+  const at = all.findIndex((e) => e.id === id);
+  for (let k = 1; k <= n; k++) {
+    const e = all[(at + k + n) % n];
+    if (e.id !== id && !decided(e.step)) return e;
+  }
+  return null;
 }
 
 // Where Previous or Next scrolls for an entry of the walk (reviewList's):
@@ -436,32 +477,56 @@ export function reviewCardState(h, { done = null, fileId = "" } = {}) {
   return null;
 }
 
-// The step each of the card's buttons takes.
-const STEP_OF = { accept: "accepted", place: "placed", move: "moved", discard: "discarded" };
-// After each step, the buttons whose action no longer applies: a moved
-// highlight is neither pending nor lost; a discarded one is off the page;
-// one placed on its closest match is lost no more, but may still move.
-const NOT_AFTER = {
-  accepted: [],
-  placed: ["discard"],
-  moved: ["accept", "place", "discard"],
-  discarded: ["place", "move"],
-};
+// The note a highlight carries, as its review card shows it under the
+// quote: {text, under, threads}, `text` the block's content as the words a
+// reader sees, line by line (search/snippets.js plainSnippet: markdown's
+// marks, refs and tags go), its empty lines dropped; `under` how many
+// blocks are under it, at any depth; `threads` its comment threads, open
+// or resolved (`threads`, as Discard counts them). Null for no block.
+export function noteSummary(block, threads = 0) {
+  if (!block) return null;
+  const text = String(block.content || "").split("\n").map((line) => plainSnippet(line)).filter(Boolean).join("\n");
+  const count = (list) => (list || []).reduce((n, b) => n + 1 + count(b.children), 0);
+  return { text, under: count(block.children), threads: threads > 0 ? threads : 0 };
+}
 
-// The card's row of steps for `state` (reviewCardState's), in their
-// places, the same before a step and after it: a pending one's Accept and
-// Move…; a lost one's Use closest match (when it has one and `place`, the
-// editor may), Move… and Discard (when `discard`, what it would do,
-// discardKind's, is known). [{key, step, pressed, disabled}]: `pressed`
-// the one whose step is in effect (pressing it again undoes it),
-// `disabled` one whose action no longer applies while it is. Empty for
+// Whether the card has a note to show (noteSummary's).
+export const carriesNote = (note) => !!note && (!!note.text || note.under > 0 || note.threads > 0);
+
+// The step each of the card's buttons takes, in the row's order.
+const STEP_OF = { accept: "accepted", place: "placed", move: "moved", discard: "discarded" };
+
+// Whether button `key` no longer applies after the card's `step` (not its
+// own): nothing is left on the page to accept or move once discarded;
+// Use closest match and Discard are a highlight's still to check, so any
+// other step takes them off. Accept stays after a move or Use closest
+// match, which wait for it, and Move… after Accept.
+function offAfter(key, step) {
+  if (!step) return false;
+  if (key === "accept" || key === "move") return step === "discarded";
+  return true;
+}
+
+// The card's row of steps for `state` (reviewCardState's), one row in one
+// order on every card, the same before a step and after it: Accept, Use
+// closest match (a lost one's with a closest match, when `place`, the
+// editor may), Move… and Discard (when `discard`, the editor may).
+// [{key, step, pressed, disabled, unplaced}]: `pressed` the one whose step
+// is in effect (pressing it again undoes it), `disabled` one that does not
+// apply: one whose action no longer applies after that step, and a lost
+// one's Accept before anything placed it (`unplaced`: Move… or Use closest
+// match first, then Accept takes that place as the decision). Empty for
 // no state.
-export function reviewActions(state, { place = true, discard = null } = {}) {
+export function reviewActions(state, { place = true, discard = false } = {}) {
   if (!state) return [];
-  const keys = state.kind === "pending" ? ["accept", "move"]
-    : ["place", "move", "discard"].filter((k) => (k === "place" ? !!state.closest && place : k === "discard" ? !!discard : true));
-  const off = NOT_AFTER[state.step] || [];
-  return keys.map((key) => ({ key, step: STEP_OF[key], pressed: !!state.step && STEP_OF[key] === state.step, disabled: off.includes(key) }));
+  const step = state.step || null;
+  const keys = Object.keys(STEP_OF).filter((k) => (k === "place" ? state.kind === "lost" && !!state.closest && place
+    : k === "discard" ? !!discard : true));
+  return keys.map((key) => {
+    const pressed = !!step && STEP_OF[key] === step;
+    const unplaced = key === "accept" && state.kind === "lost" && !step;
+    return { key, step: STEP_OF[key], pressed, disabled: !pressed && (unplaced || offAfter(key, step)), unplaced };
+  });
 }
 
 // What a step on the card changes, for its undo (the step's button pressed
@@ -474,10 +539,18 @@ export function reviewActions(state, { place = true, discard = null } = {}) {
 // started from a card already resolved keeps that card's step as `prior`
 // while the position moved from is the one that step wrote, so the move's
 // undo leaves the card on that step ("Accepted" pressed, its own undo).
-// Null when the step does not apply.
+// Accept after a move or Use closest match on the card (`prior`, while the
+// highlight is where it put it) confirms that place as the decision:
+// `confirms`, its `after` the position as it is, which it does not change
+// (a move and Use closest match leave it solid), and its undo writes
+// nothing, the card back on that step. Null when the step does not apply.
 export function reviewStep(kind, { position, quote = "", prior = null } = {}, after = null) {
   if (!position) return null;
-  if (kind === "accepted") return placedToCheck(position) ? { kind, before: { position }, after: acceptedPosition(position) } : null;
+  if (kind === "accepted") {
+    if (placedToCheck(position)) return { kind, before: { position }, after: acceptedPosition(position) };
+    const placing = prior?.kind === "moved" || prior?.kind === "placed";
+    return placing && sameJson(prior.after, position) ? { kind, before: { position }, after: position, prior, confirms: true } : null;
+  }
   if (kind === "placed") {
     const placed = closestPlacement(position);
     return placed ? { kind, before: { position, quote }, after: placed.position } : null;
@@ -491,20 +564,29 @@ export function reviewStep(kind, { position, quote = "", prior = null } = {}, af
   return null;
 }
 
-// --- Discard: a lost highlight off the page ----------------------------------
+// --- Discard: a highlight to review off the page ------------------------------
 
-// What Discard on a lost highlight's card does, its passage being gone
-// from the PDF: "delete" when the highlight carries nothing of its own (no
-// note, its content empty; no child blocks; no comment thread, open or
-// resolved: `threads`, how many it has), as the highlight menu's Delete
-// deletes it; "unplace" when it carries any, so it stays, a note, and
-// only comes off the PDF (discardedPosition). Null for a block that is no
-// lost highlight on a page.
-export function discardKind(block, threads = 0) {
-  const pos = block?.properties?.pdf_position;
-  if (!pos?.lost || !Number.isInteger(pos.pageNumber) || pos.pageNumber < 1) return null;
+// What Discard does to `block`, whatever its place: "delete" when the
+// highlight carries nothing of its own (no note, its content empty; no
+// child blocks; no comment thread, open or resolved: `threads`, how many it
+// has), as the highlight menu's Delete deletes it; "unplace" when it
+// carries any, so it stays, a note, and only comes off the PDF
+// (discardedPosition). Null for no block. The card's Discard title says
+// which, after a step too.
+export function discardOutcome(block, threads = 0) {
+  if (!block) return null;
   const bare = !(block.content || "").trim() && !(block.children || []).length && !(threads > 0);
   return bare ? "delete" : "unplace";
+}
+
+// What Discard on the review card of a highlight to review does (dashed,
+// matched roughly or placed by estimate, or lost: placeToReview), its
+// passage not found as it was: discardOutcome's. Null for a block that is
+// no such highlight on a page.
+export function discardKind(block, threads = 0) {
+  const pos = block?.properties?.pdf_position;
+  if (!placeToReview(pos) || !Number.isInteger(pos.pageNumber) || pos.pageNumber < 1) return null;
+  return discardOutcome(block, threads);
 }
 
 // The position a discarded highlight keeps as a note: its page alone, the
@@ -514,7 +596,7 @@ export function discardKind(block, threads = 0) {
 // rest of its properties stay.
 export const discardedPosition = (pos) => ({ pageNumber: pos.pageNumber });
 
-// Discard's step for the lost highlight `id` of the tree `blocks`, with
+// Discard's step for the highlight to review `id` of the tree `blocks`, with
 // `threads` comment threads: {kind: "discarded", deleted, before:
 // {position}, …} with, when it deletes the highlight (discardKind's
 // "delete"), `removed`: {block, parentId, index}, the block as it was and
@@ -533,7 +615,7 @@ export function discardStep(blocks, id, threads = 0) {
 
 // The tree with the Discard `step` (discardStep's) applied to block `id`:
 // the highlight deleted, or its position its page alone while it is still
-// the lost one discarded. The same tree when it no longer applies.
+// the one discarded. The same tree when it no longer applies.
 export function discardApplied(blocks, id, step) {
   const block = step?.kind === "discarded" ? findBlock(blocks, id) : null;
   if (!block) return blocks;
@@ -543,7 +625,7 @@ export function discardApplied(blocks, id, step) {
 }
 
 // The tree with the Discard `step` taken back (Discarded pressed again), the
-// highlight as it was, lost, on the page: a deleted one put back where it
+// highlight as it was, dashed or lost, on the page: a deleted one put back where it
 // stood (at the top's end when its parent has gone since), unless it is
 // back already; one kept as a note given its lost position again, unless
 // its position changed since. The same tree when there is nothing to take

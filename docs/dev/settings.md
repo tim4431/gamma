@@ -989,7 +989,12 @@ strip; a pick is its colour and turns it on. While it is on, PdfViewer's
 pen release (the `mouseup` path, not a finger's) goes to
 `onSelectionFinished` with `{highlighter: true}` instead of opening the
 popup, and App adds it in `highlighterColor` with its note open for typing,
-as the popup's. The viewer sets `--selection-color`, so
+as the popup's. App returns the new highlight's id, and once the mouse
+moves on (as the popup would, [ui-design.md](ui-design.md#the-pdf-viewer))
+the popup opens over that highlight instead (`kind: "made"`, `PlainTip`'s
+`recolor`): its swatches change the highlight's colour and set
+`highlighterColor`, its Comment and Link act on it as its context menu's
+do (PdfViewer's `onHighlightAction`), and the note keeps the focus. The viewer sets `--selection-color`, so
 the selection is drawn in that colour as it is made. A finger's selection,
 an area drag and a selection that places a highlight waiting to be moved
 still get the popup. `highlighterColor` (`gamma-highlighter-color`, account)

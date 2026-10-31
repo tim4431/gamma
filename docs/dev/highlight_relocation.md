@@ -12,11 +12,12 @@ highlight is found again in the new file by its passage and moved to where
 that passage is now. One found exactly is drawn as before, solid. One found
 changed a little (a renumbered citation, a reworded phrase) is placed when
 it reads alike enough, and drawn dashed, pending, until the person compares
-it on its review card and accepts it or moves it. One whose passage is
-nowhere, or only in places too unlike it, is marked `lost` and shown hollow
-where it was, keeping the place most like it as its closest match when that
-reads at least half alike, until the person moves it, takes that match on
-its review card, or a later run finds it.
+it on its review card and accepts it, moves it or discards it. One whose
+passage is nowhere, or only in places too unlike it, is marked `lost` and
+shown hollow where it was, keeping the place most like it as its closest
+match when that reads at least half alike, until the person moves it or
+takes that match on its review card (and accepts that place), discards it,
+or a later run finds it.
 
 Code: `gamma/highlight_relocate.py` (the search and the write),
 `gamma/highlights.py` (the position's flags, `prev` and `closest`:
@@ -29,16 +30,18 @@ Zotero link calls too, `_start_relocation`, `POST
 file a page shows); in the web app `pdf/PdfViewer.jsx` (the dashed and
 hollow looks, the closest match's outline, the tip's move button),
 `pdf/HighlightReview.jsx` with `pdf/highlightReview.js` (the review card,
-its queue and its walk, its steps and whether each is in effect,
-Discard's step and its pure arithmetic) and
+its queue and its walk, its steps and whether each is in effect, the one
+it goes on to after a decision, the note it shows, Discard's step and its
+pure arithmetic) and
 `shared/lib/wordDiff.js` (its word comparison),
 `shared/model/blockModel.js` (`placedToCheck`,
 `placeToReview`, `roughMatchPercent`, `acceptedPosition`, `closestPlace`,
 `closestPlacement`, `reviewUndone`, `blockPlace`, `insertBlockAt`),
 `editor/BlockTree.jsx` (the row's dashed and hollow dots, its move
 button), `app/App.jsx` (Accept, Use closest match, Discard, a step's
-undo, the stored position the card reads, move mode, the Document menu's
-rows, what the replacement says),
+undo, the stored position and the note the card reads, the notes panel
+following the card, move mode, the Document menu's rows, what the
+replacement says),
 `app/prefDefs.js` and `settings/SettingsDialog.jsx` (the thresholds),
 `tasks/taskKinds.js` and `tasks/useAppJobs.js` (the task row, the summary
 when a run ends).
@@ -77,7 +80,7 @@ placed: one still measured on the old file (`pdf_position.doc_id`), a
 dashed one and a lost one are held ("being placed in the new PDF", "dashed
 in Gamma until accepted", "not found in the new PDF"), counted under the
 link's waiting annotations ([zotero_sync.md](zotero_sync.md#annotations)). However a run ends, written or not, the link is told
-(`zotero_sync_pdfs.relocation_ended`): a PDF replaced here waits to go to
+(`zotero_sync_pdfs.relocation_ended`) once the job reads as ended: a PDF replaced here waits to go to
 Zotero until its highlights are placed, and is decided then
 ([zotero_sync.md](zotero_sync.md#the-plan)). A share link never reaches the endpoint. The job's params
 are `{page_id, title, doc_id, min_match, exact_chars}`, the file it places
@@ -659,8 +662,9 @@ from the card, undone back to solid, deleted by someone else). A card
 opened by a tap, by Previous or Next, from the Document menu or by a step
 on it stays until then and takes the focus once it shows, so the keys
 reach its buttons; one reached by Previous or Next focuses that button of
-its own, so Enter walks on. A step keeps the focus on its button, which
-stays. The browser takes the focus from what it hides, so a card hidden
+its own, so Enter walks on, and one gone on to after an Accept (below) its
+Accept when that applies, so Enter accepts the next. A step keeps the
+focus on its button, which stays. The browser takes the focus from what it hides, so a card hidden
 a moment (the viewer scrolling to the closest match that Use closest
 match took the highlight to, or back on an undo; the highlight scrolled
 out of sight) drops it to the page; the card remembers the control the
@@ -670,7 +674,7 @@ on the card when that control is disabled now, so Enter presses the
 step's button again. A card whose highlight took a step on a card stays while the
 pointer rests on another dashed or hollow highlight: hovering opens no
 card in its place. It is 360 px wide at most (the window's width less
-16 px on a phone), so its row of buttons fits on one line (below). It is
+16 px on a phone), so its steps fit on one line (below). It is
 a portal on the shared popup surface (`.hlReviewCard` beside `.pdfNoteTip`
 in app.css, fading in as the tips do), placed with `placeFloating` and
 `useFloatingPosition` ([ui-design.md](ui-design.md#menus-and-popups-open-in-place)):
@@ -694,6 +698,19 @@ centred near its foot, the line "This version of the PDF has no page 10."
 under its header (`.hlReviewOffPage`), with Before, a closest match on a
 page the PDF has, Move…, Previous and Next as any lost one's.
 
+**The notes follow the card.** A card that goes to a highlight (a tap,
+Previous, Next, the advance after a decision, the Document menu's Review)
+has the notes panel scroll to that highlight's block and mark it, as a
+click on the highlight does (PdfViewer's `onReviewFollow`, App's
+`scrollToBlock` and `reveal`: the row scrolled to the middle and marked
+focused in the tree's sense, its folded parents opened, no editor opened,
+the focus left in the card; the chat's Cursor chip follows that row, as
+after any jump). Unlike a click it does not add the highlight's quote to
+the chat. A hovered card leaves the notes where they are. One whose block Discard
+deleted has none to go to. On a phone, whose notes panel is closed while
+the PDF shows, the row is scrolled to when the panel opens, as after a
+click.
+
 What it shows is `reviewCardState`'s, from the highlight and the card's
 step in effect on it, if any (below):
 
@@ -701,8 +718,9 @@ step in effect on it, if any (below):
   (`roughMatchPercent`, the position's `match`), or "Placed by estimate"
   for one without `match`; **Before** from its `prev` (`reviewPrev`,
   below); for a text highlight its old quote against its current one, word
-  by word (below); and for an editor **Accept** (the primary button),
-  **Move…** (move mode, below), then **Previous**, "2 of 3" and **Next**.
+  by word (below); its **Note** (below); and for an editor **Accept** (the
+  primary button), **Move…** (move mode, below), **Discard** (below), then
+  under them **Previous**, "2 of 3" and **Next**.
 - **Lost** (hollow): the header "Not found in this version"; **Before**
   from its own position (`lostPlace`), since a lost highlight keeps its
   rectangles and the file they were measured on: when its `doc_id` names a
@@ -723,12 +741,46 @@ step in effect on it, if any (below):
   a candidate a few pages away is drawn only once its page renders, after
   the scroll, and PdfPage then says so (`review.drawn`, the hook's
   `drawn`), so the card places itself under the outline.
-  For an editor: **Use closest match** (the primary button, when there is
-  one), **Move…**, **Discard** (below), then **Previous**, "1 of 3" and
-  **Next**; nothing to accept. Beside Use closest match, Move… and Discard
-  show their icons alone (their names in `aria-label` and `title`): three
-  labelled step buttons and the walk's controls do not fit on one line at
-  the card's width. A lost area has no `closest`.
+  Then its **Note** (below), and for an editor the same row as a pending
+  one's: **Accept**, disabled until something placed it (its title
+  "Nothing to accept until it is placed: use Move… or Use closest match
+  first", or "…: use Move… first" without a closest match; after either,
+  Accept takes that place as the decision, below), **Use closest match**
+  (the primary button, when there is one), **Move…**, **Discard** (below),
+  then under them **Previous**, "1 of 3" and **Next**. Beside Use closest
+  match, Move… and Discard show their icons alone (their names in
+  `aria-label` and `title`): four labelled step buttons do not fit on one
+  line at the card's width. A lost area has no `closest`.
+
+The row is one row in one order on every card (`reviewActions`): Accept,
+Use closest match (a lost one's with a closest match only), Move… and
+Discard, so a dashed card and a hollow one without a closest match have
+the same buttons in the same places, and none appears or goes on a step.
+Previous, the count and Next stand on a line of their own under the steps
+on every card: all of it does not fit one line at 360 px. The primary
+button is the step the card suggests: Accept while it applies and is not
+taken, else Use closest match.
+
+**The note** (`noteSummary`, App's `reviewNote` over the live block, so an
+edit shows at once): under the quote (the comparison, or a lost one's
+stored quote), the block's text as the words a reader sees (search's
+`plainSnippet` line by line: markdown's marks, refs and tags go), four
+lines at most that scroll (`.hlReviewNoteText`), then, when it has them,
+how many blocks are under it at any depth and how many comment threads,
+open or resolved, it has ("2 notes under it · 1 comment",
+`.hlReviewNoteCounts`), as Discard counts them. A highlight that carries
+none shows nothing there. One whose block Discard deleted (it carried
+nothing, or it would have been kept) shows the note the card had
+(`h.note`, recorded with the step).
+
+**On a short window** the card (at most `min(70vh, 520px)` tall) gives the
+room it lacks from the note first, down to its label, one line of its
+text (the rest scrolls) and its counts, then from a dashed card's word
+comparison, down to three lines, or all of a shorter one (its content's
+height is `--hl-review-diff-h`, set by `Diff`). The header, the Before
+picture, a lost card's closest match, the steps and Previous / Next keep
+their size; a window too short for those floors (under about 660 px with a
+Before picture of several lines) scrolls the card as a whole.
 
 **After a step** taken on the card (Accept, Use closest match, a move
 started from its Move…, or Discard) the card stays as it was: the same
@@ -747,18 +799,38 @@ Move… and Discard show their icons alone (above), so pressed they show
 the check alone, "Moved" or "Discarded" being their `aria-label` and the
 start of their title. Each step button holds both its faces in
 one grid cell, the one not shown hidden (`.hlReviewFace`, `.hlReviewRoom`
-in app.css), so it keeps one width either way. A button whose action no
-longer applies stays in its place, disabled (`reviewActions`): after
-Discard, Use closest match and Move… (nothing is left on the page); after
-Use closest match, Discard; after a move, the others. Move… stays usable
-after Accept and Use closest match: a move from there keeps the earlier
-step to come back to (below). Show is disabled while a step is in effect.
+in app.css), so it keeps one width either way. A button that does not
+apply stays in its place, disabled (`reviewActions`): a lost one's Accept
+before anything placed it (`unplaced`); after Discard: Accept, Use
+closest match and Move… (nothing is left on the page); after any other
+step: Use closest match and Discard (they are a highlight's still to
+check). Accept stays usable after a move and Use closest match, which
+wait for it, and Move… after Accept and Use closest match: a move from
+there keeps the earlier step to come back to (below). Show is disabled
+while a step is in effect.
 The card follows its highlight when the step took it elsewhere (Use
 closest match, a move). A discarded highlight is drawn no more, so its
 card shows it as the card last had it and stays where it stood: anchored
 to its old rectangles on its page (`placeBox`, from the page's box on
 screen, the way PdfPage scales them), following the page and hidden out of
 sight as any card.
+
+**A decision goes on to the next one.** Accept (on a dashed one, or after
+a move or Use closest match on the card) and Discard decide a highlight
+(`decided`); a move and Use closest match alone do not, and wait for
+Accept. After a decision the card shows its pressed button for a moment
+(`ADVANCE_MS`, 600 ms), then goes on, as Next would (the notes following,
+above), to the next one still to check in the walk (`nextToCheck`: the
+first undecided entry after the decided one in document order, round from
+the last to the first), its Accept taking the focus after an Accept when
+it applies. The moment starts once the decision is the card's step in
+effect, and ends with nothing done when anything on the card is pressed
+(the decision's own button, which undoes it, among them: a capture-phase
+click on the card), when the card closes, or when the step in effect
+changes by other means (Ctrl+Z, a collaborator's edit). When none is left
+to check the card stays, its count reading "All reviewed". The decided
+one stays in the walk, so Previous reaches it and its pressed button
+undoes it. The Document menu's Accept all opens no card.
 
 A step is in effect only while the highlight is as the step left it
 (`stepInEffect`): its stored position (App's `reviewPosition`, the block's
@@ -816,7 +888,8 @@ shows the old passage. A lost one's stored quote is whole.
 pending and lost highlights in document order (by page, then top, then
 left, as `pendingInOrder` orders the pending ones for Accept all): the ones
 left to check, which the Document menu's Review counts and opens the first
-of. A lost one past the PDF's last page sorts last.
+of, with those waiting for Accept on a card (below). A lost one past the
+PDF's last page sorts last.
 
 **The card's walk** (`reviewList`, `reviewPlace`): what **Previous** and
 **Next** walk and "{i} of {n}" counts, in the same order: the queue, and
@@ -825,9 +898,10 @@ this page and file, each standing where it stood before its step
 (`stepOrigin`), so a step changes neither the count ("2 of 3" stays "2 of
 3") nor what Previous and Next reach. The steps are the viewer's
 (`useHighlightReview`'s `steps`: the highlight's id → the step last taken
-on its card, a move from a resolved card keeping that card's step as its
-`prior`, the highlight as the card had it, and what its Discard would
-do), recorded by the card (Accept, Use closest match, Discard) and by App
+on its card, a move from a resolved card, and an Accept after a move or
+Use closest match, keeping the card's step before it as its `prior`, and
+the highlight as the card had it), recorded by the card (Accept, Use
+closest match, Discard) and by App
 after a move from it (`reviewRef` with `done`); another page or file (a
 new replacement) or a reload starts them afresh (`review.reset`, on
 PdfViewer's `url`, `fileId` and `pageId`). A resolved one is in the walk
@@ -839,17 +913,25 @@ the walk starts afresh. Previous and Next scroll to the highlight (one
 discarded to where it stood, `entryPosition`) and open its card, round from
 the last to the first and back, both disabled when the walk holds one
 highlight; a resolved one opens with its step's button pressed, which
-undoes it. When none in the walk is left to check, the count reads "All
-reviewed" in its place. The count holds the room of both its texts, so the
-last step moves nothing. They are `ctlBtn` chevrons on either side of the
-count, as the merge resolver's conflict card walks its conflicts
-(`.mergeNav`), after the step buttons. The row stays on one line in
-English and Chinese (whose count is "2 / 3") down to a 360 px phone,
-wrapping only under a larger interface font: a window narrower than
-376 px makes the card narrower than its 360 px, and there its sides, the
-row's gaps and the labelled buttons' padding are tighter (app.css, the
-`max-width: 375px` rule after `.hlReviewCount`). Below 360 px the row
-may wrap.
+undoes it. Left to check are the entries not decided (`reviewPlace`'s
+`left`: those with no step in effect, and those moved or placed on a card,
+waiting for Accept); when none is left, the count reads "All reviewed" in
+its place. The waiting ones (`waitingForAccept`) are solid already, so
+not in the queue: PdfViewer tells App their ids (`onReviewWaiting`), and
+the Document menu's Review counts them with the queue (`reviewMenu`, the
+same number as the card's `left`). Waiting lasts as long as the walk: on
+another page or file, or after a reload, a highlight moved or placed on
+its closest match without Accept counts as resolved, where the step put
+it. The count holds the room of both its texts, so the last step
+moves nothing. They are `ctlBtn` chevrons on either side of the count, as
+the merge resolver's conflict card walks its conflicts (`.mergeNav`), on a
+line of their own at the end, under the step buttons (`.hlReviewNav`).
+The steps stay on one line in English and Chinese (whose count is "2 /
+3") down to a 360 px phone, wrapping only under a larger interface font: a
+window narrower than 376 px makes the card narrower than its 360 px, and
+there its sides, the steps' gaps and the labelled buttons' padding are
+tighter (app.css, the `max-width: 375px` rule after `.hlReviewCount`).
+Below 360 px they may wrap.
 
 **Accept** (App's `acceptHighlightPlaces`, `acceptedPosition`): the card's
 Accept, the highlight's context menu (**Accept**, offered to an editor on a
@@ -863,7 +945,12 @@ from that file nor dashes them again; a run under way for that file skips
 the position, changed meanwhile, by its compare-and-set. It is a tree edit
 like any other, one for any number of highlights: one undo step, sent to
 the others as ops. The card's Accept leaves the card open on the
-highlight as it was, its Accept now "Accepted", pressed.
+highlight as it was, its Accept now "Accepted", pressed, and a moment
+later goes on to the next one to check (above). On a card whose move or
+Use closest match placed the highlight (solid already), Accept writes
+nothing: it takes that place as the decision (`reviewStep`'s
+`confirms`, its `after` the position as it is, its `prior` that step;
+its title "Keep the highlight where it was placed").
 
 **Use closest match** (App's `placeClosestMatch`, `closestPlacement`):
 the lost highlight takes the candidate's place and text. Its position
@@ -874,9 +961,10 @@ position and it is drawn solid. A tree edit like any other: undoable, sent
 to the others as ops. The card scrolls to the new place and follows the
 highlight there, as it was, its Use closest match now "Placed".
 
-**Discard** (App's `discardLostHighlight`; `discardKind`, `discardStep`,
-`discardApplied` in highlightReview.js), on a lost highlight's card for an
-editor, beside Move…: the highlight's passage is gone, and the person does
+**Discard** (App's `discardReviewHighlight`; `discardKind`,
+`discardOutcome`, `discardStep`, `discardApplied` in highlightReview.js),
+on a dashed or a lost highlight's card for an editor, after Move…: the
+highlight's passage is not in the new file as it was, and the person does
 not want it placed. One that carries nothing of its own (no note, its
 content empty or spaces; no child blocks, even empty ones; no comment
 thread, open or resolved, `comments.threadsByBlock`) is deleted, as the
@@ -892,11 +980,13 @@ highlight. Either way it is one tree edit (ops, undo). The button's title
 says which it will do: "Delete the highlight: it holds no note or
 comment, and its text is not in this version", or "Take the highlight off
 the PDF and keep it as a note, with its quote, note and comments" (the
-viewer's `discardOf`). The card then stays as it was, its Discard now
-"Discarded" (above). There is
-no Discard on a dashed one, in the highlight's menu (its Delete does the
-one, Move to a selection… the other's undoing) or in the Document menu:
-discarding goes one highlight at a time, after a look at its card.
+viewer's `discardOf`, `discardOutcome` over what the block carries, so
+the title holds after another step too), on a dashed card as on a lost
+one. The card then stays as it was a moment, its Discard now "Discarded"
+(above), and goes on to the next one to check. There is no Discard in
+the highlight's menu (its Delete does the one, Move to a selection… the
+other's undoing) or in the Document menu: discarding goes one highlight
+at a time, after a look at its card.
 
 **Moving a highlight** (App's `moveHighlightId`): a highlight's context
 menu on the page offers **Move to a selection…** to an editor, a lost row
@@ -906,7 +996,9 @@ click on a highlight) end each other (`startHighlightMove`,
 `startAttachMode`), so one banner shows and the PDF's next selection means
 one thing. The banner says what to do; the next
 selection on the PDF, text or an area drag (the area key,
-[hotkeys.md](hotkeys.md#held-keys)), shows the tip with one button, *Move
+[hotkeys.md](hotkeys.md#held-keys)), the highlights letting the pointer
+through meanwhile (`.pdfMoving`) so the text under them, the highlight's
+own included, can be selected, shows the tip with one button, *Move
 the highlight here* (`PlainTip`'s `onMove`), and translates nothing, even
 with translate on select on; an area drag sends no picture of the region
 to the chat either (`PdfViewer`'s `onAreaSelected` skips
@@ -923,7 +1015,7 @@ step in effect when it had one; any other start of a move forgets it):
 once the selection has moved the highlight, `moveHighlightTo` opens the
 card on it again through `reviewRef`, which records the step: as it was,
 its Move… now "Moved", pressed, without scrolling, the selection being in
-sight.
+sight, and its Accept there to take the new place.
 
 **Undoing a step**: its button pressed again ("Accepted", "Placed",
 "Moved", "Discarded"; there is no Undo button of its own). Each step is one
@@ -943,7 +1035,10 @@ effect ("Accepted", "Placed") keeps that step as its own `prior` while
 the position it moved from is the one that step wrote: its undo leaves the
 card on that step again, its button pressed, so Accept and a move, then
 Moved and Accepted pressed in turn, go back one step each time to the
-highlight pending. A Discard's step
+highlight pending. An Accept that took a move's or Use closest match's
+place (`confirms`) wrote nothing, so its undo writes nothing either
+(`undoReviewStep` returns): the card is back on that step, Moved or
+Placed pressed, whose own undo is there. A Discard's step
 (`discardStep`: `{kind: "discarded", deleted, before: {position}}` with,
 for a deletion, `removed`, the block as it was and its place among its
 siblings, `blockPlace`; else `after`, `{pageNumber}`) is taken back by
@@ -952,18 +1047,21 @@ siblings, `blockPlace`; else `after`, `{pageNumber}`) is taken back by
 since; nothing when it is back already), an insert of its id as the
 app's own undo of a deletion sends; one kept as a note given its lost
 position again (`reviewUndone`, nothing when its position changed since).
-Either way it is back on the page, hollow, where the card stands, and the
-card is as it was before the Discard.
+Either way it is back on the page, dashed or hollow as it was, where the
+card stands, and the card is as it was before the Discard.
 
 **The Document menu.** When the open page has highlights to review, the
 paperclip popover lists **Review 3 highlights** (**Review 1 highlight**
 for one; for anyone: it closes the menu, shows the PDF if it was hidden,
-scrolls to the first in the review queue and opens its card) and, for an
+scrolls to the first in the review queue, or of those waiting for Accept
+on a card, in document order where they are now, and opens its card, a
+waiting one with its step's button pressed and Accept enabled) and, for an
 editor while some are pending, **Accept all 3 rough matches** (**Accept 1
 rough match** for one: one Accept over all of them, the status saying how
 many when there are several). Review counts the pending and the lost ones
-left to check (not the ones resolved on a card, which the card's walk
-keeps), Accept all the pending ones alone, an estimated area included; a
+left to check, and those moved or placed on a card that wait for its
+Accept (not the ones decided on a card, which the card's walk keeps),
+Accept all the pending ones alone, an estimated area included; a
 discarded one is in neither, and there is no Discard over them all. Review's
 title is "Show the first dashed or hollow highlight with what it matched
 and where it was before". **Find highlights in this PDF**'s title says
@@ -1162,15 +1260,26 @@ pending highlights in document order; the review queue of the dashed and
 the hollow ones, a solid one left out; Previous and Next round the walk,
 both disabled for one alone; a step changing neither the count nor the
 walk, Accept, Use closest match and a move from an accepted card each
-leaving the highlight where it stood before, all of them resolved "All
-reviewed" (`left` 0); `stepOrigin` through a move's `prior`; a highlight
+leaving the highlight where it stood before, all of them placed still to
+check and all of them accepted "All reviewed" (`left` 0); `stepOrigin`
+through a move's `prior`; a highlight
 past the PDF's last page told apart and kept in the queue, last;
 `prev` read defensively; a lost one's before from its own place, a
 picture only of a file other than the page's; the card's state, pending,
 lost with and without a closest match, and after Accept, a move from the
 accepted card, Use closest match and Discard the same as before the step
-but for its `step`; the buttons (`reviewActions`) in their places after
-each step, the step's pressed, the ones that no longer apply disabled; a
+but for its `step`; the buttons (`reviewActions`), one row in one order
+for each kind of card (dashed, lost with and without a closest match, the
+same set on a dashed one and a lost one without), in their places after
+each step, the step's pressed, the ones that do not apply disabled, a
+lost one's Accept waiting for a place and usable after a move or Use
+closest match; Accept after a move or Use closest match confirming that
+place, writing nothing (`confirms`), and none without such a step or once
+the highlight moved on, the app's undo of the move leaving it to check;
+a decision (`decided`: Accept and Discard, not a move or Use closest
+match) going on to the next one still to check (`nextToCheck`), after it
+in document order and round, past the decided, to a moved one waiting for
+Accept, none when nothing is left; a
 step in effect only while the highlight is as it left it, the app's undo
 showing it to check again, a collaborator's move or a deletion taking it
 out of the walk; what each step changes, for its undo, a move from a
@@ -1179,7 +1288,12 @@ of the old file and not through a share link, the crop's box and the old
 rectangles in it, the quote comparison, a long passage compared quickly, an old quote
 clipped to a `prev`'s length compared only as far as it goes; Discard:
 which of the two it does, a note of spaces no note, an empty child or a
-thread keeping it, only a lost one discarded; a bare one deleted as one
+thread keeping it, a lost or a dashed one discarded and no other,
+`discardOutcome` whatever the place; on a dashed one a bare one deleted
+and put back dashed with its `prev`, its card the dashed one's with
+Discarded pressed, one with a note kept off the PDF and put back; the note
+a card shows (`noteSummary`: its words line by line, the blocks under it
+at any depth, its threads; nothing for a bare one); a bare one deleted as one
 tree edit and out of the queue, its undo putting it back in its place,
 lost, at the top's end when its parent has gone, nothing when it is back
 already; one with a note kept with its quote, colour, note and children,
@@ -1206,55 +1320,94 @@ quote and `prev`, the dashed outline on a light and a flipped page, no
 title, the rows' dashed dots with the percentage, no Accept on an exact
 match; the review card on hover with its header, the before picture with
 the old rectangles over it, the struck and marked citation and "2 of 3"
-(the hollow one first), its buttons on one line, staying while the
-pointer is in it and closing when it leaves; Next; Accept on the card
-leaving the card's box, header, loaded picture, comparison, count and
-every button's box the same within a pixel, Accept reading "Accepted",
-pressed, its title saying a press undoes it, Move… still enabled;
-Accepted pressed again dashing the highlight again, saved, the card the
-same, and Accept again; the accepted card staying while the pointer rests
-on another dashed highlight; Move… from it and a selection, "Moved",
-pressed, the header as before and Accept disabled, and Moved pressed again
-putting the card back on "Accepted", the position saved as accepted; Next
-wrapping to the hollow one, whose card reads "Not found in this version",
-"1 of 3" (the accepted one kept in the walk), no Accept and a before
+(the hollow one first), its steps (Accept, Move…, Discard) on one line and
+Previous, the count and Next on their own under them, staying while the
+pointer is in it and closing when it leaves; Next, the notes on the next
+one's block and the focus in the card; Accept on the card leaving the
+card's box, header, loaded picture, comparison, count and every button's
+box the same within a pixel, Accept reading "Accepted", pressed, its title
+saying a press undoes it, Move… still enabled and Discard not, then the
+card going on to the hollow one, "1 of 3", the notes following; Previous
+round back to it, Accepted, and Accepted pressed again dashing the
+highlight again, saved, the card the same and staying; Accept and Accepted
+pressed again within the moment, the card staying; Accept for good, on to
+the hollow one, and Previous back; the accepted card staying while the
+pointer rests on another dashed highlight; Move… from it and a selection,
+"Moved", pressed, the header as before and Accept enabled, Ctrl+Z and
+Ctrl+Y, and Moved pressed again putting the card back on "Accepted", the
+position saved as accepted; Next wrapping to the hollow one, whose card
+reads "Not found in this version", "1 of 3" (the accepted one kept in the
+walk), the dashed one's row, Accept disabled with its title and a before
 picture cut from the first file, on to the rough one, "2 of 3", back with
 Previous, and Previous round from the first to the accepted one, "3 of 3",
 Accepted pressed; the hollow one's card on hover; the Document menu's
 "Review 2 highlights", Escape, and "Accept 1 rough match" for the rest,
 "Review 1 highlight" left; Move… on the hollow one's card and a selection
-reopening it, "Moved" pressed and the count "All reviewed", no Close, and
-Moved pressed again putting the highlight back hollow with its `doc_id`,
-saved, "1 of 2"; the move from the row's button with no
+reopening it, "Moved" pressed, Accept enabled and the count "1 of 2", no
+Close, Accept then "All reviewed" with the card staying and nothing more
+written, Accepted pressed again back on Moved, and Moved pressed again
+putting the highlight back hollow with its `doc_id`, saved, "1 of 2"; the
+move from the row's button with no
 translation, a second move by an area drag clearing the quote and putting
 no picture in the chat; and an account at 100% whose next renumbered
 citation is left lost with its `closest` place, its card showing "Closest
 match", the citations compared and a before picture of the second
-version, Show drawing one outline per rectangle, and Use closest match
+version, Show drawing one outline per rectangle, its row (Accept, Use
+closest match, Move…, Discard) with Accept disabled, and Use closest match
 placing it solid there with the candidate's rectangles and quote, the
 position free of `lost`, `closest`, `doc_id`, `approx`, `match` and
 `prev`, the card the same, following it, Use closest match reading
-"Placed", pressed, Discard disabled and the count as it was or "All
-reviewed"); its step "a hollow
+"Placed", pressed, Discard disabled, Accept enabled and the count as it
+was); its step "a hollow
 highlight's card leaves nothing on screen" (nothing of the card
 on screen, its picture included, while its highlight is scrolled out of
 sight with the pointer in the card, from the scroller and from the wheel with the card opened from the Document
 menu, and the card on its highlight again, picture and all, when it
 scrolls back; Discard on the bare one, its title saying it deletes: the
 card the same where it stood within a pixel, Discard reading "Discarded",
-pressed, Move… disabled and Next enabled, the highlight gone from the page
-and the store, and Discarded pressed again bringing it back hollow with
-its file and quote, saved; Next and Discard on the one with a note, its
-title saying it keeps it: the row and its note staying, the position its
-page alone, the quote kept, pressed again hollow again, a second Discard,
-Previous and Next coming back to it Discarded, and "Review 1 highlight" in
-the Document menu); its step "a hollow
+pressed, Move… and Accept disabled, then on to the one with a note, the
+highlight gone from the page and the store, Previous back to it,
+Discarded, and Discarded pressed again bringing it back hollow with its
+file and quote, saved, the card staying; Next to the one with a note, its
+note on the card, and Discard, its title saying it keeps it: the card
+still showing the note, on to the bare one, the row and its note staying,
+the position its page alone, the quote kept, pressed again hollow again, a
+second Discard, Next coming back to it Discarded, and "Review 1 highlight"
+in the Document menu); its step "a review card shows its highlight's
+note" (a dashed one's note and "2 notes under it · 1 comment" on hover,
+the notes panel staying where it was; Next to a bare one whose row was out
+of the notes' sight, the notes on its block, marked, the focus in the
+card, no note shown; Next to a hollow one, its row's buttons in the dashed
+one's places within a pixel, Accept disabled with its title; Move… and a
+selection, Moved, Accept enabled with its title, the card the same; Accept
+going on to the noted one, round, the notes on its block and the focus on
+its Accept, nothing more written; Previous back, Accepted pressed again
+back on Moved with the card staying, Moved pressed again hollow, Accept
+disabled again; Discard on the bare dashed one, its title saying it
+deletes, the card the same, Discarded pressed again within the moment
+keeping the card, Discard again deleting it and going on to the hollow
+one, Previous and Discarded pressed again bringing it back dashed, saved;
+Discard on the noted dashed one, its title saying it keeps it, the card
+still showing its note, on to the bare one, its position its page alone
+and its note kept, Previous and Discarded pressed again bringing it back
+dashed); its step "on a short window a review card's note gives way" (at
+1280x600, a dashed card with an eight-line Before picture, a long changed
+quote and a twelve-line note keeping three lines of its comparison and
+one of its note; a short comparison shown whole, no taller; at 1280x720
+the comparison at its full height, the note giving the room, the card not
+scrolling and Previous / Next in it; a hollow one moved on its card
+without Accept: "Review 3 highlights" in the Document menu, which opens it
+Moved with Accept enabled, and after Accept "Review 2 highlights");
+its step "a hollow
 highlight's card follows Show to a far page" (Show on a closest match six
 pages on keeping the card in sight beside the outline, without a scroll;
 Next to a highlight lost from a page the new version dropped, its card in
 the viewer saying so, "2 of 2", a before picture of that page in the first
 file, still open past the four seconds' wait, Next going round to the
-first, the Document menu's "Review 2 highlights") and `files.mjs`'s step "the
+first, the Document menu's "Review 2 highlights"; Use closest match by
+Enter and back; on a 360 px phone in English and Chinese, the lost card's
+steps on one line and Previous, the count and Next on their own) and
+`files.mjs`'s step "the
 highlight follows its text" (the Document menu's Replace the PDF…, the
 summary in the status pill, the highlight placed dashed with its note, a
 second tab following).

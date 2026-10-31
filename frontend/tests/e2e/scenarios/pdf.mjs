@@ -28,7 +28,9 @@ export async function selectPdfText(page, pageNo, needle) {
 }
 
 // The same with the mouse: a drag over the needle's text, released at its
-// end. Returns the point it was released at (the selection popup opens by it).
+// end, then the hand moving on a little (`moveOn`), which opens the
+// selection popup (pdf/selectionTip.js MOVE_TO_SHOW). Returns the point it
+// was released at (the popup opens by it).
 // `highlighted`: the text highlighter is on, so the release highlights the
 // selection and clears it; the highlight's saved quote is then the check.
 // The text is measured once two readings agree: a page still moving (cards
@@ -38,7 +40,7 @@ export async function selectPdfText(page, pageNo, needle) {
 // edges: one that starts within Chromium's 20 px autoscroll belt scrolls
 // the viewer under it while it runs, so a span left at an edge by "nearest"
 // (the viewer scrolled to show a card) is brought to the middle.
-export async function dragSelectPdfText(page, pageNo, needle, { highlighted = false } = {}) {
+export async function dragSelectPdfText(page, pageNo, needle, { highlighted = false, moveOn = true } = {}) {
   const measure = () => page.evaluate(([pageNo, needle]) => {
     const span = [...document.querySelectorAll(`[data-page="${pageNo}"] .textLayer span`)].find((s) => s.textContent.includes(needle));
     if (!span?.firstChild) return null;
@@ -66,10 +68,19 @@ export async function dragSelectPdfText(page, pageNo, needle, { highlighted = fa
   await page.mouse.move((box.x1 + box.x2) / 2, box.y, { steps: 4 });
   await page.mouse.move(box.x2, box.y, { steps: 4 });
   await page.mouse.up();
-  if (highlighted) return { x: box.x2, y: box.y };
-  const got = await page.evaluate(() => window.getSelection().toString().trim());
-  if (got !== needle) throw new Error(`the drag over "${needle}" selected "${got}"`);
-  return { x: box.x2, y: box.y };
+  const release = { x: box.x2, y: box.y };
+  if (!highlighted) {
+    const got = await page.evaluate(() => window.getSelection().toString().trim());
+    if (got !== needle) throw new Error(`the drag over "${needle}" selected "${got}"`);
+  }
+  if (moveOn) await movePast(page, release);
+  return release;
+}
+
+// The mouse moving on from where it was let go, as a hand does after a
+// selection: what opens the selection popup.
+export async function movePast(page, release) {
+  await page.mouse.move(release.x + 6, release.y + 8, { steps: 2 });
 }
 
 export async function waitForPdf(page, pageNo = 1, timeout = 30000) {
@@ -81,7 +92,9 @@ export async function waitForPdf(page, pageNo = 1, timeout = 30000) {
 // step's button pressed, the before picture loaded, the card at rest (its highlight scrolled to); `look`, the card
 // as it looks (its box, header, picture,
 // comparison, count and every button's box, the boxes as offsets from the card's own when `relative`: a step that
-// took the highlight elsewhere, the card following it), and `sameLook`, two looks the same within a pixel.
+// took the highlight elsewhere, the card following it), and `sameLook`, two looks the same within a pixel; the
+// row's lines (`rowOf`) and its buttons in it (`rowBoxes`, `sameRow`); the notes panel following a card to its
+// highlight's block (`notesOn`) and the focus in a card (`focusInCard`).
 export function reviewCardHelpers(p) {
   const cardOf = (id) => p.locator(`.hlReviewCard[data-review-id="${id}"]`);
   const headOf = (c) => c.locator(".hlReviewHead").textContent();
@@ -123,7 +136,43 @@ export function reviewCardHelpers(p) {
     assertEq(JSON.stringify(b.buttons.map((x) => x.key)), JSON.stringify(a.buttons.map((x) => x.key)), `${what}: its buttons`);
     a.buttons.forEach((x, i) => assert(near(x.box, b.buttons[i].box), `${what}: ${x.key}'s box ${JSON.stringify(x.box)} → ${JSON.stringify(b.buttons[i].box)}`));
   };
-  return { cardOf, headOf, stepOf, navOf, countOf, pressed, pictureLoaded, atRest, look, sameLook };
+  // The row's lines, top to bottom, each its buttons' keys ("count" for the count): "accept move discard | prev count next"
+  const rowOf = (c) => c.evaluate((el) => {
+    const lines = [];
+    for (const k of el.querySelectorAll(".hlReviewSteps > button, .hlReviewNav > *")) {
+      const r = k.getBoundingClientRect();
+      const mid = Math.round(r.top + r.height / 2);
+      let line = lines.find((l) => Math.abs(l.mid - mid) <= 2);
+      if (!line) lines.push(line = { mid, keys: [] });
+      line.keys.push(k.dataset.step || k.dataset.reviewNav || "count");
+    }
+    return lines.sort((a, b) => a.mid - b.mid).map((l) => l.keys.join(" ")).join(" | ");
+  });
+  // The row's buttons' boxes as offsets from the row's own, to compare one card's row with another's
+  const rowBoxes = (c) => c.evaluate((el) => {
+    const at = el.querySelector(".hlReviewActions").getBoundingClientRect();
+    return [...el.querySelectorAll(".hlReviewActions button")].map((b) => {
+      const r = b.getBoundingClientRect();
+      return { key: b.dataset.step || b.dataset.reviewNav, box: [r.left - at.left, r.top - at.top, r.width, r.height] };
+    });
+  });
+  const sameRow = (a, b, what) => {
+    assertEq(JSON.stringify(b.map((x) => x.key)), JSON.stringify(a.map((x) => x.key)), `${what}: the row's buttons`);
+    a.forEach((x, i) => assert(x.box.every((v, k) => Math.abs(v - b[i].box[k]) <= 1),
+      `${what}: ${x.key}'s place in the row ${JSON.stringify(x.box)} → ${JSON.stringify(b[i].box)}`));
+  };
+  // The notes panel on highlight `id`'s block, as a click on the highlight leaves it: its row marked and in the panel's
+  // sight; `focusInCard`, the focus in card `c`
+  const notesOn = (id) => p.evaluate((id) => {
+    const row = document.querySelector(`.blockRowWrap[data-block-id="${id}"] > .blockRow`);
+    if (!row?.classList.contains("focused")) return false;
+    let box = row.parentElement;
+    while (box && !/(auto|scroll)/.test(getComputedStyle(box).overflowY)) box = box.parentElement;
+    const r = row.getBoundingClientRect(), v = (box || document.documentElement).getBoundingClientRect();
+    return r.height > 0 && r.top >= v.top - 1 && r.bottom <= v.bottom + 1;
+  }, id);
+  const focusInCard = (c) => c.evaluate((el) => el.contains(document.activeElement)).catch(() => false);
+  return { cardOf, headOf, stepOf, navOf, countOf, pressed, pictureLoaded, atRest, look, sameLook, rowOf, rowBoxes, sameRow, notesOn, focusInCard };
 }
 
 export async function pdfScenarios({ server, browser, alice, makePdf, step, until, sleep, assert, assertEq, assertNoProblems, openPage, flags }, { alice2, second }) {
@@ -501,11 +550,12 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
 
   // The strip's text highlighter: on, a drag over text is a highlight as the
   // mouse lets go, in the colour picked last, with no popup, and its note
-  // opens for typing as the popup's does; its button's menu picks the
-  // colour, and so does the popup. A paper of its own, in a tab of its own:
+  // opens for typing as the popup's does; once the mouse moves on, a bar
+  // over it recolours it. Its button's menu picks the colour, and so do the
+  // popup and that bar. A paper of its own, in a tab of its own:
   // a drag that starts on a highlight is a click on it, and the steps after
   // this one drag the Rydberg paper's free text.
-  await step("pdf: the text highlighter highlights a selection on release in the colour picked last, with no popup", async () => {
+  await step("pdf: the text highlighter highlights a selection on release in the colour picked last, its bar recolouring it", async () => {
     const up = await account.upload("/api/uploads", makePdf([["Alpha beta gamma delta", "Epsilon zeta eta theta"]]), "highlighter.pdf", "application/pdf");
     const doc = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Highlighter paper", source_url: up.source_url } });
     const p = await openPage(ctx, `${server.base}/?page=${doc.id}&ws=${account.ws}`);
@@ -525,15 +575,32 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await profileColor("#aaebaaa6");
       assertEq(await p.locator(".pdfViewer").evaluate((el) => el.style.getPropertyValue("--selection-color")), "#aaebaaa6",
         "the selection is drawn in its colour");
-      await dragSelectPdfText(p, 1, "beta gamma", { highlighted: true });
+      const release = await dragSelectPdfText(p, 1, "beta gamma", { highlighted: true, moveOn: false });
       await made("beta gamma", "#aaebaaa6");
-      assertEq(await p.locator(".plainTip").count(), 0, "no popup");
       assertEq(await p.evaluate(() => window.getSelection().toString()), "", "the selection is gone into the highlight");
       await until(() => p.evaluate(() => !!document.activeElement?.closest(".blockEditorCm")), { what: "the new highlight's note open for typing" });
+      await sleep(300);
+      assertEq(await p.locator(".plainTip").count(), 0, "no popup while the mouse holds still");
+      // the mouse moves on: the bar over the highlight it made, whose colour
+      // changes it and is the highlighter's from then on; the note stays open
+      await movePast(p, release);
+      const bar = p.locator(".plainTip");
+      await bar.waitFor();
+      assertEq(await bar.locator(".tipMoveBtn").count(), 0);
+      await bar.getByRole("button", { name: "Change to Purple", exact: true }).click();
+      await made("beta gamma", "#e6b4ffa6");
+      await profileColor("#e6b4ffa6");
+      await bar.waitFor({ state: "detached" });
+      assert(await p.evaluate(() => !!document.activeElement?.closest(".blockEditorCm")), "the note keeps the focus");
+      assertEq(await p.evaluate(() => new Set([...document.querySelectorAll("[data-hl-id]")].map((el) => el.dataset.hlId)).size), 1,
+        "recoloured, not another highlight");
       // off, the popup is back; its swatch becomes the highlighter's colour
       await button.click();
       assertEq(await button.getAttribute("aria-pressed"), "false");
-      await dragSelectPdfText(p, 1, "zeta eta");
+      const zeta = await dragSelectPdfText(p, 1, "zeta eta", { moveOn: false });
+      await sleep(300);
+      assertEq(await p.locator(".plainTip").count(), 0, "the popup waits for the mouse to move on");
+      await movePast(p, zeta);
       await p.waitForSelector(".plainTip .colorBtn", { timeout: 5000 });
       await p.locator(".plainTip .colorBtn").nth(2).click();
       await made("zeta eta", "#9bcdffa6");
@@ -1321,10 +1388,13 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
   // a selection moves it by hand. The review card stays the same after a
   // step, nothing on it moving: only the step's button says it is done
   // (Accepted, Moved, Placed), pressed, and pressing it again undoes it.
-  // Previous and Next walk the dashed and the hollow ones in document order,
-  // round, with those resolved on a card where they stood, so the count
-  // stays; a hollow one's card shows where it was. A move started from the
-  // card opens it again, Moved. Translate on select is on throughout: the
+  // Accept decides: a moment later the card goes on to the next one still
+  // to check, unless a press on the card came first. Previous and Next walk
+  // the dashed and the hollow ones in document order, round, with those
+  // resolved on a card where they stood, so the count stays, the notes
+  // following the card; a hollow one's card shows where it was. A move
+  // started from the card opens it again, Moved, waiting for Accept, which
+  // takes the move's place. Translate on select is on throughout: the
   // selection that places a moved highlight is not translated. At last, an
   // account that applies only exact matches (relocateMinMatch 100) gets a
   // renumbered citation back lost, with its closest match kept, which its
@@ -1491,7 +1561,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
 
       // hovering the rough match opens its review card: how alike, a picture of where it was in the first
       // file with its old rectangles over it, the words that changed, and Accept, Move…, Previous and Next
-      const { cardOf, headOf, stepOf, navOf, countOf, pressed, pictureLoaded, atRest, look: cardLook, sameLook } = reviewCardHelpers(p);
+      const { cardOf, headOf, stepOf, navOf, countOf, pressed, pictureLoaded, atRest, look: cardLook, sameLook, rowOf, notesOn, focusInCard } = reviewCardHelpers(p);
       await p.hover(roughSel);
       const card = cardOf(roughId);
       await card.waitFor({ timeout: 5000 });
@@ -1502,19 +1572,16 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       assert((await card.locator(".hlReviewDiff ins").allTextContents()).join(" ").includes("[25]"), "the new citation marked");
       // the walk is the page's dashed and hollow highlights in document order: the hollow one on page 1 first
       assertEq(await countOf(card), "2 of 3", "the second of three to review on the page");
-      // the row on one line: Accept, Move…, Previous, the count, Next
-      const row = await card.locator(".hlReviewActions > *, .hlReviewNav > *").evaluateAll((els) => new Set(els.map((e) => {
-        const r = e.getBoundingClientRect();
-        return Math.round(r.top + r.height / 2);
-      })).size);
-      assertEq(row, 1, "the card's buttons on one line");
+      // the steps on one line (Accept, Move…, Discard), Previous, the count and Next on a line of their own under them
+      assertEq(await rowOf(card), "accept move discard | prev count next", "the card's row");
       // the pointer crosses into the card and it stays; leaving both closes it
       await card.hover();
       await sleep(400);
       assert(await card.isVisible(), "the card stays while the pointer is in it");
       await p.mouse.move(2, 2);
       await card.waitFor({ state: "detached", timeout: 5000 });
-      // Next: the second pending highlight's card, scrolled to
+      // Next: the second pending highlight's card, scrolled to, the notes following it to its block, the focus
+      // staying in the card
       await p.hover(roughSel);
       await card.waitFor({ timeout: 5000 });
       await navOf(card, "next").click();
@@ -1522,8 +1589,11 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await card2.waitFor({ timeout: 5000 });
       assertEq(await countOf(card2), "3 of 3", "Next moves to the third");
       assert((await card2.locator(".hlReviewDiff ins").allTextContents()).join(" ").includes("[33]"), "its own comparison");
+      await until(() => notesOn(rough2Id), { what: "the notes on its block" });
+      await until(() => focusInCard(card2), { what: "the focus in the card" });
       // Accept on its card: drawn solid where it is, the stored position without approx, match, prev or doc_id;
-      // the card stays as it was, nothing on it moving, its Accept now Accepted, pressed
+      // the card stays as it was a moment, nothing on it moving, its Accept now Accepted, pressed, and goes on to the
+      // next one still to check, round from the last to the first: the hollow one on page 1
       const rough2Pos = (await stored(rough2Id)).pdf_position;
       const rough2Sel = `[data-page="2"] div[data-hl-id="${rough2Id}"]`;
       const outlineOf = (sel) => p.$eval(sel, (el) => getComputedStyle(el).outlineStyle);
@@ -1534,20 +1604,28 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await pictureLoaded(card2);
       await atRest(card2);
       const pending2 = await cardLook(card2);
+      const pending2Rel = await cardLook(card2, true);
       assertEq(await stepOf(card2, "accept").locator(".hlReviewFace:not(.hlReviewRoom)").textContent(), "Accept", "Accept before");
+      const lostCard = cardOf(lostId);
       await stepOf(card2, "accept").click();
       await until(() => pressed(card2, "accept"), { what: "Accept pressed" });
       assertEq(await stepOf(card2, "accept").locator(".hlReviewFace:not(.hlReviewRoom)").textContent(), "Accepted", "it reads Accepted");
       assert((await stepOf(card2, "accept").getAttribute("title")).includes("press again to undo"), "its title says pressing it undoes it");
-      await sleep(200);
       sameLook(pending2, await cardLook(card2), "after Accept");
-      assert(await stepOf(card2, "move").isEnabled(), "Move… still moves it");
+      assert(await stepOf(card2, "move").isEnabled() && !(await stepOf(card2, "discard").isEnabled()), "Move… still moves it; nothing to discard");
+      await lostCard.waitFor({ timeout: 5000 });
+      assertEq(await countOf(lostCard), "1 of 3", "on to the next one to check");
+      await until(() => notesOn(lostId), { what: "the notes on the next one's block" });
       await until(async () => (await outlineOf(rough2Sel)) === "none", { what: "the accepted highlight drawn solid" });
       let accepted = await acceptanceSaved();
       assertEq(JSON.stringify(accepted.rects), JSON.stringify(rough2Pos.rects), "it stays where it was matched");
       assertEq(await p.locator(".blockRow .highlightDot.approx").count(), 1, "its row's dot is solid");
-      // Accepted pressed again: dashed and pending again as it was (one more tree edit, saved), the card as before;
-      // Accept again resolves it
+      // the decided one stays in the walk: Previous, round from the first to the last, reaches it, Accepted.
+      // Accepted pressed again: dashed and pending again as it was (one more tree edit, saved), the card as before,
+      // staying; Accept again resolves it, and Accepted pressed within the moment takes it back with the card staying
+      await navOf(lostCard, "prev").click();
+      await card2.waitFor({ timeout: 5000 });
+      assert(await pressed(card2, "accept"), "reached again, it shows Accepted");
       await stepOf(card2, "accept").click();
       await until(async () => !(await pressed(card2, "accept")), { what: "Accept not pressed" });
       await until(async () => (await outlineOf(rough2Sel)) === "dashed", { what: "the highlight dashed again" });
@@ -1557,10 +1635,24 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
           && JSON.stringify(pos.rects) === JSON.stringify(rough2Pos.rects);
       }, { what: "the undo saved" });
       assertEq(await stepOf(card2, "accept").locator(".hlReviewFace:not(.hlReviewRoom)").textContent(), "Accept", "Accept again");
-      sameLook(pending2, await cardLook(card2), "after its undo");
+      await pictureLoaded(card2);
+      sameLook(pending2Rel, await cardLook(card2, true), "after its undo");
+      await sleep(900);
+      assert(await card2.isVisible(), "an undo goes on to nothing");
+      // pressed again within the moment: taken back, the card staying
       await stepOf(card2, "accept").click();
       await until(() => pressed(card2, "accept"), { what: "accepted again" });
+      await stepOf(card2, "accept").click();
+      await until(async () => !(await pressed(card2, "accept")), { what: "taken back within the moment" });
+      await sleep(900);
+      assert(await card2.isVisible() && (await lostCard.count()) === 0, "the card stays: the press ended the moment");
+      // accepted for good: on to the hollow one, and Previous back to it
+      await stepOf(card2, "accept").click();
+      await lostCard.waitFor({ timeout: 5000 });
       accepted = await acceptanceSaved();
+      await navOf(lostCard, "prev").click();
+      await card2.waitFor({ timeout: 5000 });
+      assert(await pressed(card2, "accept"), "Accepted");
       // hovering another dashed highlight leaves the accepted card where it is
       await p.hover(roughSel);
       await sleep(500);
@@ -1568,10 +1660,10 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await sleep(400);
       assertEq(await cardOf(roughId).count(), 0, "no card opens in its place");
       assert(await pressed(card2, "accept"), "the accepted card stays");
-      // Move… from the accepted card and a selection: Moved, pressed, the card as before. The app's own undo
-      // (Ctrl+Z) takes the move back, leaving the highlight as Accept left it: the card stays on it, Accepted
-      // pressed, the count as it was, and its redo (Ctrl+Y) brings Moved back. Moved pressed again, the move is
-      // undone and the card is back on the acceptance, Accepted pressed
+      // Move… from the accepted card and a selection: Moved, pressed, the card as before, Accept there to take the
+      // new place. The app's own undo (Ctrl+Z) takes the move back, leaving the highlight as Accept left it: the
+      // card stays on it, Accepted pressed, the count as it was, and its redo (Ctrl+Y) brings Moved back. Moved
+      // pressed again, the move is undone and the card is back on the acceptance, Accepted pressed
       await stepOf(card2, "move").click();
       await p.waitForSelector(`.attachModeBanner[data-move-highlight="${rough2Id}"]`, { timeout: 5000 });
       await selectPdfText(p, 2, "replaced the old one");
@@ -1580,7 +1672,7 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await until(() => pressed(card2, "move").catch(() => false), { what: "the card saying it moved" });
       assertEq(await stepOf(card2, "move").locator(".hlReviewFace:not(.hlReviewRoom)").textContent(), "Moved", "Move… reads Moved");
       assertEq(await headOf(card2), `Matched roughly: ${Math.round(rough2Pos.match * 100)}%`, "the card as it was before the steps");
-      assert(!(await pressed(card2, "accept")) && !(await stepOf(card2, "accept").isEnabled()), "Accept does not apply to a moved one");
+      assert(!(await pressed(card2, "accept")) && await stepOf(card2, "accept").isEnabled(), "Accept takes the place the move gave it");
       await until(async () => (await stored(rough2Id)).quote === "replaced the old one", { what: "the move saved" });
       await p.keyboard.press("Control+z");
       await until(async () => {
@@ -1603,11 +1695,14 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       }, { what: "the move taken back, saved" });
       // Next from it: round from the last to the first, the hollow one on page 1; the accepted one stays in the walk
       await navOf(card2, "next").click();
-      const lostCard = cardOf(lostId);
       await lostCard.waitFor({ timeout: 5000 });
       assertEq(await headOf(lostCard), "Not found in this version", "a hollow highlight's card");
       assertEq(await countOf(lostCard), "1 of 3", "a step changes neither the count nor the walk");
-      assertEq(await stepOf(lostCard, "accept").count(), 0, "nothing to accept on a hollow one");
+      // the same row as a dashed one's, Accept waiting for a place
+      assertEq(await rowOf(lostCard), "accept move discard | prev count next", "the hollow one's row");
+      assert(!(await stepOf(lostCard, "accept").isEnabled()), "nothing to accept on a hollow one until it is placed");
+      assert((await stepOf(lostCard, "accept").getAttribute("title")).startsWith("Nothing to accept until it is placed"),
+        `Accept's title: ${await stepOf(lostCard, "accept").getAttribute("title")}`);
       assert(await stepOf(lostCard, "move").isVisible(), "Move… is offered");
       // where it was: a picture of the first file, which its rectangles were measured on, with them drawn over it
       const lostPos = (await stored(lostId)).pdf_position;
@@ -1663,8 +1758,9 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await p.keyboard.press("Escape");
 
       // Move… on the hollow one's card: the card makes way for the selection, then opens again on the moved
-      // highlight as it was, Move… now Moved; nothing is left to check, so the count says so; Moved pressed again
-      // puts it back, hollow where it was
+      // highlight as it was, Move… now Moved, Accept there to take the new place; the move waits for it, so the
+      // count stays. Accept: nothing is left to check, so the count says so and the card stays; Accepted pressed
+      // again is back on Moved, and Moved pressed again puts it back, hollow where it was
       await p.evaluate(() => document.querySelector('[data-page="1"]')?.scrollIntoView({ block: "start" }));
       await p.hover(lostSel);
       await lostCard.waitFor({ timeout: 5000 });
@@ -1682,12 +1778,23 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await lostCard.waitFor({ timeout: 5000 });
       await until(() => pressed(lostCard, "move"), { what: "the card saying it moved" });
       assertEq(await headOf(lostCard), "Not found in this version", "the card as it was");
-      assertEq(await countOf(lostCard), "All reviewed", "nothing left to check");
+      assertEq(await countOf(lostCard), "1 of 2", "the move waits for Accept");
+      assert(await stepOf(lostCard, "accept").isEnabled(), "Accept takes the place the move gave it");
       assertEq(await lostCard.locator(".hlReviewActions button", { hasText: "Close" }).count(), 0, "no Close");
       await until(async () => {
         const pos = (await stored(lostId)).pdf_position;
         return pos.pageNumber === 2 && !pos.lost;
       }, { what: "the move from the card saved" });
+      const movedTo = (await stored(lostId)).pdf_position;
+      await stepOf(lostCard, "accept").click();
+      await until(() => pressed(lostCard, "accept"), { what: "the move accepted" });
+      assertEq(await countOf(lostCard), "All reviewed", "nothing left to check");
+      await sleep(900);
+      assert(await lostCard.isVisible() && await pressed(lostCard, "accept"), "none left to go on to: the card stays");
+      assertEq(JSON.stringify((await stored(lostId)).pdf_position), JSON.stringify(movedTo), "Accept wrote nothing more");
+      await stepOf(lostCard, "accept").click();
+      await until(() => pressed(lostCard, "move"), { what: "back on Moved" });
+      assertEq(await countOf(lostCard), "1 of 2", "to check again");
       await stepOf(lostCard, "move").click();
       await until(async () => !(await pressed(lostCard, "move")), { what: "the card on the hollow one again" });
       assertEq(await countOf(lostCard), "1 of 2", "one to check again");
@@ -1725,6 +1832,17 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
         return b.properties.pdf_position.pageNumber === 2 && !b.properties.pdf_position.lost ? b : null;
       }, { what: "the move saved" });
       assert((moved.properties.quote || "").includes("new sentence replaced"), `quote: ${moved.properties.quote}`);
+
+      // moved again by a drag that starts on the highlight itself: while it waits, the highlights let the
+      // pointer through, so the drag selects the text under them instead of pressing on one
+      await p.click(`[data-page="2"] div[data-hl-id="${lostId}"]`, { button: "right" });
+      await p.locator(".ctxMenuItem", { hasText: "Move to a selection" }).click();
+      await p.waitForSelector(".attachModeBanner[data-move-highlight]", { timeout: 5000 });
+      await dragSelectPdfText(p, 2, "new sentence");
+      await p.locator(".plainTip .tipMoveBtn").click();
+      await p.waitForSelector(".attachModeBanner[data-move-highlight]", { state: "detached", timeout: 5000 });
+      await until(async () => (await account.api(`/api/blocks/${lostId}`)).properties.quote === "new sentence",
+        { what: "the move onto its own text saved" });
 
       // moved again onto a box (an area drag), it becomes an area with no quote
       await p.click(`[data-page="2"] div[data-hl-id="${lostId}"]`, { button: "right" });
@@ -1801,16 +1919,18 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       assertEq(await p.locator(".pdfHlGhost").count(), near.rects.length, "one outline per rectangle");
       // Use closest match: solid on the candidate's place with its text, as one tree edit; the card stays as it was,
       // following the highlight there (the same size, the same picture and comparison, every button in its place),
-      // Use closest match now Placed, pressed, and Discard disabled; the count stays, or says nothing is left to check
+      // Use closest match now Placed, pressed, Discard disabled and Accept there to take the place; it waits for
+      // Accept, so the count stays
+      assertEq(await rowOf(card3), "accept place move discard | prev count next", "a closest match's row");
+      assert(!(await stepOf(card3, "accept").isEnabled()), "nothing placed to accept yet");
       const lostLook = await cardLook(card3, true);
       await stepOf(card3, "place").click();
       await until(() => pressed(card3, "place"), { what: "the card saying it placed it" });
       assertEq(await stepOf(card3, "place").locator(".hlReviewFace:not(.hlReviewRoom)").textContent(), "Placed", "it reads Placed");
       assert(!(await stepOf(card3, "discard").isEnabled()) && await stepOf(card3, "move").isEnabled(), "Discard no longer applies; Move… does");
-      const left = /^\d+ of 1$/.test(lostLook.count) ? "All reviewed" : lostLook.count;
-      await until(async () => (await countOf(card3)) === left, { what: `the count: ${left}` });
+      assert(await stepOf(card3, "accept").isEnabled(), "Accept takes the closest match's place");
       await sleep(300);
-      sameLook({ ...lostLook, count: "" }, { ...(await cardLook(card3, true)), count: "" }, "after Use closest match");
+      sameLook(lostLook, await cardLook(card3, true), "after Use closest match");
       await until(async () => !(await p.$(strictSel)) && (await p.$(`[data-page="2"] div[data-hl-id="${roughId}"]`)) != null,
         { what: "the highlight solid on page 2" });
       assertEq(await p.locator(".pdfHlGhost").count(), 0, "the outline goes once it is placed");
@@ -1945,23 +2065,29 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await until(async () => (await seen()).includes("img") && await attached(bareId), { what: "the card back on its highlight again" });
 
       // Discard on the bare one: it says it deletes; the highlight goes from the page and the store, the card stays
-      // where it was, as it was (its box, its picture, every button in its place), Discard now Discarded, pressed,
-      // Move… disabled (nothing is left on the page to move), and the count as it was
+      // where it was a moment, as it was (its box, its picture, every button in its place), Discard now Discarded,
+      // pressed, Accept and Move… disabled (nothing is left on the page), and the count as it was; then on to the
+      // next one still to check, the one with a note
       const discard = stepOf(bareCard, "discard");
+      const notedCard = cardOf(notedId);
       assert((await discard.getAttribute("title")).startsWith("Delete the highlight"), `its title: ${await discard.getAttribute("title")}`);
       await atRest(bareCard);
       const before = await look(bareCard);
       await discard.click();
       await until(() => pressed(bareCard, "discard"), { what: "the card saying it discarded" });
       assertEq(await discard.locator(".hlReviewFace:not(.hlReviewRoom)").textContent(), "Discarded", "it reads Discarded");
-      assert(!(await stepOf(bareCard, "move").isEnabled()), "nothing to move");
-      assert(await navOf(bareCard, "next").isEnabled(), "Next to the other one");
-      assertEq(await p.locator(`[data-hl-id="${bareId}"]`).count(), 0, "gone from the page");
-      await sleep(200);
+      assert(!(await stepOf(bareCard, "move").isEnabled()) && !(await stepOf(bareCard, "accept").isEnabled()), "nothing to move or accept");
       sameLook(before, await look(bareCard), "after Discard");
+      assertEq(await p.locator(`[data-hl-id="${bareId}"]`).count(), 0, "gone from the page");
+      await notedCard.waitFor({ timeout: 5000 });
       await until(async () => !(await account.api(`/api/blocks/${doc.id}/subtree`)).block.children.some((b) => b.id === bareId),
         { what: "the highlight deleted" });
-      // Discarded pressed again: back, hollow where it was, with the file it was measured on
+      // Previous back to it, Discarded; pressed again: back, hollow where it was, with the file it was measured on,
+      // the card staying
+      await navOf(notedCard, "prev").click();
+      await bareCard.waitFor({ timeout: 5000 });
+      assertEq(await countOf(bareCard), "1 of 2", "the walk keeps the discarded one");
+      assert(await pressed(bareCard, "discard"), "reached again, it shows Discarded");
       await discard.click();
       await until(async () => !(await pressed(bareCard, "discard")), { what: "the card on the hollow one again" });
       await p.waitForSelector(lostSel(bareId), { timeout: 5000 });
@@ -1969,18 +2095,22 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
         const props = await stored(bareId).catch(() => null);
         return props?.pdf_position?.lost === true && props.pdf_position.doc_id === up1.doc_id && props.quote === bare;
       }, { what: "the highlight back, saved" });
+      await sleep(900);
+      assert(await bareCard.isVisible(), "the undo goes on to nothing");
 
-      // Next: the one with a note. Discard says it keeps the note, and takes the highlight off the PDF: the row and its
-      // note stay, its position its page alone; Discarded pressed again puts it back hollow, and a second Discard
-      // leaves one to review
+      // Next: the one with a note, which its card shows. Discard says it keeps the note, and takes the highlight off
+      // the PDF: the row and its note stay, its position its page alone, the card still showing it, then on to the
+      // bare one; Previous back, Discarded pressed again puts it back hollow, and a second Discard leaves one to review
       await navOf(bareCard, "next").click();
-      const notedCard = cardOf(notedId);
       await notedCard.waitFor({ timeout: 5000 });
+      assertEq(await notedCard.locator(".hlReviewNoteText").textContent(), note, "its note on the card");
       const keep = stepOf(notedCard, "discard");
       assert((await keep.getAttribute("title")).includes("keep it as a note"), `its title: ${await keep.getAttribute("title")}`);
       await keep.click();
       await until(() => pressed(notedCard, "discard"), { what: "the noted one discarded" });
       assertEq(await headOf(notedCard), "Not found in this version", "its card as it was");
+      assertEq(await notedCard.locator(".hlReviewNoteText").textContent(), note, "its note still on the card");
+      await bareCard.waitFor({ timeout: 5000 });
       assertEq(await p.locator(`[data-hl-id="${notedId}"]`).count(), 0, "off the page");
       assert(await p.locator(".blockRow", { hasText: note }).isVisible(), "its note row stays");
       await until(async () => {
@@ -1988,16 +2118,16 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
         return JSON.stringify(props.pdf_position) === JSON.stringify({ pageNumber: 1 }) && props.quote === noted ? props : null;
       }, { what: "its position its page alone, its quote kept" });
       assertEq((await account.api(`/api/blocks/${notedId}`)).content, note, "its note kept");
+      await navOf(bareCard, "next").click();
+      await notedCard.waitFor({ timeout: 5000 });
       await keep.click();
       await until(async () => !(await pressed(notedCard, "discard")), { what: "the noted one hollow again" });
       await p.waitForSelector(lostSel(notedId), { timeout: 5000 });
       await until(async () => (await stored(notedId)).pdf_position.lost === true, { what: "its undo saved" });
       await keep.click();
       await until(() => pressed(notedCard, "discard"), { what: "discarded again" });
-      // the discarded one stays in the walk: Previous reaches the bare one, Next comes back to it, Discarded
-      await navOf(notedCard, "prev").click();
+      // on to the bare one; Next comes back to the discarded one, Discarded
       await bareCard.waitFor({ timeout: 5000 });
-      assertEq(await countOf(bareCard), "1 of 2", "the walk keeps the discarded one");
       await navOf(bareCard, "next").click();
       await notedCard.waitFor({ timeout: 5000 });
       assert(await pressed(notedCard, "discard"), "reached again, it shows Discarded");
@@ -2015,13 +2145,312 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     }
   });
 
+  // The review card's note, its row and its walk (docs/dev/highlight_relocation.md "In the web app"). A card shows
+  // the note its highlight carries and how many notes are under it and comments on it. A card that goes to a
+  // highlight (Next, the advance after a decision) has the notes panel follow it to that highlight's block, marked
+  // as a click on the highlight marks it, the focus staying in the card; a hovered one leaves the notes where they
+  // are. Dashed and hollow cards have the same row in the same places: Accept, Move…, Discard, and Previous, the
+  // count and Next under them. A hollow one's Accept waits for a place: after Move… it takes the move as the
+  // decision and the card goes on, after a moment, to the next one still to check. Discard on a dashed one deletes
+  // a bare one and keeps one with a note off the PDF, each undone in place; a press on the card within the moment
+  // keeps it where it is.
+  await step("pdf: a review card shows its highlight's note, the notes follow it, and its row is the same on every card", async () => {
+    const lines1 = ["Quantum dots confine single electrons", "Spin echoes were measured by Hahn [27]",
+      "Coherence times were reported by Ramsey [31]", "This sentence is only in the first version"];
+    const lines2 = ["Quantum dots confine single electrons", "Spin echoes were measured by Hahn [25]",
+      "Coherence times were reported by Ramsey [33]", "A new sentence replaced the old one"];
+    const up1 = await account.upload("/api/uploads", makePdf([lines1]), "v1.pdf", "application/pdf");
+    const up2 = await account.upload("/api/uploads", makePdf([lines2]), "v2.pdf", "application/pdf");
+    const doc = await account.api(`/api/blocks/by-doc/${up2.doc_id}`, { method: "POST", body: { default_title: "Review walk" } });
+    // the lines' boxes as makePdf sets them (20 pt Helvetica from 72 pt down, 26 pt apart)
+    const box = (i, text) => ({ x1: 72, y1: 72 + 26 * i - 16, x2: 72 + text.length * 10, y2: 72 + 26 * i + 5 });
+    const at = (i, text) => ({ pageNumber: 1, width: 612, height: 792, boundingRect: box(i, text), rects: [box(i, text)] });
+    const frac = (r) => [r.x1 / 612, r.y1 / 792, r.x2 / 612, r.y2 / 792].map((v) => Math.round(v * 10000) / 10000);
+    const dashed = (i) => ({ ...at(i, lines2[i]), approx: true, match: 0.9,
+      prev: { doc_id: up1.doc_id, pageNumber: 1, rects: [frac(box(i, lines1[i]))], quote: lines1[i] } });
+    const make = (quote, pdf_position, content = "") => account.api("/api/blocks", { method: "POST", body: { parent_id: doc.id, content,
+      properties: { quote, color: "rgba(255, 226, 143, 0.4)", pdf_position } } });
+    const note = "Is [25] the same paper as [27]?";
+    const noted = await make(lines2[1], dashed(1), note);
+    const child = await account.api("/api/blocks", { method: "POST", body: { parent_id: noted.id, content: "Hahn 1950" } });
+    await account.api("/api/blocks", { method: "POST", body: { parent_id: child.id, content: "Phys. Rev. 80, 580" } });
+    await account.api(`/api/pages/${doc.id}/comments`, { method: "POST", body: { block_id: noted.id, body: "Check the reference list" } });
+    // notes enough that the next highlights' rows start out of the notes panel's sight
+    for (let i = 0; i < 30; i++) await account.api("/api/blocks", { method: "POST", body: { parent_id: doc.id, content: `Remark ${i + 1}` } });
+    const bare = await make(lines2[2], dashed(2));
+    const lost = await make(lines1[3], { ...at(3, lines1[3]), lost: true, doc_id: up1.doc_id });
+    const c = await account.context(browser);
+    try {
+      const p = await openPage(c, `${server.base}/?page=${doc.id}&ws=${account.ws}`);
+      await waitForPdf(p, 1);
+      const sel = (id) => `[data-page="1"] div[data-hl-id="${id}"]`;
+      for (const id of [noted.id, bare.id, lost.id]) await p.waitForSelector(sel(id), { timeout: 15000 });
+      const { cardOf, stepOf, navOf, countOf, pressed, pictureLoaded, look, sameLook, rowOf, rowBoxes, sameRow, notesOn, focusInCard } = reviewCardHelpers(p);
+      const stored = async (id) => (await account.api(`/api/blocks/${id}`)).properties;
+      const titleOf = (c, key) => stepOf(c, key).getAttribute("title");
+      const notesTop = () => p.evaluate(() => {
+        let box = document.querySelector(".blockRowWrap > .blockRow")?.parentElement;
+        while (box && !/(auto|scroll)/.test(getComputedStyle(box).overflowY)) box = box.parentElement;
+        return box ? box.scrollTop : -1;
+      });
+      const rowSeen = (id) => p.evaluate((id) => {
+        const row = document.querySelector(`.blockRowWrap[data-block-id="${id}"] > .blockRow`);
+        let box = row?.parentElement;
+        while (box && !/(auto|scroll)/.test(getComputedStyle(box).overflowY)) box = box.parentElement;
+        const r = row?.getBoundingClientRect(), v = box?.getBoundingClientRect();
+        return !!r && !!v && r.top >= v.top - 1 && r.bottom <= v.bottom + 1;
+      }, id);
+
+      // hovering the noted one: its note, the notes and the comment on it; the notes panel stays where it is
+      const top0 = await notesTop();
+      await p.hover(sel(noted.id));
+      const notedCard = cardOf(noted.id);
+      await notedCard.waitFor({ timeout: 5000 });
+      assertEq(await notedCard.locator(".hlReviewNoteText").textContent(), note, "the note it carries");
+      assertEq(await notedCard.locator(".hlReviewNoteCounts").textContent(), "2 notes under it · 1 comment", "what is under it and on it");
+      assertEq(await rowOf(notedCard), "accept move discard | prev count next", "a dashed card's row");
+      assertEq(await countOf(notedCard), "1 of 3", "the first of three");
+      await pictureLoaded(notedCard);
+      const dashedRow = await rowBoxes(notedCard);
+      await sleep(500);
+      assertEq(await notesTop(), top0, "a hovered card leaves the notes where they are");
+      // Next: the bare one, out of the notes' sight until the notes follow the card to its block, the focus in the card
+      assert(!(await rowSeen(bare.id)), "the next one's row out of the notes' sight");
+      await notedCard.hover();
+      await navOf(notedCard, "next").click();
+      const bareCard = cardOf(bare.id);
+      await bareCard.waitFor({ timeout: 5000 });
+      await until(() => notesOn(bare.id), { what: "the notes on the bare one's block, marked" });
+      assert(await focusInCard(bareCard), "the focus stays in the card");
+      assertEq(await bareCard.locator(".hlReviewNote").count(), 0, "a bare one has no note to show");
+      // Next: the hollow one, its row the dashed one's, Accept waiting for a place
+      await navOf(bareCard, "next").click();
+      const lostCard = cardOf(lost.id);
+      await lostCard.waitFor({ timeout: 5000 });
+      await until(() => notesOn(lost.id), { what: "the notes on the hollow one's block" });
+      await pictureLoaded(lostCard);
+      sameRow(dashedRow, await rowBoxes(lostCard), "a hollow card's row against a dashed one's");
+      assert(!(await stepOf(lostCard, "accept").isEnabled()), "nothing to accept until it is placed");
+      assert((await titleOf(lostCard, "accept")).startsWith("Nothing to accept until it is placed"), `Accept's title: ${await titleOf(lostCard, "accept")}`);
+      const lostLook = await look(lostCard, true);
+
+      // Move… and a selection: Moved, the card as it was, Accept there to take the new place
+      await stepOf(lostCard, "move").click();
+      await p.waitForSelector(`.attachModeBanner[data-move-highlight="${lost.id}"]`, { timeout: 5000 });
+      await selectPdfText(p, 1, "new sentence replaced");
+      await p.waitForSelector(".plainTip .tipMoveBtn", { timeout: 5000 });
+      await p.locator(".plainTip .tipMoveBtn").click();
+      await lostCard.waitFor({ timeout: 5000 });
+      await until(() => pressed(lostCard, "move"), { what: "Moved" });
+      assert(await stepOf(lostCard, "accept").isEnabled(), "Accept after the move");
+      assertEq(await titleOf(lostCard, "accept"), "Keep the highlight where it was placed", "Accept's title after the move");
+      await pictureLoaded(lostCard);
+      sameLook(lostLook, await look(lostCard, true), "after Move…");
+      const movedTo = await until(async () => {
+        const props = await stored(lost.id);
+        return !props.pdf_position.lost && props.quote === "new sentence replaced" ? props.pdf_position : null;
+      }, { what: "the move saved" });
+      // Accept: Accepted a moment, the card as it was, then on to the next one still to check, round to the noted
+      // one, its Accept taking the focus, the notes on its block
+      await stepOf(lostCard, "accept").click();
+      await until(() => pressed(lostCard, "accept"), { what: "Accepted" });
+      sameRow(dashedRow, await rowBoxes(lostCard), "after Accept");
+      await notedCard.waitFor({ timeout: 5000 });
+      assertEq(await countOf(notedCard), "1 of 3", "the count as it was");
+      await until(() => notesOn(noted.id), { what: "the notes on the noted one's block" });
+      await until(() => p.evaluate((id) => document.activeElement?.closest(`.hlReviewCard[data-review-id="${id}"]`)
+        && document.activeElement.dataset.step === "accept", noted.id), { what: "the focus on its Accept" });
+      assertEq(JSON.stringify((await stored(lost.id)).pdf_position), JSON.stringify(movedTo), "Accept wrote nothing more");
+      // Previous, round to the hollow one: Accepted; pressed again, back on Moved, the card staying; Moved pressed
+      // again, hollow where it was, Accept waiting again
+      await navOf(notedCard, "prev").click();
+      await lostCard.waitFor({ timeout: 5000 });
+      assert(await pressed(lostCard, "accept"), "the decided one stays in the walk, Accepted");
+      await stepOf(lostCard, "accept").click();
+      await until(() => pressed(lostCard, "move"), { what: "back on Moved" });
+      assert(await stepOf(lostCard, "accept").isEnabled(), "Accept again");
+      await sleep(900);
+      assert(await lostCard.isVisible(), "an undo goes on to nothing");
+      await stepOf(lostCard, "move").click();
+      await until(async () => !(await pressed(lostCard, "move")), { what: "hollow again" });
+      await until(async () => (await stored(lost.id)).pdf_position.lost === true, { what: "the move taken back, saved" });
+      assert(!(await stepOf(lostCard, "accept").isEnabled()), "Accept waits again");
+
+      // Discard on the bare dashed one: it says it deletes; Discarded pressed again within the moment takes it back,
+      // the card staying; Discard again deletes it and goes on to the hollow one; Previous back and Discarded
+      // pressed again bring it back, dashed where it was
+      await navOf(lostCard, "prev").click();
+      await bareCard.waitFor({ timeout: 5000 });
+      assert((await titleOf(bareCard, "discard")).startsWith("Delete the highlight"), `Discard's title: ${await titleOf(bareCard, "discard")}`);
+      await pictureLoaded(bareCard);
+      const bareLook = await look(bareCard, true);
+      await stepOf(bareCard, "discard").click();
+      await until(() => pressed(bareCard, "discard"), { what: "Discarded" });
+      sameLook(bareLook, await look(bareCard, true), "after Discard");
+      await stepOf(bareCard, "discard").click();
+      await until(async () => !(await pressed(bareCard, "discard")), { what: "taken back within the moment" });
+      await sleep(900);
+      assert(await bareCard.isVisible() && (await lostCard.count()) === 0, "the press kept the card where it is");
+      await p.waitForSelector(sel(bare.id), { timeout: 5000 });
+      await stepOf(bareCard, "discard").click();
+      await lostCard.waitFor({ timeout: 5000 });
+      const children = async () => (await account.api(`/api/blocks/${doc.id}/subtree`)).block.children.map((b) => b.id);
+      await until(async () => !(await children()).includes(bare.id), { what: "the bare one deleted" });
+      await navOf(lostCard, "prev").click();
+      await bareCard.waitFor({ timeout: 5000 });
+      assert(await pressed(bareCard, "discard"), "Discarded");
+      await stepOf(bareCard, "discard").click();
+      await until(async () => !(await pressed(bareCard, "discard")), { what: "the bare one back" });
+      await p.waitForSelector(sel(bare.id), { timeout: 5000 });
+      await until(async () => (await stored(bare.id).catch(() => null))?.pdf_position?.approx === true, { what: "back dashed, saved" });
+
+      // Discard on the noted one: it says it keeps the note; off the PDF, its note and its row kept, the card still
+      // showing the note, then on to the bare one; Previous back and Discarded pressed again bring it back dashed
+      await navOf(bareCard, "prev").click();
+      await notedCard.waitFor({ timeout: 5000 });
+      assert((await titleOf(notedCard, "discard")).includes("keep it as a note"), `Discard's title: ${await titleOf(notedCard, "discard")}`);
+      await stepOf(notedCard, "discard").click();
+      await until(() => pressed(notedCard, "discard"), { what: "the noted one discarded" });
+      assertEq(await notedCard.locator(".hlReviewNoteText").textContent(), note, "its note still on the card");
+      await bareCard.waitFor({ timeout: 5000 });
+      assertEq(await p.locator(`[data-hl-id="${noted.id}"]`).count(), 0, "off the page");
+      await until(async () => {
+        const props = await stored(noted.id);
+        return JSON.stringify(props.pdf_position) === JSON.stringify({ pageNumber: 1 }) && props.quote === lines2[1];
+      }, { what: "its position its page alone, its quote kept" });
+      assertEq((await account.api(`/api/blocks/${noted.id}`)).content, note, "its note kept");
+      await navOf(bareCard, "prev").click();
+      await notedCard.waitFor({ timeout: 5000 });
+      assert(await pressed(notedCard, "discard"), "Discarded");
+      assertEq(await notedCard.locator(".hlReviewNoteCounts").textContent(), "2 notes under it · 1 comment", "its note as it is");
+      await stepOf(notedCard, "discard").click();
+      await until(async () => !(await pressed(notedCard, "discard")), { what: "the noted one back" });
+      await p.waitForSelector(sel(noted.id), { timeout: 5000 });
+      await until(async () => (await stored(noted.id)).pdf_position.approx === true, { what: "back dashed, saved" });
+      await p.keyboard.press("Escape");
+      await notedCard.waitFor({ state: "detached", timeout: 5000 });
+      assertNoProblems(p);
+      await p.close();
+    } finally {
+      await c.close();
+      await account.api(`/api/blocks/${doc.id}`, { method: "DELETE" });
+    }
+  });
+
+  // A card taller than a short window lets: the note gives its room first, down to a line, then the word
+  // comparison, down to three lines (a shorter one keeps all of it, no more), the steps and Previous / Next
+  // keeping theirs; where those fit, the whole card does. And one moved on its card waits for Accept in the
+  // Document menu's Review as it does on the card.
+  await step("pdf: on a short window a review card's note gives way before its comparison, and the Document menu counts one moved on its card until Accept", async () => {
+    const lines1 = ["Quantum dots confine single electrons", "Spin echoes were measured by Hahn [27] in a long passage",
+      "Coherence times were reported by Ramsey [31]", "This sentence is only in the first version"];
+    const lines2 = ["Quantum dots confine single electrons", "Spin echoes were recorded by Hahn [25] in a long passage",
+      "Coherence times were reported by Ramsey [33]", "A new sentence replaced the old one"];
+    const up1 = await account.upload("/api/uploads", makePdf([lines1]), "v1.pdf", "application/pdf");
+    const up2 = await account.upload("/api/uploads", makePdf([lines2]), "v2.pdf", "application/pdf");
+    const doc = await account.api(`/api/blocks/by-doc/${up2.doc_id}`, { method: "POST", body: { default_title: "Short window" } });
+    const box = (i, len) => ({ x1: 72, y1: 72 + 26 * i - 16, x2: Math.min(560, 72 + len * 10), y2: 72 + 26 * i + 5 });
+    const at = (i) => ({ pageNumber: 1, width: 612, height: 792, boundingRect: box(i, lines2[i].length), rects: [box(i, lines2[i].length)] });
+    const frac = (r) => [r.x1 / 612, r.y1 / 792, r.x2 / 612, r.y2 / 792].map((v) => Math.round(v * 10000) / 10000);
+    const words = (w) => Array.from({ length: 30 }, (_, k) => `word${k} ${w}${k}`).join(" ");
+    const make = (quote, pdf_position, content = "") => account.api("/api/blocks", { method: "POST", body: { parent_id: doc.id, content,
+      properties: { quote, color: "rgba(255, 226, 143, 0.4)", pdf_position } } });
+    // a dashed one that stood over eight lines (a tall Before picture), its long quote changed throughout, a long note
+    const longNote = Array.from({ length: 12 }, (_, i) => `Line ${i + 1} of a long note`).join("\n");
+    const tall = await make(words("beta"), { ...at(1), approx: true, match: 0.9,
+      prev: { doc_id: up1.doc_id, pageNumber: 1, rects: [0, 1, 2, 3, 4, 5, 6, 7].map((k) => frac(box(k, 45))), quote: words("alpha") } }, longNote);
+    await account.api("/api/blocks", { method: "POST", body: { parent_id: tall.id, content: "Under it" } });
+    const short = await make(lines2[2], { ...at(2), approx: true, match: 0.9,
+      prev: { doc_id: up1.doc_id, pageNumber: 1, rects: [frac(box(2, lines1[2].length))], quote: lines1[2] } }, longNote);
+    const lost = await make(lines1[3], { ...at(3), lost: true, doc_id: up1.doc_id });
+    const c = await account.context(browser, { viewport: { width: 1280, height: 600 } });
+    try {
+      const p = await openPage(c, `${server.base}/?page=${doc.id}&ws=${account.ws}`);
+      await waitForPdf(p, 1);
+      const sel = (id) => `[data-page="1"] div[data-hl-id="${id}"]`;
+      for (const id of [tall.id, short.id, lost.id]) await p.waitForSelector(sel(id), { timeout: 15000 });
+      const { cardOf, stepOf, pressed, countOf, pictureLoaded } = reviewCardHelpers(p);
+      const fit = (card) => card.evaluate((el) => {
+        const diff = el.querySelector(".hlReviewDiff"), text = el.querySelector(".hlReviewNoteText");
+        const line = (x) => parseFloat(getComputedStyle(x).lineHeight);
+        const pad = (x) => { const s = getComputedStyle(x); return parseFloat(s.paddingTop) + parseFloat(s.paddingBottom); };
+        return {
+          diff: diff.clientHeight - pad(diff), diffAll: diff.scrollHeight - pad(diff), diffLine: line(diff),
+          diffMax: parseFloat(getComputedStyle(diff).maxHeight) - pad(diff) - 2,
+          text: text.clientHeight, textLine: line(text),
+          over: el.scrollHeight - el.clientHeight,
+          navIn: el.querySelector(".hlReviewNav").getBoundingClientRect().bottom <= el.getBoundingClientRect().bottom + 1,
+        };
+      });
+      const hoverCard = async (id) => {
+        await p.mouse.move(2, 2);
+        await p.waitForSelector(".hlReviewCard", { state: "detached", timeout: 5000 });
+        await p.hover(sel(id));
+        const card = cardOf(id);
+        await card.waitFor({ timeout: 5000 });
+        await pictureLoaded(card);
+        return card;
+      };
+      // 600 px tall: too short for all of it; the comparison keeps three lines, the note one
+      let m = await fit(await hoverCard(tall.id));
+      assert(m.diffAll > 3 * m.diffLine * 2, `a comparison of many lines: ${JSON.stringify(m)}`);
+      assert(m.diff >= 3 * m.diffLine - 1, `the comparison keeps three lines at 600 px: ${JSON.stringify(m)}`);
+      assert(m.text >= m.textLine - 1, `the note keeps a line at 600 px: ${JSON.stringify(m)}`);
+      // a short comparison is shown whole, and the floor adds it no room
+      m = await fit(await hoverCard(short.id));
+      assert(Math.abs(m.diff - m.diffAll) <= 1, `a short comparison whole: ${JSON.stringify(m)}`);
+      // 720 px: the note gives what the card lacks, the comparison keeps its full height, nothing scrolls
+      await p.setViewportSize({ width: 1280, height: 720 });
+      m = await fit(await hoverCard(tall.id));
+      assert(m.diff >= m.diffMax - 1, `the comparison at its full height at 720 px: ${JSON.stringify(m)}`);
+      assert(m.text < 4 * m.textLine - 1 && m.text >= m.textLine - 1, `the note gave the room: ${JSON.stringify(m)}`);
+      assert(m.over <= 1 && m.navIn, `the card fits, Previous / Next in it: ${JSON.stringify(m)}`);
+
+      // the hollow one moved on its card, not accepted: still to review in the Document menu, which opens it
+      // (first in document order where it is now), Moved, Accept there; accepted, it leaves the menu's count
+      await p.mouse.move(2, 2);
+      await p.waitForSelector(".hlReviewCard", { state: "detached", timeout: 5000 });
+      await p.click("button[aria-label='Document']");
+      await p.locator(".attachPopover .ctxMenuItem", { hasText: "Review 3 highlights" }).waitFor({ timeout: 5000 });
+      await p.keyboard.press("Escape");
+      const lostCard = await hoverCard(lost.id);
+      await stepOf(lostCard, "move").click();
+      await p.waitForSelector(`.attachModeBanner[data-move-highlight="${lost.id}"]`, { timeout: 5000 });
+      await selectPdfText(p, 1, "Quantum dots confine");
+      await p.waitForSelector(".plainTip .tipMoveBtn", { timeout: 5000 });
+      await p.locator(".plainTip .tipMoveBtn").click();
+      await lostCard.waitFor({ timeout: 5000 });
+      await until(() => pressed(lostCard, "move"), { what: "Moved" });
+      assertEq(await countOf(lostCard), "3 of 3", "left to check on the card");
+      await p.keyboard.press("Escape");
+      await lostCard.waitFor({ state: "detached", timeout: 5000 });
+      await p.click("button[aria-label='Document']");
+      await p.locator(".attachPopover .ctxMenuItem", { hasText: "Review 3 highlights" }).click();
+      await lostCard.waitFor({ timeout: 5000 });
+      assert(await pressed(lostCard, "move"), "opened from the menu, Moved");
+      assert(await stepOf(lostCard, "accept").isEnabled(), "Accept there to take the place");
+      await stepOf(lostCard, "accept").click();
+      await cardOf(tall.id).waitFor({ timeout: 5000 });
+      await p.keyboard.press("Escape");
+      await cardOf(tall.id).waitFor({ state: "detached", timeout: 5000 });
+      await p.click("button[aria-label='Document']");
+      await p.locator(".attachPopover .ctxMenuItem", { hasText: "Review 2 highlights" }).waitFor({ timeout: 5000 });
+      await p.keyboard.press("Escape");
+      assertNoProblems(p);
+      await p.close();
+    } finally {
+      await c.close();
+      await account.api(`/api/blocks/${doc.id}`, { method: "DELETE" });
+    }
+  });
+
   // Review cards with nothing drawn to anchor to yet, or ever: Show on a closest match pages away, outlined
   // only once its page renders after the scroll, keeps the card in sight under the outline; a highlight lost
   // from a page the new version dropped, which no page draws, is reached by Next and the Document menu, its
   // card standing in the viewer, saying so, and staying until it is closed. Use closest match by the keyboard
   // takes the highlight pages away, the card hidden while the viewer scrolls there, and the focus stays on the
-  // button, so Enter again takes the step back. On a 360 px phone, in English and in Chinese, the card's row
-  // stays on one line.
+  // button, so Enter again takes the step back. On a 360 px phone, in English and in Chinese, the card's steps
+  // stay on one line, Previous, the count and Next on their own.
   await step("pdf: a hollow highlight's card follows Show to a far page, and one from a page the new version dropped is reached by Next", async () => {
     const oldPages = Array.from({ length: 10 }, (_, i) => [`Page ${i + 1} of the paper`, `Some more text on page ${i + 1}`]);
     const up1 = await account.upload("/api/uploads", makePdf(oldPages), "old.pdf", "application/pdf");
@@ -2114,8 +2543,8 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       assertNoProblems(p);
       await p.close();
 
-      // a 360 px phone makes the card narrower than its 360 px; its row (Use closest match, Move…, Discard,
-      // Previous, the count, Next) stays on one line, in English and in Chinese
+      // a 360 px phone makes the card narrower than its 360 px; its steps (Accept, Use closest match, Move…,
+      // Discard) stay on one line, Previous, the count and Next on their own under them, in English and in Chinese
       for (const locale of ["en-US", "zh-CN"]) {
         const phone = await account.context(browser, { locale, viewport: { width: 360, height: 780 }, isMobile: true, hasTouch: true });
         try {
@@ -2127,18 +2556,16 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
           const card = q.locator(`.hlReviewCard[data-review-id="${near.id}"]`);
           await card.waitFor({ timeout: 5000 });
           const row = await card.evaluate((el) => {
-            const kids = [...el.querySelectorAll(".hlReviewActions > button, .hlReviewNav > *")];
-            const rowBox = el.querySelector(".hlReviewActions").getBoundingClientRect();
+            const steps = [...el.querySelectorAll(".hlReviewSteps > button")];
+            const stepsBox = el.querySelector(".hlReviewSteps").getBoundingClientRect();
             return {
               card: el.getBoundingClientRect().width,
-              keys: kids.map((k) => k.dataset.step || k.dataset.reviewNav || "count"),
-              lines: new Set(kids.map((k) => { const r = k.getBoundingClientRect(); return Math.round(r.top + r.height / 2); })).size,
-              height: rowBox.height, tallest: Math.max(...kids.map((k) => k.getBoundingClientRect().height)),
+              height: stepsBox.height, tallest: Math.max(...steps.map((k) => k.getBoundingClientRect().height)),
             };
           });
-          assertEq(row.keys.join(" "), "place move discard prev count next", `${locale}: the lost card's row`);
+          assertEq(await reviewCardHelpers(q).rowOf(card), "accept place move discard | prev count next", `${locale}: the lost card's row`);
           assert(row.card < 360, `${locale}: the card narrower than 360 px (${row.card})`);
-          assert(row.lines === 1 && row.height <= row.tallest + 1, `${locale}: the row on one line at 360 px: ${JSON.stringify(row)}`);
+          assert(row.height <= row.tallest + 1, `${locale}: the steps on one line at 360 px: ${JSON.stringify(row)}`);
           assertNoProblems(q);
           await q.close();
         } finally {

@@ -463,6 +463,30 @@ def test_a_real_relocation_that_places_every_highlight_lets_the_pdf_go_in_place(
     assert _pdf_atts(fake, item) == {att: file_md5(storage.open_path(ws, f"{doc}.pdf"))}
 
 
+def test_a_relocation_tells_the_link_once_its_job_reads_as_ended(me, made, fake, owner_id, monkeypatch):
+    """Told while the job still read as running, a round in between found
+    the page still placing and held its PDF back PLACING_RECHECK_S again,
+    with nothing left to wake it sooner."""
+    monkeypatch.setattr(pages_router, "_start_relocation", REAL_RELOCATION)
+    told, seen = zotero_sync_pdfs.relocation_ended, []
+
+    def recording(ws, page_id):
+        seen.append(jobs.latest(owner_id, pages_router.RELOCATE, f"{page_id}:{doc}")["state"])
+        told(ws, page_id)
+
+    monkeypatch.setattr(zotero_sync_pdfs, "relocation_ended", recording)
+    item, att, _ann = _simple_paper(fake)
+    ws = _link(me)
+    _sync(me, ws)
+    page = _page_of(ws, item)
+    doc = _replace(ws, owner_id, page, pdf_bytes() + b"\n% the same paper, saved again\n", "saved-again.pdf")
+    jobs.wait(jobs.latest(owner_id, pages_router.RELOCATE, f"{page}:{doc}")["id"])
+    assert seen == ["done"]
+    drop_pending(ws)
+    _sync(me, ws)
+    assert _pdf_atts(fake, item) == {att: file_md5(storage.open_path(ws, f"{doc}.pdf"))}
+
+
 @pytest.mark.parametrize("waited", [True, False], ids=["while-placing", "placed-before"])
 def test_replace_zoteros_copy_after_a_replacement_here_sends_gammas_file_over_its_annotations(
         me, made, fake, owner_id, monkeypatch, bounded, waited):

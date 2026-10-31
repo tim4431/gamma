@@ -12,6 +12,10 @@ export const POINT_GAP = 12;
 export const POINT_LEFT = 8;
 // Between a selection's bottom edge and the popup.
 export const RECT_GAP = 8;
+// How far the mouse moves from where it was released before a mouse
+// selection's popup opens (px): a hand still on the mouse sends a move or
+// two of a pixel.
+export const MOVE_TO_SHOW = 3;
 
 // The release point `point` ({x, y}) when it lies within RELEASE_NEAR of
 // the selection's bounding `rect` ({top, left, width, bottom}), else null.

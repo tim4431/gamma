@@ -31,7 +31,7 @@ import { heldAlone, isHeldKey } from "../shared/lib/hotkeys.js";
 import { PdfCitationOverlay } from "./PdfCitationOverlay";
 import { citationRuns, runChars } from "./pdfCitation.js";
 import { noteBadgeAnchor } from "./noteAnchor.js";
-import { nearRelease, tipAnchor } from "./selectionTip.js";
+import { MOVE_TO_SHOW, nearRelease, tipAnchor } from "./selectionTip.js";
 import { commentOnlyHighlight } from "../comments/comments.js";
 import { marginLeft as besideMargin, pageLeft } from "../comments/marginLayout.js";
 import { CommentMarginContext, CommentMarginSlot, MarginStackContext, createMarginStack } from "../comments/marginSlot";
@@ -39,7 +39,7 @@ import { useRecentIn } from "../guide/recent.js";
 import { DEFAULT_HIGHLIGHT, colorName, darkPageColor, darkPageLine, normalizeColor, pickerColors, swatchCss } from "../shared/model/palette.js";
 import { closestPlace, placedToCheck } from "../shared/model/blockModel.js";
 import { HighlightReview, useHighlightReview } from "./HighlightReview.jsx";
-import { pastLastPage } from "./highlightReview.js";
+import { pastLastPage, reviewList, waitingForAccept } from "./highlightReview.js";
 import { usePalette } from "../shared/ui/paletteContext.js";
 import { placeFloating, useFloatingPosition } from "../shared/ui/placement.js";
 import { t, tn } from "../shared/i18n/i18n.js";
@@ -504,6 +504,12 @@ async function fetchPdfData(url, onLoadState, isCancelled) {
 // selection is drawn in that colour while it is made. A finger's selection
 // has no such end (its handles are still being dragged), so it gets the
 // popup, and so does one that places a highlight waiting to be moved.
+// onHighlightAction(id, action, color): the bar over a highlight the
+// highlighter just made, `action` "color" (with the swatch picked),
+// "comment" or "link"; without it that bar is not offered.
+// moveMode: a highlight waits to be moved (App's moveHighlightId): the
+// selection popup offers only Move here, and highlights let the pointer
+// through, so the text under them can be selected.
 // commentMargin: what the comment cards beside the pages read (App's
 // CommentMarginContext value, comments/marginSlot.jsx: the threads, the
 // active card's `target`, the handlers), or null for no margin (a phone, a
@@ -520,18 +526,25 @@ async function fetchPdfData(url, onLoadState, isCancelled) {
 // lost) has a review card (HighlightReview.jsx): onAcceptHighlight(id),
 // onPlaceHighlight(id) (a lost one's closest match applied),
 // onMoveHighlight(id, step) (`step` the card's, when it had taken one),
-// onDiscardHighlight(id) (a lost one taken off the page: the step taken,
-// or null), discardOf(id) (what that Discard would do) and
+// onDiscardHighlight(id) (one taken off the page: the step taken, or
+// null), discardOf(id) (what that Discard would do) and
 // onUndoReview(id, step) (a step's button pressed again) are its actions,
 // an editor's; reviewPosition(id) is the block's stored pdf_position (null
 // when there is no such block), which says whether a step taken on a card
-// is still in effect; `fileId` is the stored file the page shows (a lost
+// is still in effect; reviewNote(id) the note the block carries
+// (highlightReview.js noteSummary, null for no block), which the card
+// shows; onReviewFollow(id) has the notes panel follow a card that went to
+// that highlight (a tap, Previous, Next, the advance after a decision, the
+// Document menu); onReviewWaiting(ids) is told the highlights a card
+// moved or placed on its closest match that wait for its Accept ([] for
+// none; the Document menu counts them); `fileId` is the stored file the page shows (a lost
 // one's picture is of the file its rectangles were measured on, when that
 // is another) and `pageId` the page: another of either starts the card's
-// walk afresh; reviewRef.current(id, {done, scroll}) scrolls to that one
-// and opens its card (the Document menu's Review; App after a move started
-// from the card, `done` what it did and scroll false).
-function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, areaKey = "Mod", peekKey = "Alt", hideEmbeddedAnnots, darkPage = false, translateKey = "", translateScope = null, translateParallel = 3, onTranslate, onTranslateBrief, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", selComment = false, highlighter = "", moveMode = false, marks, flashHighlightId = null, smoothWheel = false, commentMargin = null, marginRef = null, onMarginLost, onPageInView, zoomHeight = 200, onZoomHeight, onZoomChange, onAcceptHighlight, onPlaceHighlight, onMoveHighlight, onDiscardHighlight, discardOf, onUndoReview, reviewPosition = null, fileId = "", pageId = "", reviewRef = null }) {
+// walk afresh; reviewRef.current(id, {done, scroll, follow}) scrolls to
+// that one and opens its card (the Document menu's Review, `follow`; App
+// after a move started from the card, `done` what it did and scroll
+// false).
+function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, areaKey = "Mod", peekKey = "Alt", hideEmbeddedAnnots, darkPage = false, translateKey = "", translateScope = null, translateParallel = 3, onTranslate, onTranslateBrief, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", selComment = false, highlighter = "", onHighlightAction, moveMode = false, marks, flashHighlightId = null, smoothWheel = false, commentMargin = null, marginRef = null, onMarginLost, onPageInView, zoomHeight = 200, onZoomHeight, onZoomChange, onAcceptHighlight, onPlaceHighlight, onMoveHighlight, onDiscardHighlight, discardOf, onUndoReview, reviewPosition = null, reviewNote = null, onReviewFollow, onReviewWaiting, fileId = "", pageId = "", reviewRef = null }) {
   const tools = usePageTools(), { ink, text } = tools;
   const viewerRef = useRef(null);
   const [pdfDoc, setPdfDoc] = useState(null);
@@ -592,7 +605,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // parent state change recreates the handler closures. The wrappers always
   // dispatch to the latest handlers via the ref.
   const cbRef = useRef({});
-  cbRef.current = { onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, onExternalLink, onLinkContext, onLoadState, onZoomTo, onAreaSelection, onTranslate, onTranslateBrief, onTranslateState };
+  cbRef.current = { onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, onExternalLink, onLinkContext, onLoadState, onZoomTo, onAreaSelection, onTranslate, onTranslateBrief, onTranslateState, onHighlightAction };
   const stableCbs = useMemo(() => ({
     onJump: (...a) => cbRef.current.onJump?.(...a),
     onHighlightJump: (...a) => cbRef.current.onHighlightJump?.(...a),
@@ -1327,20 +1340,35 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // records; no scroll: the selection is in sight). A place past the last
   // page (a lost one from a page the PDF no longer has) is not scrolled to:
   // its card stands in the viewer. Another page or file closes it and
-  // starts the card's walk afresh (the steps taken on cards).
-  const { card: reviewCard, steps: reviewSteps, review, drawn: reviewDrawn } = useHighlightReview();
-  const openReview = (id, { done = null, scroll = true, position = null, walked = "" } = {}) => {
+  // starts the card's walk afresh (the steps taken on cards). With
+  // `follow` (Previous, Next, the advance after a decision, the Document
+  // menu) and on a tap, the notes panel follows it (onReviewFollow).
+  const followRef = useRef(null);
+  followRef.current = onReviewFollow || null;
+  const { card: reviewCard, steps: reviewSteps, review, drawn: reviewDrawn } = useHighlightReview(followRef);
+  const openReview = (id, { done = null, scroll = true, position = null, walked = "", follow = false } = {}) => {
     if (displayedUrl !== url) return;
     const h = (highlights || []).find((x) => x.id === id) || null;
-    if (done) review.record(id, done, h, discardOf?.(id) || null);
+    if (done) review.record(id, done, h);
     const to = position || h?.position;
     if (!to) return;
     if (scroll && !pastLastPage(to, numPages)) scrollToPositionRef.current?.({ position: to });
     review.open(id, { walked });
+    if (follow) onReviewFollow?.(id);
   };
   if (reviewRef) reviewRef.current = openReview;
   useEffect(() => () => { if (reviewRef) reviewRef.current = null; }, [reviewRef]);
   useEffect(() => { review.reset(); }, [url, fileId, pageId, review]);
+  // The highlights a card moved or placed on its closest match, waiting
+  // for its Accept (waitingForAccept), told to App (onReviewWaiting), whose
+  // Document menu counts them with the review queue: none once the walk
+  // starts afresh, or once this viewer is gone.
+  const waitingKey = displayedUrl === url && reviewSteps.size
+    ? JSON.stringify(waitingForAccept(reviewList(highlights, reviewSteps, reviewPosition))) : "[]";
+  const waitingRef = useRef(null);
+  waitingRef.current = onReviewWaiting || null;
+  useEffect(() => { waitingRef.current?.(JSON.parse(waitingKey)); }, [waitingKey]);
+  useEffect(() => () => waitingRef.current?.([]), []);
   // A lost highlight's closest match, outlined on its page while its card
   // shows it (Show), which scrolls there.
   const ghostOf = reviewCard?.ghost && displayedUrl === url ? (highlights || []).find((x) => x.id === reviewCard.id) : null;
@@ -1671,9 +1699,31 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   useEffect(() => {
     if (!canAnnotate) return;
     // A mouse selection's popup opens where the button was released, when
-    // that is near the selection (pdf/selectionTip.js). A press inside the
-    // popup (Translate, the translation's header and copy button keep it
-    // open) leaves it where it is: rebuilt from that release, it would move.
+    // that is near the selection (pdf/selectionTip.js), once the mouse moves
+    // on from there (MOVE_TO_SHOW): a double or triple click never has it
+    // jump between its presses, and the text stays bare until the hand
+    // moves. A selection with no release of the mouse by it (a finger's, a
+    // pen's, which may not hover, a script's) has it at once. A press
+    // inside the popup (Translate, the translation's header and copy button
+    // keep it open) leaves it where it is: rebuilt from that release, it
+    // would move.
+    let waiting = null; // {tip, x, y}: the popup the next move shows
+    function showTip(tip) {
+      if (tip.point && lastPointer() === "mouse") waiting = { tip, x: tip.point.x, y: tip.point.y };
+      else setSelPopup(tip);
+    }
+    function onMouseMove(e) {
+      if (!waiting || e.buttons || Math.hypot(e.clientX - waiting.x, e.clientY - waiting.y) < MOVE_TO_SHOW) return;
+      const { tip } = waiting;
+      waiting = null;
+      // Placed on the screen: a scroll since then would leave it over other
+      // text. And the text selection it is for may be gone (a key).
+      const at = viewerScroll();
+      if (at && tip.scroll && (Math.abs(at[0] - tip.scroll[0]) >= 1 || Math.abs(at[1] - tip.scroll[1]) >= 1)) return;
+      if (tip.kind !== "made" && !window.getSelection()?.toString().trim()) return;
+      setSelPopup(tip);
+    }
+    function onMouseDown() { waiting = null; }
     function onMouseUp(e) {
       if (document.querySelector(".plainTip")?.contains(e.target)) return;
       const point = { x: e.clientX, y: e.clientY };
@@ -1683,6 +1733,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       // "No text selected" must not dismiss an area popup — the drag that
       // created it ends in a mouseup with an empty selection by design.
       const keepArea = (p) => (p && p.kind === "area" ? p : null);
+      waiting = null;
       const sel = window.getSelection();
       // A click or selection inside the popup (its translation text) moves
       // the document selection there — the popup stays, with the snapshot
@@ -1734,13 +1785,16 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           pageLeft: pageRect.left, pageTop: pageRect.top, pageW, pageH, scroll: viewerScroll(),
         };
         // The highlighter: a release of the mouse or the pen ends the
-        // selection, which is highlighted then. A tap after a finger's
-        // selection also sends a mouseup; that one still gets the popup.
+        // selection, which is highlighted then; the highlight it made gets
+        // a bar of its own ("made": its colour, comment, link), shown as
+        // the popup would be. A tap after a finger's selection also sends a
+        // mouseup; that one still gets the popup.
         if (point && highlighterRef.current && !moveModeRef.current && lastPointer() !== "touch") {
-          confirmRef.current(snap, "", null, { highlighter: true });
+          const id = confirmRef.current(snap, "", null, { highlighter: true });
+          if (id && cbRef.current.onHighlightAction) showTip({ ...snap, kind: "made", id });
           return;
         }
-        setSelPopup(snap);
+        showTip(snap);
       }
     }
     // iPadOS/iOS never fires mouseup for a long-press selection or for a drag
@@ -1756,10 +1810,14 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       selTimer = setTimeout(() => syncSelPopup(), 350);
     }
     document.addEventListener("mouseup", onMouseUp);
+    document.addEventListener("mousemove", onMouseMove, { passive: true });
+    document.addEventListener("mousedown", onMouseDown, true);
     document.addEventListener("selectionchange", onSelectionChange);
     return () => {
       clearTimeout(selTimer);
       document.removeEventListener("mouseup", onMouseUp);
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mousedown", onMouseDown, true);
       document.removeEventListener("selectionchange", onSelectionChange);
     };
   }, [canAnnotate]);
@@ -1788,7 +1846,8 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   }, [zoom?.page, zoom?.x, zoom?.y, zoom?.w, zoom?.h]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // A selection to onSelectionFinished: the popup's (`sel` its state), or
-  // the one the highlighter takes without it.
+  // the one the highlighter takes without it. A text selection returns
+  // what onSelectionFinished does: the id of the highlight made, if one was.
   function confirmSelection(sel, commentText, color, extra) {
     if (sel.kind === "area") {
       // Rect is already page-relative at capture-time render size. area: true
@@ -1812,10 +1871,16 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     // The page size once: every rect is in its frame (shared/model/blockModel.js).
     const position = { pageNumber: sel.pageNumber, width: curW, height: curH, boundingRect: { x1, y1, x2, y2 }, rects: lineRects };
     const content = { text: sel.text };
-    onSelectionFinished(position, content, () => { window.getSelection()?.removeAllRanges(); setSelPopup(null); }, { color, commentText, ...(extra || {}) });
+    return onSelectionFinished(position, content, () => { window.getSelection()?.removeAllRanges(); setSelPopup(null); }, { color, commentText, ...(extra || {}) });
   }
   function handleSelConfirm(commentText, color, extra) {
     if (selPopup) confirmSelection(selPopup, commentText, color, extra);
+  }
+  // The bar over a highlight the highlighter made acts on that highlight.
+  const made = selPopup?.kind === "made" ? selPopup.id : null;
+  function madeAction(action, color) {
+    setSelPopup(null);
+    cbRef.current.onHighlightAction?.(made, action, color);
   }
 
   return (
@@ -1874,7 +1939,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           scrollbar arriving with them would fit them a second time, which
           the zoom anchor re-places about the viewport's centre, and each
           return to the tab would land a few px higher. */}
-      <div ref={viewerRef} data-guide="pdf.viewer" className={"pdfViewer" + (areaCursor || areaMode ? " areaCursor" : "") + (areaMode ? " areaMode" : "") + (darkPage ? " pdfDark" : "") + (transPeek ? " transPeek" : "") + armedClasses(tools) + (ink.tool?.tool === "select" ? " inkSelect" : "")}
+      <div ref={viewerRef} data-guide="pdf.viewer" className={"pdfViewer" + (areaCursor || areaMode ? " areaCursor" : "") + (areaMode ? " areaMode" : "") + (darkPage ? " pdfDark" : "") + (transPeek ? " transPeek" : "") + armedClasses(tools) + (ink.tool?.tool === "select" ? " inkSelect" : "") + (moveMode ? " pdfMoving" : "")}
         style={{ height: zoom ? `calc(100% - ${zoomHeight}px)` : "100%", overflowY: "auto", overflowX: "auto", overflowAnchor: "none", scrollbarGutter: "stable",
           // the selection in the colour the highlighter will give it (app.css)
           ...(highlighter && !moveMode ? { "--selection-color": highlighter } : null) }}
@@ -1932,9 +1997,10 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       {selPopup && onSelectionFinished && (
         <TipFrame anchor={tipAnchor(selPopup)}>
           {/* keyed by the selection: a new one starts with no translation */}
-          <PlainTip key={selPopup.kind === "area" ? "area" : selPopup.text}
-            onConfirm={handleSelConfirm} onLink={() => handleSelConfirm("", null, { link: true })}
-            onComment={selComment ? (color) => handleSelConfirm("", color, { comment: true }) : null}
+          <PlainTip key={selPopup.kind === "area" ? "area" : made ? `made:${made}` : selPopup.text} recolor={!!made}
+            onConfirm={made ? (_, color) => madeAction("color", color) : handleSelConfirm}
+            onLink={made ? () => madeAction("link") : () => handleSelConfirm("", null, { link: true })}
+            onComment={selComment ? (made ? () => madeAction("comment") : (color) => handleSelConfirm("", color, { comment: true })) : null}
             onMove={moveMode ? () => handleSelConfirm("", null) : null}
             // a selection that places a moved highlight is not read, so not translated
             translate={!moveMode && selTranslate && selPopup.kind !== "area" && selPopup.text && onTranslate ? {
@@ -1949,7 +2015,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       )}
       </div>
       <HighlightReview card={reviewCard} steps={reviewSteps} review={review} drawn={reviewDrawn}
-        highlights={displayedUrl === url ? highlights : null} positionOf={reviewPosition}
+        highlights={displayedUrl === url ? highlights : null} positionOf={reviewPosition} noteOf={reviewNote}
         viewerRef={viewerRef} darkPage={darkPage} fileId={fileId} pageCount={displayedUrl === url ? numPages : 0}
         onAccept={onAcceptHighlight} onPlace={onPlaceHighlight}
         onMove={onMoveHighlight} onDiscard={onDiscardHighlight} discardOf={discardOf}
@@ -2702,8 +2768,10 @@ const SEL_TRANSLATE_MAX = 5000;
 // {text, auto, langLabel, run(texts, signal, onPartial) → the server's reply
 // ({translations, failed}) | null} — run is the page translator's request, so
 // the same model/engine, language and server cache apply. Auto starts it on
-// open; the button starts it, then folds/unfolds the result.
-function PlainTip({ onConfirm, onLink, onComment, translate, onMove }) {
+// open; the button starts it, then folds/unfolds the result. `recolor`:
+// the selection is a highlight already (the highlighter's), which the
+// colours change.
+function PlainTip({ onConfirm, onLink, onComment, translate, onMove, recolor = false }) {
   const palette = usePalette();
   const colors = pickerColors(palette, "highlight");
   const [trans, setTrans] = useState(null); // {status: "loading"|"done"|"error", text, open}
@@ -2757,8 +2825,8 @@ function PlainTip({ onConfirm, onLink, onComment, translate, onMove }) {
             style={{ background: swatchCss(c) }}
             onMouseDown={(e) => { keep(e); onConfirm("", c); }}
             type="button"
-            title={t("Highlight in {color}", { color: t(colorName(c)) })}
-            aria-label={t("Highlight in {color}", { color: t(colorName(c)) })}
+            title={recolor ? t("Change to {color}", { color: t(colorName(c)) }) : t("Highlight in {color}", { color: t(colorName(c)) })}
+            aria-label={recolor ? t("Change to {color}", { color: t(colorName(c)) }) : t("Highlight in {color}", { color: t(colorName(c)) })}
           />
         ))}
         {/* the colours, then the tools */}

@@ -502,9 +502,11 @@ def _start_relocation(owner: str, ws: str, page_id: str, title: str, new_doc: st
     ``min_match`` (a fraction) and ``exact_chars``, and its result echoes:
     a setting changed later leaves the runs already started as they
     are. However a run ends, written or not, the workspace's Zotero link
-    is told (``zotero_sync_pdfs.relocation_ended``): a PDF of the page
-    that waited for its highlights to be placed, and the annotations held
-    for them, are decided again."""
+    is told (``zotero_sync_pdfs.relocation_ended``) once the job reads as
+    ended: a PDF of the page that waited for its highlights to be placed,
+    and the annotations held for them, are decided again (told while the
+    job still read as running, a round in between parked the PDF again
+    for ``PLACING_RECHECK_S``)."""
     name = " ".join((title or "").split())[:80] or "Untitled"
     limits = highlight_relocate.thresholds(get_profile(owner)[0])
     params = {"page_id": page_id, "title": name, "doc_id": new_doc, **limits}
@@ -517,18 +519,15 @@ def _start_relocation(owner: str, ws: str, page_id: str, title: str, new_doc: st
                 pass  # past its last stop: it finishes, and its write is refused (the page carries another file)
 
     def run(job):
-        try:
-            return highlight_relocate.relocate(ws, page_id, new_doc, actor=owner, progress=job.progress, **limits)
-        finally:
-            from ..zotero_sync_pdfs import relocation_ended  # local: the Zotero engine imports this router
-            try:
-                relocation_ended(ws, page_id)
-            except Exception as e:  # noqa: BLE001 — the run's own outcome stands
-                log.warning(f"[relocate] {page_id}: the Zotero link was not told the run ended: {e}")
+        return highlight_relocate.relocate(ws, page_id, new_doc, actor=owner, progress=job.progress, **limits)
+
+    def ended(_state):
+        from ..zotero_sync_pdfs import relocation_ended  # local: the Zotero engine imports this router
+        relocation_ended(ws, page_id)
 
     try:
         return jobs.start(RELOCATE, owner=owner, ws=ws, key=f"{page_id}:{new_doc}", params=params, run=run,
-                          title=f"Placing the highlights of “{name}”"), ""
+                          ended=ended, title=f"Placing the highlights of “{name}”"), ""
     except jobs.Busy as busy:
         if not busy.job.get("stopping"):
             return busy.job, ""

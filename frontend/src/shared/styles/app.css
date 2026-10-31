@@ -5391,11 +5391,13 @@ a.shareBrand:hover { background: var(--bg-hover); }
    the previous file's page, so it takes the page's paper and the theme's
    treatment of it, as the viewer's pages and the zoom window do; the old
    rectangles over it are drawn in the highlight's colour, the dark-page
-   one where the page is flipped. 360 px holds a lost card's row (Use
-   closest match, Move…, Discard, Previous, the count, Next) on one line,
-   in English and in Chinese; on a phone narrower than 376 px, where the
-   card is narrower too, its sides and the row are tighter (below), so the
-   row stays on one line down to a 360 px phone. */
+   one where the page is flipped. The steps (Accept, Use closest match,
+   Move…, Discard) are one line and Previous, the count and Next a line of
+   their own under them, on every card: all of it does not fit one line at
+   360 px. 360 px holds the steps' line, in English and in Chinese; on a
+   phone narrower than 376 px, where the card is narrower too, its sides
+   and the row are tighter (below), so it stays on one line down to a
+   360 px phone. */
 .hlReviewCard {
   position: fixed;
   z-index: var(--z-popover);
@@ -5415,6 +5417,24 @@ a.shareBrand:hover { background: var(--bg-hover); }
 /* it takes the focus as a whole (opened by a tap or the Document menu)
    only so the keys reach its buttons: no ring of its own */
 .hlReviewCard:focus { outline: none; }
+/* A card taller than its max-height (a short window) gives the room back
+   from the note first, down to its label and one line (more of it
+   scrolls), then from a dashed card's word comparison, down to three
+   lines (all of a shorter one); the rest, the steps and Previous / Next
+   among them, keeps its size, and past those floors the card scrolls. */
+.hlReviewCard > * { flex-shrink: 0; }
+.hlReviewCard > .hlReviewNote.withText {
+  flex-shrink: 1000;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  min-height: calc(var(--fs-2xs) * 1.45 + var(--space-2) + 1.45em);
+}
+.hlReviewCard > .hlReviewNote.withText.withCounts { min-height: calc(2 * var(--fs-2xs) * 1.45 + var(--space-2) + var(--space-1) + 1.45em); }
+.hlReviewNote > * { flex-shrink: 0; }
+.hlReviewNote > .hlReviewNoteText { flex-shrink: 1; min-height: 1.45em; }
+/* --hl-review-diff-h: its content's height (HighlightReview.jsx Diff) */
+.hlReviewCard > .hlReviewDiff { flex-shrink: 1; min-height: min(var(--hl-review-diff-h, 0px), calc(3 * 1.55em + 2 * var(--space-3) + 2px)); }
 .hlReviewHead { font-weight: 600; }
 .hlReviewLabel { margin-bottom: var(--space-2); font-size: var(--fs-2xs); color: var(--text-muted); }
 .hlReviewGone, .hlReviewOffPage { color: var(--text-secondary); }
@@ -5472,26 +5492,38 @@ a.shareBrand:hover { background: var(--bg-hover); }
 /* a lost highlight's closest match: its percentage beside Show, then the comparison */
 .hlReviewClosestHead { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-2); }
 .hlReviewClosestHead .hlReviewLabel { margin-bottom: 0; }
-/* The steps, then Previous, the count and Next at the end, on one line
-   (wrapping only under a larger interface font). Nothing in the row moves
-   when a step is taken or undone: a step's button holds both its faces,
-   before and after (.hlReviewFace, one cell, the one not shown hidden as
-   .hlReviewRoom), and the count holds the room of "All reviewed" too. */
-.hlReviewActions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
+/* the note the highlight carries: its text, a few lines that scroll, and
+   how many notes are under it and comments on it */
+.hlReviewNoteText {
+  max-height: calc(4 * 1.45em);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.hlReviewNoteCounts { margin-top: var(--space-1); font-size: var(--fs-2xs); color: var(--text-muted); }
+/* The steps on one line (wrapping only under a larger interface font),
+   then Previous, the count and Next on a line of their own at the end.
+   Nothing in the row moves when a step is taken or undone: a step's
+   button holds both its faces, before and after (.hlReviewFace, one cell,
+   the one not shown hidden as .hlReviewRoom), and the count holds the
+   room of "All reviewed" too. */
+.hlReviewActions { display: flex; flex-direction: column; gap: var(--space-2); }
+.hlReviewSteps { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
 .hlReviewActions .uiBtn.sm:not(.iconSq) { padding-inline: var(--space-4); }
 .uiBtn.hlReviewStep { display: inline-grid; }
 .hlReviewStep > .hlReviewFace { grid-area: 1 / 1; display: inline-flex; align-items: center; justify-content: center; gap: var(--space-3); }
 .hlReviewRoom { visibility: hidden; }
-.hlReviewNav { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; flex-shrink: 0; }
+.hlReviewNav { display: flex; align-items: center; justify-content: flex-end; gap: 2px; }
 .hlReviewCountBox { display: inline-grid; justify-items: center; }
 .hlReviewCountBox > .hlReviewCount { grid-area: 1 / 1; }
 .hlReviewCount { font-size: var(--fs-2xs); color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
 /* a window narrower than 376 px makes the card narrower than 360 px: its
    sides, the row's gaps and the labelled buttons' padding give the room
-   back, so a lost card's row stays on one line down to a 360 px phone */
+   back, so a card's steps stay on one line down to a 360 px phone */
 @media (max-width: 375px) {
   .hlReviewCard { padding-inline: var(--space-4); }
-  .hlReviewActions { gap: var(--space-2); }
+  .hlReviewSteps { gap: var(--space-2); }
   .hlReviewActions .uiBtn.sm:not(.iconSq) { padding-inline: var(--space-3); }
 }
 
@@ -5746,6 +5778,10 @@ a.shareBrand:hover { background: var(--bg-hover); }
    as on the markup strip's highlighters. */
 .pdfCtlBox .stripInkBtn { position: relative; padding-bottom: 5px; }
 .pdfCtlBox .stripInkBtn .inkToolInk { left: 7px; right: 7px; bottom: 3px; height: 3px; }
+/* A highlight waiting to be moved (PdfViewer moveMode): the highlights let
+   the pointer through to the text under them, which the new place may
+   share with them (the highlight's own old place, a neighbour's). */
+.pdfViewer.pdfMoving .pdfPageWrap [data-hl-id] { pointer-events: none; }
 .pdfViewer.areaCursor .pdfPageWrap,
 .pdfViewer.areaCursor .textLayer,
 .pdfViewer.areaCursor .textLayer span {
