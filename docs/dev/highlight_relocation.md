@@ -996,7 +996,9 @@ click on a highlight) end each other (`startHighlightMove`,
 `startAttachMode`), so one banner shows and the PDF's next selection means
 one thing. The banner says what to do; the next
 selection on the PDF, text or an area drag (the area key,
-[hotkeys.md](hotkeys.md#held-keys)), shows the tip with one button, *Move
+[hotkeys.md](hotkeys.md#held-keys)), the highlights letting the pointer
+through meanwhile (`.pdfMoving`) so the text under them, the highlight's
+own included, can be selected, shows the tip with one button, *Move
 the highlight here* (`PlainTip`'s `onMove`), and translates nothing, even
 with translate on select on; an area drag sends no picture of the region
 to the chat either (`PdfViewer`'s `onAreaSelected` skips
