@@ -450,6 +450,55 @@ export async function pdfLoadScenarios({ server, browser, alice, makePdf, step, 
     }
   });
 
+  // The notes beside a paper keep their place too: its tab comes back to
+  // the row the reader had at the notes' top, as far into it, not to the
+  // first row (the paper's read-pos entry is its PDF page, so this place
+  // is the session's).
+  await step("pdf load: back to a paper's tab, its notes are where they were left, not at the first row", async () => {
+    const up = await account.upload("/api/uploads", makePdf([["Notes place page 1", "Lorem ipsum dolor sit amet"]]), "notes-place.pdf", "application/pdf");
+    const paper = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Notes place paper", source_url: up.source_url } });
+    for (let i = 1; i <= 40; i++) {
+      await account.api("/api/blocks", { method: "POST", body: { parent_id: paper.id, content: `Place note ${i}\n\nwith a second paragraph` } });
+    }
+    const other = await account.api("/api/pages", { method: "POST", body: { title: "Notes place other" } });
+    await account.api("/api/prefs/open-tabs", { method: "PUT", body: { value: [{ id: paper.id, title: "Notes place paper" }, { id: other.id, title: "Notes place other" }] } });
+    const c = await account.context(browser);
+    const p = await openPage(c, `${server.base}/?page=${paper.id}&ws=${account.ws}`);
+    const title = () => p.locator(".pageTitleRow .titleText").innerText();
+    const tab = (name) => p.locator(".tabStrip .tab:not([data-leaving])", { hasText: name });
+    // the row at the notes' top, and how far it starts above it
+    const topRow = () => p.locator(".sidebar .blockList").evaluate((list) => {
+      const top = list.getBoundingClientRect().top;
+      for (const row of list.querySelectorAll(".blockRowWrap[data-block-id]")) {
+        const r = row.getBoundingClientRect();
+        if (r.bottom > top + 4) return { text: row.innerText.match(/Place note \d+/)?.[0], offset: Math.round(top - r.top), scrolled: list.scrollTop };
+      }
+      return null;
+    });
+    try {
+      await p.locator(".blockRowWrap", { hasText: "Place note 40" }).waitFor();
+      await p.locator(".sidebar .blockList").evaluate((list) => {
+        const row = [...list.querySelectorAll(".blockRowWrap[data-block-id]")].find((r) => /Place note 25\b/.test(r.innerText));
+        list.scrollTop += row.getBoundingClientRect().top - list.getBoundingClientRect().top + 10;
+      });
+      const left = await topRow();
+      assert(left.text === "Place note 25", `the notes scrolled to the 25th note: ${left.text}`);
+      for (const round of [1, 2]) {
+        await tab("Notes place other").click();
+        await until(async () => (await title()) === "Notes place other", { what: "the other page open" });
+        await tab("Notes place paper").click();
+        await until(async () => (await title()) === "Notes place paper", { what: "the paper back" });
+        await p.locator(".blockRowWrap", { hasText: "Place note 40" }).waitFor();
+        await p.waitForTimeout(300);
+        const back = await topRow();
+        assert(back.text === left.text, `round ${round}: the same row at the notes' top: ${back.text}`);
+        assert(Math.abs(back.offset - left.offset) <= 2, `round ${round}: as far into it (${back.offset} vs ${left.offset})`);
+      }
+      assert(await p.locator(".blockRow.landed").count() === 0, "no landing flash");
+      assertNoProblems(p);
+    } finally { await c.close(); }
+  });
+
   // Each tab brings its zoom with its url, so the paper leaving is laid
   // out at the next one's zoom in the commit that takes it off screen: what
   // it keeps must be the pages the reader saw, not the ones under its

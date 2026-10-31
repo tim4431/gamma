@@ -1012,6 +1012,21 @@ own controls.
   `selectionchange` timer (350 ms) of a touch selection survives. The tip
   is placed on the screen, so a scroll of the pages closes it; a touch
   scroll sends no `mousedown`.
+- **When the tip shows.** A mouse selection released by its text waits
+  for the mouse to move on (`MOVE_TO_SHOW`, 3 px, `pdf/selectionTip.js`),
+  then opens where it was released: a double or triple click never has it
+  jump between presses. A press, or a scroll in between, drops the wait.
+  A finger's, a pen's or a script's selection (a release far from the
+  text) has it at once; an area drag too, its box drawn under it. The text
+  highlighter's bar over the highlight it made waits the same way.
+- **Move mode.** While a highlight waits for its new place (App's
+  `moveHighlightId`), `.pdfMoving` lets the pointer through every
+  highlight (app.css), so a drag over highlighted text selects it.
+- **Tabs.** A page's notes keep their place for the session: leaving a
+  page records the row at the notes' top and how far into it they were
+  scrolled (App's `notesPlaceRef`, `captureScrollPos`), and its tab lands
+  there again, without the landing's flash. A text-only page also syncs
+  that row in `read-pos` (`{page: 0, block}`), what a reload lands on.
 
 ### Adding a control
 

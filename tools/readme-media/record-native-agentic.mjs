@@ -247,6 +247,7 @@ try {
   await page.mouse.down();
   for (let i = 1; i <= 24; i++) await page.mouse.move(geo.start[0] + (geo.end[0] - geo.start[0]) * i / 24, geo.start[1] + (geo.end[1] - geo.start[1]) * i / 24);
   await page.mouse.up();
+  await page.mouse.move(geo.end[0] + 6, geo.end[1] + 8, { steps: 2 }); // the popup opens as the mouse moves on
   const selected = (await page.evaluate(() => String(window.getSelection() || ''))).replace(/\s+/g, ' ').trim();
   await page.evaluate(() => document.querySelector('style[data-na-drag]')?.remove());
   if (!CLAUSE_RE.test(selected)) throw new Error(`The drag selected ${JSON.stringify(selected)}`);

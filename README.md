@@ -7,9 +7,9 @@
 [![Release](https://img.shields.io/github/v/release/tim4431/Gamma?filter=v%2A&style=flat&label=release&color=2563eb)](https://github.com/tim4431/Gamma/releases/latest)
 [![GitHub stars](https://img.shields.io/github/stars/tim4431/Gamma?style=flat&logo=github&color=eab308)](https://github.com/tim4431/Gamma/stargazers)
 [![GitHub forks](https://img.shields.io/github/forks/tim4431/Gamma?style=flat&logo=github&color=8b5cf6)](https://github.com/tim4431/Gamma/forks)
-[![iPad app on TestFlight](https://img.shields.io/badge/iPad-TestFlight%20beta-0D96F6?style=flat&logo=apple&logoColor=white)](https://testflight.apple.com/join/nTmSHDx6)
 
 <a href="https://apps.microsoft.com/detail/9N8WGWR2J2MV"><img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Download Gamma from the Microsoft Store" width="240"></a>
+<a href="https://testflight.apple.com/join/nTmSHDx6"><img src="./docs/assets/badges/testflight-ipad.svg" alt="Get the Gamma iPad app beta on TestFlight" width="240"></a>
 <a href="https://chromewebstore.google.com/detail/gamma-connector/njpeklephhndnpakmlaancinpnabcomn"><img src="./docs/assets/badges/chrome-web-store.png" alt="Get the Gamma Connector browser extension from the Chrome Web Store" width="218"></a>
 
 **[Install](#install)** · **[User guide](./docs/user_guide/user_guide.md)** · [Try the demo](https://demo.gammapdf.com) · [Website](https://gammapdf.com) · [Releases](https://github.com/tim4431/Gamma/releases)
