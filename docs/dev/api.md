@@ -309,7 +309,8 @@ URL alone) its rectangles were measured on, written by the replacement when
 that is no longer the page's PDF; a position without it was measured on the
 page's current PDF, which is what the viewer, the imports and a move by
 hand write. `lost: true` marks one whose text the run did not find in the
-new file (drawn hollow where it was; it keeps its `doc_id`). `approx: true`
+new file (drawn hollow where it was; it keeps its `doc_id`, the file its
+rectangles are from). `approx: true`
 marks one drawn dashed, pending until the person accepts it or moves it:
 placed where its text was found roughly, with `match`, how alike the two
 read (0 to 1, two decimals, at most 0.99), or, without `match`, an area
@@ -332,10 +333,13 @@ it read (two decimals, at most 0.99) and its text as that file spells it
 Use closest match writes that place and quote, without `lost`, `closest`,
 `doc_id` or the rest. A move by hand writes a position without any of
 these; a run writes a placed one without `doc_id`, `lost` and `closest`,
-replaces or removes a lost one's `closest` by what it found, leaves a
-pending one pending with its own `match` and `prev`, and writes one it
-places solid without `approx`, `match` or `prev`
-([highlight_relocation.md](highlight_relocation.md#what-a-run-writes)); a
+replaces or removes a lost one's `closest` by what it found, matches a
+pending one from its `prev` (its reference: the last place someone
+confirmed), placing it dashed again with that `prev` and a `match` against
+it, solid without `approx`, `match` or `prev` when found exactly, or lost
+at `prev`'s place (its page, rectangles, `doc_id` and quote, `prev` gone),
+and writes one it places solid without `approx`, `match` or `prev`
+([highlight_relocation.md](highlight_relocation.md#the-reference)); a
 replacement of the PDF drops every `closest`, a place in the outgoing file.
 A backup's restore keeps them all (`prev` and `closest` only in their own
 form). A reader

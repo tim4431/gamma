@@ -22,10 +22,10 @@ every placed highlight that has none, in the transaction that changes the
 attachment, so a run that never wrote (stopped, failed, refused) leaves
 each highlight still pointing at the file its rectangles belong to. The
 run writes moved and approx positions without it; a highlight it marks
-lost keeps it, and so does an area nothing placed, so a later run still
-reads that highlight from its own file. A text highlight read from the
-page's current file whose quote is the text under it is where it belongs,
-kept without a search.
+lost keeps its reference's, and so does an area nothing placed, so a
+later run still reads that highlight from its own file. A text highlight
+read from the page's current file whose quote is the text under it is
+where it belongs, kept without a search.
 
 A page's text, in both files, is MuPDF's lines joined with a space and
 folded (dashes, quotes, ligatures, case), a word hyphenated at a line's
@@ -68,14 +68,27 @@ image data in the new file), else it rides along with the page's other
 highlights when they all moved the same way (``approx``), else it stays,
 marked ``approx`` when it was measured on another file. A dashed
 placement keeps where the highlight was before (``prev``: the file, page,
-rectangles and quote) for the person to compare, and stays dashed through
-later runs until the person accepts it or moves it. A highlight whose
-text is nowhere, or only in places too unlike it, keeps its old
-rectangles and is marked ``lost`` for the viewer to show hollow, until
-the person moves it or a later run finds it; a text highlight's best
-place under the threshold, when it reads at least ``CLOSEST_MIN`` like
-it, rides along as its ``closest`` (its place in the new file, its
-confidence and its text) for the person to look at and take.
+rectangles and quote) for the person to compare. A highlight whose text
+is nowhere, or only in places too unlike it, is marked ``lost`` for the
+viewer to show hollow where it was, until the person moves it or a later
+run finds it; a text highlight's best place under the threshold, when it
+reads at least ``CLOSEST_MIN`` like it, rides along as its ``closest``
+(its place in the new file, its confidence and its text) for the person
+to look at and take.
+
+Each highlight is matched from its reference: the last place someone
+confirmed, in the file it was confirmed on. That is its own position for
+a solid highlight (placed by an exact match, accepted, moved by hand, put
+on its closest match) and for a lost one (its rectangles, ``doc_id`` and
+quote are the place it was confirmed at), and its ``prev`` for a dashed
+one, whose own place is a guess nobody approved. So a paper replaced
+twice while a rough match waits is matched from the first file again,
+not from the second file's guess: found exactly there, it is solid; found
+roughly, dashed with its ``prev`` as it was; not found, hollow at the
+reference place (its rectangles, ``doc_id`` and quote), no ``prev`` any
+more. Accepting it, moving it by hand or an exact match writes a position
+without ``prev``, which makes that place the next reference. Highlights
+on one page may have different references.
 
 The matching is pure Python and holds the GIL, so it naps for a moment
 every few milliseconds (``_breathe``) and the server's requests go on
@@ -103,13 +116,14 @@ from statistics import median
 from typing import NamedTuple
 
 from . import highlights as shape
+from . import upload_gc
 from .blocks_store import attachment_file, load_json, page_attachment, write_lock
 from .db import connect_pages_db, safe_doc_id
 from .logbuf import log
 from .ops import MAX_OPS, after_commits, apply_batches
 from .pdf_export import display_size, pdf_point_to_viewer, viewer_rect_to_pdf
 from .pdf_text import MAX_PAGES, GlyphPages, covers, has_box
-from .storage import find_upload_file
+from .storage import find_upload_file, upload_refs
 
 CONTEXT_CHARS = 40        # of text before and after a passage, kept from the old file to tell places apart
 CONTEXT_WEIGHT = 0.2      # what the context fit (0..1) adds to a place's confidence when places are ranked
@@ -1247,11 +1261,13 @@ def _pieces(page: PageText, stretches: list) -> list[Piece]:
     return out
 
 
-def _old_passage(src, pos: dict, quote: str = ""):
+def _old_passage(src, pos: dict, quote: str = "", spell: bool = False):
     """What ``src`` (the ``Doc`` the highlight's rectangles were measured
     on, or None) reads under a highlight: ``(needle, (before, after),
     anchor, pieces)``, or None when there is no such file or no text under
-    the rectangles.
+    the rectangles. With ``spell``, a text highlight's needle is as the
+    file spells it (``_joined``), for a quote to write rather than a
+    passage to look for.
 
     A text highlight's needle is the text of the glyphs it covers alone,
     their stretches joined as a selection reads (``_joined``): a margin
@@ -1289,7 +1305,7 @@ def _old_passage(src, pos: dict, quote: str = ""):
     s, e = stretches[0][0], stretches[-1][1]
     context = (page.text[max(0, s - CONTEXT_CHARS):s], page.text[e:e + CONTEXT_CHARS])
     if not pos.get("area"):
-        return _joined(page, stretches), context, None, _pieces(page, stretches)
+        return _joined(page, stretches, spell), context, None, _pieces(page, stretches)
     if e - s > 2 * len(covered) + 10:
         return _joined(page, stretches), context, _norm_box(_bounds([page.box(gi) for gi in covered]), frame), ()
     return page.text[s:e], context, _norm_box(_bounds(rects_for_span(page, s, e)), frame), ()
@@ -1357,82 +1373,135 @@ def _agrees(needle: str, quote: str) -> bool:
     return _similar(needle, quote) >= QUOTE_AGREES
 
 
+FLAGS = ("doc_id", "lost", "approx", "match", "prev", "closest")  # what a run writes on a position beside its place
+
+
+def _bare(pos: dict) -> dict:
+    """A position's place alone: its page, frame, rectangles and ``area``,
+    without what a run writes on it (``FLAGS``)."""
+    return {k: v for k, v in pos.items() if k not in FLAGS}
+
+
+def reference_place(pos: dict, prev: dict, size=None) -> dict:
+    """A pending highlight's reference, its ``prev`` (``highlights.valid_prev``,
+    at least one rectangle), as a position: on prev's page, in a frame of
+    ``size`` (the page of prev's file as shown; else ``pos``'s own frame,
+    which does as well: the rectangles are fractions of the page), its
+    ``area`` as ``pos`` has it, and the file prev names as its ``doc_id``."""
+    w, h = size or _size(pos)
+    rects = [(round(r[0] * w, 2), round(r[1] * h, 2), round(r[2] * w, 2), round(r[3] * h, 2)) for r in prev["rects"]]
+    return {**shape.position(prev["pageNumber"], w, h, rects, area=bool(pos.get("area"))), "doc_id": prev["doc_id"]}
+
+
+class _Seen(NamedTuple):
+    """A highlight as a run reads it (``place_all``)."""
+    bid: str
+    props: dict
+    pos: dict           # its stored position
+    prev: dict | None   # where it was confirmed last, when it is pending (``approx``) and keeps one
+    ref: dict           # the position it is matched from: prev's place, else its own
+    at_ref: bool        # whether ``ref`` is prev's place, where it goes back to when nothing places it
+    src: object         # the Doc ``ref``'s rectangles were measured on; None when that file is not stored
+    src_id: str         # that file's id, stored or not
+    group: tuple        # (that file, None for ``new``; ref's page): whose shifts an area rides along with
+    read: str           # the reference's quote, folded, to read under the rectangles ("": not known whole)
+    needle: str         # ...and to look for when nothing is read under them
+    restore: str        # the reference's quote, written when the highlight goes back to its place ("": none)
+    before: str         # its quote, for a prev of its own (one without)
+    estimated: bool     # an area placed by estimate: only a person confirms it
+
+
 def place_all(new, items: list[tuple[str, dict]], progress=None, *, read_from=None, new_doc: str = "",
               min_match: float | None = None, exact_chars: int | None = None) -> dict:
     """Each highlight's place in ``new`` (a ``Doc``, the page's PDF now, the
     stored file ``new_doc``): ``{"ops": {id: patch}, "kinds": {id: kind},
     "highlights", "moved", "kept", "approx", "lost"}``. A patch is the
     properties to write on a highlight: its ``pdf_position``, and its
-    ``quote`` as the new file spells it when the passage was found roughly
-    or the highlight now covers only the part of it on one side of a page
-    break. ``kinds`` says which of the four counts each highlight went to,
-    by how the run leaves it: ``moved`` (solid, in a new place), ``kept``
-    (solid, where it was), ``approx`` (dashed: a rough match, or an area
-    placed by estimate) or ``lost`` (not found, hollow). ``min_match`` and
-    ``exact_chars`` are ``find_passage``'s thresholds.
+    ``quote`` as the new file spells it when the passage was found roughly,
+    found from a reference other than its own place, found again after it
+    was lost, or the highlight now covers only the part of it on one side
+    of a page break. ``kinds`` says
+    which of the four counts each highlight went to, by how the run leaves
+    it: ``moved`` (solid, in a new place), ``kept`` (solid, where it was),
+    ``approx`` (dashed: a rough match, or an area placed by estimate) or
+    ``lost`` (not found, hollow). ``min_match`` and ``exact_chars`` are
+    ``find_passage``'s thresholds.
+
+    Each highlight is matched from its reference, the last place someone
+    confirmed: for a pending one (``approx``: dashed, no person has
+    accepted it, also one a run left lost since) that keeps a ``prev``
+    (``highlights.valid_prev``), that prev, the file, page, rectangles and
+    quote it had before the run that first drew it dashed; for every other
+    its own position. The reference is read (its passage, context, anchor
+    and picture) from the file its rectangles were measured on: prev's
+    file, or the one the position's ``doc_id`` names, as ``read_from(doc_id)``
+    gives it (a ``Doc``, or None for a file not stored; without
+    ``read_from`` none is; ``new`` itself for ``new_doc``), else ``new``.
+    A text highlight read from ``new`` whose quote agrees with the text
+    under its rectangles is where it belongs and is placed there without a
+    search. A lost highlight without ``doc_id`` was not found in the file
+    it was measured on, so only its quote is looked for, as for a text
+    highlight whose quote is not the text under its rectangles, and as for
+    a pending one whose prev's file is not stored (prev's quote; a prev's
+    quote clipped to ``PREV_MAX_QUOTE`` is not read under the rectangles,
+    being perhaps only the start of the passage). Among several places for
+    a passage, the nearest is measured from the centre of the reference's
+    rectangles to the centre of the candidate's glyphs, each as fractions
+    of its own page.
 
     A placement by an exact match (``find_passage``'s confidence 1.0) is
-    solid: its position carries no ``approx``, ``match`` or ``prev``, and
-    stale ones from an earlier run are dropped. One by a rough match is
-    dashed, ``approx`` with ``match``, the confidence rounded to two
-    decimals (at most 0.99: 1.0 is an exact match's), also when it lands
-    where the highlight was (a sentence reworded in place). An area takes
-    the rule of the match of the text inside it, is solid when its picture
-    placed it, and is ``approx`` without ``match`` when an estimate did.
-    Every placement drawn dashed also carries ``prev``
-    (``highlights.previous_place``), where the highlight was before for the
+    solid: its position carries no ``approx``, ``match`` or ``prev``, so a
+    pending highlight found exactly is resolved, its quote as the new file
+    spells it. One by a rough match is dashed, ``approx`` with ``match``,
+    the confidence against the reference rounded to two decimals (at most
+    0.99: 1.0 is an exact match's), also when it lands where the highlight
+    was (a sentence reworded in place). An area takes the rule of the
+    match of the text inside it, is solid when its picture placed it, and
+    is ``approx`` without ``match`` when an estimate did. Every placement
+    drawn dashed also carries ``prev``: a pending highlight's own, as it
+    was, else where it was before (``highlights.previous_place``), for the
     person to compare: the file it was read from (its ``doc_id``, else
     ``new_doc``; written even when that file is no longer stored), its page
     and rectangles there, and its quote before the run respelled it (""
-    for an area).
+    for an area). A position written in a new place names no file; one
+    where it was is written only to drop its ``doc_id``, a stale ``match``
+    or ``prev``, or a flag the outcome changed, or to respell its quote.
 
-    A highlight pending when the run starts (``approx``: dashed, and no
-    person has accepted it) stays pending whatever the run finds, an exact
-    copy included, with its ``match`` and its ``prev`` as they are (one
-    placed anew without a ``prev`` gets one): only the person resolves it,
-    by accepting it or moving it by hand, either of which writes a position
-    without them. A position written in a new place names no file, except
-    an area nothing placed (below); a lost one is the old one marked
-    ``lost`` (its ``doc_id`` kept, no ``prev`` added), with, for a text
-    highlight whose best candidate read under the threshold but at least
-    ``CLOSEST_MIN`` alike, that candidate as its ``closest``
-    (``highlights.valid_closest``: its position in ``new`` as a placement's
-    is built, its confidence to two decimals and at most 0.99, its text as
-    the file spells it), and written again only when that changes (another
-    candidate, or none any more); one where it was is written only to drop
-    its ``doc_id`` or, unless it is pending, a stale ``match`` or ``prev``,
-    or to respell its quote. A highlight placed carries no ``closest``.
+    A text highlight not found is lost: a pending one at its reference
+    (prev's page and rectangles, prev's file as its ``doc_id``, prev's
+    quote as its quote, or, that clipped, the text under prev's rectangles
+    as prev's file spells it, the quote kept when that file is not stored;
+    no ``prev`` any more: the position is the reference), any other the
+    old position marked ``lost``
+    (its ``doc_id`` kept); with, when its best candidate read under the
+    threshold but at least ``CLOSEST_MIN`` alike, that candidate as its
+    ``closest`` (``highlights.valid_closest``: its position in ``new`` as a
+    placement's is built, its confidence to two decimals and at most 0.99,
+    its text as the file spells it), and written again only when that
+    changes. A highlight placed carries no ``closest``.
 
-    Each highlight is read (its passage, context, anchor and picture) from
-    the file its rectangles were measured on: the one its position's
-    ``doc_id`` names, as ``read_from(doc_id)`` gives it (a ``Doc``, or None
-    for a file not stored; without ``read_from`` none is), else ``new``
-    itself. A text highlight read from ``new`` whose quote agrees with the
-    text under its rectangles is where it belongs and is kept without a
-    search. A lost highlight without ``doc_id`` was not found in the file
-    it was measured on, so only its quote is looked for, as for a text
-    highlight whose quote is not the text under its rectangles. Among
-    several places for a passage, the nearest is measured from the centre
-    of the highlight's old rectangles to the centre of the candidate's
-    glyphs, each as fractions of its own page.
+    An area that nothing inside its reference places rides along with the
+    highlights placed from the same page of the same file, a kept one
+    counting as no shift: when they all landed on one page and their
+    shifts agree within ``RIDE_SPREAD``, it moves by their median shift
+    (``approx``), unless that would carry it off the page; when they all
+    stayed, so does it. A pending one that does not ride along from its
+    reference rides along from where it is now, with the highlights placed
+    from that file's page (an estimate, never confirmed by its neighbours
+    staying). Otherwise nothing placed it: one read from ``new`` is where it
+    was made and is kept; a pending one stays as it is when its rectangles
+    are ``new``'s, else goes back to its reference, ``approx`` with its
+    ``prev``; any other measured on another file keeps its rectangles and
+    its ``doc_id``, still that file's measurement, and is marked ``approx``
+    without ``match``, its ``prev`` those same rectangles (written once),
+    for the person to check. An area placed by estimate (``approx`` without
+    ``match``) stays one until a person accepts it, also when the text or
+    picture under its box places it or its neighbours all stay at its
+    reference (there, still ``approx`` with its ``prev``).
 
-    An area that nothing inside it places rides along with the highlights
-    placed from its page of the same file, a kept one counting as no
-    shift: when they all landed on one page and their shifts agree within
-    ``RIDE_SPREAD``, it moves by their median shift (``approx``), unless
-    that would carry it off the page. Otherwise nothing placed it: one
-    read from ``new`` is where it was made and is kept; one measured on
-    another file keeps its rectangles and its ``doc_id``, still that
-    file's measurement, and is marked ``approx`` without ``match``, its
-    ``prev`` those same rectangles (written once), for the person to check;
-    a pending one is left as it is. An area placed by estimate (``approx``
-    without ``match``) stays one through later runs, also when the text or
-    picture under its box places it: that is only what the estimate
-    happened to cover.
-
-    ``progress`` gets a report per page read and per highlight, and is
-    called bare (no counts: a place to stop) once per page the slower
-    searches cover."""
+    A run over the file it already ran on writes nothing. ``progress`` gets
+    a report per page read and per highlight, and is called bare (no
+    counts: a place to stop) once per page the slower searches cover."""
     texts = new.all_texts(progress)
     if not any(page.text for page in texts.values()):
         raise ValueError("the new PDF has no text layer to find the highlights in")
@@ -1442,10 +1511,49 @@ def place_all(new, items: list[tuple[str, dict]], progress=None, *, read_from=No
     shifts: dict = {}
     pending_areas = []    # area highlights nothing anchored
 
-    def source(pos: dict):
-        if pos.get("doc_id"):
-            return read_from(pos["doc_id"]) if read_from else None
-        return None if pos.get("lost") else new
+    def source(doc_id, lost=False):
+        """The ``Doc`` rectangles measured on the file ``doc_id`` are read
+        from (None: not stored); without one, ``new``, unless they are a
+        lost highlight's, not found in the file they were measured on."""
+        if doc_id:
+            if doc_id == new_doc:
+                return new
+            return read_from(doc_id) if read_from else None
+        return None if lost else new
+
+    def on_new(pos: dict) -> bool:
+        """Whether ``pos``'s rectangles are the new file's (``source`` without opening a file)."""
+        return not pos.get("lost") and (not pos.get("doc_id") or pos["doc_id"] == new_doc)
+
+    def seen(bid: str, props: dict) -> _Seen:
+        pos = props["pdf_position"]
+        area = bool(pos.get("area"))
+        estimated = area and bool(pos.get("approx")) and "match" not in pos
+        prev = shape.valid_prev(pos.get("prev")) if pos.get("approx") else None
+        if prev is None:
+            src = source(pos.get("doc_id"), pos.get("lost"))
+            quote = normalize_quote(props.get("quote") or "")
+            before = "" if area or not isinstance(props.get("quote"), str) else props["quote"]
+            return _Seen(bid, props, pos, None, pos, False, src, pos.get("doc_id") or new_doc,
+                         (None if src is new else pos.get("doc_id"), pos["pageNumber"]), quote, quote, "", before,
+                         estimated)
+        src = source(prev["doc_id"])
+        if prev["rects"]:
+            size = None
+            if src is not None and 1 <= prev["pageNumber"] <= src.count:
+                w, h = display_size(*src.frame(prev["pageNumber"]))
+                size = (round(w, 2), round(h, 2))
+            ref, at_ref = reference_place(pos, prev, size), True
+            if src is new:
+                ref.pop("doc_id")
+        else:  # a prev without rectangles (a position that had no frame): its quote alone, near where it is
+            ref, at_ref, src = _bare(pos), False, None
+        quote = "" if area else prev["quote"]
+        whole = len(quote) < shape.PREV_MAX_QUOTE
+        return _Seen(bid, props, pos, prev, ref, at_ref, src, prev["doc_id"],
+                     (None if src is new else prev["doc_id"], ref["pageNumber"]),
+                     normalize_quote(quote) if whole else "", normalize_quote(quote), quote if whole else "", "",
+                     estimated)
 
     def near_to(pos: dict):
         target = _center(_norm_rect(pos["boundingRect"], _size(pos)))
@@ -1481,106 +1589,126 @@ def place_all(new, items: list[tuple[str, dict]], progress=None, *, read_from=No
         drop = ("closest",) if pos.get("approx") else ("match", "prev", "closest")
         return {k: v for k, v in pos.items() if k not in drop}
 
-    def keep(bid: str, pos: dict, quote: str = ""):
-        """Where it was: written only to drop its ``doc_id`` (its rects are
-        this file's) and a stale ``match`` or ``prev``, or to respell its
-        quote."""
-        kept = {k: v for k, v in unflagged(pos).items() if k != "doc_id"}
-        patch = {"pdf_position": kept} if kept != pos else {}
-        if quote:
+    def write(h: _Seen, target: dict, quote: str = ""):
+        """Write ``target`` as the highlight's position when it is not that
+        already, and ``quote`` as its quote when it is not that already."""
+        patch = {"pdf_position": target} if target != h.pos else {}
+        if quote and quote != h.props.get("quote"):
             patch["quote"] = quote
         if patch:
-            ops[bid] = patch
-        kinds[bid] = "approx" if kept.get("approx") else "kept"
+            ops[h.bid] = patch
 
-    def flagged(pos: dict, new_pos: dict, src_id: str, before: str, match: float, estimate: bool) -> dict:
-        """``new_pos`` with the flags the run leaves on it: none for an
-        exact match, ``approx`` (with ``match`` for a rough one) and ``prev``
-        for a rough match or an estimate; a pending highlight's own."""
-        out = {k: v for k, v in new_pos.items() if k not in ("approx", "match", "prev")}
-        rough = None if estimate or match >= 1.0 else min(round(match, 2), 0.99)
-        if pos.get("approx"):  # pending: only the person resolves it
-            out["approx"] = True
-            if "match" in pos:
-                out["match"] = pos["match"]
-            elif rough is not None:
-                out["match"] = rough
-            out["prev"] = shape.valid_prev(pos.get("prev")) or shape.previous_place(pos, src_id, before)
-        elif estimate or rough is not None:
-            out["approx"] = True
-            if rough is not None:
-                out["match"] = rough
-            out["prev"] = shape.previous_place(pos, src_id, before)
-        return out
+    def place(h: _Seen, new_pos: dict, *, match: float = 1.0, estimate: bool = False, quote: str = ""):
+        """The highlight placed at ``new_pos`` by a match of confidence
+        ``match`` or an ``estimate``, ``quote`` its new spelling: solid for
+        an exact match, else ``approx`` (with ``match`` for a rough one) and
+        a ``prev``, its own as it was or where it was before. Where it was,
+        its stored rectangles stay unless a rough match on a highlight not
+        pending moved them."""
+        pos = h.pos
+        exact = not estimate and match >= 1.0
+        same = _same_place(pos, new_pos)
+        target = _bare(pos) if same and (estimate or exact or pos.get("approx")) else _bare(new_pos)
+        if not exact:
+            target["approx"] = True
+            if not estimate:
+                target["match"] = min(round(match, 2), 0.99)
+            target["prev"] = h.prev or shape.previous_place(h.ref, h.src_id, h.before)
+        kinds[h.bid] = "approx" if not exact else "kept" if same else "moved"
+        write(h, target, quote)
 
-    def settle(bid: str, pos: dict, new_pos, group, src_id: str, *, match: float = 1.0,
-               estimate: bool = False, quote: str = "", before: str = "", closest: dict | None = None):
+    def settle(h: _Seen, new_pos, *, match: float = 1.0, estimate: bool = False, quote: str = "",
+               closest: dict | None = None):
         """Write what the run found for a highlight: ``new_pos`` (None: not
         found, ``closest`` the best place it found under the threshold, or
         None), by a match of confidence ``match`` or an ``estimate``,
-        ``quote`` its new spelling; ``src_id`` names the file its old
-        rectangles were measured on, ``before`` its quote before the run
-        (``flagged``)."""
+        ``quote`` its new spelling (``place``); a shift from its reference
+        to a place found counts for the areas riding along."""
         if new_pos is None:
-            kinds[bid] = "lost"
-            if not pos.get("lost") or pos.get("closest") != closest:
-                lost = {**unflagged(pos), "lost": True}
-                ops[bid] = {"pdf_position": {**lost, "closest": closest} if closest else lost}
+            kinds[h.bid] = "lost"
+            if h.at_ref:  # back at its reference, which is its position now
+                target, quote = {**h.ref, "lost": True}, h.restore
+                if not quote and not h.ref.get("area"):
+                    # prev's quote was clipped: the reference's words are what its file reads under its rectangles
+                    under = _old_passage(h.src, h.ref, spell=True)
+                    quote = under[0] if under else ""
+            else:
+                target = {**unflagged(h.pos), "lost": True}
+            write(h, {**target, "closest": closest} if closest else target, quote)
             return
         # A box placed by what an estimate covered is still an estimate.
-        estimate = estimate or bool(pos.get("area") and pos.get("approx") and "match" not in pos)
-        same = _same_place(pos, new_pos)
+        estimate = estimate or h.estimated
         if not estimate:
-            ca = _center(_norm_rect(pos["boundingRect"], _size(pos)))
+            ca = _center(_norm_rect(h.ref["boundingRect"], _size(h.ref)))
             cb = _center(_norm_rect(new_pos["boundingRect"], _size(new_pos)))
-            shift = (0.0, 0.0) if same else (cb[0] - ca[0], cb[1] - ca[1])
-            shifts.setdefault(group, []).append((new_pos["pageNumber"], shift))
-        if same and (estimate or match >= 1.0 or pos.get("approx")):
-            # Where it was: solid when found exactly; an estimate, or a pending highlight, keeps its flags.
-            keep(bid, pos, quote)
-            return
-        new_pos = flagged(pos, new_pos, src_id, before, match, estimate)
-        kinds[bid] = "approx" if new_pos.get("approx") else "moved"
-        ops[bid] = {"pdf_position": new_pos, **({"quote": quote} if quote else {})}
+            shift = (0.0, 0.0) if _same_place(h.ref, new_pos) else (cb[0] - ca[0], cb[1] - ca[1])
+            shifts.setdefault(h.group, []).append((new_pos["pageNumber"], shift))
+        place(h, new_pos, match=match, estimate=estimate, quote=quote)
 
-    def unplaced(bid: str, pos: dict, src, src_id: str):
-        if src is new:
-            keep(bid, pos)  # measured on this very file: where it was made
+    def ride(h: _Seen, at: dict, group, confirms: bool) -> bool:
+        """An area placed by the shift of the highlights placed from
+        ``group``, from its box ``at``; False when they do not agree on one
+        or it would carry the area off the page. When they all stayed it
+        stays: solid if that ``confirms`` it (unless an estimate), else as
+        it is, its rectangles now the new file's (no ``doc_id``)."""
+        moves = shifts.get(group) or []
+        pages_to = {p for p, _ in moves}
+        if len(pages_to) != 1:
+            return False
+        dxs, dys = [d[0] for _, d in moves], [d[1] for _, d in moves]
+        if max(dxs) - min(dxs) > RIDE_SPREAD or max(dys) - min(dys) > RIDE_SPREAD:
+            return False
+        to_page, dx, dy = pages_to.pop(), median(dxs), median(dys)
+        if to_page == at["pageNumber"] and abs(dx) <= SAME_PLACE and abs(dy) <= SAME_PLACE:
+            if confirms:  # its neighbours all stayed where they were: so does it (an estimate still one)
+                place(h, _bare(at), estimate=h.estimated)
+            else:
+                kinds[h.bid] = "approx"
+                write(h, {k: v for k, v in h.pos.items() if k != "doc_id"})
+            return True
+        box = _norm_rect(at["boundingRect"], _size(at))
+        shifted = (box[0] + dx, box[1] + dy, box[2] + dx, box[3] + dy)
+        if min(shifted) < -EDGE or max(shifted) > 1 + EDGE:
+            return False  # the shift would carry it off the page: a guess that far is no guess
+        place(h, _box_by_offsets(to_page, box, box, shifted, new.frame(to_page)), estimate=True)
+        return True
+
+    def unplaced(h: _Seen):
+        pos = h.pos
+        if h.src is new:
+            place(h, _bare(h.ref))  # measured on this very file: where it was made
             return
-        # Measured on another file: its rects and doc_id stay that file's, an estimate for the person to check
-        # (a pending one as it is).
-        kinds[bid] = "approx"
-        if not pos.get("approx"):
-            ops[bid] = {"pdf_position": {**unflagged(pos), "approx": True, "prev": shape.previous_place(pos, src_id)}}
+        kinds[h.bid] = "approx"
+        if h.prev is None:
+            # Measured on another file: its rects and doc_id stay that file's, an estimate for the person to check.
+            if not pos.get("approx"):
+                write(h, {**unflagged(pos), "approx": True, "prev": shape.previous_place(pos, h.src_id)})
+            return
+        if h.at_ref and not on_new(pos):
+            # Pending, its rects another file's: back at its reference, still to check.
+            write(h, {**h.ref, "approx": True, "prev": h.prev})
 
     for i, (bid, props) in enumerate(items):
         if progress:
             progress(done=i, total=len(items), unit="highlights", phase="matching")
         _breathe()
-        pos = props["pdf_position"]
-        area = bool(pos.get("area"))
-        src = source(pos)
-        src_id = pos.get("doc_id") or new_doc  # the file its rectangles were measured on, stored or not
-        group = (None if src is new else pos.get("doc_id"), pos["pageNumber"])
-        quote = normalize_quote(props.get("quote") or "")
-        before = "" if area or not isinstance(props.get("quote"), str) else props["quote"]
+        h = seen(bid, props)
+        ref, src = h.ref, h.src
+        area = bool(ref.get("area"))
         # (on the page's own file, what the rectangles read as they are says whether they are over their quote:
         # kept when they are, else the quote is looked for; read from another file, the quote's own copy there is
         # the passage when they read past it)
-        old = _old_passage(src, pos, "" if src is new else quote)
-        if old and quote and not area:
-            if not _agrees(old[0], quote):
+        old = _old_passage(src, ref, "" if src is new else h.read)
+        if old and h.read and not area:
+            if not _agrees(old[0], h.read):
                 old = None  # the rectangles do not belong to that file: the quote is looked for
             elif src is new:
-                # Measured on this very file and still over its quote: where it belongs, without a search
-                # (written only to drop a doc_id naming this file, or a lost mark and its closest place; a pending
-                # one stays pending).
-                settle(bid, pos, {k: v for k, v in pos.items() if k not in ("doc_id", "lost", "closest")}, group,
-                       src_id)
+                # Measured on this very file and still over its quote: where it belongs, without a search.
+                settle(h, _bare(ref), quote=h.restore)
                 continue
-        needle, context, anchor, pieces = old or (quote, None, None, ())
-        hint = min(max(pos["pageNumber"], 1), max(new.count, 1))
-        near = near_to(pos)
+        needle, context, anchor, pieces = old or (h.needle, None, None, ())
+        hint = min(max(ref["pageNumber"], 1), max(new.count, 1))
+        near = near_to(ref)
         if not area:
             match = find_passage(texts, needle, hint_page=hint, context=context, near=near, tick=progress,
                                  pieces=pieces, min_match=min_match, exact_chars=exact_chars, closest=CLOSEST_MIN)
@@ -1588,14 +1716,16 @@ def place_all(new, items: list[tuple[str, dict]], progress=None, *, read_from=No
             spans = _spans(match)
             boxes = _boxes(texts, match, spans)
             if not boxes:
-                settle(bid, pos, None, group, src_id, closest=closest_place(below))
+                settle(h, None, closest=closest_place(below))
                 continue
-            spelled = _spelled(texts[match.page], spans) if match.confidence < 1.0 or match.part else ""
-            settle(bid, pos, _position(match.page, new.frame(match.page), boxes), group, src_id,
-                   match=match.confidence, quote=spelled if spelled != props.get("quote") else "", before=before)
+            # (a lost one's quote may not be its reference's: the run that left it lost at its reference keeps
+            # the quote it had when prev's was clipped)
+            respell = match.confidence < 1.0 or match.part or h.prev is not None or bool(h.pos.get("lost"))
+            settle(h, _position(match.page, new.frame(match.page), boxes), match=match.confidence,
+                   quote=_spelled(texts[match.page], spans) if respell else "")
             continue
         # An area: the text inside it, else the picture under it, else later with its neighbours.
-        old_box = _norm_rect(pos["boundingRect"], _size(pos))
+        old_box = _norm_rect(ref["boundingRect"], _size(ref))
         if anchor is not None and len(needle) >= AREA_MIN_CHARS and len(needle.split()) >= AREA_MIN_WORDS:
             match = find_passage(texts, needle, hint_page=hint, context=context, near=near, tick=progress,
                                  min_match=min_match, exact_chars=exact_chars)
@@ -1603,38 +1733,24 @@ def place_all(new, items: list[tuple[str, dict]], progress=None, *, read_from=No
             boxes = rects_for_span(texts[match.page], match.start, match.end) if match and not match.part else []
             if boxes:
                 frame = new.frame(match.page)
-                settle(bid, pos, _box_by_offsets(match.page, old_box, anchor, _norm_box(_bounds(boxes), frame), frame),
-                       group, src_id, match=match.confidence)
+                settle(h, _box_by_offsets(match.page, old_box, anchor, _norm_box(_bounds(boxes), frame), frame),
+                       match=match.confidence)
                 continue
-        picture = _image_under(src, pos)
+        picture = _image_under(src, ref)
         where = _find_image(new, picture[0], hint, progress) if picture else None
         if where:
             found_page, new_img = where
-            settle(bid, pos, _box_by_offsets(found_page, old_box, picture[1], new_img, new.frame(found_page)), group,
-                   src_id)
+            settle(h, _box_by_offsets(found_page, old_box, picture[1], new_img, new.frame(found_page)))
             continue
-        pending_areas.append((bid, pos, old_box, src, group, src_id))
+        pending_areas.append(h)
 
-    for bid, pos, old_box, src, group, src_id in pending_areas:
-        moves = shifts.get(group) or []
-        pages_to = {p for p, _ in moves}
-        if len(pages_to) != 1:
-            unplaced(bid, pos, src, src_id)
+    for h in pending_areas:
+        if ride(h, h.ref, h.group, True):
             continue
-        dxs, dys = [d[0] for _, d in moves], [d[1] for _, d in moves]
-        if max(dxs) - min(dxs) > RIDE_SPREAD or max(dys) - min(dys) > RIDE_SPREAD:
-            unplaced(bid, pos, src, src_id)
+        stored = (None if on_new(h.pos) else h.pos.get("doc_id"), h.pos["pageNumber"])
+        if h.prev is not None and ride(h, h.pos, stored, False):
             continue
-        to_page, dx, dy = pages_to.pop(), median(dxs), median(dys)
-        if to_page == pos["pageNumber"] and abs(dx) <= SAME_PLACE and abs(dy) <= SAME_PLACE:
-            keep(bid, pos)  # its neighbours all stayed where they were: so does it
-            continue
-        shifted = (old_box[0] + dx, old_box[1] + dy, old_box[2] + dx, old_box[3] + dy)
-        if min(shifted) < -EDGE or max(shifted) > 1 + EDGE:
-            unplaced(bid, pos, src, src_id)  # the shift would carry it off the page: a guess that far is no guess
-            continue
-        settle(bid, pos, _box_by_offsets(to_page, old_box, old_box, shifted, new.frame(to_page)), group, src_id,
-               estimate=True)
+        unplaced(h)
     counts = Counter(kinds.values())
     return {"ops": ops, "kinds": kinds, "highlights": len(items),
             **{kind: counts[kind] for kind in ("moved", "kept", "lost", "approx")}}
@@ -1671,8 +1787,9 @@ def relocate(ws: str, page_id: str, new_doc: str, *, actor: str, progress=None, 
     ``min_match`` and ``exact_chars`` (``find_passage``; the run's owner's,
     ``thresholds``; ``ROUGH_APPLY`` and ``ROUGH_MIN_CHARS`` when not
     given). Each highlight is read
-    from the file its rectangles were measured on: the stored file its
-    position's ``doc_id`` names while it is stored (looked for among the
+    from its reference's file, the one its rectangles were measured on:
+    the stored file its position's ``doc_id`` (a pending one's
+    ``prev.doc_id``) names while it is stored (looked for among the
     workspace's uploads only, never fetched; each file opened once), else
     the new file; a highlight whose file is gone is placed by its quote.
     The new file is the stored ``<new_doc>.pdf``, or a URL-opened PDF
@@ -1686,7 +1803,7 @@ def relocate(ws: str, page_id: str, new_doc: str, *, actor: str, progress=None, 
     exact_chars}``, the five after the first adding up to it: ``moved``
     found exactly in a new place, ``kept`` found exactly where it was,
     ``approx`` drawn dashed (found roughly, or an area placed by
-    estimate, or pending already), ``lost`` not found, and ``changed``
+    estimate, or pending still), ``lost`` not found, and ``changed``
     left as a person changed it meanwhile (``place_all``); then the
     thresholds the run went by. ValueError when the new file is not
     stored or cannot be read, when it has no text layer, or from the
@@ -1747,7 +1864,11 @@ def _write(ws: str, page_id: str, new_doc: str, items: list[tuple[str, dict]], o
     changed since ``items`` were read (a person moved it meanwhile), is
     left out and its count in ``counts`` moves to ``changed``. The rest go
     as batches of at most ``MAX_OPS`` on the page, client ``relocate``,
-    committed together, then each batch's ``after_commit``."""
+    committed together, then each batch's ``after_commit``. The files the
+    written positions name (a ``prev``'s, a lost or unplaced one's
+    ``doc_id``: references) are claimed in the same transaction
+    (``upload_gc.claim``), so a build a sync replaced that is now a
+    highlight's reference loses the shorter life ``retain`` gave it."""
     def state(props: dict):
         return props.get("pdf_position"), props.get("quote")
 
@@ -1772,6 +1893,10 @@ def _write(ws: str, page_id: str, new_doc: str, items: list[tuple[str, dict]], o
                     counts["changed"] += 1
             batches = [(page_id, unchanged[i:i + MAX_OPS]) for i in range(0, len(unchanged), MAX_OPS)]
             results = apply_batches(conn, batches, actor=actor, client=CLIENT) if batches else []
+            # The files the written positions name are their references now (a prev's, a lost one's): kept as
+            # any file is once let go, not for the shorter life a sync gave the outgoing build
+            upload_gc.claim(conn, set().union(*(upload_refs("", {"pdf_position": op["props"]["pdf_position"]})
+                                                for op in unchanged if "pdf_position" in op["props"])))
             conn.commit()
         except BaseException:
             conn.rollback()

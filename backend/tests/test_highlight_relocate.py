@@ -15,7 +15,7 @@ from conftest import guest_name, workspace_of
 
 from gamma import highlight_relocate as hr
 from gamma import jobs, storage
-from gamma.highlights import from_scaled, previous_place
+from gamma.highlights import PREV_MAX_QUOTE, from_scaled, previous_place
 from gamma.pdf_text import GlyphPages, has_box
 
 W, H = 612, 792
@@ -602,58 +602,296 @@ def test_an_exact_placement_of_a_highlight_not_pending_is_solid_and_drops_a_stal
     assert placed["ops"]["hl"] == {"pdf_position": {**_position(1, rect), "doc_id": "v1", "lost": True}}
 
 
-def test_a_pending_highlight_stays_pending_with_its_first_prev_and_match_whatever_a_later_run_finds():
-    line = "In all but a few cases [25], however, such attention mechanisms are used"
-    v2_line = line.replace("[25]", "[27]")
-    v4_line = line.replace("[25]", "[29]")
-    v1 = _pdf([[(72, 100, "A first line"), (72, 114, line)]])
-    v2 = _pdf([[(72, 300, v2_line)]])
-    v3 = _pdf([[(72, 100, "A new front page")], [(72, 200, v2_line)]])  # v2's words exactly, elsewhere
-    v4 = _pdf([[(72, 500, v4_line)]])                                    # roughly again
-    v5 = _pdf([[(72, 100, "Nothing of the old text")]])
-    before = _position(1, _line_rect(72, 114, line))
+CITED = "Similar schemes were demonstrated with ions [{n}] and with superconducting circuits"
+CITE_A = "Trapped atoms in optical tweezers form arrays of qubits"
+CITE_C = "Gate fidelities above ninety nine percent were reported"
+ADDED = "A paragraph added in this revision of the paper"
+# v1's sentence, v2's rough match of it, and a v3 sentence that reads like v2's but too unlike v1's
+V3_LOOKS_LIKE_V2 = ["The spectrum shows a narrow doublet at the resonance frequency when the second probe beam is switched on",
+        "The spectra show a narrow doublet near the resonance frequency once the second probe beam is switched on",
+        "The spectra show a broad doublet near the resonance line once the second pump beam is turned on"]
+# v1's sentence, v2's rough match of it, and a v3 sentence that reads like v1's but too unlike v2's
+V3_LOOKS_LIKE_V1 = ["The spectrum shows a narrow doublet at the resonance frequency when the second probe beam is switched on",
+         "The spectra show a broad doublet near the resonance frequency when the second probe beam is switched on",
+         "The spectrum shows a narrow doublet at the resonance frequency once the third pump beam is turned on"]
 
-    def applied(item, placed):  # the run's write
-        return item[0], {**item[1], **placed["ops"].get(item[0], {})}
 
-    def stamped(item, doc_id):  # what a replacement writes before its run
-        return item[0], {**item[1], "pdf_position": {**item[1]["pdf_position"], "doc_id": doc_id}}
+def _cited(n, lower=False, tag=""):
+    """A page citing ``[n]`` on its second line, or on its third under an added one (``lower``)."""
+    lines = [(72, 100, CITE_A)] + ([(72, 114, ADDED), (72, 128, CITED.format(n=n)), (72, 142, CITE_C)] if lower
+                                   else [(72, 114, CITED.format(n=n)), (72, 128, CITE_C)])
+    return _pdf([lines + ([(72, 760, tag)] if tag else [])])
 
-    item = ("hl", {"pdf_position": {**before, "doc_id": "v1"}, "quote": line})
-    with hr.Doc(v1) as d1, hr.Doc(v2) as d2, hr.Doc(v3) as d3, hr.Doc(v4) as d4, hr.Doc(v5) as d5:
-        files = {"v1": d1, "v2": d2, "v3": d3}.get
-        first = hr.place_all(d2, [item], read_from=files, new_doc="v2")
-        assert first["kinds"] == {"hl": "approx"}
-        pending = first["ops"]["hl"]["pdf_position"]
-        prev, match = pending["prev"], pending["match"]
-        assert prev == _prev(before, "v1", line) and 0.9 <= match < 1
-        item = applied(item, first)
-        # Find highlights in this PDF again, on the file it was placed on: found where it is, nothing written
-        again = hr.place_all(d2, [item], read_from=files, new_doc="v2")
-        assert again["kinds"] == {"hl": "approx"} and again["ops"] == {}
-        # the next version prints v2's words exactly, elsewhere: moved there, and still pending as it was
-        item = stamped(item, "v2")
-        later = hr.place_all(d3, [item], read_from=files, new_doc="v3")
-        assert later["kinds"] == {"hl": "approx"}
-        assert later["ops"]["hl"] == {"pdf_position": {**_measured(v3, 2, v2_line), "approx": True, "match": match,
-                                                       "prev": prev}}
-        # found roughly again: still its first match and prev, the quote respelled
-        item = stamped(applied(item, later), "v3")
-        rough = hr.place_all(d4, [item], read_from=files, new_doc="v4")
-        assert rough["kinds"] == {"hl": "approx"} and rough["ops"]["hl"]["quote"] == v4_line
-        assert {k: rough["ops"]["hl"]["pdf_position"].get(k) for k in ("approx", "match", "prev", "doc_id")} == {
-            "approx": True, "match": match, "prev": prev, "doc_id": None}
-        # not found: lost, and still pending, so a later run that finds it keeps the same prev
-        gone = hr.place_all(d5, [item], read_from=files, new_doc="v5")
-        assert gone["kinds"] == {"hl": "lost"}
-        assert gone["ops"]["hl"] == {"pdf_position": {**item[1]["pdf_position"], "lost": True}}
-        assert gone["ops"]["hl"]["pdf_position"]["prev"] == prev
-    # pending from before prev was kept: placed anew, it gets one, its match as it was
+
+def _one(text):
+    return _pdf([[(24, 100, "Header line of the page"), (24, 114, text)]])
+
+
+def _applied(items, placed):  # the run's write
+    return [(bid, {**props, **placed["ops"].get(bid, {})}) for bid, props in items]
+
+
+def _stamped(items, doc_id):  # what a replacement writes before its run
+    return [(bid, {**props, "pdf_position": {**{k: v for k, v in props["pdf_position"].items() if k != "closest"},
+                                             "doc_id": props["pdf_position"].get("doc_id") or doc_id}})
+            for bid, props in items]
+
+
+def _twice(v1, v2, v3, items, *, stored=("v1", "v2"), v3_id="v3", **limits):
+    """``items``, measured on ``v1``, placed in ``v2`` (the file "v2") and
+    then, stamped as v2's, in ``v3`` (the file ``v3_id``) with only the
+    files ``stored`` to read from; and the run over v3 again:
+    ``(items after v2, the v3 run, items after it, the run again)``."""
+    with hr.Doc(v1) as d1, hr.Doc(v2) as d2, hr.Doc(v3) as d3:
+        first = hr.place_all(d2, items, read_from={"v1": d1}.get, new_doc="v2")
+        pending = _applied(items, first)
+        files = {k: d for k, d in (("v1", d1), ("v2", d2)) if k in stored}.get
+        third = hr.place_all(d3, _stamped(pending, "v2"), read_from=files, new_doc=v3_id, **limits)
+        after = _applied(_stamped(pending, "v2"), third)
+        again = hr.place_all(d3, after, read_from=files, new_doc=v3_id, **limits)
+    return pending, third, after, again
+
+
+def _cite_item():
+    q = CITED.format(n=3)
+    return [("hl", {"pdf_position": {**_position(1, _line_rect(72, 114, q)), "doc_id": "v1"}, "quote": q})]
+
+
+def _one_item(text):
+    return [("hl", {"pdf_position": {**_position(1, _line_rect(24, 114, text)), "doc_id": "v1"}, "quote": text})]
+
+
+def _at_reference(pending_pos, **flags):
+    """Where a pending highlight goes back to: its prev's place on the 612 × 792 page, naming prev's file."""
+    return {**hr.reference_place(pending_pos, pending_pos["prev"], (W, H)), **flags}
+
+
+def test_a_pending_highlight_is_matched_from_the_file_it_was_confirmed_on_not_from_its_rough_place():
+    v1, v2 = _cited(3), _cited(4)  # the citation renumbered: dashed on v2, pending
+    v1_line = CITED.format(n=3)
+    pending, third, after, again = _twice(v1, v2, _cited(5, lower=True), _cite_item())
+    first = pending[0][1]["pdf_position"]
+    assert first["approx"] is True and first["prev"] == _prev(_position(1, _line_rect(72, 114, v1_line)), "v1", v1_line)
+    # renumbered again, a line lower: dashed there, matched against v1's words, its prev still v1's place
+    assert third["kinds"] == {"hl": "approx"}
+    pos = third["ops"]["hl"]["pdf_position"]
+    assert pos == {**_measured(_cited(5, lower=True), 1, CITED.format(n=5)), "approx": True, "prev": first["prev"],
+                   "match": round(hr._similar(hr.normalize_quote(v1_line), hr.normalize_quote(CITED.format(n=5))), 2)}
+    assert third["ops"]["hl"]["quote"] == CITED.format(n=5)
+    assert again["ops"] == {}  # the same file again: nothing to write
+    # v1's words back, where v2 had its guess: solid, kept there, its quote v1's again
+    v3 = _cited(3, tag="v3")
+    _pending, third, after, again = _twice(v1, v2, v3, _cite_item())
+    assert third["kinds"] == {"hl": "kept"}
+    assert third["ops"]["hl"] == {"pdf_position": {k: v for k, v in first.items() if k not in ("approx", "match", "prev")},
+                                  "quote": v1_line}
+    assert again["kinds"] == {"hl": "kept"} and again["ops"] == {}
+    # ...and a line lower: solid, moved there
+    v3 = _cited(3, lower=True)
+    _pending, third, after, again = _twice(v1, v2, v3, _cite_item())
+    assert third["kinds"] == {"hl": "moved"}
+    assert third["ops"]["hl"] == {"pdf_position": _measured(v3, 1, v1_line), "quote": v1_line}
+    assert again["ops"] == {}
+    # the passage gone: hollow at v1's place, naming v1, its quote v1's, the pending flags and prev gone with it
+    _pending, third, after, again = _twice(v1, v2, _pdf([[(72, 100, CITE_A), (72, 128, CITE_C)]]), _cite_item())
+    assert third["kinds"] == {"hl": "lost"}
+    assert third["ops"]["hl"] == {"pdf_position": _at_reference(first, lost=True), "quote": v1_line}
+    assert third["ops"]["hl"]["pdf_position"]["rects"][0] == pytest.approx(_line_rect(72, 114, v1_line), abs=0.1)
+    assert third["ops"]["hl"]["pdf_position"]["doc_id"] == "v1"
+    assert again["kinds"] == {"hl": "lost"} and again["ops"] == {}  # read from v1 now, as any lost highlight is
+    # v3 is v1's own file again: where v1 had it, solid, without a search
+    _pending, third, after, again = _twice(v1, v2, v1, _cite_item(), v3_id="v1")
+    assert third["kinds"] == {"hl": "kept"} and third["ops"]["hl"]["quote"] == v1_line
+    assert not {"approx", "match", "prev", "doc_id", "lost"} & set(third["ops"]["hl"]["pdf_position"])
+    assert again["ops"] == {}
+
+
+def test_a_pending_highlight_is_not_put_on_text_that_reads_only_like_its_rough_place():
+    # v1's sentence is gone from v3, which has one like v2's guess: hollow at v1's place, not dashed on the look-alike
+    pending, third, after, again = _twice(_one(V3_LOOKS_LIKE_V2[0]), _one(V3_LOOKS_LIKE_V2[1]), _one(V3_LOOKS_LIKE_V2[2]), _one_item(V3_LOOKS_LIKE_V2[0]))
+    first = pending[0][1]["pdf_position"]
+    assert first["approx"] is True and hr._similar(hr.normalize_quote(V3_LOOKS_LIKE_V2[1]), hr.normalize_quote(V3_LOOKS_LIKE_V2[2])) >= hr.ROUGH_APPLY
+    assert third["kinds"] == {"hl": "lost"}
+    op = third["ops"]["hl"]
+    assert op["quote"] == V3_LOOKS_LIKE_V2[0]
+    assert {k: v for k, v in op["pdf_position"].items() if k != "closest"} == _at_reference(first, lost=True)
+    assert again["ops"] == {}
+    # v1's text changed further and v2's guess drifted from it: dashed on the sentence that reads like v1's
+    pending, third, after, again = _twice(_one(V3_LOOKS_LIKE_V1[0]), _one(V3_LOOKS_LIKE_V1[1]), _one(V3_LOOKS_LIKE_V1[2]), _one_item(V3_LOOKS_LIKE_V1[0]))
+    first = pending[0][1]["pdf_position"]
+    assert hr._similar(hr.normalize_quote(V3_LOOKS_LIKE_V1[1]), hr.normalize_quote(V3_LOOKS_LIKE_V1[2])) < hr.ROUGH_APPLY
+    assert third["kinds"] == {"hl": "approx"}
+    pos = third["ops"]["hl"]["pdf_position"]
+    assert pos == {**_measured(_one(V3_LOOKS_LIKE_V1[2]), 1, V3_LOOKS_LIKE_V1[2]), "approx": True, "prev": first["prev"],
+                   "match": round(hr._similar(hr.normalize_quote(V3_LOOKS_LIKE_V1[0]), hr.normalize_quote(V3_LOOKS_LIKE_V1[2])), 2)}
+    assert third["ops"]["hl"]["quote"] == V3_LOOKS_LIKE_V1[2]
+    assert again["ops"] == {}
+    # a stricter threshold on the same file: hollow at v1's place, the rough place offered as its closest match
+    with hr.Doc(_one(V3_LOOKS_LIKE_V1[0])) as d1, hr.Doc(_one(V3_LOOKS_LIKE_V1[2])) as d3:
+        strict = hr.place_all(d3, after, read_from={"v1": d1}.get, new_doc="v3", min_match=0.95)
+    lost = strict["ops"]["hl"]["pdf_position"]
+    assert strict["kinds"] == {"hl": "lost"} and lost["closest"]["match"] == pos["match"]
+    assert {k: v for k, v in lost.items() if k != "closest"} == _at_reference(first, lost=True)
+
+
+def test_a_pending_highlight_whose_first_file_is_gone_is_matched_by_its_prev_s_quote():
+    v1_line = CITED.format(n=3)
+    # renumbered again: found by v1's quote, dashed, near v1's place
+    pending, third, after, again = _twice(_cited(3), _cited(4), _cited(5, lower=True), _cite_item(), stored=("v2",))
+    first = pending[0][1]["pdf_position"]
+    assert third["kinds"] == {"hl": "approx"}
+    pos = third["ops"]["hl"]["pdf_position"]
+    assert pos["prev"] == first["prev"] and pos["match"] == round(hr._similar(
+        hr.normalize_quote(v1_line), hr.normalize_quote(CITED.format(n=5))), 2)
+    assert again["ops"] == {}
+    # v1's sentence gone: hollow at v1's place (prev's fractions in the frame the position has), naming v1
+    pending, third, after, again = _twice(_one(V3_LOOKS_LIKE_V2[0]), _one(V3_LOOKS_LIKE_V2[1]), _one(V3_LOOKS_LIKE_V2[2]), _one_item(V3_LOOKS_LIKE_V2[0]),
+                                          stored=("v2",))
+    first = pending[0][1]["pdf_position"]
+    assert third["kinds"] == {"hl": "lost"} and third["ops"]["hl"]["quote"] == V3_LOOKS_LIKE_V2[0]
+    assert {k: v for k, v in third["ops"]["hl"]["pdf_position"].items() if k != "closest"} == {
+        **hr.reference_place(first, first["prev"]), "lost": True}
+    assert again["ops"] == {}
+
+
+def test_a_long_pending_highlight_left_hollow_carries_its_first_file_s_words_and_gets_them_back_solid():
+    # a paragraph longer than a prev's quote keeps (PREV_MAX_QUOTE): its prev's quote is only its start
+    words = "alpha beta gamma delta epsilon zeta theta iota kappa lambda sigma omega".split()
+    lines = [" ".join(f"{words[(i + j) % len(words)]}{(7 * i + 3 * j) % 100}" for j in range(9)) for i in range(24)]
+    quote = " ".join(lines)
+    assert len(quote) > PREV_MAX_QUOTE
+
+    def version(rows, tag):
+        return _pdf([[(72, 60, "Header line of the page")] + [(72, 80 + 14 * i, t) for i, t in enumerate(rows)]
+                     + [(72, 700, tag)]])
+
+    reworded = list(lines)
+    reworded[3] = "CHANGED " + reworded[3].split(" ", 1)[1]
+    reworded[10] = "REWORDED " + reworded[10]
+    v1, v2, gone = version(lines, "v1"), version(reworded, "v2"), version([], "nothing of the old text is here")
+    items = [("hl", {"pdf_position": {**_measured(v1, 1, *lines), "doc_id": "v1"}, "quote": quote})]
+    pending, third, after, again = _twice(v1, v2, gone, items)
+    first = pending[0][1]
+    assert first["pdf_position"]["approx"] is True and "CHANGED" in first["quote"]
+    assert len(first["pdf_position"]["prev"]["quote"]) == PREV_MAX_QUOTE
+    # v3 has none of it: hollow at v1's place, its words v1's as v1 spells them, not v2's guess
+    assert third["kinds"] == {"hl": "lost"}
+    op = third["ops"]["hl"]
+    assert {k: v for k, v in op["pdf_position"].items() if k != "closest"} == _at_reference(first["pdf_position"], lost=True)
+    assert op["quote"] == quote
+    assert again["ops"] == {}
+    # v1's file gone: the clipped start is not all of its words, so it keeps the quote it had
+    _p, gone_third, _a, gone_again = _twice(v1, v2, gone, items, stored=("v2",))
+    assert gone_third["kinds"] == {"hl": "lost"} and "quote" not in gone_third["ops"]["hl"] and gone_again["ops"] == {}
+    # v4 prints v1's paragraph again: solid, its quote v1's, also from a hollow one that still had v2's guess
+    v4 = version(lines, "v4")
+    for stored_quote in (quote, first["quote"]):
+        lost = [("hl", {**dict(after)["hl"], "quote": stored_quote})]
+        with hr.Doc(v1) as d1, hr.Doc(v4) as d4:
+            fourth = hr.place_all(d4, _stamped(lost, "v3"), read_from={"v1": d1}.get, new_doc="v4")
+        assert fourth["kinds"] == {"hl": "moved"}, stored_quote
+        placed = {**lost[0][1], **fourth["ops"]["hl"]}
+        assert placed["quote"] == quote
+        assert not {"approx", "match", "prev", "doc_id", "lost", "closest"} & set(placed["pdf_position"])
+
+
+def test_a_pending_highlight_left_lost_by_an_earlier_run_is_matched_from_its_prev():
+    # what a run before the reference rule wrote: lost where its rough place was, on v2, still pending with v1's prev
+    v1_line = CITED.format(n=3)
+    rough = _measured(_cited(4), 1, CITED.format(n=4))
+    prev = _prev(_position(1, _line_rect(72, 114, v1_line)), "v1", v1_line)
+    item = [("hl", {"pdf_position": {**rough, "doc_id": "v2", "approx": True, "match": 0.99, "lost": True, "prev": prev},
+                    "quote": CITED.format(n=4)})]
+    with hr.Doc(_cited(3)) as d1, hr.Doc(_cited(3, lower=True)) as d3:
+        placed = hr.place_all(d3, item, read_from={"v1": d1}.get, new_doc="v3")
+    # v1's words in v3: solid
+    assert placed["kinds"] == {"hl": "moved"}
+    assert placed["ops"]["hl"] == {"pdf_position": _measured(_cited(3, lower=True), 1, v1_line), "quote": v1_line}
+
+
+def test_a_highlight_pending_without_a_prev_is_matched_from_its_own_place():
+    # pending from before prev was kept: its own place is all it has to go by
     rect = _line_rect(72, 100, LINE_A)
     placed, new = _place_one([LINE_A], [["Front matter", LINE_A]], rect, LINE_A, approx=True, match=0.86)
+    assert placed["kinds"] == {"hl": "moved"} and placed["ops"]["hl"] == {"pdf_position": _measured(new, 1, LINE_A)}
+    edited = LINE_A.replace("single", "lone")
+    placed, new = _place_one([LINE_A], [["Front matter", edited]], rect, LINE_A, approx=True, match=0.86)
     assert placed["kinds"] == {"hl": "approx"}
-    assert placed["ops"]["hl"] == {"pdf_position": {**_measured(new, 1, LINE_A), "approx": True, "match": 0.86,
-                                                    "prev": _prev(_position(1, rect), "v1", LINE_A)}}
+    assert placed["ops"]["hl"]["pdf_position"] == {
+        **_measured(new, 1, edited), "approx": True, "prev": _prev(_position(1, rect), "v1", LINE_A),
+        "match": round(hr._similar(hr.normalize_quote(LINE_A), hr.normalize_quote(edited)), 2)}
+
+
+FIGURE_CAPTION = "Figure {n}: Rabi oscillations of the driven qubit at resonance"
+
+
+def _figure(n, dy=0):
+    return _pdf([[(72, 100, "Header line of the page"), (72, 400 + dy, FIGURE_CAPTION.format(n=n))]])
+
+
+def test_a_pending_area_is_matched_from_where_it_was_confirmed():
+    box = {"x1": 60, "y1": 385, "x2": 420, "y2": 410}
+    area = [("area", {"pdf_position": {**_position(1, box, area=True), "doc_id": "v1"}})]
+    # its caption renumbered on v2 (dashed), v1's caption back on v3, lower: solid there
+    pending, third, after, again = _twice(_figure(2), _figure(3), _figure(2, 60), area)
+    first = pending[0][1]["pdf_position"]
+    assert first["approx"] is True and 0.9 <= first["match"] < 1 and first["prev"] == _prev(_position(1, box), "v1")
+    assert third["kinds"] == {"area": "moved"}
+    moved = third["ops"]["area"]["pdf_position"]
+    assert not {"approx", "match", "prev", "doc_id"} & set(moved)
+    assert moved["boundingRect"] == pytest.approx({"x1": 60, "y1": 445, "x2": 420, "y2": 470}, abs=0.05)
+    assert again["ops"] == {}
+    # renumbered again: dashed, its prev v1's
+    pending, third, after, again = _twice(_figure(2), _figure(3), _figure(4, 60), area)
+    assert third["kinds"] == {"area": "approx"} and third["ops"]["area"]["pdf_position"]["prev"] == first["prev"]
+    assert again["ops"] == {}
+
+
+def test_a_pending_area_nothing_places_goes_back_to_where_it_was_confirmed():
+    def rows(*dys):
+        return _pdf([[(72, 100 + dy + 14 * i, t) for i, (t, dy) in enumerate(zip((LINE_A, LINE_B, LINE_C), dys))]])
+
+    items = [(f"hl{k}", {"pdf_position": {**_measured(rows(0, 0, 0), 1, t), "doc_id": "v1"}, "quote": t})
+             for k, t in zip("ABC", (LINE_A, LINE_B, LINE_C))]
+    items.append(("area", {"pdf_position": RIDER}))
+    # v2: all 40 points lower, the area along with them, by estimate; v3: they go apart, nothing places it
+    pending, third, after, again = _twice(rows(0, 0, 0), rows(40, 40, 40), rows(40, 300, 600), items)
+    estimate = dict(pending)["area"]["pdf_position"]
+    assert estimate["approx"] is True and "match" not in estimate and estimate["prev"] == _prev(RIDER, "v1")
+    # back at v1's place, naming v1, still an estimate to check: v2's rectangles are no one's any more
+    assert third["kinds"]["area"] == "approx"
+    assert third["ops"]["area"] == {"pdf_position": _at_reference(estimate, approx=True, prev=estimate["prev"])}
+    assert third["ops"]["area"]["pdf_position"]["boundingRect"] == pytest.approx(RIDER["boundingRect"], abs=0.05)
+    assert again["ops"] == {}
+    # v3 moves them all alike: the area rides along from where v2 put it, still an estimate with v1's prev
+    pending, third, after, again = _twice(rows(0, 0, 0), rows(40, 40, 40), rows(70, 70, 70), items)
+    ride = third["ops"]["area"]["pdf_position"]
+    assert third["kinds"]["area"] == "approx" and "doc_id" not in ride and ride["prev"] == estimate["prev"]
+    assert ride["boundingRect"] == pytest.approx({"x1": 400, "y1": 670, "x2": 500, "y2": 770}, abs=0.05)
+    assert again["ops"] == {}
+
+
+def test_an_estimated_area_whose_neighbours_all_go_back_to_its_reference_is_still_an_estimate():
+    def rows(texts, dy, tag=None):
+        return _pdf([[(72, 100 + dy + 14 * i, t) for i, t in enumerate(texts)] + ([(72, 760, tag)] if tag else [])])
+
+    lines = (LINE_A, LINE_B, LINE_C)
+    items = [(f"hl{k}", {"pdf_position": {**_measured(rows(lines, 0), 1, t), "doc_id": "v1"}, "quote": t})
+             for k, t in zip("ABC", lines)]
+    items.append(("area", {"pdf_position": RIDER}))
+    # v2: every line reworded and 40 points lower, all dashed, the area along with them by estimate;
+    # v3: v1's lines at v1's places, so its neighbours are found exactly where they were confirmed
+    reworded = (LINE_A.replace("single", "lone"), LINE_B.replace("doublet", "triplet"), LINE_C.replace("first", "second"))
+    pending, third, after, again = _twice(rows(lines, 0), rows(reworded, 40), rows(lines, 0, "v3"), items)
+    estimate = dict(pending)["area"]["pdf_position"]
+    assert estimate["approx"] is True and "match" not in estimate and estimate["prev"] == _prev(RIDER, "v1")
+    assert all(dict(pending)[f"hl{k}"]["pdf_position"]["approx"] for k in "ABC")
+    assert third["kinds"] == {"hlA": "moved", "hlB": "moved", "hlC": "moved", "area": "approx"}  # off v2's places
+    # back at v1's place, still an estimate for a person to check: its neighbours staying confirms nothing
+    area = third["ops"]["area"]["pdf_position"]
+    assert area["approx"] is True and "match" not in area and area["prev"] == estimate["prev"]
+    assert "doc_id" not in area and area["boundingRect"] == pytest.approx(RIDER["boundingRect"], abs=0.05)
+    assert again["ops"] == {}
 
 
 def test_a_dashed_placement_keeps_where_the_highlight_was_even_when_that_file_is_gone():
@@ -1638,7 +1876,17 @@ def test_a_run_goes_by_its_owner_s_thresholds_as_they_were_when_it_started(guest
         _set_profile(guest, relocateMinMatch=400, relocateExactChars="5")
         job = guest.post("/api/jobs/relocate-highlights", json={"page_id": page_id}).json()
         assert (job["params"]["min_match"], job["params"]["exact_chars"]) == (1.0, hr.ROUGH_MIN_CHARS)
-        assert _done(guest, job) == {**NOTHING, "highlights": 2, "approx": 2, "min_match": 1.0}  # pending: as they were
+        # still pending, both are matched from the first file again: neither is an exact copy, so both go back
+        # hollow to their place there, with the first file's wording, the citation's rough place its closest match
+        assert _done(guest, job) == {**NOTHING, "highlights": 2, "lost": 2, "min_match": 1.0}
+        for hl, quote, rect in ((hl_cited, cited, _line_rect(72, 100, cited)),
+                                (hl_cooling, "4 K cooling", _part_rect(72, 114, cooling, "4 K cooling"))):
+            props = _props(guest, hl)
+            pos = props["pdf_position"]
+            assert props["quote"] == quote and pos["lost"] is True and pos["doc_id"] == old_doc
+            assert not {"approx", "match", "prev"} & set(pos)
+            assert pos["rects"][0] == pytest.approx(rect, abs=0.1)
+        assert _props(guest, hl_cited)["pdf_position"]["closest"]["quote"] == cited.replace("[3]", "[4]")
     finally:
         _set_profile(guest, relocateMinMatch=None, relocateExactChars=None)
 
@@ -1870,6 +2118,41 @@ def test_a_second_replacement_stops_the_run_for_the_file_before_and_places_for_t
     # read from the first file, which its position still named
     pos = _props(guest, hl)["pdf_position"]
     assert pos["pageNumber"] == 2 and 485 < pos["rects"][0]["y1"] < 505 and "doc_id" not in pos
+
+
+def test_a_highlight_still_pending_at_the_next_replacement_is_matched_from_the_file_it_was_made_on(guest):
+    looks = V3_LOOKS_LIKE_V2
+
+    def version(cite, sentence, *, lower=False):
+        lines = [(72, 100, CITE_A)] + ([(72, 114, ADDED)] if lower else []) + [(72, 128 if lower else 114, cite)]
+        return _pdf([lines + ([(24, 300, sentence)] if sentence else [])])
+
+    v1_cite = CITED.format(n=3)
+    page_id, v1, (cite, gone) = _page_with(guest, version(v1_cite, looks[0]), [
+        (v1_cite, _position(1, _line_rect(72, 114, v1_cite))), (looks[0], _position(1, _line_rect(24, 300, looks[0])))])
+    # v2: both matched roughly, pending, their prev v1's
+    _v2, body = _replace(guest, page_id, version(CITED.format(n=4), looks[1]), "v2.pdf")
+    assert _done(guest, body["job"]) == {**NOTHING, "highlights": 2, "approx": 2}
+    prev = {hl: _props(guest, hl)["pdf_position"]["prev"] for hl in (cite, gone)}
+    assert prev[cite]["doc_id"] == v1 == prev[gone]["doc_id"]
+    # v3, before anyone looked: the citation renumbered again a line lower, dashed there against v1's words; the
+    # sentence v1 had gone, only v2's guess reads like the one v3 has: hollow at v1's place, with v1's words
+    _v3, body = _replace(guest, page_id, version(CITED.format(n=5), looks[2], lower=True), "v3.pdf")
+    assert _done(guest, body["job"]) == {**NOTHING, "highlights": 2, "approx": 1, "lost": 1}
+    dashed = _props(guest, cite)
+    assert dashed["pdf_position"]["prev"] == prev[cite] and dashed["quote"] == CITED.format(n=5)
+    assert 128 - SIZE < dashed["pdf_position"]["rects"][0]["y2"] < 128 + SIZE and "doc_id" not in dashed["pdf_position"]
+    hollow = _props(guest, gone)
+    assert hollow["quote"] == looks[0]
+    assert {k: v for k, v in hollow["pdf_position"].items() if k != "closest"} == {
+        **hr.reference_place(hollow["pdf_position"], prev[gone], (W, H)), "lost": True}
+    assert hollow["pdf_position"]["doc_id"] == v1 and "prev" not in hollow["pdf_position"]
+    # v4 prints v1's words again: both found exactly, solid, with v1's wording (the hollow one where it is drawn)
+    _v4, body = _replace(guest, page_id, version(v1_cite, looks[0], lower=True), "v4.pdf")
+    assert _done(guest, body["job"]) == {**NOTHING, "highlights": 2, "moved": 1, "kept": 1}
+    for hl, quote in ((cite, v1_cite), (gone, looks[0])):
+        props = _props(guest, hl)
+        assert props["quote"] == quote and not {"approx", "match", "prev", "lost", "doc_id"} & set(props["pdf_position"])
 
 
 def test_a_page_without_highlights_starts_no_job_and_the_manual_start_says_so(guest):

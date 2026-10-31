@@ -254,10 +254,13 @@ relocation run starts ([highlight_relocation.md](highlight_relocation.md)),
 and the open viewers switch. A push asks `keep_old_days` of 1
 (`gamma_sync.KEEP_OLD_DAYS`): the file the page let go of is purged a day
 after nothing references it instead of thirty
-([user_db.md](user_db.md) "Stored files"). A pending highlight measured on
-that file is a reference, so the file stays as long as the highlight's
-review needs it, and it goes a day after the last of them is resolved
-(the last Accept). A file another page still carries or shows (a
+([user_db.md](user_db.md) "Stored files"). A highlight the run leaves
+matched from that file (dashed with it as its `prev`, or hollow on it)
+names it as its reference: the file stays as long as that highlight waits,
+through later builds, and since the run made it a reference it keeps the
+usual thirty days once the last of them is resolved. A build only stamps
+named (its highlights all placed solid, or dashed from an older file)
+goes a day after the run. A file another page still carries or shows (a
 duplicated page that shows it by its address) is no build let go of: it
 keeps its thirty days. A run that cannot start reports `relocation_error`,
 and the replacement stands.
