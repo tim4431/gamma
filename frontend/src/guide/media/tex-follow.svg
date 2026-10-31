@@ -1,0 +1,39 @@
+<svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg" focusable="false">
+  <!-- The PDF on disk is rebuilt (the arrow turns, the file pulses) and goes
+       to the page; on the page a new paragraph opens above the highlighted
+       passage, the lines below and the highlight move down together, and the
+       highlight lights where its text now is -->
+  <rect class="m-well" x="10" y="40" width="90" height="124" rx="6" />
+  <path class="m-card" d="M30 62h28l12 12v52H30z" /><path class="m-glyph" d="M58 62v12h12" />
+  <rect class="m-line-dim" x="36" y="86" width="26" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="36" y="93" width="20" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="36" y="100" width="26" height="3.5" rx="1.75" />
+  <path class="m-glyph-on m-draw" pathLength="1" style="--m-at: 0.04" d="M42 146a8 8 0 1 0 8-8" />
+  <path class="m-glyph-on m-appear" style="--m-at: 0.2" d="M47 135l3 3-3 3" />
+  <circle class="m-ripple m-press" style="--m-at: 0.18" cx="50" cy="96" r="16" />
+  <path class="m-link m-draw" pathLength="1" style="--m-at: 0.24" d="M76 100H118" />
+  <path class="m-link m-light" style="--m-at: 0.4" d="M113 95l5 5-5 5" />
+  <rect class="m-well" x="124" y="10" width="186" height="180" rx="6" />
+  <rect class="m-card" x="136" y="18" width="162" height="172" rx="2" />
+  <rect class="m-line" x="146" y="30" width="72" height="6" rx="3" />
+  <rect class="m-line-dim" x="146" y="44" width="142" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="146" y="51" width="130" height="3.5" rx="1.75" />
+  <g class="m-appear" style="--m-at: 0.44">
+    <rect class="m-line-dim" x="146" y="58" width="142" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="146" y="65" width="100" height="3.5" rx="1.75" />
+  </g>
+  <g class="m-move" style="--m-at: 0.34; --m-dx: 0; --m-dy: -14">
+    <rect class="m-line-dim" x="146" y="72" width="142" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="146" y="79" width="128" height="3.5" rx="1.75" />
+    <path class="m-mark" d="M146 80.75H274" />
+    <rect class="m-line-dim" x="146" y="86" width="142" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="146" y="93" width="96" height="3.5" rx="1.75" />
+    <rect class="m-well" x="146" y="106" width="142" height="36" rx="2" />
+    <path class="m-glyph" d="M154 134L168 122L180 128L194 114L212 121" />
+    <rect class="m-line-dim" x="146" y="152" width="142" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="146" y="159" width="120" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="146" y="166" width="142" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="146" y="173" width="80" height="3.5" rx="1.75" />
+  </g>
+  <rect class="m-link m-light" style="--m-at: 0.52" x="143" y="74.5" width="134" height="12.5" rx="2" />
+</svg>

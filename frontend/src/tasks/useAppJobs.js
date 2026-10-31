@@ -9,6 +9,7 @@ import { API, fmtBytes, getCurrentWorkspace, withWorkspace } from "../shared/lib
 import { t } from "../shared/i18n/i18n.js";
 import { exportJobBody } from "../transfers/transferFormats";
 import { importSummary } from "../transfers/importReview";
+import { guideEvents } from "../guide/events.js";
 import { kindOf, relocationSummary, relocationSuperseded, retryOf, taskTitle } from "./taskKinds.js";
 import { isActive } from "./taskModel.js";
 
@@ -178,6 +179,8 @@ export function useAppJobs({
       return;
     }
     if (job.kind === "import") {
+      // a setup guide's import step (Notability), or its offer (a Zotero library)
+      if (job.state === "done" && started) guideEvents.emit("import.finished", { source: job.params?.source || "" });
       if (job.state === "done" && here) {
         refreshQuota?.();
         // this tab's import brings its pages in; one from elsewhere is

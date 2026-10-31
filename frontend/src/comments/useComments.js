@@ -10,6 +10,7 @@
 // re-renders no row. `readable` turns false when the page's comments
 // answer 404 or 403 (App then offers no comment controls).
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { guideEvents } from "../guide/events.js";
 import { API, apiJson, makeId } from "../shared/lib/utils";
 import { nowStamp } from "../library/libraryUtils";
 import { keepIfSame, sameMap } from "../shared/lib/keepIfSame.js";
@@ -152,6 +153,7 @@ export function useComments({ pageId, enabled, me, onStatus, flush }) {
         json("POST", { id, block_id: blockId, body, thread_id: threadId, client: CLIENT_ID }));
       pendingRef.current.delete(id);
       set(page, (list) => upsertThread(list, out.thread));
+      guideEvents.emit("comment.created", { reply: !!threadId });
       return id;
     } catch (err) {
       pendingRef.current.delete(id);

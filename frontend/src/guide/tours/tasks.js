@@ -15,7 +15,7 @@ export default {
   offerPlacement: "bottom",
   offer: { title: T("That work is running in the background"), line: T("Where to watch it, stop it, or pick up the file.") },
   steps: [
-    { id: "task-tray", anchor: "header.tasks", placement: "bottom",
+    { id: "task-tray", anchor: "header.tasks", placement: "bottom", media: "tasks-outlive",
       title: T("Long work carries on without you"),
       body: T("It runs on the server, so closing this tab won't stop it.") },
     { id: "task-row", anchor: "tasks.row", placement: "left", optional: true,

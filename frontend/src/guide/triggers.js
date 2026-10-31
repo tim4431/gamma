@@ -94,6 +94,62 @@ function newer(a, b) {
   return b.state === "done" && a.state !== "done" ? b : a;
 }
 
+// A setup guide (`setup: true`) is a checklist for a feature that is set up
+// in Settings or a menu and finished somewhere else: zotero.org, a terminal,
+// the iPad, a TeX build. Each step with an `advanceOn` is ticked by that
+// event whenever it fires — whether or not the guide is running, as VS
+// Code's walkthroughs tick theirs. The steps are in order, so every step
+// before one its event ticked is done too (a library linked was connected
+// first); a step that only explains is ticked once read, and tells nothing
+// about the ones before it. Ticks are kept in
+// this browser per tour version, so a guide left for another app picks up
+// at its first step not done on the next load.
+export function setupTicks(tour, event) {
+  if (!tour.setup || !event) return [];
+  return tour.steps.filter((s) => s.advanceOn && eventMatches(s.advanceOn, event.name, event.payload)).map((s) => s.id);
+}
+
+// Each step of a run: done or not.
+export function setupDone(steps, ticked) {
+  let later = false;
+  return [...steps].reverse().map((step) => {
+    const own = ticked.has(step.id);
+    if (own && step.advanceOn) later = true;
+    return own || later;
+  }).reverse();
+}
+
+// Where a setup guide's run opens (from -1), and where it goes after step
+// `from`: the first step not done after it. A run with every step done
+// opens on its last, so the list still shows; past the last is the end (-1).
+export function setupIndex(steps, ticked, from = -1) {
+  const done = setupDone(steps, ticked);
+  for (let i = from + 1; i < steps.length; i++) if (!done[i]) return i;
+  return from < 0 ? steps.length - 1 : -1;
+}
+
+export function createGuideTicks(storage = () => globalThis.localStorage) {
+  const memory = new Map();
+  const key = (tour, scope) => `gamma-guide-ticks:${encodeURIComponent(scope)}:${tour.id}`;
+  const read = (tour, scope) => {
+    let value = memory.get(key(tour, scope));
+    try { value = JSON.parse(storage().getItem(key(tour, scope)) || "null") || value; } catch { /* unavailable or malformed */ }
+    return new Set(value?.version === tour.version && Array.isArray(value.ids) ? value.ids : []);
+  };
+  return {
+    read,
+    // Returns whether anything new was ticked.
+    add(tour, scope, ids) {
+      const ticked = read(tour, scope);
+      if (ids.every((id) => ticked.has(id))) return false;
+      const value = { version: tour.version, ids: [...new Set([...ticked, ...ids])] };
+      memory.set(key(tour, scope), value);
+      try { storage().setItem(key(tour, scope), JSON.stringify(value)); } catch { /* private mode */ }
+      return true;
+    },
+  };
+}
+
 // Memory also remembers offers if browser storage is unavailable. A fresh
 // read observes dismissals from other tabs; progress never stores chat text.
 //

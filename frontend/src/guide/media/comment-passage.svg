@@ -1,0 +1,68 @@
+<svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg" focusable="false">
+  <!-- Comment on a passage: the pointer drags across two lines of the
+       paper and the selection marks them; the colour palette comes up under
+       it with the speech bubble after the colours. The pointer presses the
+       bubble, the palette goes, and the comment opens in the margin to the
+       right of the page, level with the passage and linked to it, its field
+       taking a line of text (docs/user_guide/user_guide.md, "Comments and
+       inbox": a passage's comment opens beside it when there is room). -->
+
+  <!-- the viewer: the page, room in the margin to its right -->
+  <rect class="m-well" x="10" y="10" width="300" height="180" rx="6" />
+  <rect class="m-card" x="20" y="18" width="172" height="172" rx="2" />
+  <rect class="m-line" x="30" y="30" width="64" height="6" rx="3" />
+  <rect class="m-line-dim" x="30" y="44" width="150" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="51" width="144" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="58" width="150" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="65" width="150" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="72" width="100" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="79" width="150" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="86" width="136" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="93" width="150" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="100" width="112" height="3.5" rx="1.75" />
+  <rect class="m-well" x="30" y="112" width="150" height="40" rx="2" />
+  <path class="m-glyph" d="M38 144L54 132L66 138L82 124L102 131" />
+  <rect class="m-line-dim" x="30" y="162" width="150" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="169" width="130" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="176" width="150" height="3.5" rx="1.75" />
+
+  <!-- the selection across the passage -->
+  <path class="m-mark m-draw" pathLength="1" style="--m-at: 0.14" d="M30 66.75H180" />
+  <path class="m-mark m-draw" pathLength="1" style="--m-at: 0.2" d="M30 73.75H130" />
+
+  <!-- the palette under it: the colours, then the speech bubble -->
+  <g class="m-leave" style="--m-at: 0.5">
+    <g class="m-appear" style="--m-at: 0.32">
+      <rect class="m-card" x="56" y="82" width="104" height="20" rx="10" />
+      <circle class="m-chip-on" cx="70" cy="92" r="4" />
+      <circle class="m-chip" cx="81" cy="92" r="4" />
+      <circle class="m-chip" cx="92" cy="92" r="4" />
+      <circle class="m-chip" cx="103" cy="92" r="4" />
+      <circle class="m-chip" cx="114" cy="92" r="4" />
+      <path class="m-rule" d="M124 86V98" />
+      <path class="m-glyph" d="M134.5 87.5h12a1.5 1.5 0 0 1 1.5 1.5v5a1.5 1.5 0 0 1-1.5 1.5h-6.5l-3 2.5v-2.5h-2.5a1.5 1.5 0 0 1-1.5-1.5v-5a1.5 1.5 0 0 1 1.5-1.5z" />
+    </g>
+  </g>
+
+  <!-- the comment, in the margin level with the passage -->
+  <path class="m-link m-draw" pathLength="1" style="--m-at: 0.52" d="M181 68H199" />
+  <g class="m-appear" style="--m-at: 0.52">
+    <rect class="m-card" x="200" y="54" width="104" height="58" rx="6" />
+    <circle class="m-chip-on" cx="210" cy="65" r="5" />
+    <rect class="m-line" x="219" y="63" width="36" height="4" rx="2" />
+    <rect class="m-chip" x="206" y="76" width="92" height="18" rx="4" />
+    <rect class="m-chip-on" x="274" y="98" width="24" height="10" rx="5" />
+  </g>
+  <path class="m-text m-draw" pathLength="1" style="--m-at: 0.56" d="M212 85H268" />
+
+  <!-- the press on the bubble -->
+  <circle class="m-ripple m-press" style="--m-at: 0.47" cx="141" cy="92" r="7" />
+
+  <!-- the hand: along the passage, then to the bubble -->
+  <g class="m-move" style="--m-at: 0.36; --m-dx: -11; --m-dy: -18">
+  <g class="m-move" style="--m-at: 0.2; --m-dx: 50; --m-dy: -8">
+  <g class="m-move" style="--m-at: 0.14; --m-dx: -150; --m-dy: -2">
+  <g class="m-move" style="--m-at: 0.02; --m-dx: 30; --m-dy: 96">
+    <g transform="translate(139.76 90.76) scale(0.62)"><path class="m-pointer" d="M2 2 L2 20 L7 15.5 L10.5 23 L14 21.5 L10.5 14 L17 14 Z" /></g>
+  </g></g></g></g>
+</svg>

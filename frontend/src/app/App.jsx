@@ -4466,6 +4466,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           // by another person: the viewer follows, as openBlock shows it.
           const now = pageAttachment({ properties: props });
           if ((pageAttachment(b)?.url || "") !== (now?.url || "")) {
+            // a new version from elsewhere: a followed file on disk, say
+            if (pageAttachment(b)?.url && now?.url) guideEvents.emit("page.fileReplaced", { id: b.id });
             setDocId(props.doc_id || "");
             setInputUrl(now?.url || "");
             setPdfUrl(attachmentViewerUrl(now?.url, { share: shareMode ? initialShare : "" }));
@@ -7606,7 +7608,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   useEffect(() => {
     recorderStore.configure({
       setStatus, insertBlock: insertRecordingBlock, leadIn: () => replayLeadIn * 1000,
-      onDone: recordingTranscribe ? transcribeRecording : null,
+      // a recording saved: the guide's recording tour, then the transcript Settings may ask for
+      onDone: (blockId) => {
+        guideEvents.emit("recording.stopped", { id: blockId });
+        if (recordingTranscribe) transcribeRecording(blockId);
+      },
     });
   }, [insertRecordingBlock, replayLeadIn, recordingTranscribe, transcribeRecording]);
   // A closed or crashed tab's unsaved audio, found at start: put up and
@@ -7643,6 +7649,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     disarmInk(); // taps seek rather than draw
     clearInkSelection();
     playback.play(clock, { recording: blockId }, { source, at, rate, mode, onEnd: "hold", leadIn });
+    guideEvents.emit("recording.played", { id: blockId });
   }, []);
   const toggleRecording = useCallback(() => {
     if (recorderStore.coarseNow()) { recorderStore.stop(); return; }
@@ -7885,8 +7892,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         if (what !== "pen") return;
         restorePen();
       },
-      // the first tour's finish card: "Connect an AI provider"
+      // the first tour's finish card: "Connect an AI provider"; a setup
+      // guide's step in Settings, and leaving Settings for one outside it
       openSettings: (pane) => appCmdRef.current.openSettings(pane),
+      closeSettings: () => setSettingsOpen(null),
       // The welcome deck's way in: the seeded Welcome page, opened as a
       // click in the library opens it.
       openWelcome: () => {
@@ -7949,6 +7958,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // tour picks neither its setup step nor its chat steps too early
       aiConfigured: aiInfo ? !!aiInfo.enabled && !!aiInfo.models?.length : undefined,
       aiEditable: !authUser?.is_guest, // a guest can't store keys
+      guest: !!authUser?.is_guest, // no Zotero link, assistant or comments of their own
+      desktop: IS_DESKTOP, // the desktop app: files on this computer
       pdfChatVisible: !!pageAttach && !pdfHidden && !collapsedWins.pdf && !isPhone,
       guideAvailable: !settingsOpen,
       // the phone (compact) layout: Home is the bottom bar's Library tab
@@ -9325,7 +9336,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 {pageAttach || zoteroPdf || (!readOnly && !notebook) ? (
                   <span data-popover="attach" className="popoverAnchor">
                     <button
-                      className={`pageActionBtn ${pageAttach ? "active" : ""}`}
+                      className={`pageActionBtn ${pageAttach ? "active" : ""}`} data-guide="page.document"
                       title={pageAttach
                         ? t("Document: {name}", { name: pageAttach.name || defaultPageTitle(pageAttach) })
                         : zoteroPdfShown ? zoteroCard.title
@@ -9374,7 +9385,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             {/* In the desktop app: its page preload passes the message to the app, which
                                 asks for the file and sends each new version of it here (desktop/docs/architecture.md). */}
                             {IS_DESKTOP ? (
-                              <MenuItem icon={HardDriveIcon}
+                              <MenuItem icon={HardDriveIcon} data-guide="page.follow"
                                 title={t("Each time a PDF on this computer changes, it becomes this page's PDF: the notes and highlights stay, and each highlight moves to where its text is")}
                                 onClick={() => {
                                   setOpenPopover(null);
@@ -11326,12 +11337,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           </MenuItem>
           <MenuDivider />
           {/* The tours that can start here (guide.startable); a tour
-              whose first step needs no open popover closes this menu. */}
+              whose first step needs no open popover closes this menu.
+              The setup guides follow under their own heading. */}
           <SubMenuItem id="tours" icon={HelpCircleIcon} label={t("Tours")} data-guide="account.tour">
-            {guide.startable().map((tour) => (
-              <MenuItem key={tour.id} data-tour={tour.id}
-                onClick={() => guide.start(tour.id)}>{t(tour.title)}</MenuItem>
-            ))}
+            {menuGroups(
+              guide.startable().filter((tour) => !tour.setup).map((tour) => (
+                <MenuItem key={tour.id} data-tour={tour.id}
+                  onClick={() => guide.start(tour.id)}>{t(tour.title)}</MenuItem>
+              )),
+              guide.startable().filter((tour) => tour.setup).map((tour, i) => [
+                i === 0 ? <MenuLabel key="setup-label">{t("Setup guides")}</MenuLabel> : null,
+                <MenuItem key={tour.id} data-tour={tour.id}
+                  onClick={() => guide.start(tour.id)}>{t(tour.title)}</MenuItem>,
+              ]).flat(),
+            )}
           </SubMenuItem>
           <MenuItem icon={BugIcon} onClick={() => { setOpenPopover(null); setReportOpen(true); }}
             title={t("Describe what went wrong; Gamma adds its build, your browser and its recent log lines and opens a GitHub issue for you to review")}>

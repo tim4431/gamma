@@ -264,7 +264,7 @@ export function ToggleGroup({ selected, onToggle, options, disabled }) {
 // A close by the backdrop, Escape or × asks first while the draft is edited,
 // or while `guard` ({question, keep, leave}) names other work it would lose
 // (an upload under way); the footer's Cancel asks only for a draft.
-export function SubDialog({ title, onClose, children, draft, guard = null, className = "", closeButton = true }) {
+export function SubDialog({ title, onClose, children, draft, guard = null, className = "", closeButton = true, guide }) {
   const key = React.useId();
   const [initial] = React.useState(() => JSON.stringify(draft));
   const dirty = draft !== undefined && JSON.stringify(draft) !== initial;
@@ -291,7 +291,7 @@ export function SubDialog({ title, onClose, children, draft, guard = null, class
   }, [asked]);
   return (
     <DialogOverlay className="subDialog" {...backdrop} onClick={(event) => { event.stopPropagation(); backdrop.onClick(event); }}>
-      <div className={`reportModal ${className}`} role="dialog" aria-modal="true" aria-label={title}
+      <div className={`reportModal ${className}`} role="dialog" aria-modal="true" aria-label={title} data-guide={guide}
         ref={ref} tabIndex={-1} onClick={(event) => event.stopPropagation()}
         onClickCapture={(event) => {
           if (dirty && event.target.closest("button")?.textContent.trim() === t("Cancel")) {

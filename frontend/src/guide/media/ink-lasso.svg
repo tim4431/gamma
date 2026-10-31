@@ -1,0 +1,87 @@
+<svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg" focusable="false">
+  <!-- Erase, then lasso: the pointer presses the eraser in the markup strip
+       at the top of the page, which lights while it is armed, and passes
+       over a stray stroke, which goes. It presses the lasso, loops round a
+       written word, and the selection box with its handles stands round
+       the word; the pointer carries the box a little to the right, the word
+       inside it (markup/MarkupToolbar.jsx: eraser, lasso and text follow
+       the pens; ink.selection is the box). -->
+
+  <!-- the page, a word written on it and a stray stroke beside the figure -->
+  <rect class="m-well" x="10" y="10" width="300" height="180" rx="6" />
+  <rect class="m-card" x="40" y="34" width="240" height="156" rx="2" />
+  <rect class="m-line" x="52" y="46" width="70" height="6" rx="3" />
+  <rect class="m-line-dim" x="52" y="60" width="210" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="52" y="67" width="196" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="52" y="74" width="210" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="52" y="81" width="120" height="3.5" rx="1.75" />
+  <rect class="m-well" x="172" y="112" width="96" height="42" rx="2" />
+  <path class="m-glyph" d="M180 146L194 134L206 140L220 126L238 133" />
+  <rect class="m-line-dim" x="52" y="162" width="216" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="52" y="169" width="200" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="52" y="176" width="216" height="3.5" rx="1.75" />
+  <g class="m-leave" style="--m-at: 0.27">
+    <path class="m-ink" d="M200 100c4-5 8 3 12-1s6-3 10 1" />
+  </g>
+
+  <!-- the markup strip: pens, then the eraser, the lasso, Text and More -->
+  <rect class="m-card" x="70" y="13" width="134" height="18" rx="4" />
+  <rect class="m-chip" x="73.5" y="15.5" width="11" height="13" rx="3" />
+  <path class="m-glyph" d="M81.5 17.5L76.5 22.5M91.5 17.5L86.5 22.5M101.5 17.5L96.5 22.5M111.5 17.5L106.5 22.5" />
+  <rect class="m-line" x="76" y="24.5" width="6" height="2" rx="1" />
+  <rect class="m-line-dim" x="86" y="24.5" width="6" height="2" rx="1" />
+  <rect class="m-line-dim" x="96" y="24.5" width="6" height="2" rx="1" />
+  <rect class="m-line-dim" x="106" y="24.5" width="6" height="2" rx="1" />
+  <path class="m-rule" d="M117 16.5V27.5" />
+  <path class="m-glyph" d="M121.5 24l4-5h4l-4 5zM121.5 26h8" />
+  <path class="m-glyph" d="M136 20.5c0-2.6 8-2.6 8 0s-8 2.6-8 0M138 22.8c0 1.6-1 2.6-2 3.4" />
+  <path class="m-glyph" d="M150.5 18.5h7M154 18.5v7" />
+  <path class="m-glyph" d="M164.5 22h.01M168 22h.01M171.5 22h.01" />
+  <path class="m-glyph" d="M179 19l6 6M185 19l-6 6" />
+  <g class="m-blink" style="--m-at: 0.13">
+    <rect class="m-chip-on" x="120" y="15.5" width="12" height="13" rx="3" />
+    <path class="m-glyph-on" d="M121.5 24l4-5h4l-4 5zM121.5 26h8" />
+  </g>
+  <g class="m-light" style="--m-at: 0.45">
+    <rect class="m-chip-on" x="134" y="15.5" width="12" height="13" rx="3" />
+    <path class="m-glyph-on" d="M136 20.5c0-2.6 8-2.6 8 0s-8 2.6-8 0M138 22.8c0 1.6-1 2.6-2 3.4" />
+  </g>
+
+  <!-- the lasso's loop, drawn as the pointer goes round; it gives way to
+       the selection box -->
+  <g class="m-leave" style="--m-at: 0.66">
+    <path class="m-link m-draw" pathLength="1" style="--m-at: 0.5" d="M88 112C108 104 138 106 141 119C144 132 112 136 92 133C78 131 76 115 88 112" />
+  </g>
+
+  <!-- the word in its box, carried 22 to the right -->
+  <g class="m-move" style="--m-at: 0.7; --m-dx: -22; --m-dy: 0">
+    <g transform="translate(22 0)">
+      <g class="m-appear" style="--m-at: 0.64">
+        <rect class="m-ghost" x="80" y="106" width="64" height="30" rx="2" />
+        <rect class="m-card" x="78" y="104" width="4" height="4" rx="1" />
+        <rect class="m-card" x="142" y="104" width="4" height="4" rx="1" />
+        <rect class="m-card" x="78" y="134" width="4" height="4" rx="1" />
+        <rect class="m-card" x="142" y="134" width="4" height="4" rx="1" />
+      </g>
+      <path class="m-ink" d="M88 124c2-7 5-7 6 0c1-7 5-7 6 0c0.8 3 3 3 4.5-0.5c1.5-3.5 2.2-10-0.3-10c-2.3 0-1.8 8 1.4 10.8c2.2 1.8 4.9-0.2 5.6-3.2c0.6-2.3 4.5-2.7 4.7 0.2c0.2 2.7-4.1 3.8-4.8 0.9c-0.3-1.3 3-0.9 5 1.8c1.8 2.1 5-0.5 5.9-3" />
+    </g>
+  </g>
+
+  <!-- the presses: the eraser, then the lasso -->
+  <circle class="m-ripple m-press" style="--m-at: 0.12" cx="126" cy="22" r="7" />
+  <circle class="m-ripple m-press" style="--m-at: 0.44" cx="140" cy="22" r="7" />
+
+  <!-- the hand: to the eraser, across the stray stroke, to the lasso, round
+       the word, and with the box to the right -->
+  <g class="m-move" style="--m-at: 0.7; --m-dx: -22; --m-dy: 0">
+  <g class="m-move" style="--m-at: 0.61; --m-dx: 4; --m-dy: 21">
+  <g class="m-move" style="--m-at: 0.57; --m-dx: 49; --m-dy: -14">
+  <g class="m-move" style="--m-at: 0.53; --m-dx: -53; --m-dy: -7">
+  <g class="m-move" style="--m-at: 0.46; --m-dx: 52; --m-dy: -90">
+  <g class="m-move" style="--m-at: 0.34; --m-dx: 84; --m-dy: 75">
+  <g class="m-move" style="--m-at: 0.22; --m-dx: -26; --m-dy: 3">
+  <g class="m-move" style="--m-at: 0.15; --m-dx: -72; --m-dy: -78">
+  <g class="m-move" style="--m-at: 0.02; --m-dx: 34; --m-dy: 160">
+    <g transform="translate(108.76 110.76) scale(0.62)"><path class="m-pointer" d="M2 2 L2 20 L7 15.5 L10.5 23 L14 21.5 L10.5 14 L17 14 Z" /></g>
+  </g></g></g></g></g></g></g></g></g>
+</svg>
