@@ -22,14 +22,37 @@
 }
 /* The box as the page shows it, and as tall as its text whatever height
    it stores: its padding, its size, colour and background (inline), and
-   the PDF export's Helvetica, not the interface face: these stacks are
-   metric-compatible with it, so a box wraps on screen as in the file. */
+   for a Gamma box the PDF export's Helvetica, not the interface face:
+   these stacks are metric-compatible with it, so a Gamma box wraps on
+   screen as in the file. A Zotero box takes Zotero's face instead (below). */
 .textBoxBody {
   padding: calc(4 * var(--tb-pt));
   font-family: Helvetica, Arial, "Liberation Sans", "Noto Sans", sans-serif;
   font-size: calc(var(--tb-size) * var(--tb-pt));
   line-height: 1.25;
   overflow-wrap: anywhere;
+}
+/* A Zotero box (text_box.zotero) as Zotero's reader draws a text
+   annotation, so it breaks at the same words on the same machine: the
+   reader's textarea (.textAnnotation in its pdfjs/viewer.css) has no
+   padding and no line height of its own, so its text fills the rect at
+   the font's normal line height, and its font is the reader body's stack
+   (src/common/stylesheets/base/_base.scss), copied verbatim
+   (tests/shared/textbox.json zotero_font). The rest are the values a
+   textarea resets that a style around the box could change. Its wrap is
+   the box's overflow-wrap: anywhere, which is what the textarea's
+   word-break: break-word computes to. */
+.textBox.zotero .textBoxBody {
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  line-height: normal;
+  font-weight: 400;
+  font-style: normal;
+  letter-spacing: normal;
+  word-spacing: normal;
+  text-indent: 0;
+  text-align: start;
+  text-transform: none;
 }
 /* Auto width: as wide as the longest line, up to the surface's edge (the
    inline max-width). */
@@ -62,7 +85,8 @@
   .textBoxWidth { width: 16px; height: 32px; }
 }
 /* Read mode: the note's Markdown laid out as the PDF export lays a box out
-   (gamma/text_box.py): no margins, a line per source line, headings at
+   (gamma/text_box.py): no margins, a line per source line (in a Zotero
+   box a blank one too, textBox.js shownText), headings at
    1.45 / 1.25 / 1.1 em on the box's leading, each list level 1.5 em in
    with its marker (a to-do's box too) in that indent, code in Courier,
    and the export's code tint, link blue and mark yellow
@@ -84,6 +108,29 @@
 .textBoxText a { color: #2959ad; }
 .textBoxText mark { background: #ffed8c; color: inherit; }
 /* ds-allow-end */
+/* In a Zotero box a link's label, a [[ref]] and a citation read as their
+   text, which is what Zotero is sent (gamma/text_box.py plain_text), with
+   no chip around it: no icon, padding, border or face of its own, and
+   wrapping as the text around it does. A bare URL is text already
+   (textBox.js shownText). */
+.textBox.zotero .textBoxText :is(.linkChip, .gammaLinkCard, .citePill, .blockRefChip, .unlinkedRef) {
+  display: inline;
+  max-width: none;
+  height: auto;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  outline: 0;
+  background: none;
+  font: inherit;
+  vertical-align: baseline;
+  white-space: inherit;
+  overflow: visible;
+}
+.textBox.zotero .textBoxText :is(.linkChip, .gammaLinkCard) :is(svg, img),
+.textBox.zotero .textBoxText .gammaLinkSrc { display: none; }
+.textBox.zotero .textBoxText .linkChipText { white-space: inherit; overflow: visible; }
 /* A picture with no width of its own (![alt](…), not ![alt|300](…)) fills
    a fixed-width box's text width, and so do its frames, so it zooms with
    the page as the box's text does; a Notability picture's box is made to
@@ -118,3 +165,105 @@
    ink tool armed, boxes are inert and ink draws over them. */
 :is(.pdfViewer, .nbViewer, .noteSheet).textArmed :is(.pdfPageWrap, .nbSheet) { cursor: text; touch-action: none; }
 :is(.pdfViewer, .nbViewer, .noteSheet).inkArmed .textBox { pointer-events: none; }
+
+/* --- Pictures (markup/PictureLayer.jsx, docs/dev/pictures.md) ------------- */
+/* A surface's pictures sit under its text boxes and its ink: the layer comes
+   before theirs at the same z-index, over the page's own marks. It is a size
+   container as the text boxes' is (--tb-pt is one point of the surface). A
+   picture's frame is placed in the surface's percentages and turned about
+   its centre; its inner box clips the image to the frame and mirrors it, so
+   the frame's outline (turned with it) and its flash are not clipped. The
+   selected picture's handles (the lasso's .inkTransformHandle, app.css, in
+   screen pixels) and its crop sit outside the layer, in the surface's
+   wrapper at z-index 7 as the lasso's handles do: over the text boxes and
+   the ink, which never take their presses. A picture is never inverted on
+   a dark page: the filter in app.css takes the ink and a box's body only. */
+.pictureLayer {
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  container-type: inline-size;
+  pointer-events: none;
+}
+.pagePicture { position: absolute; box-sizing: border-box; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.pagePictureFlip { position: absolute; inset: 0; overflow: hidden; }
+.pagePictureFlip img { position: absolute; display: block; max-width: none; pointer-events: none; }
+.pictureLayer .pagePicture { pointer-events: auto; }
+.pictureLayer .pagePicture:not(.selected):hover { outline: 1px dashed var(--border-hover); }
+/* Selected, a drag moves it and a finger drags it rather than scrolling the page. */
+.pictureLayer .pagePicture.selected { outline: 1.5px solid var(--accent); cursor: move; touch-action: none; }
+/* In crop mode the crop draws the picture (.pictureCrop). */
+.pictureLayer .pagePicture.cropping { visibility: hidden; }
+.pagePicture.replayPending { opacity: 0.4; }
+/* The outline after a jump from the notes. */
+.pictureFlash {
+  position: absolute;
+  inset: -4px;
+  border: 1.5px dashed var(--accent);
+  border-radius: 2px;
+  pointer-events: none;
+  animation: inkFlashFade 1.8s ease-out forwards;
+}
+/* With an ink tool armed, pictures are inert and ink draws over them; the
+   one just placed (selected) still moves. */
+:is(.pdfViewer, .nbViewer, .noteSheet).inkArmed .pagePicture:not(.selected) { pointer-events: none; }
+/* A dark page leaves the photo as it is, a little dimmed, and a highlighter
+   over it multiplies into it as on a light page (app.css .inkOverPictures). */
+:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) .pagePicture img { filter: brightness(0.88); }
+/* The menu's crop bar: two buttons. */
+.inkEditMenu.pictureCropBar { width: auto; }
+
+/* Crop mode: the whole image dimmed, placed, flipped and turned as the
+   picture is, the part kept bright (a second copy clipped to it) inside a
+   frame with a handle at each corner and side, which keep their screen
+   size, 12 px on every device, each taking presses 28 px across as the
+   picture's other handles do. The frame moves the crop, its handles move
+   its edges. */
+.pictureCrop { position: absolute; z-index: 7; pointer-events: auto; touch-action: none; user-select: none; -webkit-user-select: none; }
+.pictureCropFlip { position: absolute; inset: 0; }
+.pictureCropImage { position: absolute; }
+.pictureCropImage img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; max-width: none; pointer-events: none; }
+.pictureCropDim { filter: brightness(0.45); }
+.pictureCropBox { position: absolute; box-sizing: border-box; outline: 1.5px solid var(--accent); cursor: move; touch-action: none; }
+.pictureCropHandle {
+  position: absolute;
+  width: 12px;
+  height: 12px;
+  box-sizing: border-box;
+  border: 1.5px solid var(--accent);
+  border-radius: 2px;
+  background: var(--bg-elevated);
+  transform: translate(-50%, -50%);
+  touch-action: none;
+}
+/* the hit area: 28 px across the 9 px inside the border */
+.pictureCropHandle::before { content: ""; position: absolute; inset: -9.5px; }
+.pictureCrop-nw { left: 0; top: 0; cursor: nwse-resize; }
+.pictureCrop-n { left: 50%; top: 0; cursor: ns-resize; }
+.pictureCrop-ne { left: 100%; top: 0; cursor: nesw-resize; }
+.pictureCrop-e { left: 100%; top: 50%; cursor: ew-resize; }
+.pictureCrop-se { left: 100%; top: 100%; cursor: nwse-resize; }
+.pictureCrop-s { left: 50%; top: 100%; cursor: ns-resize; }
+.pictureCrop-sw { left: 0; top: 100%; cursor: nesw-resize; }
+.pictureCrop-w { left: 0; top: 50%; cursor: ew-resize; }
+
+/* The picture in the notes (PictureCard): drawn as placed in its turned
+   frame's box, under the row's caption; a click shows it on its page. */
+.blockPictureCard {
+  position: relative;
+  display: block;
+  max-width: 100%;
+  margin: 4px 0 2px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  cursor: pointer;
+}
+.blockPictureCard .pagePicture { pointer-events: none; }
+.blockPictureMissing {
+  width: fit-content;
+  padding: 6px 10px;
+  color: var(--text-tertiary);
+  font-size: var(--fs-xs);
+  cursor: default;
+}

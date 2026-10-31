@@ -49,6 +49,35 @@ test("a text box's changes are named for what the user did to it", () => {
   assert.equal(describeTransition([B({ ...box, bg: undefined })], [B({ ...box, bg: null, w: 90 })]), "text box resize");
 });
 
+const PIC = { url: "/api/uploads/3f2a9c.png", x: 10, y: 20, w: 100, h: 80, angle: 0,
+  crop: { x: 0, y: 0, w: 1, h: 1 }, flip_h: false, flip_v: false };
+
+test("a picture's changes are named for what the user did to it", () => {
+  const P = (pic, content = "A figure", pdf_page = 1) => N("i", content, [], { properties: { picture: pic, pdf_page } });
+  assert.equal(describeTransition([], [P(PIC, "")]), "picture creation");
+  assert.equal(describeTransition([N("a")], [N("a"), P(PIC)]), "picture creation: “A figure”", "a duplicate");
+  assert.equal(describeTransition([P(PIC)], []), "picture deletion: “A figure”");
+  assert.equal(describeTransition([P(PIC)], [P(PIC, "A better figure")]), "picture caption edit: “A better figure”");
+  assert.equal(describeTransition([P(PIC)], [P({ ...PIC, x: 40 }, "Other")]), "note text and properties edit");
+  assert.equal(describeTransition([P(PIC)], [P({ ...PIC, x: 40, y: 60 })]), "picture move");
+  assert.equal(describeTransition([P(PIC)], [P({ ...PIC, x: 0, y: 12, w: 120, h: 96 })]), "picture resize", "about the centre");
+  assert.equal(describeTransition([P(PIC)], [P({ ...PIC, w: 140 })]), "picture resize", "a stretch");
+  assert.equal(describeTransition([P(PIC)], [P({ ...PIC, angle: -90 })]), "picture rotation");
+  assert.equal(describeTransition([P(PIC)], [P({ ...PIC, x: 30, y: 40, w: 60, h: 40, crop: { x: 0.2, y: 0.25, w: 0.6, h: 0.5 } })]),
+    "picture crop", "the frame shrinks to the part kept");
+  assert.equal(describeTransition([P(PIC)], [P({ ...PIC, crop: { x: 0.5, y: 0, w: 0.5, h: 1 } })]), "picture crop");
+  assert.equal(describeTransition([P(PIC)], [P({ ...PIC, flip_h: true })]), "picture flip");
+  assert.equal(describeTransition([P(PIC)], [P({ ...PIC, flip_h: true, flip_v: true })]), "picture flip");
+  assert.equal(describeTransition([P(PIC)], [P({ ...PIC, url: "/api/uploads/ff00.jpg" })]), "picture change", "a new file");
+  assert.equal(describeTransition([P(PIC)], [P({ ...PIC, angle: 90, flip_v: true })]), "picture change", "two at once");
+  // stored values are read as normalized: a default spelled out, or a turn by a whole one, is no change
+  const bare = { url: PIC.url, x: 10, y: 20, w: 100, h: 80 };
+  assert.equal(describeTransition([P(bare)], [P({ ...PIC, angle: 360, x: 50 })]), "picture move");
+  // a picture's text is its caption, a text box's its text
+  const box = N("t", "Hi", [], { properties: { text_box: { x: 1 }, picture: PIC } });
+  assert.equal(describeTransition([box], [{ ...box, content: "Hello" }]), "text box text edit: “Hello”");
+});
+
 test("identity and a fold's stored default are not edits", () => {
   const t = tree();
   assert.equal(classifyTransition(t, t), null);
@@ -266,6 +295,59 @@ test("a text box is rebased key by key: their measured width never blocks undoin
   p.remote([{ op: "set", id: "t", props: { text_box: { ...box, x: 200, w: 101.5, size: 24, h: 38 } } }]);
   p.undo();
   assert.deepEqual(p.tree[0].properties.text_box, { ...box, w: 101.5, size: 24, h: 38 });
+});
+
+test("a run of changes to one picture undoes as one step, a move and a turn in it named a picture change; another picture or a pause is a step of its own", () => {
+  const P = (id, pic) => N(id, "", [], { properties: { picture: pic, pdf_page: 1 } });
+  const realNow = Date.now;
+  let now = 1_000_000;
+  Date.now = () => now;
+  try {
+    const p = page([N("a", "a"), P("i", PIC), P("j", PIC)]);
+    const change = (id, fn) => {
+      now += 30; // a held arrow key, a handle's keys
+      p.edit(p.tree.map((n) => (n.id === id ? { ...n, properties: { ...n.properties, picture: fn(n.properties.picture) } } : n)));
+    };
+    for (let i = 0; i < 20; i++) change("i", (pic) => ({ ...pic, x: pic.x + 1 }));
+    for (let i = 0; i < 5; i++) change("i", (pic) => ({ ...pic, angle: pic.angle + 15 }));
+    assert.equal(p.s.undo.length, 1, "one run of changes to one picture");
+    change("j", (pic) => ({ ...pic, flip_h: true })); // another picture: a step of its own
+    now += 1500;
+    change("j", (pic) => ({ ...pic, x: 50 })); // after a pause: another
+    assert.equal(p.s.undo.length, 3);
+    assert.equal(p.undo().description, "picture move");
+    assert.equal(p.undo().description, "picture flip");
+    assert.equal(p.undo().description, "picture change", "a move and a turn in one run");
+    assert.deepEqual(p.tree[1].properties.picture, PIC, "the whole run undone at once");
+    assert.equal(p.undo(), false);
+  } finally {
+    Date.now = realNow;
+  }
+  const t0 = [P("i", PIC)];
+  assert.equal(boxChange(t0, [{ ...t0[0], properties: { picture: { ...PIC, x: 1 }, pdf_page: 1 } }]), "i");
+  assert.equal(boxChange(t0, [{ ...t0[0], properties: { picture: { ...PIC, x: 1 }, pdf_page: 2 } }]), null, "its page too");
+  assert.equal(boxChange(t0, [{ ...t0[0], content: "caption", properties: { picture: { ...PIC, x: 1 }, pdf_page: 1 } }]), null,
+    "its caption");
+});
+
+test("a picture is rebased key by key: their crop never blocks undoing our turn, nor comes undone with it", () => {
+  const P = (pic, content = "A figure") => N("i", content, [], { properties: { picture: pic, pdf_page: 1 } });
+  const crop = { x: 30, y: 25, w: 60, h: 40, crop: { x: 0.2, y: 0.25, w: 0.6, h: 0.5 } };
+  const p = page([P(PIC)]);
+  p.edit([P({ ...PIC, angle: 90 })]); // we turn it
+  // they crop it, from the picture as it stands now (the server merged their crop into our turn)
+  p.remote([{ op: "set", id: "i", props: { picture: { ...PIC, angle: 90, ...crop } } }]);
+  const undone = p.undo();
+  assert.equal(undone.description, "picture rotation");
+  assert.equal(undone.kept, false);
+  assert.deepEqual(p.tree[0].properties.picture, { ...PIC, ...crop }, "our turn undone, their crop kept");
+  p.undo(true);
+  assert.deepEqual(p.tree[0].properties.picture, { ...PIC, angle: 90, ...crop });
+  // their caption and their flip the same
+  p.remote([{ op: "set", id: "i", content: "Cropped", props: { picture: { ...PIC, angle: 90, ...crop, flip_v: true } } }]);
+  p.undo();
+  assert.deepEqual(p.tree[0].properties.picture, { ...PIC, ...crop, flip_v: true });
+  assert.equal(p.tree[0].content, "Cropped");
 });
 
 test("undoing our new block keeps it when someone else wrote a note under it", () => {

@@ -67,11 +67,13 @@ These describe the implementation unless explicitly marked as plans.
 | Guest accounts, expiry, and demo mode | [Guests](guests.md) |
 | Block operations, page sockets, reconciliation, and undo | [Collaboration](collab.md) |
 | Offline workspace copies and sync conflicts | [Mirrors](mirror.md) |
-| A folder of the workspace as a folder on disk: the layout, the desktop app's links, the gamma-sync client | [Folders on disk](folder_sync.md) |
+| A personal workspace kept in step with a Zotero library through Zotero's Web API: what syncs, the round, merging, PDFs, notes, annotations, conflicts, connecting the account | [Zotero link](zotero_sync.md) |
+| A folder of the workspace as a folder on disk, and a page that follows a PDF on disk: the layout, PDFs sent back, the desktop app's links, the gamma-sync client | [Folders and files on disk](folder_sync.md) |
 | PDF transport, manifests, caching, and load timing | [PDF loading](pdf_loading.md) |
 | Ink format, input, editing, merging, and PDF ink import/export | [Handwriting](handwriting.md) |
 | Sheets of paper in a page, the notes and notebook views, paper | [Notebooks](notebooks.md) |
 | Typed text boxes on PDF pages and sheets, and their PDF interchange | [Text boxes](text_boxes.md) |
+| Photos and images placed on PDF pages and sheets: moving, turning, cropping and flipping them, the upload, the `/Stamp` they become in the annotated PDF, and Notability's pictures | [Pictures](pictures.md) |
 | Audio recordings in step with the notes: capture, the one replay store, playback, transcription | [Recordings](recording.md) |
 | Metadata, citations, and PDF resolution | [Paper metadata](paper_metadata.md) |
 | Imports and exports: dialogs, formats, pipelines | [Import and export](import_export.md) |
@@ -84,7 +86,7 @@ These describe the implementation unless explicitly marked as plans.
 | Chat buckets per page and folder, the active conversation, the archive, and exporting a conversation with its pictures | [Chat history](chat_history.md) |
 | The translated PDF view, its engines and limits | [PDF translation](translation.md) |
 | Clickable PDF citations and library links | [PDF citations](pdf_citations.md) |
-| A page's highlights found again by their text after its PDF is replaced, the rough matches drawn dashed and their review card, the ones not found, moving one by hand | [Highlights after a PDF replacement](highlight_relocation.md) |
+| A page's highlights found again by their text after its PDF is replaced, the rough matches drawn dashed, the ones not found drawn hollow with their closest match, the review card of both, moving one by hand | [Highlights after a PDF replacement](highlight_relocation.md) |
 | MCP, integration tokens, OAuth, and assistant plugins | [MCP](mcp.md) |
 | Preferences, Settings panes, notices, and backup tasks | [Settings](settings.md) |
 | Themes, controls, menus, dialogs, and editor interactions | [UI design](ui-design.md) |

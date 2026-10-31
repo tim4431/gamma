@@ -3,9 +3,10 @@ import { flushSync } from "react-dom";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer, { preloadPdfEngine } from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
-import { requestFields } from "../pdf/translatePlan";
+import { briefRequest, chunkRequest, endTranslations, forgetTranslation, useTranslateJobs } from "./translateClient.js";
+import { scopeOf } from "../pdf/translateState.js";
 import { docIdOf } from "../pdf/pdfSource";
-import { pendingInOrder } from "../pdf/highlightReview.js";
+import { discardApplied, discardKind, discardStep, discardUndone, pendingInOrder, reviewQueue, reviewStep } from "../pdf/highlightReview.js";
 import { basePixels } from "../pdf/pageRaster";
 import { DEFAULT_HIGHLIGHT, colorName, highlightColor, normalizeColor, pickerColors, swatchCss } from "../shared/model/palette.js";
 import { PaletteContext } from "../shared/ui/paletteContext.js";
@@ -19,7 +20,7 @@ import { progressText, taskTitle } from "../tasks/taskKinds.js";
 import { isActive } from "../tasks/taskModel.js";
 import { parseGammaLink } from "../shared/model/gammaLinks.js";
 import { pageHostUser, publicPath } from "../shared/lib/slug.js";
-import { API, apiJson, getShareToken, setShareView, withShare, withWorkspace, setCurrentWorkspace, getCurrentWorkspace, setLinkName, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, PAGE_FILE_ACCEPT, metaSourceInfo, resolvePdfUrl, pdfProxyUrl, attachmentViewerUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich, readNdjson } from "../shared/lib/utils";
+import { API, apiJson, getShareToken, setShareView, withShare, withWorkspace, setCurrentWorkspace, getCurrentWorkspace, setLinkName, makeId, fmtBytes, getDocIdForUrl, isPdfFile, isMarkdownFile, PAGE_FILE_ACCEPT, metaSourceInfo, resolvePdfUrl, pdfProxyUrl, attachmentViewerUrl, probePdfUrl, setExpectedUser, getExpectedUser, usePersistedState, usePersistedFlag, copyText, copyRich } from "../shared/lib/utils";
 import { ITEM_TYPES, itemTypeFields, itemTypeOf } from "../shared/lib/itemTypes.js";
 import {
   AutoGrowTextarea,
@@ -67,12 +68,12 @@ import { collectEntryFiles } from "../shared/lib/dropEntries.js";
 import { useWheelPan } from "../shared/ui/wheelPan";
 import {
   ActivityIcon, AlertCircleIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpDownIcon, ArrowUpIcon, BookIcon, BugIcon, CheckIcon, CloudIcon, CopyIcon, DownloadIcon, ExportIcon,
-  ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph,
+  ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph, HighlightIcon,
   FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, HelpCircleIcon, HomeIcon, ImportIcon, InfoIcon, LabelGlyph, LabelIcon,
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoreIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon,
   RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
   ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon, MicIcon, MessageSquareIcon, BellIcon,
-  PanelTopIcon, LocateIcon, TextSearchIcon,
+  PanelTopIcon, LocateIcon, TextSearchIcon, CloudDownloadIcon,
 } from "../shared/ui/Icons";
 
 
@@ -103,6 +104,8 @@ import {
   addHighlightAsBlock,
   blocksToHighlights,
   acceptedPosition,
+  closestPlacement,
+  reviewUndone,
   placedToCheck,
   isHighlightBlock,
   normalizeBlocks,
@@ -139,12 +142,15 @@ import { makeStableActions, useStableActions } from "../shared/lib/stableActions
 import { keepIfSame, sameMap, sameObject } from "../shared/lib/keepIfSame.js";
 import { isTextBox, normalizeTextBox } from "../markup/textBox.js";
 import { useTextBoxes } from "../markup/useTextBoxes";
+import { isPicture, normalizePicture, turnedBox } from "../markup/picture.js";
+import { picturesDrag } from "../markup/pictureUpload.js";
+import { usePictures } from "../markup/usePictures";
 import { inkBounds } from "../ink/ink";
 import { useBuildFence } from "../ink/buildFence.js";
 import { useInkStrip } from "../ink/useInkStrip.js";
 import { useInkLive } from "../ink/useInkLive.js";
 import { useInkSave } from "../ink/useInkSave.js";
-import { useInkSurfaces } from "../ink/useInkSurfaces.js";
+import { useInkSurfaces, visiblePart } from "../ink/useInkSurfaces.js";
 import { useInkDocument } from "../ink/useInkDocument.js";
 import { useInkStrokes } from "../ink/useInkStrokes.js";
 import { useInkSelection } from "../ink/useInkSelection.js";
@@ -186,6 +192,12 @@ import { AllowanceMeter, Empty, QuotaMeter, Section } from "../settings/Settings
 import { LazyBoundary, lazySurface, useLatch, whenIdle } from "../shared/ui/lazy";
 import { libraryAccess } from "../library/libraryAccess";
 import { MirrorPopover } from "../collaboration/MirrorPopover";
+import { MergeChip } from "../collaboration/MergeResolver";
+import {
+  ZOTERO_PDF_COMING, isZoteroPdfComing, linkGone, linkPath, pillLink, zoteroLibraryLabel, zoteroPdfCard, zoteroPdfSource, zoteroPdfState,
+} from "../collaboration/syncLinks.js";
+import { ZoteroPdfCard, ZoteroReadonlyBadge } from "../collaboration/ZoteroPage.jsx";
+import { fetchZoteroPdf } from "../transfers/zoteroApi";
 import {
   EMPTY_TREE,
   addToFolder,
@@ -886,6 +898,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // false after the cookie is removed performs a local-only workspace
     // teardown, without starting reads that race logout.
     leaveCurrentPage();
+    // Translation jobs outlive the viewer: stop them before the session goes.
+    endTranslations();
     await fetch(`${API}/logout`, { method: "POST", credentials: "include" });
     // Logout kills the browser-wide session: tell other tabs of this account
     // so they drop to the login page instead of failing on their next save.
@@ -967,6 +981,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   useEffect(() => {
     const u = authUser?.user && wsId ? `${authUser.user}@${wsId}` : "";
     tabHistoryRef.current = [];
+    // Leaving the account or workspace (here too when the session expired
+    // or another tab signed in): its translation jobs stop and its
+    // documents' translations go with it.
+    if (prefsUserRef.current && prefsUserRef.current !== u) endTranslations();
     if (!u || shareMode) {
       // Losing the session (logout button, expiry in another tab) must fully
       // close the workspace: a stale focusedBlockId would get merged into the
@@ -1275,7 +1293,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   async function duplicatePage(pageId) {
     const data = await apiJson(`${API}/blocks/${pageId}/subtree`);
     const src = data.block || {};
-    const { doc_id: pdfId, ...properties } = src.properties || {};
+    // (nor what a Zotero link says of the page it keeps, which a copy is not: docs/dev/zotero_sync.md)
+    const { doc_id: pdfId, zotero_pdf: _zoteroPdf, zotero_readonly: _readonly, zotero_author: _author, ...properties } = src.properties || {};
     if (pdfId && !properties.source_url) properties.source_url = `/api/uploads/${pdfId}.pdf`;
     const created = await apiJson(`${API}/blocks`, {
       method: "POST",
@@ -1286,7 +1305,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const clone = (list) => (list || []).map((b) => {
       const id = makeId();
       ids.set(b.id, id);
-      return { ...b, id, properties: { ...(b.properties || {}) }, children: clone(b.children) };
+      const { zotero_readonly: _readonly, zotero_author: _author, ...properties } = b.properties || {};
+      return { ...b, id, properties, children: clone(b.children) };
     });
     const remap = (list) => {
       for (const b of list || []) {
@@ -2663,13 +2683,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     selTranslate, setSelTranslate, selTranslateAuto, setSelTranslateAuto,
     translateLang, setTranslateLang, translateModel, setTranslateModel,
     translateEffort, setTranslateEffort, translateParallel, setTranslateParallel,
-    translateSpeed, setTranslateSpeed,
+    translateSpeed, setTranslateSpeed, translateKeep, setTranslateKeep,
     searchDetailsHome, setSearchDetailsHome, searchDetailsPaper, setSearchDetailsPaper,
     enterNewNote, setEnterNewNote, backlinksVisible, setBacklinksVisible,
     keybindings, setKeybindings,
     statusBarVisible, setStatusBarVisible, suggestTours, setSuggestTours, tourProgress, setTourProgress,
     inboxSystemNotifications, setInboxSystemNotifications,
-    topbar, setTopbar, viewerTools, setViewerTools,
+    topbar, setTopbar, viewerTools, setViewerTools, highlighterColor, setHighlighterColor,
     chatEffort, setChatEffort, chatSpeed, setChatSpeed, aiLoginCheck, setAiLoginCheck, metaModel, setMetaModel,
     dictationModel, setDictationModel, dictationLang, setDictationLang,
     chatSystem, setChatSystem, agentSystem, setAgentSystem,
@@ -3396,24 +3416,25 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   };
 
   // --- PDF translation (the 文A button in the viewer's zoom column) ---
-  // The queue lives in PdfViewer (translateCtl), which calls translateChunk
-  // below for each chunk; the selection popup uses the same request. The
-  // settings live in Settings → Language and Translation. What is sent: a
-  // machine-translation service ("engine:<id>") or a model, per
-  // translateModelFor, else the chat model.
+  // The viewer starts the jobs (translateCtl), which send translateChunk
+  // below for each chunk and translateBrief for the paper's brief; the
+  // selection popup uses the same chunk request. app/translateClient.js
+  // follows the jobs of every document: their background-tasks rows, the
+  // reading pill, how they ended. The settings live in Settings → Language
+  // and Translation. What is sent: a machine-translation service
+  // ("engine:<id>") or a model, per translateModelFor, else the chat model.
   const translateEngines = aiInfo?.translate_engines || [];
-  const translateSendModel = translateModelFor(translateModel, translateEngines, scopedAiModels) || chatSendModel;
+  const translatePick = translateModelFor(translateModel, translateEngines, scopedAiModels);
+  const translateSendModel = translatePick || chatSendModel;
   const translateLangLabel = (TRANSLATE_LANGS.find(([code]) => code === translateLang) || ["", ""])[1];
   const pdfTranslateCtl = useRef(null); // imperative surface set by PdfViewer
-  const [pdfTransState, setPdfTransState] = useState({ running: false, progress: 0, shown: true, pages: 0, current: false });
+  const [pdfTransState, setPdfTransState] = useState({ running: false, progress: 0, shown: true, pages: 0, current: false, translated: false, url: "" });
   const [transMenu, setTransMenu] = useState(null); // {x, y} while the button's option menu is open
   const [toolsMenu, setToolsMenu] = useState(null); // {x, y} while the strip's ⋯ menu is open
   const toolsMoreRef = useRef(null); // the ⋯ button: its own press toggles the menu
   // The ⋯ going (its tools back on the strip, the viewer closed) takes its
   // menu along, so the menu does not come back on its own with the ⋯.
   const toolsMoreAt = useCallback((el) => { toolsMoreRef.current = el; if (!el) setToolsMenu(null); }, []);
-  const transTaskRef = useRef(null); // background-tasks row for the running job
-  const transReadingRef = useRef(false); // the "Reading the paper" pill is up
   // A menu from a button of the viewer's strip opens beside it, off the
   // strip's right edge.
   function stripMenuAt(el) {
@@ -3421,96 +3442,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return { x: r.right + 8, y: r.top - 4 };
   }
   function openTransMenu(el) { setTransMenu(stripMenuAt(el)); }
-  function handleTranslateState(st) {
-    setPdfTransState(st);
-    // A paper's first requests wait while the server reads it for the brief
-    // (its terms and notation): the pill says why nothing lands yet.
-    const reading = !!(st.running && st.reading);
-    if (reading !== transReadingRef.current) {
-      transReadingRef.current = reading;
-      postPill("translate", reading
-        ? { msg: t("Reading the paper first, so its terms stay the same throughout…"), spinner: true }
-        : null);
-    }
-    if (st.running && !transTaskRef.current) {
-      transTaskRef.current = addTask({
-        name: `Translate ${st.label} → ${translateLangLabel}`, kind: "ai", info: "0%", fraction: 0,
-        cancel: () => pdfTranslateCtl.current?.halt(),
-      });
-    }
-    if (transTaskRef.current) {
-      if (st.running) {
-        updateTask(transTaskRef.current, {
-          info: reading ? t("reading the paper…") : `${Math.round(st.progress * 100)}%`, fraction: st.progress,
-        });
-      } else {
-        // The job's end: stopped by a request that kept failing (its
-        // reason), or done with paragraphs the server could not translate,
-        // which the next job asks for again ("Try again").
-        const stopped = t("stopped at {progress}%", { progress: Math.round(st.progress * 100) });
-        const left = st.error == null ? st.untranslated || 0 : 0;
-        updateTask(transTaskRef.current, { state: "done", info: st.error != null ? stopped
-          : left ? tn("{n} paragraph untranslated", "{n} paragraphs untranslated", left)
-            : st.progress >= 0.999 ? "100%" : stopped });
-        transTaskRef.current = null;
-        if (st.error != null) {
-          setStatus(st.error ? t("Translation failed: {message}", { message: st.error })
-            : t("Translation failed — click the button to retry."));
-        } else if (left) {
-          setStatus(tn("{n} paragraph could not be translated and still shows the original.",
-            "{n} paragraphs could not be translated and still show the original.", left),
-          { label: t("Try again"), run: () => pdfTranslateCtl.current?.retryUntranslated() });
-        }
-      }
-    }
-  }
-  // One chunk of paragraphs → the server's final reply ({translations,
-  // failed, …}), a single provider call. All the chunking, queueing and
-  // parallelism live in the viewer's engine; this is just the HTTP wrapper
-  // carrying the language/model/effort/speed settings. Throws on failure with the
-  // server's reason (a 429 of the shared AI allowance says what to do), its
-  // HTTP `status` and `retryAfter` (seconds: the account's AI calls are all
-  // in use): the engine asks again (translatePlan.requestChunk) and reports
-  // a job that still failed through handleTranslateState, the selection
-  // popup shows the reason. `signal` is the job's AbortController: halting
-  // cancels the requests still in flight.
-  // The server streams NDJSON: `{i: [indices], text}` as the model writes
-  // each paragraph (→ onPartial, the viewer types it onto the page), then
-  // the final `{translations}` object.
-  // `context` is the viewer's for this request (pdf/translatePlan.js
-  // requestFields): the page and, for a page without a stored PDF, the
-  // document's opening text, from which the server makes the paper's brief.
-  // `onStage("brief")` while the request waits for that brief, then
-  // `onStage("translate")`.
-  async function translateChunk(texts, signal, onPartial, context, onStage) {
-    const res = await fetch(`${API}/ai/translate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      credentials: "include",
-      signal,
-      body: JSON.stringify({
-        texts, lang: translateLang,
-        model: translateSendModel || "", effort: translateEffort || "",
-        speed: translateSpeed || "",
-        stream: true, ...requestFields(context),
-      }),
-    });
-    if (!res.ok) {
-      let detail = `${res.status} ${res.statusText}`;
-      try { detail = (await res.json()).detail || detail; } catch {}
-      throw Object.assign(new Error(detail), { status: res.status, retryAfter: Number(res.headers.get("Retry-After")) || 0 });
-    }
-    let final = null;
-    await readNdjson(res, (events) => {
-      for (const ev of events) {
-        if (ev.error) throw new Error(ev.error);
-        else if (ev.translations) final = ev;
-        else if (ev.stage) onStage?.(ev.stage);
-        else if (ev.i && onPartial) for (const i of ev.i) onPartial(i, ev.text);
-      }
-    });
-    return final;
-  }
+  const [translateChunk, translateBrief] = useMemo(() => {
+    const settings = { lang: translateLang, model: translateSendModel, effort: translateEffort, speed: translateSpeed, keep: translateKeep };
+    return [chunkRequest(settings), briefRequest(settings)];
+  }, [translateLang, translateSendModel, translateEffort, translateSpeed, translateKeep]);
+  useTranslateJobs({ screenUrl: pdfUrl, langLabel: translateLangLabel, postPill, addTask, updateTask, setStatus,
+    retry: () => pdfTranslateCtl.current?.retryUntranslated(),
+    followsChat: !translatePick, openSettings: () => openSettingsPane("translation") });
 
   // POST /metadata/fetch for one page, tracked as a transfer-panel task:
   // the open page's lookup (an upload's are the metadata job's). Throws on
@@ -3963,6 +3901,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // drawing. A mouse holds Ctrl; a finger has no Ctrl, so a touch screen gets
   // a sticky toggle button in the viewer's zoom column instead.
   const [areaSelectMode, setAreaSelectMode] = useState(false);
+  // The strip's text highlighter (app/viewerToolItems.js): while it is on,
+  // a text selection on the PDF is highlighted at once in highlighterColor,
+  // with no popup; its button's right-click or long press picks the colour
+  // ({x, y} of that menu).
+  const [highlighterOn, setHighlighterOn] = useState(false);
+  const [highlighterMenu, setHighlighterMenu] = useState(null);
   // The build fence (ink/buildFence.js): a server updated under this
   // bundle stops the page drawing until it is reloaded (inkStale).
   const { inkStale, noteServerBuild } = useBuildFence({ sessionBuild: authUser?.build, setStatus });
@@ -4086,13 +4030,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const pendingCaretRef = useRef(null);  // caret to place once a restore has committed
   // Text boxes (markup/useTextBoxes.js): the selected or edited box, its
   // edits. A box's editor and the notes' row editor are never open at once,
-  // nor a selected box and the lasso's selection; an ink tool armed makes
-  // the boxes inert.
+  // nor a selected box and the lasso's selection or a selected picture
+  // (pictures, below); an ink tool armed makes the boxes inert.
   const textBoxes = useTextBoxes({
     blocks, blocksRef, setBlocks, foldBlocks, readOnly, pageId: focusedBlockId,
     rowEditingId: view.editingId, closeRowEditor: () => setView((v) => (v.editingId ? closeEditing(v, v.editingId) : v)),
     style: textBoxStyle, setStyle: setTextBoxStyle, keybindings,
-    inert: !!inkUi.tool && inkUi.tool !== "text", onSelect: () => clearInkSelection(),
+    inert: !!inkUi.tool && inkUi.tool !== "text", onSelect: () => { clearInkSelection(); pictures.deselect(); },
   });
   const blockHistory = useBlockHistory(blocks, setBlocks, {
     originOf: (tree) => treeOriginRef.current.get(tree),
@@ -4157,20 +4101,27 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
 
   // Merges an offline copy's sync decided on this page's blocks
-  // (docs/dev/mirror.md): a chip on each such row (MergeResolver). Read on
-  // page open and after any sync event; a decision is posted and the block's
-  // new text arrives over the page socket like any edit.
+  // (docs/dev/mirror.md), and the differences a Zotero link kept
+  // (docs/dev/zotero_sync.md): a chip on each such row (MergeResolver), and
+  // for a link's row on the page itself (its record) one on the page's
+  // header. Read on page open and after any sync event; a decision is posted
+  // and the block's new text arrives over the page socket like any edit.
   const [merges, setMerges] = useState(null);
-  const mirrorWs = workspace?.mirror_of || workspace?.publishing ? workspace.id : "";
+  // The workspace's link (syncLinks.js pillLink): the session row's, or one
+  // the pill detached ({ws, kind}, `pillHeld`), whose pill stays, detached
+  // with Reattach, though the row read again lists an ordinary workspace.
+  const [pillHeld, setPillHeld] = useState(null);
+  const syncKind = pillLink(workspace, pillHeld);
+  const mirrorWs = syncKind ? workspace.id : "";
   const loadMerges = useCallback(async () => {
     if (!mirrorWs || !focusedBlockId || !authUser?.user) { setMerges(null); return; }
     try {
-      const d = await apiJson(`${API}/mirrors/${encodeURIComponent(mirrorWs)}/conflicts?page=${encodeURIComponent(focusedBlockId)}`);
+      const d = await apiJson(`${API}${linkPath(syncKind, mirrorWs, `/conflicts?page=${encodeURIComponent(focusedBlockId)}`)}`);
       const map = new Map();
       for (const c of d.conflicts || []) if (!map.has(c.block_id)) map.set(c.block_id, c);
       setMerges(map.size ? map : null);
     } catch { setMerges(null); }
-  }, [mirrorWs, focusedBlockId, authUser?.user]);
+  }, [syncKind, mirrorWs, focusedBlockId, authUser?.user]);
   // No timer of its own: the sync pill polls the mirror and raises
   // "gamma:mirror-changed" when its open conflicts move.
   useEffect(() => { loadMerges(); }, [loadMerges]);
@@ -4187,13 +4138,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // conflicts is worked through without hunting for the chips.
   const [mergeOpen, setMergeOpen] = useState(null);
   useEffect(() => { setMergeOpen(null); }, [focusedBlockId]);
+  // (a Zotero link's row on the page itself, its record, comes first)
+  const recordMerge = syncKind === "zotero" && focusedBlockId ? merges?.get(focusedBlockId) || null : null;
   const mergeOrder = useMemo(
-    () => (merges ? flattenBlocks(blocks).map((b) => b.id).filter((id) => merges.has(id)) : []),
-    [merges, blocks],
+    () => (merges ? [...(recordMerge ? [focusedBlockId] : []), ...flattenBlocks(blocks).map((b) => b.id).filter((id) => merges.has(id))] : []),
+    [merges, blocks, recordMerge, focusedBlockId],
   );
   function showMerge(id) {
     setMergeOpen(id);
-    if (id) jumpToRef.current?.(focusedBlockId, id);
+    if (id && id !== focusedBlockId) jumpToRef.current?.(focusedBlockId, id);
   }
   function stepMerge(fromId, delta) {
     if (!mergeOrder.length) { setMergeOpen(null); return; }
@@ -4202,7 +4155,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
   const mergeNav = (id) => ({ index: mergeOrder.indexOf(id) + 1, total: mergeOrder.length, onStep: (delta) => stepMerge(id, delta) });
   async function resolveMerge(conflict, choice) {
-    await apiJson(`${API}/mirrors/${encodeURIComponent(mirrorWs)}/conflicts/${conflict.id}`, {
+    await apiJson(`${API}${linkPath(syncKind, mirrorWs, `/conflicts/${conflict.id}`)}`, {
       method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ choice }),
     });
     // on to the next conflict down the page (the one above when it was the last), else done
@@ -4216,13 +4169,23 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const jumpToRef = useRef(null);
   jumpToRef.current = (pageId, blockId) => {
     setOpenPopover(null);
+    // a row of the folders or labels tree (a Zotero collection's) is about
+    // its folder or label, which the library shows: the tree is no page
+    if (pageId === "folders" || pageId === "labels") {
+      if (!homeMode) goHome();
+      if (pageId === "folders") openFolder(blockId || lib.root);
+      else if (blockId) openLabel(blockId, "");
+      return;
+    }
+    // a conflict on the page itself (a Zotero link's record) is on its header, not a row
+    if (blockId && blockId === pageId) blockId = "";
     if (pageId && pageId !== focusedBlockId) { openPage(pageId, blockId); return; }
     if (blockId) { scrollToBlock(blockId); reveal(blockId); }
   };
   useEffect(() => {
     const h = (e) => jumpToRef.current?.(e.detail?.page, e.detail?.block);
-    // the link was forgotten: this is an ordinary workspace again (no pill, no merge chips)
-    const gone = () => setWorkspace((prev) => (prev && prev.mirror_of ? { ...prev, mirror_of: "" } : prev));
+    // the link was forgotten: this is an ordinary workspace again (no pill, no merge chips, no PDF a link brings)
+    const gone = () => setWorkspace(linkGone);
     window.addEventListener("gamma:jump", h);
     window.addEventListener("gamma:mirror-gone", gone);
     return () => { window.removeEventListener("gamma:jump", h); window.removeEventListener("gamma:mirror-gone", gone); };
@@ -5521,6 +5484,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         openBlock(err.data.page_id, { pushNav: true });
         return;
       }
+      if (isZoteroPdfComing(err)) {
+        // The page waits for the PDF its Zotero item holds (this view had not
+        // heard yet): the page is read again, so its card shows in the
+        // paperclip's place.
+        updateTask(taskId, { state: "done", info: t("in Zotero") });
+        setStatus(t(ZOTERO_PDF_COMING));
+        setLoading(false);
+        if (focusedBlockIdRef.current === pageId) openBlock(pageId);
+        return;
+      }
       updateTask(taskId, { state: "failed", info: (err.message || "failed") });
       setStatus(replace
         ? t("Replace failed: {message}", { message: err.message })
@@ -6576,7 +6549,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
   function markPublishing() {
     // the header's sync pill follows the publication without a reload
-    setWorkspace((prev) => (prev && !prev.mirror_of && !prev.publishing ? { ...prev, publishing: true } : prev));
+    setWorkspace((prev) => (prev && !prev.mirror_of && !prev.zotero_of && !prev.publishing ? { ...prev, publishing: true } : prev));
     window.dispatchEvent(new CustomEvent("gamma:mirror"));
   }
   async function publishPage(patch) {
@@ -6920,6 +6893,26 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // What the open page carries — THE switch for layout and page-level
   // affordances (docs/dev/block_centric.md). pdfUrl is only the viewer's input.
   const pageAttach = useMemo(() => pageAttachment(focusedBlock), [focusedBlock]);
+  // A page whose PDF Zotero holds and Gamma not yet (its `zotero_pdf`,
+  // docs/dev/zotero_sync.md): its card shows in the attach popover, in the
+  // prompt's place while something brings that PDF (`zoteroPdfShown`, the
+  // server refuses another meanwhile), above the prompt when nothing can
+  // (a linked file, WebDAV, no file access, a failed download, no link any
+  // more), so the page takes a copy of its own, which stays in Gamma.
+  // Opening the page asks a live link for that PDF first, once.
+  const zoteroPdf = !pageAttach && focusedBlock?.properties?.zotero_pdf || null;
+  const zoteroSource = shareMode ? "" : zoteroPdfSource(workspace);
+  const zoteroLinked = zoteroSource === "zotero";
+  const zoteroCard = zoteroPdfCard(zoteroPdf, { source: zoteroSource });
+  const zoteroPdfShown = zoteroCard?.takesOver || false;
+  const fetchZoteroPdfNow = (pageId) => { fetchZoteroPdf(workspace.id, pageId).catch(() => {}); };
+  const zoteroPdfAsked = useRef(new Set());
+  const zoteroPdfWanted = zoteroLinked && zoteroPdfState(zoteroPdf)?.fetch ? focusedBlock?.id || "" : "";
+  useEffect(() => {
+    if (!zoteroPdfWanted || zoteroPdfAsked.current.has(zoteroPdfWanted)) return;
+    zoteroPdfAsked.current.add(zoteroPdfWanted);
+    fetchZoteroPdfNow(zoteroPdfWanted);
+  }, [zoteroPdfWanted]); // eslint-disable-line react-hooks/exhaustive-deps -- once per page
   // The page's sheets of paper (notebook/notebook.js, docs/dev/notebooks.md).
   // The notes view draws them among the blocks (notebook/NoteSheet.jsx); on
   // a page without a PDF the notebook view — `notebook`, switched per page
@@ -6939,9 +6932,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The PATCH names the file the draft was edited from (base_properties):
   // when someone else changed the drawing meanwhile the server merges both
   // by stroke and answers with the merged file (gamma/ops.py merge_ink).
-  // Undo / Redo (the strip's buttons, Ctrl+Z while it is open) step the
-  // block history for text boxes, the stroke history otherwise.
-  const boxUndo = textArmed || !!textBoxes.sel;
   // The save (ink/useInkSave.js over ink/inkSaver.js): the drafts go to the
   // server 700 ms after the last edit, at most 5 s after the first unsaved
   // one, and at once when the tab is hidden, the page goes away or another
@@ -6953,6 +6943,24 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // messages.
   const { inkBlocks, inkBySurface, onPageInView, pasteTarget, inkPageNumber } = useInkSurfaces({
     blocks, nbSheets, nbSheetsRef, nbCurrent, notebook, pdfUrl, pdfHidden });
+  // Pictures (markup/usePictures.js): the selected picture and its crop
+  // mode, its edits, and the new ones the strip's Picture button, a paste
+  // and a drop place on the surface in view. One selection in the app: a
+  // picture selected lets go of a text box and of the lasso's strokes, and
+  // either of those lets go of the picture; a tool armed lets go of it.
+  // A new picture without a point goes to the surface in view, else to the
+  // sheet among the notes that shows the most of itself.
+  const pictureTarget = () => pasteTarget() || nbSheetsRef.current.reduce((best, s) => {
+    const size = { width: s.paper.width, height: s.paper.height }, seen = visiblePart(s.id, size);
+    const area = seen ? seen.width * seen.height : 0;
+    return area > (best?.area || 0) ? { page: s.id, size, area } : best;
+  }, null);
+  const pictures = usePictures({ blocks, blocksRef, setBlocks, readOnly, pageId: focusedBlockId, tool: inkUi.tool,
+    pasteTarget: pictureTarget, setStatus, onSelect: () => { textBoxes.actions.onBoxDeselect(); clearInkSelection(); } });
+  // Undo / Redo (the strip's buttons, Ctrl+Z while it is open) step the
+  // block history for text boxes and pictures (the Text tool armed, a box
+  // or a picture selected), the stroke history otherwise.
+  const boxUndo = textArmed || !!textBoxes.sel || !!pictures.sel;
   // The page's ink as a document (ink/useInkDocument.js): every edit
   // through applyInk, the stroke history and its steps, the eraser's
   // sweeps and a scribble's erasures, the journal's restored drafts.
@@ -6976,7 +6984,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     deleteInkSelection, selectionStill, handleInkAction, copyInkSelection, pasteInk, pasteAtCentre,
     duplicateInkSelection, selectAllInk } = useInkSelection({ focusedBlockId, readOnly, inkUi, blocksRef, inkOf,
     applyInk, flushInk, handleInkStrokes, pickInkTool, revealInkStrip, inkBySurface, pasteTarget,
-    onBoxDeselect: textBoxes.actions.onBoxDeselect, showInNotes, transcribe: shareMode ? null : askToTranscribe, setStatus });
+    onBoxDeselect: () => { textBoxes.actions.onBoxDeselect(); pictures.deselect(); }, showInNotes,
+    transcribe: shareMode ? null : askToTranscribe, setStatus });
   // The ruler (ink/useInkRuler.js): laid on the surface in view with its
   // row, Stamp line, and the layers' moves of it; it goes with the page,
   // and when the viewer stops showing its surface.
@@ -7001,7 +7010,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // never sees the stroke history's Ctrl+Z; Hold-E learns of an eraser
   // pass through noteInkEraseHold (handleInkEraseEnd).
   const { noteInkEraseHold } = useStripKeys({ inkUi, inkSelection, inkVisible, inkTools, setInkTools, pickInkTool,
-    toggleInkShape, closeInkOptions, toggleInkOptions, closeInkStrip, inkUndo, boxUndo, hasBox: !!textBoxes.sel,
+    toggleInkShape, closeInkOptions, toggleInkOptions, closeInkStrip, inkUndo, boxUndo, hasBox: !!textBoxes.sel || !!pictures.sel,
+    onPicture: readOnly ? null : pictures.pick,
     deleteInkSelection, selectionStill, clearInkSelection, restoreInkSelection, inkRuler, toggleInkRuler,
     inkZoom, toggleInkZoom, inkZoomNewLine, setStatus });
   // The Apple Pencil (ink/usePencil.js): the double tap and the squeeze
@@ -7029,16 +7039,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     inkEraserLifted();
   }
 
-  // From the notes (a marker, an ink card): show an ink group or a text box
-  // on its page and outline it. From the page (Show note, a read-only click
-  // on ink or a box): show its block in the notes.
+  // From the notes (a marker, an ink card, a picture's card): show an ink
+  // group, a text box or a picture on its page and outline it. From the
+  // page (Show note, a read-only click on ink, a box or a picture): show its
+  // block in the notes.
   function showOnPage(id) {
     const b = findBlock(blocksRef.current, id);
     if (!b) return;
     setPhonePanel(null); // the compact shell: the page, not a panel over it
     const tb = isTextBox(b) ? normalizeTextBox(b.properties.text_box) : null;
-    const box = tb ? [tb.x, tb.y, tb.x + tb.w, tb.y + tb.h] : inkBounds(inkOf(id));
-    const flash = () => (tb ? textBoxes.flashBox(id) : setInkFlash({ id, nonce: Date.now() }));
+    const pic = !tb && isPicture(b) ? normalizePicture(b.properties.picture) : null;
+    if (!tb && !pic && isPicture(b)) return; // a picture whose file is missing is drawn nowhere
+    const box = tb ? [tb.x, tb.y, tb.x + tb.w, tb.y + tb.h] : pic ? turnedBox(pic) : inkBounds(inkOf(id));
+    const flash = () => (tb ? textBoxes.flashBox(id) : pic ? pictures.flashPicture(id) : setInkFlash({ id, nonce: Date.now() }));
     const sheetId = sheetOfBlock(blocksRef.current, id);
     if (sheetId && notebook) {
       nbScrollRef.current?.(sheetId, box);
@@ -7059,11 +7072,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       flash();
       return;
     }
-    // A box is on its pdf_page (it stores no position), an ink group where its position says.
-    const position = tb ? { pageNumber: b.properties.pdf_page } : b.properties.pdf_position;
+    // A box or a picture is on its pdf_page (it stores no position), an ink group where its position says.
+    const position = tb || pic ? { pageNumber: b.properties.pdf_page } : b.properties.pdf_position;
     const wasHidden = pdfHidden;
     if (wasHidden) setPdfHidden(false);
-    setTimeout(() => scrollToRef.current?.({ position, box: tb, offset: 120 }), wasHidden ? 300 : 0);
+    setTimeout(() => scrollToRef.current?.({ position, box: tb || (pic ? { y: box[1] } : undefined), offset: 120 }), wasHidden ? 300 : 0);
     flash();
   }
   function showInNotes(id) {
@@ -7136,10 +7149,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setMoveHighlightId(null);
     setAttachModeBlockId(blockId);
   }, []);
+  // A move started from a highlight's review card (its Move…) is
+  // remembered, {id, prior} (prior: the card's step in effect, when it had
+  // one): once the selection has moved the highlight, the card opens on it
+  // again, as it was, its Move… pressed ("Moved"), pressing it again
+  // undoing the move (pdf/HighlightReview.jsx). Any other start of a move
+  // forgets it.
+  const moveFromReviewRef = useRef(null);
   const startHighlightMove = useCallback((blockId) => {
+    moveFromReviewRef.current = null;
     setAttachModeBlockId(null);
     setMoveHighlightId(blockId);
   }, []);
+  const startReviewMove = useCallback((blockId, prior = null) => {
+    startHighlightMove(blockId);
+    moveFromReviewRef.current = { id: blockId, prior };
+  }, [startHighlightMove]);
 
   // Escape ends whichever mode is on.
   useEffect(() => {
@@ -7160,10 +7185,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // a tree edit like any other (ops, undo). Whatever marked it lost or
   // placed by estimate goes with the old position. An area drag has no
   // text, so the highlight becomes an area with no quote, as one made the
-  // usual way (null drops the key).
+  // usual way (null drops the key). A move started from the review card
+  // opens it again on the highlight, "Moved", with what the move changed
+  // for its undo (reviewStep), and the card's step before it when it had
+  // one, which that undo goes back to.
   function moveHighlightTo(blockId, position, content) {
     setMoveHighlightId(null);
-    if (readOnly || !blockId || !position || !findBlock(blocks, blockId)) return;
+    const from = moveFromReviewRef.current;
+    const fromReview = from?.id === blockId;
+    moveFromReviewRef.current = null;
+    const block = blockId ? findBlock(blocks, blockId) : null;
+    if (readOnly || !position || !block) return;
     setBlocks((prev) => updateBlockTree(prev, blockId, (b) => ({
       ...b,
       properties: applyPatch(b.properties, {
@@ -7173,6 +7205,63 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     })));
     setStatus(t("Highlight moved."));
     triggerFlash(blockId);
+    const step = fromReview ? reviewStep("moved", {
+      position: block.properties?.pdf_position, quote: block.properties?.quote || "", prior: from.prior,
+    }, position) : null;
+    if (step) pdfReviewRef.current?.(blockId, { done: step, scroll: false });
+  }
+
+  // Use closest match on a lost highlight's review card: it takes the place
+  // the run found for its passage below the account's threshold, and that
+  // place's text (closestPlacement: lost, closest, doc_id, approx, match
+  // and prev go), drawn solid. A tree edit like any other (ops, undo).
+  function placeClosestMatch(blockId) {
+    if (readOnly || !closestPlacement(findBlock(blocks, blockId)?.properties?.pdf_position)) return;
+    setBlocks((prev) => updateBlockTree(prev, blockId, (b) => {
+      const placed = closestPlacement(b.properties?.pdf_position);
+      return placed ? { ...b, properties: applyPatch(b.properties, { pdf_position: placed.position, quote: placed.quote || null }) } : b;
+    }));
+    triggerFlash(blockId);
+  }
+
+  // Discard on a lost highlight's review card, its passage gone from the
+  // new PDF (highlightReview.js discardStep): one with no note of its own,
+  // no child blocks and no comment thread is deleted, as the highlight
+  // menu's Delete deletes it; one that carries any stays as a note, its
+  // position its page alone, so it leaves the PDF and the review queue. One
+  // tree edit either way (ops, undo). The step goes back to the card, for
+  // its undo (Discarded pressed again); `discardOf` says which of the two it
+  // would be, for its title.
+  const discardThreads = (blockId) => comments.threadsByBlock.get(blockId)?.length || 0;
+  const discardOf = (blockId) => discardKind(findBlock(blocks, blockId), discardThreads(blockId));
+  function discardLostHighlight(blockId) {
+    const step = readOnly ? null : discardStep(blocks, blockId, discardThreads(blockId));
+    if (!step) return null;
+    setBlocks((prev) => discardApplied(prev, blockId, step));
+    return step;
+  }
+
+  // A step's button pressed again on the review card: the step it took
+  // (Accept, Use closest match, a move started from it, Discard) taken
+  // back, one more tree edit, so the app's own undo takes that back in
+  // turn. Nothing when the highlight changed since (reviewUndone; a
+  // discarded one back already). `reviewPosition(id)`, the block's stored
+  // pdf_position (null for no such block), tells the card whether its step
+  // is still in effect (highlightReview.js stepInEffect): a deletion by
+  // someone else, or a change, ends it.
+  const reviewPosition = useCallback((blockId) => findBlock(blocks, blockId)?.properties?.pdf_position ?? null, [blocks]);
+  function undoReviewStep(blockId, step) {
+    if (readOnly) return;
+    if (step?.kind === "discarded") {
+      setBlocks((prev) => discardUndone(prev, blockId, step));
+      return;
+    }
+    const block = findBlock(blocks, blockId);
+    if (!block || reviewUndone(block.properties, step) === block.properties) return;
+    setBlocks((prev) => updateBlockTree(prev, blockId, (b) => {
+      const props = reviewUndone(b.properties, step);
+      return props === b.properties ? b : { ...b, properties: props };
+    }));
   }
 
   // Accept on one pending after its PDF was replaced (matched roughly, or an
@@ -7202,6 +7291,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const relocating = tasks.jobs.some((job) => job.kind === "relocate-highlights" && isActive(job)
     && job.params?.page_id === focusedBlockId);
   const pdfStored = !!attachmentFile(pageAttach);
+  // The page as the PDF translated view sees it (translateState.scopeOf):
+  // the page and the PDF it shows, together, since while the next PDF loads
+  // the viewer still shows the last one, which this page must not name.
+  // stored: the server reads its own copy for the paper's brief; a PDF read
+  // through the proxy may have none, so the brief's request carries the
+  // opening text. file: what the server keeps the paper's translations
+  // under, the page's file (an upload, a duplicated page's, or for a PDF
+  // opened from its link the copy the proxy saves under the link's hash).
+  const pdfTransScope = { url: pdfUrl, pageId: focusedBlockId, stored: !!docIdOf(pdfUrl), file: attachmentFile(pageAttach) };
+  // The file "Forget this translation" names: the page's, once the document
+  // the viewer reports on (the one on screen) is the page's.
+  const pdfTransFile = scopeOf(pdfTransState.url, pdfTransScope).file;
   async function relocateHighlights() {
     const pageId = focusedBlockId;
     if (!pageId || !pdfStored || readOnly) return;
@@ -7401,13 +7502,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   nbSheetsRef.current = nbSheets;
   // The page tools every surface's layers read (markup/PageTools.jsx), and
   // per surface its marks (markup/MarkupLayers.jsx): a PDF page's ink groups
-  // by their position's page, a sheet's by its id, its text boxes, with the lasso
-  // selection, the selected box and the flashes on the surface they are on.
+  // by their position's page, a sheet's by its id, its text boxes and its
+  // pictures, with the lasso selection, the selected box, the selected
+  // picture and the flashes on the surface they are on.
   const inkFeaturesToldRef = useRef(null); // the page whose newer-ink pill was shown
   const pageActions = useStableActions({
     onStroke: handleInkStroke, onEraseAlong: handleInkEraseAlong, onEraseEnd: handleInkEraseEnd,
     onEraseMany: handleInkEraseMany, onSelect: handleInkSelect, onUndoGesture: handleUndoGesture, onHoldStatus: handleHoldStatus,
     onAction: handleInkAction, onMoveSelection: handleInkMoveSelection, onJump: showInNotes, ...textBoxes.actions,
+    ...pictures.actions,
     // a held pen or mouse, or a right-click, asking for the clipboard at a page point
     onPaste: pasteInk,
     onInkLive: handleInkLive,
@@ -7438,11 +7541,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       eraserSize: inkEraserSize, eraserFilter: inkEraserFilter, drawHold: inkDrawHold,
       scribble: inkScribbleErase, fingerUndo: inkFingerUndo, lassoMode: inkLassoMode, clip: inkClip, keys: inkKeys,
       hoverPreview: inkHoverPreview, ruler: readOnly ? null : inkRuler, rulerUnits: inkRulerUnits, zoom: readOnly ? null : inkZoom },
-    text: { armed: textArmed, style: textBoxStyle },
+    text: { armed: textArmed, style: textBoxStyle, zotero: zoteroLinked },
     actions: pageActions,
   }), [readOnly, inkTool, inkPenTool, inkPenOnly, inkPressure, inkEraserMode, inkEraserSize, inkEraserFilter, inkClip, inkKeys,
-    inkDrawHold, inkScribbleErase, inkFingerUndo, inkLassoMode, inkHoverPreview, textArmed, textBoxStyle, pageActions, inkRuler, inkRulerUnits,
-    inkZoom]);
+    inkDrawHold, inkScribbleErase, inkFingerUndo, inkLassoMode, inkHoverPreview, textArmed, textBoxStyle, zoteroLinked, pageActions, inkRuler,
+    inkRulerUnits, inkZoom]);
   // --- Recordings (docs/dev/recording.md) ---------------------------------------
   // The page's recording blocks and every block stamped with the moment it
   // was written, each list kept while its contents are the same, so the
@@ -7561,7 +7664,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   ) : null;
 
   const marks = useMarks({ ink: inkBySurface, inkSelection, inkFlash, boxes: textBoxes.bySurface, boxSel: textBoxes.sel,
-    boxFlash: textBoxes.flash });
+    boxFlash: textBoxes.flash, pictures: pictures.bySurface, pictureSel: pictures.sel, pictureFlash: pictures.flash });
   const homeMode = !focusedBlockId && lib.browse;
   // The one page selected on the home library (F2 renames it), or "".
   const homePick = homeMode && lib.organize && selectedPages.size === 1 && !selectedFolders.size && !selectedLabels.size
@@ -7656,7 +7759,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (!notesVisible) guideEvents.emit("window.shown", { id: "notes" });
       setNotesVisible((v) => !v);
     },
-    openSettings: (pane) => { setOpenPopover(null); setSettingsOpen((cur) => pane || cur || "appearance"); },
+    openSettings: (pane) => { setOpenPopover(null); setSettingsOpen((cur) => pane || cur || "account"); },
     // The Export dialog, preset to a format (transfers/transferFormats.js).
     exportAs: (format) => { setExportFolder(null); setExportOpts((o) => ({ ...o, format })); setExportOpen(true); },
     downloadPdf: () => exportRawPdf(),
@@ -7859,8 +7962,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // is on screen: a PDF or the notebook view, not closed, and on a
       // phone not under the Notes or Chat panel
       viewerTools: !!(pdfUrl || notebook) && !viewerHidden && !(isPhone && phonePanel),
-      // this workspace has an offline copy or a publication, so it has a sync pill
-      clonedWorkspace: !!(workspace?.mirror_of || workspace?.publishing),
+      // this workspace has an offline copy, a publication or a Zotero link, so it has a sync pill
+      clonedWorkspace: !!syncKind,
       installable: HOME_SCREEN_INSTALLABLE,
       // Gamma Connector in this browser (undefined while it is asked, and
       // in the desktop app), and a Gamma Cloud account this one could link.
@@ -8446,13 +8549,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     prevHighlightsRef.current = { json, value: next };
     return next;
   }, [blocks, treeBlocks, comments.countByBlock]);
-  // The page's highlights pending after its PDF was replaced (drawn dashed
-  // until accepted or moved), in document order: the Document menu's Review
-  // and Accept all (docs/dev/highlight_relocation.md).
+  // The page's highlights to review after its PDF was replaced, in document
+  // order: the pending ones (drawn dashed until accepted or moved), the
+  // Document menu's Accept all, and with the lost ones (hollow) the review
+  // queue its Review opens the first of (docs/dev/highlight_relocation.md).
   const pendingHighlights = useMemo(() => pendingInOrder(highlights), [highlights]);
-  const pdfReviewRef = useRef(null); // set by PdfViewer: scrolls to a pending highlight and opens its card
+  const reviewHighlights = useMemo(() => reviewQueue(highlights), [highlights]);
+  // set by PdfViewer: scrolls to a highlight to review and opens its card
+  // (with a step, `done`, the card says what it did: after a move from it)
+  const pdfReviewRef = useRef(null);
   function reviewPending() {
-    const first = pendingHighlights[0];
+    const first = reviewHighlights[0];
     setOpenPopover(null);
     if (!first) return;
     const wasHidden = pdfHidden;
@@ -8925,7 +9032,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // sheet actions (the tools reach them through PageToolsContext), and the
   // strip over the notes when no viewer is there to hold it.
   const viewerInk = (!!pdfUrl || notebook) && !viewerHidden;
-  const openInkTools = () => (inkUi.open ? closeInkStrip() : openInkStrip());
+  // The pen's strip and the text highlighter both take a drag on the page:
+  // opening one puts the other away.
+  const openInkTools = () => {
+    if (inkUi.open) { closeInkStrip(); return; }
+    setHighlighterOn(false);
+    openInkStrip();
+  };
+  function setHighlighter(on) {
+    if (on && inkUi.open) closeInkStrip();
+    setHighlighterOn(on);
+  }
   const noteSheetCtx = notebook ? null : {
     marks, inkOpen: inkUi.open,
     onPen: openInkTools, onPaper: setSheetPaper, onPaperAll: applyPaperToAll, onAddAfter: addSheetAfter,
@@ -8937,6 +9054,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       eraserMode={inkEraserMode} eraserSize={inkEraserSize} eraserReturn={inkEraserReturn} eraserFilter={inkEraserFilter}
       lassoMode={inkLassoMode} textStyle={textBoxes.shownStyle}
       onPick={pickInkTool} onTextStyle={textBoxes.restyle} blockHistory={boxUndo}
+      onPicture={readOnly ? undefined : pictures.pick}
       onUndo={() => stripUndo(false)} onRedo={() => stripUndo(true)}
       // the block history keeps no count to disable its buttons by: a step with nothing to undo says so
       canUndo={boxUndo || inkHistoryState.undo > 0} canRedo={boxUndo || inkHistoryState.redo > 0}
@@ -9172,19 +9290,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     <NotebookIcon size={16} /> {t("Notebook")}
                   </button>
                 ) : null}
-                {pageAttach || (!readOnly && !notebook) ? (
+                {pageAttach || zoteroPdf || (!readOnly && !notebook) ? (
                   <span data-popover="attach" className="popoverAnchor">
                     <button
                       className={`pageActionBtn ${pageAttach ? "active" : ""}`}
                       title={pageAttach
                         ? t("Document: {name}", { name: pageAttach.name || defaultPageTitle(pageAttach) })
+                        : zoteroPdfShown ? zoteroCard.title
                         : t("Attach a PDF as this page's document (URL, arXiv id, DOI, or upload) — it gets the viewer, highlights and metadata. Other files go into blocks.")}
-                      aria-label={pageAttach ? t("Document") : t("Attach document")}
+                      aria-label={pageAttach ? t("Document") : zoteroPdfShown ? t("PDF in Zotero") : t("Attach document")}
                       aria-haspopup={pageAttach ? "menu" : undefined}
                       aria-expanded={openPopover === "attach"}
                       disabled={loading}
                       onClick={() => setOpenPopover((p) => (p === "attach" ? null : "attach"))}
-                    ><PaperclipIcon size={16} /></button>
+                    >{zoteroPdfShown ? <CloudDownloadIcon size={16} /> : <PaperclipIcon size={16} />}</button>
                     {openPopover === "attach" && pageAttach ? (
                       <Popover as={MenuScope} className="addPopover attachPopover" aria-label={t("Document")}>
                         <div className="popoverTitle">{t("Document")}</div>
@@ -9199,19 +9318,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             {t("Download the PDF")}
                           </MenuItem>
                         ) : null}
-                        {/* the highlights drawn dashed after a replacement, to check: the
-                            first one's review card, or all of them accepted as one edit */}
-                        {pendingHighlights.length ? (
+                        {/* the highlights drawn dashed or hollow after a replacement, to
+                            review: the first one's card; the dashed ones accepted as one edit */}
+                        {reviewHighlights.length ? (
                           <MenuItem icon={TextSearchIcon} onClick={reviewPending}
-                            title={t("Show the first dashed highlight with what it matched and where it was before")}>
-                            {tn("Review {n} rough match", "Review {n} rough matches", pendingHighlights.length)}
+                            title={t("Show the first dashed or hollow highlight with what it matched and where it was before")}>
+                            {tn("Review {n} highlight", "Review {n} highlights", reviewHighlights.length)}
                           </MenuItem>
                         ) : null}
                         {pendingHighlights.length && !readOnly ? (
                           <MenuItem icon={CheckIcon}
                             onClick={() => { setOpenPopover(null); acceptHighlightPlaces(pendingHighlights.map((h) => h.id)); }}
                             title={t("Draw every dashed highlight solid where it is now")}>
-                            {tn("Accept {n} rough match", "Accept all {n}", pendingHighlights.length)}
+                            {tn("Accept {n} rough match", "Accept all {n} rough matches", pendingHighlights.length)}
                           </MenuItem>
                         ) : null}
                         {!readOnly ? (
@@ -9220,6 +9339,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                               title={t("Upload a new version of this PDF: the notes and highlights stay, and each highlight moves to where its text is in the new file")}>
                               {t("Replace the PDF…")}
                             </MenuItem>
+                            {/* In the desktop app: its page preload passes the message to the app, which
+                                asks for the file and sends each new version of it here (desktop/docs/architecture.md). */}
+                            {IS_DESKTOP ? (
+                              <MenuItem icon={HardDriveIcon}
+                                title={t("Each time a PDF on this computer changes, it becomes this page's PDF: the notes and highlights stay, and each highlight moves to where its text is")}
+                                onClick={() => {
+                                  setOpenPopover(null);
+                                  window.postMessage({ source: "gamma-app", type: "follow-file-on-disk", ws: getCurrentWorkspace(), page: focusedBlockId }, window.location.origin);
+                                }}>{t("Follow a file on this computer…")}</MenuItem>
+                            ) : null}
                             <MenuItem icon={LocateIcon} disabled={loading || relocating || !pdfStored} onClick={relocateHighlights}
                               title={!pdfStored ? t("This PDF is shown from its link and not stored on the server, so its highlights cannot be placed in it")
                                 : relocating ? t("This page's highlights are being placed — see Background tasks")
@@ -9237,30 +9366,50 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           </>
                         ) : null}
                       </Popover>
+                    ) : openPopover === "attach" && zoteroPdfShown ? (
+                      <Popover className="addPopover attachPopover" aria-label={t("PDF in Zotero")}>
+                        <ZoteroPdfCard pdf={zoteroPdf} source={zoteroSource} onFetch={() => fetchZoteroPdfNow(focusedBlockId)} />
+                      </Popover>
                     ) : openPopover === "attach" ? (
                       <Popover className="addPopover attachPopover">
-                        <div className="popoverTitle">{t("Attach a document")}</div>
-                        <input
-                          autoFocus
-                          className="searchInput"
-                          value={attachUrl}
-                          onChange={(e) => setAttachUrl(e.target.value)}
-                          placeholder={t("PDF URL, arXiv id, or DOI — press Enter")}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" && attachUrl.trim() && !loading) attachPdfToPage({ url: attachUrl.trim() });
-                            else if (e.key === "Escape") setOpenPopover(null);
-                          }}
-                        />
-                        <MenuItem icon={UploadIcon} disabled={loading} onClick={() => attachFileRef.current?.click()}>{t("Upload a PDF…")}</MenuItem>
-                        <input
-                          ref={attachFileRef}
-                          type="file"
-                          accept=".pdf,application/pdf"
-                          hidden
-                          onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) attachPdfToPage({ file: f }); }}
-                        />
+                        {/* a PDF in Zotero that cannot come: why, above the page's own copy */}
+                        {zoteroPdf ? (
+                          <ZoteroPdfCard pdf={zoteroPdf} source={zoteroSource} ownCopy={!readOnly && !notebook}
+                            onFetch={() => fetchZoteroPdfNow(focusedBlockId)} />
+                        ) : null}
+                        {!readOnly && !notebook ? <>
+                          <div className="popoverTitle">{t("Attach a document")}</div>
+                          <input
+                            autoFocus={!zoteroPdf}
+                            className="searchInput"
+                            value={attachUrl}
+                            onChange={(e) => setAttachUrl(e.target.value)}
+                            placeholder={t("PDF URL, arXiv id, or DOI — press Enter")}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter" && attachUrl.trim() && !loading) attachPdfToPage({ url: attachUrl.trim() });
+                              else if (e.key === "Escape") setOpenPopover(null);
+                            }}
+                          />
+                          <MenuItem icon={UploadIcon} disabled={loading} onClick={() => attachFileRef.current?.click()}>{t("Upload a PDF…")}</MenuItem>
+                          <input
+                            ref={attachFileRef}
+                            type="file"
+                            accept=".pdf,application/pdf"
+                            hidden
+                            onChange={(e) => { const f = e.target.files?.[0]; e.target.value = ""; if (f) attachPdfToPage({ file: f }); }}
+                          />
+                        </> : null}
                       </Popover>
                     ) : null}
+                  </span>
+                ) : null}
+                {/* a note page that is a Zotero note Gamma cannot write back */}
+                {focusedBlock?.properties?.zotero_readonly ? <ZoteroReadonlyBadge props={focusedBlock.properties} onPage /> : null}
+                {/* a Zotero link's difference on the record (both sides changed a field) */}
+                {recordMerge ? (
+                  <span className="zoteroRecordChip">
+                    <MergeChip conflict={recordMerge} onResolve={resolveMerge} nav={mergeNav(focusedBlockId)}
+                      open={mergeOpen === focusedBlockId} onOpenChange={(v) => setMergeOpen(v ? focusedBlockId : null)} />
                   </span>
                 ) : null}
                 {pageAttach || pageMeta ? (
@@ -10449,7 +10598,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       hold=".slashMenu, .refPopup">
                       <FileChipContext.Provider value={fileChipCtx}>
                         <NoteSheetContext.Provider value={noteSheetCtx}>
-                          <BlockTree blocks={blocks} readOnly={readOnly} rowProps={stableRowProps(rowProps)} />
+                          <BlockTree blocks={blocks} readOnly={readOnly} rowProps={stableRowProps(rowProps)}
+                            zoteroLock={focusedBlock?.properties?.zotero_readonly ? focusedBlockId : ""} />
                         </NoteSheetContext.Provider>
                       </FileChipContext.Provider>
                       {backlinksPanel}
@@ -10785,7 +10935,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // the open page's Share, or the open folder's; a folder's is a row on a phone
   const sharesPage = !!focusedBlockId && !homeMode;
   const shareOnBar = onBar("share") && (sharesPage || !isPhone);
-  const syncs = !!authUser?.user && !!(workspace?.mirror_of || workspace?.publishing);
+  const syncs = !!authUser?.user && !!syncKind;
   const phoneMainActive = phonePanel === null || (phonePanel === "notes" && centerNotes);
   // An item's row in the account menu while it is off the bar (the View
   // menu's rows are the menu's last group, below).
@@ -10982,17 +11132,26 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     ) : null),
     sync: () => (syncs ? (
       <MirrorPopover
-        key={workspace.id}
+        key={`${syncKind}:${workspace.id}`}
         wsId={workspace.id}
-        mirrorOf={workspace.mirror_of}
-        publication={!workspace.mirror_of && !!workspace.publishing}
+        kind={syncKind}
+        mirrorOf={syncKind === "zotero" ? zoteroLibraryLabel({ name: workspace.zotero_of }) : workspace.mirror_of}
+        publication={syncKind === "mirror" && !workspace.mirror_of && !!workspace.publishing}
         pageId={focusedBlockId}
         everyPage={topbarLayout.modes.sync === "always"}
         button={onBar("sync")}
         open={openPopover === "mirror"}
         onToggle={() => setOpenPopover(openPopover === "mirror" ? null : "mirror")}
         jumpTo={(pageId, blockId) => jumpToRef.current?.(pageId, blockId)}
-        onOpenSettings={() => openSettingsPane(workspace.mirror_of ? "workspaces" : "account")}
+        onOpenSettings={() => openSettingsPane(workspace.mirror_of || workspace.mirror_detached || syncKind === "zotero" ? "workspaces" : "account")}
+        onOpenAccount={() => openSettingsPane("account")}
+        onLinkMoved={(path) => {
+          // detached or reattached here: the session row says so (zotero_of,
+          // mirror_of, …), and the page's PDF card follows; the pill that
+          // detached the link stays, for its Reattach
+          if (path === "/detach") setPillHeld({ ws: workspace.id, kind: syncKind });
+          checkSession();
+        }}
       />
     ) : null),
     inbox: () => (inbox.enabled ? (
@@ -11138,7 +11297,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             >{t("Workspaces…")}</MenuItem>
           ) : null}
           <MenuDivider />
-          <MenuItem icon={SettingsIcon} onClick={() => openSettingsPane(notices.firstPane || "general")}
+          <MenuItem icon={SettingsIcon} onClick={() => openSettingsPane(notices.firstPane || "account")}
             trailing={notices.tone ? <span className={`noticeDot inline ${dotTone(notices.tone)}`} aria-hidden="true" /> : null}>
             {t("Settings…")}
           </MenuItem>
@@ -11178,17 +11337,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // each on the strip or a row of the ⋯ menu at its end. A tool that does
   // not apply here is in neither: Paper and Notes view are a notebook's,
   // Translate a PDF's outside a share, the selection mode a touch screen's,
-  // and a read-only page has nothing to write on or record onto. A lit tool
-  // is in use and stays on the strip whatever its mode (the pen while its
-  // tools are open, Record while it records, Translate while it translates
-  // or shows a translation, Paper while its panel is open, the rectangle
-  // mode); a tour or a hint on screen shows them all, since their steps
-  // point at them.
+  // the text highlighter a PDF's, and a read-only page has nothing to write
+  // on, highlight or record onto. A lit tool is in use and stays on the
+  // strip whatever its mode (the pen while its tools are open, Record while
+  // it records, the highlighter while it is on, Translate while it
+  // translates or shows a translation, Paper while its panel is open, the
+  // rectangle mode); a tour or a hint on screen shows them all, since their
+  // steps point at them.
   const transLit = pdfTransState.running || (pdfTransState.pages > 0 && pdfTransState.shown);
   const stripApplies = {
     zoom: true,
     ink: !readOnly,
     record: !readOnly,
+    highlighter: !readOnly && !!pdfUrl,
     translate: !shareMode && !!pdfUrl,
     paper: notebook && !readOnly,
     notesView: notebook,
@@ -11196,8 +11357,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   };
   const stripPlaces = VIEWER_TOOLS.place(viewerTools, {
     guide: guide.running || !!guide.offer,
-    pinned: { ink: inkUi.open, record: !!recordingNow, translate: transLit, paper: paperMenu, selectMode: areaSelectMode },
+    pinned: { ink: inkUi.open, record: !!recordingNow, highlighter: highlighterOn, translate: transLit, paper: paperMenu, selectMode: areaSelectMode },
   }).filter((x) => stripApplies[x.id]);
+  // The highlighter's colour: the one used last, else the popup's first.
+  const highlighterPen = highlighterColor || highlightColor(pickerColors(palette, "highlight")[0]);
+  const highlighterName = t(colorName(highlighterPen));
   const stripMenuTools = stripPlaces.filter((x) => x.at === "menu");
   const toolsMore = !!(pdfUrl || notebook) && !viewerHidden && stripMenuTools.length > 0;
   // Each tool's button on the strip, by id: zoom is its three buttons,
@@ -11238,6 +11402,23 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         aria-label={recordingNow ? t("Stop recording") : t("Record audio")}
       >
         <MicIcon size={16} />
+      </button>
+    ),
+    // Under the icon, its colour (as the markup strip's highlighters).
+    highlighter: () => (
+      <button
+        className={"stripInkBtn" + (highlighterOn ? " modeActive" : "")}
+        data-guide="viewer.highlighter"
+        onClick={() => setHighlighter(!highlighterOn)}
+        {...menuPress((e) => { e.preventDefault(); setHighlighterMenu(stripMenuAt(e.currentTarget)); })}
+        aria-pressed={highlighterOn}
+        title={highlighterOn
+          ? t("Text highlighter: on, in {color} — click to turn it off, right-click for its colour", { color: highlighterName })
+          : t("Text highlighter: what you select is highlighted in {color}, with no popup — right-click for its colour", { color: highlighterName })}
+        aria-label={t("Text highlighter")}
+      >
+        <HighlightIcon size={16} />
+        <span className="inkToolInk" style={{ background: highlighterPen }} />
       </button>
     ),
     translate: () => (
@@ -11321,6 +11502,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         {recordingNow ? t("Stop recording") : t("Record audio")}
       </MenuItem>
     ),
+    highlighter: () => (
+      <MenuItem key="highlighter" icon={HighlightIcon} onClick={stripRow(() => setHighlighter(!highlighterOn))}>
+        {highlighterOn ? t("Turn off the text highlighter") : t("Text highlighter")}
+      </MenuItem>
+    ),
     // the button's click: stop, show or hide, or translate this page
     translate: () => (
       <MenuItem key="translate" icon={pdfTransState.pages > 0 && !pdfTransState.shown ? LanguagesOffIcon : LanguagesIcon}
@@ -11380,8 +11566,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         e.preventDefault();
         // The overlay only where a drop does something: the library imports
         // files, an editable page takes files as blocks; block rows take
-        // files themselves.
-        const dropHere = ((homeMode && lib.organize) || (focusedBlockId && !readOnly)) && !e.target.closest(".blockRowWrap");
+        // files themselves, and a page or a sheet takes pictures
+        // (markup/PictureLayer.jsx).
+        const dropHere = ((homeMode && lib.organize) || (focusedBlockId && !readOnly)) && !e.target.closest(".blockRowWrap")
+          && !picturesDrag(e);
         appRef.current?.classList.toggle("dragOver", dropHere);
       }}
       onDragLeave={shareMode ? undefined : (e) => {
@@ -11632,8 +11820,41 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               {pdfTransState.shown ? t("Show original") : t("Show translation")}
             </MenuItem>
           ) : null}
+          {/* A stored PDF's translation is kept on the server, under the
+              page's file: forgetting it there and here makes the next click
+              translate afresh. For a writer of the workspace. */}
+          {!pdfTransState.running && pdfTransState.translated && pdfTransFile && !readOnly ? (
+            <MenuItem icon={Trash2Icon}
+              onClick={() => { setTransMenu(null); forgetTranslation(pdfTransState.url, pdfTransFile, scopeOf(pdfTransState.url, pdfTransScope).pageId, setStatus); }}>
+              {t("Forget this translation")}
+            </MenuItem>
+          ) : null}
         </ContextMenu>
       )}
+      {/* The highlighter's colours, the selection popup's: a pick is its
+          colour from then on, and turns it on. */}
+      {highlighterMenu ? (
+        <ContextMenu x={highlighterMenu.x} y={highlighterMenu.y} onClose={() => setHighlighterMenu(null)} aria-label={t("Text highlighter")}>
+          <div className="colorRow ctxMenuColors">
+            {pickerColors(palette, "highlight").map((c, i) => {
+              const color = highlightColor(c), on = color === highlighterPen;
+              return (
+                <button
+                  key={c.hex + c.alpha + i}
+                  type="button"
+                  role="menuitemradio"
+                  aria-checked={on}
+                  className={"colorBtn" + (on ? " selected" : "")}
+                  style={{ background: swatchCss(c) }}
+                  onClick={() => { setHighlighterMenu(null); setHighlighterColor(color); setHighlighter(true); }}
+                  title={t("Highlight in {color}", { color: t(colorName(c)) })}
+                  aria-label={t("Highlight in {color}", { color: t(colorName(c)) })}
+                />
+              );
+            })}
+          </div>
+        </ContextMenu>
+      ) : null}
       {/* The strip's ⋯: the tools off it, then the way to their setting. */}
       {toolsMenu && toolsMore ? (
         <ContextMenu x={toolsMenu.x} y={toolsMenu.y} onClose={() => setToolsMenu(null)} ignoreRef={toolsMoreRef}
@@ -11756,15 +11977,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               zoomHeight={appPrefs.inkZoomHeight} onZoomHeight={appPrefs.setInkZoomHeight} onZoomChange={changeInkZoom}
               darkPage={pdfDarkPage}
               translateKey={`${translateLang}|${translateSendModel}`}
-              // stored: the viewer reads the server's own copy; a PDF read through the
-              // proxy may have none, so its requests carry the opening text too.
-              translateScope={{ pageId: focusedBlockId, stored: !!docIdOf(pdfUrl) }}
+              translateScope={pdfTransScope}
               translateParallel={translateParallel}
               onTranslate={shareMode ? undefined : translateChunk}
+              onTranslateBrief={shareMode ? undefined : translateBrief}
               selTranslate={selTranslate ? (selTranslateAuto ? "auto" : "button") : ""}
               translateLangLabel={translateLangLabel}
               translateCtlRef={pdfTranslateCtl}
-              onTranslateState={handleTranslateState}
+              onTranslateState={setPdfTransState}
               areaMode={areaSelectMode && !shareMode}
               areaKey={commandChord("pdf.areaDrag", keybindings)}
               peekKey={commandChord("pdf.peekOriginal", keybindings)}
@@ -11812,10 +12032,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 regionBox({ boundingRect: sel.rect, width: sel.width, height: sel.height })))}
               // the selection popup's Comment: a highlight with its thread popover open on it
               selComment={commentsOn && canComment}
+              highlighter={highlighterOn && !readOnly ? highlighterPen : ""}
               moveMode={!!moveHighlightId}
-              // a pending highlight's review card (pdf/HighlightReview.jsx): its actions are an editor's
+              // a dashed or hollow highlight's review card (pdf/HighlightReview.jsx): its actions are an
+              // editor's; a lost one's picture is of the file it was measured on, when not this one
               onAcceptHighlight={readOnly ? undefined : acceptHighlightPlace}
-              onMoveHighlight={readOnly ? undefined : startHighlightMove}
+              onPlaceHighlight={readOnly ? undefined : placeClosestMatch}
+              onMoveHighlight={readOnly ? undefined : startReviewMove}
+              onDiscardHighlight={readOnly ? undefined : discardLostHighlight}
+              discardOf={readOnly ? undefined : discardOf}
+              onUndoReview={readOnly ? undefined : undoReviewStep}
+              reviewPosition={reviewPosition}
+              fileId={attachmentFile(pageAttach)}
+              pageId={focusedBlockId || ""}
               reviewRef={pdfReviewRef}
               onSelectionFinished={readOnly ? undefined : (position, content, hideTip, extras) => {
                 if (moveHighlightIdRef.current) {
@@ -11830,12 +12059,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   hideTip?.();
                   return;
                 }
+                // The popup's swatch is a palette colour, which a highlight
+                // stores at the swatch's alpha; the highlighter's is that of
+                // the last swatch picked, and a pick is its colour from now on.
+                const color = extras?.highlighter ? highlighterPen : highlightColor(extras?.color) || DEFAULT_HIGHLIGHT;
+                if (extras?.color && !extras.comment) setHighlighterColor(color);
                 const id = addHighlight({
                   content: content || { text: "" },
                   position,
                   comment: { text: extras?.commentText || "" },
-                  // the popup's swatch is a palette colour; a highlight stores it at the wash alpha
-                  color: highlightColor(extras?.color) || DEFAULT_HIGHLIGHT,
+                  color,
                 }, { edit: !extras?.comment });
                 hideTip?.();
                 if (extras?.comment && id) commentOnNewHighlight(id);
@@ -12291,6 +12524,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setTranslateSpeed,
           translateParallel,
           setTranslateParallel,
+          translateKeep,
+          setTranslateKeep,
+          readOnly, // a viewer of the workspace cannot clear its kept translations
           aiModels: scopedAiModels, // the translation picker's registry
           translateEngines, // …and the translation services set up for it
           refreshAiModels, // saving a service's key updates that list
@@ -12476,7 +12712,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             build: authUser?.build,
             view: { mode: shareMode ? "share" : homeMode ? "home" : "page", pdf: !!pdfUrl, readOnly, phone: isPhone, theme, uiScale },
             workspace: workspace ? {
-              kind: workspace.mirror_of ? "clone" : workspace.personal ? "personal" : workspace.access === "public" ? "public" : "shared",
+              kind: workspace.mirror_of ? "clone" : workspace.zotero_of ? "zotero" : workspace.personal ? "personal" : workspace.access === "public" ? "public" : "shared",
               role: workspace.role,
             } : null,
             events: sysLog,

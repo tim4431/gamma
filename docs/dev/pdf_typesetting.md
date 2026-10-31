@@ -1,10 +1,10 @@
 # PDF typesetting and the annotated-PDF export
 
 How Gamma writes PDFs: the typesetting engine both writers share, and the
-annotated-PDF writer that puts highlights, notes, ink and text boxes into a
-copy of the source file. Which exports exist and how they are started is in
-[import_export.md](import_export.md); the notes typeset as their own
-document are [there too](import_export.md#notes-as-a-pdf-document).
+annotated-PDF writer that puts highlights, notes, ink, text boxes and
+pictures into a copy of the source file. Which exports exist and how they
+are started is in [import_export.md](import_export.md); the notes typeset as
+their own document are [there too](import_export.md#notes-as-a-pdf-document).
 
 ## The shared typesetting engine
 
@@ -37,6 +37,14 @@ alpha under a 2pt border — because a viewer synthesizing the box from
 `/Rect` + `/C` + `/BS` draws only the outline. No `/IC`: a viewer that
 regenerates from it would fill at the full `/CA` and hide the figure.
 
+Annotations paint in the order they are written, so `annotate_pdf` writes
+them as the page stacks them. The highlights and area notes come first,
+under everything placed on the page, then the pictures, the text boxes and
+the handwriting. Pictures and boxes go in document order
+(`notebook.document_order`: each block before its children, siblings by
+position), which is their z-order on screen: Bring to front moves a block
+after its siblings.
+
 Every writer here maps through the page's view box (`page_frame`), the frame
 the viewer stores positions in (scaled by the position's `width` /
 `height`, the page as measured when it was taken): the crop box clipped to the media box, as
@@ -44,9 +52,10 @@ pdf.js, pdfium and MuPDF show a page, or the media box when the two do not
 meet. `pdf_notes` places its cards in the same frame. A popup's text
 (`highlight_note_text`) is the highlight's own note and the notes under it,
 as an indented bullet list (`popup_text` of `highlight_note_blocks`).
-A text box on a PDF page among them is left out with the notes under it,
-since the box is written as its own `/FreeText`. A box under a sheet stays
-a line: the nearest sheet wins. The highlight's comment threads are no
+A text box or a picture on a PDF page among them is left out with the
+notes under it, since it is written as its own `/FreeText` or `/Stamp`.
+One under a sheet stays a line, a picture as its `![caption](url)` line:
+the nearest sheet wins. The highlight's comment threads are no
 part of it: they live beside the blocks ([comments.md](comments.md)).
 
 Handwriting blocks (`ink_url`) become `/Ink` annotations: one per look
@@ -60,30 +69,72 @@ Same skip rule as highlights for ink still embedded in the file.
 
 Text boxes on the PDF's pages (`_collect_text_boxes`: a positive-integer
 `pdf_page`, held by no sheet, with text) become `/FreeText` annotations.
-They are written before the ink and the highlights, so they sit under
-them, as on screen. The appearance (`/AP /N`) typesets the box's Markdown
-with the shared engine (`text_box.pdf_ops`), upright on a turned page.
+They are written after the pictures and before the ink, so they sit over
+the pictures and under the ink, as on screen. The appearance (`/AP /N`)
+typesets the box's Markdown with the shared engine (`text_box.pdf_ops`),
+upright on a turned page.
 `/Contents` is the plain text, references read through the notes PDF's
 resolver (`markdown_export.block_ref_resolver`). A private `/GammaTextBox` holds the Markdown and the
 box for a lossless re-import. Each key, and why, is in
 [text_boxes.md](text_boxes.md#server-and-interchange).
 
-Unlike the other kinds, a box imported from the file and still embedded in
-it is written as Gamma has it. Its original (matched by its
-`imported_annot` key, `annotate_pdf`'s `replaced`) leaves the copy with its
-popup and thread, so an edit made here reaches the export. A box deleted
-here leaves its original, since nothing records the deletion. The boxes
-are written with either switch on: `highlights=0&notes=1` keeps them with
-the painted notes, and only both off (the stored file) leaves them out.
+Pictures on the PDF's pages (`_collect_pictures`, by the boxes' rules: a
+positive-integer `pdf_page`, held by no sheet, a value that normalizes)
+become `/Stamp` annotations (`_picture_annotation`).
+
+- **The appearance** (`/AP /N`) draws the image as the page shows it,
+  through `picture.pdf_ops`: the crop, then the flips, then the turn. It
+  is drawn from the turned frame's bounding box, `/BBox` `[0 0 w h]`
+  (`picture.turned_size`), upright on a turned page (`/Matrix` from
+  `_upright`, as a box's). `/Rect` is that box in user space, through
+  `viewer_point_to_pdf`.
+- **The image** is the upload's XObject from `XObjectStore`
+  ([Images](#images)). A picture whose file is missing is left out with a
+  log line, and so is one whose file cannot be embedded.
+- **The keys.** `/IT /StampImage` is PDF 2.0's intent for a stamp that
+  shows an image. `/Contents`, written when there is a caption, is its
+  plain text on one line, references read through the resolver. `/F 4`
+  prints it. `/NM` comes from the block id, `/T` is the author and `/M` the
+  block's `updated_at`.
+- **`/GammaPicture`** holds `{v, picture, caption, text}`: the picture, its
+  Markdown caption and the `/Contents` written, for a lossless re-import
+  that can tell another viewer's edit from a reference label.
+- **Zotero** draws the appearance but imports no annotation of a stamp.
+
+Each key, and why, is in
+[pictures.md](pictures.md#server-and-interchange).
+
+Unlike the other kinds, a box or a picture imported from the file and
+still embedded in it is written as Gamma has it. Its original (matched by
+its `imported_annot` key, `annotate_pdf`'s `replaced`) leaves the copy
+with its popup and thread, so an edit made here reaches the export.
+`_drop_replaced` removes each shown `/FreeText`, `/Text` or `/Stamp`
+(`REPLACED_TYPES`) that is no reply and whose key is replaced. A box or a
+picture deleted here leaves its original, since nothing records the
+deletion. The boxes and pictures are written with either switch on:
+`highlights=0&notes=1` keeps them with the painted notes, and only both
+off (the stored file) leaves them out.
 
 A page with sheets of paper and no PDF has none to annotate:
 `annotated_pdf` writes `notebook.notebook_pdf` instead. Each sheet is a PDF page of its paper's
-size, painted with the paper, its text boxes typeset on it as real,
-selectable text, and the ink groups under it drawn over them as vectors
-in the content, as the screen draws them, the pencil's grain and the
-calligraphy nib included (a dashed or dotted pressure stroke as one
-dashed line at its mean width and shade). The page is the drawing, so
-there is no `/FreeText` or `/Ink` layer. The switches do not apply.
+size, painted with the paper. Its pictures are drawn on it as placed, its
+text boxes typeset over them as real, selectable text, and the ink groups
+under it drawn over those as vectors in the content, as the screen draws
+them, the pencil's grain and the calligraphy nib included (a dashed or
+dotted pressure stroke as one dashed line at its mean width and shade).
+The page is the drawing, so there is no `/Stamp`, `/FreeText` or `/Ink`
+layer. The switches do not apply.
+
+`notebook.placed_ops` is the drawing of a surface's placed objects: its
+pictures (`picture.pdf_ops`), then its text boxes typeset over them
+(`text_box.pdf_ops`), each in the order given, which every caller makes
+document order, with the resources they use. A picture whose file cannot
+be read is left out (`XObjectStore` logs why). The sheet PDF draws a sheet
+with it, and so does `pdf_export.page_with_ink`, the AI's picture of a PDF
+page as the user sees it ([ai_tools.md](ai_tools.md#view_ink-both-scopes)).
+That one takes the page alone, drops the originals of the boxes and
+pictures it replaces, draws the page's pictures and boxes into its content
+as one form (`_stamp_placed`), and the handwriting over them.
 
 ### Notes and comments as cards
 
@@ -132,11 +183,11 @@ next to what it answers, and two threads under one note stay apart. That
 includes the highlight's own threads, under its own note, since a
 highlight's own text is its note ([comments.md](comments.md)
 "Vocabulary"). When the note is on the page, or not printed (the Notes
-switch off, an empty note, a text box), the thread is a card of its own in
-the column. A thread on one of the notes under the highlight then opens
-with that note's first line, quoted (italic, behind a bar, cut with an
-ellipsis); the highlight's own need no quote, as the viewer's margin shows
-them.
+switch off, an empty note, a text box or a picture on the page), the
+thread is a card of its own in the column. A thread on one of the notes
+under the highlight then opens with that note's first line, quoted (italic,
+behind a bar, cut with an ellipsis); the highlight's own need no quote, as
+the viewer's margin shows them.
 
 **Every card of a highlight** is collected by the router's `_collect_cards`
 from every highlight block, the ones still embedded in the PDF included
@@ -194,9 +245,9 @@ gradient-filled box counts as occupied) rasterized into an occupancy grid
 (display space, 3 pt cells) with a summed-area table behind the candidate
 search (`place`); a placed card is marked too, so cards never overlap. The
 log takes in the annotations' appearances, so what `annotate_pdf` wrote
-first counts as occupied: the text boxes with any switch, the highlights
-and ink when the highlight layer is on. The log comes in the unrotated
-page's space, its origin at the view box's corner and scaled by
+first counts as occupied: the pictures and text boxes with any switch,
+the highlights and ink when the highlight layer is on. The log comes in
+the unrotated page's space, its origin at the view box's corner and scaled by
 `/UserUnit` like `page.rect`; `bbox_log` takes the unit out
 (`pdf_text.user_unit`), and `page_space` maps it to user space against the
 view box `page_frame` found, not through `page.transformation_matrix`,
@@ -286,7 +337,8 @@ tests cover both fallbacks.
 
 ### Images
 
-`gamma/pdf_image.py` embeds `![](/api/uploads/…)` refs as image XObjects. JPEG
+`gamma/pdf_image.py` embeds `![](/api/uploads/…)` refs, and the pictures
+placed on a page, as image XObjects. JPEG
 goes in verbatim, and so does an 8-bit gray, RGB or palette PNG without
 transparency (PDF's `/Predictor 15` IS PNG row filtering), at any size and
 without decoding. Everything else is decoded with Pillow: a PNG with an alpha
@@ -299,9 +351,52 @@ screenshot takes about 0.7 s and 200 MB while decoded; `MAX_DECODED_PIXELS`
 (40 MP) bounds that memory. A picture that can't be embedded (an SVG, a
 corrupt file, one past the cap) is logged with the reason and drawn as its
 alt text, or "image"; the export job's result lists only the pages it left
-out, not pictures. A palette's `/Indexed` lookup must be a `ByteStringObject`: as a
-text string PyPDF2 re-encodes it to UTF-16 and the picture comes out one flat
-colour.
+out, not pictures. A picture placed on a page that can't be embedded is
+left out of the page, and the notes PDF names it in a grey line. A
+palette's `/Indexed` lookup must be a `ByteStringObject`: as a text string
+PyPDF2 re-encodes it to UTF-16 and the picture comes out one flat colour.
+
+**A picture is drawn as the browser shows it.** `browser_orientation` is
+the EXIF orientation Chromium and Firefox apply:
+
+- a JPEG's first APP1 Exif block;
+- a PNG's `eXIf` chunk, when it comes before the image data.
+
+A WebP's EXIF, an `eXIf` after `IDAT` and the text-chunk profile
+ImageMagick writes ("Raw profile type exif") are ignored, as those
+browsers ignore them; Pillow's `ImageOps.exif_transpose` would apply them.
+The decoded path turns the pixels themselves (`_TRANSPOSE`). A verbatim
+JPEG or PNG keeps its bytes: `_oriented` wraps it in a form XObject over
+the unit square that draws it through the orientation (`_ORIENTED`), and
+marks the form with a private `/GammaOrientation`. An image fills the unit
+square too, so every writer draws the form as it draws an image. The size
+reported is the size as shown, its sides swapped for a quarter turn.
+`XObjectStore` makes the image inside the form an indirect object, as it
+does a soft mask. The orientation applies to every picture the writers
+embed, a note's image in the notes PDF and on a card too.
+
+Uploads are opened only as the formats a browser draws (`BROWSER_FORMATS`:
+PNG, JPEG, GIF, WebP, BMP, ICO, AVIF). `Image.open` would try every format
+Pillow knows, and an EPS would hand its bytes to Ghostscript.
+`XObjectStore` logs an upload that is missing.
+
+**The way back.** `image_file` reads an image XObject back as a file to
+store, for the import of a picture embedded in a PDF
+([import_export.md](import_export.md#importing-annotations-embedded-in-a-pdf)
+has the formats). The PDF is untrusted, so nothing is read from it without
+a bound:
+
+- `stream_data` inflates a `/FlateDecode` by hand, never past the size the
+  image needs. PyPDF2's `get_data` inflates a stream whole however large it
+  grows, and keeps the result on the object for as long as the reader
+  lives; `image_file` never calls it on an image stream.
+- Each image is opened only as the format its filter names, and refused
+  when its header's size is not its `/Width` and `/Height`, before
+  anything is decoded.
+- What is decoded counts against `MAX_DECODED_PIXELS` and the import's
+  `DecodeBudget` (`MAX_IMPORT_PIXELS`).
+- `/GammaOrientation` tells it the orientation an export drew a verbatim
+  picture through, so the file comes back as the browser showed it.
 
 ### Fonts and content streams
 

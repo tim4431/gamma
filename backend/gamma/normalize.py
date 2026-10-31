@@ -43,6 +43,7 @@ from .blocks_store import FOLDERS, LABELS, STORED_COLUMNS, TRASH, TREES, ensure_
 from .db import BLOCK_HOT_COLUMNS, BLOCK_HOT_INDEXES, CHATS_SCHEMA, PAGES_SCHEMA, page_now
 from .highlights import from_scaled
 from .note_markup import LEGACY_WIDTH_RE, obsidian_image_sizes
+from .picture import is_picture
 from .storage import display_filename, pdf_url
 from .text_box import is_text_box
 
@@ -378,14 +379,15 @@ def highlight_shape(conn: sqlite3.Connection) -> bool:
     ``pageNumber`` / ``width`` / ``height`` per rect), and one with no page
     goes; a highlight (a ``highlight_id``) with no position but a
     ``pdf_page`` gets its page alone as one. ``highlight_id`` goes, and
-    ``pdf_page`` everywhere but on a text box (its only page). A link
-    region's ``link_highlight_id`` becomes ``link_block_id``, the block that
-    had that highlight id on the page it links to, and a note's
-    ``linked_highlight_id`` names the block that had it on the note's own
-    page (a block of that id there stays named); one no block there had is
-    dropped. A ``source_url`` that is the
-    row's ``doc_id``'s stored copy goes (blocks_store.page_attachment
-    derives it). What a row becomes depends on the file's rows alone, so
+    ``pdf_page`` everywhere but on a text box or a picture (their only
+    page; every backup restore runs this, so a picture of today's shape
+    must come through it). A link region's ``link_highlight_id`` becomes
+    ``link_block_id``, the block that had that highlight id on the page it
+    links to, and a note's ``linked_highlight_id`` names the block that had
+    it on the note's own page (a block of that id there stays named); one
+    no block there had is dropped. A ``source_url`` that is the row's
+    ``doc_id``'s stored copy goes (blocks_store.page_attachment derives
+    it). What a row becomes depends on the file's rows alone, so
     two copies of a page upgraded apart agree. A file with nothing of the
     old shape is left as it is. Returns whether it changed the file."""
     rows = [(block_id, page_id, doc_id, props) for block_id, page_id, doc_id, props in (
@@ -406,7 +408,7 @@ def highlight_shape(conn: sqlite3.Connection) -> bool:
     for block_id, page_id, doc_id, props in rows:
         new = dict(props)
         old_page = props.get("pdf_page")
-        if not is_text_box(props):
+        if not is_text_box(props) and not is_picture(props):
             new.pop("pdf_page", None)
         was_highlight = new.pop("highlight_id", None)
         if isinstance(new.get("pdf_position"), dict):

@@ -1,7 +1,7 @@
 // The pdf.js-based viewer: lazy page rendering, highlights, link
 // annotations, text search, and the selection popup. Extracted from
 // App.jsx to keep the God component shrinking.
-import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 // The worker is the legacy build matching the engine below, bundled by Vite
 // as a content-hashed asset (?url): always the installed pdfjs-dist version,
 // and served immutable for a year like every other asset — a copy under
@@ -15,11 +15,11 @@ import { MarkupLayers, NO_MARKS } from "../markup/MarkupLayers";
 import { armedClasses, usePageTools } from "../markup/PageTools";
 import { ZoomWindow } from "../ink/ZoomWindow.jsx";
 import { revealDelta } from "../ink/zoomWindow.js";
-import { KEEP_MARGIN, RENDER_MARGIN, ZOOM_SETTLE_MS, basePixels, cropPage, forgetPixels, installPageRaster, keepPixels, showsKept, takePixels } from "./pageRaster.js";
+import { KEEP_MARGIN, RENDER_MARGIN, ZOOM_SETTLE_MS, cropPage, forgetPixels, installPageRaster, keepPixels, showsKept, takePixels } from "./pageRaster.js";
 import { installVerticalScrollSnap } from "./verticalScrollSnap.js";
-import { segmentPage, selectionParagraphs, textRuns } from "./pdfTranslate";
-import { HEAD_CHARS, chunkUnits, createPlanner, partials, readingOrder, requestChunk, results } from "./translatePlan";
-import { pageFaces } from "./pdfFonts";
+import { selectionParagraphs } from "./pdfTranslate";
+import * as translateState from "./translateState.js";
+import { TransPara, TransPending } from "./TransOverlay.jsx";
 import { BACKFILL_DELAY_MS, chooseTransport, docIdOf, layoutFromManifest, rangeOpenOptions, typicalPageIndex } from "./pdfSource";
 import { normalizeChars } from "../shared/lib/textnorm";
 import { apiJson, copyText, withShare, withWorkspace } from "../shared/lib/utils";
@@ -37,8 +37,9 @@ import { marginLeft as besideMargin, pageLeft } from "../comments/marginLayout.j
 import { CommentMarginContext, CommentMarginSlot, MarginStackContext, createMarginStack } from "../comments/marginSlot";
 import { useRecentIn } from "../guide/recent.js";
 import { DEFAULT_HIGHLIGHT, colorName, darkPageColor, darkPageLine, normalizeColor, pickerColors, swatchCss } from "../shared/model/palette.js";
-import { placedToCheck } from "../shared/model/blockModel.js";
+import { closestPlace, placedToCheck } from "../shared/model/blockModel.js";
 import { HighlightReview, useHighlightReview } from "./HighlightReview.jsx";
+import { pastLastPage } from "./highlightReview.js";
 import { usePalette } from "../shared/ui/paletteContext.js";
 import { placeFloating, useFloatingPosition } from "../shared/ui/placement.js";
 import { t, tn } from "../shared/i18n/i18n.js";
@@ -182,7 +183,10 @@ function cachePdf(url, buf) {
 // what a reopen costs, and a document handed over ready to render also holds
 // the reading position still: its geometry is final in the first frame, so
 // nothing settles under the scroll restore. Eviction destroys the oldest,
-// never the one being committed (it is set last).
+// never the one being committed (it is set last) nor one a translation job
+// is reading (translateState.pinned): a job runs on when the viewer leaves
+// its PDF and segments pages with the document, so it stays past
+// DOC_CACHE_MAX until the last job reading it ends.
 const DOC_CACHE = new Map(); // url -> {doc, heights, widths}, insertion order = LRU
 const DOC_CACHE_MAX = 2;
 // The in-document search's page texts, by parsed document (PdfViewer's
@@ -205,9 +209,13 @@ function sameHighlights(a, b) {
 function rememberDoc(url, entry) {
   DOC_CACHE.delete(url);
   DOC_CACHE.set(url, entry);
-  while (DOC_CACHE.size > DOC_CACHE_MAX) {
-    const victim = DOC_CACHE.keys().next().value;
-    const { doc } = DOC_CACHE.get(victim);
+  trimDocs();
+}
+function trimDocs() {
+  const newest = [...DOC_CACHE.keys()].at(-1);
+  for (const [victim, { doc }] of DOC_CACHE) {
+    if (DOC_CACHE.size <= DOC_CACHE_MAX) break;
+    if (victim === newest || translateState.pinned(victim)) continue;
     DOC_CACHE.delete(victim);
     forgetPixels(doc);
     // Its pages may still be mounted mid-swap — destroying now would spam
@@ -490,6 +498,12 @@ async function fetchPdfData(url, onLoadState, isCancelled) {
 // (.pdfHlFlash; App's triggerFlash sets it for about a second).
 // selComment: the selection popup offers Comment (the reader may comment on
 // the page); a press reaches onSelectionFinished with {comment: true}.
+// highlighter: the strip's text highlighter is on, in this colour ("" off):
+// a text selection the mouse or the pen lets go of reaches
+// onSelectionFinished at once with {highlighter: true}, no popup, and the
+// selection is drawn in that colour while it is made. A finger's selection
+// has no such end (its handles are still being dragged), so it gets the
+// popup, and so does one that places a highlight waiting to be moved.
 // commentMargin: what the comment cards beside the pages read (App's
 // CommentMarginContext value, comments/marginSlot.jsx: the threads, the
 // active card's `target`, the handlers), or null for no margin (a phone, a
@@ -502,11 +516,22 @@ async function fetchPdfData(url, onLoadState, isCancelled) {
 // onZoomChange(update) changes the window, `update(window) → next | null`.
 // areaKey / peekKey: the held keys (docs/dev/hotkeys.md "Held keys") that
 // make a mouse drag box an area and show a translated page's original.
-// A highlight pending after its PDF was replaced (dashed) has a review card
-// (HighlightReview.jsx): onAcceptHighlight(id) and onMoveHighlight(id) are
-// its actions, an editor's; reviewRef.current(id) scrolls to that one and
-// opens its card (the Document menu's Review).
-function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, areaKey = "Mod", peekKey = "Alt", hideEmbeddedAnnots, darkPage = false, translateKey = "", translateScope = null, translateParallel = 3, onTranslate, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", selComment = false, moveMode = false, marks, flashHighlightId = null, smoothWheel = false, commentMargin = null, marginRef = null, onMarginLost, onPageInView, zoomHeight = 200, onZoomHeight, onZoomChange, onAcceptHighlight, onMoveHighlight, reviewRef = null }) {
+// A highlight to review after its PDF was replaced (dashed, or hollow:
+// lost) has a review card (HighlightReview.jsx): onAcceptHighlight(id),
+// onPlaceHighlight(id) (a lost one's closest match applied),
+// onMoveHighlight(id, step) (`step` the card's, when it had taken one),
+// onDiscardHighlight(id) (a lost one taken off the page: the step taken,
+// or null), discardOf(id) (what that Discard would do) and
+// onUndoReview(id, step) (a step's button pressed again) are its actions,
+// an editor's; reviewPosition(id) is the block's stored pdf_position (null
+// when there is no such block), which says whether a step taken on a card
+// is still in effect; `fileId` is the stored file the page shows (a lost
+// one's picture is of the file its rectangles were measured on, when that
+// is another) and `pageId` the page: another of either starts the card's
+// walk afresh; reviewRef.current(id, {done, scroll}) scrolls to that one
+// and opens its card (the Document menu's Review; App after a move started
+// from the card, `done` what it did and scroll false).
+function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, areaKey = "Mod", peekKey = "Alt", hideEmbeddedAnnots, darkPage = false, translateKey = "", translateScope = null, translateParallel = 3, onTranslate, onTranslateBrief, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", selComment = false, highlighter = "", moveMode = false, marks, flashHighlightId = null, smoothWheel = false, commentMargin = null, marginRef = null, onMarginLost, onPageInView, zoomHeight = 200, onZoomHeight, onZoomChange, onAcceptHighlight, onPlaceHighlight, onMoveHighlight, onDiscardHighlight, discardOf, onUndoReview, reviewPosition = null, fileId = "", pageId = "", reviewRef = null }) {
   const tools = usePageTools(), { ink, text } = tools;
   const viewerRef = useRef(null);
   const [pdfDoc, setPdfDoc] = useState(null);
@@ -567,7 +592,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // parent state change recreates the handler closures. The wrappers always
   // dispatch to the latest handlers via the ref.
   const cbRef = useRef({});
-  cbRef.current = { onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, onExternalLink, onLinkContext, onLoadState, onZoomTo, onAreaSelection, onTranslate, onTranslateState };
+  cbRef.current = { onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, onExternalLink, onLinkContext, onLoadState, onZoomTo, onAreaSelection, onTranslate, onTranslateBrief, onTranslateState };
   const stableCbs = useMemo(() => ({
     onJump: (...a) => cbRef.current.onJump?.(...a),
     onHighlightJump: (...a) => cbRef.current.onHighlightJump?.(...a),
@@ -1293,20 +1318,43 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     if (scrollRef) scrollRef.current = scrollToPositionRef.current;
   }, [scrollRef, scale, pdfDoc]);
 
-  // The review card of a pending highlight (HighlightReview.jsx): opened by
-  // hovering or tapping its rectangles (PdfPage), by its Next, and from the
-  // Document menu (reviewRef), which scroll to the highlight first. Another
-  // document closes it.
-  const { card: reviewCard, review } = useHighlightReview();
-  const openReview = (id) => {
-    const h = displayedUrl === url ? (highlights || []).find((x) => x.id === id) : null;
-    if (!h) return;
-    scrollToPositionRef.current?.({ position: h.position });
-    review.open(id);
+  // The review card of a dashed or hollow highlight (HighlightReview.jsx):
+  // opened by hovering or tapping its rectangles (PdfPage), by its Previous
+  // and Next and its steps, from the Document menu (reviewRef), which
+  // scroll to the highlight first (to `position` when given: a discarded
+  // one, drawn no more, where it stood; an undo puts it back there), and by
+  // App after a move started from it (`done`, the step, which the card
+  // records; no scroll: the selection is in sight). A place past the last
+  // page (a lost one from a page the PDF no longer has) is not scrolled to:
+  // its card stands in the viewer. Another page or file closes it and
+  // starts the card's walk afresh (the steps taken on cards).
+  const { card: reviewCard, steps: reviewSteps, review, drawn: reviewDrawn } = useHighlightReview();
+  const openReview = (id, { done = null, scroll = true, position = null, walked = "" } = {}) => {
+    if (displayedUrl !== url) return;
+    const h = (highlights || []).find((x) => x.id === id) || null;
+    if (done) review.record(id, done, h, discardOf?.(id) || null);
+    const to = position || h?.position;
+    if (!to) return;
+    if (scroll && !pastLastPage(to, numPages)) scrollToPositionRef.current?.({ position: to });
+    review.open(id, { walked });
   };
   if (reviewRef) reviewRef.current = openReview;
   useEffect(() => () => { if (reviewRef) reviewRef.current = null; }, [reviewRef]);
-  useEffect(() => { review.close(); }, [url, review]);
+  useEffect(() => { review.reset(); }, [url, fileId, pageId, review]);
+  // A lost highlight's closest match, outlined on its page while its card
+  // shows it (Show), which scrolls there.
+  const ghostOf = reviewCard?.ghost && displayedUrl === url ? (highlights || []).find((x) => x.id === reviewCard.id) : null;
+  const reviewGhost = useMemo(() => {
+    const c = ghostOf?.position?.lost ? closestPlace(ghostOf.position) : null;
+    return c ? { id: ghostOf.id, color: normalizeColor(ghostOf.color) || DEFAULT_HIGHLIGHT, ...c.position } : null;
+  }, [ghostOf]);
+  const showClosest = (id) => {
+    const h = displayedUrl === url ? (highlights || []).find((x) => x.id === id) : null;
+    const c = h ? closestPlace(h.position) : null;
+    if (!c) return;
+    scrollToPositionRef.current?.({ position: c.position });
+    review.ghost(id);
+  };
 
   // Wait for this document, then mount only the cited page. Matching happens
   // after its actual text layer has rendered, including on zoom changes.
@@ -1377,38 +1425,35 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   };
 
   // --- Translation engine ----------------------------------------------------
-  // One queue for the whole document, driven from the host's toolbar button.
-  // A producer segments queued pages in order, plans them
-  // (pdf/translatePlan.js: a paragraph that a column or page break cut in
-  // two is one unit) and feeds ONE flat list of chunks; N workers (Settings →
-  // parallel requests) start on the first chunk while later pages are still
-  // segmenting, and stream across page boundaries — the parallel slots never
-  // idle at page ends. A chunk whose request fails is asked again
-  // (requestChunk); the server asks the model again for what its reply got
-  // wrong, and names the paragraphs that still failed, which stay pending
-  // for the next job. State per page sits in transMap, its results by block
-  // index; PdfPage only *renders* its entry. Halting flips job.aborted:
-  // finished chunks keep their text.
-  const [transMap, setTransMap] = useState(() => new Map()); // pageNo -> {key, paras, texts, done, queued, busy, partial, failed}
-  const [transShown, setTransShown] = useState(true); // show/hide applies to ALL pages at once
-  // At a job's end: `error` (the request that stopped it kept failing, its
-  // reason) or `untranslated` (paragraphs the server could not translate).
-  const [transStatus, setTransStatus] = useState({ running: false, progress: 0, label: "" });
-  // A request is waiting while the server reads the paper for its brief (a
-  // paper's first requests; the stream's "stage" lines): the host says so.
-  const [transReading, setTransReading] = useState(false);
-  const transJobRef = useRef(null); // {aborted} while a job runs
-  const parasCacheRef = useRef(new Map()); // pageNo -> segmented paragraph blocks
-  const transMapRef = useRef(transMap);
-  transMapRef.current = transMap;
+  // One job at a time per document, driven from the host's toolbar button:
+  // pdf/translateJob.js segments, plans and requests the pages (N workers,
+  // Settings → parallel requests) and hands back each page's entry, its
+  // results by block index. pdf/translateState.js keeps them per document
+  // with its show/hide, its job and the job's status, so a job runs on when
+  // the viewer goes (the host follows it there) and a document comes back
+  // translated; a re-run asks only for what is missing. PdfPage only
+  // *renders* its page's entry (pdf/TransOverlay.jsx). The document is the
+  // one whose page boxes are on screen.
+  const transUrl = displayedUrl;
+  const transUrlRef = useRef(transUrl);
+  transUrlRef.current = transUrl;
+  // transMap: pageNo -> {key, paras, texts, done, queued, busy, partial,
+  // failed}; transShown: show/hide, for ALL pages at once; transStatus: the
+  // job's (translateJob.js onStatus) — its progress, `reading` while a
+  // request waits for the server to read the paper for its brief, and at
+  // its end `error` or `untranslated`.
+  const { entries: transMap, shown: transShown, status: transStatus } =
+    useSyncExternalStore(translateState.subscribe, () => translateState.snapshot(transUrl));
+  useEffect(() => { translateState.touch(transUrl); }, [transUrl]);
   const translateKeyRef = useRef(translateKey);
   translateKeyRef.current = translateKey;
-  // {pageId, stored}: the page being translated and whether its PDF is
-  // stored on the server (else the request carries the document's opening
-  // text for the paper's brief).
+  // {url, pageId, stored, file}: the page being translated, the PDF it
+  // shows, whether that PDF is stored on the server (else the request
+  // carries the document's opening text for the paper's brief) and its
+  // file. It names the document on screen only once that is the page's
+  // (translateState.scopeOf).
   const translateScopeRef = useRef(translateScope);
   translateScopeRef.current = translateScope;
-  const fontsRef = useRef(new Map()); // fontId -> {name, type3} of the displayed document (pdf/pdfFonts.js)
   const translateParallelRef = useRef(3);
   translateParallelRef.current = Math.min(TRANSLATE_PARALLEL_MAX, Math.max(1, translateParallel || 3));
   const curPageRef = useRef(1);
@@ -1424,277 +1469,65 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // read is fully translated under that key — the button toggles show/hide
   // there, and translates this page anywhere else (a halted, half-done page
   // counts as untranslated, so a click finishes it from the cache).
+  // `translated`: some page holds translated text under any key, which
+  // "Forget this translation" would drop. `url`: the document all this is
+  // about (the one on screen, which lags the `url` prop while the next one
+  // loads), so the host's controls that name a document name this one.
   useEffect(() => {
-    let pages = 0;
+    let pages = 0, translated = false;
     for (const e of transMap.values()) {
-      if (e.key === translateKey && e.texts.some(Boolean)) pages += 1;
+      if (!e.texts.some(Boolean)) continue;
+      translated = true;
+      if (e.key === translateKey) pages += 1;
     }
     const cur = transMap.get(curPage);
     const current = !!(cur && cur.key === translateKey && cur.done);
-    cbRef.current.onTranslateState?.({ ...transStatus, reading: transReading, shown: transShown, pages, current });
-  }, [transStatus, transReading, transShown, transMap, translateKey, curPage]);
-
-  // A document swap invalidates geometry and translations wholesale.
-  useEffect(() => {
-    haltTransJob();
-    parasCacheRef.current = new Map();
-    fontsRef.current = new Map();
-    setTransMap(new Map());
-    setTransShown(true);
-    setTransStatus({ running: false, progress: 0, label: "" });
-  }, [docSeq]);
-  // Unmounted mid-job (a text page opened), the viewer reports nothing
-  // more: the host hears here that the job stopped, so its pill and
-  // background-tasks row end with it.
-  const transStatusRef = useRef(transStatus);
-  transStatusRef.current = transStatus;
-  useEffect(() => () => {
-    if (!transJobRef.current) return;
-    haltTransJob();
-    cbRef.current.onTranslateState?.({ ...transStatusRef.current, running: false, reading: false,
-                                       shown: true, pages: 0, current: false });
-  }, []);
-
-  async function ensureParas(pn) {
-    const cache = parasCacheRef.current;
-    if (cache.has(pn)) return cache.get(pn);
-    const doc = displayedDocRef.current;
-    if (!doc || pn < 1 || pn > doc.numPages) return [];
-    const page = await doc.getPage(pn);
-    const vp = page.getViewport({ scale: 1 });
-    const tc = await page.getTextContent();
-    // The real font names tell a formula's runs (pdf/pdfMath.js). A page
-    // drawn already has them; for a page segmented ahead of the view the
-    // operator list is built once, and its decoded images are let go again
-    // when the page is far from the one being read.
-    const fonts = fontsRef.current;
-    const ids = new Set(tc.items.map((it) => it.fontName));
-    const fresh = [...ids].some((id) => id && !fonts.has(id) && !page.commonObjs.has(id));
-    const faces = await pageFaces(page, ids, { known: fonts });
-    if (fresh && Math.abs(pn - curPageRef.current) > 2) page.cleanup();
-    const paras = segmentPage(textRuns(tc.items, vp.transform, { faces, styles: tc.styles }));
-    // A document swapped meanwhile must not land in the new one's cache.
-    if (displayedDocRef.current === doc && parasCacheRef.current === cache) cache.set(pn, paras);
-    return paras;
-  }
-
-  // The document's opening text, for a page whose PDF the server has not
-  // stored: it makes the paper's brief from it (backend
-  // gamma/translate_context.py).
-  async function documentHead() {
-    let text = "";
-    for (let pn = 1; pn <= Math.min(3, numPagesRef.current) && text.length < HEAD_CHARS; pn++) {
-      let paras = [];
-      try { paras = await ensureParas(pn); } catch {}
-      for (const i of readingOrder(paras)) text += `${paras[i].text}\n`;
-    }
-    return text.slice(0, HEAD_CHARS);
-  }
+    cbRef.current.onTranslateState?.({ ...transStatus, shown: transShown, pages, current, translated, url: transUrl });
+  }, [transStatus, transShown, transMap, translateKey, curPage, transUrl]);
 
   // A formula token's span on any page of the document: a token the model
   // moved across a page join points into the other page's block.
-  const transSpan = useCallback((pn, i, k) => parasCacheRef.current.get(pn)?.[i]?.spans?.[k - 1] || null, []);
+  const transSpan = useCallback((pn, i, k) => translateState.span(transUrl, pn, i, k), [transUrl]);
 
-  // Halting a job: flip `aborted` AND abort the controller — the controller
-  // cancels the in-flight fetches, so the job unwinds (and the button frees
-  // up for the next job) immediately instead of waiting out slow requests.
-  const haltTransJob = () => {
-    const j = transJobRef.current;
-    if (j) { j.aborted = true; j.ctl.abort(); }
-  };
-
-  async function runTransJob(pages, label) {
-    if (transJobRef.current || !pages.length) return;
-    const job = { aborted: false, ctl: new AbortController() };
-    transJobRef.current = job;
-    const key = translateKeyRef.current;
-    setTransShown(true);
-    setTransStatus({ running: true, progress: 0, label });
-    const inJob = new Set(pages);
-    // What every request of the job carries for the paper's brief: the page,
-    // and the document's opening text when the server has no stored copy.
-    const scope = translateScopeRef.current || {};
-    const context = { pageId: scope.pageId || "" };
-    if (!scope.stored) context.head = await documentHead();
-    // The chunks whose request is waiting on the paper's brief.
-    const reading = new Set();
-    const readingFor = (c, on) => {
-      const was = reading.size > 0;
-      if (on) reading.add(c);
-      else reading.delete(c);
-      if (was !== reading.size > 0) setTransReading(reading.size > 0);
-    };
-    // Per-page state, made on first use (a page's own turn, or a unit from a
-    // neighbouring page that a paragraph runs into). `out` holds results by
-    // block index (translatePlan.results): text, null for a block that came
-    // back untranslated (the original shows; "Translate this page" asks
-    // again), or "" for a block whose words went to the part before it
-    // (masked). It is seeded from the page's entry under this job's key, so
-    // a re-run keeps what an earlier job finished and requests only the
-    // rest — its untranslated blocks included, which go back to pending.
-    // `pending`: blocks still without a result; `busy`: blocks whose request
-    // is in flight (the page shimmers those lines); `partial`: text streamed
-    // so far per block (typed onto the page ahead of the final text);
-    // `failed`: blocks the server could not translate in this job (pending
-    // still, so the page is not done and the next job asks for them; the
-    // original shows meanwhile).
-    const states = new Map();
-    const stateOf = (pn) => {
-      let st = states.get(pn);
-      if (!st) {
-        const paras = parasCacheRef.current.get(pn) || [];
-        const e = transMapRef.current.get(pn);
-        const out = e && e.key === key && e.paras === paras ? e.texts.map((t) => (t === null ? undefined : t)) : [];
-        const pending = new Set();
-        paras.forEach((p, i) => { if (p.translate && out[i] == null) pending.add(i); });
-        st = { paras, out, pending, busy: new Set(), partial: {}, failed: new Set() };
-        states.set(pn, st);
-      }
-      return st;
-    };
-    const entryOf = (pn) => {
-      const st = stateOf(pn);
-      const done = st.pending.size === 0;
-      return { key, paras: st.paras, texts: st.out.slice(), done, queued: !done,
-               busy: new Set(st.busy), partial: { ...st.partial }, failed: new Set(st.failed) };
-    };
-    const paint = (pns) => setTransMap((prev) => {
-      const m = new Map(prev);
-      for (const pn of pns) m.set(pn, entryOf(pn));
-      return m;
+  // A job over `pages` of the document on screen, once pdf.js has it (not
+  // while a skeleton stands in for it). It keeps the chunk and brief
+  // requests it starts with, so its replies are in the language and from the
+  // model its entries are kept under, and it pins the document in DOC_CACHE
+  // so it can segment pages after the viewer has gone. Pages near the one
+  // being read keep the decoded images their segmentation brought in; the
+  // rest let them go. A document its last job lets go leaves the cache
+  // when the cache is past its size.
+  function runTransJob(pages, label) {
+    const url = transUrlRef.current;
+    const doc = displayedDocRef.current;
+    const translate = cbRef.current.onTranslate;
+    if (!doc || !translate || docUrlRef.current !== url) return;
+    translateState.startJob(url, {
+      doc, pages, label, key: translateKeyRef.current, parallel: translateParallelRef.current, translate,
+      brief: cbRef.current.onTranslateBrief || null,
+      scope: translateScopeRef.current,
+      near: (pn) => transUrlRef.current === url && Math.abs(pn - curPageRef.current) <= 2,
+      released: trimDocs,
     });
-    const planner = createPlanner({
-      paras: (pn) => parasCacheRef.current.get(pn) || null,
-      inJob: (pn) => inJob.has(pn),
-      filled: (pn, i) => stateOf(pn).out[i] != null,
-    });
-    const pagesOf = (units) => new Set(units.flatMap((u) => u.targets.map((t) => t.pn)));
-    // Producer/consumer: the producer segments pages in queue order and
-    // appends chunks; workers pick them up immediately, so the first request
-    // is in flight while later pages are still segmenting. Idle workers wait
-    // on `wake` with a short timeout backstop — the timeout (not an event)
-    // is what lets them notice an abort or a failure, so halting can stay a
-    // plain `job.aborted = true` everywhere.
-    const queue = [];
-    let totalChars = 0, doneChars = 0, failed = false, segDone = false, error = null, untranslated = 0;
-    let wake = null;
-    const notify = () => { const w = wake; wake = null; w?.(); };
-    const producer = async () => {
-      for (const pn of pages) {
-        if (job.aborted || failed) break;
-        // The page, and its neighbours in the job: a paragraph that runs
-        // over a page break is planned with both pages segmented.
-        for (const p of [pn, pn - 1, pn + 1]) {
-          if (p !== pn && !inJob.has(p)) continue;
-          try { await ensureParas(p); } catch {}
-        }
-        if (job.aborted) break;
-        const units = planner.planPage(pn);
-        const touched = pagesOf(units).add(pn);
-        for (const chunk of chunkUnits(units)) {
-          queue.push(chunk);
-          totalChars += chunk.units.reduce((n, u) => n + u.chars, 0);
-        }
-        paint(touched);
-        notify();
-      }
-      segDone = true;
-      notify();
-    };
-    const worker = async () => {
-      while (!job.aborted && !failed) {
-        const c = queue.shift();
-        if (!c) {
-          if (segDone) return;
-          await new Promise((resolve) => {
-            const prev = wake;
-            wake = () => { prev?.(); resolve(); };
-            setTimeout(resolve, 200);
-          });
-          continue;
-        }
-        let res = null;
-        const pns = pagesOf(c.units);
-        const targets = c.units.flatMap((u) => u.targets);
-        for (const t of targets) stateOf(t.pn).busy.add(t.i);
-        paint(pns);
-        const onPartial = (j, text) => {
-          const u = c.units[j];
-          if (job.aborted || !u) return;
-          for (const r of partials(u, text)) stateOf(r.pn).partial[r.i] = r.text;
-          paint(pns);
-        };
-        const onStage = (stage) => { if (!job.aborted) readingFor(c, stage === "brief"); };
-        let err = null;
-        try {
-          res = await requestChunk(() => cbRef.current.onTranslate?.(c.texts, job.ctl.signal, onPartial,
-            { ...context, ...c.context }, onStage), job.ctl.signal);
-        } catch (e) { err = e; }
-        readingFor(c, false);
-        for (const t of targets) { const st = stateOf(t.pn); st.busy.delete(t.i); delete st.partial[t.i]; }
-        if (job.aborted) return;
-        const got = res?.translations;
-        if (!Array.isArray(got) || got.length !== c.units.length) {
-          failed = true;
-          error = err?.message || "";
-          return;
-        }
-        // The units the server could not translate keep their blocks
-        // pending (the original shows), for the next job to ask again.
-        const lost = new Set(res.failed || []);
-        c.units.forEach((u, j) => {
-          if (lost.has(j)) {
-            for (const t of u.targets) stateOf(t.pn).failed.add(t.i);
-            untranslated += 1;
-            return;
-          }
-          for (const r of results(u, got[j])) {
-            const st = stateOf(r.pn);
-            st.out[r.i] = r.text;
-            st.pending.delete(r.i);
-          }
-        });
-        paint(pns);
-        doneChars += c.units.reduce((n, u, j) => n + (lost.has(j) ? 0 : u.chars), 0);
-        // While segmentation is still running the denominator is a lower
-        // bound, so cap displayed progress until the total is final.
-        const p = totalChars ? doneChars / totalChars : 1;
-        setTransStatus({ running: true, label, progress: segDone ? p : Math.min(p, 0.95) });
-      }
-    };
-    await Promise.all(
-      [producer()].concat(Array.from({ length: translateParallelRef.current }, worker)));
-    transJobRef.current = null;
-    // Job over (finished, halted or failed): nothing is queued or in flight
-    // any more — drop the working indicators, keep whatever was translated.
-    setTransMap((prev) => {
-      const m = new Map(prev);
-      for (const [pn, e] of m) {
-        if (e.queued || e.busy?.size || (e.partial && Object.keys(e.partial).length)) {
-          m.set(pn, { ...e, queued: false, busy: null, partial: null });
-        }
-      }
-      return m;
-    });
-    setTransReading(false);
-    setTransStatus({ running: false, label, progress: totalChars ? doneChars / totalChars : 1,
-                     error: failed && !job.aborted ? error : null, untranslated: job.aborted ? 0 : untranslated });
   }
 
-  // Imperative surface for the host's toolbar button + its menu.
+  // Imperative surface for the host's toolbar button + its menu, on the
+  // document on screen. Halting a job aborts its requests in flight, so it
+  // unwinds (and the button frees up for the next job) at once instead of
+  // waiting out slow requests.
   useEffect(() => {
     if (!translateCtlRef) return;
     translateCtlRef.current = {
-      running: () => !!transJobRef.current,
-      halt: haltTransJob,
-      setShown: setTransShown,
+      halt: () => translateState.halt(transUrlRef.current),
+      setShown: (shown) => translateState.setShown(transUrlRef.current, shown),
       translatePage: () => runTransJob([curPageRef.current], `p.${curPageRef.current}`),
       translateDoc: () => {
         const key = translateKeyRef.current;
         const cur = curPageRef.current;
+        const done = translateState.entries(transUrlRef.current);
         const pages = [];
         for (let p = 1; p <= numPagesRef.current; p++) {
-          const e = transMapRef.current.get(p);
+          const e = done.get(p);
           if (!(e && e.done && e.key === key)) pages.push(p);
         }
         // The page being read paints first, then outward by distance
@@ -1711,7 +1544,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       // cut): asked for again, nothing else.
       retryUntranslated: () => {
         const key = translateKeyRef.current;
-        const pages = [...transMapRef.current]
+        const pages = [...translateState.entries(transUrlRef.current)]
           .filter(([, e]) => e.key === key && e.failed?.size).map(([p]) => p).sort((a, b) => a - b);
         runTransJob(pages, pages.length === 1 ? `p.${pages[0]}` : "document");
       },
@@ -1769,8 +1602,11 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     return () => document.removeEventListener("mousedown", onDown);
   }, [outlineOpen]);
 
-  // Text selection for highlight creation
+  // Text selection for highlight creation. The popup keeps where the viewer
+  // stood when it opened (`scroll`, [left, top]), for the scroll that closes
+  // it (onScroll below).
   const [selPopup, setSelPopup] = useState(null);
+  const viewerScroll = () => (viewerRef.current ? [viewerRef.current.scrollLeft, viewerRef.current.scrollTop] : null);
 
   // The area key (Ctrl, ⌘ on a Mac, by default) held when annotating is
   // allowed → crosshair over the pages: the cue that dragging now draws an
@@ -1802,8 +1638,14 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // place) the region is only that place and goes nowhere else.
   const moveModeRef = useRef(moveMode);
   moveModeRef.current = moveMode;
+  // The highlighter's colour and the confirm it skips the popup with, for
+  // the selection listeners below, which subscribe once.
+  const highlighterRef = useRef(highlighter);
+  highlighterRef.current = highlighter;
+  const confirmRef = useRef(null);
+  confirmRef.current = confirmSelection;
   const onAreaSelected = useCallback((sel) => {
-    setSelPopup({ kind: "area", ...sel });
+    setSelPopup({ kind: "area", ...sel, scroll: viewerScroll() });
     // The region goes to the chat as its page and box (chat/chatPictures.js
     // regionPicture); the server draws it from the document.
     if (!moveModeRef.current) cbRef.current.onAreaSelection?.(sel);
@@ -1887,10 +1729,18 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
         const pageW = parseFloat(pageEl.style.width) || pageEl.offsetWidth || 1;
         const pageH = parseFloat(pageEl.style.height) || pageEl.offsetHeight || 1;
         const rect = { top: r.top, left: r.left, width: r.width, bottom: r.bottom };
-        setSelPopup({
+        const snap = {
           text, rect, point: nearRelease(point, rect), lineRects, pageNumber,
-          pageLeft: pageRect.left, pageTop: pageRect.top, pageW, pageH,
-        });
+          pageLeft: pageRect.left, pageTop: pageRect.top, pageW, pageH, scroll: viewerScroll(),
+        };
+        // The highlighter: a release of the mouse or the pen ends the
+        // selection, which is highlighted then. A tap after a finger's
+        // selection also sends a mouseup; that one still gets the popup.
+        if (point && highlighterRef.current && !moveModeRef.current && lastPointer() !== "touch") {
+          confirmRef.current(snap, "", null, { highlighter: true });
+          return;
+        }
+        setSelPopup(snap);
       }
     }
     // iPadOS/iOS never fires mouseup for a long-press selection or for a drag
@@ -1937,31 +1787,35 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     if (dx || dy) root.scrollBy({ left: dx, top: dy });
   }, [zoom?.page, zoom?.x, zoom?.y, zoom?.w, zoom?.h]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  function handleSelConfirm(commentText, color, extra) {
-    if (!selPopup) return;
-    if (selPopup.kind === "area") {
+  // A selection to onSelectionFinished: the popup's (`sel` its state), or
+  // the one the highlighter takes without it.
+  function confirmSelection(sel, commentText, color, extra) {
+    if (sel.kind === "area") {
       // Rect is already page-relative at capture-time render size. area: true
       // rides inside the position, so it flows through block storage,
       // rendering, and PDF export (/Square) without extra plumbing.
-      const { pageNumber, rect, width, height } = selPopup;
+      const { pageNumber, rect, width, height } = sel;
       const position = { pageNumber, width, height, boundingRect: { ...rect }, rects: [{ ...rect }], area: true };
       onSelectionFinished(position, { text: "" }, () => setSelPopup(null), { color, commentText, ...(extra || {}) });
       return;
     }
-    const r = selPopup.rect;
+    const r = sel.rect;
     // Use the page offset/size snapshotted with the selection — the current
     // page position may have drifted (scroll/zoom) since the rects were taken.
-    const curW = selPopup.pageW, curH = selPopup.pageH;
-    const px = selPopup.pageLeft, py = selPopup.pageTop;
+    const curW = sel.pageW, curH = sel.pageH;
+    const px = sel.pageLeft, py = sel.pageTop;
     const x1 = r.left - px, y1 = r.top - py;
     const x2 = r.left + r.width - px, y2 = r.bottom - py;
-    const lineRects = (selPopup.lineRects && selPopup.lineRects.length)
-      ? selPopup.lineRects.map(lr => ({ x1: lr.left - px, y1: lr.top - py, x2: lr.right - px, y2: lr.bottom - py }))
+    const lineRects = (sel.lineRects && sel.lineRects.length)
+      ? sel.lineRects.map(lr => ({ x1: lr.left - px, y1: lr.top - py, x2: lr.right - px, y2: lr.bottom - py }))
       : [{ x1, y1, x2, y2 }];
     // The page size once: every rect is in its frame (shared/model/blockModel.js).
-    const position = { pageNumber: selPopup.pageNumber, width: curW, height: curH, boundingRect: { x1, y1, x2, y2 }, rects: lineRects };
-    const content = { text: selPopup.text };
+    const position = { pageNumber: sel.pageNumber, width: curW, height: curH, boundingRect: { x1, y1, x2, y2 }, rects: lineRects };
+    const content = { text: sel.text };
     onSelectionFinished(position, content, () => { window.getSelection()?.removeAllRanges(); setSelPopup(null); }, { color, commentText, ...(extra || {}) });
+  }
+  function handleSelConfirm(commentText, color, extra) {
+    if (selPopup) confirmSelection(selPopup, commentText, color, extra);
   }
 
   return (
@@ -2021,15 +1875,20 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           the zoom anchor re-places about the viewport's centre, and each
           return to the tab would land a few px higher. */}
       <div ref={viewerRef} data-guide="pdf.viewer" className={"pdfViewer" + (areaCursor || areaMode ? " areaCursor" : "") + (areaMode ? " areaMode" : "") + (darkPage ? " pdfDark" : "") + (transPeek ? " transPeek" : "") + armedClasses(tools) + (ink.tool?.tool === "select" ? " inkSelect" : "")}
-        style={{ height: zoom ? `calc(100% - ${zoomHeight}px)` : "100%", overflowY: "auto", overflowX: "auto", overflowAnchor: "none", scrollbarGutter: "stable" }}
+        style={{ height: zoom ? `calc(100% - ${zoomHeight}px)` : "100%", overflowY: "auto", overflowX: "auto", overflowAnchor: "none", scrollbarGutter: "stable",
+          // the selection in the colour the highlighter will give it (app.css)
+          ...(highlighter && !moveMode ? { "--selection-color": highlighter } : null) }}
         onScroll={(e) => {
           lastScrollRef.current = e.currentTarget.scrollTop;
           lastScrollLeftRef.current = e.currentTarget.scrollLeft;
           syncCurPage();
           // The tip is placed on the screen, not on the page, so a scroll
           // would leave it over other text; and a touch scroll sends none of
-          // the mousedown that otherwise closes it.
-          if (selPopup) setSelPopup(null);
+          // the mousedown that otherwise closes it. A scroll event that
+          // leaves the viewer where it stood when the tip opened (one a
+          // re-layout of the pages sends) moves nothing under it.
+          const at = selPopup?.scroll, el = e.currentTarget;
+          if (selPopup && (!at || Math.abs(el.scrollLeft - at[0]) >= 1 || Math.abs(el.scrollTop - at[1]) >= 1)) setSelPopup(null);
         }}>
       {/* pdfZoomLayer: the pinch preview's transform target — spans the full
           scroll content so transform-origin 0 0 coincides with content (0,0) */}
@@ -2044,6 +1903,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           flashId={flashHighlightId && hlsByPage.get(i + 1)?.some((h) => h.id === flashHighlightId) ? flashHighlightId : null}
           onLinkHighlight={stableCbs.onLinkHighlight} onHighlightContext={stableCbs.onHighlightContext}
           onHighlightThread={stableCbs.onHighlightThread} onReview={review}
+          reviewGhost={reviewGhost?.pageNumber === i + 1 ? reviewGhost : null}
           citation={displayedUrl === url && activeCitation?.page === i + 1 ? activeCitation : null}
           readOnly={!onSelectionFinished} forceRender={forcePages.has(i + 1) || activeCitation?.page === i + 1}
           hideEmbeddedAnnots={!!hideEmbeddedAnnots}
@@ -2080,15 +1940,20 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
             translate={!moveMode && selTranslate && selPopup.kind !== "area" && selPopup.text && onTranslate ? {
               text: selPopup.text, auto: selTranslate === "auto", langLabel: translateLangLabel,
               // A quick one-off text: the paper's brief rides along when it is
-              // made already, never waited for.
+              // made already, never waited for. The page is the selected
+              // document's, none while the next one loads.
               run: (texts, signal, onPartial) => cbRef.current.onTranslate?.(texts, signal, onPartial,
-                { pageId: translateScopeRef.current?.pageId || "", quick: true }),
+                { pageId: translateState.scopeOf(transUrlRef.current, translateScopeRef.current).pageId, waitBrief: false }),
             } : null} />
         </TipFrame>
       )}
       </div>
-      <HighlightReview card={reviewCard} review={review} highlights={displayedUrl === url ? highlights : null}
-        viewerRef={viewerRef} darkPage={darkPage} onAccept={onAcceptHighlight} onMove={onMoveHighlight} onNext={openReview} />
+      <HighlightReview card={reviewCard} steps={reviewSteps} review={review} drawn={reviewDrawn}
+        highlights={displayedUrl === url ? highlights : null} positionOf={reviewPosition}
+        viewerRef={viewerRef} darkPage={darkPage} fileId={fileId} pageCount={displayedUrl === url ? numPages : 0}
+        onAccept={onAcceptHighlight} onPlace={onPlaceHighlight}
+        onMove={onMoveHighlight} onDiscard={onDiscardHighlight} discardOf={discardOf}
+        onUndo={onUndoReview} onOpen={openReview} onShow={showClosest} />
       {zoom ? (
         <ZoomWindow zoom={zoom} size={{ width: pageWidths[zoom.page - 1] || FALLBACK_W, height: pageHeights[zoom.page - 1] || FALLBACK_H }}
           page={zoomPage?.doc === pdfDoc && zoomPage.n === zoom.page ? zoomPage.page : null}
@@ -2228,129 +2093,12 @@ function NoteBadge({ hlId, text, hasNote = true, threads = 0, style, onClick, on
   );
 }
 
-// One translated paragraph. Two independent layers inside the block box:
-// masks that cover EXACTLY the original text lines (per-line rects, so a
-// figure the paragraph wraps around is never painted over), and the
-// translated text with an inline background behind each rendered line
-// (box-decoration-break: clone) — so text and mask stay readable even where
-// the browser's line breaks don't coincide with the original's. The text is
-// drawn at the original font size, shrunk in steps until it fits the box —
-// the page layout never reflows. The measured shrink loop runs a handful of
-// synchronous reflows per block; pages have tens of blocks, which is fine.
-// A token in a translation: {vK} is the block's own K-th span, {v:pn.i.K}
-// another block's (pdf/translatePlan.js results).
-const TRANS_TOKEN = /\{v(?::(\d+)\.(\d+)\.)?(\d+)\}/g;
-
-// A translated paragraph over its original lines: masks over exactly those
-// lines, the translation in them, shrunk until it fits. Its tokens come back
-// as the original's formulas (TransMath), citation markers and URLs.
-function TransPara({ box, lines, baseSize, text, streaming, block, page, scale, spanOf, basePaints }) {
-  const ref = useRef(null); // the text container (the fit-measured element)
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    let size = baseSize;
-    el.style.fontSize = size + "px";
-    let guard = 0;
-    while (guard++ < 24 && size > 6
-        && (el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1)) {
-      size *= 0.93;
-      el.style.fontSize = size + "px";
-    }
-  }, [text, baseSize, box.width, box.height, basePaints]);
-  const parts = [];
-  let at = 0;
-  for (const m of text.matchAll(TRANS_TOKEN)) {
-    if (m.index > at) parts.push(text.slice(at, m.index));
-    const pn = m[1] ? Number(m[1]) : page;
-    const span = m[1] ? spanOf?.(pn, Number(m[2]), Number(m[3])) : block?.spans?.[Number(m[3]) - 1];
-    if (span?.kind === "math") {
-      parts.push(<TransMath key={m.index} span={span} page={pn} em={block.size} scale={scale} basePaints={basePaints} />);
-    } else if (span) parts.push(span.str);
-    at = m.index + m[0].length;
-  }
-  if (at < text.length) parts.push(text.slice(at));
-  return (
-    <div className={"pdfTransPara" + (streaming ? " streaming" : " landed")}
-      style={{ left: box.left, top: box.top, width: box.width, height: box.height }}>
-      {lines.map((l, i) => (
-        <div key={i} className="pdfTransMask" style={{ left: l.left, top: l.top, width: l.width, height: l.height }} />
-      ))}
-      <div ref={ref} className="pdfTransText" style={{ fontSize: baseSize }}>
-        <span>{parts}</span>
-      </div>
-    </div>
-  );
-}
-
-// A formula of the original inside the translated text: its box cropped from
-// its page's bitmap (pageRaster basePixels), sized in em of the paragraph's
-// font so it shrinks with the text, and set on the text's baseline. While
-// that page holds no pixels (not drawn yet, or let go far from the view)
-// the formula's extracted text stands in; the next paint of the page's
-// whole bitmap (`basePaints`) draws it. The bare class is set here, in the
-// layout phase before the paragraph measures its fit, not through state; the
-// box's size rides in custom properties so that class can let it go.
-function TransMath({ span, page, em, scale, basePaints }) {
-  const ref = useRef(null);
-  // A formula from another page (moved across a page join) redraws when that
-  // page's bitmap is painted: it announces it on its box.
-  const [elsewhere, setElsewhere] = useState(0);
-  useEffect(() => {
-    const own = ref.current?.closest(".pdfPageWrap");
-    const wrap = ref.current?.closest(".pdfViewer")?.querySelector(`.pdfPageWrap[data-page="${page}"]`);
-    if (!wrap || wrap === own) return undefined;
-    const bump = () => setElsewhere((n) => n + 1);
-    wrap.addEventListener("pdfbasepaint", bump);
-    return () => wrap.removeEventListener("pdfbasepaint", bump);
-  }, [page]);
-  useLayoutEffect(() => {
-    const el = ref.current;
-    const canvas = el?.firstChild;
-    if (!canvas) return;
-    const wrap = el.closest(".pdfViewer")?.querySelector(`.pdfPageWrap[data-page="${page}"]`);
-    const src = wrap && basePixels(wrap);
-    const ctx = src && wrap.offsetWidth ? canvas.getContext("2d") : null;
-    el.classList.toggle("bare", !ctx);
-    if (!ctx) return;
-    // Backing pixels per scale-1 unit: the bitmap covers the whole page box.
-    const k = (src.width * scale) / wrap.offsetWidth;
-    const sw = (span.x2 - span.x1) * k, sh = (span.y2 - span.y1) * k;
-    canvas.width = Math.max(1, Math.round(sw));
-    canvas.height = Math.max(1, Math.round(sh));
-    ctx.drawImage(src, span.x1 * k, span.y1 * k, sw, sh, 0, 0, canvas.width, canvas.height);
-  }, [span, page, scale, basePaints, elsewhere]);
-  return (
-    <span ref={ref} className="pdfTransMath" style={{
-      "--w": `${(span.x2 - span.x1) / em}em`,
-      "--h": `${(span.y2 - span.y1) / em}em`,
-      "--shift": `${-(span.y2 - span.base) / em}em`,
-    }}>
-      <canvas aria-hidden="true" />
-      <span className="pdfTransMathText">{span.str}</span>
-    </span>
-  );
-}
-
-// The working indicator over a paragraph whose translation has not arrived:
-// its original lines stay readable under a faint accent wash — shimmering
-// while the request is in flight, still while it is only queued.
-function TransPending({ lines, busy }) {
-  return (
-    <div className={"pdfTransPending" + (busy ? " busy" : "")}>
-      {lines.map((l, i) => (
-        <div key={i} className="pdfTransPendingLine" style={{ left: l.left, top: l.top, width: l.width, height: l.height }} />
-      ))}
-    </div>
-  );
-}
-
 // marginLeft: the page's left edge beside its comment margin, or null for
 // none (centred, with the badge and the popover); pageTop: the page's top,
 // px from the first page's top, where its margin's column goes on from the
 // pages above; activeHl: the highlight
 // whose card is the active one, drawn stronger.
-const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scale, highlights, flashId, onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, onReview, readOnly, forceRender, reservedHeight, reservedWidth, findMarks, onInternalLink, onExternalLink, onLinkContext, onPainted, onAreaSelected, pendingArea, areaMode, areaKey, hideEmbeddedAnnots, trans, transKey, transShown, transSpan, toolArmed, marks, marginLeft = null, pageTop = 0, activeHl = null }) {
+const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scale, highlights, flashId, onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, onReview, reviewGhost = null, readOnly, forceRender, reservedHeight, reservedWidth, findMarks, onInternalLink, onExternalLink, onLinkContext, onPainted, onAreaSelected, pendingArea, areaMode, areaKey, hideEmbeddedAnnots, trans, transKey, transShown, transSpan, toolArmed, marks, marginLeft = null, pageTop = 0, activeHl = null }) {
   const wrapRef = useRef(null);
   const baseRef = useRef(null);
   const detailRef = useRef(null);
@@ -2374,6 +2122,11 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
   // a book with highlights on every page paid that on each wheel notch
   // (docs/dev/pdf_loading.md, "High zoom and touch scrolling").
   const overlays = renderVisible;
+  // A lost highlight's closest match outlined here (below): its review
+  // card anchors to the outline once it is drawn, this page rendering
+  // after Show scrolled to it.
+  const ghostDrawn = overlays && !!reviewGhost;
+  useEffect(() => { if (ghostDrawn) onReview?.drawn?.(); }, [ghostDrawn, reviewGhost, onReview]);
   const [links, setLinks] = useState([]); // link annotations, rects at scale 1
   const scaleRef = useRef(scale);
   scaleRef.current = scale;
@@ -2713,7 +2466,9 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
                 return null;
               }
               return (
-                <TransPara key={i} box={box} lines={lines} baseSize={p.size * scale} text={text}
+                // Keyed by its final text too: a translation asked again
+                // (now with the paper's brief) fades in like a new one.
+                <TransPara key={final ? `${i}:${final}` : i} box={box} lines={lines} baseSize={p.size * scale} text={text}
                   streaming={!final && final !== ""} block={p} page={pageNumber} scale={scale}
                   spanOf={transSpan} basePaints={basePaints} />
               );
@@ -2805,23 +2560,24 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
         const lost = !!h.position?.lost;
         const approx = placedToCheck(h.position);
         const edge = approx ? "dashed" : "solid";
-        // One to check is pending: its rectangles alone listen for the
-        // pointer, which opens its review card (HighlightReview.jsx) — what
-        // it matched, where it was, Accept — so they carry no title of
-        // their own. Only an editor is offered the move of a lost one (App's
-        // highlight menu).
-        const pending = approx && !!onReview;
-        const placing = lost
-          ? (readOnly ? t("This highlight's text was not found in the current PDF")
-            : t("This highlight's text was not found in the current PDF — right-click to move it to a selection"))
-          : "";
+        // One to check, or a lost one, is to review: its rectangles alone
+        // listen for the pointer, which opens its review card
+        // (HighlightReview.jsx) — what it matched or that it was not found,
+        // where it was, Accept, its closest match, Move… — so they carry no
+        // title of their own.
+        const reviewable = (approx || lost) && !!onReview;
         const color = normalizeColor(h.color) || DEFAULT_HIGHLIGHT;
         // The colour rides in --hl (the border in --hl-line, defaulting to
         // it) beside its dark-page variant in --hl-dark / --hl-dark-line:
         // a flipped page (Flip page colors, Gamma Dark) draws those instead
         // (app.css), whatever app the colour came from.
         // Right-click, or a finger held on it: colour, link, copy as reference.
-        const openMenu = (e) => { e.preventDefault(); onHighlightContext?.({ id: h.id, x: e.clientX, y: e.clientY }); };
+        // The menu takes the place of a review card, shown or on its way.
+        const openMenu = (e) => {
+          e.preventDefault();
+          if (reviewable) onReview.close();
+          onHighlightContext?.({ id: h.id, x: e.clientX, y: e.clientY });
+        };
         const elements = [];
         for (const [ri, r] of rects.entries()) {
           elements.push(<div key={h.id + "-" + r.x1 + "-" + r.y1} data-hl-id={h.id}
@@ -2854,12 +2610,12 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
               : { borderBottom: "2px solid rgba(70, 130, 255, 0.9)", borderRadius: 1 }) : {}),
             ...(approx && !isArea ? { outline: "1px dashed var(--hl-line, var(--hl-dark-line))" } : {}),
           }} title={isLink ? (h.linkTarget.pageId ? t("Open linked paper") : h.linkTarget.url)
-            : pending ? undefined : [placing, h.comment?.text || ""].filter(Boolean).join(" — ")}
-            {...(pending ? { onMouseEnter: () => onReview.hover(h.id, true), onMouseLeave: () => onReview.hover(h.id, false) } : null)}
+            : reviewable ? undefined : h.comment?.text || ""}
+            {...(reviewable ? { onMouseEnter: () => onReview.hover(h.id, true), onMouseLeave: () => onReview.hover(h.id, false) } : null)}
             onClick={function (e) {
               e.stopPropagation();
               // a tap (no hover on touch) opens its card instead; a second tap acts
-              if (pending && onReview.tap(h.id)) return;
+              if (reviewable && onReview.tap(h.id)) return;
               if (isLink) onLinkHighlight?.(h);
               else onHighlightJump?.(h.id, e.ctrlKey || e.metaKey);
               // a highlight with cards: its card becomes the active one
@@ -2891,6 +2647,17 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
         }
         return elements;
       })}
+      {/* A lost highlight's closest match, outlined while its review card
+          shows it (Show): its rectangles in its colour's line tone, dotted
+          over a faint wash, taking no pointer (app.css .pdfHlGhost). */}
+      {overlays && reviewGhost ? reviewGhost.rects.map((r, i) => (
+        <div key={`ghost-${i}`} className="pdfHlGhost" data-review-ghost={reviewGhost.id} aria-hidden="true" style={{
+          left: r.x1 * curW / reviewGhost.width, top: r.y1 * curH / reviewGhost.height,
+          width: Math.max(1, (r.x2 - r.x1) * curW / reviewGhost.width),
+          height: Math.max(1, (r.y2 - r.y1) * curH / reviewGhost.height),
+          "--hl": reviewGhost.color, "--hl-dark": darkPageColor(reviewGhost.color), "--hl-dark-line": darkPageLine(reviewGhost.color),
+        }} />
+      )) : null}
       {overlays && marginLeft != null ? <CommentMarginSlot pageNumber={pageNumber} highlights={highlights} pageH={curH} pageTop={pageTop} /> : null}
       {/* Over the highlights, note badges and link boxes: text boxes, then ink (app.css). */}
       <MarkupLayers surface={pageNumber} wrapRef={wrapRef} width={baseW} height={baseH} marks={marks} active={renderVisible} />

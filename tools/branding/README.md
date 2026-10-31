@@ -26,6 +26,10 @@ Store promo tile and marquee in `extension/store/` (opaque, as that store
 requires). The desktop's `npm run store-art` remains an alias for the unified
 generation.
 
+An `outputs.json` composition entry with `png` (width, height) is also
+rendered to a PNG of that size beside its SVG: opaque for scenes, transparent
+for the logo. The hero, the banner and the one-line logo have one.
+
 An `outputs.json` entry of kind `crop` publishes a window onto a
 composition. Its `box` (x, y, width, height in the composition's units)
 becomes the root's size and viewBox, and the element ids in `hide` are left

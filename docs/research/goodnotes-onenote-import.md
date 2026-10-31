@@ -682,13 +682,16 @@ Samples are `(stored + #6) × 6/11` pt, y down, no flip [V]; `size × max(w)
   attachment is a one-page vector PDF (4,113 B, MediaBox 254 × 214) at a
   `#2` size equal to the MediaBox in canvas units, its lettering separate
   `#21` elements grouped with it [V1: gnnote, Test9].
-  - Gamma: a picture box through `notability_map.picture_box` at `#2 ×
-    6/11` ([dev/text_boxes.md](../dev/text_boxes.md)), the bytes stored as
-    they came, or through `notability_import.picture_bytes` when the EXIF
-    orientation, a crop (`#3` as an intersection) or a turn (`#3.#3`) must
-    be applied, as the Notability import applies them; a sticker PDF
-    rasterised to a PNG at twice the box through PyMuPDF, which the server
-    already has [I].
+  - Gamma, as built: a picture block through `notability_map.picture_block`
+    ([dev/pictures.md](../dev/pictures.md)), its frame `#2 × 6/11` and its
+    turn (`#3.#3`, radians) as `angle` in degrees, the bytes stored as they
+    came (`note_app_import.AppImport.store_picture`), never decoded: the
+    EXIF orientation is applied where the picture is drawn, as for any
+    picture. A crop (`#3` other than `#2`) is not applied: the picture
+    comes in whole, counted. A sticker PDF is rasterised to a PNG through
+    PyMuPDF (`goodnotes_import._sticker`), once for all the pictures that
+    show it, its longer side twice that of the largest of their frames and
+    at most 1,024 px.
 - **Legacy text, kind `#8`** (every schema ≤ 25 file, the iOS 16 builds of
   2026-09 included; 21 instances): `{#1 E, #2 outer rect, #3 text frame =
   outer inset by 10 units, #4 {1.0, _, _, 1.0}, #5 clock, #6 RTF bytes, #7
@@ -1345,14 +1348,16 @@ refusal skipping the notebook, a report of what was dropped.
   read into memory only after their size is checked and the disk's free
   space is.
 - `notability_import.compose_pdf` (a PDF page copied from its reader by
-  page number, a paper page painted through `paper_ops`), `picture_bytes`
-  (EXIF orientation, crop, turn), the `_Import` commit shape, the `_Skip`
-  and `_Stop` rules, `_ordered`, the report's fields.
+  page number, a paper page painted through `paper_ops`), the storing of a
+  picture's file as it came, never decoded, only its size read from its
+  header (as built, `note_app_import.AppImport.store_picture`), the
+  `_Import` commit shape, the `_Skip` and `_Stop` rules, `_ordered`, the
+  report's fields.
 - `notability_map`'s pure helpers whose inputs are generic: `Frame` (a
   GoodNotes page is `Frame(top 0, bottom H, ox 0, oy 0, k 6/11, width,
   height, pdf, pdf_page)`), `Media` and `Run` (an image, a text box, a
   sticky and a formula fit its fields), `Shape` (a parametric shape fits
-  its kinds and `fill`), `text_box`, `picture_box`, `sticky_stroke`,
+  its kinds and `fill`), `text_box`, `picture_block`, `sticky_stroke`,
   `shape_stroke` with `normalise_rect` and `normalise_ellipse`,
   `box_markdown`, `_checked` (every stroke through `ink.Stroke`),
   `MAX_FORCE`, `STEP_PT`, `DECIMATE_PT` and the cubic flattening
@@ -1612,6 +1617,13 @@ straight shape has its annotation's width and lies within 2 pt of it, and
   connectors (`#22`), sticky notes (`#20`) and math (`#11`), none of which
   a public file holds. A cropped picture comes in whole, and a turned page
   upright, each counted.
+- **Pictures** are picture blocks ([dev/pictures.md](../dev/pictures.md)),
+  not the picture boxes first planned (`picture_box`, decoded through
+  `picture_bytes` for a crop or a turn), both of which are gone: the file
+  is stored as it came, never decoded, its frame and its turn kept as
+  numbers (`notability_map.picture_block` through the shared
+  `AppImport.store_picture`). A sticker's PDF is rendered to one PNG for
+  all the pictures that show it (`goodnotes_import._sticker`).
 - **The iPad app** declares `.goodnotes` under an identifier of its own
   (`net.gammapdf.goodnotes`), GoodNotes' own being unpublished; whether
   GoodNotes' declaration hides Gamma from the share sheet is a device
@@ -1701,6 +1713,8 @@ straight shape has its annotation's width and lies within 2 pt of it, and
   from gnnote's reader rather than the spec; `.onex`.
 - Gamma: stickies with text, recognised handwriting as search text,
   outline entries as sheet titles, strokes placed on a recording once the
-  tick's unit is known, a cover read as a sheet, the picture box for a
-  vector sticker, the RTF reader's scope, and the Notability import's
-  helpers generalised (the `Media` and `Shape` inputs) rather than copied.
+  tick's unit is known, a cover read as a sheet, a vector sticker kept as
+  vector art rather than a PNG, a GoodNotes crop applied (once where `#3`
+  cuts the image is confirmed), the RTF reader's scope, and the
+  Notability import's helpers generalised (the `Media` and `Shape` inputs)
+  rather than copied.

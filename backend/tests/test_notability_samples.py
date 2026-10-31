@@ -112,12 +112,20 @@ def test_the_example_s_shapes_and_groups_come_in_whole(example):
     assert sum(1 for page in plan.pages for _stroke in nm.page_strokes(note, page, left)) == 871 and not left
 
 
+def pictures_of(ws: str, blocks: list[dict]) -> list[tuple[dict, Image.Image]]:
+    """The picture blocks among ``blocks``: each one's picture and its
+    stored file, opened."""
+    found = [b["properties"]["picture"] for b in blocks if b["properties"].get("picture")]
+    return [(p, Image.open(ws_uploads_dir(ws) / p["url"].rsplit("/", 1)[-1])) for p in found]
+
+
 def test_the_example_imports_as_notability_shows_it(example):
     """A notebook of two ruled letter sheets with its 871 strokes (699
-    curves, 170 shapes, 2 stickies) and 8 pictures, the photo cropped as
-    Notability crops it, the turned ones stored turned and the GIF as its
-    animation, and the text typed on its pages as the page's notes:
-    nothing left out."""
+    curves, 170 shapes, 2 stickies) and 8 pictures, each its file as it
+    came with its crop, turn and flips as numbers: the photo whole with the
+    crop Notability shows, the turned ones upright with their angles, the
+    GIF as its animation; and the text typed on its pages as the page's
+    notes: nothing left out."""
     ws, report = imported(EXAMPLE)
     assert (report["pages_created"], report["strokes_imported"], report["pictures_imported"]) == (1, 871, 8)
     assert report["warnings"] == [] and report["skipped"] == []
@@ -127,15 +135,19 @@ def test_the_example_imports_as_notability_shows_it(example):
     sheets = sheets_of(blocks, page_id)
     assert [(s["paper"]["width"], s["paper"]["height"], s["paper"]["pattern"], s["paper"]["spacing"]) for s in sheets] == [
         (612, 803.25, "ruled", 18)] * 2
-    pictures = [[Image.open(ws_uploads_dir(ws) / b["content"].rsplit("/", 1)[-1][:-1]) for b in s["blocks"]
-                 if b["content"].startswith("![")] for s in sheets]
+    pictures = [pictures_of(ws, s["blocks"]) for s in sheets]
     assert [len(on_sheet) for on_sheet in pictures] == [4, 4]
-    photo, *turned = pictures[0]
-    assert (photo.format, photo.size) == ("JPEG", (2250, 1550))  # FigureCropRectKey of a 2250 × 3000 photo
-    assert all(p.format == "PNG" and p.mode == "RGBA" and p.getpixel((0, 0))[3] == 0 and max(p.size) <= 2048
-               for p in turned)
-    (moving,) = [p for p in pictures[1] if p.format == "GIF"]
-    assert (moving.size, moving.n_frames) == ((352, 240), 18)  # its animation, not the 220 × 150 still frame
+    (photo, image), *turned = pictures[0]
+    assert (image.format, image.size) == ("JPEG", (2250, 3000))  # the photo, not the part Notability shows
+    assert (photo["crop"], photo["angle"]) == ({"x": 0, "y": 0.2658, "w": 1, "h": 0.5168}, 0)  # its FigureCropRectKey
+    assert [(p["angle"], p["flip_h"], p["flip_v"], i.format, i.size) for p, i in turned] == [
+        (16.22, False, True, "JPEG", (2250, 3000)), (53.15, True, False, "JPEG", (2250, 3000)),
+        (-31.41, False, False, "JPEG", (2250, 3000))]
+    assert [(p["angle"], i.format, i.size) for p, i in pictures[1]] == [
+        (19.2, "PNG", (1877, 3000)), (0, "PNG", (1317, 1298)), (0, "PNG", (1800, 1800)), (0, "GIF", (352, 240))]
+    gif, moving = pictures[1][3]
+    assert moving.n_frames == 18 and gif["crop"] == {"x": 0, "y": 0, "w": 1, "h": 1}  # its animation, its crop whole
+    assert all(p["w"] < 612 and p["x"] + p["w"] <= 612 and p["y"] + p["h"] <= 803.25 for s in pictures for p, _i in s)
     notes = [b["content"] for b in sorted(blocks, key=lambda b: b["position"]) if b["parent_id"] == page_id
              and "sheet" not in b["properties"]]
     assert notes == ["https://github.com/nokcha0/Notability-notes-converter", "DIFFERENT **FONT**",
@@ -188,15 +200,25 @@ def test_the_example_s_ntb_reads_as_its_note_does(example):
 
 def test_the_example_s_ntb_imports_as_its_note_does():
     """Its NTB export becomes the page its Note export does: as many
-    strokes, pictures and pages, nothing left out, and the GIF moving, its
+    strokes, pictures and pages, nothing left out, each picture an image
+    of the same kind and size at the same place, size, turn and crop (the
+    bundle's floats aside; an .ntb keeps no flips), and the GIF moving, its
     crop given in the asset's logical size the whole GIF."""
     ws, report = imported(EXAMPLE_NTB)
-    _ws, note_report = imported(EXAMPLE)
+    note_ws, note_report = imported(EXAMPLE)
     counts = ("pages_created", "strokes_imported", "pictures_imported", "text_boxes_imported", "recordings_imported")
     assert [report[k] for k in counts] == [note_report[k] for k in counts] == [1, 871, 8, 0, 0]
     assert report["warnings"] == [] and report["skipped"] == []
-    with connect_pages_db(ws) as conn:
-        blocks = [block_to_dict(row) for row in fetch_subtree(conn, report["pages"][0]["id"])]
-    gifs = [Image.open(ws_uploads_dir(ws) / b["content"].rsplit("/", 1)[-1][:-1]) for b in blocks
-            if b["content"].startswith("![") and b["content"].endswith(".gif)")]
-    assert [(g.size, g.n_frames) for g in gifs] == [((352, 240), 18)]
+    pages = []
+    for workspace, made in ((ws, report), (note_ws, note_report)):
+        with connect_pages_db(workspace) as conn:
+            blocks = [block_to_dict(row) for row in fetch_subtree(conn, made["pages"][0]["id"])]
+        pages.append([pictures_of(workspace, s["blocks"]) for s in sheets_of(blocks, made["pages"][0]["id"])])
+    for ours, theirs in zip(*pages, strict=True):
+        assert len(ours) == len(theirs) == 4
+        for (mine, image), (other, their_image) in zip(ours, theirs):
+            assert (image.format, image.size) == (their_image.format, their_image.size)
+            assert all(abs(mine[k] - other[k]) <= 0.05 for k in ("x", "y", "w", "h", "angle")), (mine, other)
+            assert all(abs(mine["crop"][k] - other["crop"][k]) <= 0.0002 for k in ("x", "y", "w", "h")), (mine, other)
+    ((gif, moving),) = [(p, i) for p, i in pages[0][1] if i.format == "GIF"]
+    assert (moving.size, moving.n_frames, gif["crop"]) == ((352, 240), 18, {"x": 0, "y": 0, "w": 1, "h": 1})

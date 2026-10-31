@@ -1472,6 +1472,29 @@ def _v36_folder_links_remote(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+# The columns a link to disk gained with files followed and PDFs sent back
+# (gamma/folder_links.py): its kind, a file link's page and what it knows
+# of the file, and whether PDFs changed on disk go back to Gamma.
+_V46_COLUMNS = (("kind", "TEXT NOT NULL DEFAULT 'folder'"), ("page_id", "TEXT NOT NULL DEFAULT ''"),
+                ("push", "INTEGER NOT NULL DEFAULT 0"), ("state", "TEXT NOT NULL DEFAULT '{}'"))
+
+
+def _v46_folder_links_push(conn: sqlite3.Connection) -> None:
+    """``folder_links`` gains ``kind`` (``folder``, what every link so far
+    is, or ``file``), ``page_id``, ``push`` and ``state``
+    (``_V46_COLUMNS``): a link may now follow one PDF on disk into a page,
+    and a folder link may send PDFs changed on disk back. The table is
+    created first where it is missing, in step 35's frozen shape with step
+    36's columns. Re-runnable: a column is added only where ``_columns()``
+    lacks it. No workspace is touched."""
+    conn.execute(_V35_FOLDER_LINKS)
+    have = _columns(conn, "folder_links")
+    for name, decl in _V36_COLUMNS + _V46_COLUMNS:
+        if name not in have:
+            conn.execute(f"ALTER TABLE folder_links ADD COLUMN {name} {decl}")
+    conn.commit()
+
+
 def _v37_highlight_colors(ws: str, pages: sqlite3.Connection, data) -> None:
     """A block's ``properties.color`` (a highlight's, gamma/colors.py) is
     ``#rrggbbaa``: every stored ``rgba(…)`` / ``#rrggbb`` string takes that
@@ -1732,6 +1755,56 @@ def _v43_email_invites(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _v44_picture_kind(ws: str, pages: sqlite3.Connection, data) -> None:
+    """The generated ``kind`` gains its ``picture`` case (a ``picture``
+    object, gamma/picture.py), after ``text_box``: ``block_columns`` finds
+    the column's stored definition outdated and adds it again, with its
+    index and the generated columns after it. It commits what it rebuilt
+    itself, ahead of the stamp; a rerun finds the current definition and
+    changes nothing. Nothing is stamped or touched: the column is derived."""
+    if _columns(pages, "unified_blocks"):  # an old copy without the table gets it from the schema statements
+        block_columns(pages)
+
+
+# users.db ``zotero_links`` and its owner-library index as schema version 45
+# shaped them, frozen: step 45 creates them from these.
+_V45_ZOTERO_LINKS = [
+    """CREATE TABLE IF NOT EXISTS zotero_links (
+        workspace_id TEXT PRIMARY KEY REFERENCES workspaces(id),
+        owner TEXT NOT NULL,
+        library TEXT NOT NULL,
+        library_name TEXT NOT NULL DEFAULT '',
+        mode TEXT NOT NULL DEFAULT 'two-way',
+        download TEXT NOT NULL DEFAULT 'all',
+        upload INTEGER NOT NULL DEFAULT 1,
+        auto_tags INTEGER NOT NULL DEFAULT 0,
+        send_unrecorded INTEGER NOT NULL DEFAULT 0,
+        poll_s INTEGER NOT NULL DEFAULT 5,
+        on_change INTEGER NOT NULL DEFAULT 1,
+        status TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL
+    )""",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_zotero_links_owner_library ON zotero_links(owner, library)",
+]
+
+
+def _v45_zotero_links(conn: sqlite3.Connection) -> None:
+    """users.db gains ``zotero_links`` (personal workspaces kept in step
+    with a Zotero library, gamma/zotero_sync.py) and its unique index on
+    (owner, library), from the step's frozen statements. Re-runnable: both
+    are ``IF NOT EXISTS``, and a table an earlier shape of this step made
+    without the index keeps, of the links one owner made of one library,
+    the oldest. No workspace is touched (the link's per-object tables are
+    additive in pages.db)."""
+    conn.execute(_V45_ZOTERO_LINKS[0])
+    conn.execute("DELETE FROM zotero_links WHERE EXISTS (SELECT 1 FROM zotero_links o WHERE o.owner = "
+                 "zotero_links.owner AND o.library = zotero_links.library AND (o.created_at, o.rowid) < "
+                 "(zotero_links.created_at, zotero_links.rowid))")
+    for stmt in _V45_ZOTERO_LINKS[1:]:
+        conn.execute(stmt)
+    conn.commit()
+
+
 STEPS = [
     (20, "guest_accounts", _v20_guest_accounts),
     (21, "folder_shares", _v21_folder_shares),
@@ -1754,6 +1827,8 @@ STEPS = [
     (40, "comments_inbox", _v40_comments_inbox),
     (42, "cloud_invitations", _v42_cloud_invitations),
     (43, "email_invites", _v43_email_invites),
+    (45, "zotero_links", _v45_zotero_links),
+    (46, "folder_links_push", _v46_folder_links_push),
 ]
 
 # The workspace parts of the steps from version 34 on: (version, name,
@@ -1765,4 +1840,5 @@ WORKSPACE_STEPS = [
     (37, "highlight_colors", _v37_highlight_colors),
     (38, "recording_kind", _v38_recording_kind),
     (41, "ink_v2", _v41_ink_v2),
+    (44, "picture_kind", _v44_picture_kind),
 ]

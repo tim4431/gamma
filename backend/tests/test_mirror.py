@@ -6,6 +6,7 @@ an in-process TestClient carrying the write token."""
 import io
 import json
 import time
+from contextlib import closing
 
 import pytest
 from fastapi.testclient import TestClient
@@ -13,7 +14,7 @@ from fractional_indexing import generate_key_between
 
 from conftest import account_of, login, make_user
 from gamma import migrations, sync_engine
-from gamma.db import connect_pages_db, ws_uploads_dir
+from gamma.db import connect_pages_db, connect_users_db, page_now, ws_uploads_dir
 from gamma.integrations import create_token
 
 PDF = b"%PDF-1.4 mirror test\n" + b"m" * 1500
@@ -536,6 +537,62 @@ def test_a_round_reports_its_progress_and_an_interrupted_one_is_reset(monkeypatc
     st = sync_engine.get_mirror(local.ws)["status"]
     assert st["running"] is False and st["interrupted"] is True and "progress" not in st
     assert "interrupted" not in _sync(local)  # the next round clears the note
+
+
+def test_a_mirror_status_that_does_not_read_keeps_no_other_from_its_reset(client):
+    make_user("mr_status_reset", "pw-mr_status_reset")
+    spaces = [f"mrStatus{n}" for n in range(2)]
+    with connect_users_db() as conn:
+        for ws, status in zip(spaces, ("{not json", json.dumps({"running": True, "progress": {"done": 1}}))):
+            conn.execute("INSERT INTO mirrors (workspace_id, remote_url, remote_ws, token, owner, status, created_at) "
+                         "VALUES (?, 'http://testserver', 'r', '', ?, ?, ?)",
+                         (ws, account_of("mr_status_reset"), status, page_now()))
+        conn.commit()
+    try:
+        sync_engine.reset_interrupted()
+        with connect_users_db() as conn:
+            status = json.loads(conn.execute("SELECT status FROM mirrors WHERE workspace_id = ?",
+                                             (spaces[1],)).fetchone()[0])
+        assert status == {"running": False, "interrupted": True}
+    finally:
+        with connect_users_db() as conn:
+            conn.execute(f"DELETE FROM mirrors WHERE workspace_id IN ({','.join('?' * len(spaces))})", spaces)
+            conn.commit()
+
+
+def test_a_mirrors_status_that_does_not_read_is_patched_over(client):
+    make_user("mr_status_unread", "pw-mr_status_unread")
+    owner = account_of("mr_status_unread")
+    ws = "mrStatusBad"
+    with connect_users_db() as conn:
+        conn.execute("INSERT INTO mirrors (workspace_id, remote_url, remote_ws, token, owner, mode, status, "
+                     "created_at) VALUES (?, 'http://testserver', 'r', '', ?, 'pull', '{not json', ?)",
+                     (ws, owner, page_now()))
+        conn.commit()
+    try:  # read as no status, as the shared table reads it
+        assert sync_engine.get_mirror(ws)["status"] == {} and sync_engine.list_mirrors(owner)[0]["status"] == {}
+        assert sync_engine._patch_status(ws, {"last_error": ""}, drop=("running",)) == {"last_error": ""}
+        with connect_users_db() as conn:
+            assert json.loads(conn.execute("SELECT status FROM mirrors WHERE workspace_id = ?",
+                                           (ws,)).fetchone()[0]) == {"last_error": ""}
+        assert sync_engine._stored_mode(ws) == "pull" and sync_engine._stored_mode("mrNoMirror") == "off"
+        sync_engine._filters[ws] = frozenset({"x"})
+        sync_engine._save(ws, page_filter=json.dumps(["a"]))
+        assert ws not in sync_engine._filters  # a new filter is read again
+    finally:
+        with connect_users_db() as conn:
+            conn.execute("DELETE FROM mirrors WHERE workspace_id = ?", (ws,))
+            conn.commit()
+
+
+def test_a_mirror_conflict_can_be_written_resolved_and_says_which_row_it_is(client):
+    ws = make_user("mr_conflicts_resolved", "pw-mr_conflicts_resolved")
+    with closing(connect_pages_db(ws)) as conn:
+        first = sync_engine._conflict(conn, "p", "b", "diverged", mine="a", theirs="b")
+        done = sync_engine._conflict(conn, "p", "b2", "merged", mine="a", theirs="b", resolved=True)
+        again = sync_engine._conflict(conn, "p", "b", "diverged", mine="a", theirs="b", once=True)
+        rows = dict(conn.execute("SELECT id, resolved FROM sync_conflicts").fetchall())
+    assert again is None and rows == {first: 0, done: 1}
 
 
 def test_an_unexpected_error_in_one_page_does_not_stick_the_round(monkeypatch):

@@ -11,7 +11,7 @@ from urllib.parse import urlsplit
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
-from . import accounts, alerts, billing, config, db, hosted, identities, invitations, oidc, sessions, settings
+from . import accounts, alerts, billing, config, db, hosted, identities, invitations, oidc, sessions, settings, zotero
 from .accounts import Problem
 from .log import log
 from .routers import accounts as accounts_router
@@ -24,6 +24,7 @@ from .routers import external as external_router
 from .routers import oidc as oidc_router
 from .routers import portal as portal_router
 from .routers import profile as profile_router
+from .routers import zotero as zotero_router
 
 
 def purge() -> None:
@@ -32,6 +33,7 @@ def purge() -> None:
         sessions.purge_stale(conn)
         identities.purge_expired(conn)
         invitations.purge_expired(conn)
+        zotero.purge_expired(conn)
         conn.commit()
     with closing(db.connect()) as conn:
         # grants that ended and accounts past their grace period, before the
@@ -86,7 +88,8 @@ async def lifespan(app: FastAPI):
 
 # The OAuth endpoints a Gamma server calls with its own credentials: no
 # cookie is involved, so they take any origin.
-_CROSS_ORIGIN_OK = {"/token", "/revoke", "/api/servers/connect/token", "/api/hosted/sync", "/api/billing/webhook"}
+_CROSS_ORIGIN_OK = {"/token", "/revoke", "/api/servers/connect/token", "/api/zotero/connect/token", "/api/hosted/sync",
+                    "/api/billing/webhook"}
 
 
 def same_origin(request: Request) -> bool:
@@ -146,6 +149,7 @@ def create_app() -> FastAPI:
     app.include_router(admin_router.router)
     app.include_router(external_router.router)
     app.include_router(connect_router.router)
+    app.include_router(zotero_router.router)
     app.include_router(portal_router.router)
     app.include_router(hosted_router.router)
     app.include_router(fleet_router.router)

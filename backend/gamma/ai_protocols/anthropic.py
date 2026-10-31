@@ -169,6 +169,9 @@ class Anthropic(Protocol):
             raise RuntimeError(f"empty response (stop_reason={data.get('stop_reason', 'unknown')})")
         return text
 
+    def stop_reason(self, data):
+        return str(data.get("stop_reason") or "")
+
     def usage(self, raw):
         # Cached and freshly written prompt parts are reported beside the
         # uncached ones; summed, the way OpenAI's prompt_tokens includes them.

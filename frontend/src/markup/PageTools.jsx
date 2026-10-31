@@ -1,13 +1,13 @@
 // The page tools every surface's layers read (markup/MarkupLayers.jsx): a
 // PDF page, a sheet in the notebook view and a sheet among the notes all
 // take the same tools from here. App builds them from the owners it
-// composes (ink/'s, the text boxes') and provides PageToolsContext
+// composes (ink/'s, the text boxes', the pictures') and provides PageToolsContext
 // around the viewer and the notes (docs/dev/handwriting.md).
 import { createContext, useContext } from "react";
 
 // {readOnly, ink: {tool, penTool, penOnly, pressure, eraserMode, eraserSize,
 // eraserFilter, drawHold, scribble, fingerUndo, lassoMode, clip, keys,
-// hoverPreview}, text: {armed, style}, actions}. ink.tool is the
+// hoverPreview}, text: {armed, style, zotero}, actions}. ink.tool is the
 // armed tool and ink.penTool what a stylus writes with when nothing is
 // armed; both are null on a read-only page and while the Text tool is
 // armed. drawHold, scribble and eraserFilter ('all' | 'pen' |
@@ -22,7 +22,9 @@ import { createContext, useContext } from "react";
 // kind, fill, style} (ink/shapeTool.js; `style` the stylus pen's look as an
 // even Ballpoint line). ink.zoom: the zoom window, {page, x, y, w, h, mag,
 // line, x0} in page points (ink/zoomWindow.js), or null. text.armed: the
-// Text tool is armed; text.style: the style of new boxes ({size, color, bg}).
+// Text tool is armed; text.style: the style of new boxes ({size, color, bg});
+// text.zotero: the workspace has a live Zotero link, so a new box on a PDF
+// page is a Zotero box (text_box.zotero, markup/textBox.js).
 // actions carries the handlers: the ink ones (onStroke(page, stroke,
 // {width, height}, {label}): a stroke and its history entry's label, onEraseAlong(page,
 // path, r, {mode, pass}): the path the eraser swept since its last call,
@@ -38,8 +40,9 @@ import { createContext, useContext } from "react";
 // stretched or put away, onZoom(page, {x, y} | {mag} | {at, size}): the
 // zoom window dragged, resized, or sent to a tapped point of a page whose
 // size in points rides along),
-// onJump (show a mark's block in the notes) and the text boxes'
-// (markup/useTextBoxes.js) — one object for App's life whose functions call
+// onJump (show a mark's block in the notes), the text boxes'
+// (markup/useTextBoxes.js) and the pictures' (onPicture…,
+// markup/usePictures.js) — one object for App's life whose functions call
 // the latest handlers (shared/lib/stableActions.js), so the context value
 // changes only with the tools and a memoized page never re-renders for a
 // new closure.

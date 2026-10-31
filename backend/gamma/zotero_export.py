@@ -47,7 +47,8 @@ endpoint burns them in with ``pdf_export.annotate_pdf``): highlights, area
 notes, handwriting and text boxes, which Zotero reads as its highlight,
 image, ink and text annotations. A text box with no PDF copy to carry it is
 a note: one placed on a PDF page opens with its page, as a highlight's memo
-does.
+does. So is a picture, its image embedded in the note with its caption
+under it: the copy draws it, but Zotero keeps no annotation of a stamp.
 
 Keys: an item's ``rdf:about`` is the page's Zotero key or ``GAMMA_PAGE_KEY``
 + the page id; a note's is ``GAMMA_NOTE_KEY`` + the block id. Both stay the
@@ -60,6 +61,7 @@ import xml.etree.ElementTree as ET
 
 from . import item_types, zotero_import, zotero_notes
 from .highlights import page_of
+from .picture import is_picture, markdown_of, picture_page
 from .text_box import box_page
 
 _NS = {
@@ -117,17 +119,33 @@ def strip_image_md(text: str) -> str:
     return MD_IMAGE_RE.sub(lambda m: f"(image: {m.group(1)} — see item notes)", text or "")
 
 
+def _shown(node: dict) -> dict:
+    """A block subtree as its note shows it: a picture block's text is its
+    image line (``picture.markdown_of``), then its caption as text, since
+    the <img> holds the caption only as its alt; every other block's is its
+    content."""
+    content = node.get("content") or ""
+    props = node.get("properties") or {}
+    if is_picture(props) and (line := markdown_of(content, props["picture"])):
+        content = "\n".join(part for part in (line, content.strip()) if part)
+    return {**node, "content": content, "children": [_shown(child) for child in node.get("children") or []]}
+
+
 def note_html(node, resolve_image=None, resolve_ref=None) -> str:
     """One block subtree (a ``build_tree`` node) → one Zotero note's HTML
     (``zotero_notes.note_html``: the block as its element, its children as
-    lists), after its page for a text box on a PDF page.
+    lists), after its page for a text box or a picture on a PDF page.
     ``resolve_image(filename) -> (mime, base64) | None`` embeds pasted images
-    into the note; ``resolve_ref(id) -> {content, …} | None`` reads a
-    [[ref]] as the text of the block it names."""
+    into the note, and a picture block's own; ``resolve_ref(id) -> {content,
+    …} | None`` reads a [[ref]] as the text of the block it names."""
+    node = _shown(node)
     body = zotero_notes.note_html(node, resolve_image, resolve_ref)
-    page_no = box_page(node.get("properties"))
-    if body and page_no and (node.get("content") or "").strip():
-        return f"<p><strong>Text box on p.{page_no}</strong></p>{body}"
+    props = node.get("properties")
+    if body and node["content"].strip():
+        if page_no := box_page(props):
+            return f"<p><strong>Text box on p.{page_no}</strong></p>{body}"
+        if page_no := picture_page(props):
+            return f"<p><strong>Picture on p.{page_no}</strong></p>{body}"
     return body
 
 
@@ -157,7 +175,7 @@ def standalone_note_html(title: str, children, resolve_image=None, resolve_ref=N
     reads the heading's text back as the title and the blocks as the
     children they were."""
     return f"<h1>{html_mod.escape(title, quote=False)}</h1>" + zotero_notes.note_html(
-        {"content": "", "children": children}, resolve_image, resolve_ref)
+        _shown({"content": "", "children": children}), resolve_image, resolve_ref)
 
 
 # --- names ------------------------------------------------------------------

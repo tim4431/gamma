@@ -137,6 +137,12 @@ def test_addresses_hold_balanced_parentheses():
     assert one("<p>(see https://x.org/a)</p>") == "(see [https://x.org/a](https://x.org/a))"
 
 
+def test_a_blocks_note_text_has_one_rule():
+    from gamma import zotero_notes
+    node = {"content": "\r\n  Self-attention\u00a0\t\r", "children": []}
+    assert zotero_notes.block_text(node) == "Self-attention\u00a0"  # a no-break space is text
+
+
 # --- import: HTML → tree -----------------------------------------------------------
 
 def test_a_zotero_note_becomes_one_subtree():

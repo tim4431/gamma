@@ -113,7 +113,9 @@ enum InkWidth {
     /// or nil when it has none (`hasWidths`). The Brush's tapers run over the
     /// samples' arc length: the start taper while it is under 2 sizes, the
     /// end taper while the rest is under 3, each at most half the stroke's
-    /// length and neither on a stroke of no length; its pressure is the
+    /// length and neither on a stroke of no length nor on a finished stroke
+    /// of two samples, which has no middle to keep, or one shorter than its
+    /// size, whose middle the outline skips; its pressure is the
     /// samples' own, or, without pressure (`pressure` false, or samples
     /// without p), the speed law's. `live` is a stroke still being written:
     /// no end taper and the start taper at its full length, as the web's
@@ -142,7 +144,7 @@ enum InkWidth {
             arc[i] = arc[i - 1] + hypot(dx, dy)
         }
         let total = arc[arc.count - 1]
-        let most = live ? Double.infinity : total / 2
+        let most = live ? Double.infinity : samples.count < 3 || total < size ? 0 : total / 2
         let start = min(taperStart * size, most)
         let end = min(taperEnd * size, most)
         return samples.indices.map { (i: Int) -> Double in

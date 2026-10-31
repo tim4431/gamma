@@ -194,8 +194,9 @@ def over_http(monkeypatch):
     this server stands in for the "other" one a remote source reads."""
     http = fresh_client()
 
-    def open_(method, path, headers):
-        r = http.request(method, path, headers=headers)
+    def open_(method, path, headers, body=None):
+        content = body if body is None or isinstance(body, bytes) else b"".join(body)
+        r = http.request(method, path, headers=headers, content=content)
         return r.status_code, r.headers, io.BytesIO(r.content)
 
     monkeypatch.setattr(gamma_sync, "default_open", open_)

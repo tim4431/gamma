@@ -9,9 +9,11 @@ import {
   mergeInk, serializeInk, inkProps, newCanvasInk, sameStroke,
   inkAtTime, inkTimeline, REPLAY_MAX, REPLAY_PAUSE,
   DEFAULT_SIZE, STROKE_DEFAULTS, byBand, cloneStrokes, encodePoints, inkBytes, inkFeatures, strokeBand, strokeBounds, strokeBytes,
+  INK_PLANE, PLANES, planeMultiplies, strokeMultiplies, strokePlane,
   upgradeV1, withDefaults, appendStrokes, flipStrokes,
   transformPoint, visibleTools, BRUSH_ORDER, KNOWN_BRUSHES, bandRuns, dashArray, dashDots, dashPattern, dashRuns, opacityBand, strokeOpacity,
-  outlineOptions, runOutline, cachedStrokePath as cachedPath, strokePlaceholder as placeholderOf,
+  outlineOptions, runOutline, cachedStrokePath as cachedPath, strokePlaceholder as placeholderOf, denseStraights, STRAIGHT_STEP,
+  STRAIGHT_END_STEPS,
   CALLIGRAPHY_SMOOTHING, CLOSED_SHAPES, DEFAULT_NIB, FILL_OPACITY, NIB_HAIR, NIB_MAX, NIB_MIN, NIB_REACH, NIB_STEP, isClosedShape, nibOutline,
   presetSmoothing, strokeNib,
 } from "../src/ink/ink.js";
@@ -116,6 +118,10 @@ test("bands: highlighters draw under ink; a tap prefers the ink above a highligh
   const ink = { ...newInk(1, 612, 792), strokes: [pen(), hl, under, top] };
   assert.deepEqual([strokeBand(pen()), strokeBand(hl), strokeBand(under), strokeBand(top)], [1, 0, 0, 1]);
   assert.deepEqual(byBand(ink.strokes).map((s) => s.id), ["hl", "under", "pen", "top"]);
+  // the layer's planes: a band's highlighters over its other strokes, each band's over the band below
+  assert.deepEqual([under, hl, pen(), top].map(strokePlane), [0, 1, INK_PLANE, 3]);
+  assert.deepEqual(PLANES.filter(planeMultiplies), [1, 3], "the highlighters' planes multiply into the page");
+  assert.equal(strokePath(hl).multiply && strokeMultiplies(hl) && !strokeMultiplies(under), true);
   const plain = [pen(), encodeStroke({ id: "b", samples: samples() })];
   assert.equal(byBand(plain), plain, "nothing to reorder: the same array");
   // a thin pen over a wide highlighter: the pen is what a tap near both means
@@ -947,6 +953,63 @@ const pathBox = (d) => {
   const pts = [...d.matchAll(/(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/g)].map((m) => [Number(m[1]), Number(m[2])]);
   return [Math.min(...pts.map((p) => p[0])), Math.min(...pts.map((p) => p[1])), Math.max(...pts.map((p) => p[0])), Math.max(...pts.map((p) => p[1]))];
 };
+
+// Whether (x, y) is inside an outline path, read as the polygon of its points in order (even-odd).
+const insidePath = (d, x, y) => {
+  const pts = [...d.matchAll(/(-?\d+(?:\.\d+)?),(-?\d+(?:\.\d+)?)/g)].map((m) => [Number(m[1]), Number(m[2])]);
+  let inside = false;
+  for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+    const [xi, yi] = pts[i], [xj, yj] = pts[j];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+};
+
+test("denseStraights: a straight run is cut into quarter-point steps, so the corner it leads to is inked; a curve is left to the streamline (gamma/ink.py _dense_straights)", () => {
+  // a 20 pt square's outline sampled every 2 pt, as a Notability square or a Shapes rectangle is
+  const square = [];
+  for (const [x0, y0, x1, y1] of [[0, 0, 20, 0], [20, 0, 20, 20], [20, 20, 0, 20], [0, 20, 0, 0]]) {
+    for (let j = 0; j < 10; j++) square.push({ x: x0 + ((x1 - x0) * j) / 10, y: y0 + ((y1 - y0) * j) / 10, t: 0, w: 1 });
+  }
+  square.push({ x: 0, y: 0, t: 0, w: 1 });
+  const dense = denseStraights(square);
+  assert.equal(dense.length, 4 * 10 * (2 / STRAIGHT_STEP) + 1, "every 2 pt step cut into eight");
+  assert.ok(dense.every((s) => s.w === 1 && s.t === 0), "its channels lerped");
+  assert.equal(denseStraights(dense), dense, "a run already that fine is returned as it is");
+  // the streamline trailed half a sample gap behind and cut each corner by about 1 pt, leaving the vertex outside the ink
+  const d = runOutline(square, outlineOptions({ size: 1 }));
+  for (const [x, y] of [[20, 0], [20, 20], [0, 20]]) assert.ok(insidePath(d, x, y), `the corner (${x}, ${y}) is inked`);
+  // a fast hand's circle: samples about 4 pt apart, each turning 24°: nothing straight, nothing cut
+  const circle = Array.from({ length: 16 }, (_, i) => ({ x: 10 * Math.cos((i / 15) * 2 * Math.PI), y: 10 * Math.sin((i / 15) * 2 * Math.PI) }));
+  assert.equal(denseStraights(circle), circle, "a curve keeps the streamline's smoothing");
+  // a run turning gently (under 3° a sample) is cut too: within 0.03 pt of its arc, nothing shows
+  const arc = Array.from({ length: 6 }, (_, i) => ({ x: 100 * Math.sin(i * 0.04), y: 100 - 100 * Math.cos(i * 0.04) }));
+  assert.ok(denseStraights(arc).length > arc.length, "a 4 pt step turning 2.3° is cut");
+  // a lone gentle turn among sharper ones (an inflection of a fast curve) is not a straight run: nothing is cut
+  const wave = [{ x: 0, y: 0 }, { x: 4, y: 3 }, { x: 8, y: 3.1 }, { x: 12, y: 0 }, { x: 16, y: -3 }, { x: 20, y: 0 }];
+  assert.equal(denseStraights(wave), wave, "the turn at (8, 3.1) is gentle but alone");
+  // a long straight step is cut only near its ends: the streamline has closed in long before the middle
+  const ruler = denseStraights([{ x: 0, y: 0 }, { x: 500, y: 0 }, { x: 1000, y: 0 }]);
+  assert.equal(ruler.length, 3 + 2 * 2 * STRAIGHT_END_STEPS, "a 1000 pt line gets 24 quarter-point steps at each end of each half");
+  assert.deepEqual([ruler[1].x, ruler[24].x, ruler[25].x, ruler[48].x], [0.25, 6, 494, 499.75], "steps of 0.25 pt from each end");
+  // repeated samples (a pen held still) have no direction: they cut nothing and make no NaN
+  const still = [{ x: 0, y: 0 }, { x: 0, y: 0 }, { x: 3, y: 0 }, { x: 3, y: 0 }];
+  assert.ok(denseStraights(still).every((s) => Number.isFinite(s.x) && Number.isFinite(s.y)));
+  assert.equal(denseStraights([{ x: 1, y: 1 }]).length, 1, "a lone sample is left as it is");
+});
+
+test("bandRuns: a band edge that falls on a sample cuts there, the sample never copied (gamma/ink.py stroke_bands, test_ink.py)", () => {
+  // o 1, 0.33, 0.33, 1: the second sample's o is the 0.33 edge itself, the third's too
+  const samples = [{ x: 100, y: 100, o: 1 }, { x: 102, y: 100, o: 0.33 }, { x: 104, y: 100, o: 0.33 }, { x: 106, y: 100, o: 1 }];
+  const runs = bandRuns(samples);
+  assert.deepEqual(runs.map((r) => r.band), [1, 0.66, 0.33, 0.66, 1]);
+  assert.deepEqual(runs[2].samples.map((s) => s.x), [102, 104], "the 0.33 run is its two samples, as the server cuts it");
+  for (const r of runs) {
+    assert.ok(r.samples.every((s, i) => !i || s.x !== r.samples[i - 1].x), `no copied sample in the ${r.band} run`);
+  }
+  assert.deepEqual(runs.map((r) => r.samples.map((s) => Math.round(s.x * 1000) / 1000)),
+    [[100, 101.015], [101.015, 102], [102, 104], [104, 104.985], [104.985, 106]]);
+});
 
 test("a dash or a shade is outlined at its drawn width whatever its length: ten times the page's scale, a two-sample run with its midpoint (gamma/ink.py stroke_outline)", () => {
   // a 0.8 pt pen's 1.6 pt dash: 0.8 pt across with round ends, never a disc as wide as the dash is long

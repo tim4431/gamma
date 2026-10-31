@@ -15,7 +15,12 @@
 // while a box is edited, the band around its frame. Read-only, a click
 // shows its note. App owns the boxes and their edits
 // (markup/useTextBoxes.js); after an edit here the layer reports the size
-// the box rendered at.
+// the box rendered at. A Zotero box (text_box.zotero) is drawn as Zotero's
+// reader draws a text annotation (markup.css), read mode showing the text
+// Zotero is sent (textBox.js shownText); with a live Zotero link
+// (text.zotero) every new box on a PDF page is one, so it is measured in
+// Zotero's face from its first keystroke. A box on a sheet never goes to
+// Zotero and stays Gamma's.
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { BlockCmEditor } from "../editor/BlockCmEditor";
 import { BlockMarkdown } from "../editor/BlockTree";
@@ -31,7 +36,7 @@ import { CopyIcon, FileTextIcon, PaintBucketIcon, PaletteIcon, TextSizeIcon, Tra
 import { usePageTools } from "./PageTools";
 import * as playback from "../replay/playback.js";
 import { useBlockFrame } from "../replay/useFrame.js";
-import { TEXT_BACKGROUNDS, TEXT_SIZES, moveBox, normalizeTextBox, placeBox, resizeBox } from "./textBox.js";
+import { TEXT_BACKGROUNDS, TEXT_SIZES, moveBox, normalizeTextBox, placeBox, resizeBox, shownText } from "./textBox.js";
 import "./markup.css";
 
 const DRAG = 6; // css px a press moves before it is a drag rather than a tap
@@ -50,22 +55,25 @@ export function TextBoxLayer({ surface, wrapRef, width, height, marks }) {
   const { readOnly, text, actions } = usePageTools();
   const [ghost, setGhost] = useState(null); // the box a drag is making
   const live = useRef(null);
-  live.current = { surface, width, height, armed: text.armed, style: text.style, actions };
+  live.current = { surface, width, height, armed: text.armed, style: text.style, actions,
+    zotero: !!text.zotero && typeof surface === "number" };
 
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return undefined;
     let press = null; // {id, x, y, rect, k (css px per pt), start (pt), drag}
     const toPt = (e) => ({ x: (e.clientX - press.rect.left) / press.k, y: (e.clientY - press.rect.top) / press.k });
-    const boxAt = (e) => placeBox(live.current, press.start, press.drag ? toPt(e) : null, live.current.style);
+    const boxAt = (e) => placeBox(live.current, press.start, press.drag ? toPt(e) : null, live.current.style,
+      { zotero: live.current.zotero });
     const end = () => { press = null; setGhost(null); };
     const onDown = (e) => {
       const L = live.current;
       if (!L.armed || !L.width) return;
       if (press) { end(); return; } // a second finger: a pinch, not a box
-      // a box, the ruler (its band moves it, ink/InkLayer.jsx InkRuler) or a
+      // a box, the ruler (its band moves it, ink/InkLayer.jsx InkRuler), a
+      // selected picture and its controls (markup/PictureLayer.jsx) or a
       // comment card beside the page keeps its press
-      if (e.button !== 0 || e.target.closest?.(".textBox, .inkRuler, .commentMargin")) return;
+      if (e.button !== 0 || e.target.closest?.(".textBox, .inkRuler, .pagePicture.selected, .pictureHandle, .pictureCrop, .commentMargin")) return;
       e.preventDefault();
       e.stopPropagation();
       // The box being typed in is left at the press, an edit before the new box exists.
@@ -274,8 +282,8 @@ const TextBox = React.memo(function TextBox({ block, width, height, readOnly, ar
   const keepFocus = (e) => e.preventDefault(); // a press on the band or the handle leaves the editor open
   return (
     <div ref={ref} data-box-id={block.id}
-      className={"textBox" + (at.auto ? " auto" : "") + (selected ? " selected" : "") + (editing ? " editing" : "")
-        + (replayState === "pending" ? " replayPending" : "")}
+      className={"textBox" + (at.auto ? " auto" : "") + (box.zotero ? " zotero" : "") + (selected ? " selected" : "")
+        + (editing ? " editing" : "") + (replayState === "pending" ? " replayPending" : "")}
       style={{
         ...frame(at, width, height),
         ...(at.auto ? { maxWidth: `${(width - at.x) / width * 100}%` } : { width: `${at.w / width * 100}%` }),
@@ -297,7 +305,7 @@ const TextBox = React.memo(function TextBox({ block, width, height, readOnly, ar
             }} />
         ) : (
           <div className="textBoxText">
-            <BlockMarkdown content={block.content || ""} blockId={`textbox:${block.id}`} refLabels={NO_LABELS} />
+            <BlockMarkdown content={shownText(block.content || "", box)} blockId={`textbox:${block.id}`} refLabels={NO_LABELS} />
           </div>
         )}
       </div>

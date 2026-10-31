@@ -344,7 +344,8 @@ export default function SearchPanel({
   );
   const kindBadge = (r) => (
     r.kind === "highlight" ? <span className="searchKindBadge">{t("highlight")}</span>
-      : r.kind === "link" ? <span className="searchKindBadge">{t("link")}</span> : null
+      : r.kind === "link" ? <span className="searchKindBadge">{t("link")}</span>
+      : r.kind === "picture" ? <span className="searchKindBadge">{t("picture")}</span> : null
   );
   const noteRow = (r) => (
     <button key={r.id} className="searchResult" onClick={() => openNoteHit(r)}>

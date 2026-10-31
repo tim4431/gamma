@@ -1,8 +1,8 @@
 """Where a GoodNotes notebook lands in Gamma, as pure functions of the
 ``Notebook`` model (gamma/goodnotes.py): what it becomes, each page's frame
-and paper, its strokes as gamma-ink v2 dicts, its text boxes and its
-pictures' boxes (docs/dev/import_export.md "GoodNotes notebooks"; the
-format: docs/research/goodnotes-onenote-import.md).
+and paper, its strokes as gamma-ink v2 dicts, its text boxes, and the
+order its pictures and text boxes are drawn in (docs/dev/import_export.md
+"GoodNotes notebooks"; the format: docs/research/goodnotes-onenote-import.md).
 
 Every page of a notebook is bound to a PDF page of its own size: a paper
 GoodNotes ships, or a page of a PDF the user brought. So a notebook
@@ -19,8 +19,9 @@ becomes (``plan_notebook``):
 
 A page is a ``notability_map.Frame`` at the origin whose scale is points
 per canvas unit (6/11 on a page of the size its template says), so the
-Notability planner's shapes, text boxes and picture boxes place GoodNotes'
-too. Nothing here stores, decodes or writes.
+Notability planner's shapes, text boxes and pictures
+(``notability_map.picture_block``) place GoodNotes' too. Nothing here
+stores, decodes or writes.
 """
 
 import math

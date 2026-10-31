@@ -7,8 +7,9 @@ block, so sheets two devices add while apart both survive a merge, and
 nothing counts pages. A sheet's handwriting is the ink groups under it that
 no nearer sheet holds — blocks with an ``ink_url`` whose file
 (gamma/ink.py) is drawn on a ``canvas`` space the sheet's size, points from
-its top-left corner — and its text boxes are the ones placed the same way
-(gamma/text_box.py). Other blocks under a sheet are notes about that page.
+its top-left corner — and its text boxes and pictures are the ones placed
+the same way (gamma/text_box.py, gamma/picture.py). Other blocks under a
+sheet are notes about that page.
 
 A paper is ``{width, height, color, pattern, spacing, line}``: the size in
 points, the background colour, ``blank`` / ``ruled`` / ``grid`` / ``dots``
@@ -124,36 +125,40 @@ def paper_ops(paper: dict) -> bytes:
     return b"\n".join(ops)
 
 
-def notebook_pdf(sheets: list[tuple[dict, list, list]], resolve_ref=None) -> bytes:
+def notebook_pdf(sheets: list[tuple[dict, list, list]], resolve_ref=None, pictures=(), uploads_dir=None) -> bytes:
     """A PDF of a page's sheets: one PDF page per ``(paper, [(content,
     text_box)], [InkFile])`` in order (at least one), the text boxes
-    normalized. The paper is painted, the text boxes typeset on it as real
-    text (``resolve_ref`` reads their references, ``text_box.pdf_ops``),
-    and the handwriting drawn over them as vectors (the page is the
-    drawing, so every viewer and printer shows it as written): every
-    group's band 0 before any group's band 1, with the graphics states the
-    strokes set (``ink.pdf_path_resources``) and the pencil's grain
-    patterns they paint with (``ink.GrainPatterns``, one tile per colour
-    for the whole document) among the page's resources."""
+    normalized. ``pictures`` holds, for the sheets in that order, the
+    pictures on each (``sheet_pictures``; a sheet past its end has none),
+    their files read from ``uploads_dir``. The paper is painted, the
+    pictures drawn on it as placed and the text boxes typeset over them as
+    real text (``placed_ops``, ``resolve_ref`` reading their references),
+    and the handwriting drawn over those as vectors (the page is the drawing, so
+    every viewer and printer shows it as written): every group's band 0
+    before any group's band 1, with the graphics states the strokes set
+    (``ink.pdf_path_resources``) and the pencil's grain patterns they paint
+    with (``ink.GrainPatterns``, one tile per colour for the whole document)
+    among the page's resources. A picture whose file cannot be read is left
+    out (``pdf_image.XObjectStore`` logs why)."""
     from PyPDF2 import PdfWriter
-    from PyPDF2.generic import DecodedStreamObject, DictionaryObject, NameObject
+    from PyPDF2.generic import DecodedStreamObject, NameObject
 
     from . import ink as inkmod
-    from . import text_box
     from .pdf_glyphs import GlyphFonts
+    from .pdf_image import XObjectStore
     from .pdf_typeset import finalize_cid, num
 
     writer = PdfWriter()
     glyphs = GlyphFonts(writer)
     grain = inkmod.GrainPatterns(writer)
-    for paper, boxes, inks in sheets:
+    images = XObjectStore(writer, uploads_dir)
+    for n, (paper, boxes, inks) in enumerate(sheets):
         w, h = paper["width"], paper["height"]
         writer.add_blank_page(w, h)
         page = writer.pages[-1]  # add_blank_page's return value is not the page the writer keeps
-        body, fonts = [b"q 1 0 0 -1 0 %s cm" % num(h), paper_ops(paper)], set()
-        for content, box in boxes:
-            ops, _w, _h = text_box.pdf_ops(content, box, w, glyphs, fonts, resolve_ref)
-            body.append(b"q 1 0 0 1 %s %s cm\n%s\nQ" % (num(box["x"]), num(box["y"]), ops))
+        placed, resources = placed_ops(pictures[n] if n < len(pictures) else (), boxes, w, images, glyphs,
+                                       resolve_ref)
+        body = [b"q 1 0 0 -1 0 %s cm" % num(h), paper_ops(paper), *placed]
         body += [inkmod.pdf_path_ops(ink, lambda x, y: (x, y), band=band, frame=(1, 0, 0, -1, 0, h))
                  for band in (0, 1) for ink in inks]
         body.append(b"Q")
@@ -161,7 +166,6 @@ def notebook_pdf(sheets: list[tuple[dict, list, list]], resolve_ref=None) -> byt
         stream = DecodedStreamObject()
         stream.set_data(content)
         page[NameObject("/Contents")] = writer._add_object(stream.flate_encode())
-        resources = text_box.pdf_resources(fonts, glyphs) if boxes else DictionaryObject()
         states = inkmod.pdf_path_resources(content)
         if states:
             resources[NameObject("/ExtGState")] = states
@@ -177,6 +181,36 @@ def notebook_pdf(sheets: list[tuple[dict, list, list]], resolve_ref=None) -> byt
     return out.getvalue()
 
 
+def placed_ops(pictures, boxes, width, images, glyphs, resolve_ref=None) -> tuple[list[bytes], dict]:
+    """What a surface's placed objects draw, in a y-down frame of its
+    ``width`` (the caller flips y): the normalized ``pictures`` in order
+    (``picture.pdf_ops``: the crop, the flips, the turn), their files
+    through the ``pdf_image.XObjectStore`` ``images`` (one that cannot be
+    read left out), then the text boxes ``boxes``, ``(content, normalized
+    box)``, typeset over them (``text_box.pdf_ops``, ``resolve_ref``
+    reading their references) → ``(the content operators, the resources
+    they use)``: the boxes' fonts from ``glyphs`` and the images. The sheet
+    PDF and the AI's picture of a PDF page draw them so
+    (``notebook_pdf``, ``pdf_export.page_with_ink``)."""
+    from PyPDF2.generic import DictionaryObject, NameObject
+
+    from . import picture, text_box
+    from .pdf_typeset import num
+
+    ops, fonts, drawn = [], set(), {}
+    for pic in pictures:
+        if info := images.resolve(pic["url"]):
+            ops.append(picture.pdf_ops(pic, info[0]))
+            drawn[NameObject("/" + info[0])] = images.refs[info[0]]
+    for content, box in boxes:
+        box_ops, _w, _h = text_box.pdf_ops(content, box, width, glyphs, fonts, resolve_ref)
+        ops.append(b"q 1 0 0 1 %s %s cm\n%s\nQ" % (num(box["x"]), num(box["y"]), box_ops))
+    resources = text_box.pdf_resources(fonts, glyphs) if boxes else DictionaryObject()
+    if drawn:
+        resources[NameObject("/XObject")] = DictionaryObject(drawn)
+    return ops, resources
+
+
 def sheet_text_boxes(blocks: list[dict]) -> list[tuple[str, dict]]:
     """The text boxes among a sheet's blocks (``sheets_of``'s ``blocks``) as
     ``notebook_pdf`` takes them: ``(content, normalized text_box)``, the
@@ -186,25 +220,53 @@ def sheet_text_boxes(blocks: list[dict]) -> list[tuple[str, dict]]:
             if (box := normalize_text_box((b.get("properties") or {}).get("text_box"))) is not None]
 
 
-def sheets_of(blocks: list[dict], page_id: str) -> list[dict]:
-    """The page's sheets in document order, at any depth, from its flat
-    block dicts (``block_to_dict``): ``[{id, paper, blocks: [the blocks
-    under it that no nearer sheet holds]}]``."""
+def sheet_pictures(blocks: list[dict]) -> list[dict]:
+    """The pictures among a sheet's blocks (``sheets_of``'s ``blocks``) as
+    ``notebook_pdf`` takes them: normalized, in document order, which is
+    the order they are drawn in; one whose value does not normalize (no
+    file) draws nothing and is left out."""
+    from .picture import is_picture, normalize_picture
+    return [pic for b in blocks if is_picture(b.get("properties"))
+            if (pic := normalize_picture(b["properties"]["picture"])) is not None]
+
+
+def document_order(blocks: list[dict], page_id: str) -> list[dict]:
+    """The blocks under the page ``page_id``, from its flat block dicts
+    (``block_to_dict``, in any order: a page's rows come as they were
+    stored), in document order: each block before its children, siblings
+    by position (then id, as a tie), as the outline shows them. That is
+    the order a surface's pictures and text boxes stack in (Bring to front
+    moves a block after its siblings). A block no parent chain from the
+    page reaches is left out."""
     kids: dict[str, list[dict]] = {}
     for b in blocks:
         kids.setdefault(b.get("parent_id"), []).append(b)
     for rows in kids.values():
         rows.sort(key=lambda b: (b.get("position") or "", b["id"]))
-    out, of = [], {}
-    stack = [(b, None) for b in kids.get(page_id, [])]
+    out, stack, seen = [], list(reversed(kids.get(page_id, []))), {page_id}
     while stack:
-        b, sheet = stack.pop(0)
+        b = stack.pop()
+        if b["id"] in seen:
+            continue
+        seen.add(b["id"])
+        out.append(b)
+        stack += reversed(kids.get(b["id"], []))
+    return out
+
+
+def sheets_of(blocks: list[dict], page_id: str) -> list[dict]:
+    """The page's sheets in document order, at any depth, from its flat
+    block dicts (``block_to_dict``): ``[{id, paper, blocks: [the blocks
+    under it that no nearer sheet holds, in document order]}]``."""
+    out, of, sheet_of = [], {}, {}
+    for b in document_order(blocks, page_id):
         props = b.get("properties") or {}
+        sheet = sheet_of.get(b.get("parent_id"))
         if is_sheet(props):
             of[b["id"]] = {"id": b["id"], "paper": normalize_paper(props["sheet"]), "blocks": []}
             out.append(of[b["id"]])
             sheet = b["id"]
         elif sheet:
             of[sheet]["blocks"].append(b)
-        stack[:0] = [(c, sheet) for c in kids.get(b["id"], [])]
+        sheet_of[b["id"]] = sheet
     return out

@@ -2,7 +2,7 @@
 tests/shared/*.json at the repository root. The node half is
 frontend/tests/textnorm.test.mjs, ink.test.mjs, inkRender.test.mjs,
 finishStroke.test.mjs, notebook.test.mjs, mentions.test.mjs, textBox.test.mjs,
-shapes.test.mjs and shapeTool.test.mjs; a case added here fails whichever
+picture.test.mjs, shapes.test.mjs and shapeTool.test.mjs; a case added here fails whichever
 side drifts. The mirror's cases (synctree.json, textmerge.json) have only
 this Python side; the client's recognisers (inkshapes.json, inkscribble.json)
 have only the node side, and this side checks their shape, but both sides
@@ -331,9 +331,10 @@ INKOUTLINE = _load("inkoutline.json")
 
 @pytest.mark.parametrize("case", INKOUTLINE["strokes"], ids=[c["note"] for c in INKOUTLINE["strokes"]])
 def test_ink_whole_outline(case):
-    """pen_outline is penOutline: perfect-freehand at the page's own scale,
-    so the SVG export's outline is the screen's, number for number (each
-    written to the hundredth; toFixed and Python round a tie apart)."""
+    """pen_outline is penOutline: perfect-freehand at ten times the page's
+    scale, both ends round, so the SVG export's outline is the screen's,
+    number for number (each written to the hundredth; toFixed and Python
+    round a tie apart)."""
     ink = inkmod.parse_ink({"format": "gamma-ink", "version": 2, "space": NIB_SPACE, "strokes": [case["stroke"]]})
     (d,) = re.findall(r'<path d="([^"]*)"', inkmod.to_svg(ink))
     got, want = ([float(v) for v in re.findall(_NUM, path)] for path in (d, case["d"]))
@@ -396,6 +397,48 @@ def test_text_box_merge(case):
     from gamma.text_box import merge_text_box
     got = json.dumps(merge_text_box(case["stored"], case["mine"], case["base"]), sort_keys=True)
     assert got == json.dumps(case["result"], sort_keys=True)
+
+
+PICTURE = _load("picture.json")
+
+
+@pytest.mark.parametrize("case", PICTURE["normalize"], ids=[c["note"] for c in PICTURE["normalize"]])
+def test_picture_normalize(case):
+    from gamma.picture import normalize_picture
+    # as JSON text, as the text box cases are compared
+    got = json.dumps(normalize_picture(case["input"]), sort_keys=True)
+    assert got == json.dumps(case["output"], sort_keys=True)
+
+
+@pytest.mark.parametrize("case", PICTURE["keep"], ids=[c["note"] for c in PICTURE["keep"]])
+def test_picture_keep_on_surface(case):
+    from gamma.picture import keep_on_surface
+    got = keep_on_surface(case["picture"], case["surface"]["width"], case["surface"]["height"])
+    assert json.dumps(got, sort_keys=True) == json.dumps(case["output"], sort_keys=True)
+
+
+@pytest.mark.parametrize("case", PICTURE["turned"], ids=[c["note"] for c in PICTURE["turned"]])
+def test_picture_turned(case):
+    from gamma.picture import turned_box, turned_corners
+    from gamma.text_box import _round
+    assert [[_round(x), _round(y)] for x, y in turned_corners(case["picture"])] == case["corners"]
+    assert [_round(v) for v in turned_box(case["picture"])] == case["box"]
+
+
+@pytest.mark.parametrize("case", PICTURE["markdown"], ids=[c["note"] for c in PICTURE["markdown"]])
+def test_picture_markdown(case):
+    from gamma.picture import markdown_of
+    assert markdown_of(case["content"], case["picture"]) == case["output"]
+
+
+PICTUREMERGE = _load("picturemerge.json")
+
+
+@pytest.mark.parametrize("case", PICTUREMERGE["merge"], ids=[c["note"] for c in PICTUREMERGE["merge"]])
+def test_picture_merge(case):
+    from gamma.picture import merge_picture
+    got = json.dumps(merge_picture(case["stored"], case["mine"], case["base"]), sort_keys=True)
+    assert got == json.dumps(case["output"], sort_keys=True)
 
 
 TEXTMERGE = _load("textmerge.json")

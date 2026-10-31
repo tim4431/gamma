@@ -175,6 +175,7 @@ paste).
 | a backup restored in place | the table is copied with the rest |
 | a backup merge, a Gamma import, "Add to my library" | copied with the pages they add (below) |
 | a clone, a publication, the share host | not synced ([mirror.md](mirror.md) "What travels") |
+| a Zotero link | not synced: threads stay in Gamma; a highlight's own note and the notes under it travel as the Zotero annotation's comment, which is no thread ([zotero_sync.md](zotero_sync.md#what-syncs)) |
 
 **The sweep.** `comments.sweep` runs at startup and hourly in the app's
 lifespan (`app.py`), beside `trash.sweep`, not in `db_maintenance`. It walks
@@ -224,8 +225,9 @@ and it would notify again on every edit.
 
 No one hears of a batch that an offline copy wrote (client `sync`: the
 names were typed on the other server, so mentions typed in a clone tell no
-one here), of a mirror's round (actor `mirror`), or of a link visitor's
-edit (no account to name). The AI's batches carry the chat owner's id, so
+one here), of a mirror's round (actor `mirror`), of a Zotero link's writes
+(client or actor `zotero`: typed in Zotero, or a conflict's "theirs" taken
+from there), or of a link visitor's edit (no account to name). The AI's batches carry the chat owner's id, so
 they count as the owner's. A retried batch is answered from the op log and
 never reaches `after_commit`, so a retry tells no one twice. A reopen tells
 no one.
@@ -865,7 +867,9 @@ has notifications; the iPad's WKWebView has none, and the row says so.
   controls. Syncing them needs the author's name carried along, as the
   Gamma export does (`author_name`). The sync popover of a clone or a
   publication says so: "Comments stay on each server: a sync carries
-  none." (`MirrorPopover`).
+  none." (`MirrorPopover`). A Zotero link carries none either, Zotero
+  having no threads, and its popover says "Discussion threads stay in
+  Gamma. Highlight notes travel as Zotero comments."
 - **Comments in the other readers.** The exports other than the Gamma zip
   and the annotated PDF (Markdown, Obsidian, Logseq, Zotero), the AI's
   context and tools, search and the MCP tools leave comments out. The

@@ -78,6 +78,36 @@ def cloud_env() -> dict:
             "share_host": _env_on("GAMMA_CLOUD_SHARE_HOST")}
 
 
+def zotero_api_base() -> str:
+    """``GAMMA_ZOTERO_API_BASE``: Zotero's Web API (gamma/zotero_web.py),
+    https://api.zotero.org unless a test or the browser e2e points it at a
+    stand-in."""
+    return (os.environ.get("GAMMA_ZOTERO_API_BASE", "").strip() or "https://api.zotero.org").rstrip("/")
+
+
+def zotero_web_base() -> str:
+    """``GAMMA_ZOTERO_WEB_BASE``: zotero.org itself, where the OAuth steps
+    live (gamma/zotero_oauth.py)."""
+    return (os.environ.get("GAMMA_ZOTERO_WEB_BASE", "").strip() or "https://www.zotero.org").rstrip("/")
+
+
+def zotero_stream_url() -> str:
+    """``GAMMA_ZOTERO_STREAM_URL``: Zotero's streaming API, the socket that
+    says when a linked library changed (gamma/zotero_stream.py);
+    wss://stream.zotero.org unless a test points it at a stand-in."""
+    return (os.environ.get("GAMMA_ZOTERO_STREAM_URL", "").strip() or "wss://stream.zotero.org").rstrip("/")
+
+
+def zotero_client() -> tuple[str, str]:
+    """``GAMMA_ZOTERO_CLIENT_KEY`` / ``GAMMA_ZOTERO_CLIENT_SECRET``: this
+    server's own Zotero OAuth application (zotero.org/oauth/apps), which
+    lets people connect their account here without Gamma Cloud's broker;
+    ("", "") unless both are set."""
+    key = os.environ.get("GAMMA_ZOTERO_CLIENT_KEY", "").strip()
+    secret = os.environ.get("GAMMA_ZOTERO_CLIENT_SECRET", "").strip()
+    return (key, secret) if key and secret else ("", "")
+
+
 def hosted() -> bool:
     """``GAMMA_HOSTED=1``: this server is a paid hosted container. It learns
     its plan's limits from the account server ``GAMMA_CLOUD_ISSUER`` names,

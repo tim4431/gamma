@@ -29,7 +29,7 @@ from .logbuf import log
 from .note_app_import import Skip, Stop, compose_pdf
 from .storage import display_filename, store_pdf
 
-MAX_STICKER_SIDE = 1024          # px: a sticker's PDF rendered for its box, its longer side at most this
+MAX_STICKER_SIDE = 1024          # px: a sticker's PDF rendered for its pictures, its longer side at most this
 
 
 def import_goodnotes(ws: str, data, conn, folder: str = "", *, name: str = "", actor: str = "",
@@ -106,7 +106,7 @@ class _Import(app.AppImport):
         """``store_ink``'s strokes of a page: the page read now
         (``read_page``, within one budget for the notebook), its strokes
         made, then its ink let go, so one page's ink is held at a time; its
-        pictures and text stay for their boxes."""
+        pictures and text stay for their blocks."""
         budget = gn.Budget()
 
         def strokes(page, left_out, left):
@@ -140,14 +140,22 @@ class _Import(app.AppImport):
             props.update(attachment_props(doc_id, "", f"{title}.pdf")[0])
             self.progress(item=title)
         groups = self.store_ink(plan, self._strokes(members, notebook), title)
-        boxes, counts, uses = [], Counter(), Counter()
+        sides = {}  # each picture file's longer side at its largest frame, in canvas units: a sticker is drawn for it
+        for page in plan.pages:
+            for media in gmap.page_media(page):
+                if media.kind == "picture":
+                    sides[media.picture] = max(sides.get(media.picture, 0.0), media.w, media.h)
+
+        def sticker(data: bytes, media: nb.Media) -> bytes:
+            return _sticker(data, sides[media.picture])
+        boxes, counts, files = [], Counter(), {}
         for page in plan.pages:
             found = []
             for media in gmap.page_media(page):
-                box = (self.store_picture(members, media, page.frame, title, uses, convert=_sticker)
-                       if media.kind == "picture" else gmap.text_box(media, page.frame, plan.left_out))
-                if box is not None:
-                    found.append(box)
+                made = (self.store_picture(members, media, page.frame, title, plan.left_out, files, convert=sticker)
+                        if media.kind == "picture" else gmap.text_box(media, page.frame, plan.left_out))
+                if made is not None:
+                    found.append(made)
                     counts["pictures" if media.kind == "picture" else "boxes"] += 1
             boxes.append(found)
         recordings = [made for ref in notebook.recordings
@@ -218,11 +226,13 @@ def _colours(reader) -> tuple | None:
         return None
 
 
-def _sticker(data: bytes, media: nb.Media) -> bytes:
+def _sticker(data: bytes, side: float) -> bytes:
     """A picture whose file is a PDF (a die-cut sticker, GoodNotes' vector
-    art) as a PNG of its first page, its longer side twice the box's in
-    points, at most MAX_STICKER_SIDE px, its background transparent; any
-    other file as it is. ValueError when it does not render."""
+    art) as a PNG of its first page, which its picture blocks show: its
+    longer side twice ``side`` in points (the longer side of the largest
+    frame that shows it, in canvas units), at most MAX_STICKER_SIDE px, its
+    background transparent; any other file as it is. ValueError when it
+    does not render."""
     if not data.lstrip()[:5] == b"%PDF-":
         return data
     from . import pdf_text
@@ -234,7 +244,7 @@ def _sticker(data: bytes, media: nb.Media) -> bytes:
             try:
                 page = doc[0]
                 longer = max(page.rect.width, page.rect.height)
-                shown = max(media.w, media.h) * gn.CANVAS_PT
+                shown = side * gn.CANVAS_PT
                 zoom = min(MAX_STICKER_SIDE / longer, max(1.0, 2 * shown / longer)) if longer > 0 else 1.0
                 return page.get_pixmap(matrix=pymupdf.Matrix(zoom, zoom), alpha=True).tobytes("png")
             finally:

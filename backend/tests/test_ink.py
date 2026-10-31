@@ -895,6 +895,37 @@ def test_annots_come_band_0_first_and_keep_their_bucket_index():
     assert ids == ["h", "h2", "a", "b"]
 
 
+def test_an_exported_highlighter_multiplies_into_the_page():
+    """/Ink has no blend mode, so a highlighter's annotation carries an
+    appearance that multiplies (#147): drawn by a viewer, black under it
+    stays black and white paper takes the colour at its opacity, where
+    the /InkList painted at /CA would wash the black out to the colour.
+    A pen's annotation keeps no appearance."""
+    import pymupdf
+    from PyPDF2 import PdfReader
+    from gamma.pdf_export import annotate_pdf
+
+    src = pymupdf.open()
+    src.new_page(width=PAGE_W, height=PAGE_H).draw_rect(pymupdf.Rect(100, 90, 200, 110), color=None, fill=(0, 0, 0))
+    ink = inkmod.parse_ink(_ink(strokes=[
+        {"id": "h", "tool": "highlighter", "color": "#ffe28f", "size": 20, "opacity": 0.6, "ch": "xy",
+         "pts": inkmod.encode_points([{"x": 50.0, "y": 100.0}, {"x": 250.0, "y": 100.0}], "xy")},
+        {"id": "p", "ch": "xy", "pts": [10000, 10000, 1000, 0]},
+    ]))
+    out, written = annotate_pdf(src.tobytes(), [], ink=[{"ink": ink, "note": "", "id": "blk"}])
+    assert written == 2
+    hl, pen = [a.get_object() for a in PdfReader(io.BytesIO(out)).pages[0]["/Annots"]]
+    assert "/AP" not in pen
+    form = hl["/AP"]["/N"].get_object()
+    assert [float(v) for v in form["/BBox"]] == [float(v) for v in hl["/Rect"]]
+    states = form["/Resources"]["/ExtGState"]
+    assert [str(states[name]["/BM"]) for name in states] == ["/Multiply"]
+    pix = pymupdf.open(stream=out, filetype="pdf")[0].get_pixmap(annots=True)
+    assert pix.pixel(150, 100) == (0, 0, 0)            # the black under it stays black
+    paper = pix.pixel(70, 100)
+    assert abs(paper[1] - 238) <= 2 and abs(paper[2] - 188) <= 2   # white × #ffe28f at 0.6
+
+
 def _pdf_with_ink_annotation(gamma_ink: str | None = None, border=None):
     from PyPDF2 import PdfReader, PdfWriter
     from PyPDF2.generic import ArrayObject, DictionaryObject, FloatObject, NameObject, TextStringObject
@@ -1228,3 +1259,19 @@ def test_the_annotated_pdf_keeps_a_filled_shape_as_ink_and_brings_the_fill_back(
     assert json.loads(str(annots[0]["/GammaInk"]))["strokes"][0]["fill"] == {"color": "#fde047", "opacity": 0.4}
     back = _extract_pdf_annotations(reader)[0]["ink"].strokes[0]
     assert back.fill.color == "#fde047" and back.fill.opacity == 0.4 and back.shape.kind == "rect"
+
+
+def test_a_band_edge_on_a_sample_cuts_there_without_a_copy():
+    """stroke_bands cuts a pencil where its o crosses a band's edge; an edge
+    that falls on a sample is that sample, as the client's bandRuns cuts it
+    (frontend/tests/ink.test.mjs), so a short run of one band reaches the
+    outline in the same form on both sides."""
+    samples = [{"x": 100.0, "y": 100.0, "o": 1.0}, {"x": 102.0, "y": 100.0, "o": 0.33},
+               {"x": 104.0, "y": 100.0, "o": 0.33}, {"x": 106.0, "y": 100.0, "o": 1.0}]
+    stroke = inkmod.Stroke.model_validate({"id": "e", "tool": "pen", "brush": "pencil", "color": "#111827", "size": 2,
+                                           "ch": "xyo", "pts": inkmod.encode_points(samples, "xyo")})
+    runs = inkmod.stroke_bands(stroke, samples)
+    assert [band for band, _ in runs] == [1.0, 0.66, 0.33, 0.66, 1.0]
+    assert [[round(s["x"], 3) for s in run] for _, run in runs] == [
+        [100, 101.015], [101.015, 102], [102, 104], [104, 104.985], [104.985, 106]]
+

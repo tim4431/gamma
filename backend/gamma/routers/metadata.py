@@ -56,8 +56,9 @@ from ..pdf_text import PDF_EXTRACT_FAILED
 from ..pdf_text import page_count as _page_count
 from ..pdf_text import title_guess as _title_guess
 from ..textnorm import INDEX_VERSION, normalize_text, plain_text
-from .ai import CITE_PROMPT, METADATA_PROMPT, _resolve_model, _translate_effort
+from .ai import CITE_PROMPT, METADATA_PROMPT, _resolve_model
 from .pdf import ARXIV_ID, CONTACT_EMAIL
+from .translate import _translate_effort
 
 # Guards the doc-id → filename join below (defense in depth: doc ids come from
 # block properties a user can set). Mirrors gamma.db._DOC_ID_RE.

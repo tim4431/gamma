@@ -50,6 +50,7 @@ import { inkScenarios } from "./scenarios/ink.mjs";
 import { notebookScenarios } from "./scenarios/notebooks.mjs";
 import { recordingScenarios } from "./scenarios/recording.mjs";
 import { textBoxScenarios } from "./scenarios/textBoxes.mjs";
+import { pictureScenarios } from "./scenarios/pictures.mjs";
 import { guideScenarios } from "./scenarios/guide.mjs";
 import { contextualGuideScenarios } from "./scenarios/contextualGuide.mjs";
 import { triggeredGuideScenarios } from "./scenarios/triggeredGuide.mjs";
@@ -68,6 +69,7 @@ import { cloudSignInScenarios } from "./scenarios/cloudSignIn.mjs";
 import { publishScenarios } from "./scenarios/publish.mjs";
 import { i18nScenarios } from "./scenarios/i18n.mjs";
 import { authScenarios } from "./scenarios/auth.mjs";
+import { zoteroLinkScenarios } from "./scenarios/zotero-link.mjs";
 import { GROUPS, changedFromGit, selectGroups, shardOf } from "./select.mjs";
 
 const RUNNERS = {
@@ -88,6 +90,7 @@ const RUNNERS = {
   "notebooks": notebookScenarios,
   "recording": recordingScenarios,
   "textbox": textBoxScenarios,
+  "pictures": pictureScenarios,
   "pdf-touch": pdfTouchScenarios,
   "publish": publishScenarios,
   "chat-navigation": chatNavigationScenarios,
@@ -98,6 +101,7 @@ const RUNNERS = {
   "inbox": inboxScenarios,
   "collab": collabScenarios,
   "mirror": mirrorScenarios,
+  "zotero-link": zoteroLinkScenarios,
   "transfers": transferScenarios,
   "mcp": mcpScenarios,
   "files": fileScenarios,

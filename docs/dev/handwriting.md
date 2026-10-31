@@ -16,8 +16,8 @@ app ([ipad.md](ipad.md)). Typed text on a page is
     `ink/shapeTool.js`, `ink/ruler.js`, `ink/zoomWindow.js`,
     `ink/surfaceScale.js`, `ink/gestures.js`, `ink/stabilizer.js`,
     `ink/fingerChords.js`, `ink/stripKeys.js`, `ink/pencilActions.js`,
-    `ink/hostInk.js`, `ink/inkFlush.js`, `ink/inkLive.js`, `ink/grain.js`
-    and `ink/inkInput.js`;
+    `ink/hostInk.js`, `ink/inkFlush.js`, `ink/inkLive.js`, `ink/grain.js`,
+    `ink/inkInput.js` and `ink/overPictures.js`;
   - the drafts and the save, `ink/inkStore.js`, `ink/inkJournal.js` and
     `ink/inkSaver.js`;
   - the components `ink/InkStylePicker.jsx`, `ink/InkLayer.jsx` and
@@ -30,9 +30,10 @@ app ([ipad.md](ipad.md)). Typed text on a page is
   - the owners' pure parts, `ink/stripState.js`, `ink/inkSurfaces.js`,
     `ink/inkHistory.js`, `ink/inkEdits.js`, `ink/selectionEdits.js` and
     `ink/inkCommands.js`;
-  - the tool strip and the page plumbing it shares with text boxes,
-    `markup/MarkupToolbar.jsx`, `markup/MarkupLayers.jsx` and
-    `markup/PageTools.jsx`.
+  - the tool strip and the page plumbing it shares with text boxes and
+    pictures, `markup/MarkupToolbar.jsx`, `markup/MarkupLayers.jsx` and
+    `markup/PageTools.jsx`, and the lasso's resize and rotate handles,
+    which a picture shares, `markup/TransformHandles.jsx`.
 - Tests: `backend/tests/test_ink.py`, and in `frontend/tests/`:
   - `ink.test.mjs`, `inkErase.test.mjs`, `finishStroke.test.mjs`,
     `shapes.test.mjs`, `shapeTool.test.mjs`, `ruler.test.mjs`,
@@ -40,7 +41,8 @@ app ([ipad.md](ipad.md)). Typed text on a page is
     `fingerChords.test.mjs`, `stripKeys.test.mjs`, `pencilActions.test.mjs`,
     `hostInk.test.mjs`, `inkInput.test.mjs`, `inkLive.test.mjs`,
     `inkJournal.test.mjs`, `inkFlush.test.mjs`, `inkSaver.test.mjs`,
-    `inkRender.test.mjs` and `surfaceScale.test.mjs`;
+    `inkRender.test.mjs`, `surfaceScale.test.mjs` and
+    `overPictures.test.mjs`;
   - the owners' pure parts: `buildFence.test.mjs`, `stripState.test.mjs`,
     `inkSurfaces.test.mjs`, `inkHistory.test.mjs`, `inkEdits.test.mjs`,
     `selectionEdits.test.mjs` and `inkCommands.test.mjs`;
@@ -66,8 +68,9 @@ app ([ipad.md](ipad.md)). Typed text on a page is
 - e2e: `tests/e2e/scenarios/ink.mjs` (the draft journal's restore too),
   `inkEditing.mjs`, `inkShapes.mjs` (group `ink-shapes`: the Shapes tool,
   the ruler, the calligraphy pen, shape handles and fills), `inkZoom.mjs`
-  (group `ink-zoom`: the zoom window and transcribing a selection), and the
-  live stroke in `collab.mjs`. The scratch scenario `tests/e2e/tabClose.mjs`,
+  (group `ink-zoom`: the zoom window and transcribing a selection), the
+  live stroke in `collab.mjs`, and a highlighter over a picture in
+  `pictures.mjs`. The scratch scenario `tests/e2e/tabClose.mjs`,
   apart from the groups, closes the tab as the pen lifts, also with no
   `pagehide` listener of the app running
   ([debugging.md](debugging.md#browser-end-to-end-suite)).
@@ -85,9 +88,12 @@ app ([ipad.md](ipad.md)). Typed text on a page is
     - the **tool presets**, each a pen or a highlighter with its own colour
       and width, shown as the icon over a colour bar (four pens and three
       highlighters to start);
-    - the eraser, the lasso and the Text tool (typed text boxes,
-      [text_boxes.md](text_boxes.md)), then a pressed *Ruler*, *Shapes* and
-      *Zoom window* button, each only while it is on (below);
+    - the eraser, the lasso, the Text tool (typed text boxes,
+      [text_boxes.md](text_boxes.md)) and the Picture button (a photo or an
+      image placed on the page, [pictures.md](pictures.md): a button that
+      opens the file picker, not a tool that stays armed, and none on a
+      read-only page), then a pressed *Ruler*, *Shapes* and *Zoom window*
+      button, each only while it is on (below);
     - a hand (nothing armed: scroll and select text);
     - **More** (⋯, "More handwriting tools") and close;
     - Undo / Redo, pinned at the right end as the last two buttons.
@@ -520,7 +526,7 @@ app ([ipad.md](ipad.md)). Typed text on a page is
     the notebook view, or the notes for a sheet among them), and below the
     strip when the strip floats over the top of that scroller.
   - Its tallest state (two rows and a colour row) fits a 740 × 620
-    viewport. A text box's menu is placed the same way
+    viewport. A text box's menu and a picture's are placed the same way
     (`useSelectionMenuAnchor`).
 - **Copy, cut and paste.** Copy (Ctrl+C, or the menu) keeps the selected
   strokes on a handwriting clipboard: in memory for this tab, and as a
@@ -578,6 +584,8 @@ app ([ipad.md](ipad.md)). Typed text on a page is
     (10% / 15°).
   - The handles keep their screen size and follow the live preview.
     Pressure, timing, tilt and stroke ids are untouched.
+  - A selected picture has the same two handles, with its own rules for
+    the value they make ([pictures.md](pictures.md#the-handles)).
 - **Editable shapes.** A selection of exactly one stroke that carries a
   shape record (a held shape, a Shapes stroke, a ruler line or a stamped
   one) also shows the shape's own handles, 28 px on the screen.
@@ -691,8 +699,9 @@ app ([ipad.md](ipad.md)). Typed text on a page is
 - **Undo / Redo buttons** on the strip (*Undo ink* / *Redo ink*) step the
   stroke history. Their disabled state follows it and resets on leaving
   the page, and selecting alone is not an entry.
-  - While the Text tool is armed or a text box is selected or edited, they
-    read *Undo* / *Redo* and step the page's block history. They stay
+  - While the Text tool is armed, a text box is selected or edited, or a
+    picture is selected, they read *Undo* / *Redo* and step the page's
+    block history. They stay
     enabled, since the block history keeps no count, and a step with
     nothing to undo says "Nothing to undo in notes."
   - A press on them never takes the focus from an open editor, a box's or
@@ -702,7 +711,7 @@ app ([ipad.md](ipad.md)). Typed text on a page is
     Double tap; Double tap by default on a touch screen, Off elsewhere):
     two fingers tapped together undo, three redo. They are routed exactly
     as the strip's buttons are (the stroke history, or the block history
-    while the Text tool or a text box has it).
+    while the Text tool, a text box or a picture has it).
     - A chord is two or three touches that land within 80 ms, move under
       10 css px and all lift within 250 ms.
     - A pinch or a scroll cancels its touches rather than lifting them, so
@@ -823,10 +832,21 @@ sweep along a stroke from its angle and size ("The brush table").
   arc length and kept between 0.1 and 2.0.
   - The start taper is two sizes long and the end taper three sizes long,
     each at most half the stroke's length, both eased out as a sine.
-  - So a mark shorter than the two tapers (a comma) still reaches `2p` in
-    its middle. A stroke of no length (a tap, a dot) is not tapered at all
-    and draws `2p`, as perfect-freehand draws a lone point at its
+  - So a mark shorter than the two tapers (a comma) still reaches `2p` at
+    its middle sample. A stroke of no length (a tap, a dot) is not tapered
+    at all and draws `2p`, as perfect-freehand draws a lone point at its
     untapered radius.
+  - Nor is a finished mark of two samples, which has no middle sample, or
+    one shorter than its size. The outline skips a stroke's first samples
+    until their streamlined distances from the start add up to the size
+    (perfect-freehand's start drop), so of a mark that short it draws only
+    the first and last samples. Tapered, both would sit at the 0.1 floor
+    and the mark would draw as a hairline.
+  - A quick flick commits two samples, and so does a short mark under
+    Smoothing, whose stabilizer commits only its two ends. A Smoothing mark
+    between half the string and the string's length commits three, the
+    middle one a quarter of the way along, so it peaks at about 0.7 of the
+    width.
   - The stroke in progress keeps the full start taper (its length is not
     known yet) and has no end taper. Both are settled at the lift.
   - When the pointer reports no pressure (a mouse or finger, or the
@@ -959,7 +979,7 @@ and the canonical bytes never write a key at its omission value:
 | `opacity` | number in (0, 1] | `1` | |
 | `pen` | bool | `true` | `false` marks a stroke without real pressure (a mouse or finger, or a stylus with *Pressure-sensitive strokes* off), drawn even, no `w`, for every brush but `brush`, whose `w` then comes from the pointer's speed, and `calligraphy`, whose `w` comes from its direction alone (a snapped stroke is `pen: false` too, and even whatever its brush: it carries `shape`) |
 | `t0` | int ≥ 0 | omitted | wall-clock ms of the first sample, never invented (a client without timing omits `t` and `t0`); the replay reads both |
-| `band` | `0` or `1` | the tool's default, `0` for a highlighter and `1` otherwise, and omitted when equal to it | `0` draws under, `1` draws as ink. Every layer draws band 0 first, then band 1 (`InkLayer`, `to_svg`, `pdf_path_ops`, the annotated PDF's `/Annots` order); a tap prefers band 1 within the radius (`nearestInkStroke`) |
+| `band` | `0` or `1` | the tool's default, `0` for a highlighter and `1` otherwise, and omitted when equal to it | `0` draws under, `1` draws as ink. Every layer draws band 0 first, then band 1 (`InkLayer`, whose planes put a band's highlighters over its other strokes, `to_svg`, `pdf_path_ops`, the annotated PDF's `/Annots` order); a tap prefers band 1 within the radius (`nearestInkStroke`) |
 | `from` | a stroke id | omitted | the stroke this piece was cut from by the partial eraser. A cut of a piece keeps the root's id, so every piece names the original. Written by `restroke`, kept by every edit, dropped on paste and duplicate (`cloneStrokes`, `duplicateStrokes`: a copy is not a piece). Read by the merge only |
 | `shape` | `{kind, params}` | omitted | `kind` one of `line` `arrow` `rect` `ellipse` `triangle` `polygon` `curve`; `params` an object of at most 64 finite numbers (and booleans), the geometry an editor rebuilds `pts` from after a handle drag, moved with `pts` by every edit that moves the samples ("Client"). The stroke **also carries its baked `pts`**, so hit test, bounds, eraser, lasso, replay and every exporter draw it as any stroke; it is constant width whatever its `brush` (no `w`, no `o`: "The brush table"); a piece cut from a shape loses `shape` and `fill` |
 | `fill` | `{color: '#rrggbb', opacity}` | omitted; `opacity` in (0, 1], omitted at `0.25` | the inside of a closed shape (a `shape` of kind `rect`, `ellipse`, `triangle` or `polygon`: `CLOSED_SHAPES`, both languages), drawn under its outline at `opacity`; written only there (the selection's Fill, the Shapes tool's), and a fill on any other stroke is kept but not drawn; a piece cut from the shape drops it |
@@ -1419,22 +1439,72 @@ reach.
       (`tests/shared/inkdash.json` pins the runs).
     - A piece of a stroke is outlined by `runOutline(samples, opts, first,
       last)`: perfect-freehand at ten times the page's scale, a two-sample
-      piece with its midpoint added first, as the server's
-      `stroke_outline` does.
-    - Perfect-freehand drops the points within 3 units of a path's end, so
-      a piece shorter than 3 pt (a thin pen's dash, a short shade) would
-      outline as a disc about its length across. It also draws the points
-      it puts between two at pressure 0.5, the nominal size.
+      piece with its midpoint added first and its straight runs then cut
+      finer (`denseStraights`, below), as the server's `stroke_outline`
+      does.
+    - Perfect-freehand has three absolute constants, which do not scale
+      with the size, and at ten times the page's scale each is a tenth:
+      - It drops the points within 3 units of a path's end and joins the
+        last kept one straight to the end. At the page's own scale a piece
+        shorter than 3 pt (a thin pen's dash, a short shade) would outline
+        as a disc about its length across, and every stroke's last 3 pt
+        would straighten: a hook at the end of a letter flattened, a 7 pt
+        circle closed by a chord, a 4 pt chevron collapsed into a bar (the
+        Sketchbook's drawn icons and a Notability import's small
+        handwriting both showed it). Now it is the last 0.3 pt.
+      - It offsets a lone point by (1, 1) units to give it a direction. A
+        stroke of one sample drew as an off-centre blob about 1.4 pt plus
+        the pen's width across; now it is a round dot of diameter `size ×
+        w`, within about 0.1 pt of its sample, as the exporters'
+        round-capped segment draws it.
+      - It floors the radius at 0.01, now 0.001 pt.
+    - It also draws the points it puts between two at pressure 0.5, the
+      nominal size, which the two-sample midpoint avoids.
+    - **Straight runs** (`denseStraights(run)`): perfect-freehand's
+      streamline moves each point 0.66 of the way to the next sample, so
+      the line trails about half a sample gap behind the samples and cuts
+      every corner by that much. A shape sampled every 2 pt (shapes.js
+      `SAMPLE_PT`, a Notability or GoodNotes shape, the Sketchbook's lines)
+      lost about 1 pt at each corner, its vertex outside the ink.
+      - A sample is straight where the piece turns by less than 3° there
+        and so does a neighbouring sample, or it is next to an end of the
+        piece. A lone gentle turn among sharper ones (the inflection of a
+        fast curve) is not a run.
+      - Before a piece is outlined, every segment longer than
+        `STRAIGHT_STEP` (0.25 pt) that starts or ends at a straight sample
+        is cut into equal steps of lerped samples (`lerpSample`), but only
+        `STRAIGHT_END_STEPS` (24) of them at each end. The streamline
+        closes 0.66 of what is left at every step, so 24 steps draw it in
+        to well under a hundredth of a point even after a jump across the
+        largest page, and a long straight step costs no more than a short
+        one (a 1000 pt line of two samples gets 99 samples).
+      - Samples a quarter point apart carry the line into the corner the
+        run leads to. A curve turns at every sample and is left to the
+        streamline, so a fast hand's sparse samples still draw a curve. A
+        chord turning less than 3° at its ends lies within about 0.03 pt
+        of the arc even 4 pt long, so the cut never shows where a run
+        bends gently.
+      - Corners whose turn is up to about 120° are then bevelled by
+        perfect-freehand's outline (0.29 of the radius at a turn of 90°),
+        sharper ones get its round cap; both stay under the line's width.
+      - It costs: a page of imported handwriting outlines in 1.6 to 2.5
+        times the time and its paths are 19 to 43 % longer, once per stroke
+        (`strokePath` caches it); the live canvas outlines the whole stroke
+        in progress each frame, under about 1.2 ms for the longest strokes
+        of the Notability sample.
     - Every dash of a dashed pressure stroke is such a piece, the only dash
       of a stroke shorter than one dash and a gap included. A solid stroke
-      is outlined whole at the page's scale (`penOutline`).
-    - The live canvas outlines its dashes the same way, its first while it
-      is the only one too.
+      is outlined whole the same way (`penOutline` is `runOutline` with
+      both ends its own), so nothing is outlined at the page's own scale.
+    - The live canvas outlines its dashes and its solid line the same way,
+      a dash while it is the only one too.
   - A **pencil** stroke's `d` is three paths, one per opacity band: `o`
     quantised up to 0.33, 0.66 or 1 (`opacityBand`).
     - Consecutive samples of one band form a run with lerped boundaries
       like a dash (`bandRuns`, which leaves out a run of no length, as the
-      server's `stroke_bands` does).
+      server's `stroke_bands` does). A boundary that falls on a sample (its
+      `o` right on an edge) is that sample, never a copy beside it, so a
+      short run reaches the outline in the server's form.
     - Each is filled with the layer's grain pattern at `fill-opacity` band
       × `opacity`. `strokePath` returns `{bands: [{d, alpha}]}` for it, the
       runs' inner ends flat so the shades meet without overlapping.
@@ -2100,7 +2170,9 @@ reach.
       `Z`.
     - `{kind: "newLine", prevent: true}` for Enter (and the keypad's)
       while `zoom` and neither `onControl` nor `hasBox`.
-    - Escape, in order: `hasBox` leaves it to the box (null),
+    - `{kind: "picture"}` for `I`: the strip's Picture button. `P` stays
+      the next pen.
+    - Escape, in order: `hasBox` leaves it to the box or the picture (null),
       `hasSelection` → `deselect`, `optionsOpen` → `closeOptions`, the
       Shapes tool armed (`tool === "shape"`) → `{kind: "off", what:
       "shape"}`, `ruler` → `{kind: "off", what: "ruler"}`, `zoom` →
@@ -2377,9 +2449,62 @@ reach.
   `desynchronized` canvas for the stroke in progress. There is one per
   surface (a PDF page, a sheet in the notebook view, a sheet among the
   notes), and it draws after the highlights and the text boxes.
-  - The SVG draws every group's band-0 strokes first, then every group's
-    band-1 strokes (two `<g data-ink-id>` per group at most). `Strokes`
-    alone, as in the notes card, orders one drawing by band.
+  - The strokes stand in planes (`ink.js strokePlane`), bottom to top:
+    band 0's other strokes (an imported sticky), band 0's highlighters,
+    band 1's other strokes (`INK_PLANE`), band 1's highlighters. Each plane
+    is an `svg.inkLayer` of its own, drawn while a stroke of it is on the
+    surface (the ink plane always), with every group's strokes of it in one
+    `<g data-ink-id>`. `Strokes` alone, as in the notes card, orders one
+    drawing by band.
+  - A highlighter plane carries `data-blend="multiply"` and multiplies into
+    the page as a whole, so the text under a highlighter stays black (#147).
+    A blend on a path inside an SVG never leaves it: `.inkLayer`'s z-index
+    makes it a stacking context, which isolates what it holds. The paths
+    keep their own multiply, so two highlighters still mix where they
+    cross. The live canvas takes the blend while it draws a highlighter (or
+    the Shapes tool in one's look), and peers' wet highlighters have a
+    canvas of their own that blends.
+  - On a turned-over page (Flip page colors, Gamma Dark), where the layer
+    is inverted with the page, those planes and canvases screen instead,
+    multiply's dual: the page shows the light page's highlight inverted,
+    the light text under it staying light. On dark notebook paper
+    (`notebook.js paperIsDark`, the sheet's `data-paper="dark"`) a
+    highlighter is drawn as it is, since multiplied it would all but
+    vanish.
+  - Over a picture ([pictures.md](pictures.md)), which is never inverted,
+    a highlighter multiplies on every page, as on a light one: screened, or
+    drawn as it is on dark paper, it would all but vanish there.
+    - `MarkupLayers` passes the page's own layer the surface's pictures;
+      the zoom window's copy draws none and gets none.
+    - On a surface with pictures a highlighter plane holds its strokes in
+      a `<g id>` of their own and draws it through a mask of the surface
+      less its pictures (`${id}-page`). An `svg.inkOverPictures` laid
+      right after the plane draws the group again, a `<use>` of it, through
+      a mask of the pictures alone (`${id}-pictures`), always multiplied.
+      It is no `.inkLayer` and has no `data-blend`, so neither the dark
+      page's filter nor a blend rule of the page reaches it.
+    - The pictures' mask is an alpha mask of their images, each placed as
+      the page draws it (`ink/overPictures.js` `pictureShape`: the crop,
+      then the flips, then the turn). Where a picture is transparent, or
+      its image has yet to load, the highlighter takes the page's blend as
+      the page around it does.
+    - The plane holds both masks. They reach `MAX_COORD` past every edge
+      of the surface, since a stroke may run off its page, and their ids
+      come from `useId`, so two layers of one surface (the zoom window, two
+      viewers) never share one.
+    - A mask does not cut hit testing, so the copy takes presses wherever
+      the plane's strokes would, and a tap still finds its stroke from the
+      samples.
+    - The masks follow the pictures as stored: while a picture is dragged
+      or a handle sizes or turns it, they keep its place until the change
+      lands.
+    - The stroke in progress and peers' wet highlighters keep their
+      canvas's blend over a picture: a highlighter drawn across one shows
+      faint on a turned-over page, and plain on dark paper, until it lands
+      in its plane.
+  - The ink plane holds the grain's `<defs>`, which the other planes'
+    pencils reach by id, the selection's box and the flash. A dragged
+    selection's preview draws in each plane its strokes stand in.
   - A drawing `inkFeatures` finds something in is reported once
     (`onInkFeatures`). App puts one pill per page visit on it: "Some
     handwriting here comes from a newer Gamma and is drawn plainly; update
@@ -2393,7 +2518,7 @@ reach.
       it stays in, and the menu, from its own measured height, picks above
       or below before it is painted
       ([ui-design.md](ui-design.md#menus-and-popups-open-in-place)). A
-      text box's menu is placed the same way.
+      text box's menu and a picture's are placed the same way.
     - Its first row is fixed: Color, Width, Style (`ctlBtn`, `BrushIcon`,
       aria-label and title "Style", `aria-expanded`, `modeActive` while
       its row shows), Copy, Duplicate, More (`ctlBtn`, `MoreIcon`,
@@ -2462,7 +2587,25 @@ reach.
     - The buttons dispatch `onAction(kind, value)` with `copy`, `cut`,
       `flip` `{axis: 'h' | 'v'}`, `split`, `merge`, `transcribe` and, from
       the shape handles, `reshape` `{id, params}`, beside the other kinds.
-  - `InkTransformHandles` are the resize/rotate buttons.
+  - `InkTransformHandles` are the resize/rotate buttons. It renders
+    `markup/TransformHandles.jsx` `TransformHandles` with the lasso's
+    props, and `InkShapeHandles` beside them. A selected picture uses
+    `TransformHandles` too ([pictures.md](pictures.md#client)). `pct` and
+    `arrowSign`, which `InkLayer` reads for its other controls, live there.
+    - The lasso passes `{wrapRef, box, width, height, positions,
+      maxScale, onPreview, onCommit}`. For it a drag previews `{cx, cy,
+      angle, scale}` and the release commits it, Shift snaps the turn to
+      15°, the scale stays within 0.1 … `maxScale`, and a focused handle's
+      arrow keys scale by 1.1 or turn by 15°.
+    - A picture adds `turn` (both buttons turned with its frame, each
+      about its corner), `labels` (each button's name and title),
+      `className` (`pictureHandle`), `valueFor(raw)` (the picture reads
+      the press itself) and `onStep(mode, sign)` (its own arrow keys).
+    - Escape during a drag is taken on the window in the capture phase
+      and goes no further: it takes back the drag, and a picture stays
+      selected (its own Escape, a listener on the document, never sees the
+      key). A blur ends the drag the same way, and handles unmounted
+      mid-drag call `onPreview(null)`.
   - `InkTooltips` shows a button's title on hover or focus for the strip
     and the menus, since native titles are unreliable under Pencil hover.
     - A press takes the tooltip away and keeps it away while the pointer
@@ -2505,6 +2648,19 @@ reach.
       to whatever lies beneath.
     - Lost capture, `pointercancel` and window blur discard the unfinished
       stroke.
+    - A press on what `NOT_INK` names never starts ink, a stylus's
+      included: the menus, the lasso's handles (a picture's are the same
+      `.inkTransformHandle`), the ruler's knob and ends, the zoom window's
+      band and corner, a text box's width handle, band and open editor, a
+      selected picture and its crop (`.pagePicture.selected`,
+      `.pictureCrop`), and the comment cards beside a PDF page. So a
+      picture placed while a pen is armed moves before the pen writes over
+      it. With an ink tool armed, an unselected picture takes no pointer
+      (`markup.css`), and ink draws over it.
+    - On a read-only page the strokes take no pointer, and a tap near one
+      shows its note. The page's own clickable marks come first
+      (`ABOVE_PASSIVE_INK`): a highlight, a note badge, a link box, a text
+      box and a picture.
   - Touch: non-passive capture `touchstart`/`touchmove` listeners cancel
     the Pencil's touch gesture on iPad Safari (cancelling the pointer events
     alone does not stop native panning).
@@ -2871,7 +3027,7 @@ reach.
       `onZoom(page, {at: {x, y}, size})`, `size` that page's in points. The
       tap is a finger's tap, or a mouse click with the hand or the lasso,
       that selects no stroke and dismisses no selection, on no highlight,
-      link or text box.
+      link, text box or picture (`ABOVE_PASSIVE_INK`).
     - Only the page's layers do, never the panel's: MarkupLayers passes
       `onZoom` only to a `chrome` layer, and only while a window is open.
   - Finger chords: `wireChords` installs one module-level
@@ -2989,7 +3145,8 @@ reach.
       lands.
     - It is not React state: each layer subscribes to its own surface
       (`useWetStrokes`) and paints the wet strokes on a canvas of their own
-      (`.inkWetCanvas`).
+      (`.inkWetCanvas`), the highlighters on a second one that multiplies
+      into the page (`data-blend`), as their plane will.
     - That canvas is under the live canvas, cleared whole per paint and
       laid on what shows of the surface as the live canvas is. While it has
       strokes it is painted again when a scroll or a resize brings more of
@@ -3035,13 +3192,13 @@ reach.
     - **The raster**: on a surface holding more than `RASTER_STROKES`
       (1 500) strokes, every finished group's `<g>` is drawn, once it has
       stood unchanged for a second, as a picture of itself.
-      - That is each `<g>` (one per band) but the group the layer's last
+      - That is each `<g>` (one per plane) but the group the layer's last
         stroke went into, one with a selection or in a replay, and one
         culled.
       - The picture is its own markup, with the layer's `<defs>`, as an SVG
         image drawn to a canvas at the current zoom in device pixels and
         kept as a PNG. It is shown as one `<image class="inkRaster">` in its
-        `<g>` (multiplied onto the page for band 0) until the group
+        `<g>` (multiplied, in a highlighter plane) until the group
         changes.
       - The picture takes no presses (`pointer-events: none`). An image is
         hit over its whole box, where the paths are hit on their ink alone,
@@ -3515,13 +3672,14 @@ reach.
   - The lasso selection (`inkSelection`, `{page, items: [{id, ids}]}`).
     - `handleInkSelect(page, items)` (the layers' `onSelect`) sets it.
       When it holds strokes, it shows the strip with its options row
-      closed, lets go of a selected text box (`onBoxDeselect()`) and emits
-      `ink.selected`.
+      closed, lets go of a selected text box or picture (`onBoxDeselect()`,
+      which App points at both) and emits `ink.selected`.
     - The selection belongs to the lasso: arming another tool drops it,
       and so does leaving the page.
     - `clearInkSelection()` and `restoreInkSelection(selection)`, stable
       for App's life, are its commands for App and the other owners (an
-      undo, a selected box, Play, Esc; the end of a held E or squeeze).
+      undo, a selected box or picture, Play, Esc; the end of a held E or
+      squeeze).
     - `selectionStill(selection)` is a selection kept aside as it stands,
       without the strokes erased meanwhile, or null when none is left.
   - Each edit of the selection is one `applyInk` across its groups
@@ -3688,11 +3846,13 @@ reach.
 - `ink/useStripKeys.js`: the strip's keys, `useStripKeys({inkUi,
   inkSelection, inkVisible, inkTools, setInkTools, pickInkTool,
   toggleInkShape, closeInkOptions, toggleInkOptions, closeInkStrip,
-  inkUndo, boxUndo, hasBox, deleteInkSelection, selectionStill,
+  inkUndo, boxUndo, hasBox, onPicture, deleteInkSelection, selectionStill,
   clearInkSelection, restoreInkSelection, inkRuler, toggleInkRuler,
   inkZoom, toggleInkZoom, inkZoomNewLine, setStatus}) →
-  {noteInkEraseHold}`, which App calls after the zoom window, `hasBox`
-  being whether a text box is selected.
+  {noteInkEraseHold}`, which App calls after the zoom window. `hasBox` is
+  whether a text box or a picture is selected, and `onPicture` the Picture
+  button's `pictures.pick` (null on a read-only page, where `I` does
+  nothing).
   - While the strip is open (`inkUi.open`), a capture-phase `keydown` and
     `keyup` listener on the window hands each key to `stripKey` and does
     what it answers ([hotkeys.md](hotkeys.md) "Widget keys"). It passes
@@ -3766,8 +3926,13 @@ reach.
 - `markup/` ([text_boxes.md](text_boxes.md) "Client"):
   - `MarkupToolbar.jsx` `MarkupToolbar` is the strip. Its first row
     (`.pdfInkRow`) is five groups split by `.pdfInkSep`: the presets; the
-    eraser, the lasso and the Text tool; the hand; **More** and close; and
-    the history buttons last, whose labels follow its `blockHistory` flag.
+    eraser, the lasso, the Text tool and the Picture button; the hand;
+    **More** and close; and the history buttons last, whose labels follow
+    its `blockHistory` flag.
+    - The Picture button (`ImageIcon`, aria-label "Picture", title
+      "Picture (I): add a photo or an image to the page") calls
+      `onPicture()`, App's `pictures.pick`. Without `onPicture` (a
+      read-only page) the strip draws no button.
     - More, the Tool menu and the Style picker's menu are one
       `useMenuTrigger()` (`"more"`, `"tool"`, `"style"`, one open at a
       time, below their buttons;
@@ -3964,18 +4129,23 @@ reach.
       mounts no layer unless peers are writing on it (`useHasWet`, "Wet
       strokes").
     - While the Text tool is armed the layer only draws.
+    - The picture layer and the text-box layer mount before the ink
+      layer, so they lie under it ([text_boxes.md](text_boxes.md)
+      "Client").
     - It passes the layer `ruler` (`ink.ruler` when its `surface` is this
       surface, else null), `rulerUnits`, `zoom` (`ink.zoom` when its `page`
       is this surface, else null) and the actions `onRuler` and `onZoom`
       (the latter only while a window is open).
     - It takes `chrome` (true by default) and `onZoomStroke` for
-      `InkLayer`. The zoom window's `false` mounts no text boxes and passes
+      `InkLayer`. The zoom window's `false` mounts no text boxes or
+      pictures and passes
       the layer no ruler, window box, `onZoom`, *Paste here*, finger
       chords, finger-scroll hint or `onInkFeatures`.
   - `useMarks` (same file) builds App's marks per surface: its ink groups,
-    and the lasso selection and the flash when they are on it. A surface's
-    slice is kept while its parts are unchanged, so a memoized page
-    re-renders only for its own ink.
+    and the lasso selection and the flash when they are on it. Its text
+    boxes and its pictures come with their selections and flashes the same
+    way. A surface's slice is kept while its parts are unchanged, so a
+    memoized page re-renders only for its own marks.
   - `PageTools.jsx` `PageToolsContext` carries the tools to every layer:
     `{readOnly, ink: {tool, penTool, penOnly, pressure, eraserMode,
     eraserSize, eraserFilter, drawHold, scribble, fingerUndo, lassoMode,
@@ -3995,7 +4165,7 @@ reach.
     - The actions are ref-backed through `useStableActions`, so their
       identity never changes. They are:
       - the stroke, erase, select, action, move, jump and finger-scroll
-        handlers (and the text boxes');
+        handlers (and the text boxes' and the pictures');
       - `onEraseAlong(page, path, r, {mode, pass})`, the eraser's path
         since its last flush ("Erasing" above);
       - `onEraseEnd()` (the tool eraser lifted);
@@ -4018,8 +4188,8 @@ reach.
       classes (`inkArmed`, `inkTouchDraw`, `textArmed`).
 - `app/App.jsx` composes the owners above and owns the rest of the state:
   - The glue between the owners:
-    - `boxUndo`, the Text tool armed or a text box selected: Undo is the
-      block history's;
+    - `boxUndo`, the Text tool armed, a text box selected or a picture
+      selected: Undo is the block history's;
     - `closeInkStrip()`, which the strip's three closers (its ✕, Esc, the
       viewer's pen button) call: the strip's `closeInkStripUi()`, then the
       ruler's `clearInkRuler()` and the zoom window's `clearInkZoom()`;
@@ -4105,10 +4275,11 @@ reach.
   handler, `useStripKeys`'s, so the page's block undo never sees it). With
   it closed, Ctrl+Z is the page's block history, which knows the group's
   block but not its strokes.
-  - Text boxes are blocks: while the Text tool is armed or a box is
-    selected or edited (App's `boxUndo`), the handler leaves Ctrl+Z to the
-    block history. The strip's buttons step it (`undoBlocks`).
-  - Escape goes to a selected or edited box.
+  - Text boxes and pictures are blocks: while the Text tool is armed, a
+    box is selected or edited, or a picture is selected (App's `boxUndo`),
+    the handler leaves Ctrl+Z to the block history. The strip's buttons
+    step it (`undoBlocks`).
+  - Escape goes to a selected or edited box, or to a selected picture.
   - An undo or redo applies its entry onto the group as it stands, by
     stroke id (`mergeInk`), so strokes someone else drew meanwhile stay.
     Two clients drawing into one group keep both drawings (see "Two
@@ -4174,15 +4345,22 @@ reach.
     stroke that turns back on itself.
     - It is driven by pressure `w / 2`, so its half-width is `size × w /
       2`.
-    - It runs at ten times the page's scale, since perfect-freehand drops
-      every point within 3 units of a path's end and a dash or band run
-      shorter than 3 pt would outline as a blot.
+    - It runs at ten times the page's scale, since perfect-freehand's
+      three absolute constants would otherwise blot a dash or band run
+      shorter than 3 pt, straighten a whole stroke's last 3 pt and draw a
+      stroke of one sample as an off-centre blob.
     - A run of two samples gets a midpoint first, since its two-point path
-      reads their pressure as 0.5.
+      reads their pressure as 0.5. Then its straight runs are cut into
+      quarter-point steps (`_dense_straights`, the client's
+      `denseStraights`: its tangent the same literal, its lengths
+      `_js_hypot`'s, so a step count never differs by an ulp).
+    - The arc lengths that place a dash's or a band's cuts (`_arcs`) are
+      summed with `_js_hypot` too, so a cut falls where the client's
+      `arcLengths` puts it, to the last bit.
   - `pen_outline(stroke)` is the whole of a stroke without `o` as the
     client's `penOutline` draws it (`tests/shared/inkoutline.json` pins
-    it). It is at the page's own scale, so a hook in its last 3 pt drops as
-    on the screen, with perfect-freehand's own points between two samples.
+    it): `stroke_outline` with both ends round, so its last 3 pt keep their
+    hook, as on the screen.
   - The calligraphy nib, as the screen draws it: `NIB_HAIR` (0.12),
     `DEFAULT_NIB` (45), `nib_outline(samples, size, nib)` and
     `nib_shape(stroke)`.
@@ -4335,6 +4513,15 @@ reach.
       `/Annots` (`annotate_pdf` sorts a page's annotations by band,
       stably, since `/Ink` has no blend mode). The note carrier and the
       Zotero `/NM` keep the first-seen bucket index.
+    - A highlighter's bucket also carries a normal appearance (`/AP /N`,
+      `_marker_appearance`): its strokes as `pdf_path_ops` draws them,
+      under a graphics state that multiplies, in a form whose `/BBox` is
+      the `/Rect`. A viewer drawing it keeps the text under the
+      highlighter black, as Gamma does (PDFium, MuPDF and pdf.js were
+      checked). Drawn from `/InkList` and `/CA` it would paint the colour
+      over the text instead, and pdf.js draws a `/BS /W` wider than half
+      the `/Rect`'s height as a 1 pt line. The `/Rect` takes in the
+      bucket's widest stroke.
   - A bucket whose first stroke is dashed writes `/BS /S /D /D [on off]`.
     A bucket mixing dashes writes that first one's: `/GammaInk` carries
     the truth, and the dash is not part of the bucket key, so re-exports
@@ -4389,6 +4576,13 @@ reach.
   reads the samples back exactly; the stroke verbatim (its time, a
   pencil's `o`, every key) rides in the note's private copy, which the
   import takes while the curve still has those samples.
+- A Zotero link (`gamma/zotero_annotations.py`,
+  [zotero_sync.md](zotero_sync.md#annotations)) sends an ink group on a
+  PDF page as one Zotero `ink` annotation per look, since an item has one
+  colour and one width. Each such item owns the ids of its strokes: a row
+  keeps its item when its strokes change look, and a pull replaces exactly
+  the strokes an item owns. What a stroke holds that Zotero's paths cannot
+  (pressure, time) never reads as a change on either side.
 - `gamma/ink_view.py`: the picture the chat sees of a group (`view_ink`,
   and an attached handwriting block), drawn where it was written.
   - A sheet goes through `notebook_pdf`, and a PDF page through
@@ -4402,8 +4596,9 @@ reach.
   - The pens show their baked widths, tapers, dashes, the pencil's shades
     in its grain and the calligraphy nib.
   - The highlighters are multiplied onto the page, so the text under them
-    stays as dark as it was, and they stay under the ink. `/Ink`
-    annotations (drawn over the page's content) could not do that.
+    stays as dark as it was, and they stay under the ink. A plain `/Ink`
+    annotation (drawn over the page's content) could not do that; the
+    annotated PDF's highlighters do it through their appearance.
   - MuPDF rasterizes the sheet's PDF and the stamped page
     ([ai_tools.md](ai_tools.md) "view_ink").
   - `backend/tests/test_ai_tools_ink.py` renders text under a highlighter

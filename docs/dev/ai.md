@@ -7,9 +7,10 @@ loop runs, and what the user controls. The tools themselves are catalogued in
 [ai_context.md](ai_context.md). Code: `gamma/ai_settings.py`,
 `gamma/ai_protocols/` (one adapter per wire), `gamma/ai_client.py`,
 `gamma/ai_catalog.py`, `gamma/ai_context.py`, `gamma/ai_tools.py`,
-`gamma/chatgpt_oauth.py`, `gamma/routers/ai.py`. PDF translation and the
-stored chat conversations have their own documents:
-[translation.md](translation.md) and [chat_history.md](chat_history.md).
+`gamma/chatgpt_oauth.py`, `gamma/routers/ai.py`. PDF translation
+(`gamma/routers/translate.py`) and the stored chat conversations have their
+own documents: [translation.md](translation.md) and
+[chat_history.md](chat_history.md).
 
 ## Provider and models
 
@@ -204,7 +205,7 @@ branches on a protocol id. Routes, the chat loop, `ai_settings` and
 | Concern | Adapter member |
 |---|---|
 | what the form offers | `label`, `base_url` (env default, `config.AI_BASE_URLS`), `auth` (`"key"` / `"oauth"` + the `oauth` module that refreshes tokens), `entry`, `key_placeholder` / `key_url` (the key field's hint and "Get a key at" link, for the provider's own endpoint) |
-| the chat call | `wire(conf, tools)` (a sibling wire for some calls), `request(...)`, `reply_text`, `read_reply`, `streams_only` |
+| the chat call | `wire(conf, tools)` (a sibling wire for some calls), `request(...)`, `reply_text`, `stop_reason` (a whole reply's), `read_reply`, `streams_only` |
 | speed tiers | `speeds` (canonical name → the value this wire sends), `speed_value(speed)`, `speed_tiers(conf)` (what an entry may be asked for when its own listing names none) |
 | the stream | `events` (one loop in the base) over `stream_event` / `stream_end`, with `("reasoning", …)` before the tool calls where the wire reports thinking; a stream without a single event raises `NotAnAIStream` |
 | token counts | `usage(raw)` → `{input, output, cache_read, cache_write}` |
@@ -320,7 +321,8 @@ Settings → AI. How each caller surfaces it:
 - Chat, both modes: the stream opens eagerly, so a refused first call is a
   real 429; a later agent round ends the stream with the detail as its
   `error` line.
-- Translation: the stream variant checks before it starts.
+- Translation: the stream variant and the paper's brief request check
+  before their stream starts.
 - Metadata extraction and `/metadata/cite` let the 429 through.
 - The Test probe and the login test report it in-body.
 - Dictation reports no tokens, so it is not metered, only refused once the
@@ -334,20 +336,42 @@ server worker thread for as long as the provider takes, and those threads
 serve every other request too (a PDF page read included). So the seventh is
 refused with `TooManyCalls`, a 429 whose detail points at the translation's
 parallel requests and whose `Retry-After` (`CALL_RETRY_AFTER`, 5 s) the PDF
-translator waits out. A caller on a thread of its own may wait for a slot
-instead (`slot_wait`, seconds, on `open_ai` and `call_ai`): the translator's
-stream and the calls that ask the model again do
-([translation.md](translation.md) "The server"). `open_ai` takes a slot
-before it connects and returns the response wrapped (`_OpenCall`), which
-frees the slot (and wakes a caller waiting for one) when it is closed. Every
-caller closes its response when the reply ends or fails, a stream's
-generator also when its client goes away; a response dropped unread frees
-its slot when it is collected, and a failed connect at once. Both refusals
-derive from `CallRefused`, so every caller above treats them alike
-(`failure_kind` calls this one `rate`). The streamed translation checks both
-before its stream starts (`check_call_slot`). Dictation and the model
-listings bypass `open_ai` and are not counted. The pool itself is raised
-from AnyIO's 40 to `app.THREAD_TOKENS` (100) at startup.
+translator waits out. `open_ai` takes a slot before it connects and
+returns the response wrapped (`_OpenCall`), which frees the slot (and wakes
+a caller waiting for one) when it is closed. Every caller closes its
+response when the reply ends or fails, a stream's generator also when its
+client goes away; a response dropped unread frees its slot when it is
+collected, and a failed connect at once.
+
+A request whose calls follow one another holds one slot for all of them:
+`with ai_client.call_slot(user_id, wait)` takes a slot (waiting up to `wait`
+seconds for one to free, then `TooManyCalls`) and frees it at the block's
+end, and a call given that slot (`slot` on `open_ai` and `call_ai`) takes
+none of its own. Each PDF translation request runs its call and its re-ask
+under one; a streamed one, on a thread of its own, waits up to 120 s for it,
+and so does the paper's brief request ([translation.md](translation.md) "The
+server").
+
+`retries` on `open_ai` and `call_ai` (default 0) tries a call that failed
+before any of the reply came up to that many more times, under the same
+slot, after 1 s, 4 s, then 8 s (`_retry_wait`): a connect or send that
+failed (a non-HTTP `URLError`), or a provider 408, 429, 500, 502, 503 or 529
+(a 429 or 503 waits its numeric `Retry-After`, and is not retried when that
+is over 20 s). A timeout or hang-up while waiting for the answer, and a 504,
+are retried only for a streamed call, whose headers come before the model
+starts. Other 4xx, Gamma's own refusals and a stream cut midway are never
+retried. With `within`, no retry is begun that could end more than that
+many seconds after the first attempt began. Each retry is
+one `[ai] … retrying in Ns (attempt k of n)` info line. Only the PDF
+translator passes retries (2, for its chunks, re-asks and briefs); the chat
+and every other caller make one attempt.
+
+Both refusals derive from `CallRefused`, so every caller above treats them
+alike (`failure_kind` calls this one `rate`). The streamed translation and
+the brief request check both before their stream starts
+(`check_call_slot`). Dictation and the model listings bypass `open_ai` and
+are not counted. The pool itself is raised from AnyIO's 40 to
+`app.THREAD_TOKENS` (100) at startup.
 
 ### The chatgpt protocol (OAuth)
 
@@ -603,7 +627,10 @@ line, see "Fitting the window"), "PDF passage shortened: first 12,000 of
 `length`, `max_output_tokens` or the Responses API's `incomplete`
 (`ai_protocols.base.TRUNCATED_STOPS`) — `Protocol.events` ends every
 stream with `("stop", reason)`, `ai_protocols.base.truncated_stop` reads
-it; the agent loop stops there rather than run a half-written tool call),
+it; the agent loop stops there rather than run a half-written tool call;
+`call_ai`, `read_reply` and `sse_deltas` hand the reason to an `on_stop`
+callback, which the PDF translation reads ([translation.md](translation.md)),
+and `Protocol.stop_reason` reads a whole reply's),
 and "Stopped at the tool-round limit", "Stopped at the change limit" or
 "Stopped: the conversation is full" (`{"limit"}`, see "The tool loop").
 That pill and the output-limit one offer Continue.
@@ -1129,8 +1156,10 @@ dict with a label and a group.
 to the model and into the store: the longer side at most `RENDER_MAX_SIDE`
 (1568 px — past that every provider downscales anyway), JPEG at quality 85
 unless the picture is translucent somewhere or small (`PNG_MAX_PIXELS`),
-then PNG; an animation keeps its first frame. Pillow is a shipped
-dependency (`requirements.txt`). So each picture costs about the same per
+then PNG; an animation keeps its first frame. It opens any format Pillow
+reads in its own code but EPS (`ai_pictures.chat_formats`), whose reader
+would hand the bytes to Ghostscript. Pillow is a shipped dependency
+(`requirements.txt`). So each picture costs about the same per
 wire: `Protocol.picture_tokens`, 1,600 on Anthropic and 800 on the OpenAI
 wires (`OPENAI_PICTURE_TOKENS`). The window estimate counts that
 (`prompt_tokens(picture_tokens=)`).

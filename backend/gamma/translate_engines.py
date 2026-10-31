@@ -1,6 +1,6 @@
 """Machine-translation engines for the PDF translated view: Microsoft (the
 Edge browser's free endpoint, no key), Google Cloud Translation and Youdao,
-next to the LLM path in routers/ai.py.
+next to the LLM path in routers/translate.py.
 
 An engine is picked like a model: the viewer sends ``model: "engine:<id>"``
 to /api/ai/translate, which then calls ``translate()`` here instead of a chat
@@ -41,7 +41,7 @@ GOOGLE_URL = "https://translation.googleapis.com/language/translate/v2"
 YOUDAO_URL = "https://openapi.youdao.com/v2/api"
 
 # The viewer's allowlisted target languages, for both translation paths:
-# code → the name the LLM prompt (routers/ai.py) splices in. Mirrored in
+# code → the name the LLM prompt (translate_context.py) splices in. Mirrored in
 # frontend/src/app/prefDefs.js TRANSLATE_LANGS — keep the two in sync.
 TRANSLATE_LANGS = {
     "en": "English", "zh-CN": "Simplified Chinese", "zh-TW": "Traditional Chinese",

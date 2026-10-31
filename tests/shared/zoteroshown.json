@@ -1,0 +1,107 @@
+{
+  "about": "A Zotero box's text as read mode shows it (frontend/src/markup/textBox.js shownText) and as gamma/text_box.py lays it out and sends it to Zotero (plain_text with gaps): `lines` is the line count of a box too wide to wrap, `sent` the text Zotero is sent and read mode shows.",
+  "box": {
+    "x": 0,
+    "y": 0,
+    "w": 500,
+    "h": 20,
+    "auto": false,
+    "size": 10,
+    "color": "#000000",
+    "bg": null,
+    "zotero": true
+  },
+  "surface_width": 600,
+  "cases": [
+    {
+      "note": "a blank line between two takes a line",
+      "md": "a\n\nb",
+      "lines": 3,
+      "sent": "a\n\nb"
+    },
+    {
+      "note": "each of a run takes a line",
+      "md": "a\n\n\nb",
+      "lines": 4,
+      "sent": "a\n\n\nb"
+    },
+    {
+      "note": "a trailing line break is not sent",
+      "md": "a\n",
+      "lines": 1,
+      "sent": "a"
+    },
+    {
+      "note": "trailing blank lines are not sent",
+      "md": "a\n\n\n",
+      "lines": 1,
+      "sent": "a"
+    },
+    {
+      "note": "leading blank lines are not sent",
+      "md": "\n\na",
+      "lines": 1,
+      "sent": "a"
+    },
+    {
+      "note": "blank lines at both ends",
+      "md": "\n \na\n\u3000\n",
+      "lines": 1,
+      "sent": "a"
+    },
+    {
+      "note": "a line of a full-width space is blank",
+      "md": "a\n\u3000\nb",
+      "lines": 3,
+      "sent": "a\n\nb"
+    },
+    {
+      "note": "a line of a no-break space is blank",
+      "md": "a\n\u00a0\nb",
+      "lines": 3,
+      "sent": "a\n\nb"
+    },
+    {
+      "note": "one inside a run of blank lines",
+      "md": "a\n\n\u3000\n\nb",
+      "lines": 5,
+      "sent": "a\n\n\n\nb"
+    },
+    {
+      "note": "a bare URL is its text",
+      "md": "see https://arxiv.org/abs/2401.12345 for details",
+      "lines": 1,
+      "sent": "see https://arxiv.org/abs/2401.12345 for details"
+    },
+    {
+      "note": "a www link is its text",
+      "md": "at www.example.com/x today",
+      "lines": 1,
+      "sent": "at www.example.com/x today"
+    },
+    {
+      "note": "an angle autolink is its text, brackets and all",
+      "md": "<https://example.org/a>",
+      "lines": 1,
+      "sent": "<https://example.org/a>"
+    },
+    {
+      "note": "a link reads as its label",
+      "md": "the [paper](https://example.org/p) here",
+      "lines": 1,
+      "sent": "the paper here"
+    },
+    {
+      "note": "a link labelled with its URL is its text",
+      "md": "[https://example.org/a](https://example.org/a) here",
+      "lines": 1,
+      "sent": "https://example.org/a here"
+    },
+    {
+      "note": "a URL in code stays code",
+      "md": "run `https://example.org` now",
+      "lines": 1,
+      "sent": "run https://example.org now"
+    }
+  ]
+}

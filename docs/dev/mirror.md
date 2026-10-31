@@ -11,12 +11,14 @@ the pill once a workspace has a copy, before a conflict ever makes it loud
 ([onboarding.md](onboarding.md)).
 
 Code: `gamma/sync_engine.py` (the engine and the mirror registry),
+`gamma/sync_clock.py` (when a mirror gets a round: the clock the Zotero
+link's engine shares),
 `gamma/sync_tree.py` (snapshots and the diff between them),
 `gamma/routers/sync.py` (the change feed and `whoami`, what a mirror reads
 on the remote), `gamma/routers/mirrors.py` (the mirror API on the server
 that holds the copy), `gamma/publish.py` + `gamma/routers/publish.py`
 (publishing a page to the share host, below), `frontend/src/settings/SettingsMirrors.jsx` (Settings →
-Workspaces → Clones), `frontend/src/collaboration/MirrorPopover.jsx`
+Workspaces → Clones and Zotero links), `frontend/src/collaboration/MirrorPopover.jsx`
 (the header's sync pill, its settings and review views),
 `frontend/src/collaboration/MergeResolver.jsx` (the merge chip on a block
 row) with `frontend/src/collaboration/conflictKinds.js` (what each kind of
@@ -24,6 +26,21 @@ conflict row says, pure), `desktop/main.js` `keepOffline` (the shell's
 one-click flow). Why the
 model is ops plus a three-way merge and not a CRDT:
 [research/collaboration.md](../research/collaboration.md).
+
+A second engine of the same kind keeps a personal workspace in step with
+a Zotero library instead of another Gamma: the **Zotero link**
+([zotero_sync.md](zotero_sync.md)). It runs on the same clock ("Rounds and
+cadence" below), records its conflicts and log lines in the same
+`sync_conflicts` and `sync_log` tables (through `sync_engine._conflict`
+and `_note`, read back by `list_conflicts`, `list_log` and
+`open_conflict_mark`), and shows on the same surfaces: the pill, its
+popover, the conflict card and Settings' Clones and Zotero links section take a `kind`
+([zotero_sync.md](zotero_sync.md#frontend)). A workspace is a clone, a
+publication or a Zotero link, never two of these: `create_mirror` refuses
+a workspace a link keeps (detached included), publishing refuses it too
+("Publishing" below), and a link refuses a workspace that has a
+`mirrors` row, but for a publication emptied of its pages, which it
+forgets once the link is made.
 
 ## The model in one paragraph
 
@@ -73,7 +90,12 @@ the frontend changes: editing a mirror is editing a workspace.
   does not echo the kind (an older server) gets it whole. Every fetched tree's files are checked, not only the
   changed blocks', and each round ends with a sweep for files the copy's
   pages name but lack (`missing_uploads`), so a round cut short after a
-  page landed but before its PDF did heals by itself. A fetched file is
+  page landed but before its PDF did heals by itself. The files that
+  travel are the ones the pages show (`storage.upload_refs` with
+  `held=False`): the older PDF a pending highlight holds after a
+  replacement ([highlight_relocation.md](highlight_relocation.md)) stays
+  on the copy that has it, so a page published to the share host never
+  carries it. A fetched file is
   stored only when it is what its name says (`storage.matches_name`: a PDF
   must be a PDF, anything else must hash to its name); a captive portal's
   page is dropped with a warning and fetched again next round. It must
@@ -129,14 +151,28 @@ the frontend changes: editing a mirror is editing a workspace.
     landed is answered from the remote's op log, which keeps no report,
     so an unclean merge whose answer was lost leaves no row ("Limits and
     next steps").
-- **Text boxes** merge key by key, the same way. A diff that changes a
-  box's `text_box` carries the box it was changed from (`base_props`), so
-  either side's server keeps the keys the other changed
-  (`text_box.merge_text_box`, [text_boxes.md](text_boxes.md) "Merge").
-- A push whose answer was lost is judged key by key for a text box
-  (`_unlanded`, `_box_again`). The keys of ours the remote still shows as
-  they were go again, onto the remote's box. A key it shows as ours, or
+- **Text boxes and pictures** merge on either side's server too. A diff
+  that changes a box's `text_box` or a picture's `picture` carries the
+  value it was changed from (`base_props`, sync_tree `_set_op`), so either
+  side's server keeps what the other changed: a box key by key
+  (`text_box.merge_text_box`, [text_boxes.md](text_boxes.md) "Merge"), a
+  picture by its size, its centre and its other keys
+  (`picture.merge_picture`, [pictures.md](pictures.md#model) "Merge").
+  Both go through the placed-objects table, `ops.PLACED_KEYS`
+  ([collab.md](collab.md) "same-box merge").
+- A push whose answer was lost is judged by the parts the merge merges
+  (`_unlanded`, `_placed_again`). What goes again goes onto the remote's
+  value, with that value as its base. A part the remote shows as ours, or
   changed since, counts as landed.
+  - A text box goes key by key: the keys of ours the remote still shows
+    as they were go again.
+  - A picture goes as `merge_picture` would merge it
+    (`picture.resend_picture`): each key but `x` and `y` on its own, then
+    the centre as one. Our shift of the centre goes again, onto the
+    remote's centre, when that centre has not moved or our crop goes
+    again. A centre both sides moved otherwise stays the remote's. So a
+    lost resize sent again after someone moved the picture stays about the
+    moved centre.
 
 Not synced: preferences (reading positions, open tabs, recents — they are
 per account and per server), the AI chats (in pages.db beside the pages,
@@ -256,6 +292,9 @@ does not hide it. When the two differ the round stops (`FormatMismatch`):
   other failure, it does not hold the policy back (`_round`). Publishing
   such a page answers 502 while it waits on the retry list
   ([Publishing](#publishing), step 3).
+- **Step 44** (`picture_kind`) moves the format to 44. It only redefines
+  the generated `kind` column, so a pair that has run it on both sides has
+  nothing to send for it, and the pause above holds until then.
 
 ## One round, one page (`sync_engine._sync_page`)
 
@@ -449,14 +488,26 @@ whole (below).
 
 ## Rounds and cadence
 
-The engine's loop (`start_loop`; `GAMMA_SYNC_INTERVAL=0` turns it off, the
-tests) ticks every second and gives a round to each mirror that is due: its
+The clock is `gamma/sync_clock.py`, shared with the Zotero link
+([zotero_sync.md](zotero_sync.md#clock-and-stream)). Each engine registers
+an `Engine` there at import (`sync_clock.register`: its rows, its round,
+its op-log client, its quiet time) and gets marks and a loop thread of its
+own, so a slow Zotero round never holds up a mirror's and one engine's
+refresh never touches another's marks. `sync_engine` keeps its old names
+(`_pending`, `_last_run`, `_wants_change`, `_dirty`, `_wake`,
+`request_sync`, `due_now`, `has_local_changes`) for its engine's objects
+and calls. `start_loop` runs at app startup and starts every engine's loop
+(`sync_clock.start`; `GAMMA_SYNC_INTERVAL=0` turns them off, the tests).
+
+The mirror's loop ticks every second (`TICK_S`) and gives a round to each
+mirror that is due: its
 own `poll_s` come round (per copy, `mirrors.poll_s`: 5 = *Live*, 30, 300,
 0 = only by hand), or a local edit `DEBOUNCE_S` (1 s) ago when the copy's
-`on_change` is set — `ops.commit_listeners` tells the engine about every
-committed write (`request_sync`, which also wakes the loop, so the round
+`on_change` is set — `ops.commit_listeners` tells each engine about every
+committed write (`Engine.on_commit`, which asks for the round and wakes the
+loop, so the round
 starts the moment the quiet second is over rather than at the next tick;
-the engine's own writes, client `sync`, do not count, and a typing burst
+only the engine's own writes, client `sync`, do not count, and a typing burst
 is one round). The same listener marks the copy **dirty** (`_dirty`, in
 memory): `has_local_changes(ws)` is true from a local write until a round
 that started after it finishes without error, and the API reports it as
@@ -469,12 +520,18 @@ by a restart continues at once; "Sync now" (`POST /api/mirrors/{ws}/sync`,
 `?wait=1` for the answer) runs one on demand. Rounds of one mirror never
 overlap: a second caller waits for the round lock and reads the mirror's
 row only once it holds it, so it runs with a page unpublished or a detach
-done while it waited. What the person does *while* a round runs is kept
-too:
+done while it waited. The loop itself never waits on that lock: a mirror
+whose round already runs (Sync now, a background round) is looked at
+again `BUSY_RETRY_S` (5 s) later, and a round asked for a mirror detached
+or removed meanwhile is dropped once it is due. The mirror runs its rounds
+on the loop thread, one after another; the Zotero link's engine hands its
+rounds to a pool of threads of its own (`workers`). What the person does
+*while* a round runs is kept too:
 
 - the round only patches its own keys of the status JSON (`_patch_status`,
-  one read-modify-write under a lock, the path every writer of the status
-  takes);
+  `sync_clock.LinkTable.patch_status`: one read-modify-write under the
+  table's lock, the path every writer of the status takes; a status that
+  does not read as a JSON object reads as empty);
 - it saves the feeds' cursors only when nothing reset them meanwhile;
 - a detach makes it stop at its next page (the pages left over go on the
   retry list for the reattach);
@@ -489,7 +546,8 @@ it; a feed that lists the page again has the newer say for its side).
 Nothing a round does can leave the `running` flag up: every exception
 brings it down with `last_error`, and a process stopped in the middle of a
 round (the desktop app quit) is caught at the next startup by
-`reset_interrupted`, which clears the flag and notes `interrupted`; the
+`reset_interrupted` (`LinkTable.reset_interrupted`, which `sync_clock.start`
+runs for every engine), which clears the flag and notes `interrupted`; the
 next round simply continues, a round is idempotent.
 
 The status the Settings row and the header pill show is the mirror's
@@ -623,7 +681,7 @@ the pill's poll raises the latter); a decision
 is an ordinary edit the next round pushes. The lists in the pill and in
 Settings jump to the block (`gamma:jump`).
 
-### Settings → Workspaces → Clones (`SettingsMirrors.jsx`)
+### Settings → Workspaces → Clones and Zotero links (`SettingsMirrors.jsx`)
 
 - One row per clone. Its avatar is its state (the same reading as the pill:
   a spinning refresh while a round runs, a check when up to date, a warning
@@ -639,7 +697,10 @@ Settings jump to the block (`gamma:jump`).
   `ActionMenu`: *Force pull*, *Force push* (off on a receive-only clone),
   *Detach*, and a danger *Remove origin*. The forces and the removal are
   confirmed by the shared confirm box.
-- No intro paragraph: the empty state's one sentence says what a clone is.
+- No intro paragraph: the empty state ("No clones or Zotero links yet.")
+  says in one sentence each what a clone and a Zotero link are. The
+  section's create buttons wait until the clones and links are read, so
+  *Into* never offers a workspace one of them holds.
 - *Clone a remote workspace* asks for the origin server's address, a write
   token made there, *Into* (a new workspace, or one of yours: an imported
   backup, a clone whose origin was removed, with *If a page differs*: take
@@ -746,8 +807,9 @@ log under that account with client `sync`.
   the page's session, starts (or makes) a local server, signs into it with
   the seeded admin credentials, creates the mirror there and moves the
   window to it ([desktop/docs/architecture.md](../../desktop/docs/architecture.md)).
-- **Any Gamma**: Settings → Workspaces → Clones → *Clone a remote
-  workspace*: the server address and a write token made there.
+- **Any Gamma**: Settings → Workspaces → Clones and Zotero links →
+  *Clone a remote workspace*: the server address and a write token made
+  there.
 
 **Detach and reattach.** *Detach* (`POST /api/mirrors/{ws}/detach`) sets
 the mirror's `mode` to `off`: no round runs and the workspace lists as an
@@ -812,8 +874,11 @@ workspace there:
    Cloud identity holding a token; the page a root block). Refused with 409
    and a message when the account has no identity ("Sign in with Gamma Cloud
    to publish."), when the account server names no share host, when this
-   server is itself a share host, or when the workspace already follows
-   another server.
+   server is itself a share host, when the workspace already follows
+   another server, or when a Zotero link keeps it, detached or not ("This
+   workspace is kept in step with a Zotero library, so it cannot publish
+   pages.", checked before any token is minted; `GET
+   /api/pages/{id}/publish` gives the same sentence as its `reason`).
 2. No mirror yet: the server asks the account server for an access token
    (`cloud_auth.access_token_for`), trades it at the share host's
    `POST /api/auth/cloud/exchange` for a write token on the person's
@@ -978,6 +1043,11 @@ drawings go in one batch, each merge reported on its own group. A
 force's policy ends with a page waiting for its drawing, but not with a
 page that failed. `frontend/tests/conflictKinds.test.mjs` checks that every
 kind the engine records has its words, and a merged drawing's lines.
+`test_sync_clock.py` is the clock both engines share: each engine's own
+requests, dirty marks and loop, a write counting for every engine but the
+one that made it, a loop passing over a workspace whose round runs and
+dropping requests nobody will run, a pool's rounds of several workspaces at
+once, and the mirror's names staying aliases of its engine's objects.
 `test_mirror_interrupted.py` is
 rounds cut short: a first push stopped by a refused file, a dropped link or
 half way through its batches, a first pull waiting for its PDF and stopped
@@ -1021,9 +1091,15 @@ the Gamma server it runs on the device keeps clones like any other
 
 The folder sync ([folder_sync.md](folder_sync.md)) keeps no copy of the
 workspace either: it writes one folder's pages to a directory
-on a PC as files, one way from Gamma to disk, through
+on a PC as files, from Gamma to disk, through
 `GET /api/sync/folders/{id}` (the manifest) and `…/notes` beside the change
-feed.
+feed. Only PDFs go back, each one as its page's new file through the
+replacement route, never as a merge.
+
+A Zotero link reads the local change feed in-process
+(`routers.sync.changes`, from `zotero_state.local_cursor`) to find the
+pages, folders and labels to send to Zotero
+([zotero_sync.md](zotero_sync.md#the-round)).
 
 ## Limits and next steps
 

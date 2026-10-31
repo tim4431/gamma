@@ -1,6 +1,7 @@
 """Render a page's block subtree to readable Markdown: clean nested bullets,
 highlights as blockquotes with a page marker, a text box on a PDF page as a
-note with one, a recording as its length with a link per audio file, page
+note with one, a picture as its image line with one when it is on a PDF
+page, a recording as its length with a link per audio file, page
 title as an H1, scalar metadata as YAML front-matter and
 the cached BibTeX as a fenced block. Lossy but portable. (Logseq-app export
 lives in ``logseq_graph_export``.)
@@ -19,6 +20,7 @@ from .blocks_store import TRASH, block_to_dict, page_attachment
 from .highlights import is_highlight, page_of
 from .note_markup import obsidian_image_sizes
 from .notebook import is_sheet
+from .picture import is_picture, markdown_of, picture_page
 from .recording import heading as recording_heading, is_recording, segments_of
 from .text_box import box_page
 
@@ -202,9 +204,13 @@ def resolve_block_links(md, resolve_ref, page_file=None, page_id=None, nested=Fa
 def _render_readable_block(node, depth, lines, highlights=True, notes=True,
                            resolve_ref=None, page_file=None, page_id=None, on_sheet=False):
     """One block and its subtree. ``on_sheet``: a sheet of paper is among
-    the block's ancestors, so a text box under it is on that sheet."""
+    the block's ancestors, so a text box or a picture under it is on that
+    sheet."""
     props = node.get("properties") or {}
     under_sheet = on_sheet or is_sheet(props)
+    # A picture is placed on the page as a text box is, so the notes switch
+    # takes it out with the other notes and the highlights switch leaves it.
+    picture_line = markdown_of(node.get("content"), props["picture"]) if notes and is_picture(props) else ""
     content = obsidian_image_sizes((node.get("content") or "").strip())
     content = resolve_block_links(content, resolve_ref, page_file, page_id)
     # The two export switches. A highlight block carries both a PDF region and
@@ -269,6 +275,15 @@ def _render_readable_block(node, depth, lines, highlights=True, notes=True,
         lines.append(f"{indent}- " + " ".join([f"**{recording_heading(props)}**", *links]))
         for c in content.split("\n") if content else []:
             lines.append(f"{indent}  {c}")
+        emitted = True
+    elif picture_line:
+        # A picture placed on a page: its image, the caption as its alt
+        # text (bundled like any upload), then the page line a text box
+        # carries.
+        lines.append(f"{indent}- {picture_line}")
+        page_no = picture_page(props, on_sheet)
+        if page_no:
+            lines.append(f"{indent}  `p.{page_no}`")
         emitted = True
     elif content:
         clines = content.split("\n")

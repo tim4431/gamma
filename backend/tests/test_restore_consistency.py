@@ -301,16 +301,19 @@ def test_a_backup_from_before_the_highlight_shape_is_converted_on_restore(tmp_pa
 
 def test_a_restore_keeps_what_a_pdf_replacement_wrote_on_the_highlights():
     """A replaced PDF's relocation marks a highlight lost and names the file
-    its rects were measured on, an area placed by estimate approx, and a
-    highlight matched roughly approx with its match and where it was
-    before (gamma/highlight_relocate.py); a replace or merge of a backup taken
-    after that keeps them, though it passes every position through the
-    highlight shape's rewrite."""
+    its rects were measured on and the closest place it found, an area
+    placed by estimate approx, and a highlight matched roughly approx with
+    its match and where it was before (gamma/highlight_relocate.py); a
+    replace or merge of a backup taken after that keeps them, though it
+    passes every position through the highlight shape's rewrite."""
     ws, c = _account("rc_relocated")
     pid = _page(c, "Replaced paper")
     rect = {"x1": 72, "y1": 90, "x2": 300, "y2": 104}
+    near = {"x1": 72, "y1": 300, "x2": 400, "y2": 314}
     lost = {"pageNumber": 1, "width": 612, "height": 792, "boundingRect": rect, "rects": [rect],
-            "doc_id": "a" * 64, "lost": True}
+            "doc_id": "a" * 64, "lost": True,
+            "closest": {"pageNumber": 3, "width": 612, "height": 792, "boundingRect": near, "rects": [near],
+                        "match": 0.68, "quote": "q most alike"}}
     approx = {"pageNumber": 2, "width": 612, "height": 792, "boundingRect": rect, "rects": [rect],
               "area": True, "approx": True}
     rough = {"pageNumber": 1, "width": 612, "height": 792, "boundingRect": rect, "rects": [rect],

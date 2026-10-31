@@ -5,7 +5,8 @@
 // (`securityScopedBookmarks`); `app.startAccessingSecurityScopedResource`
 // opens the same folder again on a later run. The bookmarks are kept in
 // the registry (`access`: { path, bookmark }), and every one is opened at
-// launch, before any local server starts.
+// launch, before any local server starts. A PDF a page follows (main.js
+// followFile) is picked and kept the same way, a file in place of a folder.
 //
 // The local servers are child processes that inherit the app's sandbox,
 // together with the folders the app holds open at the moment they start;
@@ -45,14 +46,16 @@ function create({ load, save, start, container }) {
   }
 
   return {
-    // At launch: open every stored folder. A bookmark that resolves
-    // somewhere else (the folder moved) does not open the stored path.
+    // At launch: open every stored folder, and every followed file. A
+    // bookmark that resolves somewhere else (the folder moved) does not
+    // open the stored path.
     restore() {
       for (const g of load()) {
         let stop = null;
         try {
           stop = start(g.bookmark);
-          fs.readdirSync(g.path);
+          if (fs.statSync(g.path).isDirectory()) fs.readdirSync(g.path);
+          else fs.accessSync(g.path, fs.constants.R_OK);
           hold(g.path, { stop, since: 0, kept: true });
         } catch (e) {
           if (stop) stop();

@@ -121,14 +121,18 @@ shell which local servers to start at launch (`startBackgroundHosts`): a copy
 syncs only while its server runs, so those run for as long as the app does,
 whichever server the window shows.
 
-### Folders on this computer
+### Folders and files on this computer
 
 A folder of any server's workspace can be kept as a directory anywhere on
 this computer: each paper's PDF beside a Markdown note of its highlights
-and notes, kept up to date by a local server. Only the app's own local
-servers keep folders on disk ([docs/dev/folder_sync.md](../../docs/dev/folder_sync.md)
-"Folders kept by the desktop app"); a NAS only answers the reads. The
-shell adds the native directory picker, the token, and two ways in.
+and notes, kept up to date by a local server, and when asked, the PDFs
+changed there sent back. A page can also follow one PDF file on this
+computer, a manuscript's build output say: each new version of the file
+becomes the page's PDF. Only the app's own local servers keep folders and
+files on disk ([docs/dev/folder_sync.md](../../docs/dev/folder_sync.md)
+"Folders kept by the desktop app"); a NAS only answers the reads, the
+uploads and the replacement. The shell adds the native pickers, the
+tokens, and the ways in: two for a folder, one for a file.
 
 **A folder's menu in Gamma's page.** In the desktop app a library
 folder's right-click menu has *Keep on this computer…*
@@ -153,15 +157,53 @@ links names). Any other asks for a directory on click (`shell:keep-folder`
 subdirectory named after the folder. Pausing, syncing and stopping a kept
 folder are the panel's rows, below.
 
-Under the test harness `GAMMA_SHELL_PICK_DIR` answers the picker, the
-questions take their first answer, and a directory "opened" is only
-recorded (`openDirectory`, like `openExternal`).
+**A page's Document menu in Gamma's page.** In the desktop app a page's
+Document menu has *Follow a file on this computer…* under *Replace the
+PDF…* (`frontend/src/app/App.jsx`, shown when `IS_DESKTOP`). The page
+posts `{source: "gamma-app", type: "follow-file-on-disk", ws, page}` to its
+own origin, and the page preload passes it on as
+`shell:follow-file-from-page`, under the folder message's guards. Then it
+runs `followFile(wsId, pageId)`:
+
+1. It reads the page's title (`GET /api/blocks/<id>`) for the notices.
+2. A page that follows a file already gets a question instead: "“Title”
+   follows <path>", with *Reveal* (`revealFile`, the file shown in its
+   directory with `shell.showItemInFolder`), *Stop following* (`dropFile`)
+   and *Cancel*.
+3. Otherwise the native file picker (`pickFile`: one `.pdf`, from the
+   Documents folder) is the user's say. Then the link is made where a kept
+   folder's would be (below): `POST /api/folder-links {kind: "file", page,
+   path}`. On a remote server the shell first mints a write-scope token
+   there (a year, named after the page and the file), since each send
+   replaces the page's PDF; a link that fails to be made revokes it.
+4. The bar says "“Title” follows main.pdf: each new version is sent to
+   Gamma.", and the shell offers background mode while it is off.
+
+**Sending PDFs back from a kept folder.** A folder's row in the sync panel
+has an upload arrow, a toggle (`push-on`, `push-off`) that runs `setPush`:
+`PATCH /api/folder-links/<id> {push}`. It is off until asked for, since
+people put annotated copies in a kept folder trusting that nothing goes
+back. On a remote folder, kept with a read token, turning it on first
+mints a write token on the remote with the window's session and hands it
+to the host with the `PATCH` (`token`, `token_id`). The host checks it and
+keeps it in place of the read token, which the shell then revokes; a
+token the host refuses is revoked instead, and so is one the link the
+host answers with does not hold. One change per folder runs at a time: a
+second click on the arrow while one runs is ignored, so a double click
+never mints two write tokens. Turning it off keeps the write token until
+the folder is dropped.
+
+Under the test harness `GAMMA_SHELL_PICK_DIR` answers the directory
+picker and `GAMMA_SHELL_PICK_FILE` the file picker, the questions take
+their first answer, and a directory "opened" or a file "revealed" is only
+recorded (`openDirectory`, `revealFile`, like `openExternal`).
 
 In the Mac App Store build the pick is also the app's access to the
-directory, kept as a bookmark (`lib/folderAccess.js`), and a server
-reaches only the folders the app held when it started. So `keepFolder`
-first starts the server that is to write there again, on its port, when
-it started before the pick (`reachFolder`;
+directory or the file, kept as a bookmark (`lib/folderAccess.js`; at
+launch a directory is listed and a file checked for reading), and a server
+reaches only what the app held when it started. So `keepFolder` and
+`followFile` first start the server that is to read or write there again,
+on its port, when it started before the pick (`reachFolder`;
 [release.md](release.md#mac-app-store) "Folders outside the sandbox").
 
 Where the link lives depends on the server:
@@ -180,56 +222,117 @@ Where the link lives depends on the server:
   folder's files come down.
 
 The links of a remote workspace are the host's links with that origin
-and workspace. *Stop* deletes the link on the host and revokes the token
-on the remote (`revokeToken`, with the window's session, which is signed
-into the remote). `settings.folderHost` remembers the host so it starts
-at launch like the clones' hosts (`startBackgroundHosts`). *Stop* on the
-host's last remote folder clears it.
+and workspace, kept folders and followed files alike (`listLinks`; the
+folder chooser lists only the folders). *Stop* deletes the link on the
+host and revokes the token on the remote (`releaseRemote`: `revokeToken`,
+with the window's session, which is signed into the remote).
+`settings.folderHost` remembers the host so it starts at launch like the
+clones' hosts (`startBackgroundHosts`). *Stop* on the host's last remote
+link clears it.
 
 The shell keeps nothing else about links; the rounds and the status are
-the server's, the host's for a remote folder. The bar reports each action
-in its status line for a few seconds (`notice` in the shell state). The
-first time a clone or a folder on disk is made, the shell offers
-background mode (below), since both sync only while Gamma runs.
+the server's, the host's for a remote folder or page. The bar reports each
+action in its status line for a few seconds (`notice` in the shell state).
+When a clone, a folder on disk or a followed file is made while
+background mode (below) is off, the shell offers it, since all of them
+sync only while Gamma runs.
 
 ### Kept on this computer
 
 The **sync button** at the bar's right end sums up everything this
-computer keeps of Gamma: the clones and the folders on disk, of every
-running local server, whichever server the window shows. It reads
-*Synced*, *Syncing…*, *Conflicts*, *n problems* and the like, with a
-matching icon and colour, and shows once a server is open or anything is
-kept. Its **panel** lists the clones, then the folders on disk, each a row
-with its name over its state and where it is, a state dot, and its round
-action buttons, always shown (each named by its tooltip):
+computer keeps of Gamma: the clones, the Zotero links, the folders on disk
+and the files followed, of every running local server, whichever server
+the window shows. It reads *Synced*, *Syncing…*, *Conflicts*, *n
+problems*, *Waiting*, *Changes queued* and the like, with a matching icon
+and colour, and shows once a server is open or anything is kept; its
+tooltip counts them ("1 clone, 2 folders on disk and 1 file followed").
+Its **panel** lists four groups, *Clones*, *Zotero links*, *Folders on
+this computer* and *Files followed*, each row with its name over its
+state and where it is, a state dot, and its round action buttons, always
+shown (each named by its tooltip):
 
-- A click on the row opens it: a clone in the window (`openServer`, then
-  `openGammaWorkspace`), a folder's directory (`openDirectory`).
+- A click on the row opens it: a clone or a Zotero link's workspace in the
+  window (`openServer`, then `openGammaWorkspace`), a folder's directory
+  (`openDirectory`), a file in its directory (`revealFile`).
 - *pause* and *resume* swap with the item's state, and the panel stays
   open on the new one. For a clone they are `POST /api/mirrors/<ws>/detach`
   and `/relink` (the stored token; what both sides did meanwhile merges),
-  so a paused clone reads *Detached*, as in Gamma's pill. For a folder they
-  are `pauseFolder`, `PATCH /api/folder-links/<id> {paused}`: the server's
-  tick leaves a paused folder alone, and resuming runs a round.
-- *sync* runs a round now. For a clone that is `POST
-  /api/mirrors/<ws>/sync` on its local server, shut while it is detached.
+  so a paused clone reads *Detached*, as in Gamma's pill; for a Zotero
+  link `POST /api/zotero/links/<ws>/detach` and `/relink`, the same way.
+  For a folder or a file they are `pauseFolder`,
+  `PATCH /api/folder-links/<id> {paused}`: the server's tick leaves a
+  paused link alone, and resuming runs a round.
+- *sync* runs a round now, the panel staying open as for *pause*. For a
+  clone that is `POST /api/mirrors/<ws>/sync` on its local server, for a
+  Zotero link `POST /api/zotero/links/<ws>/sync`, shut while either is
+  detached.
   For a folder it is `syncFolder`, which asks first whether to replace
-  files changed on disk when there are any, and reports the round in the
-  bar. A paused folder syncs too and stays paused.
+  the files the last round left alone that a forced round would replace
+  (the status's kept entries with `force`: files changed on disk, and
+  with sending back on the PDFs changed here and in Gamma), and reports
+  the round in the bar. A PDF a send could not deliver is no such file:
+  Gamma's copy did not change, so there is nothing to replace it with,
+  and the row counts it as *n not synced*, the reason in the tooltip. For a file it is
+  `sendFile`, a round waited for, and the bar says "main.pdf was sent to
+  Gamma.", "nothing new to send", why it is not sent yet, or the problem.
+  A paused folder or file syncs too and stays paused.
+- A folder's upload arrow turns sending PDFs back on and off (`setPush`,
+  above), the panel staying open; it reads pressed while on.
 - *stop* (a folder) is `dropFolder`, which asks whether to keep the files
-  or take back what the sync wrote.
+  or take back what the sync wrote. *stop* (a file) is `dropFile`, which
+  asks nothing: the file is never touched.
 
-A detached clone or a paused folder never raises the button's summary;
-when everything is, it reads *Paused*. The panel ends with the chooser
-above. Conflicts and a clone's cadence stay in Gamma's own sync pill, in
-the clone.
+A folder that sends back reads *Up to date · 14:02 · sends back*, with
+*n sent* when its last round sent any. A folder's row adds *n changed
+here* for the files Sync can replace and *n not synced* for the other
+files its last round left alone. A followed file reads, worst first:
+*Sending…* (a round runs), *Paused · 14:02*, *Problem* (the reason as the
+tooltip), *Waiting for the file to finish* (a file still being written or
+not there, drawn as pending, never as an error), *Not sent yet* (no round
+yet), *Sent · 14:02*, or *Up to date · 14:02* when its rounds found the file
+Gamma's already. When the last send could not move the highlights, the
+tooltip says why.
 
-`refreshKeeping` reads every running local server's `GET /api/mirrors` and
+A detached clone or link or a paused folder or file never raises the
+button's summary; when everything is, it reads *Paused*. A Zotero link's
+PDFs that wait on something outside Gamma (a full storage, files Zotero
+does not serve) read *Waiting*, and its changes queued for a later round
+*Changes queued*: they only say so, ranked with a first sync not yet run,
+below anything that asks for a look. The panel ends with the chooser
+above. Conflicts and a clone's or link's cadence stay in Gamma's own sync
+pill, in the workspace.
+
+A Zotero link syncs only while its local server runs, so a server that
+holds one starts at launch, as the clones' hosts and the folder host do:
+`startBackgroundHosts` starts the servers `registry.launchHosts` names,
+best effort, a failure logged. The registry records such a server as
+`zoteroHost` on its entry (`registry.setZoteroHost`, written only when it
+changes). Each reading below sets it while the server's list holds a link
+that is not detached, and clears it once its links all went or were
+detached; *resume* on a link's row sets it at once. A list that does not
+come (a server from before the Zotero links, or one that did not answer)
+leaves it as it was. The list is the one the shell's own sign-in, the
+server's seeded admin, gets, so a link another account on that server made
+does not count. A server the user opens while its launch start is still
+under way waits for that start (`startLocal` runs one start per server at
+a time), so two processes never race for its port and data directory
+(`test/main.test.js` and `test/registry.test.js`, `npm test`).
+
+`refreshKeeping` reads every running local server's `GET /api/mirrors`,
+`GET /api/zotero/links` (none from a server that has no such list) and
 `GET /api/folder-links` every 15 s, every 2 s while something syncs, when
-the panel opens and after each action. `lib/keeping.js` turns the rows into
+the panel opens and after each action. A call while a reading runs gets the
+reading that starts once that one ends, and the running reading's result is
+dropped: an action calls it right after changing something on a server,
+which that reading may have read before the change. A timer that comes due
+during a reading leaves it be. `lib/keeping.js` turns the rows into
 items and the button's summary, with no Electron in it
-(`test/keeping.test.js`, `npm test`). A clone reads as Gamma's sync pill
-reads it (`mirrorState` in `frontend/src/collaboration/MirrorPopover.jsx`):
+(`test/keeping.test.js`, `npm test`). A clone and a Zotero link read as
+Gamma's sync pill reads them (`mirrorState` in
+`frontend/src/collaboration/MirrorPopover.jsx`, a link's errors by
+`status.error_kind` and its waiting files as
+`frontend/src/collaboration/syncLinks.js` reads them,
+[docs/dev/zotero_sync.md](../../docs/dev/zotero_sync.md#frontend)):
 the same states in the same order, so the two never disagree. Change both
 together. The result is the shell state's `keeping` (`{items, summary}`).
 The panel's rows act through `shell:keeping-action` (kind, server, id,
@@ -302,7 +405,11 @@ theme is persisted so the chrome is right before any page has loaded, and
 with none of either — a first run, or the launcher, which reports no theme
 — it follows the OS scheme (`main.js` `currentTheme`, repainting on
 `nativeTheme`'s `updated`), since Gamma's own default theme is System: a
-light machine never opens a dark window.
+light machine never opens a dark window. The launcher's first paint takes
+that theme from its `?theme=` (`loadLauncher`) and shows only the page's
+colour until its first server list arrives, so leaving a server for it
+does not flash a light, empty page; the content view's background follows
+the theme too, for the moment between one page and the next.
 
 The tokens are Gamma's own. `ui/tokens.css` is a committed copy of
 `frontend/src/shared/styles/tokens.css`, and `ui/fonts/` holds the Latin
@@ -456,11 +563,12 @@ the page and the system's own settings.
 Closing the last window quits the app (macOS keeps the dock process, as
 any Mac app) unless **Keep running in the background** is on. The setting
 is `settings.background`, turned on by the launcher's switch, the *Server*
-menu, the tray menu, or `offerBackground`, the offer made when a clone or a
-folder on disk is first created. On, `window-all-closed` leaves the app
+menu, the tray menu, or `offerBackground`, the offer made when a clone, a
+folder on disk or a followed file is first created. On, `window-all-closed` leaves the app
 running with a tray icon (`ensureTray`: *Open Gamma*, the two switches,
 *Quit Gamma*). At launch `startBackgroundHosts` then starts every local
-server instead of only the clones' hosts, so clones and folders on disk
+server instead of only the hosts of clones, of remote folders and files and
+of Zotero links, so clones, Zotero links, folders on disk and followed files
 keep syncing with no window. The tray's click or *Open Gamma* brings the
 window back where the user left off (`showWindow`). Turning the setting off
 from the tray with no window quits.
@@ -514,15 +622,18 @@ the Mac App Store build's is in its container,
 `~/Library/Containers/net.blitzbuild.gamma/Data/Library/Application Support/gamma-desktop`):
 
 - `servers.json` — the registry: server list (a local server with its
-  admin credentials and last `port`), `lastOpened`, `windowBounds`,
+  admin credentials, last `port`, and `zoteroHost` while it holds a Zotero
+  link that is not detached, "Kept on this computer"), `lastOpened`,
+  `windowBounds`,
   and `settings` (`openLastOnLaunch`, `lastTheme`, `dataRoot`, `background`
   and `openAtLogin` (the tray, above), `folderHost` (the local server that
-  keeps folders of remote servers), the dev-mode
+  keeps folders and files of remote servers), the dev-mode
   `pythonPath`/`backendDir`/`staticDir` overrides). Local admin credentials
   are stored in plaintext here — same trust level as the SQLite files next
   to it; acceptable for a per-OS-user desktop app. The Mac App Store build
-  also keeps `access` here: the folders outside its sandbox the user
-  picked, as security-scoped bookmarks (`lib/folderAccess.js`). An older profile's
+  also keeps `access` here: the folders and followed files outside its
+  sandbox the user picked, as security-scoped bookmarks
+  (`lib/folderAccess.js`). An older profile's
   `workspaces.json` (the file's previous name) is copied over on first start
   and left in place.
 - `workspaces/<id>/` — local servers' data dirs (a standard `GAMMA_DATA_DIR`
@@ -537,8 +648,12 @@ the Mac App Store build's is in its container,
 Changing the root is `registry.setDataRoot(dir, { move })`. With `move` it
 relocates every local server under the old root. The shell stops their
 sidecars first (an open one returns to the launcher). The registry copies
-each `<id>` dir with `fs.cpSync` (so it works across drives), and only after
-every copy succeeded re-points the entries and deletes the originals. A
+each `<id>` dir a file at a time and asynchronously (`copyTree`, so it works
+across drives and the app stays live), and only after every copy succeeded
+re-points the entries and deletes the originals. Meanwhile the launcher
+shows the bytes copied of the total (`shell:data-move`, a bar under *Local
+server storage* and the status line), and the servers being moved refuse to
+open. A
 failure midway rolls back the copies and leaves the registry untouched. The
 new folder may not be inside the current one or contain it. Removing a
 server offers *keep files* / *delete everything*; deletion is guarded to
@@ -546,8 +661,8 @@ directories under the default or the configured root only.
 
 `GAMMA_SHELL_USER_DATA=<dir>` relocates all of it (the tests use a temp
 profile); `GAMMA_SHELL_DOWNLOAD_DIR=<dir>` saves downloads there without the
-dialog and `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker (tests
-only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
+dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
+`GAMMA_SHELL_PICK_FILE=<file>` the file picker (tests only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
 
 ## File map
 
@@ -558,8 +673,8 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   else — `target=_blank`, cross-origin redirects — opens in the system
   browser; a server's Gamma Cloud sign-in start is taken over, "Gamma Cloud
   sign-in"), the remote health probes, the `/api/session` read behind the
-  workspace switcher, the clone and folder-on-this-computer flows over the
-  server's API, the tray and background mode, one app per profile and the
+  workspace switcher, the clone, folder-on-this-computer and
+  file-on-this-computer flows over the server's API, the tray and background mode, one app per profile and the
   PDFs the system hands it ("Opening PDF files"), `--smoke` self-test,
   sidecar cleanup on quit, the `GAMMA_SHELL_TEST` hook the e2e suite drives.
 - `preload.js` — exposes the `gammaShell` IPC bridge **only on `file:`
@@ -578,7 +693,9 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
 - `ui/bar.html` — the shell bar. `ui/launcher.html` — the server picker.
   Both plain HTML, no build step, and the iPad app's chrome as well.
 - `lib/registry.js` — `servers.json` load/save, add/rename/remove,
-  last-opened, settings, window bounds, data-dir size.
+  last-opened, settings, window bounds, data-dir size, the local servers
+  started at launch (`launchHosts`); no Electron, unit tested by
+  `test/registry.test.js`.
 - `lib/sidecar.js` — local server lifecycle: the port (`pickPort`, "A local
   server's address"; `test/sidecar.test.js`), spawn, health poll
   (`/api/health`, 60 s budget for frozen cold starts), log capture,
@@ -603,8 +720,9 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
 - `lib/hostPath.js` — a path as programs outside a Store package find it:
   the package's private copy of AppData ("Shell state"); no Electron, unit
   tested by `test/hostPath.test.js`.
-- `lib/folderAccess.js` — the Mac App Store build's folders outside its
-  sandbox: the bookmarks kept, the folders opened at launch, and when a
+- `lib/folderAccess.js` — the Mac App Store build's folders and followed
+  files outside its sandbox: the bookmarks kept, the ones opened at
+  launch, and when a
   server must start again to reach one ([release.md](release.md#mac-app-store));
   no Electron, unit tested by `test/folderAccess.test.js`.
 - `lib/microphone.js` — the pages' permission requests: all granted, the
@@ -642,6 +760,10 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
 - `assets/appx/` and `assets/store/` — tracked Store package/listing images;
   `scripts/store-art.js` regenerates them. The packager's build-resources
   directory is `assets/`; `build/` holds generated PyInstaller intermediates.
+- `test/main.test.js` — `main.js` under plain Node, Electron replaced by a
+  stand-in and the local servers by fakes (the `GAMMA_SHELL_TEST` hook):
+  the launch record a keeping reading writes, a resume made during a
+  reading, one start per server (`npm test`).
 - `test/e2e.js` — the Playwright-driven end-to-end suite (see
   [checklist.md](checklist.md)). `test/smoke.js` — runs the app's `--smoke`
   self-test (dev or `--packaged`).
@@ -656,8 +778,8 @@ only); `GAMMA_SHELL_NO_UPDATE=1` disables the updater.
   `mas` in the Mac App Store build (which also sets `GAMMA_UPDATE_CHECK=off`),
   so it says who installs a newer one,
   `GAMMA_CLOUD_DEFAULT_ISSUER` = Gamma Cloud, the account server until the
-  admin saves another, `GAMMA_FOLDER_LINKS` = this server keeps folders on
-  disk, anywhere the user picks, since the sidecar runs as the user), `/api/health` and
+  admin saves another, `GAMMA_FOLDER_LINKS` = this server keeps folders and
+  files on disk, anywhere the user picks, since the sidecar runs as the user), `/api/health` and
   `/api/session` (+ the `?ws=` and `?page=` URL parameters). No imports from `backend/`,
   no frontend patches. The one thing it reads off the page is the
   `data-theme` attribute (read-only, via the preload).

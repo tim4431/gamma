@@ -84,16 +84,26 @@ def sniff(data: bytes) -> str:
     return ""
 
 
+def chat_formats() -> tuple[str, ...]:
+    """The formats a chat picture is opened as: every one Pillow reads but
+    EPS, whose reader runs Ghostscript on the file, a program outside Pillow
+    that no upload should reach."""
+    Image.init()
+    return tuple(f for f in Image.OPEN if f != "EPS")
+
+
 def normalize(data: bytes, media_type: str = "") -> tuple[bytes, str, int, int] | None:
     """``(bytes, media_type, width, height)`` of ``data`` as the model gets
     it and as a chat picture is stored: the longer side at most
     ``RENDER_MAX_SIDE`` px, JPEG at :data:`JPEG_QUALITY` unless the picture
     is translucent somewhere or small (:data:`PNG_MAX_PIXELS`), then PNG.
     An animation keeps its first frame; EXIF orientation is applied. None
-    for bytes that are no picture."""
+    for bytes that are no picture. Any format Pillow reads in its own code is
+    taken (a TIFF, a PSD); PostScript is not (``chat_formats``), so an EPS
+    never reaches Ghostscript."""
     media_type = "image/jpeg" if media_type == "image/jpg" else (media_type or sniff(data))
     try:
-        with Image.open(io.BytesIO(data)) as opened:
+        with Image.open(io.BytesIO(data), formats=chat_formats()) as opened:
             opened.load()
             source = opened.format
             image = ImageOps.exif_transpose(opened) or opened
@@ -240,7 +250,8 @@ def page_pdf_path(ws: str, conn, page_id: str):
 
 def render_region(ws: str, conn, page_id: str, page_no: int, box=None, ink: bool = False):
     """A PDF page of the page ``page_id`` (or its region ``box``) as a
-    picture, with the user's handwriting written on it when ``ink``:
+    picture, with the user's handwriting written on it when ``ink``, over
+    the pictures and text boxes placed on it (``ink_view.page_with_handwriting``):
     ``(image, pages)`` as ``render_page`` gives them — ``(None, 0)`` for a
     page without a PDF file here, ``(None, pages)`` for a page number past
     the end."""

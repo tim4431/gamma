@@ -24,10 +24,12 @@ deterministic ``/NM`` key derived from the highlight block id (stable across
 re-exports, so Zotero can dedupe), spelled in Zotero's own 8-char key
 alphabet. Highlights stay id-less on purpose.
 
-Handwriting becomes /Ink and text boxes /FreeText (gamma/text_box.py), each
-with a private key holding Gamma's own record for a lossless re-import.
-Zotero imports both: the /Ink with its /NM id, the /FreeText as a text
-annotation through its ``/Zotero:*`` keys.
+Handwriting becomes /Ink, text boxes /FreeText (gamma/text_box.py) and
+pictures /Stamp (gamma/picture.py), each with a private key holding Gamma's
+own record for a lossless re-import. Zotero imports the first two: the /Ink
+with its /NM id, the /FreeText as a text annotation through its
+``/Zotero:*`` keys. It draws a /Stamp's appearance but keeps no annotation
+of it.
 
 Zotero's reader blends /C toward white by /CA (and draws a highlight at its
 own opacity on top), so Gamma's highlights and area notes reached it paler
@@ -36,8 +38,8 @@ therefore give their /Highlight and /Square no /CA, as Zotero's own carry
 none, and keep Gamma's alpha in the private ``/GammaAlpha``, which the
 importer reads before /CA. The /Square's appearance stream keeps the alpha,
 so other viewers draw it as before; a /Highlight, which has no appearance,
-they draw from /C at full strength. Ink and text boxes are written the same
-in both. Every annotation names its author as /T and as
+they draw from /C at full strength. Ink, text boxes and pictures are written
+the same in both. Every annotation names its author as /T and as
 /Zotero:AuthorName, the only one Zotero reads.
 """
 
@@ -180,8 +182,8 @@ def _resolve(obj):
 
 # --- embedded annotations as the importer takes them --------------------------------
 # routers/imports.py turns a PDF's own annotations into blocks; the export
-# replaces the embedded original of a text box it writes again. Both read the
-# annotations with these rules.
+# replaces the embedded original of a text box or a picture it writes again.
+# Both read the annotations with these rules.
 
 # The /F bits that keep an annotation off the screen (ISO 32000-1, 12.5.3):
 # Hidden and NoView. pdf.js does not draw such an annotation, so neither is
@@ -190,6 +192,9 @@ _UNSEEN = 2 | 32
 # The embedded annotations a Gamma text box stands for: typed text and
 # sticky notes (the importer makes boxes of them, the export replaces them).
 TEXT_BOX_TYPES = frozenset({"/FreeText", "/Text"})
+# The ones the export replaces: those, and the image stamps a Gamma picture
+# stands for.
+REPLACED_TYPES = TEXT_BOX_TYPES | {"/Stamp"}
 
 
 def annotation_shown(annot) -> bool:
@@ -260,21 +265,20 @@ def drop_annotations(page, doomed) -> int:
     return removed
 
 
-def _drop_replaced(writer, keys) -> None:
-    """Take out of the copy the embedded text boxes a Gamma version
-    replaces: each shown /FreeText or /Text, no reply, whose key is among
-    ``keys`` (the ``imported_annot`` of the boxes the import made of them),
-    with its thread."""
-    for pnum, page in enumerate(writer.pages, start=1):
-        doomed = set()
-        for ref in _resolve(page.get("/Annots")) or ():
-            obj = _resolve(ref)
-            subtype = str(obj.get("/Subtype", ""))
-            if (subtype in TEXT_BOX_TYPES and annotation_shown(obj) and reply_parent(obj) is None
-                    and (rect := first_rect(obj)) and annotation_key(pnum, subtype, rect) in keys):
-                doomed.add(id(obj))
-        if doomed:
-            drop_annotations(page, doomed)
+def _drop_replaced(page, pnum: int, keys) -> None:
+    """Take off ``page`` (page ``pnum`` of its PDF) the embedded text boxes
+    and pictures a Gamma version replaces: each shown /FreeText, /Text or
+    /Stamp, no reply, whose key is among ``keys`` (the ``imported_annot`` of
+    the blocks the import made of them), with its thread."""
+    doomed = set()
+    for ref in _resolve(page.get("/Annots")) or ():
+        obj = _resolve(ref)
+        subtype = str(obj.get("/Subtype", ""))
+        if (subtype in REPLACED_TYPES and annotation_shown(obj) and reply_parent(obj) is None
+                and (rect := first_rect(obj)) and annotation_key(pnum, subtype, rect) in keys):
+            doomed.add(id(obj))
+    if doomed:
+        drop_annotations(page, doomed)
 
 
 def _sign(annot, author) -> None:
@@ -400,14 +404,35 @@ def _ink_scale(ink, rotation, crop) -> float:
     return ((cw if rotation in (0, 180) else ch) / sw) if sw else 1.0
 
 
-def _ink_annotations(ink, rotation, crop, note, author, block_id=""):
+def _marker_appearance(writer, ink, bucket, to_pdf, scale, rect):
+    """A highlighter bucket's normal appearance: its strokes as the screen
+    draws them (``ink.pdf_path_ops``: each centreline at its own width under
+    ``/GSinkM<α>``, which multiplies), in user space (the form's /BBox is
+    the annotation's /Rect). /Ink has no blend mode of its own, so a viewer
+    drawing it from /InkList and /CA paints the colour over the text under
+    it; one drawing this keeps that text black, as the viewer does."""
+    from . import ink as inkmod
+    ops = inkmod.pdf_path_ops(ink.model_copy(update={"strokes": bucket}), to_pdf, scale)
+    stream = DecodedStreamObject()
+    stream.set_data(ops)
+    stream.update({
+        NameObject("/Type"): NameObject("/XObject"),
+        NameObject("/Subtype"): NameObject("/Form"),
+        NameObject("/BBox"): ArrayObject(FloatObject(round(v, 2)) for v in rect),
+        NameObject("/Resources"): DictionaryObject({NameObject("/ExtGState"): inkmod.pdf_path_resources(ops)}),
+    })
+    return writer._add_object(stream)
+
+
+def _ink_annotations(writer, ink, rotation, crop, note, author, block_id=""):
     """One handwriting group → ``/Ink`` annotations, one per look bucket
     (``ink.ink_buckets``): ``/InkList`` polylines in user space, ``/BS /W``
     the bucket's mean drawn width, ``/BS /S /D /D [on off]`` when the
     bucket's first stroke is dashed or dotted (a bucket mixing dashes takes
     that one's: the bucket key has no dash, so a re-export keeps its
     ``/NM`` set), ``/C`` + ``/CA`` its colour at the opacity the screen
-    draws it (``ink.drawn_alpha``). Every annotation also carries
+    draws it (``ink.drawn_alpha``), and a highlighter's an appearance that
+    multiplies (``_marker_appearance``). Every annotation also carries
     its strokes as ``/GammaInk`` (the gamma-ink version 2 JSON, verbatim)
     so a Gamma re-import keeps pressure, time, the dash and every key;
     other readers ignore the private key. The note rides on the first
@@ -419,6 +444,10 @@ def _ink_annotations(ink, rotation, crop, note, author, block_id=""):
     from . import ink as inkmod
     sw, sh = float(ink.space.width), float(ink.space.height)
     k = _ink_scale(ink, rotation, crop)
+
+    def to_pdf(x, y):
+        return viewer_point_to_pdf(x / sw, y / sh, rotation, crop)
+
     out = []
     for n, bucket in enumerate(inkmod.ink_buckets(ink)):
         first = bucket[0]
@@ -428,7 +457,7 @@ def _ink_annotations(ink, rotation, crop, note, author, block_id=""):
             poly = inkmod.stroke_polyline(stroke)
             flat = []
             for x, y, w in poly:
-                px, py = viewer_point_to_pdf(x / sw, y / sh, rotation, crop)
+                px, py = to_pdf(x, y)
                 flat.extend((px, py))
                 xs.append(px)
                 ys.append(py)
@@ -439,7 +468,8 @@ def _ink_annotations(ink, rotation, crop, note, author, block_id=""):
         if not paths:
             continue
         width = (sum(widths) / len(widths)) * k
-        pad = width / 2 + 1
+        pad = max(widths) * k / 2 + 1
+        rect = (min(xs) - pad, min(ys) - pad, max(xs) + pad, max(ys) + pad)
         border = DictionaryObject({NameObject("/W"): FloatObject(round(width, 2)), NameObject("/S"): NameObject("/S")})
         pattern = inkmod.dash_pattern(first)
         if pattern:
@@ -448,8 +478,7 @@ def _ink_annotations(ink, rotation, crop, note, author, block_id=""):
         annot = DictionaryObject({
             NameObject("/Type"): NameObject("/Annot"),
             NameObject("/Subtype"): NameObject("/Ink"),
-            NameObject("/Rect"): ArrayObject(
-                FloatObject(v) for v in (min(xs) - pad, min(ys) - pad, max(xs) + pad, max(ys) + pad)),
+            NameObject("/Rect"): ArrayObject(FloatObject(round(v, 2)) for v in rect),
             NameObject("/InkList"): ArrayObject(paths),
             NameObject("/BS"): border,
             NameObject("/GammaInk"): TextStringObject(inkmod.dumps({
@@ -458,6 +487,9 @@ def _ink_annotations(ink, rotation, crop, note, author, block_id=""):
                 "strokes": [inkmod.to_dict(s) for s in bucket],
             }).decode("utf-8")),
         })
+        if first.tool == "highlighter":
+            annot[NameObject("/AP")] = DictionaryObject({
+                NameObject("/N"): _marker_appearance(writer, ink, bucket, to_pdf, k, rect)})
         if block_id:
             annot[NameObject("/NM")] = TextStringObject(f"Zotero-{zotero_annot_key(f'{block_id}:{n}')}")
         out.append((inkmod.band_of(first), _finish_annotation(annot, (r, g, b, inkmod.drawn_alpha(first, a)),
@@ -487,10 +519,13 @@ def _text_box_annotation(writer, glyphs, tb, rotation, crop, author, resolve_ref
     a free-text background), for a viewer that rebuilds the look after an
     edit, and ``/Rotate`` (Adobe's key, read by pdf.js and MuPDF) keeps that
     rebuilt text upright too. ``/BS /W 0``: no border. ``/Contents`` is the
-    plain text, references read through ``resolve_ref``; the private
-    ``/GammaTextBox`` holds the Markdown, the box and that text, for a
-    lossless re-import that can tell another viewer's edit of /Contents
-    from a reference label."""
+    plain text, references read through ``resolve_ref`` (a Zotero box's
+    blank lines kept, as Zotero holds them); the private ``/GammaTextBox``
+    holds the Markdown, the box and that text, for a lossless re-import
+    that can tell another viewer's edit of /Contents from a reference
+    label. ``/Zotero:Rect`` is the drawn box as a Zotero box
+    (``text_box.zotero_frame``): a Zotero box itself, a Gamma box's text
+    area, so Zotero puts the text where it is drawn here, at its width."""
     from . import text_box
     from .pdf_typeset import num
 
@@ -498,7 +533,7 @@ def _text_box_annotation(writer, glyphs, tb, rotation, crop, author, resolve_ref
     disp_w, disp_h = display_size(crop, rotation)
     fonts = set()
     ops, w, h = text_box.pdf_ops(md, box, disp_w, glyphs, fonts, resolve_ref)
-    text = text_box.plain_text(md, resolve_ref)
+    text = text_box.plain_text(md, resolve_ref, gaps=box.get("zotero") is True)
     w, h = round(w, 2), round(h, 2)
     (ax, ay), (bx, by) = (viewer_point_to_pdf(x / disp_w, y / disp_h, rotation, crop)
                           for x, y in ((box["x"], box["y"]), (box["x"] + w, box["y"] + h)))
@@ -529,14 +564,17 @@ def _text_box_annotation(writer, glyphs, tb, rotation, crop, author, resolve_ref
             {"v": 1, "md": md, "box": box, "text": text}, ensure_ascii=False, separators=(",", ":"))),
     })
     # Zotero 7+ reads a /FreeText as its own text annotation only with these
-    # keys (pdf-worker's readRawAnnotation drops one without them): the box
-    # as shown, unturned, around the drawn box's centre; the page's turn,
-    # since Zotero draws the text turned by the page's rotation less this
-    # one, so it stands upright as here; the size; the text colour, which
-    # Zotero would otherwise take from /C, the fill.
-    cx, cy = (ax + bx) / 2, (ay + by) / 2
+    # keys (pdf-worker's readRawAnnotation drops one without them): the drawn
+    # box as a Zotero box (its text area, for a Gamma box), unturned, around
+    # that area's centre; the page's turn, since Zotero draws the text turned
+    # by the page's rotation less this one, so it stands upright as here; the
+    # size; the text colour, which Zotero would otherwise take from /C, the
+    # fill.
+    frame = text_box.zotero_frame({**box, "w": w, "h": h})
+    fw, fh = frame["w"], frame["h"]
+    cx, cy = viewer_point_to_pdf((frame["x"] + fw / 2) / disp_w, (frame["y"] + fh / 2) / disp_h, rotation, crop)
     annot[NameObject("/Zotero:Rect")] = ArrayObject(
-        FloatObject(round(v, 3)) for v in (cx - w / 2, cy - h / 2, cx + w / 2, cy + h / 2))
+        FloatObject(round(v, 3)) for v in (cx - fw / 2, cy - fh / 2, cx + fw / 2, cy + fh / 2))
     annot[NameObject("/Zotero:Rotation")] = NumberObject(rotation)
     annot[NameObject("/Zotero:FontSize")] = FloatObject(box["size"])
     annot[NameObject("/Zotero:Color")] = ArrayObject(FloatObject(round(v, 4)) for v in parse_css_color(box["color"])[:3])
@@ -553,13 +591,14 @@ def _text_box_annotation(writer, glyphs, tb, rotation, crop, author, resolve_ref
 def highlight_note_blocks(block, children_by_id) -> list[tuple[int, str, str]]:
     """A highlight's notes as ``(depth, markdown, block id)``, in reading
     order: its own note at depth 0, then the notes under it at their depth
-    below it (comment threads are no part of them). A text box on a PDF page among
-    them is left out with the notes under it: it is written as its own
-    /FreeText, whose text speaks for itself on the page. A box under a sheet
-    among them is on that sheet (the nearest sheet wins), so it stays a
-    note. An empty note is left out and the notes under it keep their
-    depth."""
+    below it (comment threads are no part of them). A text box or a picture
+    on a PDF page among them is left out with the notes under it: it is
+    written as its own /FreeText or /Stamp, which speaks for itself on the
+    page. One under a sheet among them is on that sheet (the nearest sheet
+    wins), so it stays a note, a picture as its ``![caption](url)`` line. An
+    empty note is left out and the notes under it keep their depth."""
     from .notebook import is_sheet
+    from .picture import is_picture, markdown_of, picture_page
     from .text_box import box_page
 
     out = []
@@ -570,9 +609,10 @@ def highlight_note_blocks(block, children_by_id) -> list[tuple[int, str, str]]:
     def walk(bid, depth, on_sheet):
         for child in children_by_id.get(bid, []):
             props = child.get("properties")
-            if box_page(props, on_sheet):
+            if box_page(props, on_sheet) or picture_page(props, on_sheet):
                 continue
-            text = (child.get("content") or "").strip()
+            text = ((markdown_of(child.get("content"), props["picture"]) if is_picture(props) else "")
+                    or (child.get("content") or "").strip())
             if text:
                 out.append((depth, text, child["id"]))
             walk(child["id"], depth + 1, on_sheet or is_sheet(props))
@@ -592,10 +632,74 @@ def highlight_note_text(block, children_by_id) -> str:
     return popup_text(highlight_note_blocks(block, children_by_id))
 
 
+def _picture_annotation(writer, images, pic, rotation, crop, author, resolve_ref=None):
+    """One picture → a ``/Stamp`` whose appearance (``/AP /N``) draws its
+    image as the page shows it (``picture.pdf_ops``: the crop, the flips,
+    the turn), from the turned frame's bounding box, upright on a turned
+    page; None when the image cannot be embedded (``XObjectStore`` logged
+    why). The ``/Rect`` is that box in user space. ``/IT /StampImage`` is
+    PDF 2.0's intent for a stamp that shows an image, ``/Contents`` the
+    caption as a reader sees it, on one line (its plain text, references
+    read through ``resolve_ref``, as a text box's), and the private
+    ``/GammaPicture`` holds the picture, its Markdown caption and that text
+    for a lossless re-import that can tell another viewer's edit of
+    /Contents from a reference label."""
+    from . import picture, text_box
+    from .pdf_typeset import num
+
+    placed, caption = pic["picture"], pic["content"] or ""
+    info = images.resolve(placed["url"])
+    if info is None:
+        return None
+    name = info[0]
+    disp_w, disp_h = display_size(crop, rotation)
+    x0, y0, x1, y1 = picture.turned_box(placed)
+    w, h = picture.turned_size(placed)
+    (ax, ay), (bx, by) = (viewer_point_to_pdf(x / disp_w, y / disp_h, rotation, crop)
+                          for x, y in ((x0, y0), (x1, y1)))
+    stream = DecodedStreamObject()
+    stream.set_data(b"q 1 0 0 -1 %s %s cm\n%s\nQ" % (num(-x0), num(h + y0), picture.pdf_ops(placed, name)))
+    form = stream.flate_encode()
+    form.update({
+        NameObject("/Type"): NameObject("/XObject"),
+        NameObject("/Subtype"): NameObject("/Form"),
+        NameObject("/BBox"): ArrayObject(FloatObject(v) for v in (0, 0, w, h)),
+        NameObject("/Matrix"): ArrayObject(FloatObject(v) for v in _upright(rotation, w, h)),
+        NameObject("/Resources"): DictionaryObject({NameObject("/XObject"): DictionaryObject(
+            {NameObject("/" + name): images.refs[name]})}),
+    })
+    text = picture.caption_text(text_box.plain_text(caption, resolve_ref))
+    annot = DictionaryObject({
+        NameObject("/Type"): NameObject("/Annot"),
+        NameObject("/Subtype"): NameObject("/Stamp"),
+        NameObject("/IT"): NameObject("/StampImage"),
+        NameObject("/Rect"): ArrayObject(
+            FloatObject(round(v, 3)) for v in (min(ax, bx), min(ay, by), max(ax, bx), max(ay, by))),
+        NameObject("/F"): NumberObject(4),  # print
+        NameObject("/AP"): DictionaryObject({NameObject("/N"): writer._add_object(form)}),
+        NameObject("/NM"): TextStringObject(f"Zotero-{zotero_annot_key(pic['id'])}"),
+        NameObject("/GammaPicture"): TextStringObject(json.dumps(
+            {"v": 1, "picture": placed, "caption": caption, "text": text}, ensure_ascii=False,
+            separators=(",", ":"))),
+    })
+    if text:
+        annot[NameObject("/Contents")] = TextStringObject(text)
+    _sign(annot, author)
+    if pic.get("modified"):
+        annot[NameObject("/M")] = TextStringObject(_pdf_date(pic["modified"]))
+    return annot
+
+
 def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=(),
-                 text_boxes=(), replaced=(), resolve_ref=None,
+                 text_boxes=(), replaced=(), resolve_ref=None, pictures=(), uploads_dir=None,
                  zotero: bool = False) -> tuple[bytes, int]:
     """Return (annotated pdf bytes, number of annotations written).
+
+    Annotations paint in the order they are written, so they are written as
+    the page stacks them: the highlights and area notes under everything
+    the user placed on the page, then the pictures, the text boxes and the
+    handwriting, and each kind in the order it comes in (document order,
+    the z-order, for the pictures and boxes).
 
     ``highlights``: [{position: <pdf_position dict>, color: <css string>,
     note: <str>, id: <highlight block id, optional>}]. Positions with no
@@ -603,16 +707,20 @@ def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=(),
     whole export. ``ink``: [{ink: <gamma.ink.InkFile>, note, id}], the
     handwriting groups, written as ``/Ink`` (``_ink_annotations``).
     ``text_boxes``: [{box: <normalized text_box>, content, page, id,
-    modified}], written as ``/FreeText`` (``_text_box_annotation``) under
-    the rest, as the page draws them under the ink, their references read
-    through ``resolve_ref`` (``text_box._paragraphs``). ``replaced``: the
-    ``imported_annot`` keys of text boxes imported from this PDF and still
-    embedded in it, whose originals leave the copy (``_drop_replaced``)
-    before anything is written, so the Gamma version stands alone.
-    ``zotero``: a copy for a Zotero RDF export, its highlights' and area
-    notes' alpha in ``/GammaAlpha`` instead of /CA (module docstring).
+    modified}], written as ``/FreeText`` (``_text_box_annotation``), their
+    references read through ``resolve_ref`` (``text_box._paragraphs``).
+    ``pictures``: [{picture: <normalized picture>, content, page, id,
+    modified}], written as ``/Stamp`` (``_picture_annotation``), their files
+    read from ``uploads_dir``, their captions' references through
+    ``resolve_ref`` too. ``replaced``: the ``imported_annot`` keys of text
+    boxes and pictures imported from this PDF and still embedded in it,
+    whose originals leave the copy (``_drop_replaced``) before anything is
+    written, so the Gamma version stands alone. ``zotero``: a copy for a
+    Zotero RDF export, its highlights' and area notes' alpha in
+    ``/GammaAlpha`` instead of /CA (module docstring).
     """
     from .pdf_glyphs import GlyphFonts
+    from .pdf_image import XObjectStore
     from .pdf_typeset import finalize_cid
 
     reader = ExportPdfReader(io.BytesIO(pdf_bytes))
@@ -620,33 +728,11 @@ def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=(),
     writer.append(reader)
     glyphs = GlyphFonts(writer)
     if replaced:
-        _drop_replaced(writer, set(replaced))
+        keys = set(replaced)
+        for pnum, page in enumerate(writer.pages, start=1):
+            _drop_replaced(page, pnum, keys)
 
     written = 0
-    for tb in text_boxes:
-        if not 1 <= tb["page"] <= len(writer.pages):
-            continue
-        crop, rotation = page_frame(writer.pages[tb["page"] - 1])
-        annot = _text_box_annotation(writer, glyphs, tb, rotation, crop, author, resolve_ref)
-        writer.add_annotation(page_number=tb["page"] - 1, annotation=annot)
-        written += 1
-    by_page: dict[int, list] = {}
-    for group in ink:
-        ink_file = group.get("ink")
-        page_num = ink_file.space.page if ink_file and ink_file.space.kind == "pdf-page" else None
-        if not page_num or page_num < 1 or page_num > len(writer.pages):
-            continue
-        crop, rotation = page_frame(writer.pages[page_num - 1])
-        by_page.setdefault(page_num - 1, []).extend(_ink_annotations(
-            ink_file, rotation, crop, group.get("note") or "", author, block_id=group.get("id") or ""))
-    # A page's annotations from every group on it go band 0 first (a stable
-    # sort: groups and buckets keep their order within a band), as the layers
-    # draw: /Ink has no blend mode, so the order alone keeps a later group's
-    # highlighter from painting over an earlier group's pen.
-    for page_index, annots in by_page.items():
-        for _, annot in sorted(annots, key=lambda pair: pair[0]):
-            writer.add_annotation(page_number=page_index, annotation=annot)
-            written += 1
     for h in highlights:
         pos = h.get("position") or {}
         page_num = pos.get("pageNumber")
@@ -666,6 +752,39 @@ def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=(),
             annot = _highlight_annotation(pdf_rects, color, h.get("note") or "", author, zotero)
         writer.add_annotation(page_number=page_num - 1, annotation=annot)
         written += 1
+    images = XObjectStore(writer, uploads_dir)
+    for pic in pictures:
+        if not 1 <= pic["page"] <= len(writer.pages):
+            continue
+        crop, rotation = page_frame(writer.pages[pic["page"] - 1])
+        annot = _picture_annotation(writer, images, pic, rotation, crop, author, resolve_ref)
+        if annot is not None:
+            writer.add_annotation(page_number=pic["page"] - 1, annotation=annot)
+            written += 1
+    for tb in text_boxes:
+        if not 1 <= tb["page"] <= len(writer.pages):
+            continue
+        crop, rotation = page_frame(writer.pages[tb["page"] - 1])
+        annot = _text_box_annotation(writer, glyphs, tb, rotation, crop, author, resolve_ref)
+        writer.add_annotation(page_number=tb["page"] - 1, annotation=annot)
+        written += 1
+    by_page: dict[int, list] = {}
+    for group in ink:
+        ink_file = group.get("ink")
+        page_num = ink_file.space.page if ink_file and ink_file.space.kind == "pdf-page" else None
+        if not page_num or page_num < 1 or page_num > len(writer.pages):
+            continue
+        crop, rotation = page_frame(writer.pages[page_num - 1])
+        by_page.setdefault(page_num - 1, []).extend(_ink_annotations(
+            writer, ink_file, rotation, crop, group.get("note") or "", author, block_id=group.get("id") or ""))
+    # A page's annotations from every group on it go band 0 first (a stable
+    # sort: groups and buckets keep their order within a band), as the layers
+    # draw: /Ink has no blend mode, so the order alone keeps a later group's
+    # highlighter from painting over an earlier group's pen.
+    for page_index, annots in by_page.items():
+        for _, annot in sorted(annots, key=lambda pair: pair[0]):
+            writer.add_annotation(page_number=page_index, annotation=annot)
+            written += 1
 
     glyphs.finalize()
     finalize_cid(writer)
@@ -674,12 +793,20 @@ def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=(),
     return out.getvalue(), written
 
 
-def page_with_ink(src, page_no: int, inks) -> tuple[bytes, int]:
+def page_with_ink(src, page_no: int, inks, *, pictures=(), text_boxes=(), replaced=(), uploads_dir=None,
+                  resolve_ref=None) -> tuple[bytes, int]:
     """Page ``page_no`` (1-based) of the PDF ``src`` (a path or bytes) on
-    its own, with the handwriting groups ``inks`` (``gamma.ink.InkFile``s
-    drawn on that page) stamped into its content (``_stamp_ink``), every
-    look as drawn → ``(pdf bytes, the source's page count)``; ``b""`` for a
-    page past the end. The agent's view_ink renders it (gamma/ink_view.py)."""
+    its own, as the page shows it: its pictures and text boxes
+    (``annotate_pdf``'s ``pictures`` from ``uploads_dir`` and
+    ``text_boxes``, those on this page) drawn into its content
+    (``_stamp_placed``), then the handwriting groups ``inks``
+    (``gamma.ink.InkFile``s drawn on that page) over them (``_stamp_ink``),
+    every look as drawn → ``(pdf bytes, the source's page count)``; ``b""``
+    for a page past the end. The originals of the boxes and pictures
+    imported from the file and still embedded in it (``replaced``, as for
+    ``annotate_pdf``) leave the copy first, so each is drawn once. The
+    agent's view_ink and its pictures of the page as the user sees it
+    render it (gamma/ink_view.py)."""
     reader = ExportPdfReader(io.BytesIO(src) if isinstance(src, (bytes, bytearray)) else str(src))
     pages = len(reader.pages)
     if not 1 <= page_no <= pages:
@@ -687,11 +814,39 @@ def page_with_ink(src, page_no: int, inks) -> tuple[bytes, int]:
     writer = PdfWriter()
     writer.add_page(reader.pages[page_no - 1])
     page = writer.pages[0]
+    if replaced:
+        _drop_replaced(page, page_no, set(replaced))
     crop, rotation = page_frame(page)
+    _stamp_placed(writer, page, [p for p in pictures if p["page"] == page_no],
+                  [b for b in text_boxes if b["page"] == page_no], rotation, crop, uploads_dir, resolve_ref)
     _stamp_ink(writer, page, inks, rotation, crop)
     out = io.BytesIO()
     writer.write(out)
     return out.getvalue(), pages
+
+
+def _stamp_placed(writer, page, pictures, text_boxes, rotation, crop, uploads_dir, resolve_ref) -> None:
+    """Draw ``pictures`` and then ``text_boxes`` over ``page``'s content as
+    the page shows them (``notebook.placed_ops``): one form XObject in the
+    display frame, mapped to user space through the page's view box and
+    rotation, which the page's content draws after its own
+    (``pdf_notes._stamp``). Nothing is drawn when there is nothing to draw,
+    or no picture's file can be read."""
+    from .notebook import placed_ops
+    from .pdf_glyphs import GlyphFonts
+    from .pdf_image import XObjectStore
+    from .pdf_notes import _form, _frame, _stamp, _stream
+    from .pdf_typeset import finalize_cid
+
+    (disp_w, disp_h), matrix = _frame(crop, rotation)
+    glyphs = GlyphFonts(writer)
+    ops, resources = placed_ops([p["picture"] for p in pictures], [(b["content"], b["box"]) for b in text_boxes],
+                                disp_w, XObjectStore(writer, uploads_dir), glyphs, resolve_ref)
+    if not ops:
+        return
+    _stamp(writer, page, _form(writer, ops, disp_w, disp_h, matrix, resources), writer._add_object(_stream(b"q\n")))
+    glyphs.finalize()
+    finalize_cid(writer)
 
 
 def _stamp_ink(writer, page, inks, rotation, crop) -> None:

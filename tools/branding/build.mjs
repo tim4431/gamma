@@ -120,8 +120,14 @@ if (check) {
     for (const [p, width, height, svg, transparent] of storeJobs) {
       emit(p, await renderPng(browser, svg, width, height, transparent), { source: 'tools/branding/store-layouts.mjs', variant: path.basename(p, '.png') });
     }
-    const hero = 'docs/assets/branding/gamma-hero-light';
-    emit(`${hero}.png`, await renderPng(browser, read(`${hero}.svg`).toString(), 1920, 1080, false), { source: `${hero}.svg`, variant: 'light' });
+    // A composition with `png` (width, height) is also rendered at that size
+    // beside its SVG: opaque for the scenes, transparent for the logo.
+    for (const entry of manifest.filter(entry => entry.png)) {
+      const [width, height] = entry.png;
+      const svg = read(entry.destination).toString()
+        .replace(/(<svg\b[^>]*?)\swidth="[^"]*"\s+height="[^"]*"/, `$1 width="${width}" height="${height}"`);
+      emit(entry.destination.replace(/\.svg$/, '.png'), await renderPng(browser, svg, width, height, entry.kind === 'logo'), { source: entry.destination, variant: entry.theme });
+    }
   } finally { await browser.close(); }
   fs.writeFileSync(lockPath, JSON.stringify({ inputs: inputs(), outputs }, null, 2) + '\n');
   console.log(`Generated ${Object.keys(outputs).length} brand outputs. Run node tools/branding/build.mjs --check to verify.`);

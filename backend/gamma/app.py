@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Response
 
 from . import backup_schedule, cloud_auth, cloud_sync, comments, config, db_maintenance, email_invites, guests, hosted
 from . import inbox, jobs, migrations, offsite, sync_engine, trash, upload_gc, version, workspaces, ws_backup
+from . import zotero_stream
 from .publish import check_config as check_publish_config
 from .auth import session_middleware
 from .compression import JsonGzip
@@ -56,9 +57,12 @@ from .routers import (
     shares,
     sync,
     trash as trash_router,
+    translate,
     uploads,
     workspaces as workspaces_router,
-    ws_backups, cloud_auth as cloud_auth_router)
+    ws_backups, cloud_auth as cloud_auth_router,
+    zotero as zotero_router,
+    zotero_sync as zotero_sync_router)
 from . import folder_links
 from .routers import folder_links as folder_links_api
 from .seed import ensure_admin_seed
@@ -314,6 +318,19 @@ async def every(seconds, fn, failed: str):
         await task
 
 
+@asynccontextmanager
+async def zotero_live():
+    """While the app runs: Zotero's streaming API (gamma/zotero_stream.py),
+    which starts the rounds of Live Zotero links as soon as their library
+    changes. Off with the sync loops (``GAMMA_SYNC_INTERVAL=0``); the links
+    keep in step without it, at their safety poll."""
+    zotero_stream.start()
+    try:
+        yield
+    finally:
+        await asyncio.to_thread(zotero_stream.stop)
+
+
 def create_app() -> FastAPI:
     setup_logging()
     _silence_windows_connection_reset()
@@ -347,7 +364,8 @@ def create_app() -> FastAPI:
                 every(offsite.wait_s, offsite.tick, "[offsite] round failed"), \
                 every(folder_links.TICK_S, folder_links.tick, "[folders] round failed"), \
                 every(workspaces.LEFTOVERS_EVERY_S, workspaces.remove_leftovers,
-                      "[workspaces] leftover sweep failed"):
+                      "[workspaces] leftover sweep failed"), \
+                zotero_live():
             with migrations.warming():  # the workspaces still behind on their steps, one by one
                 yield state
 
@@ -386,6 +404,7 @@ def create_app() -> FastAPI:
     app.include_router(backup_tasks.router)
     app.include_router(jobs_router.router)
     app.include_router(ai.router)
+    app.include_router(translate.router)
     app.include_router(ai_handoffs.router)
     app.include_router(chats.router)
     app.include_router(chats.history_router)
@@ -418,6 +437,8 @@ def create_app() -> FastAPI:
     app.include_router(mirrors.router)
     app.include_router(folder_links_api.router)
     app.include_router(publish.router)
+    app.include_router(zotero_router.router)
+    app.include_router(zotero_sync_router.router)  # importing it registers the Zotero link's clock
 
     # Serve the built frontend (SPA) when GAMMA_STATIC_DIR is set.
     # Registered last so all /api routes take precedence.

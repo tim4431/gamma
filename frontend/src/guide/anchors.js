@@ -72,6 +72,7 @@ export const ANCHORS = {
   "viewer.fullscreen": { view: "viewer", description: "Full screen, bottom-left" },
   "viewer.translate": { view: "translatable pdf", description: "Translate this page; right-click or long-press for the whole document and options" },
   "viewer.selectMode": { view: "touch pdf", description: "On a touch screen: whether a drag selects text or draws a box" },
+  "viewer.highlighter": { view: "editable pdf", description: "The text highlighter: on, a selection is highlighted at once in the colour used last; right-click or long-press for the colour" },
   "viewer.outline": { view: "pdf with an outline", description: "The PDF's table of contents, top-left, when the PDF carries one" },
   "viewer.paper": { view: "notebook view", description: "The notebook view's paper button: size, pattern and colour of the page in view" },
   "viewer.notesView": { view: "notebook view", description: "Back to the notes view: the same pages among the notes" },

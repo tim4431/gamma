@@ -4,8 +4,9 @@
 // Import and Manage — a dialog with rename, storage, members and roles
 // (shared), Make default (personal), Leave, Delete. Plus your account's
 // storage meter, New workspace (a personal one), Export all and, last, the
-// clones of workspaces on other Gamma servers (MirrorsSection in
-// SettingsMirrors.jsx). GUI for /api/workspaces* (docs/dev/workspaces.md).
+// clones of workspaces on other Gamma servers and the workspaces linked to
+// a Zotero library (MirrorsSection in SettingsMirrors.jsx), which Personal
+// leaves out. GUI for /api/workspaces* (docs/dev/workspaces.md).
 //
 // The dialog (ManageWorkspaceDialog) is shared with the admin's Server pane
 // (SettingsWorkspacesAdmin.jsx), which adds access, quota, ownership, kind
@@ -20,7 +21,7 @@ import React from "react";
 import { API, apiJson, fmtBytes } from "../shared/lib/utils";
 import { ActionMenu, MenuSelect } from "../shared/ui/Menus";
 import { PaneHead, Section, Row, SubDialog, Field, DialogButtons, Empty, QuotaMeter, UnitInput, AccountPicker, PersonRow, Segmented, WorkspaceFolder } from "./SettingsKit";
-import { MirrorsSection, useMirrors } from "./SettingsMirrors";
+import { MirrorsSection, useMirrors, useZoteroLinks } from "./SettingsMirrors";
 import { useSettingsRead } from "./settingsReads.js";
 import { parseStamp } from "../library/libraryUtils";
 import {
@@ -633,7 +634,7 @@ export function WorkspaceDataMenus({ w, exportWorkspace, importWorkspace, closeS
   return <ActionMenu label={t("Data")} icon={DatabaseIcon} items={items} />;
 }
 
-export function WorkspacesSettings({ value, onServer }) {
+export function WorkspacesSettings({ value, onServer, onAccount }) {
   const { workspace, me, isAdmin, switchWorkspace, refreshSession,
           exportWorkspace, exportAll, importWorkspace, setStatus, confirm, closeSettings } = value;
   // GET /api/workspaces/mine: {workspaces, account}, the pane's read (settingsReads.js)
@@ -648,15 +649,16 @@ export function WorkspacesSettings({ value, onServer }) {
   const currentId = workspace?.id;
   const signedIn = !!me && me !== "guest";
   const [mirrors, refreshMirrors] = useMirrors(signedIn);
+  const [links, refreshLinks] = useZoteroLinks(signedIn);
 
   const refresh = React.useCallback(() => {
     reload().then(() => setError(""), (err) => setError(err.message));
   }, [reload]);
-  // A new clone is also a new workspace: read both lists again.
-  const refreshClones = React.useCallback(() => { refreshMirrors(); refresh(); }, [refreshMirrors, refresh]);
+  // A new clone or link is also a new workspace: read the lists again.
+  const refreshClones = React.useCallback(() => { refreshMirrors(); refreshLinks(); refresh(); }, [refreshMirrors, refreshLinks, refresh]);
 
   const all = data?.workspaces || [];
-  const personal = all.filter((w) => w.personal && !w.mirror_of);  // clones have their own section, last
+  const personal = all.filter((w) => w.personal && !w.mirror_of && !w.zotero_of);  // clones and links have their own section, last
   const shared = all.filter((w) => !w.personal);
 
   async function submitCreate(name) {
@@ -774,8 +776,9 @@ export function WorkspacesSettings({ value, onServer }) {
             )}
           </Section>
           {signedIn ? (
-            <MirrorsSection mirrors={mirrors} refresh={refreshClones} workspaces={all} currentId={currentId}
-              switchWorkspace={switchWorkspace} closeSettings={closeSettings} confirm={confirm} setStatus={setStatus} />
+            <MirrorsSection mirrors={mirrors} links={links} refresh={refreshClones} workspaces={all} currentId={currentId}
+              switchWorkspace={switchWorkspace} closeSettings={closeSettings} confirm={confirm} setStatus={setStatus} onAccount={onAccount}
+              refreshSession={refreshSession} />
           ) : null}
         </>
       ) : null}

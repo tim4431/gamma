@@ -40,11 +40,33 @@ comments.py        comments: threads on a note, a page or a highlight, following
 inbox.py           each account's Inbox: mentions, replies, resolves, shares, invitations and requests to join, settled when read (docs/dev/comments.md)
 sync_tree.py       a page's tree as a flat snapshot, and the ops between two (the mirror's pure half)
 sync_engine.py     mirrors: a local workspace kept in step with one on another Gamma server (docs/dev/mirror.md)
+sync_clock.py      the sync engines' clock: when each linked workspace gets a round, and their users.db rows (LinkTable)
 publish.py         publishing a page to the free share host (docs/dev/mirror.md "Publishing")
+zotero_sync.py     Zotero links: a personal workspace kept in step with a Zotero library (docs/dev/zotero_sync.md): the registry, the round, conflicts, the clock
+zotero_sync_rows.py    what the engine's parts share: the link's row, the round's state, pages.db rows, conflict rows and log lines
+zotero_sync_reads.py   what a round's units read of both sides: a page, the projections compared, Zotero's objects read ahead
+zotero_sync_items.py   an item's unit: the record, tags, collections and trash, with its page
+zotero_sync_pdfs.py    an item's PDF and a file's own unit: downloads, uploads, kept copies, Zotero's full storage
+zotero_sync_blocks.py  an item's notes and annotations, riding on its unit
+zotero_sync_pages.py   a Gamma page's unit: a paper made an item, a standalone PDF given a parent item
+zotero_sync_folders.py collections ↔ folders, one pass before the units
+zotero_sync_gone.py    the items Zotero removed for good
+zotero_sync_first.py   a first link's pairs of pages and items, and the link dialog's preview of them
+zotero_sync_resolve.py the field and file conflicts' resolvers
+zotero_merge.py    the link's pure decisions: projections, the two bases field by field, note regions, matching
+zotero_local.py    the link's writes to Gamma, through the op path as actor and client "zotero"
+zotero_remote.py   the link's Zotero side of a round: listings into the queue, batched writes, file transfers
+zotero_annotations.py  Zotero annotation items and Gamma's annotation blocks, both ways: positions, colours, comments, ink
+zotero_stream.py   Zotero's streaming API: a Live link's round as soon as its library changes
+zotero_web.py      Zotero's Web API: the transport and the client a Zotero link syncs through (docs/dev/zotero_sync.md)
+zotero_account.py  the Zotero account an account connected: its API key, sealed
+zotero_oauth.py    connecting a Zotero account by signing in at zotero.org (OAuth 1.0a)
+zotero_fields.py   Zotero item fields and Gamma's paper record, both ways
+zotero_schema.json Zotero's item types and their fields (api.zotero.org/schema), which zotero_fields.py reads
 
 # Annotations, files and search
 highlights.py      a block's place on a PDF page: the pdf_position shape (highlights, link regions, ink)
-highlight_relocate.py  the highlights of a replaced PDF found again by their text and moved, exactly or roughly (dashed, to review) (docs/dev/highlight_relocation.md)
+highlight_relocate.py  the highlights of a replaced PDF found again by their text and moved, exactly or roughly (dashed, to review), or left lost with their closest match (docs/dev/highlight_relocation.md)
 text_box.py        text boxes: typed text on a PDF page or a sheet of paper (docs/dev/text_boxes.md)
 storage.py         uploads (content-addressed, written atomically) + the upload-reference grammar
 upload_parts.py    a PDF's upload in parts: the sessions, the parts appended and hashed, stored by a rename
@@ -88,6 +110,8 @@ search_services.py the services behind the agent's web search (search_web)
 paper_links.py     the links on a web page that may lead to a paper's full text, ranked
 fetch_handoff.py   fetches handed to the user's browser when a paper is behind a wall
 publisher_sessions.py  publisher cookies the Connector imports, stored encrypted
+translate.py       the PDF translated view's paragraph cache: a translation's key, the in-memory LRU, one request's texts against it and the kept ones
+translate_store.py the kept translations and briefs of stored papers, in the workspace's data.db
 translate_engines.py  machine translation for the PDF's translated view (Microsoft, Google, Youdao)
 
 # Assistants (MCP)
@@ -97,7 +121,9 @@ mcp_oauth*.py      browser consent for MCP clients; mcp_lazy.py loads the option
 # Import and export
 logseq_*.py        Logseq: PDF-highlight importers (EDN / Markdown), a page as a Logseq file graph
 markdown_*.py      Markdown import (one document, or a zip: Notion, Obsidian, Gamma's own) and export
-zotero_*.py        Zotero RDF library import and export
+zotero_import.py   Zotero RDF library import
+zotero_export.py   Zotero RDF library export
+zotero_notes.py    a Zotero note's HTML and a block tree, both ways
 notability*.py     Notability notes: the plists and the .ntb's FlatBuffers log read behind guards, a note's model, its place in Gamma, the import and the export
 goodnotes*.py      GoodNotes notebooks: protobuf, Apple LZ4 and tpl read behind guards, a notebook's model, its place in Gamma, the import
 note_app_import.py what the Notability and GoodNotes imports share: the run over an upload, the commit, the storing of a note's files

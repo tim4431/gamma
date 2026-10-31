@@ -17,16 +17,91 @@
 // scrolls nothing; a press that leaves a box early ends where it is let
 // go; a stylus uses a box's handle, band and editor; a box over a PDF link
 // takes its own clicks. The same on a sheet in the notebook view and in
-// the notes view. Last, two people on one box: a move made while the other
-// types survives the typing, and its undo. The rules behind it are
-// frontend/tests/textBox.test.mjs, blockHistory.test.mjs,
-// collabSession.test.mjs and backend/tests/test_text_box.py,
-// test_text_box_merge.py.
+// the notes view. Then two people on one box: a move made while the other
+// types survives the typing, and its undo. Last, a Zotero box breaks its
+// lines where Zotero's reader does, at two zooms. The rules behind it are
+// frontend/tests/textBox.test.mjs, textBoxShown.test.mjs,
+// blockHistory.test.mjs, collabSession.test.mjs and
+// backend/tests/test_text_box.py, test_text_box_merge.py.
+import { readFileSync } from "node:fs";
 import { normalizePaper } from "../../../src/notebook/notebook.js";
 import { closeEditor } from "./notes.mjs";
 import { waitForPdf } from "./pdf.mjs";
 
 const TEXT = "Hello **bold**\nsecond line";
+
+// Zotero's reader draws a text annotation as a <textarea> over the page,
+// styled by the .textAnnotation rule of its pdfjs/viewer.css (verbatim
+// here) in the reader body's font stack (tests/shared/textbox.json
+// zotero_font), and measures one as text-annotation.js measureHeight
+// does: its scrollHeight at the rect's width, which here is divided by a
+// one-line textarea's. The UA values a textarea resets are spelt out, so
+// the page's own styles cannot reach the reference.
+const ZOTERO_TEXTAREA = "background-color: transparent; border: none; box-sizing: border-box; margin: 0; outline: none; "
+  + "padding: 0; pointer-events: none; word-break: break-word; cursor: text; resize: none; overflow: hidden;";
+const TEXTAREA_UA = "white-space: pre-wrap; line-height: normal; font-weight: 400; font-style: normal; letter-spacing: normal; "
+  + "word-spacing: normal; text-indent: 0; text-transform: none; text-align: start;";
+const SHARED = new URL("../../../../tests/shared/", import.meta.url);
+export const ZOTERO_TEXT = JSON.parse(readFileSync(new URL("zoterotext.json", SHARED), "utf8"));
+const ZOTERO_FONT = JSON.parse(readFileSync(new URL("textbox.json", SHARED), "utf8")).zotero_font;
+
+// Each case {id, text, w, size} on PDF page `surface`, `widthPt` points
+// wide, as the page shows it and as Zotero's reader would: {k (css px per
+// point), out: {[id]: {lines, starts, ref, refStarts}}}. A box's lines are
+// the distinct tops of its characters' client rects (a blank line's
+// no-break space counts) and its starts the word each line begins with;
+// `ref` is the reference textarea's lines at the box's width and size,
+// `refStarts` those of a pre-wrap div styled as it.
+export function zoteroLines(page, surface, widthPt, cases) {
+  return page.evaluate(({ surface, widthPt, cases, css, font }) => {
+    const layer = document.querySelector(`[data-page="${surface}"] .textBoxLayer`);
+    const k = layer.getBoundingClientRect().width / widthPt;
+    const space = (c) => c === " " || c === "\n" || c === "\t" || c === "\r";
+    const range = document.createRange();
+    const starts = (root) => {
+      const out = [];
+      let top = -Infinity;
+      const walk = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+      for (let n = walk.nextNode(); n; n = walk.nextNode()) {
+        for (let i = 0; i < n.data.length; i++) {
+          if (space(n.data[i])) continue;
+          range.setStart(n, i);
+          range.setEnd(n, i + 1);
+          const r = range.getClientRects()[0];
+          if (!r) continue;
+          if (r.top > top + r.height / 2) {
+            let j = i;
+            while (j < n.data.length && !space(n.data[j])) j++;
+            out.push(n.data.slice(i, j));
+          }
+          top = Math.max(top, r.top);
+        }
+      }
+      return out;
+    };
+    const made = (tag, w, size) => {
+      const el = document.createElement(tag);
+      el.style.cssText = `${css} position: absolute; left: 0; top: 0; visibility: hidden; font-family: ${font}; `
+        + `font-size: ${size * k}px; width: ${w * k}px;${tag === "textarea" ? ` height: ${size * k}px;` : ""}`;
+      document.body.append(el);
+      return el;
+    };
+    const out = {};
+    for (const c of cases) {
+      const ta = made("textarea", c.w, c.size), one = made("textarea", c.w, c.size), twin = made("div", c.w, c.size);
+      ta.value = c.text;
+      one.value = "A";
+      twin.textContent = c.text;
+      const ref = Math.round(ta.scrollHeight / one.scrollHeight), refStarts = starts(twin);
+      ta.remove();
+      one.remove();
+      twin.remove();
+      const shown = starts(document.querySelector(`[data-box-id="${c.id}"] .textBoxText`));
+      out[c.id] = { lines: shown.length, starts: shown, ref, refStarts };
+    }
+    return { k, out };
+  }, { surface, widthPt, cases, css: `${ZOTERO_TEXTAREA} ${TEXTAREA_UA}`, font: ZOTERO_FONT });
+}
 
 // A one-page Letter PDF whose link annotation covers x 72..400, y 232..292
 // pt from the top.
@@ -51,8 +126,8 @@ function linkPdf() {
 }
 
 // A stylus on the page, through the DevTools protocol (Chromium's pen): a
-// press at x0, y0 moved to x1, y1 and let go.
-function stylus(cdp) {
+// press at x0, y0 moved to x1, y1 and let go. pictures.mjs drives one too.
+export function stylus(cdp) {
   const send = (type, x, y, buttons) => cdp.send("Input.dispatchMouseEvent", {
     type, x, y, button: type === "mouseMoved" ? "none" : "left", buttons, clickCount: type === "mouseMoved" ? 0 : 1, pointerType: "pen",
   });
@@ -823,5 +898,114 @@ export async function textBoxScenarios({ server, browser, alice, bob, makePdf, s
     assertNoProblems(B, [/ERR_INTERNET_DISCONNECTED|Failed to fetch|WebSocket|net::ERR/]);
     await ctxA.close();
     await ctxB.close();
+  });
+
+  // --- Zotero boxes ------------------------------------------------------------------
+
+  // The boxes of tests/shared/zoterotext.json on its 607.54 × 810 page, as
+  // Zotero boxes and as Gamma boxes of the same numbers, two with blank
+  // lines, and a sweep of sentences, widths and sizes as Zotero boxes: each
+  // Zotero box shows the lines Zotero's textarea shows at its rect, at 100%
+  // and at 150%. The reference resolves the same font stack as the box on
+  // the machine that runs it, so this holds wherever it runs; the counts
+  // of the user's two annotations are pinned where the face is Segoe UI.
+  await step("text box: a Zotero box wraps as Zotero's reader, at 100% and 150% and over a sweep; a Gamma box of the same numbers keeps its padding", async () => {
+    const W = 607.54, H = 810;
+    const up = await account.upload("/api/uploads", makePdf([{ box: [W, H], lines: ["Zotero boxes"] }]), "zotero-boxes.pdf", "application/pdf");
+    const paper = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Zotero boxes", source_url: up.source_url } });
+    const ops = [], cases = [];
+    const add = (id, content, text_box, text = content) => {
+      ops.push({ op: "insert", id, parent: paper.id, content, props: { text_box, pdf_page: 1 } });
+      cases.push({ id, text, w: text_box.w, size: text_box.size, zotero: !!text_box.zotero });
+    };
+    ZOTERO_TEXT.items.forEach((item, i) => {
+      add(`zItem${i}`, item.content, item.box, item.data.annotationComment);
+      const { zotero, ...gamma } = item.box;
+      add(`gItem${i}`, item.content, gamma, item.data.annotationComment);
+    });
+    const blank = { x: 300, y: 300, w: 90, h: 40, auto: false, size: 12, color: "#1f1f1f", bg: null };
+    add("zGap1", "a\n\nb", { ...blank, zotero: true });
+    add("zGap2", "a\n\n\nb", { ...blank, y: 380, zotero: true });
+    add("gGap1", "a\n\nb", { ...blank, y: 460 });
+    // Each as Zotero shows the text it is sent: a bare URL as its text, no
+    // blank line at either end, a line of a full-width space blank.
+    add("zLink", "see https://arxiv.org/abs/2401.12345 for details", { ...blank, y: 540, w: 130, zotero: true });
+    add("zEnds", "\na\n\n", { ...blank, y: 600, zotero: true }, "a");
+    add("zWide", "a\n\u3000\nb", { ...blank, y: 640, zotero: true }, "a\n\nb");
+    const SENTENCES = ["from zotero online edit", "some tests", "The quick brown fox jumps over the lazy dog",
+      "surface code threshold is about one percent per operation", "Check the stabilizer measurement schedule against Fig. 3",
+      "This assumes a depolarizing noise model with equal rates", "Logical qubits are encoded in the topology of the lattice",
+      "Why does the distance scale like this? Compare with Ref. 12", "magic state distillation costs dominate the overhead",
+      "note to self: reread section IV before the group meeting"];
+    const sweep = [];
+    for (const size of [10, 14]) {
+      for (const [s, text] of SENTENCES.entries()) {
+        for (let w = 40; w <= 300; w += 13) {
+          const id = `zSweep${size}_${s}_${w}`;
+          add(id, text, { x: 10, y: 10 + (sweep.length % 400) * 1.9, w, h: 20, auto: false, size, color: "#1f1f1f", bg: null, zotero: true });
+          sweep.push(id);
+        }
+      }
+    }
+    for (let i = 0; i < ops.length; i += 200) {
+      await account.api(`/api/pages/${paper.id}/ops`, { method: "POST", body: { client: "e2e", ops: ops.slice(i, i + 200) } });
+    }
+    ctx = await account.context(browser);
+    page = await openPage(ctx, `${server.base}/?page=${paper.id}&ws=${account.ws}`);
+    await waitForPdf(page, 1);
+    await until(async () => (await page.$$('[data-page="1"] .textBox')).length === cases.length, { what: "every box on the page", timeout: 30000 });
+    const body = await page.locator('[data-box-id="zItem0"] .textBoxBody').evaluate((el) => {
+      const s = getComputedStyle(el);
+      return { padding: s.padding, lineHeight: s.lineHeight, family: s.fontFamily, zotero: el.parentElement.classList.contains("zotero") };
+    });
+    assert(body.zotero, "a Zotero box has the class");
+    assertEq(body.padding, "0px", "a Zotero box has no padding");
+    assertEq(body.lineHeight, "normal", "and the font's own line height");
+    assert(body.family.startsWith("-apple-system"), `in the reader's font stack (${body.family})`);
+    assert(!(await page.$('[data-box-id="gItem0"].zotero')), "a Gamma box is not a Zotero box");
+    assert(!(await page.$('[data-box-id="zLink"] a')), "a bare URL in a Zotero box is no link chip");
+    const k = () => page.locator('[data-page="1"] .textBoxLayer').evaluate((el, w) => el.getBoundingClientRect().width / w, W);
+    // 100%: the zoom buttons step by 20%
+    for (let i = 0; i < 12 && Math.abs(await k() - 1) > 0.005; i++) {
+      const before = await k();
+      await page.getByRole("button", { name: before > 1 ? "Zoom out" : "Zoom in", exact: true }).click();
+      await until(async () => Math.abs(await k() - before) > 0.005, { what: "the zoom changed" });
+    }
+    const check = async (zoom) => {
+      const { k: at, out } = await zoteroLines(page, 1, W, cases);
+      assert(Math.abs(at - zoom) < 0.01, `at ${zoom * 100}% (${at} css px a point)`);
+      const lines = (id) => out[id].lines;
+      ZOTERO_TEXT.items.forEach((item, i) => {
+        assertEq(lines(`zItem${i}`), out[`zItem${i}`].ref, `${item.data.key} at ${zoom * 100}%: the lines Zotero's reader shows (${out[`zItem${i}`].starts})`);
+        assertEq(lines(`gItem${i}`), ZOTERO_TEXT.layout[i].gamma.rows.length, `${item.data.key} as a Gamma box at ${zoom * 100}%: inside its padding`);
+      });
+      if (process.platform === "win32") {
+        assertEq(ZOTERO_TEXT.items.map((_, i) => lines(`zItem${i}`)).join(), "2,1,1", "in Segoe UI: 'from zotero' / 'online edit', 'some tests', 'from gamma'");
+      }
+      assertEq(`${lines("zGap1")}/${lines("zGap2")}`, `${out.zGap1.ref}/${out.zGap2.ref}`, "a blank line is a line, as in Zotero");
+      assertEq(`${lines("zGap1")}/${lines("zGap2")}/${lines("gGap1")}`, "3/4/2", "and a Gamma box's blank line none");
+      assertEq(["zLink", "zEnds", "zWide"].map(lines).join("/"), ["zLink", "zEnds", "zWide"].map((id) => out[id].ref).join("/"),
+        "a URL, blank lines at the ends and a full-width space's line, as Zotero shows what it is sent");
+      assertEq(`${lines("zEnds")}/${lines("zWide")}`, "1/3", "the ends dropped, the full-width space's line one line");
+      assert(sweep.some((id) => out[id].ref === 1) && sweep.some((id) => out[id].ref >= 4), "the sweep wraps from one line to many");
+      const off = sweep.filter((id) => out[id].lines !== out[id].ref || out[id].starts.join(" ") !== out[id].refStarts.join(" "));
+      assert(!off.length, `${off.length} of ${sweep.length} sweep boxes break unlike Zotero's at ${zoom * 100}%: ${off.slice(0, 5)
+        .map((id) => `${id} ${JSON.stringify(out[id].starts)} against ${JSON.stringify(out[id].refStarts)} (${out[id].ref})`).join("; ")}`);
+    };
+    await check(1);
+    // 150%: Ctrl + wheel zooms by e^(-deltaY · 0.0015) (shared/lib/viewerZoom.js)
+    const v = await page.locator(".pdfViewer").boundingBox();
+    await page.mouse.move(v.x + v.width / 2, v.y + v.height / 2);
+    await page.keyboard.down("Control");
+    await page.mouse.wheel(0, -Math.log(1.5) / 0.0015);
+    await page.keyboard.up("Control");
+    await until(async () => Math.abs(await k() - 1.5) < 0.01, { what: "the page at 150%" });
+    await check(1.5);
+    await shot("textbox-zotero");
+    // nothing measured back: the page only showed the boxes
+    const kept = boxesIn((await subtree(paper.id)).children).find((b) => b.id === "zItem0").properties.text_box;
+    for (const key of ["x", "y", "w", "h", "auto", "zotero"]) assertEq(kept[key], ZOTERO_TEXT.items[0].box[key], `the box's ${key} as stored`);
+    assertNoProblems(page);
+    await ctx.close();
   });
 }

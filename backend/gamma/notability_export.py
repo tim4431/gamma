@@ -38,15 +38,18 @@ from .ai_pictures import sniff
 from .notebook import DEFAULT_PAPER, normalize_paper, sheets_of
 from .pdf_export import ExportPdfReader, display_size, page_frame
 from .pdf_typeset import BOLD, ITALIC, LINK, MARK, MONO, STRIKE, UNDERLINE
-from .text_box import PAD, box_page, normalize_text_box
+from .picture import MIN_SIDE, URL_RE, caption_text, image_size, is_picture, normalize_picture, picture_page
+from .text_box import PAD, box_page, normalize_text_box, plain_text
 
 PRIVATE_FORMAT = "gamma-notability"
 PRIVATE_VERSION = 1
 MARK_RGBA = (1.0, 0.93, 0.55, 1.0)       # a ==mark==, as the notes PDF paints one
 STICKY_EDGE = nmap.STICKY_EDGE
 _DASH_CODES = {name: code for code, name in nb.DASH_PATTERNS.items()}
+_IMAGE_EXTS = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}
 _PICTURE = re.compile(r"^!\[(?P<alt>[^\]]*)\]\(\s*/api/uploads/(?P<name>[0-9A-Za-z_-]+\.(?:png|jpe?g|gif|webp))\s*\)$",
                       re.I)
+_ALT_WIDTH = re.compile(r"(?P<alt>.*?)\|\d+(?:x\d+)?")  # an Obsidian size ending the alt text, as the editor reads it
 _LIST_ITEM = re.compile(r"^(?P<lead>[ \t]*)(?P<marker>[-*+]|\d{1,9}[.)])[ \t]+"
                         r"(?:\[(?P<box>[ xX])\][ \t]+)?(?P<text>.*)$")
 _HEADING = re.compile(r"^[ \t]{0,3}#{1,6}[ \t]+(?P<text>.*)$")
@@ -62,6 +65,7 @@ LEFT_OUT = {
     "pdf sheet": ("{n} sheet of paper on a PDF page is left out", "{n} sheets of paper on a PDF page are left out"),
     "nowhere": ("{n} group of handwriting is on no page and is left out",
                 "{n} groups of handwriting are on no page and are left out"),
+    "picture nowhere": ("{n} picture is on no page and is left out", "{n} pictures are on no page and are left out"),
     "missing": ("{n} file of the page is missing on the server and is left out",
                 "{n} files of the page are missing on the server and are left out"),
     "recording": ("{n} recording is not an .m4a file (Notability plays only those) and is left out",
@@ -193,8 +197,9 @@ class _Page:
             surfaces = self._sheets(sheets, title, created)
         draft = self.draft
         draft.modified = _stamp(self.root.get("updated_at"))
-        inks = {}   # surface index → [InkFile] in block order
-        boxes = {}  # surface index → [block]
+        inks = {}      # surface index → [InkFile] in block order
+        pictures = {}  # surface index → [block]
+        boxes = {}     # surface index → [block]
         notes = []  # (block, its depth among the notes) of the flow
         depths: dict[str, int] = {}  # a note's depth among the notes: its parent's + 1 under a note, else 0
         hidden: set[str] = set()  # blocks left out with what holds them
@@ -232,6 +237,15 @@ class _Page:
                     inks.setdefault(surface, []).append(ink)
                     self._markup_here(doc_id)
                 continue
+            if is_picture(p):  # also while the kind column is older than pictures
+                surface = on_sheet.get(b["id"]) if not doc_id else (
+                    page - 1 if (page := picture_page(p)) and page <= len(surfaces) else None)
+                if surface is None:
+                    self.left_out["picture nowhere"] += 1
+                else:
+                    pictures.setdefault(surface, []).append(b)
+                    self._markup_here(doc_id)
+                continue
             if kind == "text_box":
                 surface = on_sheet.get(b["id"]) if not doc_id else (
                     page - 1 if (page := box_page(p, on_sheet=False)) and page <= len(surfaces) else None)
@@ -244,8 +258,10 @@ class _Page:
             notes.append((b, depths[b["id"]]))
             if not depths[b["id"]]:
                 self.order.append("note")
-        for n, frame in enumerate(surfaces):
+        for n, frame in enumerate(surfaces):  # a surface's pictures under its boxes, as the screen draws them
             self._ink(inks.get(n, []), frame)
+            for b in pictures.get(n, []):
+                self._picture_block(b, frame)
             for b in boxes.get(n, []):
                 self._box(b, frame)
         self._flow(notes)
@@ -253,8 +269,8 @@ class _Page:
         return draft
 
     def _markup_here(self, doc_id) -> None:
-        """A PDF page's handwriting and boxes come back together, where the
-        first of them was among the page's notes and recordings."""
+        """A PDF page's handwriting, boxes and pictures come back together,
+        where the first of them was among the page's notes and recordings."""
         if doc_id and "markup" not in self.order:
             self.order.append("markup")
 
@@ -376,59 +392,98 @@ class _Page:
         box = normalize_text_box((b.get("properties") or {}).get("text_box"))
         content = b.get("content") or ""
         k = frame.k
-        uuid = nw.new_uuid()
-        picture = _PICTURE.match(content.strip())
-        if picture and self._picture(picture, box, frame, uuid):
+        match = _PICTURE.match(content.strip())
+        if match and self._boxed_picture(match, box, frame):
             return
         size = box["size"] / k
         rgba = inkmod.parse_color(box["color"])
         runs = box_runs(content, size, rgba, self.resolve_ref)
+        uuid = nw.new_uuid()
         self.draft.media.append(nw.TextBox(
             x=box["x"] / k + frame.ox, y=box["y"] / k + frame.oy, w=box["w"] / k, h=box["h"] / k, runs=runs,
             background=inkmod.parse_color(box["bg"]) if box["bg"] else None, z=len(self.draft.media), uuid=uuid))
         self.private["boxes"][uuid.hex()] = {"content": content, "text_box": box,
                                              "text": "".join(r.text for r in runs)}
 
-    def _picture(self, match, box: dict, frame, uuid: bytes) -> bool:
-        """A box holding one uploaded picture as a picture in the frame the
-        import grows into the box (``nmap.picture_box``): the box less its
-        padding, as tall as the picture shown that wide. False when its
-        file cannot be read (the box is then written as text)."""
-        path = self.uploads / match.group("name")
-        try:
-            data = path.read_bytes()
-            with Image.open(io.BytesIO(data)) as image:
-                shown = image.size  # as shown: an EXIF quarter turn swaps its sides, as the import reads it
-                if (image.getexif() or {}).get(0x0112, 1) in (5, 6, 7, 8):
-                    shown = shown[1], shown[0]
-                still = None
-                if sniff(data) == "image/gif":
-                    out = io.BytesIO()
-                    image.seek(0)
-                    image.convert("RGBA").save(out, "PNG")
-                    still = out.getvalue()
-        except (OSError, ValueError, Image.DecompressionBombError, SyntaxError):
+    def _boxed_picture(self, match, box: dict, frame) -> bool:
+        """A box holding one uploaded picture, as imports made one before a
+        picture was a block of its own: a picture in the box less its
+        padding, as tall as the picture shown that wide, its alt text the
+        caption without the Obsidian size the width grip ends it with
+        (``![alt|300](url)``). False when its file cannot be read (the box
+        is then written as text)."""
+        url = f"/api/uploads/{match.group('name')}"
+        image = self._image(url) if URL_RE.match(url) else None
+        if image is None:
             self.left_out["missing"] += 1
             return False
-        k = frame.k
-        w = max(1.0, box["w"] - 2 * PAD)
-        h = w * shown[1] / shown[0]
-        n = sum(1 for m in self.draft.media if isinstance(m, nw.Picture)) + 1
-        kind = sniff(data)
-        if still is not None:  # an animated GIF: its still frame in Images/, its animation an asset
-            image_name, asset = f"Images/Image {n}.png", str(uuidlib.uuid4()).upper()
-            self.draft.files[image_name] = still
-            self.draft.files[f"Assets/{asset}/media.gif"] = data
-        else:
-            ext = {"image/png": ".png", "image/jpeg": ".jpg", "image/webp": ".webp"}.get(kind, ".png")
-            image_name, asset = f"Images/Image {n}{ext}", None
-            self.draft.files[image_name] = path
-        self.draft.media.append(nw.Picture(
-            x=(box["x"] + PAD) / k + frame.ox, y=(box["y"] + PAD) / k + frame.oy, w=w / k, h=h / k,
-            image=image_name, pixels=shown, jpeg=kind == "image/jpeg", gif=asset,
-            z=len(self.draft.media), uuid=uuid))
-        self.private["pictures"][uuid.hex()] = {"alt": match.group("alt"), "text_box": box}
+        pw, ph = image[1]
+        w = max(MIN_SIDE, box["w"] - 2 * PAD)
+        pic = normalize_picture({"url": url, "x": box["x"] + PAD, "y": box["y"] + PAD, "w": w, "h": w * ph / pw})
+        alt = match.group("alt")
+        sized = _ALT_WIDTH.fullmatch(alt)
+        self._picture(pic, sized.group("alt") if sized else alt, image, frame)
         return True
+
+    def _picture_block(self, b: dict, frame) -> None:
+        """A picture block as a picture of the note; one whose file is
+        missing or does not read is left out (counted)."""
+        pic = normalize_picture((b.get("properties") or {}).get("picture"))
+        image = self._image(pic["url"]) if pic else None
+        if image is None:
+            self.left_out["missing"] += 1
+            return
+        self._picture(pic, b.get("content") or "", image, frame)
+
+    def _picture(self, pic: dict, caption: str, image: tuple, frame) -> None:
+        """A (normalized) picture as an ImageMediaObject, its file ``image``
+        (``_image``): its frame through the note's, its crop in the file's
+        pixels, its flips, its turn in radians, and its caption the text
+        Notability shows under it (``caption``'s Markdown marks dropped, on
+        one line). Gamma's copy keeps the caption's Markdown and the picture
+        as they are."""
+        name, (pw, ph), jpeg, asset = image
+        k, crop = frame.k, pic["crop"]
+        uuid = nw.new_uuid()
+        self.draft.media.append(nw.Picture(
+            x=pic["x"] / k + frame.ox, y=pic["y"] / k + frame.oy, w=pic["w"] / k, h=pic["h"] / k, image=name,
+            pixels=(pw, ph), jpeg=jpeg, gif=asset, rotation=math.radians(pic["angle"]),
+            crop=(crop["x"] * pw, crop["y"] * ph, crop["w"] * pw, crop["h"] * ph), flip_h=pic["flip_h"],
+            flip_v=pic["flip_v"], caption=caption_text(plain_text(caption, self.resolve_ref)),
+            z=len(self.draft.media), uuid=uuid))
+        self.private["pictures"][uuid.hex()] = {"caption": caption, "picture": pic}
+
+    def _image(self, url: str) -> tuple | None:
+        """An uploaded picture's file in the note: ``(its path below the
+        note's folder, its pixel size as shown, whether it is a JPEG, the
+        asset id of a GIF's animation)``, or None when it is missing or no
+        picture whose size reads (``picture.image_size``). A GIF is its
+        still frame under Images/ and itself under Assets/<id>/media.gif,
+        as Notability keeps one; any other file goes under Images/ as it
+        is."""
+        path = self.uploads / url.rsplit("/", 1)[-1]
+        try:
+            data = path.read_bytes()
+        except OSError:
+            return None
+        pixels, kind = image_size(data), sniff(data)
+        if pixels is None or not all(pixels):
+            return None
+        n = sum(1 for m in self.draft.media if isinstance(m, nw.Picture)) + 1
+        if kind != "image/gif":
+            name = f"Images/Image {n}{_IMAGE_EXTS[kind]}"
+            self.draft.files[name] = path
+            return name, pixels, kind == "image/jpeg", None
+        try:
+            with Image.open(io.BytesIO(data), formats=["GIF"]) as image:  # its first frame
+                still = io.BytesIO()
+                image.convert("RGBA").save(still, "PNG")
+        except (OSError, ValueError, Image.DecompressionBombError, SyntaxError):
+            return None
+        name, asset = f"Images/Image {n}.png", str(uuidlib.uuid4()).upper()
+        self.draft.files[name] = still.getvalue()
+        self.draft.files[f"Assets/{asset}/media.gif"] = data
+        return name, pixels, False, asset
 
     # --- the notes ------------------------------------------------------------------------
 

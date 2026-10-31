@@ -74,6 +74,14 @@ test("brushWidths: the Brush's tapers run over the arc; live it has no end taper
   assert.ok(brushWidths(comma, style, { live: true })[4] < 0.5, "while it is written the start taper keeps its full length");
   assert.deepEqual(brushWidths([{ x: 3, y: 4, p: 0.5, t: 0 }], style), [1], "a tap draws the law's width");
   assert.deepEqual(brushWidths([{ x: 3, y: 4, p: 0.5, t: 0 }, { x: 3, y: 4, p: 0.5, t: 30 }], style), [1, 1], "and so does a tap held still");
+  // two samples have no middle: tapered, both would be the floor and the mark a hairline
+  const flick = [{ x: 0, y: 0, p: 0.5, t: 0 }, { x: 6, y: 0, p: 0.6, t: 16 }];
+  assert.deepEqual(brushWidths(flick, style), [1, 1.2], "a finished two-sample mark is not tapered, as a tap is not");
+  assert.deepEqual(brushWidths(flick, style, { live: true }), [0.1, 1.2], "while it is written only its start is tapered");
+  assert.deepEqual(brushWidths([...flick, { x: 9, y: 0, p: 0.6, t: 24 }], style).map((w) => w > 0.1), [false, true, false], "three samples taper again");
+  // a mark shorter than its size: the outline's start drop skips its middle, so tapered it would be two floors
+  const dot = [0, 0.3, 0.6, 0.9].map((x, i) => ({ x, y: 0, p: 0.5, t: 8 * i }));
+  assert.deepEqual(brushWidths(dot, style), [1, 1, 1, 1], "a 0.9 pt mark of a 2 pt brush is not tapered");
   assert.deepEqual(brushWidths([{ x: 3, y: 4, p: 0.5, t: 0 }], style, { live: true }), [0.1], "but not while the pen is down: no blot before it moves");
   // a shape (an even, snapped stroke) is constant width: no tapers, no speed law, no w
   const shape = line.map(({ x, y, t }) => ({ x: x * 4, y, t }));

@@ -7,7 +7,6 @@ written (docs/dev/import_export.md "Notability notes")."""
 import hashlib
 import io
 import json
-import math
 import tempfile
 import threading
 import zipfile
@@ -147,8 +146,8 @@ def test_a_note_on_its_own_pdf_keeps_the_pdf(accounts):
     boxes = [c for c in page["children"] if c["properties"].get("text_box")]
     text = next(b for b in boxes if b["content"] == "Second page")
     assert text["properties"]["pdf_page"] == 2
-    shown = next(b for b in boxes if b["content"].startswith("!["))
-    assert shown["properties"]["pdf_page"] == 1 and stored(ws, shown["content"][4:-1]) == picture
+    (shown,) = [c for c in page["children"] if c["properties"].get("picture")]
+    assert shown["properties"]["pdf_page"] == 1 and stored(ws, shown["properties"]["picture"]["url"]) == picture
 
 
 def test_a_mixed_note_is_one_composed_pdf():
@@ -217,7 +216,8 @@ def test_the_sample_note_has_what_the_browser_suite_checks(accounts):
     assert any("w" in s["ch"] for s in first["strokes"])
     boxes = [c for c in page["children"] if c["properties"].get("text_box")]
     assert {b["content"] for b in boxes if b["properties"]["pdf_page"] == 1} >= {"Typed **box**"}
-    assert any(b["content"].startswith("![](/api/uploads/") for b in boxes)
+    (picture,) = [c for c in page["children"] if c["properties"].get("picture")]
+    assert picture["content"] == "" and picture["properties"]["pdf_page"] == 1
     recording = next(c for c in page["children"] if c["properties"].get("recording"))
     segment = recording["properties"]["recording"]["segments"][0]
     assert segment["mime"] == "audio/mp4" and segment["dur"] == 3500 and recording["content"] == "Recording 1"
@@ -246,55 +246,112 @@ def test_recordings_and_their_warnings(accounts):
     assert result["pages"][0]["missing"] is True and result["recordings_imported"] == 1
 
 
-def test_a_turned_and_cropped_picture_is_stored_turned(accounts, monkeypatch):
-    from PIL import Image
-    monkeypatch.setattr(app, "MAX_TURNED_SIDE", 100)
+def at(x: float, y: float) -> tuple[float, float]:
+    """A point of a note W 565 wide on its first paper page, in points."""
+    k = 612 / 565
+    return (x + 565 * 20 / 768) * k, y * k
+
+
+def test_a_turned_cropped_flipped_picture_keeps_its_file_and_its_numbers(accounts):
+    """A picture comes in as a picture block of its file as it came, never
+    decoded: the crop as fractions of the image, the turn in degrees, the
+    flips, the frame through the page's and the caption on one line."""
     owner, ws = accounts["nbi_owner"], workspace_of("nbi_owner")
-    data = note("Turned picture", files={"Images/Image .jpg": fx.jpeg(400, 300)},
+    photo = fx.jpeg(400, 300)
+    data = note("Turned picture", files={"Images/Image .jpg": photo},
                 media=[{"kind": "picture", "origin": (100, 100), "size": (145, 100), "rotation": 0.5,
-                        "crop": (10, 10, 290, 200), "path": "Images/Image .jpg", "caption": "A |300 [x]"}])
+                        "flip_v": True, "crop": (10, 10, 290, 200), "path": "Images/Image .jpg",
+                        "caption": "A |300\n [x]"}])
     result = imported(owner, data, "Turned.note")
+    assert result["pictures_imported"] == 1 and not reasons(result)
     sheet = subtree(owner, result["pages"][0]["id"])["children"][0]
-    (box,) = sheet["children"]
-    assert box["content"].startswith("![A 300 x](/api/uploads/") and box["content"].endswith(".png)")
-    picture = Image.open(io.BytesIO(stored(ws, box["content"].split("(")[1][:-1])))
-    assert picture.format == "PNG" and picture.mode == "RGBA" and max(picture.size) <= 100
-    assert picture.getpixel((0, 0))[3] == 0  # a turned picture's corner is transparent
-    w, h = 145, 100
-    c, s = math.cos(0.5), math.sin(0.5)
-    assert picture.size[0] / picture.size[1] == pytest.approx((w * c + h * s) / (w * s + h * c), rel=0.05)
+    (block,) = sheet["children"]
+    picture = block["properties"]["picture"]
+    assert block["content"] == "A \\|300 \\[x\\]" and "text_box" not in block["properties"]
+    assert stored(ws, picture["url"]) == photo and picture["url"].endswith(".jpg")
+    (x, y), k = at(100, 100), 612 / 565
+    assert (picture["x"], picture["y"], picture["w"], picture["h"]) == (
+        pytest.approx(x, abs=0.01), pytest.approx(y, abs=0.01), pytest.approx(145 * k, abs=0.01),
+        pytest.approx(100 * k, abs=0.01))
+    assert (picture["angle"], picture["flip_h"], picture["flip_v"]) == (28.65, False, True)
+    assert picture["crop"] == {"x": 0.025, "y": 0.0333, "w": 0.725, "h": 0.6667}
 
 
-def test_an_animated_gif_shown_whole_comes_in_moving(accounts):
+def test_an_animated_gif_comes_in_moving(accounts):
     """An animated GIF's still frame is its image and its animation is
-    Assets/<assetsIdKey>/media.gif: shown whole, the animation is stored as
-    it came; cropped, the still frame is, cropped; without the animation,
-    the still frame as it came."""
-    from PIL import Image
+    Assets/<assetsIdKey>/media.gif: the animation is stored as it came,
+    shown whole or cropped (the browser animates it cropped, flipped or
+    turned alike), its crop given in the still frame's pixels; without the
+    animation, the still frame as it came. The GIF is stored once."""
     owner, ws = accounts["nbi_owner"], workspace_of("nbi_owner")
     still, moving = fx.jpeg(24, 16), fx.gif(48, 32, frames=3)
     shown = {"kind": "picture", "origin": (10, 10), "size": (48, 32), "path": "Images/Image 5.jpg", "gif": "A1"}
-    pictures = [shown, {**shown, "origin": (100, 10), "size": (24, 16), "crop": (0, 0, 12, 8)},
+    pictures = [shown, {**shown, "origin": (100, 10), "size": (24, 16), "crop": (0, 0, 12, 8), "rotation": 1.0},
                 {**shown, "origin": (200, 10), "gif": "Gone"}]
     result = imported(owner, note("Animated picture", media=pictures,
                                   files={"Images/Image 5.jpg": still, "Assets/A1/media.gif": moving}), "Gif.note")
     assert result["pictures_imported"] == 3 and not reasons(result)
-    boxes = subtree(owner, result["pages"][0]["id"])["children"][0]["children"]
-    whole, cropped, alone = (stored(ws, b["content"].split("(")[1][:-1]) for b in boxes)
-    assert whole == moving and alone == still
-    assert (Image.open(io.BytesIO(cropped)).format, Image.open(io.BytesIO(cropped)).size) == ("JPEG", (12, 8))
+    whole, cropped, alone = (b["properties"]["picture"] for b in
+                             subtree(owner, result["pages"][0]["id"])["children"][0]["children"])
+    assert whole["url"] == cropped["url"] and stored(ws, whole["url"]) == moving and stored(ws, alone["url"]) == still
+    assert (whole["crop"], cropped["crop"]) == ({"x": 0, "y": 0, "w": 1, "h": 1}, {"x": 0, "y": 0, "w": 0.5, "h": 0.5})
+    assert cropped["angle"] == 57.3
 
 
-def test_a_turned_picture_stays_within_its_longest_side(monkeypatch):
-    """Pillow's expanded size rounds the turned corners outward, up to 2 px
-    past their extent, and the fit leaves room for it: a photo of
-    Notability-notes-converter's example note came out 2,049 px long."""
+def test_a_picture_whose_file_is_missing_or_unreadable_is_left_out(accounts, monkeypatch):
+    """A picture whose file the note lacks, that is no PNG, JPEG, GIF or
+    WebP, whose header does not read or that is past MAX_HELD_BYTES is
+    left out, each said once; the rest come in. Nothing is decoded: a
+    picture of five billion pixels by its header is stored as it came."""
+    import struct
+    import zlib
+
     from PIL import Image
-    monkeypatch.setattr(app, "MAX_TURNED_SIDE", 100)
-    photo = fx.jpeg(300, 400)
-    for angle in (k / 20 for k in range(1, 60)):  # 0.1, 0.35, 1.15 and more came out 101 px
-        media = nb.Media(kind="picture", x=0, y=0, w=30, h=40, rotation=angle, picture="a.jpg")
-        assert max(Image.open(io.BytesIO(app.picture_bytes(photo, media)[0])).size) <= 100, angle
+
+    def never(*_args, **_kwargs):
+        raise AssertionError("decoded")
+
+    def chunk(kind: bytes, body: bytes) -> bytes:
+        return struct.pack(">I", len(body)) + kind + body + struct.pack(">I", zlib.crc32(kind + body))
+
+    huge = (b"\x89PNG\r\n\x1a\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", 100_000, 50_000, 8, 2, 0, 0, 0))
+            + chunk(b"IDAT", zlib.compress(b"\0" * 10)) + chunk(b"IEND", b""))
+    owner, ws = accounts["nbi_owner"], workspace_of("nbi_owner")
+    names = ["Huge.png", "Text.png", "Broken.png", "Big.png", "Gone.png", "Lost.png"]
+    media = [{"kind": "picture", "origin": (10 + 60 * i, 10), "size": (40, 20), "path": f"Images/{name}",
+              "missing": name == "Lost.png"} for i, name in enumerate(names)]
+    files = {"Images/Huge.png": huge, "Images/Text.png": b"not a picture", "Images/Broken.png": b"\x89PNG\r\n\x1a\nno",
+             "Images/Big.png": fx.png(4, 4) + bytes(1 << 20), "Images/Lost.png": fx.png(4, 4)}
+    data = note("Unreadable pictures", media=media + [media[1]], files=files)  # Text.png twice: said once
+    monkeypatch.setattr(Image.Image, "load", never)
+    monkeypatch.setattr(app, "MAX_HELD_BYTES", 1 << 20)
+    result = imported(owner, data, "Unreadable.note")
+    assert result["pictures_imported"] == 1
+    assert sorted(reasons(result)) == sorted([
+        "Picture Text.png is left out: not a readable PNG, JPEG, GIF or WebP picture",
+        "Picture Broken.png is left out: not a readable PNG, JPEG, GIF or WebP picture",
+        "Picture Big.png is over 1 MB: left out",
+        "Missing picture Images/Gone.png: left out", "Missing picture Images/Lost.png: left out"])
+    (block,) = subtree(owner, result["pages"][0]["id"])["children"][0]["children"]
+    assert stored(ws, block["properties"]["picture"]["url"]) == huge
+
+
+def test_an_ntb_picture_s_crop_is_in_its_logical_size(accounts):
+    """An .ntb gives a picture's crop in the asset's logical size, which
+    need not be its pixels: the crop is the same fractions of either."""
+    owner, ws = accounts["nbi_owner"], workspace_of("nbi_owner")
+    png = fx.png(80, 60)
+    digest = hashlib.sha512(png).digest()
+    turn = 0.3
+    data = _ntb((22, (0, 12), tx.picture(digest, corner=tx.turned_corner(300, 60, 40, 30, turn), size=(40, 30),
+                                          logical=(40, 30), crop=(10, 0, 20, 15), rotation=turn)),
+                title="Cropped in logical units", assets={f"{digest.hex()}.png": png})
+    result = imported(owner, data, "Logical.ntb")
+    assert result["pictures_imported"] == 1 and not reasons(result)
+    sheet = subtree(owner, result["pages"][0]["id"])["children"][0]
+    (picture,) = [c["properties"]["picture"] for c in sheet["children"] if c["properties"].get("picture")]
+    assert stored(ws, picture["url"]) == png
+    assert (picture["crop"], picture["angle"]) == ({"x": 0.25, "y": 0, "w": 0.5, "h": 0.5}, 17.19)
 
 
 # --- many notes, re-import, filing ------------------------------------------------------------
@@ -488,8 +545,8 @@ def test_an_ntb_imports_as_its_note_would(accounts):
     flow, *sheets = page["children"]
     assert (page["content"], flow["content"], len(sheets)) == ("Cloud lecture", "Typed on the page", 2)
     assert sheets[0]["properties"]["sheet"]["pattern"] == "ruled"
-    picture = next(c for c in sheets[0]["children"] if c["content"].startswith("!["))
-    assert stored(ws, picture["content"].split("(")[1][:-1]) == png
+    picture = next(c for c in sheets[0]["children"] if c["properties"].get("picture"))
+    assert stored(ws, picture["properties"]["picture"]["url"]) == png
     first, second = (ink_of(ws, next(c for c in sheet["children"] if c["properties"].get("ink_url"))) for sheet in sheets)
     assert [len(f["strokes"]) for f in (first, second)] == [2, 1] and first["strokes"][0]["band"] == 0  # the sticky
     again = imported(owner, data, "Cloud lecture.ntb")
@@ -621,7 +678,7 @@ def test_one_pdf_under_several_names_is_read_once(accounts, monkeypatch):
     assert result["pages_created"] == 1 and result["pdfs_stored"] == 1 and len(opened) == 1
 
 
-def test_a_picture_file_shown_over_and_over_is_read_a_few_times(accounts, monkeypatch):
+def test_a_picture_file_shown_over_and_over_is_read_once(accounts, monkeypatch):
     owner = accounts["nbi_owner"]
     real, made = fx.media_object, []
 
@@ -632,12 +689,40 @@ def test_a_picture_file_shown_over_and_over_is_read_a_few_times(accounts, monkey
 
     monkeypatch.setattr(fx, "media_object", one_object)
     picture = {"kind": "picture", "origin": (10, 10), "size": (40, 40), "path": "Images/a.png", "crop": (0, 0, 20, 20)}
-    decoded, bytes_of = [], app.picture_bytes
-    monkeypatch.setattr(app, "picture_bytes", lambda *args: decoded.append(1) or bytes_of(*args))
+    sized, size_of = [], app.image_size
+    monkeypatch.setattr(app, "image_size", lambda data: sized.append(1) or size_of(data))
     result = imported(owner, note("One picture named often", media=[picture] * 9,
                                   files={"Images/a.png": fx.png(40, 40)}), "Often.note")
-    assert result["pictures_imported"] == app.MAX_PICTURE_USES == len(decoded)
-    assert reasons(result) == [f"Picture a.png is shown more than {app.MAX_PICTURE_USES} times: the rest are left out"]
+    assert result["pictures_imported"] == 9 and len(sized) == 1 and not reasons(result)
+
+
+def test_a_picture_file_shown_with_many_animations_is_read_twice_at_most(accounts, monkeypatch):
+    """A file that many pictures show, each naming an animation of its own,
+    is read and stored once whatever animation each names, and each
+    animation once: a still is read again only to be stored for the
+    pictures shown without the animation the first one showed."""
+    owner, ws = accounts["nbi_owner"], workspace_of("nbi_owner")
+    still, moving = fx.png(40, 40), fx.gif(40, 40, frames=2)
+    shown = {"kind": "picture", "size": (40, 40), "path": "Images/a.png"}
+    gifs = ["A"] + [f"G{i}" for i in range(6)] + ["A", None, None]  # each G<i> no GIF: the still is shown
+    media = [{**shown, "origin": (10 + 45 * i, 10), "gif": gif} for i, gif in enumerate(gifs)]
+    files = {"Images/a.png": still, "Assets/A/media.gif": moving,
+             **{f"Assets/G{i}/media.gif": b"not a gif" for i in range(6)}}
+    reads, read = [], import_zip.ZipEntry.read
+    monkeypatch.setattr(import_zip.ZipEntry, "read", lambda entry: reads.append(entry.path) or read(entry))
+    stores, store = [], app.store_file
+    monkeypatch.setattr(app, "store_file", lambda ws, data, ext: stores.append(ext) or store(ws, data, ext))
+    result = imported(owner, note("One picture, many animations", media=media, files=files), "Animations.note")
+    assert result["pictures_imported"] == 10 and not reasons(result)
+
+    def times(name: str) -> int:
+        return sum(path.endswith(name) for path in reads)
+
+    assert times("Images/a.png") == 2 and times("A/media.gif") == 1
+    assert all(times(f"G{i}/media.gif") == 1 for i in range(6)) and sorted(stores) == [".gif", ".png"]
+    sheet = subtree(owner, result["pages"][0]["id"])["children"][0]
+    assert [stored(ws, b["properties"]["picture"]["url"]) for b in sheet["children"]] == (
+        [moving] + [still] * 6 + [moving, still, still])
 
 
 def test_a_recording_listed_twice_is_stored_once(accounts, monkeypatch):
@@ -648,18 +733,6 @@ def test_a_recording_listed_twice_is_stored_once(accounts, monkeypatch):
     result = imported(owner, note("One recording listed five times", files={
         "Recordings/library.plist": library, "Recordings/a.m4a": fx.m4a(2000)}), "Listed.note")
     assert result["recordings_imported"] == 1 == len(streamed)
-
-
-def test_a_stretch_too_long_and_thin_is_refused_before_pillow_sizes_it(monkeypatch):
-    from PIL import Image
-
-    def never(*_args, **_kwargs):
-        raise AssertionError("resized")
-
-    monkeypatch.setattr(Image.Image, "resize", never)
-    thin = nb.Media(kind="picture", x=0, y=0, w=1e6, h=1e-5, picture="a.png")  # 2,000,000,000 x 1 px asked
-    with pytest.raises(ValueError, match="too long and thin"):
-        app.picture_bytes(fx.png(10, 10), thin)
 
 
 def test_the_note_s_sample_budget_bounds_the_work(accounts, monkeypatch):

@@ -5,10 +5,11 @@
 // - http(s) pages (a server's Gamma frontend) get NOTHING exposed. Two
 //   things happen there, both one way, page to shell: the page's
 //   `data-theme` attribute is reported so the shell chrome paints in the
-//   same theme, and a folder's "Keep on this computer…" request, which the
-//   page posts to itself (frontend/src/app/App.jsx), is passed on as it is.
-//   The shell checks it and asks the user for the directory. Gamma stays a
-//   black box.
+//   same theme, and a folder's "Keep on this computer…" or a page's "Follow
+//   a file on this computer…" request, which the page posts to itself
+//   (frontend/src/app/App.jsx), is passed on as it is. The shell checks it
+//   and asks the user for the directory or the file. Gamma stays a black
+//   box.
 
 const { contextBridge, ipcRenderer } = require('electron');
 
@@ -49,6 +50,12 @@ if (window.location.protocol === 'file:') {
       ipcRenderer.on('shell:state', handler);
       return () => ipcRenderer.removeListener('shell:state', handler);
     },
+    // A storage-folder move's progress ({ name, done, total } bytes; null once it ends).
+    onDataMove: (cb) => {
+      const handler = (_e, move) => cb(move);
+      ipcRenderer.on('shell:data-move', handler);
+      return () => ipcRenderer.removeListener('shell:data-move', handler);
+    },
   });
 } else if (/^https?:$/.test(window.location.protocol)) {
   const report = () => {
@@ -66,7 +73,8 @@ if (window.location.protocol === 'file:') {
   else document.addEventListener('DOMContentLoaded', start, { once: true });
   window.addEventListener('message', (e) => {
     const d = e.data;
-    if (e.source !== window || e.origin !== window.location.origin || !d || d.source !== 'gamma-app' || d.type !== 'keep-folder-on-disk') return;
-    ipcRenderer.send('shell:keep-folder-from-page', String(d.ws || ''), String(d.folder || ''));
+    if (e.source !== window || e.origin !== window.location.origin || !d || d.source !== 'gamma-app') return;
+    if (d.type === 'keep-folder-on-disk') ipcRenderer.send('shell:keep-folder-from-page', String(d.ws || ''), String(d.folder || ''));
+    else if (d.type === 'follow-file-on-disk') ipcRenderer.send('shell:follow-file-from-page', String(d.ws || ''), String(d.page || ''));
   });
 }

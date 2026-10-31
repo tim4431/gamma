@@ -26,7 +26,7 @@ import { ZOOM_HEIGHT, ZOOM_HEIGHT_MAX, ZOOM_HEIGHT_MIN } from "../ink/zoomWindow
 import { textStyle } from "../markup/textBox.js";
 import { LANGUAGES } from "../shared/i18n/locales.js";
 import { normalizeChord } from "../shared/lib/hotkeys.js";
-import { DEFAULT_PALETTE, normalizePalette } from "../shared/model/palette.js";
+import { DEFAULT_PALETTE, normalizeColor, normalizePalette } from "../shared/model/palette.js";
 import { DARK_THEMES, THEMES, themeScheme } from "./theme.js";
 import { TOPBAR } from "./topbarItems.js";
 import { VIEWER_TOOLS } from "./viewerToolItems.js";
@@ -183,6 +183,12 @@ export const PREFS = {
   // one on the strip or a row of its ⋯ menu. Translate hidden is the
   // translate button turned off.
   viewerTools: pref("gamma-viewer-tools", ACCOUNT, VIEWER_TOOLS.DEFAULT, json(VIEWER_TOOLS.normalize)),
+  // The colour the strip's text highlighter highlights in: the last swatch
+  // picked for a text highlight, in the selection popup or the
+  // highlighter's own menu, stored as a highlight stores it (#rrggbbaa), so
+  // a changed palette leaves it as it is. "" until one is picked: the
+  // highlight picker's first swatch. Set where it acts; no Settings row.
+  highlighterColor: pref("gamma-highlighter-color", ACCOUNT, "", { parse: (raw) => (raw === "" ? "" : normalizeColor(raw) || undefined) }),
   // Interface size: index.html applies the stored value before first paint,
   // App.jsx keeps `--ui-scale` on the root in sync afterwards. Screens
   // differ, so it stays with the device.
@@ -267,6 +273,11 @@ export const PREFS = {
   // Translation's service tier is independent of chat; unsupported tiers use
   // the provider's usual routing, as does the empty default.
   translateSpeed: pref("gamma-translate-speed", ACCOUNT, "", oneOf(["", "flex", "fast"])),
+  // Whether the server keeps the translations it makes, and each paper's
+  // brief, in the workspace (sent as `keep` with every translation request),
+  // so a paper read again shows at once. Off, they last only in the
+  // server's memory; what is kept already stays until cleared.
+  translateKeep: flag("gamma-translate-keep", ACCOUNT, true),
 
   // --- Search (Settings → Reading) ---
   // Whether the search popover's result-detail lists start expanded, one

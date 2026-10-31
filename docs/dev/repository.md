@@ -79,6 +79,7 @@ generated illustrations uses `branding.typewriter()`; see the
 | `docs/assets/demos/` | README demos as small animated WebP images |
 | `docs/assets/screenshots/` | Documentation stills |
 | `backend/gamma/onboarding/welcome.md` | The seeded Welcome page ([onboarding.md](onboarding.md)); Docker copies it with `gamma/`, the desktop freeze adds it with `--add-data` |
+| `backend/gamma/zotero_schema.json` | Zotero's item types, their fields and creator types, the part of `https://api.zotero.org/schema` a Zotero link's field mapping reads (`gamma/zotero_fields.py`, whose docstring says how to refresh it; [zotero_sync.md](zotero_sync.md#merging)); Docker and the iPad bundle copy it with `gamma/`, the desktop freeze adds it with `--add-data` |
 | `frontend/public/media/icons/` | Favicon, served at `/media/icons/favicon.svg` |
 | `frontend/public/media/gamma-scene-light.svg` | The demo server's landing picture: a generated crop of the hero composition |
 | `desktop/assets/icon.png` | Electron window and installer icon |

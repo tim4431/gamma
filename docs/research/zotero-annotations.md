@@ -101,14 +101,19 @@ Zotero came in as a 40 × 200 box instead of 200 × 40, from its turned
   with the highlights switch, text boxes with either switch. An ink group's
   caption is its `/Ink` comment, not a note as well. A text box is a note
   as well only when notes sit under it.
-- Gamma's `/FreeText` carries the `/Zotero:*` keys: the box as shown around
-  its centre, the page's rotation, the size, the text colour. Checked on a
-  page turned 90°: Zotero's worker read the box, its writer rebuilt Gamma's
-  `/Rect` from those keys to the point, and Gamma's import restored the box.
+- Gamma's `/FreeText` carries the `/Zotero:*` keys: the rect, the page's
+  rotation, the size, the text colour. Checked on a page turned 90°, with
+  the drawn box as the rect: Zotero's worker read the box, its writer
+  rebuilt Gamma's `/Rect` from those keys to the point, and Gamma's import
+  restored the box. The rect is the box's text area, since Zotero's reader
+  draws a text annotation with no inset: the drawn box itself for a box
+  laid out as Zotero lays one out (a Zotero box), and for a Gamma box the
+  box less its padding, its lines at Zotero's line height
+  ([zotero-text-layout.md](zotero-text-layout.md)).
 - Keys come from ids (`#gamma_page_<id>`, `#gamma_note_<id>`), and the
   import merges a Gamma export into the page it came from.
 - A Zotero text annotation imports as its `/Zotero:Rect` upright on the
-  same centre; colour channels are rounded.
+  same centre, as a Zotero box; colour channels are rounded.
 - Colours were left as they are at first (below). In October 2026 the
   Zotero copies stopped writing `/CA` on highlights and area notes, Gamma's
   alpha in the private `/GammaAlpha` instead, which the import reads first

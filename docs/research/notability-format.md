@@ -422,6 +422,22 @@ gamma/notability_write.py). What is known of what the app accepts:
   `kPageLayoutPDFFileNameKey`, `kPageLayoutDocumentPageNumberKey`,
   `kPageLayoutPDFIsOriginalPageKey`, `kPageLayoutPageIsBookmarkedKey`), in
   both page lists.
+- **A picture's turn, crop, flips and caption** go in the keys the
+  sample's pictures carry [the keys V against the sample; these values not
+  yet opened in the app]:
+  - `rotationDegrees`: the turn in radians, clockwise as seen;
+  - `FigureCropRectKey`: the crop in the file's pixels, the file's size read
+    as a browser shows it (its EXIF orientation applied), the whole image
+    when uncropped;
+  - `isFlippedHorizontal` and `isFlippedVertical`: the flips;
+  - `captionFieldText`: the caption's plain text on one line, its Markdown
+    marks dropped, with `isCaptionEnabled` true; with no caption, the null
+    UID and false.
+  - `documentOrigin` and `unscaledContentSize` are the frame's top-left
+    before the turn and its size after the crop, a stretch included. A
+    page's pictures come before its text boxes, so their `zIndex` is lower.
+  - An animated GIF is its still frame under `Images/` and its animation
+    as `Assets/<id>/media.gif`. Two pictures of one file are two files.
 - **Not written**: a formula as a MathMediaObject (no sample shows its
   keys beyond `latex` and `color`, so it goes as a text box of its TeX),
   thumbnails but `thumb12x.png`, `HandwritingIndex`, the recording
@@ -481,13 +497,34 @@ gamma/notability_write.py). What is known of what the app accepts:
   never invented, and the event join is verified only for old versions.
 - **A version 1 PDF** wider than 8.5 in is scaled down, which gnnote's
   sample supports.
+- **A picture's crop** is kept as fractions of the image as a browser shows
+  it: `FigureCropRectKey` over the file's pixel size (an `.ntb`'s over its
+  logical asset size), cut to the image, and the whole image when there is
+  none or it holds nothing. The export multiplies it back by the file's
+  pixel size. A stretch is then the shown size's aspect against the crop's,
+  with nothing to compute.
+- **A picture's turn** is kept in degrees, clockwise as seen:
+  `rotationDegrees` holds radians, converted both ways. Every reader and
+  writer applies the crop, then the flips, then the turn ("Pictures", above).
+- **A GIF's animation** is the picture's file whenever the note has it,
+  within the per-file cap and readable as a GIF: the browser animates it
+  cropped, flipped or turned alike. Without it the still frame is shown.
+- **Nothing is decoded.** A picture's file is stored as it came. Only its
+  pixel size is read, from its header, with the EXIF orientation applied
+  where browsers apply it. Each file of a note is read and stored once,
+  however many pictures show it.
+- **A caption** comes in as the content, on one line, escaped as plain
+  text, and goes back as its plain text on one line.
 
 ## Still open
 
 - Writing: whether the app opens what Gamma writes (only gnnote's ink has
   been tried), text boxes, PDF pages and pictures above all; what
   `staticWidth` does in the app (Gamma writes it for US Letter sheets);
-  whether a blank page at the end of a note survives.
+  whether a blank page at the end of a note survives; a picture's turn,
+  crop, flips and caption as Gamma writes them, the order of the flips and
+  the turn on the device, and whether two pictures may share one file under
+  `Images/` (Gamma writes two).
 
 - `.ntb`: a bundle that is an edit log (read as nokcha0 describes it, with
   none to check it on); recordings; shape fills and arrowheads; checklist

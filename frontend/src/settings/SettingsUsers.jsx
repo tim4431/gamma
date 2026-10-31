@@ -18,6 +18,7 @@ import React from "react";
 import { API, apiJson, fmtBytes, getExpectedUser, setExpectedUser } from "../shared/lib/utils";
 import { PaneHead, Section, Row, SubDialog, Field, DialogButtons, UnitInput, Empty, QuotaMeter, PasswordInput, PersonRow } from "./SettingsKit";
 import { CloudIdentityRow } from "./SettingsCloudSignIn";
+import { ZoteroAccountRow } from "./SettingsZotero";
 import { EmailInviteButtons, ManageWorkspaceDialog, inviteExpiry, looksLikeEmail, useAccounts } from "./SettingsWorkspace";
 import { useSettingsRead } from "./settingsReads.js";
 import { formatRelativeTime } from "../library/libraryUtils";
@@ -397,6 +398,7 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
       {isAdmin && !info && !error ? <Empty icon={UsersIcon} loading>{t("Loading…")}</Empty> : null}
       {(selfOnly ? rows.filter((row) => row.username === me) : rows).map(userRow)}
       {!isGuest && (selfOnly || !isAdmin) ? <CloudIdentityRow setStatus={setStatus} confirm={confirm} onSetUp={onServer} /> : null}
+      {!isGuest && (selfOnly || !isAdmin) ? <ZoteroAccountRow setStatus={setStatus} confirm={confirm} /> : null}
       {edit?.kind === "account" ? accountDialog() : null}
       {edit?.kind === "storage" ? storageDialog() : null}
       {manage ? (

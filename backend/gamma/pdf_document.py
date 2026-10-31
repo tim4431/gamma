@@ -67,6 +67,7 @@ from .pdf_typeset import (
 )
 from .highlights import is_highlight, page_of
 from .notebook import is_sheet
+from .picture import is_picture, normalize_picture, pdf_ops as picture_ops, picture_page, turned_box
 from .recording import heading as recording_heading, is_recording
 from .text_box import box_page
 
@@ -484,6 +485,27 @@ class _Canvas:
         self.page["xobjects"][name] = self.images.refs[name]
         self.y += h + IMAGE_GAP
 
+    def picture(self, pic: dict, x: float, width: float) -> bool:
+        """A picture placed on a page (normalized), drawn as it is placed
+        there: cropped, flipped and turned (``picture.pdf_ops``), its turned
+        frame fitted to the column (never enlarged). False when its file is
+        missing or cannot be embedded: the caller falls back to text."""
+        info = self.images.resolve(pic["url"])
+        if not info:
+            return False
+        x0, y0, x1, y1 = turned_box(pic)
+        scale = min(1.0, width / (x1 - x0))
+        cap = PAGE_H - MARGIN_TOP - MARGIN_BOTTOM
+        if (y1 - y0) * scale > cap:
+            scale = cap / (y1 - y0)
+        h = (y1 - y0) * scale
+        self.need(h)
+        self.page["ops"].append(b"q %s 0 0 %s %s %s cm\n%s\nQ" % (
+            num(scale), num(scale), num(x - x0 * scale), num(self.y - y0 * scale), picture_ops(pic, info[0])))
+        self.page["xobjects"][info[0]] = self.images.refs[info[0]]
+        self.y += h + IMAGE_GAP
+        return True
+
     def ink(self, ink_url: str, x: float, width: float) -> bool:
         """A handwriting group drawn as vector strokes, fitted to the column
         (never enlarged). False when the ink file is missing or unreadable —
@@ -822,8 +844,9 @@ def _emit_block(cv: _Canvas, node: dict, depth: int, highlights: bool, notes: bo
     """One block and its subtree. Mirrors the Markdown export's switches: with
     highlights off a highlight block keeps its own writing as a plain bullet;
     with notes off only the quoted passages remain. ``on_sheet``: a sheet of
-    paper is among the block's ancestors, so a text box under it is on that
-    sheet."""
+    paper is among the block's ancestors, so a text box or a picture under
+    it is on that sheet. A picture is placed on the page as a text box is,
+    so the notes switch takes it out with the notes."""
     props = node.get("properties") or {}
     under_sheet = on_sheet or is_sheet(props)
     content = (node.get("content") or "").strip()
@@ -831,6 +854,7 @@ def _emit_block(cv: _Canvas, node: dict, depth: int, highlights: bool, notes: bo
     is_link = bool(props.get("link_url"))
     is_ink = bool(props.get("ink_url"))
     is_rec = is_recording(props)
+    is_pic = notes and is_picture(props)
     if is_region or is_link or is_ink or is_rec:
         if not highlights:
             props, is_region, is_link, is_ink, is_rec = {}, False, False, False, False
@@ -864,6 +888,20 @@ def _emit_block(cv: _Canvas, node: dict, depth: int, highlights: bool, notes: bo
             inset = QUOTE_PAD if emitted else 0
             _emit_chunks(cv, content, x + inset, width - inset, bullet=bool(depth or inset))
             emitted = True
+    elif is_pic:
+        # A picture placed on a page: drawn as placed, then a line naming
+        # its page, as handwriting has, then its caption.
+        cv.gap(BLOCK_GAP)
+        pic = normalize_picture(props["picture"])
+        drawn = pic is not None and cv.picture(pic, x + QUOTE_PAD, width - QUOTE_PAD)
+        page_no = picture_page(props, on_sheet)
+        if page_no or not drawn:  # a picture that cannot be drawn is still named
+            cv.paragraph([(TEXT, f"picture, p. {page_no}" if page_no else "picture", 0, PLAIN)],
+                         x + QUOTE_PAD, width - QUOTE_PAD, SMALL_SIZE, color=MUTED)
+        if content:
+            cv.gap(BLOCK_GAP)
+            _emit_chunks(cv, content, x + QUOTE_PAD, width - QUOTE_PAD, bullet=True)
+        emitted = True
     elif is_rec:
         # A recording: a line naming it, as a text box's does, then its
         # title; its transcript is its children.

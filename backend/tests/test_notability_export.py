@@ -29,6 +29,7 @@ from gamma import notability_map as nmap
 from gamma import notability_write as nw
 from gamma import notebook, storage
 from gamma.db import ws_uploads_dir
+from gamma.picture import is_picture, normalize_picture
 from gamma.text_box import normalize_text_box
 
 SAMPLES = Path(__file__).parent / "samples" / "notability"
@@ -130,13 +131,19 @@ def tree(client, pid: str) -> dict:
     return client.get(f"/api/blocks/{pid}/subtree").json()["block"]
 
 
+def kind_of(b: dict) -> str:
+    """A block's kind, a picture's whether or not the kind column names it."""
+    return "picture" if is_picture(b["properties"]) else b.get("kind") or "note"
+
+
 def view(client, ws: str, pid: str) -> dict:
     """What a page is, to compare two: its title and PDF; its notes as a
     tree of contents; per surface (a sheet, a PDF page) its paper, its
     strokes in drawing order with every key but the id, its text boxes
-    and pictures (a picture's file by its digest); its recordings (each
-    file by its digest). Block ids, stroke ids and how the strokes are
-    grouped into files are not the page's content and are left out."""
+    and its pictures (each with its caption, its file by its digest); its
+    recordings (each file by its digest). Block ids, stroke ids and how the
+    strokes are grouped into files are not the page's content and are left
+    out."""
     root = tree(client, pid)
     uploads = ws_uploads_dir(ws)
 
@@ -145,7 +152,7 @@ def view(client, ws: str, pid: str) -> dict:
 
     def notes(nodes):
         return [{"content": n["content"], "children": notes(n.get("children") or [])} for n in nodes
-                if (n.get("kind") or "note") == "note"]
+                if kind_of(n) == "note"]
 
     def surface_of(blocks):
         files = [inkmod.read_upload(uploads, b["properties"]["ink_url"]) for b in blocks if b["kind"] == "ink"]
@@ -153,15 +160,11 @@ def view(client, ws: str, pid: str) -> dict:
         out = {"strokes": [{k: v for k, v in inkmod.to_dict(s).items() if k not in ("id", "from")} for s in strokes],
                "boxes": [], "pictures": []}
         for b in blocks:
-            if b["kind"] != "text_box":
-                continue
-            box = normalize_text_box(b["properties"]["text_box"])  # as every reader reads one
-            picture = nexp._PICTURE.match(b["content"].strip())
-            if picture:
-                out["pictures"].append({"alt": picture.group("alt"), "box": box,
-                                        "file": digest(picture.group("name"))})
-            else:
-                out["boxes"].append({"content": b["content"], "box": box})
+            if kind_of(b) == "picture":  # as every reader reads one
+                picture = normalize_picture(b["properties"]["picture"])
+                out["pictures"].append({"caption": b["content"], "picture": {**picture, "url": digest(picture["url"])}})
+            elif b["kind"] == "text_box":
+                out["boxes"].append({"content": b["content"], "box": normalize_text_box(b["properties"]["text_box"])})
         return out
 
     children = root.get("children") or []
@@ -172,7 +175,7 @@ def view(client, ws: str, pid: str) -> dict:
         for b in children:
             if b["kind"] == "ink":
                 page_no = inkmod.read_upload(uploads, b["properties"]["ink_url"]).space.page
-            elif b["kind"] == "text_box":
+            elif kind_of(b) in ("text_box", "picture"):
                 page_no = b["properties"].get("pdf_page")
             else:
                 continue
@@ -188,10 +191,10 @@ def view(client, ws: str, pid: str) -> dict:
             rec["segments"] = [{**{k: v for k, v in s.items() if k != "url"}, "file": digest(s["url"])}
                                for s in rec["segments"]]
             recordings.append({"content": b["content"], "recording": rec})
-    order = []  # the page's notes, sheets and recordings in order; a PDF's handwriting and boxes as one
+    order = []  # the page's notes, sheets and recordings in order; a PDF's handwriting, boxes and pictures as one
     for b in children:
-        kind = b.get("kind") or "note"
-        kind = "markup" if kind in ("ink", "text_box") else kind
+        kind = kind_of(b)
+        kind = "markup" if kind in ("ink", "text_box", "picture") else kind
         if kind in ("note", "sheet", "recording") or (kind == "markup" and "markup" not in order):
             order.append(kind)
     return {"title": root["content"], "doc_id": props.get("doc_id"), "notes": notes(children),
@@ -208,7 +211,8 @@ def round_trip(client, ws: str, pid: str) -> tuple[dict, dict, bytes]:
 # --- the round trips ---------------------------------------------------------------------------
 
 def notebook_page(client, ws: str, title: str) -> str:
-    """A notebook with a stroke of every kind Gamma draws, boxes, pictures,
+    """A notebook with a stroke of every kind Gamma draws, boxes, pictures
+    (cropped, stretched, turned, flipped, captioned, an animated GIF),
     notes and recordings."""
     pid = page(client, title)
     tag = pid[:6]  # block ids of this page's own
@@ -257,14 +261,18 @@ def notebook_page(client, ws: str, title: str) -> str:
          "content": "# A title\n- one\n    - two\n1. first\n- [x] done\n[a link](https://example.org) $x^2$",
          "props": {"text_box": {"x": 300, "y": 560, "w": 240, "h": 120, "auto": True, "size": 16,
                                 "color": "#aa0000", "bg": "#fff4b8"}}},
-        {"id": f"{tag}Pic", "content": f"![a red block]({stored_url(ws, picture, '.png')})",
-         "props": {"text_box": {"x": 60, "y": 640, "w": 128, "h": 88, "auto": False}}},
+        {"id": f"{tag}Pic", "content": "A *red* block, [turned]", "props": {"picture": {
+            "url": stored_url(ws, picture, ".png"), "x": 60, "y": 640, "w": 96, "h": 40, "angle": 32.5,
+            "crop": {"x": 0.1, "y": 0.25, "w": 0.6, "h": 0.5}, "flip_h": True}}},
+        {"id": f"{tag}Pic2", "props": {"picture": {"url": stored_url(ws, picture, ".png"), "x": 320, "y": 700,
+                                                    "w": 60, "h": 40, "angle": -90, "flip_v": True}}},
     ])
     long_stroke = stroke("long", trace(4000, 40, 120, step=0.12, p=0.5, t=lambda i: 4 * i), "xypt")
     insert(client, pid, sheets[1], [
         {"id": f"{tag}Ink2", "props": {"ink_url": ink_url(client, [long_stroke], space), "ink_strokes": 1}},
-        {"id": f"{tag}Gif", "content": f"![]({stored_url(ws, animated, '.gif')})",
-         "props": {"text_box": {"x": 200, "y": 300, "w": 56, "h": 40, "auto": False}}},
+        {"id": f"{tag}Gif", "content": "moving", "props": {"picture": {
+            "url": stored_url(ws, animated, ".gif"), "x": 200, "y": 300, "w": 64, "h": 32, "angle": -170.25,
+            "crop": {"x": 0.5, "y": 0, "w": 0.5, "h": 1}, "flip_h": True, "flip_v": True}}},
     ])
     first, second = fx.m4a(2500), fx.m4a(1800)
     one, two = stored_url(ws, first, ".m4a"), stored_url(ws, second, ".m4a")
@@ -290,6 +298,7 @@ def test_a_notebook_comes_back_as_it_was(owner, ws):
     pid = notebook_page(owner, ws, "Round trip notebook")
     before, after, _data = round_trip(owner, ws, pid)
     assert after == before
+    assert [len(s["pictures"]) for s in after["surfaces"]] == [2, 1, 0]  # each crop, turn, flip and caption as it was
     assert before["order"] == ["sheet"] * 3 + ["note"] * 6 + ["recording"]  # as the page has them, not as an
     # import of a note orders a page (notes, sheets, recordings)
 
@@ -366,8 +375,9 @@ def test_without_gamma_s_copy_what_notability_holds_comes_back(owner, ws):
         assert theirs.keys() == mine.keys()
         for start, stroke in mine.items():
             assert theirs[start] == held(stroke), stroke
-        assert [p["file"] for p in now["pictures"]] == [p["file"] for p in was["pictures"]]
-        assert [p["box"] for p in now["pictures"]] == [p["box"] for p in was["pictures"]]
+        assert [p["picture"] for p in now["pictures"]] == [p["picture"] for p in was["pictures"]]
+    assert [p["caption"] for s in after["surfaces"] for p in s["pictures"]] == [
+        "A red block, \\[turned\\]", "", "moving"]  # the text Notability shows under each
     plain, rich = before["surfaces"][0]["boxes"]
     assert after["surfaces"][0]["boxes"] == [plain, {
         "content": "**A title**\n- one\n    - two\n1. first\n- [x] done\n\na link \\$x^2\\$",
@@ -548,6 +558,10 @@ def test_what_notability_changed_comes_in_as_notability_has_it(owner, ws):
         rich = objects[objects[objects[1]["richText"].data]["attributedString"].data]
         text = objects[rich["NS.objects"][0].data]
         objects[rich["NS.objects"][0].data] = text.replace("Intro note", "Intro notes")
+        picture = next(o for o in objects if isinstance(o, dict) and "figure" in o)  # the first, on the first sheet
+        x, y = (float(v) for v in objects[picture["documentOrigin"].data].strip("{}").split(","))
+        picture["documentOrigin"] = picture["documentContentOrigin"] = plistlib.UID(len(objects))
+        objects.append("{%r, %r}" % (x + 10, y))
 
     report = reimport(owner, edited(data, change), "Edited.note")
     before, after = view(owner, ws, pid), view(owner, ws, report["pages"][0]["id"])
@@ -561,16 +575,88 @@ def test_what_notability_changed_comes_in_as_notability_has_it(owner, ws):
             assert stroke == mine[start]
     assert after["notes"][0]["content"] == "Intro notes"  # the note's text: the copy no longer matches it
     assert after["surfaces"][0]["boxes"] == before["surfaces"][0]["boxes"]
+    (was, *kept), (moved, *rest) = before["surfaces"][0]["pictures"], after["surfaces"][0]["pictures"]
+    assert moved == {"caption": "A red block, \\[turned\\]", "picture": {**was["picture"], "x": 70}}  # as it holds it
+    assert rest == kept
+
+
+def test_a_box_holding_a_picture_still_exports_and_comes_back_a_picture(owner, ws):
+    """A text box holding one picture, as imports made one before a picture
+    was a block of its own, is a picture of the note in the box less its
+    padding, as tall as the picture shown that wide: it comes back a
+    picture block there, its alt text the caption, Gamma's copy giving it
+    as Markdown and Notability as the text it shows."""
+    pid = page(owner, "An old picture box")
+    tag = pid[:6]
+    (sheet,) = insert(owner, pid, pid, [{"id": f"{tag}S", "props": {"sheet": A4}}])
+    png = fx.png(120, 80)
+    insert(owner, pid, sheet, [{"id": f"{tag}B", "content": f"![a *red* block]({stored_url(ws, png, '.png')})",
+                                "props": {"text_box": {"x": 60, "y": 640, "w": 128, "h": 88, "auto": False}}}])
+    data = export(owner, pid)
+    shown = {"url": hashlib.sha256(png).hexdigest(), "x": 64, "y": 644, "w": 120, "h": 80, "angle": 0,
+             "crop": {"x": 0, "y": 0, "w": 1, "h": 1}, "flip_h": False, "flip_v": False}
+    for note, caption in ((data, "a *red* block"), (without_copy(data), "a red block")):
+        report = reimport(owner, note, "Old picture box.note")
+        (surface,) = view(owner, ws, report["pages"][0]["id"])["surfaces"]
+        assert (surface["boxes"], surface["pictures"]) == ([], [{"caption": caption, "picture": shown}])
+
+
+def test_a_picture_box_s_obsidian_size_is_no_part_of_its_caption(owner, ws):
+    """The size the width grip ends a boxed picture's alt text with
+    (``![alt|240](url)``, as the editor reads it) is not written as its
+    caption: Notability shows the alt text before it, no caption when there
+    is none, and the picture comes back with that caption, the copy or
+    not; a pipe that ends no size is the caption's."""
+    pid = page(owner, "Sized picture boxes")
+    tag = pid[:6]
+    (sheet,) = insert(owner, pid, pid, [{"id": f"{tag}S", "props": {"sheet": A4}}])
+    url = stored_url(ws, fx.png(120, 80), ".png")
+    insert(owner, pid, sheet, [{"id": f"{tag}{i}", "content": f"![{alt}]({url})",
+                                "props": {"text_box": {"x": 60 + 150 * i, "y": 640, "w": 128, "h": 88, "auto": False}}}
+                               for i, alt in enumerate(["|240", "Figure 2|300x200", "a|b"])])
+    data = export(owner, pid)
+    images = [o for o in plistlib.loads(session_of(data))["$objects"] if isinstance(o, dict) and "figure" in o]
+    assert [o["isCaptionEnabled"] for o in images] == [False, True, True]
+    members = fx_members(data)
+    shown = nb.read_note(members, members.find("Session.plist").read(), path="Sized.note").media
+    assert [m.caption for m in shown] == ["", "Figure 2", "a|b"]
+    for note, captions in ((data, ["", "Figure 2", "a|b"]), (without_copy(data), ["", "Figure 2", "a\\|b"])):
+        report = reimport(owner, note, "Sized picture boxes.note")
+        (surface,) = view(owner, ws, report["pages"][0]["id"])["surfaces"]
+        assert surface["boxes"] == [] and [p["caption"] for p in surface["pictures"]] == captions
+
+
+def test_a_picture_is_written_with_its_crop_turn_flips_and_caption():
+    """An ImageMediaObject carries the picture's turn (radians), its crop in
+    the file's pixels, its flips and its caption, where the reader finds
+    them."""
+    draft = nw.Draft(title="Picture", width=612.0)
+    draft.files["Images/Image 1.png"] = fx.png(120, 80)
+    draft.media.append(nw.Picture(x=10.5, y=20.25, w=96, h=40, image="Images/Image 1.png", pixels=(120, 80),
+                                  rotation=0.75, crop=(12, 20, 72, 40), flip_h=True, caption="Under it",
+                                  uuid=nw.new_uuid()))
+    draft.media.append(nw.Picture(x=0, y=0, w=12, h=8, image="Images/Image 1.png", pixels=(120, 80)))
+    members = fx_members(nw.note_bytes(draft))
+    turned, plain = nb.read_note(members, members.find("Session.plist").read(), path="Picture.note").media
+    assert (turned.x, turned.y, turned.w, turned.h, turned.rotation, turned.crop, turned.flip_h, turned.flip_v,
+            turned.caption) == (10.5, 20.25, 96, 40, 0.75, (12, 20, 72, 40), True, False, "Under it")
+    assert members.find(turned.picture).read() == draft.files["Images/Image 1.png"]
+    assert (plain.rotation, plain.crop, plain.flip_h, plain.flip_v, plain.caption) == (0, (0, 0, 120, 80), False,
+                                                                                       False, "")
 
 
 def test_what_a_note_cannot_hold_is_said(owner, ws):
     """A page's highlights, a recording that is no .m4a or is still being
-    made, grid paper and a sheet Notability has no size for are not in the
-    note, and the export says so; the rest comes back."""
+    made, a picture on no page or whose file is gone, grid paper and a
+    sheet Notability has no size for are not in the note, and the export
+    says so; the rest comes back."""
     pid = page(owner, "What a note cannot hold")
     tag = pid[:6]
     odd = notebook.normalize_paper({"width": 500, "height": 500, "pattern": "grid", "spacing": 20})
+    gone = {"url": f"/api/uploads/{'0' * 64}.png", "x": 10, "y": 10, "w": 40, "h": 30}  # no such file
+    nowhere = {**gone, "url": stored_url(ws, fx.png(4, 4), ".png")}  # a file, under no sheet
     insert(owner, pid, pid, [
+        {"id": f"{tag}P", "content": "on no page", "props": {"picture": nowhere}},
         {"id": f"{tag}S", "props": {"sheet": odd}},
         {"id": f"{tag}W", "content": "Web audio", "props": {"recording": {
             "started": T0, "state": "done", "dur": 1000, "segments": [
@@ -580,6 +666,7 @@ def test_what_a_note_cannot_hold_is_said(owner, ws):
                                                                      "segments": []}}},
     ])
     insert(owner, pid, f"{tag}W", [{"id": f"{tag}WT", "content": "a transcript line"}])
+    insert(owner, pid, f"{tag}S", [{"id": f"{tag}G", "props": {"picture": gone}}])
     r = owner.post("/api/jobs/export", json={"page_id": pid, "mode": "notability"})
     assert r.status_code == 200, r.text
     jobs.wait(r.json()["id"])
@@ -590,6 +677,8 @@ def test_what_a_note_cannot_hold_is_said(owner, ws):
         "1 recording is not an .m4a file (Notability plays only those) and is left out",
         "1 recording still being made is left out",
         "1 note under a recording is left out",
+        "1 picture is on no page and is left out",
+        "1 file of the page is missing on the server and is left out",
         "A sheet's size is not one of Notability's (letter, A4, legal): its page is 612 × 803.25 pt",
         "Notability shows grid paper as plain: a note keeps only ruled lines",
     ])

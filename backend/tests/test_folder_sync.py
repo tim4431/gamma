@@ -2,11 +2,15 @@
 notes reads (gamma/folder_sync.py, routers/sync.py ``/sync/folders*``) and
 the gamma-sync client (gamma/gamma_sync.py, run over HTTP) that writes them —
 the layout, the vault pages with the page's id, and the client's rounds:
-adds, updates, renames, removals, and the files it must leave alone."""
+adds, updates, renames, removals, and the files it must leave alone — and
+the PDFs it sends back when asked (more in test_disk_push.py)."""
 
 import base64
 import io
 import json
+import os
+import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -156,8 +160,9 @@ def _tool(monkeypatch):
     from gamma import gamma_sync as mod
     http = fresh_client()
 
-    def open_(method, path, headers):
-        r = http.request(method, path, headers=headers)
+    def open_(method, path, headers, body=None):
+        content = body if body is None or isinstance(body, bytes) else b"".join(body)
+        r = http.request(method, path, headers=headers, content=content)
         return r.status_code, r.headers, io.BytesIO(r.content)
 
     monkeypatch.setattr(mod, "default_open", open_)
@@ -268,3 +273,66 @@ def test_client_can_take_the_pdfs_alone_and_lists_folders(owner, lab, token, tmp
     # an id beginning with "-" is the folder asked for, not another option
     assert mod.main(["init", str(tmp_path / "y"), "--server", SERVER, "--folder", "-Ab9_xYz12", "--token", token]) == 1
     assert "no folder called '-Ab9_xYz12'" in capsys.readouterr().err
+
+
+def _built(path, data):
+    """``data`` written at ``path`` as a build that finished ten seconds ago."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(data)
+    then = time.time() - 10
+    os.utime(path, (then, then))
+
+
+def test_client_sends_pdfs_back_when_asked_and_follows_a_file(owner, token, tmp_path, capsys, monkeypatch):
+    mod = _tool(monkeypatch)
+    write = create_token(account_of("fs_owner"), workspace_of("fs_owner"), "folder sync push", 90, scope="write")["token"]
+    page, v1, _ = _pdf_page(owner, "Pushed paper", ["FS push"])
+    dest = tmp_path / "push"
+    capsys.readouterr()
+    assert mod.main(["init", str(dest), "--server", SERVER, "--folder", "FS push", "--token", token, "--push"]) == 1
+    assert "--push needs a token that may write" in capsys.readouterr().err
+    assert mod.main(["init", str(dest), "--server", SERVER, "--folder", "FS push", "--token", write, "--push"]) == 0
+    assert _state(dest)["push"] is True
+    assert mod.main(["sync", str(dest), "--token", write]) == 0
+    paper = dest / "Pushed paper.pdf"
+    _built(paper, _blank_pdf(pages=2))
+    capsys.readouterr()
+    assert mod.main(["sync", str(dest), "--token", write]) == 0
+    assert "1 sent" in capsys.readouterr().out
+    assert owner.get(f"/api/blocks/{page['id']}").json()["properties"]["doc_id"] == mod.doc_of(paper) != v1
+    assert _state(dest)["files"]["Pushed paper.pdf"]["doc"] == mod.doc_of(paper)
+
+    # --watch looks at the disk too: a build written meanwhile goes at the next look, though nothing changed in Gamma
+    looks = []
+
+    def look(seconds):
+        looks.append(seconds)
+        if len(looks) > 1:
+            raise KeyboardInterrupt
+        _built(paper, _blank_pdf(pages=4))
+
+    monkeypatch.setattr(mod, "time", SimpleNamespace(**{**vars(time), "sleep": look}))
+    capsys.readouterr()
+    assert mod.main(["sync", str(dest), "--token", write, "--watch", "60"]) == 130
+    rounds = capsys.readouterr().out.splitlines()
+    assert rounds[0] == "up to date; 2 unchanged" and "sent Pushed paper.pdf" in rounds and "1 sent" in rounds[-1], rounds
+    assert owner.get(f"/api/blocks/{page['id']}").json()["properties"]["doc_id"] == mod.doc_of(paper)
+    monkeypatch.setattr(mod, "time", time)
+
+    # a file followed by a build script: sent once, then up to date; a read token or no such page is an error
+    build = tmp_path / "tex" / "main.pdf"
+    _built(build, _blank_pdf(pages=3))
+    draft = make_page(owner, "Pushed draft")
+    args = ["push", str(build), "--page", draft["id"], "--server", SERVER]
+    assert mod.main([*args, "--token", token]) == 1
+    assert "push needs a token that may write" in capsys.readouterr().err
+    assert mod.main(["push", str(build), "--page", "-no-such-page", "--server", SERVER, "--token", write]) == 1
+    assert "no page -no-such-page" in capsys.readouterr().err
+    assert mod.main([*args, "--token", write, "--dry-run"]) == 0
+    assert capsys.readouterr().out.strip() == "would send"
+    assert mod.main([*args, "--token", write]) == 0
+    assert capsys.readouterr().out.strip() == "sent"
+    props = owner.get(f"/api/blocks/{draft['id']}").json()["properties"]
+    assert props["doc_id"] == mod.doc_of(build) and props["original_filename"] == "main.pdf"
+    assert mod.main([*args, "--token", write]) == 0
+    assert capsys.readouterr().out.strip() == "up to date"

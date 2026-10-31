@@ -22,10 +22,11 @@
 // when they come quickly (TYPING_MERGE_MS while the block's editor is open —
 // a run of typing undoes as one chunk, like any editor — else
 // EDIT_MERGE_MS: a drag, a run of toggles), and so do consecutive changes
-// of one text box's `text_box` alone (EDIT_MERGE_MS: a held arrow key, a
-// colour dragged in the picker). A fold that takes the tree back to the
-// newest entry's (a text box made and left empty) takes that entry back,
-// and brings back the redo steps it cleared.
+// of one text box's `text_box` or one picture's `picture` alone
+// (EDIT_MERGE_MS: a held arrow key, a colour dragged in the picker, a
+// handle's keys). A fold that takes the tree back to the newest entry's (a
+// text box made and left empty) takes that entry back, and brings back the
+// redo steps it cleared.
 //
 // An entry is {tree, caret, mark}: the tree kept by reference (the helpers
 // never mutate in place), when the change came from an editor that
@@ -43,20 +44,21 @@
 // (`rebaseHistory`) — structure and properties as they are, text as a
 // change carried over onto the entry's own text, so undoing our typing in a
 // block someone else typed in too takes out only ours, and a text box's
-// `text_box` as the keys they changed. Undo never takes
-// back what someone else changed after an entry was recorded
-// (`planRestore`): a block the restore would delete that they edited,
-// moved or made stays, as does text of theirs an entry's text couldn't be
-// rebased around; the rest of the entry applies, and when nothing is left
-// the step says so instead of pretending. An entry that changes nothing any
-// more is passed over. The stack's bookkeeping is plain functions over one
+// `text_box` or a picture's `picture` as the keys they changed (blockOps
+// PLACED). Undo never takes back what someone else changed after an entry
+// was recorded (`planRestore`): a block the restore would delete that they
+// edited, moved or made stays, as does text of theirs an entry's text
+// couldn't be rebased around; the rest of the entry applies, and when
+// nothing is left the step says so instead of pretending. An entry that
+// changes nothing any more is passed over. The stack's bookkeeping is plain functions over one
 // state object (`observeTree`, `rebaseHistory`, `undoStep`, `clearHistory`),
 // so the node tests drive it without React.
 import { useCallback, useEffect, useRef } from "react";
 import { generateNKeysBetween } from "fractional-indexing";
-import { applyOps, diffTrees, indexTree, someNode, withTexts } from "../shared/model/blockOps.js";
+import { PLACED, applyOps, diffTrees, indexTree, someNode, withTexts } from "../shared/model/blockOps.js";
 import { isHighlightBlock } from "../shared/model/blockModel.js";
-import { isTextBox, mergeTextBox, normalizeTextBox } from "../markup/textBox.js";
+import { isTextBox, normalizeTextBox } from "../markup/textBox.js";
+import { isPicture, normalizePicture } from "../markup/picture.js";
 import { t } from "../shared/i18n/i18n.js";
 
 const MAX_ENTRIES = 200;
@@ -98,9 +100,9 @@ export function classifyTransition(prev, next) {
   return only;
 }
 
-// The id of the one block whose `text_box` alone changed from `prev` to
-// `next` (no text, place or other property), else null. Exported for its
-// tests.
+// The id of the one block whose `text_box` or `picture` alone changed from
+// `prev` to `next` (no text, place or other property), else null. Exported
+// for its tests.
 export function boxChange(prev, next) {
   let id = null;
   const walk = (a, b) => {
@@ -111,7 +113,7 @@ export function boxChange(prev, next) {
       if (x === y) continue;
       if (x.id !== y.id || x.content !== y.content) return false;
       if (!propsEqual(x.properties, y.properties)) {
-        if (id !== null || !propsEqual(withoutBox(x.properties), withoutBox(y.properties))) return false;
+        if (id !== null || !placedAlone(x.properties, y.properties)) return false;
         id = x.id;
       }
       if (!walk(x.children || [], y.children || [])) return false;
@@ -120,7 +122,10 @@ export function boxChange(prev, next) {
   };
   return walk(prev, next) ? id : null;
 }
-const withoutBox = (props) => ({ ...(props || {}), text_box: null });
+const without = (props, key) => ({ ...(props || {}), [key]: null });
+const withoutBox = (props) => without(props, "text_box");
+// Whether two blocks' properties differ in one placed key alone (blockOps PLACED).
+const placedAlone = (a, b) => Object.keys(PLACED).some((key) => propsEqual(without(a, key), without(b, key)));
 
 // Describe the forward action, even when the caller is restoring it backward.
 // Compare rebased trees so a collaborator's edits are not named as our undo.
@@ -138,8 +143,10 @@ export function describeTransition(before, after) {
   };
   if (added.length && removed.length) return t("note replacement ({n} removed, {n2} added)", { n: removed.length, n2: added.length });
   if (added.length === 1 && isTextBox(added[0])) return t("text box creation{added}", { added: preview(added[0]) });
+  if (added.length === 1 && isPicture(added[0])) return t("picture creation{added}", { added: preview(added[0]) });
   if (added.length) return added.length === 1 ? t("note creation{added}", { added: preview(added[0]) }) : t("creation of {n} notes", { n: added.length });
   if (removed.length === 1 && isTextBox(removed[0])) return t("text box deletion{removed}", { removed: preview(removed[0]) });
+  if (removed.length === 1 && isPicture(removed[0])) return t("picture deletion{removed}", { removed: preview(removed[0]) });
   if (removed.length) return removed.length === 1 ? t("note deletion{removed}", { removed: preview(removed[0]) }) : t("deletion of {n} notes", { n: removed.length });
   const moved = [...b.values()].filter((n) => a.get(n.id)?.parent !== n.parent || a.get(n.id)?.order !== n.order);
   if (moved.length) return t("note move");
@@ -149,11 +156,14 @@ export function describeTransition(before, after) {
   const boxText = text.length === 1 && isTextBox(text[0]) && props.every((n) => n.id === text[0].id
     && propsEqual(withoutBox(a.get(n.id)?.properties), withoutBox(n.properties)));
   if (boxText) return t("text box text edit{text}", { text: preview(text[0]) });
+  // A picture's text is its caption.
+  if (text.length === 1 && !props.length && isPicture(text[0])) return t("picture caption edit{text}", { text: preview(text[0]) });
   if (text.length && props.length) return t("note text and properties edit");
   if (text.length) return text.length === 1 ? t("note text edit{text}", { text: preview(text[0]) }) : t("text edits in {n} notes", { n: text.length });
   if (props.length) {
     if (props.every((n) => n.properties?.ink_url !== undefined)) return t("handwriting note update");
     if (props.every(isTextBox)) return textBoxChange(props.map((n) => [a.get(n.id)?.properties?.text_box, n.properties.text_box]));
+    if (props.every(isPicture)) return pictureChange(props.map((n) => [a.get(n.id)?.properties?.picture, n.properties.picture]));
     if (props.every(isHighlightBlock)) {
       return props.every((n) => a.get(n.id)?.properties?.color !== n.properties.color) ? t("highlight color change") : t("highlight edit");
     }
@@ -171,6 +181,27 @@ function textBoxChange(pairs) {
   if (changed("x") || changed("y")) return t("text box move");
   if (changed("size") || changed("color") || changed("bg")) return t("text box style change");
   return t("text box resize");
+}
+
+// What a change of pictures (pairs of their `picture` before and after) did,
+// by the keys it changed, read normalized: a crop when `crop` changed, with
+// the frame it then fits; a move when only `x` and `y` did; a resize when
+// `w` or `h` did, about the centre; a rotation when only `angle` did; a flip
+// when only `flip_h` or `flip_v` did; anything else (a new file, several at
+// once) a change.
+function pictureChange(pairs) {
+  const keys = new Set();
+  for (const [before, after] of pairs) {
+    const was = normalizePicture(before), now = normalizePicture(after);
+    for (const k of Object.keys({ ...was, ...now })) if (JSON.stringify(was?.[k]) !== JSON.stringify(now?.[k])) keys.add(k);
+  }
+  const only = (...allowed) => keys.size > 0 && [...keys].every((k) => allowed.includes(k));
+  if (keys.has("crop") && only("crop", "x", "y", "w", "h")) return t("picture crop");
+  if (only("x", "y")) return t("picture move");
+  if ((keys.has("w") || keys.has("h")) && only("x", "y", "w", "h")) return t("picture resize");
+  if (only("angle")) return t("picture rotation");
+  if (only("flip_h", "flip_v")) return t("picture flip");
+  return t("picture change");
 }
 
 function hasBlock(list, id) {
@@ -235,15 +266,18 @@ export function rebaseHistory(s, ops, { pageId, pos, before = [] }) {
   const stamp = ++s.tick;
   const was = indexTree(before, pageId);
   const texts = new Map(); // id → [text before the batch, after it]
-  const boxes = new Map(); // id → [text_box before the batch, after it]
+  // key (blockOps PLACED) → id → [the block's value of it before the batch, after it]
+  const placed = new Map(Object.keys(PLACED).map((key) => [key, new Map()]));
   const shaped = [];
   for (const op of ops || []) {
     if (op.op === "set") {
       const props = Object.keys(op.props || {}).some((k) => k !== "collapsed");
       if (op.content !== undefined || props) s.touched.set(op.id, stamp);
       const had = was.get(op.id)?.node;
-      if (had && op.props && "text_box" in op.props) {
-        boxes.set(op.id, [boxes.has(op.id) ? boxes.get(op.id)[0] : had.properties?.text_box, op.props.text_box]);
+      if (had && op.props) {
+        for (const [key, values] of placed) {
+          if (key in op.props) values.set(op.id, [values.has(op.id) ? values.get(op.id)[0] : had.properties?.[key], op.props[key]]);
+        }
       }
       if (op.content !== undefined && had) {
         texts.set(op.id, [texts.get(op.id)?.[0] ?? (had.content || ""), op.content]);
@@ -254,20 +288,31 @@ export function rebaseHistory(s, ops, { pageId, pos, before = [] }) {
     shaped.push(op);
   }
   const ids = [...new Set((ops || []).map((op) => op.id))];
+  const keyed = [...placed.values()].some((values) => values.size);
+  // Their set of a text box or a picture carried onto `mine` (an entry's
+  // blocks): only the keys they changed.
+  const carried = (op, mine) => {
+    let props = op.props;
+    for (const [key, values] of placed) {
+      if (!values.has(op.id) || !(key in props)) continue;
+      const [from, to] = values.get(op.id);
+      props = { ...props, [key]: PLACED[key].merge(mine.get(op.id)?.node.properties?.[key], to, from) };
+    }
+    return props === op.props ? op : { ...op, props };
+  };
   const rebase = (e) => {
-    const mine = !e.hit || texts.size || boxes.size ? indexTree(e.tree, pageId) : null;
+    const mine = !e.hit || texts.size || keyed ? indexTree(e.tree, pageId) : null;
     const hit = e.hit || ids.some((id) => {
       const a = mine.get(id), b = was.get(id);
       if (!a || !b) return !!a !== !!b;
       return a.parent !== b.parent || (a.node.content || "") !== (b.node.content || "")
         || !propsEqual(a.node.properties, b.node.properties);
     });
-    // A text box, which every change sends whole, takes only the keys
-    // they changed: undoing our move never takes back their restyle, nor
-    // their measured size, and theirs never blocks ours.
-    const theirs = boxes.size ? shaped.map((op) => (op.op === "set" && boxes.has(op.id) && op.props && "text_box" in op.props
-      ? { ...op, props: { ...op.props, text_box: mergeTextBox(mine.get(op.id)?.node.properties?.text_box,
-        boxes.get(op.id)[1], boxes.get(op.id)[0]) } } : op)) : shaped;
+    // A text box or a picture, which every change sends whole, takes only
+    // the keys they changed: undoing our move never takes back their
+    // restyle or crop, nor a box's measured size, and theirs never blocks
+    // ours.
+    const theirs = keyed ? shaped.map((op) => (op.op === "set" && op.props ? carried(op, mine) : op)) : shaped;
     let tree = theirs.length ? applyOps(e.tree, theirs, pageId, pos) : e.tree;
     let contested = e.contested;
     const changed = new Map();

@@ -33,6 +33,7 @@ import zlib
 
 from .highlights import is_highlight, page_of
 from .colors import logseq_name
+from .picture import is_picture, markdown_of
 
 CONFIG_EDN = "{:meta/version 1}\n"
 
@@ -192,6 +193,10 @@ def _render_block(node, depth, lines, has_pdf):
         for child in node["children"]:
             _render_block(child, depth + 1, lines, has_pdf)
         return
+    elif is_picture(props) and (picture := markdown_of(content, props["picture"])):
+        # A picture: its image line, bundled as a note's image is, and no
+        # page, as a text box has none.
+        lines.append(f"{tabs}- {picture}")
     elif content:
         # A note, a text box included: Logseq keeps a page (hl-page) only on
         # annotation blocks, and a text box is not one.

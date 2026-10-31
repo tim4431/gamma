@@ -1,8 +1,8 @@
 """Where a Notability note lands in Gamma, as pure functions of the ``Note``
 model (gamma/notability.py): the pages' frames, which page each item is on,
-the paper, the strokes as gamma-ink v2 dicts, the text boxes and the typed
-text as notes (docs/dev/import_export.md "Notability notes"; the geometry's
-sources: docs/research/notability-format.md).
+the paper, the strokes as gamma-ink v2 dicts, the text boxes, the pictures
+and the typed text as notes (docs/dev/import_export.md "Notability notes";
+the geometry's sources: docs/research/notability-format.md).
 
 A note is one continuous canvas in document units, its pages stacked with
 no gap. A ``Frame`` maps one page's slot of it onto a Gamma surface: a PDF
@@ -22,6 +22,8 @@ from .notability import (COORD_LIMIT, IDENTITY, MAX_NOTE_PAGES, STYLE_HIGHLIGHTE
                          Run, Shape, curve_points)
 from .notebook import normalize_paper
 from .ops import MAX_CONTENT
+from .picture import caption_text, normalize_picture
+from .picture import keep_on_surface as keep_picture
 from .text_box import LINE, MAX_SIZE, MIN_SIZE, PAD, escape_markdown, keep_on_surface, markdown_of, normalize_text_box
 
 INSET = 20 / 768                 # the paper's left edge is at x = −W × INSET
@@ -791,6 +793,8 @@ def page_strokes(note: Note, page: PagePlan, left_out: Counter, left: list | Non
 # Notability has changed an item the note's own version is what comes in.
 
 COPY_TOLERANCE = 0.05  # pt: how far a sample of the copy may lie from the note's (float32 coordinates)
+COPY_TURN = 0.05       # degrees: how far a picture's turn in the copy may lie from the note's
+COPY_CROP = 0.001      # how far a picture's crop in the copy may lie from the note's, as a fraction of its side
 
 
 def _part(private: dict, name: str) -> dict:
@@ -830,30 +834,62 @@ def copied_stroke(copy, made: dict, *, exact: bool) -> dict | None:
 
 
 def copied_box(note: Note, media: Media, made: dict | None, frame: Frame) -> dict | None:
-    """Gamma's copy of a text box or a picture's box (``{content,
-    text_box}``, ``made`` the note's own), when the note still holds it:
-    a box at the same place and width, a text box with the same text. A
-    picture keeps ``made``'s content but for its alt text."""
+    """Gamma's copy of a text box (``{content, text_box, text}``, ``made``
+    the note's own), when the note still holds it: a box at the same place
+    and width with the same text."""
     if made is None or media.uuid is None:
         return made
-    parts = _part(note.private or {}, "pictures" if media.kind == "picture" else "boxes")
-    copy = parts.get(media.uuid.hex())
+    copy = _part(note.private or {}, "boxes").get(media.uuid.hex())
     if not isinstance(copy, dict):
         return made
     box = normalize_text_box(copy.get("text_box"))
     ours = made["text_box"]
     if box is None or any(abs(box[k] - ours[k]) > COPY_TOLERANCE for k in ("x", "y", "w")):
         return made
-    box = keep_on_surface(box, frame.width, frame.height)
-    if media.kind == "picture":
-        alt = copy.get("alt")
-        if not isinstance(alt, str) or len(alt) > MAX_CONTENT or "]" in alt:
-            return made
-        return {"content": "![" + alt + made["content"][made["content"].index("]("):], "text_box": box}
     text, content = copy.get("text"), copy.get("content")
     if not isinstance(content, str) or len(content) > MAX_CONTENT or text != "".join(r.text for r in media.runs):
         return made
-    return {"content": content, "text_box": box}
+    return {"content": content, "text_box": keep_on_surface(box, frame.width, frame.height)}
+
+
+def _turn(a: float, b: float) -> float:
+    """How far apart two turns are, in degrees, the short way round."""
+    return abs((a - b + 180) % 360 - 180)
+
+
+def copied_picture(note: Note, media: Media, made: dict | None, frame: Frame) -> dict | None:
+    """Gamma's copy of a picture (``{caption, picture}``, ``made`` the
+    note's own), when the note still shows it as the copy has it: at the
+    same place and size (within COPY_TOLERANCE), turn (COPY_TURN), crop
+    (COPY_CROP) and flips. Then the caption is the copy's and so is every
+    number, the file the note's. A copy an older export wrote, of a box
+    holding the picture (``{alt, text_box}``), gives its alt text as the
+    caption when the picture is still where that box's padding put it."""
+    if made is None or media.uuid is None:
+        return made
+    copy = _part(note.private or {}, "pictures").get(media.uuid.hex())
+    if not isinstance(copy, dict):
+        return made
+    ours = made["picture"]
+    if "picture" not in copy:  # an older export's box, the picture inside its padding
+        box, alt = normalize_text_box(copy.get("text_box")), copy.get("alt")
+        if box is None or not isinstance(alt, str) or len(alt) > MAX_CONTENT:
+            return made
+        inside = (box["x"] + PAD, box["y"] + PAD, box["w"] - 2 * PAD)
+        if any(abs(v - ours[k]) > COPY_TOLERANCE for v, k in zip(inside, ("x", "y", "w"))):
+            return made
+        return {"content": alt, "picture": ours}
+    caption, raw = copy.get("caption"), copy.get("picture")
+    pic = normalize_picture({**raw, "url": ours["url"]}) if isinstance(raw, dict) else None
+    if pic is None or not isinstance(caption, str) or len(caption) > MAX_CONTENT:
+        return made
+    pic = keep_picture(pic, frame.width, frame.height)
+    if (any(abs(pic[k] - ours[k]) > COPY_TOLERANCE for k in ("x", "y", "w", "h"))
+            or _turn(pic["angle"], ours["angle"]) > COPY_TURN
+            or any(abs(pic["crop"][k] - ours["crop"][k]) > COPY_CROP for k in ("x", "y", "w", "h"))
+            or (pic["flip_h"], pic["flip_v"]) != (ours["flip_h"], ours["flip_v"])):
+        return made
+    return {"content": caption, "picture": pic}
 
 
 def copied_flow(note: Note) -> list | None:
@@ -1049,14 +1085,30 @@ def text_box(media: Media, frame: Frame, left_out: Counter | None = None) -> dic
     return {"content": content, "text_box": keep_on_surface(normalize_text_box(box), frame.width, frame.height)}
 
 
-def picture_box(media: Media, frame: Frame) -> dict:
-    """The box a picture is drawn in: the bounding box of the picture as
-    Notability turns it about its centre, grown by the box's padding, fixed
-    width, kept on the page. The picture is stored turned (the import's
-    ``picture_bytes``), so it fills the box's text width."""
+def picture_block(media: Media, frame: Frame, url: str, pixels: tuple, left_out: Counter | None = None) -> dict:
+    """A picture as ``{"content", "picture"}`` in the frame, its file the
+    upload ``url`` (stored as it came) whose image is ``pixels`` (width,
+    height) as shown: the frame through the page's, kept on the page
+    (``picture.keep_on_surface``); the turn in degrees (rotationDegrees
+    holds radians, clockwise as seen); the flips; the crop as fractions of
+    the image, FigureCropRectKey being in its pixels (an .ntb's in the
+    asset's logical size, ``media.crop_size``), cut to the image, and the
+    whole image when there is none or it holds nothing. The content is the
+    caption on one line, escaped (``text_box.escape_markdown``), cut at
+    ops.MAX_CONTENT characters (counted)."""
     x, y, w, h = _surface_rect(media, frame)
-    cx, cy = x + w / 2, y + h / 2
-    c, s = abs(math.cos(media.rotation)), abs(math.sin(media.rotation))
-    bw, bh = w * c + h * s, w * s + h * c
-    box = {"x": cx - bw / 2 - PAD, "y": cy - bh / 2 - PAD, "w": bw + 2 * PAD, "h": bh + 2 * PAD, "auto": False}
-    return keep_on_surface(normalize_text_box(box), frame.width, frame.height)
+    sw, sh = media.crop_size or pixels
+    crop = None
+    if media.crop is not None:
+        cx, cy, cw, ch = media.crop
+        x0, y0, x1, y1 = max(0, cx), max(0, cy), min(sw, cx + cw), min(sh, cy + ch)
+        if x1 > x0 and y1 > y0:
+            crop = {"x": x0 / sw, "y": y0 / sh, "w": (x1 - x0) / sw, "h": (y1 - y0) / sh}
+    pic = normalize_picture({"url": url, "x": x, "y": y, "w": w, "h": h, "angle": math.degrees(media.rotation),
+                             "crop": crop, "flip_h": media.flip_h, "flip_v": media.flip_v})
+    content = escape_markdown(caption_text(media.caption))
+    if len(content) > MAX_CONTENT:  # what the editor saves (counted)
+        content = content[:MAX_CONTENT]
+        if left_out is not None:
+            left_out["long text"] += 1
+    return {"content": content, "picture": keep_picture(pic, frame.width, frame.height)}

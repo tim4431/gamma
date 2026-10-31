@@ -8,10 +8,10 @@ inserts for ids only ``target`` has, moves for a changed parent or key,
 sets for changed content (carrying ``base``, the text it was edited from —
 the server's three-way merge reads it) or a properties patch (carrying
 ``base_props`` with the ``ink_url`` a changed drawing was edited from, so
-the server merges it by stroke, and the ``text_box`` a changed text box
-was changed from, merged key by key), and deletes of the top-most removed
-subtrees last. Inserts and moves come in tree
-order, so a parent always exists before its children arrive.
+the server merges it by stroke, and the ``text_box`` or ``picture`` a
+changed text box or picture was changed from, merged key by key), and
+deletes of the top-most removed subtrees last. Inserts and moves come in
+tree order, so a parent always exists before its children arrive.
 ``apply(snapshot, ops)`` is the other way round: what a server holds after
 ops, keys taken as sent. ``moved(base, target)`` names the blocks a
 person moved, telling them from blocks the server only re-keyed.
@@ -20,7 +20,7 @@ person moved, telling them from blocks the server only re-keyed.
 import json
 
 from . import storage
-from .ops import props_patch
+from .ops import PLACED_KEYS, props_patch
 
 
 def snapshot_from_rows(rows) -> dict:
@@ -108,10 +108,12 @@ def _set_op(bid: str, b: dict | None, t: dict, with_base: bool) -> dict | None:
             # the drawing this one was edited from: a server whose drawing
             # moved on meanwhile merges the two by stroke (ops.py merge_ink)
             base_props["ink_url"] = b["props"].get("ink_url") or ""
-        if with_base and b is not None and "text_box" in patch and isinstance(b["props"].get("text_box"), dict):
-            # the box this one was changed from: merged key by key into a
-            # box someone else changed meanwhile (text_box.merge_text_box)
-            base_props["text_box"] = b["props"]["text_box"]
+        for key in PLACED_KEYS:
+            if with_base and b is not None and key in patch and isinstance(b["props"].get(key), dict):
+                # the text box or picture this one was changed from: merged
+                # key by key into one someone else changed meanwhile
+                # (ops.py PLACED_KEYS)
+                base_props[key] = b["props"][key]
         if base_props:
             op["base_props"] = base_props
     return op if len(op) > 2 else None
@@ -200,11 +202,12 @@ def moved(base: dict, target: dict) -> set[str]:
     return out
 
 
-def upload_refs(blocks) -> set[str]:
+def upload_refs(blocks, *, held: bool = True) -> set[str]:
     """The upload file names a set of blocks (snapshot values or op dicts)
-    reference: ``/api/uploads/<name>`` in content or properties, and a
-    page's ``doc_id`` (its PDF) — ``storage.upload_refs`` per block."""
+    reference: ``/api/uploads/<name>`` in content or properties, a page's
+    ``doc_id`` (its PDF), and with ``held`` the files highlights hold —
+    ``storage.upload_refs`` per block."""
     names = set()
     for b in blocks:
-        names |= storage.upload_refs(b.get("content") or "", b.get("props") or {})
+        names |= storage.upload_refs(b.get("content") or "", b.get("props") or {}, held=held)
     return names

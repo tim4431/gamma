@@ -81,9 +81,13 @@ past the viewer's edge. The viewer's load effect composes them:
    (below, "Coming back to a document").
    Documents are never destroyed on a tab switch or a viewer unmount, only on
    eviction, a second after the commit so mounted pages are not torn out from
-   under pdf.js. The byte cache (`PDF_CACHE`) holds one entry, which pays
-   for this one: re-reading bytes from IndexedDB costs tens of milliseconds,
-   re-parsing them is the expensive half. The in-document search (Ctrl+F)
+   under pdf.js. A document a translation job is reading is pinned
+   (`translateState.pinned`): eviction passes over it, past the two, until
+   the last job reading it ends and lets it go
+   ([translation.md](translation.md#outliving-the-viewer)). The
+   byte cache (`PDF_CACHE`) holds one entry, which pays for this one:
+   re-reading bytes from IndexedDB costs tens of milliseconds, re-parsing
+   them is the expensive half. The in-document search (Ctrl+F)
    reads each page's text from pdf.js once per parsed document and caches it
    per parsed document (`SEARCH_TEXT`, a WeakMap freed with the document): the
    first query over a book extracts every page, the next is a regex over

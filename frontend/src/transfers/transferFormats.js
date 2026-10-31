@@ -193,17 +193,17 @@ export function exportSummary({ payload, noPdfCopy }, folder) {
     case "obsidian":
       return t("An Obsidian vault: one note per page{folders}, links as [[wikilinks]], labels as tags{callouts}{lists}. Unzip it into a vault, or open it as one.", { folders: folder ? t(", subfolders as folders") : "", callouts: highlights ? t(", highlights as quote callouts") : "", lists: notes ? t(", your notes as headings, paragraphs and lists") : "" });
     case "pdf":
-      // Text boxes are written as annotations with any switch (they are the
-      // user's own writing on the page); highlights and ink only with the
-      // first (routers/export.py).
+      // Text boxes and pictures are written as annotations with any switch
+      // (they are the user's own on the page); highlights and ink only with
+      // the first (routers/export.py).
       if (folder) {
         return highlights || notes || comments
-          ? t("Every paper's PDF in one .zip, with {annotations}{page}, its subfolders as folders. Pages without a PDF are left out.", { annotations: highlights ? t("highlight annotations") : t("text box annotations only"), page: cardsSummary(payload) })
+          ? t("Every paper's PDF in one .zip, with {annotations}{page}, its subfolders as folders. Pages without a PDF are left out.", { annotations: highlights ? t("highlight annotations") : t("text box and picture annotations only"), page: cardsSummary(payload) })
           : t("Every paper's PDF in one .zip, exactly as stored, its subfolders as folders. Pages without a PDF are left out.");
       }
       if (noPdfCopy) return t("This PDF isn't stored on the server, so only the file itself can be exported.");
       if (!highlights && !notes && !comments) return t("The PDF file exactly as stored, with nothing added.");
-      return t("The PDF with {annotations}{page}.", { annotations: highlights ? t("highlight annotations") : t("text box annotations only"), page: cardsSummary(payload) });
+      return t("The PDF with {annotations}{page}.", { annotations: highlights ? t("highlight annotations") : t("text box and picture annotations only"), page: cardsSummary(payload) });
     case "notespdf":
       if (!highlights && !notes) return t("A new PDF with the title and metadata only — both switches are off.");
       return t("A new PDF of {page} — title, {quotes}{typeset}.", { page: folder ? t("every page in the folder") : t("this page"), quotes: highlights ? t("quoted highlights") : t("no quotes"), typeset: notes ? t(" and your notes, typeset") : "" });
@@ -221,7 +221,7 @@ export function exportSummary({ payload, noPdfCopy }, folder) {
 // where the browser can pick folders (folderZip.js), the .zip then a link.
 const IMPORT_SOURCES = [
   { id: "annots", label: T("Annotations in this PDF"), category: "This paper", hint: T("Bring embedded highlights and notes into Gamma"), strip: true, actionLabel: T("Import"),
-    instructions: T("Highlights, notes and boxes saved inside this PDF (a Gamma export, SumatraPDF, Acrobat…) become regular blocks. Importing twice adds nothing — each annotation is matched to the block it already made.") },
+    instructions: T("Highlights, notes, boxes and pictures (image stamps) saved inside this PDF (a Gamma export, SumatraPDF, Acrobat…) become regular blocks. Importing twice adds nothing — each annotation is matched to the block it already made.") },
   { id: "zotero", label: T("Zotero library"), category: "Library", hint: T("Papers, collections, tags and notes"), strip: true, archive: true, actionLabel: T("Choose .zip…"), folderLabel: T("Choose folder…") },
   { id: "markdown", label: T("Markdown notes"), category: "Notes", hint: T("Markdown files, Obsidian vaults or Notion exports"), archive: true, actionLabel: T("Choose file…"),
     instructions: T("A single .md becomes a note page. A .zip of Markdown — a zipped Obsidian vault, Notion's Export → Markdown & CSV (subpages included), a Gamma Markdown export, or any zipped folder of notes — becomes one page per file: folders become folders, links between the notes ([[wikilinks]] included) become mentions, ![[block]] embeds synced blocks, tags labels, and images and files come along. Notes already imported are skipped.") },

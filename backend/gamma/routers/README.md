@@ -13,22 +13,25 @@ One module per API area. Mounted under `/api` in `gamma/app.py`.
 | `workspaces.py` | `/api/workspaces/*`               | workspaces: list/create/rename/delete, members and roles, invitations by Gamma Cloud username or by e-mail |
 | `admin.py`    | `/api/admin/*`, `/api/jobs/server-backup` | accounts and invitations to this server by e-mail, server settings, shared AI providers, every workspace, server backups and off-site copies, the database check, the server log |
 | `blocks.py`   | `/api/blocks/*`, `/block-search`    | the block tree (CRUD, children, subtree, backlinks, by-doc), block search |
-| `pages.py`    | `/api/pages`, `/pages/by-docs`, `/pages/from-file`, `/pages/{id}/attachment` | page-first endpoints: create a page (also from a stored Markdown file), attach/detach its document, which pages carry which PDFs |
+| `pages.py`    | `/api/pages`, `/pages/by-docs`, `/pages/from-file`, `/pages/{id}/attachment` | page-first endpoints: create a page (also from a stored Markdown file), attach/detach its document (`replace_attachment`, which a Zotero link calls too; no person's PDF on a page whose PDF a Zotero link still brings), which pages carry which PDFs |
 | `trash.py`    | `/api/trash`, `/trash/{id}/restore` | Recently deleted: list, restore, delete for good, empty |
 | `uploads.py`  | `/api/uploads/*`, `/upload-image`, `/upload-file`, `/pdf-info/{doc_id}`, `/quota` | PDF / image / any-file upload + serving (content-addressed; executables refused); a PDF's upload in parts (`/uploads/parts`, gamma/upload_parts.py); a PDF's manifest (gamma/pdf_meta.py); the storage limits |
 | `ink.py`      | `/api/upload-ink`                   | handwriting uploads: one `gamma-ink` file per ink group, stored like any upload |
 | `recordings.py` | `/api/jobs/transcribe` | a recording's transcript as the `transcribe` job (`gamma/recording.py`); the recording is a block, its audio uploads |
 | `pdf.py`      | `/api/resolve-pdf`, `/pdf`          | find a real PDF url (arXiv → meta tag → Unpaywall OA), and proxy it (optional local cache) |
 | `metadata.py` | `/api/metadata/*` (`fetch`, `update`, `verify`, `status`, `cite`), `/jobs/metadata` | paper metadata + BibTeX + PPT citation (cached on the page), and the batch lookup as a job |
-| `ai.py`       | `/api/ai/*` (chat, models, providers, approvals, revert, translate, transcribe, search services, ChatGPT OAuth), `/translate/engines*` | chat orchestration, AI settings, OAuth, translation |
+| `ai.py`       | `/api/ai/*` (chat, models, providers, approvals, revert, transcribe, search services, ChatGPT OAuth) | chat orchestration, AI settings, OAuth |
+| `translate.py` | `/api/ai/translate`, `/ai/translate/brief`, `/translations*`, `/translate/engines*` | the PDF's translated view (gamma/translate.py, translate_context.py), the paper's brief, the workspace's kept translations (gamma/translate_store.py) and the machine-translation services' keys |
 | `ai_handoffs.py` | `/api/ai/handoffs/{id}*`         | the chat's fetch handoffs (gamma/fetch_handoff.py): a PDF the user's browser fetches for the chat, from the card or the Gamma Connector |
 | `chats.py`    | `/api/chats/*`, `/api/chat-history*` | the AI chats per bucket (a page, a folder, `home`) and their history (workspace data) |
 | `collab.py`   | `/api/pages/{id}/ops`, `/api/ws/page/{id}` | the op write path + the page websocket (pages, and the `folders` / `labels` trees) |
 | `comments.py` | `/api/pages/{id}/comments`, `/api/comments/{id}*` | comment threads on a page's blocks (gamma/comments.py): list, write, edit, delete, resolve; any member or a signed-in share visitor (`auth.require_commenter`) |
-| `sync.py`     | `/api/sync/whoami`, `/sync/changes`, `/sync/folders*` | the workspace change feed, for anything that keeps a copy in step (a desktop mirror), and the folder manifest and notes files the gamma-sync client reads (`gamma/folder_sync.py`) |
+| `sync.py`     | `/api/sync/whoami`, `/sync/changes`, `/sync/folders*` | the workspace change feed, for anything that keeps a copy in step (a desktop mirror; a Zotero link reads it in-process), and the folder manifest and notes files the gamma-sync client reads (`gamma/folder_sync.py`) |
 | `mirrors.py`  | `/api/mirrors*`                     | mirrors of a workspace on another Gamma server (gamma/sync_engine.py): create, run a round, status, log, conflicts; the owner only |
 | `folder_links.py` | `/api/folder-links*`               | folders kept as directories on this computer (gamma/folder_links.py) — of the server's workspaces, or of another Gamma server read with a token of it: list, make, change, a round now, remove; the desktop app's own server only (404 elsewhere), session only, editors (a remote source's link: its account) |
 | `publish.py`  | `/api/pages/{id}/publish`, `/publish/limit`, `/pages/resolve-public`, `/auth/cloud/exchange` | publishing a page to the free share host (gamma/publish.py): the publishing server's half and the share host's |
+| `zotero.py`   | `/api/zotero/account`, `/zotero/libraries`, `/zotero/oauth/*` | the account's Zotero connection (gamma/zotero_account.py): a pasted key or signing in at zotero.org (this server's Zotero app or Gamma Cloud's broker), and the libraries its key reaches; personal accounts only |
+| `zotero_sync.py` | `/api/zotero/links*`             | Zotero links (gamma/zotero_sync.py, docs/dev/zotero_sync.md): link a library to a workspace, the link dialog's counts (`preview`), settings, a round now, a page's PDF first (`fetch`), detach, relink, force, remove, log, conflicts; session only, the link's owner (`fetch`: any member) |
 | `folders.py`  | `/api/folders/{id}`, `/api/labels/{id}` (DELETE) | deleting a folder or a label (`ops.delete_tree`): the subtree, the ids on the pages, the folder chats and shares |
 | `prefs.py`    | `/api/prefs/*`, `/api/page-snaps*`  | per-account (and per-workspace) synced prefs, cover snapshots |
 | `notices.py`  | `/api/notices*`                     | the red dot's feed (gamma/notices.py) and the ack when a notice is seen |
@@ -39,7 +42,7 @@ One module per API area. Mounted under `/api` in `gamma/app.py`.
 | `clip.py`     | `/api/clip`, `/clip/note`, `/library/*` | the Gamma Connector's endpoints: save a page or a selection, look the library up for the popup |
 | `publisher_sessions.py` | `/api/publisher-sessions*` | publisher sign-in cookies the Connector imports, stored encrypted and write-only |
 | `shares.py`   | `/api/share/*`, `/api/share-settings/*` | share links of a page or a folder (by id), and their invitations by Gamma Cloud username or by e-mail |
-| `imports.py`  | `/api/import/*`, `/jobs/import`     | Logseq, embedded-PDF-annotation, Markdown and the reviewed library imports — Zotero, Markdown zips, Notability notes, Gamma exports (the import itself a job) |
+| `imports.py`  | `/api/import/*`, `/jobs/import`     | Logseq, embedded-PDF-annotation, Markdown and the reviewed library imports — Zotero (never into a workspace a Zotero link keeps), Markdown zips, Notability notes, Gamma exports (the import itself a job) |
 | `export.py`   | `/api/pages/{id}/export*`, `/folders/{id}/export`, `/bibliography`, `/jobs/export` | every export format, as a download or a job |
 
 Gotchas:

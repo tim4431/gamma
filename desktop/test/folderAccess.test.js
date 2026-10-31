@@ -90,6 +90,18 @@ test('at launch every stored folder opens; one that does not stays stored', () =
   assert.equal(again.stored().length, 3, 'a disk that comes back works at the next launch');
 });
 
+test('a followed file kept as a bookmark opens at launch as a folder does', () => {
+  const t = setup();
+  const pdf = path.join(t.dir('Build'), 'main.pdf');
+  fs.writeFileSync(pdf, '%PDF-1.4\n%%EOF\n');
+  t.access.add(pdf, 'bm-pdf');
+  assert.deepEqual(t.stored(), [{ path: pdf, bookmark: 'bm-pdf' }]);
+  const again = setup(t.stored());
+  again.access.restore();
+  assert.equal(again.access.reachable(pdf), true);
+  assert.deepEqual(again.stopped, []);
+});
+
 test('a server started before a grant has to start again to reach it', () => {
   const t = setup();
   const books = t.dir('Books');

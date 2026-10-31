@@ -125,6 +125,7 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
       await page.getByRole("button", { name: "More", exact: true }).click();
       await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
       await page.getByRole("dialog", { name: "Settings", exact: true }).waitFor();
+      await page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Appearance", exact: true }).click();
       const before = await page.locator("html").getAttribute("data-theme");
       const next = before === "sepia" ? "Gamma Dark" : "Sepia";
       await page.getByRole("button", { name: next, exact: true }).click();

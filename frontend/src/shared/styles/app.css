@@ -7,8 +7,8 @@
 /* The tokens (theme colours, type, radii, layers) live in tokens.css, which
    index.html links ahead of this file; this file only reads them. */
 
-/* Live-preview selection color while picking in PlainTip. PlainTip sets
-   --selection-color on :root; otherwise we fall back to default. */
+/* A PDF text selection's colour: the text highlighter's while it is on (the
+   viewer sets --selection-color, pdf/PdfViewer.jsx), else a light blue. */
 .textLayer ::selection,
 .textLayer span::selection {
   background: var(--selection-color, rgba(180, 200, 255, 0.5));
@@ -2474,6 +2474,9 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .mirrorSetActions { display: flex; gap: 6px; flex-wrap: wrap; padding: 6px 4px; }
 .mirrorConfirm { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 6px 4px; font-size: var(--fs-xs); color: var(--text-secondary); }
 .mirrorConfirm > svg { color: var(--warn); flex-shrink: 0; }
+/* why the sync settings' last change was refused, and Reconnect when a connection mends it */
+.mirrorRefused { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 2px 4px 6px; }
+.mirrorRefused .settingsPaneHint { padding: 0; flex: 1 1 200px; min-width: 0; }
 .mirrorConfirmBtns { display: inline-flex; gap: 6px; margin-left: auto; }
 /* The merge chip on a block row and the conflict card (MergeResolver.jsx):
    one card for the chip's popover, the sync pill's list and Settings — the
@@ -2491,6 +2494,8 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
 .mergePage { font-weight: 500; color: var(--text-muted); }
 .mergeNav { display: inline-flex; align-items: center; gap: 2px; flex-shrink: 0; }
 .mergeNavCount { font-size: var(--fs-2xs); color: var(--text-muted); font-variant-numeric: tabular-nums; min-width: 34px; text-align: center; }
+/* a Zotero row's own sentence (a refusal, a give-up, an annotation back) */
+.mergeReason { padding: 0 4px; white-space: pre-wrap; word-break: break-word; }
 .mergeVersions { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
 .mergeVersions.one, .mirrorPopover .mergeVersions { grid-template-columns: 1fr; }
 .mergeVersions .mergeVersion.result { grid-column: 1 / -1; }
@@ -5386,7 +5391,11 @@ a.shareBrand:hover { background: var(--bg-hover); }
    the previous file's page, so it takes the page's paper and the theme's
    treatment of it, as the viewer's pages and the zoom window do; the old
    rectangles over it are drawn in the highlight's colour, the dark-page
-   one where the page is flipped. */
+   one where the page is flipped. 360 px holds a lost card's row (Use
+   closest match, Move…, Discard, Previous, the count, Next) on one line,
+   in English and in Chinese; on a phone narrower than 376 px, where the
+   card is narrower too, its sides and the row are tighter (below), so the
+   row stays on one line down to a 360 px phone. */
 .hlReviewCard {
   position: fixed;
   z-index: var(--z-popover);
@@ -5394,7 +5403,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
   display: flex;
   flex-direction: column;
   gap: var(--space-4);
-  width: min(340px, calc(100vw - 16px));
+  width: min(360px, calc(100vw - 16px));
   max-height: min(70vh, 520px);
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -5403,12 +5412,12 @@ a.shareBrand:hover { background: var(--bg-hover); }
   line-height: 1.45;
   color: var(--text-primary);
 }
-/* it takes the focus as a whole (opened by a tap, Next or the Document
-   menu) only so the keys reach its buttons: no ring of its own */
+/* it takes the focus as a whole (opened by a tap or the Document menu)
+   only so the keys reach its buttons: no ring of its own */
 .hlReviewCard:focus { outline: none; }
 .hlReviewHead { font-weight: 600; }
 .hlReviewLabel { margin-bottom: var(--space-2); font-size: var(--fs-2xs); color: var(--text-muted); }
-.hlReviewGone { color: var(--text-secondary); }
+.hlReviewGone, .hlReviewOffPage { color: var(--text-secondary); }
 .hlReviewQuote {
   margin-top: var(--space-2);
   max-height: 6em;
@@ -5427,9 +5436,13 @@ a.shareBrand:hover { background: var(--bg-hover); }
   background: var(--bg-deeper); /* the placeholder, until the picture is in */
   isolation: isolate; /* the rectangles' blend stays on the picture */
 }
-/* the frame's shape is its aspect-ratio alone (the box's, then the picture's own) */
-.hlReviewShot img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; visibility: hidden; }
-.hlReviewShot.loaded img { visibility: visible; }
+/* the frame's shape is its aspect-ratio alone (the box's, then the picture's own).
+   The picture is unseen until it is in, and then takes the card's own
+   visibility, never a `visible` of its own: the card stands hidden while
+   its highlight is out of the viewer's sight, and a picture set visible
+   showed through it, alone over the page */
+.hlReviewShot img { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+.hlReviewShot:not(.loaded) img { visibility: hidden; }
 .hlReviewRect { position: absolute; border-radius: 1px; background: var(--hl); mix-blend-mode: multiply; pointer-events: none; }
 /* ds-allow-start: the page's paper and the themes' treatment of it, as .pdfViewer's pages take them */
 .hlReviewShot.loaded { background: #fff; }
@@ -5456,8 +5469,31 @@ a.shareBrand:hover { background: var(--bg-hover); }
   overflow-wrap: anywhere;
 }
 .hlReviewDiff del + ins { margin-left: var(--space-1); }
+/* a lost highlight's closest match: its percentage beside Show, then the comparison */
+.hlReviewClosestHead { display: flex; align-items: center; justify-content: space-between; gap: var(--space-3); margin-bottom: var(--space-2); }
+.hlReviewClosestHead .hlReviewLabel { margin-bottom: 0; }
+/* The steps, then Previous, the count and Next at the end, on one line
+   (wrapping only under a larger interface font). Nothing in the row moves
+   when a step is taken or undone: a step's button holds both its faces,
+   before and after (.hlReviewFace, one cell, the one not shown hidden as
+   .hlReviewRoom), and the count holds the room of "All reviewed" too. */
 .hlReviewActions { display: flex; flex-wrap: wrap; align-items: center; gap: var(--space-3); }
-.hlReviewCount { margin-left: auto; font-size: var(--fs-xs); color: var(--text-muted); font-variant-numeric: tabular-nums; }
+.hlReviewActions .uiBtn.sm:not(.iconSq) { padding-inline: var(--space-4); }
+.uiBtn.hlReviewStep { display: inline-grid; }
+.hlReviewStep > .hlReviewFace { grid-area: 1 / 1; display: inline-flex; align-items: center; justify-content: center; gap: var(--space-3); }
+.hlReviewRoom { visibility: hidden; }
+.hlReviewNav { display: inline-flex; align-items: center; gap: 2px; margin-left: auto; flex-shrink: 0; }
+.hlReviewCountBox { display: inline-grid; justify-items: center; }
+.hlReviewCountBox > .hlReviewCount { grid-area: 1 / 1; }
+.hlReviewCount { font-size: var(--fs-2xs); color: var(--text-muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+/* a window narrower than 376 px makes the card narrower than 360 px: its
+   sides, the row's gaps and the labelled buttons' padding give the room
+   back, so a lost card's row stays on one line down to a 360 px phone */
+@media (max-width: 375px) {
+  .hlReviewCard { padding-inline: var(--space-4); }
+  .hlReviewActions { gap: var(--space-2); }
+  .hlReviewActions .uiBtn.sm:not(.iconSq) { padding-inline: var(--space-3); }
+}
 
 /* --- area notes (Ctrl+drag rectangle selection on the PDF) --- */
 /* pinch-preview transform target. Origin 0 0 = the layer's top-left, which
@@ -5505,6 +5541,20 @@ a.shareBrand:hover { background: var(--bg-hover); }
   --hl: var(--hl-dark) !important;
   --hl-line: var(--hl-dark-line);
 }
+/* A lost highlight's closest match while its review card shows it
+   (pdf/HighlightReview.jsx Show): a dotted line in its colour's line tone
+   over a faint wash, taking no pointer; the dark-tuned colour on a flipped
+   page, as the highlights take it. */
+.pdfHlGhost {
+  position: absolute;
+  z-index: 2;
+  box-sizing: border-box;
+  border: 2px dotted var(--hl-dark-line);
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--hl) 22%, transparent);
+  pointer-events: none;
+}
+:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) .pdfPageWrap .pdfHlGhost { --hl: var(--hl-dark); }
 :is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) .pdfPageWrap .pdfNoteBadge {
   mix-blend-mode: normal !important;
   background: #2a2a2a;
@@ -5692,6 +5742,10 @@ a.shareBrand:hover { background: var(--bg-hover); }
   line-height: 1;
   padding-bottom: 2px;
 }
+/* The text highlighter's button on the strip: its colour under the icon,
+   as on the markup strip's highlighters. */
+.pdfCtlBox .stripInkBtn { position: relative; padding-bottom: 5px; }
+.pdfCtlBox .stripInkBtn .inkToolInk { left: 7px; right: 7px; bottom: 3px; height: 3px; }
 .pdfViewer.areaCursor .pdfPageWrap,
 .pdfViewer.areaCursor .textLayer,
 .pdfViewer.areaCursor .textLayer span {
@@ -6520,7 +6574,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
    click over a link. */
 .pdfViewer.inkArmed .pdfPageWrap { cursor: crosshair; }
 .pdfViewer.inkTouchDraw .pdfPageWrap { touch-action: none; }
-.inkLayer, .inkCanvas, .inkWetCanvas {
+.inkLayer, .inkOverPictures, .inkCanvas, .inkWetCanvas {
   position: absolute;
   left: 0;
   top: 0;
@@ -6528,9 +6582,22 @@ a.shareBrand:hover { background: var(--bg-hover); }
   height: 100%;
   pointer-events: none;
 }
-.inkLayer { z-index: 6; overflow: visible; }
+.inkLayer, .inkOverPictures { z-index: 6; overflow: visible; }
 /* The stroke in progress; peers' strokes in progress (ink-live) have a canvas of their own under it. */
 .inkCanvas, .inkWetCanvas { z-index: 6; display: none; }
+/* A highlighter multiplies into the page under it, so the text there stays
+   black: its plane of the layer as a whole (InkLayer), and the canvas while
+   one is drawn or a peer draws one. The blend sits on the SVG or canvas
+   itself, since one inside an SVG never leaves it (its z-index makes it a
+   stacking context, which isolates what is in it). */
+:is(.inkLayer, .inkCanvas, .inkWetCanvas)[data-blend="multiply"] { mix-blend-mode: multiply; }
+/* Over a picture a highlighter multiplies whatever the page around it does:
+   a picture is never inverted, so the screen of a turned-over page, or dark
+   paper's plain drawing, would all but lose it there. A highlighter plane
+   is drawn off the surface's pictures and its strokes again over them in an
+   SVG of its own (InkLayer), which neither the dark page's filter nor the
+   blend rules for [data-blend] reach. */
+.inkOverPictures { mix-blend-mode: multiply; }
 .pdfViewer .pdfPageWrap.inkHovering, .pdfPageWrap.inkHovering .textLayer { cursor: none; }
 /* Drawn over an arbitrary PDF page, so fixed white/black like the lasso,
    not theme tokens. */
@@ -6586,6 +6653,10 @@ a.shareBrand:hover { background: var(--bg-hover); }
 /* The selection menu's second row (More edits): the first row's targets. */
 .inkEditOptions.inkEditMore .ctlBtn { flex: 1; min-width: 36px; min-height: 36px; }
 :is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) :is(.inkLayer, .inkCanvas, .inkWetCanvas, .textBoxBody) { filter: invert(1) hue-rotate(180deg); }
+/* Turned over with the page, a highlighter screens, multiply's dual: the
+   dark page shows the light page's highlight inverted, the light text under
+   it staying light. */
+:is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) [data-blend="multiply"] { mix-blend-mode: screen; }
 /* The brief outline after a jump from the notes. */
 .inkFlash {
   fill: none;
@@ -6760,9 +6831,10 @@ a.shareBrand:hover { background: var(--bg-hover); }
 }
 
 /* The notes: a rounded-square pen marker in the dot slot (a text box's is
-   a T), the strokes as a picture above the caption (on white: the card is
-   a piece of the page, the same rule as .pdfAreaMarquee). */
-.inkMarker, .textBoxMarker {
+   a T, a picture's a picture), the strokes as a picture above the caption
+   (on white: the card is a piece of the page, the same rule as
+   .pdfAreaMarquee). */
+.inkMarker, .textBoxMarker, .pictureMarker {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -6900,6 +6972,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 :is([data-theme="sepia"], [data-theme="solarized"], [data-theme="gray"]) .inkZoomPanel:not(.pdfDark) .inkZoomRaster { mix-blend-mode: multiply; opacity: 0.82; }
 [data-theme="gamma-light"] .inkZoomPanel:not(.pdfDark) .inkZoomRaster { mix-blend-mode: multiply; }
 :is(.inkZoomPanel.pdfDark, [data-theme="gamma-dark"] .inkZoomPanel) :is(.inkLayer, .inkCanvas, .inkWetCanvas) { filter: invert(1) hue-rotate(180deg); }
+:is(.inkZoomPanel.pdfDark, [data-theme="gamma-dark"] .inkZoomPanel) [data-blend="multiply"] { mix-blend-mode: screen; }
 .viewerWrap.inkZoomOpen :is(.pdfCloseBtn, .pdfFullscreenBox) { bottom: calc(14px + var(--ink-zoom-h, 0px)); }
 .viewerWrap.inkZoomOpen .recordingPill { bottom: calc(12px + var(--ink-zoom-h, 0px)); }
 .viewerWrap.inkZoomOpen .replayBar { bottom: calc(10px + var(--ink-zoom-h, 0px)); }

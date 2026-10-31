@@ -1,17 +1,30 @@
 """Unreferenced uploads: kept for RETAIN_S, then purged.
 
 A stored file (``uploads/<name>``) is in use while a block names it —
-``/api/uploads/<name>`` in its content or properties, or a page's ``doc_id``
-(``storage.upload_refs``, the one grammar). When the last reference goes the
+``/api/uploads/<name>`` in its content or properties, a page's ``doc_id``,
+or a highlight's ``pdf_position.doc_id`` or ``prev.doc_id``, the file its
+rectangles were measured on, which a pending highlight holds until it is
+resolved (``storage.upload_refs``, the one grammar) — while an AI chat
+names it, and while an open ``zotero_file`` conflict keeps it (Zotero's PDF
+a Zotero link kept when Gamma's went over it, for that conflict's
+"theirs", gamma/zotero_sync_pdfs.py). When the last reference goes the
 file is NOT deleted: its name goes into the workspace's ``upload_orphans``
 table (pages.db: ``name``, ``since``) and the file stays stored, served as
 before — so an undo, a cut pasted in a later batch, an AI edit, an ink undo
 or a re-attached PDF finds it again. A reference that comes back clears the
 row. A file still unreferenced RETAIN_S after both its row's ``since`` and
 its own mtime (an upload of the same bytes re-dates it,
-``storage._store``, under the workspace's ``guard``) is purged. Nothing here touches the quota: an
-unreferenced file counts like any stored one until it goes. Files are
-listed, dated and deleted through the store's calls (gamma/storage.py).
+``storage._store``, under the workspace's ``guard``) is purged. A file
+``retain`` named (a PDF a sync replaced with a newer build) is kept for its
+own ``keep_s`` instead, counted the same way: its row in
+``upload_retention`` (pages.db: ``name``, ``keep_s``, ``since``) applies
+once nothing references the file, and a reference written to the file
+again removes it. Only a file nothing shows any more gets one: a file
+another page still carries or shows (its ``doc_id``, a ``source_url``, an
+image) or a Zotero conflict keeps holds RETAIN_S for when that reference
+goes too. Nothing here touches the quota: an unreferenced file counts like
+any stored one until it goes. Files are listed, dated and deleted through
+the store's calls (gamma/storage.py).
 
 Who notices what:
 
@@ -23,12 +36,17 @@ Who notices what:
   the names the page held, ``blocks_store.create_page`` claims its PDF
   (what a trashed copy it replaces held is left to ``reconcile``). A batch
   that drops nothing (typing in a block that keeps its image) costs nothing.
+- ``retain``, after a replacement that asked for a short life for the
+  outgoing file, records that file's row at once when nothing references
+  it: UPLOAD_GRACE_S is for an upload not attached yet, and this one was.
+  A file some block still shows gets no short life at all.
 - ``reconcile`` is the whole picture of one workspace in one pass: one scan
   of the blocks that mention an upload, diffed against the stored files
   (``storage.list``) — a row for every unreferenced file past UPLOAD_GRACE_S (an
   upload is stored before the block naming it is written), the rows of
-  referenced or vanished files cleared, then the purge. The thread runs it
-  for every workspace FIRST_PASS_S after startup and every
+  referenced or vanished files cleared (and the ``upload_retention`` rows
+  of vanished ones and of ones a block shows again), then the purge. The
+  thread runs it for every workspace FIRST_PASS_S after startup and every
   RECONCILE_EVERY_S after: the safety net for writers that bypass the op
   path (imports, a restore, a mirror).
 - The purge reads the references again under the write lock, so no batch
@@ -66,42 +84,103 @@ PURGE_SHARE = 0.2
 # --- references ----------------------------------------------------------------------
 
 def referenced(conn) -> set[str]:
-    """Every stored-file name the workspace's blocks reference, lowercased
+    """Every stored-file name the workspace's blocks reference (``_references``)."""
+    return _references(conn)[0]
+
+
+def _references(conn) -> tuple[set[str], set[str]]:
+    """``(every name referenced, the names shown)``: every stored-file name
+    the workspace's blocks reference, lowercased
     (compared without case, as the old ``LIKE`` did), in one pass over the
-    rows that mention an upload or carry a ``doc_id`` — and every one its
-    AI chats name: a picture attached to a message is a stored upload the
-    conversation points at (``/api/uploads/<name>`` in the saved messages'
-    JSON, the one grammar; gamma/ai_pictures.py), in the active
-    conversations and the archived ones alike."""
-    names = set()
+    rows that mention an upload or name a file by id: a page's ``doc_id``,
+    or a ``"doc_id"`` deeper in the properties (a highlight's position and
+    its ``prev``; only rows that hold the word are parsed for it) — every
+    one its AI chats name: a picture attached to a message is a stored
+    upload the conversation points at (``/api/uploads/<name>`` in the saved
+    messages' JSON, the one grammar; gamma/ai_pictures.py), in the active
+    conversations and the archived ones alike — and the PDF each open
+    ``zotero_file`` conflict keeps (its ``base``'s ``doc_id``): resolved
+    ("keep", or "theirs", which makes it a page's PDF) or gone with its
+    link, it is a file like any other. The names shown are the same less
+    those only a highlight's position holds (``storage.upload_refs`` with
+    ``held=False``)."""
+    names, shown = set(), set()
     for content, props in conn.execute(
             "SELECT content, properties FROM unified_blocks WHERE instr(content, '/api/uploads/') > 0 "
-            "OR instr(properties, '/api/uploads/') > 0 OR doc_id IS NOT NULL"):
+            "OR instr(properties, '/api/uploads/') > 0 OR doc_id IS NOT NULL "
+            "OR instr(properties, '\"doc_id\"') > 0"):
         names.update(n.lower() for n in upload_refs(content or "", props or "{}"))
+        shown.update(n.lower() for n in upload_refs(content or "", props or "{}", held=False))
+    try:
+        kept = conn.execute("SELECT base FROM sync_conflicts WHERE resolved = 0 AND kind = 'zotero_file'").fetchall()
+    except sqlite3.OperationalError:  # a database from before the table existed
+        kept = []
+    for (base,) in kept:  # the base is JSON, its doc_id read as a page's is
+        found = {n.lower() for n in upload_refs("", base or "{}")}
+        names |= found
+        shown |= found
     for table in ("chats", "chat_history"):
         try:
             rows = conn.execute(f"SELECT messages FROM {table} WHERE instr(messages, '/api/uploads/') > 0")
         except sqlite3.OperationalError:  # a database from before the table existed
             continue
         for (messages,) in rows:
-            names.update(n.lower() for n in UPLOAD_REF_RE.findall(messages or ""))
-    return names
+            found = {n.lower() for n in UPLOAD_REF_RE.findall(messages or "")}
+            names |= found
+            shown |= found
+    return names, shown
 
 
 def claim(conn, names) -> None:
-    """Clear the rows of ``names``: the writer holding ``conn`` just wrote a
-    reference to them (inside its own transaction — the caller commits)."""
+    """Clear the rows of ``names``, and the shorter life ``retain`` gave
+    them: the writer holding ``conn`` just wrote a reference to them
+    (inside its own transaction — the caller commits)."""
     if names:
-        conn.executemany("DELETE FROM upload_orphans WHERE name = ? COLLATE NOCASE", [(n,) for n in names])
+        rows = [(n,) for n in names]
+        conn.executemany("DELETE FROM upload_orphans WHERE name = ? COLLATE NOCASE", rows)
+        conn.executemany("DELETE FROM upload_retention WHERE name = ?", rows)  # its column ignores case
+
+
+def retain(ws: str, name: str, keep_s: int) -> None:
+    """Keep the stored file ``name`` for ``keep_s`` seconds instead of
+    RETAIN_S once nothing references it (a PDF a sync replaced with a newer
+    build: ``pages.replace_attachment`` with ``keep_old_days``). Counted as
+    RETAIN_S is, from both its orphan row's ``since`` and its own mtime. A
+    reference written to the file again (``claim``) cancels it. A file
+    nothing references now gets its orphan row at once, past no grace (it
+    was attached, not just uploaded); one only highlights hold (the
+    replaced page's, until they are resolved) keeps the short life for when
+    the last of them goes. A file a block still shows (another page's
+    ``doc_id`` or ``source_url``, an image) is no build let go of: it gets
+    no short life and keeps RETAIN_S. Never makes a referenced file
+    purgeable: the purge reads the references again under the write lock."""
+    with guard(ws):
+        if not _has_pages_db(ws) or not storage.exists(ws, name):
+            return
+        with connect_pages_db(ws) as conn:
+            refs, shown = _references(conn)
+            if name.lower() in shown:
+                return
+            stamp = page_now()
+            conn.execute("INSERT OR REPLACE INTO upload_retention (name, keep_s, since) VALUES (?, ?, ?)",
+                         (name, keep_s, stamp))
+            if name.lower() not in refs:
+                conn.execute("INSERT OR IGNORE INTO upload_orphans (name, since) VALUES (?, ?)", (name, stamp))
+            conn.commit()
 
 
 def restart_clocks(conn) -> None:
     """A pages.db put back from a backup carries the rows it had when the
-    backup was taken; their clocks start over now, so a restore never makes
-    a file due at once (the state it replaced may have used it). Commits."""
-    if conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'upload_orphans'").fetchone():
+    backup was taken; their clocks start over now, and at RETAIN_S (the
+    shorter lives ``retain`` gave go), so a restore never makes a file due
+    soon (the state it replaced may have used it). Commits."""
+    tables = {name for (name,) in conn.execute(
+        "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('upload_orphans', 'upload_retention')")}
+    if "upload_orphans" in tables:
         conn.execute("UPDATE upload_orphans SET since = ?", (page_now(),))
-        conn.commit()
+    if "upload_retention" in tables:
+        conn.execute("DELETE FROM upload_retention")
+    conn.commit()
 
 
 def _stored(ws: str) -> dict:
@@ -113,6 +192,16 @@ def _stored(ws: str) -> dict:
 def _since_s(since: str, now: float) -> float:
     t = parse_stamp(since)
     return t.timestamp() if t else now  # unreadable: the clock starts now
+
+
+def _keeps(conn) -> dict:
+    """``{lowercased name: keep_s}`` of the files ``retain`` named."""
+    return {name.lower(): keep_s for name, keep_s in conn.execute("SELECT name, keep_s FROM upload_retention")}
+
+
+def _keep(keeps: dict, name: str) -> int:
+    """How long the file ``name`` is kept once nothing references it."""
+    return keeps.get(name.lower(), RETAIN_S)
 
 
 _locks: dict[str, threading.Lock] = {}
@@ -164,32 +253,40 @@ def reconcile(ws: str) -> dict:
     """The whole picture of one workspace (see the module doc). Returns
     ``{recorded, cleared, purged, blocked}`` — the file names that got a
     row, the rows cleared, the files deleted, and why a due purge was
-    refused ("" when it was not)."""
+    refused ("" when it was not). A file is due once unreferenced for its
+    keep (``retain``'s, else RETAIN_S) after both its row's ``since`` and
+    its mtime."""
     out = {"recorded": [], "cleared": [], "purged": [], "blocked": ""}
     with guard(ws):
         if not _has_pages_db(ws):
             return out
         storage.sweep_partial(ws, PARTIAL_MAX_AGE_S)  # temp files a write that never finished left
         with connect_pages_db(ws) as conn:
-            refs = referenced(conn)
+            refs, shown = _references(conn)
             files = _stored(ws)
             rows = dict(conn.execute("SELECT name, since FROM upload_orphans").fetchall())
+            keeps = _keeps(conn)
             now = time.time()
             out["cleared"] = sorted(n for n in rows if n not in files or n.lower() in refs)
             out["recorded"] = sorted(n for n, mtime in files.items()
                                      if n not in rows and n.lower() not in refs
                                      and now - mtime >= UPLOAD_GRACE_S)
-            if out["cleared"] or out["recorded"]:
+            # the short lives of files gone, and of files a block shows again (a write past ``claim``)
+            let_go = sorted((set(keeps) - {n.lower() for n in files}) | (set(keeps) & shown))
+            for n in let_go:
+                keeps.pop(n)
+            if out["cleared"] or out["recorded"] or let_go:
                 stamp = page_now()
                 conn.executemany("DELETE FROM upload_orphans WHERE name = ?", [(n,) for n in out["cleared"]])
                 conn.executemany("INSERT OR IGNORE INTO upload_orphans (name, since) VALUES (?, ?)",
                                  [(n, stamp) for n in out["recorded"]])
+                conn.executemany("DELETE FROM upload_retention WHERE name = ?", [(n,) for n in let_go])
                 conn.commit()
             cleared = set(out["cleared"])
             due = sorted(n for n, since in rows.items() if n not in cleared
-                         and now - max(_since_s(since, now), files[n]) >= RETAIN_S)
+                         and now - max(_since_s(since, now), files[n]) >= _keep(keeps, n))
             if due:
-                out["purged"], out["blocked"] = _purge(ws, conn, due, len(files))
+                out["purged"], out["blocked"] = _purge(ws, conn, due, len(files), keeps)
     return out
 
 
@@ -217,9 +314,10 @@ def _too_many(due: int, stored: int) -> bool:
     return due > PURGE_MAX or (due > PURGE_FLOOR and due > PURGE_SHARE * stored)
 
 
-def _purge(ws: str, conn, due: list, stored: int) -> tuple[list, str]:
+def _purge(ws: str, conn, due: list, stored: int, keeps: dict) -> tuple[list, str]:
     """Delete the ``due`` files that are still unreferenced, under the write
-    lock. Returns ``(purged names, blocker)``."""
+    lock, each one only once its mtime is as old as its keep (``_keep``).
+    Returns ``(purged names, blocker)``."""
     from .blocks_store import write_lock  # local: blocks_store imports this module
 
     write_lock(conn)
@@ -230,7 +328,7 @@ def _purge(ws: str, conn, due: list, stored: int) -> tuple[list, str]:
         gone, count = [], 0
         for name in unreferenced:
             st = storage.stat(ws, name)  # dated again, the due names alone: re-dated by an upload meanwhile
-            if st is not None and now - st[1] >= RETAIN_S:
+            if st is not None and now - st[1] >= _keep(keeps, name):
                 gone.append(name)
                 if _too_many(len(gone), stored):
                     # refused whatever the rest's dates say (so nothing is deleted): ask
@@ -242,7 +340,7 @@ def _purge(ws: str, conn, due: list, stored: int) -> tuple[list, str]:
         if blocker:
             conn.rollback()
             log.warning(f"[uploads] workspace {ws}: not purging {count} file(s) unreferenced for "
-                        f"{RETAIN_S // 86400} days — {blocker}; they are kept")
+                        f"{_spans(gone or unreferenced, keeps)} — {blocker}; they are kept")
             return [], blocker
         purged = []
         for name in gone:
@@ -253,14 +351,22 @@ def _purge(ws: str, conn, due: list, stored: int) -> tuple[list, str]:
                 continue
             purged.append(name)
         conn.executemany("DELETE FROM upload_orphans WHERE name = ?", [(n,) for n in purged])
+        conn.executemany("DELETE FROM upload_retention WHERE name = ?", [(n,) for n in purged])
         conn.commit()
     except BaseException:
         conn.rollback()
         raise
     if purged:
         log.info(f"[uploads] workspace {ws}: purged {len(purged)} file(s) unreferenced for "
-                 f"{RETAIN_S // 86400} days: {purged}")
+                 f"{_spans(purged, keeps)}: {purged}")
     return purged, ""
+
+
+def _spans(names, keeps: dict) -> str:
+    """How long ``names`` were kept unreferenced, for a log line: "30
+    days", "1 day or 30 days"."""
+    days = sorted({_keep(keeps, n) / 86400 for n in names})
+    return " or ".join(f"{d:g} day" + ("" if d == 1 else "s") for d in days)
 
 
 # --- the thread ----------------------------------------------------------------------

@@ -390,11 +390,37 @@ fixtures in `tests/ai_fixtures.py`. Its `org` fixture creates one account
 per test module (the module's name is in the username), so the files never
 see each other's pages or provider entries.
 
+The Zotero link's tests ([zotero_sync.md](zotero_sync.md#tests)) never
+reach zotero.org: they run against an in-memory Zotero,
+`tests/zotero_fake.py`'s `FakeZotero` (the Web API, zotero.org's OAuth
+steps and the file storage, with Zotero's versions and refusals), which
+`install(monkeypatch)` points the server at, serving
+`tests/zotero_fixtures.py`'s `standard_library`. `conftest.py` drops every
+`GAMMA_ZOTERO_*` variable at import, so a developer's stand-in address or
+Zotero app never reaches a test. The engine's suites,
+`test_zotero_sync*.py` (the registry and the API, folders, items, PDFs,
+the first link, annotations, notes, large libraries, hardening, crashes,
+the fuzz), share one harness, `tests/zotero_engine.py`, loaded as
+`ai_fixtures.py` is: each file imports the fixtures it uses by name
+(`# noqa: F401  (fixtures)`) and keeps its own `USER` and `PASSWORD`, which
+`owner_id` and `me` read; never through `pytest_plugins`, which would
+reach every test of the session with its autouse fixtures (`background`,
+which records the background rounds asked for instead of running them, and
+`no_relocation`). Rounds run when a test asks, with the budget lifted.
+`me` checks the owner's links before it removes them: one more round
+writes nothing on either side (`tests/zotero_idle.py`; a test that leaves
+a link unsettled on purpose says so with `idle.skip(reason)`). The fuzz
+runs 8 seeds by default: `ZOTERO_FUZZ_SEEDS=2000 ZOTERO_FUZZ_STEPS=100`
+runs more, and `ZOTERO_FUZZ_TRACE=<key>` follows one object round by round.
+
 Rules the frontend mirrors — search normalization (`gamma/textnorm.py` ↔
 `frontend/src/shared/lib/textnorm.js`), published pages' slugs
 (`gamma/publish.py` ↔ `frontend/src/shared/lib/slug.js`), text boxes
 (`gamma/text_box.py` ↔ `frontend/src/markup/textBox.js`,
-`tests/shared/textbox.json`, [text_boxes.md](text_boxes.md)) and
+`tests/shared/textbox.json`, [text_boxes.md](text_boxes.md)), pictures
+(`gamma/picture.py` ↔ `frontend/src/markup/picture.js`: the normalizer,
+the turned frame, the Markdown line and the merge, `tests/shared/picture.json`
+and `picturemerge.json`, [pictures.md](pictures.md)) and
 handwriting (`gamma/ink.py` ↔ `frontend/src/ink/ink.js` and
 `ink/grain.js`: the codec, dashes, merge, the calligraphy nib and the
 pencil's grain, [handwriting.md](handwriting.md)) — are pinned by ONE
@@ -413,10 +439,11 @@ above), `mdMarks` (the formatting hotkeys' toggle), `logseqPdfModel` (tree
 ops), `blockHistory` (the undo classifier), `menuAim` (the safe-triangle
 geometry), `themes` (the design tokens: the desktop copy, the pre-paint's
 theme lists, every theme resolving, the contrast ratchet) and
-`designTokens` (the raw-value ratchet on the stylesheets). Both ratchets are
-described in [ui-design.md](ui-design.md#ratchets). A module is testable
-there when its relative imports carry the `.js` extension (node resolves
-nothing else). Modules that import React can still be imported for their
+`designTokens` (the raw-value ratchet on the stylesheets, and no
+`(pointer: coarse)` rule sizing a control but the text box's handle).
+Both ratchets are described in [ui-design.md](ui-design.md#ratchets). A
+module is testable there when its relative imports carry the `.js`
+extension (node resolves nothing else). Modules that import React can still be imported for their
 pure exports. Actual React rendering and
 interactions are exercised by the browser suite below, plus one standalone
 browser regression: `npm run e2e:latex` bundles the block
@@ -549,15 +576,20 @@ glob wins) to the groups that exercise it. `frontend/src/guide/**` goes to
 the three tour groups. `frontend/src/markup/**` (the page layers and the
 tool strip, whose anchors the ink tour uses) goes to the ink groups (ink,
 ink-editing, ink-shapes, ink-zoom), pdf-touch, touch, notebooks,
-triggered-guide, textbox and comments (a press on a margin card with a pen
-or the Text tool armed). `backend/gamma/ink.py` goes to ink,
+triggered-guide, textbox, pictures and comments (a press on a margin card
+with a pen or the Text tool armed). The pictures group also runs for
+`frontend/src/ink/`, `notebook/`, `editor/` and `pdf/`, and for
+`backend/gamma/picture.py` (with notebooks, the export groups and the
+chat's) and `text_box.py`. `backend/gamma/ink.py` goes to ink,
 ink-editing, ink-shapes, notebooks, triggered-guide and transfers, and
 `backend/gamma/notebook.py` to notebooks and transfers: the Notability
 note the transfers scenario imports writes its strokes through the first
 and paints its paper page with the second's paper. The chat's
 pictures of handwriting (`backend/gamma/ink_view.py`) go to the groups of
 the AI modules (`ai_*.py`: the chat's, settings and ink-zoom).
-Docs, desktop, extension and backend tests go to none, and what every
+Docs, desktop, extension and backend tests go to none (but the fixtures a
+scenario imports or serves: the Notability and GoodNotes notes, the fake
+Zotero and its library), and what every
 scenario goes through
 (`src/app/`, `src/shared/`, the home library, the page's live session, the
 backend core: auth, db, blocks, ops, uploads) to all of them. A changed
@@ -654,12 +686,44 @@ The scenarios live in `tests/e2e/scenarios/`:
   host anonymously, changes the cloud share's audience, syncs, checks the
   pill and Settings' Publishing row, unpublishes, and stops publishing
   from Settings. `--only publish`.
-- `mirror.mjs`: Settings → Workspaces → Clones — the server clones one of
+- `mirror.mjs`: Settings → Workspaces → Clones and Zotero links — the server clones one of
   its own workspaces through the dialog with a write token made via the
   API: Sync, the empty conflicts list, opening the clone, the sync pill's
   log and settings (cadence, detach, reattach), a same-block conflict
   resolved on its row chip, Remove origin ([mirror.md](mirror.md)).
   `--only mirror`.
+- `zotero-link.mjs`: a Zotero link on the clone's surfaces. A second Gamma
+  talks to the fake Zotero (`backend/tests/zotero_fake.py --port 0`, over
+  HTTP, serving `zotero_fixtures.standard_library`) through
+  `GAMMA_ZOTERO_API_BASE` / `GAMMA_ZOTERO_WEB_BASE`, and to a stream
+  address that refuses connections (`GAMMA_ZOTERO_STREAM_URL`), so nothing
+  reaches zotero.org. An account connects with a pasted API key (Account &
+  sync → Zotero), links My Library into a new workspace from Workspaces →
+  Clones and Zotero links, which closes Settings and opens that workspace,
+  its pill showing the first sync from its first read (running or done,
+  never "Not synced yet"), then syncs it from its row (a Zotero row, no
+  "clone of", tagged open); the pill reads
+  `waiting` on the library's linked file until Zotero trashes it, then
+  `ok`; the paper has its PDF, highlight, ink group and text box, the
+  collections and manual tags are folders and labels. The pill's settings
+  turn the cadence to Manual and a round after an edit off, so each round
+  is a Sync now the step presses: a highlight's note edited here reaches
+  the fake (read back through its API with the key), a colour patched
+  there is redrawn here, and a volume changed on both sides is a conflict
+  on the pill and on the page's record chip, taken from Zotero. A group
+  library linked "When opened" into the open workspace (50 newer items
+  added first, so the paper is not among the newest) closes Settings on it,
+  gives it its pill without a reload, and shows the PDF card while the
+  page's own fetch is held, then draws the PDF and a read-only badge on another member's
+  annotation; a paper whose PDF is a linked file takes a PDF attached in
+  Gamma, under the card that says why. Detach and reattach from the pill,
+  Remove link from Settings
+  ([zotero_sync.md](zotero_sync.md)). `--group zotero-link`. Its `RULES`
+  route the link's modules (`backend/gamma/zotero_*`, `routers/zotero*.py`,
+  the Zotero files under `frontend/src/collaboration/` and `settings/`),
+  the fake and its fixtures to it; the Zotero import's note and record
+  modules, the clones' surfaces and clock, the PDF viewer, the editor and
+  Settings select it beside their own groups.
 
 - `notes.mjs`: New page → title → first block (the seed-block insert),
   Shift+Enter / Tab / Shift+Tab / Backspace, Enter as a line break vs the
@@ -677,17 +741,43 @@ The scenarios live in `tests/e2e/scenarios/`:
   text": the job's result, a highlight left hollow (on a flipped page and
   in the notes too), attach mode and move mode ending each other, two
   renumbered citations matched roughly and drawn dashed, their review card
-  on hover (the before picture, the changed words, Next, Accept) and the
-  Document menu's Review and Accept, the move to a selection by hand with
-  no translation of it, a second move by an area drag clearing the quote
-  and putting no picture in the chat, and an account that applies only
-  exact matches getting a renumbered citation back lost
+  on hover (the before picture, the changed words, the row on one line,
+  Next; Accept leaving the card as it was within a pixel, Accepted pressed,
+  pressed again making it dashed again, staying while another is hovered,
+  a move from it, Ctrl+Z taking the move back to Accepted pressed with the
+  count kept and Ctrl+Y bringing Moved back, and that move's undo back to
+  Accepted), the hollow one's
+  card (the picture of the first file, Previous and Next walking the dashed
+  and the hollow ones in document order and round, the accepted one kept
+  in the walk and the count with it, Move… reopening it Moved and "All
+  reviewed", Moved pressed again) and the Document menu's
+  Review and Accept, the move to a selection by hand with no translation of
+  it, a second move by an area drag clearing the quote and putting no
+  picture in the chat, and an account that applies only exact matches
+  getting a renumbered citation back lost with its closest match, which
+  its card shows, outlines and places, the card the same after it; then a
+  hollow highlight's card scrolled out of sight and back, Discard
+  deleting a bare one or keeping one with a note off the PDF, the card the
+  same after it and Discarded pressed again bringing it back, the
+  discarded one kept in the walk; then a hollow highlight's card
+  following Show to a closest match pages away, one lost from a page
+  the new version dropped reached by Next, its card standing in the viewer,
+  Enter on Use closest match to that far page and Enter again with the
+  focus kept on the button through the card's hiding, and the lost card's
+  row on one line on a 360 px phone in English and Chinese
   ([highlight_relocation.md](highlight_relocation.md)).
 - `translation.mjs`: a two-column page whose paragraph runs over the column
   break: the request carries one text with `{br}`, the formulas and the
   citation marker as tokens, the page and the section; the reply fills both
   columns' boxes, and a formula comes back as a crop of the page inside the
-  translated line (against a mocked `/api/ai/translate`). What a change does
+  translated line (against a mocked `/api/ai/translate` and
+  `/api/ai/translate/brief`). Then the first chunk landing while the brief
+  is made, the job running on after leaving the PDF to 100% in its
+  background-tasks row and asking again for the chunk that went without the
+  brief; a busy account's refusal waited out and a paragraph left in the
+  original until Try again; the keep switch, the kept line and Clear in
+  Settings; Forget this translation; and a viewer of the workspace offered
+  neither Forget nor Clear. What a change does
   to the requests on real papers is the translation bench's
   ([translation.md](translation.md) "The bench").
 - `transfers.mjs`: the Import and Export dialogs — format/source cards,
@@ -849,6 +939,23 @@ The scenarios live in `tests/e2e/scenarios/`:
   - a touch pointer is captured by the element under the finger, so taking
     the capture on another element fires `lostpointercapture` on that
     child, and the box's handler checks which element lost it.
+- `pictures.mjs`: pictures ([pictures.md](pictures.md)) on a PDF page and
+  on a sheet in the notebook view. `--group pictures`.
+  - The strip's Picture button places a PNG on the page in view at its
+    aspect, centred and selected, and a reload keeps it. A paste places
+    one at the page's centre and a drop at the drop point.
+  - A drag, the arrows, the handles (Alt stretching, the turn's
+    right-angle magnet), the flips, a crop (Escape cancels one), Reset,
+    Fit to page and a turn after it each undo and redo. Copy image puts the
+    picture on the clipboard as it shows. Duplicate, Bring to front and
+    Send to back act on the page and in the notes.
+  - Then come the caption typed in its row, a stylus, a finger's tap,
+    drag, scroll and pinch, Escape and a press elsewhere during a handle
+    drag, a text box over the handles, an upload that lands after a box
+    was opened, the notes' card and marker, a read-only visitor, an edit
+    share's drop, and two people on one picture (a move while the other
+    crops and types the caption).
+  - A drop on a sheet drawn among the notes leaves no row outlined.
 - `guide.mjs`: the first-run guide ([onboarding.md](onboarding.md)),
   started from the account menu's Tours — every registered home-view anchor
   is present once, the demo step adds a paper by itself (pointed at an
@@ -1003,17 +1110,34 @@ save path, workspaces, auth or rendering of URLs should add a step here; the
   `log-errors` notice. The connection is closed either way and the page
   reconnects. A "data transfer failed" error that remains is some other
   exception and worth a look.
-- **`[ai_translate]` warnings** trace the PDF translator asking the model
-  again ([translation.md](translation.md) "The server"). "expected 10
-  translations, got 8 — asking again in halves" is a reply that merged or
-  dropped a paragraph, "— asking again one by one" a half that did too,
-  and "N of M lost a formula token — redoing them" a reply that broke a
-  `{v1}` token. "asking again failed: …" is a paragraph that stayed
-  untranslated: "no JSON array in reply" or "empty reply" (the model
-  answered something that is no translation), or the call itself failing.
-  Those paragraphs show the original and the viewer offers to try again.
-  Many "expected N, got M" lines mean the model keeps losing paragraphs:
-  a better instruction follower serves translation better.
+- **`[ai_translate]` warnings** trace the PDF translator
+  ([translation.md](translation.md) "The server"):
+  - "N of M segments came back missing, doubled or with a broken token —
+    asking for them again" is a reply that left out, doubled or emptied a
+    numbered segment, or broke a `{v1}` token. They go again in one call.
+    A segment still wrong after it shows the original, and the viewer
+    offers to try again. Many such lines mean the model keeps losing
+    segments: a better instruction follower serves translation better.
+  - "asking again failed: …" is that one call failing as a call.
+  - A bare "[ai_translate] <error>" is a chunk's own call (or a
+    translation service) failing after its retries: a 502 for a plain
+    request, an `{error}` line in a stream. The viewer asks once more,
+    then leaves the chunk's paragraphs in the original and goes on.
+  - "the paper's brief: …" is a brief request that failed outside its
+    model call.
+  - `[translate]` lines are the brief itself: "making the paper's brief
+    failed: …" and "the paper's brief came back unusable" are remembered
+    for 30 s, during which the chunks translate without a brief; "the
+    paper's brief was not asked for: …" is Gamma's own refusal (the calls
+    all in use, the allowance spent), not remembered.
+  - `[translate_store]` lines are the kept translations' own sqlite errors,
+    which never fail a translation, and "… has 20000 kept paragraphs …;
+    not keeping more" (`MAX_ROWS`, once per document per process).
+- **`[ai]` retry lines** ("<model>: <why> — retrying in 1s (attempt 1 of
+  2)") are info lines: a provider call that failed before its reply began
+  and is tried again ([ai.md](ai.md) "Calls open at once"). Many with a
+  connect timeout (`WinError 10060`) mean the provider is hard to reach
+  from this server.
 - **`[relocate]` lines** come from the highlight run of a replaced PDF
   ([highlight_relocation.md](highlight_relocation.md)). The warning "the
   job did not start (…)" is a replacement whose run was refused (the

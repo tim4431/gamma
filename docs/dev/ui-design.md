@@ -552,7 +552,16 @@ to place it:
   then, while the surface stands hidden. When its size changes later (a row
   of options opens, a translation streams in), the window's does, or, with
   `follow`, the page scrolls, it is placed again in that same frame
-  (`flushSync`).
+  (`flushSync`). A surface hidden this way (or while its anchor is out of
+  sight) is hidden by `visibility`, which a child set `visibility: visible`
+  overrides: nothing inside such a surface sets it, or that child shows
+  alone where the surface stands. A child kept unseen for a while (a
+  picture until it loads) is hidden by a rule that lets go of it after,
+  so it inherits again (`.hlReviewShot:not(.loaded) img`). The browser
+  also takes the focus from what it hides, dropping it to the page: a
+  surface that holds the focus and hides while its anchor scrolls (the
+  review card, `pdf/HighlightReview.jsx`) remembers the control the focus
+  was on, and puts it back once shown when the focus is still on nothing.
 
 The rule behind the second half: a state update from a ResizeObserver, a
 scroll listener, a `requestAnimationFrame` or a passive effect renders
@@ -895,8 +904,8 @@ the layout, which follows the screen (`PHONE_MQ`,
 `shared/lib/pickFiles.js` opens the system file picker from code. iOS
 Safari may not open it for an `<input>` outside the document, or may drop
 that input before its `change`, so the input joins the page, hidden, for
-the pick and leaves after it. The backup restore and the imports pick
-through it.
+the pick and leaves after it. The backup restore, the imports and the
+markup strip's Picture button pick through it.
 
 ### Sizes and reveals: CSS asks capability
 
@@ -906,6 +915,8 @@ through it.
   grip's `::before`, a splitter's `hitAreaMargins`). Two sizes stay apart:
   the editing bar's 36 px buttons, which only a touch screen shows, and
   the text box's handles under `(pointer: coarse)` ([text_boxes.md](text_boxes.md)).
+  `tests/designTokens.test.mjs` fails on any other `(pointer: coarse)`
+  rule that sets a width or a height.
 - **Hover is a capability.** A rule that reveals a control on hover sits
   under `@media (hover: hover)`, or pairs its `opacity: 0` with
   `pointer-events: none`: a hidden control takes no press, so a stray tap
@@ -1416,7 +1427,7 @@ editor's other popups.
 |---|---|
 | `app/App.jsx` | routing, block-tree editor state, docks, the page's live session glue, AI chat glue (decomposition in progress) |
 | `collaboration/usePageCollab.js`, `shared/model/blockOps.js`, `collaboration/Presence.jsx` | the live session (ops out, ops + presence in), the pure tree diff/apply, the avatar stack / row chips ([collab.md](collab.md)), and `PersonAvatar`, the avatar of someone not on the page by username (a share's owner, a person to mention, a comment's author, an Inbox item's actor) |
-| `collaboration/MirrorPopover.jsx`, `collaboration/MergeResolver.jsx`, `collaboration/conflictKinds.js`, `settings/SettingsMirrors.jsx` | a clone's sync pill with its settings and conflicts views, the conflict card + the row chip, what each kind of conflict row says (pure), Settings → Workspaces → Clones ([mirror.md](mirror.md)) |
+| `collaboration/MirrorPopover.jsx`, `collaboration/MergeResolver.jsx`, `collaboration/conflictKinds.js`, `settings/SettingsMirrors.jsx` | a clone's sync pill with its settings and conflicts views, the conflict card + the row chip, what each kind of conflict row says (pure), Settings → Workspaces → Clones and Zotero links ([mirror.md](mirror.md)) |
 | `app/boot.js`, `app/theme.js` | the first load's reads, sent as `main.jsx` starts and taken once by the code that would ask for them (`startBootReads`, `takeBootRead`: the server's config, the session), and the account's theme and language put on from the session's `profile` (`adoptAccountLook`, `languageSeen`; [settings.md](settings.md), [i18n.md](i18n.md)); the theme list (`THEMES`, `DARK_THEMES`, `themeScheme`) and `applyTheme`, which changes every colour in one frame ([Motion](#motion)) |
 | `app/prefDefs.js`, `app/prefs.js` | every preference's key, default, codec and scope (`PREFS`); the hooks that make them state (`useAppPrefs`) and sync the account-scoped ones (`useProfileSync`) |
 | `shared/model/barLayout.js`, `app/topbarItems.js`, `app/viewerToolItems.js`, `settings/BarLayoutSection.jsx` | a bar's order and modes (`defineBar`: the preference's codec, the edits, where each item goes) and the two bars on it: the topbar's configurable buttons, each on the bar or a row of the account menu with its popover anchored where the button would be (`.offBar`), and the viewer strip's tools, each on the strip or a row of its ⋯ menu; the Settings list that orders them ([settings.md](settings.md#bars-order-and-modes)) |

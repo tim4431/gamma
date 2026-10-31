@@ -16,9 +16,10 @@ import { stepBrush, stepWidth, stripKey } from "./stripKeys.js";
 // and its writer. pickInkTool, toggleInkShape, closeInkOptions,
 // toggleInkOptions: the strip's commands. closeInkStrip: App's (the
 // strip, the ruler, the zoom window). inkUndo: a step of the stroke
-// history (useInkDocument.js). boxUndo: the Text tool armed or a box
-// selected, whose Ctrl+Z is the block history's; hasBox: a box selected,
-// whose Escape is its own. deleteInkSelection, selectionStill,
+// history (useInkDocument.js). boxUndo: the Text tool armed, or a box or a
+// picture selected, whose Ctrl+Z is the block history's; hasBox: a box or a
+// picture selected, whose Escape is its own. onPicture(): the Picture
+// button (markup/usePictures.js pick), null on a page that takes none. deleteInkSelection, selectionStill,
 // clearInkSelection, restoreInkSelection: the selection's. inkRuler,
 // toggleInkRuler; inkZoom, toggleInkZoom, inkZoomNewLine: the ruler's
 // and the zoom window's (useInkRuler.js, useInkZoom.js). setStatus: the
@@ -26,7 +27,7 @@ import { stepBrush, stepWidth, stripKey } from "./stripKeys.js";
 // closeInkOptions, toggleInkOptions and setStatus as it found them when
 // the strip opened: each is the same function for the page's life.
 export function useStripKeys({ inkUi, inkSelection, inkVisible, inkTools, setInkTools, pickInkTool,
-  toggleInkShape, closeInkOptions, toggleInkOptions, closeInkStrip, inkUndo, boxUndo, hasBox,
+  toggleInkShape, closeInkOptions, toggleInkOptions, closeInkStrip, inkUndo, boxUndo, hasBox, onPicture,
   deleteInkSelection, selectionStill, clearInkSelection, restoreInkSelection,
   inkRuler, toggleInkRuler, inkZoom, toggleInkZoom, inkZoomNewLine, setStatus }) {
   // The strip's keys while it is open (the table is ink/stripKeys.js): 1–9
@@ -35,13 +36,14 @@ export function useStripKeys({ inkUi, inkSelection, inkVisible, inkTools, setInk
   // with a pill, Shift+[ / ] an armed pen's style through BRUSH_ORDER (Pen,
   // Ballpoint, Brush, Pencil, wrapping; the same pill naming the style), E
   // taps or holds the eraser ("Hold-E" below), L the lasso,
-  // T the Text tool, V the hand, Esc closes one layer at a time (the
-  // selection, the options row, the strip), Delete removes the selection,
-  // and Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y step the STROKE history — registered
-  // in the capture phase so the page's block undo (a bubble listener on the
-  // window) never sees them. Text boxes are blocks: with the Text tool armed
-  // or a box selected, Ctrl+Z is left to the block undo, and Esc to the box
-  // (it lets go first). A focused text field keeps its own keys, and an open
+  // T the Text tool, V the hand, I the Picture button (its file picker),
+  // Esc closes one layer at a time (the selection, the options row, the
+  // strip), Delete removes the selection, and Ctrl+Z / Ctrl+Shift+Z /
+  // Ctrl+Y step the STROKE history — registered in the capture phase so the
+  // page's block undo (a bubble listener on the window) never sees them.
+  // Text boxes and pictures are blocks: with the Text tool armed or a box
+  // or a picture selected, Ctrl+Z is left to the block undo, and Esc to the
+  // box or the picture (it lets go first). A focused text field keeps its own keys, and an open
   // menu or a preset drag keeps Escape (they close themselves).
   // Hold-E: the keydown arms the eraser as a tap does and keeps {since,
   // erased, selection, tool} — the lasso selection and the tool armed before;
@@ -56,7 +58,7 @@ export function useStripKeys({ inkUi, inkSelection, inkVisible, inkTools, setInk
     allTools: inkTools, setInkTools, tool: inkUi.tool, pickInkTool, boxUndo, hasBox, optionsOpen: !!inkUi.options,
     // the modifiers: R, S, Z, the zoom window's Enter and their places in Esc's order
     ruler: !!inkRuler, toggleInkRuler, toggleInkShape, closeInkStrip,
-    zoom: !!inkZoom, toggleInkZoom, inkZoomNewLine };
+    zoom: !!inkZoom, toggleInkZoom, inkZoomNewLine, onPicture };
   const inkHoldRef = useRef(null);
   // The eraser tool lifted (App's handleInkEraseEnd): a held E learns that
   // a pass was made.
@@ -91,6 +93,7 @@ export function useStripKeys({ inkUi, inkSelection, inkVisible, inkTools, setInk
         else if (action.what === "shape") K.toggleInkShape();
         else if (action.what === "zoom") K.toggleInkZoom();
       } else if (action.kind === "newLine") K.inkZoomNewLine();
+      else if (action.kind === "picture") K.onPicture?.();
       else if (action.kind === "delete") K.deleteInkSelection();
       else if (action.kind === "pick") K.pickInkTool(action.id);
       else if (action.kind === "width") {

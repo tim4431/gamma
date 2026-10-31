@@ -17,11 +17,18 @@ chat, the labelled head excerpt below; for `read_page`, a `pdf_chars`
 window. A page without an attachment is its notes, always included;
 `include_notes` only decides whether PDF pages also show theirs. In the
 notes, and in the focus outline of the cursor's and the attached blocks
-(`notes_focus_section`), a text box ([text_boxes.md](text_boxes.md)) is a
-note, never an area highlight. A label before its text says where it is:
-"(text box on p. N)", "(text box on a page of paper)" or "(text box, not
-placed on a page)" (`text_box_label`). The nearest sheet above a box wins,
-and an outline that starts at a block asks `under_sheet` once.
+(`notes_focus_section`), a text box ([text_boxes.md](text_boxes.md)) and a
+picture ([pictures.md](pictures.md)) are notes, never area highlights. A
+label before the text says where each is, by one rule for both
+(`placed_label`): "(text box on p. N)", "(picture on a page of paper)",
+"(text box, not placed on a page)" and so on. The nearest sheet above
+wins, and an outline that starts at a block asks `under_sheet` once.
+
+A picture's text is its `![caption](url)` line (`picture_text`,
+`picture.markdown_of`), so the model reads the caption and has the URL
+`view_image` opens ([ai_tools.md](ai_tools.md#view_image-both-scopes)).
+The picture itself is not in the context. A picture with no caption is
+listed too, and one whose value names no file reads as its caption.
 
 The head excerpt is the *document part* of the context: it goes on the
 oldest user turn and reads the same on every turn of a conversation

@@ -209,6 +209,20 @@ def ellipse(cx: float, cy: float, rx: float, ry: float, start: float = -100.0, s
     return out
 
 
+def _along(points, step: float = STEP) -> list[tuple[float, float]]:
+    """A polyline through ``points`` with each side sampled every ``step``
+    or closer, as ``flatten`` samples a path's lines: a side handed over
+    as its two ends is one long step, which the screen's streamline cuts
+    across, rounding the corners at both of its ends by about half its
+    length (a star's tips, an arrow's head, a pressed ground's zigzag); a
+    side of samples is a straight run, which the outline carries into its
+    corners (ink.js ``denseStraights``)."""
+    out = [points[0]]
+    for a, b in zip(points, points[1:]):
+        out += _line(a, b, step)
+    return out
+
+
 def _placed(polys, at=(0.0, 0.0), scale=1.0, turn=0.0):
     c, s = math.cos(math.radians(turn)), math.sin(math.radians(turn))
     return [[(at[0] + scale * (x * c - y * s), at[1] + scale * (x * s + y * c)) for x, y in poly] for poly in polys]
@@ -383,13 +397,13 @@ def _arrow(s: Sheet, d: str, color: str = INK, size: float = 2.0, head: float = 
         s.even([poly], color, size, dash)
     else:
         s.pen([poly], color, size)
-    s.pen([[wings[0], end, wings[1]]], color, size)
+    s.pen([_along([wings[0], end, wings[1]])], color, size)
 
 
 def _star(s: Sheet, cx: float, cy: float, r: float, color: str = ORANGE, fill: str = YELLOW_HI):
     pts = [(cx + (r if k % 2 == 0 else r * 0.45) * math.sin(math.pi * k / 5),
             cy - (r if k % 2 == 0 else r * 0.45) * math.cos(math.pi * k / 5)) for k in range(11)]
-    s.pen([pts], color, 1.8)
+    s.pen([_along(pts)], color, 1.8)
     s.marker([[(cx - r * 0.15, cy + r * 0.05), (cx + r * 0.15, cy + r * 0.05)]], fill, r * 1.1)
 
 
@@ -521,15 +535,15 @@ def _icon(s: Sheet, name: str, cx: float, cy: float, color: str = UI_ICON, side:
 
 
 def _fill(s: Sheet, x0: float, y0: float, x1: float, y1: float, color: str = UI_PRESSED):
-    """A rounded patch of ground: one opaque zigzag, drawn before what
-    stands on it."""
+    """A rounded patch of ground: one opaque zigzag, its legs sampled
+    along (``_along``), drawn before what stands on it."""
     w = min(7.0, y1 - y0, x1 - x0)
     rows = max(1, math.ceil((y1 - y0 - w) / (w * 0.8)))
     ys = [y0 + w / 2 + (y1 - y0 - w) * i / rows for i in range(rows + 1)]
     pts = []
     for i, y in enumerate(ys):
         pts += [(x0 + w / 2, y), (x1 - w / 2, y)] if i % 2 == 0 else [(x1 - w / 2, y), (x0 + w / 2, y)]
-    s.even([pts], color, w)
+    s.even([_along(pts)], color, w)
 
 
 def _label(s: Sheet, text: str, x: float, y: float, color: str = RING, cap: float = 8.0):

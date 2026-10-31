@@ -273,6 +273,25 @@ Each provider shows up on the sign-in pages once both of its values are in
 
 Restart the container after editing `.env` (`docker compose up -d`).
 
+## Connecting Zotero
+
+The account server can hold the Zotero app through which Gamma servers
+connect a person's Zotero account for their Zotero links, so a desktop app
+or a self-hosted server needs no Zotero registration of its own
+([docs/dev/cloud_accounts.md](../../docs/dev/cloud_accounts.md) "Connecting
+Zotero"). Without it, people paste a Zotero API key in Gamma instead.
+
+- Sign in to zotero.org with the account that should own the app, then go
+  to <https://www.zotero.org/oauth/apps> → *Register a new application*:
+  name *Gamma*, website `https://gammapdf.com`, type *Browser*, callback
+  URL `https://account.gammapdf.com/zotero/callback`.
+- Put the client key and the client secret Zotero shows into `.env` as
+  `GAMMA_CLOUD_ZOTERO_CLIENT_KEY` / `_SECRET` and restart the container.
+  The discovery document then names `gamma_zotero_connect_endpoint` and
+  `gamma_zotero_token_endpoint`, and Gamma servers whose sign-in uses this
+  account server offer *Connect Zotero* (Settings → Account & sync). The
+  Admin page's Configuration section shows whether both values are set.
+
 ## Connecting Gamma servers
 
 - **The desktop app / any local Gamma**: Settings → Server → Sign-in →

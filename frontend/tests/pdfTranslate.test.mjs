@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import fs from "node:fs";
-import { isTranslatable, segmentPage, selectionParagraphs, textRuns } from "../src/pdf/pdfTranslate.js";
+import { isNameList, isTranslatable, segmentPage, selectionParagraphs, textRuns } from "../src/pdf/pdfTranslate.js";
 
 // The fixture paper's pdf.js runs (tests/fixtures/translate/paper.tex,
 // recorded by tests/bench/translateBench.mjs --record): a two-column revtex
@@ -154,6 +154,78 @@ test("isTranslatable keeps prose and skips symbol soup", () => {
   assert.equal(isTranslatable("We consider N identical atoms."), true);
   assert.equal(isTranslatable("x y z p q"), false);
   assert.equal(isTranslatable("(1)"), false);
+});
+
+test("an author line is a list of names with their marks; a name pair without marks or prose is not", () => {
+  // Author lines from the library: the mark after the name or after its
+  // comma, a space either side, footnote signs beside it, a stray token
+  // before the first name, particles.
+  for (const src of [
+    "Alexandra A. Geim{v1}, Nazlı U˘gur K¨oyl¨uo˘glu{v2}, Simon J. Evered{v3}, Rahul Sahay{v4},",
+    "Haruka Tanji-Suzuki{v1}, Ian D. Leroux{v2}, Jonathan Simon{v3}, and Vladan Vuleti ´c{v4}",
+    "J. D. Thompson,{v1} T. G. Tiecke,{v2} A. S. Zibrov,{v3} and M. D. Lukin{v4}",
+    "Yue Wu{v1}, Shimon Kolkowitz {v2}, Shruti Puri {v3} & Jeff D. Thompson{v4}",
+    "B. A. Bernevig {v1} , L. Fu {v2} , L. Ju {v3} , A. H. MacDonald {v4} , K. F. Mak {v5} & J. Shan {v6}",
+    "Nathanan Tantivasadakarn ,{v1} Ruben Verresen ,{v2} and Ashvin Vishwanath{v3}",
+    "A. Muzi Falconi ,{v1} R. Panza ,{v2} S. Sbernardori ,{v3} R. Forti ,{v4}R. Klemt ,{v5}",
+    "K. J. Satzinger{v1}*, Y.-J Liu{v2}, A. Smith{v3}, C. Knapp{v4}†, M. Newman{v5}",
+    "Jouni Kainulainen,{v1}* Christoph Federrath,{v2} Thomas Henning{v3}",
+    "Hannah J. Manetsch{v1}, Xudong Lv{v4}, Kon H. Leung{v5}✉ & Manuel Endres{v6}✉",
+    "{v1} Ran Finkelstein{v2}, Ohad Lib{v3}, Yoav Sagi{v4}",
+    "Jan van der Waals{v1}, Ana María de la Cruz{v2}",
+    "Emily H. Qiu,{v1} Tamara Sumarac,ˇ{v2} Peiran Niu,{v3} Shai Tsesses,{v4}",
+  ]) assert.equal(isNameList(src), true, src);
+  for (const src of [
+    "Roman Schmied and Philipp Treutlein",
+    "Chetan Nayak{v1}",
+    "Theory{v1}, Experiment{v2}",
+    "where {v1}, {v2} and {v3} are the Rabi frequencies",
+    "Bais {v1} and Bais et al. {v2}1992; Bais, van Driel, et al., 1993",
+  ]) assert.equal(isNameList(src), false, src);
+});
+
+test("an affiliation line is no author line: its marks open the affiliation after them", () => {
+  for (const src of [
+    "{v1}Department of Physics, Harvard University, Cambridge, MA 02138, USA",
+    "{v1}California Institute of Technology, Pasadena {v2}Harvard Quantum Initiative, Harvard University",
+    "{v1}Harvard University, Cambridge {v2}Massachusetts Institute of Technology, Cambridge {v3}California Institute of Technology, Pasadena",
+    "{v1}Stanford University, {v2}Google Research, {v3}UC Berkeley",
+    "{v1}Stanford University {v2}Google Research {v3}UC Berkeley",
+  ]) assert.equal(isNameList(src), false, src);
+});
+
+test("a title or heading in title case with a formula is no author line", () => {
+  for (const src of [
+    "B. Defining and Computing the Improvement Factor {v1}",
+    "Spin Squeezing and Entanglement of {v1}Rb Atoms in an Optical Cavity",
+    "Rydberg Atom Arrays and Quantum Simulation of {v1} Gauge Theories",
+    "Topological Order and Anyons in a {v1} Toric Code",
+    "Rydberg Blockade and Entanglement of Two Atoms{v1}",
+    // Two names with one mark read the same as a title with a footnote: both
+    // stay translatable.
+    "Quantum Optics and Atomic Physics{v1}",
+    "Ariel Sommer and Jonathan Simon{v1}",
+  ]) assert.equal(isNameList(src), false, src);
+  const sup = (str, x) => run(str, x, 96, { h: 6, w: str.length * 3, font: "r6" });
+  const [title] = segmentPage([
+    run("Spin Squeezing and Entanglement of", 54, 100, { w: 170 }), sup("87", 228), run("Rb Atoms in an Optical Cavity", 234, 100, { w: 140 }),
+  ]);
+  assert.equal(title.src, "Spin Squeezing and Entanglement of {v1}Rb Atoms in an Optical Cavity");
+  assert.equal(title.translate, true);
+});
+
+test("an author line with superscript affiliation marks stays original", () => {
+  const sup = (str, x) => run(str, x, 96, { h: 6, w: str.length * 3, font: "r6" });
+  const runs = [
+    run("Alexandra A. Geim", 54, 100, { w: 80 }), sup("1", 134),
+    run(", Simon J. Evered", 137, 100, { w: 80 }), sup("2", 217),
+    run(", and Mikhail D. Lukin", 220, 100, { w: 100 }), sup("1,2", 320),
+    ...words("We study the dynamics of a driven superatom.", 54, 130),
+  ];
+  const [authors, prose] = segmentPage(runs);
+  assert.equal(authors.src, "Alexandra A. Geim{v1}, Simon J. Evered{v2}, and Mikhail D. Lukin{v3}");
+  assert.equal(authors.translate, false);
+  assert.equal(prose.translate, true);
 });
 
 test("selectionParagraphs rejoins lines and keeps paragraph breaks", () => {

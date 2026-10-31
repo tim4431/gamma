@@ -27,9 +27,9 @@
 //     dropped; structure and properties the other way round: remote
 //     batches applied here after our edits but ordered before them on the
 //     server get our batch put back on top when it comes by (`reassert`);
-//     a text box, which every change sends whole, is merged key by key on
-//     the server, and here a remote box meets our changes still on their
-//     way the same way (`ahead`);
+//     a text box or a picture, which every change sends whole, is merged
+//     key by key on the server, and here a remote one meets our changes
+//     still on their way the same way (`ahead`);
 //   - catches up after a reconnect from the op log (GET …/ops?since=), or
 //     asks for a reload when the log no longer reaches back;
 //   - heals a batch the server refused for naming a block it doesn't have
@@ -51,9 +51,8 @@
 // advances it; remote ops advance it too. Positions live in one Map shared
 // with blockOps.
 import {
-  applyOps, diffTrees, indexTree, propsPatch, pushOp, seedPositions, someNode, withTexts,
+  PLACED, applyOps, diffTrees, indexTree, propsPatch, pushOp, seedPositions, someNode, withTexts,
 } from "../shared/model/blockOps.js";
-import { mergeTextBox, normalizeTextBox } from "../markup/textBox.js";
 import { t } from "../shared/i18n/i18n.js";
 
 export const TYPING_DEBOUNCE_MS = 350;
@@ -108,38 +107,53 @@ function saveProblem(err) {
   return t("Not saved yet — the server answered {status}. Retrying…", { status });
 }
 
-// Our changes of text boxes the server has not applied yet: the queue, and
-// the batch out unless its own fan-out came by (`landed`).
-const unappliedBoxes = (s) => [...(s.out && !s.out.landed ? s.out.ops : []), ...s.queue]
-  .filter((q) => q.op === "set" && q.props && "text_box" in q.props);
+// Our changes of `key` (a text box's `text_box`, a picture's `picture`:
+// blockOps PLACED) the server has not applied yet: the queue, and the batch
+// out unless its own fan-out came by (`landed`).
+const unappliedPlaced = (s, key) => [...(s.out && !s.out.landed ? s.out.ops : []), ...s.queue]
+  .filter((q) => q.op === "set" && q.props && key in q.props);
 
-// A remote set of a text box: as the box will be once our changes of it
-// still on their way land after it. The server merges each key by key
-// (gamma/text_box.py merge_text_box), so theirs alone would take our
-// change off the screen until the ack, and out of the next edit's diff.
+// A remote set of a text box or a picture: as it will be once our changes
+// of it still on their way land after it. The server merges each key by
+// key (gamma/ops.py PLACED_KEYS), so theirs alone would take our change off
+// the screen until the ack, and out of the next edit's diff.
 function ahead(s, op) {
-  const box = op.props?.text_box;
-  if (op.op !== "set" || !box || typeof box !== "object") return op;
-  const ours = unappliedBoxes(s).filter((q) => q.id === op.id);
-  if (!ours.length) return op;
-  const next = ours.reduce((v, q) => (q.base_props && "text_box" in q.base_props
-    ? mergeTextBox(v, q.props.text_box, q.base_props.text_box) : q.props.text_box), box);
-  return { ...op, props: { ...op.props, text_box: next } };
+  if (op.op !== "set" || !op.props) return op;
+  let props = op.props;
+  for (const [key, { merge }] of Object.entries(PLACED)) {
+    const value = op.props[key];
+    if (!value || typeof value !== "object") continue;
+    const ours = unappliedPlaced(s, key).filter((q) => q.id === op.id);
+    if (!ours.length) continue;
+    const next = ours.reduce((v, q) => (q.base_props && key in q.base_props
+      ? merge(v, q.props[key], q.base_props[key]) : q.props[key]), value);
+    props = { ...props, [key]: next };
+  }
+  return props === op.props ? op : { ...op, props };
 }
 
-// Our batch in its place in the order: the boxes it set as the server
-// stored them (merged onto someone else's change), where this tab holds
-// something else and no newer change of ours to them is on its way (the
-// server merges that one onto these, and its answer brings the result).
-// This tab holds something else after a refetch, for one: `overlay` lays
-// our batch over the fetched box whole.
-function storedBoxes(s, ops) {
+// Our batch in its place in the order: the text boxes and pictures it set
+// as the server stored them (merged onto someone else's change), where this
+// tab holds something else and no newer change of ours to them is on its
+// way (the server merges that one onto these, and its answer brings the
+// result). This tab holds something else after a refetch, for one:
+// `overlay` lays our batch over the fetched value whole.
+function storedPlaced(s, ops) {
   const here = indexTree(s.base, s.pageId);
-  const newer = new Set(unappliedBoxes(s).map((q) => q.id));
-  const same = (a, b) => JSON.stringify(normalizeTextBox(a)) === JSON.stringify(normalizeTextBox(b));
-  return ops.filter((op) => op.op === "set" && op.props?.text_box && typeof op.props.text_box === "object"
-      && !newer.has(op.id) && here.has(op.id) && !same(here.get(op.id).node.properties?.text_box, op.props.text_box))
-    .map((op) => ({ op: "set", id: op.id, props: { text_box: op.props.text_box } }));
+  const newer = new Map(Object.keys(PLACED).map((key) => [key, new Set(unappliedPlaced(s, key).map((q) => q.id))]));
+  const out = [];
+  for (const op of ops) {
+    if (op.op !== "set" || !op.props || !here.has(op.id)) continue;
+    const props = {};
+    for (const [key, { normalize }] of Object.entries(PLACED)) {
+      const value = op.props[key];
+      if (!value || typeof value !== "object" || newer.get(key).has(op.id)) continue;
+      const held = here.get(op.id).node.properties?.[key];
+      if (JSON.stringify(normalize(held)) !== JSON.stringify(normalize(value))) props[key] = value;
+    }
+    if (Object.keys(props).length) out.push({ op: "set", id: op.id, props });
+  }
+  return out;
 }
 
 // Split `ops` into those that no longer apply now that the blocks in
@@ -876,7 +890,7 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
         if (s.out && m.seq > s.acked) s.out.landed = true;
         const mark = m.mark ?? s.out?.mark;
         if (mark != null && s.remote > mark) reassert(s, m.ops || []);
-        else land(s, storedBoxes(s, m.ops || []));
+        else land(s, storedPlaced(s, m.ops || []));
         continue;
       }
       const now = [];

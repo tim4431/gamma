@@ -291,6 +291,14 @@ const shownPage = (content) => {
 // Both of the bar's dropdowns closed.
 const menuClosed = (bar) => waitFor(() => bar.evaluate(() => document.getElementById('menu').hidden && document.getElementById('syncPanel').hidden), 'menu closed');
 
+// The sync panel still shown a while after a press in it: open in the page,
+// and the bar view still grown over the content (else the panel is cut off).
+async function panelStaysOpen(app, bar) {
+  await sleep(1500);
+  assert(!(await bar.evaluate(() => document.getElementById('syncPanel').hidden)), 'the panel stays open');
+  assert(await hook(app, (s) => s.barExpanded()), 'the bar view stays grown over the content');
+}
+
 // ------------------------------------------------------------- steps -------
 
 async function main() {
@@ -635,9 +643,13 @@ async function main() {
       // "pause" detaches the clone, the panel staying open, its sync shut; "resume" reattaches it.
       await cloneRow.locator('[data-act="pause"]').click();
       await waitFor(async () => (await cloneRow.locator('.state').textContent()).startsWith('Detached'), 'shown paused', 15_000);
+      await panelStaysOpen(app, bar);
       assert.equal(await cloneRow.locator('[data-act="sync"]').getAttribute('aria-disabled'), 'true', 'no sync while detached');
       await cloneRow.locator('[data-act="resume"]').click();
       await waitFor(async () => (await cloneRow.locator('[data-act="pause"]').count()) === 1, 'shown resumed', 30_000);
+      await panelStaysOpen(app, bar);
+      await cloneRow.locator('[data-act="sync"]').click();
+      await panelStaysOpen(app, bar);
       await bar.keyboard.press('Escape');
       await menuClosed(bar);
       return `${origWs} → copy ${copyWs} on Alpha, paused and resumed`;
@@ -672,13 +684,13 @@ async function main() {
       assert((await row.locator('.state').textContent()).includes(fs.realpathSync(kept).split(path.sep).pop()), 'its state and where it is');
       for (const act of ['pause', 'sync', 'stop']) assert(await row.locator(`[data-act="${act}"]`).isVisible(), `"${act}" shown without hovering`);
       await row.locator('[data-act="sync"]').click();
-      await menuClosed(bar);
       await waitFor(async () => /is up to date/.test((await hook(app, (s) => s.notice())) || ''), 'the sync reported', 15_000);
+      await panelStaysOpen(app, bar);
       // "pause" leaves the panel open on the paused row, whose "resume" starts it again.
-      const toggled = await keptRow(app, bar, 'folder', 'Kept lab');
+      const toggled = row;
       await toggled.locator('[data-act="pause"]').click();
       await waitFor(async () => (await toggled.locator('.state').textContent()).startsWith('Paused'), 'shown paused', 15_000);
-      assert(!(await bar.evaluate(() => document.getElementById('syncPanel').hidden)), 'the panel stays open');
+      await panelStaysOpen(app, bar);
       const linkOf = async () => (await hook(app, (s, w) => s.listFolders(w), ws)).links[0];
       assert((await linkOf()).status.paused_at, 'paused on the server');
       await toggled.locator('[data-act="resume"]').click();
@@ -769,6 +781,80 @@ async function main() {
       assert.equal(await hook(app, (s) => s.registry.getSettings().folderHost), '', 'the host no longer starts at launch for it');
       await waitFor(async () => /no longer kept/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
       return `${links[0].dest} from ${links[0].remote_url}, then dropped`;
+    });
+
+    await step('file on this computer: a page follows a PDF on disk; a new version is sent and the panel says so', async () => {
+      await hook(app, (s, id) => s.openServer(id), ids.alpha);
+      await waitLoggedIn(content);
+      const ws = (await waitFor(async () => hook(app, (s) => s.gamma()), 'workspaces read', 15_000)).current;
+      const page = await serverCall(app, '/api/blocks', { ws, method: 'POST', body: { parent_id: 'root', content: 'Followed draft' } });
+      const docOf = async () => (await serverCall(app, `/api/blocks/${page.id}`, { ws })).properties.doc_id || '';
+      // A build's output, dated a while back so that it reads as finished
+      // (settled: a few seconds old, %%EOF at its end): its doc_id.
+      const pdf = path.join(profile, 'build', 'main.pdf');
+      fs.mkdirSync(path.dirname(pdf), { recursive: true });
+      const build = (text) => {
+        const bytes = minimalPdf(text);
+        fs.writeFileSync(pdf, bytes);
+        const past = new Date(Date.now() - 10_000);
+        fs.utimesSync(pdf, past, past);
+        return crypto.createHash('sha256').update(bytes).digest('hex').slice(0, 24);
+      };
+      const first = build('Followed draft, first build');
+      await hook(app, (s, f) => { process.env.GAMMA_SHELL_PICK_FILE = f; }, pdf); // the file picker's answer
+      const link = await hook(app, (s, [w, p]) => s.followFile(w, p), [ws, page.id]);
+      assert.equal(link.kind, 'file');
+      assert.equal(link.page_id, page.id);
+      assert.equal(fs.realpathSync(link.dest).toLowerCase(), fs.realpathSync(pdf).toLowerCase(), 'the file the picker said');
+      await waitFor(async () => /follows main\.pdf: each new version is sent to Gamma/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
+      await waitFor(async () => (await docOf()) === first, 'the page carries the first build', 30_000, 500);
+      // Asked again for the same page, it shows the file instead.
+      await hook(app, (s, [w, p]) => s.followFile(w, p), [ws, page.id]);
+      const opened = await hook(app, (s) => s.externalOpens[s.externalOpens.length - 1]);
+      assert.equal(fs.realpathSync(opened).toLowerCase(), fs.realpathSync(pdf).toLowerCase(), 'the file is shown');
+      // A new build: the row's "sync" sends it now (the server's own loop would, within its 30 s tick).
+      const second = build('Followed draft, second build with more text');
+      const row = await keptRow(app, bar, 'file', 'Followed draft');
+      assert.equal(await bar.locator('#syncPanel .menuLabel', { hasText: 'Files followed' }).count(), 1, 'under its own heading');
+      for (const act of ['pause', 'sync', 'stop']) assert(await row.locator(`[data-act="${act}"]`).isVisible(), `"${act}" shown`);
+      await row.locator('[data-act="sync"]').click();
+      await waitFor(async () => (await docOf()) === second, 'the page carries the second build', 60_000, 500);
+      await waitFor(async () => /main\.pdf( was sent to Gamma|: nothing new to send)/.test((await hook(app, (s) => s.notice())) || ''), 'the sync reported', 15_000);
+      await panelStaysOpen(app, bar);
+      await waitFor(async () => (await row.locator('.state').textContent()).startsWith('Sent'), 'the row reads Sent', 15_000);
+      // "stop" drops the link; the file stays as it is.
+      await row.locator('[data-act="stop"]').click();
+      await menuClosed(bar);
+      await waitFor(async () => {
+        await hook(app, (s) => s.refreshKeeping());
+        return !(await hook(app, (s) => s.keeping().items.some((i) => i.kind === 'file')));
+      }, 'the link is gone', 15_000);
+      assert(fs.existsSync(pdf), 'the file stays');
+      assert.equal(await docOf(), second, 'the page keeps the last build');
+      await waitFor(async () => /no longer follows main\.pdf/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
+      return `${page.id} followed ${link.dest}: ${first}, then ${second}`;
+    });
+
+    await step('sending back from a kept folder: the folder row\'s upload arrow turns it on and off', async () => {
+      const row = await keptRow(app, bar, 'folder', 'Kept lab');
+      const pushOf = async () => {
+        await hook(app, (s) => s.refreshKeeping());
+        return (await hook(app, (s) => s.keeping().items.find((i) => i.kind === 'folder' && i.name === 'Kept lab'))).push;
+      };
+      const toggle = (act, pressed) => row.locator(`[data-act="${act}"][aria-pressed="${pressed}"]`);
+      assert.equal(await toggle('push-on', false).count(), 1, 'off until asked for');
+      await toggle('push-on', false).click();
+      await waitFor(async () => (await toggle('push-off', true).count()) === 1, 'shown on', 15_000);
+      await panelStaysOpen(app, bar);
+      assert.equal(await pushOf(), true, 'on, on the server');
+      await waitFor(async () => /sends PDFs you change there back to Gamma/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
+      await toggle('push-off', true).click();
+      await waitFor(async () => (await toggle('push-on', false).count()) === 1, 'shown off', 15_000);
+      assert.equal(await pushOf(), false, 'off, on the server');
+      await waitFor(async () => /no longer sends PDFs back/.test((await hook(app, (s) => s.notice())) || ''), 'the bar said so', 5_000);
+      await bar.keyboard.press('Escape');
+      await menuClosed(bar);
+      return 'on, then off';
     });
 
     await step('background: with "keep running" on, closing the window leaves the servers up and the tray in place; the window comes back', async () => {
@@ -1002,8 +1088,19 @@ async function main() {
       const newRoot = path.join(profile, 'moved-root');
       const before = await hook(app, (s) => s.registry.load().servers.filter((w) => w.type === 'local').map((w) => w.dataDir));
       assert(before.length === 2, 'two local servers');
-      const r = await content.evaluate((dir) => gammaShell.setDataRoot(dir, { move: true }), newRoot);
+      const { r, seen } = await content.evaluate(async (dir) => {
+        const seen = [];
+        const off = gammaShell.onDataMove((m) => seen.push(m));
+        const r = await gammaShell.setDataRoot(dir, { move: true });
+        await new Promise((ok) => setTimeout(ok, 200));
+        off();
+        return { r, seen };
+      }, newRoot);
       assert.deepEqual(r.moved.sort(), ['Alpha', 'Beta renamed'], JSON.stringify(r));
+      // the launcher heard how far the copy was, up to all of it, then that it ended
+      const last = seen.filter(Boolean).pop();
+      assert(last && last.total > 0 && last.done === last.total, `progress up to the whole: ${JSON.stringify(seen.slice(-3))}`);
+      assert.equal(seen[seen.length - 1], null, 'the move reported done');
       const after = await hook(app, (s) => s.registry.load().servers.filter((w) => w.type === 'local').map((w) => w.dataDir));
       for (const d of after) {
         assert(d.startsWith(newRoot + path.sep), `moved: ${d}`);

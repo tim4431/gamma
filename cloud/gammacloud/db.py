@@ -22,7 +22,7 @@ from datetime import datetime, timezone
 
 from . import config
 
-SCHEMA_VERSION = 13
+SCHEMA_VERSION = 14
 BUSY_TIMEOUT = 10  # seconds a connection waits for another writer
 
 
@@ -298,6 +298,28 @@ SERVER_INVITATIONS = """CREATE TABLE IF NOT EXISTS server_invitations (
 SERVER_INVITATIONS_INDEX = ("CREATE INDEX IF NOT EXISTS idx_server_invitations_expires "
                             "ON server_invitations(expires_at)")
 
+# The Zotero broker (``zotero.py``, step 14). ``zotero_requests``: a browser
+# at zotero.org, keyed by the request token's hash, its secret sealed with a
+# key derived from the token. ``zotero_codes``: an approval (the request
+# token, its secret and Zotero's verifier) waiting for its Gamma server,
+# keyed by the one-time code's hash and sealed with a key derived from the
+# code. Neither token is stored, so a row alone replays nothing.
+ZOTERO_REQUESTS = """CREATE TABLE IF NOT EXISTS zotero_requests (
+    token_hash TEXT PRIMARY KEY,
+    secret TEXT NOT NULL,
+    server TEXT NOT NULL,
+    state TEXT NOT NULL,
+    code_challenge TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+)"""
+ZOTERO_CODES = """CREATE TABLE IF NOT EXISTS zotero_codes (
+    code_hash TEXT PRIMARY KEY,
+    approval TEXT NOT NULL,
+    server TEXT NOT NULL,
+    code_challenge TEXT NOT NULL,
+    expires_at TEXT NOT NULL
+)"""
+
 SCHEMA = [
     # ``email`` is the address as it was typed; ``email_canon`` is the inbox
     # it reaches (accounts.py ``email_canon``), what uniqueness is judged on.
@@ -471,6 +493,8 @@ SCHEMA = [
     METRICS,
     SERVER_INVITATIONS,
     SERVER_INVITATIONS_INDEX,
+    ZOTERO_REQUESTS,
+    ZOTERO_CODES,
 ]
 
 
@@ -640,6 +664,12 @@ def _step_server_invitations(conn) -> None:
     _add_column(conn, "invites", "invitation", "INTEGER NOT NULL DEFAULT 0")
 
 
+def _step_zotero(conn) -> None:
+    """The Zotero broker's requests in flight and its one-time codes."""
+    conn.execute(ZOTERO_REQUESTS)
+    conn.execute(ZOTERO_CODES)
+
+
 STEPS: list = [
     # (version, name, fn(conn)) — append only; see docs/dev/cloud_accounts.md.
     (2, "external_logins", _step_external_logins),
@@ -654,6 +684,7 @@ STEPS: list = [
     (11, "operations", _step_operations),
     (12, "fleet_containers", _step_fleet_containers),
     (13, "server_invitations", _step_server_invitations),
+    (14, "zotero", _step_zotero),
 ]
 
 

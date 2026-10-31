@@ -21,6 +21,11 @@
 // sync state and no token — only this map, for the switcher's cross-links
 // and for starting the servers that hold copies at launch.
 //
+// `zoteroHost` on a local server's entry: that server holds a Zotero link
+// that is not detached (docs/dev/zotero_sync.md), as the shell last read
+// its `/api/zotero/links`. A link syncs only while its server runs, so
+// those servers start at launch like the clones' hosts (`launchHosts`).
+//
 // `access` is the Mac App Store build's alone: the folders outside its
 // sandbox the user picked, as security-scoped bookmarks
 // (lib/folderAccess.js).
@@ -129,12 +134,57 @@ function localsUnderRoot(state = load()) {
   return state.servers.filter((s) => s.type === 'local' && s.dataDir && isUnder(s.dataDir, root));
 }
 
+// The bytes under `dir`, counted the way copyTree copies them (links not followed).
+async function treeBytes(dir) {
+  let n = 0;
+  for (const e of await fs.promises.readdir(dir, { withFileTypes: true })) {
+    const p = path.join(dir, e.name);
+    if (e.isDirectory()) n += await treeBytes(p);
+    else if (e.isFile()) n += (await fs.promises.stat(p)).size;
+  }
+  return n;
+}
+
+// `from` copied to `to`, a file at a time and asynchronously, so the shell
+// stays live while it runs; `onBytes(n)` after each file, and after each chunk of a
+// large one. Throws on any failed file, like fs.cpSync.
+const STREAM_FROM = 8 * 1024 * 1024;
+async function copyTree(from, to, onBytes) {
+  await fs.promises.mkdir(to, { recursive: true });
+  for (const e of await fs.promises.readdir(from, { withFileTypes: true })) {
+    const src = path.join(from, e.name);
+    const dest = path.join(to, e.name);
+    if (e.isDirectory()) {
+      await copyTree(src, dest, onBytes);
+    } else if (e.isSymbolicLink()) {
+      await fs.promises.symlink(await fs.promises.readlink(src), dest);
+    } else if (e.isFile()) {
+      const { size } = await fs.promises.stat(src);
+      if (size < STREAM_FROM) {
+        await fs.promises.copyFile(src, dest, fs.constants.COPYFILE_EXCL);
+        onBytes(size);
+      } else {
+        await new Promise((resolve, reject) => {
+          const r = fs.createReadStream(src);
+          const w = fs.createWriteStream(dest, { flags: 'wx' });
+          r.on('data', (chunk) => onBytes(chunk.length));
+          r.on('error', reject);
+          w.on('error', reject);
+          w.on('finish', resolve);
+          r.pipe(w);
+        });
+      }
+    }
+  }
+}
+
 // Change the storage root. `newRoot` '' resets to the default. With `move`
 // every local server under the old root is copied to `<newRoot>/<id>`; only
 // after ALL copies succeed does the registry switch over and the old copies
 // get deleted, so a failure (disk full, permissions) leaves everything as it
-// was. Returns { root, moved: [names] }.
-function setDataRoot(newRoot, { move = true } = {}) {
+// was. `onProgress({ name, done, total })`, in bytes over all the servers,
+// as the copy goes. Returns { root, moved: [names] }.
+async function setDataRoot(newRoot, { move = true, onProgress = () => {} } = {}) {
   const state = load();
   const oldRoot = dataRoot(state);
   const target = newRoot ? path.resolve(newRoot) : '';
@@ -146,11 +196,16 @@ function setDataRoot(newRoot, { move = true } = {}) {
   fs.mkdirSync(targetRoot, { recursive: true });
   const moved = [];
   if (move) {
-    for (const srv of localsUnderRoot(state)) {
+    const servers = localsUnderRoot(state);
+    let total = 0;
+    for (const srv of servers) if (fs.existsSync(srv.dataDir)) total += await treeBytes(srv.dataDir);
+    let done = 0;
+    for (const srv of servers) {
       const dest = path.join(targetRoot, path.basename(srv.dataDir));
+      onProgress({ name: srv.name, done, total });
       try {
         if (fs.existsSync(dest)) throw new Error('already exists');
-        fs.cpSync(srv.dataDir, dest, { recursive: true }); // throws on any failed file
+        await copyTree(srv.dataDir, dest, (n) => { done += n; onProgress({ name: srv.name, done, total }); });
       } catch (e) {
         for (const m of moved) fs.rmSync(m.dest, { recursive: true, force: true });
         fs.rmSync(dest, { recursive: true, force: true });
@@ -301,6 +356,29 @@ function setPort(id, port) {
   save(state);
 }
 
+// Whether local server `id` holds a Zotero link that is not detached, as
+// the shell last read its links (main.js refreshKeeping); such a server
+// starts at launch. Written only when it changes.
+function setZoteroHost(id, on) {
+  const state = load();
+  const srv = state.servers.find((s) => s.id === id && s.type === 'local');
+  if (!srv || Boolean(srv.zoteroHost) === Boolean(on)) return;
+  if (on) srv.zoteroHost = true;
+  else delete srv.zoteroHost;
+  save(state);
+}
+
+// The local servers to run for as long as the app does (main.js
+// startBackgroundHosts): the hosts of clones, of folders kept of remote
+// servers (`settings.folderHost`) and of Zotero links, which all sync only
+// while their server runs; in background mode, every local server.
+function launchHosts(state = load()) {
+  const hosts = new Set(state.mirrors.map((m) => m.server));
+  if (state.settings.folderHost) hosts.add(state.settings.folderHost);
+  const all = Boolean(state.settings.background);
+  return state.servers.filter((s) => s.type === 'local' && (all || hosts.has(s.id) || Boolean(s.zoteroHost)));
+}
+
 // Remember which server is open (reopened at next launch).
 function markOpened(id) {
   const state = load();
@@ -412,7 +490,8 @@ function dirSize(dir) {
 }
 
 module.exports = {
-  init, load, get, addLocal, addRemote, setRemoteUrl, withScheme, rename, remove, setPort, markOpened, getLastOpened,
+  init, load, get, addLocal, addRemote, setRemoteUrl, withScheme, rename, remove, setPort, setZoteroHost, launchHosts,
+  markOpened, getLastOpened,
   getSettings, setSettings, getWindowBounds, setWindowBounds, getAccess, setAccess, dirSize,
   defaultDataRoot, dataRoot, localsUnderRoot, setDataRoot,
   originOf, findMirror, mirrorOf, addMirror, setServerMirrors,
