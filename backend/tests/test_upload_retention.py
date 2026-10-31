@@ -104,6 +104,63 @@ def test_a_replaced_pdf_stays_while_a_highlight_names_it_and_goes_once_it_is_res
     assert (ws_uploads_dir(ws) / f"{old}.pdf").is_file()
 
 
+def test_the_file_a_pending_highlight_is_matched_from_stays_through_later_replacements(owner):
+    c, ws = owner
+    cited = "Similar schemes were demonstrated with ions [{n}] and with superconducting circuits"
+
+    def version(n=None, lower=False):
+        lines = [(72, 100, "Trapped atoms in optical tweezers form arrays of qubits")]
+        lines += [(72, 114, "A paragraph added in this revision of the paper")] if lower else []
+        return _pdf([lines + ([(72, 128 if lower else 114, cited.format(n=n))] if n else [])])
+
+    def upload(pdf, name):
+        return c.post("/api/uploads", files={"file": (name, io.BytesIO(pdf), "application/pdf")}).json()["doc_id"]
+
+    def replace(doc, **body):
+        r = c.put(f"/api/pages/{page}/attachment", json={"doc_id": doc, **body})
+        assert r.status_code == 200, r.text
+        assert jobs.wait(r.json()["job"]["id"])["state"] == "done"
+        return c.get("/api/blocks/rtV").json()["properties"]["pdf_position"]
+
+    v1 = upload(version(3), "v1.pdf")
+    page = _page(c, "versions")
+    assert c.post(f"/api/pages/{page}/attachment", json={"doc_id": v1}).status_code == 200
+    _ops(c, page, [{"op": "insert", "id": "rtV", "parent": page, "content": "",
+                    "props": _highlight(_position(1, _line_rect(72, 114, cited.format(n=3))), cited.format(n=3))}])
+    # v2, a build a sync sent: renumbered, pending, matched from v1 at the next replacement, so v1 stays, and as
+    # the highlight's reference it loses the day the sync asked for
+    on_v2 = replace(upload(version(4), "v2.pdf"), keep_old_days=1)
+    assert on_v2["approx"] is True and on_v2["prev"]["doc_id"] == v1
+    assert f"{v1}.pdf" not in _orphans(ws) and f"{v1}.pdf" not in _retained(ws)
+    # v3 before anyone looked: still dashed, still v1's prev; v2 held only the rectangles the run moved off it,
+    # so it goes after the sync's day
+    v2 = c.get(f"/api/blocks/{page}").json()["properties"]["doc_id"]
+    on_v3 = replace(upload(version(5, lower=True), "v3.pdf"), keep_old_days=1)
+    assert on_v3["approx"] is True and on_v3["prev"]["doc_id"] == v1 and "doc_id" not in on_v3
+    orphans = _orphans(ws)
+    assert f"{v2}.pdf" in orphans and f"{v1}.pdf" not in orphans and _retained(ws)[f"{v2}.pdf"] == DAY
+    _age(ws, f"{v1}.pdf", 31)  # an old file, and a row a writer past the op path left
+    out = upload_gc.reconcile(ws)
+    assert f"{v1}.pdf" in out["cleared"] and f"{v1}.pdf" not in out["purged"]
+    assert (ws_uploads_dir(ws) / f"{v1}.pdf").is_file()
+    # accepted on v3: nothing names v1 any more; the undo names it again
+    accepted = {k: v for k, v in on_v3.items() if k not in ("approx", "match", "prev", "doc_id")}
+    _ops(c, page, [{"op": "set", "id": "rtV", "props": {"pdf_position": accepted}}])
+    assert f"{v1}.pdf" in _orphans(ws)
+    _ops(c, page, [{"op": "set", "id": "rtV", "props": {"pdf_position": on_v3}}])
+    assert f"{v1}.pdf" not in _orphans(ws)
+    # v4 without the passage: hollow at v1's place, naming v1; v3, whose rectangles it no longer has, goes
+    v3 = c.get(f"/api/blocks/{page}").json()["properties"]["doc_id"]
+    on_v4 = replace(upload(version(), "v4.pdf"))
+    assert on_v4["lost"] is True and on_v4["doc_id"] == v1 and "prev" not in on_v4
+    orphans = _orphans(ws)
+    assert f"{v3}.pdf" in orphans and f"{v1}.pdf" not in orphans
+    # discarded: v1 is no one's, kept the usual 30 days for an undo
+    _ops(c, page, [{"op": "delete", "id": "rtV"}])
+    assert f"{v1}.pdf" in _orphans(ws) and (ws_uploads_dir(ws) / f"{v1}.pdf").is_file()
+    assert f"{v1}.pdf" not in _retained(ws)
+
+
 # --- a shorter life ------------------------------------------------------------------
 
 def test_a_retained_file_is_recorded_at_once_and_goes_after_its_own_keep(owner, monkeypatch):

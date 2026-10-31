@@ -4,7 +4,7 @@ A stored file (``uploads/<name>``) is in use while a block names it —
 ``/api/uploads/<name>`` in its content or properties, a page's ``doc_id``,
 or a highlight's ``pdf_position.doc_id`` or ``prev.doc_id``, the file its
 rectangles were measured on, which a pending highlight holds until it is
-resolved (``storage.upload_refs``, the one grammar) — while an AI chat
+resolved (its reference, matched from at every later replacement) (``storage.upload_refs``, the one grammar) — while an AI chat
 names it, and while an open ``zotero_file`` conflict keeps it (Zotero's PDF
 a Zotero link kept when Gamma's went over it, for that conflict's
 "theirs", gamma/zotero_sync_pdfs.py). When the last reference goes the
@@ -150,7 +150,9 @@ def retain(ws: str, name: str, keep_s: int) -> None:
     nothing references now gets its orphan row at once, past no grace (it
     was attached, not just uploaded); one only highlights hold (the
     replaced page's, until they are resolved) keeps the short life for when
-    the last of them goes. A file a block still shows (another page's
+    the last of them goes, unless the relocation run makes it a highlight's
+    reference meanwhile (the version a pending one is matched from: the run
+    claims the files its written positions name, highlight_relocate._write). A file a block still shows (another page's
     ``doc_id`` or ``source_url``, an image) is no build let go of: it gets
     no short life and keeps RETAIN_S. Never makes a referenced file
     purgeable: the purge reads the references again under the write lock."""

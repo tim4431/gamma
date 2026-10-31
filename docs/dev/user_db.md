@@ -594,12 +594,16 @@ track of the ones nothing uses.
   file chips, `ink_url`, a picture's `picture.url`, `source_url`), a
   block's `doc_id` (its PDF, `<doc_id>.pdf`), and a highlight's
   `pdf_position.doc_id` and `pdf_position.prev.doc_id`. Those two name the
-  file a highlight's rectangles were measured on, after a replacement, and
-  stay until the highlight is resolved (Accept, Use closest match, a move,
-  Discard, or a run that places it solid). So **a pending highlight holds its
-  file**: its review card's Before picture and a later run read it
-  ([highlight_relocation.md](highlight_relocation.md)). `unstored` names no
-  file. A mirror's file transfer and
+  file a highlight's rectangles were measured on, after a replacement: a
+  pending highlight's `prev` (and a lost one's `doc_id`) is its reference,
+  the version it is matched from at every later replacement, and stays
+  until the highlight is resolved (Accept, Use closest match, a move,
+  Discard, or a run that places it solid), however many replacements come
+  between; the stamp on rectangles a run then moves (an in-between
+  version's) goes with that run. So **a pending highlight holds the file it
+  is matched from**: its review card's Before picture and every later run
+  read it ([highlight_relocation.md](highlight_relocation.md#the-reference)).
+  `unstored` names no file. A mirror's file transfer and
   a page export's file list read references through it too, with
   `held=False` where a copy goes elsewhere: a mirror (and a page published
   to the share host) and an export through a share carry what the pages
@@ -637,9 +641,12 @@ track of the ones nothing uses.
   which every PDF sent back from disk asks, for a day
   ([folder_sync.md](folder_sync.md#sending-pdfs-back)). A file nothing
   references then gets its `upload_orphans` record at once, past no upload
-  grace (it was attached, not just uploaded). A file only pending
-  highlights hold keeps its row for when the last of them goes, and then
-  goes after its own keep. A file some block still shows (another page's
+  grace (it was attached, not just uploaded). A file only highlights hold
+  keeps its row for when the last of them goes, and then goes after its own
+  keep, unless the run that follows made it a highlight's reference (a
+  pending one's `prev`, a lost one's `doc_id`): the run claims the files its
+  written positions name, which removes the row, so the version a highlight
+  waits on keeps the usual 30 days once it is let go. A file some block still shows (another page's
   `doc_id`, a duplicated page's `source_url`, an image) gets no row: it is
   no build let go of, and keeps its 30 days for when that reference goes
   too. The keep counts from both the record and the mtime, as the 30 days

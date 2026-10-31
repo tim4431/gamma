@@ -1952,6 +1952,110 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     }
   });
 
+  // A highlight still dashed when the PDF is replaced again is matched from the version it was made on, its
+  // reference, not from its dashed guess (docs/dev/highlight_relocation.md "The reference"): the third version printing
+  // the first's words again draws it solid there, with the first's quote; one whose sentence the first version had is
+  // gone, while the third has one like the second's guess, is drawn hollow where the first version had it, naming that
+  // version, whose picture its card shows.
+  await step("pdf: a highlight still dashed at the next replacement is matched from the version it was made on: solid on its words, hollow at its first place with that version's picture", async () => {
+    const lineA = "Quantum dots confine single electrons";
+    const cite = (n) => `Spin echoes were measured by Hahn [${n}]`;
+    // the second version's sentence reads like the first's; the third's like the second's, not like the first's
+    const [first, guess, lookAlike] = ["A sharp doublet sits at the resonance", "The sharp doublets sit near the resonance",
+      "The sharp doublets lie near their resonances"];
+    const up1 = await account.upload("/api/uploads", makePdf([[lineA, cite(25), first]]), "v1.pdf", "application/pdf");
+    const doc = await account.api(`/api/blocks/by-doc/${up1.doc_id}`, { method: "POST", body: { default_title: "Twice replaced paper" } });
+    const replace = async (lines, name) => {
+      const up = await account.upload("/api/uploads", makePdf([lines]), name, "application/pdf");
+      const bound = await account.api(`/api/pages/${doc.id}/attachment`, { method: "PUT", body: { doc_id: up.doc_id, original_filename: name } });
+      const job = await until(async () => {
+        const j = await account.api(`/api/jobs/${bound.job.id}`);
+        return ["done", "failed", "cancelled"].includes(j.state) ? j : null;
+      }, { what: `the relocation job for ${name}`, timeout: 20000 });
+      assertEq(job.state, "done", `the relocation job for ${name}: ${job.error}`);
+      return job.result;
+    };
+    const c = await account.context(browser);
+    try {
+      const p = await openPage(c, `${server.base}/?page=${doc.id}&ws=${account.ws}`);
+      await waitForPdf(p, 1);
+      let made = 0;
+      for (const needle of [cite(25), first]) {
+        await selectPdfText(p, 1, needle);
+        await p.waitForSelector(".plainTip .colorBtn", { timeout: 5000 });
+        await p.locator(".plainTip .colorBtn").first().click();
+        made += 1;
+        await until(async () => (await p.$$('[data-page="1"] div[data-hl-id]')).length >= made, { what: `the highlight of "${needle}"` });
+        await closeEditor(p);
+      }
+      const saved = await until(async () => {
+        const d = await account.api(`/api/blocks/${doc.id}/subtree`);
+        const hls = (d.block.children || []).filter((b) => b.properties?.pdf_position?.rects);
+        return hls.length === 2 ? hls : null;
+      }, { what: "two saved highlights" });
+      const citeId = saved.find((b) => b.properties.quote === cite(25))?.id;
+      const goneId = saved.find((b) => b.properties.quote === first)?.id;
+      assert(citeId && goneId, `the quotes as selected: ${JSON.stringify(saved.map((b) => b.properties.quote))}`);
+      const stored = async (id) => (await account.api(`/api/blocks/${id}`)).properties;
+      const madeAt = (await stored(goneId)).pdf_position;
+
+      // the second version: both matched roughly, dashed, waiting for review
+      const second = await replace([lineA, cite(27), guess], "v2.pdf");
+      assertEq(second?.approx, 2, `both dashed: ${JSON.stringify(second)}`);
+      // the third, before anyone looked: the first's citation again, a line lower, and the first's sentence gone
+      const third = await replace([lineA, "A new line in the third version", cite(25), lookAlike], "v3.pdf");
+      for (const [key, count] of Object.entries({ highlights: 2, moved: 1, kept: 0, lost: 1, approx: 0 })) {
+        assertEq(third?.[key], count, `result.${key} of ${JSON.stringify(third)}`);
+      }
+      const solid = await stored(citeId);
+      assert(!["approx", "match", "prev", "doc_id", "lost"].some((k) => k in solid.pdf_position),
+        `the citation solid: ${JSON.stringify(solid.pdf_position)}`);
+      assertEq(solid.quote, cite(25), "the citation's quote the first version's words");
+      const gone = await stored(goneId);
+      const hollow = gone.pdf_position;
+      assert(hollow.lost === true && !("prev" in hollow) && !hollow.approx && !hollow.closest,
+        `the sentence hollow, no longer pending, nothing like it: ${JSON.stringify(hollow)}`);
+      assertEq(hollow.doc_id, up1.doc_id, "it names the first version");
+      assertEq(gone.quote, first, "its quote the first version's words");
+      const fractions = (pos) => pos.rects.map((r) => [r.x1 / pos.width, r.y1 / pos.height, r.x2 / pos.width, r.y2 / pos.height]);
+      assert(hollow.pageNumber === madeAt.pageNumber && fractions(hollow).length === fractions(madeAt).length
+        && fractions(hollow).every((r, i) => r.every((v, k) => Math.abs(v - fractions(madeAt)[i][k]) < 0.001)),
+        `where the first version had it: ${JSON.stringify(hollow.rects)} against ${JSON.stringify(madeAt.rects)}`);
+
+      // on the page the citation is solid, the sentence hollow, drawn at its first place on the third version's page
+      const citeSel = `[data-page="1"] div[data-hl-id="${citeId}"]`;
+      const lostSel = `[data-page="1"] div[data-hl-id="${goneId}"].pdfHlLost`;
+      await p.waitForSelector(lostSel, { timeout: 15000 });
+      await until(async () => (await p.$(`${citeSel}:not(.pdfHlLost)`))
+        && (await p.$eval(citeSel, (el) => getComputedStyle(el).outlineStyle)) === "none", { what: "the citation drawn solid" });
+      const drawn = await p.$eval(lostSel, (el) => {
+        const page = el.closest('[data-page="1"]').getBoundingClientRect();
+        const r = el.getBoundingClientRect();
+        return [(r.left - page.left) / page.width, (r.top - page.top) / page.height];
+      });
+      const at = fractions(madeAt)[0];
+      assert(Math.abs(drawn[0] - at[0]) < 0.01 && Math.abs(drawn[1] - at[1]) < 0.01,
+        `the hollow outline at ${JSON.stringify(drawn)}, the first version's place ${JSON.stringify(at)}`);
+      // its card: not found, its first words, and a picture of the first version
+      const { cardOf, headOf, pictureLoaded } = reviewCardHelpers(p);
+      await p.hover(lostSel);
+      const card = cardOf(goneId);
+      await card.waitFor({ timeout: 5000 });
+      assertEq(await headOf(card), "Not found in this version", "the hollow one's card");
+      assertEq(await card.locator(".hlReviewQuote").textContent(), first, "the card's quote");
+      await pictureLoaded(card);
+      assert((await card.locator(".hlReviewShot img").getAttribute("src")).includes(`/ai/selection-crop/${up1.doc_id}?`),
+        "the picture is of the first version");
+      await p.mouse.move(2, 2);
+      await card.waitFor({ state: "detached", timeout: 5000 });
+      assertNoProblems(p);
+      await p.close();
+    } finally {
+      await c.close();
+      await account.api(`/api/blocks/${doc.id}`, { method: "DELETE" });
+    }
+  });
+
   // A hollow highlight's card (docs/dev/highlight_relocation.md "In the web app"). A card open while its highlight
   // is scrolled out of the viewer's sight shows nothing of itself, its before picture included, and is on the
   // highlight again when it scrolls back. Discard on a hollow highlight with nothing of its own deletes it, the card

@@ -17,7 +17,8 @@
 // keeps prev, where it was before the run that first drew it dashed
 // ({doc_id, pageNumber, rects: [[x1, y1, x2, y2], …] as fractions of that
 // page, quote before it was respelled}), which its review card shows
-// (pdf/highlightReview.js). Accepting it (acceptedPosition) drops approx,
+// (pdf/highlightReview.js) and later runs match it from; one they do not
+// find is lost back at that place, naming that file. Accepting it (acceptedPosition) drops approx,
 // match, prev and doc_id. A lost one may keep closest, the best place in
 // the current PDF the run found for its text, which read too unlike it to
 // be applied ({pageNumber, width, height, boundingRect, rects, match,

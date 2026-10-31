@@ -17,7 +17,10 @@ passage is nowhere, or only in places too unlike it, is marked `lost` and
 shown hollow where it was, keeping the place most like it as its closest
 match when that reads at least half alike, until the person moves it or
 takes that match on its review card (and accepts that place), discards it,
-or a later run finds it.
+or a later run finds it. Every run matches a highlight from its
+reference, the last place someone confirmed, so a dashed one still
+waiting when the PDF is replaced again is matched from the file it was
+made on, not from the guess ([The reference](#the-reference)).
 
 Code: `gamma/highlight_relocate.py` (the search and the write),
 `gamma/highlights.py` (the position's flags, `prev` and `closest`:
@@ -175,22 +178,28 @@ restored position passes through; `prev` and `closest` only in their own
 form, [What a run writes](#what-a-run-writes)).
 
 The run reads each highlight (its passage, context, anchor and picture)
-from the file its own position names: the page's new file when that is the
-one, else the stored file, looked for among the workspace's uploads only
-(`find_upload_file`, never fetched), each file opened once. A `doc_id` that
-is no file name names no file. A file no longer stored logs `[relocate]
-<page>: the file <id> is no longer stored; its highlights are placed by
-their quotes`, and so they are, without context. The stamp is a reference
-to the file, and so is a `prev`'s `doc_id` (`storage.upload_refs`): the file
-a pending highlight was measured on stays stored while the highlight names
-it, and goes to the orphan bookkeeping once Accept, Use closest match, a
-move or a run that places it solid drops the name. It is then purged 30
-days after nothing references it, or after the day a sync's replacement
-asked for (`keep_old_days`, [user_db.md](user_db.md) "Stored files"). The
-file stays on the copy that holds it: a mirror and an export through a
-share carry only the files the pages show. A
-file is no longer stored when it was purged before pending highlights held
-their files, or removed some other way. A position without
+from the file its reference names ([The reference](#the-reference)): its
+own position's `doc_id`, or a pending one's `prev.doc_id`; the page's new
+file when that is the one, else the stored file, looked for among the
+workspace's uploads only (`find_upload_file`, never fetched), each file
+opened once. A `doc_id` that is no file name names no file. A file no
+longer stored logs `[relocate] <page>: the file <id> is no longer stored;
+its highlights are placed by their quotes`, and so they are, without
+context. The stamp is a reference to the file, and so is a `prev`'s
+`doc_id` (`storage.upload_refs`): the file a pending highlight is matched
+from stays stored while the highlight names it, through any number of
+later replacements, and goes to the orphan bookkeeping once Accept, Use
+closest match, a move, a Discard or a run that places it solid drops the
+name; a file only stamps named (the rectangles a run then moves off it,
+an in-between version's) goes after that run. It is then purged 30 days
+after nothing references it, or after the day a sync's replacement asked
+for (`keep_old_days`, [user_db.md](user_db.md) "Stored files"), unless a
+run made it a highlight's reference meanwhile: the run claims the files
+its written positions name (`upload_gc.claim` in `_write`), which drops
+that shorter life. The file stays on the copy that holds it: a mirror and
+an export through a share carry only the files the pages show. A file is
+no longer stored when it was purged before pending highlights held their
+files, or removed some other way. A position without
 `doc_id` is read from the page's new file, unless it is `lost`: it was not
 found in that file, so only its quote is looked for. A text highlight's
 stored quote and the text read under its rectangles agree when, both
@@ -207,12 +216,13 @@ file is dropped, a `lost` mark cleared with its `closest`).
 
 What the run writes carries no `doc_id`: a position in a new place is a new
 one, measured on the new file, and one left where it was that named a file
-is written once more without it. A lost one keeps it (the old position with
-`lost: true`), so a later run still reads that highlight from the file it
-was made on, and so does an area nothing placed (the old position with
-`approx: true`, [Areas](#areas)). The file a dashed placement's old
-rectangles belong to is kept apart, in `prev`, for the person to compare
-and not for a later run to read ([What a run writes](#what-a-run-writes)).
+is written once more without it. A lost one names its reference's file (the
+old position with `lost: true`, or a pending one's `prev` turned back into
+a position), so a later run still reads that highlight from the file it
+was confirmed on, and so does an area nothing placed (with `approx: true`,
+[Areas](#areas)). The file a dashed placement's old rectangles belong to is
+kept apart, in `prev`, for the person to compare and for later runs to
+match it from ([The reference](#the-reference)).
 
 ## Finding a passage
 
@@ -424,8 +434,9 @@ shown (`display_size`: the crop box, its sides swapped on a quarter turn),
 so a rotated or cropped page places like pdf.js draws it. A position found
 within half a percent of the page of the old one, on the same page, of a
 highlight not lost, is in the **same place**; any other is in a new place.
-A passage found roughly (a confidence under 1.0), or a part across a page
-break, also rewrites the highlight's `quote` to the text as the new file
+A passage found roughly (a confidence under 1.0), a part across a page
+break, or one found from a pending highlight's `prev` or for a lost one
+([The reference](#the-reference)), also rewrites the highlight's `quote` to the text as the new file
 spells it, when that differs from the stored one, since that is what the
 highlight covers now; in the same place too. As the file spells it is the
 characters of the glyphs the text was read from, in the file's case
@@ -488,12 +499,26 @@ by:
   file leaves it be, and the next replacement stamps it with the outgoing
   file, from which it rides along with its neighbours.
 
+A pending area (dashed, with a `prev`) is placed by the same steps from
+its reference: the text and the picture under `prev`'s rectangles in
+`prev`'s file, then the highlights placed from that file's page. When
+those place it nowhere it rides along, as an estimate, with the
+highlights placed from the page and file its rectangles are on now (the
+ones an earlier run moved there; their staying put leaves it as it is,
+confirming nothing); else, its rectangles another file's, it goes back to
+its reference (`prev`'s page and rectangles, `prev`'s file as its
+`doc_id`, still `approx` with that `prev`), so the file an earlier run
+guessed it on is no longer named; on the page's own file it stays as it
+is.
+
 An area placed by estimate (`approx` without `match`) stays an estimate
-through later runs, whatever places it: the text or picture under an
-estimated box is only what the estimate happened to cover, so finding it
-again confirms nothing and gives it no `match`. Like every dashed
+until the person accepts it, whatever places it: the text or picture under
+an estimated box is only what the estimate happened to cover, so finding
+it again confirms nothing and gives it no `match`; its neighbours all
+staying at its reference put it back there, still `approx` with its
+`prev`. Like every dashed
 highlight it is pending until the person accepts it or moves it
-([What a run writes](#what-a-run-writes)).
+([The reference](#the-reference)).
 
 ## The thresholds
 
@@ -534,13 +559,14 @@ runs go by the defaults.
 A run leaves each highlight in one of three looks, and counts it by the
 look it leaves (`place_all`'s `kinds`):
 
-- **solid**: placed by an exact match or by the PDF's picture under an
-  area, or left where it was made (a highlight on the page's own file over
-  its quote, an area there that nothing moves). Its position carries no
-  `approx`, `match` or `prev`. In a new place it counts as `moved` (so does
-  a lost one found again, even where it was); in the same place as `kept`,
-  written then only to drop a `doc_id` or a stale `match` or `prev`, or to
-  respell its quote.
+- **solid**: placed by an exact match of its reference or by the PDF's
+  picture under an area, or left where it was made (a highlight on the
+  page's own file over its quote, an area there that nothing moves). Its
+  position carries no `approx`, `match` or `prev`, a pending one's
+  included, which is then resolved. In a new place it counts as `moved` (so
+  does a lost one found again, even where it was); in the same place as
+  `kept`, written then only to drop a `doc_id`, a flag or a stale `match`
+  or `prev`, or to respell its quote.
 - **dashed** (`approx: true`): placed by a rough match, with `match`, its
   confidence rounded to two decimals and at most 0.99 (1.0 is an exact
   match's), also when it lands where it was (a sentence reworded in place);
@@ -548,12 +574,13 @@ look it leaves (`place_all`'s `kinds`):
   nothing placed, without `match`. It counts as `approx`.
 - **hollow** (`lost: true`): nothing found it, or its best place reads too
   unlike it (under `min_match`, or not exact for a needle under
-  `exact_chars`). It keeps its old rectangles and its `doc_id`, with, for
-  a text highlight, its `closest` place (below), and counts as `lost`. One
-  already lost is written again only when its `closest` changes: another
-  place, or none any more. A run that finds it later, even in the same
-  place, or a move by hand, writes a position without the mark and without
-  `closest`.
+  `exact_chars`). It keeps its old rectangles and its `doc_id` (a pending
+  one goes back to its reference, [The reference](#the-reference)), with,
+  for a text highlight, its `closest` place (below), and counts as `lost`.
+  One already lost is written again only when its `closest` changes:
+  another place, or none any more. A run that finds it later, even in the
+  same place, or a move by hand, writes a position without the mark and
+  without `closest`.
 
 **Where it was before.** Every placement a run draws dashed also stores
 `pdf_position.prev`, where the highlight was before, for the person to
@@ -569,9 +596,12 @@ shows the quote alone); `pageNumber` its page there; `rects` its
 rectangles as fractions of that page as shown (`[x1, y1, x2, y2]`, top-left
 origin, clamped to the page, four decimals, at most 200; none for a
 position without a frame's size); `quote` its stored quote before the run
-respelled it (`""` for an area, at most 1000 characters). An exact
-placement, a kept one and a newly lost one get no `prev`, and a stale one
-goes when a highlight not pending is placed solid. `highlights.from_scaled`
+respelled it (`""` for an area, at most 1000 characters). A pending
+highlight placed dashed again keeps its own `prev` as it is, so `prev`
+shows where it was before the run that first drew it dashed, the place
+later runs match it from. An exact placement, a kept one and a lost one
+get no `prev`, and a pending one placed solid or lost loses its own.
+`highlights.from_scaled`
 keeps `prev` only in this form (`valid_prev`: a string `doc_id`, a
 positive whole page, at most 200 rectangles of four numbers from 0 to 1, a
 string quote clipped to 1000 characters) and `match` only as a number from
@@ -603,27 +633,79 @@ candidate, or removes it when there is none; one that places it, or
 finds it where it is on its own file, removes it. A replacement of the PDF
 drops it too ([Which file](#which-file-a-position-was-measured-on)).
 
-**Pending.** A highlight that is `approx` when a run starts is pending:
-drawn dashed, and not yet accepted. Only the person resolves it, by
-accepting it (`approx`, `match`, `prev` and `doc_id` go, the rectangles
-stay, [In the web app](#in-the-web-app)) or by moving it by hand (a new position
-without any of them). A run leaves it pending whatever it finds, an exact
-copy included. Placed in a new place, it stays `approx` with its own
-`match` (one without takes this run's rough match; an estimate takes none)
-and its own `prev` (one without, made before `prev` existed, gets one
-now). Found where it is, it is written only to drop a `doc_id` or respell
-its quote. Not found, it is marked `lost` and keeps the rest (with a
-`closest` place, as any lost text highlight may get), though it is drawn
-hollow and reviewed as a lost one. An area nothing placed is left as it is. So Find highlights
-in this PDF on the same file again leaves every dashed highlight dashed,
-and a `prev` keeps showing where the highlight was before the run that
-first drew it dashed, not before the last one.
-
 **The counts.** The result's `moved` (solid, in a new place), `kept`
 (solid, where it was), `approx` (dashed: matched roughly, placed by
-estimate, or pending already), `lost` (hollow) and `changed` (left as a
+estimate, or pending still), `lost` (hollow) and `changed` (left as a
 person changed it while the run matched, [The job](#the-job)) add up to
 `highlights`.
+
+### The reference
+
+A highlight that is `approx` when a run starts is pending: drawn dashed,
+and not yet accepted. Its own place is a guess nobody approved, so a run
+does not match it from there. Each highlight has a **reference**, the last
+place someone confirmed: its file, page, rectangles and quote.
+
+- A solid highlight's reference is its own position: placed by an exact
+  match, accepted, moved by hand (a selection, **Move…**) or put on its
+  closest match (Use closest match writes a solid position).
+- A dashed one's is its `prev`, the place before the run that first drew
+  it dashed (`_Seen.ref`, built by `reference_place`: `prev`'s fractions in
+  the frame of `prev`'s file's page, else in the position's own frame,
+  naming `prev`'s file). Also one a run before this rule left lost while
+  pending (`lost`, `approx` and a `prev`, its rectangles a later file's).
+- A lost one's is its own position: its rectangles, `doc_id` and quote are
+  the place it was confirmed at.
+
+So highlights on one page can have different references, one the second
+file, another the first. A run reads each from its reference: its
+passage, context and anchor from `prev`'s file at `prev`'s rectangles
+(`read_from(prev.doc_id)`), else, that file no longer stored, `prev`'s
+quote alone (a quote `prev` clipped to 1000 characters is not compared
+with the text under the rectangles, and with the file gone is looked for
+as it is, the start of the passage); the nearest
+place is measured from `prev`'s rectangles on `prev`'s page. Then:
+
+- **found exactly**: solid in its new place, without `approx`, `match` or
+  `prev`, its quote as the new file spells it: resolved. A v3 that prints
+  v1's words again gives v1's highlight back solid, wherever they stand;
+  so does a later file for one left hollow at its reference, its quote
+  respelled too.
+- **found roughly**: dashed in its new place, `match` its confidence
+  against the reference (not against the guess before), `prev` as it was.
+- **not found**: hollow at its reference: `prev`'s page and rectangles,
+  `prev`'s file as its `doc_id`, `prev`'s quote as its quote (one clipped
+  to 1000 characters gives way to the text under `prev`'s rectangles as
+  `prev`'s file spells it; with that file gone the highlight keeps the
+  quote it had, until a later run finds it exactly and respells it), no
+  `prev` any more (the position is the reference now), with
+  the best candidate of the search from the reference as its `closest`
+  when it reads at least `CLOSEST_MIN` alike. The review card's Before
+  picture is then cut from that file at that place, as for any lost
+  highlight, and the hollow outline drawn at those fractions of the
+  current file's page. A sentence the first file had that is gone, while
+  the second file's guess happens to read like a sentence of the third, is
+  not dashed onto that look-alike.
+
+A highlight without `prev` is matched from its own position (a pending one
+from before `prev` existed included: found roughly it gets one, its own
+place). Areas follow the same rule ([Areas](#areas)). Accepting a highlight
+(`approx`, `match`, `prev` and `doc_id` go, the rectangles stay,
+[In the web app](#in-the-web-app)), moving it by hand, Use closest match
+and an exact match write a position without `prev`, so the next
+replacement matches it from that version; the undo of an Accept puts
+`prev` back, and with it the reference. A run over the file it already
+ran on writes nothing (Find highlights in this PDF again; a dashed one
+stays dashed, its `match` read against the same reference), and nothing
+is migrated: the rule reads the stored positions as they are. A stricter
+threshold set since leaves a rough match under it hollow at its
+reference, its rough place offered as the closest match.
+
+The file a reference names stays stored while it does ([Which
+file](#which-file-a-position-was-measured-on)): v1 while a highlight
+still waits on it, through v3, v4; the in-between v2 once the v3 run has
+moved the pending rectangles off it; v1 once every highlight referencing
+it is confirmed, discarded or deleted.
 
 ## In the web app
 
@@ -1211,10 +1293,19 @@ page is going, **Find highlights in this PDF** is disabled, its title
   the sentence placing it solid without it, and the file it was measured
   on, back as the page's PDF, dropping `lost`, `doc_id` and `closest`; an
   exact placement of a highlight not pending solid,
-  dropping a stale `match` and `prev`; a pending highlight staying pending
-  with its first `prev` and `match` whatever a later run finds, and a
-  pending one without `prev` getting one; a dashed placement keeping where
-  the highlight was when that file is gone; the thresholds read from a
+  dropping a stale `match` and `prev`; the reference, a highlight left
+  pending on v2 and v3 matched from v1 (renumbered again: dashed, `prev`
+  v1's, `match` against v1's words; v1's words back in place and a line
+  lower: solid, v1's quote; the passage gone, and v1's sentence gone while
+  v2's guess reads like a v3 sentence: hollow at v1's place naming v1,
+  v1's quote, not on the look-alike; v1's text changed further while v2's
+  guess drifted: dashed on the sentence like v1's; a stricter threshold:
+  hollow at v1's place with its closest match; v1 no longer stored:
+  `prev`'s quote; v3 v1's own file again: solid without a search; one an
+  earlier run left lost while pending; one without `prev`; a pending area
+  by its caption and by estimate, sent back to v1's place when nothing
+  places it; each rerun on v3 writing nothing); a dashed placement keeping
+  where the highlight was when that file is gone; the thresholds read from a
   profile (in range, on their step, clamped, else the defaults) and
   deciding what a rough match applies;
 - `place_all`: two files with each outcome; a file gone; a quote that is
@@ -1225,7 +1316,8 @@ page is going, **Find highlights in this PDF** is disabled, its title
   end; margin line numbers either way; a new file without text; a lost
   highlight not written again, and one found again; the page cap; the
   ride-along's cases; an area placed by estimate staying one through a
-  second run on the same file and after the next replacement; an area with
+  second run on the same file and after the next replacement (riding along
+  from where it is now); an area with
   nothing to go by, on its own file and on another; such an area, once
   accepted, left be by the next run on that file and carried along at the
   next replacement; an unplaced area not
@@ -1233,7 +1325,10 @@ page is going, **Find highlights in this PDF** is disabled, its title
 - the endpoint and the job: the PUT's run and its answer, the counts of a
   run end to end with the flags stored, a run going by its owner's
   thresholds as they were when it started (its params and result, a later
-  run by hand at others, the first run's result unchanged), the stamps (a
+  run by hand at others, the first run's result unchanged, a stricter one
+  sending the pending ones back hollow to the first file), two replacements
+  with highlights still pending (dashed again against v1, hollow at v1's
+  place, both solid once v4 prints v1's words), the stamps (a
   lost highlight's `closest` dropped with them) and `relocation_error` when
   the jobs are full, a run that never wrote, a lost
   highlight read from its own file by the next runs, a wrong file in
@@ -1249,6 +1344,12 @@ page is going, **Find highlights in this PDF** is disabled, its title
   file changed again.
 
 `test_pages.py`'s replacement test checks the stamp;
+`test_upload_retention.py` the files a reference keeps: v1 through v3
+while a highlight waits on it (claimed by the run from a sync's day, kept
+past it), v2 recorded once the v3 run moved the rectangles off it (with
+the sync's day), v1 recorded on Accept and named again by its undo,
+still named by the highlight hollow at its place on v4 while v3 goes, and
+recorded with the usual 30 days once it is deleted;
 `test_highlight_shape.py` that `from_scaled` keeps `match` as a number
 from 0 to 1, `prev` only in its own form and `closest` only in its own
 (a valid one, its quote clipped, 200 rectangles, extra keys stripped, a
@@ -1358,7 +1459,13 @@ placing it solid there with the candidate's rectangles and quote, the
 position free of `lost`, `closest`, `doc_id`, `approx`, `match` and
 `prev`, the card the same, following it, Use closest match reading
 "Placed", pressed, Discard disabled, Accept enabled and the count as it
-was); its step "a hollow
+was); its step "a highlight still dashed at the next replacement is
+matched from the version it was made on" (two highlights dashed on v2; v3
+printing v1's citation a line lower draws it solid with v1's quote; v1's
+sentence gone while v3 has one like v2's guess: hollow, no `prev`, naming
+v1, v1's quote, the outline at v1's place on v3's page, its card "Not
+found in this version" with v1's quote and a before picture of v1); its
+step "a hollow
 highlight's card leaves nothing on screen" (nothing of the card
 on screen, its picture included, while its highlight is scrolled out of
 sight with the pointer in the card, from the scroller and from the wheel with the card opened from the Document

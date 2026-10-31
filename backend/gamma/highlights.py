@@ -25,7 +25,9 @@ where its text was found roughly, with ``"match"`` saying how alike the
 two read (0 to 1, two decimals, at most 0.99), or, without ``match``, an
 area placed by estimate or left where it was when nothing placed it. A
 pending highlight also carries ``"prev"``, where it was before the run
-that first drew it dashed, for the person to compare
+that first drew it dashed, for the person to compare and for later runs
+to match it from (its reference, the last place someone confirmed; one
+those runs do not find goes back there, lost, without ``prev``)
 (``previous_place``)::
 
     {"doc_id": "<the file it was measured on>", "pageNumber": 2,
