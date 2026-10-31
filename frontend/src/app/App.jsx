@@ -188,7 +188,7 @@ import { modelList, useProviderEditor } from "../settings/providerEditor.js";
 import { useGuide } from "../guide/useGuide";
 import { guideEvents } from "../guide/events";
 import { askConnectorHere, IS_DESKTOP } from "../shared/lib/connector.js";
-import { AllowanceMeter, Empty, QuotaMeter, Section } from "../settings/SettingsKit";
+import { AllowanceMeter, Empty, Section, StorageRing } from "../settings/SettingsKit";
 import { LazyBoundary, lazySurface, useLatch, whenIdle } from "../shared/ui/lazy";
 import { libraryAccess } from "../library/libraryAccess";
 import { MirrorPopover } from "../collaboration/MirrorPopover";
@@ -11255,25 +11255,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   : t("Signed in")}
               </span>
             </span>
-            {quotaInfo ? (
-              <span className="userCardQuota" title={t("Storage used by your uploaded PDFs and images")}>
-                {fmtBytes(quotaInfo.used_bytes)}
-                {quotaInfo.quota_mb ? ` / ${fmtBytes(quotaInfo.quota_mb * 1024 * 1024)}` : ""}
-              </span>
-            ) : null}
           </button>
           {authUser.is_guest ? (
             <div className="popoverHint">{t("Your work stays until then, or until you log out; then the workspace is deleted with everything in it. Ask the admin for an account to keep your work.")}</div>
           ) : null}
-          {quotaInfo?.quota_mb ? (
+          {/* Capacity rings: storage for everyone, the server's shared AI
+              allowance for the admin only. */}
+          {quotaInfo || (authUser.is_admin && aiInfo?.allowance) ? (
             <div className="popoverQuota">
-              <QuotaMeter usedBytes={quotaInfo.used_bytes} quotaMb={quotaInfo.quota_mb} barOnly />
-            </div>
-          ) : null}
-          {aiInfo?.allowance ? (
-            <div className="popoverQuota" data-testid="account-ai-usage"
-              title={t("Tokens your AI requests spent through this server's shared connections in the last 24 hours. Your own keys are not counted.")}>
-              <AllowanceMeter allowance={aiInfo.allowance} />
+              {quotaInfo ? <StorageRing usedBytes={quotaInfo.used_bytes} quotaMb={quotaInfo.quota_mb} /> : null}
+              {authUser.is_admin ? <AllowanceMeter allowance={aiInfo?.allowance} /> : null}
             </div>
           ) : null}
           {/* What the red dot is about: one row per notice, its sentence

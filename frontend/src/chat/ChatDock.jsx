@@ -49,6 +49,7 @@ import { AlertCircleIcon, ArrowDownIcon, ArrowUpIcon, BookIcon, BotIcon, CheckIc
 import { T, getLocale, t, tn } from "../shared/i18n/i18n.js";
 import { DialogOverlay, Popover } from "../shared/ui/Surfaces";
 import ListMotion from "../shared/ui/ListMotion";
+import { UsageRing } from "../shared/ui/UsageRing";
 
 const JSON_HEADERS = { "Content-Type": "application/json" };
 // A conversation this tab has nothing of yet (one array, never written).
@@ -308,16 +309,9 @@ function useModelInfo(modelId) {
 
 // Claude Code's context ring: the share of the model's window the
 // conversation fills (tokenUsage.contextUsed against useContextWindow),
-// drawn in the icon colour and turning red past 80%.
+// drawn in the icon colour (shared/ui/UsageRing.jsx).
 function ContextRing({ fraction }) {
-  const f = Math.max(0, Math.min(1, fraction));
-  const c = 2 * Math.PI * 6;
-  return (
-    <svg width="15" height="15" viewBox="0 0 16 16" className={`chatContextRing${f >= 0.8 ? " full" : ""}`} aria-hidden="true">
-      <circle cx="8" cy="8" r="6" className="chatContextRingTrack" />
-      <circle cx="8" cy="8" r="6" className="chatContextRingFill" strokeDasharray={`${f * c} ${c}`} transform="rotate(-90 8 8)" />
-    </svg>
-  );
+  return <UsageRing fraction={fraction} />;
 }
 
 const toolCallText = (a) => {

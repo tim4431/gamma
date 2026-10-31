@@ -4,13 +4,15 @@
 // on the rail, plus the small shared controls (Segmented,
 // PictureChoices/IconChoices, ToggleGroup, Stepper, UnitInput, CharSlider,
 // PasswordInput, CopyField, AccountPicker, PersonRow, LogBox, Stat/StatText, Empty,
-// WorkspaceFolder, QuotaMeter/PercentMeter/AllowanceMeter, KeyCaps/KeyBinding).
+// WorkspaceFolder, QuotaMeter/PercentMeter, RingMeter/StorageRing/AllowanceMeter,
+// KeyCaps/KeyBinding).
 // New settings UI should reuse these; bespoke classes are for layout only.
 import React from "react";
 import { API, apiJson, copyText, fmtBytes } from "../shared/lib/utils";
 import { AlertCircleIcon, CheckIcon, CloudCheckIcon, CopyIcon, EyeIcon, EyeOffIcon, MonitorIcon, RefreshIcon, ShieldIcon, UndoIcon, UserIcon, XIcon } from "../shared/ui/Icons";
 import { bindable, chordFromEvent, heldFromEvent } from "../shared/lib/hotkeys.js";
 import { KeyCaps } from "../shared/ui/KeyCaps.jsx";
+import { UsageRing } from "../shared/ui/UsageRing.jsx";
 import { useInMenu } from "../shared/ui/Menus";
 import { backdropPress } from "../shared/ui/press.js";
 import { BROWSER_TAG, profileSyncState } from "./syncState.js";
@@ -787,25 +789,49 @@ export function PercentMeter({ percent, barOnly, caption = "" }) {
   );
 }
 
+// One capacity tile of the account popover: a ring (shared/ui/UsageRing,
+// the chat's context ring drawn larger) with the percentage inside, a label
+// and "used of total" beside it. `fraction` null = no limit: the bare track
+// and no percentage.
+export function RingMeter({ fraction, label, value, title, testId }) {
+  const pct = fraction == null ? null : Math.round(Math.max(0, Math.min(1, fraction)) * 100);
+  return (
+    <span className="ringMeter" title={title} data-testid={testId}>
+      <span className="ringMeterRing">
+        <UsageRing fraction={fraction} size={40} />
+        {pct == null ? null : <span className="ringMeterPct">{pct}%</span>}
+      </span>
+      <span className="ringMeterText">
+        <span className="ringMeterLabel">{label}</span>
+        <span className="ringMeterValue">{value}</span>
+      </span>
+    </span>
+  );
+}
+
+// The account's storage against its quota, as a RingMeter.
+export function StorageRing({ usedBytes, quotaMb }) {
+  if (usedBytes == null) return null;
+  const quotaBytes = (quotaMb || 0) * 1024 * 1024;
+  return <RingMeter fraction={quotaBytes ? usedBytes / quotaBytes : null} label={t("Storage")}
+    title={t("Storage used by your uploaded PDFs and images")}
+    value={quotaBytes ? t("{used} of {quota}", { used: fmtBytes(usedBytes), quota: fmtBytes(quotaBytes) })
+      : t("{used} · no quota", { used: fmtBytes(usedBytes) })} />;
+}
+
 // What the account has spent through the server's shared AI connections in
-// the last 24 hours (the `allowance` of GET /api/ai/models, docs/dev/guests.md):
-// the storage meter's bar under the admin's limit, the plain count without
-// one. Null when no shared connection applies.
+// the last 24 hours (the `allowance` of GET /api/ai/models, docs/dev/guests.md),
+// as a RingMeter against the admin's limit; the bare count without one. Null
+// when no shared connection applies.
 export function AllowanceMeter({ allowance }) {
   if (!allowance) return null;
   const used = Number(allowance.used) || 0;
   const limit = Number(allowance.limit) || 0;
-  if (!limit) {
-    return (
-      <span className="quotaMeter">
-        <span className="settingDesc">{t("Server AI: {used} tokens in the last 24 h", { used: fmtTokens(used) })}</span>
-      </span>
-    );
-  }
-  return <PercentMeter percent={(used / limit) * 100}
-    caption={allowance.exhausted
-      ? t("Server AI used up: {used} of {limit} tokens in the last 24 h", { used: fmtTokens(used), limit: fmtTokens(limit) })
-      : t("Server AI: {used} of {limit} tokens in the last 24 h", { used: fmtTokens(used), limit: fmtTokens(limit) })} />;
+  return <RingMeter fraction={limit ? used / limit : null} testId="account-ai-usage"
+    label={allowance.exhausted ? t("Server AI · used up") : t("Server AI · 24 h")}
+    title={t("Tokens your AI requests spent through this server's shared connections in the last 24 hours. Your own keys are not counted.")}
+    value={limit ? t("{used} of {limit} tokens", { used: fmtTokens(used), limit: fmtTokens(limit) })
+      : t("{used} tokens · no limit", { used: fmtTokens(used) })} />;
 }
 
 // The keys of a chord as <kbd> caps (shared/ui/KeyCaps.jsx, which the

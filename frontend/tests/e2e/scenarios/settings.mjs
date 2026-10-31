@@ -2425,14 +2425,26 @@ export async function settingsScenarios(env) {
       assert(models.models.some((m) => m.model === "lab-model" && m.shared), "member sees the shared model");
       const mine = (await member.api("/api/ai/settings")).providers.find((p) => p.shared);
       assertEq(mine.key_hint, "");
-      // The account card shows what the shared connections allow.
+      // The admin's account popover rings what the shared connections allow.
       await page.getByRole("button", { name: "Close settings", exact: true }).click();
       await page.getByRole("button", { name: "Account & settings", exact: true }).click();
       const card = page.locator(".userPopover");
       await card.waitFor();
-      await until(() => page.getByTestId("account-ai-usage").innerText({ timeout: 500 }).then((text) => text.includes("Server AI: 0 of 50k tokens in the last 24 h"), () => false),
-        { what: "the account card's shared AI line" })
+      await until(() => page.getByTestId("account-ai-usage").innerText({ timeout: 500 }).then((text) => text.includes("0 of 50k tokens"), () => false),
+        { what: "the account popover's server AI ring" })
         .catch(async (e) => { throw new Error(`${e.message}; the card says: ${await card.innerText()}`); });
+      // A member is metered too, but only the admin sees the ring; the
+      // member's popover keeps its storage ring.
+      const memberCtx = await member.context(browser);
+      try {
+        const memberPage = await openPage(memberCtx, server.base);
+        await memberPage.waitForSelector(".folderNewBtn");
+        await memberPage.getByRole("button", { name: "Account & settings", exact: true }).click();
+        await memberPage.locator(".userPopover .ringMeter").first().waitFor();
+        assertEq(await memberPage.getByTestId("account-ai-usage").count(), 0, "no server AI ring for a member");
+      } finally {
+        await memberCtx.close();
+      }
       assertNoProblems(page);
     } finally {
       await ctx.close();

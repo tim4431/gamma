@@ -186,11 +186,12 @@ allowance work the same on every server.
   deleted in 5 hours", from `guest_expires_at`, `auth/guestExpiry.js`),
   with the hint that it stays until then or until log-out. Every guest
   sees that line, demo server or not.
-- The account card of any account a shared entry applies to shows what it
-  spent through the shared entries (`AllowanceMeter` in
-  `settings/SettingsKit.jsx`: "Server AI: 1.2k of 50k tokens in the last
-  24 h" over the storage meter's bar, or the plain count with no limit),
-  refreshed with `/api/ai/models` each time the menu opens.
+- For the admin only, the account popover shows what the account spent
+  through the shared entries in the last 24 hours (`AllowanceMeter` in
+  `settings/SettingsKit.jsx`: a ring beside the storage ring, "1.2k of 50k
+  tokens", or the plain count with no limit), refreshed with
+  `/api/ai/models` each time the menu opens. Other accounts and guests see
+  their allowance in Settings → AI → Token usage.
 
 demo.gammapdf.com is its own compose project on the VPS, in a folder next
 to the account server's (`GAMMA_DEMO=1` in its `demo.env`), reached through
