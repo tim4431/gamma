@@ -602,15 +602,14 @@ def _placing_entry(key: str, version: int) -> dict:
 
 def relocation_ended(ws: str, page_id: str) -> None:
     """The relocate job of the page ``page_id`` ended, however it ended
-    (gamma/routers/pages.py, as its run returns): the page's PDFs that
+    (gamma/routers/pages.py, once the job reads as ended): the page's PDFs that
     waited for its highlights to be placed (``FILE_PLACING``, or a file
     entry still held back for it after a receive-only round parked the
     PDF) are due again, and so is the page's item while annotation rows of
     it are held or wait (a highlight the run left where it was reads as it
     last synced, so no change of the page's lifts the wait it was put on;
     its item's unit does). The link's round is asked for after the clock's
-    quiet time, by when the job reads as ended. Nothing for a workspace
-    with no link."""
+    quiet time. Nothing for a workspace with no link."""
     if get_link(ws) is None:
         return
     with connect_pages_db(ws) as conn:

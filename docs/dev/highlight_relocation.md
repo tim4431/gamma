@@ -80,7 +80,7 @@ placed: one still measured on the old file (`pdf_position.doc_id`), a
 dashed one and a lost one are held ("being placed in the new PDF", "dashed
 in Gamma until accepted", "not found in the new PDF"), counted under the
 link's waiting annotations ([zotero_sync.md](zotero_sync.md#annotations)). However a run ends, written or not, the link is told
-(`zotero_sync_pdfs.relocation_ended`): a PDF replaced here waits to go to
+(`zotero_sync_pdfs.relocation_ended`) once the job reads as ended: a PDF replaced here waits to go to
 Zotero until its highlights are placed, and is decided then
 ([zotero_sync.md](zotero_sync.md#the-plan)). A share link never reaches the endpoint. The job's params
 are `{page_id, title, doc_id, min_match, exact_chars}`, the file it places
