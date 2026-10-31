@@ -12,17 +12,20 @@ export."""
 import contextlib
 import functools
 import hashlib
+import io
 import math
 import os
 import zipfile
 from collections import Counter
 from pathlib import Path
 
+import pymupdf
 import pytest
-from PIL import Image
+from PIL import Image, ImageChops, ImageDraw, ImageFilter, ImageStat
 
 from conftest import make_user
 from gamma import ink, notability as nb, notability_import as ni, notability_map as nm, notability_ntb as ntb
+from gamma import notebook, picture
 from gamma.blocks_store import block_to_dict, fetch_subtree
 from gamma.db import connect_pages_db, ws_uploads_dir
 from gamma.import_zip import new_walk, walk_zip
@@ -154,6 +157,59 @@ def test_the_example_imports_as_notability_shows_it(example):
                      "1. *Large title*", "2. Title 1", "3. Title 2", "4. **Title 3**", "5. Body", "6. Caption"]
 
 
+def test_the_example_s_pictures_lie_where_notability_drew_them():
+    """Sheet 1's pictures as imported and as Gamma draws them
+    (``notebook.notebook_pdf``, rendered by MuPDF at the scale of the
+    note's thumb12x.png, which Notability drew) match that thumbnail
+    inside each one's visible area (its turned frame less the frames drawn
+    over it, 3 px in from its edges): the crop, the flips about the frame's
+    own axes, then the turn, a higher zIndex on top. The other order, the
+    turn and then the flips about the page's axes, which is the turn the
+    other way round (F·R(θ) = R(−θ)·F), lies far off on both flipped
+    pictures."""
+    ws, report = imported(EXAMPLE)
+    page_id = report["pages"][0]["id"]
+    with connect_pages_db(ws) as conn:
+        sheet = sheets_of([block_to_dict(row) for row in fetch_subtree(conn, page_id)], page_id)[0]
+    pictures = [b["properties"]["picture"] for b in sheet["blocks"] if b["properties"].get("picture")]
+    with zipfile.ZipFile(EXAMPLE) as zf:
+        drawn = Image.open(io.BytesIO(zf.read("TEST Note Apr 26, 2026/thumb12x.png"))).convert("RGBA")
+    thumb = Image.new("RGBA", drawn.size, "white")
+    thumb.alpha_composite(drawn)
+    thumb = thumb.convert("RGB")
+    k = thumb.width / sheet["paper"]["width"]
+    paper = notebook.normalize_paper({"width": sheet["paper"]["width"], "height": sheet["paper"]["height"]})
+
+    def render(pics: list[dict]) -> Image.Image:
+        pdf = notebook.notebook_pdf([(paper, [], [])], pictures=[pics], uploads_dir=ws_uploads_dir(ws))
+        pix = pymupdf.open(stream=pdf, filetype="pdf")[0].get_pixmap(matrix=pymupdf.Matrix(k, k), alpha=False)
+        return Image.frombytes("RGB", (pix.width, pix.height), pix.samples)
+
+    def frame(pic: dict) -> Image.Image:
+        mask = Image.new("L", thumb.size, 0)
+        ImageDraw.Draw(mask).polygon([(x * k, y * k) for x, y in picture.turned_corners(pic)], fill=255)
+        return mask
+
+    visible = []
+    for i, pic in enumerate(pictures):
+        mask = frame(pic)
+        for above in pictures[i + 1:]:
+            mask = ImageChops.subtract(mask, frame(above))
+        visible.append(mask.filter(ImageFilter.MinFilter(7)))
+
+    def error(image: Image.Image, i: int) -> float:
+        return sum(ImageStat.Stat(ImageChops.difference(image, thumb), visible[i]).mean) / 3
+
+    shown = render(pictures)
+    right = [error(shown, i) for i in range(len(pictures))]
+    assert len(pictures) == 4 and max(right) < 10, right
+    flipped = [i for i, pic in enumerate(pictures) if pic["flip_h"] or pic["flip_v"]]
+    assert len(flipped) == 2
+    for i in flipped:
+        wrong = error(render([{**pic, "angle": -pic["angle"]} if j == i else pic for j, pic in enumerate(pictures)]), i)
+        assert wrong > max(25, 4 * right[i]), (i, right[i], wrong)
+
+
 # --- its NTB export against its Note export --------------------------------------------
 
 def strokes_of(note: nb.Note) -> list[list[tuple]]:
@@ -202,8 +258,11 @@ def test_the_example_s_ntb_imports_as_its_note_does():
     """Its NTB export becomes the page its Note export does: as many
     strokes, pictures and pages, nothing left out, each picture an image
     of the same kind and size at the same place, size, turn and crop (the
-    bundle's floats aside; an .ntb keeps no flips), and the GIF moving, its
-    crop given in the asset's logical size the whole GIF."""
+    bundle's floats aside), and the GIF moving, its crop given in the
+    asset's logical size the whole GIF. Their flips differ: the bundle holds
+    no flipped picture (Notability 16.10 drew both of the Note's flipped
+    ones unflipped in its thumbnail.png), though its format has the flips
+    (CreateBlock fields 16 and 17), which the .ntb reader reads."""
     ws, report = imported(EXAMPLE_NTB)
     note_ws, note_report = imported(EXAMPLE)
     counts = ("pages_created", "strokes_imported", "pictures_imported", "text_boxes_imported", "recordings_imported")

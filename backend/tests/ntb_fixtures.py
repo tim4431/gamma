@@ -11,9 +11,13 @@ import struct
 import zipfile
 
 
+EMPTY_VTABLE = 2  # an empty table's vtable: its own size alone, as Notability's iPad app writes it (4: its table's too)
+
+
 class Table:
     """A table: ``{slot: value}``, a value a ``Table``, a ``Vector``, a
-    ``str`` or ``bytes`` (each led to by an offset), or ``Inline`` bytes."""
+    ``str`` or ``bytes`` (each led to by an offset), or ``Inline`` bytes.
+    An empty one's vtable is EMPTY_VTABLE bytes long."""
 
     def __init__(self, **slots):
         self.slots = {int(k[1:]): v for k, v in slots.items()}  # s0=..., s5=...
@@ -36,6 +40,7 @@ def u32(v): return Inline(struct.pack("<I", v))
 def u64(v): return Inline(struct.pack("<Q", v))
 def f32(v): return Inline(struct.pack("<f", v))
 def pair(x, y): return Inline(struct.pack("<ff", x, y))
+def rect(x, y, w, h): return Inline(struct.pack("<4f", x, y, w, h))
 def ident(a, b): return Inline(struct.pack("<II", a, b))
 def place(owner, count): return Inline(struct.pack("<III", *owner, count))  # an id and a count past it
 def rgba(*v): return Inline(bytes(v))
@@ -53,10 +58,13 @@ def _emit(out: bytearray, node) -> int:
     if isinstance(node, Table):
         slots = sorted(node.slots)
         vtable = len(out)
-        size = 4 + 2 * (max(slots) + 1 if slots else 0)
+        size = 4 + 2 * (max(slots) + 1) if slots else EMPTY_VTABLE
         out += bytes(size)
         table = len(out)
         out += struct.pack("<i", table - vtable)
+        if size == 2:
+            struct.pack_into("<H", out, vtable, size)
+            return table
         refs, offsets = [], {}
         for slot in slots:
             value = node.slots[slot]
@@ -182,20 +190,26 @@ def shape(kind: str, *, page=0, origin=(100.0, 100.0), tool=0, dash=1, color=(0,
 
 
 def picture(digest: bytes, *, page=0, corner=(50.0, 50.0), size=(120.0, 90.0), mime="image/png", logical=None,
-            crop=None, rotation=None, key=None) -> Table:
+            crop=None, rotation=None, key=None, scale=None, flip_h=False, flip_v=False, caption=False) -> Table:
     """A picture's media record payload: its asset by content hash (64
-    bytes), its frame by its turned top-left corner."""
+    bytes), its frame by its turned top-left corner and its size before
+    ``scale``; its flips and whether its caption shows, each a byte."""
     asset = Table(s0=Inline(digest), s2=mime)
     content = {"s0": asset}
     if logical is not None:
         content["s1"] = pair(*logical)
     slots = {"s2": place(PAGES, page), "s3": pair(*corner), "s6": pair(*size), "s10": Table(**content)}
     if crop is not None:
-        slots["s11"] = Inline(struct.pack("<4f", *crop))
+        slots["s11"] = rect(*crop)
     if rotation is not None:
         slots["s4"] = f32(rotation)
+    if scale is not None:
+        slots["s5"] = pair(*scale)
     if key is not None:
         slots["s9"] = u64(key)
+    for slot, on in ((8, caption), (16, flip_h), (17, flip_v)):
+        if on:
+            slots[f"s{slot}"] = u8(1)
     return Table(**slots)
 
 
@@ -211,8 +225,16 @@ def box(*, page=0, corner=(60.0, 400.0), size=(200.0, 40.0), rotation=None) -> T
     return Table(**slots)
 
 
-def text(string: str, owner=DOCUMENT) -> Table:
-    return Table(s0=ident(*owner), s1=string)
+def text(string: str, owner=None, *, at=None) -> Table:
+    """A text record: ``string``, typed in the block ``owner`` (its text
+    field; the document's text without one), inserted ``at`` a position
+    ``(anchor, count)`` when given."""
+    slots = {"s1": string}
+    if owner is not None:
+        slots["s2"] = ident(*owner)
+    if at is not None:
+        slots["s0"] = place(*at)
+    return Table(**slots)
 
 
 def anchor(at: tuple, count: int) -> Table:
@@ -224,7 +246,7 @@ def style(start: tuple, end: tuple, *, bold=None, italic=None, strike=None, size
     """A character style over the range between two positions, ``(anchor,
     count)`` each."""
     slots = {"s0": place(*start), "s1": place(*end)}
-    for slot, value in ((3, bold), (4, italic), (11, strike)):
+    for slot, value in ((3, bold), (4, italic), (13, strike)):
         if value is not None:
             slots[f"s{slot}"] = Table(s0=u8(int(value)))
     if size is not None:
@@ -244,8 +266,63 @@ def paragraph(start: tuple, end: tuple, *, decoration=None, level=None) -> Table
 
 
 def ids(*keys) -> Table:
-    """A group's members, or an erase record's records."""
+    """A group's members."""
     return Table(s0=Vector(ident(*key) for key in keys))
+
+
+def _page(n): return place(PAGES, n)
+def _xy(p): return pair(*p)
+def _rect(r): return rect(*r)
+def _paper(color): return Table(s4=rgba(*color))
+
+
+def erase(*keys, restored=(), pages=(), restored_pages=()) -> Table:
+    """An erase record: the records it deletes and those it restores, then
+    the pages it deletes and restores, each by its number."""
+    slots = {}
+    for slot, items in ((0, [ident(*key) for key in keys]), (1, [ident(*key) for key in restored]),
+                        (2, [_page(n) for n in pages]), (3, [_page(n) for n in restored_pages])):
+        if items:
+            slots[f"s{slot}"] = Vector(items)
+    return Table(**slots)
+
+
+def _set(pack):
+    """How a table of one value (SetFloat, SetSize, SetRect, SetPaper) is
+    packed: ``()`` packs one of none, which clears the value."""
+    return lambda value: Table() if value == () else Table(s0=pack(value))
+
+
+def _table(slots: dict, given: tuple) -> Table:
+    """A table of ``slots`` and of what ``given`` sets, ``(slot, value,
+    pack)`` each, a value of None left out."""
+    for slot, value, pack in given:
+        if value is not None:
+            slots[f"s{slot}"] = pack(value)
+    return Table(**slots)
+
+
+def edit(*blocks, page=None, corner=None, rotation=None, scale=None, size=None, key=None, crop=None, color=None,
+         caption=None, flip_h=None, flip_v=None, rounded=None, locked=None) -> Table:
+    """An edit of ``blocks`` (ModifyBlock): what it sets, each in its slot;
+    the turn, scale, crop and a sticky's paper (its ``color``) each in a
+    table of one value."""
+    return _table({"s0": Vector(ident(*block) for block in blocks)}, (
+        (1, rounded, u8), (2, page, _page), (3, corner, _xy), (4, rotation, _set(f32)), (5, scale, _set(_xy)),
+        (6, size, _xy), (8, caption, u8), (9, key, u64), (12, crop, _set(_rect)), (13, color, _set(_paper)),
+        (14, flip_h, u8), (15, flip_v, u8), (17, locked, u8)))
+
+
+def move(*targets) -> Table:
+    """Moves (ModifyPositions), one ``position`` per target."""
+    return Table(s0=Vector(targets))
+
+
+def position(target, *, page=None, origin=None, rotation=None, scale=None, key=None) -> Table:
+    """One target's move (a ModifyPosition): what it sets, each in its slot;
+    the turn and scale each in a table of one value."""
+    return _table({"s0": ident(*target)}, ((1, page, _page), (2, origin, _xy), (3, rotation, _set(f32)),
+                                            (4, scale, _set(_xy)), (5, key, u64)))
 
 
 def bundle(*records, created_ms: int = 1_777_193_637_206) -> bytes:

@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 import notability_fixtures as fx
-from gamma import ink, notability as nb, notability_map as nm
+from gamma import ink, notability as nb, notability_map as nm, picture
 from gamma.ops import MAX_CONTENT
 from gamma.text_box import PAD
 from gamma.import_zip import DirectoryTooLarge, directory_size, new_walk, open_zip, walk_zip
@@ -300,6 +300,24 @@ def test_a_groups_transform_and_its_nesting():
     assert len(note.curves) == nb.MAX_GROUP_DEPTH and note.left_out["group"] == 1
 
 
+def test_a_group_s_item_that_does_not_read_is_counted_and_the_rest_drawn(monkeypatch):
+    """A group's member of a kind the import does not know, a hash archive
+    or a shape list that is not one, or an item that is no member is
+    counted; the group's other members are drawn."""
+    inner = fx.Archiver("NSKeyedArchiver", "root")
+    curves = {"type": 1, "object": inner.dumps(fx.ink_hash(inner, [fx.curve(WORKED)]))}
+    items = [curves, {"type": 3, "object": {"anything": 1}}, {"type": 1, "object": {"x": 1}},
+             {"type": 1, "object": b"not an archive"}, {"type": 2, "object": b"shapes"},
+             {"type": 2, "object": {"shapes": "x", "kinds": [], "indices": []}}, "junk"]
+    raw = plistlib.dumps({"inkGroup": {"inkGroupObjects": items, "transform": [1, 0, 0, 1, 0, 0]}, "index": 0},
+                         fmt=plistlib.FMT_BINARY)
+    monkeypatch.setattr(fx, "group_bytes", lambda group: group)
+    note = note_of(fx.session(groups=[raw]))
+    assert len(note.curves) == 1 and note.left_out == Counter({"group item": 6})
+    assert nb.left_out_reasons(note.left_out) == [
+        "6 items in groups of handwriting could not be read and were left out"]
+
+
 def test_strokes_shapes_and_groups_share_one_z_order():
     """A shape's index and an ink group's are positions in one z-order and
     the strokes take the other positions in turn; a group's members are
@@ -418,6 +436,27 @@ def test_media_kinds():
     assert note.media[2].background == pytest.approx(nb.STICKY_COLOR) and note.media[1].latex == "x^2"
     assert note.left_out["media"] == 1 and note.classes == Counter({"AudioMediaObject": 1})
     assert note.left_out["object"] == 1
+
+
+def test_what_stands_in_for_a_picture_s_lost_image():
+    """A picture whose full-resolution image the note lacks, its file gone
+    or flagged imageIsMissing, is its smaller copy (contentSnapshot) when
+    the note has that, else, a GIF, its animation alone: either stands in
+    for the image its crop is measured on. With neither the image is named
+    missing; a GIF whose animation is gone is its still frame."""
+    shown = {"kind": "picture", "origin": (10, 10), "size": (40, 30)}
+    media = [{**shown, "path": "Images/Gone.png", "copy": "Images/Small.png"},
+             {**shown, "path": "Images/Full.png", "missing": True, "copy": "Images/Small.png"},
+             {**shown, "path": "Images/Full.png", "gif": "A1"}, {**shown, "path": "Images/Gone.png", "gif": "A1"},
+             {**shown, "path": "Images/Full.png", "gif": "Gone"},
+             {**shown, "path": "Images/Lost.png", "copy": "Images/Lost copy.png"}]
+    files = {"Images/Full.png": fx.png(), "Images/Small.png": fx.png(20, 15), "Assets/A1/media.gif": fx.gif()}
+    note = note_of(fx.session(media=media), files)
+    assert [(m.picture, m.animation, m.stand_in) for m in note.media] == [
+        ("Images/Small.png", None, True), ("Images/Small.png", None, True),
+        ("Images/Full.png", "Assets/A1/media.gif", False), ("Assets/A1/media.gif", None, True),
+        ("Images/Full.png", None, False), (None, None, False)]
+    assert note.missing == ["Images/Lost.png"]
 
 
 def test_recordings_with_and_without_a_library():
@@ -767,6 +806,47 @@ def test_a_sticky_is_a_filled_rect_under_the_ink():
     assert "tool" not in sticky and "opacity" not in sticky
 
 
+def test_what_notability_draws_over_a_sticky_or_a_text_box_is_counted():
+    """Gamma draws a sticky note as ink, over every picture and text box,
+    and a text box over a picture: each picture or text box Notability
+    draws over a sticky it meets (a higher z) is counted, and each picture
+    it draws over a text box it meets; one under it, or clear of it, is
+    not. Two meet where their turned frames overlap, not where only the
+    boxes around those frames do."""
+    shown = {"kind": "picture", "size": (40, 30), "path": "Images/a.png"}
+    media = [{"kind": "sticky", "origin": (100, 100), "size": (100, 100), "z": 1},
+             {**shown, "origin": (150, 150), "z": 0},  # under the sticky, as Gamma draws it
+             {**shown, "origin": (150, 150), "z": 2},
+             {"kind": "text", "origin": (110, 110), "size": (50, 20), "z": 3, "runs": [{"text": "on the sticky"}]},
+             {**shown, "origin": (120, 115), "z": 4},  # on the sticky and on the text box
+             {**shown, "origin": (203, 100), "z": 5},  # clear of the sticky
+             {**shown, "origin": (203, 100), "z": 6, "rotation": math.atan2(15, 20)},  # its turned corner on it
+             {**shown, "origin": (206, 206), "size": (40, 40), "z": 7, "rotation": math.pi / 4},  # its box on it
+             {"kind": "sticky", "origin": (300, 300), "size": (100, 100), "z": 8, "rotation": math.pi / 4},
+             {**shown, "origin": (282, 282), "size": (20, 20), "z": 9}]  # on the turned sticky's box, not on it
+    note = note_of(fx.session(media=media), {"Images/a.png": fx.png()})
+    left = nm.plan_note(note, {}).left_out
+    assert left == Counter({"picture on sticky": 3, "box on sticky": 1, "picture on box": 1})
+    assert sorted(nb.left_out_reasons(left)) == ["1 picture lies on a text box, which Gamma draws over it",
+                                                 "1 text box lies on a sticky note, which Gamma draws over it",
+                                                 "3 pictures lie on sticky notes, which Gamma draws over them"]
+
+
+def test_a_turn_is_read_within_a_half_turn():
+    """A medium's turn (rotationDegrees, in radians) comes in as the same
+    turn within half a turn either way, so one whose degrees would not be
+    finite is planned and drawn like any other."""
+    shown = {"kind": "picture", "size": (40, 30), "path": "Images/a.png"}
+    media = [{**shown, "origin": (100, 100), "z": 0, "rotation": 2.5 * math.pi},
+             {"kind": "sticky", "origin": (100, 100), "size": (100, 100), "z": 1, "rotation": 1e308},
+             {**shown, "origin": (120, 120), "z": 2, "rotation": 1e308}]  # on the sticky, however turned
+    note = note_of(fx.session(media=media), {"Images/a.png": fx.png()})
+    assert note.media[0].rotation == pytest.approx(math.pi / 2)
+    assert all(abs(media.rotation) <= math.pi for media in note.media)
+    assert nm.plan_note(note, {}).left_out == Counter({"picture on sticky": 1})
+    assert nm.sticky_stroke(note.media[1], frame()) is not None
+
+
 def _shape_for(kind: str, p: dict) -> tuple:
     """The Notability shape the import maps onto a shape record's params: a
     line's or an arrow's ends, a triangle's corners, a rectangle's corners
@@ -853,30 +933,119 @@ def test_text_boxes_and_math():
 def test_a_picture_keeps_its_crop_turn_and_flips_as_numbers():
     """A picture is a picture block of its file as it came: its frame
     through the page's, its turn in degrees (rotationDegrees holds
-    radians), its flips, its crop as fractions of the image (cut to it, the
-    whole image when it holds nothing; an .ntb's in the asset's logical
-    size), its caption on one line and escaped, and kept on the page."""
+    radians), its flips, its crop as fractions of the image (the whole
+    image when it holds nothing; an .ntb's in the asset's logical size),
+    its caption escaped line by line, and kept on the page."""
     page = frame(k=2.0, width=600, height=800)
     url = "/api/uploads/a.png"
     turned = nb.Media("picture", 100, 100, 40, 20, rotation=math.pi / 2, flip_h=True, crop=(10, 20, 100, 50),
                       caption="A |300\n [x]")
     made = nm.picture_block(turned, page, url, (200, 100))
-    assert made == {"content": "A \\|300 \\[x\\]", "picture": {
+    assert made == {"content": "A \\|300\n\\[x\\]", "picture": {
         "url": url, "x": 200, "y": 200, "w": 80, "h": 40, "angle": 90,
         "crop": {"x": 0.05, "y": 0.2, "w": 0.5, "h": 0.5}, "flip_h": True, "flip_v": False}}
-    whole = {"x": 0, "y": 0, "w": 1, "h": 1}
-    for crop in (None, (-10, -10, 1000, 1000), (300, 0, 50, 50), (0, 0, 0, 0)):  # none, past the image, outside it
-        assert nm.picture_block(replace(turned, crop=crop), page, url, (200, 100))["picture"]["crop"] == whole, crop
-    edge = nm.picture_block(replace(turned, crop=(150, -20, 100, 60)), page, url, (200, 100))["picture"]["crop"]
-    assert edge == {"x": 0.75, "y": 0, "w": 0.25, "h": 0.4}  # the part inside the image
+    for crop in (None, (300, 0, 50, 50), (0, 0, 0, 0)):  # none, outside the image, holding nothing
+        assert nm.picture_block(replace(turned, crop=crop), page, url, (200, 100))["picture"] == {
+            **made["picture"], "crop": {"x": 0, "y": 0, "w": 1, "h": 1}}, crop
     logical = replace(turned, crop=(0, 0, 50, 25), crop_size=(100, 50))  # an .ntb's: in its logical size
     assert nm.picture_block(logical, page, url, (400, 200))["picture"]["crop"] == {"x": 0, "y": 0, "w": 0.5, "h": 0.5}
     wide = nm.picture_block(nb.Media("picture", -100, 50, 500, 100, rotation=-3.5), page, url, (500, 100))["picture"]
     # kept on the page: the 1000 x 200 frame turned is about 1006 pt wide, scaled down until it fits the 600-pt page
     assert (wide["x"], wide["y"], wide["w"], wide["h"], wide["angle"]) == (1.97, 140.39, 596.07, 119.21, 159.46)
+
+
+def notability_point(media: nb.Media, k: float, point: tuple) -> tuple:
+    """Where Notability draws a point of the image (in its pixels) on a
+    page whose frame maps a unit to ``k`` points from the origin: the crop
+    rect fills the frame, then the flips in the frame, then the turn."""
+    cx, cy, cw, ch = media.crop
+    u, v = (point[0] - cx) / cw, (point[1] - cy) / ch
+    u, v = (1 - u if media.flip_h else u) - 0.5, (1 - v if media.flip_v else v) - 0.5
+    cos, sin = math.cos(media.rotation), math.sin(media.rotation)
+    dx, dy = u * media.w * k, v * media.h * k
+    return (media.x + media.w / 2) * k + dx * cos - dy * sin, (media.y + media.h / 2) * k + dx * sin + dy * cos
+
+
+def test_a_crop_past_the_image_cuts_the_frame_with_it():
+    """A crop that reaches past the image is cut to it, and the frame by
+    the same fractions in its own axes, mirrored for the flips and turned
+    with it: the part of the image kept lies where Notability drew it, at
+    the crop's aspect, unstretched. A crop larger than the image shows the
+    whole image in the part of the frame it filled."""
+    page = frame(k=1.0, width=600, height=800)
+    url = "/api/uploads/a.png"
+    past = nb.Media("picture", 100, 100, 40, 30, crop=(-20, 0, 40, 30))  # its left half off a 40 x 30 image
+    made = nm.picture_block(past, page, url, (40, 30))["picture"]
+    assert (made["x"], made["y"], made["w"], made["h"]) == (120, 100, 20, 30)
+    assert made["crop"] == {"x": 0, "y": 0, "w": 0.5, "h": 1}
+    mirrored = nm.picture_block(replace(past, flip_h=True), page, url, (40, 30))["picture"]
+    assert (mirrored["x"], mirrored["w"]) == (100, 20)
+    larger = nm.picture_block(replace(past, crop=(0, 0, 80, 60)), page, url, (40, 30))["picture"]
+    assert (larger["x"], larger["y"], larger["w"], larger["h"]) == (100, 100, 20, 15)
+    assert larger["crop"] == {"x": 0, "y": 0, "w": 1, "h": 1}
+    turned = nb.Media("picture", 100, 100, 60, 50, rotation=math.radians(30), flip_h=True, flip_v=True,
+                      crop=(-10, 5, 60, 50))  # past the left and the bottom of a 40 x 30 image
+    k = 1.5
+    made = nm.picture_block(turned, frame(k=k, width=600, height=800), url, (40, 30))["picture"]
+    assert made["crop"] == {"x": 0, "y": 0.1667, "w": 1, "h": 0.8333}
+    kept = ((40, 30), (0, 30), (0, 5), (40, 5))  # at the frame's corners, the image flipped both ways in it
+    for ours, theirs in zip(picture.turned_corners(made), [notability_point(turned, k, p) for p in kept], strict=True):
+        assert ours == pytest.approx(theirs, abs=0.02)
+
+
+def test_a_picture_under_the_least_side_grows_about_its_centre():
+    """A frame with a side under picture.MIN_SIDE grows about its centre
+    until that side is MIN_SIDE, its aspect kept; one too long for the page
+    at that size keeps the page's width and the least side."""
+    page = frame(k=612 / 679, width=612, height=792)  # Notability's least side, 8 units, is 7.21 pt here
+    url = "/api/uploads/a.png"
+    for w, h in ((100, 8), (3, 3)):
+        made = nm.picture_block(nb.Media("picture", 100, 100, w, h), page, url, (w, h))["picture"]
+        assert (made["w"], made["h"]) == (pytest.approx(8 * w / h, abs=0.01), 8)
+        assert (made["x"] + made["w"] / 2, made["y"] + made["h"] / 2) == pytest.approx(
+            ((100 + w / 2) * page.k, (100 + h / 2) * page.k), abs=0.01)
+    line = nm.picture_block(nb.Media("picture", 0, 100, 1000, 5), page, url, (1000, 5))["picture"]
+    assert (line["x"], line["w"], line["h"]) == (0, 612, 8)
+
+
+def test_a_crop_measured_on_a_lost_image_is_whole_or_counted():
+    """A picture whose image stands in for the one its crop is measured on
+    (``Media.stand_in``: a smaller copy, a GIF's animation) shows whole in
+    its frame: silently when the crop is all of that image (at its origin,
+    with the stand-in's aspect, its sides rounded), else counted."""
+    page = frame(k=1.0, width=600, height=800)
+    url, left = "/api/uploads/a.png", Counter()
+    for crop, pixels in ((None, (300, 400)), ((0, 0, 2250, 3000), (300, 400)), ((0, 0, 2250, 3001), (300, 400)),
+                         ((0, 0, 220, 150), (352, 240))):  # a copy of a 2250 x 3000 photo; a GIF's 220 x 150 still
+        made = nm.picture_block(nb.Media("picture", 10, 10, 75, 100, crop=crop, stand_in=True), page, url, pixels,
+                                left)["picture"]
+        assert (made["crop"], made["w"], made["h"]) == ({"x": 0, "y": 0, "w": 1, "h": 1}, 75, 100), crop
+    assert not left
+    for crop in ((0, 797.53, 2250, 1550.52), (0, 0, 2250, 2000), (-10, 0, 2250, 3000)):
+        made = nm.picture_block(nb.Media("picture", 10, 10, 75, 100, crop=crop, stand_in=True), page, url, (300, 400),
+                                left)["picture"]
+        assert made["crop"] == {"x": 0, "y": 0, "w": 1, "h": 1}, crop
+    assert nb.left_out_reasons(left) == [
+        "3 pictures shown cropped come in whole: the note lacks the images their crops are measured on"]
+
+
+def test_a_caption_keeps_its_lines_and_is_cut_on_its_own(monkeypatch):
+    """A caption is the picture's content line by line, a line ending at
+    any line terminator, each line trimmed and escaped as plain text; one
+    past what the editor saves is cut, never inside an escape, and counted
+    as a caption, not as typed text."""
+    page = frame(k=1.0, width=600, height=800)
+    media = nb.Media("picture", 10, 10, 40, 30, caption="Line one  \n  Line **two**")
+    made = nm.picture_block(media, page, "/api/uploads/a.png", (40, 30))
+    assert made["content"] == "Line one\nLine \\*\\*two\\*\\*"
+    lines = nm.picture_block(replace(media, caption=f"Seen\r# Big{nm.LINE_SEPARATOR}- item\r\n---"), page,
+                             "/api/uploads/a.png", (40, 30))
+    assert lines["content"] == "Seen\n\\# Big\n\\- item\n\\---"  # no heading, list or rule
+    monkeypatch.setattr(nm, "MAX_CONTENT", 10)
     left = Counter()
-    long = nm.picture_block(replace(turned, caption="*" * (MAX_CONTENT // 2 + 1)), page, url, (200, 100), left)
-    assert len(long["content"]) == MAX_CONTENT and left["long text"] == 1
+    cut = nm.picture_block(replace(media, caption="abc" + "_" * 10), page, "/api/uploads/a.png", (40, 30), left)
+    assert cut["content"] == "abc\\_\\_\\_" and left == Counter({"long caption": 1})  # not "abc\\_\\_\\_\\"
+    assert nb.left_out_reasons(left) == ["1 picture caption was cut short"]
 
 
 def test_gamma_s_copy_of_a_picture():
@@ -1010,7 +1179,7 @@ def test_the_plists_inside_a_note_are_read_within_its_budget(monkeypatch):
     monkeypatch.setattr(nb, "MAX_SESSION_BYTES", 4 * len(session))
     note = note_of(session)
     read = (4 * len(session) - len(raw)) // archive  # the group's own plist first, then an archive a time
-    assert 1 <= read < 50 and len(note.curves) == 1 + 2 * read and note.left_out["group"] == 50 - read
+    assert 1 <= read < 50 and len(note.curves) == 1 + 2 * read and note.left_out == Counter({"group item": 50 - read})
 
 
 def test_typed_text_is_read_within_its_budget(monkeypatch):

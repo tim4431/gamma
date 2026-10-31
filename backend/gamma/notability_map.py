@@ -22,7 +22,7 @@ from .notability import (COORD_LIMIT, IDENTITY, MAX_NOTE_PAGES, STYLE_HIGHLIGHTE
                          Run, Shape, curve_points)
 from .notebook import normalize_paper
 from .ops import MAX_CONTENT
-from .picture import caption_text, normalize_picture
+from .picture import MIN_SIDE, _resized, normalize_picture, turned_corners
 from .picture import keep_on_surface as keep_picture
 from .text_box import LINE, MAX_SIZE, MIN_SIZE, PAD, escape_markdown, keep_on_surface, markdown_of, normalize_text_box
 
@@ -247,7 +247,10 @@ def plan_note(note: Note, pdf_pages: dict) -> NotePlan:
     - ``note``: no PDF page and nothing on the pages: the typed text alone;
     - ``original``: the pages are exactly one bundled PDF's, 1..n in order;
     - ``composed``: any other note with a PDF page, whose PDF is made of its
-      pages in order."""
+      pages in order.
+
+    A picture or text box Gamma draws under what Notability draws it over
+    is counted (``_covered``)."""
     left_out = Counter()
     items = []
     for i, curve in enumerate(note.curves):
@@ -283,6 +286,8 @@ def plan_note(note: Note, pdf_pages: dict) -> NotePlan:
             page.stickies.append(i)
         else:
             page.boxes.append(i)
+    for page in pages:
+        _covered(note, page, left_out)
     names = {f.pdf for f in pages_}
     kind, pdf = "notebook", None
     if names == {None}:
@@ -301,6 +306,43 @@ def plan_note(note: Note, pdf_pages: dict) -> NotePlan:
     if flow is None:
         flow = flow_blocks(note.flow, left_out)
     return NotePlan(pages, kind, pdf, paper(note), flow, warnings, left_out, papers)
+
+
+def _covered(note: Note, page: PagePlan, left_out: Counter) -> None:
+    """Count each picture or text box of the page that Notability draws
+    over a sticky note it meets, which Gamma draws as ink, over both, and
+    each picture Notability draws over a text box it meets, which Gamma
+    draws over pictures ("picture on sticky", "box on sticky", "picture on
+    box"). Notability draws the page's media in their z-order, which their
+    indices follow; two meet where their frames, turned as Gamma turns them
+    (a text box stands upright), overlap."""
+    stickies, texts = [], []  # the turned frames of the stickies and the text boxes drawn before the medium at hand
+    for i in sorted(page.stickies + page.boxes):
+        media = note.media[i]
+        turn = 0 if media.kind in ("text", "math") else math.degrees(media.rotation)
+        corners = turned_corners({"x": media.x, "y": media.y, "w": media.w, "h": media.h, "angle": turn})
+        if media.kind != "sticky" and any(_meet(corners, other) for other in stickies):
+            left_out["picture on sticky" if media.kind == "picture" else "box on sticky"] += 1
+        if media.kind == "picture" and any(_meet(corners, other) for other in texts):
+            left_out["picture on box"] += 1
+        if media.kind == "sticky":
+            stickies.append(corners)
+        elif media.kind != "picture":
+            texts.append(corners)
+
+
+def _meet(a: list, b: list) -> bool:
+    """Whether two turned frames (``picture.turned_corners``) overlap, more
+    than at an edge: no side of either separates them. A frame's first two
+    sides give every direction its sides take; one with a side of no
+    length meets nothing."""
+    for corners in (a, b):
+        for (x0, y0), (x1, y1) in zip(corners, corners[1:3]):
+            nx, ny = y0 - y1, x1 - x0  # the side's normal
+            on_a, on_b = [nx * x + ny * y for x, y in a], [nx * x + ny * y for x, y in b]
+            if max(on_a) <= min(on_b) or max(on_b) <= min(on_a):
+                return False
+    return True
 
 
 # --- ink ----------------------------------------------------------------------------------
@@ -1087,28 +1129,77 @@ def text_box(media: Media, frame: Frame, left_out: Counter | None = None) -> dic
 
 def picture_block(media: Media, frame: Frame, url: str, pixels: tuple, left_out: Counter | None = None) -> dict:
     """A picture as ``{"content", "picture"}`` in the frame, its file the
-    upload ``url`` (stored as it came) whose image is ``pixels`` (width,
-    height) as shown: the frame through the page's, kept on the page
-    (``picture.keep_on_surface``); the turn in degrees (rotationDegrees
-    holds radians, clockwise as seen); the flips; the crop as fractions of
-    the image, FigureCropRectKey being in its pixels (an .ntb's in the
-    asset's logical size, ``media.crop_size``), cut to the image, and the
-    whole image when there is none or it holds nothing. The content is the
-    caption on one line, escaped (``text_box.escape_markdown``), cut at
-    ops.MAX_CONTENT characters (counted)."""
-    x, y, w, h = _surface_rect(media, frame)
-    sw, sh = media.crop_size or pixels
-    crop = None
-    if media.crop is not None:
-        cx, cy, cw, ch = media.crop
-        x0, y0, x1, y1 = max(0, cx), max(0, cy), min(sw, cx + cw), min(sh, cy + ch)
-        if x1 > x0 and y1 > y0:
-            crop = {"x": x0 / sw, "y": y0 / sh, "w": (x1 - x0) / sw, "h": (y1 - y0) / sh}
-    pic = normalize_picture({"url": url, "x": x, "y": y, "w": w, "h": h, "angle": math.degrees(media.rotation),
-                             "crop": crop, "flip_h": media.flip_h, "flip_v": media.flip_v})
-    content = escape_markdown(caption_text(media.caption))
-    if len(content) > MAX_CONTENT:  # what the editor saves (counted)
+    upload ``url`` whose image is ``pixels`` (width, height) as shown: the
+    frame through the page's, kept on the page (``picture.keep_on_surface``);
+    the turn in degrees (rotationDegrees holds radians, clockwise as seen);
+    the flips; the crop as fractions of the image, FigureCropRectKey being
+    in its pixels (an .ntb's in the asset's logical size,
+    ``media.crop_size``), cut to the image with the frame (``_cut``), and
+    the whole image when there is none or it holds nothing. An image that
+    stands in for the one the crop is measured on (``media.stand_in``) is
+    shown whole, counted ("crop") unless the crop is all of that one
+    (``_whole``). A frame with a side under picture.MIN_SIDE grows about
+    its centre until that side is MIN_SIDE, its aspect kept, unless the
+    page is too small for it then (``keep_on_surface`` scales it down and
+    the side is clamped). The content is the caption, its lines (split at
+    any line terminator, LINE_SEPARATOR and a lone \\r as well as \\n) each
+    escaped as plain text (``text_box.markdown_of``), cut at
+    ops.MAX_CONTENT characters, what the editor saves, and never inside an
+    escape (counted, "long caption")."""
+    left_out = left_out if left_out is not None else Counter()
+    rect, crop = _surface_rect(media, frame), None
+    if media.crop is not None and media.stand_in:
+        if not _whole(media.crop, pixels):
+            left_out["crop"] += 1
+    elif media.crop is not None:
+        rect, crop = _cut(media, rect, media.crop_size or pixels)
+    x, y, w, h = rect
+    pic = {"url": url, "x": x, "y": y, "w": w, "h": h, "angle": math.degrees(media.rotation), "crop": crop,
+           "flip_h": media.flip_h, "flip_v": media.flip_v}
+    if 0 < min(w, h) < MIN_SIDE:  # grown about the centre, the aspect kept
+        k = MIN_SIDE / min(w, h)
+        pic = _resized(pic, w * k, h * k)
+    pic = normalize_picture(pic)
+    content = markdown_of("\n".join(media.caption.splitlines()))
+    if len(content) > MAX_CONTENT:
         content = content[:MAX_CONTENT]
-        if left_out is not None:
-            left_out["long text"] += 1
+        content = content[:-1] if (len(content) - len(content.rstrip("\\"))) % 2 else content  # a split escape
+        left_out["long caption"] += 1
     return {"content": content, "picture": keep_picture(pic, frame.width, frame.height)}
+
+
+def _cut(media: Media, rect: tuple, size: tuple) -> tuple[tuple, dict | None]:
+    """``(frame, crop)`` of a picture drawn in the frame ``rect`` with its
+    crop (``media.crop``, in the pixels of an image of ``size``) filling
+    it: the crop cut to the image, as fractions of it, and the frame cut by
+    the same fractions of the crop in its own axes, mirrored for the flips,
+    its centre moved by the kept part's offset turned with it, so the part
+    kept shows where Notability drew it, unstretched. ``(rect, None)``, the
+    whole image in the whole frame, when the crop holds nothing of the
+    image."""
+    x, y, w, h = rect
+    sw, sh = size
+    cx, cy, cw, ch = media.crop
+    x0, y0, x1, y1 = max(0, cx), max(0, cy), min(sw, cx + cw), min(sh, cy + ch)
+    if not (x1 > x0 and y1 > y0):
+        return rect, None
+    u0, u1, v0, v1 = (x0 - cx) / cw, (x1 - cx) / cw, (y0 - cy) / ch, (y1 - cy) / ch  # the part kept, in the crop
+    if media.flip_h:
+        u0, u1 = 1 - u1, 1 - u0
+    if media.flip_v:
+        v0, v1 = 1 - v1, 1 - v0
+    dx, dy = ((u0 + u1) / 2 - 0.5) * w, ((v0 + v1) / 2 - 0.5) * h
+    cos, sin = math.cos(media.rotation), math.sin(media.rotation)
+    mx, my = x + w / 2 + dx * cos - dy * sin, y + h / 2 + dx * sin + dy * cos
+    w, h = (u1 - u0) * w, (v1 - v0) * h
+    return (mx - w / 2, my - h / 2, w, h), {"x": x0 / sw, "y": y0 / sh, "w": (x1 - x0) / sw, "h": (y1 - y0) / sh}
+
+
+def _whole(crop: tuple, pixels: tuple) -> bool:
+    """Whether a crop measured on an image the note lacks is all of it:
+    at its origin with the aspect of ``pixels``, the image standing in for
+    it at another size, to within the rounding of either one's sides to
+    whole pixels."""
+    cx, cy, cw, ch = crop
+    fw, fh = pixels
+    return cx == cy == 0 and abs(cw * fh - ch * fw) <= max(cw + ch, fw + fh) / 2

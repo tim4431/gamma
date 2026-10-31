@@ -106,11 +106,17 @@ From [notability-format.md](notability-format.md) "Pictures" and
   names the file under `Images/`; `isGif` and `assetsIdKey` name an
   animated GIF's `Assets/<id>/media.gif` beside its still frame; a caption
   in `captionFieldText` when `isCaptionEnabled`. The order of the flips and
-  the turn is not documented: the import takes flip, then turn.
-- `.ntb`: a media record (kind 22) with the page, the frame's top-left as
-  turned about its centre, the turn, the size, the asset by SHA-512 with its
-  MIME type and logical size, and a crop in that logical size
-  (`notability_ntb._media`). No flip field is known.
+  the turn is not documented, but Notability's own drawing of the sample
+  (its `thumb12x.png`) shows the flips about the frame's own axes, then the
+  turn, a higher `zIndex` on top. Where the crop falls against the flips is
+  inferred: no sample picture is both cropped and flipped.
+- `.ntb`: a block record (kind 22, CreateBlock in Notability's web app's
+  schema) with the page, the frame's top-left as turned about its centre,
+  the turn, the size and a scale, the asset by SHA-512 with its MIME type
+  and logical size, and a crop in that logical size, measured on the image
+  as flipped (`notability_ntb._media`). The flips are its fields 16 and 17
+  (14 and 15 of a later edit, ModifyBlock); the reader reads them, and the
+  sample `.ntb` has none.
 - Gamma's reader already yields all of this as `notability.Media(kind=
   "picture", x, y, w, h, rotation, flip_h, flip_v, z, picture, animation,
   crop, crop_size, caption, uuid)`: the import below is a change of what
@@ -184,9 +190,10 @@ property in one helper each; that is the whole cost.
   unknown keys dropped, a `url` that is no upload reference makes the value
   no picture. `tests/shared/picture.json` pins both halves, as
   `textbox.json` does.
-- The order crop → flips → turn is the import's today and the one
-  Notability's export suggests; it is what the CSS, the PDF matrix and the
-  Notability writer all apply.
+- The order crop → flips → turn is the import's, and the flips before the
+  turn are what Notability's own drawing shows (the sample's
+  `thumb12x.png`); it is what the CSS, the PDF matrix and the Notability
+  writer all apply.
 - **Placement** is the text box's rule word for word: `pdf_page` on a PDF
   page, made at the page's top level; under a sheet, the sheet's last
   child, on the nearest sheet above it whatever `pdf_page` says; neither,
@@ -556,8 +563,9 @@ these differences. Phase 4 waits
 - **EXIF orientation as browsers apply it**, not as Pillow's
   `exif_transpose` does: a JPEG's APP1 Exif block, and a PNG's `eXIf` chunk
   before its image data. A WebP's EXIF is ignored, as Chromium and Firefox
-  ignore it. `image_size`, the PDF images and the import all follow that
-  rule, so the crop's fractions mean the same image everywhere.
+  ignore it. `image_size`, the PDF images and the import of a PNG, JPEG,
+  GIF or WebP all follow that rule, so the crop's fractions mean the same
+  image everywhere.
 - **The 24 MP cap** holds for a file kept as it is. A re-encode is also
   bounded by the canvas caps, 16 Mi px in desktop Chromium and Firefox and
   8 Mi px and 4096 px an edge in WebKit (the iPad among it), since a canvas
@@ -620,7 +628,13 @@ these differences. Phase 4 waits
   `MAX_PICTURE_USES`, and `picture_bytes` and `MAX_PICTURE_PIXELS` are gone
   altogether. A file whose size does not read is left out with a warning,
   not kept whole. The storing is `note_app_import.AppImport.store_picture`,
-  which the GoodNotes import shares.
+  which the GoodNotes import shares. A TIFF, BMP or AVIF, which a page
+  cannot show, is not kept as it came: it is stored as a PNG of its first
+  frame, turned by Pillow's `exif_transpose` (an AVIF's `irot` and `imir`
+  too), and one past `pdf_image.MAX_DECODED_PIXELS`, in its pixels or in a
+  TIFF's tile, is left out before it is decoded
+  (`note_app_import.picture_file`). The PNG carries no orientation, so the
+  crop's fractions mean the same image everywhere.
 - **The Notability export** writes an old picture box's alt text, less an
   Obsidian size, as the caption. Two pictures of one file are written as two
   files under `Images/`: whether Notability takes two media sharing one file

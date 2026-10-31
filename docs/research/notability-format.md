@@ -40,6 +40,10 @@ Facts only were taken from them; no code was copied.
 | [inkterop](https://github.com/cable729/inkterop) (`docs/formats/notability.md`, `ntb.py`, the erase audit) | docs CC BY 4.0, code MIT, fixtures CC0 | The `.ntb` container, op envelope, stroke payload and point blob, colour order; that erase, move and undo in the op log are unmapped |
 | [nokcha0's converter](https://github.com/nokcha0/Notability-notes-converter) | none | Ink groups, shapes and `partialshape` paths, stickies, styles 5 and 6, `lineStyle2`, rotation in radians; `.ntb` event types and payloads with byte tests; that `curvesstyles` and `dashStyles` count strokes and that strokes, shapes and groups share one z-order, checked against the `.ntb` export of its example note. That note, its "Note" export (16.1.5) and its "NTB" export (16.10), is in `backend/tests/samples/notability/` for `test_notability_samples.py` |
 | [bitsandbonds](https://github.com/bitsandbonds/notability-to-onenote) | none | An independent `.ntb` reading on 16.0.1 |
+| [Notability's web app](https://notability.com/app/), fetched 2026-10-29: its generated FlatBuffers code (`CalendarEventHelpers-DA_idU3b.js`), its renderer (`store-Brjjb5AZ.js`) and its PDF export (`App-BTqAyZO1.js`) | © Ginger Labs | The `.ntb` op log's schema: every record kind by name (3 CreatePage, 7 InsertChar, 8 InsertString, 12 ModifyStyle, 17 ModifyInk, 22 CreateBlock, 23 ModifyBlock, 24 ModifyPositions, 25 DeleteEntities…) and the fields of each; that a crop is measured on the image as flipped. The web client writes the same log, so where no bundle shows a field this is the only source |
+| [NotabilityEditor](https://github.com/SeedStudent/NotabilityEditor) (commit `e5d0bcc`) | 0BSD | An `.ntb` editor that replays edits (23) and moves (24) onto blocks, from the same schema; a block's sort key (9) and lock (20); `assets/official_templates/noteBundle_3.bin`, a bundle with an erase log |
+| [OpenNote](https://github.com/GGStonks/OpenNote) (`src/import/notability.ts`) | none | A `.note` reader that applies a picture's crop only when its Figure holds the crop path (`$0`) |
+| [notability-lib-private](https://github.com/TheNoim/notability-lib-private) (commit `85d2fa0`) | none | Sample notes of 4.2.5 and 9.3.4: a picture's smaller copy (`contentSnapshot`) and an uncropped picture's crop path |
 | [note-core-swift](https://github.com/PsychQuant/note-core-swift) | none | The recording timeline and the curve UUID join |
 | [notability2pdf](https://github.com/wongkang01/notability2pdf) | none | A 941-note corpus of formats 7–9; MathMediaObject; recordings |
 | [jvns' post](https://jvns.ca/blog/2018/03/31/reverse-engineering-notability-format/) and [svg2notability](https://github.com/jvns/svg2notability) | none stated / none | The first reverse engineering (7.x); RGBA colour bytes |
@@ -264,12 +268,43 @@ Four kinds [V]:
 
 - `ImageMediaObject` (and `GifMediaObject`): the image is
   `figure.FigureBackgroundObjectKey.kImageObjectSnapshotKey.relativePath`
-  (full resolution), else `contentSnapshot.relativePath` (a smaller copy).
+  (full resolution), and `contentSnapshot.relativePath` a smaller copy;
   `imageIsMissing` means Notability lost the file [V].
+- Gamma takes the full-resolution image when the note has its file and it
+  is not flagged missing, else the smaller copy on the same terms, else an
+  animated GIF's `Assets/<id>/media.gif` alone
+  (`notability._Reader._picture`, `_image`), and with none of them names
+  the picture missing. gnnote takes the copy only when the full path is
+  empty. A copy or an animation standing in (`Media.stand_in`) is shown
+  whole, since the crop is measured on the image the note lacks. The crop
+  is kept only when `notability_map._whole` finds it is all of that image
+  (at its origin, with the stand-in's aspect, to within whole-pixel
+  rounding); otherwise the report says so ("crop").
+  4.2.5 and 9.3.4 write the copy (TheNoim's notability-lib-private notes),
+  and for an uncropped picture it is the whole image scaled evenly (3000 ×
+  2000 to 768 × 512, and to 432 × 288) [V1]; 10.2.4 and 16.1.5 write none.
+  No sample has a cropped picture's copy, so that one is the whole image
+  too is inferred [I].
 - `FigureCropRectKey` is the crop in source pixels, the whole image when
   uncropped; `unscaledContentSize` the shown size after the crop and before
-  the turn; `isFlippedHorizontal`/`Vertical` from 15.3 [V]. The order of
-  the flips and the turn is not documented [I: flip, then turn].
+  the turn; `isFlippedHorizontal`/`Vertical` the flips (the feature from
+  14.4.6, December 2023, by Ginger Labs' App Update History; the keys seen
+  in files from 15.3) [V]. [V on the sample's thumb12x.png: the flips about
+  the frame's own axes, then the turn; a higher zIndex on top. I: the crop
+  before the flips, since no sample picture is both cropped and flipped.]
+  `test_notability_samples.test_the_example_s_pictures_lie_where_notability_drew_them`
+  pins it: page 1's four pictures as Gamma draws them differ from the
+  thumbnail by a mean of 4 to 5 (of 255), and the two flipped ones turned
+  the other way, which is the other order, by 49 and 65.
+- A cropped picture's Figure holds the same rectangle again under `$0`: an
+  archived CGPath laid out as a `partialshape`'s (Shapes, above), a move to
+  its top-left and four lines round it back there, five float64 points in
+  93 bytes. An uncropped picture has null there [V on the 16.1.5 sample and
+  notesconverter's 10.2.4 `image-insert.note`]; 9.3.4 writes the whole
+  image's path [V1]. notesconverter and OpenNote apply a crop only when
+  `$0` is there; nokcha0, notability2pdf and NotabilityEditor apply
+  `FigureCropRectKey` whatever `$0` holds. Gamma's import reads
+  `FigureCropRectKey` and ignores `$0`.
 - An animated GIF's still frame is in `Images/`, the animation in
   `Assets/<id>/media.gif`: its object says `isGif` and names `<id>` as its
   `assetsIdKey` (every picture has one; only a GIF's names a folder), its
@@ -306,15 +341,16 @@ agree where they overlap [V]:
 - a stored zip of `version`, `manifest.json`, `noteBundle` (FlatBuffers),
   `thumbnail.png`, `assets/<sha512>.<ext>` and recognition indexes;
 - `noteBundle` is an append-only log of ops, oldest first: document, text,
-  styles, ink (type 15), shapes (18), media (22). An ink op carries its
+  styles, ink (type 15), shapes (18), blocks (22). An ink op carries its
   page, origin, turn, scale, tool, dash, RGBA, base width and a point blob
   of offsets from the origin with, per anchor, two float16 values and two
   bytes (the second float the force; the first byte, which renderers read
   as a pencil's opacity, is the altitude).
 
 What Gamma reads (gamma/notability_ntb.py), from nokcha0's description and
-the bytes of its example, which the "Note" export of the same note checks
-[V on that sample unless tagged]:
+the bytes of its example, which the "Note" export of the same note checks,
+with the names and fields of Notability's web app's schema (Sources) [V on
+that sample unless tagged; "the schema" where it is the only source]:
 
 - **The root** table: field 4 the creation time in ms, field 6 the records.
   A record: field 0 its id (two uint32), 1 a time, 4 its kind (a byte), 5
@@ -346,24 +382,88 @@ the bytes of its example, which the "Note" export of the same note checks
   width, 14 a pencil shape's force [V1]. Fills and arrowheads: no sample
   has them, so their fields are not known.
 - **Groups** (20): 0 the members' ids; the members carry their own turn.
-- **Media** (22): 2 the page, 3 the frame's top-left corner as turned
-  about its centre, 4 the turn, 6 the size, 9 a sort key, 10 → 0 the asset
-  (0 its SHA-512, 2 its MIME type) and → 1 its logical size, 11 a crop in
-  that logical size (the sample's GIF is 352 × 240 px, its logical size
-  220 × 150), 15 a sticky's paper (4 its colour). A media record whose id
-  owns text is a text box [V1: no sample has one].
-- **Text** (8): 0 its owner (the document, or a text box), 1 the string,
-  appended to the owner's text; its id is an anchor at where it starts.
-  An anchor (7) marks a range's last character. Character styles (12): 0
-  and 1 the range, then a table each: 3 bold, 4 italic, 5 underline, 7 the
-  font, 8 its size, 9 the colour, 11 strikethrough. Paragraph styles (13):
-  2 the indent level, 4 the line spacing, 5 the list (1 bullet, 2
-  numbered). No number is stored: a list counts its paragraphs per level,
-  bullets too, as the .note's numbers do.
-- **A log** [V1: the sample is a compacted list, one version of each record
-  and no erase record]: a record given again is current at its last
-  version, in the place of its first, and an erase record (25) lists the
-  records that are gone, with the text they own.
+- **Blocks** (22, CreateBlock: a picture, a sticky note or a text box): 0
+  the type (0 text, the default, 1 an image, 2 a formula; 1 on every
+  sample picture and absent on its stickies), 2 the page, 3 the frame's
+  top-left corner as turned about its centre, 4 the turn, 5 a scale (two
+  float32, 1 and 1 when absent; the frame shown is the size times it), 6
+  the size, 8 whether a picture's caption shows (a byte, absent false), 9
+  the sort key, 10 → 0 the asset (0 its SHA-512, 1 the same file's name in
+  a .note, 2 its MIME type, 3 its size in bytes) and → 1 its logical size,
+  11 a crop in that logical size (the sample's GIF is 352 × 240 px, its
+  logical size 220 × 150), 15 a sticky's paper (4 its colour), 16 and 17
+  the horizontal and vertical flips (bytes, absent false), 20 a lock (1 on
+  the sample's two locked pictures). The schema requires 2, 3 and 6. Not
+  read: 1 the corner style (0 square, 1 round), 7 text wrap, 12 a web URL,
+  13 and 14 a formula's LaTeX and colour, 18 a width that fits the text,
+  19 margins, the lock, and the asset's name and size. [The schema for 5,
+  8, 16 and 17, which no sample has.]
+- **A block's text**: a block with an asset, or of type 1, is a picture,
+  and the text it holds is its caption, shown when 8 is set (plain, its
+  line breaks kept); any other block holding a text is a text box [V1: no
+  sample has one], and one with a paper a sticky note.
+- **A crop on a flipped picture** is measured on the image as flipped
+  [the schema: the web app's renderer (`refreshSpriteLayout`) and its PDF
+  export both take a flipped picture's source rectangle from the far side
+  of the image; no sample picture is both cropped and flipped]. The reader
+  mirrors it onto the image as stored, in the logical size W × H: x
+  becomes W − x − w when the picture is flipped horizontally, y becomes
+  H − y − h when vertically. An asset with no logical size has its crop in
+  pixels the reader does not know, and it is kept as it is.
+- **Text** (8, InsertString): 0 where it is inserted (a position: the
+  record it counts from and an index into its string), 1 the string, 2 the
+  text field, the block it is typed in (none: the document) [the schema;
+  the sample's one text record has 1 alone]. Its id is an anchor at where
+  it starts. The insert position is not read: a text is appended to its
+  owner's, so one typed inside earlier text comes in at the end of its
+  owner's text, unwarned. Kind 7 is InsertChar (0 its position, 1 a
+  Unicode scalar, 2 the text field): the reader takes its position as an
+  anchor that marks a range's last character and adds no character [V1:
+  the sample's one adds a newline (10) after a text that ends in one, so
+  the sample cannot settle what an insert position means].
+- **Character styles** (12): 0 and 1 the range, then a table each: 3 bold,
+  4 italic, 5 underline, 6 highlight, 7 the font, 8 its size, 9 the
+  colour, 10 a link, 11 superscript, 12 subscript, 13 strikethrough, 14
+  code [the schema]. The reader takes bold, italic, the size, the colour
+  and strikethrough; superscript and subscript are not imported. The
+  sample's 15 style records set none of 11 to 13, which is how nokcha0's
+  "11 strikethrough" went unchecked. Paragraph styles (13): 2 the indent
+  level, 4 the line spacing, 5 the list (1 bullet, 2 numbered). No number
+  is stored: a list counts its paragraphs per level, bullets too, as the
+  .note's numbers do.
+- **A log** [V1: the sample is a compacted list, one version of each
+  record and no edit, move or erase record; the rest is the schema's]. The
+  reader replays it in its order (`notability_ntb._live`,
+  `_Reader._blocks`):
+  - **Versions**: a record given again is current at its last version, in
+    the place of its first.
+  - **Erase records** (25, DeleteEntities): 0 the records deleted and 1
+    those restored (vectors of ids), 2 the pages deleted and 3 those
+    restored (vectors of positions, 12 bytes each). A record deleted at
+    the end is gone, with the text records whose text field names it. A
+    page deleted at the end is only counted ("deleted page"): a record's
+    page is its index in the page list, so the pages after it would have
+    to be numbered again. NotabilityEditor's `noteBundle_3.bin` has a
+    sticky note deleted, restored and deleted again, its page vectors
+    empty.
+  - **Edits** (23, ModifyBlock) change each block they list: 0 the blocks
+    (a vector of ids, the one field required), 2 the page, 3 the turned
+    frame's top-left corner, 4 the turn, 5 the scale (replacing the one
+    before), 6 the size, 8 whether a caption shows, 9 the sort key, 12 the
+    crop, 13 a sticky's paper, 14 and 15 the flips. 1 the corner style, 7
+    text wrap, 10 and 11 a formula's, 16 a width that fits the text and 17
+    the lock change nothing Gamma shows.
+  - **Moves** (24, ModifyPositions): 0 a vector of moves, each 0 its
+    target (required), 1 the page, 2 the turned frame's top-left corner, 3
+    the turn, 4 the scale, 5 the sort key, applied to each target that is
+    a block. A record whose targets include a stroke, a shape or a group
+    is not applied to them and is counted once ("ink edit"): they come in
+    where they were drawn. Their changes (17 ModifyInk, 19 ModifyShape, 21
+    ModifyGroup) are records of a kind not read.
+  - **Tables of one value**: an edit's or a move's turn, scale, crop and
+    paper are each a table of one (SetFloat, SetSize, SetRect, SetPaper).
+    An absent field keeps the value, and a table holding none clears it:
+    no turn, a scale of 1, no crop.
 - **Order**: strokes, shapes and groups are drawn in the order of their
   records, a group in its first member's place, as the .note's z-order
   has them, except highlighter shapes: the sample lists its 16 apart,
@@ -377,10 +477,12 @@ on text, and where the pages of several PDFs go. Gamma imports an `.ntb`
 since 2026-10, the decoders having closed most of what the verdict before
 left open: the example's NTB export reads as its Note export does,
 stroke for stroke within a point, the same notes (but for a bold the .ntb
-keeps where the .note names the font alone, Impact) and the same pictures.
-What the op log keeps of a stroke deleted, undone, moved or restyled is
-taken as nokcha0 found it, versions and erase records; a bundle that kept
-it some other way would bring back what was erased.
+keeps where the .note names the font alone, Impact) and the same pictures,
+but for their flips: the bundle has no flipped picture, and its own
+`thumbnail.png` (16.10) draws the Note's two flipped ones unflipped. The
+log's edits, moves, deletes and restores are replayed as the schema has
+them (A log, above), but for ink: a stroke, shape or group moved or
+changed later comes in where and as it was drawn, which the report says.
 
 ## Writing a note
 
@@ -429,19 +531,30 @@ gamma/notability_write.py). What is known of what the app accepts:
   - `FigureCropRectKey`: the crop in the file's pixels, the file's size read
     as a browser shows it (its EXIF orientation applied), the whole image
     when uncropped;
+  - `$0` beside it: the crop again as an archived CGPath
+    (`notability_write.crop_path`, magic `notability.PATH_MAGIC`), laid out
+    as a `partialshape`'s: the element count 5, the bytes 0 1 1 1 1 (a
+    move to the top-left corner and four lines round the rectangle back
+    there), then five float64 x, y pairs, 93 bytes in all. A picture shown
+    whole has the null UID there, as 16.1.5 and 10.2.4 write it (9.3.4
+    writes the whole image's path). For the same crops Gamma's bytes are
+    those of the 16.1.5 sample and of 10.2.4's `image-insert.note` [V].
+    notesconverter and OpenNote apply a crop only when the path is there;
   - `isFlippedHorizontal` and `isFlippedVertical`: the flips;
   - `captionFieldText`: the caption's plain text on one line, its Markdown
     marks dropped, with `isCaptionEnabled` true; with no caption, the null
     UID and false.
   - `documentOrigin` and `unscaledContentSize` are the frame's top-left
     before the turn and its size after the crop, a stretch included. A
-    page's pictures come before its text boxes, so their `zIndex` is lower.
+    page's pictures come before its text boxes, and both before its sticky
+    notes, so their `zIndex` is lower: a sticky lies over what it covers,
+    as on Gamma's screen.
   - An animated GIF is its still frame under `Images/` and its animation
     as `Assets/<id>/media.gif`. Two pictures of one file are two files.
 - **Not written**: a formula as a MathMediaObject (no sample shows its
   keys beyond `latex` and `color`, so it goes as a text box of its TeX),
   thumbnails but `thumb12x.png`, `HandwritingIndex`, the recording
-  timeline's events, a picture's crop path.
+  timeline's events.
 - **Gamma's own keys** [I]: a curve UUID beginning `GAMMAI` (a version 8
   UUID), which the app keeps as a stroke's identity, as it keeps its own;
   and the root's `GammaNoteKey`, data no class of the app decodes, which
@@ -473,7 +586,10 @@ gamma/notability_write.py). What is known of what the app accepts:
   as plain paper of its colour.
 - **Stickies** are filled rectangle strokes in band 0, not empty text
   boxes: an empty box goes when its editor closes, the PDF writers leave it
-  out, a box cannot turn, and the ink layer draws over boxes anyway.
+  out, a box cannot turn, and the ink layer draws over boxes anyway. A
+  picture or text box Notability draws over a sticky is therefore under it
+  in Gamma, and so is a picture Notability draws over a text box; the
+  report says so of each (`notability_map._covered`).
 - **Sample spacing**: Notability's Bézier chains are flattened to samples at
   most a point apart (before the client's 0.1 pt decimation), within 0.05
   pt of the curve. The client's pen outline (perfect-freehand at streamline
@@ -499,22 +615,41 @@ gamma/notability_write.py). What is known of what the app accepts:
   sample supports.
 - **A picture's crop** is kept as fractions of the image as a browser shows
   it: `FigureCropRectKey` over the file's pixel size (an `.ntb`'s over its
-  logical asset size), cut to the image, and the whole image when there is
-  none or it holds nothing. The export multiplies it back by the file's
-  pixel size. A stretch is then the shown size's aspect against the crop's,
-  with nothing to compute.
+  logical asset size, mirrored first where the picture is flipped), and the
+  whole image when there is none. The export multiplies it back by the
+  file's pixel size. Inside the image a stretch is then the shown size's
+  aspect against the crop's, with nothing to compute.
+- **A crop past the image** is cut to it, and the frame is cut by the same
+  fractions of the crop in its own axes, mirrored for the flips, its centre
+  moved by the kept part's offset turned with it (`notability_map._cut`):
+  the part kept shows where Notability drew it, unstretched. A crop larger
+  than the image is the whole image in the part of the frame it covered; a
+  crop holding nothing of the image is the whole image in the whole frame.
+- **A small picture**: a frame with a side under 8 pt (`picture.MIN_SIDE`)
+  grows about its centre until that side is 8 pt, its aspect kept; a page
+  too small for it then scales it down (`picture.keep_on_surface`), the
+  short side held at 8 pt.
 - **A picture's turn** is kept in degrees, clockwise as seen:
   `rotationDegrees` holds radians, converted both ways. Every reader and
   writer applies the crop, then the flips, then the turn ("Pictures", above).
 - **A GIF's animation** is the picture's file whenever the note has it,
   within the per-file cap and readable as a GIF: the browser animates it
   cropped, flipped or turned alike. Without it the still frame is shown.
-- **Nothing is decoded.** A picture's file is stored as it came. Only its
-  pixel size is read, from its header, with the EXIF orientation applied
-  where browsers apply it. Each file of a note is read and stored once,
-  however many pictures show it.
-- **A caption** comes in as the content, on one line, escaped as plain
-  text, and goes back as its plain text on one line.
+- **Pictures stay as they came.** A PNG, JPEG, GIF or WebP is stored as it
+  came and never decoded: only its pixel size is read, from its header,
+  with the EXIF orientation applied where browsers apply it. A TIFF, BMP or
+  AVIF, which a browser page cannot show, is stored as a PNG of its first
+  frame, turned as its EXIF orientation says
+  (`note_app_import.picture_file`), so the crop's fractions hold, and its
+  grey kept to 16 bits; one past `pdf_image.MAX_DECODED_PIXELS`
+  (40,000,000), in its pixels or in a TIFF's tile, is left out before it
+  is decoded. HEIC, a picture of floating-point samples and any other
+  format are left out with a warning. Each
+  file of a note is read and stored once, however many pictures show it.
+- **A caption** comes in as the content line by line: split at any line
+  terminator (a line separator, U+2028, and a lone `\r` as well as `\n`),
+  each line trimmed and escaped as plain text (`text_box.markdown_of`). It
+  goes back as its plain text on one line.
 
 ## Still open
 
@@ -522,14 +657,25 @@ gamma/notability_write.py). What is known of what the app accepts:
   been tried), text boxes, PDF pages and pictures above all; what
   `staticWidth` does in the app (Gamma writes it for US Letter sheets);
   whether a blank page at the end of a note survives; a picture's turn,
-  crop, flips and caption as Gamma writes them, the order of the flips and
-  the turn on the device, and whether two pictures may share one file under
-  `Images/` (Gamma writes two).
+  crop, flips and caption as Gamma writes them, and whether two pictures
+  may share one file under `Images/` (Gamma writes two).
+- Pictures: where the crop falls against the flips (no sample picture is
+  both cropped and flipped); how pictures stack against ink and text boxes
+  (Gamma draws every picture under both, and says so of one whose
+  `zIndex` lies above a text box it meets; no sample shows Notability's
+  order); how a caption is laid out on the page (Gamma keeps it in the
+  notes).
 
-- `.ntb`: a bundle that is an edit log (read as nokcha0 describes it, with
-  none to check it on); recordings; shape fills and arrowheads; checklist
-  ticks and text highlights; where several PDFs' pages go; text boxes and
-  PDF pages, checked on written bundles alone.
+- `.ntb`: a bundle that is an edit log, its edits, moves, deletes and
+  restores read from the web app's schema with none to check them on;
+  whether the iPad's NTB export writes a block's scale, caption switch and
+  flips (5, 8, 16 and 17) and edits and moves (23 and 24) at all, since no
+  sample has them; a page made by a later page record (3), which a
+  position names by that record and its index, while the reader reads the
+  index alone (the sample's records all name its first); recordings; shape
+  fills and arrowheads; checklist ticks and text highlights; where several
+  PDFs' pages go; text boxes and PDF pages, checked on written bundles
+  alone.
 - Strokes on recordings: the event join on current versions, and per-sample
   times interpolated over an event's duration.
 - The flow text's layout on the page (it is imported as notes).

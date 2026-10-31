@@ -812,7 +812,13 @@ curve becomes one gamma-ink v2 stroke ([handwriting.md](handwriting.md)
   its stroke's. A curve of style 6, or with an alpha of 0, is not drawn by
   Notability and not imported.
 - **Groups** (16.x) are read with their transforms composed and their
-  widths scaled, their shapes from the shape list each member holds.
+  widths scaled, their shapes from the shape list each member holds. A
+  member of a type the import does not know, a type 1 member that is no
+  archive, a type 2 member that is no shape list (a mapping whose `shapes`,
+  `kinds` and `indices` are lists), or an item that is no member at all is
+  left out and said ("1 item in a group of handwriting could not be read
+  and was left out"); the group's other members are drawn. The sample's
+  70 type 2 members are all shape lists.
 - **Shapes** keep the record the client's recogniser writes (params in page
   points, normalised as `shapes.js` does), so a handle drag rebuilds them: a
   line, a straight arrow, a rectangle or square with square corners, a
@@ -853,23 +859,58 @@ curve becomes one gamma-ink v2 stroke ([handwriting.md](handwriting.md)
 - A picture becomes a picture block
   ([pictures.md](pictures.md#the-notability-import-and-export),
   `notability_map.picture_block`): `pdf_page` on a PDF page, under its
-  sheet on paper. Its file is stored as it came, never decoded
-  (`note_app_import.AppImport.store_picture`, which the GoodNotes import
-  shares). Its frame (`documentOrigin`, `unscaledContentSize`) goes
-  through the page's frame and is kept on the page
-  (`picture.keep_on_surface`). The turn
-  (`rotationDegrees`, in radians) is `angle` in degrees, and the flips are
-  `flip_h` and `flip_v`. The crop (`FigureCropRectKey`, in the file's
-  pixels; an `.ntb`'s in the asset's logical size, `crop_size`) is
-  fractions of the image as the browser shows it, cut to the image; one
-  that holds nothing is the whole image. A stretch needs nothing: the
-  frame's aspect is not the crop's. The caption (`captionFieldText`), on
-  one line and escaped, is the block's content. A picture whose file is
-  missing, past `MAX_HELD_BYTES`, or not a PNG, JPEG, GIF or WebP whose
-  size reads is left out with a warning.
+  sheet on paper. Its file is stored as it came, a TIFF, BMP or AVIF as a
+  PNG (`note_app_import.AppImport.store_picture`, which the GoodNotes
+  import shares; Limits, below). Its frame (`documentOrigin`,
+  `unscaledContentSize`) goes through the page's frame and is kept on the
+  page (`picture.keep_on_surface`): one that crosses the page's edge is
+  moved onto it whole, scaled down when it is larger than the page. A
+  frame with a side under 8 pt (`picture.MIN_SIDE`) first grows about its
+  centre until that side is 8 pt, its aspect kept; on a page too small for
+  it then, `keep_on_surface` scales it down and the short side stays 8 pt.
+  The turn (`rotationDegrees`, in radians, taken within a half turn either
+  way, so a huge one is the same turn) is `angle` in degrees, and the
+  flips are `flip_h` and `flip_v`.
+- The crop (`FigureCropRectKey`, in the file's pixels; an `.ntb`'s in the
+  asset's logical size, `crop_size`) is fractions of the image as the
+  browser shows it; one that holds nothing of the image is the whole image
+  in the whole frame. Inside the image a stretch needs nothing: the
+  frame's aspect is not the crop's. A crop that reaches past the image is
+  cut to it, and the frame by the same fractions of the crop in its own
+  axes, mirrored for the flips, its centre moved with the part kept and
+  turned with it (`notability_map._cut`). So the part of the image kept
+  lies where Notability drew it, unstretched, and a crop larger than the
+  image shows the whole image in the part of the frame it covered.
+- The image is the full-resolution one. When the note lacks its file or
+  flags it `imageIsMissing`, the smaller copy (`contentSnapshot`) stands
+  in, and failing that an animated GIF's animation alone, the still frame
+  then not named missing. A stand-in is shown whole in Notability's frame,
+  since the crop is measured on the image the note lacks. The report says
+  so ("1 picture shown cropped comes in whole: the note lacks the image
+  its crop is measured on"), unless the crop is all of that image (at its
+  origin, with the stand-in's aspect: `notability_map._whole`). With none
+  of them the picture is named missing.
+- The caption (`captionFieldText`, when `isCaptionEnabled`) is the block's
+  content line by line. A line ends at any line terminator (`\n`, `\r\n`,
+  a lone `\r`, Notability's line separator U+2028, U+2029), and each line
+  is trimmed and escaped as plain text (`text_box.markdown_of`), so none
+  reads as a heading, list, quote, rule or code block. It is cut at
+  `ops.MAX_CONTENT` characters, never inside an escape, and the cut is
+  said ("1 picture caption was cut short").
+- A picture whose file is missing, past `MAX_HELD_BYTES`, or not a
+  readable PNG, JPEG, GIF, WebP, TIFF, BMP or AVIF is left out with a
+  warning.
 - An animated GIF is its animation whenever the note has it within
   `MAX_HELD_BYTES` and it stores, cropped, flipped or turned alike: the
-  browser animates it so. Otherwise it is its still frame.
+  browser animates it so. Otherwise it is its still frame, unsaid.
+- An `.ntb`'s picture (a block of the image type, or one that names an
+  asset) is as its record and the log's later edits and moves leave it
+  ([research/notability-format.md](../research/notability-format.md#ntb),
+  "A log"). Its frame is its size times its scale, its flips are read, and
+  its crop, which Notability measures on the image as flipped, is mirrored
+  onto the image as stored. Its caption is the text whose text field
+  names it, plain with its line breaks, when the block shows one
+  (EnableCaption).
 - Pictures an older import made stay text boxes holding an image. Their
   pixels were transformed and their crop is gone, so no migration makes
   them picture blocks.
@@ -962,15 +1003,32 @@ names:
   points, so only a page many times as many points wide as W gets there:
   a letter page of a note a few dozen units wide, or a PDF page far wider
   than its note. Finding the notes of an upload is linear in its files.
-- Pictures are PNG, JPEG, GIF or WebP by their first bytes, and nothing
-  decodes them: only their size is read, from the header
+- A PNG, JPEG, GIF or WebP picture (by its first bytes) is stored as it
+  came and never decoded: only its size is read, from the header
   (`picture.image_size`, the EXIF orientation applied as browsers apply
-  it), so a picture of any declared size costs no more. A file is read and
-  stored once per note however many pictures show it (`store_picture`'s
-  `files`). A still is read again at most once, to be stored for a picture
-  shown without the animation an earlier one showed. A bundled PDF is read
-  and opened once however many names lead to it, and a recording file
-  listed twice is one recording. Recordings are `.m4a` by their `ftyp`,
+  it), so a picture of any declared size costs no more. A TIFF, BMP or
+  AVIF, which a page cannot show, is decoded into a PNG of its first frame
+  as shown, its EXIF orientation applied (an AVIF's `irot` and `imir` too,
+  as Pillow reads them), so the crop's fractions hold
+  (`note_app_import.picture_file`). A 16-bit grey one stays 16-bit (a
+  32-bit one is cut to the 16 bits a PNG holds), and a CMYK or Lab one
+  loses its colour profile, which an RGB PNG cannot use. Its pixels, and
+  a TIFF's tile, which is decoded whole however little of it the picture
+  shows, are checked against `pdf_image.MAX_DECODED_PIXELS` (40,000,000)
+  before it is decoded, and one past them is left out ("Picture Scan.tif
+  is left out: over 40,000,000 pixels"). This holds for a `.note`'s
+  pictures, an `.ntb`'s `image/*` assets and GoodNotes' pictures alike.
+  HEIC, SVG, PDF, a picture of floating-point samples (whose range is not
+  said) and any other file are left out ("Picture Photo.heic is left out:
+  not a readable PNG, JPEG, GIF, WebP, TIFF, BMP or AVIF picture"); an
+  `.ntb` asset that
+  is no `image/*` is an object of a kind the import does not know. A file
+  is read and stored once per note however many pictures show it
+  (`store_picture`'s `files`). A still is read again at most once, to be
+  stored for a picture shown without the animation an earlier one showed.
+  A bundled PDF is read and opened once however many names lead to it,
+  and a recording file listed twice is one recording. Recordings are
+  `.m4a` by their `ftyp`,
   their length read from box headers only, and are streamed into storage
   (`storage.store_file_stream`). A text box's, a formula's or a caption's
   text is cut at 200,000 characters, what the editor saves
@@ -978,7 +1036,12 @@ names:
 - An `.ntb`'s log is read up to 1,500,000 records (`notability.MAX_RECORDS`;
   past them the rest is left out, with a warning), and its text styles may
   touch 20,000,000 characters in all (`notability_ntb.MAX_STYLED`; past them
-  a text keeps its words only).
+  a text keeps its words only). Any number of records may point at one
+  vector, so the ids and tables the bundle's vectors list are 6,000,000 in
+  all, every reading of a vector counting (`notability_ntb.MAX_LISTED`);
+  past them a vector lists nothing more, without a warning. A real note
+  lists each record a few times at most: the sample lists 577 over its 430
+  records.
 - Every file goes through `store_pdf`, `store_file` or
   `store_file_stream` (quota, dedup), its size checked from the zip before a
   byte is read: a PDF or picture, held whole in memory, up to
@@ -996,21 +1059,47 @@ lists the upload's notes and, not imported, its other files.
 - A Supernote `.note`, and a "PDF + Recording" backup (add its PDF instead).
 - From an `.ntb`, what no bundle seen yet has shown how it keeps: its
   recordings, a shape's fill and arrowhead, a checklist's ticks, a highlight
-  on text. A bundle with several PDFs does not say where their pages go:
-  they are paper, with a warning. Its log is read as the decoders found it
-  (a record's last version, erase records); the sample is a compacted
-  list.
+  on text. A picture's flips, scale and caption, and the edits after
+  insertion, are read from Notability's web app's schema with no sample to
+  confirm them. A bundle with several PDFs does not say where their pages
+  go: they are paper, with a warning.
+- An `.ntb`'s log is replayed for blocks: versions, edits, moves, deletes
+  and restores, in their order
+  ([research/notability-format.md](../research/notability-format.md#ntb),
+  "A log"); the sample is a compacted list. Handwriting comes in where it
+  was drawn. A record that moves, turns or resizes a stroke, shape or group
+  is not applied to it and is said once ("ink edit": "1 later move, turn
+  or resize of handwriting is left out: it comes in where it was drawn"),
+  and one that changes it otherwise is a record of a kind the import does
+  not know. A page deleted in Notability is not taken out, since the pages
+  after it would be numbered again ("deleted page": "1 page deleted in
+  Notability is not taken out").
 - Left out with a warning: a partly erased shape whose centre line does
-  not read, a polygon's fill, objects
-  of a kind this import does not know, and anything past the limits. A
-  template paper comes in as plain paper of its colour.
+  not read, an item of an ink group that does not read ("group item"), a
+  polygon's fill, objects of a kind this import does not know, and
+  anything past the limits. A template paper comes in as plain paper of
+  its colour. Changed with a warning: a picture shown cropped whose image
+  the note lacks comes in whole ("crop"), and a caption past
+  `ops.MAX_CONTENT` is cut ("long caption").
 - Not kept: a text box's turn, alignment, fonts, per-run colours and
   underline; a sticky's lines; Notability's pencil shading and dash
-  lengths (Gamma draws its own); where a caption is drawn; note links and
-  tags; the
+  lengths (Gamma draws its own); where a caption is drawn, and its style;
+  a picture's lock and rounded corners; note links and tags; the
   handwriting Notability recognised (`HandwritingIndex`).
-- A text box or picture that overlaps a sticky is drawn under it, since
-  boxes lie under the ink layer.
+- Gamma draws a sticky as ink, over every picture and text box, and a
+  text box over the pictures. A picture or text box Notability draws over
+  a sticky, and a picture it draws over a text box, so lie under them, and
+  the report says so (`notability_map._covered`): "picture on sticky" ("1
+  picture lies on a sticky note, which Gamma draws over it"), "box on
+  sticky" ("1 text box lies on a sticky note, which Gamma draws over it")
+  and "picture on box" ("1 picture lies on a text box, which Gamma draws
+  over it"). Notability draws a page's objects in their z-order, which
+  the reader sorts them by. Two meet when their frames, turned as Gamma
+  turns them (a sticky and a picture about their centres, a text box or a
+  formula upright), overlap by more than an edge. The test is exact, by
+  separating axes: two turned frames whose bounding boxes meet do not
+  count unless the frames do. A `.note` and an `.ntb` are checked alike,
+  at the commit; a preview does not say it.
 - A long paper note is a notebook of as many sheets, and the notebook view
   mounts every sheet ([notebooks.md](notebooks.md) "Not built yet").
 
@@ -1063,11 +1152,16 @@ note of
 [Notability-notes-converter](https://github.com/nokcha0/Notability-notes-converter),
 exported by Notability 16 as both "Note" and "NTB" (its README says
 more): the module pins the Note export against the note's own bytes and
-its thumbnail, and holds the NTB export to it, stroke for stroke within a
-point. `test_notability_ntb.py` covers what the sample does not (a log's
-versions and erase records, text boxes, a PDF's pages, damage) on bundles
-`ntb_fixtures.py` writes. `GAMMA_NOTABILITY_SAMPLES` names a folder of
-more notes to import the same way.
+its thumbnail (page 1's pictures as Gamma draws them, too), and holds the
+NTB export to it, stroke for stroke within a point.
+`test_notability_ntb.py` covers what the sample does not on bundles
+`ntb_fixtures.py` writes: a log's versions, edits and moves of blocks
+(each slot, and a turn, scale or crop table that clears it), deletes and
+restores in their order and deleted pages; a picture's scale, flips,
+flipped crop and caption; text boxes and a text's owner (its text field);
+strikethrough in slot 13; a PDF's pages; damage and the `MAX_LISTED`
+budget. `GAMMA_NOTABILITY_SAMPLES` names a folder of more notes to import
+the same way.
 
 ## GoodNotes notebooks
 
@@ -1160,15 +1254,17 @@ Widths scale with the page when its PDF is drawn at another size than
   (counted from half a degree).
 - A picture becomes a picture block by the Notability import's rules
   (`notability_map.picture_block`, stored by the shared
-  `AppImport.store_picture`): its file stored as it came, never decoded,
-  and once however many pictures show it; its frame (`#2`) through the
-  page's and kept on the page; its turn (`#3.#3`, in radians) as `angle` in
-  degrees. A die-cut sticker, a one-page PDF, is rendered through PyMuPDF
-  to a PNG, transparent around the art, once for all the pictures that
-  show it: its longer side twice that of the largest of their frames, in
-  points, and at most 1,024 px (`goodnotes_import._sticker`), and the
-  blocks show that PNG. A picture GoodNotes shows cropped comes in whole
-  (counted), since where the visible rect (`#3`) cuts it is not confirmed.
+  `AppImport.store_picture`): its file stored as it came, a TIFF, BMP or
+  AVIF as a PNG ([Limits](#notability-notes)), and once however many
+  pictures show it; its frame (`#2`) through the page's and kept on the
+  page, a side under 8 pt grown to it; its turn (`#3.#3`, in radians) as
+  `angle` in degrees. A die-cut sticker, a one-page PDF, is rendered
+  through PyMuPDF to a PNG, transparent around the art, once for all the
+  pictures that show it: its longer side twice that of the largest of
+  their frames, in points, and at most 1,024 px
+  (`goodnotes_import._sticker`), and the blocks show that PNG. A picture
+  GoodNotes shows cropped comes in whole (counted), since where the
+  visible rect (`#3`) cuts it is not confirmed.
 - Each recording whose audio the notebook holds becomes a recording block
   after the sheets or the PDF's markup: one segment, its length from the
   file's movie header, started when GoodNotes started it, titled
@@ -1307,16 +1403,21 @@ computed by the same function on the note's own layout:
 - A picture block is an `ImageMediaObject` (`_picture`). Its frame goes
   through the note's. `rotationDegrees` is the turn in radians,
   `FigureCropRectKey` the crop × the file's pixel size as shown
-  (`picture.image_size`), and `isFlippedHorizontal` and
-  `isFlippedVertical` the flips. `captionFieldText` is the caption's plain
+  (`picture.image_size`), `$0` the same rectangle as the path Notability
+  keeps beside it (`notability_write.crop_path`; null for a picture shown
+  whole), and `isFlippedHorizontal` and `isFlippedVertical` the flips.
+  Readers such as notesconverter and OpenNote show a crop only when that
+  path is there. `captionFieldText` is the caption's plain
   text on one line, references read as their labels, and
   `isCaptionEnabled` is set when there is one.
 - Its file goes under `Images/` as it is. An animated GIF is its still
   frame under `Images/` and the GIF under `Assets/<id>/media.gif`, as
   Notability keeps one. Two pictures that show one file are written as
   two files.
-- A surface's pictures come before its boxes in `zIndex`, so they lie
-  under them, as on screen.
+- A surface's pictures come before its boxes in `zIndex`, and both before
+  its stickies (`notability_export._Page`), so pictures lie under boxes
+  and both under stickies, as on screen. A page with a sticky over a
+  picture or a box comes back as it was, with no warning.
 - A box holding one picture, as imports made one before a picture was a
   block of its own, is still a picture (`_boxed_picture`): in the box less
   its padding, as tall as the picture shown that wide. Its alt text is the
@@ -1364,9 +1465,10 @@ GIF), notes and a recording of two segments; a
 PDF page of three page sizes; and the sample's Note export, each the same
 page after. With the copy stripped it holds every stroke to what Notability
 keeps of it; with an item edited, that item comes as the note has it; and
-the file is held to the sample's classes and keys. An old box holding a
-picture comes back a picture block, its Obsidian size no part of its
-caption. The browser suite
+the file is held to the sample's classes and keys, a cropped picture's
+crop path to the sample's bytes. A sticky over a picture and a box comes
+back over them, unwarned. An old box holding a picture comes back a
+picture block, its Obsidian size no part of its caption. The browser suite
 exports a page from the dialog and imports it back
 (`transfer: a page out as a Notability note and back in is the page it
 was`).
@@ -2154,7 +2256,8 @@ caption is written as a note's text.
 - The Notability export writes two pictures that show one file as two
   files: whether Notability takes two media sharing one is unknown. How
   Notability itself shows a turned, cropped, flipped or captioned picture
-  Gamma wrote is untested, and so is the order of its flips and turn.
+  Gamma wrote is untested. Its own drawing puts the flips before the turn,
+  as Gamma does; where its crop falls against the flips no sample shows.
 
 ## The PDF writers
 

@@ -254,7 +254,8 @@ def _paper_style(arch: Archiver, color) -> plistlib.UID:
 def media_object(arch: Archiver, item: dict) -> plistlib.UID:
     """One ``mediaObjects`` entry: ``{kind: text|math|picture|sticky|<a
     class name>, origin, size, rotation?, z?, …}``; a picture's ``gif`` is
-    the asset id of an animated GIF's animation."""
+    the asset id of an animated GIF's animation, its ``copy`` the path of
+    the smaller copy of its image (``contentSnapshot``)."""
     kind = item["kind"]
     fields = _geometry(arch, item)
     if kind == "text":
@@ -280,6 +281,9 @@ def media_object(arch: Archiver, item: dict) -> plistlib.UID:
                       captionFieldText=arch.string(item["caption"]) if item.get("caption") else plistlib.UID(0))
         if item.get("gif"):  # an animated GIF: its animation is Assets/<gif>/media.gif
             fields.update(isGif=True, assetsIdKey=arch.string(item["gif"], mutable=True))
+        if item.get("copy"):
+            fields["contentSnapshot"] = arch.obj("GLSnapshot", {"relativePath": arch.string(item["copy"]),
+                                                                "saveAsJPEG": True, "imageIsMissing": False})
         return arch.obj("ImageMediaObject", fields, ("GenericMediaObject",))
     return arch.obj(kind, fields, ("GenericMediaObject",))
 
