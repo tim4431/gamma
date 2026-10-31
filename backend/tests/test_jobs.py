@@ -187,6 +187,45 @@ def test_a_job_never_reads_as_ended_before_its_row_says_how(alice, monkeypatch):
     assert done["state"] == "done" and done["artifact"]["name"] == "file.bin"
 
 
+@pytest.mark.parametrize("raised", [None, ValueError("no")], ids=["done", "failed"])
+def test_a_jobs_end_hook_finds_it_ended_and_wait_waits_for_the_hook(alice, raised):
+    """``ended`` runs once the job reads as ended, so the work it wakes
+    never finds the job still running; ``wait`` returns after the hook."""
+    from gamma import jobs
+    seen, held, go = [], threading.Event(), threading.Event()
+
+    def run(job):
+        # The hook reads the job by the handle start returns: without this, a
+        # run that raises at once can end it before the handle is assigned.
+        assert held.wait(10), "the test never took the job's handle"
+        if raised:
+            raise raised
+        return {"made": 1}
+
+    def ended(state):
+        seen.append((state, jobs.get(job["id"])["state"]))
+        assert go.wait(10), "the test never released the hook"
+        seen.append("returned")
+
+    job = _start("jb_alice", run, ended=ended)
+    held.set()
+    threading.Timer(0.3, go.set).start()
+    _finished(job["id"])
+    state = "failed" if raised else "done"
+    assert seen == [(state, state), "returned"]
+
+
+def test_a_failing_end_hook_leaves_the_job_as_it_ended(alice):
+    from gamma import jobs
+
+    def ended(state):
+        raise RuntimeError("hook")
+
+    job = _start("jb_alice", lambda job: {"made": 1}, ended=ended)
+    done = _finished(job["id"])
+    assert done["state"] == "done" and done["result"] == {"made": 1} and job["id"] not in jobs._ending
+
+
 def test_stopping_a_running_job(alice):
     from gamma import jobs
 

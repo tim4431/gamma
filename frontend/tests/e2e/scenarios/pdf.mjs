@@ -28,7 +28,9 @@ export async function selectPdfText(page, pageNo, needle) {
 }
 
 // The same with the mouse: a drag over the needle's text, released at its
-// end. Returns the point it was released at (the selection popup opens by it).
+// end, then the hand moving on a little (`moveOn`), which opens the
+// selection popup (pdf/selectionTip.js MOVE_TO_SHOW). Returns the point it
+// was released at (the popup opens by it).
 // `highlighted`: the text highlighter is on, so the release highlights the
 // selection and clears it; the highlight's saved quote is then the check.
 // The text is measured once two readings agree: a page still moving (cards
@@ -38,7 +40,7 @@ export async function selectPdfText(page, pageNo, needle) {
 // edges: one that starts within Chromium's 20 px autoscroll belt scrolls
 // the viewer under it while it runs, so a span left at an edge by "nearest"
 // (the viewer scrolled to show a card) is brought to the middle.
-export async function dragSelectPdfText(page, pageNo, needle, { highlighted = false } = {}) {
+export async function dragSelectPdfText(page, pageNo, needle, { highlighted = false, moveOn = true } = {}) {
   const measure = () => page.evaluate(([pageNo, needle]) => {
     const span = [...document.querySelectorAll(`[data-page="${pageNo}"] .textLayer span`)].find((s) => s.textContent.includes(needle));
     if (!span?.firstChild) return null;
@@ -66,10 +68,19 @@ export async function dragSelectPdfText(page, pageNo, needle, { highlighted = fa
   await page.mouse.move((box.x1 + box.x2) / 2, box.y, { steps: 4 });
   await page.mouse.move(box.x2, box.y, { steps: 4 });
   await page.mouse.up();
-  if (highlighted) return { x: box.x2, y: box.y };
-  const got = await page.evaluate(() => window.getSelection().toString().trim());
-  if (got !== needle) throw new Error(`the drag over "${needle}" selected "${got}"`);
-  return { x: box.x2, y: box.y };
+  const release = { x: box.x2, y: box.y };
+  if (!highlighted) {
+    const got = await page.evaluate(() => window.getSelection().toString().trim());
+    if (got !== needle) throw new Error(`the drag over "${needle}" selected "${got}"`);
+  }
+  if (moveOn) await movePast(page, release);
+  return release;
+}
+
+// The mouse moving on from where it was let go, as a hand does after a
+// selection: what opens the selection popup.
+export async function movePast(page, release) {
+  await page.mouse.move(release.x + 6, release.y + 8, { steps: 2 });
 }
 
 export async function waitForPdf(page, pageNo = 1, timeout = 30000) {
@@ -539,11 +550,12 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
 
   // The strip's text highlighter: on, a drag over text is a highlight as the
   // mouse lets go, in the colour picked last, with no popup, and its note
-  // opens for typing as the popup's does; its button's menu picks the
-  // colour, and so does the popup. A paper of its own, in a tab of its own:
+  // opens for typing as the popup's does; once the mouse moves on, a bar
+  // over it recolours it. Its button's menu picks the colour, and so do the
+  // popup and that bar. A paper of its own, in a tab of its own:
   // a drag that starts on a highlight is a click on it, and the steps after
   // this one drag the Rydberg paper's free text.
-  await step("pdf: the text highlighter highlights a selection on release in the colour picked last, with no popup", async () => {
+  await step("pdf: the text highlighter highlights a selection on release in the colour picked last, its bar recolouring it", async () => {
     const up = await account.upload("/api/uploads", makePdf([["Alpha beta gamma delta", "Epsilon zeta eta theta"]]), "highlighter.pdf", "application/pdf");
     const doc = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Highlighter paper", source_url: up.source_url } });
     const p = await openPage(ctx, `${server.base}/?page=${doc.id}&ws=${account.ws}`);
@@ -563,15 +575,32 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await profileColor("#aaebaaa6");
       assertEq(await p.locator(".pdfViewer").evaluate((el) => el.style.getPropertyValue("--selection-color")), "#aaebaaa6",
         "the selection is drawn in its colour");
-      await dragSelectPdfText(p, 1, "beta gamma", { highlighted: true });
+      const release = await dragSelectPdfText(p, 1, "beta gamma", { highlighted: true, moveOn: false });
       await made("beta gamma", "#aaebaaa6");
-      assertEq(await p.locator(".plainTip").count(), 0, "no popup");
       assertEq(await p.evaluate(() => window.getSelection().toString()), "", "the selection is gone into the highlight");
       await until(() => p.evaluate(() => !!document.activeElement?.closest(".blockEditorCm")), { what: "the new highlight's note open for typing" });
+      await sleep(300);
+      assertEq(await p.locator(".plainTip").count(), 0, "no popup while the mouse holds still");
+      // the mouse moves on: the bar over the highlight it made, whose colour
+      // changes it and is the highlighter's from then on; the note stays open
+      await movePast(p, release);
+      const bar = p.locator(".plainTip");
+      await bar.waitFor();
+      assertEq(await bar.locator(".tipMoveBtn").count(), 0);
+      await bar.getByRole("button", { name: "Change to Purple", exact: true }).click();
+      await made("beta gamma", "#e6b4ffa6");
+      await profileColor("#e6b4ffa6");
+      await bar.waitFor({ state: "detached" });
+      assert(await p.evaluate(() => !!document.activeElement?.closest(".blockEditorCm")), "the note keeps the focus");
+      assertEq(await p.evaluate(() => new Set([...document.querySelectorAll("[data-hl-id]")].map((el) => el.dataset.hlId)).size), 1,
+        "recoloured, not another highlight");
       // off, the popup is back; its swatch becomes the highlighter's colour
       await button.click();
       assertEq(await button.getAttribute("aria-pressed"), "false");
-      await dragSelectPdfText(p, 1, "zeta eta");
+      const zeta = await dragSelectPdfText(p, 1, "zeta eta", { moveOn: false });
+      await sleep(300);
+      assertEq(await p.locator(".plainTip").count(), 0, "the popup waits for the mouse to move on");
+      await movePast(p, zeta);
       await p.waitForSelector(".plainTip .colorBtn", { timeout: 5000 });
       await p.locator(".plainTip .colorBtn").nth(2).click();
       await made("zeta eta", "#9bcdffa6");
@@ -1803,6 +1832,17 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
         return b.properties.pdf_position.pageNumber === 2 && !b.properties.pdf_position.lost ? b : null;
       }, { what: "the move saved" });
       assert((moved.properties.quote || "").includes("new sentence replaced"), `quote: ${moved.properties.quote}`);
+
+      // moved again by a drag that starts on the highlight itself: while it waits, the highlights let the
+      // pointer through, so the drag selects the text under them instead of pressing on one
+      await p.click(`[data-page="2"] div[data-hl-id="${lostId}"]`, { button: "right" });
+      await p.locator(".ctxMenuItem", { hasText: "Move to a selection" }).click();
+      await p.waitForSelector(".attachModeBanner[data-move-highlight]", { timeout: 5000 });
+      await dragSelectPdfText(p, 2, "new sentence");
+      await p.locator(".plainTip .tipMoveBtn").click();
+      await p.waitForSelector(".attachModeBanner[data-move-highlight]", { state: "detached", timeout: 5000 });
+      await until(async () => (await account.api(`/api/blocks/${lostId}`)).properties.quote === "new sentence",
+        { what: "the move onto its own text saved" });
 
       // moved again onto a box (an area drag), it becomes an area with no quote
       await p.click(`[data-page="2"] div[data-hl-id="${lostId}"]`, { button: "right" });

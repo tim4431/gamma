@@ -93,6 +93,7 @@ await page.mouse.move(sel.sx + (sel.ex - sel.sx) * 0.45, (sel.sy + sel.ey) / 2, 
 await page.mouse.move(sel.ex + 3, sel.ey, { steps: 20 });
 await beat(160);
 await page.mouse.up();
+await page.mouse.move(sel.ex + 9, sel.ey + 8, { steps: 2 }); // the popup opens as the mouse moves on
 await beat(220);
 
 // safety net: if the drag missed, set the exact range and re-fire mouseup

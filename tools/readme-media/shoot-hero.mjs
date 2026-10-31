@@ -74,6 +74,7 @@ try {
     await page.mouse.down({ clickCount: 2 });
     await page.mouse.move(b.x + b.width - 6, b.y + b.height / 2, { steps: 12 });
     await page.mouse.up();
+    await page.mouse.move(b.x + b.width, b.y + b.height / 2 + 8, { steps: 2 }); // the popup opens as the mouse moves on
     const selected = (await page.evaluate(() => window.getSelection()?.toString()))?.trim();
     if (selected !== HIGHLIGHT) throw new Error(`The drag selected "${selected}"`);
     await page.locator('.plainTip .colorBtn').first().click();

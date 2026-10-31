@@ -80,7 +80,7 @@ placed: one still measured on the old file (`pdf_position.doc_id`), a
 dashed one and a lost one are held ("being placed in the new PDF", "dashed
 in Gamma until accepted", "not found in the new PDF"), counted under the
 link's waiting annotations ([zotero_sync.md](zotero_sync.md#annotations)). However a run ends, written or not, the link is told
-(`zotero_sync_pdfs.relocation_ended`): a PDF replaced here waits to go to
+(`zotero_sync_pdfs.relocation_ended`) once the job reads as ended: a PDF replaced here waits to go to
 Zotero until its highlights are placed, and is decided then
 ([zotero_sync.md](zotero_sync.md#the-plan)). A share link never reaches the endpoint. The job's params
 are `{page_id, title, doc_id, min_match, exact_chars}`, the file it places
@@ -996,7 +996,9 @@ click on a highlight) end each other (`startHighlightMove`,
 `startAttachMode`), so one banner shows and the PDF's next selection means
 one thing. The banner says what to do; the next
 selection on the PDF, text or an area drag (the area key,
-[hotkeys.md](hotkeys.md#held-keys)), shows the tip with one button, *Move
+[hotkeys.md](hotkeys.md#held-keys)), the highlights letting the pointer
+through meanwhile (`.pdfMoving`) so the text under them, the highlight's
+own included, can be selected, shows the tip with one button, *Move
 the highlight here* (`PlainTip`'s `onMove`), and translates nothing, even
 with translate on select on; an area drag sends no picture of the region
 to the chat either (`PdfViewer`'s `onAreaSelected` skips

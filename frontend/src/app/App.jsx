@@ -4214,9 +4214,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // A page's passive landing (openBlock): the notes scroll to where the
   // reader left off, else to the top, and that row flashes once — but no
   // row is focused, so the chat's Cursor chip waits for a real click or
-  // caret. Explicit jumps (deep links, highlights, backlinks, search hits,
-  // citations) go through pendingBlockScrollRef above and do focus.
-  const landingRef = useRef(null); // {id} ("" = the top) until the page's rows render
+  // caret. A tab's page back where it was left this session (`kept`) is
+  // no landing to point out: it does not flash. Explicit jumps (deep
+  // links, highlights, backlinks, search hits, citations) go through
+  // pendingBlockScrollRef above and do focus.
+  const landingRef = useRef(null); // {id, offset?, kept?} ("" = the top) until the page's rows render
   useEffect(() => {
     const land = landingRef.current;
     if (!land) return;
@@ -4225,8 +4227,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (!list) return;
     const row = land.id ? list.querySelector(`.blockRowWrap[data-block-id="${land.id}"]`) : null;
     if (!row) { list.scrollTop = 0; return; }
-    list.scrollTop += row.getBoundingClientRect().top - list.getBoundingClientRect().top;
-    triggerFlash(land.id);
+    list.scrollTop += row.getBoundingClientRect().top - list.getBoundingClientRect().top + (land.offset || 0);
+    if (!land.kept) triggerFlash(land.id);
   }, [blocks]);
 
   // Fetch backlinks for the focused block, while the "Linked from" section
@@ -5847,13 +5849,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         }
       }
 
-      // The notes land where the reader left off (text-only pages) or at the
-      // top — a passive landing that focuses no row (see landingRef) —
-      // unless this open lands on a block of its own (`opts.block`).
+      // The notes land where the reader left off or at the top — a passive
+      // landing that focuses no row (see landingRef) — unless this open
+      // lands on a block of its own (`opts.block`). A tab's page lands
+      // exactly where it was left this session (notesPlaceRef); otherwise
+      // a text-only page lands on its synced row.
+      const has = (id) => !!id && flattenBlocks(childBlocks).some((b) => b.id === id);
+      const kept = opts?.restoreScroll ? notesPlaceRef.current[blockId] : null;
       const notePos = !attachment ? readPosRef.current[blockId] : null;
-      landingRef.current = opts?.block ? null : {
-        id: notePos?.page === 0 && notePos.block && flattenBlocks(childBlocks).some((b) => b.id === notePos.block) ? notePos.block : "",
-      };
+      landingRef.current = opts?.block ? null
+        : kept && (!kept.id || has(kept.id)) ? { ...kept, kept: true }
+          : { id: notePos?.page === 0 && has(notePos.block) ? notePos.block : "" };
 
       const newUrl = withWorkspace(`${window.location.pathname}?block=${encodeURIComponent(blockId)}`);
       window.history.replaceState({}, "", newUrl);
@@ -5960,6 +5966,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // were, not just to the same page. blockId -> {top, scale}, or for a page
   // with sheets {place} (notebook/sheetPlace.js), whichever view shows them.
   const tabScrollRef = useRef({});
+  // Where each page's notes stood when it was left, for this session:
+  // blockId -> {id, offset} (captureScrollPos), the row at their top ("" the
+  // top itself) and the pixels scrolled into it.
+  const notesPlaceRef = useRef({});
   // Per-page window layout (dock slots, collapsed bars, hidden windows, and
   // panel size ratios) — captured when leaving a page, restored on reopen.
   const pageLayoutsRef = useRef({});
@@ -6023,19 +6033,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         localStorage.setItem(`gamma-page-layouts:${prefsUserRef.current}`, JSON.stringify(pageLayoutsRef.current));
       } catch {}
     }
-    // A page without a viewer keeps its place by block, not by PDF page.
-    if (focusedBlockId && !shareMode && !pageAttach) {
-      const list = document.querySelector(".sidebar .blockList");
-      if (list) {
-        let topId = "";
-        if (list.scrollTop > 8) {
-          const top = list.getBoundingClientRect().top + 4;
-          for (const row of list.querySelectorAll(".blockRowWrap[data-block-id]")) {
-            if (row.getBoundingClientRect().bottom > top) { topId = row.dataset.blockId || ""; break; }
-          }
+    // The notes keep their place by block: the row at their top, and how
+    // far into it they are scrolled, which its tab lands on again
+    // (notesPlaceRef). A page without a viewer also keeps that row in the
+    // synced reading positions; a PDF's entry there is its PDF page.
+    const list = focusedBlockId ? document.querySelector(".sidebar .blockList") : null;
+    if (list) {
+      let place = { id: "", offset: 0 };
+      if (list.scrollTop > 8) {
+        const top = list.getBoundingClientRect().top;
+        for (const row of list.querySelectorAll(".blockRowWrap[data-block-id]")) {
+          const r = row.getBoundingClientRect();
+          if (r.bottom > top + 4) { place = { id: row.dataset.blockId || "", offset: top - r.top }; break; }
         }
-        recordNotePos(focusedBlockId, topId);
       }
+      notesPlaceRef.current[focusedBlockId] = place;
+      if (!shareMode && !pageAttach) recordNotePos(focusedBlockId, place.id);
     }
     // A page's sheets keep their place, on whichever view shows them.
     if (focusedBlockId && hasSheets) {
@@ -12114,6 +12127,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 }, { edit: !extras?.comment });
                 hideTip?.();
                 if (extras?.comment && id) commentOnNewHighlight(id);
+                return id;
+              }}
+              // the bar over a highlight the highlighter just made: what its menu does to it,
+              // a colour picked there the highlighter's from now on
+              onHighlightAction={readOnly ? undefined : (id, action, c) => {
+                if (action === "color") {
+                  changeHighlightColor(id, highlightColor(c));
+                  setHighlighterColor(highlightColor(c));
+                } else if (action === "comment") {
+                  openThread(id, highlightEl(id), { compose: true, toggle: false, pdf: true });
+                } else if (action === "link") {
+                  setLinkDialog({ position: null, content: { text: highlights.find((x) => x.id === id)?.content?.text || "" }, editBlockId: id });
+                  setLinkDialogInput("");
+                }
               }}
             />
           ) : notebook ? (

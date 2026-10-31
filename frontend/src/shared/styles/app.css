@@ -5778,6 +5778,10 @@ a.shareBrand:hover { background: var(--bg-hover); }
    as on the markup strip's highlighters. */
 .pdfCtlBox .stripInkBtn { position: relative; padding-bottom: 5px; }
 .pdfCtlBox .stripInkBtn .inkToolInk { left: 7px; right: 7px; bottom: 3px; height: 3px; }
+/* A highlight waiting to be moved (PdfViewer moveMode): the highlights let
+   the pointer through to the text under them, which the new place may
+   share with them (the highlight's own old place, a neighbour's). */
+.pdfViewer.pdfMoving .pdfPageWrap [data-hl-id] { pointer-events: none; }
 .pdfViewer.areaCursor .pdfPageWrap,
 .pdfViewer.areaCursor .textLayer,
 .pdfViewer.areaCursor .textLayer span {
