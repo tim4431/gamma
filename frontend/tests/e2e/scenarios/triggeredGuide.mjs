@@ -449,7 +449,8 @@ export async function triggeredGuideScenarios(env) {
       await page.waitForSelector('[data-guide-overlay="ink-style"] .guideCard');
       await page.click(".pdfInkBar .inkToolBtn.modeActive");
       await page.waitForSelector('[data-guide-overlay="ink-erase"] .guideCard');
-      assertEq(await page.locator(".guideSegments i").count(), 5, "five steps from the menu");
+      assertEq(await page.locator(".guideSegments i").count(), 6, "six steps from the menu");
+      await page.waitForSelector('[data-guide-overlay="ink-erase"] .guideMedia[data-media="ink-lasso"] svg');
       await page.click('[data-guide="ink.eraser"]');
       await line([box.x + 180, box.y + 120], [box.x + 180, box.y + 200]);
       assertEq(await page.locator('[data-guide-overlay="ink-erase"] .guideCard').count(), 1, "erasing does not move the card on");
@@ -457,6 +458,10 @@ export async function triggeredGuideScenarios(env) {
       await page.keyboard.press("Control+z");
       await page.waitForSelector('[data-guide="notes.ink"] svg.blockInkCard');
       await page.click('[data-guide="ink.lasso"]');
+      await primary(page).click();
+      // Shapes and the ruler, in More at the strip's end.
+      await page.waitForSelector('[data-guide-overlay="ink-shapes"] .guideMedia[data-media="ink-shape"] svg');
+      assertEq(await page.locator('[data-guide="ink.more"][data-guide-active]').count(), 1, "More is pointed at");
       await primary(page).click();
       // Last, the Text tool beside them in the strip.
       await page.waitForSelector('[data-guide-overlay="ink-text"] .guideCard');
@@ -737,9 +742,9 @@ export async function triggeredGuideScenarios(env) {
       await page.click('[data-guide="header.account"]');
       await page.click('[data-guide="account.tour"]');
       await page.click('[data-tour="highlights"]');
-      await page.waitForSelector('[data-guide-overlay="hl-note"] .guideCard');
-      await page.mouse.move(5, 5);
-      await page.waitForSelector('[data-guide-scene="hl-note"] .guideSceneRipple', { state: "attached", timeout: 8000 });
+      // The round trip, highlight to note and back, as a clip on the card.
+      await page.waitForSelector('[data-guide-overlay="hl-note"] .guideCard .guideMedia[data-media="highlight-jump"] svg');
+      assertEq(await page.locator("[data-guide-scene]").count(), 0, "a clip on the card, no scene on the highlight");
       await primary(page).click();
       await page.waitForSelector('[data-guide-overlay="hl-menu"] .guideCard');
       await page.mouse.move(5, 5);
@@ -750,6 +755,46 @@ export async function triggeredGuideScenarios(env) {
       await primary(page).click();
       await until(async () => await page.locator(".guideCard").count() === 0);
       assertEq(await progress(page, "highlights"), "done");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  // A setup guide (docs/dev/onboarding.md, "Setup guides"): its steps open
+  // Settings at their pane, its card lists them, a step ticks from its event
+  // whether or not it is showing, and a run the last load left comes back as
+  // a card in the corner that resumes at the first step not done.
+  await step("triggered guide: a setup guide opens Settings, lists its steps, resumes after a reload and ticks from its event", async () => {
+    const { ctx, page } = await open("");
+    try {
+      await page.click('[data-guide="header.account"]');
+      await page.click('[data-guide="account.tour"]');
+      await page.locator('.ctxMenuLabel', { hasText: "Setup guides" }).waitFor();
+      await page.click('[data-tour="assistants"]');
+      await page.waitForSelector('[data-guide-overlay="assistant-setup"] .guideCard .guideMedia[data-media="assistant-connect"] svg');
+      await page.waitForSelector('[data-guide="settings.assistantSetup"][data-guide-active]');
+      assertEq(await page.locator(".guideCard .guideChecklist li").count(), 3, "the card lists the guide's steps");
+      assertEq(await page.locator(".guideCard .guideSegments").count(), 0, "a list in place of the bar");
+      assertEq(await page.locator(".guideCard .guideChip.turn").count(), 1, "the step waits for the connection: your turn");
+      // Left for a terminal and the browser: the next load offers to go on.
+      await page.reload();
+      await page.waitForSelector('[data-guide-offer="assistants"] .guideCard.guideCardCorner');
+      assertEq((await page.locator('[data-guide-offer="assistants"] .guideStep').textContent()).trim(), "Setup guide · 0 of 3 done");
+      await page.getByRole("button", { name: "Continue" }).click();
+      await page.waitForSelector('[data-guide-overlay="assistant-setup"] .guideCard');
+      await page.waitForSelector('[data-guide="settings.assistantSetup"]');
+      // The assistant connects elsewhere; Settings reads its list again when
+      // the window gets the focus back, and the step is done.
+      await user.api("/api/integrations/tokens", { method: "POST", body: { name: "e2e assistant", scope: "read", expires_in_days: 1 } });
+      await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+      await page.waitForSelector('[data-guide-overlay="assistant-setup"] .guideChip.done');
+      await page.waitForSelector('[data-guide-overlay="assistant-ask"] .guideCard.guideCardCentered');
+      assertEq(await page.locator(".guideChecklist li.done").count(), 1, "ticked in the list");
+      await primary(page).click();
+      await page.waitForSelector('[data-guide-overlay="assistant-access"] .guideCard');
+      await page.waitForSelector('[data-guide="settings.assistantAccess"][data-guide-active]');
+      await primary(page).click();
+      await until(async () => await page.locator(".guideCard").count() === 0);
+      assertEq(await progress(page, "assistants"), "done");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

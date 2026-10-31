@@ -4,7 +4,8 @@ import { T } from "../../shared/i18n/i18n.js";
 // finds its note (and quotes it into the chat), its menu recolours, links or
 // deletes it, and its note leads back. The steps point at the highlight made
 // last (`pick: "recent"`, guide/recent.js); the note step is `optional`, for
-// a page whose Notes window is closed.
+// a page whose Notes window is closed. The first card's clip shows the round
+// trip, highlight to note and back.
 export default {
   id: "highlights",
   version: 1,
@@ -17,8 +18,8 @@ export default {
   steps: [
     { id: "hl-note", anchor: "pdf.highlight", placement: "bottom",
       title: T("Click a highlight to find its note"),
-      body: T("It's quoted into your next chat message too."),
-      scene: [{ click: "pdf.highlight", at: [0.3, 0.5] }] },
+      media: "highlight-jump",
+      body: T("It's quoted into your next chat message too.") },
     { id: "hl-menu", anchor: "pdf.highlight", placement: "bottom",
       title: T("Right-click to recolour, link or delete"),
       bodyTouch: T("Long-press it instead."),

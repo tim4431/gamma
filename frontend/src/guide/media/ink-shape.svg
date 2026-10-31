@@ -1,0 +1,79 @@
+<svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg" focusable="false">
+  <!-- Shapes: the pointer presses More at the end of the markup strip and
+       its menu drops (paste, select all, the ruler, Shapes, the zoom
+       window); it picks Shapes, the row lights, the menu goes and the
+       Shapes button stands in the strip, armed. A drag across the page
+       lays down a clean rectangle, and a second drag from its side an
+       arrow, each a shape and not a sketch (markup/MarkupToolbar.jsx: a
+       modifier shows in the strip only while it is on). -->
+
+  <!-- the page, room for the drawing under its text -->
+  <rect class="m-well" x="10" y="10" width="300" height="180" rx="6" />
+  <rect class="m-card" x="40" y="34" width="240" height="156" rx="2" />
+  <rect class="m-line" x="52" y="46" width="70" height="6" rx="3" />
+  <rect class="m-line-dim" x="52" y="60" width="210" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="52" y="67" width="196" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="52" y="74" width="210" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="52" y="81" width="120" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="52" y="168" width="216" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="52" y="175" width="200" height="3.5" rx="1.75" />
+
+  <!-- the markup strip: pens, the eraser, the lasso, Text, a modifier's
+       place, More and close -->
+  <rect class="m-card" x="70" y="13" width="134" height="18" rx="4" />
+  <rect class="m-chip" x="73.5" y="15.5" width="11" height="13" rx="3" />
+  <path class="m-glyph" d="M81.5 17.5L76.5 22.5M91.5 17.5L86.5 22.5M101.5 17.5L96.5 22.5M111.5 17.5L106.5 22.5" />
+  <rect class="m-line" x="76" y="24.5" width="6" height="2" rx="1" />
+  <rect class="m-line-dim" x="86" y="24.5" width="6" height="2" rx="1" />
+  <rect class="m-line-dim" x="96" y="24.5" width="6" height="2" rx="1" />
+  <rect class="m-line-dim" x="106" y="24.5" width="6" height="2" rx="1" />
+  <path class="m-rule" d="M117 16.5V27.5" />
+  <path class="m-glyph" d="M121.5 24l4-5h4l-4 5zM121.5 26h8" />
+  <path class="m-glyph" d="M136 20.5c0-2.6 8-2.6 8 0s-8 2.6-8 0M138 22.8c0 1.6-1 2.6-2 3.4" />
+  <path class="m-glyph" d="M150.5 18.5h7M154 18.5v7" />
+  <path class="m-glyph" d="M178.5 22h.01M182 22h.01M185.5 22h.01" />
+  <path class="m-glyph" d="M193 19l6 6M199 19l-6 6" />
+  <g class="m-appear" style="--m-at: 0.42">
+    <rect class="m-chip-on" x="162" y="15.5" width="12" height="13" rx="3" />
+    <path class="m-glyph-on" d="M163 19.5h4.5v4.5h-4.5zM168.5 25.5l4.5-6" />
+  </g>
+
+  <!-- the shapes, drawn by the drags -->
+  <path class="m-ink m-draw" pathLength="1" style="--m-at: 0.52" d="M80 104H150V150H80Z" />
+  <path class="m-ink m-draw" pathLength="1" style="--m-at: 0.66" d="M150 127L226 112L217.3 108.8L226 112L218.7 117.7" />
+
+  <!-- More's menu, until Shapes is picked -->
+  <g class="m-leave" style="--m-at: 0.4">
+    <g class="m-appear" style="--m-at: 0.15">
+      <rect class="m-card" x="150" y="34" width="74" height="64" rx="6" />
+      <path class="m-glyph" d="M156 37.5h5v6h-5z" />
+      <rect class="m-line-dim" x="166" y="38.75" width="44" height="3.5" rx="1.75" />
+      <path class="m-glyph" d="M156 49.5h5v5h-5z" />
+      <rect class="m-line-dim" x="166" y="50.75" width="36" height="3.5" rx="1.75" />
+      <path class="m-glyph" d="M155 66l8-5 1.4 2-8 5z" />
+      <rect class="m-line-dim" x="166" y="62.75" width="30" height="3.5" rx="1.75" />
+      <g class="m-light" style="--m-at: 0.33">
+        <rect class="m-chip-on" x="152" y="70.5" width="70" height="11" rx="3" />
+      </g>
+      <path class="m-glyph" d="M155 74h4v4h-4zM161 79l3.5-5" />
+      <rect class="m-line-dim" x="166" y="74.75" width="40" height="3.5" rx="1.75" />
+      <circle class="m-glyph" cx="158.5" cy="87.5" r="2.5" />
+      <path class="m-glyph" d="M160.5 89.5l2 2" />
+      <rect class="m-line-dim" x="166" y="86.75" width="46" height="3.5" rx="1.75" />
+    </g>
+  </g>
+
+  <!-- the presses: More, then Shapes -->
+  <circle class="m-ripple m-press" style="--m-at: 0.12" cx="182" cy="22" r="7" />
+  <circle class="m-ripple m-press" style="--m-at: 0.33" cx="186" cy="76" r="7" />
+
+  <!-- the hand: to More, down to Shapes, then the two drags -->
+  <g class="m-move" style="--m-at: 0.66; --m-dx: -76; --m-dy: 15">
+  <g class="m-move" style="--m-at: 0.62; --m-dx: 0; --m-dy: 23">
+  <g class="m-move" style="--m-at: 0.53; --m-dx: -70; --m-dy: -46">
+  <g class="m-move" style="--m-at: 0.42; --m-dx: 106; --m-dy: -28">
+  <g class="m-move" style="--m-at: 0.22; --m-dx: -4; --m-dy: -54">
+  <g class="m-move" style="--m-at: 0.02; --m-dx: -32; --m-dy: 160">
+    <g transform="translate(224.76 110.76) scale(0.62)"><path class="m-pointer" d="M2 2 L2 20 L7 15.5 L10.5 23 L14 21.5 L10.5 14 L17 14 Z" /></g>
+  </g></g></g></g></g></g>
+</svg>

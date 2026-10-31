@@ -1,4 +1,5 @@
 import React from "react";
+import { guideEvents } from "../guide/events.js";
 import { API, apiJson } from "../shared/lib/utils";
 import { CopyField, PaneHead, Section, Row, Segmented, Step } from "./SettingsKit";
 import { LinkIcon, KeyIcon, RefreshIcon, UnlinkIcon, ShieldIcon } from "../shared/ui/Icons";
@@ -39,6 +40,9 @@ export function IntegrationSettings({ workspaceId }) {
   const [loadError, setLoadError] = React.useState("");
   const endpoint = `${API}/integrations/tokens`;
   const loadVersion = React.useRef(0);
+  // The connections the last read listed: one more since, after the user
+  // ran an assistant's setup and allowed it, is the setup guide's step.
+  const known = React.useRef(null);
   const refresh = React.useCallback(async (notice = "") => {
     const version = ++loadVersion.current;
     setMessage(notice);
@@ -46,6 +50,9 @@ export function IntegrationSettings({ workspaceId }) {
       const value = await apiJson(endpoint);
       // A focus refresh started before a revocation must not restore its row.
       if (version !== loadVersion.current) return;
+      const ids = new Set((value.tokens || []).map((item) => item.id));
+      if (known.current && [...ids].some((id) => !known.current.has(id))) guideEvents.emit("mcp.connected");
+      known.current = ids;
       setData(value); setLoadError("");
     } catch (err) {
       if (version === loadVersion.current) setLoadError(err.message);
@@ -104,7 +111,7 @@ export function IntegrationSettings({ workspaceId }) {
       <p>{t("Could not load your connections. {loadError}", { loadError: loadError })}</p>
       <button className="uiBtn" onClick={() => refresh()}>{t("Try again")}</button>
     </div> : null}
-    <Section title={t("Connect an assistant")}>
+    <Section title={t("Connect an assistant")} guide="settings.assistantSetup">
       {data ? <div className="integrationDetails">
         {data.oauth_available ? <>
           <div role="group" aria-label={t("Connection method")}>
@@ -185,7 +192,7 @@ export function IntegrationSettings({ workspaceId }) {
         </>}
       </div> : !loadError ? <p role="status">{t("Loading connection settings…")}</p> : null}
     </Section>
-    <Section title={t("Workspace access")} action={
+    <Section title={t("Workspace access")} guide="settings.assistantAccess" action={
       <button type="button" className="uiBtn sm iconSq" aria-label={t("Refresh connections")} title={t("Refresh connections")} onClick={() => refresh()}>
         <RefreshIcon size={16} />
       </button>}>

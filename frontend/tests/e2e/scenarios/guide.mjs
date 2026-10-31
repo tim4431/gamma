@@ -199,6 +199,8 @@ export async function guideScenarios(env) {
       // What Gamma does, a card each with its drawing; the hero carries the tour.
       assertEq(await page.locator(".welcomeFeature").count(), 7, "seven feature cards");
       assertEq(await page.locator(".welcomeFeature .guideMedia svg").count(), 7, "each with its drawing");
+      // What is set up elsewhere carries its setup guide's way in.
+      assertEq(await page.locator(".welcomeFeature .welcomeSetup").count(), 3, "Zotero, Notability and the assistants");
       assertEq(await page.locator(".welcomeFeature.hero .welcomeTour").textContent(), "Take the 2-minute tour");
       await page.getByRole("button", { name: "Explore on my own", exact: true }).click();
       await until(async () => await page.locator(".guideCard").count() === 0);

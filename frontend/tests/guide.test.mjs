@@ -8,7 +8,8 @@ import { join } from "node:path";
 import { ANCHORS, anchorElement } from "../src/guide/anchors.js";
 import { EVENTS, eventMatches } from "../src/guide/events.js";
 import { TOURS } from "../src/guide/tours/index.js";
-import { answersOffer, canOffer, createGuideProgress, factsMatch, guideProgressKey, guideStorage, normalizeTourProgress, retiresOffer, stepApplies } from "../src/guide/triggers.js";
+import { answersOffer, canOffer, createGuideProgress, createGuideTicks, factsMatch, guideProgressKey, guideStorage, normalizeTourProgress, retiresOffer,
+  setupDone, setupIndex, setupTicks, stepApplies } from "../src/guide/triggers.js";
 import { ACCOUNT_PREFS, readProfile } from "../src/app/prefDefs.js";
 import { keyNames, keyText, resolveKey } from "../src/guide/keys.js";
 import { createRunLog, madeItems, recordEvent } from "../src/guide/finish.js";
@@ -168,6 +169,37 @@ test("progress follows the account: its synced copy is read, written and seeded 
   const seeded = loaded;
   early.seed(Object.values(TOURS), "alice");
   assert.equal(loaded, seeded, "a second seed changes nothing");
+});
+
+// A setup guide's steps tick from their events whether or not it runs, and
+// its run opens, and moves on, at the first step not done.
+test("a setup guide ticks its steps from their events and resumes at the first not done", () => {
+  const tour = { id: "s", version: 2, setup: true, steps: [
+    { id: "a", advanceOn: { event: "settings.opened", match: { pane: "account" } } },
+    { id: "b", advanceOn: { event: "share.created" } },
+    { id: "c" },
+  ] };
+  assert.deepEqual(setupTicks(tour, at("settings.opened", { pane: "account" })), ["a"]);
+  assert.deepEqual(setupTicks(tour, at("settings.opened", { pane: "ai" })), []);
+  assert.deepEqual(setupTicks({ ...tour, setup: false }, at("share.created")), [], "only a setup guide keeps ticks");
+  assert.deepEqual(setupDone(tour.steps, new Set(["b"])), [true, true, false], "a step its event ticked was preceded by the ones before");
+  assert.deepEqual(setupDone(tour.steps, new Set(["c"])), [false, false, true], "a step only read says nothing of the ones before");
+  assert.equal(setupIndex(tour.steps, new Set()), 0);
+  assert.equal(setupIndex(tour.steps, new Set(["a"])), 1);
+  assert.equal(setupIndex(tour.steps, new Set(["a", "b", "c"])), 2, "all done: the run opens on the last, so its list shows");
+  assert.equal(setupIndex(tour.steps, new Set(["b"]), 0), 2, "Next passes over a step done meanwhile");
+  assert.equal(setupIndex(tour.steps, new Set(), 2), -1, "past the last is the end");
+  const values = new Map();
+  const storage = () => ({ getItem: (k) => values.get(k) ?? null, setItem: (k, v) => values.set(k, v) });
+  const ticks = createGuideTicks(storage);
+  assert.equal(ticks.add(tour, "alice", ["a"]), true);
+  assert.equal(ticks.add(tour, "alice", ["a"]), false, "nothing new");
+  assert.deepEqual([...createGuideTicks(storage).read(tour, "alice")], ["a"], "a reload keeps them");
+  assert.equal(createGuideTicks(storage).read(tour, "bob").size, 0, "per account");
+  assert.equal(createGuideTicks(storage).read({ ...tour, version: 3 }, "alice").size, 0, "a new version starts over");
+  const blocked = createGuideTicks(() => { throw new Error("Storage unavailable"); });
+  blocked.add(tour, "alice", ["b"]);
+  assert.deepEqual([...blocked.read(tour, "alice")], ["b"], "memory keeps them without storage");
 });
 
 test("the account's copy keeps well-formed records only, and travels in the profile", () => {

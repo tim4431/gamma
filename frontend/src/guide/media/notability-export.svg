@@ -1,0 +1,69 @@
+<svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg" focusable="false">
+  <!-- Out of Notability: on the iPad the note's Export Options sheet is
+       up over its handwritten page; Note is picked from the formats and
+       lights, and Export is pressed. The .note file comes away from the
+       iPad to Gamma, where the page opens with the same handwriting, ink
+       that stays live to write on, and the drawing waits as a note beside
+       it (docs/user_guide/user_guide.md, "Import and export": File Format
+       Note or NTB, then Import, Notability notes). The import itself, and
+       the way back out, is notability-sync's. -->
+
+  <!-- the iPad, the handwritten page under the Export Options sheet -->
+  <rect class="m-card" x="12" y="22" width="112" height="156" rx="13" />
+  <rect class="m-well" x="20" y="30" width="96" height="140" rx="5" />
+  <rect class="m-card" x="26" y="36" width="84" height="128" rx="2" />
+  <g transform="translate(0 -6)">
+    <path class="m-rule" d="M30 59.5H106M30 73.5H106M30 87.5H106M30 101.5H106" />
+      <path class="m-ink" d="M34 58c1.5-5.25 4.5-5.25 4.88 0c0.38-5.25 4.5-5.25 4.88 0c0.6 2.25 2.63 2.25 3.75-0.38c1.2-2.63 1.88-9-0.22-9c-1.95 0-1.5 6.75 1.2 9.3c1.8 1.5 4.13-0.15 4.72-2.7c0.45-1.95 3.75-2.25 3.9 0.15c0.15 2.25-3.45 3.15-4.05 0.75c-0.22-1.05 2.55-0.75 4.2 1.5c1.5 1.8 4.2-0.45 4.95-2.55c0.68-1.95 3.15-1.8 3-0.3c-0.15 1.8-2.7 2.55-2.85 1.05c-0.15-1.5 3-1.2 4.65 1.2c1.65 2.4 4.5 0.75 5.7-1.05" />
+      <path class="m-ink" d="M34 72c1.5-5.25 4.5-5.25 4.88 0c0.38-5.25 4.5-5.25 4.88 0c0.6 2.25 2.63 2.25 3.75-0.38c1.2-2.63 1.88-9-0.22-9c-1.95 0-1.5 6.75 1.2 9.3c1.8 1.5 4.13-0.15 4.72-2.7c0.45-1.95 3.75-2.25 3.9 0.15c0.15 2.25-3.45 3.15-4.05 0.75" />
+      <ellipse class="m-ink" cx="60" cy="90" rx="20" ry="7" />
+  </g>
+  <rect class="m-card" x="22" y="98" width="92" height="66" rx="7" />
+  <rect class="m-line" x="30" y="106" width="44" height="4" rx="2" />
+  <rect class="m-chip" x="30" y="116" width="24" height="11" rx="5.5" />
+  <rect class="m-chip" x="58" y="116" width="24" height="11" rx="5.5" />
+  <rect class="m-chip" x="86" y="116" width="22" height="11" rx="5.5" />
+  <rect class="m-chip-on m-light" style="--m-at: 0.14" x="86" y="116" width="22" height="11" rx="5.5" />
+  <rect class="m-line-dim" x="30" y="134" width="60" height="3" rx="1.5" />
+  <rect class="m-line-dim" x="30" y="141" width="44" height="3" rx="1.5" />
+  <rect class="m-chip-on" x="78" y="148" width="30" height="11" rx="5.5" />
+
+  <!-- the .note, carried from the iPad to Gamma -->
+  <g class="m-move" style="--m-at: 0.36; --m-dx: -60; --m-dy: 64">
+    <g class="m-appear" style="--m-at: 0.32">
+      <path class="m-card" d="M142 72h16l7 7v26h-23z" />
+      <path class="m-glyph" d="M158 72v7h7" />
+      <path class="m-ink" d="M146 90c2-3 4 3 6 0s4-3 6 0" />
+    </g>
+  </g>
+  <path class="m-link m-draw" pathLength="1" style="--m-at: 0.46" d="M168 90H182L178 86L182 90L178 94" />
+
+  <!-- Gamma: the same page, its ink live, its drawing a note beside it -->
+  <rect class="m-well" x="186" y="28" width="124" height="150" rx="6" />
+  <rect class="m-card" x="192" y="36" width="80" height="134" rx="2" />
+  <g class="m-light" style="--m-at: 0.5">
+    <g transform="translate(166 -6)">
+      <path class="m-rule" d="M30 59.5H106M30 73.5H106M30 87.5H106M30 101.5H106M30 115.5H106M30 129.5H106M30 143.5H106" />
+      <path class="m-ink" d="M34 58c1.5-5.25 4.5-5.25 4.88 0c0.38-5.25 4.5-5.25 4.88 0c0.6 2.25 2.63 2.25 3.75-0.38c1.2-2.63 1.88-9-0.22-9c-1.95 0-1.5 6.75 1.2 9.3c1.8 1.5 4.13-0.15 4.72-2.7c0.45-1.95 3.75-2.25 3.9 0.15c0.15 2.25-3.45 3.15-4.05 0.75c-0.22-1.05 2.55-0.75 4.2 1.5c1.5 1.8 4.2-0.45 4.95-2.55c0.68-1.95 3.15-1.8 3-0.3c-0.15 1.8-2.7 2.55-2.85 1.05c-0.15-1.5 3-1.2 4.65 1.2c1.65 2.4 4.5 0.75 5.7-1.05" />
+      <path class="m-ink" d="M34 72c1.5-5.25 4.5-5.25 4.88 0c0.38-5.25 4.5-5.25 4.88 0c0.6 2.25 2.63 2.25 3.75-0.38c1.2-2.63 1.88-9-0.22-9c-1.95 0-1.5 6.75 1.2 9.3c1.8 1.5 4.13-0.15 4.72-2.7c0.45-1.95 3.75-2.25 3.9 0.15c0.15 2.25-3.45 3.15-4.05 0.75" />
+      <ellipse class="m-ink" cx="60" cy="90" rx="20" ry="7" />
+    </g>
+  </g>
+  <rect class="m-card" x="276" y="36" width="30" height="134" rx="3" />
+  <g class="m-appear" style="--m-at: 0.58">
+    <rect class="m-chip" x="279" y="44" width="24" height="18" rx="3" />
+    <ellipse class="m-ink" cx="291" cy="53" rx="7" ry="3" />
+  </g>
+  <circle class="m-line-dim" cx="283" cy="72" r="1.4" />
+  <rect class="m-line-dim" x="287" y="70.5" width="15" height="3" rx="1.5" />
+  <circle class="m-line-dim" cx="283" cy="82" r="1.4" />
+  <rect class="m-line-dim" x="287" y="80.5" width="11" height="3" rx="1.5" />
+
+  <!-- the presses: Note, then Export -->
+  <circle class="m-ripple m-press" style="--m-at: 0.13" cx="97" cy="121.5" r="7" />
+  <circle class="m-ripple m-press" style="--m-at: 0.31" cx="93" cy="153.5" r="7" />
+  <g class="m-move" style="--m-at: 0.2; --m-dx: 4; --m-dy: -32">
+  <g class="m-move" style="--m-at: 0.02; --m-dx: -37; --m-dy: 70.5">
+    <g transform="translate(91.76 152.26) scale(0.62)"><path class="m-pointer" d="M2 2 L2 20 L7 15.5 L10.5 23 L14 21.5 L10.5 14 L17 14 Z" /></g>
+  </g></g>
+</svg>

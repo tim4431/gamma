@@ -1,0 +1,66 @@
+<svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg" focusable="false">
+  <!-- A row more: in Notes a small table, the + strip under it; the
+       pointer presses +, and a new row slides in under the last one while
+       the strip and the notes below move down to make room. The row
+       lights, and the pointer rests on it, where its ⋮ handle comes up at
+       its left edge for dragging it or its options (editor/MdTools.jsx: the
+       add strips and the row handle shown on hover). -->
+
+  <!-- the Notes window, a note above the table -->
+  <rect class="m-card" x="10" y="10" width="300" height="180" rx="6" />
+  <path class="m-glyph" d="M16 15h.01M19 15h.01M16 18h.01M19 18h.01M16 21h.01M19 21h.01" />
+  <rect class="m-line" x="24" y="16" width="26" height="4" rx="2" />
+  <path class="m-rule" d="M10 26H310" />
+  <circle class="m-line-dim" cx="20" cy="37" r="1.6" />
+  <rect class="m-line-dim" x="25" y="35.25" width="150" height="3.5" rx="1.75" />
+  <circle class="m-line-dim" cx="20" cy="49" r="1.6" />
+  <rect class="m-line-dim" x="25" y="47.25" width="110" height="3.5" rx="1.75" />
+
+  <!-- the table: a header and two rows; the column + on its right -->
+  <rect class="m-card" x="40" y="60" width="240" height="48" rx="3" />
+  <rect class="m-chip" x="40" y="60" width="240" height="16" rx="3" />
+  <path class="m-rule" d="M40 76H280M40 92H280M120 60V108M200 60V108" />
+  <rect class="m-line" x="48" y="66" width="36" height="4" rx="2" />
+  <rect class="m-line" x="128" y="66" width="40" height="4" rx="2" />
+  <rect class="m-line" x="208" y="66" width="30" height="4" rx="2" />
+  <rect class="m-line-dim" x="48" y="82.25" width="50" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="48" y="98.25" width="40" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="128" y="82.25" width="44" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="128" y="98.25" width="56" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="208" y="82.25" width="52" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="208" y="98.25" width="36" height="3.5" rx="1.75" />
+  <rect class="m-chip" x="284" y="60" width="10" height="48" rx="3" />
+  <path class="m-glyph" d="M286.5 84h5M289 81.5v5" />
+
+  <!-- the new row, empty, under the last -->
+  <g class="m-appear" style="--m-at: 0.2">
+    <rect class="m-card" x="40" y="105" width="240" height="19" rx="3" />
+    <path class="m-rule" d="M40 108H280M120 108V124M200 108V124" />
+  </g>
+  <rect class="m-link m-light" style="--m-at: 0.3" x="40" y="108" width="240" height="16" rx="2" />
+
+  <!-- the + strip and the notes under the table, 16 down -->
+  <g class="m-move" style="--m-at: 0.2; --m-dx: 0; --m-dy: -16">
+    <rect class="m-chip" x="40" y="127" width="240" height="10" rx="3" />
+    <path class="m-glyph" d="M157 132h6M160 129v6" />
+    <circle class="m-line-dim" cx="20" cy="153" r="1.6" />
+    <rect class="m-line-dim" x="25" y="151.25" width="140" height="3.5" rx="1.75" />
+    <circle class="m-line-dim" cx="20" cy="165" r="1.6" />
+    <rect class="m-line-dim" x="25" y="163.25" width="96" height="3.5" rx="1.75" />
+  </g>
+
+  <!-- the row's handle, with the pointer over the row -->
+  <g class="m-appear" style="--m-at: 0.52">
+    <rect class="m-chip" x="31" y="110" width="7" height="12" rx="2" />
+    <path class="m-glyph" d="M34.5 113.5h.01M34.5 116h.01M34.5 118.5h.01" />
+  </g>
+
+  <!-- the press on + -->
+  <circle class="m-ripple m-press" style="--m-at: 0.13" cx="160" cy="116" r="7" />
+
+  <!-- the hand: to +, then along the new row -->
+  <g class="m-move" style="--m-at: 0.4; --m-dx: 60; --m-dy: -1">
+  <g class="m-move" style="--m-at: 0.02; --m-dx: 40; --m-dy: 66">
+    <g transform="translate(98.76 115.76) scale(0.62)"><path class="m-pointer" d="M2 2 L2 20 L7 15.5 L10.5 23 L14 21.5 L10.5 14 L17 14 Z" /></g>
+  </g></g>
+</svg>

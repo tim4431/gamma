@@ -1,0 +1,43 @@
+<svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg" focusable="false">
+  <!-- The pointer clicks a highlight on the paper, a link draws to its note
+       in Notes and the note lights; the pointer clicks the note and the
+       passage lights on the page: the two are one thing -->
+  <rect class="m-well" x="10" y="10" width="180" height="180" rx="6" />
+  <rect class="m-card" x="22" y="18" width="156" height="172" rx="2" />
+  <rect class="m-line" x="32" y="30" width="72" height="6" rx="3" />
+  <rect class="m-line-dim" x="32" y="44" width="132" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="32" y="51" width="124" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="32" y="58" width="120" height="3.5" rx="1.75" />
+  <path class="m-mark" d="M32 59.75H152" />
+  <rect class="m-line-dim" x="32" y="65" width="128" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="32" y="72" width="90" height="3.5" rx="1.75" />
+  <rect class="m-well" x="32" y="84" width="136" height="40" rx="2" />
+  <path class="m-glyph" d="M40 116L54 104L66 110L80 96L98 103" />
+  <rect class="m-line-dim" x="32" y="134" width="136" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="32" y="141" width="120" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="32" y="148" width="132" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="32" y="155" width="80" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="32" y="162" width="128" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="32" y="169" width="100" height="3.5" rx="1.75" />
+  <rect class="m-card" x="200" y="10" width="110" height="180" rx="6" />
+  <path class="m-glyph" d="M206 15h.01M209 15h.01M206 18h.01M209 18h.01M206 21h.01M209 21h.01" />
+  <rect class="m-line" x="214" y="16" width="26" height="4" rx="2" />
+  <path class="m-rule" d="M200 26H310" />
+  <circle class="m-line-dim" cx="208" cy="37" r="1.6" /><rect class="m-line-dim" x="213" y="35.25" width="80" height="3.5" rx="1.75" />
+  <circle class="m-line-dim" cx="208" cy="49" r="1.6" /><rect class="m-line-dim" x="213" y="47.25" width="64" height="3.5" rx="1.75" />
+  <rect class="m-chip" x="206" y="58" width="98" height="26" rx="4" />
+  <path class="m-mark" d="M212 66.75H282" />
+  <rect class="m-line-dim" x="212" y="74" width="72" height="3.5" rx="1.75" />
+  <circle class="m-line-dim" cx="208" cy="97" r="1.6" /><rect class="m-line-dim" x="213" y="95.25" width="88" height="3.5" rx="1.75" />
+  <circle class="m-line-dim" cx="208" cy="109" r="1.6" /><rect class="m-line-dim" x="213" y="107.25" width="70" height="3.5" rx="1.75" />
+  <circle class="m-line-dim" cx="208" cy="121" r="1.6" /><rect class="m-line-dim" x="213" y="119.25" width="84" height="3.5" rx="1.75" />
+  <circle class="m-line-dim" cx="208" cy="133" r="1.6" /><rect class="m-line-dim" x="213" y="131.25" width="60" height="3.5" rx="1.75" />
+  <path class="m-link m-draw" pathLength="1" style="--m-at: 0.24" d="M153 60C178 60 182 71 205 71" />
+  <rect class="m-link m-light" style="--m-at: 0.3" x="206" y="58" width="98" height="26" rx="4" />
+  <rect class="m-link m-light" style="--m-at: 0.64" x="29" y="53.5" width="126" height="12.5" rx="2" />
+  <circle class="m-ripple m-press" style="--m-at: 0.15" cx="92" cy="60" r="7" />
+  <circle class="m-ripple m-press" style="--m-at: 0.57" cx="252" cy="71" r="7" />
+  <g class="m-move" style="--m-at: 0.45; --m-dx: -160; --m-dy: -11"><g class="m-move" style="--m-at: 0.03; --m-dx: 38; --m-dy: 100">
+    <g transform="translate(250.76 69.76) scale(0.62)"><path class="m-pointer" d="M2 2 L2 20 L7 15.5 L10.5 23 L14 21.5 L10.5 14 L17 14 Z" /></g>
+  </g></g>
+</svg>

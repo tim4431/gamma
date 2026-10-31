@@ -1,0 +1,109 @@
+<svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg" focusable="false">
+  <!-- Select many: the pointer presses Select in the listing bar, which
+       lights, and every card shows its tick box. It ticks three cards one
+       after another, each lighting, then carries the three as one bundle to
+       a folder in the sidebar, which lights: they are filed there. The
+       cards keep their places in the grid, since a paper sits in a folder
+       without leaving the others (App's listing bar, home.select). -->
+
+  <!-- the library: folders on the left, the listing bar, the grid -->
+  <rect class="m-well" x="10" y="10" width="300" height="180" rx="6" />
+  <rect class="m-card" x="16" y="18" width="66" height="164" rx="5" />
+  <rect class="m-line" x="24" y="26" width="30" height="4" rx="2" />
+  <rect class="m-chip" x="22" y="38" width="54" height="13" rx="4" />
+  <path class="m-glyph" d="M27 41.5h3l1 1.2h5v5.3h-9z" />
+  <rect class="m-line-dim" x="40" y="42.75" width="26" height="3.5" rx="1.75" />
+  <rect class="m-chip" x="22" y="56" width="54" height="13" rx="4" />
+  <path class="m-glyph" d="M27 59.5h3l1 1.2h5v5.3h-9z" />
+  <rect class="m-line-dim" x="40" y="60.75" width="30" height="3.5" rx="1.75" />
+  <rect class="m-chip" x="22" y="74" width="54" height="13" rx="4" />
+  <path class="m-glyph" d="M27 77.5h3l1 1.2h5v5.3h-9z" />
+  <rect class="m-line-dim" x="40" y="78.75" width="22" height="3.5" rx="1.75" />
+  <rect class="m-chip" x="22" y="92" width="54" height="13" rx="4" />
+  <path class="m-glyph" d="M27 95.5h3l1 1.2h5v5.3h-9z" />
+  <rect class="m-line-dim" x="40" y="96.75" width="28" height="3.5" rx="1.75" />
+  <rect class="m-chip" x="90" y="18" width="120" height="14" rx="7" />
+  <circle class="m-glyph" cx="99" cy="25" r="3" />
+  <path class="m-glyph" d="M101.2 27.2l2 2" />
+  <rect class="m-chip" x="262" y="18" width="40" height="14" rx="7" />
+  <rect class="m-line-dim" x="270" y="23.25" width="24" height="3.5" rx="1.75" />
+  <g class="m-light" style="--m-at: 0.14">
+    <rect class="m-chip-on" x="262" y="18" width="40" height="14" rx="7" />
+  </g>
+  <rect class="m-card" x="90" y="40" width="66" height="66" rx="4" />
+  <rect class="m-well" x="96" y="46" width="54" height="34" rx="2" />
+  <rect class="m-line-dim" x="96" y="86" width="44" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="96" y="93" width="30" height="3.5" rx="1.75" />
+  <rect class="m-card" x="162" y="40" width="66" height="66" rx="4" />
+  <rect class="m-well" x="168" y="46" width="54" height="34" rx="2" />
+  <rect class="m-line-dim" x="168" y="86" width="44" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="168" y="93" width="30" height="3.5" rx="1.75" />
+  <rect class="m-card" x="234" y="40" width="66" height="66" rx="4" />
+  <rect class="m-well" x="240" y="46" width="54" height="34" rx="2" />
+  <rect class="m-line-dim" x="240" y="86" width="44" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="240" y="93" width="30" height="3.5" rx="1.75" />
+  <rect class="m-card" x="90" y="114" width="66" height="66" rx="4" />
+  <rect class="m-well" x="96" y="120" width="54" height="34" rx="2" />
+  <rect class="m-line-dim" x="96" y="160" width="44" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="96" y="167" width="30" height="3.5" rx="1.75" />
+  <rect class="m-card" x="162" y="114" width="66" height="66" rx="4" />
+  <rect class="m-well" x="168" y="120" width="54" height="34" rx="2" />
+  <rect class="m-line-dim" x="168" y="160" width="44" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="168" y="167" width="30" height="3.5" rx="1.75" />
+  <rect class="m-card" x="234" y="114" width="66" height="66" rx="4" />
+  <rect class="m-well" x="240" y="120" width="54" height="34" rx="2" />
+  <rect class="m-line-dim" x="240" y="160" width="44" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="240" y="167" width="30" height="3.5" rx="1.75" />
+
+  <!-- selecting: a tick box on every card -->
+  <g class="m-appear" style="--m-at: 0.17">
+    <circle class="m-chip" cx="100" cy="50" r="4" />
+    <circle class="m-chip" cx="172" cy="50" r="4" />
+    <circle class="m-chip" cx="244" cy="50" r="4" />
+    <circle class="m-chip" cx="100" cy="124" r="4" />
+    <circle class="m-chip" cx="172" cy="124" r="4" />
+    <circle class="m-chip" cx="244" cy="124" r="4" />
+  </g>
+  <g class="m-light" style="--m-at: 0.32">
+    <rect class="m-link" x="90" y="40" width="66" height="66" rx="4" />
+    <circle class="m-chip-on" cx="100" cy="50" r="4" />
+    <path class="m-glyph-on" d="M98 50l1.5 1.5 3-3" />
+  </g>
+  <g class="m-light" style="--m-at: 0.46">
+    <rect class="m-link" x="162" y="40" width="66" height="66" rx="4" />
+    <circle class="m-chip-on" cx="172" cy="50" r="4" />
+    <path class="m-glyph-on" d="M170 50l1.5 1.5 3-3" />
+  </g>
+  <g class="m-light" style="--m-at: 0.6">
+    <rect class="m-link" x="90" y="114" width="66" height="66" rx="4" />
+    <circle class="m-chip-on" cx="100" cy="124" r="4" />
+    <path class="m-glyph-on" d="M98 124l1.5 1.5 3-3" />
+  </g>
+
+  <!-- the folder they are filed in lights -->
+  <rect class="m-link m-light" style="--m-at: 0.7" x="22" y="56" width="54" height="13" rx="4" />
+  <circle class="m-chip-on m-light" style="--m-at: 0.7" cx="74" cy="57" r="4" />
+
+  <!-- the three as one bundle, carried from the last card to the folder -->
+  <g class="m-move" style="--m-at: 0.62; --m-dx: 50; --m-dy: 61.5">
+    <g class="m-appear" style="--m-at: 0.6">
+      <rect class="m-ghost" x="44" y="54" width="28" height="20" rx="2" />
+      <rect class="m-ghost" x="40" y="58" width="28" height="20" rx="2" />
+      <rect class="m-ghost" x="36" y="62" width="28" height="20" rx="2" />
+    </g>
+  </g>
+
+  <!-- the presses: Select, then the three tick boxes -->
+  <circle class="m-ripple m-press" style="--m-at: 0.12" cx="282" cy="25" r="7" />
+  <circle class="m-ripple m-press" style="--m-at: 0.3" cx="100" cy="50" r="7" />
+  <circle class="m-ripple m-press" style="--m-at: 0.44" cx="172" cy="50" r="7" />
+  <circle class="m-ripple m-press" style="--m-at: 0.58" cx="100" cy="124" r="7" />
+
+  <g class="m-move" style="--m-at: 0.62; --m-dx: 50; --m-dy: 61.5">
+  <g class="m-move" style="--m-at: 0.48; --m-dx: 72; --m-dy: -74">
+  <g class="m-move" style="--m-at: 0.34; --m-dx: -72; --m-dy: 0">
+  <g class="m-move" style="--m-at: 0.2; --m-dx: 182; --m-dy: -25">
+  <g class="m-move" style="--m-at: 0.02; --m-dx: -82; --m-dy: 163">
+    <g transform="translate(48.76 61.26) scale(0.62)"><path class="m-pointer" d="M2 2 L2 20 L7 15.5 L10.5 23 L14 21.5 L10.5 14 L17 14 Z" /></g>
+  </g></g></g></g></g>
+</svg>

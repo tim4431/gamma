@@ -1,0 +1,72 @@
+<svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg" focusable="false">
+  <!-- Send the link: in the Share popover's Link section the pointer
+       presses Copy link, which lights, and the link's field lights with
+       it. The link goes out, and the same page opens in a second window,
+       someone else's: each window shows the other person's face in its
+       header (sharing/SharePopover.jsx: the link with Copy and Stop sharing,
+       then Who has access). -->
+
+  <!-- the page, its Share button open -->
+  <rect class="m-well" x="10" y="10" width="180" height="180" rx="6" />
+  <rect class="m-line" x="20" y="18" width="50" height="5" rx="2.5" />
+  <rect class="m-chip-on" x="152" y="14.5" width="30" height="12" rx="6" />
+  <rect class="m-card" x="20" y="34" width="160" height="150" rx="2" />
+  <rect class="m-line-dim" x="30" y="44" width="140" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="51" width="128" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="58" width="140" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="65" width="90" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="140" width="140" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="147" width="120" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="154" width="140" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="161" width="100" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="30" y="168" width="136" height="3.5" rx="1.75" />
+
+  <!-- the Share popover: the link, then who has access -->
+  <rect class="m-card" x="40" y="32" width="146" height="102" rx="8" />
+  <rect class="m-line" x="50" y="42" width="40" height="5" rx="2.5" />
+  <rect class="m-line-dim" x="50" y="55" width="20" height="3" rx="1.5" />
+  <rect class="m-chip" x="50" y="62" width="88" height="14" rx="5" />
+  <rect class="m-line-dim" x="56" y="67.25" width="60" height="3.5" rx="1.75" />
+  <rect class="m-chip" x="142" y="62" width="36" height="14" rx="7" />
+  <path class="m-glyph" d="M156 66.5h5v5h-5zM158 64.5h5v5" />
+  <rect class="m-line-dim" x="50" y="82" width="44" height="3" rx="1.5" />
+  <path class="m-rule" d="M40 92H186" />
+  <rect class="m-line-dim" x="50" y="99" width="40" height="3" rx="1.5" />
+  <circle class="m-chip" cx="55" cy="112" r="4.5" />
+  <rect class="m-line-dim" x="64" y="110.25" width="60" height="3.5" rx="1.75" />
+  <circle class="m-chip" cx="55" cy="124" r="4.5" />
+  <rect class="m-line-dim" x="64" y="122.25" width="44" height="3.5" rx="1.75" />
+
+  <!-- copied: the button and the link light -->
+  <g class="m-light" style="--m-at: 0.16">
+    <rect class="m-chip-on" x="142" y="62" width="36" height="14" rx="7" />
+    <path class="m-glyph-on" d="M156 66.5h5v5h-5zM158 64.5h5v5" />
+  </g>
+  <rect class="m-link m-light" style="--m-at: 0.18" x="50" y="62" width="88" height="14" rx="5" />
+
+  <!-- the link goes out, and the page opens in someone else's window -->
+  <path class="m-link m-draw" pathLength="1" style="--m-at: 0.26" d="M178 69C196 69 198 54 206 46" />
+  <g class="m-appear" style="--m-at: 0.32">
+    <rect class="m-well" x="200" y="22" width="110" height="160" rx="6" />
+    <rect class="m-line" x="208" y="30" width="40" height="5" rx="2.5" />
+    <rect class="m-card" x="208" y="42" width="94" height="134" rx="2" />
+    <rect class="m-line-dim" x="215" y="52" width="80" height="3" rx="1.5" />
+    <rect class="m-line-dim" x="215" y="58" width="72" height="3" rx="1.5" />
+    <rect class="m-line-dim" x="215" y="64" width="80" height="3" rx="1.5" />
+    <rect class="m-line-dim" x="215" y="70" width="50" height="3" rx="1.5" />
+    <rect class="m-well" x="215" y="80" width="80" height="30" rx="2" />
+    <rect class="m-line-dim" x="215" y="118" width="80" height="3" rx="1.5" />
+    <rect class="m-line-dim" x="215" y="124" width="68" height="3" rx="1.5" />
+    <rect class="m-line-dim" x="215" y="130" width="80" height="3" rx="1.5" />
+    <rect class="m-line-dim" x="215" y="136" width="56" height="3" rx="1.5" />
+  </g>
+  <!-- each sees the other: your face on their page, theirs on yours -->
+  <circle class="m-chip m-appear" style="--m-at: 0.44" cx="298" cy="32" r="5" />
+  <circle class="m-chip-on m-appear" style="--m-at: 0.5" cx="136" cy="20.5" r="5" />
+
+  <!-- the press on Copy link -->
+  <circle class="m-ripple m-press" style="--m-at: 0.14" cx="160" cy="69" r="7" />
+  <g class="m-move" style="--m-at: 0.02; --m-dx: -50; --m-dy: 103">
+    <g transform="translate(158.76 67.76) scale(0.62)"><path class="m-pointer" d="M2 2 L2 20 L7 15.5 L10.5 23 L14 21.5 L10.5 14 L17 14 Z" /></g>
+  </g>
+</svg>

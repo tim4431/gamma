@@ -24,6 +24,7 @@
 // does not hold (off by default for an existing workspace), Zotero's
 // automatic tags, PDF pages without a record.
 import React from "react";
+import { guideEvents } from "../guide/events.js";
 import { Empty, Field, IconChoices, Row, Segmented, Step, SubDialog, Toggle, DialogButtons } from "./SettingsKit";
 import { MenuSelect } from "../shared/ui/Menus";
 import { MorphText } from "../shared/ui/MotionWidgets";
@@ -89,6 +90,10 @@ export function ZoteroLinkDialog({ busy, error, onSubmit, onClose, candidates = 
     else reload().catch(() => {});
   }
   const signIn = useZoteroSignIn({ onConnected: connectedNow, onError: setConnectError });
+  // The Zotero link setup guide's steps: the dialog came up, and Zotero is
+  // connected (now, or before it opened).
+  React.useEffect(() => { guideEvents.emit("dialog.opened", { name: "zotero-link" }); }, []);
+  React.useEffect(() => { if (connected) guideEvents.emit("zotero.connected"); }, [connected]);
 
   // the libraries the key reaches, once connected (never before: the
   // server refuses the read then)
@@ -144,7 +149,7 @@ export function ZoteroLinkDialog({ busy, error, onSubmit, onClose, candidates = 
   }
 
   const dialog = (
-    <SubDialog title={t("Link a Zotero library")} onClose={onClose} draft={into || name || null}>
+    <SubDialog title={t("Link a Zotero library")} onClose={onClose} draft={into || name || null} guide="zotero.dialog">
       <div className="settingsForm">
         {!account && accountError ? (
           <Empty icon={BookIcon}>
@@ -155,7 +160,7 @@ export function ZoteroLinkDialog({ busy, error, onSubmit, onClose, candidates = 
           : !connected ? (
             <Step n={1} title={t("Connect your Zotero account")}
               hint={t("Sign in at zotero.org, or paste an API key you make there. The key stays on this server.")}>
-              <span className="setRowControls">
+              <span className="setRowControls" data-guide="zotero.connect">
                 {signIn.waiting ? <SignInWaiting waiting={signIn.waiting} onCancel={signIn.cancel} /> : <>
                   {account.oauth?.available ? (
                     <button className="uiBtn sm primary" disabled={signIn.starting} onClick={signIn.connect}>{t("Connect Zotero")}</button>
@@ -230,7 +235,7 @@ export function ZoteroLinkDialog({ busy, error, onSubmit, onClose, candidates = 
         {error ? <div className="settingsPaneHint aiKeysError">{error}</div> : null}
         <DialogButtons footnote={connected && chosen ? null : t("Connect Zotero and pick a library to continue.")}>
           <button className="uiBtn" onClick={onClose} disabled={busy}>{t("Cancel")}</button>
-          <button className="uiBtn primary" disabled={!ok} onClick={submit}>
+          <button className="uiBtn primary" disabled={!ok} onClick={submit} data-guide="zotero.link">
             <MorphText>{busy ? t("Linking…") : t("Link")}</MorphText>
           </button>
         </DialogButtons>

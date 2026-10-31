@@ -99,12 +99,14 @@ const keepFocus = (e) => { e.preventDefault(); e.stopPropagation(); };
 // themselves as each thing is first done; without it the tour is the way
 // in. Explore on my own, × and Esc close the deck, and every tour stays in
 // the account menu. The cards are not buttons: the deck says what Gamma
-// does, and the Welcome page is where it is tried.
+// does, and the Welcome page is where it is tried. A card whose feature is
+// set up elsewhere (Zotero, Notability, an assistant) carries its setup
+// guide's way in (`setup`, `go`), where that guide can start here.
 const MORE_ICONS = { share: UsersIcon, offline: CloudOffIcon, connector: GlobeIcon, translate: LanguagesIcon };
 const DECK_RATIO = 1.6; // every card's box, so the titles under them line up
 const DECK_LEAD = 0.3;  // s: the hero's drawing starts as the deck lands
 const DECK_STEP = 0.3;  // s: each next card's starts this much later
-function WelcomeDeck({ step, minutes, welcomePage, onAction, onLater, bindings }) {
+function WelcomeDeck({ step, minutes, welcomePage, setups = [], onAction, onLater, bindings }) {
   const tour = minutes ? tn("Take the {n}-minute tour", "Take the {n}-minute tour", minutes) : t("Take the tour");
   return (
     <>
@@ -126,6 +128,9 @@ function WelcomeDeck({ step, minutes, welcomePage, onAction, onLater, bindings }
               <div className="welcomeFeatureLine">{renderInline(t(feature.line), bindings)}</div>
               {i === 0 && welcomePage ? (
                 <button type="button" className="uiBtn sm welcomeTour" onClick={() => onAction("tour")}><PlayGlyph />{tour}</button>
+              ) : feature.setup && setups.includes(feature.setup) ? (
+                <button type="button" className="uiBtn sm ghost welcomeSetup" data-setup={feature.setup}
+                  onClick={() => onAction(feature.setup)}>{t(feature.go)}</button>
               ) : null}
             </div>
           </li>
@@ -218,6 +223,12 @@ export default function GuideOverlay({ guide, keybindings }) {
   const dismiss = inviting ? guide.dismissOffer : guide.dismiss;
   const [rect, setRect] = useState(null);   // spotlight rect (padded) or null
   const [missing, setMissing] = useState(false);
+  // A setup step that waits, its control gone once used (the menu closed,
+  // its dialog opened): the card waits in the corner, nothing dimmed, for
+  // what the user is doing there to finish.
+  const [held, setHeld] = useState(false);
+  const waitsRef = useRef(false);
+  waitsRef.current = !!guide.waits;
   const cardRef = useRef(null);
   const rootRef = useRef(null);
   const [cardPos, setCardPos] = useState(null);
@@ -239,6 +250,7 @@ export default function GuideOverlay({ guide, keybindings }) {
   // the last step's anchor first (shared/ui/placement.js).
   useLayoutEffect(() => {
     if (!visible || !step) return undefined;
+    setHeld(false);
     if (!anchor) { setRect(null); setMissing(false); return undefined; }
     let raf = 0;
     let gone = false;
@@ -269,6 +281,7 @@ export default function GuideOverlay({ guide, keybindings }) {
       const b = el?.getBoundingClientRect();
       if (!b?.width || !b?.height) {
         setRect(null);
+        if (landed && waitsRef.current && !inviting) { setHeld(true); return; }
         if (performance.now() - started > WAIT_MS && !gone && !step.do && !finishing) {
           gone = true;
           if (!inviting && !step.optional) console.warn(`guide: anchor "${anchor}" not found, skipping step "${step.id}"`);
@@ -288,6 +301,7 @@ export default function GuideOverlay({ guide, keybindings }) {
       const a = step.avoid && anchor === step.anchor ? anchorElement(step.avoid)?.getBoundingClientRect() : holds ? own : null;
       const keep = [s, a].filter((box) => box?.width).map(pad);
       landed = true;
+      setHeld(false);
       setRect({ ...pad(b), hole: s?.width ? pad(s) : null,
         avoid: keep.length ? { top: Math.min(...keep.map((k) => k.top)), left: Math.min(...keep.map((k) => k.left)),
           right: Math.max(...keep.map((k) => k.right)), bottom: Math.max(...keep.map((k) => k.bottom)) } : null });
@@ -391,13 +405,13 @@ export default function GuideOverlay({ guide, keybindings }) {
         <div className="guideScrim" onClick={dismiss} aria-hidden="true" />
         <div className="guideCard guideCardCentered welcomeDeck" role="dialog" aria-live="polite"
           aria-label={plainText(t(offer.title), keybindings)} onMouseDown={keepFocus} onPointerDown={(e) => e.stopPropagation()}>
-          <WelcomeDeck step={offer} minutes={offer.minutes} welcomePage={offer.welcomePage} bindings={keybindings}
+          <WelcomeDeck step={offer} minutes={offer.minutes} welcomePage={offer.welcomePage} setups={offer.setups} bindings={keybindings}
             onAction={guide.welcomeAction} onLater={dismiss} />
         </div>
       </div>
     );
   }
-  const waiting = anchor && !rect;
+  const waiting = anchor && !rect && !held;
   const centered = !anchor && !inviting;
   const vw = window.innerWidth, vh = window.innerHeight;
   // The hole is the anchor's surface when it has one; the ring stays on the anchor.
@@ -409,18 +423,21 @@ export default function GuideOverlay({ guide, keybindings }) {
   // invites a try with Next still there (its `advanceOn` ticks it if the
   // user does it).
   const failed = !inviting && !!live?.failed;
-  const yourTurn = !inviting && !busy && !failed && !done && !!step.creates;
-  const primaryLabel = inviting ? (offer.hint ? t("Got it") : t("Show me")) : failed ? t("Skip") : step.next ? t(step.next)
+  const yourTurn = !inviting && !busy && !failed && !done && (!!step.creates || guide.waits);
+  const primaryLabel = inviting ? (offer.hint ? t("Got it") : offer.resume ? t("Continue") : t("Show me")) : failed ? t("Skip") : step.next ? t(step.next)
     : index + 1 >= count ? t("Done") : t("Next");
   const showPrimary = inviting || (!busy && !done && !yourTurn);
   const showBack = !inviting && index > 0 && !busy && !failed && !done;
   const link = busy ? (step.skippable !== false ? t("Skip this demo") : null)
     : yourTurn ? (step.next ? t(step.next) : t("Skip step")) : null;
   const body = !inviting && COARSE() && step.bodyTouch ? step.bodyTouch : step.body;
+  // A resumed setup guide's card names its next step.
+  const bodyArgs = step.bodyArgs ? Object.fromEntries(Object.entries(step.bodyArgs).map(([k, v]) => [k, t(v)])) : undefined;
+  const checklist = !inviting ? guide.checklist : null;
 
   return (
     <div className={`guideRoot ${inviting ? "guideInvitation" : ""} ${inviting && offer.hint ? "guideHint" : ""} ${done ? "done" : ""} ${busy ? "busy" : ""} ${acting ? "acting" : ""}`} data-guide-overlay={inviting ? undefined : step.id} data-guide-offer={inviting ? offer.id : undefined} data-guide-busy={busy ? "1" : undefined} ref={rootRef}>
-      {!inviting ? <svg className="guideDim" width={vw} height={vh} viewBox={`0 0 ${vw} ${vh}`} aria-hidden="true">
+      {!inviting && !held ? <svg className="guideDim" width={vw} height={vh} viewBox={`0 0 ${vw} ${vh}`} aria-hidden="true">
         <path
           d={`M0,0 H${vw} V${vh} H0 Z ${hole}`}
           fillRule="evenodd"
@@ -447,7 +464,7 @@ export default function GuideOverlay({ guide, keybindings }) {
       {!waiting || busy ? (
         <div
           ref={cardRef}
-          className={`guideCard ${rect && rect.top > vh / 2 ? "guideCardAbove" : ""} ${centered && !busy ? "guideCardCentered" : ""} ${cardPos ? `side-${cardPos.side}` : ""} ${(busy || inviting) && !cardPos && !centered ? "guideCardCorner" : ""}`}
+          className={`guideCard ${rect && rect.top > vh / 2 ? "guideCardAbove" : ""} ${centered && !busy ? "guideCardCentered" : ""} ${cardPos ? `side-${cardPos.side}` : ""} ${(busy || inviting || held) && !cardPos && !centered ? "guideCardCorner" : ""}`}
           style={cardPos ? { top: cardPos.top, left: cardPos.left, width: CARD_W } : undefined}
           onMouseDown={keepFocus}
           onPointerDown={(e) => e.stopPropagation()}
@@ -462,7 +479,10 @@ export default function GuideOverlay({ guide, keybindings }) {
           <div className="guideHead">
             {inviting ? (
               <span className="guideStep">
-                {offer.hint ? <span className="guideChip tip">{t("Tip")}</span> : tn("Quick tour · {n} step", "Quick tour · {n} steps", offer.count)}
+                {offer.hint ? <span className="guideChip tip">{t("Tip")}</span>
+                  : offer.resume ? t("Setup guide · {done} of {count} done", { done: offer.doneCount, count: offer.count })
+                  : offer.setup ? tn("Setup guide · {n} step", "Setup guide · {n} steps", offer.count)
+                  : tn("Quick tour · {n} step", "Quick tour · {n} steps", offer.count)}
               </span>
             ) : (
               <>
@@ -480,7 +500,7 @@ export default function GuideOverlay({ guide, keybindings }) {
               a card of words (guide/media.js). */}
           {!inviting && step.media ? <Media id={step.media} key={busy ? "still" : "live"} still={busy} /> : null}
           <div className="guideTitle">{renderInline(t(step.title), keybindings)}</div>
-          {t(body) ? <div className="guideBody">{renderBody(t(body), keybindings)}</div> : null}
+          {t(body) ? <div className="guideBody">{renderBody(t(body, bodyArgs), keybindings)}</div> : null}
           {busy && live?.status ? (
             <div className="guideWait" role="status">
               <span className="guideSpinner" aria-hidden="true" />
@@ -493,7 +513,21 @@ export default function GuideOverlay({ guide, keybindings }) {
           {busy && live?.progress ? (
             <div className="guideDemoBar" aria-hidden="true"><i style={{ width: `${(100 * live.progress[0]) / Math.max(1, live.progress[1])}%` }} /></div>
           ) : null}
-          {!inviting ? (
+          {/* A setup guide's steps as a list, done ones ticked: it is left
+              for other apps and picked up again, so where it stands shows.
+              Any step can be gone back to. Other tours show a bar. */}
+          {checklist ? (
+            <ol className="guideChecklist">
+              {checklist.map((item, i) => (
+                <li key={item.id} className={`${item.done ? "done" : ""} ${i === index ? "now" : ""}`}>
+                  <button type="button" onClick={() => guide.goTo(i)} aria-current={i === index ? "step" : undefined}>
+                    <span className="guideCheck" aria-hidden="true">{item.done ? <CheckIcon size={10} /> : null}</span>
+                    <span>{renderInline(t(item.title), keybindings)}</span>
+                  </button>
+                </li>
+              ))}
+            </ol>
+          ) : !inviting ? (
             <div className="guideSegments" aria-hidden="true">
               {Array.from({ length: count }, (_, i) => <i key={i} className={i === index ? "on" : i < index ? "done" : ""} />)}
             </div>

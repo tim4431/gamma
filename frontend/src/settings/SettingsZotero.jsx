@@ -14,6 +14,7 @@
 // them. The link dialog connects with the same pieces (useZoteroAccount,
 // useZoteroSignIn, ZoteroKeyDialog), so connecting there never leaves it.
 import React from "react";
+import { guideEvents } from "../guide/events.js";
 import { Field, PasswordInput, Row, Step, SubDialog } from "./SettingsKit";
 import { useSettingsRead } from "./settingsReads.js";
 import { ZOTERO_ACCOUNT, connectZoteroKey, disconnectZotero, startZoteroOAuth, zoteroKeyRefusal,
@@ -114,6 +115,7 @@ export function ZoteroAccountRow({ setStatus, confirm }) {
     if (next) set((previous) => ({ ...previous, ...next, connected: true }));
     else reload().catch(() => {});
     setStatus?.(t("Zotero connected."));
+    guideEvents.emit("zotero.connected");
   }
   const signIn = useZoteroSignIn({ onConnected: connected, onError: setError });
 

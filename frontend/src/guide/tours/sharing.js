@@ -20,9 +20,9 @@ export default {
   steps: [
     { id: "share-create", anchor: "share.start", placement: "left", creates: "share.link",
       title: T("Share it to make its link"), advanceOn: { event: "share.created" } },
-    { id: "share-link", anchor: "share.link", placement: "left", requires: { shareTarget: "page" },
+    { id: "share-link", anchor: "share.link", placement: "left", requires: { shareTarget: "page" }, media: "share-link",
       title: T("Copy the link to send it") },
-    { id: "share-link-folder", anchor: "share.link", placement: "left", requires: { shareTarget: "folder" },
+    { id: "share-link-folder", anchor: "share.link", placement: "left", requires: { shareTarget: "folder" }, media: "share-link",
       title: T("Copy the link to send it"), body: T("It opens every page filed here, now and later.") },
     { id: "share-people", anchor: "share.people", placement: "left",
       title: T("Invite people by name"), body: T("Each gets View or Edit.") },

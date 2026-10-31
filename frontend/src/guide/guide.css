@@ -120,6 +120,41 @@
 .guideSegments i { flex: 1; height: 3px; border-radius: 2px; background: var(--border); }
 .guideSegments i.done { background: color-mix(in srgb, var(--accent) 45%, transparent); }
 .guideSegments i.on { background: var(--accent); }
+/* A setup guide's list of steps in place of the bar: a ring per step, ticked
+   when done, the current one on the accent wash. A row goes to its step. */
+.guideChecklist { list-style: none; margin: 2px 0 0; padding: 0; display: flex; flex-direction: column; gap: 1px; }
+.guideChecklist button {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  width: 100%;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: var(--fs-xs);
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+}
+.guideChecklist button:hover { background: var(--bg-hover); color: var(--text-secondary); }
+.guideChecklist button:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.guideChecklist .now button { background: var(--accent-bg); color: var(--text-primary); font-weight: 500; }
+.guideChecklist .done button { color: var(--text-dim); }
+.guideCheck {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 14px;
+  height: 14px;
+  margin-top: 1px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--border-hover);
+}
+.guideChecklist .now .guideCheck { box-shadow: inset 0 0 0 4px var(--accent); }
+.guideChecklist .done .guideCheck { background: var(--accent); box-shadow: none; color: var(--on-accent); }
 /* While a demo acts, the whole sheet swallows clicks (the hole included) so
    a stray click can't derail it; the card stays usable for Skip / leave. */
 .guideShield { position: absolute; inset: 0; pointer-events: auto; }
@@ -384,6 +419,8 @@
 .welcomeFeature.hero .welcomeFeatureLine { font-size: var(--fs-md); line-height: 1.5; }
 .welcomeTour { align-self: flex-start; margin-top: auto; }
 .welcomeTour svg { color: var(--accent); }
+/* A card's setup guide, under its line. */
+.welcomeSetup { align-self: flex-start; margin: 6px 0 0 -8px; }
 
 /* What has no drawing: a strip of words under the cards. */
 .welcomeMore {

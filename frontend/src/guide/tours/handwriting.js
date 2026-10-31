@@ -32,8 +32,12 @@ export default {
       advanceOn: { event: "ink.options" } },
     { id: "ink-erase", anchor: "pdf.pane", reveal: "ink.toolbar", placement: "inside",
       title: T("Erase, or lasso strokes to move"),
-      body: T("{key:Mod-z} brings back what you erased."),
-      scene: [{ point: "ink.eraser" }, { wait: 500 }, { point: "ink.lasso" }] },
+      media: "ink-lasso",
+      body: T("{key:Mod-z} brings back what you erased.") },
+    // Shapes and the ruler wait in More at the strip's end.
+    { id: "ink-shapes", anchor: "ink.more", placement: "bottom", media: "ink-shape",
+      title: T("**⋯** has shapes and a ruler"),
+      body: T("A drag then lays down a clean line, arrow, box or ellipse.") },
     // Text boxes live in the same strip: T, then a click on the page.
     { id: "ink-text", anchor: "ink.text", placement: "bottom",
       title: T("**T** types text onto the page"),

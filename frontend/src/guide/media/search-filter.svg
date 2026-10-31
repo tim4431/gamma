@@ -1,0 +1,38 @@
+<svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg" focusable="false">
+  <!-- Over the dimmed library a query types out; results come in three
+       groups (titles, this paper's notes, the text of every PDF); Tab turns
+       a folder name into a chip, the rows outside it go; the pointer clicks
+       a PDF-text result, which lights -->
+  <rect class="m-well" x="10" y="10" width="300" height="180" rx="6" />
+  <rect class="m-card" x="22" y="24" width="60" height="56" rx="4" /><rect class="m-card" x="92" y="24" width="60" height="56" rx="4" />
+  <rect class="m-card" x="162" y="24" width="60" height="56" rx="4" /><rect class="m-card" x="232" y="24" width="60" height="56" rx="4" />
+  <rect class="m-card" x="22" y="92" width="60" height="56" rx="4" /><rect class="m-card" x="92" y="92" width="60" height="56" rx="4" />
+  <rect class="m-card" x="162" y="92" width="60" height="56" rx="4" /><rect class="m-card" x="232" y="92" width="60" height="56" rx="4" />
+  <rect class="m-scrim" x="10" y="10" width="300" height="180" rx="6" />
+  <rect class="m-card" x="50" y="18" width="220" height="166" rx="8" />
+  <rect class="m-chip" x="60" y="26" width="200" height="18" rx="6" />
+  <circle class="m-glyph" cx="70" cy="35" r="3.5" /><path class="m-glyph" d="M72.5 37.5l2.5 2.5" />
+  <path class="m-text m-draw" pathLength="1" style="--m-at: 0.04" d="M82 35H128" />
+  <rect class="m-chip-on m-appear" style="--m-at: 0.42" x="134" y="29" width="40" height="12" rx="6" />
+  <g class="m-appear" style="--m-at: 0.2">
+    <rect class="m-line" x="60" y="54" width="28" height="4" rx="2" />
+    <rect class="m-line-dim" x="60" y="64" width="150" height="3.5" rx="1.75" />
+    <rect class="m-line-dim m-leave" style="--m-at: 0.46" x="60" y="74" width="120" height="3.5" rx="1.75" />
+  </g>
+  <g class="m-appear" style="--m-at: 0.26">
+    <rect class="m-line" x="60" y="92" width="24" height="4" rx="2" />
+    <rect class="m-line-dim" x="60" y="102" width="170" height="3.5" rx="1.75" />
+    <rect class="m-line-dim m-leave" style="--m-at: 0.46" x="60" y="112" width="110" height="3.5" rx="1.75" />
+  </g>
+  <g class="m-appear" style="--m-at: 0.3">
+    <rect class="m-line" x="60" y="130" width="36" height="4" rx="2" />
+    <rect class="m-line-dim" x="60" y="140" width="180" height="3.5" rx="1.75" />
+    <rect class="m-line-dim m-leave" style="--m-at: 0.46" x="60" y="150" width="140" height="3.5" rx="1.75" />
+    <rect class="m-line-dim" x="60" y="160" width="160" height="3.5" rx="1.75" />
+  </g>
+  <rect class="m-link m-light" style="--m-at: 0.7" x="55" y="135.5" width="190" height="12.5" rx="3" />
+  <circle class="m-ripple m-press" style="--m-at: 0.64" cx="120" cy="141.75" r="7" />
+  <g class="m-move" style="--m-at: 0.52; --m-dx: 110; --m-dy: 48">
+    <g transform="translate(118.76 140.51) scale(0.62)"><path class="m-pointer" d="M2 2 L2 20 L7 15.5 L10.5 23 L14 21.5 L10.5 14 L17 14 Z" /></g>
+  </g>
+</svg>

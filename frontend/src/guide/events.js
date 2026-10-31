@@ -48,6 +48,17 @@ export const EVENTS = [
   "ref.search",       // the [[ block search opened with results
   "math.previewed",   // the live formula preview came up while typing math
   "settings.opened",  // {pane}
+  "dialog.opened",    // {name}: a dialog came up — "zotero-link", the Zotero link dialog
+  "recording.stopped", // {id}: a recording was saved (Stop, or leaving the page)
+  "recording.played", // {id}: a recording's playback started
+  "search.results",   // {pdf}: a search's answers all came; pdf — some are text inside PDFs
+  "search.filtered",  // {kind: folder | label}: a filter chip was made in the search box
+  "comment.created",  // {reply}: a comment was stored; reply — in a thread that was there
+  "import.finished",  // {source}: this tab's import finished (transferFormats' IMPORT_SOURCES id)
+  "page.fileReplaced", // {id}: the open page's PDF was replaced from elsewhere (a followed file, another tab)
+  "zotero.connected", // the Zotero account is connected: just now, or seen so by the link dialog
+  "zotero.linked",    // {workspace}: a Zotero library was linked (the app then opens its workspace)
+  "mcp.connected",    // a new assistant connection showed in Settings → Integrations
 ];
 
 const listeners = new Set();

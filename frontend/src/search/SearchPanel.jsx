@@ -28,6 +28,7 @@ import { buildSearchRegex, normalizeQuery } from "../shared/lib/textnorm";
 import { createTitleScorer } from "../library/librarySearch";
 import { filedIn, filingChips, folderEntries, folderSubtree, pageAttachment } from "../library/libraryUtils";
 import { markedParts, plainSnippet } from "./snippets";
+import { guideEvents } from "../guide/events.js";
 import { NOTES_PAGE, PDF_PAGE, TITLES_PAGE, appendNew, searchQuery } from "./searchPages";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { Popover } from "../shared/ui/Surfaces";
@@ -106,6 +107,7 @@ export default function SearchPanel({
   function confirmLabel(opt) {
     setLabels((prev) => (prev.some((l) => l.kind === opt.kind && l.id === opt.id) ? prev : [...prev, opt]));
     setQuery("");
+    guideEvents.emit("search.filtered", { kind: opt.kind });
   }
   const titleScoreOf = useMemo(() => createTitleScorer(q, { caseSensitive, wholeWord }),
     [q, caseSensitive, wholeWord, homeBlocks]);
@@ -171,6 +173,7 @@ export default function SearchPanel({
     }
     const timer = setTimeout(() => {
       setBusy(true);
+      let pdfText = 0; // hits inside PDFs, this one's or the library's, for the guide's search tour
       // `partial`: the server's scan ran out of time, so the notes found
       // are only some of them (the notes group says so).
       const notesReq = notesPage("")
@@ -179,6 +182,7 @@ export default function SearchPanel({
       const libReq = libPage("")
         .then((d) => {
           if (!current()) return;
+          pdfText += (d.results || []).length;
           setLibHits(d.results || []);
           setLibIndexing(d.indexing || 0);
           setLibNext(d.next || "");
@@ -216,12 +220,17 @@ export default function SearchPanel({
               gotoFind(idx >= 0 ? idx : 0, matches);
             }
           }
+          pdfText += matches.length;
           setPdfMatches(matches);
         }).catch(() => setPdfMatches([]));
       } else {
         setPdfMatches([]);
       }
-      Promise.allSettled([notesReq, libReq, pdfReq]).then(() => { if (current()) setBusy(false); });
+      Promise.allSettled([notesReq, libReq, pdfReq]).then(() => {
+        if (!current()) return;
+        setBusy(false);
+        guideEvents.emit("search.results", { pdf: pdfText > 0 });
+      });
     }, 250);
     return () => clearTimeout(timer);
   }, [q, open, pinned, caseSensitive, wholeWord, docNonce, labels]);
@@ -392,7 +401,7 @@ export default function SearchPanel({
         </button>
       ) : null}
       {open ? (
-        <Popover className="searchPopover">
+        <Popover className="searchPopover" data-guide="search.panel">
           <div className="searchRow">
             <button
               className={`searchToggle ${showDetails ? "on" : ""}`}
@@ -418,6 +427,7 @@ export default function SearchPanel({
               <input
                 autoFocus
                 className="searchInput"
+                data-guide="search.input"
                 value={query}
                 onChange={(e) => { setQuery(e.target.value); setPinned(false); pendingFindRef.current = null; }}
                 onKeyDown={(e) => {
@@ -474,7 +484,7 @@ export default function SearchPanel({
             <button className={`searchToggle ${caseSensitive ? "on" : ""}`} onClick={() => setCaseSensitive((v) => !v)} title={t("Match case")}>{t("Aa")}</button>
             <button className={`searchToggle ${wholeWord ? "on" : ""}`} onClick={() => setWholeWord((v) => !v)} title={t("Match whole word")}><u>ab</u></button>
           </div>
-          <div className="searchResults">
+          <div className="searchResults" data-guide="search.results">
             {busy ? <div className="searchHint">{t("Searching…")}</div> : null}
             {!busy && q && !anything ? <div className="searchHint">{t("No matches.")}</div> : null}
             {/* The compact find bar still says what the details hold (the
