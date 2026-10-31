@@ -192,9 +192,12 @@ def test_a_jobs_end_hook_finds_it_ended_and_wait_waits_for_the_hook(alice, raise
     """``ended`` runs once the job reads as ended, so the work it wakes
     never finds the job still running; ``wait`` returns after the hook."""
     from gamma import jobs
-    seen, go = [], threading.Event()
+    seen, held, go = [], threading.Event(), threading.Event()
 
     def run(job):
+        # The hook reads the job by the handle start returns: without this, a
+        # run that raises at once can end it before the handle is assigned.
+        assert held.wait(10), "the test never took the job's handle"
         if raised:
             raise raised
         return {"made": 1}
@@ -205,6 +208,7 @@ def test_a_jobs_end_hook_finds_it_ended_and_wait_waits_for_the_hook(alice, raise
         seen.append("returned")
 
     job = _start("jb_alice", run, ended=ended)
+    held.set()
     threading.Timer(0.3, go.set).start()
     _finished(job["id"])
     state = "failed" if raised else "done"
