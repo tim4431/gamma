@@ -258,12 +258,12 @@ class _Page:
             notes.append((b, depths[b["id"]]))
             if not depths[b["id"]]:
                 self.order.append("note")
-        for n, frame in enumerate(surfaces):  # a surface's pictures under its boxes, as the screen draws them
-            self._ink(inks.get(n, []), frame)
+        for n, frame in enumerate(surfaces):  # pictures under boxes, both under stickies, as the screen draws them
             for b in pictures.get(n, []):
                 self._picture_block(b, frame)
             for b in boxes.get(n, []):
                 self._box(b, frame)
+            self._ink(inks.get(n, []), frame)
         self._flow(notes)
         draft.private = {**self.private, "order": self.order}
         return draft

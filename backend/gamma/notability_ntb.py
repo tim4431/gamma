@@ -7,13 +7,17 @@ treats the two alike.
 An .ntb is a zip of ``noteBundle``, a FlatBuffers table of the note's
 records, and the pictures and PDFs they name under ``assets/`` by content
 hash. The records are a log (``_live``): one is current at its last
-version, in the place of its first, and one an erase record names is gone,
-with the text it holds. The kinds read here: 1 the document, 3 the page
+version, in the place of its first; erase records delete and restore
+records and pages in their order, and a record deleted at the end is
+gone, with the text it holds, while a page stays (counted); a block is as
+its record and the edits and moves after it leave it
+(``_Reader._blocks``). The kinds read here: 1 the document, 3 the page
 list (nothing drawn), 7 a text anchor, 8 text, 12 character and 13
 paragraph styles, 15 ink, 18 a shape, 20 an ink group's members, 22 a
-picture, a sticky note or a text box, 25 erased records. Strokes, shapes
-and groups are drawn in the order of their records, a group in the place
-of its first member.
+block (a picture, a sticky note or a text box), 23 an edit of blocks, 24
+moves, 25 deletes and restores. Strokes, shapes and groups are drawn in
+the order of their records, a group in the place of its first member,
+where they were drawn: a move of them is not applied (counted).
 
 A record's coordinates are its page's, x from the paper's left edge. Each
 item is placed in the .note's document units by its page's frame
@@ -26,7 +30,9 @@ enough for a preview.
 Everything read is untrusted: every position is checked before it is read
 and every offset before it is followed (``_Flat``), damage reads as a
 missing value or a count of what was left out, and the caps of a .note
-(gamma/notability.py) bound what is read.
+(gamma/notability.py) bound what is read, with MAX_STYLED for every
+style's range together and MAX_LISTED for the ids and tables of every
+vector together.
 """
 
 import math
@@ -41,12 +47,16 @@ from . import notability as nb
 from . import notability_map as nmap
 
 DOCUMENT, PAGES, ANCHOR, TEXT, STYLE, PARAGRAPH = 1, 3, 7, 8, 12, 13
-INK, SHAPE, GROUP, MEDIA, ERASE = 15, 18, 20, 22, 25
-KNOWN = frozenset({DOCUMENT, PAGES, ANCHOR, TEXT, STYLE, PARAGRAPH, INK, SHAPE, GROUP, MEDIA, ERASE})
+INK, SHAPE, GROUP, MEDIA, EDIT, MOVE, ERASE = 15, 18, 20, 22, 23, 24, 25
+KNOWN = frozenset({DOCUMENT, PAGES, ANCHOR, TEXT, STYLE, PARAGRAPH, INK, SHAPE, GROUP, MEDIA, EDIT, MOVE, ERASE})
 MAX_STYLED = 20_000_000          # characters the styles of one note may touch, every range together
+MAX_LISTED = 6_000_000           # ids and tables the bundle's vectors may list, every reading of them together
 _TOOLS = {0: nb.STYLE_PEN, 1: nb.STYLE_PENCIL, 2: nb.STYLE_HIGHLIGHTER}  # a record's tool byte
 _DASHES = {2: "dashed", 3: "dotted"}                                    # its line style byte
 _RULINGS = {0: "ruled", 1: "dots", 2: "grid"}                           # a paper's pattern byte
+_IMAGE = 1                       # a block's type byte: 0 text, 1 an image, 2 a formula
+_EDIT_PLACE = (2, 3, 4, 5, 9)    # where an edit of blocks holds their page, corner, turn, scale and sort key
+_MOVE_PLACE = (1, 2, 3, 4, 5)    # where a move holds its target's
 _CUBIC, _LINEAR = 3, 7           # an ink path's kinds
 _UPRIGHT = (1.0, 1.0, math.pi / 2, 1.0, 0.0)  # a node with nothing measured: width, force, altitude, azimuth x, y
 _A4 = 841.89 / 595.28
@@ -58,10 +68,14 @@ _LOOK = ("bold", "italic", "strike", "size", "rgba", "list_style", "level")  # a
 class _Flat:
     """A FlatBuffers buffer read behind bounds checks: a value outside it, a
     table without a whole vtable, an offset that leads outside it, all read
-    as None. An offset only leads forward, so no chain of them loops."""
+    as None. An offset only leads forward, so no chain of them loops. Any
+    number of tables may lead to one vector, so the vectors' ids and tables
+    are MAX_LISTED in all, each reading of one spending its own
+    (``_spend``)."""
 
     def __init__(self, data: bytes):
         self.data, self.size = data, len(data)
+        self.listed = MAX_LISTED  # ids and tables the vectors may still list
 
     def number(self, letter: str, pos):
         """The little-endian value (a ``struct`` letter) at ``pos``; None
@@ -73,10 +87,12 @@ class _Flat:
 
     def table(self, pos) -> int | None:
         """``pos`` when a table lies there: its vtable, at ``pos`` less the
-        int32 there, inside the buffer, even and at least 4 bytes long."""
+        int32 there, inside the buffer, even and at least 2 bytes long (an
+        empty table's vtable, as Notability's iPad app writes one, holds
+        its own size alone)."""
         back = self.number("i", pos)
         size = self.number("H", None if back is None else pos - back)
-        if size is None or size < 4 or size % 2 or pos - back + size > self.size:
+        if size is None or size < 2 or size % 2 or pos - back + size > self.size:
             return None
         return pos
 
@@ -105,6 +121,12 @@ class _Flat:
         n = self.number("I", pos)
         return n if n is not None and pos + 4 + n * width <= self.size else None
 
+    def _spend(self, n: int) -> int:
+        """``n``, or what is left of MAX_LISTED when that is less, spent."""
+        n = min(n, self.listed)
+        self.listed -= n
+        return n
+
     def blob(self, table, slot: int) -> bytes | None:
         """A byte vector, or a string's bytes."""
         pos = self.follow(self.field(table, slot))
@@ -122,12 +144,14 @@ class _Flat:
             return None
 
     def tables(self, table, slot: int, limit: int) -> tuple[list[int], int]:
-        """The tables a vector of offsets leads to, at most ``limit`` of them,
-        and how many it lists past those."""
+        """The tables a vector of offsets leads to, at most ``limit`` of them
+        and no more than is left of MAX_LISTED, and how many it lists past
+        those."""
         pos = self.follow(self.field(table, slot))
         n = self.length(pos, 4) or 0
-        found = (self.table(self.follow(pos + 4 + 4 * i)) for i in range(min(n, limit)))
-        return [t for t in found if t is not None], max(0, n - limit)
+        read = self._spend(min(n, limit))
+        found = (self.table(self.follow(pos + 4 + 4 * i)) for i in range(read))
+        return [t for t in found if t is not None], n - read
 
     def pairs(self, table, slot: int, limit: int) -> list[tuple[float, float]] | None:
         """A vector of (float32, float32) structs; None when it does not read,
@@ -144,18 +168,30 @@ class _Flat:
         x, y = self.number("f", pos), self.number("f", None if pos is None else pos + 4)
         return (x, y) if x is not None and y is not None else None
 
+    def rect(self, table, slot: int) -> tuple | None:
+        """An inline struct of four float32: a rect's origin and size."""
+        pos = self.field(table, slot)
+        values = tuple(self.number("f", None if pos is None else pos + 4 * i) for i in range(4))
+        return values if None not in values else None
+
+    def flag(self, table, slot: int) -> bool | None:
+        """A byte as a bool; None when absent."""
+        value = self.number("B", self.field(table, slot))
+        return None if value is None else bool(value)
+
     def ident(self, table, slot: int) -> tuple[int, int] | None:
         """A record's id: an inline struct of two uint32."""
         pos = self.field(table, slot)
         a, b = self.number("I", pos), self.number("I", None if pos is None else pos + 4)
         return (a, b) if a is not None and b is not None else None
 
-    def idents(self, table, slot: int) -> list[tuple[int, int]]:
-        """A vector of ids, at most MAX_RECORDS of them."""
+    def idents(self, table, slot: int, words: int = 2) -> list[tuple]:
+        """A vector of ids, at most MAX_RECORDS of them and no more than is
+        left of MAX_LISTED; with ``words`` 3, of positions (``place``)."""
         pos = self.follow(self.field(table, slot))
-        n = min(self.length(pos, 8) or 0, nb.MAX_RECORDS)
-        values = struct.unpack_from(f"<{2 * n}I", self.data, pos + 4) if n else ()
-        return list(zip(values[0::2], values[1::2]))
+        n = self._spend(min(self.length(pos, 4 * words) or 0, nb.MAX_RECORDS))
+        values = struct.unpack_from(f"<{words * n}I", self.data, pos + 4) if n else ()
+        return [values[i:i + words] for i in range(0, len(values), words)]
 
     def place(self, table, slot: int) -> tuple[tuple[int, int] | None, int | None]:
         """A position: an inline struct of an id, the record it counts from
@@ -176,9 +212,26 @@ class _Record:
     payload: int
 
 
+@dataclass(slots=True)
+class _Block:
+    """A block (a picture, a sticky note, a text box) as its record gives it
+    and the log's edits and moves change it (``_Reader._blocks``)."""
+    page: int | None
+    corner: tuple | None           # its frame's top-left corner, turned with the frame
+    size: tuple | None             # before its scale
+    scale: tuple
+    turn: float                    # radians, about the frame's centre
+    z: int | None                  # its sort key
+    crop: tuple | None             # a picture's, on its image as flipped
+    flip_h: bool
+    flip_v: bool
+    caption: bool                  # whether a picture shows its text as a caption
+    paper: int | None              # a sticky note's paper table
+
+
 @dataclass
 class _Store:
-    """One text: the document's or a text box's."""
+    """One text: the document's or a block's (a text box's, a caption)."""
     parts: list = field(default_factory=list)
     units: int = 0                 # its length in UTF-16 units
     styles: list = field(default_factory=list)      # (start, end, patch), in UTF-16 units
@@ -241,7 +294,9 @@ class _Reader:
             kind, payload = flat.number("B", flat.field(table, 4)), flat.sub(table, 5)
             if kind is not None and payload is not None:
                 records.append(_Record(order, flat.ident(table, 0), kind, payload))
-        live = _live(flat, records)
+        live, deleted = _live(flat, records)
+        if deleted:
+            note.left_out["deleted page"] += deleted
         unknown = sum(1 for r in live if r.kind not in KNOWN)
         if unknown:
             note.left_out["record"] += unknown
@@ -257,10 +312,10 @@ class _Reader:
         if ink:
             self._ink(live)
         stores = self._texts(live, document_id)
-        boxes = self._media(live, stores)
+        owners = self._media(live, stores)
         main = stores.pop(document_id, None)
         note.flow = self._runs(main) if main is not None else []
-        lost = sum(1 for owner, store in stores.items() if owner not in boxes and store.units)
+        lost = sum(1 for owner, store in stores.items() if owner not in owners and store.units)
         if lost:
             note.left_out["lost text"] += lost
         return note
@@ -475,54 +530,42 @@ class _Reader:
         return key
 
     def _media(self, live: list, stores: dict) -> set:
-        """Pictures, sticky notes and text boxes (a media record whose id
-        holds a text) by their sort keys; returns the text boxes' ids. A
-        frame is stored by its turned top-left corner: its unturned one is
-        found from it."""
+        """Pictures, sticky notes and text boxes by their sort keys, each as
+        the log leaves it (``_blocks``); returns the ids of the blocks whose
+        text is theirs: a picture's (an image block, or one with an asset),
+        which is its caption, and a text box's (any other block holding a
+        text). A frame is stored by its turned top-left corner and shown at
+        its size times its scale: its unturned corner is found from them."""
         flat, note = self.flat, self.note
-        found, boxes = [], set()
-        for r in live:
-            if r.kind != MEDIA:
-                continue
+        found, owners = [], set()
+        for r, block in self._blocks(live):
             if len(found) >= nb.MAX_MEDIA:
                 note.left_out["media limit"] += 1
                 continue
-            p = r.payload
-            page, corner, size = self._page(p, 2), flat.pair(p, 3), flat.pair(p, 6)
-            if self._far(page):
+            if self._far(block.page):
                 continue
-            if page is None or corner is None or size is None or not (size[0] > 0 and size[1] > 0):
+            (w, h), (sx, sy) = block.size or (0.0, 0.0), block.scale
+            w, h = w * sx, h * sy
+            if block.page is None or block.corner is None or not (w > 0 and h > 0):
                 note.left_out["object"] += 1
                 continue
-            turn = flat.number("f", flat.field(p, 4)) or 0.0
-            (w, h), c, s = size, math.cos(turn), math.sin(turn)
-            x = corner[0] - w / 2 + w / 2 * c - h / 2 * s - self.pages.inset
-            y = self.pages.top(page) + corner[1] - h / 2 + w / 2 * s + h / 2 * c
+            c, s = math.cos(block.turn), math.sin(block.turn)
+            x = block.corner[0] - w / 2 + w / 2 * c - h / 2 * s - self.pages.inset
+            y = self.pages.top(block.page) + block.corner[1] - h / 2 + w / 2 * s + h / 2 * c
             if max(abs(v) for v in (x, y, w, h)) > nb.COORD_LIMIT:
                 note.left_out["object"] += 1
                 continue
-            media = nb.Media(kind="text", x=x, y=y, w=w, h=h, rotation=turn,
-                             z=flat.number("Q", flat.field(p, 9)) or r.order)
-            content = flat.sub(p, 10)
-            asset, paper = flat.sub(content, 0), flat.sub(p, 15)
-            if r.ident in stores:
-                boxes.add(r.ident)
-                media.runs = self._runs(stores[r.ident])
-            elif asset is not None:
-                mime = flat.name(asset, 2) or "image/jpeg"
-                digest = flat.field(asset, 0)
-                if not mime.startswith("image/") or digest is None or digest + 64 > flat.size:
-                    note.left_out["media"] += 1
-                    note.classes[mime] += 1
+            media = nb.Media(kind="text", x=x, y=y, w=w, h=h, rotation=block.turn, z=block.z or r.order)
+            content = flat.sub(r.payload, 10)
+            if flat.sub(content, 0) is not None or flat.number("B", flat.field(r.payload, 0)) == _IMAGE:
+                owners.add(r.ident)
+                if not self._picture(media, block, content, stores.get(r.ident)):
                     continue
-                media.kind, media.picture = "picture", self._asset(flat.data[digest:digest + 64], mime)
-                at = flat.field(p, 11)
-                crop = [flat.number("f", at + 4 * i) for i in range(4)] if at is not None else None
-                media.crop = tuple(crop) if crop and None not in crop and crop[2] > 0 and crop[3] > 0 else None
-                logical = flat.pair(content, 1)
-                media.crop_size = logical if logical and logical[0] > 0 and logical[1] > 0 else None
-            elif paper is not None:
-                color = flat.rgba(flat.field(paper, 4))
+            elif r.ident in stores:
+                owners.add(r.ident)
+                media.runs = self._runs(stores[r.ident])
+            elif block.paper is not None:
+                color = flat.rgba(flat.field(block.paper, 4))
                 media.kind = "sticky"
                 media.background = _unit(color) if color else nb.STICKY_COLOR
             else:
@@ -531,15 +574,116 @@ class _Reader:
                 continue
             found.append(media)
         note.media = sorted(found, key=lambda media: media.z)  # stable: one key's stay in order
-        return boxes
+        return owners
+
+    def _blocks(self, live: list) -> list[tuple[_Record, _Block]]:
+        """The block records, each with its state once the log's edits and
+        moves are applied in their order: an edit (23) to each block it
+        lists, a move (24) to each of its targets that is a block. One that
+        moves ink, a shape or a group is not applied to them, and counted
+        ("ink edit")."""
+        flat = self.flat
+        blocks = [(r, self._block(r.payload)) for r in live if r.kind == MEDIA]
+        by_id = {r.ident: block for r, block in blocks if r.ident is not None}
+        drawn = {r.ident for r in live if r.kind in (INK, SHAPE, GROUP)} - {None}
+        for r in live:
+            if r.kind == EDIT:
+                for ident in flat.idents(r.payload, 0):
+                    if ident in by_id:
+                        self._edit(by_id[ident], r.payload)
+            elif r.kind == MOVE:
+                moves = [(flat.ident(move, 0), move) for move in flat.tables(r.payload, 0, nb.MAX_RECORDS)[0]]
+                for target, move in moves:
+                    if target in by_id:
+                        self._move(by_id[target], move, _MOVE_PLACE)
+                if any(target in drawn for target, _ in moves):
+                    self.note.left_out["ink edit"] += 1
+        return blocks
+
+    def _block(self, p: int) -> _Block:
+        """A block record's state: its page, its frame (the turned corner,
+        the size, its scale, the turn), its sort key, a picture's crop,
+        flips and whether its caption shows, a sticky note's paper."""
+        flat = self.flat
+        return _Block(page=self._page(p, 2), corner=flat.pair(p, 3), size=flat.pair(p, 6),
+                      scale=flat.pair(p, 5) or (1.0, 1.0), turn=flat.number("f", flat.field(p, 4)) or 0.0,
+                      z=flat.number("Q", flat.field(p, 9)), crop=flat.rect(p, 11), flip_h=bool(flat.flag(p, 16)),
+                      flip_v=bool(flat.flag(p, 17)), caption=bool(flat.flag(p, 8)), paper=flat.sub(p, 15))
+
+    def _move(self, block: _Block, p: int, slots: tuple) -> None:
+        """What an edit or a move sets of a block's place, from ``slots``:
+        its page, corner, turn and scale (those two each a table of one
+        value, and one of none clears it: no turn, a scale of 1) and its
+        sort key. What it does not hold stays as it was."""
+        flat = self.flat
+        page, corner, turn, scale, z = slots
+        block.page = _given(self._page(p, page), block.page)
+        block.corner = _given(flat.pair(p, corner), block.corner)
+        held = flat.sub(p, turn)
+        if held is not None:
+            block.turn = flat.number("f", flat.field(held, 0)) or 0.0
+        held = flat.sub(p, scale)
+        if held is not None:
+            block.scale = flat.pair(held, 0) or (1.0, 1.0)
+        block.z = _given(flat.number("Q", flat.field(p, z)), block.z)
+
+    def _edit(self, block: _Block, p: int) -> None:
+        """What an edit of blocks sets: their place (``_move``), size,
+        crop (a table of one rect, one of none clearing it), flips, whether
+        a caption shows and a sticky note's paper (a table of one). Their
+        corners' style, text wrap and lock change nothing Gamma shows."""
+        flat = self.flat
+        self._move(block, p, _EDIT_PLACE)
+        block.size = _given(flat.pair(p, 6), block.size)
+        held = flat.sub(p, 12)
+        if held is not None:
+            block.crop = flat.rect(held, 0)
+        held = flat.sub(p, 13)
+        if held is not None:
+            block.paper = flat.sub(held, 0)
+        block.caption = _given(flat.flag(p, 8), block.caption)
+        block.flip_h = _given(flat.flag(p, 14), block.flip_h)
+        block.flip_v = _given(flat.flag(p, 15), block.flip_v)
+
+    def _picture(self, media: nb.Media, block: _Block, content: int | None, text: _Store | None) -> bool:
+        """A picture's file by its content hash; its crop in the asset's
+        logical size, mirrored where the picture is flipped (Notability
+        measures it on the image as flipped, Gamma on the image as stored),
+        or, for an asset without a logical size, in its pixels, which are
+        not known here, so kept as it is; its flips; and, when it shows
+        one, its caption: the text it holds, plain, its line breaks kept.
+        False when it has no image to read (counted)."""
+        flat, note = self.flat, self.note
+        asset = flat.sub(content, 0)
+        if asset is None:
+            note.left_out["object"] += 1
+            return False
+        mime = flat.name(asset, 2) or "image/jpeg"
+        digest = flat.field(asset, 0)
+        if not mime.startswith("image/") or digest is None or digest + 64 > flat.size:
+            note.left_out["media"] += 1
+            note.classes[mime] += 1
+            return False
+        media.kind, media.picture = "picture", self._asset(flat.data[digest:digest + 64], mime)
+        logical = flat.pair(content, 1)
+        media.crop_size = logical if logical and logical[0] > 0 and logical[1] > 0 else None
+        crop = block.crop if block.crop and block.crop[2] > 0 and block.crop[3] > 0 else None
+        if crop and media.crop_size:
+            (x, y, w, h), (sw, sh) = crop, media.crop_size
+            crop = (sw - x - w if block.flip_h else x, sh - y - h if block.flip_v else y, w, h)
+        media.crop, media.flip_h, media.flip_v = crop, block.flip_h, block.flip_v
+        if block.caption and text is not None:
+            media.caption = _clean("".join(text.parts)).strip()
+        return True
 
     # --- text -----------------------------------------------------------------------------
 
     def _texts(self, live: list, document: tuple) -> dict:
-        """The note's texts by their owner's id, the document's or a text
-        box's: each text record appended to its owner's, an anchor where it
-        starts; then the anchors that mark a text's last character; then the
-        styles of the ranges between anchors."""
+        """The note's texts by their owner's id, the document's or a block's:
+        each text record appended to its owner's (the block its text field
+        names, else the document; where it was inserted is not read), an
+        anchor where it starts; then the anchors that mark a text's last
+        character; then the styles of the ranges between anchors."""
         flat, note = self.flat, self.note
         stores, anchors, ends = {}, {document: (document, 0)}, set()
         for r in live:
@@ -552,7 +696,7 @@ class _Reader:
             if len(text) > self.text_left or (raw and not text):
                 note.left_out["typed text"] += 1
                 text = text[:self.text_left]
-            owner = flat.ident(r.payload, 0) or document
+            owner = flat.ident(r.payload, 2) or document
             store = stores.setdefault(owner, _Store())
             anchors[r.ident] = (owner, store.units)
             store.parts.append(text)
@@ -646,11 +790,16 @@ def _unit(color: tuple) -> tuple:
     return tuple(v / 255 for v in color)
 
 
+def _given(value, old):
+    """An edit's value, or ``old`` where it holds none."""
+    return old if value is None else value
+
+
 def _style(flat: _Flat, payload: int) -> dict:
     """A character style record's patch: what it sets, each in a table of
     one value (a flag whose table holds none is off)."""
     patch = {}
-    for slot, key in ((3, "bold"), (4, "italic"), (11, "strike")):
+    for slot, key in ((3, "bold"), (4, "italic"), (13, "strike")):
         holder = flat.sub(payload, slot)
         if holder is not None:
             patch[key] = bool(flat.number("B", flat.field(holder, 0)))
@@ -711,12 +860,23 @@ def _clean(text: str) -> str:
     return unicodedata.normalize("NFC", text.replace("\x00", ""))
 
 
-def _live(flat: _Flat, records: list) -> list[_Record]:
-    """The records still part of the note: those an erase record lists are
-    gone, and the text records they own with them; a record listed again is
-    current at its last version, in the place of its first."""
-    erased = {ident for r in records if r.kind == ERASE for ident in flat.idents(r.payload, 0)}
-    erased |= {r.ident for r in records if r.kind == TEXT and flat.ident(r.payload, 0) in erased}
+def _live(flat: _Flat, records: list) -> tuple[list[_Record], int]:
+    """The records still part of the note, and how many pages are deleted.
+    Erase records delete records (slot 0) and restore them (1), and pages
+    likewise (2 and 3, each by its position), in their order: a record
+    deleted at the end is gone, and the text records it holds with it; a
+    page is only counted, as the pages after it would have to be numbered
+    again (``_page`` reads a page's number from its position). A record
+    listed again is current at its last version, in the place of its
+    first."""
+    erased, pages = set(), set()
+    for r in records:
+        if r.kind == ERASE:
+            erased.update(flat.idents(r.payload, 0))
+            erased.difference_update(flat.idents(r.payload, 1))
+            pages.update(flat.idents(r.payload, 2, 3))
+            pages.difference_update(flat.idents(r.payload, 3, 3))
+    erased |= {r.ident for r in records if r.kind == TEXT and flat.ident(r.payload, 2) in erased}
     latest = {r.ident: r for r in records if r.ident is not None}
     out, seen = [], set()
     for r in records:
@@ -725,7 +885,7 @@ def _live(flat: _Flat, records: list) -> list[_Record]:
         elif r.ident not in erased and r.ident not in seen:
             seen.add(r.ident)
             out.append(latest[r.ident])
-    return out
+    return out, len(pages)
 
 
 def _decode(data: bytes, origin: tuple, scale: tuple) -> list | None:

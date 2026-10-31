@@ -24,11 +24,12 @@ The upload is untrusted:
   temporary disk a note takes is given back before the next and a library
   of thousands of notes imports whole;
 - every member is read only after its size is checked (a PDF or picture,
-  held whole in memory, up to MAX_HELD_BYTES), a picture is never decoded
-  (only its header's size is read; a GoodNotes sticker's PDF is rendered
-  through PyMuPDF, at most ``goodnotes_import.MAX_STICKER_SIDE`` px),
-  recordings are streamed, and the ink is made and stored one page at a
-  time;
+  held whole in memory, up to MAX_HELD_BYTES), a PNG, JPEG, GIF or WebP
+  picture is never decoded (only its header's size is read; a TIFF, BMP or
+  AVIF is decoded into a PNG, at most ``pdf_image.MAX_DECODED_PIXELS``, and
+  a GoodNotes sticker's PDF rendered through PyMuPDF, at most
+  ``goodnotes_import.MAX_STICKER_SIDE`` px), recordings are streamed, and
+  the ink is made and stored one page at a time;
 - every file goes through ``store_pdf``, ``store_file`` or
   ``store_file_stream``, so the quota and dedup apply, and the disk keeps
   ``import_staging.MIN_FREE_BYTES`` free.
@@ -73,6 +74,8 @@ MAX_DIRECTORY_BYTES = 16 << 20   # a zip's central directory (the upload's, each
 MAX_HELD_BYTES = 256 << 20       # a note's PDF or picture: read whole into memory, parsed and composed
 MAX_NOTE_SAMPLES = 20_000_000    # flattened samples in one note (a thousand pages of dense writing)
 MAX_WARNINGS = 200
+_CONVERTED = ("TIFF", "BMP", "AVIF")  # Pillow's formats of the picture files a picture block holds as PNG
+_PNG_MODES = ("1", "L", "LA", "I;16", "I;16B", "P", "RGB", "RGBA")  # Pillow's modes a PNG holds as they are
 _PICTURE_EXTS = {"image/png": ".png", "image/jpeg": ".jpg", "image/gif": ".gif", "image/webp": ".webp"}
 
 
@@ -197,6 +200,42 @@ def open_pdf(entry, name: str, tag: str = "import") -> tuple | None:
         log.info(f"[{tag}] {name}: unreadable PDF ({exc!r})")
         return None
     return (sizes, reader, data) if sizes else None
+
+
+def picture_file(data: bytes) -> bytes:
+    """A picture's file as a picture block holds it (``picture.URL_RE``): a
+    PNG, JPEG, GIF or WebP as it is; a TIFF, BMP or AVIF (``_CONVERTED``)
+    as a PNG of its first frame, turned as its EXIF orientation says, so a
+    crop's fractions of its size as shown hold for the PNG, its grey kept
+    to 16 bits; anything else, and a picture of floating-point samples, as
+    it is, for the caller to find it no picture. ValueError past
+    pdf_image.MAX_DECODED_PIXELS, checked before it is decoded, for its
+    pixels and for a TIFF's tile, which is decoded whole."""
+    if sniff(data):
+        return data
+    from PIL import Image, ImageOps
+
+    from .pdf_image import MAX_DECODED_PIXELS
+
+    try:
+        with Image.open(io.BytesIO(data), formats=_CONVERTED) as image:
+            tile = image.tag_v2.get(322, 0) * image.tag_v2.get(323, 0) if image.format == "TIFF" else 0
+            if max(image.width * image.height, tile) > MAX_DECODED_PIXELS:
+                raise Image.DecompressionBombError
+            if image.mode == "F":  # what range its samples span is not said
+                return data
+            shown = ImageOps.exif_transpose(image)
+            if shown.mode not in _PNG_MODES:
+                shown = shown.convert("I;16" if shown.mode == "I" else "RGBA" if shown.has_transparency_data else "RGB")
+                if image.mode in ("CMYK", "LAB"):  # its profile is of colours the PNG no longer holds
+                    shown.info.pop("icc_profile", None)
+            out = io.BytesIO()
+            shown.save(out, "PNG")
+            return out.getvalue()
+    except Image.DecompressionBombError:  # that, or Pillow's own past twice its MAX_IMAGE_PIXELS
+        raise ValueError(f"over {MAX_DECODED_PIXELS:,} pixels") from None
+    except Exception:  # noqa: BLE001 — none of those formats, or one that does not decode: no picture
+        return data
 
 
 class AppImport:
@@ -443,19 +482,20 @@ class AppImport:
                       convert=None) -> dict | None:
         """A picture as a picture block's ``{content, picture}``
         (``notability_map.picture_block``); None, with a warning, when its
-        file cannot be stored. The file is stored as it came, never decoded:
-        an animated GIF's animation in place of its still frame when the
-        note has it within MAX_HELD_BYTES, it is a GIF and it stores
-        (``_animation``). Only the still's size is read, from its header
-        (``picture.image_size``), for the crop. ``convert(data, media)``,
-        when given, turns a file that is no picture into one first (a
-        sticker's PDF); it is handed any one of the pictures that show the
-        file, so what it makes must not hang on which. ``files``
-        holds, by member, what the note's files were found to be and stored
-        as (a still apart from an animation), so each is read and stored
-        once however many pictures show it, whatever animations they name:
-        a still is read again at most once, to be stored for a picture shown
-        without the animation an earlier one showed."""
+        file cannot be stored. The file is stored as it came (a TIFF, BMP
+        or AVIF as a PNG, ``picture_file``), an animated GIF's animation in
+        place of its still frame when the note has it within MAX_HELD_BYTES,
+        it is a GIF and it stores (``_animation``). Only the still's size is
+        read, from its header (``picture.image_size``), for the crop.
+        ``convert(data, media)``, when given, turns a file that is no
+        picture into one first (a sticker's PDF); it is handed any one of
+        the pictures that show the file, so what it makes must not hang on
+        which. ``files`` holds, by member, what the note's files were found
+        to be and stored as (a still apart from an animation), so each is
+        read and stored once however many pictures show it, whatever
+        animations they name: a still is read again at most once, to be
+        stored for a picture shown without the animation an earlier one
+        showed."""
         key, data = ("still", media.picture), None
         if key not in files:
             data, pixels = self._read_still(members, media, title, convert)
@@ -475,9 +515,11 @@ class AppImport:
 
     def _read_still(self, members, media: nb.Media, title: str, convert=None) -> tuple:
         """``(bytes, pixel size as shown)`` of a picture's file, through
-        ``convert`` when given; ``(None, None)``, with a warning, when it is
-        missing, past MAX_HELD_BYTES, does not read or convert, or is no
-        PNG, JPEG, GIF or WebP whose size reads."""
+        ``convert`` when given, then ``picture_file``; ``(None, None)``,
+        with a warning, when it is missing, past MAX_HELD_BYTES, does not
+        read or convert, is a TIFF, BMP or AVIF past
+        pdf_image.MAX_DECODED_PIXELS, or is no PNG, JPEG, GIF, WebP, TIFF,
+        BMP or AVIF whose size reads."""
         entry = members.find(media.picture)
         name = posixpath.basename(media.picture)
         if entry is None:
@@ -490,6 +532,7 @@ class AppImport:
             data = entry.read()
             if convert is not None:
                 data = convert(data, media)
+            data = picture_file(data)
         except READ_ERRORS:
             self.warn(title, f"Picture {name} could not be read: left out")
             return None, None
@@ -498,7 +541,8 @@ class AppImport:
             return None, None
         pixels = image_size(data)
         if pixels is None or not all(pixels):
-            self.warn(title, f"Picture {name} is left out: not a readable PNG, JPEG, GIF or WebP picture")
+            self.warn(title, f"Picture {name} is left out: "
+                             "not a readable PNG, JPEG, GIF, WebP, TIFF, BMP or AVIF picture")
             return None, None
         return data, pixels
 

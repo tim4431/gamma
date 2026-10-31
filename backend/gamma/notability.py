@@ -76,7 +76,7 @@ _WIDTH_RANGE = (16.0, 10_000.0)  # a page width W outside it is damage
 _MAX_LINE_SPACING = 10.0         # inches between ruled lines
 _MAX_PAGE_NUMBER = 1_000_000     # past it a layout entry is a blank page (Notability writes INT64_MAX)
 _LAST = 1 << 62                  # the z-order position of an ink group that has no index: above the rest
-_PATH_MAGIC = b"\x25\xb3\xe5\x48"  # an archived CGPath (``_path``)
+PATH_MAGIC = b"\x25\xb3\xe5\x48"  # an archived CGPath (``_path``, ``notability_write.crop_path``)
 _PATH_POINTS = (1, 1, 2, 3, 0)   # the points of each CGPath element: move, line, quadratic, cubic, close
 GAMMA_UUID = b"GAMMAI\x80"       # how a curve UUID Gamma's export wrote begins (a version 8 UUID): its anchors
                                  # are the stroke's samples (``Curve.gamma``)
@@ -93,6 +93,8 @@ LEFT_OUT = {
                f"Past {MAX_CURVES:,} strokes the rest is left out ({{n}} strokes)"),
     "group": ("{n} group of handwriting could not be read and was left out",
               "{n} groups of handwriting could not be read and were left out"),
+    "group item": ("{n} item in a group of handwriting could not be read and was left out",
+                   "{n} items in groups of handwriting could not be read and were left out"),
     "partial shape": ("{n} partly erased shape could not be read and was left out",
                       "{n} partly erased shapes could not be read and were left out"),
     "shape": ("{n} shape of a kind this import does not know is left out",
@@ -103,12 +105,21 @@ LEFT_OUT = {
     "media": ("{n} object of a kind this import does not know is left out ({classes})",
               "{n} objects of a kind this import does not know are left out ({classes})"),
     "rotated box": ("{n} rotated text box is placed upright", "{n} rotated text boxes are placed upright"),
+    "crop": ("{n} picture shown cropped comes in whole: the note lacks the image its crop is measured on",
+             "{n} pictures shown cropped come in whole: the note lacks the images their crops are measured on"),
+    "picture on sticky": ("{n} picture lies on a sticky note, which Gamma draws over it",
+                          "{n} pictures lie on sticky notes, which Gamma draws over them"),
+    "box on sticky": ("{n} text box lies on a sticky note, which Gamma draws over it",
+                      "{n} text boxes lie on sticky notes, which Gamma draws over them"),
+    "picture on box": ("{n} picture lies on a text box, which Gamma draws over it",
+                       "{n} pictures lie on text boxes, which Gamma draws over them"),
     "polygon fill": ("{n} filled polygon keeps its outline only", "{n} filled polygons keep their outline only"),
     "page": (f"Past {MAX_NOTE_PAGES:,} pages the rest is left out ({{n}} item)",
              f"Past {MAX_NOTE_PAGES:,} pages the rest is left out ({{n}} items)"),
     "samples": ("The note's handwriting is too long: {n} stroke is left out",
                 "The note's handwriting is too long: {n} strokes are left out"),
     "long text": ("{n} paragraph of typed text was cut short", "{n} paragraphs of typed text were cut short"),
+    "long caption": ("{n} picture caption was cut short", "{n} picture captions were cut short"),
     "typed text": ("The note's typed text is too long: {n} text is cut short or left out",
                    "The note's typed text is too long: {n} texts are cut short or left out"),
     "formatting": ("The note's typed text has too much formatting: {n} text keeps its words only",
@@ -121,6 +132,10 @@ LEFT_OUT = {
                 f"Past {MAX_RECORDS:,} records of the note the rest is left out ({{n}} records)"),
     "record": ("{n} record of a kind this import does not know is left out",
                "{n} records of a kind this import does not know are left out"),
+    "ink edit": ("{n} later move, turn or resize of handwriting is left out: it comes in where it was drawn",
+                 "{n} later moves, turns or resizes of handwriting are left out: it comes in where it was drawn"),
+    "deleted page": ("{n} page deleted in Notability is not taken out",
+                     "{n} pages deleted in Notability are not taken out"),
     "lost text": ("{n} text that belongs to no page or box is left out",
                   "{n} texts that belong to no page or box are left out"),
 }
@@ -271,7 +286,7 @@ class Media:
     y: float
     w: float
     h: float
-    rotation: float = 0.0          # rotationDegrees, which holds radians; the turn is about the centre
+    rotation: float = 0.0          # rotationDegrees, which holds radians, within a half turn; about the centre
     flip_h: bool = False           # pictures only
     flip_v: bool = False
     z: float = 0.0                 # zIndex
@@ -281,6 +296,8 @@ class Media:
     rgba: tuple | None = None
     picture: str | None = None     # picture: its image below the note's folder; None when missing
     animation: str | None = None   # picture: an animated GIF's animation below the note's folder
+    stand_in: bool = False         # picture: its image stands in for the one its crop is measured on, which the
+                                   # note lacks (a smaller copy, or a GIF's animation), so the crop's scale is unknown
     crop: tuple | None = None      # picture: FigureCropRectKey, in source pixels
     crop_size: tuple | None = None  # picture: the size the crop is given in, when not the image's pixels
     caption: str = ""              # picture: captionFieldText when isCaptionEnabled
@@ -770,7 +787,9 @@ class _Reader:
         within its group's index (after ``zkey``) by the group's order in
         ``groupsArrays`` and its own; returns the indices. A group's
         transform is composed with the one around it; a type 1 member is a
-        whole archive of another hash, a type 2 member a shape list."""
+        whole archive of another hash, a type 2 member a shape list, and any
+        other member, or one of them that does not read, is counted ("group
+        item")."""
         note = self.note
         taken = []
         for order, element in enumerate(arch.array(h.get("groupsArrays"))):
@@ -800,9 +819,7 @@ class _Reader:
             look = group.get("appearance") if isinstance(group.get("appearance"), dict) else {}
             items = group.get("inkGroupObjects")
             for member, item in enumerate(items if isinstance(items, list) else ()):
-                if not isinstance(item, dict):
-                    continue
-                kind, obj = whole(item.get("type")), item.get("object")
+                kind, obj = (whole(item.get("type")), item.get("object")) if isinstance(item, dict) else (None, None)
                 key = zkey + (index, order, member)
                 if kind == 1 and isinstance(obj, (bytes, bytearray)):
                     if self.archives >= MAX_GROUP_ARCHIVES:
@@ -813,11 +830,13 @@ class _Reader:
                         self._spend(obj)
                         inner = Archive(bytes(obj), limit=MAX_SESSION_BYTES)
                     except ArchiveError:
-                        note.left_out["group"] += 1
+                        note.left_out["group item"] += 1
                         continue
                     self._hash(inner, inner.root, composed, depth + 1, key)
-                elif kind == 2 and isinstance(obj, dict):
+                elif kind == 2 and _shape_lists(obj):
                     self._shapes(obj, composed, scale, key, look, grouped=True)
+                else:
+                    note.left_out["group item"] += 1
         return taken
 
     def _shape_list(self, raw: bytes | None, transform: tuple, scale: float, zkey: tuple) -> list[int]:
@@ -838,11 +857,9 @@ class _Reader:
         (``grouped``, with the group's appearance). Each shape goes into
         ``self.drawn`` keyed by its index after ``zkey``, up to the note's
         MAX_SHAPES; returns the indices."""
-        if not isinstance(plist, dict):
+        if not _shape_lists(plist):
             return []
-        shapes, kinds, indices = (plist.get(k) for k in ("shapes", "kinds", "indices"))
-        if not all(isinstance(v, list) for v in (shapes, kinds, indices)):
-            return []
+        shapes, kinds, indices = (plist[k] for k in ("shapes", "kinds", "indices"))
         listed = min(len(shapes), len(kinds), len(indices))
         room = max(0, MAX_SHAPES - self.shape_count)
         if listed > room:
@@ -937,7 +954,7 @@ class _Reader:
                 note.left_out["object"] += 1
                 continue
             media = Media(kind=kind, x=origin[0], y=origin[1], w=size[0], h=size[1],
-                          rotation=arch.number(obj.get("rotationDegrees")) or 0.0,
+                          rotation=math.remainder(arch.number(obj.get("rotationDegrees")) or 0.0, math.tau),
                           z=arch.number(obj.get("zIndex")) or 0.0)
             ident = arch.data(arch.get(arch.get(obj, "UUID"), "NS.uuidbytes"))
             media.uuid = ident if ident is not None and len(ident) == 16 else None
@@ -959,30 +976,39 @@ class _Reader:
     def _picture(self, obj: dict, media: Media) -> bool:
         """A picture's image, crop, flips and caption, and an animated GIF's
         animation (``isGif``: ``Assets/<assetsIdKey>/media.gif``, beside the
-        still frame its image is); False when it names no image at all
-        (counted as unreadable)."""
+        still frame its image is). The image is the full-resolution one;
+        when the note lacks it (``_image``), the smaller copy in
+        ``contentSnapshot``, else a GIF's animation alone, stands in for it
+        (``Media.stand_in``); with none of them it is named missing. False
+        when it names no image at all (counted as unreadable)."""
         arch, note = self.arch, self.note
         figure = arch.get(obj, "figure")
-        snapshot = arch.get(arch.get(figure, "FigureBackgroundObjectKey"), "kImageObjectSnapshotKey")
-        rel = self._name(arch.get(snapshot, "relativePath"))
-        if not rel:
-            snapshot = arch.get(obj, "contentSnapshot")
-            rel = self._name(arch.get(snapshot, "relativePath"))
-        if not rel:
+        full, key = self._image(arch.get(arch.get(figure, "FigureBackgroundObjectKey"), "kImageObjectSnapshotKey"))
+        small, copy = self._image(arch.get(obj, "contentSnapshot"))
+        if not (full or small):
             note.left_out["object"] += 1
             return False
-        key = None if arch.flag(arch.get(snapshot, "imageIsMissing")) else self.members.resolve(rel)
-        if key is None:
-            self.note.name_missing(rel)
-        media.picture = key
         ident = self._name(obj.get("assetsIdKey")) if arch.flag(obj.get("isGif")) else None
         media.animation = self.members.resolve(f"Assets/{ident}/media.gif") if ident else None
+        media.picture = key or copy
+        if media.picture is None and media.animation is not None:  # the still frame lost: the animation alone
+            media.picture, media.animation = media.animation, None
+        media.stand_in = key is None and media.picture is not None
+        if media.picture is None:
+            note.name_missing(full or small)
         media.crop = parse_numbers(arch.string(arch.get(figure, "FigureCropRectKey")), 4)
         media.flip_h = arch.flag(obj.get("isFlippedHorizontal"))
         media.flip_v = arch.flag(obj.get("isFlippedVertical"))
         if arch.flag(obj.get("isCaptionEnabled")):
             media.caption = self._text(obj.get("captionFieldText")).strip()
         return True
+
+    def _image(self, snapshot) -> tuple[str | None, str | None]:
+        """A GLSnapshot's ``relativePath`` and the member it names, None
+        when the note has no such file or ``imageIsMissing`` says Notability
+        lost it."""
+        rel = self._name(self.arch.get(snapshot, "relativePath"))
+        return rel, None if self.arch.flag(self.arch.get(snapshot, "imageIsMissing")) else self.members.resolve(rel)
 
     # --- text -----------------------------------------------------------------------------
 
@@ -1193,6 +1219,11 @@ def _compose(outer: tuple, inner: tuple) -> tuple:
             a1 * x2 + c1 * y2 + x1, b1 * x2 + d1 * y2 + y1)
 
 
+def _shape_lists(plist) -> bool:
+    """Whether a shape list's shapes, kinds and indices are lists."""
+    return isinstance(plist, dict) and all(isinstance(plist.get(k), list) for k in ("shapes", "kinds", "indices"))
+
+
 def _point(value, transform: tuple) -> tuple[float, float] | None:
     """A shape's point (``[x, y]``, or a "{x, y}" string) through the
     transform; None unless finite and within COORD_LIMIT."""
@@ -1306,7 +1337,7 @@ def _path(data, transform: tuple) -> list[tuple[list, tuple]] | None:
     None when it does not read: no magic, an element before any move or of
     no known kind, sizes that disagree, past MAX_CURVE_POINTS points, a
     point that is not finite or lies past COORD_LIMIT."""
-    if not isinstance(data, (bytes, bytearray)) or len(data) < 8 or data[:4] != _PATH_MAGIC:
+    if not isinstance(data, (bytes, bytearray)) or len(data) < 8 or data[:4] != PATH_MAGIC:
         return None
     count = int.from_bytes(data[4:8], "little")
     kinds = data[8:8 + count]
