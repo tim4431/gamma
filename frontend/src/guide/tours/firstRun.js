@@ -9,26 +9,49 @@ import { T } from "../../shared/i18n/i18n.js";
 // the rest of the tour depends on. `{demoUrl}` in typed text comes from
 // `vars` (overridable through the localStorage key gamma-guide-vars). Start
 // it from the account menu's Tours > Your first paper. It is also offered,
-// as its welcome card, on the library of a demo server once the guest lands
+// as its welcome deck, on the library of a demo server once the guest lands
 // and on a library with nothing in it yet but the seeded Welcome page and Sketchbook: the
 // trigger's own `requires` / `anyOf` gate only that offer, so the tour stays
 // startable everywhere.
 //
-// `welcome: true`: the first (`intro`) step is a centred welcome card — what
-// the tour does, how long it takes, an outline — and so is the tour's offer;
-// Start from the offer begins after it. The intro is not counted as a step.
+// `welcome: true`: the first (`intro`) step is the welcome deck, the tour's
+// arrival offer (GuideOverlay's WelcomeDeck): what Gamma does, a card each
+// with its drawing (`media`, guide/media.js) and one line, the first card the
+// hero that carries this tour, then `more`, what has no drawing. Its way in
+// (`next`) opens the seeded Welcome page; the hero's button starts the tour.
+// A run never shows the intro: started from the deck, the Tours menu or the
+// library's "Take the 2-minute tour", the tour opens on its first step.
 const WELCOME = {
   anchor: null,
   intro: true,
-  body: T("Watch each move on a real paper, then try it."),
-  outline: [
-    { text: T("Add a paper from a link"), kind: "watch" },
-    { text: T("Highlight a sentence and an equation"), kind: "try" },
-    { text: T("Turn highlights into notes and labels"), kind: "watch" },
+  body: T("Read papers and keep what you learn, in one place."),
+  // Two rows of four, the hero two wide: what Gamma does on a paper, then
+  // where it reaches beyond it.
+  features: [
+    { media: "highlight-note", title: T("Highlights become notes"),
+      line: T("Highlight a passage and it lands in your notes, linked to its page.") },
+    { media: "chat-figure", title: T("Ask the paper"),
+      line: T("Box a figure and ask; the answer cites its page.") },
+    { media: "labels-folders", title: T("One paper, many folders"),
+      line: T("Label a paper and keep it in several folders, never copied.") },
+    { media: "ink-pen", title: T("Write on the page"),
+      line: T("Circle, sketch or type; every mark is a note.") },
+    { media: "notability-sync", title: T("Notability, both ways"),
+      line: T("Bring notes in with their handwriting still live, and send pages back.") },
+    { media: "zotero-sync", title: T("In sync with Zotero"),
+      line: T("Highlights, notes and folders travel both ways through zotero.org.") },
+    { media: "assistants-mcp", title: T("Your AI tools, connected"),
+      line: T("Claude Code, Codex or any MCP client can search and read your papers.") },
   ],
-  next: T("Start the tour"),
+  more: [
+    { icon: "share", text: T("Share and edit together") },
+    { icon: "offline", text: T("Offline copies that sync back") },
+    { icon: "connector", text: T("Save papers from your browser") },
+    { icon: "translate", text: T("Translate a page in place") },
+  ],
+  next: T("Open the Welcome page"),
   later: T("Explore on my own"),
-  footnote: T("Replay it any time from the account menu."),
+  footnote: T("Every tour stays in the account menu."),
 };
 
 export default {
@@ -86,6 +109,7 @@ export default {
       id: "highlight",
       anchor: "pdf.viewer",
       placement: "inside",
+      media: "highlight-note",
       title: T("Select text, then choose a colour"),
       bodyTouch: T("Long-press a word, drag the handles, then pick a colour."),
       do: [{ previewHighlight: true }],

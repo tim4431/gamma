@@ -111,10 +111,10 @@ export async function authScenarios({ server, browser, alice, step, until, asser
       }));
       assertEq(JSON.parse(kept.session)?.state, "offered");
       assertEq(kept.local, null, "nothing kept in localStorage");
-      // The offer is the tour's welcome card; Start begins with the first
-      // demo, not a second welcome.
-      assertEq(await page.locator('[data-guide-offer="first-run"] .guideTitle').textContent(), "Welcome to the Gamma demo");
-      await page.getByRole("button", { name: "Start the tour", exact: true }).click();
+      // The offer is the tour's welcome deck; its hero's tour begins with the
+      // first demo, not a second welcome.
+      assertEq(await page.locator('[data-guide-offer="first-run"] .welcomeIntro .guideTitle').textContent(), "Welcome to the Gamma demo");
+      await page.getByRole("button", { name: "Take the 2-minute tour", exact: true }).click();
       await page.locator('[data-guide-overlay="add-demo"] .guideCard').waitFor();
       await page.keyboard.press("Escape");
       await page.locator('[data-guide-overlay]').waitFor({ state: "detached" });
@@ -149,9 +149,12 @@ export async function authScenarios({ server, browser, alice, step, until, asser
       await dialog.waitFor({ state: "detached" });
       // The first tour.
       await panel.getByRole("button", { name: /Take the 2-minute tour/ }).click();
-      await page.locator('[data-guide-overlay="welcome"] .guideCard').waitFor();
+      await page.locator('[data-guide-overlay="add-demo"] .guideCard').waitFor();
       await page.keyboard.press("Escape");
       await page.locator("[data-guide-overlay]").waitFor({ state: "detached" });
+      // The add demo may have opened Add before it was left: close it.
+      if (await page.locator('[data-guide="add.urlInput"]').count()) await page.locator('[data-guide="header.add"]').click();
+      await until(() => page.locator('[data-guide="add.urlInput"]').count().then((n) => n === 0));
       // A note page of the user's own: the library is no longer new.
       await panel.getByRole("button", { name: /Write a note page/ }).click();
       await until(() => /[?&](block|page)=/.test(page.url()), { what: "the new page opens" });

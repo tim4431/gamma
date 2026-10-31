@@ -1,19 +1,21 @@
 # Onboarding: tours and contextual guides
 
 **Status: the engine, the two manual tours (first paper, AI chat), fifteen
-triggered tours, twenty-seven hints, the welcome page with its sample PDF
-and the Sketchbook notebook are built. The first paper tour is also offered to every new library.** A
+triggered tours, twenty-seven hints, the welcome deck, the clips on seven
+tour steps, the welcome page with its sample PDF and the Sketchbook notebook
+are built. The first paper tour is also offered to every new library, as the
+welcome deck.** A
 checklist is not built (see "Not built").
 What exists: `frontend/src/guide/` (anchor registry, event bus, trigger rules
 in `triggers.js`, `useGuide`, `GuideOverlay` and its positioner `place.js`,
 the scene player `scene.js`, the illustration registry `media.js` with its
-drawings in `media/` and their shared stylesheet `media.css`, the newest
+drawings and clips in `media/` and their shared stylesheet `media.css`, the newest
 highlight for `pick: "recent"` in `recent.js`, one file per tour in `tours/`,
 the hints in `tours/hints.js`), the node test
 `tests/guide.test.mjs` and the e2e scenarios `guide.mjs` (first paper),
 `contextualGuide.mjs` (AI chat) and `triggeredGuide.mjs` (offers and hints).
 
-The first tour is a welcome card and five steps. Gamma adds a paper (the
+The first tour is five steps, offered as the welcome deck. Gamma adds a paper (the
 add-a-paper demo). It drags across a sentence, and the user may highlight
 one of their own; then the same for a box around the equation. One demo
 types a note and adds the `llm` label. The last step is a spotlight on the
@@ -23,18 +25,33 @@ the user's own highlight of that kind ticks it. Returning to the library emits `
 Done, and completes the tour automatically; Finish can also close it.
 Either way the tour ends on its finish card (below).
 
-The welcome card (`welcome: true` on the tour, its first step `intro:
-true`) is a centred 440 px card. It holds a "2-minute tour" chip
-(`minutes`), the title, one sentence saying Gamma shows each move once and
-then the user tries it, and a three-line `outline` marking each line
-*watch* or *you try*. **Explore on my own** (`later`) dismisses it, **Start
-the tour** (`next`) starts it, and a footnote says the tour can be replayed
-from the account menu. A demo server gets its own title ("Welcome to the
-Gamma demo"): two `intro` variants, picked by `requires: {demo}`. The card
-is not counted as a step (the add demo reads "Step 1 of 5"). It is also the
-tour's offer, which every new account gets on arrival (see the table below)
-without anything dimmed. Start begins with the add demo; Explore on my own
-settles the offer for the tour's version.
+The welcome deck (`welcome: true` on the tour, its first step `intro:
+true`, GuideOverlay's `WelcomeDeck`) is the tour's arrival offer, which
+every new account gets (see the table below). It is a centred sheet over
+the finish card's light scrim, up to 1040 px wide: the Gamma mark, "Welcome
+to Gamma" and one line, then a bento of seven feature cards (`features`),
+each a drawing from `guide/media.js` over a title and a line, and a strip of
+words for what has no drawing (`more`). The first card is the hero, two
+columns wide, and carries **Take the 2-minute tour** (`minutes`). The cards
+are not buttons: the deck says what Gamma does, and the seeded Welcome page
+is where it is tried. Each card's drawing plays once as the deck opens, one
+after the other (hero first, 0.3 s apart), and loops while the pointer or
+the keyboard is on its card; reduced motion shows the stills. On a phone the
+cards become rows, a small drawing beside its words, and the list scrolls
+under a footer that stays.
+
+Its way in (`next`), **Open the Welcome page**, opens the seeded Welcome
+page and its sample PDF (App's `openWelcome` service; the `welcomePage`
+fact says the library still has it, found by `welcomePageOf` in
+`library/libraryUtils.js`). That answers the offer ("done") and hands the
+page load back to the contextual tours, so the first highlight there may
+offer its own. Without a Welcome page the way in is the tour. **Explore on
+my own** (`later`), ×, Esc and the scrim dismiss it, and a footnote says
+every tour stays in the account menu. A demo server gets its own title
+("Welcome to the Gamma demo"): two `intro` variants, picked by `requires:
+{demo}`. A run never shows an intro step: started from the deck, the Tours
+menu or the library's "Take the 2-minute tour", the tour opens on its add
+demo ("Step 1 of 5").
 
 The finish card (`finishCard` on the tour, `guide/finish.js`) comes up when
 the last step completes. It is centred over a light scrim, with a beacon on
@@ -246,7 +263,7 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 | hint: clone sync | the workspace has an offline copy or a publication (`clonedWorkspace`, state) | the sync pill: what is still to go, and its log |
 | hint: Gamma Connector | the first paper fetched from an address (`paper.fetched`, from App's `openPdf`) in a browser with no Connector (`connectorHere: false` — `shared/lib/connector.js` asks it through the extension's `bridge.js`; unknown in the desktop app, whose Connector would be in the system browser, so nothing is suggested there) | Add: what the extension does for papers a publisher won't hand over, and where to get it |
 | hint: Gamma Cloud | a setting that travels with the account was changed here (`prefsChanged`: the first push after the profile sync has been quiet once, so a profile arriving or seeding itself does not count) on a server offering cloud sign-in to an account that has not linked one (`cloudLinkable`, from `GET /api/auth/cloud/status`) — state, so the card comes once Settings is closed again | the account button: linking carries these settings to the user's other Gamma servers and publishes pages for free |
-| Your first paper | on the library of a demo server once the guest lands, or of a library with nothing in it yet but the seeded Welcome page (`emptyLibrary`: the listing has loaded and every root page has `properties.seeded`) — state, `trigger: {requires: {view: "home", editable: true}, anyOf: [{demo: true}, {emptyLibrary: true}]}`; not once the tour has any progress | no anchor: the centred welcome card; Start the tour begins with the add demo |
+| Your first paper | on the library of a demo server once the guest lands, or of a library with nothing in it yet but the seeded Welcome page (`emptyLibrary`: the listing has loaded and every root page has `properties.seeded`) — state, `trigger: {requires: {view: "home", editable: true}, anyOf: [{demo: true}, {emptyLibrary: true}]}`; not once the tour has any progress | no anchor: the centred welcome deck; Open the Welcome page opens the seeded page, its hero's Take the 2-minute tour begins the add demo |
 
 Rules the engine keeps (`useGuide.js`, `triggers.js`):
 
@@ -382,11 +399,13 @@ to try, and the screen does the explaining.
    moves on; if not, Next moves on all the same. Only a step whose result
    later steps need waits for the user: a `creates` step. That card says
    **Your turn**, has no Next, and offers a quiet **Skip step**.
-2. **Show on the real UI.** A gesture is a `scene` played over the real
-   control: a ghost pointer double-clicks the actual title, drags the
-   actual window to where it would dock. It is never a drawing of the
-   control beside the control. A drawing (`media`) is only for a concept
-   with no place on screen (Illustrations, below).
+2. **Point at the real UI, show the move on the card.** The spotlight
+   rings the real control. On an important control the card shows a clip
+   of the gesture and what the app does in answer, in miniature (Chat
+   carried by its title and docked on the left); elsewhere a `scene` plays
+   the gesture over the real control. A step has one or the other, never
+   both. A drawing without a gesture is for a concept with no place on
+   screen (Drawings and clips, below).
 3. **One sentence per card.** A title of about six words, imperative when
    it is an action. A body only when the title cannot carry it, and then
    one short sentence. The card never narrates what the scene or the demo
@@ -548,61 +567,102 @@ step completes only for its matching type.
 
 The survey behind these choices is [docs/research/onboarding.md](../research/onboarding.md).
 
-## Illustrations
+## Drawings and clips
 
-A step may carry a drawing above its copy: `media: "<id>"`, an id of the
+A step may carry a picture above its copy: `media: "<id>"`, an id of the
 registry in `guide/media.js`, whose file is `guide/media/<id>.svg`. It is the
-same contract as an anchor — a tour names an illustration and never a path,
-and `npm test` fails on an id with no file, a file no step shows, and a file
-the registry does not know.
+same contract as an anchor — a tour names a picture and never a path, and
+`npm test` fails on an id with no file, a file no step or deck card shows,
+and a file the registry does not know. The welcome deck shows the same
+files, one per feature card.
 
-**What a drawing is for.** A concept that has no place on screen. A gesture
-on the real UI is a scene's to show ("Scenes", above), so a drawing never
-shows a control, a click or a drag. Two ideas have earned one: one paper
-filed in several folders and never copied (`labels-folders`, the library
-tour), and one page behind both views, the notes and the notebook view
-(`page-notebook`, the Add and notebook tours).
+**Two kinds, one grammar.** A *drawing* is for a concept with no place on
+screen: one paper filed in several folders and never copied
+(`labels-folders`, the library tour), one page behind both views
+(`page-notebook`, the Add and notebook tours), and the deck's Zotero,
+Notability and assistants cards. A *clip* shows a gesture on an important
+control in miniature, the pointer, its press, what it carries and where
+that lands, and what the app does in answer: the first tour's highlight
+becoming a note (`highlight-note`), the figure boxed into a question
+(`chat-figure`), the pen (`ink-pen`), a note carried to where it nests
+(`notes-move`), a sheet adding the next (`sheet-grow`), and Chat folded and
+docked (`window-fold`, `window-dock`). The spotlight says where; the clip
+says what happens. A step with a clip has no scene. On a demo step the clip
+holds its finished picture while the demo acts and plays once it is done
+(GuideOverlay's `Media` `still`), so one thing moves at a time.
 
 **Why it is inlined.** `GuideOverlay` puts the file's markup straight into
 the card rather than loading it as an `<img>`, so it paints from the theme's
-tokens. There are eight themes, so a drawing carrying its own colours — or
+tokens. There are eight themes, so a picture carrying its own colours — or
 deciding them from `prefers-color-scheme` — would be wrong in most of them.
 The files are this repository's own, built into the bundle by
 `import.meta.glob(… "?raw")`; nothing a user supplies is ever inlined.
 
-**One grammar** (`guide/media.css`). A drawing is plain shapes carrying the
+**One grammar** (`guide/media.css`). A picture is plain shapes carrying the
 stylesheet's classes, with no `<style>`, colour or words of its own, so the
-drawings look like one set:
+set looks like one:
 
 - **Shapes**, painted from tokens: `m-card` (a surface: a paper, a panel, a
   sheet), `m-well` (a sunken area), `m-line` and `m-line-dim` (lines of
-  text), `m-rule` (a ruled line), `m-chip` and `m-chip-on` (a pill), `m-glyph`
-  and `m-glyph-on` (an icon's stroke), `m-link` (the accent connector or
-  outline) and `m-ink` (handwriting). The accent goes on the one thing the
-  drawing is about.
+  text), `m-text` (a line of text as a stroke, to type out), `m-rule` (a
+  ruled line), `m-chip` and `m-chip-on` (a pill), `m-glyph` and `m-glyph-on`
+  (an icon's stroke), `m-link` (the accent connector or outline), `m-ink`
+  (handwriting), `m-mark` (a highlight along a line) and `m-scrim` (the
+  dimming under a palette). The accent goes on the one thing the picture
+  is about.
+- **Gestures**, the scene's own look, so the clip on the card and the scene
+  on the real UI read as one hand: `m-pointer` (the system pointer, scene.js's
+  `POINTER_PATH`), `m-ripple` (a press's ring), `m-ghost` (what the pointer
+  carries), `m-slot` (a place something can go) and `m-zone` (the place lit
+  as the pointer reaches it: the dock's drop preview).
 - **Motion**, on one clock: `--m-t` (an `@property` number) runs from 0 to
   1 over the period `--m-period` (4.8 s), twice, then rests at 1. An
   element's motion class starts at its `style="--m-at: …"` (0 to 0.7 of
   the period): `m-appear` fades in and settles, `m-draw` draws a stroke
-  along its path (`pathLength="1"`), `m-light` lights an accent mark. A
-  drawing's order is data, and its rhythm is every drawing's.
+  along its path (`pathLength="1"`), `m-light` lights it, `m-leave` fades it
+  out, `m-blink` lights it and puts it out again (a zone passed over),
+  `m-move` brings it from `--m-dx`, `--m-dy` (a path with corners is nested
+  moves, the last leg outermost), `m-press` grows and fades a ripple, and
+  `m-fold` folds it up into its top edge. One motion class per element; to
+  combine two, nest them. A picture's order is data, and its rhythm is
+  every picture's.
 - **The still picture is the whole one.** At `--m-t: 1` every element is
-  complete, and that is where the drawing rests, what reduced motion shows
-  and what a browser without `@property` shows.
+  where it ends: what moved stands where it went, what left is gone, and a
+  clip's pointer rests where its gesture finished. That is where the
+  picture rests, what reduced motion shows and what a browser without
+  `@property` shows.
 
-**What a drawing must do**, each checked by `tests/guide.test.mjs`: open
+**A clip says what it depicts** (`shows` in its registry row): the anchors
+of the controls it draws, the events of the outcome it shows, and the dock
+zones it lands in. A clip draws behaviour, not pixels — a window is a
+rounded box with a grip and a title bar — so restyling a control leaves it
+right; changing what the gesture does is what makes it wrong, and the test
+says so: each anchor must be registered, each event catalogued, each zone
+one of `DOCK_ZONES`, and a step showing the clip must point at one of its
+anchors and advance on one of its events. A failure names the clip to
+redraw (*windows/window-move advances on window.docked; its clip
+window-dock does not show that event*).
+
+**What a picture must do**, each checked by `tests/guide.test.mjs`: open
 with a comment saying what it shows; use only plain shape elements, the
 geometry attributes and `media.css` classes (every class it uses has a
 `.guideMedia .<class>` rule); no `<style>`, `<text>`, raw colour, id or
-event attribute; no inline style but `--m-at`; `pathLength="1"` on every
-`m-draw`; no `transform` on an `m-appear`; a `viewBox` and no
-`width`/`height` on the root. The registry's `ratio` (1.4–2.2 — the card is
-320 px wide) gives the box an `aspect-ratio`, so the card is its final
-height when `place.js` measures it and a picture never moves its own card.
-`media.css` itself is scoped under `.guideMedia` and paints from tokens.
+event attribute; no inline style but the motion's numbers (`--m-at`, and
+`--m-dx` / `--m-dy` on an `m-move`), each motion element with its own
+`--m-at`; one motion class per element; `pathLength="1"` on every `m-draw`;
+no `transform` on an element whose motion owns it (`m-appear`, `m-move`,
+`m-press`, `m-fold`); an `m-pointer` path that is `POINTER_PATH`; an
+`m-ripple` that carries `m-press`; a `viewBox` and no `width`/`height` on the
+root. The registry's `ratio` (1.4–2.2 — the card is 320 px wide) gives the
+box an `aspect-ratio`, so the card is its final height when `place.js`
+measures it and a picture never moves its own card; the deck draws every
+box at 1.6, so its titles line up. `media.css` itself is scoped under
+`.guideMedia` and paints from tokens. Its stroke dashes are lengths, not
+bare numbers: Firefox computed a unitless `stroke-dashoffset` to 0 and drew
+every stroke whole.
 
-A drawing goes on a step of a running tour only. An offer and a hint stay a
-card of words: they interrupt, so they stay small.
+A picture goes on a step of a running tour or a deck card only. An offer
+and a hint stay a card of words: they interrupt, so they stay small.
 
 ## Goals
 
@@ -726,8 +786,8 @@ Tour fields:
 - `show`: a surface App brings up before the first step (`"chat"`; the
   windows tour's `"windows"` is Chat and, beside a visible PDF, Notes).
 - `restore`: what App restores when the last step is done (`"pen"`).
-- `welcome: true` with `minutes`: the first `intro` step is the centred
-  welcome card, which is also the offer.
+- `welcome: true` with `minutes`: the first `intro` step is the welcome
+  deck, the tour's offer; a run never shows it.
 - `finishCard`: the card the tour ends on (`guide/finish.js`).
 - `vars`: values for `{name}` in typed text, an object or a function of the
   facts.
@@ -743,8 +803,9 @@ Step fields:
   `{key:…}`.
 - `scene`: a looping demonstration on the real UI that changes nothing
   ("Scenes", above).
-- `media`: an illustration id from `guide/media.js`, drawn above the copy,
-  for a concept with no place on screen (Illustrations, below).
+- `media`: a picture id from `guide/media.js`, drawn above the copy: a clip
+  of the step's gesture, or a drawing of a concept with no place on screen
+  (Drawings and clips, below). Not with a `scene`.
 - `placement`: the card's preferred side (`top`, `bottom`, `left`, `right`),
   or `inside` to tuck it into the anchor's bottom-right corner (the whole
   PDF viewer). `avoid`: another anchor whose box the card keeps clear of as
@@ -761,7 +822,8 @@ Step fields:
 - `optional`, `creates`, `reveal`: see the engine abilities above.
 - `shared`: a step the sibling tour also teaches, left out once the
   sibling is done (Sibling tours).
-- `intro`, with `outline`, `later` and `footnote`: the welcome card.
+- `intro`, with `features` (`{media, title, line}`, the first the hero),
+  `more` (`{icon, text}`), `next`, `later` and `footnote`: the welcome deck.
 
 `open` paths live in the registry, not on steps.
 
@@ -1094,7 +1156,7 @@ frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made
   feature is found; the highlights and notes tours wait for several; the
   Add, library and handwriting tours end where their new controls are.
 - `guide.mjs`: every `home` anchor without an `open` path is present once;
-  the first tour runs end to end from the Tours menu (welcome card, the add
+  the first tour runs end to end from the Tours menu (opening on the add
   demo, both highlights with their demos and the light hand-over, the note
   and label demo, Home, the finish card's items and tiles), Skip on a
   highlight demo stays for the try, and the tour replays on the paper
@@ -1150,13 +1212,15 @@ frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made
 - New feature worth a triggered tour: emit an event where it happens (one
   line, catalogued), write `tours/<name>.js` with a `trigger`, register it in
   `tours/index.js`, add its strings to the catalog. A single card is a hint.
-- A gesture worth showing (a double-click, a drag, where something lands):
-  a `scene` on the step, from the primitives above, on registered anchors.
-  Add a primitive to `guide/scene.js` only when no combination shows it.
+- A gesture worth showing on an important control (a double-click, a drag,
+  where something lands): a clip — `guide/media/<id>.svg` and a row in
+  `guide/media.js` with its `shows` — named from the step's `media`, and
+  the step's scene goes. Elsewhere a `scene` on the step, from the
+  primitives above, on registered anchors; add a primitive to
+  `guide/scene.js` only when no combination shows it.
 - A concept with no place on screen (one page behind two views, one paper
-  in many folders): a drawing — `guide/media/<id>.svg` and a row in
-  `guide/media.js` — named from the step's `media`. Keep pointing at the
-  real control (Illustrations).
+  in many folders): a drawing, the same way. Keep pointing at the real
+  control (Drawings and clips).
 - Copy: a title of about six words, a body only when needed, never a
   sentence that narrates what the scene or the demo shows. Use the words a
   newcomer would use ("find", "group", "move") rather than the model's

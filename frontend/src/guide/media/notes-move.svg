@@ -1,0 +1,83 @@
+<svg viewBox="0 0 320 200" xmlns="http://www.w3.org/2000/svg" focusable="false">
+  <!-- Move a note by its handle: the pointer rests on a note, and the
+       note's ⋮⋮ handle shows. The pointer takes the handle and carries it
+       (the drag image is the handle itself) down a row: the drop line
+       shows under the next note, starting at its bullet. Carried on to
+       the right, the line steps in by one indent, so the note will nest.
+       On the drop the rows glide: the note below moves up into the empty
+       place, and the carried note lands under it, indented, with the
+       thread line of its parent's children beside it. The geometry is the
+       app's (BlockTree's row and .blockChildren; App's onBlockDragOver,
+       nested once the pointer is 50 px into the row; BlockDropIndicator,
+       28 px in and 14 more per depth). -->
+
+  <!-- the Notes window: its title row and the page's heading -->
+  <rect class="m-card" x="10" y="10" width="300" height="180" rx="6" />
+  <path class="m-glyph" d="M16 15h.01M19 15h.01M16 18h.01M19 18h.01M16 21h.01M19 21h.01" />
+  <rect class="m-line" x="24" y="16" width="22" height="4" rx="2" />
+  <path class="m-rule" d="M10 26H310" />
+  <rect class="m-line" x="18" y="37" width="120" height="6" rx="3" />
+
+  <!-- the notes that stay where they are -->
+  <circle class="m-line-dim" cx="48.5" cy="69" r="2.6" />
+  <rect class="m-line-dim" x="58" y="65.5" width="200" height="7" rx="3.5" />
+  <circle class="m-line-dim" cx="48.5" cy="159" r="2.6" />
+  <rect class="m-line-dim" x="58" y="155.5" width="222" height="7" rx="3.5" />
+
+  <!-- the note under the drop: it glides up a row once the carried one
+       has left its place, and its children's thread line comes in -->
+  <g class="m-move" style="--m-at: 0.57; --m-dx: 0; --m-dy: 30">
+    <circle class="m-line-dim" cx="48.5" cy="99" r="2.6" />
+    <rect class="m-line-dim" x="58" y="95.5" width="176" height="7" rx="3.5" />
+  </g>
+  <path class="m-rule m-light" style="--m-at: 0.6" d="M31 115V145" />
+
+  <!-- the carried note, drawn where it lands: nested under that note, one
+       indent in. Before the drop it stands in its own row, its handle
+       shown while the pointer is on the row, and the handle's own pill
+       while the pointer is on the handle -->
+  <g class="m-move" style="--m-at: 0.57; --m-dx: -29; --m-dy: -30">
+    <g class="m-leave" style="--m-at: 0.56">
+      <rect class="m-chip m-light" style="--m-at: 0.12" x="47" y="116" width="20" height="24" rx="4" />
+    </g>
+    <g class="m-light" style="--m-at: 0.02">
+      <g transform="translate(57 128) scale(2)">
+        <path class="m-glyph" d="M-1.4 -1.95h.01M1.4 -1.95h.01M-1.4 0h.01M1.4 0h.01M-1.4 1.95h.01M1.4 1.95h.01" />
+      </g>
+    </g>
+    <circle class="m-line-dim" cx="77.5" cy="129" r="2.6" />
+    <rect class="m-line-dim" x="87" y="125.5" width="140" height="7" rx="3.5" />
+  </g>
+
+  <!-- the drop line under the next note: from its bullet while the
+       pointer is near the left, one indent in once it is further right -->
+  <g class="m-leave" style="--m-at: 0.56">
+    <g class="m-light" style="--m-at: 0.23">
+      <path class="m-link m-leave" style="--m-at: 0.41" d="M49 145H65" />
+      <path class="m-link" d="M65 145H300" />
+    </g>
+  </g>
+
+  <!-- the press on the handle -->
+  <circle class="m-ripple m-press" style="--m-at: 0.16" cx="31" cy="102" r="8" />
+
+  <!-- the hand: from the note to its handle, then carrying the handle down
+       a row and on to the right; each leg nests inside the next -->
+  <g class="m-move" style="--m-at: 0.37; --m-dx: -80; --m-dy: 0">
+    <g class="m-move" style="--m-at: 0.19; --m-dx: -7; --m-dy: -33">
+      <g class="m-leave" style="--m-at: 0.56">
+        <g class="m-light" style="--m-at: 0.17">
+          <rect class="m-ghost" x="105" y="119" width="20" height="24" rx="4" />
+          <g transform="translate(115 131) scale(2)">
+            <path class="m-glyph-on" d="M-1.4 -1.95h.01M1.4 -1.95h.01M-1.4 0h.01M1.4 0h.01M-1.4 1.95h.01M1.4 1.95h.01" />
+          </g>
+        </g>
+      </g>
+      <g class="m-move" style="--m-at: 0.04; --m-dx: 139; --m-dy: 2">
+        <g transform="translate(116.76 133.76) scale(0.62)">
+          <path class="m-pointer" d="M2 2 L2 20 L7 15.5 L10.5 23 L14 21.5 L10.5 14 L17 14 Z" />
+        </g>
+      </g>
+    </g>
+  </g>
+</svg>

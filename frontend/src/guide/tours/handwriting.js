@@ -20,8 +20,8 @@ export default {
   restore: "pen",
   steps: [
     { id: "ink-draw", anchor: "pdf.pane", reveal: "ink.toolbar", placement: "inside", creates: "notes.ink",
+      media: "ink-pen",
       title: T("Pick a pen and draw here"),
-      scene: [{ stroke: "pdf.pane", at: [0.3, 0.35, 0.62, 0.46] }],
       advanceOn: { event: "ink.stroke" } },
     { id: "ink-note", anchor: "notes.ink", optional: true, placement: "left",
       title: T("Your drawing is a note too"),

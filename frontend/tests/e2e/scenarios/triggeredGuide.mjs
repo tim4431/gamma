@@ -482,7 +482,7 @@ export async function triggeredGuideScenarios(env) {
   // The guides that draw: a step's `media` is the registry's drawing inlined
   // into the card, so what this checks in a real browser is that the file is
   // bundled, drawn with media.css's classes and there before the card is
-  // placed (docs/dev/onboarding.md, "Illustrations").
+  // placed (docs/dev/onboarding.md, "Drawings and clips").
   // steps: [step id, the drawing it must carry, or null for a card of words,
   // and optionally the surface that must be open at it, over `open`].
   const walk = async (page, steps, { open = null } = {}) => {
@@ -548,7 +548,7 @@ export async function triggeredGuideScenarios(env) {
       await page.waitForSelector('[data-guide-offer="notebook"] .guideCard');
       await page.getByRole("button", { name: "Show me" }).click();
       // nb-make is dropped from the run: the sheet it would ask for is there.
-      await walk(page, [["nb-grow", null], ["nb-pen", null], ["nb-view", "page-notebook"]]);
+      await walk(page, [["nb-grow", "sheet-grow"], ["nb-pen", null], ["nb-view", "page-notebook"]]);
       assertEq(await progress(page, "notebook"), "done");
       assertNoProblems(page);
     } finally { await ctx.close(); }

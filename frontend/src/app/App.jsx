@@ -221,6 +221,7 @@ import {
   formatRelativeTime,
   formatShortDate,
   isFreshLibrary,
+  welcomePageOf,
   friendlyApiError,
   attachmentFile,
   pageAttachment,
@@ -7867,6 +7868,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       },
       // the first tour's finish card: "Connect an AI provider"
       openSettings: (pane) => appCmdRef.current.openSettings(pane),
+      // The welcome deck's way in: the seeded Welcome page, opened as a
+      // click in the library opens it.
+      openWelcome: () => {
+        const page = welcomePageOf(homeBlocks);
+        if (page) openPage(page.id);
+      },
       show: (surface) => {
         if (surface === "chat" || surface === "windows") showChat();
         if (surface === "windows" && !homeMode && pageAttach && !pdfHidden) {
@@ -7953,6 +7960,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       firstRunDone: firstRunDoneAtLoad.current === true,
       unfiledLibrary,
       emptyLibrary: freshLibrary,
+      // the seeded Welcome page is in the library (the welcome deck's way in)
+      welcomePage: !!welcomePageOf(homeBlocks),
       growingLibrary,
       annotatedPage,
       // the notebook view: the sheets fill the viewer, so the notes view's
