@@ -58,6 +58,7 @@ import { inkAiScenarios } from "./scenarios/inkAi.mjs";
 import { inkEditingScenarios } from "./scenarios/inkEditing.mjs";
 import { inkShapesScenarios } from "./scenarios/inkShapes.mjs";
 import { inkZoomScenarios } from "./scenarios/inkZoom.mjs";
+import { penScenarios } from "./scenarios/pen.mjs";
 import { pdfLoadScenarios } from "./scenarios/pdfload.mjs";
 import { pdfTouchScenarios } from "./scenarios/pdfTouch.mjs";
 import { ipadScenarios } from "./scenarios/ipad.mjs";
@@ -90,6 +91,7 @@ const RUNNERS = {
   "ink-ai": inkAiScenarios,
   "ink-shapes": inkShapesScenarios,
   "ink-zoom": inkZoomScenarios,
+  "pen": penScenarios,
   "pdf-load": pdfLoadScenarios,
   "ink": inkScenarios,
   "notebooks": notebookScenarios,

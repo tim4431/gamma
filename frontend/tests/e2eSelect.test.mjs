@@ -73,8 +73,8 @@ test("a change selects the groups that exercise it", () => {
     assert.deepEqual(pick([file]).filter((id) => id !== "android").sort(), pick(["frontend/src/transfers/exportApi.js"]).sort(), file);
   }
   assert.deepEqual(pick(["android/app/src/main/kotlin/com/gammapdf/gamma/MainActivity.kt"]), [], "the app's Kotlin has its own tests");
-  // the shells' stand-ins are the ipad and android groups'
-  assert.deepEqual(pick(["frontend/tests/e2e/shells.mjs"]).sort(), ["android", "ipad"]);
+  // the shells' stand-ins are the ipad and android groups', and the pen's, which runs on both
+  assert.deepEqual(pick(["frontend/tests/e2e/shells.mjs"]).sort(), ["android", "ipad", "pen"]);
   const markupGroups = pick(["frontend/src/markup/picture.js"]);
   assert.ok(!markupGroups.includes("ipad"), "the rest of src/markup/ selects no ipad");
   assert.deepEqual(pick(["frontend/src/markup/usePictures.js"]).sort(), [...markupGroups, "ipad"].sort());

@@ -43,6 +43,7 @@ export const GROUPS = [
   { id: "diagrams", files: ["diagrams.mjs"], s: 19 },
   { id: "mentions", files: ["mentions.mjs"], s: 18 },
   { id: "ink-shapes", files: ["inkShapes.mjs"], s: 18 },
+  { id: "pen", files: ["pen.mjs"], s: 18 },
   { id: "notebooks", files: ["notebooks.mjs"], s: 17 },
   { id: "auth", files: ["auth.mjs"], s: 17 },
   { id: "inbox", files: ["inbox.mjs"], s: 15 },
@@ -81,16 +82,16 @@ const ALL = "all";
 const GUIDES = ["guide", "contextual-guide", "triggered-guide"];
 const CHAT = ["chat-navigation", "mentions", "contextual-guide", "triggered-guide", "notes-pdf-share", "touch"];
 // every group that opens a PDF in the viewer
-const PDF_VIEW = ["notes-pdf-share", "translation", "pdf-load", "pdf-touch", "ink", "ink-editing", "ink-shapes", "ink-zoom", "textbox", "pictures", "collab", "comments", "files", "transfers", "touch", "zotero-link", ...GUIDES];
+const PDF_VIEW = ["notes-pdf-share", "translation", "pdf-load", "pdf-touch", "ink", "ink-editing", "ink-shapes", "ink-zoom", "pen", "textbox", "pictures", "collab", "comments", "files", "transfers", "touch", "zotero-link", ...GUIDES];
 const EXPORTS = ["transfers", "files", "ink", "diagrams"];
 // what a change to the handwriting (src/ink/) can break: a text box's menu and a
 // picture's are placed and labelled by the ink layer's helpers; ipad, android: the host
 // claim path; comments: a press with a pen or the Text tool armed leaves a margin card alone;
 // ink-ai: the selection menu's Convert, its requests and the edits their answers make
-const INK = ["ink", "ink-editing", "ink-shapes", "ink-zoom", "ink-ai", "pdf-touch", "triggered-guide", "notebooks", "textbox", "pictures", "touch", "ipad", "android", "comments"];
+const INK = ["ink", "ink-editing", "ink-shapes", "ink-zoom", "ink-ai", "pen", "pdf-touch", "triggered-guide", "notebooks", "textbox", "pictures", "touch", "ipad", "android", "comments"];
 // what a page surface carries (ink, text boxes and pictures) and the tool strip, whose anchors the ink tour uses;
 // ink-ai: Convert to text places a text box
-const MARKUP = ["ink", "ink-editing", "ink-shapes", "ink-zoom", "ink-ai", "pdf-touch", "triggered-guide", "notebooks", "textbox", "pictures", "touch", "comments"];
+const MARKUP = ["ink", "ink-editing", "ink-shapes", "ink-zoom", "ink-ai", "pen", "pdf-touch", "triggered-guide", "notebooks", "textbox", "pictures", "touch", "comments"];
 
 // [glob, groups], first match wins. `**` spans folders, `*` stays in one.
 // ALL is for what every scenario goes through (the app shell, shared UI,

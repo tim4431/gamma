@@ -3,6 +3,7 @@ import { flushSync } from "react-dom";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import PdfViewer, { preloadPdfEngine } from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
+import { penSelecting } from "../pdf/penSelect.js";
 import { briefRequest, chunkRequest, endTranslations, forgetTranslation, useTranslateJobs } from "./translateClient.js";
 import { scopeOf, snapshot as translateSnapshot, span as translateSpan } from "../pdf/translateState.js";
 import { exportFile, exportLayout, exportPages } from "../pdf/translateExport.js";
@@ -2841,7 +2842,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     fileLabels, setFileLabels,
     oaFallback, setOaFallback, metaAutoFetch, setMetaAutoFetch, pdfSaveLocal, setPdfSaveLocal,
     embAnnots, setEmbAnnots, smoothWheel, setSmoothWheel,
-    inkPenOnly, setInkPenOnly, inkAutoPen, setInkAutoPen, inkPressure, setInkPressure,
+    inkPenOnly, setInkPenOnly, inkPenWritesPdf, setInkPenWritesPdf, inkPressure, setInkPressure,
     inkFingerUndo, setInkFingerUndo, inkDrawHold, setInkDrawHold, inkScribbleErase, setInkScribbleErase,
     inkEraserReturn, setInkEraserReturn, inkEraserFilter, setInkEraserFilter,
     inkHoverPreview, setInkHoverPreview, inkPencilTap, setInkPencilTap, inkPencilSqueeze, setInkPencilSqueeze, inkHaptics, setInkHaptics,
@@ -3866,6 +3867,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Committed on mouseup (not selectionchange) so the modifier key is known:
   // Ctrl+select APPENDS another passage, plain select replaces the set, and
   // a plain click in the PDF clears it. Clicking into the chat keeps it.
+  const penSelectionRef = useRef(null);
   useEffect(() => {
     function onMouseUp(e) {
       if (!viewerWrapRef.current?.contains(e.target)) {
@@ -3912,20 +3914,23 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // the passage up from selectionchange instead. No modifier exists there,
     // so it always replaces; and an emptied selection is left alone rather
     // than cleared, since a tap into the chat is indistinguishable from a tap
-    // that dismissed the selection — and that tap must keep it.
+    // that dismissed the selection — and that tap must keep it. A pen's drag
+    // has no mouseup either, and is read once, at its end (onPenSelection).
     let selTimer = null;
+    function readSelection() {
+      const sel = window.getSelection();
+      const text = sel ? sel.toString().trim() : "";
+      if (!text) return;
+      const node = sel.anchorNode;
+      const el = node?.nodeType === 3 ? node.parentElement : node;
+      if (!(viewerWrapRef.current && el && viewerWrapRef.current.contains(el))) return;
+      addPdfSelection(text, false, rangeSpot(sel.getRangeAt(0)));
+    }
+    penSelectionRef.current = readSelection;
     function onSelectionChange() {
       if (lastPointer() === "mouse") return;
       clearTimeout(selTimer);
-      selTimer = setTimeout(() => {
-        const sel = window.getSelection();
-        const text = sel ? sel.toString().trim() : "";
-        if (!text) return;
-        const node = sel.anchorNode;
-        const el = node?.nodeType === 3 ? node.parentElement : node;
-        if (!(viewerWrapRef.current && el && viewerWrapRef.current.contains(el))) return;
-        addPdfSelection(text, false, rangeSpot(sel.getRangeAt(0)));
-      }, 350);
+      if (!penSelecting()) selTimer = setTimeout(readSelection, 350);
     }
     document.addEventListener("mouseup", onMouseUp);
     document.addEventListener("selectionchange", onSelectionChange);
@@ -4110,7 +4115,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setInkTools, pickInkTool, openInkStrip, toggleInkShape, previousTool, inkEraserLifted,
     revealInkStrip, openRulerRow, closeRulerRow, closeInkStripUi, toggleInkOptions, closeInkOptions,
     applyPencilUi, disarmInk, restorePen,
-  } = useInkStrip({ focusedBlockId, readOnly, inkStale, inkTools, setInkToolsRaw, inkAutoPen,
+  } = useInkStrip({ focusedBlockId, readOnly, inkStale, inkTools, setInkToolsRaw,
     inkShapeKind, inkShapeFill, inkEraserReturn });
   const [inkFlash, setInkFlash] = useState(null);
   // Sheets: the open page's (for handlers that run after an await); in the
@@ -7396,8 +7401,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // the options row closed — except while a held squeeze is open, whose
   // end goes back instead (noteSqueezeUse; the pass marks it used). A squeeze
   // that toggles the eraser (pencilActions.js) still toggles it: with the
-  // return on, the lift re-arms the pen and the next squeeze arms the
-  // eraser again.
+  // return on, the lift gives back the tool armed before it and the next
+  // squeeze arms the eraser again.
   function handleInkEraseEnd() {
     noteInkEraseHold();
     if (noteSqueezeUse()) return;
@@ -7927,14 +7932,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }, [keybindings]);
   const pageTools = useMemo(() => ({
     readOnly,
-    ink: { tool: inkTool, penTool: inkPenTool, penOnly: inkPenOnly, pressure: inkPressure, eraserMode: inkEraserMode,
+    ink: { tool: inkTool, penTool: inkPenTool, penWritesPdf: inkPenWritesPdf, penOnly: inkPenOnly, pressure: inkPressure, eraserMode: inkEraserMode,
       eraserSize: inkEraserSize, eraserFilter: inkEraserFilter, drawHold: inkDrawHold,
       scribble: inkScribbleErase, fingerUndo: inkFingerUndo, lassoMode: inkLassoMode, lassoPictures: inkLassoPictures, clip: inkClip,
       keys: inkKeys, hoverPreview: inkHoverPreview, ruler: readOnly ? null : inkRuler, rulerUnits: inkRulerUnits,
       zoom: readOnly ? null : inkZoom, aiWork: inkAiWork },
     text: { armed: textArmed, style: textBoxStyle, zotero: zoteroLinked },
     actions: pageActions,
-  }), [readOnly, inkTool, inkPenTool, inkPenOnly, inkPressure, inkEraserMode, inkEraserSize, inkEraserFilter, inkClip, inkKeys,
+  }), [readOnly, inkTool, inkPenTool, inkPenWritesPdf, inkPenOnly, inkPressure, inkEraserMode, inkEraserSize, inkEraserFilter, inkClip, inkKeys,
     inkDrawHold, inkScribbleErase, inkFingerUndo, inkLassoMode, inkLassoPictures, inkHoverPreview, textArmed, textBoxStyle, zoteroLinked,
     pageActions, inkRuler, inkRulerUnits, inkZoom, inkAiWork]);
   // --- Recordings (docs/dev/recording.md) ---------------------------------------
@@ -12470,6 +12475,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               marginRef={pdfMarginRef}
               onMarginLost={() => setThreadPop((cur) => (cur?.margin
                 ? { ...cur, margin: false, anchor: highlightEl(cur.blockId) } : cur))}
+              onPenSelection={() => penSelectionRef.current?.()}
               onAreaSelection={(sel) => addChatPicture(regionPicture("area", focusedBlockId, sel.pageNumber,
                 regionBox({ boundingRect: sel.rect, width: sel.width, height: sel.height })))}
               // the selection popup's Comment: a highlight with its thread popover open on it
@@ -12950,8 +12956,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setRelocateExactChars: appPrefs.setRelocateExactChars,
           inkPenOnly,
           setInkPenOnly,
-          inkAutoPen,
-          setInkAutoPen,
+          inkPenWritesPdf,
+          setInkPenWritesPdf,
           inkPressure,
           setInkPressure,
           inkFingerUndo,

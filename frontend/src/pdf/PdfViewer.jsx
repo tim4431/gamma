@@ -13,6 +13,7 @@ import { createPortal } from "react-dom";
 import { CheckIcon, CopyIcon, LanguagesIcon, LinkIcon, LocateIcon, MessageSquareIcon, OutlineIcon } from "../shared/ui/Icons";
 import { MarkupLayers, NO_MARKS } from "../markup/MarkupLayers";
 import { armedClasses, usePageTools } from "../markup/PageTools";
+import { inkPenDown } from "../ink/InkLayer";
 import { ZoomWindow } from "../ink/ZoomWindow.jsx";
 import { revealDelta } from "../ink/zoomWindow.js";
 import { KEEP_MARGIN, RENDER_MARGIN, ZOOM_SETTLE_MS, cropPage, forgetPixels, installPageRaster, keepPixels, showsKept, takePixels } from "./pageRaster.js";
@@ -32,6 +33,7 @@ import { PdfCitationOverlay } from "./PdfCitationOverlay";
 import { citationRuns, runChars } from "./pdfCitation.js";
 import { noteBadgeAnchor } from "./noteAnchor.js";
 import { inTextLayer, nearRelease, tipAnchor, tipWaiter } from "./selectionTip.js";
+import { beginPenSelect, penSelecting } from "./penSelect.js";
 import { nativeHost, postToHost } from "../shared/lib/host.js";
 import { commentOnlyHighlight } from "../comments/comments.js";
 import { marginLeft as besideMargin, pageLeft } from "../comments/marginLayout.js";
@@ -551,7 +553,7 @@ async function fetchPdfData(url, onLoadState, isCancelled) {
 // that one and opens its card (the Document menu's Review, `follow`; App
 // after a move started from the card, `done` what it did and scroll
 // false).
-function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, areaKey = "Mod", peekKey = "Alt", hideEmbeddedAnnots, darkPage = false, translateKey = "", translateScope = null, translateParallel = 3, onTranslate, onTranslateBrief, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", selComment = false, highlighter = "", onHighlightAction, moveMode = false, marks, flashHighlightId = null, smoothWheel = false, commentMargin = null, marginRef = null, onMarginLost, onPageInView, zoomHeight = 200, onZoomHeight, onZoomChange, onAcceptHighlight, onPlaceHighlight, onMoveHighlight, onDiscardHighlight, discardOf, onUndoReview, reviewPosition = null, reviewNote = null, onReviewFollow, onReviewWaiting, fileId = "", pageId = "", reviewRef = null }) {
+function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef, onJump, onHighlightJump, onLinkHighlight, onSelectionFinished, onAreaSelection, onPenSelection, onHighlightContext, onHighlightThread, searchRef, captureRef, onEffectiveScale, onZoomTo, findMarks, onExternalLink, onLinkContext, onBeforeLinkJump, onLoadState, retryRef, areaMode, areaKey = "Mod", peekKey = "Alt", hideEmbeddedAnnots, darkPage = false, translateKey = "", translateScope = null, translateParallel = 3, onTranslate, onTranslateBrief, translateCtlRef, onTranslateState, selTranslate = "", translateLangLabel = "", selComment = false, highlighter = "", onHighlightAction, moveMode = false, marks, flashHighlightId = null, smoothWheel = false, commentMargin = null, marginRef = null, onMarginLost, onPageInView, zoomHeight = 200, onZoomHeight, onZoomChange, onAcceptHighlight, onPlaceHighlight, onMoveHighlight, onDiscardHighlight, discardOf, onUndoReview, reviewPosition = null, reviewNote = null, onReviewFollow, onReviewWaiting, fileId = "", pageId = "", reviewRef = null }) {
   const tools = usePageTools(), { ink, text } = tools;
   const viewerRef = useRef(null);
   const [pdfDoc, setPdfDoc] = useState(null);
@@ -612,7 +614,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
   // parent state change recreates the handler closures. The wrappers always
   // dispatch to the latest handlers via the ref.
   const cbRef = useRef({});
-  cbRef.current = { onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, onExternalLink, onLinkContext, onLoadState, onZoomTo, onAreaSelection, onTranslate, onTranslateBrief, onTranslateState, onHighlightAction };
+  cbRef.current = { onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, onExternalLink, onLinkContext, onLoadState, onZoomTo, onAreaSelection, onPenSelection, onTranslate, onTranslateBrief, onTranslateState, onHighlightAction };
   const stableCbs = useMemo(() => ({
     onJump: (...a) => cbRef.current.onJump?.(...a),
     onHighlightJump: (...a) => cbRef.current.onHighlightJump?.(...a),
@@ -675,6 +677,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     const zoom = installViewerZoom(el, {
       layer: () => zoomLayerRef.current,
       clamp: clampZoom,
+      held: inkPenDown,
       onWheelZoom: (next, at) => {
         zoomAnchorRef.current = at;
         docSwapPendingRef.current = false; // an explicit zoom, whatever mounted before it
@@ -1685,6 +1688,18 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     // regionPicture); the server draws it from the document.
     if (!moveModeRef.current) cbRef.current.onAreaSelection?.(sel);
   }, []);
+  // A pen's press on a page (PdfPage penDrag) clears what a mouse's would,
+  // since it sends no mousedown and moves no focus: an open note would keep
+  // the keyboard up and write its own selection over the pen's. Its drag
+  // over the text goes to the selection listeners below.
+  const penSelectRef = useRef(null);
+  const onPenSelect = useCallback((e) => penSelectRef.current?.(e), []);
+  const onPenPress = useCallback(() => {
+    setSelPopup(null);
+    setOutlineOpen(false);
+    document.activeElement?.blur?.();
+    window.getSelection()?.removeAllRanges();
+  }, []);
 
   // Dismiss the color popup when the user mouses down anywhere outside it
   // (without that, removing the textarea/Cancel leaves no way to back out).
@@ -1733,10 +1748,13 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
       const point = { x: e.clientX, y: e.clientY };
       setTimeout(() => syncSelPopup(point), 10);
     }
-    function syncSelPopup(point = null) {
+    // `point`: where a mouse was released; `released`: a release of the
+    // mouse or the pen ended the selection.
+    function syncSelPopup(point = null, released = !!point) {
       // "No text selected" must not dismiss an area popup — the drag that
-      // created it ends in a mouseup with an empty selection by design.
-      const keepArea = (p) => (p && p.kind === "area" ? p : null);
+      // created it ends in a mouseup with an empty selection by design — nor
+      // the bar of a highlight the highlighter made, which took the selection.
+      const keepArea = (p) => (p && (p.kind === "area" || p.kind === "made") ? p : null);
       waiter.drop();
       const sel = window.getSelection();
       // A click or selection inside the popup (its translation text) moves
@@ -1793,7 +1811,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
         // a bar of its own ("made": its colour, comment, link), shown as
         // the popup would be. A tap after a finger's selection also sends a
         // mouseup; that one still gets the popup.
-        if (point && highlighterRef.current && !moveModeRef.current && lastPointer() !== "touch") {
+        if (released && highlighterRef.current && !moveModeRef.current && (!point || lastPointer() !== "touch")) {
           const id = confirmRef.current(snap, "", null, { highlighter: true });
           if (id && cbRef.current.onHighlightAction) showTip({ ...snap, kind: "made", id });
           return;
@@ -1820,23 +1838,30 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     // popup. selectionchange does fire — debounced, since it fires on every
     // pixel of a handle drag — and only after a press that was not the
     // mouse's, so mouse drags keep committing on mouseup (where the modifier
-    // key is known).
+    // key is known), and a pen's drag on its lift.
     let selTimer = null;
     function onSelectionChange() {
       syncHostMenu();
       if (lastPointer() === "mouse") return;
       clearTimeout(selTimer);
-      selTimer = setTimeout(() => syncSelPopup(), 350);
+      if (!penSelecting()) selTimer = setTimeout(() => syncSelPopup(), 350);
     }
     // A scroll closes the popup (the viewer's onScroll), and a touch scroll
     // keeps the selection: the popup opens again where it is once the
     // scroll stops, as the system's menu does, which may be off.
     const scroller = viewerRef.current;
     function onScroll() {
-      if (lastPointer() === "mouse" || !inTextLayer(window.getSelection())) return;
+      if (lastPointer() === "mouse" || penSelecting() || !inTextLayer(window.getSelection())) return;
       clearTimeout(selTimer);
       selTimer = setTimeout(() => syncSelPopup(), 350);
     }
+    // A pen's drag over the text: the chat hears of the selection as at a
+    // mouse's release, and the popup or the highlighter takes it, or the
+    // popup alone from a drag the system cancelled.
+    penSelectRef.current = (e) => beginPenSelect(e, scroller, (released) => {
+      cbRef.current.onPenSelection?.();
+      syncSelPopup(null, released);
+    });
     document.addEventListener("mouseup", onMouseUp);
     document.addEventListener("mousemove", onMouseMove, { passive: true });
     document.addEventListener("mousedown", onMouseDown, true);
@@ -1844,6 +1869,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
     scroller?.addEventListener("scroll", onScroll, { passive: true });
     return () => {
       clearTimeout(selTimer);
+      penSelectRef.current = null;
       document.removeEventListener("mouseup", onMouseUp);
       document.removeEventListener("mousemove", onMouseMove);
       document.removeEventListener("mousedown", onMouseDown, true);
@@ -2003,7 +2029,7 @@ function PdfViewer({ url, citation = null, highlights, pdfScaleValue, scrollRef,
           readOnly={!onSelectionFinished} forceRender={forcePages.has(i + 1) || activeCitation?.page === i + 1}
           hideEmbeddedAnnots={!!hideEmbeddedAnnots}
           areaMode={canAnnotate ? !!areaMode : false} areaKey={areaKey}
-          onAreaSelected={canAnnotate ? onAreaSelected : undefined}
+          onAreaSelected={canAnnotate ? onAreaSelected : undefined} onPenPress={onPenPress} onPenSelect={onPenSelect}
           pendingArea={selPopup?.kind === "area" && selPopup.pageNumber === i + 1 ? selPopup : null}
           reservedHeight={pageHeights[i] ? pageHeights[i] * scale : null}
           reservedWidth={pageWidths[i] ? pageWidths[i] * scale : null}
@@ -2196,7 +2222,7 @@ function NoteBadge({ hlId, text, hasNote = true, threads = 0, style, onClick, on
 // px from the first page's top, where its margin's column goes on from the
 // pages above; activeHl: the highlight
 // whose card is the active one, drawn stronger.
-const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scale, highlights, flashId, onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, onReview, reviewGhost = null, readOnly, forceRender, reservedHeight, reservedWidth, findMarks, onInternalLink, onExternalLink, onLinkContext, onPainted, onAreaSelected, pendingArea, areaMode, areaKey, hideEmbeddedAnnots, trans, transKey, transShown, transSpan, toolArmed, marks, marginLeft = null, pageTop = 0, activeHl = null }) {
+const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scale, highlights, flashId, onJump, onHighlightJump, onLinkHighlight, onHighlightContext, onHighlightThread, onReview, reviewGhost = null, readOnly, forceRender, reservedHeight, reservedWidth, findMarks, onInternalLink, onExternalLink, onLinkContext, onPainted, onAreaSelected, onPenPress, onPenSelect, pendingArea, areaMode, areaKey, hideEmbeddedAnnots, trans, transKey, transShown, transSpan, toolArmed, marks, marginLeft = null, pageTop = 0, activeHl = null }) {
   const wrapRef = useRef(null);
   const baseRef = useRef(null);
   const detailRef = useRef(null);
@@ -2422,7 +2448,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
     const wrap = wrapRef.current;
     if (!wrap) return;
     e.preventDefault(); // keep the text layer from starting a selection
-    const pointerId = e.pointerId;
+    const pointerId = e.pointerId, pen = e.pointerType === "pen";
     const box = wrap.getBoundingClientRect();
     const sx = e.clientX, sy = e.clientY;
     const clamp = (v, max) => Math.max(0, Math.min(max, v));
@@ -2457,9 +2483,10 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
       detach();
       setMarquee(null);
     }
-    // A second finger makes the drag a pinch: the area goes.
+    // A second finger makes the drag a pinch: the area goes. Under a pen
+    // it is a palm.
     function onOther(ev) {
-      if (ev.pointerId !== pointerId) onCancel({ pointerId });
+      if (ev.pointerId !== pointerId && !pen) onCancel({ pointerId });
     }
     function onUp(ev) {
       if (ev.pointerId !== pointerId) return;
@@ -2486,6 +2513,16 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
     document.addEventListener("pointerup", onUp, true);
     document.addEventListener("pointercancel", onCancel);
   }
+  // A pen with no ink tool armed does what a mouse does on the page. Its
+  // press comes from its ink layer (InkLayer.jsx onPenDrag), which holds the
+  // touch for the drag, never the wrap's: the rectangle in rectangle mode,
+  // else the text (pdf/penSelect.js). What takes a press of its own keeps it.
+  function penDrag(e) {
+    onPenPress();
+    if (e.target.closest?.(".textBox, .pagePicture, .pdfNoteAnchor")) return;
+    if (areaMode) beginAreaDrag(e);
+    else onPenSelect(e);
+  }
 
   // Whether translated text is on screen: gates the overlay and flips the
   // wrap class that makes the translation selectable instead of the
@@ -2500,7 +2537,7 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
 
   return (
     <div ref={wrapRef} data-page={pageNumber} data-guide="pdf.page" className={"pdfPageWrap" + (transActive ? " transShown" : "")}
-      onPointerDown={beginAreaDrag}
+      onPointerDown={(e) => { if (e.pointerType !== "pen") beginAreaDrag(e); }}
       style={{
         margin: marginLeft != null ? `0 0 ${PAGE_GAP}px ${marginLeft}px` : `0 auto ${PAGE_GAP}px`, position: "relative", background: "#fff",
         width: pageSize || reservedWidth ? curW : undefined,
@@ -2758,7 +2795,8 @@ const PdfPage = React.memo(function PdfPage({ citation, pageNumber, pdfDoc, scal
       )) : null}
       {overlays && marginLeft != null ? <CommentMarginSlot pageNumber={pageNumber} highlights={highlights} pageH={curH} pageTop={pageTop} /> : null}
       {/* Over the highlights, note badges and link boxes: text boxes, then ink (app.css). */}
-      <MarkupLayers surface={pageNumber} wrapRef={wrapRef} width={baseW} height={baseH} marks={marks} active={renderVisible} />
+      <MarkupLayers surface={pageNumber} wrapRef={wrapRef} width={baseW} height={baseH} marks={marks} active={renderVisible}
+        onPenDrag={readOnly ? undefined : penDrag} />
       {marquee ? (
         <div className="pdfAreaMarquee" style={{
           left: marquee.x1, top: marquee.y1,

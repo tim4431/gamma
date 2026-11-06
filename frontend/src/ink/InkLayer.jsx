@@ -1,9 +1,9 @@
 // Handwriting on the PDF (docs/dev/handwriting.md): InkLayer is one page's
 // ink — the retained strokes as SVG paths in the page's scale-1 frame
 // (the viewBox does the zoom), a low-latency canvas for the stroke (or
-// lasso) being drawn, and the pointer handling that turns a pen (or, with
-// a tool armed, any pointer) into samples, erasures, a lasso selection or
-// a move of that selection. InkCard is the same strokes as a picture in
+// lasso) being drawn, and the pointer handling that turns a pointer with a
+// tool to use (pressUse) into samples, erasures, a lasso selection or a move
+// of that selection. InkCard is the same strokes as a picture in
 // the notes, with a replay of their writing that plays there and on the
 // page (replay/playback.js). The tool strip is markup/MarkupToolbar.jsx, and
 // a surface mounts its layer through markup/MarkupLayers.jsx. Strokes come
@@ -40,7 +40,7 @@ import {
   stretchRuler, turnRuler,
 } from "./ruler.js";
 import { toolShape } from "./shapeTool.js";
-import { doublePress, swallowClick } from "../shared/ui/press.js";
+import { clickAt, doublePress, swallowClick } from "../shared/ui/press.js";
 import { scrollBox } from "../shared/ui/placement.js";
 import { ARROWS, TransformHandles, arrowSign, pct } from "../markup/TransformHandles.jsx";
 import { MAX_COORD, lassoTakes, normalizePicture, turnedBox } from "../markup/picture.js";
@@ -90,6 +90,15 @@ export const ERASER_SIZES = [5, 9, 16];
 // other pointer moves it (writesOnBand).
 const BESIDE_PAGE = ".commentMargin";
 const NOT_INK = `.inkEditMenu, .inkTransformHandle, .inkRulerKnob, .inkRulerEnd, .inkZoomBand, .inkZoomResize, .textBoxWidth, .textBoxBand, .textBox.editing, .pagePicture.selected, .pictureCrop, ${BESIDE_PAGE}`;
+// What a pen's press decides by (the rule in one place): a tool armed is
+// what it uses. With none, its eraser end (buttons 32) or barrel (2) erases
+// where a pen may ink (`penInk`), as the pen's own eraser (BARREL, no tool
+// of the strip's), and it writes with the stylus pen where the surface says
+// so (pencilActions.js penToolOn: paper; a PDF page under inkPenWritesPdf).
+// Otherwise it has nothing to write with and does what a mouse does on the
+// page (onPenDrag in onDown). Any other pointer uses the armed tool or nothing.
+const BARREL = { tool: "barrel" };
+const pressUse = (L, e) => L.tool || (e.pointerType !== "pen" ? null : e.buttons & 34 && L.penInk ? BARREL : L.penTool);
 // The tools that write a stroke: a pen or a highlighter preset (the
 // stylus's pen with nothing armed included).
 const strokeTool = (use) => use?.tool === "pen" || use?.tool === "highlighter";
@@ -97,7 +106,7 @@ const strokeTool = (use) => use?.tool === "pen" || use?.tool === "highlighter";
 // its eraser end or barrel) with a stroke tool. With the eraser, the lasso
 // or the Shapes tool armed, and for a finger or the mouse, the band is the
 // ruler's, which moves.
-const writesOnBand = (L, e) => e.pointerType === "pen" && !(e.buttons & 34) && strokeTool(L.tool || L.penTool);
+const writesOnBand = (L, e) => e.pointerType === "pen" && !(e.buttons & 34) && strokeTool(pressUse(L, e));
 // Every position a pointer move carries: its coalesced events, else the move itself.
 const coalesced = (e) => {
   const events = e.getCoalescedEvents?.() || [];
@@ -145,6 +154,17 @@ export function inkBusy() {
   for (const busy of busyLayers) if (busy()) return true;
   return false;
 }
+// Whether a pen is down on any layer, its own drag or a stroke the host took.
+// A finger is then a palm wherever it lands: on any page here, and in the
+// viewer's gaps and margins through its pinch (shared/lib/viewerZoom.js `held`).
+const penLayers = new Set();
+export function inkPenDown() {
+  for (const down of penLayers) if (down()) return true;
+  return false;
+}
+// This device's pen sends touch events, which onTouch cancels, so a tap of it
+// sends no click of its own (a desktop's pen sends none and keeps its click).
+let penTouches = false;
 // Whether a finger scrolling under an armed tool is still worth explaining
 // (onFingerScroll): once a session, and never once a pen has drawn.
 let fingerHint = true;
@@ -166,17 +186,16 @@ function wireChords() {
   };
   // The first contact on a layer names the host; one landing off every
   // layer (the gutter, the strip) changes nothing, so it neither flips the
-  // mode mid-chord nor forgets the first chord of a double tap. A layer
-  // that is writing with a pen the detector cannot see (the native host
-  // owns the Pencil, so WebKit cancelled its pointer) makes the touches a
-  // palm.
+  // mode mid-chord nor forgets the first chord of a double tap. A pen down,
+  // which the detector may not see (the native host owns the Pencil, so
+  // WebKit cancelled its pointer), makes the touches a palm.
   const down = (e) => {
     if (e.pointerType === "touch") {
       const at = hostAt(e.target);
       if (at) { host = at; detector.setMode(at.fingerUndo || "off"); }
     }
     detector.down(e);
-    if (e.pointerType === "touch" && host?.penBusy?.()) detector.palm();
+    if (e.pointerType === "touch" && inkPenDown()) detector.palm();
   };
   const move = (e) => detector.move(e);
   const up = (e) => detector.up(e);
@@ -832,7 +851,14 @@ function samplesBox(samples, pad) {
 }
 
 // tool: the armed tool {tool: pen|highlighter|eraser|select, color, size}
-// or null; penTool: what a stylus draws with when nothing is armed;
+// or null; penTool: what a stylus draws with here when nothing is armed
+// (pressUse above), null where it does not; penInk: a pen may ink this
+// surface at all (not a read-only page, nor with the Text tool armed), so
+// its eraser end and barrel erase and the page never pans under it;
+// onPenDrag(e): a pen pressed with nothing to write with on a surface that
+// has a drag of its own for it (a PDF page's text selection or rectangle):
+// the layer leaves that press to it, a tap on a stroke still selecting, and
+// holds its fingers as palms and its pan off until it lifts (`mode: "page"`);
 // eraserMode: "stroke" (whole strokes) | "partial" (cuts through them),
 // eraserSize its S/M/L index; lassoMode: "free" (a drawn loop) | "box";
 // lassoPictures: the lasso takes the unlocked pictures it circles with the
@@ -888,7 +914,7 @@ function samplesBox(samples, pad) {
 // onZoom(page, {x, y} | {mag} | {at, size}) while a window is open.
 // aiWork: the handwriting on this surface the AI is redrawing or
 // converting, {box, landed?} (useInkSelection.js), washed over (InkAiWork).
-export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures, tool, penTool, penOnly, pressure, eraserMode,
+export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures, tool, penTool, penInk, onPenDrag, penOnly, pressure, eraserMode,
   eraserSize = 1, eraserFilter = "all", drawHold = false, scribble = false, fingerUndo = "off", lassoMode = "free", lassoPictures = true,
   selection, flash, clip = false, keys, hoverPreview = true, ruler = null, rulerUnits = "pt", aiWork = null, onCarry,
   onStroke, onEraseAlong, onEraseEnd, onEraseMany, onSelect, onAction, onMoveSelection, onJump, onPaste,
@@ -914,9 +940,6 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
   const [pasteMenu, setPasteMenu] = useState(null);
   useLayoutEffect(() => { setTransform(null); setReshape(null); }, [selection]);
   const live = useRef({});
-  // Whether a pen is writing on this layer, the page's own stroke or one
-  // the native host took (the pointer effect sets it; the finger chords ask).
-  const penBusy = useRef(() => false);
   // What a press in leaves the selection menu open: this page, and the zoom
   // window under the viewer, whose layer draws and drags the same selection.
   // A comment card beside the page (BESIDE_PAGE, inside the page's box) is
@@ -990,9 +1013,8 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
   useLayoutEffect(() => { onCarry?.(carrying ? { ids: carryIds, value: carrying } : null); }, [onCarry, carrying, carryIds]);
   // The ruler where it can be used: shown, moved and written along.
   const rulerOn = ruler && onRuler ? ruler : null;
-  live.current = { tool, penTool, penOnly, pressure, eraserMode, eraserSize, eraserFilter, drawHold, scribble, fingerUndo, lassoMode,
+  live.current = { tool, penTool, penInk, onPenDrag, penOnly, pressure, eraserMode, eraserSize, eraserFilter, drawHold, scribble, fingerUndo, lassoMode,
     lassoPictures, width, height, groups, pictures: shownPictures, selBox, replay, clip, hoverPreview, ruler: rulerOn,
-    penBusy: () => penBusy.current(),
     onStroke, onEraseAlong, onEraseEnd, onEraseMany, onSelect, onMoveSelection, onJump, onPaste, onFingerScroll, onUndoGesture,
     onHoldStatus, onInkLive, onHaptic, onZoom, onZoomStroke };
   useWetStrokes(pageNumber, wrapRef, wetRef, washRef, live);
@@ -1030,12 +1052,13 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
   useEffect(() => {
     const el = wrapRef.current;
     if (!el) return;
-    let drawing = null; // {mode: stroke|erase|lasso|move, …}
+    let drawing = null; // {mode: stroke|erase|lasso|move|shape|page, …}
     // The pointer the native host took from this page (claimForHost): its
     // stroke arrives as a message, its own events are ignored, and fingers
     // stay palms until it ends.
     let hostOwned = null;
-    penBusy.current = () => drawing?.pointerType === "pen" || hostOwned != null;
+    const penDown = () => drawing?.pointerType === "pen" || hostOwned != null;
+    penLayers.add(penDown);
     // inkBusy: anything this layer is drawing, or a stroke the host draws for it
     const layerBusy = () => drawing != null || hostOwned != null;
     busyLayers.add(layerBusy);
@@ -1050,7 +1073,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
     };
     const showCursor = (e) => {
       if (e.pointerType === "touch" || e.target.closest?.(`.inkSelectionHit, ${NOT_INK}`)) { hideCursor(); return; }
-      const L = live.current, use = L.tool || (e.pointerType === "pen" ? L.penTool : null);
+      const L = live.current, use = pressUse(L, e);
       if (!use || !L.width || !cursorRef.current) { hideCursor(); return; }
       // The Shapes tool's cursor is the crosshair alone; over the ruler's
       // band only a pen that writes there shows its footprint.
@@ -1100,14 +1123,26 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
     };
     const trackDown = (e) => {
       contacts.add(e.pointerId);
-      if (pending && pending.id !== e.pointerId) clearPending(true);
+      if (pending && pending.id !== e.pointerId && !pending.pen) clearPending(true);
       if (e.pointerType === "pen") fingerHint = false;
       // A second finger makes a finger's stroke a pinch: the stroke goes.
       if (drawing?.pointerType === "touch" && e.pointerType === "touch" && drawing.id !== e.pointerId) {
         finish({ pointerId: drawing.id }, true);
       }
     };
-    const trackUp = (e) => contacts.delete(e.pointerId);
+    // On the document: the page's own drag may end anywhere. Its touch was
+    // cancelled (onTouch), so a tap's click is sent from here, past what a
+    // tap on ink handles itself (finish, swallowing the click it would send).
+    const trackUp = (e) => {
+      contacts.delete(e.pointerId);
+      if (drawing?.mode !== "page" || drawing.id !== e.pointerId) return;
+      const d = drawing;
+      drawing = null;
+      const handled = pending?.id === e.pointerId && (pending.hit || live.current.selBox);
+      if (e.type === "pointerup" && penTouches && !handled && Math.hypot(e.clientX - d.x, e.clientY - d.y) <= 8) {
+        setTimeout(() => clickAt(e.clientX, e.clientY), 0);
+      }
+    };
     // A draft that ends stops its frame, its prediction's expiry and its hold timer.
     const stopTimers = (d) => {
       if (d.raf) cancelAnimationFrame(d.raf);
@@ -1118,11 +1153,8 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
     const setup = (e, forcedTool) => {
       const L = live.current;
       if (!L.width) return null;
-      let use = forcedTool || L.tool;
-      if (!use) {
-        if (!(L.penTool && e.pointerType === "pen")) return null;
-        use = L.penTool;
-      }
+      const use = forcedTool || pressUse(L, e);
+      if (!use) return null;
       if (!forcedTool && L.penOnly && e.pointerType === "touch") return null;
       if (e.button !== 0 && !(e.pointerType === "pen" && (e.buttons & 34))) return null;
       const rect = el.getBoundingClientRect();
@@ -1607,43 +1639,36 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
       // but a touch while a pen writes stays a palm (below), resting on the
       // ruler as a hand does.
       const band = !!e.target.closest?.(".inkRulerBand");
-      const palm = e.pointerType !== "pen" && (hostOwned != null || drawing?.pointerType === "pen");
+      const palm = e.pointerType !== "pen" && inkPenDown();
       if (band && !palm && !writesOnBand(live.current, e)) { hideCursor(); return; }
       showCursor(e);
       const L = live.current;
-      const selectionDrag = !!L.onSelect && e.target.closest?.(".inkSelectionHit")
-        && (e.pointerType === "touch" || !L.tool || L.tool.tool === "select") && e.pointerType !== "pen";
-      // While the host draws a stroke, fingers are palms; a new pen down
-      // means that stroke is over.
-      if (hostOwned != null) {
-        if (e.pointerType !== "pen") { e.preventDefault(); e.stopPropagation(); return; }
-        hostOwned = null;
-      }
+      const selectionDrag = !!L.onSelect && e.target.closest?.(".inkSelectionHit") && (e.pointerType === "touch" || !L.tool || L.tool.tool === "select")
+        && !(e.pointerType === "pen" && (e.buttons & 34 || pressUse(L, e)));
+      // While a pen is down, on any page, other pointers are palms.
+      if (palm) { e.preventDefault(); e.stopPropagation(); return; }
+      // A new pen down means a stroke the host drew, or a page's drag, is over.
+      hostOwned = null;
+      if (drawing?.mode === "page" && e.pointerType === "pen") drawing = null;
       const ctx = setup(e, selectionDrag ? { tool: "select" } : null);
       // A pen takes priority even if the palm landed first in finger-draw mode.
-      if (drawing?.pointerType === "touch" && e.pointerType === "pen" && ctx) {
+      if (drawing?.pointerType === "touch" && e.pointerType === "pen" && (ctx || L.onPenDrag)) {
         finish({ pointerId: drawing.id }, true);
       }
-      if (drawing) {
-        if (drawing.pointerType === "pen" && e.pointerType === "touch") {
-          e.preventDefault();
-          e.stopPropagation();
-        }
-        return;
-      }
+      if (drawing) return;
       if (contacts.size > 1 && e.pointerType === "touch") return;
       // A read-only page: a tap near a stroke shows its note, below the
       // page's own clickable marks.
       const passive = !L.onSelect && !!L.onJump;
       if (passive && e.target.closest?.(ABOVE_PASSIVE_INK)) return;
-      const navigation = passive || (e.pointerType === "touch" ? (L.penOnly || !L.tool) : e.pointerType === "mouse" && !L.tool);
+      const navigation = passive || (e.pointerType === "touch" ? (L.penOnly || !L.tool) : !L.tool && !ctx);
       if (!selectionDrag && navigation && (L.onSelect || passive) && L.width && e.button === 0) {
         clearPending();
         const probe = setup(e, { tool: "select" });
         if (!probe) return;
         const pt = probe.toPt(e);
         const hit = nearestInkStroke(L.groups, pt.x, pt.y, (e.pointerType === "touch" ? 10 : 5) / probe.k);
-        pending = { id: e.pointerId, x: e.clientX, y: e.clientY, hit, shown: false };
+        pending = { id: e.pointerId, x: e.clientX, y: e.clientY, hit, shown: false, pen: e.pointerType === "pen" };
         if (hit && e.pointerType === "touch" && !passive) {
           pending.timer = setTimeout(() => {
             if (!pending || drawing) return;
@@ -1653,6 +1678,11 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
         }
         // Leave default touch behavior intact so scrolling can cancel the tap.
         if (hit || L.selBox) e.stopPropagation();
+        // A pen's tap is the mouse's, just above; its drag is the page's.
+        if (e.pointerType === "pen" && L.onPenDrag) {
+          drawing = { id: e.pointerId, mode: "page", pointerType: "pen", x: e.clientX, y: e.clientY };
+          L.onPenDrag(e);
+        }
         return;
       }
       if (!ctx) return;
@@ -1726,7 +1756,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
       showCursor(e);
       if (pending?.id === e.pointerId && Math.hypot(e.clientX - pending.x, e.clientY - pending.y) > 8) clearPending(true);
       const d = drawing;
-      if (!d || e.pointerId !== d.id) return;
+      if (!d || e.pointerId !== d.id || d.mode === "page") return;
       e.preventDefault();
       if (d.mode === "erase") {
         sweepAdd(d, coalesced(e));
@@ -1798,6 +1828,9 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
       }
       const d = drawing;
       if (!d || e.pointerId !== d.id) return;
+      // A page's drag ends at trackUp, though a box or a picture it pressed
+      // takes the pointer's capture; only a blur, no event, ends it here.
+      if (d.mode === "page" && e.type) return;
       drawing = null;
       try { el.releasePointerCapture(e.pointerId); } catch { /* already released */ }
       stopTimers(d);
@@ -1874,14 +1907,14 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
     // stream. Keep touch-action available for finger scrolling and pinch zoom.
     const onTouch = (e) => {
       const L = live.current;
-      if (!L.width || !(L.tool || L.penTool)) return;
+      if (!L.width || !(L.tool || L.penInk || drawing)) return;
       // a Pencil on a comment card scrolls and presses it, as a finger does
       if (!drawing && e.target.closest?.(BESIDE_PAGE)) return;
       const pencil = Array.from(e.changedTouches).some((t) =>
         t.touchType === "stylus" || (!t.touchType && drawing?.pointerType === "pen"));
       // While the pen is down, direct contacts are palms, not pan/pinch.
       // As soon as it lifts, fingers can navigate again.
-      if (e.touches.length > 1) clearPending(true);
+      if (e.touches.length > 1 && !pending?.pen) clearPending(true);
       // One finger moving over a page with a tool armed scrolls it when only
       // a pen draws, which nothing on screen explains.
       if (fingerHint && e.type === "touchmove" && !pencil && !drawing && e.touches.length === 1
@@ -1889,9 +1922,12 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
         fingerHint = false;
         L.onFingerScroll();
       }
-      if (!pencil && drawing?.pointerType !== "pen" && drawing?.mode !== "move" && hostOwned == null) return;
+      if (!pencil && !inkPenDown() && drawing?.mode !== "move") return;
       if (e.cancelable) e.preventDefault();
       e.stopPropagation(); // Do not feed Pencil into the viewer's pan/pinch handlers.
+      // Alone on the screen: a finger's touch during a desktop pen's press
+      // is none of the pen's, which has no touch to say so.
+      if (pencil && contacts.size === 1) penTouches = true;
     };
     el.addEventListener("touchstart", onTouch, { capture: true, passive: false });
     el.addEventListener("touchmove", onTouch, { capture: true, passive: false });
@@ -1927,6 +1963,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
     window.addEventListener("blur", onBlur);
     return () => {
       busyLayers.delete(layerBusy);
+      penLayers.delete(penDown);
       el.removeEventListener("touchstart", onTouch, true);
       el.removeEventListener("touchmove", onTouch, true);
       el.removeEventListener("pointerdown", onDown, true);

@@ -296,11 +296,11 @@ function ViewerSettings({ value }) {
         </div>
         <Toggle
           icon={PenIcon}
-          label={t("Stylus draws right away")}
+          label={t("Stylus draws on PDFs right away")}
           hint={t("Without opening the tools first")}
-          title={t("With a stylus (Apple Pencil, Surface Pen, Wacom…), touching the page draws with the pen tool even when the handwriting tools are closed. Fingers and the mouse still select text. Turn off if your stylus keeps leaving marks while you navigate.")}
-          checked={value.inkAutoPen}
-          onChange={value.setInkAutoPen}
+          title={t("With a stylus (Apple Pencil, Surface Pen, Wacom…), touching a PDF page draws with the pen even with no tool armed. Off, until you arm a tool the stylus does what the mouse does: it selects text, or draws the rectangle in rectangle mode. On notebook paper a stylus always writes.")}
+          checked={value.inkPenWritesPdf}
+          onChange={value.setInkPenWritesPdf}
         />
         <Toggle
           icon={ActivityIcon}

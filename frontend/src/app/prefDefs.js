@@ -390,11 +390,14 @@ export const PREFS = {
 
   // --- Handwriting (Settings → Reading; docs/dev/handwriting.md) ---
   // Input rules and tools belong to the device's pen and screen. inkPenOnly:
-  // fingers never draw (they scroll and pinch). inkAutoPen: a stylus draws
-  // with the pen even when no tool is armed. inkPressure: use the stylus
-  // pressure for stroke width.
+  // fingers never draw (they scroll and pinch). inkPenWritesPdf: a stylus
+  // draws on a PDF page with no tool armed, where it otherwise does what a
+  // mouse does (ink/pencilActions.js penToolOn). A key of its own: a
+  // browser stores a preference's default too, so the on of
+  // gamma-ink-auto-pen, which this replaces, says nothing of a choice.
+  // inkPressure: use the stylus pressure for stroke width.
   inkPenOnly: flag("gamma-ink-pen-only", BROWSER, COARSE),
-  inkAutoPen: flag("gamma-ink-auto-pen", BROWSER, true),
+  inkPenWritesPdf: flag("gamma-ink-pen-writes-pdf", BROWSER, false),
   inkPressure: flag("gamma-ink-pressure", BROWSER, true),
   // Two fingers tapped together undo, three redo (ink/fingerChords.js): a
   // single chord, a double one, or nothing; on by default where a finger is

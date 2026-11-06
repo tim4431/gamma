@@ -538,7 +538,7 @@ export async function textBoxScenarios({ server, browser, alice, bob, makePdf, s
     const groups = async () => (await subtree(pageId)).children.filter((c) => c.properties?.ink_url !== undefined).length;
     const groups0 = await groups();
     const k = (await page.locator('[data-page="1"]').boundingBox()).width / 612;
-    await boxEl(fixedId).click(); // the hand is armed: a stylus writes right away elsewhere
+    await boxEl(fixedId).click();
     await page.waitForSelector(`[data-box-id="${fixedId}"].selected .textBoxWidth`, { timeout: 5000 });
     const w0 = (await stored(fixedId)).properties.text_box.w;
     const h = await boxEl(fixedId).locator(".textBoxWidth").boundingBox();

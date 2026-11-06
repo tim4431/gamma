@@ -103,6 +103,12 @@ export function swallowClick() {
   setTimeout(() => document.removeEventListener("click", swallow, { capture: true }), 0);
 }
 
+// The click a tap would have sent, for a touch that was cancelled: on what
+// lies under a point in the viewport.
+export function clickAt(x, y) {
+  document.elementFromPoint(x, y)?.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window, detail: 1, button: 0, clientX: x, clientY: y }));
+}
+
 // --- a menu button ---------------------------------------------------------------------
 
 // A button's menu opens on the press, as a native menu does, not on the

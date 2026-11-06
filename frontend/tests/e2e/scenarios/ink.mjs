@@ -796,6 +796,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     // iPad is still needed to verify native Pencil/scroll arbitration.
     await page.keyboard.press("Escape");
     if (await page.locator(".pdfInkBar").count()) await page.keyboard.press("Escape");
+    await page.click("button[aria-label='Handwriting tools']"); // armed: the stylus pen
     const paths = '[data-page="1"] .inkLayer path';
     const count = await page.locator(paths).count();
     const result = await page.locator('[data-page="1"]').evaluate((el) => {
@@ -1055,7 +1056,6 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     await cdp.send("Input.dispatchTouchEvent", { type: "touchEnd", touchPoints: [] });
     await until(async () => await page.locator(paths).count() === count + 1, { what: "native touch stroke" });
     assertEq(await page.locator(".pdfViewer").evaluate((el) => el.scrollTop), scrollBefore, "finger drawing does not pan");
-    await page.getByRole("button", { name: "Hand", exact: true }).click();
     await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", x, y: y + 80,
       pointerType: "pen", button: "left", buttons: 1, clickCount: 1, force: 0.2 });
     for (let i = 1; i <= 12; i++) {
@@ -1064,7 +1064,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     }
     await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: x + 100, y: y + 76,
       pointerType: "pen", button: "left", buttons: 0, clickCount: 1 });
-    await until(async () => await page.locator(paths).count() === count + 2, { what: "native pen stroke in Hand mode" });
+    await until(async () => await page.locator(paths).count() === count + 2, { what: "native pen stroke" });
     await until(async () => {
       const d = await account.api(`/api/blocks/${pageId}/subtree`);
       for (const b of d.block.children) {
@@ -1251,7 +1251,7 @@ export async function inkScenarios({ server, browser, alice, makePdf, step, unti
     const dialog = await openReadingSettings();
     const row = settingRow;
     for (const name of ["Handwriting", "Reset presets", "Eraser returns to the last tool", "Erases", "Draw and hold", "Scribble to erase",
-      "This device", "Draws with", "Stylus draws right away", "Pressure-sensitive strokes", "Undo with fingers", "Hover preview"]) {
+      "This device", "Draws with", "Stylus draws on PDFs right away", "Pressure-sensitive strokes", "Undo with fingers", "Hover preview"]) {
       assert(await row(name).count(), `the row "${name}" is in Reading & editing`);
     }
     // the Apple Pencil's gestures and haptics are the iPad app's alone (ipad.mjs shows them under its host)

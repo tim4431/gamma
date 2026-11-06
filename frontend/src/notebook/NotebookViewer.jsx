@@ -8,6 +8,7 @@
 // ink/useInkDocument.js, ink/useInkStrokes.js); PaperMenu edits a sheet's
 // paper.
 import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { inkPenDown } from "../ink/InkLayer";
 import { MarkupLayers, NO_MARKS } from "../markup/MarkupLayers";
 import { armedClasses, usePageTools } from "../markup/PageTools";
 import { PlusIcon, XIcon } from "../shared/ui/Icons";
@@ -177,6 +178,7 @@ export function NotebookViewer({ sheets, marks, scaleValue = "page-width", onEff
     const zoom = installViewerZoom(el, {
       layer: () => columnRef.current,
       clamp: clampZoom,
+      held: inkPenDown,
       // The paper under the cursor stays under it.
       onWheelZoom: (next, at) => {
         const hold = holdAt(el, el.scrollLeft + at.x, el.scrollTop + at.y);

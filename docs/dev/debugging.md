@@ -594,7 +594,7 @@ left `ref`. `RULES` in `select.mjs` maps each source path (first matching
 glob wins) to the groups that exercise it. `frontend/src/guide/**` goes to
 the three tour groups. `frontend/src/markup/**` (the page layers and the
 tool strip, whose anchors the ink tour uses) goes to the ink groups (ink,
-ink-editing, ink-shapes, ink-zoom, ink-ai), pdf-touch, touch, notebooks,
+ink-editing, ink-shapes, ink-zoom, ink-ai, pen), pdf-touch, touch, notebooks,
 triggered-guide, textbox, pictures and comments (a press on a margin card
 with a pen or the Text tool armed). The pictures group also runs for
 `frontend/src/ink/`, `notebook/`, `editor/` and `pdf/`, and for
@@ -852,6 +852,10 @@ The scenarios live in `tests/e2e/scenarios/`:
     `test_ink.py`). The partial eraser, and one swept in three long jumps
     over two groups: every stroke it crossed cut at its edge, one undo
     entry, which redo brings back whole.
+  - What a pen's press is (`pen.mjs`, its own group): with nothing armed a
+    drag selects text, highlights it under the text highlighter and draws
+    the rectangle in rectangle mode, an armed tool takes the pen over all
+    of these, paper is written on, and both shells claim nothing.
   - Pen input: coalesced sample timing, pressure and lift endpoints in the
     uploaded file, prediction, palm suppression and palm-first pen
     takeover, cleanup after `pointercancel` / lost capture. Chromium's

@@ -208,10 +208,11 @@ const TextBox = React.memo(function TextBox({ block, width, height, readOnly, ar
   // the text only once it moves, so a Ctrl+click still finds its link. The
   // press ends wherever its pointer is let go, since it may leave the box
   // before it moves far enough to take the pointer; another contact
-  // anywhere (a second finger: a pinch zooms) drops it.
+  // anywhere (a second finger: a pinch zooms) drops it, but under a pen it
+  // is a palm.
   const begin = (e, mode, now) => {
-    const p = { id: e.pointerId, mode, x: e.clientX, y: e.clientY, shown: shown(), el: now ? e.currentTarget : null, moved: false };
-    const other = (ev) => { if (ev.pointerId !== p.id) end(p, true); };
+    const p = { id: e.pointerId, mode, x: e.clientX, y: e.clientY, shown: shown(), el: now ? e.currentTarget : null, moved: false, pen: e.pointerType === "pen" };
+    const other = (ev) => { if (ev.pointerId !== p.id && !p.pen) end(p, true); };
     // Let go over the box, or held by it: the box's own pointerup ends it.
     const up = (ev) => { if (ev.pointerId === p.id && (p.dead || !ref.current?.contains(ev.target))) end(p); };
     p.off = () => {
