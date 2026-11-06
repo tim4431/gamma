@@ -204,3 +204,12 @@ $$"""
     assert r.status_code == 200, r.text
     tree = r.json()["blocks"]
     assert [b["content"] for b in tree] == ["Result:", math, "Done."]
+
+def test_md_to_blocks_keeps_a_task_box():
+    """A task item keeps its ``- [ ]`` (a bare ``[ ]`` renders as text):
+    Notion's two spaces after the box, ``*`` bullets and an upper-case X
+    all come in as the editor's own form; a plain bullet still drops its
+    marker and a number stays."""
+    tree = md_to_blocks("- [ ]  open\n- [X] done\n* [x] star\n  - [ ] nested\n- plain\n1. one")
+    assert [b["content"] for b in tree] == ["- [ ] open", "- [x] done", "- [x] star", "plain", "1. one"]
+    assert tree[2]["children"][0]["content"] == "- [ ] nested"

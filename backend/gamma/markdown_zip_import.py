@@ -17,8 +17,12 @@ naming and link conventions:
   its page a sub-page of that note's (``parent_page``), filed where its
   top is and so in no folder of its own. Without one, a note in Notion's
   page directory (``Title <id>/`` beside the page's ``Title <id>.md``, or
-  a database's ``Title <id>.csv``) is a sub-page of that page, so a Notion
-  page tree comes in as a page tree and its directories make no folders;
+  a database's ``Title <id>.csv``; since late 2025 ``Title/``, or
+  ``Title abcd-wxyz/`` for a second page of the title) is a sub-page of
+  that page, so a Notion page tree comes in as a page tree and its
+  directories make no folders. A flat export (every page in one
+  directory) gets its tree from the pages' lines that link to their
+  sub-pages and from the row names in its databases' CSVs;
 - links to other notes in the zip become ``[[page]]`` mentions — Markdown
   links (relative paths, Notion's percent-encoded ones) and Obsidian
   wikilinks alike, both resolved by path first and by basename anywhere in
@@ -33,13 +37,16 @@ naming and link conventions:
   ``![alt|300](url)`` form the editor renders;
 - Obsidian properties: ``tags`` become labels (made by name where missing),
   ``aliases`` are kept in ``properties.aliases``; foldable callout markers
-  are dropped; ``%%comments%%`` are removed (vaults only — the ``.obsidian/``
+  stay; ``%%comments%%`` are removed (vaults only — the ``.obsidian/``
   folder marks one); ``.obsidian/``, ``.trash/`` and ``.canvas`` files are
   skipped;
 - a Notion database (``Name <id>.csv`` — the ``_all`` variant when both exist,
-  it carries every row) becomes a page holding the table, its row pages
-  (``Name <id>/Row <id>.md``) sub-pages of it; Notion's
-  ``<aside>`` callouts become ``> [!info]`` callouts;
+  it carries every row, in the columns' order the view's CSV gives) becomes
+  a page holding the table, its row pages (``Name <id>/Row <id>.md``)
+  sub-pages of it; relations (``Title (…%20<id>.md)``, in a cell or a row's
+  property line) become mentions of the page of that id; Notion's
+  ``<aside>`` callouts become ``> [!info]`` callouts, and the empty ``>``
+  line Notion ends a quote with goes;
 - Gamma's front matter (``source`` → the bundled PDF or its URL, ``doi`` /
   ``authors`` / ``year`` → metadata) and BibTeX block are restored;
 - a ``.md`` already imported (same bytes, or the same Notion page id) is
@@ -81,23 +88,47 @@ from .storage import IMAGE_MEDIA_TYPES, content_digest, is_pdf, store_file_strea
 
 # A Notion database's rows, in tables of at most this many rows (and
 # characters): each table one block the editor renders and can save
-# (ops.MAX_CONTENT is 200,000 characters).
+# (ops.MAX_CONTENT is 200,000 characters), but for a single row past that:
+# it stays whole, to read, and takes shortening before it saves.
 TABLE_ROWS = 500
 TABLE_CHARS = 100_000
 MAX_TABLE_COLS = 40
+# (a cell can be as long as the file: Notion's relation cells run long)
+csv.field_size_limit(max(csv.field_size_limit(), MAX_MARKDOWN_BYTES))
 # New pages written in one transaction: few commits, and each hold of the
 # write lock stays short (a page's files are stored before it is staged).
 PAGES_PER_COMMIT = 50
 
 _MD_EXTS = (".md", ".markdown")
 _NOTION_ID_RE = re.compile(r"\s+[0-9a-f]{32}$", re.I)
+# Since about November 2025 a page's directory is named as the page without
+# its id, and a second one of the same name in a directory carries the
+# page id's first and last four digits: ``Title abcd-wxyz/``.
+_PARTIAL_ID_RE = re.compile(r"\s+([0-9a-f]{4})-([0-9a-f]{4})$", re.I)
+# A relation in a Notion database cell or row property: ``Title (path)``,
+# the path the related page's file (``…%20<id>.md``; Notion encodes the
+# spaces, not the parentheses, which a title cut at 50 characters can
+# leave unbalanced), relations joined by ", ".
+_RELATION_RE = re.compile(r" \((\S*?%20([0-9a-f]{32})\.md)\)", re.I)
+# A row page's property line, ``Name: value``, as Notion writes them under
+# the title.
+_PROPERTY_RE = re.compile(r"([^:|\n]{1,100}): ?(.*)$")
+_TABLE_LINE_RE = re.compile(r"[ \t]*\|")
+_CELL_BAR_RE = re.compile(r"(?<!\\)\|")
 _EXPORT_WRAPPER_RE = re.compile(r"^Export-[0-9a-f-]{8,}$", re.I)
-_H1_RE = re.compile(r"^#\s+(.+?)\s*#*\s*$")
-_HEADING_TEXT_RE = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$")
+# (a closing run of # counts after a space only, as in CommonMark: "# C#" is "C#")
+_H1_RE = re.compile(r"^#\s+(.+?)(?:\s+#+)?\s*$")
+_HEADING_TEXT_RE = re.compile(r"^#{1,6}\s+(.+?)(?:\s+#+)?\s*$")
+# What Obsidian reads as a space when it matches a link to a heading (its
+# stripHeading): ``## Learn C#`` is linked as ``[[Note#Learn C]]``.
+_HEADING_PUNCT_RE = re.compile(r"""[!"#$%&()*+,.:;<=>?@^`{|}~/\[\]\\\r\n]""")
 _BIBTEX_RE = re.compile(r"^```bibtex[ \t]*\n(.*?)\n```[ \t]*\n?", re.S)
-_ASIDE_RE = re.compile(r"<aside>\s*(.*?)\s*</aside>", re.S)
-# [label](target "title") / ![alt](target) — label may hold one level of []
-_LINK_RE = re.compile(r"(!?)\[((?:[^\[\]]|\[[^\]]*\])*)\]\(\s*(<[^>]*>|[^)\s]+)((?:\s+\"[^\"]*\")?)\s*\)")
+# [label](target "title") / ![alt](target) — label may hold one level of [],
+# target balanced () as CommonMark allows (Notion leaves them unencoded:
+# ``Tasks%20(grid%20view)%20<id>.csv``), else up to the first ")" (a name
+# Notion cut at 50 characters inside a parenthesis: ``Plan%20(PHASE%20ST%20<id>.md``)
+_LINK_RE = re.compile(r"(!?)\[((?:[^\[\]]|\[[^\]]*\])*)\]\(\s*(<[^>]*>|(?:[^()\s]|\([^()\s]*\))+|[^)\s]+)"
+                      r"((?:\s+\"[^\"]*\")?)\s*\)")
 # [[target#sub#sub|alias]] / ![[…]] — Obsidian's wikilink and embed; the
 # alias pipe may be escaped (``\|``) inside a table cell. The same shape
 # matches Gamma's own [[id]] refs, which simply resolve to nothing here.
@@ -153,6 +184,46 @@ def _clean_stem(stem: str) -> str:
     return _NOTION_ID_RE.sub("", stem).strip() or stem.strip()
 
 
+def _norm_name(name: str) -> str:
+    """A title or file name as names are compared: NFC, spaces collapsed,
+    case folded."""
+    return re.sub(r"\s+", " ", unicodedata.normalize("NFC", name)).strip().casefold()
+
+
+def _loose(name: str) -> str:
+    """A title as Notion names its file, for comparing the two: letters and
+    digits only (``GAOS 1.0`` is ``GAOS 1 0 <id>.md``, ``A: B`` ``A B``)."""
+    return "".join(ch for ch in unicodedata.normalize("NFC", name).casefold() if ch.isalnum())
+
+
+def _title_key(title: str) -> str:
+    """A title as a flat export's titles and labels are matched: its letters
+    and digits (marks, punctuation and what Notion drops from file names
+    aside: ``[**Plan**](…)`` names ``Plan``), else the title itself when it
+    has none (an emoji)."""
+    return _loose(title) or _norm_name(title)
+
+
+def _notion_file(path: str):
+    """``(normalized title, Notion id or None)`` of a note's or database's
+    file name."""
+    stem, ext = _split_ext(path)
+    stem = re.sub(r"_all$", "", stem) if ext == ".csv" else stem
+    return _norm_name(_clean_stem(stem)), _notion_id(stem)
+
+
+def _properties(body: str) -> dict:
+    """A Notion row page's property lines: the ``Name: value`` lines its
+    body starts with."""
+    fields = {}
+    for line in body.lstrip("\n").split("\n"):
+        m = _PROPERTY_RE.fullmatch(line)
+        if not m:
+            break
+        fields[m.group(1).strip()] = m.group(2).strip()
+    return fields
+
+
 def _dir_path(path: str) -> list[str]:
     """The folder path a note's directory makes: a folder per directory,
     named as the directory (Notion's id suffix dropped)."""
@@ -174,7 +245,7 @@ def _split_ext(path: str):
 
 
 def _norm_heading(text: str) -> str:
-    return re.sub(r"\s+", " ", text).strip().lower()
+    return re.sub(r"\s+", " ", _HEADING_PUNCT_RE.sub(" ", text)).strip().lower()
 
 
 # --- body preparation --------------------------------------------------------
@@ -190,14 +261,15 @@ def _take_title(body: str, fm_title, vault_stem=None):
     if not m:
         return fm_title or vault_stem, body
     h1 = m.group(1).strip()
+    whole = lines[0][1:].strip()  # (Gamma's export writes the title "Issue #" as ``# Issue #``)
     if vault_stem is not None:
         title = fm_title or vault_stem
-        if h1.casefold() != title.casefold():
+        if title.casefold() not in (h1.casefold(), whole.casefold()):
             return title, body
         return title, "\n".join(lines[1:]).lstrip("\n")
-    if fm_title and h1 != fm_title:
+    if fm_title and fm_title not in (h1, whole):
         return fm_title, body
-    return h1, "\n".join(lines[1:]).lstrip("\n")
+    return fm_title or h1, "\n".join(lines[1:]).lstrip("\n")
 
 
 def _take_bibtex(body: str):
@@ -208,10 +280,105 @@ def _take_bibtex(body: str):
 
 
 def _convert_asides(body: str) -> str:
-    def repl(m):
-        lines = [ln.rstrip() for ln in m.group(1).strip().split("\n")]
-        return "\n".join([f"> [!info] {lines[0]}"] + [f"> {ln}" for ln in lines[1:]])
-    return _ASIDE_RE.sub(repl, body)
+    """Notion's ``<aside>`` (its tags alone on their lines, indented as the
+    block is in a toggle or a list item) → a ``> [!info]`` callout, its
+    first line the title. Since 2026 Notion writes the icon alone on that
+    line and a blank line after it; that blank goes (after a first line of
+    text it parts paragraphs). An ``<aside>`` in a code block is code."""
+    lines, out, in_fence, i = body.split("\n"), [], False, 0
+    while i < len(lines):
+        line = lines[i]
+        i += 1
+        if _FENCE_LINE_RE.match(line):
+            in_fence = not in_fence
+        end = None
+        if not in_fence and line.strip() == "<aside>":
+            end = next((j for j in range(i, len(lines)) if lines[j].strip() == "</aside>"), None)
+        if end is None:
+            out.append(line)
+            continue
+        indent = line[:len(line) - len(line.lstrip())]
+        inner = [(ln[len(indent):] if ln.startswith(indent) else ln.lstrip()).rstrip() for ln in lines[i:end]]
+        inner = list(itertools.dropwhile(lambda ln: not ln, inner))
+        while inner and not inner[-1]:
+            inner.pop()
+        i = end + 1
+        if not inner:
+            continue
+        rest = inner[1:]
+        if not re.search(r"\w", re.sub(r"<img\b[^>]*>", "", inner[0])):
+            rest = list(itertools.dropwhile(lambda ln: not ln, rest))
+        out += [f"{indent}> [!info] {inner[0]}"] + [f"{indent}> {ln}" if ln else f"{indent}>" for ln in rest]
+    return "\n".join(out)
+
+
+def _drop_quote_tails(body: str) -> str:
+    """Notion's Markdown export ends every quote with an empty ``>`` line,
+    indented as the quote is (in a list item, a toggle) and inside a
+    callout's ``>`` too; drop it (a ``>`` between two quoted lines stays: it
+    parts paragraphs)."""
+    lines, out, in_fence = body.split("\n"), [], False
+    for i, line in enumerate(lines):
+        tail = None
+        if _FENCE_LINE_RE.match(line):
+            in_fence = not in_fence
+        elif not in_fence:
+            tail = re.fullmatch(r"([ \t]*(?:> ?)*?)>\s*", line)
+        if tail and out:
+            quote = tail.group(1) + ">"
+            if out[-1].startswith(quote) and (i + 1 == len(lines) or not lines[i + 1].startswith(quote)):
+                continue
+        out.append(line)
+    return "\n".join(out)
+
+
+def _link_lines(body: str) -> list:
+    """The ``(label, href)`` of each line that is one Markdown link and
+    nothing else, outside fences: how Notion writes a sub-page, a database
+    and a link to a page."""
+    out, in_fence = [], False
+    for line in body.split("\n"):
+        if _FENCE_LINE_RE.match(line):
+            in_fence = not in_fence
+            continue
+        m = None if in_fence else _LINK_RE.fullmatch(line.strip())
+        if m and not m.group(1):
+            out.append((m.group(2), m.group(3).strip("<>").strip()))
+    return out
+
+
+def _link_relations(text: str, page_of) -> tuple[str, int]:
+    """Notion relations (``Title (…%20<id>.md)``, in a database cell or a
+    row page's property line) → ``[[page]]`` mentions (``page_of(id,
+    path)``: the related page's id, or None). A relation's title
+    runs from the end of the relation before it (and its ", "), the cell's
+    ``|`` or the property line's ``Name: `` to the path; it is the related
+    page's when it starts as the file's name does, compared as
+    ``_title_key`` compares (Notion drops some characters there and cuts it
+    at 50). Returns the text
+    and how many were linked."""
+    out, pos, last, line, n = [], 0, 0, 0, 0
+    for m in _RELATION_RE.finditer(text):
+        nl = text.rfind("\n", last, m.start())  # (else on the line of the relation before)
+        if nl >= 0:
+            line = nl + 1
+        start = max(line, last)
+        if _TABLE_LINE_RE.match(text, line):
+            for bar in _CELL_BAR_RE.finditer(text, start, m.start()):
+                start = bar.end()
+        elif line >= last and (prop := _PROPERTY_RE.match(text, line, m.start())):
+            start = prop.start(2)
+        last = m.end()
+        label = text[start:m.start()]
+        start += len(label) - len(label.lstrip(" ,"))
+        pid = page_of(m.group(2).lower(), m.group(1))
+        name = _title_key(_clean_stem(_split_ext(unquote(posixpath.basename(m.group(1))))[0]))
+        if not pid or not name or not _title_key(text[start:m.start()]).startswith(name):
+            continue
+        out += [text[pos:start], f"[[{pid}]]"]
+        pos, n = m.end(), n + 1
+    out.append(text[pos:])
+    return "".join(out), n
 
 
 def _strip_comments(body: str) -> str:
@@ -242,15 +409,30 @@ def _wiki_source(value: str) -> str:
     return m.group(1).strip() if m else value.strip()
 
 
-def _csv_to_markdown(data: bytes) -> tuple[str, int]:
+def _csv_rows(data: bytes, blank=False) -> list:
+    """A CSV's rows, without the wholly blank ones; ``blank`` keeps those
+    after the first row (a row page can stand for one: an untitled row of
+    no values). Lines end as the file ends them, a bare CR too."""
+    text = data.decode("utf-8-sig", errors="replace")
+    rows = list(itertools.dropwhile(lambda r: not any(c.strip() for c in r),
+                                    csv.reader(io.StringIO(text, newline=""))))
+    return rows if blank else [r for r in rows if any(c.strip() for c in r)]
+
+
+def _csv_to_markdown(data: bytes, order=None) -> tuple[str, int]:
     """A Notion database CSV → GFM tables, cells pipe-escaped: every row,
     TABLE_ROWS (or TABLE_CHARS) to a table, each table under the header and
-    a block of its own. Returns the Markdown and the number of columns left
-    out past MAX_TABLE_COLS."""
-    text = data.decode("utf-8-sig", errors="replace")
-    rows = [r for r in csv.reader(io.StringIO(text)) if any(c.strip() for c in r)]
+    a block of its own. ``order``: column names to put first, in that order
+    (the view's, whose CSV lists them as the view shows them while the
+    ``_all`` one sorts them). Returns the Markdown and the number of columns
+    left out past MAX_TABLE_COLS."""
+    rows = _csv_rows(data)
     if not rows:
         return "", 0
+    if order:
+        rank = {name: i for i, name in enumerate(order)}
+        cols = sorted(range(len(rows[0])), key=lambda i: (rank.get(rows[0][i], len(rank)), i))
+        rows = [[r[i] if i < len(r) else "" for i in cols] + r[len(rows[0]):] for r in rows]
     columns = max(len(r) for r in rows)
     width = min(columns, MAX_TABLE_COLS)
 
@@ -271,6 +453,138 @@ def _csv_to_markdown(data: bytes) -> tuple[str, int]:
         size += len(row) + 1
     tables.append(table)
     return "\n\n".join("\n".join(head + t) for t in tables), columns - width
+
+
+# --- a flat Notion export's tree ---------------------------------------------
+
+def _row_names(plan) -> list:
+    """A database's row names (its CSV's first column), normalized; an empty
+    one is Notion's "Untitled"."""
+    return [_norm_name(r[0] if r else "") or "untitled" for r in plan.rows[1:]]
+
+
+def _row_fit(header, same):
+    """``fit(note)``: how many of the note's property values the best of the
+    rows ``same`` (of one name) holds. Its rarest values first, a row scored
+    once, and no further than another row could still win: rows of one name
+    can share every value."""
+    rows_with = {}  # (column, value) → the rows holding it
+    for i, cells in enumerate(same):
+        for col, cell in zip(header[1:], cells[1:]):
+            rows_with.setdefault((col, cell.strip()), []).append(i)
+
+    def fit(note):
+        items = sorted((item for item in note.fields.items() if item in rows_with),
+                       key=lambda item: len(rows_with[item]))
+        best, seen = 0, set()
+        for left, item in zip(range(len(items), 0, -1), items):
+            if best >= left:
+                break
+            for i in rows_with[item]:
+                if i not in seen:
+                    seen.add(i)
+                    row = dict(zip(header[1:], (cell.strip() for cell in same[i][1:])))
+                    best = max(best, sum(row.get(col) == value for col, value in items))
+                    if best == len(items):
+                        return best
+        return best
+
+    return fit
+
+
+def _flat_tree(flat, linked_to) -> dict:
+    """The tree of a flat Notion export's pages and databases (``flat``, in
+    zip order; a file of no Notion id is no page of it): {page id: parent's
+    page id}. ``linked_to(plan, href)``: the plan a link of the plan's
+    names, or None.
+
+    A page names its sub-pages and databases by its lines that are one link
+    to them under their title (as ``_title_key`` compares them, the file's
+    name's or the H1's), or under no label (an untitled page). A database
+    names its rows: as many notes of a title as it has rows of it. Every
+    database's offers are ranked together, so the note goes where its values
+    fit best, not to the first database read: the values that match a row's
+    cells, then the columns shared, then notes no page links to, then zip
+    order. Exact titles go first (``C`` is not ``C++``); then titles as
+    ``_title_key`` compares them, where a note a page links to takes a
+    matching value as well (a linked ``C++`` is no row ``C``). Both ask a
+    note with property lines for one of the columns (a row page can show a
+    property its CSV leaves out), then, for the rows still without a page,
+    ask nothing: a first line of ``Attendees: Ada`` reads as a property. A
+    note a database takes is its row whichever page links to it. Walked
+    breadth-first from the files nothing names, then from the first file
+    still not reached (a sub-page whose line links back to its top names
+    it), the first to name a file is its parent: the page above beats a
+    link to it from a sibling."""
+    members = {plan.page_id for plan in flat}
+
+    def titles(plan):
+        return {_title_key(plan.title), _title_key(_notion_file(plan.entry.path)[0])}
+
+    exact, close, links = {}, {}, {}
+    for plan in flat:
+        if _split_ext(plan.entry.path)[1] in _MD_EXTS:
+            exact.setdefault(_norm_name(plan.title), []).append(plan)
+            for key in titles(plan):
+                close.setdefault(key, []).append(plan)
+        kids = []
+        for label, href in plan.links:
+            kid = linked_to(plan, href)
+            if (kid is not None and kid is not plan and kid.page_id in members
+                    and (not label.strip() or _title_key(label) in titles(kid))):
+                kids.append(kid)
+        links[plan.page_id] = list(dict.fromkeys(kids))
+    linked = {kid.page_id for kids in links.values() for kid in kids}
+
+    databases = [db for db in flat if _split_ext(db.entry.path)[1] == ".csv" and db.rows]
+    named_rows = {}  # database's page id → row name → the rows of that name
+    for db in databases:
+        for name, cells in zip(_row_names(db), db.rows[1:]):
+            named_rows.setdefault(db.page_id, {}).setdefault(name, []).append(cells)
+
+    row_of, rows, found = {}, {}, {}
+    for index, key, strict in ((exact, _norm_name, True), (close, _title_key, True),
+                               (exact, _norm_name, False), (close, _title_key, False)):
+        offers = []
+        for db in databases:
+            header = [cell.strip() for cell in db.rows[0]]
+            columns = set(header[1:])
+            for name, same in named_rows.get(db.page_id, {}).items():
+                if found.get((db.page_id, name), 0) >= len(same):
+                    continue
+                fit = _row_fit(header, same)
+                for note in dict.fromkeys(index.get(key(name), [])):
+                    if note.page_id in row_of or (strict and note.fields and not columns & note.fields.keys()):
+                        continue
+                    score = fit(note)
+                    if index is exact or note.page_id not in linked or score:
+                        offers.append((-score, -len(columns & note.fields.keys()), note.page_id in linked,
+                                       db, name, len(same), note))
+        offers.sort(key=lambda offer: offer[:3])
+        for *_, db, name, count, note in offers:
+            if note.page_id not in row_of and found.get((db.page_id, name), 0) < count:
+                row_of[note.page_id] = db.page_id
+                rows.setdefault(db.page_id, []).append(note)
+                found[db.page_id, name] = found.get((db.page_id, name), 0) + 1
+
+    named = {plan.page_id: rows.get(plan.page_id, []) + [kid for kid in links[plan.page_id] if kid.page_id not in row_of]
+             for plan in flat}
+    named_ids = {kid.page_id for kids in named.values() for kid in kids}
+    parent, reached, walk = {}, set(), []
+    for seed in [plan for plan in flat if plan.page_id not in named_ids] + flat:
+        if seed.page_id in reached:
+            continue
+        reached.add(seed.page_id)
+        walk.append(seed)
+        i = len(walk) - 1
+        while i < len(walk):
+            plan, i = walk[i], i + 1
+            for kid in named[plan.page_id]:
+                if kid.page_id not in reached:
+                    reached.add(kid.page_id)
+                    walk.append(kid)
+                    parent[kid.page_id] = plan.page_id
+    return parent
 
 
 # --- the block tree: ids, anchors, headings ----------------------------------
@@ -375,7 +689,7 @@ def markdown_page(ws: str, conn, raw: bytes, original: str, folder: str = "", *,
 
 class _Plan:
     __slots__ = ("entry", "page_id", "title", "path", "alone", "labels", "body", "props", "existing",
-                 "tree", "anchors", "headings", "ids")
+                 "tree", "anchors", "headings", "ids", "links", "rows", "fields")
 
     def __init__(self, entry):
         self.entry = entry
@@ -391,6 +705,9 @@ class _Plan:
         self.anchors = {}
         self.headings = {}
         self.ids = {}       # place in the tree → id, of the blocks links can target
+        self.links = []     # (label, href) of the lines that are one link (_link_lines)
+        self.rows = []      # a database's: its CSV's rows, the header first
+        self.fields = {}    # a Notion row page's property lines (_properties)
 
 
 def import_markdown_zip(ws: str, zf: zipfile.ZipFile, conn, folder: str = "", *, actor: str = "",
@@ -464,6 +781,7 @@ def _import_zip(ws, zf, conn, folder, unpacked, *, actor, preview, selected, pro
         stem, _ = _split_ext(e.path)
         key = (posixpath.dirname(e.path), re.sub(r"_all$", "", stem).lower())
         csv_alias[e.path] = databases[key]
+    views = {db.path: e for e in csvs if (db := csv_alias[e.path]) is not e}
 
     # Already-imported pages: same bytes, or the same Notion page.
     by_digest, by_notion, existing_pages = {}, {}, {}
@@ -475,11 +793,12 @@ def _import_zip(ws, zf, conn, folder, unpacked, *, actor, preview, selected, pro
             continue
         existing_pages[pid] = (title, props)
         if props.get("markdown_import"):
-            by_digest.setdefault(props["markdown_import"], pid)
+            by_digest.setdefault(props["markdown_import"], []).append(pid)
         if props.get("notion_id"):
             by_notion.setdefault(props["notion_id"], pid)
 
     plans, targets, plan_of = [], {}, {}
+    taken = set()  # pages a Notion note of the zip found by their bytes
     for e in notes + list(databases.values()):
         if e.size > MAX_MARKDOWN_BYTES:
             warn(e.path, "file exceeds 5 MB")
@@ -496,7 +815,14 @@ def _import_zip(ws, zf, conn, folder, unpacked, *, actor, preview, selected, pro
         plan.path = _dir_path(e.path)
         if ext == ".csv":
             plan.title = _clean_stem(re.sub(r"_all$", "", stem))[:500] or "Database"
-            plan.body, cut = _csv_to_markdown(raw)
+            view = views.get(e.path)
+            try:
+                head = _csv_rows(view.read())[:1] if view is not None and view.size <= MAX_MARKDOWN_BYTES else []
+                plan.body, cut = _csv_to_markdown(raw, head[0] if head else None)
+                plan.rows = _csv_rows(raw, blank=True)
+            except csv.Error as exc:
+                warn(e.path, f"not a readable CSV: {exc}")
+                continue
             if cut:
                 warn(e.path, f"{cut} columns past the first {MAX_TABLE_COLS} are left out")
         else:
@@ -534,8 +860,26 @@ def _import_zip(ws, zf, conn, folder, unpacked, *, actor, preview, selected, pro
                 plan.props["aliases"] = list(dict.fromkeys(aliases))
             if vault:
                 body = _strip_comments(body)
-            plan.body = _convert_asides(body)
-        existing = by_digest.get(digest) or (by_notion.get(notion_id) if notion_id else None)
+            plan.body = body
+            if notion_id:
+                plan.body = _drop_quote_tails(_convert_asides(body))
+                plan.links = _link_lines(plan.body)
+                plan.fields = _properties(plan.body)
+        # A Notion page is the page of its id: two pages of one template
+        # (``# Untitled`` and a status line) have the same bytes. Its bytes
+        # find only the page made from this file alone (POST
+        # /import/markdown: no Notion id, the file's name), once.
+        existing = by_notion.get(notion_id) if notion_id else None
+        for pid in by_digest.get(digest, ()) if existing is None else ():
+            known = existing_pages[pid][1]
+            if not notion_id:
+                existing = pid
+                break
+            if (pid not in taken and not known.get("notion_id")
+                    and known.get("original_filename") == posixpath.basename(e.path)):
+                existing = pid
+                taken.add(pid)
+                break
         if existing:
             plan.existing = True
             plan.page_id = existing
@@ -555,6 +899,29 @@ def _import_zip(ws, zf, conn, folder, unpacked, *, actor, preview, selected, pro
         plans.append(plan)
         targets[e.path] = plan.page_id
         plan_of[plan.page_id] = plan
+    # A database's page can come as a note of the database's own id beside
+    # its CSV (``People <id>.md``: a line linking to the CSV, the view's
+    # filters and sort). It is the database's page: its other lines go
+    # above the table, and links to it resolve to that page.
+    database_of = {(posixpath.dirname(p.entry.path), _notion_file(p.entry.path)[1]): p
+                   for p in plans if _split_ext(p.entry.path)[1] == ".csv" and _notion_file(p.entry.path)[1]}
+    for stub in [p for p in plans if _split_ext(p.entry.path)[1] in _MD_EXTS]:
+        nid = _notion_file(stub.entry.path)[1]
+        db = database_of.get((posixpath.dirname(stub.entry.path), nid)) if nid else None
+        if db is None:
+            continue
+        plans.remove(stub)
+        if stub.page_id != db.page_id:  # (imported before, both are the database's page)
+            del plan_of[stub.page_id]
+        plan_of[db.page_id] = db
+        targets[stub.entry.path] = db.page_id
+        rest = "\n".join(line for line in stub.body.split("\n")
+                         if not ((m := _LINK_RE.fullmatch(line.strip())) and nid in unquote(m.group(3)).lower()))
+        if rest.strip() and not db.existing:
+            db.body = rest.strip() + "\n\n" + db.body
+            db.ids.clear()
+        if not db.existing and len(stub.title) > len(db.title):  # (the CSV's name is cut at 50 characters)
+            db.title = stub.title
     for path, db_entry in csv_alias.items():
         if db_entry.path in targets:
             targets[path] = targets[db_entry.path]
@@ -568,6 +935,12 @@ def _import_zip(ws, zf, conn, folder, unpacked, *, actor, preview, selected, pro
     # its links off the chosen ones only.
     every = dict(targets)
     targets = {path: pid for path, pid in targets.items() if pid not in excluded_ids}
+    # Notion id → page, for relations (the pages of the import, then the
+    # library's).
+    notion_pages = {plan.props["notion_id"]: plan.page_id for plan in plans
+                    if plan.props.get("notion_id") and plan.page_id not in excluded_ids}
+    for nid, pid in by_notion.items():
+        notion_pages.setdefault(nid, pid)
 
     # Basename lookup, the way Obsidian resolves a bare [[Note]] or
     # ![[image.png]] wherever the file sits: lower-cased stem (notes) or
@@ -617,6 +990,9 @@ def _import_zip(ws, zf, conn, folder, unpacked, *, actor, preview, selected, pro
             stem, ext = _split_ext(leaf)
             paths = (stems.get(stem) if ext in _MD_EXTS or not ext else None) \
                 or stems.get(leaf) or assets_by_name.get(leaf)
+            if not paths and ext == ".csv" and _notion_id(re.sub(r"_all$", "", stem)):
+                # (the view's CSV is left out of the export: the page of its id)
+                paths = stems.get(re.sub(r"_all$", "", stem))
             if paths:
                 return nearest(base_dir, paths)
         return None
@@ -658,7 +1034,7 @@ def _import_zip(ws, zf, conn, folder, unpacked, *, actor, preview, selected, pro
         """``#Heading`` / ``#^id`` inside a link to ``page_id`` → the block it
         names, else the page itself."""
         plan = plan_of.get(page_id)
-        last = sub.split("#")[-1].strip() if sub else ""
+        last = next((part.strip() for part in reversed((sub or "").split("#")) if part.strip()), "")
         if plan is None or not last:
             return page_id
         if last.startswith("^"):
@@ -673,6 +1049,10 @@ def _import_zip(ws, zf, conn, folder, unpacked, *, actor, preview, selected, pro
             if path is None:
                 if href and not _SCHEME_RE.match(href) and not href.startswith(("#", "/")):
                     warn(current_selection, f"Missing or unselected linked file: {href}; the link is kept as written")
+                return m.group(0)
+            if (path in targets and targets[path] == page_id and _split_ext(path)[1] != ".csv"
+                    and _split_ext(unquote(href))[1] == ".csv"):  # a page's own CSV is not in the zip
+                warn(current_selection, f"Missing or unselected linked file: {href}; the link is kept as written")
                 return m.group(0)
             if path in targets:
                 report["links_resolved"] += 1
@@ -714,7 +1094,17 @@ def _import_zip(ws, zf, conn, folder, unpacked, *, actor, preview, selected, pro
                 return f"![{alt}|{size}]({url})" if size else f"![{alt}]({url})"
             return f"[{alias or leaf}]({url})"
 
-        return _LINK_RE.sub(md_repl, _WIKILINK_RE.sub(wiki_repl, body))
+        def relation_page(nid, href):
+            """The file a relation's path names when it has the relation's
+            id (a zip can hold a page twice), else the page of the id."""
+            path = resolve(base_dir, href)
+            return targets[path] if path in targets and _notion_file(path)[1] == nid else notion_pages.get(nid)
+
+        body = _LINK_RE.sub(md_repl, _WIKILINK_RE.sub(wiki_repl, body))
+        if notion_pages:
+            body, linked = _link_relations(body, relation_page)
+            report["links_resolved"] += linked
+        return body
 
     staged = []  # pages whose files are stored, written PAGES_PER_COMMIT at a time
 
@@ -755,19 +1145,68 @@ def _import_zip(ws, zf, conn, folder, unpacked, *, actor, preview, selected, pro
         path = resolve(base, ref, every_lookup)
         return path if path != note and path in every else None
 
+    # Notion's page directories. Until about November 2025 one is named as
+    # its page's file (``Title <id>/`` beside ``Title <id>.md``, a database's
+    # beside its ``Title <id>.csv``); since, as the title alone (``Title/``),
+    # and the second of one title in a directory with the page id's first
+    # and last four digits (``Title abcd-wxyz/``).
+    plan_at = {plan.entry.path: plan for plan in plans}
+    beside = {}    # (directory, normalized title) → the Notion files of that title
+    notes_in = {}  # directory → the notes directly in it
+    for path, plan in plan_at.items():
+        title, nid = _notion_file(path)
+        if nid:
+            beside.setdefault((posixpath.dirname(path), title), []).append(path)
+        if _split_ext(path)[1] in _MD_EXTS:
+            notes_in.setdefault(posixpath.dirname(path), []).append(plan)
+    directories = {d for e in entries
+                   for d in itertools.accumulate(e.path.split("/")[:-1], lambda a, b: f"{a}/{b}")}
+
+    def partial_owner(base):
+        m = _PARTIAL_ID_RE.search(posixpath.basename(base))
+        if not m:
+            return None
+        title = _norm_name(posixpath.basename(base)[:m.start()])
+        cands = [p for p in beside.get((posixpath.dirname(base), title), [])
+                 if _notion_file(p)[1].startswith(m.group(1).lower()) and _notion_file(p)[1].endswith(m.group(2).lower())]
+        return cands[0] if len(cands) == 1 else None
+
+    claimed = {partial_owner(d) for d in directories} - {None}
+
+    def owner_of(base):
+        """The note or database (its path) whose directory ``base`` is, or
+        None. A name that looks like a partial id (``Budget 2024-2025``) but
+        names no page of the shorter title is a plain title. A plain
+        ``Title/`` beside several files of that title is the one not claimed
+        by a ``Title abcd-wxyz/``, else the one whose lines link into it,
+        else the database whose rows the notes in it are."""
+        name = posixpath.basename(base)
+        if _NOTION_ID_RE.search(name):
+            return next((p for p in [base + ext for ext in _MD_EXTS] + [f"{base}.csv", f"{base}_all.csv"]
+                         if p in every), None)
+        if _PARTIAL_ID_RE.search(name) and (owner := partial_owner(base)):
+            return owner
+        cands = [p for p in beside.get((posixpath.dirname(base), _norm_name(name)), []) if p not in claimed]
+        if len(cands) > 1:
+            into = [p for p in cands if any(
+                posixpath.normpath(posixpath.join(posixpath.dirname(p), unquote(href))).startswith(base + "/")
+                for _, href in plan_at[p].links)]
+            if len(into) != 1:
+                titles = {_norm_name(plan.title) for plan in notes_in.get(base, [])}
+                into = [p for p in cands if _split_ext(p)[1] == ".csv" and titles
+                        and titles <= set(_row_names(plan_at[p]))]
+            cands = into
+        return cands[0] if len(cands) == 1 else None
+
+    owners = {}
+
     def paired_page(note):
         """The page whose directory, in Notion's layout, holds the note
-        ``note``, or None: its directory's name carries a Notion id and a
-        note (``Title <id>.md``) or a database (``Title <id>.csv``, or the
-        ``_all`` one) of that name sits beside it, named exactly as the
-        directory is, as Notion writes them."""
+        ``note``, or None."""
         base = posixpath.dirname(note)
-        if not _NOTION_ID_RE.search(posixpath.basename(base)):
-            return None
-        for path in [base + ext for ext in _MD_EXTS] + [f"{base}.csv", f"{base}_all.csv"]:
-            if path in every:
-                return every[path]
-        return None
+        if base and base not in owners:
+            owners[base] = owner_of(base)
+        return every.get(owners.get(base))
 
     chosen = [plan for plan in plans if selected is None or plan.entry.path in selected]
     # A new note whose ``parent:`` names another note of the import, or
@@ -790,6 +1229,30 @@ def _import_zip(ws, zf, conn, folder, unpacked, *, actor, preview, selected, pro
         parent = every[note] if note else paired_page(plan.entry.path)
         if parent and parent != plan.page_id:
             parent_of[plan.page_id] = parent
+
+    # A CSV has no H1 and Notion cuts a file's name at 50 characters: such a
+    # database's title is the label of the line that links to it.
+    cut = {plan.page_id: plan for plan in plans
+           if _split_ext(plan.entry.path)[1] == ".csv" and len(plan.title) >= 49 and not plan.existing}
+    for plan in plans if cut else ():
+        for label, href in plan.links:
+            db = cut.get(every.get(resolve(posixpath.dirname(plan.entry.path), href, every_lookup)))
+            if db is not None and len(label) > len(db.title) and _loose(label).startswith(_loose(db.title)):
+                db.title = label.strip()[:500]
+
+    # A flat Notion export ("Create folders for subpages" off) has every page,
+    # database and attachment in one directory and no directory in it; its
+    # tree is in the pages themselves (_flat_tree).
+    order = {e.path: i for i, e in enumerate(entries)}
+    flat = sorted((plan for plan in plans if _notion_file(plan.entry.path)[1]),
+                  key=lambda plan: order.get(plan.entry.path, 0))
+    base_dir = posixpath.dirname(flat[0].entry.path) if flat else ""
+    if (len(flat) > 1 and all(posixpath.dirname(plan.entry.path) == base_dir for plan in flat)
+            and not any(posixpath.dirname(d) == base_dir for d in directories)):
+        tree = _flat_tree(flat, lambda plan, href: plan_of.get(every.get(resolve(base_dir, href, every_lookup))))
+        for page_id, up in tree.items():
+            if not plan_of[page_id].existing:
+                parent_of.setdefault(page_id, up)
 
     def above(page_id):
         """The parent of a page of a walk up: the import's, else the library's."""

@@ -402,7 +402,10 @@ folder of notes, because they only differ in naming and link conventions
 (the survey behind the Obsidian mapping: [docs/research/obsidian.md](../research/obsidian.md)):
 
 - **Title**: front-matter `title`, else the leading `# H1` (stripped from
-  the body — Notion and Gamma both write one), else the filename with
+  the body — Notion and Gamma both write one; a closing run of `#` counts
+  only after a space, as in CommonMark, so `# C#` is "C#", though an H1
+  whose whole text is the front-matter title repeats it: the export writes
+  the title "Issue #" as `# Issue #`), else the filename with
   Notion's `Title <32-hex id>` suffix removed. In an Obsidian vault
   (recognised by its `.obsidian/` folder) the filename is the title, as in
   Obsidian itself, and the H1 stays in the body unless it repeats the title.
@@ -434,14 +437,61 @@ folder of notes, because they only differ in naming and link conventions
   is the value's (the layout the exports write, `Top.md` beside
   `Top/Child.md`), then a wikilink's exact vault path, then as a link is.
   Notion writes no `parent:`: it puts the pages inside `Title <id>.md` in
-  a directory of the same name beside it, `Title <id>/`, at every depth,
-  and a database's row pages in `Name <id>/` beside its `Name <id>.csv`.
-  So a note directly in a directory whose name carries a Notion id, beside
-  a note (`.md` or `.markdown`) or a database (`.csv`, or the `_all.csv`)
-  named exactly as the directory is, goes inside that note's or that
-  database's page (`paired_page`). A vault or a plain zip carries no
+  a directory beside it, at every depth, and a database's row pages in a
+  directory beside its `Name <id>.csv`. Until about November 2025 that
+  directory was named as the file (`Title <id>/`); since, it is the title
+  alone (`Title/`), and a second page of the title in one directory gets
+  its id's first and last four digits (`Title abcd-wxyz/`). So a note
+  directly in a directory goes inside the note (`.md` or `.markdown`) or
+  database (`.csv`, or the `_all.csv`) beside it that the directory names
+  (`paired_page`, `owner_of`): `Title <id>/` the file named exactly so;
+  `Title abcd-wxyz/` the one of that title whose id starts and ends so (a
+  name that only looks like that, `Budget 2024-2025/`, and matches no page
+  of the shorter title is a plain title); plain `Title/` the one file of
+  that title with a Notion id not claimed by a partial-id directory, and
+  when several are left, the one whose lines link into the directory,
+  else the database whose rows the notes in it are (a page and a database
+  of one title side by side). Titles compare as `_norm_name` does (NFC,
+  spaces collapsed, case folded). A vault or a plain zip carries no
   Notion ids, so its `Topic.md` beside `Topic/` stays a page beside a
-  folder, and a directory that pairs with nothing stays a folder. When the
+  folder, and a directory that pairs with nothing stays a folder. A
+  database's page can also come as a note of the database's own id beside
+  its CSV (`People <id>.md`: a line linking to the CSV, then the view's
+  `filters:` and `sort:`); that note is folded into the database's page,
+  its other lines above the table, links to it resolving there.
+  A flat Notion export ("Create folders for subpages" off) has every page,
+  database and attachment in one directory and no directory in it. When a
+  zip's Notion files all sit in one directory that holds no directory,
+  its tree is taken from the pages (`_flat_tree`). A page's sub-pages and
+  databases are its lines that are one link to them (`_link_lines`: how
+  Notion writes a sub-page, a database or a link to a page) under their
+  title — the H1's or the file name's, compared by letters and digits
+  (`_title_key`: `[**Plan**](…)` names `Plan`) — or under no label (an
+  untitled page). A file with no Notion id beside them is no page of the
+  export, and a link to it nests nothing. A database's rows are notes
+  titled as its CSV's first column (an empty cell, or a wholly blank row,
+  is "Untitled"): per row name as many notes of that title as it has such
+  rows. All databases' offers are ranked together, so a note goes where
+  its values fit and the zip's order does not decide: those whose
+  property values match a row's cells best first, then those sharing more
+  columns, then those no page links to. Exact titles go first, for every
+  database, then titles by letters and digits (`C` is not `C++`), where a
+  note a page links to must also match a value. Both ask a note with
+  property lines for one of the columns (a row page can show a property
+  its CSV leaves out); rows still without a page then take any note of
+  their title, since Notion leaves a row's empty properties out and a
+  first line such as `Attendees: Ada` reads as one. A note a database
+  takes is its row whichever page links to
+  it. A callout's lines are no link lines (a navigation box's links are
+  mostly not its page's sub-pages), so a sub-page or database linked only
+  inside a callout gets no parent. Walked breadth-first from the files nothing names, then from the
+  first file still unreached in zip order (a sub-page whose line links
+  back to its top names it too), the first to name a file is its parent,
+  so a link to a page from its sibling never takes it from the page
+  above. Top-level pages of a workspace export that link to each other
+  would nest under the first: this tree is inferred, and no flat export
+  seen carries Notion's `index.html` manifest
+  ([research note](../research/notion-roundtrip.md)). When the
   parent is another chosen note of the zip, or one imported before (the
   same digest or `notion_id`), the note's page stores that note's page id
   as `parent_page`, written by `insert_page_tree` with the rest (every
@@ -465,12 +515,15 @@ folder of notes, because they only differ in naming and link conventions
   its parent.
 - **Links**: a link to another note in the zip becomes a `[[page]]` mention
   of the page it produced — Markdown links (Notion's percent-encoded
-  `[Sub](Parent%20<id>/Sub%20<id>.md)`, Gamma's `[label](Page-id.md)` and
+  `[Sub](Parent%20<id>/Sub%20<id>.md)`, whose balanced `( )` stay unencoded
+  as in `Tasks%20(grid%20view)%20<id>.csv`, Gamma's `[label](Page-id.md)` and
   `*(from [title](file.md))*`) and Obsidian wikilinks (`[[Note]]`,
   `[[Note|alias]]`, `[[folder/Note]]`) alike. A target is resolved relative
   to the note, then as an exact vault path, then by basename anywhere in the
   zip (nearest directory wins), case-insensitively — Obsidian's own rule.
-  `[[Note#Heading]]` and `[[Note#^id]]` point at that heading block or
+  `[[Note#Heading]]` and `[[Note#^id]]` point at that heading block
+  (matched as Obsidian's `stripHeading` does, punctuation read as spaces:
+  `## Learn C#` by `[[Note#Learn C]]`, the first of two alike winning) or
   anchored block (`^id` markers are indexed per note and removed from the
   text; an anchor on its own line belongs to the block before it),
   `![[Note#^id]]` becomes a Gamma synced block `![[id]]`, while `![[Note]]`
@@ -480,24 +533,54 @@ folder of notes, because they only differ in naming and link conventions
   it is a warning and the link stays as typed) and points at
   `/api/uploads/…`; `![[img.png|300]]` / `|300x200` becomes the editor's
   `![|300](url)` size form, other pipe text the alt. Links that resolve to
-  nothing stay as typed (so a Gamma `[[id]]` is never touched).
+  nothing stay as typed (so a Gamma `[[id]]` is never touched). A link to
+  a Notion `Name <id>.csv` the export left out reaches the page of that id,
+  the way a `.md` link reaches a database; a page's link to its own absent
+  CSV stays as typed, with the warning.
 - **Obsidian specifics**: front-matter `tags` (list, flow list or comma
   string; `tag` too) become labels, label blocks made by name where missing
   (a name keeps its `/` and `,`), `aliases`
-  are kept in `properties.aliases`; `> [!type]+`/`-` fold markers are
-  dropped (in `md_to_blocks`, so pasted text loses them too);
-  `%%comments%%` are removed in a vault (inline or block, never inside
-  fences). Inline `#tags`, footnotes and task states pass through as text.
+  are kept in `properties.aliases`; `> [!type]+`/`-` fold markers stay
+  (the editor folds a callout by them); `%%comments%%` are removed in a
+  vault (inline or block, never inside fences). Inline `#tags` and
+  footnotes pass through as text. A task keeps its box: `md_to_blocks`
+  drops a bullet's marker but writes a task as the editor's `- [ ] text` /
+  `- [x] text`, whatever bullet, case or spacing it came with (Notion
+  writes `- [ ]  text`), so pasted text keeps it too.
 - **Notion specifics**: a database `Name <id>.csv` becomes a page holding
-  the table (`_all.csv` preferred when both exist — it has every row). Every
+  the table (`_all.csv` preferred when both exist — it has every row — in
+  the column order of the view's CSV, since `_all` sorts its columns). Every
   row is kept, 500 rows (or 100,000 characters) to a table, each table a
   block of its own under the header, so each renders and stays under a
-  block's 200,000 characters. Columns past 40 are left out with a warning.
+  block's 200,000 characters, but for a single row past that: it stays
+  whole, to read, and takes shortening before it saves. A CSV's lines end
+  as the file ends them, a bare CR too, and one that cannot be read is a
+  warning, the rest of the zip imported. Columns past 40 are left out with a warning.
   Its row pages `Name <id>/Row <id>.md` are pages inside it (above). Two
   databases of one name in one page (Notion's `Untitled <id>`) are two
-  pages, each holding its own rows, since their ids differ;
-  `<aside>` callouts become `> [!info]` callouts;
-  the row pages' `Property: value` lines stay as text.
+  pages, each holding its own rows, since their ids differ. Notion cuts a
+  file's name at 50 characters and a CSV has no H1, so a database of a
+  longer title takes it from its stub note or the line linking to it;
+  in a Notion note `<aside>`, its tags alone on their lines and indented
+  as the block is (in a toggle or a list item; in a code block it is
+  code, and other sources' `<aside>` stays HTML), becomes a `> [!info]`
+  callout, its first line the
+  title (since 2026 Notion writes the icon alone on that line; the blank
+  line after an icon-only line goes, after a line of text it stays and
+  parts paragraphs); the empty `>` line Notion ends each quote with is
+  dropped, also when the quote is indented in a list item or toggle or
+  sits in a callout (`_drop_quote_tails`); the row pages' `Property:
+  value` lines stay as text. A relation, in a database cell or a row's
+  property line, is written `Title (…%20<id>.md)` (the path relative to
+  where Notion pleased: the database's page for a cell, the row for a
+  line) and becomes a mention of the page its path names when that file
+  has the id (a zip can hold one page twice), else of the page of that id,
+  of the import or the library (`_link_relations`). Its title runs from the relation before it,
+  the cell's `|` or the line's `Name: ` up to the path, and must start
+  with the file's name compared by letters and digits only (`_loose`:
+  Notion writes `GAOS 1.0` as `GAOS 1 0 <id>.md` and cuts names at 50
+  characters, sometimes inside a parenthesis, which a link's target may
+  then leave unclosed).
 - **Gamma specifics**: the front matter's `source:` restores the PDF when it
   is bundled (`assets/<sha>.pdf`, or the vault export's quoted
   `"[[Paper.pdf]]"` → `doc_id`, the page becomes a paper again) or the
@@ -508,9 +591,15 @@ folder of notes, because they only differ in naming and link conventions
   string), the ```` ```bibtex ```` block → `properties.bibtex`. Highlights come back as their quote blocks, not as
   positioned highlights — the Gamma format (`?mode=gamma`) is the lossless
   route; Markdown is for notes and for other apps.
-- **Idempotent**: a `.md` already imported (same bytes — `markdown_import`
-  digest — or the same `notion_id`) is skipped, and links to it resolve to
-  the existing page, so re-importing an export adds nothing.
+- **Idempotent**: a `.md` already imported is skipped, and links to it
+  resolve to the existing page, so re-importing an export adds nothing. A
+  note with a Notion id is the page of that `notion_id`; any other is the
+  page of its bytes (the `markdown_import` digest). Two Notion pages of one
+  template have the same bytes, so for a Notion note the digest finds only
+  the page made from that very file alone (`POST /import/markdown`: no
+  Notion id, the same `original_filename`), and that page once per import.
+  A database's stub note imported again resolves to the database's page
+  with its CSV.
 - **In short batches**: a page's bundled files are stored while its links
   are rewritten, outside any transaction. Its rows then wait with the next
   ones, and every `PAGES_PER_COMMIT` (50) pages go in as one short

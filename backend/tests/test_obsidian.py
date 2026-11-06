@@ -164,7 +164,7 @@ def test_vault_import_pages_links_embeds_and_properties(guest):
     assert "[notes.txt](/api/uploads/" in text
     assert f"Markdown link [[{did}]] and shortest [[{method['id']}]]." in text
     assert "[[Nowhere]] stays" in text
-    assert "> [!faq] Folded question" in text and "[!faq]-" not in text
+    assert "> [!faq]- Folded question" in text               # the fold flag renders
     para = next(b for b in home_blocks if b["content"] == "A paragraph.")
     assert para["parent_id"] == setup["id"]
     fence = next(b for b in home_blocks if b["content"].startswith("```python"))
@@ -186,7 +186,8 @@ def test_vault_import_is_idempotent(guest):
 def test_frontmatter_lists_and_fold_markers():
     fm, body = parse_frontmatter("---\ntags:\n  - a\n  - b\nx: [1, 2]\ns: 'q'\n---\nrest")
     assert fm == {"tags": ["a", "b"], "x": ["1", "2"], "s": "q"} and body == "rest"
-    assert md_to_blocks("> [!tip]+ T\n> b")[0]["content"] == "> [!tip] T\n> b"
+    # The editor folds a callout by its flag, so the flag stays.
+    assert md_to_blocks("> [!tip]+ T\n> b")[0]["content"] == "> [!tip]+ T\n> b"
 
 
 # --- export ------------------------------------------------------------------

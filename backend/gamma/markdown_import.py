@@ -9,12 +9,14 @@ blocks and how they nest:
 
 - headings nest by level (## under #, …) and keep their ``#`` markup;
 - list items nest by indentation under the nearest heading, bullet markers are
-  dropped (every block already renders as a bullet), numbered markers stay;
+  dropped (every block already renders as a bullet), numbered markers stay,
+  and a task keeps its ``- [ ]`` / ``- [x]`` (the box needs it to render);
 - lines indented under a list item continue that item: text directly below
   it (or, after a blank line, text aligned with the item's own text column)
   joins the item's content — which is exactly how Gamma's Markdown export
   writes a multi-line block — while text indented deeper after a blank line
-  becomes a child block (Notion's toggles export that way);
+  becomes a child block (Notion's toggles export that way), whose next
+  lines stay in it (a quote or callout in a toggle is one child);
 - everything else groups into one block per paragraph (consecutive non-blank
   lines — which also keeps quote runs and tables together);
 - fenced code blocks and multi-line ``$$`` display math are kept whole,
@@ -133,16 +135,24 @@ def _dedent(raw: str, col: int) -> str:
     return line[min(lead, col):]
 
 
-# Obsidian's foldable callout marker — ``> [!note]+ Title`` / ``[!note]-`` —
-# has no meaning here; the ``+``/``-`` would only keep the callout from
-# rendering, so it is dropped wherever markdown is parsed into blocks.
-_CALLOUT_FOLD_RE = re.compile(r"^(\s*(?:>\s*)+\[![^\]\n]+\])[+-](?=\s|$)", re.M)
+# A task item's box after its bullet: ``[ ]`` / ``[x]``, then the text (Notion
+# writes two spaces after the box).
+_TASK_RE = re.compile(r"^\[([ xX])\]\s+(.*)$")
+
+
+def _item_content(marker: str, body: str) -> str:
+    """A list item's block content: a bullet's marker is dropped (every block
+    already renders as a bullet) unless the item is a task, whose box needs
+    its ``- `` to render; a number stays."""
+    if len(marker) > 1:
+        return f"{marker} {body}"
+    task = _TASK_RE.match(body)
+    return f"- [{task.group(1).lower()}] {task.group(2)}" if task else body
 
 
 def md_to_blocks(text: str) -> list:
     """Parse markdown into a tree of ``{"content": str, "children": [...]}``.
     Raises TooManyBlocks past MAX_BLOCKS blocks, where it stops reading."""
-    text = _CALLOUT_FOLD_RE.sub(r"\1", text)
     lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
     root = {"content": "", "children": []}
     headings = [(0, root)]   # (heading level, node) — nesting for everything
@@ -206,8 +216,7 @@ def md_to_blocks(text: str) -> list:
             while lists and lists[-1][0] >= indent:
                 lists.pop()
             parent = lists[-1][1] if lists else headings[-1][1]
-            content = body if len(marker) == 1 else f"{marker} {body}"
-            lists.append((indent, add(parent, content), indent + len(marker) + 1))
+            lists.append((indent, add(parent, _item_content(marker, body)), indent + len(marker) + 1))
             blank_before = False
             i += 1
             continue
@@ -224,6 +233,11 @@ def md_to_blocks(text: str) -> list:
             indent = len(expanded) - len(expanded.lstrip(" "))
             while lists and lists[-1][0] >= indent:
                 lists.pop()
+            if (para and not blank_before and lists and para_target is lists[-1][1]
+                    and not stripped.startswith(("```", "~~~", "$$"))):
+                para.append(stripped)
+                i += 1
+                continue
             if lists and (not blank_before or indent <= lists[-1][2]):
                 flush_para()
                 node, col = lists[-1][1], lists[-1][2]
