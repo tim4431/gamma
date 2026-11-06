@@ -235,6 +235,7 @@ import {
   welcomePageOf,
   pagePathLabel,
   pageDescendants,
+  topmostPages,
   deleteConfirm,
   topPageOf,
   friendlyApiError,
@@ -250,7 +251,7 @@ import {
   NO_LABEL_TITLE,
   PATH_SEP,
 } from "../library/libraryUtils";
-import { createLibraryMatcher } from "../library/librarySearch";
+import { createLibraryMatcher, movePageRows } from "../library/librarySearch";
 import { prefetchTrash } from "../library/trashList";
 import { batchText, runBatch } from "../library/pageBatch.js";
 import { useComments } from "../comments/useComments";
@@ -1405,7 +1406,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       onConfirm: async () => {
         // Only the topmost selected pages: the server's cascade takes the
         // pages inside them, and one trashed alone first would leave it.
-        const tops = ids.filter((id) => !pageDescendants(pageBlocks, ids.filter((o) => o !== id)).includes(id));
+        const tops = topmostPages(pageBlocks, ids);
         const result = await trashPages(tops, new Set([...ids, ...inside]));
         await fetchHomeBlocks();
         // what a Stop or a failure left is counted as the batch counts: its tops
@@ -1502,10 +1503,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     batchStatus(done(result.done.length), result, ids.length);
   }
   // "Move into page…": a page picker (the move dialog) over every page but
-  // the moved ones and the pages inside them, where they cannot go.
-  async function pickPageParent(ids) {
+  // the moved ones and the pages inside them, where they cannot go. Only
+  // the topmost of `picked` move: a page inside one of them goes along
+  // inside it rather than out of it.
+  async function pickPageParent(picked) {
     const pages = await fetchHomeBlocks({ still: true });
     const byId = new Map(pages.map((p) => [p.id, p]));
+    const ids = topmostPages(pages, picked);
     const out = new Set([...ids, ...pageDescendants(pages, ids)]);
     setMoveBlockDialog({ pageIds: ids, query: "",
       pages: pages.filter((p) => !out.has(p.id)).map((p) => ({ ...p, _path: pagePathLabel(byId, p.id) })) });
@@ -1517,8 +1521,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       (n) => tn("Moved {n} page into “{title}”.", "Moved {n} pages into “{title}”.", n, { title }));
   }
   // "Move to library": out of the page they are in, filed in their top's
-  // folders, where they were listed until now.
-  function movePagesToLibrary(ids) {
+  // folders, where they were listed until now. Only the topmost of `picked`
+  // that are inside a page move: a page inside another of them stays inside it.
+  function movePagesToLibrary(picked) {
+    const ids = topmostPages(pageBlocks, picked).filter((id) => pagesById.get(id)?._parentPage);
+    if (!ids.length) return;
     const place = (id) => {
       const folders = topPageOf(pagesById, id)?._folders || [];
       return { parent_page: null, folders: folders.length ? folders : null };
@@ -1572,22 +1579,33 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     batchStatus(done(result.done.length), result, patches.length);
   }
 
-  // Add pages to a folder (soft link — their other folders are kept, except
-  // one above the target: dragging a "readout" paper into "readout /
-  // nondestructive" refines it, it shouldn't stay in both levels).
   // A page inside another is filed where its top is (its own folders count
-  // for nothing), so a drop leaves it out.
-  async function addPagesToFolder(pageIds, folder) {
-    const path = folderPath(libTree, folder);
+  // for nothing), so filing leaves it out: the library pages of `pageIds`,
+  // and what the status adds about the ones left out ("" for none). Null
+  // when every one is inside a page, which the status says.
+  function filablePages(pageIds) {
     const ids = pageIds.filter((id) => !pagesById.get(id)?._parentPage);
     if (!ids.length) {
       setStatus(t("A page inside another page is filed with it."));
-      return;
+      return null;
     }
-    await refilePages(ids,
+    const left = pageIds.length - ids.length;
+    return { ids, left: left ? ` ${tn("Left out {n} page inside another page, filed with its top.",
+      "Left out {n} pages inside other pages, filed with their tops.", left)}` : "" };
+  }
+
+  // Add pages to a folder (soft link — their other folders are kept, except
+  // one above the target: dragging a "readout" paper into "readout /
+  // nondestructive" refines it, it shouldn't stay in both levels).
+  // A page inside another is left out (filablePages).
+  async function addPagesToFolder(pageIds, folder) {
+    const path = folderPath(libTree, folder);
+    const filable = filablePages(pageIds);
+    if (!filable) return;
+    await refilePages(filable.ids,
       ({ folders }) => (folders.includes(folder) ? null : { folders: addToFolder(libTree, folders, folder) }),
       (n) => t("Add {n} pages to “{path}”", { n, path }),
-      (n) => (n ? tn("Added {n} page to “{path}”.", "Added {n} pages to “{path}”.", n, { path }) : t("Already in “{path}”.", { path })));
+      (n) => (n ? tn("Added {n} page to “{path}”.", "Added {n} pages to “{path}”.", n, { path }) : t("Already in “{path}”.", { path })) + filable.left);
   }
 
   // Label mirror — labels are flat, so a soft add with no ancestor
@@ -1618,14 +1636,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   // Take pages out of one folder (the back row's drop target, the menu's
   // "Remove from"); "" takes them out of every folder.
-  async function removePagesFromFolder(ids, folder) {
+  async function removePagesFromFolder(pageIds, folder) {
     const name = folderPath(libTree, folder);
-    await refilePages(ids, ({ folders }) => {
+    const filable = filablePages(pageIds);
+    if (!filable) return;
+    await refilePages(filable.ids, ({ folders }) => {
       const next = folder ? folders.filter((f) => f !== folder) : [];
       return next.length === folders.length ? null : { folders: next };
     },
     (n) => (folder ? t("Remove {n} pages from “{name}”", { n, name }) : t("Remove {n} pages from every folder", { n })),
-    (n) => (folder ? tn("Removed {n} page from “{name}”.", "Removed {n} pages from “{name}”.", n, { name }) : t("Removed from every folder.")));
+    (n) => (folder ? tn("Removed {n} page from “{name}”.", "Removed {n} pages from “{name}”.", n, { name }) : t("Removed from every folder.")) + filable.left);
   }
 
   // Rename a folder: one `set` of its name on the folder tree. Its pages,
@@ -8560,10 +8580,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
   // The "move to page" picker, for a block (`blockId`) or an object
   // (`fragment`); "Move into page…" picks with it too (`pageIds`, pickPageParent).
+  // Each row names where a sub-page is (`_path`), as Move into page… does.
   async function pickMovePage(what) {
     try {
       const d = await apiJson(`${API}/blocks/root/children`);
-      const pages = (d.children || []).filter((p) => p.id !== focusedBlockId);
+      const all = (d.children || []).map((p) => ({ ...p, _parentPage: p.parent || "" }));
+      const byId = new Map(all.map((p) => [p.id, p]));
+      const pages = all.filter((p) => p.id !== focusedBlockId).map((p) => ({ ...p, _path: pagePathLabel(byId, p.id) }));
       setMoveBlockDialog({ ...what, query: "", pages });
     } catch (err) { setStatus(t("Could not list pages: {message}", { message: err.message })); }
   }
@@ -8615,12 +8638,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setStatus(t("Move failed: {message}", { message: err.message }));
     }
   }
-  const movePageMatches = (() => {
-    if (!moveBlockDialog) return [];
-    const q = moveBlockDialog.query.trim().toLowerCase();
-    const all = moveBlockDialog.pages;
-    return (q ? all.filter((p) => (p.content || "").toLowerCase().includes(q)) : all).slice(0, 12);
-  })();
+  // the title, and as a weaker hit the path (librarySearch.movePageRows)
+  const movePageMatches = moveBlockDialog ? movePageRows(moveBlockDialog.pages, moveBlockDialog.query) : [];
   // Leaving home or changing folders drops the file-manager selection.
   useEffect(() => { clearSelection(); setHomeMenu(null); }, [folderFilter, labelFilter, homeMode]);
   // A folder or label the view names that the listing's trees lack (deleted
@@ -12774,7 +12793,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       {trashOpen ? (
         <LazyBoundary>
         <RecentlyDeleted onClose={() => setTrashOpen(false)} confirm={setConfirmBox} setStatus={setStatus}
-          tree={libTree} onRestored={() => { fetchHomeBlocks(); rereadFamily(); }} />
+          tree={libTree} pages={pagesById} onRestored={() => { fetchHomeBlocks(); rereadFamily(); }} />
         </LazyBoundary>
       ) : null}
       {exportOpen ? (
@@ -13369,12 +13388,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               const many = ids.length > 1;
               const acted = ids.map((id) => pageBlocks.find((b) => b._pageId === id));
               const allPinned = acted.every((b) => b?._pinned);
+              // A page inside another (the strips and the filter box list
+              // them) is filed with its top: Move to folder files the library
+              // pages among them and says it left the rest out
+              // (filablePages); Move to library takes the topmost of them out.
+              const filable = acted.filter((b) => b && !b._parentPage);
+              const leftOut = ids.length - filable.length;
+              const outOf = topmostPages(pageBlocks, ids).filter((id) => pagesById.get(id)?._parentPage);
               // Folders the acted-on pages already sit in — offered for
               // removal alongside the current folder view.
-              const ownFolders = [...new Set(acted.flatMap((b) => b?._folders || []))];
-              // A page inside another (the strips list them) is filed with
-              // its top: no folders of its own, and a way back to the library.
-              const inside = acted.some((b) => b?._parentPage);
+              const ownFolders = [...new Set(filable.flatMap((b) => b._folders || []))];
               const allLabelled = (l) => acted.every((b) => b?._labels?.includes(l));
               const close = () => setHomeMenu(null);
               // A typed name: the label of that name, else a new one.
@@ -13449,7 +13472,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       )}
                     </SubMenuItem>
                   ),
-                  lib.organize && !inside && (
+                  lib.organize && filable.length > 0 && (
                     <SubMenuItem
                       key="folders"
                       id="folders"
@@ -13470,15 +13493,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       {folderFilter || ownFolders.length ? (
                         <MenuItem icon={XIcon} onClick={() => { close(); removePagesFromFolder(ids, ""); }}>{t("All folders")}</MenuItem>
                       ) : null}
+                      {leftOut ? (
+                        <>
+                          <MenuDivider />
+                          <MenuItem disabled>{tn("{n} page inside another page is left out: it is filed with its top.",
+                            "{n} pages inside other pages are left out: they are filed with their tops.", leftOut)}</MenuItem>
+                        </>
+                      ) : null}
                     </SubMenuItem>
                   ),
                   lib.organize && (
                     <MenuItem key="into" icon={IndentIcon} title={t("Put it inside another page, where it is listed under Pages inside")}
                       onClick={() => { close(); pickPageParent(ids); }}>{t("Move into page…")}</MenuItem>
                   ),
-                  lib.organize && inside && (
+                  lib.organize && outOf.length > 0 && (
                     <MenuItem key="library" icon={OutdentIcon} title={t("Take it out of the page it is in, back into the library and the folders it was filed in")}
-                      onClick={() => { close(); movePagesToLibrary(ids.filter((id) => pagesById.get(id)?._parentPage)); }}>{t("Move to library")}</MenuItem>
+                      onClick={() => { close(); movePagesToLibrary(outOf); }}>{t("Move to library")}</MenuItem>
                   ),
                   lib.organize && (
                     <MenuItem key="duplicate" icon={CopyIcon} onClick={() => { close(); duplicatePages(ids); }}>{many ? t("Duplicate {n} pages", { n: ids.length }) : t("Duplicate")}</MenuItem>

@@ -5,9 +5,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  MAX_PAGE_DEPTH, PAGE_PATH_SEP, deleteConfirm, libraryTree, pageAncestors, pageDescendants, pagePathLabel, topPageOf,
+  MAX_PAGE_DEPTH, PAGE_PATH_SEP, deleteConfirm, libraryTree, pageAncestors, pageDescendants, pagePathLabel, pagePlaceLabel,
+  topPageOf, topmostPages,
 } from "../src/library/libraryUtils.js";
-import { rankLibraryPages } from "../src/library/librarySearch.js";
+import { movePageRows, rankLibraryPages } from "../src/library/librarySearch.js";
 import { mentionRows } from "../src/editor/mentions.js";
 
 const page = (id, content, parent = "", extra = {}) => ({ id, content, _parentPage: parent, ...extra });
@@ -67,6 +68,41 @@ test("a sub-page's path reads as its ancestors' titles; the pages inside some, p
   assert.deepEqual(pageDescendants(undefined, ["proj"]), []);
   const loop = [page("a", "A", "b"), page("b", "B", "a")];
   assert.deepEqual(pageDescendants(loop, ["a"]), ["b"], "a cycle ends the walk");
+});
+
+test("Delete and the moves keep to the topmost pages picked: one inside another picked stays with it", () => {
+  assert.deepEqual(topmostPages(PAGES, ["week", "proj"]), ["proj"], "a page two levels inside a picked one");
+  assert.deepEqual(topmostPages(PAGES, ["notes", "week", "lone"]), ["notes", "lone"]);
+  assert.deepEqual(topmostPages(PAGES, ["notes", "todo"]), ["notes", "todo"], "siblings are both topmost");
+  assert.deepEqual(topmostPages(PAGES, ["orphan", "week"]), ["orphan", "week"], "a parent the pages lack is no picked page");
+  assert.deepEqual(topmostPages(undefined, ["a"]), ["a"]);
+  const loop = [page("a", "A", "b"), page("b", "B", "a")];
+  assert.deepEqual(topmostPages(loop, ["a"]), ["a"], "a cycle ends the walk");
+});
+
+test("where a page is, its own title last: how Recently deleted names a sub-page's parent", () => {
+  const map = byId(PAGES);
+  assert.equal(pagePlaceLabel(map, "notes"), "Project › Notes");
+  assert.equal(pagePlaceLabel(map, "proj"), "Project", "a library page is its own title");
+  assert.equal(pagePlaceLabel(map, "todo"), "Project › Untitled");
+});
+
+test("the move dialogs match a title, then a path, and keep the listing's order on ties", () => {
+  const map = byId(PAGES);
+  const rows = PAGES.map((p) => ({ ...p, _path: pagePathLabel(map, p.id) }));
+  const ids = (query, limit) => movePageRows(rows, query, limit).map((p) => p.id);
+  assert.deepEqual(ids(""), PAGES.map((p) => p.id), "no query lists every page in order");
+  assert.deepEqual(ids("", 2), ["proj", "notes"]);
+  assert.equal(ids("project")[0], "proj", "the title hit first");
+  assert.deepEqual(ids("project").slice(1).sort(), ["notes", "todo", "week"], "then the pages whose path names it");
+  assert.deepEqual(ids("notes"), ["notes", "week"]);
+  assert.deepEqual(ids("week"), ["week"]);
+  // two sub-pages of one name sort by where they are
+  const twins = [page("p1", "Alpha"), page("p2", "Beta"), page("n1", "Notes", "p1"), page("n2", "Notes", "p2")];
+  const tmap = byId(twins);
+  const trows = twins.map((p) => ({ ...p, _path: pagePathLabel(tmap, p.id) }));
+  assert.deepEqual(movePageRows(trows, "notes beta").map((p) => p.id), ["n2"], "a term on the path picks one");
+  assert.deepEqual(movePageRows(trows, "rdng").map((p) => p.id), [], "nothing matched");
 });
 
 test("a delete's confirmation counts the pages inside and quotes one page by its title", () => {

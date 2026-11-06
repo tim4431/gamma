@@ -457,7 +457,13 @@ panel not following other clients, the 402 at the cap, a sub-page
 unpublished alone sent again, a kept page landing unfiled, the `[[`
 picker's path) and found these as well. The library's filter box not
 finding sub-pages was among them and is fixed (home_library.md
-"Listing and counting").
+"Listing and counting"), and so are, on 2026-11-06, the moves of a
+selection holding a page and a page inside it (they keep to the topmost
+pages, as Delete does), Move to folder hidden by one sub-page in a
+selection, the move dialogs matching titles only and Move block to page
+showing no path, and Recently deleted not saying a sub-page deleted on
+its own comes back inside its parent (home_library.md "Moving one" and
+"Recently deleted").
 
 Sharing and publishing:
 
@@ -508,9 +514,6 @@ Integrations and the agent:
 
 The library and the page:
 
-- Move into page… and Move to library on a selection holding a page and
-  a page inside it move the inner page out of its parent (Delete keeps to
-  the topmost pages; the moves do not).
 - The Pages inside rows have no menu and no drag, and no page is a drop
   target for "move into this page".
 - A library row or card gives no sign that a page has pages inside it.
@@ -518,16 +521,9 @@ The library and the page:
   label view) has no preview text (the listing runs none for a sub-page),
   shows its own folder chips rather than its path, and Quick open matches
   it on those own folders.
-- One sub-page in a selection hides Move to folder for the library pages
-  in it too.
-- The move dialogs filter on titles only, and Move block to page shows no
-  path, so two sub-pages of one name read alike.
 - The `[[` picker and the editor's `@` menu match folders and labels by
   id rather than name (`rankRefPages`), for every page, as well as not
   matching a sub-page's path.
-- A sub-page deleted on its own is listed in Recently deleted by its
-  top's folder, with nothing saying Restore puts it back inside its
-  parent.
 
 Deliberate, worth a second look: "Start your library" and the first-run
 tour count library pages only, so a new user whose pages all sit inside

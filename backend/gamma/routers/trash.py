@@ -15,9 +15,10 @@ router = APIRouter(prefix="/api", tags=["trash"])
 
 @router.get("/trash")
 def list_deleted(request: Request):
-    """``{pages: [{id, title, folders, deleted_at, deleted_by, purge_at,
-    sub_pages}], keep_days}``, the last deleted first (``folders``: folder
-    ids; ``sub_pages``: how many pages went with it, listed only through
+    """``{pages: [{id, title, folders, parent, deleted_at, deleted_by,
+    purge_at, sub_pages}], keep_days}``, the last deleted first (``folders``:
+    folder ids; ``parent``: the live page a restore puts it back inside, ""
+    for none; ``sub_pages``: how many pages went with it, listed only through
     it)."""
     ws = require_ws(request)
     with connect_pages_db(ws) as conn:

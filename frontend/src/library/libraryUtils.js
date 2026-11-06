@@ -138,6 +138,26 @@ export const topPageOf = (pagesById, id) => pagesById.get(pageAncestors(pagesByI
 // Where a sub-page is, as a picker's second line names it ("Top › Mid");
 // "" for a library page.
 export const pagePathLabel = (pagesById, id) => pageAncestors(pagesById, id).map((a) => a.title).join(PAGE_PATH_SEP);
+// Where a page is, its own title last ("Top › Mid › Page"): how Recently
+// deleted names the page a restore puts a sub-page back inside.
+export const pagePlaceLabel = (pagesById, id) =>
+  [pagePathLabel(pagesById, id), pagesById.get(id)?.content || t("Untitled")].filter(Boolean).join(PAGE_PATH_SEP);
+// The topmost of pages `ids`: those not inside another of them, at any
+// depth, in their order, from `pages` (page blocks or listing rows, by
+// their `_parentPage`). What Delete and the moves act on, so a page inside
+// a picked page goes, or stays, with it.
+export function topmostPages(pages, ids) {
+  const parents = new Map((pages || []).map((page) => [page.id, page._parentPage]));
+  const picked = new Set(ids);
+  return ids.filter((id) => {
+    const seen = new Set([id]);
+    for (let up = parents.get(id); up && !seen.has(up); up = parents.get(up)) {
+      if (picked.has(up)) return false;
+      seen.add(up);
+    }
+    return true;
+  });
+}
 // The ids of the pages inside pages `ids`, at any depth, parents first,
 // from `pages` (page blocks or listing rows, by their `_parentPage`); none
 // of `ids` among them.

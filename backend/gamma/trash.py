@@ -22,7 +22,7 @@ from collections import Counter
 from datetime import datetime, timedelta, timezone
 
 from .auth import actor_names
-from .blocks_store import TRASH, load_props, trashed_folders, trashed_page, write_lock
+from .blocks_store import TRASH, load_props, trashed_page, write_lock
 from .db import connect_pages_db, format_stamp, parse_stamp, workspace_ids, ws_dir
 from .logbuf import log
 from .ops import delete_page
@@ -50,10 +50,11 @@ def named(pages: list[dict]) -> list[dict]:
 
 def list_trash(conn) -> list[dict]:
     """The pages in Recently deleted, the last deleted first: ``{id, title,
-    folders, deleted_at, deleted_by, purge_at, sub_pages}`` (``named``;
-    ``folders`` the ids of the folders a restore puts it back in,
-    ``blocks_store.trashed_folders``: a sub-page's are its live parent's
-    top's; ``sub_pages`` how many pages went there with it,
+    folders, parent, deleted_at, deleted_by, purge_at, sub_pages}``
+    (``named``; ``folders`` the ids of the folders a restore puts it back
+    in, ``blocks_store.trashed_folders``: a sub-page's are its live parent's
+    top's; ``parent`` the live page a restore puts it back inside, "" for
+    none, ``blocks_store.trashed_parent``; ``sub_pages`` how many pages went there with it,
     ``ops.trash_page``). A page that went with another still in the trash
     is not listed: it comes back, and goes for good, with that one. One
     read of the trash, counted here."""
@@ -62,8 +63,8 @@ def list_trash(conn) -> list[dict]:
     props = {row[0]: load_props(row[2]) for row in rows}
     went = {page_id: p["deleted_with"] for page_id, p in props.items() if isinstance(p.get("deleted_with"), str)}
     counts = Counter(went.values())
-    pages = named([{**trashed_page(*row, folders=trashed_folders(conn, props[row[0]])),
-                    "sub_pages": counts[row[0]]} for row in rows if went.get(row[0]) not in props])
+    pages = named([{**trashed_page(conn, *row), "sub_pages": counts[row[0]]}
+                   for row in rows if went.get(row[0]) not in props])
     for page in pages:
         page["purge_at"] = purge_at(page["deleted_at"])
     return sorted(pages, key=lambda p: p["deleted_at"], reverse=True)

@@ -237,9 +237,13 @@ there ([api.md](api.md) "Browser extension"). The app follows the same
 rule: the chat's "Save to library" offers the open page's top's first
 folder, a PDF uploaded into a folder while it already sits on a sub-page
 files the top, a drop of sub-pages on a folder is refused ("A page inside
-another page is filed with it."), the page menu has no Move to folder for
-one, and an open sub-page's label field files by labels only ("Folders
-and labels" above). Labels stay per page: a label is a tag, not a place.
+another page is filed with it."), and an open sub-page's label field files
+by labels only ("Folders and labels" above). Filing a selection (Move to
+folder, its "remove from" rows, a drop on a folder or the back row) files
+the library pages in it and leaves its sub-pages out (App's
+`filablePages`): the flyout, offered while the selection holds a library
+page, ends with "N pages inside other pages are left out", and the status
+adds "Left out N pages inside other pages, filed with their tops." Labels stay per page: a label is a tag, not a place.
 
 **Listing and counting.** `GET /blocks/root/children` lists every page,
 sub-pages included, each with `parent`, its effective parent (`""` for a
@@ -265,7 +269,10 @@ which name a sub-page's path. Quick open and the chat's `@` and `+`
 pickers rank through `rankLibraryPages`, which matches the path too, as a
 weaker hit, so typing a parent's title lists the pages inside it after the
 title hits; Quick open's and the `@` picker's rows show the path on their
-second line, the `+` picker after the title. The `[[` picker's meta reads
+second line, the `+` picker after the title. The move dialogs (Move into
+page…, Move block to page, "Moving one" below) match the same way
+(`movePageRows`: the title, then the path as a weaker hit) and show the
+path after the title, so two sub-pages of one name read apart. The `[[` picker's meta reads
 "kind · path" and the `@` menu's page row the path, each else the page's
 first folder. The Ctrl+F search panel names a hit's page "Parent › Child",
 the pages above it muted and shrinking first.
@@ -305,7 +312,9 @@ copied.
 
 **Moving one.** Both moves are a `set` of `parent_page` per page through
 `PUT /blocks/{id}` (`placePages`), and both read the listing and the open
-page's family again after.
+page's family again after. Like Delete, both keep to the topmost pages of
+a selection (`topmostPages` in libraryUtils.js): a page picked with a page
+inside it moves alone, the other staying inside it.
 
 - **Move into page…** (the home page menu, for one page or a selection,
   and a tab's menu) opens the Move to page dialog as "Move into page": a
@@ -313,10 +322,10 @@ page's family again after.
   where they cannot go, a sub-page's row showing its path. A pick puts each
   page inside the one picked, and the server drops their folders. "Moved N
   pages into “Title”."
-- **Move to library** (the same menus, for a sub-page) sends
-  `{parent_page: null, folders: <its top's folders, or null>}`, so the page
-  lands in the folders it was listed under until then. "Moved N pages to
-  the library."
+- **Move to library** (the same menus, while a topmost page of the
+  selection is a sub-page) sends `{parent_page: null, folders: <its top's
+  folders, or null>}` for each topmost sub-page, so the page lands in the
+  folders it was listed under until then. "Moved N pages to the library."
 
 **Shares.** A page share reaches the shared page and every page inside it
 (`ShareScope.allows_page`: one whose ancestors hold the shared page), and a
@@ -625,8 +634,9 @@ surface opens the SAME page menu, the Recently-viewed strip and the pinned
 strip included:
 
 - A page: Open (Enter) · Rename (F2) | New page inside (one page) | Pin ·
-  Add label ▸ · Move to folder ▸ (not for a sub-page) · Move into page… ·
-  Move to library (a sub-page) · Duplicate | Copy link · Share… · Export… ·
+  Add label ▸ · Move to folder ▸ (a library page among them) · Move into
+  page… · Move to library (a sub-page among the topmost) · Duplicate |
+  Copy link · Share… · Export… ·
   Ask AI about this page · Properties | Delete (Del). The three rows for
   pages inside pages are in "Sub-pages" above. Properties, for one page, opens the read-only
   Properties popover at the menu's point
@@ -695,8 +705,8 @@ pages to Recently deleted?"). The library's Delete and the header's
 button ask the same question, built by `deleteConfirm` in
 `library/libraryUtils.js`. Their tabs close too, and none is a place a closed tab goes
 back to. A selection holding a page and a page inside it sends the outer
-one only, so the cascade takes the rest rather than one going alone
-first. Many pages go as a batch (`library/pageBatch.js`, [tasks.md](tasks.md)
+one only (`topmostPages`), so the cascade takes the rest rather than one
+going alone first. Many pages go as a batch (`library/pageBatch.js`, [tasks.md](tasks.md)
 "The web app"): they leave the library at once, a row of Background tasks
 counts them from ten on with Stop, and the status says how many went and
 what failed. The header's button closes the page's tab first, as its × does (back to the latest page still
@@ -740,7 +750,9 @@ entry of the page it went with (`blocks_store.trash_entry`), so a Restore
 from a link brings the whole tree back. An entry's `folders` are where a
 restore files it (`blocks_store.trashed_folders`): for a sub-page
 deleted on its own while its parent is live, the folders of that
-parent's top.
+parent's top. Its `parent` is that live parent, the page a restore puts
+it back inside (`blocks_store.trashed_parent`), `""` for an entry that
+comes back in the library.
 
 Restoring (`ops.restore_page`) puts the page back under `root`, last in the
 library, filed where it was (a folder deleted meanwhile is passed by).
@@ -787,7 +799,10 @@ toolbar (at the library root, where `lib.organize`) or from the
 deleted it and when, the days it has left, its folder and, for a page
 deleted with pages inside it, "with N pages inside", as `aiProvRow`
 rows (a row's folder: the first of its entry's `folders` ids the folder
-tree has, by its path). Each row has Restore and a trash button that deletes for good after
+tree has, by its path). A sub-page deleted on its own says where Restore
+puts it, "comes back inside “Top › Parent”" (its entry's `parent` by its
+path, `pagePlaceLabel`, from the listing App passes as `pages`), and its
+Restore's status says so too ("Restored “Child” inside “Top › Parent”."). Each row has Restore and a trash button that deletes for good after
 App's confirm box, which names the pages inside, and the dialog's footer
 has Empty, whose confirmation and status count every page that goes,
 the pages inside included. The pointer or the

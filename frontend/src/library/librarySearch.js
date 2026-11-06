@@ -179,3 +179,20 @@ export function rankLibraryPages(pages, tree, query, { recentViews = [], openTab
       time: viewedAt.get(page.id) || page.updated_at,
     }));
 }
+
+// The move dialogs' rows (Move into page…, Move block to page): `pages` in
+// the order they list, each with its `_path` (libraryUtils.pagePathLabel,
+// "" for a library page). A query matches the title and, as a weaker hit,
+// the path, as Ctrl+P does (rankLibraryPages), so two sub-pages of one
+// name sort by where they are; best first, ties in the pages' order. At
+// most `limit` rows.
+export function movePageRows(pages, query, limit = 12) {
+  const match = createLibraryMatcher(query);
+  if (!match) return pages.slice(0, limit);
+  return pages
+    .map((page, at) => ({ page, at, score: match(page.content, page._path ? [page._path] : []) }))
+    .filter((r) => r.score > 0)
+    .sort((a, b) => (b.score - a.score) || (a.at - b.at))
+    .slice(0, limit)
+    .map((r) => r.page);
+}
