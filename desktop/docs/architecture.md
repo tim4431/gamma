@@ -627,6 +627,8 @@ alone ([the survey](../../docs/research/test-windows.md)):
 - An error's message box is logged instead (`errorBox`), and an uncaught
   error exits 1 rather than waiting in Electron's own box. The scripts print
   those `[shell]` lines, which the Playwright driver would otherwise keep.
+  A step of `test/e2e.js` that opens a box fails, on any system: it could
+  otherwise go on to pass.
 - A minimized window on Windows has no client area, so its pages would lay
   out at 0 × 0. The shell gives each page its view's size by device
   emulation (`emulateViewSize`) once the view has navigated, since the call
@@ -780,6 +782,17 @@ dialog, `GAMMA_SHELL_PICK_DIR=<dir>` answers the folder picker and
 - `lib/openFiles.js` — the PDFs a command line names and the workspace a
   file goes into ("Opening PDF files"); no Electron, unit tested by
   `test/openFiles.test.js`.
+- `lib/loadPage.js` — `webContents.loadURL` without its false alarms. Its
+  promise takes any `did-stop-loading` or `did-navigate-in-page` for the end of
+  its load, and the load before it or the page being left can send those, since
+  Gamma writes its workspace or page into the address as it boots: a load
+  starting just then is rejected as `ERR_FAILED`, or resolved before it has
+  begun, while it goes on and lands, which is what a server opened and then its
+  workspace ran into. A load cancelled outright is rejected the same way with
+  no `did-fail-load`, so only an ending with one of those two about counts, and
+  never one after the redirect guard refused the load: then `loadPage` waits
+  for the page, up to a minute, and a newer load aborts the wait as `loadURL`'s
+  own watch would have.
 - `lib/hostPath.js` — a path as programs outside a Store package find it:
   the package's private copy of AppData ("Shell state"); no Electron, unit
   tested by `test/hostPath.test.js`.

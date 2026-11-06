@@ -15,8 +15,9 @@ never touched. The window stays minimized, so a run does not take the
 screen; on Windows it also takes no focus and has no taskbar button, and a
 step that leaves it up fails. The background step brings it back for a
 moment, unfocused, to test that. The restore and focus a user gets run under
-`--headed`, which keeps the window up to watch. Each item below names the e2e
-step that covers it (**auto**) or says it is a manual look (**manual**).
+`--headed`, which keeps the window up to watch. A step that opens an error box
+fails too, on any system. Each item below names the e2e step that covers it
+(**auto**) or says it is a manual look (**manual**).
 
 ## 1. Lifecycle
 
