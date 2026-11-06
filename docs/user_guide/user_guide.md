@@ -61,7 +61,8 @@ A new account starts with a **Welcome** page to practise on, and a **Sketchbook*
 
 The pen button in the viewer's zoom column opens the tool strip: pens and highlighters, an eraser, a lasso, the Text tool, the Picture button, undo and redo.
 
-- A **stylus** draws right away, with pressure, while fingers scroll. The mouse draws once the strip is open.
+- With a tool picked on the strip, a **stylus** or the mouse writes, a stylus with pressure, while fingers scroll.
+- With no tool picked, a stylus on a PDF does what the mouse does: it selects text (the text highlighter then highlights it), or draws the rectangle in rectangle mode. On notebook paper a stylus always writes. To have it write on PDFs too, turn on **Stylus draws on PDFs right away** in Settings → Reading & editing.
 - The **lasso** moves, resizes, recolors, flips, copies, duplicates or deletes strokes. Ctrl+C / X / V copy, cut and paste them; to paste at a point, hold the pen still on the page, or right-click there. **New note** in the lasso's menu gives the selection a note of its own.
 - **More** (⋯) on the strip holds the **ruler** (a straight edge: a pen along its edge draws a straight line), **Shapes** (drag a line, an arrow, a rectangle or an ellipse) and the **zoom window** (write large in a panel under the page, on PDF pages). A shape you select has handles to reshape it and can be filled.
 - The pen's **Style** menu offers Pen, Ballpoint, Brush, Pencil and **Calligraphy**, a flat nib whose angle you set.
@@ -518,7 +519,7 @@ Both are in the **View menu (≡)**, on a page or on the home library (with a fo
 
 ## Install as an app
 
-- **iPad / iPhone**: open your Gamma in Safari, Share → **Add to Home Screen**. The Apple Pencil writes right away.
+- **iPad / iPhone**: open your Gamma in Safari, Share → **Add to Home Screen**. The Apple Pencil writes with a tool picked on the strip.
 - **Android**: Chrome → ⋮ → **Install app**. **Desktop browsers**: the install icon in the address bar.
 - **Desktop app** (Windows, macOS, Linux): a self-contained Gamma with local libraries, which also opens your servers and keeps [offline copies](#offline-copies). From the [Microsoft Store](https://apps.microsoft.com/detail/9N8WGWR2J2MV) or the [releases](https://github.com/tim4431/Gamma/releases/latest). A PDF opened with Gamma (**Open with → Gamma**, or Gamma chosen as your default PDF app) goes into the library the app shows and opens there, with any annotations another reader saved in it; a library other people see asks first.
 - **The Gamma iPad app** (beta) keeps a copy of one workspace on the iPad for handwriting with no connection. Install Apple's TestFlight app, then open [the TestFlight invitation](https://testflight.apple.com/join/nTmSHDx6) on the iPad. The chevron at the right end of its server bar hides the bar (⌘⇧B with a keyboard), and **View → Server bar** brings it back (**More** when the iPad is upright).

@@ -101,7 +101,8 @@ emulator -avd gamma-tablet
 
 On an Apple Silicon Mac, take the `arm64-v8a` system image instead. Then
 `:app:installDebug` and start the app as above. A stylus can be injected:
-`adb shell input stylus swipe <x1> <y1> <x2> <y2> 500` writes a stroke
+`adb shell input stylus swipe <x1> <y1> <x2> <y2> 500` writes a stroke with
+a pen armed, and on a PDF page selects text without one
 (screen pixels, the page's CSS px times the density), and `adb shell input
 stylus tap <x> <y>` taps. The emulator's hardware keyboard sends the
 shell's shortcuts.

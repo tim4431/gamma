@@ -637,8 +637,8 @@ are in [text_boxes.md](text_boxes.md#client) and
 - `markup/TextBoxLayer.jsx`: with the Text tool armed, its capture-phase
   claim skips `.pagePicture.selected, .pictureHandle, .pictureCrop`.
 - `ink/InkLayer.jsx` `NOT_INK` gains `.pagePicture.selected` and
-  `.pictureCrop`, so a press there starts no ink, from a stylus that writes
-  at once either. The handles are `.inkTransformHandle` and so were in it
+  `.pictureCrop`, so a press there starts no ink, a stylus's included.
+  The handles are `.inkTransformHandle` and so were in it
   already.
 
 **TransformHandles.** `markup/TransformHandles.jsx` is the lasso's two

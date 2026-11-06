@@ -761,7 +761,7 @@ export async function pictureScenarios({ server, browser, alice, bob, makePdf, s
     const [paths0, groups0] = [await page.locator(paths).count(), await groups()];
     const k = (await page.locator('[data-page="1"]').boundingBox()).width / 612;
     const at = await spotOn(page, firstId);
-    await page.mouse.click(at.x, at.y); // the hand is armed: a stylus on a picture not selected writes over it
+    await page.mouse.click(at.x, at.y);
     await page.waitForSelector(`[data-picture-id="${firstId}"].selected`, { timeout: 5000 });
     await pause();
     const before = (await stored(firstId)).properties.picture;

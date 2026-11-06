@@ -537,8 +537,8 @@ server at launch* on.
 
 The web decides, native executes. On a Pencil touch the web's ink layer
 decides what the touch is, as it does in Safari: a stroke, a tap, the
-eraser, the lasso, a move, the hand. Only a pen or highlighter stroke is
-claimed.
+eraser, the lasso, a move, a text selection, a rectangle, the hand. Only
+a pen or highlighter stroke is claimed.
 
 1. **The touch begins.** `PencilCapture`, a Pencil-and-direct recognizer
    on the web view's container, records the touch from its first sample
@@ -672,6 +672,14 @@ claimed.
 A claim the shell does not take (`{taken: false}`) leaves the touch to the
 page, which finishes it as in Safari. Pencil hover, pressure and tilt
 reach the page as Safari gives them.
+
+With nothing armed on a PDF page the page posts no claim at all: the
+Pencil selects text or draws the rectangle ([handwriting.md](handwriting.md)
+"Claiming input"). `PencilCapture` only records such a touch and drops it
+at the lift, and it never prevents anything, so what stops the pan and
+the palm there is the page's `onTouch`. An ended touch stays in the
+`ClaimQueue` for half a second as any unclaimed one does, so a stroke at
+that spot within that time is the page's own.
 
 **Gestures.** `PencilGestures` (`UIPencilInteraction`) forwards the double
 tap as `pencil`, and on iPadOS 17.5 and later the squeeze in its phases:
@@ -1579,6 +1587,18 @@ Only an iPad can show these, and none has been run yet:
     the page's word arrives. Also check that the popup's Copy fills the
     clipboard, ⌘C on a keyboard copies a PDF selection, and a note's
     selection still gets the system's menu, Format included.
+36. A Pencil with nothing armed on a PDF page ([handwriting.md](handwriting.md)
+    "Claiming input"). A drag selects without panning and a tap clicks a
+    link, from the page's own click. A palm on the page, on the next page
+    or in a gap neither pans nor pinches during the drag, and one down
+    before the Pencil is another case. The selection shows while it is
+    dragged: UIKit draws it, not WebKit's `::selection`, and WebKit
+    activates it when its content view becomes first responder, which a
+    Pencil's cancelled touch never makes it, so try it first thing after a
+    launch, before any finger's tap. If it does not show, the page would
+    have to draw it from the range's rects
+    ([research/pen-logic.md](../research/pen-logic.md)). *Only Draw with
+    Apple Pencil* and Scribble on and off.
 
 ### Not built yet
 
@@ -1636,7 +1656,8 @@ what the upstream fork's PDFKit/PencilKit app was measured against.
    signed in as before (the session cookie lives a year; the installed app
    has its own cookie jar, so the first launch may ask once).
 
-Writing then works as everywhere else: a Pencil draws right away, fingers
+Writing then works as everywhere else: a Pencil writes with a tool armed
+and selects text without one, fingers
 scroll and pinch, the tool strip's presets are per browser (the installed
 app counts as one browser, separate from Safari).
 

@@ -24,6 +24,8 @@
 //            `gesture` is { scale, sl, st, mx, my, vx, vy }: the scale and
 //            scroll offsets it began at, the midpoint it began at, and the
 //            midpoint it ended at (midpoints in view coordinates).
+//   held()   a pen is down: a finger beside it is a palm, which neither
+//            pinches nor pans, wherever in the viewer it lands.
 //
 // Returns { dispose, sync }.
 
@@ -33,7 +35,7 @@ const WHEEL_RATE = 0.0015;
 // Firefox reports wheel deltas in lines rather than pixels (deltaMode 1).
 const LINE_PX = 33;
 
-export function installViewerZoom(el, { layer, clamp, onWheelZoom, onPinchZoom }) {
+export function installViewerZoom(el, { layer, clamp, onWheelZoom, onPinchZoom, held }) {
   // The scale the viewer is heading to. It runs ahead of the committed scale
   // while a wheel train is in flight — the dispatch is coalesced to one per
   // frame and the render lands a frame later still — so steps compound off
@@ -77,7 +79,7 @@ export function installViewerZoom(el, { layer, clamp, onWheelZoom, onPinchZoom }
     return { x: (t[0].clientX + t[1].clientX) / 2 - r.left, y: (t[0].clientY + t[1].clientY) / 2 - r.top };
   };
   const onTouchStart = (e) => {
-    if (e.touches.length !== 2) return;
+    if (e.touches.length !== 2 || held()) return;
     const m = mid(e.touches);
     start = { scale: live, dist: dist(e.touches), mx: m.x, my: m.y, sl: el.scrollLeft, st: el.scrollTop };
     cur = null;
@@ -85,6 +87,7 @@ export function installViewerZoom(el, { layer, clamp, onWheelZoom, onPinchZoom }
     if (l) l.style.willChange = "transform";
   };
   const onTouchMove = (e) => {
+    if (held()) { if (e.cancelable) e.preventDefault(); return; }
     if (!start || e.touches.length !== 2) return;
     e.preventDefault();
     const m = mid(e.touches);

@@ -5843,6 +5843,11 @@ a.shareBrand:hover { background: var(--bg-hover); }
   user-select: none !important;
   -webkit-user-select: none !important;
 }
+/* A pen's text selection (pdf/penSelect.js): the caret under the pen comes
+   from a hit test, so while it drags only the text answers one. */
+.pdfViewer[data-pen-select] .pdfPageWrap :not(.textLayer, .textLayer *, .pdfTransText, .pdfTransText *) {
+  pointer-events: none !important;
+}
 :is(.pdfCtlBox button, .ctlBtn).modeActive {
   color: var(--accent);
   background: var(--bg-active);

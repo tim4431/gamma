@@ -1,6 +1,6 @@
 import { T } from "../../shared/i18n/i18n.js";
-// Offered after the first handwriting stroke — a stylus writes even with the
-// tools closed, so the offer points at the button that opens them. Started
+// Offered after the first handwriting stroke, at the button that opens and
+// closes the tools. Started
 // from the Tours menu on a page without handwriting, the first step has the
 // user draw something for the rest to point at (a `scene` shows a stroke on
 // the page). It leads with why ink is worth it (the drawing is a note you
