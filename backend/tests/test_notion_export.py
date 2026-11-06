@@ -570,11 +570,11 @@ def test_a_share_s_zip_holds_nothing_of_a_page_outside_it(user, anon):
     assert z.namelist() == ["Public page.md"]
     text = _text(z, "Public page.md")
     assert "TOPSECRET" not in text and "Secret page" not in text and "private" not in text
-    assert text.endswith("mine\n") and f"\\[\\[{secret}-0]]" in text
+    assert text.endswith("mine\n") and f"[[{secret}-0]]" in text.replace("\\", "")  # an id's _ may be escaped
 
 
 def test_a_share_s_zip_goes_by_what_the_share_can_read_not_what_a_ref_says(user, anon, monkeypatch):
-    monkeypatch.setattr(export_router, "_within_share", lambda resolve_ref, conn, scope: resolve_ref)
+    monkeypatch.setattr(export_router, "_ref_resolver", lambda conn, reach=None: export_router.block_ref_resolver(conn))
     secret = _private_page(user)
     shared = _page(user, "Public picture")
     _put(user, shared, [_note(f"![[{secret}-1]]")])

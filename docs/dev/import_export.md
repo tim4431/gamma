@@ -2105,13 +2105,32 @@ folder by its link, below) the export carries only what the share shows
 Each page's filing is cut to the folders and labels kept, and of the chats
 only each page's active conversation travels (the one
 `GET /chats/{page}?share=` reads): no archived conversation and no folder
-view's chat. A member's own export is unchanged. The other formats through
-a share still name the folder's whole path (the download's name, a `.bib`'s
-header, a Markdown page's front matter) and, but for the Notion zip, render
-embeds of pages outside the share. The Notion zip stays inside it: a `[[ref]]`
-or `![[embed]]` of a block on a page the share does not reach stays as typed
-(`_within_share`), and an upload the share cannot read stays out with a
-warning (`_can_bundle`, the rule of `GET /api/uploads/…?share=`).
+view's chat. A member's own export is unchanged.
+
+Every format keeps to the share the same way, in `_Builder` and so with no
+rule of a builder's own (`tests/test_share_export.py` runs all of `_BUILDERS`,
+and the `/export-pdf` route):
+
+- A `[[ref]]` or `![[embed]]` of a block on a page the share does not reach
+  resolves to nothing (`_ref_resolver`, by `ShareScope.pages`), at any depth
+  of embeds. It stays as typed, or reads as its bare id in a PDF, a Zotero
+  note or a Notability note, which is the chip the share view itself draws, so
+  the block's text, its page's title and the pictures in it stay out. A
+  vault's `^anchors` come from the share's own pages.
+- An upload the share cannot read stays out of any zip, whatever named it
+  (`_can_bundle`, the rule of `GET /api/uploads/…?share=` read once per
+  export, `uploads._pages_upload_names`); the Notion zip warns of it.
+
+Logseq and Gamma write a ref as stored, and BibTeX reads page properties
+alone, so they read no block outside the pages exported to begin with.
+`POST /api/jobs/export` takes no share: it works in the signed-in account's
+own workspace.
+
+Folder and label names are not held back this way. The formats but Gamma's
+still write the folder's whole path (the download's name, a `.bib`'s header)
+and a page's folders and labels where they write them (a Markdown page's front
+matter, the vault's directories and tags, Zotero's collections and tags, the
+Notion zip's `Tags:`), a page share's too.
 
 ### Importing a shared page or folder by link
 

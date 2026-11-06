@@ -63,7 +63,10 @@ else; in dev, Vite proxies `/api` → `127.0.0.1:9001`.
   top level with no folder above or beside it, a page opened through a
   folder share its folders up to the shared folder, a page share no folder
   or label; and of the chats only the pages' active ones
-  ([import_export.md](import_export.md#gamma-to-gamma-export)). `*` makes browsers drop credentials,
+  ([import_export.md](import_export.md#gamma-to-gamma-export)). Every format
+  through a token keeps to the share: a `[[ref]]` or `![[embed]]` of a block
+  outside it stays as typed and an upload it cannot read stays out of the zip,
+  as `/blocks` and `/uploads` refuse them. `*` makes browsers drop credentials,
   so a cross-origin fetch is a stranger's: only `anyone` links open that way.
   Writes and every other endpoint keep the same-origin default.
 - **Share permissions** (`shares.audience` / `role`, the invited people in
