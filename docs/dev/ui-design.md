@@ -23,7 +23,7 @@ A theme's block names a handful of seeds: `--ground` (the content surface),
 `--accent-fill` (the primary button), `--on-accent` and the callout colours.
 Every other colour comes from one of two recipes, `color-mix()` in oklab of
 the seeds. `--warn`, the amber of warnings and conflicts, is one value in
-every theme, with its tint `--warn-bg`. The light recipe steps each surface, border and quieter text from
+every theme, with its tint `--warn-bg`. So are the scrims (`--scrim*`, [Surfaces](#surfaces)), black at a fixed opacity. The light recipe steps each surface, border and quieter text from
 the ground toward the ink. The dark one takes chrome and wells toward black,
 and raised surfaces toward the ink.
 
@@ -64,6 +64,7 @@ one app inside one frame:
 | Sunken | `--bg-deeper` | wells; the PDF surround in the tinted themes |
 | Floating | `--bg-elevated` + `--shadow-2` | popovers, menus, tips, the guide card |
 | Field | `--bg-field` + `--border-light` | a text box that must stand out on the content — the chat composer: toward white in a light theme, toward the ink in a dark one |
+| Scrim | `--scrim` 45 % · `--scrim-tour` 42 % · `--scrim-soft` 22 % · `--scrim-lightbox` 75 % | the dimming under what takes the clicks: a dialog (`.reportOverlay`); the tour's centred card (`.guideDim`); the finish card and the welcome deck (`.guideScrim`); a zoomed picture (`.lightbox`). Black at that opacity in every theme, so no theme names its own; a new overlay takes one of them, never an `rgba()` of its own |
 
 The active tab is the content surface cut out of the chrome: no shadow, and
 a band under it (`.tab.active::after`, over the topbar's padding and bottom

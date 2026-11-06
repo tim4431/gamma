@@ -1158,7 +1158,7 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.75);
+  background: var(--scrim-lightbox);
   cursor: zoom-out;
 }
 .lightbox img {
@@ -4273,7 +4273,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .reportOverlay {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.45);
+  background: var(--scrim);
   z-index: var(--z-modal);
   display: flex;
   align-items: center;
