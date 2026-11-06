@@ -30,6 +30,17 @@ const READ_TOOLS = Object.freeze({
 const NO_MARKS = new Map();
 const PRESS_SLOP = 8;
 
+// A press on the scrollbar of the element it lands on: past that element's
+// client box, on a side it overflows. An inline element has no client box
+// and overflows nothing.
+export function onScrollbar(event) {
+  const el = event.target;
+  if (!el || typeof el.getBoundingClientRect !== "function") return false;
+  const box = el.getBoundingClientRect();
+  const x = event.clientX - box.left - el.clientLeft, y = event.clientY - box.top - el.clientTop;
+  return (el.scrollHeight > el.clientHeight && x >= el.clientWidth) || (el.scrollWidth > el.clientWidth && y >= el.clientHeight);
+}
+
 export default function PagePane({ pageId, title, overlay, scroll, onScroll, onActivate }) {
   const [page, setPage] = useState({ id: null, block: null, children: [], error: "" });
   useEffect(() => {
@@ -47,10 +58,18 @@ export default function PagePane({ pageId, title, overlay, scroll, onScroll, onA
   const highlights = useMemo(() => blocksToHighlights(page.children), [page.children]);
 
   // A press (down and up within a few pixels) makes the group live; a drag,
-  // a scroll or a text selection does not.
+  // a scroll or a text selection does not. It is the primary button's or
+  // the first finger's, and never one on a scrollbar: Windows and Linux
+  // draw classic scrollbars that take presses. It is decided on the click,
+  // which a right button does not send (Windows sends its contextmenu after
+  // the release, which would then open over the page made live) and which
+  // the pane takes before it gives way, so the click does not land on the
+  // workbench that replaces it.
   const pressRef = useRef(null);
-  const onPointerDown = (event) => { pressRef.current = { x: event.clientX, y: event.clientY }; };
-  const onPointerUp = (event) => {
+  const onPointerDown = (event) => {
+    pressRef.current = event.button === 0 && event.isPrimary && !onScrollbar(event) ? { x: event.clientX, y: event.clientY } : null;
+  };
+  const onClick = (event) => {
     const p = pressRef.current;
     pressRef.current = null;
     if (p && Math.hypot(event.clientX - p.x, event.clientY - p.y) <= PRESS_SLOP) onActivate();
@@ -104,7 +123,7 @@ export default function PagePane({ pageId, title, overlay, scroll, onScroll, onA
     );
   }
   return (
-    <div className="pagePane" data-page-id={pageId} onPointerDown={onPointerDown} onPointerUp={onPointerUp}>
+    <div className="pagePane" data-page-id={pageId} onPointerDown={onPointerDown} onClick={onClick}>
       {body}
     </div>
   );

@@ -3,7 +3,7 @@ import { flushSync } from "react-dom";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { TabGroups } from "../workspace/TabGroups";
 import PagePane from "../workspace/PagePane";
-import { activate as activateGroupIn, activeGroup, groupById, groupOf, groupsOf, isSingle, joinAll, moveTab, normalizeLayout, reconcile as reconcileGroups, removeGroup, removeTab, reorderGroup, resizeSplit, singleLayout, splitGroup, tabOrder } from "../workspace/tabGroups.js";
+import { activate as activateGroupIn, activeGroup, groupById, groupOf, groupsOf, isSingle, joinAll, moveTab, normalizeLayout, reconcile as reconcileGroups, removeGroup, removeTab, reorderGroup, resizeSplit, singleLayout, splitGroup, tabOrder } from "../workspace/tabLayout.js";
 import PdfViewer, { preloadPdfEngine } from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
 import { penSelecting } from "../pdf/penSelect.js";
@@ -2113,7 +2113,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Persistence happens inside the updater (not an effect) so a user switch
   // can't race an in-flight save into the wrong key.
   const [openTabs, setOpenTabs] = useState([]);
-  // The tabs' arrangement into groups side by side (workspace/tabGroups.js,
+  // The tabs' arrangement into groups side by side (workspace/tabLayout.js,
   // docs/dev/tab_groups.md): this browser's, kept per account and workspace
   // like the dock layout, while the tabs themselves stay the synced list
   // above. One group is live and holds the page on screen in the work area;

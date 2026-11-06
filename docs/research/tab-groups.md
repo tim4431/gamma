@@ -63,7 +63,7 @@ device's: sync carries the documents, not `layout.json`.
 
 Both are the same shape: a tree of splits whose leaves are tab groups,
 drop zones at a group's edges that split it, empty groups removed, the
-tree serialized with its sizes. Gamma's `workspace/tabGroups.js` is that
+tree serialized with its sizes. Gamma's `workspace/tabLayout.js` is that
 tree as pure functions, and `TabGroups.jsx` draws it with the dock's
 resizable panels and the browser's drag, which the strip's reorder
 already used ([dev/tab_groups.md](../dev/tab_groups.md)).

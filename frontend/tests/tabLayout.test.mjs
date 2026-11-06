@@ -1,5 +1,5 @@
 // The arrangement of the open tabs into groups side by side
-// (workspace/tabGroups.js, docs/dev/tab_groups.md): splits, moves, closes,
+// (workspace/tabLayout.js, docs/dev/tab_groups.md): splits, moves, closes,
 // what a stored layout is made into, and the tabs list the arrangement
 // follows.
 import assert from "node:assert/strict";
@@ -7,7 +7,7 @@ import test from "node:test";
 import {
   activate, activeGroup, groupOf, groupsOf, isSingle, joinAll, moveTab, normalizeLayout, reconcile, removeGroup, removeTab,
   reorderGroup, resizeSplit, singleLayout, splitGroup, tabOrder,
-} from "../src/workspace/tabGroups.js";
+} from "../src/workspace/tabLayout.js";
 
 const ids = (layout) => groupsOf(layout).map((g) => g.tabs.join(","));
 const shape = (node) => (node.type === "group" ? node.tabs.join(",") : `${node.dir}(${node.children.map(shape).join(" | ")})`);

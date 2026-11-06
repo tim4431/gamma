@@ -114,7 +114,7 @@ export const RULES = [
   ["frontend/src/shared/**", ALL],
   ["frontend/src/app/**", ALL],
   // the tab groups' pure model and the read view of a page in a group that is not live
-  ["frontend/src/workspace/tabGroups.js", ["tab-groups"]],
+  ["frontend/src/workspace/tabLayout.js", ["tab-groups"]],
   ["frontend/src/workspace/PagePane.jsx", ["tab-groups"]],
   ["frontend/src/workspace/**", ALL], // the frames every page stands in
   ["frontend/src/main.jsx", ALL],

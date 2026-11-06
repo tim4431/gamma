@@ -48,7 +48,7 @@ it always did.
   drawn, the strip stays in the topbar, and the split commands are
   absent.
 
-## The model: `workspace/tabGroups.js`
+## The model: `workspace/tabLayout.js`
 
 A layout is `{root, active, seq}`. `root` is a group, `{type: "group",
 id, tabs: [pageId…], active: pageId | null}`, or a split, `{type:
@@ -96,7 +96,7 @@ itself when nothing changed, so a caller compares identities.
   unwrapped, sizes made to fit, unplaced tabs added to the live group,
   and a live group that is gone replaced by the first.
 
-`tests/tabGroups.test.mjs` covers each of these.
+`tests/tabLayout.test.mjs` covers each of these.
 
 ## The frames: `workspace/TabGroups.jsx`
 
@@ -146,8 +146,16 @@ marks), with its highlights, the viewer's zoom (Ctrl+wheel) and scroll. A
 page without one shows its title and notes rendered: each block's text as
 `BlockMarkdown`, a highlight's quote over its note, children under their
 parent; handwriting groups, sheets and other blocks without text are left
-out. A press (down and up within 8 px) calls `onActivate`; a scroll, a
-drag or a text selection does not.
+out. A press calls `onActivate`: the primary button's or the first
+finger's, down and up within 8 px, decided on its `click`. A scroll, a drag,
+a text selection, a right-click and a press on a scrollbar do not
+(`onScrollbar`: past the client box of the element pressed, on a side it
+overflows; Windows and Linux draw scrollbars that take presses). The click
+matters twice. Windows sends a right-click's `contextmenu` after the
+release, so a release that switched groups would open the menu over the
+page made live. And the pane takes its own click before it gives way to the
+workbench, which a release would leave to land on whatever mounted under
+the pointer.
 
 The scroll travels. The pane reports its viewer's scroll as
 `onScroll(pageId, {top, scale})`, the shape App's `tabScrollRef` keeps
@@ -197,7 +205,7 @@ the `app.splitRight`, `app.splitDown` and `app.joinGroups` commands
 
 ## Tests
 
-`frontend/tests/tabGroups.test.mjs` is the model. The browser group
+`frontend/tests/tabLayout.test.mjs` is the model. The browser group
 `tab-groups` (`tests/e2e/scenarios/tabGroups.mjs`) splits a paper off
 from the tab menu beside notes being edited and reads the PDF in its
 pane, makes the pane's group live with a press and finds the notes

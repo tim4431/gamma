@@ -2,9 +2,10 @@
 // a tab split off into a group of its own from its menu, the group left
 // behind showing its page to read, a press on that view making its group
 // live, a tab dragged onto a group's edge, a group gone with its last tab,
-// an empty group with the library in it, and the arrangement kept across a
-// reload in this browser.
-import { Account, live } from "../harness.mjs";
+// an empty group with the library in it, the arrangement kept across a
+// reload in this browser, and a right-click or a scrollbar press on a read
+// view leaving its group as it is.
+import { Account, launchBrowser, live } from "../harness.mjs";
 import { waitForPdf } from "./pdf.mjs";
 
 export async function tabGroupScenarios({ server, browser, makePdf, step, until, assert, assertEq, assertNoProblems, openPage }) {
@@ -16,6 +17,11 @@ export async function tabGroupScenarios({ server, browser, makePdf, step, until,
   const notes = await user.api("/api/pages", { method: "POST", body: { title: "Lecture notes" } });
   await user.api("/api/blocks", { method: "POST", body: { parent_id: notes.id, content: "Lecture notes body line" } });
 
+  // The account's tabs, as the server holds them, and none: each step starts
+  // from none, since the tabs reach the server through a debounced push and
+  // the server's copy wins on load.
+  const serverTabs = async () => ((await user.api("/api/prefs/open-tabs")).value || []).map((tab) => tab.title);
+  const noTabs = () => user.api("/api/prefs/open-tabs", { method: "PUT", body: { value: [] } });
   const groups = (page) => page.locator(".tabGroup.framed");
   const liveGroup = (page) => page.locator(".tabGroup.framed.live");
   const readGroup = (page) => page.locator(".tabGroup.framed:not(.live)");
@@ -51,6 +57,7 @@ export async function tabGroupScenarios({ server, browser, makePdf, step, until,
   }
 
   await step("tab groups: Split right puts the paper in a group of its own, shown to read beside the notes being edited", async () => {
+    await noTabs();
     const ctx = await user.context(browser);
     const page = await openBoth(ctx);
     try {
@@ -76,6 +83,7 @@ export async function tabGroupScenarios({ server, browser, makePdf, step, until,
   });
 
   await step("tab groups: a press on the read view makes its group live; the notes left behind render as a read view", async () => {
+    await noTabs();
     const ctx = await user.context(browser);
     const page = await openBoth(ctx);
     try {
@@ -93,6 +101,8 @@ export async function tabGroupScenarios({ server, browser, makePdf, step, until,
       await readGroup(page).locator(".pagePaneNotes", { hasText: "Lecture notes body line" }).waitFor();
       assertEq(await readGroup(page).locator(".pagePaneNotes h3").textContent(), "Lecture notes");
       // the arrangement is this browser's: a reload keeps it, the paper still on screen
+      // the reload waits for the tabs to reach the account, as a reader's would take longer than the push
+      await until(async () => (await serverTabs()).length === 2, { what: "both tabs on the account" });
       await page.reload();
       await until(async () => (await groups(page).count()) === 2, { what: "two groups after the reload" });
       await until(() => blockOf(page) === paper.id, { what: "the paper is the page on screen" });
@@ -102,6 +112,7 @@ export async function tabGroupScenarios({ server, browser, makePdf, step, until,
   });
 
   await step("tab groups: a tab dropped on a group's bottom edge stacks the groups; the last tab closed takes its group away", async () => {
+    await noTabs();
     const ctx = await user.context(browser);
     const page = await openBoth(ctx);
     try {
@@ -132,6 +143,7 @@ export async function tabGroupScenarios({ server, browser, makePdf, step, until,
   });
 
   await step("tab groups: the only tab split off opens an empty group with the library in it, closed from its view", async () => {
+    await noTabs();
     const ctx = await user.context(browser);
     const page = await openPage(ctx, `${server.base}/?page=${paper.id}&ws=${user.ws}`);
     try {
@@ -176,5 +188,42 @@ export async function tabGroupScenarios({ server, browser, makePdf, step, until,
       assertEq(blockOf(page), paper.id);
       assertNoProblems(page);
     } finally { await ctx.close(); }
+  });
+
+  await step("tab groups: a right-click or a press on its scrollbar leaves a read view's group as it is; a click makes it live", async () => {
+    await noTabs();
+    // Scrollbars that take room and presses, as Windows and Linux draw them (the suite's browser hides them).
+    const shown = await launchBrowser({ scrollbars: true });
+    const ctx = await user.context(shown);
+    try {
+      const page = await openBoth(ctx);
+      await tabIn(page.locator(".topbar"), "Split paper").click({ button: "right" });
+      await page.getByRole("menuitem", { name: "Split right" }).click();
+      const scroller = readGroup(page).locator(".pagePane .pdfViewer");
+      await readGroup(page).locator('.pagePane [data-page="1"] .textLayer span').first().waitFor({ timeout: 30000 });
+      // a right-click on the paper's page: no switch, whatever the platform sends after the release
+      const box = await readGroup(page).locator(".pagePane").boundingBox();
+      await page.mouse.click(box.x + box.width / 2, box.y + 60, { button: "right" });
+      await page.keyboard.press("Escape");
+      await page.waitForTimeout(400);
+      assertEq(blockOf(page), notes.id, "a right-click opens nothing");
+      assertEq(await readGroup(page).locator(".pagePane").count(), 1, "the paper still reads in its pane");
+      // a press on the viewer's scrollbar track: it scrolls the view, and the notes stay live
+      const bar = await scroller.evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        return { width: el.offsetWidth - el.clientLeft - el.clientWidth, x: r.left + el.clientLeft + el.clientWidth, y: r.top + r.height * 0.8,
+          overflows: el.scrollHeight > el.clientHeight, top: el.scrollTop };
+      });
+      assert(bar.overflows && bar.width >= 4, `the read view shows a scrollbar: ${JSON.stringify(bar)}`);
+      await page.mouse.click(bar.x + bar.width / 2, bar.y);
+      await until(async () => (await scroller.evaluate((el) => el.scrollTop)) > bar.top, { what: "the track press scrolls the view" });
+      await page.waitForTimeout(400);
+      assertEq(blockOf(page), notes.id, "a scrollbar press opens nothing");
+      assertEq(await liveGroup(page).locator(".sidebar .blockList", { hasText: "Lecture notes body line" }).count(), 1, "the notes stay live");
+      // a plain click on the page makes the group live
+      await page.mouse.click(box.x + box.width / 2, box.y + 60);
+      await until(() => blockOf(page) === paper.id, { what: "the paper opens in the workbench" });
+      assertNoProblems(page);
+    } finally { await ctx.close(); await shown.close(); }
   });
 }

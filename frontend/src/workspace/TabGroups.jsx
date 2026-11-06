@@ -1,5 +1,5 @@
 // The open tabs' groups side by side (docs/dev/tab_groups.md): the layout
-// tree of workspace/tabGroups.js drawn with the dock's resizable panels,
+// tree of workspace/tabLayout.js drawn with the dock's resizable panels,
 // each group a frame with its own tab strip over its page. The live group
 // holds `live`, App's work area (the open page and its windows); every
 // other group shows its active tab through `renderPane` (PagePane.jsx). One
