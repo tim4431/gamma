@@ -428,6 +428,11 @@ The front page makes no call to the account server, so the *Coming soon*
 label on its Gamma Cloud row is static text, changed by hand when a plan goes
 on sale.
 
+The pricing page's Free Download and *Self-hosting* links go to the front
+page's `#download` and `#selfhost` sections. So do the account server's links:
+`/#selfhost` directly, and `{SITE}/download` through the site's `_redirects`,
+which sends it to `/#download` now that `/download` is no page of its own.
+
 ## Running it locally with Stripe test mode
 
 1. In the Stripe dashboard, in test mode, create a product per plan with a

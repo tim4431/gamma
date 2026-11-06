@@ -1,11 +1,12 @@
 // gammapdf.com — the little behaviour the page needs. No dependencies.
 //  - the mobile menu button
-//  - "Download for <this OS>" on the primary buttons, and on the download
-//    page the visitor's card marked and moved first
+//  - "Download for <this OS>" on the primary buttons, and the visitor's card
+//    marked in the download section
+//  - a plain button if the Microsoft Store badge cannot load
 //  - the front page's clips: a still until one comes near, then the animation
 //  - copy buttons on code blocks
-//  - the latest release: version, per-OS asset links, star count (two calls
-//    to api.github.com; every element keeps a working fallback link)
+//  - the latest release: version, per-OS asset links, and the front page's star
+//    count (api.github.com; every element keeps a working fallback link)
 //  - on the pricing page, "Coming soon" for a plan Gamma Cloud does not sell
 //    right now (one call to its /api/plans; a failure leaves the page as written)
 (() => {
@@ -32,10 +33,11 @@
   });
 
   // OS detection — the "platform" hints first, the user agent as a fallback.
-  // An iPhone has no build: it keeps the plain "Download" of /download, and is
-  // ruled out first because it says "like Mac OS X". An iPad's Safari says it
-  // is a Mac; its touch points give it away. Android says it is Linux ("Linux;
-  // Android", platform "Linux aarch64"), so it is asked about before those.
+  // An iPhone has no build: it keeps the plain "Download" that goes to the
+  // download section, and is ruled out first because it says "like Mac OS X".
+  // An iPad's Safari says it is a Mac; its touch points give it away. Android
+  // says it is Linux ("Linux; Android", platform "Linux aarch64"), so it is
+  // asked about before those.
   const ua = navigator.userAgent;
   const platform = (navigator.userAgentData?.platform || navigator.platform || '').toLowerCase();
   const mac = /mac/.test(platform) || /Mac OS X/.test(ua);
@@ -49,14 +51,21 @@
   const label = { windows: 'Download for Windows', macos: 'Download for macOS', linux: 'Download for Linux', ipad: 'Get the iPad beta', android: 'Download for Android' };
   const name = () => document.querySelectorAll('[data-download-label]').forEach(el => { el.textContent = label[os]; });
   // Android is named only once a release carries its APK (below): until
-  // then the buttons stay the plain "Download" of /download.
+  // then the buttons stay the plain "Download" that goes to the section.
   if (os && os !== 'android') name();
   if (os) {
     const fixed = { windows: STORE, ipad: TESTFLIGHT }[os];
     if (fixed) document.querySelectorAll('[data-download]').forEach(a => { a.href = fixed; });
-    // First in the DOM rather than by CSS order, so the keyboard follows the eye.
-    const card = document.querySelector(`.dl__card[data-os="${os}"]`);
-    if (card) { card.classList.add('dl__card--mine'); card.parentElement.prepend(card); }
+    document.querySelector(`.dl__card[data-os="${os}"]`)?.classList.add('dl__card--mine');
+  }
+
+  // The Store badge is the one external image; fall back to a plain button
+  // when it can't load (offline, blocked).
+  const badge = document.querySelector('[data-store-badge]');
+  const badgeFailed = () => badge.closest('.dl__card')?.classList.add('store--failed');
+  if (badge) {
+    badge.addEventListener('error', badgeFailed);
+    if (badge.complete && badge.naturalWidth === 0) badgeFailed();
   }
 
   // Clips: the still until one comes near, so a visit that stops at the top
@@ -94,7 +103,8 @@
       const published = releases.filter(r => !r.draft && !r.prerelease);
       const desktop = published.find(r => /^v\d/.test(r.tag_name));
       if (desktop) {
-        document.querySelectorAll('[data-version]').forEach(el => { el.textContent = desktop.tag_name; });
+        // The space comes with the version: without one the line reads "Latest release."
+        document.querySelectorAll('[data-version]').forEach(el => { el.textContent = ` ${desktop.tag_name}`; });
         document.querySelectorAll('[data-version-link]').forEach(a => { a.href = desktop.html_url; });
         const links = {
           exe: assetFor(desktop, n => /\.exe$/i.test(n)),
@@ -122,14 +132,17 @@
       }
     })
     .catch(() => {});
-  fetch(`https://api.github.com/repos/${REPO}`, { headers: { Accept: 'application/vnd.github+json' } })
-    .then(r => (r.ok ? r.json() : Promise.reject(r.status)))
-    .then(repo => {
-      const n = repo.stargazers_count;
-      if (!Number.isFinite(n)) return;
-      document.querySelectorAll('[data-stars]').forEach(el => { el.textContent = fmt(n); el.hidden = false; });
-    })
-    .catch(() => {});
+  const stars = document.querySelectorAll('[data-stars]');
+  if (stars.length) {
+    fetch(`https://api.github.com/repos/${REPO}`, { headers: { Accept: 'application/vnd.github+json' } })
+      .then(r => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then(repo => {
+        const n = repo.stargazers_count;
+        if (!Number.isFinite(n)) return;
+        stars.forEach(el => { el.textContent = fmt(n); el.hidden = false; });
+      })
+      .catch(() => {});
+  }
 
   // Plans on sale: the account server says which paid plans can be bought now.
   const choose = document.querySelectorAll('[data-plan]');
@@ -150,8 +163,10 @@
 
 // A page's pictures carry no size, so the browser's own jump to #anchor can
 // land above the heading once they have loaded: jump again when they have.
+// At once, whatever scroll-behavior says: a visitor from /download is not
+// shown the whole front page going past.
 if (location.hash.length > 1) {
   addEventListener('load', () => {
-    try { document.getElementById(decodeURIComponent(location.hash.slice(1)))?.scrollIntoView(); } catch {}
+    try { document.getElementById(decodeURIComponent(location.hash.slice(1)))?.scrollIntoView({ behavior: 'instant' }); } catch {}
   });
 }
