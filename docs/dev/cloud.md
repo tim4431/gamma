@@ -46,7 +46,7 @@ portal), [billing.md](billing.md) (plans and Stripe) and
 | **Caddy** | TLS and routing by hostname: `account` → the account server, `app`/`share`/`<user>-pages` → the shared server, `demo` → the demo, `<label>-user` → `gamma-<label>` | the account project on the VPS; one per routed host besides | — |
 | **Cloudflare** | DNS for the zone (a wildcard plus named records), the proxy and certificate in front of everything, Turnstile on sign-up, the rate rules | — | — |
 | **Stripe** | Checkout, the Customer Portal, subscriptions, invoices, tax. The account server keeps a copy of each subscription and is told by webhook. | — | the source of truth for money |
-| **Website** | `sites/`: the front page, pricing, the rendered docs | a Cloudflare Worker | — |
+| **Website** | `sites/`: the front page, download, pricing, the rendered docs | a Cloudflare Worker | — |
 
 One VPS runs the account server, the shared server, Caddy and one fleet
 agent. A second host runs an agent and a Caddy of its own, and the

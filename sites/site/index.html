@@ -40,357 +40,136 @@
 <main id="main">
 
   <!-- Hero -->
-  <section class="hero">
-    <div class="wrap hero__text">
-      <p class="eyebrow">Open source · self-hosted · for people who read papers</p>
+  <section class="hero wrap">
+    <div class="split">
       <h1>Read papers.<br>Keep what you learn.</h1>
-      <p class="lead">A PDF annotator with outliner notes, live math and an AI that reads along — on your own machine.</p>
-      <div class="cta">
-        <a class="btn btn--primary btn--lg" href="https://github.com/tim4431/Gamma/releases/latest" data-download>
-          <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3v10m0 0 4-4m-4 4-4-4M3 15v2h14v-2"/></svg>
-          <span data-download-label>Download</span>
-        </a>
-        <a class="btn btn--ghost btn--lg" href="https://demo.gammapdf.com">Try the demo</a>
-        <span class="cta__star">
-          <a class="btn btn--ghost btn--lg" href="https://github.com/tim4431/Gamma">
-            <svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
-            Star on GitHub<span class="stars" data-stars hidden></span>
+      <div>
+        <p class="lead">An open-source PDF annotator with outliner notes, live math and an AI that reads along, on your own machine.</p>
+        <div class="cta">
+          <a class="btn btn--primary btn--lg" href="/download" data-download>
+            <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3v10m0 0 4-4m-4 4-4-4M3 15v2h14v-2"/></svg>
+            <span data-download-label>Download</span>
           </a>
-          <!-- A hand-drawn pigtail arrow pointing at the button -->
-          <svg class="pigtail" viewBox="0 0 100 88" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
-            <path pathLength="1" d="M94 4C96 22 84 40 66 44C50 48 40 38 48 30C56 22 66 32 60 46C54 60 30 74 6 76"/>
-            <path pathLength="1" d="M17 67 6 76l12 6"/>
-          </svg>
-        </span>
+          <a class="btn btn--ghost btn--lg" href="https://demo.gammapdf.com">Try the demo</a>
+        </div>
+        <p class="hero__meta">Windows, macOS, Linux, iPad, Android and Docker. <a href="/download">All downloads</a></p>
       </div>
-      <p class="hero__meta">
-        <span>Windows · macOS · Linux · Docker</span>
-        <span class="dot" aria-hidden="true">·</span>
-        <a href="https://github.com/tim4431/Gamma/releases/latest" data-version-link>Latest release <span data-version></span></a>
-      </p>
     </div>
-    <div class="wrap wrap--wide">
-      <figure class="frame frame--hero">
-        <div class="frame__bar" aria-hidden="true"><i></i><i></i><i></i></div>
-        <img src="/media/app.webp" width="2880" height="1800" alt="Gamma with a Nature paper open on its first figure: a highlighted sentence and its note in the notes on the right, and under them an AI chat that answers what the paper's key idea is" fetchpriority="high">
-      </figure>
-    </div>
+    <img class="media" src="/media/app.webp" width="2880" height="1800" alt="Gamma with a Nature paper open on its first figure: a highlighted sentence and its note in the notes on the right, and under them an AI chat that answers what the paper's key idea is" fetchpriority="high">
   </section>
 
-  <!-- Pillars -->
-  <section class="pillars wrap">
-    <div class="pillar">
-      <h3>Your library, on your machine</h3>
-      <p>SQLite and files in one folder. No account with us, no telemetry.</p>
+  <!-- Three stories -->
+  <section class="section wrap">
+    <div class="split">
+      <h2>Every mark becomes a note.</h2>
+      <p class="lead">Highlight, draw or type on the page. Each mark lands in your notes, and a click jumps back to the passage.</p>
     </div>
-    <div class="pillar">
-      <h3>Papers and notes are one thing</h3>
-      <p>Every highlight is a note block. Click it and the PDF jumps to the passage.</p>
-    </div>
-    <div class="pillar">
-      <h3>Open source, open formats</h3>
-      <p>Export to Markdown, Obsidian, Logseq, Zotero or an annotated PDF at any time.</p>
-    </div>
+    <div class="clip clip--crop"><picture>
+      <source media="(prefers-reduced-motion: reduce)" srcset="/media/demo-ink-still.webp">
+      <img src="/media/demo-ink-still.webp" data-clip="/media/demo-ink-marks.webp" width="1600" height="900" loading="lazy" alt="A paper with pencil marks made on the iPad and their ink cards in the notes: Gamma's pen circles a phrase and draws an arrow to a margin note, and a new card lands in the notes">
+    </picture></div>
   </section>
 
-  <!-- Features -->
-  <div id="features" class="features">
+  <section class="section wrap">
+    <div class="split">
+      <h2>Notes with live math.</h2>
+      <p class="lead">An outliner right next to the paper, with live Markdown and LaTeX, links between pages, and handwriting on a sheet.</p>
+    </div>
+    <div class="clip clip--crop"><picture>
+      <source media="(prefers-reduced-motion: reduce)" srcset="/media/demo-notes-still.webp">
+      <img src="/media/demo-notes-still.webp" data-clip="/media/demo-notes-math.webp" width="1600" height="900" loading="lazy" alt="A live LaTeX equation renders in a note next to a page link, then /note drops a sheet of paper into the notes and a pen sketches the result on it">
+    </picture></div>
+  </section>
 
-    <section class="feature feature--flip wrap">
-      <div class="feature__text">
-        <p class="eyebrow">Read from any place</p>
-        <h2>One library on every device.</h2>
-        <p>Any browser, the desktop app, the iPad or Android. Keep an offline copy on your laptop; it syncs itself when you are back online.</p>
-        <p class="feature__guide">Guide: <a href="/docs/#offline-copies">Offline copies</a> · <a href="/docs/#install-as-an-app">Install as an app</a></p>
+  <section class="section wrap">
+    <div class="split">
+      <h2>Ask the paper.</h2>
+      <p class="lead">Get cited answers that jump to the passage, with your own Anthropic or OpenAI key or a paid ChatGPT plan.</p>
+    </div>
+    <div class="clip"><picture>
+      <source media="(prefers-reduced-motion: reduce)" srcset="/media/demo-agentic-still.webp">
+      <img src="/media/demo-agentic-still.webp" data-clip="/media/demo-native-agentic.webp" width="1600" height="900" loading="lazy" alt="Ctrl+dragging a figure into the chat and asking what it shows, following the answer's page citation to the marked passage, then asking about a highlighted sentence's references: the assistant searches for the three papers, reads them and compares them in a cited table">
+    </picture></div>
+  </section>
+
+  <!-- Tiles -->
+  <section class="section wrap">
+    <h2 class="section__title">Everything around the paper.</h2>
+    <div class="tiles">
+      <div class="tile">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 8V6a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v7a2 2 0 0 0 2 2h8"/><path d="M10 15v4"/><path d="M7 19h5"/><rect width="6" height="10" x="16" y="12" rx="2"/></svg>
+        <h3>Every device</h3>
+        <p>Browser, desktop, iPad and Android. Offline copies sync themselves.</p>
       </div>
-      <figure class="feature__media">
-        <img src="/media/anywhere-light.svg" width="1920" height="1080" loading="lazy" alt="One library on the lab server, open on a desktop, an iPad and a phone; a note typed from the iPad appears on every other device as the sync between them runs">
-      </figure>
-    </section>
-
-    <section class="feature wrap">
-      <div class="feature__text">
-        <p class="eyebrow">Highlight, annotate &amp; draw</p>
-        <h2>Mark up the paper. Every mark becomes a note.</h2>
-        <p>Paste an arXiv or DOI link, or drag the PDF in.</p>
-        <ul>
-          <li><b>Highlight</b> text or a figure, with a note</li>
-          <li><b>Draw</b> with a stylus or the mouse, or bring your Notability notes</li>
-          <li><b>Type</b> text boxes with Markdown and math</li>
-          <li><b>Follow citations</b> and translate a page in place</li>
-        </ul>
-        <p class="feature__guide">Guide: <a href="/docs/#highlight-and-annotate">Highlight and annotate</a> · <a href="/docs/#draw-and-type-on-the-page">Draw and type on the page</a> · <a href="/docs/#follow-links-and-translate">Follow links and translate</a></p>
+      <div class="tile">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <h3>Find anything</h3>
+        <p>Search notes, highlights and every PDF at once.</p>
       </div>
-      <figure class="feature__media">
-        <img src="/media/demo-ink-import.webp" width="1600" height="900" loading="lazy" alt="Importing a Notability note: the paper opens with the pencil marks made on the iPad and their ink cards in the notes, then Gamma's pen circles a phrase and draws an arrow to a margin note">
-      </figure>
-    </section>
-
-    <section class="feature feature--flip wrap">
-      <div class="feature__text">
-        <p class="eyebrow">Take notes</p>
-        <h2>An outliner with live math, right next to the paper.</h2>
-        <ul>
-          <li><b>Nest</b> blocks with Tab, drag to reorder</li>
-          <li><b>Live preview</b> of Markdown, <code>$LaTeX$</code> and diagrams</li>
-          <li><b>Link and embed</b> with <code>[[page]]</code> and <code>![[block]]</code></li>
-          <li><b>Write by hand</b> on a sheet with <code>/note</code></li>
-        </ul>
-        <p class="feature__guide">Guide: <a href="/docs/#notes">Notes</a></p>
+      <div class="tile">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 7v14"/><path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z"/></svg>
+        <h3>Metadata and citations</h3>
+        <p>Title, authors and venue fill in on open. Copy BibTeX in one click.</p>
       </div>
-      <figure class="feature__media">
-        <img src="/media/demo-notes.webp" width="1600" height="900" loading="lazy" alt="Typing markdown, a page link and a live LaTeX equation, then /note drops a sheet of paper into the notes and a pen sketches the result on it">
-      </figure>
-    </section>
-
-    <section class="feature wrap">
-      <div class="feature__text">
-        <p class="eyebrow">Ask an AI about your papers</p>
-        <h2>Ask about the paper. Follow its citations back.</h2>
-        <ul>
-          <li><b>Cited answers</b> that jump to the passage</li>
-          <li><b>Show it a figure</b> with Ctrl+drag</li>
-          <li><b>Your own key</b>: Anthropic, OpenAI or ChatGPT</li>
-          <li><b>An agent</b> that finds, reads and saves papers, asking before it changes anything</li>
-        </ul>
-        <p class="feature__guide">Guide: <a href="/docs/#ai-chat">AI chat</a> · <a href="/docs/#the-library-agent">The library agent</a></p>
+      <div class="tile">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z"/></svg>
+        <h3>One-click saving</h3>
+        <p>The browser extension saves the paper you're reading, with its metadata, to the folder you pick.</p>
       </div>
-      <figure class="feature__media">
-        <img src="/media/demo-native-agentic.webp" width="1600" height="900" loading="lazy" alt="Ctrl+dragging a figure into the chat and asking what it shows, following the answer's page citation to the marked passage, then asking about a highlighted sentence's references: the assistant searches for the three papers, reads them and compares them in a cited table">
-      </figure>
-    </section>
-
-    <section class="feature feature--flip wrap">
-      <div class="feature__text">
-        <p class="eyebrow">AI in your notes</p>
-        <h2>From a slide to your notes, as math you can edit.</h2>
-        <p>Paste a slide and ask. The equation lands under your cursor once you approve, and any change can be undone.</p>
-        <p class="feature__guide">Guide: <a href="/docs/#the-library-agent">The library agent</a></p>
+      <div class="tile">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
+        <h3>Work together</h3>
+        <p>Shared workspaces, live cursors, and comments on any note or highlight.</p>
       </div>
-      <figure class="feature__media">
-        <img src="/media/demo-agentic-notes.webp" width="1600" height="900" loading="lazy" alt="Pasting a lecture slide into the chat and asking for its equation under the block you are on: after the approval card, the formula lands rendered in the note">
-      </figure>
-    </section>
-
-    <section class="feature feature--stack wrap">
-      <div class="feature__text feature__text--center">
-        <p class="eyebrow">Link and organize</p>
-        <h2>Papers arrive labeled. Ideas stay connected.</h2>
-        <p>Metadata fills itself in. Labels and folders keep the library in shape.</p>
+      <div class="tile">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22v-5"/><path d="M9 8V2"/><path d="M15 8V2"/><path d="M18 8v5a4 4 0 0 1-4 4h-4a4 4 0 0 1-4-4V8Z"/></svg>
+        <h3>Your tools</h3>
+        <p>Import from Zotero, Obsidian, Logseq and Notion. Connect Codex, Claude Code and any MCP client.</p>
       </div>
-      <figure class="feature__media">
-        <img src="/media/library-light.svg" width="1920" height="1080" loading="lazy" alt="Bring a paper in with an arXiv or DOI link and its metadata fills in; search titles, notes and PDF text narrowed by folder and label; follow a reference to a linked paper and come back">
-      </figure>
-      <div class="trio">
-        <article class="card">
-          <img src="/media/demo-reference-links.webp" width="1040" height="662" loading="lazy" alt="Following a citation to its reference, then fetching the cited arXiv paper into Gamma with one click">
-          <h3>Reference links</h3>
-          <p>Click a citation to jump to it, or add the cited paper to your library.</p>
-        </article>
-        <article class="card">
-          <img src="/media/demo-search.webp" width="1600" height="900" loading="lazy" alt="In an open paper Ctrl+F finds a word and steps through its matches in the page, then Ctrl+P finds the quantum computing label and opens its papers">
-          <h3>Find anything</h3>
-          <p>Search notes, highlights and every PDF at once, typos forgiven.</p>
-        </article>
-        <article class="card">
-          <img src="/media/demo-metadata.webp" width="1120" height="714" loading="lazy" alt="A freshly opened paper resolves its title, authors and venue; one click copies BibTeX or a slide-ready citation">
-          <h3>Metadata &amp; citations</h3>
-          <p>Title, authors and venue fill in on open. Copy BibTeX in one click.</p>
-        </article>
-      </div>
-      <p class="feature__guide feature__guide--center">Guide: <a href="/docs/#library">Library</a> · <a href="/docs/#labels-or-folders">Labels or folders</a> · <a href="/docs/#search">Search</a> · <a href="/docs/#metadata-and-citations">Metadata and citations</a></p>
-    </section>
+    </div>
+    <p class="section__link"><a href="/docs/">Read the user guide</a></p>
+  </section>
 
-    <section class="feature feature--flip wrap">
-      <div class="feature__text">
-        <p class="eyebrow">Connect your research</p>
-        <h2>At home in the tools you already use.</h2>
-        <ul>
-          <li><b>Assistants</b>: Codex, Claude Code and any MCP client</li>
-          <li><b>Import</b> from Zotero, Obsidian, Logseq and Notion</li>
-          <li><b>Export</b> to Markdown, Obsidian, Zotero, PDF and BibTeX</li>
-        </ul>
-        <p class="feature__guide">Guide: <a href="/docs/#assistants">Assistants</a> · <a href="/docs/#import-and-export">Import and export</a> · <a href="/docs/#backups-and-upgrades">Backups and upgrades</a></p>
-      </div>
-      <figure class="feature__media">
-        <img src="/media/connections-light.svg" width="1920" height="1080" loading="lazy" alt="Gamma in the middle of an assistant prompt that mentions @Gamma and a paper, the Obsidian, Notion and Zotero import and export arrows, and the Gamma Connector saving a paper with the publisher sign-in kept per journal">
-      </figure>
-    </section>
-
-    <section class="feature wrap">
-      <div class="feature__text">
-        <p class="eyebrow">Gamma Connector</p>
-        <h2>Save the paper you're reading. One click.</h2>
-        <p>On an arXiv, DOI or publisher page, the browser extension saves the PDF and its metadata into the folder you pick.</p>
-        <p class="feature__guide">Guide: <a href="/docs/#gamma-connector">Gamma Connector</a></p>
-      </div>
-      <figure class="feature__media">
-        <img src="/media/demo-connector.webp" width="1600" height="900" loading="lazy" alt="On a Physical Review Letters article page, the Gamma Connector's toolbar badge has found the paper; its popup shows the title and authors, files it under Quantum/Neutral atoms with a label, saves it, and the PDF opens in Gamma with its folder and label">
-      </figure>
-    </section>
-
-    <section class="feature feature--flip wrap">
-      <div class="feature__text">
-        <p class="eyebrow">Share and back up</p>
-        <h2>Your space. A shared place.</h2>
-        <p>Keep personal workspaces, share one with your lab, or send a link to a single page. Back everything up as one zip.</p>
-        <p class="feature__guide">Guide: <a href="/docs/#share-a-page">Share a page</a> · <a href="/docs/#workspaces">Workspaces</a> · <a href="/docs/#backups-and-upgrades">Backups and upgrades</a></p>
-      </div>
-      <figure class="feature__media">
-        <img src="/media/workspaces-light.svg" width="1920" height="1080" loading="lazy" alt="Personal workspaces next to a shared research library where an owner and an editor type into two blocks of the same page at the same time and a viewer reads along">
-      </figure>
-    </section>
-
-    <section class="feature wrap">
-      <div class="feature__text">
-        <p class="eyebrow">Edit together</p>
-        <h2>One page. Everyone typing on it.</h2>
-        <p>Edits and named cursors show up live, even with two people in one block. Your undo only takes back your own changes. Comment on a note, a highlight or the page; mentions and replies wait in each person's inbox.</p>
-        <p class="feature__guide">Guide: <a href="/docs/#workspaces">Workspaces</a> · <a href="/docs/#comments-and-inbox">Comments and inbox</a></p>
-      </div>
-      <figure class="feature__media">
-        <img src="/media/demo-collab.webp" width="1600" height="900" loading="lazy" alt="Three people on one page of a shared workspace: Maya types a question and Sam adds to the takeaway, each caret labeled with its writer's name, while the owner pastes a figure from the paper and drags it larger">
-      </figure>
-    </section>
-
-  </div>
-
-  <!-- Download -->
-  <section id="download" class="download">
+  <!-- Ownership -->
+  <section class="band">
     <div class="wrap">
-      <p class="eyebrow">Get Gamma</p>
-      <h2>Free, on every desk.</h2>
-      <p class="lead">A self-contained app: no Docker, Python or Node. <a href="https://github.com/tim4431/Gamma/releases/latest" data-version-link>Latest release <span data-version></span></a>.</p>
-      <div class="dl">
-        <article class="dl__card" data-os="windows">
-          <h3 class="dl__title"><span class="dl__icon"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M0,0H11.377V11.372H0ZM12.623,0H24V11.372H12.623ZM0,12.623H11.377V24H0Zm12.623,0H24V24H12.623"/></svg></span>Windows</h3>
-          <a class="store" href="https://apps.microsoft.com/detail/9N8WGWR2J2MV"><img src="https://get.microsoft.com/images/en-us%20dark.svg" alt="Get it from the Microsoft Store" width="200" height="72" loading="lazy" data-store-badge></a>
-          <a class="btn btn--primary store--text" href="https://apps.microsoft.com/detail/9N8WGWR2J2MV">Microsoft Store</a>
-          <p>Or the <a href="https://github.com/tim4431/Gamma/releases/latest" data-asset="exe">standalone installer</a> (SmartScreen: <i>More info → Run anyway</i>).</p>
-        </article>
-        <article class="dl__card" data-os="macos">
-          <h3 class="dl__title"><span class="dl__icon"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04-2.04.027-3.91 1.183-4.961 3.014-2.117 3.675-.546 9.103 1.519 12.09 1.013 1.454 2.208 3.09 3.792 3.039 1.52-.065 2.09-.987 3.935-.987 1.831 0 2.35.987 3.96.948 1.637-.026 2.676-1.48 3.676-2.948 1.156-1.688 1.636-3.325 1.662-3.415-.039-.013-3.182-1.221-3.22-4.857-.026-3.04 2.48-4.494 2.597-4.559-1.429-2.09-3.623-2.324-4.39-2.376-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83-1.207.052-2.662.805-3.532 1.818-.78.896-1.454 2.338-1.273 3.714 1.338.104 2.715-.688 3.559-1.701"/></svg></span>macOS</h3>
-          <a class="btn btn--primary" href="https://github.com/tim4431/Gamma/releases/latest" data-asset="dmg">Download .dmg</a>
-          <p>First launch: <i>System Settings → Privacy &amp; Security → Open Anyway</i>.</p>
-        </article>
-        <article class="dl__card" data-os="linux">
-          <h3 class="dl__title"><span class="dl__icon"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12.504 0c-.155 0-.315.008-.48.021-4.226.333-3.105 4.807-3.17 6.298-.076 1.092-.3 1.953-1.05 3.02-.885 1.051-2.127 2.75-2.716 4.521-.278.832-.41 1.684-.287 2.489a.424.424 0 00-.11.135c-.26.268-.45.6-.663.839-.199.199-.485.267-.797.4-.313.136-.658.269-.864.68-.09.189-.136.394-.132.602 0 .199.027.4.055.536.058.399.116.728.04.97-.249.68-.28 1.145-.106 1.484.174.334.535.47.94.601.81.2 1.91.135 2.774.6.926.466 1.866.67 2.616.47.526-.116.97-.464 1.208-.946.587-.003 1.23-.269 2.26-.334.699-.058 1.574.267 2.577.2.025.134.063.198.114.333l.003.003c.391.778 1.113 1.132 1.884 1.071.771-.06 1.592-.536 2.257-1.306.631-.765 1.683-1.084 2.378-1.503.348-.199.629-.469.649-.853.023-.4-.2-.811-.714-1.376v-.097l-.003-.003c-.17-.2-.25-.535-.338-.926-.085-.401-.182-.786-.492-1.046h-.003c-.059-.054-.123-.067-.188-.135a.357.357 0 00-.19-.064c.431-1.278.264-2.55-.173-3.694-.533-1.41-1.465-2.638-2.175-3.483-.796-1.005-1.576-1.957-1.56-3.368.026-2.152.236-6.133-3.544-6.139zm.529 3.405h.013c.213 0 .396.062.584.198.19.135.33.332.438.533.105.259.158.459.166.724 0-.02.006-.04.006-.06v.105a.086.086 0 01-.004-.021l-.004-.024a1.807 1.807 0 01-.15.706.953.953 0 01-.213.335.71.71 0 00-.088-.042c-.104-.045-.198-.064-.284-.133a1.312 1.312 0 00-.22-.066c.05-.06.146-.133.183-.198.053-.128.082-.264.088-.402v-.02a1.21 1.21 0 00-.061-.4c-.045-.134-.101-.2-.183-.333-.084-.066-.167-.132-.267-.132h-.016c-.093 0-.176.03-.262.132a.8.8 0 00-.205.334 1.18 1.18 0 00-.09.4v.019c.002.089.008.179.02.267-.193-.067-.438-.135-.607-.202a1.635 1.635 0 01-.018-.2v-.02a1.772 1.772 0 01.15-.768c.082-.22.232-.406.43-.533a.985.985 0 01.594-.2zm-2.962.059h.036c.142 0 .27.048.399.135.146.129.264.288.344.465.09.199.14.4.153.667v.004c.007.134.006.2-.002.266v.08c-.03.007-.056.018-.083.024-.152.055-.274.135-.393.2.012-.09.013-.18.003-.267v-.015c-.012-.133-.04-.2-.082-.333a.613.613 0 00-.166-.267.248.248 0 00-.183-.064h-.021c-.071.006-.13.04-.186.132a.552.552 0 00-.12.27.944.944 0 00-.023.33v.015c.012.135.037.2.08.334.046.134.098.2.166.268.01.009.02.018.034.024-.07.057-.117.07-.176.136a.304.304 0 01-.131.068 2.62 2.62 0 01-.275-.402 1.772 1.772 0 01-.155-.667 1.759 1.759 0 01.08-.668 1.43 1.43 0 01.283-.535c.128-.133.26-.2.418-.2zm1.37 1.706c.332 0 .733.065 1.216.399.293.2.523.269 1.052.468h.003c.255.136.405.266.478.399v-.131a.571.571 0 01.016.47c-.123.31-.516.643-1.063.842v.002c-.268.135-.501.333-.775.465-.276.135-.588.292-1.012.267a1.139 1.139 0 01-.448-.067 3.566 3.566 0 01-.322-.198c-.195-.135-.363-.332-.612-.465v-.005h-.005c-.4-.246-.616-.512-.686-.71-.07-.268-.005-.47.193-.6.224-.135.38-.271.483-.336.104-.074.143-.102.176-.131h.002v-.003c.169-.202.436-.47.839-.601.139-.036.294-.065.466-.065zm2.8 2.142c.358 1.417 1.196 3.475 1.735 4.473.286.534.855 1.659 1.102 3.024.156-.005.33.018.513.064.646-1.671-.546-3.467-1.089-3.966-.22-.2-.232-.335-.123-.335.59.534 1.365 1.572 1.646 2.757.13.535.16 1.104.021 1.67.067.028.135.06.205.067 1.032.534 1.413.938 1.23 1.537v-.043c-.06-.003-.12 0-.18 0h-.016c.151-.467-.182-.825-1.065-1.224-.915-.4-1.646-.336-1.77.465-.008.043-.013.066-.018.135-.068.023-.139.053-.209.064-.43.268-.662.669-.793 1.187-.13.533-.17 1.156-.205 1.869v.003c-.02.334-.17.838-.319 1.35-1.5 1.072-3.58 1.538-5.348.334a2.645 2.645 0 00-.402-.533 1.45 1.45 0 00-.275-.333c.182 0 .338-.03.465-.067a.615.615 0 00.314-.334c.108-.267 0-.697-.345-1.163-.345-.467-.931-.995-1.788-1.521-.63-.4-.986-.87-1.15-1.396-.165-.534-.143-1.085-.015-1.645.245-1.07.873-2.11 1.274-2.763.107-.065.037.135-.408.974-.396.751-1.14 2.497-.122 3.854a8.123 8.123 0 01.647-2.876c.564-1.278 1.743-3.504 1.836-5.268.048.036.217.135.289.202.218.133.38.333.59.465.21.201.477.335.876.335.039.003.075.006.11.006.412 0 .73-.134.997-.268.29-.134.52-.334.74-.4h.005c.467-.135.835-.402 1.044-.7zm2.185 8.958c.037.6.343 1.245.882 1.377.588.134 1.434-.333 1.791-.765l.211-.01c.315-.007.577.01.847.268l.003.003c.208.199.305.53.391.876.085.4.154.78.409 1.066.486.527.645.906.636 1.14l.003-.007v.018l-.003-.012c-.015.262-.185.396-.498.595-.63.401-1.746.712-2.457 1.57-.618.737-1.37 1.14-2.036 1.191-.664.053-1.237-.2-1.574-.898l-.005-.003c-.21-.4-.12-1.025.056-1.69.176-.668.428-1.344.463-1.897.037-.714.076-1.335.195-1.814.12-.465.308-.797.641-.984l.045-.022zm-10.814.049h.01c.053 0 .105.005.157.014.376.055.706.333 1.023.752l.91 1.664.003.003c.243.533.754 1.064 1.189 1.637.434.598.77 1.131.729 1.57v.006c-.057.744-.48 1.148-1.125 1.294-.645.135-1.52.002-2.395-.464-.968-.536-2.118-.469-2.857-.602-.369-.066-.61-.2-.723-.4-.11-.2-.113-.602.123-1.23v-.004l.002-.003c.117-.334.03-.752-.027-1.118-.055-.401-.083-.71.043-.94.16-.334.396-.4.69-.533.294-.135.64-.202.915-.47h.002v-.002c.256-.268.445-.601.668-.838.19-.201.38-.336.663-.336zm7.159-9.074c-.435.201-.945.535-1.488.535-.542 0-.97-.267-1.28-.466-.154-.134-.28-.268-.373-.335-.164-.134-.144-.333-.074-.333.109.016.129.134.199.2.096.066.215.2.36.333.292.2.68.467 1.167.467.485 0 1.053-.267 1.398-.466.195-.135.445-.334.648-.467.156-.136.149-.267.279-.267.128.016.034.134-.147.332a8.097 8.097 0 01-.69.468zm-1.082-1.583V5.64c-.006-.02.013-.042.029-.05.074-.043.18-.027.26.004.063 0 .16.067.15.135-.006.049-.085.066-.135.066-.055 0-.092-.043-.141-.068-.052-.018-.146-.008-.163-.065zm-.551 0c-.02.058-.113.049-.166.066-.047.025-.086.068-.14.068-.05 0-.13-.02-.136-.068-.01-.066.088-.133.15-.133.08-.031.184-.047.259-.005.019.009.036.03.03.05v.02h.003z"/></svg></span>Linux</h3>
-          <a class="btn btn--primary" href="https://github.com/tim4431/Gamma/releases/latest" data-asset="deb">Download .deb</a>
-          <p>Debian / Ubuntu, x64.</p>
-        </article>
-        <article class="dl__card dl__card--wide">
-          <h3 class="dl__title"><span class="dl__icon"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13.983 11.078h2.119a.186.186 0 00.186-.185V9.006a.186.186 0 00-.186-.186h-2.119a.185.185 0 00-.185.185v1.888c0 .102.083.185.185.185m-2.954-5.43h2.118a.186.186 0 00.186-.186V3.574a.186.186 0 00-.186-.185h-2.118a.185.185 0 00-.185.185v1.888c0 .102.082.185.185.185m0 2.716h2.118a.187.187 0 00.186-.186V6.29a.186.186 0 00-.186-.185h-2.118a.185.185 0 00-.185.185v1.887c0 .102.082.185.185.186m-2.93 0h2.12a.186.186 0 00.184-.186V6.29a.185.185 0 00-.185-.185H8.1a.185.185 0 00-.185.185v1.887c0 .102.083.185.185.186m-2.964 0h2.119a.186.186 0 00.185-.186V6.29a.185.185 0 00-.185-.185H5.136a.186.186 0 00-.186.185v1.887c0 .102.084.185.186.186m5.893 2.715h2.118a.186.186 0 00.186-.185V9.006a.186.186 0 00-.186-.186h-2.118a.185.185 0 00-.185.185v1.888c0 .102.082.185.185.185m-2.93 0h2.12a.185.185 0 00.184-.185V9.006a.185.185 0 00-.184-.186h-2.12a.185.185 0 00-.184.185v1.888c0 .102.083.185.185.185m-2.964 0h2.119a.185.185 0 00.185-.185V9.006a.185.185 0 00-.184-.186h-2.12a.186.186 0 00-.186.186v1.887c0 .102.084.185.186.185m-2.92 0h2.12a.185.185 0 00.184-.185V9.006a.185.185 0 00-.184-.186h-2.12a.185.185 0 00-.184.185v1.888c0 .102.082.185.185.185M23.763 9.89c-.065-.051-.672-.51-1.954-.51-.338.001-.676.03-1.01.087-.248-1.7-1.653-2.53-1.716-2.566l-.344-.199-.226.327c-.284.438-.49.922-.612 1.43-.23.97-.09 1.882.403 2.661-.595.332-1.55.413-1.744.42H.751a.751.751 0 00-.75.748 11.376 11.376 0 00.692 4.062c.545 1.428 1.355 2.48 2.41 3.124 1.18.723 3.1 1.137 5.275 1.137.983.003 1.963-.086 2.93-.266a12.248 12.248 0 003.823-1.389c.98-.567 1.86-1.288 2.61-2.136 1.252-1.418 1.998-2.997 2.553-4.4h.221c1.372 0 2.215-.549 2.68-1.009.309-.293.55-.65.707-1.046l.098-.288Z"/></svg></span>Server</h3>
+      <div class="split">
+        <h2>Yours, either way.</h2>
+        <div>
+          <p class="lead">SQLite and files in one folder. No account with us, no telemetry. Export everything at any time.</p>
+          <p class="band__link"><a href="/privacy/">Privacy policy</a></p>
+        </div>
+      </div>
+      <div>
+        <div class="way">
+          <h3>Desktop app</h3>
+          <p>Free. Your library on your own disk.</p>
+          <a class="btn btn--ghost" href="/download">Download</a>
+        </div>
+        <div class="way" id="selfhost">
+          <h3>Your own server</h3>
+          <p>Free. One Docker image for your whole lab.</p>
           <div class="code"><pre><code>docker run -d --name gamma -p 9001:9001 -v gamma-data:/data ghcr.io/tim4431/gamma:latest</code></pre><button class="copy" type="button" data-copy>Copy</button></div>
-          <p>Open <code>localhost:9001</code> as <code>admin</code>; the password is in <code>docker logs gamma</code>. <a href="#selfhost">More ↓</a></p>
-        </article>
-        <article class="dl__card" data-os="ipad">
-          <h3 class="dl__title"><span class="dl__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="16" height="20" x="4" y="2" rx="2"/><path d="M12 18h.01"/></svg></span>iPad</h3>
-          <a class="btn btn--primary" href="https://testflight.apple.com/join/nTmSHDx6">Join the TestFlight beta</a>
-          <p>Install Apple's TestFlight app, then open the link on the iPad. Keeps a workspace on the iPad for the Pencil with no connection.</p>
-        </article>
-        <article class="dl__card" data-os="android">
-          <h3 class="dl__title"><span class="dl__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="10" height="14" x="3" y="8" rx="2"/><path d="M5 4a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v16a2 2 0 0 1-2 2h-2.4"/><path d="M8 18h.01"/></svg></span>Android</h3>
-          <a class="btn btn--primary" href="https://github.com/tim4431/Gamma/releases/latest" data-asset="apk">Download .apk</a>
-          <p>Android 10 or later on 64-bit ARM, phones and tablets. Open the APK on the device and allow your browser to install it. Keeps a workspace on the device for the stylus with no connection.</p>
-        </article>
-        <article class="dl__card">
-          <h3 class="dl__title"><span class="dl__icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z"/></svg></span>Browser extension</h3>
-          <a class="store" href="https://chromewebstore.google.com/detail/gamma-connector/njpeklephhndnpakmlaancinpnabcomn"><img src="/media/chrome-web-store.png" alt="Get Gamma Connector from the Chrome Web Store" width="198" height="60" loading="lazy"></a>
-          <p>Gamma Connector, for Chrome, Edge and other Chromium browsers. Or the <a href="https://github.com/tim4431/Gamma/releases/latest" data-asset="extension">.zip</a>.</p>
-        </article>
-        <article class="dl__card">
-          <h3 class="dl__title"><span class="dl__icon"><svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M13.85 0a4.16 4.16 0 0 0-2.95 1.217L1.456 10.66a.835.835 0 0 0 0 1.18.835.835 0 0 0 1.18 0l9.442-9.442a2.49 2.49 0 0 1 3.541 0 2.49 2.49 0 0 1 0 3.541L8.59 12.97l-.1.1a.835.835 0 0 0 0 1.18.835.835 0 0 0 1.18 0l.1-.098 7.03-7.034a2.49 2.49 0 0 1 3.542 0l.049.05a2.49 2.49 0 0 1 0 3.54l-8.54 8.54a1.96 1.96 0 0 0 0 2.755l1.753 1.753a.835.835 0 0 0 1.18 0 .835.835 0 0 0 0-1.18l-1.753-1.753a.266.266 0 0 1 0-.394l8.54-8.54a4.185 4.185 0 0 0 0-5.9l-.05-.05a4.16 4.16 0 0 0-2.95-1.218c-.2 0-.401.02-.6.048a4.17 4.17 0 0 0-1.17-3.552A4.16 4.16 0 0 0 13.85 0m0 3.333a.84.84 0 0 0-.59.245L6.275 10.56a4.186 4.186 0 0 0 0 5.902 4.186 4.186 0 0 0 5.902 0L19.16 9.48a.835.835 0 0 0 0-1.18.835.835 0 0 0-1.18 0l-6.985 6.984a2.49 2.49 0 0 1-3.54 0 2.49 2.49 0 0 1 0-3.54l6.983-6.985a.835.835 0 0 0 0-1.18.84.84 0 0 0-.59-.245"/></svg></span>Codex, Claude Code &amp; MCP</h3>
-          <a class="btn btn--ghost" href="/docs/#assistants">Connection guide</a>
-          <p>One-command setup in <i>Settings → AI → Integrations</i>.</p>
-        </article>
+          <a class="btn btn--ghost" href="/download#server">Set it up</a>
+        </div>
+        <div class="way">
+          <h3>Gamma Cloud <span class="badge">Coming soon</span></h3>
+          <p>A library we keep running for you, if you'd rather not run a server.</p>
+          <a class="btn btn--ghost" href="/pricing">See the plans</a>
+        </div>
       </div>
     </div>
-  </section>
-
-  <!-- Self-host -->
-  <section id="selfhost" class="selfhost wrap">
-    <div class="selfhost__text">
-      <p class="eyebrow">Self-host</p>
-      <h2>One container. Your whole lab.</h2>
-      <p>One Docker image for amd64 and arm64, with all your data in one <code>/data</code> volume. No environment variables.</p>
-      <ul>
-        <li>Users and shared workspaces, managed in the app</li>
-        <li>Caddy or nginx in front for your own domain</li>
-        <li>Upgrades itself through Watchtower</li>
-      </ul>
-      <p><a href="https://github.com/tim4431/Gamma#install">Full install notes on GitHub →</a> · <a href="/docs/#backups-and-upgrades">Upgrading</a></p>
-    </div>
-    <div class="selfhost__code">
-      <div class="code"><pre><code># Docker Compose (recommended)
-services:
-  gamma:
-    image: ghcr.io/tim4431/gamma:latest
-    container_name: gamma
-    restart: unless-stopped
-    ports:
-      - "9001:9001"
-    volumes:
-      - gamma-data:/data
-volumes:
-  gamma-data:</code></pre><button class="copy" type="button" data-copy>Copy</button></div>
-    </div>
-  </section>
-
-  <!-- Privacy -->
-  <section class="privacy">
-    <div class="wrap">
-      <p class="eyebrow">Your data stays yours</p>
-      <h2>Runs on your machine. We never see your papers.</h2>
-      <div class="facts">
-        <div><h3>Nothing is collected</h3><p>No telemetry, analytics or crash reports. The only call the app makes on its own is the update check on GitHub.</p></div>
-        <div><h3>Plain storage</h3><p>SQLite and your files in one folder. Copy it anywhere.</p></div>
-        <div><h3>Network only when you ask</h3><p>Paper lookups, translation and AI go out only when you use them, to the service you chose.</p></div>
-        <div><h3>Leave any time</h3><p>Export everything as Markdown, Obsidian, Zotero, PDFs or one zip.</p></div>
-      </div>
-      <p class="privacy__link"><a href="/privacy/">Read the privacy policy →</a></p>
-    </div>
-  </section>
-
-  <!-- FAQ -->
-  <section id="faq" class="faq wrap">
-    <p class="eyebrow">Questions</p>
-    <h2>Frequently asked</h2>
-    <details>
-      <summary>Is Gamma free?</summary>
-      <p>Yes, free and open source, with no account. If you'd rather not run a server, <a href="/pricing">hosted plans</a> start at $2 a month.</p>
-    </details>
-    <details>
-      <summary>Where is my data?</summary>
-      <p>In one folder of SQLite databases and files: on your disk with the desktop app, in the <code>/data</code> volume on a server. Export it as a zip at any time.</p>
-    </details>
-    <details>
-      <summary>Do I need an API key for the AI features?</summary>
-      <p>Only if you want them: an Anthropic or OpenAI key, or a ChatGPT Plus/Pro sign-in. Until then Gamma contacts no AI service.</p>
-    </details>
-    <details>
-      <summary>Can I work with my group?</summary>
-      <p>Yes: shared workspaces with owners, editors and viewers, or a link to one page or folder. Edits show up live for everyone.</p>
-    </details>
-    <details>
-      <summary>What about handwriting and tablets?</summary>
-      <p>Draw with a stylus or the mouse anywhere. On an iPad, the Pencil writes with pressure: in the <a href="https://testflight.apple.com/join/nTmSHDx6">iPad app</a> (a TestFlight beta, which also works with no connection) or after <i>Add to Home Screen</i> from Safari. On Android, the <a href="https://github.com/tim4431/Gamma/releases/latest" data-asset="apk">Android app</a> captures an S Pen, USI or Wacom stylus natively and works with no connection too. See <a href="/docs/#install-as-an-app">Install as an app</a>.</p>
-    </details>
-    <details>
-      <summary>Which platforms?</summary>
-      <p>Windows, macOS and Debian/Ubuntu on the desktop; the iPad through <a href="https://testflight.apple.com/join/nTmSHDx6">TestFlight</a>; Android 10 or later on 64-bit ARM through the <a href="https://github.com/tim4431/Gamma/releases/latest" data-asset="apk">APK on each release</a>, and Google Play once it is listed; Docker (amd64, arm64) or Python 3.11+ and Node 18+ on a server.</p>
-    </details>
   </section>
 
   <!-- Closing -->
-  <section class="closing">
-    <div class="wrap">
+  <section id="download" class="section closing wrap">
+    <div class="split">
       <h2>Start with the next paper you open.</h2>
-      <div class="cta cta--center">
-        <a class="btn btn--primary btn--lg" href="https://github.com/tim4431/Gamma/releases/latest" data-download>
+      <div class="cta">
+        <a class="btn btn--primary btn--lg" href="/download" data-download>
           <svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M10 3v10m0 0 4-4m-4 4-4-4M3 15v2h14v-2"/></svg>
           <span data-download-label>Download</span>
         </a>
-        <a class="btn btn--ghost btn--lg" href="https://github.com/tim4431/Gamma">View on GitHub</a>
       </div>
     </div>
   </section>

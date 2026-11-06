@@ -35,7 +35,7 @@ are in [dev/cloud_accounts.md](../dev/cloud_accounts.md),
 - Not built: anything that takes money, anything that creates a container,
   and any limit on a Gamma server that depends on a plan other than the
   publish cap. The website's FAQ says "no plans, no seats and no account
-  with us". (All of it since built; the FAQ now points to `/pricing`.)
+  with us". (All of it since built; `/pricing` now answers it.)
 
 ## The plans
 

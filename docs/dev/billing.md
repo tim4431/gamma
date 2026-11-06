@@ -417,12 +417,16 @@ Plus and Pro to `https://account.gammapdf.com/plan`. Those links carry
 `data-plan`; `sites/site/site.js` asks `GET /api/plans` ("Plans on sale")
 and turns the link of a plan not on sale into a disabled "Coming soon".
 A call that fails leaves the page as written. The site's CSP lets
-`https://account.gammapdf.com` through `connect-src` for it. The FAQ's "Is Gamma
-free?" says the app is free and open source and points to it. Keep its
-numbers in step with `config.PLAN_LIMITS` and `config.PLAN_PRICES_USD`.
+`https://account.gammapdf.com` through `connect-src` for it. Its note "Is
+Gamma free?" says the app is free and open source and what a plan adds. Keep
+its numbers in step with `config.PLAN_LIMITS` and `config.PLAN_PRICES_USD`.
 Its notes say that payments are not refunded and link to `/terms/`, the
 repository's [TERMS.md](../../TERMS.md) rendered by the site build. The
 footer links there too.
+
+The front page makes no call to the account server, so the *Coming soon*
+label on its Gamma Cloud row is static text, changed by hand when a plan goes
+on sale.
 
 ## Running it locally with Stripe test mode
 

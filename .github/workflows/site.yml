@@ -1,5 +1,6 @@
 # gammapdf.com: build sites/dist from the page sources, the README artwork
-# and demos, and the documents under docs/ rendered as pages, and deploy it
+# and demos, the app's Inter font, and the documents under docs/ rendered as
+# pages, and deploy it
 # as a Cloudflare Worker (static assets only). The site depends on no app
 # code, so it has its own check and its own deploy, independent of
 # check.yml / docker.yml:
@@ -22,6 +23,7 @@ on:
     paths:
       - "sites/**"
       - "docs/**"
+      - "desktop/ui/fonts/**"
       - "frontend/public/media/icons/favicon.svg"
       - "PRIVACY.md"
       - "TERMS.md"
@@ -32,6 +34,7 @@ on:
     paths:
       - "sites/**"
       - "docs/**"
+      - "desktop/ui/fonts/**"
       - "frontend/public/media/icons/favicon.svg"
       - "PRIVACY.md"
       - "TERMS.md"
@@ -60,7 +63,7 @@ jobs:
       - name: Pages assembled
         working-directory: sites
         run: |
-          for f in index.html 404.html pricing.html privacy/index.html terms/index.html delete-account/index.html docs/index.html sitemap.xml _redirects _headers media/favicon.svg; do
+          for f in index.html download.html 404.html pricing.html privacy/index.html terms/index.html delete-account/index.html docs/index.html sitemap.xml _redirects _headers media/favicon.svg media/inter.woff2; do
             test -s "dist/$f" || { echo "::error::dist/$f is missing"; exit 1; }
           done
           if grep -rl '<!--#include' dist --include='*.html'; then

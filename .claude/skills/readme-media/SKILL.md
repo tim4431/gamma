@@ -23,7 +23,9 @@ scripts.
 - After a capture, render, then look at the frames of `<name>-preview.mp4` and
   `check-media.mjs`'s contact sheet, verify the demonstrated action saved,
   update the matching README link (and the site's, `sites/build.mjs` and
-  `sites/site/index.html`), and stop any isolated server you started.
+  `sites/site/index.html`), after ink-import, notes or native-agentic check
+  that the frames at the top of `tools/readme-media/site-cuts.py` still land
+  on the payoff and run it, and stop any isolated server you started.
 - Leave changes in the working tree. Do not commit unless the user asks.
 
 The research behind the style lives in

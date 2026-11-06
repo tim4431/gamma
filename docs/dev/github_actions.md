@@ -28,7 +28,7 @@ Watchtower (the `update-demo-server`, `update-share-host` and
 | `docker` | `docker.yml` | every push to `main` except one that only touches the account server or the website; dispatched by the desktop release with a version; manual dispatch from any branch (a `sha-<short>` image only) | `ghcr.io/tim4431/gamma:sha-<short>` on every run; `:latest` only from `main`; `:<version>` and `:<major.minor>` when dispatched with a version; linux/amd64 + arm64 |
 | `cloud` | `cloud.yml` | a pull request touching `cloud/`; manual dispatch from any branch (`update-account-server` skill) | pass/fail: the account server's pytest; when dispatched and green, `ghcr.io/tim4431/gamma-cloud:latest` + `:sha-<short>` (`cloud/Dockerfile`, amd64) |
 | `fleet` | `fleet.yml` | a pull request or a push to `main` touching `cloud/fleet/`; manual dispatch from any branch | pass/fail: the fleet agent's pytest; on a push to main or a dispatch, when green, `ghcr.io/tim4431/gamma-fleet:latest` + `:sha-<short>` (`cloud/fleet/Dockerfile`, amd64; [hosted.md](hosted.md)) |
-| `site` | `site.yml` | a PR or a push to `main` touching `sites/`, `docs/` (the artwork it copies and the documents it renders), `PRIVACY.md` or `TERMS.md`; manual dispatch from any branch (`build-site` skill) | pass/fail: the site builds with every internal link resolving and its Worker passes a dry run; on a push or dispatch, gammapdf.com: `sites/dist` deployed as a Cloudflare Worker (static assets only; needs `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`; [sites/README.md](../../sites/README.md)) |
+| `site` | `site.yml` | a PR or a push to `main` touching `sites/`, `docs/` (the artwork it copies and the documents it renders), `desktop/ui/fonts/` (the font it copies), `PRIVACY.md` or `TERMS.md`; manual dispatch from any branch (`build-site` skill) | pass/fail: the site builds with every internal link resolving and its Worker passes a dry run; on a push or dispatch, gammapdf.com: `sites/dist` deployed as a Cloudflare Worker (static assets only; needs `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`; [sites/README.md](../../sites/README.md)) |
 | `ipad` | `ipad.yml` | a pull request touching `ipad/`, the server's mobile entry and pins (`backend/gamma_mobile.py`, `backend/requirements-mobile.txt`), `backend/requirements.txt`, the ink fixtures its tests read (`tests/shared/inkwidth.json`, `inkhold.json`), the desktop app's chrome pages the app carries (`desktop/ui/`), `tools/build_frontend_if_needed.mjs` or the workflow; manual dispatch | pass/fail on macOS: the app's Python, wheels, server code and web app prepared (`ipad/scripts/build-python.sh`), the Xcode project generated (XcodeGen), the XCTest suite on an iPad simulator with the embedded server started, an unsigned device build ([ipad/README.md](../../ipad/README.md)) |
 | `android` | `android.yml` | a pull request touching `android/`, the server's mobile entry and pins, `backend/requirements.txt`, the ink fixtures, `desktop/ui/`, `tools/build_frontend_if_needed.mjs` or the workflow; manual dispatch | pass/fail on Ubuntu: the JVM unit tests, an unsigned 64-bit ARM release build checked for 16 KB alignment, and the device tests on an x86_64 Android 16 emulator with the embedded server started |
 | `Assistant plugin package` | `codex-plugin.yml` | PRs touching the plugin or its tooling, or manual dispatch | plugin packaging and installer tests on Windows/macOS/Linux and preview plugin release assets (`plugins-<os>` artifacts) |
@@ -44,7 +44,7 @@ PR → main ──▶ check (pytest, npm test + build, e2e, extension zip)   ←
 PR touching android/ ──▶ android.yml: unit tests, release build, emulator   ← beside check
 PR touching ipad/ ──────▶ ipad.yml: simulator tests, device build           ← beside check
 merge ───────▶ docker.yml  ghcr :latest                              ← every merge (not cloud/- or sites/-only ones)
-         └──▶ site.yml    check → gammapdf.com                      ← only when sites/, docs/, PRIVACY.md or TERMS.md changed
+         └──▶ site.yml    check → gammapdf.com                      ← only when sites/, docs/, desktop/ui/fonts/, PRIVACY.md or TERMS.md changed
          └──▶ fleet.yml   test → ghcr gamma-fleet :latest           ← only when cloud/fleet/ changed
 PR touching cloud/ ──▶ cloud.yml: test                            ← instead of check, for cloud/-only PRs
 PR touching sites/ ──▶ site.yml: check                            ← instead of check, for sites/-only PRs
@@ -594,13 +594,14 @@ dispatch, it needs the file on `main` once before the first run.
 ## `site.yml`
 
 gammapdf.com ([sites/README.md](../../sites/README.md)); it depends on no
-app code, only on `sites/`, `PRIVACY.md`, `TERMS.md` and `docs/`: the artwork
-the build copies and the user guide it renders as a page, so a change under
-`docs/` on `main` deploys the site.
-`check`: `npm ci`, `node build.mjs --strict` (fails on an internal link or
-anchor that resolves to nothing), the key pages present in `dist/` (index,
-404, pricing, privacy, terms, the user guide, the sitemap, `_redirects`,
-`_headers`, the favicon), no `<!--#include` left unexpanded, and `wrangler
+app code, only on `sites/`, `PRIVACY.md`, `TERMS.md`, `desktop/ui/fonts/` (the
+Inter file the pages use) and `docs/`: the artwork the build copies and the
+user guide it renders as a page, so a change under `docs/` on `main` deploys
+the site.
+`check`: `npm ci`, `node build.mjs --strict` (fails on an internal link,
+picture or anchor that resolves to nothing), the key pages present in `dist/` (index,
+download, 404, pricing, privacy, terms, the user guide, the sitemap,
+`_redirects`, `_headers`, the favicon, the font), no `<!--#include` left unexpanded, and `wrangler
 deploy --dry-run` (bundles the Worker and reads `wrangler.jsonc` — no
 credentials). Runs on a PR touching those paths and first on every deploy. `deploy` (a push to `main` touching those paths, or
 a dispatch from any branch — the `build-site` skill, `gh workflow run

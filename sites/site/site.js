@@ -1,8 +1,10 @@
 // gammapdf.com — the little behaviour the page needs. No dependencies.
 //  - the mobile menu button
-//  - "Download for <this OS>" on the primary buttons
+//  - "Download for <this OS>" on the primary buttons, and on the download
+//    page the visitor's card marked and moved first
+//  - the front page's clips: a still until one comes near, then the animation
 //  - copy buttons on code blocks
-//  - the latest release: version, per-OS asset links, star count (one call
+//  - the latest release: version, per-OS asset links, star count (two calls
 //    to api.github.com; every element keeps a working fallback link)
 //  - on the pricing page, "Coming soon" for a plan Gamma Cloud does not sell
 //    right now (one call to its /api/plans; a failure leaves the page as written)
@@ -18,18 +20,27 @@
     const open = nav.classList.toggle('nav--open');
     menu.setAttribute('aria-expanded', String(open));
   });
-  nav?.addEventListener('click', e => {
-    if (e.target.closest('a')) { nav.classList.remove('nav--open'); menu?.setAttribute('aria-expanded', 'false'); }
+  const closeMenu = () => { nav?.classList.remove('nav--open'); menu?.setAttribute('aria-expanded', 'false'); };
+  nav?.addEventListener('click', e => { if (e.target.closest('a')) closeMenu(); });
+  // Escape, a click elsewhere, or focus leaving the header closes it too.
+  addEventListener('keydown', e => {
+    if (e.key === 'Escape' && nav?.classList.contains('nav--open')) { closeMenu(); menu.focus(); }
+  });
+  addEventListener('click', e => { if (!e.target.closest('.top')) closeMenu(); });
+  document.querySelector('.top')?.addEventListener('focusout', e => {
+    if (e.relatedTarget && !e.relatedTarget.closest('.top')) closeMenu();
   });
 
   // OS detection — the "platform" hints first, the user agent as a fallback.
-  // An iPad's Safari says it is a Mac; its touch points give it away. Android
-  // says it is Linux ("Linux; Android", platform "Linux aarch64"), so it is
-  // asked about first.
+  // An iPhone has no build: it keeps the plain "Download" of /download, and is
+  // ruled out first because it says "like Mac OS X". An iPad's Safari says it
+  // is a Mac; its touch points give it away. Android says it is Linux ("Linux;
+  // Android", platform "Linux aarch64"), so it is asked about before those.
   const ua = navigator.userAgent;
   const platform = (navigator.userAgentData?.platform || navigator.platform || '').toLowerCase();
   const mac = /mac/.test(platform) || /Mac OS X/.test(ua);
-  const os = /iPad/.test(ua) || (mac && navigator.maxTouchPoints > 1) ? 'ipad'
+  const os = /iPhone|iPod/.test(ua) ? null
+    : /iPad/.test(ua) || (mac && navigator.maxTouchPoints > 1) ? 'ipad'
     : /android/.test(platform) || /Android/.test(ua) ? 'android'
     : /win/.test(platform) || /Windows/.test(ua) ? 'windows'
     : mac ? 'macos'
@@ -38,22 +49,27 @@
   const label = { windows: 'Download for Windows', macos: 'Download for macOS', linux: 'Download for Linux', ipad: 'Get the iPad beta', android: 'Download for Android' };
   const name = () => document.querySelectorAll('[data-download-label]').forEach(el => { el.textContent = label[os]; });
   // Android is named only once a release carries its APK (below): until
-  // then the buttons stay the plain "Download" of the releases page.
+  // then the buttons stay the plain "Download" of /download.
   if (os && os !== 'android') name();
   if (os) {
     const fixed = { windows: STORE, ipad: TESTFLIGHT }[os];
     if (fixed) document.querySelectorAll('[data-download]').forEach(a => { a.href = fixed; });
-    document.querySelector(`.dl__card[data-os="${os}"]`)?.classList.add('dl__card--mine');
+    // First in the DOM rather than by CSS order, so the keyboard follows the eye.
+    const card = document.querySelector(`.dl__card[data-os="${os}"]`);
+    if (card) { card.classList.add('dl__card--mine'); card.parentElement.prepend(card); }
   }
 
-  // The Store badge is the one external image; fall back to a plain button
-  // when it can't load (offline, blocked).
-  const badge = document.querySelector('[data-store-badge]');
-  const badgeFailed = () => badge.closest('.dl__card')?.classList.add('store--failed');
-  if (badge) {
-    badge.addEventListener('error', badgeFailed);
-    if (badge.complete && badge.naturalWidth === 0) badgeFailed();
-  }
+  // Clips: the still until one comes near, so a visit that stops at the top
+  // never fetches them. Under reduced motion the <source> keeps the still,
+  // and a clip that fails to load goes back to it.
+  const clips = new IntersectionObserver(entries => entries.forEach(({ isIntersecting, target }) => {
+    if (!isIntersecting) return;
+    clips.unobserve(target);
+    const still = target.src;
+    target.addEventListener('error', () => { target.src = still; }, { once: true });
+    target.src = target.dataset.clip;
+  }), { rootMargin: '200px' });
+  document.querySelectorAll('img[data-clip]').forEach(img => clips.observe(img));
 
   // Copy buttons
   document.querySelectorAll('[data-copy]').forEach(btn => {
@@ -110,7 +126,7 @@
     .then(r => (r.ok ? r.json() : Promise.reject(r.status)))
     .then(repo => {
       const n = repo.stargazers_count;
-      if (!Number.isFinite(n) || n < 50) return;
+      if (!Number.isFinite(n)) return;
       document.querySelectorAll('[data-stars]').forEach(el => { el.textContent = fmt(n); el.hidden = false; });
     })
     .catch(() => {});
@@ -131,12 +147,6 @@
       .catch(() => {});
   }
 })();
-
-// The documentation sidebar starts folded on a narrow screen (it is written
-// open so it shows without this script).
-if (matchMedia('(max-width: 900px)').matches) {
-  document.querySelectorAll('details.docnav').forEach(d => { d.open = false; });
-}
 
 // A page's pictures carry no size, so the browser's own jump to #anchor can
 // land above the heading once they have loaded: jump again when they have.

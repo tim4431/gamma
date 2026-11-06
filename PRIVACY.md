@@ -1,14 +1,14 @@
 # Gamma privacy policy
 
-_Last updated: 2026-11-04._
+_Last updated: 2026-11-06._
 
 Gamma is an open-source PDF annotation and note-taking application
 ([github.com/tim4431/Gamma](https://github.com/tim4431/Gamma)). This
 policy covers the Gamma desktop app (Windows, macOS, Linux, including the
 Microsoft Store edition "Gamma PDF"), the Gamma apps for iPad and Android
 (including the Google Play edition), the self-hosted Gamma server, the
-Gamma Connector browser extension, and Gamma Cloud: the optional account
-at account.gammapdf.com and the paid plans that add a library we keep
+Gamma Connector browser extension, the gammapdf.com website, and Gamma
+Cloud: the optional account at account.gammapdf.com and the paid plans that add a library we keep
 running for you. It is published by Gamma PDF, the developer of Gamma
 and of its store editions, referred to below as "we".
 
@@ -131,6 +131,21 @@ needs them. What is sent is limited to what the feature requires:
 
 Each of these services receives your IP address as part of the request,
 as any web request does. Gamma adds no identifiers of its own.
+
+## The website
+
+gammapdf.com sets no cookies and runs no analytics. Its pages, fonts and
+pictures come from the site itself, served through Cloudflare. Your browser
+makes two other kinds of request from its pages:
+
+- **GitHub** (api.github.com), from every page: the latest release, for the
+  download links and the version, and the repository's star count.
+- **Gamma Cloud** (account.gammapdf.com), from the pricing page only: which
+  plans are on sale.
+
+Each of these receives your IP address as part of the request, as any web
+request does. The site adds no identifiers of its own, and it works without
+these requests.
 
 ## Gamma Cloud
 

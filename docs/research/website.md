@@ -64,8 +64,21 @@ October 2026 it was cut to about 1,100: one sentence or a few short bullets
 per feature, as on the surveyed sites, with the detail left to the README and
 the guide. The hero's keyword chips went with it.
 
+In November 2026 the front page stopped following the README feature by
+feature. At 1920×911 it still ran 13.2 screens, with 989 visible words, 49
+links and 16 images in its main content, most of it repeating what the README
+and the guide list in full. The three pillars, the ten feature rows with their
+Guide lines, the Star on GitHub button with its arrow, the platform and
+self-hosting sections, the data-ownership section and the FAQ went. The page
+now tells three stories with a clip each, then six text tiles, a band on who
+keeps the data and a closing call to action: 6.0 screens, 294 words, 9 links
+and 4 images. The platform and self-hosting sections became the `/download`
+page, with two of the FAQ's questions, and "Is Gamma free?" became a note on
+`/pricing`.
+
 Tone: lead with what the reader does, state privacy as fact, no adjectives
 for their own sake. Testimonials, press and community counts were left out:
 there is nothing honest to show there yet, and the survey found them optional.
-The GitHub star count is fetched live and only shown once it is large enough
-to say something.
+The GitHub star count is fetched live. At first it showed only once it was
+large enough to say something; since November 2026 the header shows it
+whenever the API answers.
