@@ -196,7 +196,7 @@ export async function quickOpenScenarios(env) {
       await page.keyboard.press("Escape");
       await row.click();
       await page.keyboard.press("Delete");
-      const confirm = page.locator(".confirmModal", { hasText: "Move this page to Recently deleted?" });
+      const confirm = page.locator(".confirmModal", { hasText: "Move \"Quantum correction\" to Recently deleted?" });
       await confirm.waitFor();
       await confirm.getByRole("button", { name: "Cancel", exact: true }).click();
       await row.waitFor();

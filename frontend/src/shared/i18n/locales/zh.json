@@ -2347,8 +2347,6 @@
   "Move these {count} pages and the {n} page inside them to Recently deleted? You can restore them from there for 30 days.": "把这 {count} 个页面及其中的 {n} 个页面移到“最近删除”？30 天内可以在那里恢复。",
   "Move these {n} pages to Recently deleted? You can restore them from there for 30 days.": "把这 {n} 个页面移到“最近删除”？30 天内可以在那里恢复。",
   "Move this block and its sub-blocks to the end of another page": "将此块及其子块移动到另一个页面的末尾",
-  "Move this page and the {n} page inside it to Recently deleted? You can restore them from there for 30 days.": "把此页面及其中的 {n} 个页面移到“最近删除”？30 天内可以在那里恢复。",
-  "Move this page to Recently deleted? You can restore it from there for 30 days.": "把此页面移到“最近删除”？30 天内可以在那里恢复。",
   "Move to": "移动到",
   "Move to a selection on the PDF": "移到 PDF 上的选区",
   "Move to a selection…": "移到选区…",

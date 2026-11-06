@@ -231,6 +231,7 @@ import {
   welcomePageOf,
   pagePathLabel,
   pageDescendants,
+  deleteConfirm,
   topPageOf,
   friendlyApiError,
   attachmentFile,
@@ -1384,19 +1385,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const allWent = (result) => !result.stopped && !result.failed.length;
 
   // The pages inside a page go to Recently deleted with it (the server's
-  // cascade), so the confirmation counts them and their tabs close too.
+  // cascade): the confirmation counts them (deleteConfirm) and their tabs
+  // close too.
   function deletePages(ids) {
-    const inside = pageDescendants(pageBlocks, ids);
-    const n = inside.length;
+    const { title, message, inside } = deleteConfirm(pageBlocks, ids);
     setConfirmBox({
-      title: ids.length === 1 ? t("Delete page") : t("Delete {n} pages", { n: ids.length }),
-      message: ids.length === 1
-        ? (n ? tn("Move this page and the {n} page inside it to Recently deleted? You can restore them from there for 30 days.",
-          "Move this page and the {n} pages inside it to Recently deleted? You can restore them from there for 30 days.", n)
-          : t("Move this page to Recently deleted? You can restore it from there for 30 days."))
-        : n ? tn("Move these {count} pages and the {n} page inside them to Recently deleted? You can restore them from there for 30 days.",
-          "Move these {count} pages and the {n} pages inside them to Recently deleted? You can restore them from there for 30 days.", n, { count: ids.length })
-        : t("Move these {n} pages to Recently deleted? You can restore them from there for 30 days.", { n: ids.length }),
+      title,
+      message,
       confirmLabel: t("Delete"),
       danger: true,
       onConfirm: async () => {
@@ -1414,14 +1409,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // it, whose tabs close too and are no place to go back to.
   function deleteOpenPage() {
     const id = focusedBlockId;
-    const inside = pageDescendants(pageBlocks, [id]);
-    const page = pageTitle || t("this page");
+    const { title, message, inside } = deleteConfirm(pageBlocks, [id], pageTitle);
     setConfirmBox({
-      title: T("Delete page"),
-      message: inside.length
-        ? tn("Move \"{page}\" and the {n} page inside it to Recently deleted? You can restore them from there for 30 days.",
-          "Move \"{page}\" and the {n} pages inside it to Recently deleted? You can restore them from there for 30 days.", inside.length, { page })
-        : t("Move \"{page}\" to Recently deleted? You can restore it from there for 30 days.", { page }),
+      title,
+      message,
       confirmLabel: t("Delete"),
       danger: true,
       onConfirm: async () => {
