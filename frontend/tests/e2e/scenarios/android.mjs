@@ -8,7 +8,8 @@
 // declined claim left to the page, the hold and its tick, the pen's two
 // buttons; the Stylus settings and their search, gated by the gestures the
 // host forwards, and no Lock angle without a barrel roll; the saves the app
-// takes (a blob in chunks, a URL by itself) and a refused one, with no
+// takes (a blob in chunks, a URL by itself, a backup's under the server's
+// name) and a refused one, with no
 // browser download; a file the app was given; the shell's bar; no folder
 // picker; the server inside the app on Settings › Server; Gamma Cloud in
 // Account & sync with no Open account and a link to the page on deleting
@@ -359,6 +360,33 @@ export async function androidScenarios(env) {
       assertEq(JSON.stringify(downloads), "[]", "no browser download");
       assertNoProblems(page);
     } finally { await ctx.close(); }
+  });
+
+  await step("android shell: a workspace backup's Download goes to the app under the name a browser saves it as", async () => {
+    const snap = await alice.api(`/api/workspaces/${alice.ws}/backups`, { method: "POST", body: { label: "e2e-android", uploads: false } });
+    const listed = (await alice.api(`/api/workspaces/${alice.ws}/backups`)).backups.find((b) => b.name === snap.name);
+    const { ctx, page } = await androidPage(`${server.base}/?ws=${alice.ws}`);
+    try {
+      await page.waitForSelector(".folderNewBtn");
+      await page.locator('[data-guide="header.account"]').click();
+      await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
+      await page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name: "Backups", exact: true }).click();
+      const row = page.locator(".aiProvRow", { hasText: "e2e-android" });
+      await row.getByRole("button", { name: "Download", exact: true }).click();
+      const [save] = await until(async () => {
+        const all = await page.evaluate(() => window.e2eSaved);
+        return all.length ? all : null;
+      }, { what: "the backup handed to the app" });
+      assert(save.url.endsWith(`/api/workspaces/${alice.ws}/backups/${snap.name}/download`), `the backup's download: ${save.url}`);
+      assertEq(save.name, listed.filename, "named as the listing names it");
+      const served = await fetch(save.url, { headers: alice.headers() });
+      assert((served.headers.get("content-disposition") || "").includes(`filename="${listed.filename}"`),
+        `the name the server's Content-Disposition gives: ${served.headers.get("content-disposition")}`);
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+      await alice.api(`/api/workspaces/${alice.ws}/backups/${snap.name}`, { method: "DELETE" });
+    }
   });
 
   await step("android shell: a PDF the app was given becomes its page, read over the port in chunks and let go", async () => {

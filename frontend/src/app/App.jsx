@@ -1,6 +1,9 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
+import { TabGroups } from "../workspace/TabGroups";
+import PagePane from "../workspace/PagePane";
+import { activate as activateGroupIn, activeGroup, groupById, groupOf, groupsOf, isSingle, joinAll, moveTab, normalizeLayout, reconcile as reconcileGroups, removeGroup, removeTab, reorderGroup, resizeSplit, singleLayout, splitGroup, tabOrder } from "../workspace/tabGroups.js";
 import PdfViewer, { preloadPdfEngine } from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
 import { briefRequest, chunkRequest, endTranslations, forgetTranslation, useTranslateJobs } from "./translateClient.js";
@@ -78,7 +81,7 @@ import {
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoreIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon,
   RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
   ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon, MicIcon, MessageSquareIcon, BellIcon,
-  PanelTopIcon, LocateIcon, TextSearchIcon, CloudDownloadIcon, BracesIcon,
+  PanelTopIcon, LocateIcon, TextSearchIcon, CloudDownloadIcon, BracesIcon, SplitColumnsIcon, SplitRowsIcon, OnePaneIcon,
 } from "../shared/ui/Icons";
 
 
@@ -231,6 +234,7 @@ import {
   welcomePageOf,
   pagePathLabel,
   pageDescendants,
+  deleteConfirm,
   topPageOf,
   friendlyApiError,
   attachmentFile,
@@ -1018,6 +1022,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       }
       prefsUserRef.current = "";
       setOpenTabs([]);
+      setTabLayout(singleLayout([]));
       setRecentViews([]);
       pageSnapsRef.current = {};
       setPageSnaps({});
@@ -1037,6 +1042,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (!Array.isArray(localTabs)) localTabs = [];
     tabsReadRef.current.add(localTabs);
     setOpenTabs(localTabs);
+    let localLayout = null;
+    try { localLayout = JSON.parse(localStorage.getItem(`gamma-tab-layout:${u}`) || "null"); } catch {}
+    setTabLayout(normalizeLayout(localLayout, localTabs.map((tab) => tab.id)));
     let localRecents = [];
     try { localRecents = JSON.parse(localStorage.getItem(`gamma-recent-views:${u}`) || "[]"); } catch {}
     if (!Array.isArray(localRecents)) localRecents = [];
@@ -1384,19 +1392,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const allWent = (result) => !result.stopped && !result.failed.length;
 
   // The pages inside a page go to Recently deleted with it (the server's
-  // cascade), so the confirmation counts them and their tabs close too.
+  // cascade): the confirmation counts them (deleteConfirm) and their tabs
+  // close too.
   function deletePages(ids) {
-    const inside = pageDescendants(pageBlocks, ids);
-    const n = inside.length;
+    const { title, message, inside } = deleteConfirm(pageBlocks, ids);
     setConfirmBox({
-      title: ids.length === 1 ? t("Delete page") : t("Delete {n} pages", { n: ids.length }),
-      message: ids.length === 1
-        ? (n ? tn("Move this page and the {n} page inside it to Recently deleted? You can restore them from there for 30 days.",
-          "Move this page and the {n} pages inside it to Recently deleted? You can restore them from there for 30 days.", n)
-          : t("Move this page to Recently deleted? You can restore it from there for 30 days."))
-        : n ? tn("Move these {count} pages and the {n} page inside them to Recently deleted? You can restore them from there for 30 days.",
-          "Move these {count} pages and the {n} pages inside them to Recently deleted? You can restore them from there for 30 days.", n, { count: ids.length })
-        : t("Move these {n} pages to Recently deleted? You can restore them from there for 30 days.", { n: ids.length }),
+      title,
+      message,
       confirmLabel: t("Delete"),
       danger: true,
       onConfirm: async () => {
@@ -1414,14 +1416,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // it, whose tabs close too and are no place to go back to.
   function deleteOpenPage() {
     const id = focusedBlockId;
-    const inside = pageDescendants(pageBlocks, [id]);
-    const page = pageTitle || t("this page");
+    const { title, message, inside } = deleteConfirm(pageBlocks, [id], pageTitle);
     setConfirmBox({
-      title: T("Delete page"),
-      message: inside.length
-        ? tn("Move \"{page}\" and the {n} page inside it to Recently deleted? You can restore them from there for 30 days.",
-          "Move \"{page}\" and the {n} pages inside it to Recently deleted? You can restore them from there for 30 days.", inside.length, { page })
-        : t("Move \"{page}\" to Recently deleted? You can restore it from there for 30 days.", { page }),
+      title,
+      message,
       confirmLabel: t("Delete"),
       danger: true,
       onConfirm: async () => {
@@ -2114,6 +2112,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Persistence happens inside the updater (not an effect) so a user switch
   // can't race an in-flight save into the wrong key.
   const [openTabs, setOpenTabs] = useState([]);
+  // The tabs' arrangement into groups side by side (workspace/tabGroups.js,
+  // docs/dev/tab_groups.md): this browser's, kept per account and workspace
+  // like the dock layout, while the tabs themselves stay the synced list
+  // above. One group is live and holds the page on screen in the work area;
+  // every other shows its page to read (workspace/PagePane.jsx). Set and
+  // kept in one step, as the tabs are, so an account switch cannot race a
+  // write into the wrong key.
+  const [tabLayout, setTabLayout] = useState(() => singleLayout([]));
+  const tabLayoutRef = useRef(tabLayout);
+  tabLayoutRef.current = tabLayout;
+  function keepTabLayout(next) {
+    tabLayoutRef.current = next;
+    setTabLayout(next);
+    const u = prefsUserRef.current;
+    if (u) { try { localStorage.setItem(`gamma-tab-layout:${u}`, JSON.stringify(next)); } catch {} }
+  }
   // Tabs read from this browser's cache or the server's copy: the strip
   // takes them without moving (OpenTabs `still`).
   const tabsReadRef = useRef(new WeakSet());
@@ -2194,6 +2208,55 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function toggleTabPinned(id) {
     updateTabs((prev) => prev.map((t) => (t.id === id ? { ...t, pinned: t.pinned ? undefined : true } : t)));
   }
+  // Every change of the arrangement: the layout is kept, the synced tabs
+  // take its order, and the page on screen follows the live group's active
+  // tab (the library when it has none).
+  function applyLayout(next) {
+    const prev = tabLayoutRef.current;
+    if (next === prev) return;
+    keepTabLayout(next);
+    const order = tabOrder(next);
+    if (order.join("\n") !== tabOrder(prev).join("\n")) {
+      updateTabs((tabs) => [...tabs].sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id)));
+    }
+    const want = activeGroup(next)?.active || "";
+    if (want === (tabPick || focusedBlockId || "")) return;
+    if (want) selectTab(want);
+    else if (focusedBlockId) goHome(true, true);
+  }
+  // A group's tabs as its strip shows them, pinned first.
+  const groupTabs = (group) => orderTabs(group.tabs.map((id) => openTabs.find((tab) => tab.id === id)).filter(Boolean));
+  const activateTabGroup = (groupId, tabId) => applyLayout(activateGroupIn(tabLayoutRef.current, groupId, tabId));
+  const moveTabToGroup = (tabId, groupId, index) => applyLayout(moveTab(tabLayoutRef.current, tabId, groupId, index));
+  const splitTabGroup = (groupId, side, tabId) => applyLayout(splitGroup(tabLayoutRef.current, groupId, side, tabId));
+  // A tab into a group of its own beside the one it is in: the tab menu's
+  // and the palette's Split right and Split down. The only tab of a group
+  // opens an empty group beside it instead, where the library shows to
+  // pick that group's page.
+  const splitTab = (tabId, side) => {
+    const g = groupOf(tabLayoutRef.current, tabId);
+    if (g) splitTabGroup(g.id, side, g.tabs.length === 1 ? null : tabId);
+  };
+  const joinTabGroups = () => applyLayout(joinAll(tabLayoutRef.current));
+  const closeTabGroup = (groupId) => applyLayout(removeGroup(tabLayoutRef.current, groupId));
+  const resizeTabSplit = (splitId, sizes) => {
+    const next = resizeSplit(tabLayoutRef.current, splitId, sizes);
+    if (next !== tabLayoutRef.current) keepTabLayout(next);
+  };
+  // A strip's reorder: the dragged tab takes the target's place among the
+  // tabs as shown; dragging never crosses the pinned/unpinned boundary.
+  const reorderGroupTabs = (groupId, dragged, target) => {
+    const group = groupById(tabLayoutRef.current, groupId);
+    if (!group) return;
+    const shown = groupTabs(group);
+    const from = shown.findIndex((tab) => tab.id === dragged), to = shown.findIndex((tab) => tab.id === target);
+    if (from < 0 || to < 0 || from === to || !!shown[from].pinned !== !!shown[to].pinned) return;
+    const next = [...shown];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    applyLayout(reorderGroup(tabLayoutRef.current, groupId, next.map((tab) => tab.id)));
+  };
+  const paneScroll = useCallback((pageId, entry) => { tabScrollRef.current[pageId] = entry; }, []);
   // Last-read positions, synced like tabs so "jump to last read" follows the
   // account across browsers: blockId -> {page, at}. Per-paper entries merged
   // newest-wins, so two open windows only conflict when reading the SAME
@@ -2550,6 +2613,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // it selected from the press's own commit, while the page it leaves stays
   // on screen until the new one's tree lands (openBlock). "" when none is.
   const [tabPick, setTabPick] = useState("");
+  // The arrangement follows the tabs and the page on screen: a tab opened
+  // lands in the live group, one closed leaves its group, and the page on
+  // screen (the one a press picked, while it opens) is its group's active
+  // tab, with that group live.
+  useEffect(() => {
+    if (shareMode || !prefsUserRef.current) return;
+    const next = reconcileGroups(tabLayoutRef.current, openTabs.map((tab) => tab.id), tabPick || focusedBlockId || null);
+    if (next !== tabLayoutRef.current) keepTabLayout(next);
+  }, [openTabs, focusedBlockId, tabPick, shareMode]); // eslint-disable-line react-hooks/exhaustive-deps
   // The latest openBlock call: an earlier open landing after it neither
   // posts nor takes down the "Opening…" of the one the reader is waiting on.
   const openSeqRef = useRef(0);
@@ -6554,8 +6626,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // taken back, and what is on screen stays.
     if (tabPick && id === tabPick && id !== focusedBlockId) { dropTabPick(); return; }
     if (id !== focusedBlockId) return;
-    const entry = [...tabHistoryRef.current].reverse().find((entry) =>
-      !entry.blockId || next.some((tab) => tab.id === entry.blockId));
+    // What shows next is found within the tab's group (docs/dev/tab_groups.md):
+    // the latest page still open there or library view in the tab history,
+    // else the group's neighbouring tab. A group emptied by the close goes,
+    // and the neighbouring group's page comes forward.
+    const group = groupOf(tabLayoutRef.current, id);
+    const stillHere = (blockId) => !!group?.tabs.includes(blockId) && next.some((tab) => tab.id === blockId);
+    const entry = [...tabHistoryRef.current].reverse().find((entry) => !entry.blockId || stillHere(entry.blockId));
+    const arranged = removeTab(tabLayoutRef.current, id, { prefer: entry?.blockId || null });
+    keepTabLayout(arranged);
+    const live = activeGroup(arranged);
+    if (group && live?.id !== group.id) {
+      return live?.active ? selectTab(live.active) : goHome(refresh, true);
+    }
     if (entry?.blockId) {
       return selectTab(entry.blockId);
     } else if (entry) {
@@ -6572,8 +6655,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // new slot would open with), halved to the drop position when other
   // windows already live there. The drag's preview, and the guide's scene
   // of that drag (services.dockZone).
+  // The frame the open page's windows live in: the live group's body, the
+  // whole work area with one group.
+  const benchRect = () => (document.querySelector(".tabGroup.live .tabGroupBody") || document.querySelector(".workArea"))?.getBoundingClientRect();
   function dockPreviewRect(winId, zone) {
-    const wa = document.querySelector(".workArea")?.getBoundingClientRect();
+    const wa = benchRect();
     if (!wa) return null;
     const slotEl = document.querySelector(`[data-panel-id="slot-${zone.side}"]`);
     let r;
@@ -6612,11 +6698,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     try { target.setPointerCapture(pointerId); } catch (_) {}
 
     function zoneFor(ev) {
-      if (ev.clientY > window.innerHeight * 0.65) {
-        return { side: "bottom", index: ev.clientX < window.innerWidth / 2 ? 0 : 99 };
-      }
-      const side = ev.clientX < window.innerWidth / 2 ? "left" : "right";
-      return { side, index: ev.clientY < window.innerHeight * 0.35 ? 0 : 99 };
+      const b = benchRect() || { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+      const fx = (ev.clientX - b.left) / (b.width || 1), fy = (ev.clientY - b.top) / (b.height || 1);
+      if (fy > 0.65) return { side: "bottom", index: fx < 0.5 ? 0 : 99 };
+      const side = fx < 0.5 ? "left" : "right";
+      return { side, index: fy < 0.35 ? 0 : 99 };
     }
     // The preview (an App render) changes only when the zone does.
     function onMove(ev) {
@@ -8114,6 +8200,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   bindingsRef.current = keybindings;
   appCmdRef.current = {
     shareMode, homeMode, readOnly, hasPage: !!focusedBlockId, hasPdf: !!pdfUrl && !homeMode, commentsOn,
+    phone: isPhone, groups: groupsOf(tabLayout).length,
+    splitTab: (side) => { if (focusedBlockId) splitTab(focusedBlockId, side); },
+    joinGroups: joinTabGroups,
     search: (all) => {
       if (!all) {
         const homeFind = document.querySelector(".homeFindInput");
@@ -12077,29 +12166,24 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 <span className="navBackBadge"><span key={Math.min(navStackLen, 30)} className="countIn">{Math.min(navStackLen, 30)}</span></span>
               </button>
             ) : null}
-            <OpenTabs
-              tabs={openTabs}
-              activeId={tabPick || focusedBlockId}
-              still={tabsReadRef.current.has(openTabs)}
-              kindOf={tabKindOf}
-              menuOpen={openPopover === "tabs"}
-              onMenuOpenChange={(open) => setOpenPopover(open ? "tabs" : null)}
-              onReorder={(dragged, target) => updateTabs((prev) => {
-                const from = prev.findIndex((tab) => tab.id === dragged);
-                const to = prev.findIndex((tab) => tab.id === target);
-                if (from < 0 || to < 0 || from === to) return prev;
-                // Dragging never crosses the pinned/unpinned boundary.
-                if (!!prev[from].pinned !== !!prev[to].pinned) return prev;
-                const next = [...prev];
-                const [moved] = next.splice(from, 1);
-                next.splice(to, 0, moved);
-                return next;
-              })}
-              onOpen={selectTab}
-              onClose={closeTab}
-              onTogglePin={toggleTabPinned}
-              onContext={(tab, x, y) => { setTabMenu({ id: tab.id, pinned: !!tab.pinned, x, y }); guideEvents.emit("tab.menu"); }}
-            />
+            {/* With one group the strip is here, as always; split into
+                groups, each group's frame carries its own (TabGroups). */}
+            {isPhone || isSingle(tabLayout) ? (
+              <OpenTabs
+                groupId={activeGroup(tabLayout)?.id}
+                tabs={isPhone ? openTabs : groupTabs(activeGroup(tabLayout))}
+                activeId={tabPick || focusedBlockId}
+                still={tabsReadRef.current.has(openTabs)}
+                kindOf={tabKindOf}
+                menuOpen={openPopover === "tabs"}
+                onMenuOpenChange={(open) => setOpenPopover(open ? "tabs" : null)}
+                onReorder={(dragged, target) => reorderGroupTabs(activeGroup(tabLayout)?.id, dragged, target)}
+                onOpen={selectTab}
+                onClose={closeTab}
+                onTogglePin={toggleTabPinned}
+                onContext={(tab, x, y) => { setTabMenu({ id: tab.id, pinned: !!tab.pinned, x, y }); guideEvents.emit("tab.menu"); }}
+              />
+            ) : <div className="tabStrip" aria-hidden="true" />}
             {isPhone ? null : topbarActions}
           </div>
           {statusBarVisible ? <div className="status">{status}</div> : null}
@@ -12317,6 +12401,29 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       ) : null}
 
       <div className="workArea">
+      <TabGroups layout={tabLayout} single={isPhone} tabsOf={groupTabs} activeTabId={tabPick || focusedBlockId}
+        onActivate={activateTabGroup} onMoveTab={moveTabToGroup} onSplit={splitTabGroup} onResize={resizeTabSplit}
+        sashMargins={SASH_MARGINS}
+        strip={{
+          still: tabsReadRef.current.has(openTabs), kindOf: tabKindOf,
+          menuOpenFor: typeof openPopover === "string" && openPopover.startsWith("tabs:") ? openPopover.slice(5) : null,
+          onMenuOpenChange: (groupId) => setOpenPopover(groupId ? `tabs:${groupId}` : null),
+          onReorder: reorderGroupTabs, onClose: closeTab, onTogglePin: toggleTabPinned,
+          onContext: (tab, x, y) => { setTabMenu({ id: tab.id, pinned: !!tab.pinned, x, y }); guideEvents.emit("tab.menu"); },
+        }}
+        renderPane={(group) => (group.active ? (
+          <PagePane key={group.active} pageId={group.active} title={openTabs.find((tab) => tab.id === group.active)?.title}
+            overlay={(id, children) => collabRef.current.overlay(id, children)}
+            scroll={tabScrollRef.current[group.active]} onScroll={paneScroll}
+            onActivate={() => activateTabGroup(group.id)} />
+        ) : (
+          <div className="pagePaneEmpty">
+            <p>{t("Nothing is open here. Drag a tab in, or open a page from the library.")}</p>
+            <button type="button" className="uiBtn sm" onClick={() => activateTabGroup(group.id)}>{t("Open a page here")}</button>
+            <button type="button" className="uiBtn sm" onClick={() => closeTabGroup(group.id)}>{t("Close this group")}</button>
+          </div>
+        ))}
+        live={(
       <PanelGroup direction="horizontal" autoSaveId="gamma-work-h" ref={(h) => { panelGroupRefs.current["work-h"] = h; }}>
       {slotWins("left").length ? (
         <>
@@ -12562,6 +12669,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         </>
       ) : null}
       </PanelGroup>
+        )} />
       {isPhone && winVisible.notes && (phonePanel === "notes" || phoneSeen.current.notes) ? (
         <div className={`phonePanel ${phonePanel === "notes" ? "" : "phonePanelHidden"}`}>{renderWindow("notes")}</div>
       ) : null}
@@ -13211,6 +13319,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             onClick={() => { setTabMenu(null); openProps(tabMenu.id, null, { at: { x: tabMenu.x, y: tabMenu.y } }); }}>
             {t("Page properties")}
           </MenuItem>
+          {!isPhone ? (
+            // Tab groups (docs/dev/tab_groups.md): this tab into a group of its
+            // own beside its group (the only tab of a group: an empty group
+            // beside it), and every tab back into one group.
+            <>
+              <MenuDivider />
+              <MenuItem icon={SplitColumnsIcon} title={t("Show this page in a group of its own, to the right")}
+                onClick={() => { setTabMenu(null); splitTab(tabMenu.id, "right"); }}>{t("Split right")}</MenuItem>
+              <MenuItem icon={SplitRowsIcon} title={t("Show this page in a group of its own, below")}
+                onClick={() => { setTabMenu(null); splitTab(tabMenu.id, "bottom"); }}>{t("Split down")}</MenuItem>
+              {!isSingle(tabLayout) ? (
+                <MenuItem icon={OnePaneIcon} title={t("Every tab back in one group")}
+                  onClick={() => { setTabMenu(null); joinTabGroups(); }}>{t("Join tab groups")}</MenuItem>
+              ) : null}
+            </>
+          ) : null}
           {lib.organize ? (
             <>
               <MenuDivider />

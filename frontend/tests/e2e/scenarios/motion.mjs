@@ -811,7 +811,7 @@ export async function motionScenarios(env) {
   async function deleteRow(page, text) {
     await listRow(page, text).click({ button: "right" });
     await page.locator(".ctxMenuItem", { hasText: "Delete" }).click();
-    const confirm = page.locator(".confirmModal", { hasText: "Move this page to Recently deleted?" });
+    const confirm = page.locator(".confirmModal", { hasText: `Move "${text}" to Recently deleted?` });
     await confirm.getByRole("button", { name: "Delete", exact: true }).click();
   }
 

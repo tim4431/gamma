@@ -173,7 +173,7 @@ export async function subPageScenarios(env) {
     try {
       await fileRow(page, "Family top").click({ button: "right" });
       await page.locator(".ctxMenuItem", { hasText: "Delete" }).click();
-      const confirm = page.locator(".confirmModal", { hasText: "Move this page and the 2 pages inside it to Recently deleted?" });
+      const confirm = page.locator(".confirmModal", { hasText: "Move \"Family top\" and the 2 pages inside it to Recently deleted?" });
       await confirm.waitFor();
       await confirm.getByRole("button", { name: "Delete", exact: true }).click();
       await fileRow(page, "Family top").waitFor({ state: "detached" });

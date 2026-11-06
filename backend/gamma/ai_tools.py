@@ -3184,6 +3184,20 @@ def _find_label(conn, raw) -> tuple[tuple | None, str | None]:
     return (found[0], dict(have)[found[0]]), None
 
 
+def _label_page_reached(conn, scope: dict, reach: set[str], sub_pages: dict, page_id: str,
+                        parent_id: str, props: dict) -> bool:
+    """Whether a folder chat (its folder subtree ``reach``) reaches a page
+    carrying a label, for ``_label_out_of_reach``: a live sub-page (a key of
+    ``sub_pages``, ``page_parents``) by where its top is filed; a page in
+    Recently deleted by the folders a restore puts it back in
+    (``trashed_folders``); any other page by its own folders."""
+    if page_id in sub_pages:
+        return page_in_folder(conn, page_id, _scope_folder(scope))
+    if parent_id == TRASH:
+        return _filed_in(reach, trashed_folders(conn, props))
+    return _filed_in(reach, filing(props, FOLDERS))
+
+
 def _label_out_of_reach(conn, scope: dict, label_id: str, name: str) -> str | None:
     """None when the chat reaches every page carrying the label (``_reach``;
     the library root reaches all), else the refusal. A label is
@@ -3194,13 +3208,11 @@ def _label_out_of_reach(conn, scope: dict, label_id: str, name: str) -> str | No
     reach = _reach(conn, scope)
     if reach is None:
         return None
-    inside = page_parents(conn)  # a sub-page is filed where its top is
+    sub_pages = page_parents(conn)
     outside = sum(1 for page_id, parent_id, raw in conn.execute(
         "SELECT p.id, p.parent_id, p.properties FROM unified_blocks p WHERE p.parent_id IN ('root', ?) AND EXISTS "
         "(SELECT 1 FROM json_each(p.properties, '$.labels') l WHERE l.value = ?)", (TRASH, label_id))
-        if not (page_in_folder(conn, page_id, _scope_folder(scope)) if page_id in inside
-                else _filed_in(reach, trashed_folders(conn, load_props(raw)) if parent_id == TRASH
-                               else filing(load_props(raw), FOLDERS))))
+        if not _label_page_reached(conn, scope, reach, sub_pages, page_id, parent_id, load_props(raw)))
     if not outside:
         return None
     return (f'error: the label "{name}" is also on {outside} page{"s" if outside != 1 else ""} '

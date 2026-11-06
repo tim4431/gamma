@@ -10,7 +10,9 @@
 // page selected on the home library), homePicks (how many), organize (the
 // library may be changed: library/libraryAccess.js), search(all),
 // palette(prefix), back(), undo(redo), renameTitle(), deletePages(), recentlyDeleted(), toggleChat(),
-// toggleComments(), togglePdf(), toggleNotes(), openSettings(pane), exportAs(format),
+// toggleComments(), togglePdf(), toggleNotes(), splitTab(side) and joinGroups()
+// with phone (one view at a time: no groups) and groups (how many tab groups),
+// openSettings(pane), exportAs(format),
 // downloadPdf(), importDialog(), newPage(), share(), metadata(), pageProperties(), attach(),
 // reportProblem(), and for the handwriting group (docs/dev/handwriting.md
 // "Copy, cut and paste"): inkOpen (the markup strip is open), inkTool (a
@@ -112,6 +114,12 @@ export const APP_COMMANDS = [
   cmd("app.toggleComments", t("Show or hide the comments"), GROUP_VIEW, null, (c) => { c.toggleComments(); }, { when: (c) => c.hasPage && c.commentsOn }),
   cmd("app.togglePdf", t("Show or hide the PDF"), GROUP_VIEW, null, (c) => { c.togglePdf(); }, { when: (c) => c.hasPdf }),
   cmd("app.toggleNotes", t("Show or hide the notes"), GROUP_VIEW, null, (c) => { c.toggleNotes(); }, { when: (c) => c.hasPdf }),
+  // Tab groups (docs/dev/tab_groups.md): the open page's tab into a group of
+  // its own beside its group, and every tab back in one group. A phone has
+  // one view at a time, so no groups.
+  cmd("app.splitRight", t("Split right"), GROUP_VIEW, null, (c) => { c.splitTab("right"); }, { when: (c) => !c.shareMode && !c.phone && c.hasPage }),
+  cmd("app.splitDown", t("Split down"), GROUP_VIEW, null, (c) => { c.splitTab("bottom"); }, { when: (c) => !c.shareMode && !c.phone && c.hasPage }),
+  cmd("app.joinGroups", t("Join tab groups"), GROUP_VIEW, null, (c) => { c.joinGroups(); }, { when: (c) => c.groups > 1 }),
 
   cmd("app.newPage", t("New page"), GROUP_LIBRARY, null, (c) => { c.newPage(); }, { when: (c) => !c.shareMode }),
   // The file manager's Delete: the pages selected on the home library, after

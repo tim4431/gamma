@@ -1,10 +1,10 @@
 {
   "guide/guide.css": {
-    "color": 7,
+    "color": 5,
     "shadow": 4
   },
   "shared/styles/app.css": {
-    "color": 82,
+    "color": 80,
     "shadow": 3
   }
 }

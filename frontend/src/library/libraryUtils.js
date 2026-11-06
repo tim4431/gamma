@@ -2,7 +2,7 @@
 // usable by dialogs, home views, and future tests without coupling them to React.
 
 import { generateNKeysBetween } from "fractional-indexing";
-import { fmtDate, t } from "../shared/i18n/i18n.js";
+import { fmtDate, t, tn } from "../shared/i18n/i18n.js";
 import { itemTypeOf } from "../shared/lib/itemTypes.js";
 
 // How a folder's path reads: its names from the top, joined (the server's
@@ -155,6 +155,34 @@ export function pageDescendants(pages, ids) {
     }
   }
   return queue.slice(ids.length);
+}
+
+// The confirmation of deleting pages `ids` (the library's Delete and the
+// page header's trash button): {title, message, inside}. The pages inside
+// them go to Recently deleted with them (the server's cascade), so `inside`
+// holds their ids and the message counts them. One page is quoted by its
+// title: `title` when given (the open page's own, which may be newer), else
+// its entry's in `pages`.
+export function deleteConfirm(pages, ids, title) {
+  const inside = pageDescendants(pages, ids);
+  const n = inside.length;
+  if (ids.length === 1) {
+    const page = title || (pages || []).find((p) => p.id === ids[0])?.content || t("Untitled");
+    return {
+      title: t("Delete page"),
+      message: n ? tn("Move \"{page}\" and the {n} page inside it to Recently deleted? You can restore them from there for 30 days.",
+        "Move \"{page}\" and the {n} pages inside it to Recently deleted? You can restore them from there for 30 days.", n, { page })
+        : t("Move \"{page}\" to Recently deleted? You can restore it from there for 30 days.", { page }),
+      inside,
+    };
+  }
+  return {
+    title: t("Delete {n} pages", { n: ids.length }),
+    message: n ? tn("Move these {count} pages and the {n} page inside them to Recently deleted? You can restore them from there for 30 days.",
+      "Move these {count} pages and the {n} pages inside them to Recently deleted? You can restore them from there for 30 days.", n, { count: ids.length })
+      : t("Move these {n} pages to Recently deleted? You can restore them from there for 30 days.", { n: ids.length }),
+    inside,
+  };
 }
 
 // The folder or label a typed name means among `items` ({id, name}): the
