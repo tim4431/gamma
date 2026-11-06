@@ -1999,9 +1999,20 @@ const SortableBlockRow = React.memo(function SortableBlockRow({ block, ...rowPro
 
   return (
     <div className="sortableBlockWrap" data-block-id={block.id} data-motion-key={block.id} data-depth={depth}>
-      {/* One narrow gutter column: ⋮⋮ (drag / menu) with the "+" (add a
-          block) sitting right under it, shown only while the row is hovered. */}
+      {/* Side by side on the row's first line, as in Notion: the "+" (add a
+          block), then ⋮⋮ (drag / menu), shown only while the row is hovered. */}
       <span className="rowHandles">
+        {block.id !== "root" && rowProps.onEnterSibling && !rowProps.readOnly ? (
+          <button
+            type="button"
+            className="addHandle"
+            data-guide="notes.addBelow"
+            onClick={onAddClick}
+            onMouseDown={(e) => e.preventDefault()}
+            aria-label={t("Add a block below (Alt+click: above)")}
+            title={t("Click to add a block below\nAlt+click to add above")}
+          ><PlusIcon size={16} /></button>
+        ) : null}
         <span
           ref={handleRef}
           className="dragHandle"
@@ -2014,17 +2025,6 @@ const SortableBlockRow = React.memo(function SortableBlockRow({ block, ...rowPro
           aria-label={t("Drag to move, click for menu")}
           title={t("Drag to move · click for menu")}
         >⋮⋮</span>
-        {block.id !== "root" && rowProps.onEnterSibling && !rowProps.readOnly ? (
-          <button
-            type="button"
-            className="addHandle"
-            data-guide="notes.addBelow"
-            onClick={onAddClick}
-            onMouseDown={(e) => e.preventDefault()}
-            aria-label={t("Add a block below (Alt+click: above)")}
-            title={t("Click to add a block below\nAlt+click to add above")}
-          ><PlusIcon size={16} /></button>
-        ) : null}
       </span>
       {handleMenu ? (
         <ContextMenu x={handleMenu.x} y={handleMenu.y} onClose={() => setHandleMenu(null)}>

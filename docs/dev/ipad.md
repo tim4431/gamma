@@ -1793,10 +1793,9 @@ The iPad app shows this same bar, since it is the web app.
     above it. An editor a key opens scrolls as it mounts, since focus
     scrolls nothing, and a caret placed from outside
     (`setSelectionRange`) replaces that scroll's target, or a row taller
-    than the pane would scroll to its end. The row's hanging "+" has to stay ink overflow
-    (`contain: layout` on `.rowHandles`): counted as scrollable overflow it
-    makes the row a scroller to CodeMirror, which clips that margin to the
-    row. Caret-anchored popups (the slash menu, the math preview,
+    than the pane would scroll to its end. A row must not overflow its own
+    box downward or to the right: that makes it a scroller to CodeMirror,
+    which clips that margin to the row. Caret-anchored popups (the slash menu, the math preview,
     `useCaretAnchored`) leave that room free.
   - On a narrow screen the tools scroll sideways and Done stays at the end.
 - **The keyboard stays up.** iPadOS keeps it while focus stays in the

@@ -1475,12 +1475,19 @@ gap between paragraphs is ordinary, and a copy across the row leaves it out
 (`data-markdown-copy-ignore`). Any other empty row, such as a picture or a text
 box, keeps its word as something to click.
 
-The row gutter (`.rowHandles`) holds the drag/menu handle and an out-of-flow
-add button so one-line rows stay one line tall. A one-line row is shorter than
-the "+" hangs, so the hovered row's gutter rises over the next row's. Rows of
-one depth keep the "+" in the empty gutter; when the next row is shallower it
-covers the start of that row's line or its fold caret until the pointer leaves,
-and a press there adds a block.
+The row gutter (`.rowHandles`) holds the add button and the drag/menu handle
+side by side, as in Notion: "+", then ⋮⋮, then the row. Both stay within the
+row's height, on its first line and level with its text at any text size, a
+heading's taller line included (`--row-line`); on a tall block that is its top.
+The gutter is 36 px wide and starts 6 px left of the row's box, so it stays
+inside the row's own span whatever the depth: at depth, over the indent and
+clear of the parent's guide line; at the top level, over the pane's padding,
+which `.blockList` reaches into so the "+" is not clipped, and clear of the
+6 px hit margin of the sash beside the pane, which would take the press. A
+row's text therefore stands 12 px further right than the drag/menu handle alone
+needed. A read-only row has no gutter. `onBlockDragOver` counts in the same
+12 px: a drop nests past the row's text edge, 62 px from the row's box, and
+`BlockDropIndicator`'s line starts 40 px in, 22 px short of that edge.
 Add uses the same sibling creation path as Enter: below by default, above with Alt+click;
 a home-library row creates a page. The handle menu copies a link or the subtree as Markdown,
 shows the block's Properties ([The properties popover](#the-properties-popover)),

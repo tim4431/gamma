@@ -11032,7 +11032,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     }
                     const above = frag ? py < r.top + r.height / 2 : (py - r.top) <= 16;
                     const td = parseInt((wrap || e.currentTarget).getAttribute("data-depth") || "0", 10);
-                    const nested = (px - r.left) > 50;
+                    const nested = (px - r.left) > 62;
                     const dt = { targetId: block.id, above, depth: nested ? td + 1 : td, rect: { top: r.top, left: r.left, width: r.width, bottom: r.bottom } };
                     _dragState.dropTarget = dt;
                     setDropTarget(dt);

@@ -757,7 +757,7 @@ function BlockDropIndicator({ target }) {
     );
   }
   const indentStep = 14;
-  const baseOffset = 28;
+  const baseOffset = 40; // 22px short of a row's text, where App's onBlockDragOver starts to nest
   const left = target.rect.left + baseOffset + target.depth * indentStep;
   return (
     <div

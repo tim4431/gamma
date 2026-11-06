@@ -432,6 +432,10 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   scrollbar-gutter: stable;
   min-height: 0;
   padding-bottom: 24px;
+  /* Its box reaches the pane's edge, so that a top-level row's "+" is not
+     clipped there. Its content stays where the pane's padding puts it. */
+  margin-left: -12px;
+  padding-left: 12px;
 }
 
 .blockRowWrap {
@@ -1662,30 +1666,39 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   align-items: flex-start;
   gap: 0;
 }
-/* Notion-like handles in ONE narrow gutter column: ⋮⋮ (drag / menu) with the
-   "+" (add a block) right under it. Invisible at rest, appear on row hover,
-   and get a rounded pill background when hovered themselves. The "+" is
-   taken out of flow so a one-line row stays one line tall — it hangs below
-   the ⋮⋮ over the next row's gutter, above it in z-order. A next row that
-   sits shallower has the start of its line there instead, under the "+".
-   Layout containment makes that hanging ink overflow, as it paints the same:
-   counted as scrollable overflow it makes the row a scroller to CodeMirror,
-   which then clips the caret's scroll target, the editing bar's margin with it,
-   to the row. */
+/* Notion's handles, side by side on the row's first line: "+" (add a block),
+   then ⋮⋮ (drag / menu), then the row. Invisible at rest, appear on row hover,
+   and get a rounded pill background when hovered themselves. They stand 6px
+   left of the row's box, in the indent at depth and in the pane's padding at
+   the top level, which the .blockList reaches into; further left is the sash's
+   6px hit margin, where a press would resize the pane. The drop rule in
+   App's onBlockDragOver counts the 30px that stay inside the box.
+   --row-line is the height of the row's first line, so that they sit level
+   with it at any text size; a heading's is taller. */
+.sortableBlockWrap {
+  --row-line: calc(var(--fs-body) * var(--text-scale, 1) * 1.45);
+}
+.sortableBlockWrap:has(> .blockRowWrap > .blockRow > .blockBody :is(.blockRendered > h1:first-child, .cm-content > .cmH1:first-child)) {
+  --row-line: calc(var(--fs-body) * var(--text-scale, 1) * 1.45 * 1.3);
+}
+.sortableBlockWrap:has(> .blockRowWrap > .blockRow > .blockBody :is(.blockRendered > h2:first-child, .cm-content > .cmH2:first-child)) {
+  --row-line: calc(var(--fs-body) * var(--text-scale, 1) * 1.25 * 1.3);
+}
 .sortableBlockWrap > .rowHandles {
   flex: 0 0 auto;
-  position: relative;
-  z-index: 2;
-  width: 18px;
+  display: flex;
+  justify-content: flex-end;
+  width: 36px;
   height: 22px;
-  margin-top: 1px;
-  contain: layout;
+  margin-left: -6px;
+  margin-top: calc((var(--row-line) - 18px) / 2); /* the row's 2px padding, then centred on the line */
 }
 /* Both handles: a flat 18px-wide hit box that appears on row hover, and
    takes no press while it is out of sight. */
 .rowHandles > .addHandle,
 .rowHandles > .dragHandle {
-  width: 18px;
+  flex: 0 0 18px;
+  height: 22px;
   padding: 0;
   border-radius: var(--radius-xs);
   display: flex;
@@ -1700,14 +1713,9 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   user-select: none;
 }
 .rowHandles > .addHandle {
-  position: absolute;
-  left: 0;
-  top: 22px;
-  height: 18px;
   cursor: pointer;
 }
 .rowHandles > .dragHandle {
-  height: 22px;
   margin-right: 0;
   font-size: var(--fs-lg);
   font-weight: 600;
@@ -1720,9 +1728,6 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   opacity: 1;
   pointer-events: auto;
 }
-/* A one-line row is shorter than its "+" hangs: over the next row's handles,
-   which come later in the tree, it has to rise above them. */
-.sortableBlockWrap:is(:hover, :focus-within, :has(:hover)) > .rowHandles { z-index: 3; }
 /* Where nothing hovers, every row's ⋮⋮ stays, quiet, so its menu and drag
    are in reach; the "+" still comes with the row being edited. */
 @media (hover: none) {

@@ -456,11 +456,30 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     assertNoProblems(page);
   });
 
-  await step("notes: dragging a block's handle moves it; the drop line never outlives the drag (#88)", async () => {
+  await step("notes: dragging a block's handle moves it; the drop line steps in where a drop nests, in step with the row's text, and never outlives the drag (#88)", async () => {
     const handle = (text) => page.locator(".sortableBlockWrap", { hasText: text }).first().locator(".dragHandle").first().elementHandle();
     const line = page.locator(".dropIndicator");
-    // A handle drag shows the line and the drop moves the block.
+    // A drop nests once the pointer passes the start of the row's text, and the
+    // line says so: it steps in by one indent, clear of the handles' gutter.
     let drag = await startDrag(page, await handle("third"), "first");
+    await line.waitFor({ timeout: 5000 });
+    const dragOverText = (text, dx) => page.locator(".sortableBlockWrap", { hasText: text }).last().evaluate((wrap, dx) => {
+      const textLeft = wrap.querySelector(".blockRendered").getBoundingClientRect().left;
+      const row = wrap.querySelector(".blockRow");
+      row.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: window.__e2eDrag.dt, clientX: textLeft + dx, clientY: row.getBoundingClientRect().top + 4 }));
+      return { textLeft, rowLeft: row.getBoundingClientRect().left };
+    }, dx);
+    for (const [text, sibling, nested] of [["first", -22, -8], ["second", -8, 6]]) {
+      for (const [dx, want, what] of [[-2, sibling, "a sibling"], [2, nested, "nested"]]) {
+        const { textLeft, rowLeft } = await dragOverText(text, dx);
+        await until(async () => Math.abs((await line.boundingBox()).x - (textLeft + want)) < 1, { what: `the line for ${what} on "${text}", ${want}px from its text` });
+        assert((await line.boundingBox()).x >= rowLeft, `the line for ${what} on "${text}" starts in the row, not over the handles`);
+      }
+    }
+    await drag.finish("elsewhere");
+    await line.waitFor({ state: "detached", timeout: 5000 });
+    // A handle drag shows the line and the drop moves the block.
+    drag = await startDrag(page, await handle("third"), "first");
     await line.waitFor({ timeout: 5000 });
     await drag.finish("drop");
     await line.waitFor({ state: "detached", timeout: 5000 });
@@ -818,7 +837,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     }
   });
 
-  await step("notes: a plain row draws neither dot nor label; a placed row keeps p.N and a mark while edited; an empty row is blank until hovered or focused, and on a view-only page for good, and never copied; the + lies above the next row's handles", async () => {
+  await step("notes: a plain row draws neither dot nor label; a placed row keeps p.N and a mark while edited; an empty row is blank until hovered or focused, and on a view-only page for good, and never copied; the + and the ⋮⋮ sit side by side on a row's first line", async () => {
     const src = await alice2.api("/api/pages", { method: "POST", body: { title: "Rows" } });
     const place = { pageNumber: 3, width: 600, height: 800, boundingRect: { x1: 10, y1: 10, x2: 90, y2: 30 }, rects: [{ x1: 10, y1: 10, x2: 90, y2: 30 }] };
     const blocks = [
@@ -826,11 +845,13 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       { id: "rempty", content: "" },
       { id: "rnext", content: "One line" },
       { id: "rlast", content: "Another line" },
+      { id: "rhead", content: "# A heading" },
       { id: "rhigh", content: "On a passage", props: { pdf_position: place, quote: "a quoted passage" } },
       { id: "rbox", content: "", props: { text_box: { x: 40, y: 40 }, pdf_page: 2 } },
     ];
     await alice2.api(`/api/pages/${src.id}/ops`, { method: "POST", body: { client: "e2e", ops: blocks.map(({ id, content, props }, i) => (
-      { op: "insert", id, parent: src.id, position: `a${i}`, content, props })) } });
+      { op: "insert", id, parent: src.id, position: `a${i}`, content, props })).concat(
+      { op: "insert", id: "rdeep", parent: "rlast", position: "a0", content: "Under a line" }) } });
     const shown = (p, id, what) => p.locator(`.blockRowWrap[data-block-id="${id}"] > .blockRow ${what}`);
     const wordShown = (p, id) => shown(p, id, ".blockPlaceholder").evaluate((el) => getComputedStyle(el).visibility === "visible");
     const p2 = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${src.id}`);
@@ -864,21 +885,46 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       assertEq(await p2.locator('.blockRowWrap[data-block-id="rempty"] > .blockRow.focused').count(), 1, "the row keeps the focus");
       assert(await wordShown(p2, "rempty"), "the word on the focused row");
 
-      // The "+" hangs over the next row's gutter, and the press reaches it.
+      // On a row's first line, level with its text: the "+", then the ⋮⋮, then
+      // the row. They stay in the row's height, so over neither the next row
+      // nor their own text, and the row is no scroller to CodeMirror. A press
+      // reaches all of the "+", clear of the sash's margin at the pane's edge
+      // and of the guide line of the row above.
+      const handlesOf = (id) => p2.evaluate((id) => {
+        const wrap = document.querySelector(`.sortableBlockWrap[data-block-id="${id}"]`);
+        const box = (selector) => { const r = wrap.querySelector(selector).getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom }; };
+        const add = wrap.querySelector(".addHandle");
+        const hit = box(".addHandle");
+        const reached = [hit.left + 2, hit.right - 2].every((x) => document.elementFromPoint(x, (hit.top + hit.bottom) / 2)?.closest(".addHandle") === add);
+        return { add: hit, drag: box(".dragHandle"), row: box(".blockRow"), text: box(".blockRendered > :first-child"), reached,
+          scroller: wrap.scrollHeight > wrap.clientHeight || wrap.scrollWidth > wrap.clientWidth,
+          pane: document.querySelector(".sidebar").getBoundingClientRect().left,
+          guide: wrap.closest(".blockChildren")?.getBoundingClientRect().left ?? null };
+      }, id);
+      for (const id of ["rnext", "rhead", "rdeep"]) {
+        await p2.locator(`.blockRowWrap[data-block-id="${id}"] > .blockRow`).hover();
+        const at = await handlesOf(id);
+        assert(at.add.right <= at.drag.left + 0.5 && at.drag.right <= at.row.left + 0.5, `${id}: the +, the ⋮⋮, the row: ${JSON.stringify(at)}`);
+        assert(Math.abs(at.add.top - at.drag.top) < 0.5 && at.add.bottom <= at.row.bottom, `${id}: one line, in the row: ${JSON.stringify(at)}`);
+        assert(Math.abs((at.drag.top + at.drag.bottom) / 2 - (at.text.top + at.text.bottom) / 2) <= 1.5, `${id}: level with the text: ${JSON.stringify(at)}`);
+        assert(!at.scroller, `${id}: the row has nothing to scroll`);
+        assert(at.reached, `${id}: a press reaches the + from edge to edge: ${JSON.stringify(at)}`);
+        assert(at.add.left >= at.pane + 6, `${id}: clear of the sash's margin: ${JSON.stringify(at)}`);
+        if (at.guide != null) assert(at.add.left > at.guide + 1, `${id}: clear of the guide line: ${JSON.stringify(at)}`);
+      }
+      const order = async () => (await alice2.api(`/api/blocks/${src.id}/subtree`)).block.children.map((b) => b.id);
       const wrap = p2.locator('.sortableBlockWrap[data-block-id="rnext"]');
-      await wrap.hover();
       const add = wrap.locator(".addHandle");
-      await add.waitFor();
-      const under = await add.evaluate((el) => {
-        const r = el.getBoundingClientRect();
-        return document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2)?.closest(".addHandle") === el;
-      });
-      assert(under, "the + lies above the next row's handles");
-      await add.click();
-      await until(async () => (await alice2.api(`/api/blocks/${src.id}/subtree`)).block.children.length === blocks.length + 1, { what: "the + adds a block" });
-      await p2.waitForSelector(".blockEditorCm .cm-content", { timeout: 5000 });
-      await p2.keyboard.press("Backspace");
-      await until(async () => (await alice2.api(`/api/blocks/${src.id}/subtree`)).block.children.length === blocks.length, { what: "that block gone again" });
+      for (const [modifiers, past, what] of [[[], 1, "below"], [["Alt"], -1, "above"]]) {
+        await p2.locator('.blockRowWrap[data-block-id="rnext"] > .blockRow').hover();
+        await add.click({ modifiers });
+        await until(async () => (await order()).length === blocks.length + 1, { what: `the + adds a block ${what}` });
+        const ids = await order();
+        assert(!blocks.some((b) => b.id === ids[ids.indexOf("rnext") + past]), `it lands ${what} the row: ${ids}`);
+        await p2.waitForSelector(".blockEditorCm .cm-content", { timeout: 5000 });
+        await p2.keyboard.press("Backspace");
+        await until(async () => (await order()).length === blocks.length, { what: "that block gone again" });
+      }
       assertNoProblems(p2);
     } finally {
       await p2.close();
@@ -891,6 +937,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     await viewer.waitForSelector('.blockRowWrap[data-block-id="rempty"] .blockRendered', { timeout: 15000 });
     await viewer.locator('.blockRowWrap[data-block-id="rempty"] > .blockRow').hover();
     assert(!(await wordShown(viewer, "rempty")), "a viewer never sees the word");
+    assertEq(await viewer.locator(".rowHandles").count(), 0, "a viewer has no handles");
     // Copying across the gap leaves out the word that was never on screen.
     const copied = await shown(viewer, "rplain", ".blockRendered").evaluate((el) => {
       const last = document.querySelector('.blockRowWrap[data-block-id="rnext"] > .blockRow .blockRendered');

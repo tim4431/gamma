@@ -105,7 +105,7 @@ page you can edit; **The PDF viewer** on a PDF whose viewer is open and
 thing it explains when there is none yet (see "Steps that have the user
 make something"). **Your highlights** is listed on a PDF you can edit that
 has a highlight, **Moving notes around** on any page you can edit (with a
-mouse: on a touch screen the handle neither drags nor has a + under every
+mouse: on a touch screen the handle neither drags nor has a + beside every
 note). **Background tasks** is listed on the desktop layout.
 **Shared workspaces** is listed once you belong to one.
 **Working together** and **Citations in answers** are listed only while
@@ -241,7 +241,7 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 | Sharing a page or folder | a page or a folder gets its first share link (`share.created`: the Share popover's Share button) | (press Share,) the link, with a clip of Copy link and the page opening in someone else's window (`share-link`; a folder's link opens every page filed there, now and later: `shareTarget`), who has access, general access naming Stop sharing beside the link (worded for what an anyone-with-the-link share exposes when it is one, `shareAudience`) — inside the Share popover, top to bottom |
 | Your highlights | the third highlight of a load (`highlight.created`, `count: 3`) | the highlight made last (`pick: "recent"`, `guide/recent.js`): a clip of the round trip, the highlight clicked lighting its note and the note lighting the passage (`highlight-jump`; a click also quotes it in the next chat message), a scene right-clicking it (recolour, link, delete); then its card in the notes, which jumps back (`optional`: the Notes window may be closed) |
 | Editing tables | the user makes a table (/table, or a pasted spreadsheet or html table) and it first renders (`table.created`); opening a page that has one offers nothing | (add one with /table,) a cell to type into, the + strips and the row/column handles (a clip of a row sliding in and its handle coming up: `table-grow`), the corner handle (copy, move or delete the whole table), the others with a scene clicking it — on the table just made when the page has several, each card clear of the table |
-| Moving notes around | the eighth note made in a load (`block.created`, `count: 8`: Enter, or the + under a handle); not on a touch screen, nor in the notebook view | the last note's ⋮⋮ (a scene carrying it down and to the right, where a nested note lands: a drag by `offset`), its menu (a scene clicking it), the + under it (a scene clicking it, then Alt-clicking it). The handles show on hover and while pointed at (`[data-guide-active]`) |
+| Moving notes around | the eighth note made in a load (`block.created`, `count: 8`: Enter, or the + beside a handle); not on a touch screen, nor in the notebook view | the last note's ⋮⋮ (a scene carrying it down and to the right, where a nested note lands: a drag by `offset`), its menu (a scene clicking it), the + beside it (a scene clicking it, then Alt-clicking it). The handles show on hover and while pointed at (`[data-guide-active]`) |
 | Handwriting | the first stroke (`ink.stroke`) | (draw something, with a scene writing on the page,) the drawing's note block and its caption, tap the pen again for its style (Pen, Ballpoint, Brush, Pencil or Calligraphy), line, Smoothing, colour and width, the eraser and the lasso on one card (a clip of the eraser rubbing out a stray stroke and the lasso carrying a word: `ink-lasso`; Ctrl+Z brings back what was erased), More at the strip's end for shapes and the ruler (a clip of Shapes picked and a box and an arrow drawn: `ink-shape`), then the Text tool (a scene clicking T, then the page); finishing re-arms the pen |
 | The PDF viewer | a PDF is opened (`page.opened`) with its viewer on screen (`viewerTools`), in a load whose offer Arrange windows did not take | the table of contents (if any), zoom and fit, the pen, Translate (if on), the selection mode on a touch screen; after The notebook view, only the outline and Translate |
 | The notebook view | the notebook view is open (`notebookView`, state) | zoom and fit, the pen, the paper, Notes view (a drawing of the one page behind both views); after The PDF viewer, the paper and Notes view |
@@ -957,7 +957,7 @@ where the thing happens:
 | `conflict.shown` | MergeResolver's versions |
 | `ref.search` | BlockTree, when the `[[` search shows results |
 | `math.previewed` | MathLivePreview, when it comes up |
-| `block.created` | BlockTree: a new note from the new-note Enter, or the + under a handle |
+| `block.created` | BlockTree: a new note from the new-note Enter, or the + beside a handle |
 | `note.lineBreak` | BlockTree: a plain Enter that broke a line in a note with text, where Enter is set to make a new line |
 | `slash.opened`, `paste.offered` | SlashMenuPopup (its `event`), when the / menu or the Paste as chooser comes up |
 | `mention.opened` | MentionMenuPopup, when the @ menu comes up |

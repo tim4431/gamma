@@ -160,7 +160,7 @@ Notes are a nested outline. Highlights and free notes are the same kind of block
 - **Enter in a list** starts the next item: the next number, or an open box after a to-do. On an empty item it ends the list and leaves plain text; `/text` does the same to any line.
 - **Backspace** right after a `- `, `1. ` or `- [ ] ` takes the marker off in one press. At the start of a note it joins the note to the one above, unless one of the two is anything but plain text, or the note has comments. In an empty note it removes the note and keeps the notes under it.
 - These splits and joins are for plain notes. On a highlight, a text box, a picture, a recording or a drawing, Enter adds an empty note below and the text stays where it is.
-- Drag the **⋮⋮ handle** to reorder or re-nest; **+** under it adds a block.
+- Drag the **⋮⋮ handle** to reorder or re-nest; **+** beside it adds a block.
 - Click the **⋮⋮ handle** → **Properties** to see what a block is and everything it stores: a highlight's color and where it sits on the PDF, when a note was written, a page's file, paper details, folders and labels. Nothing in it can be changed. Each row has a copy button, and its **⋯** button (or right-clicking the row, or holding a finger on it) copies its value or its name. **JSON** shows the raw data. You also find it when you right-click a highlight on the PDF, a tab (**Page properties**), or a paper, a folder or a label in the library, and in the command palette (**Block properties**, **Page properties**). On a page shared with you to view, use the command palette.
 - **Undo** is one history for the whole page.
 

@@ -828,8 +828,8 @@ export async function touchScenarios({ server, browser, alice, makePdf, step, un
     } finally { await ctx.close(); }
   });
 
-  // A one-line row whose "+" hangs past it once made the row a scroller to
-  // CodeMirror, which cut the bar's margin off the caret's scroll target:
+  // A row CodeMirror takes for a scroller cuts the bar's margin off the
+  // caret's scroll target, as a "+" hanging past a one-line row once did:
   // writing block after block ended up behind the bar.
   for (const [device, viewport] of [["a phone", { width: 390, height: 844 }], ["an upright tablet", UPRIGHT.viewport]]) {
     await step(`touch: on ${device}, Enter near the editing bar keeps each new row's caret above it, and so does the bar's New block`, async () => {

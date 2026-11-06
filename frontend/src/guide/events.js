@@ -17,7 +17,7 @@ export const EVENTS = [
   "palette.opened",   // the Ctrl+P page palette opened
   "commands.opened",  // the palette turned command palette (Ctrl+Shift+P, or > typed)
   "highlight.created", // {id, kind: "text" | "area"}
-  "block.created",    // a new note: Enter (or Shift+Enter, as Settings has it) or the + under a handle
+  "block.created",    // a new note: Enter (or Shift+Enter, as Settings has it) or the + beside a handle
   "block.indented",
   "note.lineBreak",   // Enter broke a line in a note with text, where Enter is not the new-note key
   "slash.opened",     // the / command menu came up
