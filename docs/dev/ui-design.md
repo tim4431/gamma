@@ -1081,6 +1081,11 @@ own controls.
   included.
 - **The compact shell** neither drags nor folds a window: without
   `onGrip` the title is a plain label, with no "⠿".
+- **Tab groups.** The windows are the open page's; the page itself can
+  stand beside another in a group of its own, each group with a strip over
+  it, split by a tab's menu or a tab dragged onto a group's edge
+  ([tab_groups.md](tab_groups.md)). A window's drop zones measure the live
+  group's frame.
 
 ### The PDF viewer
 
