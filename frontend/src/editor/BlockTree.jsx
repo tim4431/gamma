@@ -13,7 +13,7 @@ import rehypeRaw from "rehype-raw";
 import { rehypeNoteSanitize } from "./noteSanitize.js";
 import {
   blockColor, blockPage, blockPosition, blockQuote, countBlocks, isFolded, isHighlightBlock, isInkGroup, isLinkBlock,
-  roughMatchPercent,
+  isPlainNote, roughMatchPercent,
 } from "../shared/model/blockModel";
 import { DEFAULT_HIGHLIGHT, darkPageLine } from "../shared/model/palette.js";
 import { citesSeveralPapers, gammaLinkId, parseGammaLink, relativeGammaLink } from "../shared/model/gammaLinks.js";
@@ -27,6 +27,7 @@ import { isTextBox } from "../markup/textBox.js";
 import { isPicture, pictureMarkdown } from "../markup/picture.js";
 import { PictureCard } from "../markup/PictureLayer";
 import { picturesDrag } from "../markup/pictureUpload.js";
+import { composing } from "../chat/enterKey.js";
 import { isSheet } from "../notebook/notebook";
 import { NoteSheet } from "../notebook/NoteSheet";
 import { CitationPill, GammaLinkCard, handleMarkdownCopy, useDockFolded } from "../shared/ui/Widgets";
@@ -42,7 +43,7 @@ import { findMathAtCursor, LatexAcPopup, MathLivePreview } from "./LatexEditor";
 import { useMathUi } from "./useMathUi.js";
 import { BlockCmEditor, OBJECT_DRAG_TYPE } from "./BlockCmEditor";
 import { expandBlankLines } from "./mdMarks";
-import { BLOCK_COMMANDS } from "./blockCommands.js";
+import { BLOCK_COMMANDS, codeBreak, newBlockKey } from "./blockCommands.js";
 import { EditBarHost, useEditBarRow } from "./EditBar";
 import SelectionToolbar from "./SelectionToolbar";
 import { useSelectionToolbar } from "./useSelectionToolbar.js";
@@ -50,9 +51,9 @@ import { dispatch as dispatchHotkey } from "../shared/lib/hotkeys.js";
 import { blockStartInSource, gapInSource, renderedGaps, sourceOffsetAtPoint } from "./clickToSource";
 import { highlightCode, makeCopyButton } from "./codeHighlight";
 import { fenceInnerAt } from "./fences.js";
-import { enterPlan, pastePlacements, quoteMarksAt } from "./mdLines.js";
+import { backspacePlan, enterPlan, pastePlacements } from "./mdLines.js";
 import { dollarMath, pasteMath } from "./pasteMath.js";
-import { isSourceCopy, sourceCopied } from "./sourceCopy.js";
+import { isOutlineCopy, isSourceCopy, sourceCopied } from "./sourceCopy.js";
 import { escapedAt } from "./latexInput.js";
 import { SlashMenuPopup } from "./SlashMenu";
 import { RefPickerPopup } from "./RefPicker";
@@ -685,6 +686,8 @@ const BlockRow = React.memo(function BlockRow({
   onChangeText,
   onCaret,
   onEnterSibling,
+  onNewBlock,
+  onMergeAbove,
   enterNewNote,
   onAddChild,
   onPasteBlocks,
@@ -1032,11 +1035,17 @@ const BlockRow = React.memo(function BlockRow({
 
   function acceptLatexAc(c) { acceptCompletion(ref.current, c); }
 
+  // The new-block key closes this row's editor when the caret leaves it, and
+  // the close would pretty-print its tables as a second undo step: they go
+  // into the key's own step instead.
+  const newBlockFormatted = (id, plan) => onNewBlock?.(id,
+    plan.stay || plan.above ? plan : { ...plan, keep: formatTables(plan.keep) ?? plan.keep });
+
   // What a block command runs with (blockCommands.js): the row's keydown
   // dispatches with it, and the editing bar builds one per press.
   const commandContext = () => ({
     block, tree: getTree?.(), view, folded: collapsed, readOnly, editor: ref.current,
-    row: { onHop, onMoveBlock, onDuplicate, onDelete, onEnterSibling, onIndent, onOutdent, onToggle, onAddToChat, onMoveToPage, onComment, onProperties },
+    row: { onHop, onMoveBlock, onDuplicate, onDelete, onEnterSibling, onNewBlock: newBlockFormatted, onIndent, onOutdent, onToggle, onAddToChat, onMoveToPage, onComment, onProperties },
   });
   // While this row's editor is open, the tree's editing bar is this row's.
   useEditBarRow(!readOnly && editing, commandContext);
@@ -1229,7 +1238,7 @@ const BlockRow = React.memo(function BlockRow({
       apiJson(`${API}/markdown-blocks`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ text: pm.text ?? pm.url }),
+        body: JSON.stringify({ text: pm.text ?? pm.url, outline: !!pm.outline }),
       }).then((d) => {
         const nodes = d?.blocks || [];
         if (!nodes.length) return;
@@ -1348,7 +1357,9 @@ const BlockRow = React.memo(function BlockRow({
       // Placed, the lines keep their indentation: only the blank lines
       // around them go.
       const shape = (s) => s.replace(/^\s*\n/, "").trimEnd();
-      const placed = ta?.view && !tsvMd && !fenceInnerAt(val, from) && !findMathAtCursor(val, from)?.display
+      // Code takes a paste as it is, but for a quote's marks on every line.
+      const code = fenceInnerAt(val, from);
+      const placed = ta?.view && !tsvMd && (!code || code.quote) && !findMathAtCursor(val, from)?.display
         ? pastePlacements(val, from, to, shape(mathed), shape(clip)) : null;
       if (placed && !multiline && !converted) {
         e.preventDefault();
@@ -1386,8 +1397,10 @@ const BlockRow = React.memo(function BlockRow({
         const anchor = ta.caretCoords(from);
         // `restore`: the range as it was, without the paste (Blocks puts it back).
         const restore = val.slice(start, from) + val.slice(to, end);
+        // `outline`: Gamma's own copy of a subtree (the raw clip: `text` is trimmed).
+        const outline = isOutlineCopy(clip);
         requestAnimationFrame(() => {
-          setPasteMenu({ start, end: start + insert.length, url: insert, text, restore, items, anchor });
+          setPasteMenu({ start, end: start + insert.length, url: insert, text, restore, items, anchor, outline });
           setPasteIdx(0);
         });
       }
@@ -1622,14 +1635,16 @@ const BlockRow = React.memo(function BlockRow({
               : <span className="textBoxMarker"><TypeIcon size={9} /></span>}
           </button>
         ) : (
-          <span className="dotSlot dotSlotEmpty"><span className="noteBulletDot" /></span>
+          // A plain note draws nothing, its text is the row; the slot keeps
+          // its left edge. The others come here with their editor open.
+          <span className="dotSlot dotSlotEmpty">
+            {isHighlight || isInk || isBox || isPic || isRec ? <span className="noteBulletDot" /> : null}
+          </span>
         )}
 
         <div className="blockBody" data-guide={isInk ? "notes.ink" : isHighlight ? "notes.highlight" : undefined}
           data-guide-recent={isHighlight && recentHighlight ? "" : undefined}>
-          <div className="blockMeta">
-            {shownPage ? `p.${shownPage}` : "note"}
-          </div>
+          {shownPage ? <div className="blockMeta">{`p.${shownPage}`}</div> : null}
           {recorded && !isRec ? (
             <button type="button" className="replayGlyph" onClick={(e) => { e.stopPropagation(); recordings.playAt(block.properties.t0); }}
               title={t("Play the recording from when this was written")} aria-label={t("Play the recording from when this was written")}>
@@ -1679,6 +1694,9 @@ const BlockRow = React.memo(function BlockRow({
               onPaste={handleEditorPaste}
               onUndo={onUndo}
               onKeyDown={(e) => {
+                // A key that confirms a word an input method is composing
+                // is the input method's: it makes no block.
+                if (composing(e)) return;
                 if (pasteMenu) {
                   const n = pasteMenu.items.length;
                   if (e.key === "ArrowDown") { e.preventDefault(); setPasteIdx((i) => Math.min(i + 1, n - 1)); return; }
@@ -1701,13 +1719,13 @@ const BlockRow = React.memo(function BlockRow({
                 // groups (useMathUi.js tabJumpKey); with nowhere to go it
                 // falls through to the outliner's indent.
                 if (tabJumpKey(e, ref.current)) return;
-                // Inside a ``` fence the outliner keys turn code-editor:
+                // Inside a code fence the outliner keys turn code-editor:
                 // any Enter is a line break (never a new note) and Tab
                 // indents with spaces instead of nesting the block. Enter
                 // inside $$ display math (closed, or still open while being
                 // typed) is a line break too — a multi-line \begin{array}
-                // would otherwise split into a new note on every row — and
-                // in a quote or callout the new line keeps its quote marks.
+                // would otherwise split into a new note on every row. In a
+                // quote or callout the new line keeps its quote marks.
                 const inFence = (e.key === "Enter" || (e.key === "Tab" && !e.shiftKey))
                   && ref.current && fenceInnerAt(ref.current.value, ref.current.selectionStart);
                 const inDisplayMath = !inFence && e.key === "Enter" && ref.current
@@ -1716,7 +1734,7 @@ const BlockRow = React.memo(function BlockRow({
                   const ta = ref.current;
                   const selStart = ta.selectionStart, selEnd = ta.selectionEnd;
                   e.preventDefault();
-                  const ins = e.key !== "Enter" ? "  " : inDisplayMath ? "\n" + quoteMarksAt(ta.value, selStart) : "\n";
+                  const ins = e.key !== "Enter" ? "  " : codeBreak(ta.value, selStart);
                   ta.view?.dispatch({
                     changes: { from: selStart, to: selEnd, insert: ins },
                     selection: { anchor: selStart + ins.length },
@@ -1729,8 +1747,7 @@ const BlockRow = React.memo(function BlockRow({
                 const newNoteKey = enterNewNote ? !e.shiftKey : e.shiftKey;
                 if (e.key === "Enter" && newNoteKey) {
                   e.preventDefault();
-                  onEnterSibling(block.id);
-                  guideEvents.emit("block.created");
+                  if (newBlockKey(commandContext())) guideEvents.emit("block.created");
                 } else if (e.key === "Enter") {
                   // The line-break Enter continues markdown lists and quotes
                   // (Obsidian-style, mdLines.enterPlan): "> - [ ] foo⏎"
@@ -1773,9 +1790,30 @@ const BlockRow = React.memo(function BlockRow({
                   onToggle(block.id);
                 } else if (e.key === "Backspace" && !(block.content || "").trim() && !quote.trim()) {
                   // The caret goes on to the end of the block shown above, as
-                  // in any outliner (and the on-screen keyboard stays up).
+                  // in any outliner (and the on-screen keyboard stays up). A
+                  // plain note's children stay, where the indented lines under
+                  // a deleted line would; a sheet's or a group's go with it.
                   e.preventDefault();
-                  onDelete(block.id, { focusAbove: true });
+                  onDelete(block.id, { keepChildren: isPlainNote(block), focusAbove: true });
+                } else if (e.key === "Backspace" && isPlainNote(block) && ref.current?.selectionStart === ref.current?.selectionEnd) {
+                  // Right after a list marker the marker goes, in one press;
+                  // at the very start the block joins the one above. Code and
+                  // math are text here, whatever they look like.
+                  const ta = ref.current, pos = ta.selectionStart;
+                  if (!pos) {
+                    e.preventDefault();
+                    onMergeAbove(block.id);
+                  } else if (!fenceInnerAt(ta.value, pos) && !findMathAtCursor(ta.value, pos)?.display) {
+                    const plan = backspacePlan(ta.value, pos);
+                    if (plan) {
+                      e.preventDefault();
+                      ta.view?.dispatch({
+                        changes: { from: plan.from, to: plan.to },
+                        selection: { anchor: plan.pos },
+                        userEvent: "delete.backward",
+                      });
+                    }
+                  }
                 }
               }}
               placeholder={t("Type — '/' for commands")}
@@ -1803,7 +1841,13 @@ const BlockRow = React.memo(function BlockRow({
                 // an untitled notebook sheet reads as the page it stands for
                 <div className="blockPlaceholder blockSheetLabel">{t("Page {n}", { n: sheetNumber })}</div>
               ) : (
-                <div className="blockPlaceholder">{t("(empty)")}</div>
+                // An empty plain note is a gap in the text: blank until the
+                // row is hovered or focused, and blank for good on a page
+                // that cannot be edited. It keeps the row's height either way,
+                // and a copy across it leaves the word out.
+                isPlainNote(block)
+                  ? <div className={`blockPlaceholder blockPlaceholderQuiet${readOnly ? " readOnly" : ""}`} data-markdown-copy-ignore="">{t("(empty)")}</div>
+                  : <div className="blockPlaceholder">{t("(empty)")}</div>
               )}
               {gapLine ? <div className="mdGapLine" data-markdown-copy-ignore="" style={{ top: gapLine.top - gapLine.half, height: 2 * gapLine.half }} /> : null}
               {remoteCursors ? <RenderedCarets peers={remoteCursors} source={block.content || ""} containerRef={renderedRef} /> : null}
@@ -1937,9 +1981,9 @@ const SortableBlockRow = React.memo(function SortableBlockRow({ block, ...rowPro
     setHandleMenu({ x: e.clientX, y: e.clientY });
   }
 
-  const copy = (text, msg) => {
+  const copy = (text, msg, source) => {
     setHandleMenu(null);
-    sourceCopied(text);
+    sourceCopied(text, source);
     copyText(text);
     rowProps.onStatus?.(msg);
   };
@@ -1998,6 +2042,7 @@ const SortableBlockRow = React.memo(function SortableBlockRow({ block, ...rowPro
             onClick={() => copy(
               block.children?.length ? subtreeMarkdown(block, 0) : blockMarkdown(block),
               t("Copied block as markdown"),
+              { outline: !!block.children?.length },
             )}
           >{t("Copy as markdown")}</MenuItem>
           {block.id !== "root" && rowProps.onProperties ? (
@@ -2124,9 +2169,8 @@ function AiGhostRow({ content, depth }) {
       <div className="blockRowWrap">
         <div className="blockRow ai-create aiMark0">
           <span className="collapseSpacer" />
-          <span className="dotSlot dotSlotEmpty"><span className="noteBulletDot" /></span>
+          <span className="dotSlot dotSlotEmpty" />
           <div className="blockBody">
-            <div className="blockMeta">{t("note")}</div>
             <div className="blockRendered aiStreaming">
               {content.trim() ? <BlockMarkdown content={content} blockId="ai-ghost" refLabels={NO_LABELS} /> : null}
             </div>

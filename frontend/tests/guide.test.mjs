@@ -224,6 +224,18 @@ test("every data-guide attribute in the source is registered", () => {
   for (const id of Object.keys(ANCHORS)) assert.ok(used.has(id), `anchor ${id} is registered but no element carries it`);
 });
 
+// A row of notes is a bar on its own: plain text has no dot in the app, so a
+// drawing of one has none either. The MCP clip's dot is a terminal's tool call.
+test("a clip's note rows draw no dot", () => {
+  const dir = new URL("../src/guide/media/", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+  const dot = /<circle class="m-line(?:-dim)?" cx="[\d.]+" cy="([\d.]+)" r="[\d.]+" \/>\s*<rect class="m-line(?:-dim)?" x="[\d.]+" y="([\d.]+)" width="[\d.]+" height="([\d.]+)"/g;
+  for (const name of readdirSync(dir).filter((n) => n.endsWith(".svg") && n !== "assistants-mcp.svg")) {
+    for (const [, cy, y, h] of readFileSync(join(dir, name), "utf8").matchAll(dot)) {
+      assert.ok(Math.abs(Number(y) + Number(h) / 2 - Number(cy)) > 0.5, `guide/media/${name}: a dot at y ${cy} beside its row`);
+    }
+  }
+});
+
 test("a step's drawing is a registered id with a file, and every drawing is used", () => {
   const dir = new URL("../src/guide/media/", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
   const files = new Set(readdirSync(dir).filter((n) => n.endsWith(".svg")).map((n) => n.replace(/\.svg$/, "")));

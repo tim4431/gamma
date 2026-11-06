@@ -53,7 +53,7 @@ from . import ink as inkmod
 from .blocks_store import block_kind
 from .highlight_relocate import to_viewer_rect
 from .note_markup import INLINE_RE, LINK_PARTS
-from .pdf_export import (annotation_key, display_size, pdf_point_to_viewer, still_embedded,
+from .pdf_export import (annotation_key, display_size, nested_note_line, pdf_point_to_viewer, still_embedded,
                          viewer_point_to_pdf, viewer_rect_to_pdf)
 from .pdf_text import GlyphPages, has_box, quote_under
 from .zotero_notes import note_tree
@@ -482,12 +482,12 @@ def _comment_text(md: str) -> str:
 def _nested_lines(nested) -> list[str]:
     """The nested notes (``(depth, markdown, …)``, depth 1 under the block;
     a depth-0 entry, the block's own note, is skipped) as popup_text writes
-    them: an indented bullet list."""
+    them: an indented list."""
     out = []
     for entry in nested or ():
         depth, md = entry[0], (entry[1] or "").strip(_WS)
         if depth >= 1 and md:
-            out.append("  " * (depth - 1) + "- " + _comment_text(md))
+            out.append(nested_note_line(depth, _comment_text(md)))
     return out
 
 

@@ -1,8 +1,8 @@
 """Exporting pages: one driver (``_run_export``) walks the selected page
 subtrees and feeds them to the format's ``_Builder`` — Markdown, an Obsidian
-vault, a Logseq graph, a Zotero RDF library, a scoped Gamma backup, a BibTeX
-bibliography, the notes typeset as a PDF document, or the annotated PDFs
-themselves. Most builders produce a zip; a bare .md (nothing to bundle), the
+vault, a Logseq graph, a Zotero RDF library, a zip for Notion's importer, a
+scoped Gamma backup, a BibTeX bibliography, the notes typeset as a PDF document,
+or the annotated PDFs themselves. Most builders produce a zip; a bare .md (nothing to bundle), the
 .bib, the notes PDF and one page's annotated PDF are single files. A page's
 export takes the pages inside it too when asked (``sub_pages``), laid out
 as a folder's pages are. The same builders serve the downloads
@@ -29,7 +29,7 @@ from starlette.background import BackgroundTask
 
 from .. import bibtex as bibtex_mod
 from .. import ink as inkmod
-from .. import comments, jobs, notability_export, notebook, pdf_text, pdf_translated
+from .. import comments, jobs, notability_export, notebook, notion_export, pdf_text, pdf_translated
 from ..auth import require_user, require_ws, resolve_ws, share_scope
 from ..blocks_store import (
     BLOCK_COLUMNS, FOLDERS, LABELS, PATH_SEP, TREES, assert_block_in_scope, block_to_dict,
@@ -63,6 +63,7 @@ from ..highlights import is_highlight, is_link
 from ..storage import attachment_disposition, upload_refs
 from ..picture import is_picture, normalize_picture, picture_page, stack_order
 from ..text_box import box_page, is_text_box, normalize_text_box
+from .uploads import _share_can_read_upload
 from ..obsidian_export import (APP_JSON, Filing, VaultContext, referenced_blocks, render_vault_page, unique_name,
                                vault_name)
 from ..pdf_document import render_document
@@ -503,6 +504,23 @@ class _MarkdownBuilder(_Builder):
         return super().save(dest, progress)
 
 
+def _named_pages(conn, root_ids) -> list[tuple]:
+    """``root_ids`` as ``obsidian_export.name_files`` takes them: (page id,
+    title, properties), those no longer there left out."""
+    pages = []
+    for rid in root_ids:
+        row = conn.execute("SELECT content, properties FROM unified_blocks WHERE id = ?",
+                           (rid,)).fetchone()
+        if row is None:
+            continue
+        try:
+            props = json.loads(row[1] or "{}")
+        except (TypeError, ValueError):
+            props = {}
+        pages.append((rid, row[0] or "", props))
+    return pages
+
+
 class _ObsidianBuilder(_Builder):
     """An Obsidian vault (``obsidian_export``): ``<dir>/<Title>.md`` per page
     (directories = the folders below the exported folder, a sub-page's
@@ -520,17 +538,7 @@ class _ObsidianBuilder(_Builder):
     def begin(self, conn, root_ids):
         super().begin(conn, root_ids)
         self.ctx = VaultContext(block_ref_resolver(conn), include_pdf=self.opts["pdf"])
-        pages = []
-        for rid in root_ids:
-            row = conn.execute("SELECT content, properties FROM unified_blocks WHERE id = ?",
-                               (rid,)).fetchone()
-            if row is None:
-                continue
-            try:
-                props = json.loads(row[1] or "{}")
-            except (TypeError, ValueError):
-                props = {}
-            pages.append((rid, row[0] or "", props))
+        pages = _named_pages(conn, root_ids)
         self.ctx.name_pages(self.filing, pages)
         # Every block that something links to needs its ^anchor written, and
         # a page may be rendered before the page that links into it — so the
@@ -1104,6 +1112,91 @@ class _NotabilityBuilder(_Builder):
         return {**super().summary(), "warnings": self.warnings}
 
 
+def _within_share(resolve_ref, conn, scope):
+    """``block_ref_resolver`` for a share's export: a block on a page outside
+    ``scope`` resolves to nothing, as a deleted one does, so a [[ref]] to it
+    stays as typed."""
+    pages = set(scope.pages(conn))               # the allows_page rule, in one read
+
+    def resolve(block_id):
+        ref = resolve_ref(block_id)
+        return ref if ref and ref["page_id"] in pages else None
+
+    return resolve
+
+
+class _NotionBuilder(_Builder):
+    """A zip for Notion's importer (``notion_export``), a zip however few
+    pages it holds: ``<dir>/<Title>.md`` per page, filed as the annotated
+    PDFs are (``directory``), each page's images in a directory named for
+    it. Links resolve against the export set, so every page is named before
+    the first one renders. The PDFs stay out whatever the ``pdf`` switch
+    says, since Notion drops them; what a page loses is listed under its
+    title in the result's ``warnings``. Through a share a [[ref]] or an
+    ![[embed]] reaches only the share's pages (``_within_share``) and an
+    upload goes in only if the share can read it (``_can_bundle``)."""
+    suffix = "-notion.zip"
+
+    def __init__(self, ws, base, opts):
+        super().__init__(ws, base, opts)
+        self.ctx = None
+        self.sizes = {}              # arcname of a bundled file → its size
+
+    def begin(self, conn, root_ids):
+        super().begin(conn, root_ids)
+        resolve_ref, share = block_ref_resolver(conn), self.opts.get("share")
+        self.ctx = notion_export.NotionContext(_within_share(resolve_ref, conn, share) if share else resolve_ref,
+                                               self._bundle, self.opts["highlights"], self.opts["notes"])
+        self.ctx.name_pages(self.filing, _named_pages(conn, root_ids),
+                            lambda pid, props, stems: self.directory({"id": pid, "properties": props}, stems))
+
+    def _can_bundle(self, name) -> bool:
+        """Whether the zip may hold the upload ``name``: through a share, only
+        what the share can read. A handwriting picture goes by its ink."""
+        share = self.opts.get("share")
+        if share is None:
+            return True
+        drawn = name.endswith(".svg") and not (self.uploads_dir / name).is_file()
+        return _share_can_read_upload(self.ws, share, f"{name[:-4]}.ink" if drawn else name)
+
+    def _bundle(self, name, stem) -> int | None:
+        """The upload ``name`` beside the page file ``stem``: its size, None
+        for a file that is gone, which ``_write_zip`` would pass over without
+        a word, or that the export may not hold. A handwriting picture has no
+        file: it is rendered here."""
+        arcname = f"{stem}/{name}"
+        if arcname not in self.sizes and not self._can_bundle(name):
+            self.sizes[arcname] = None
+        if arcname not in self.sizes:
+            path = self.uploads_dir / name
+            if path.is_file():
+                self.files.append((arcname, path))
+                self.sizes[arcname] = path.stat().st_size
+            else:
+                self.render_ink_svgs([name], prefix=f"{stem}/")
+                if self.blobs and self.blobs[-1][0] == arcname:
+                    self.sizes[arcname] = len(self.blobs[-1][1])
+        return self.sizes.get(arcname)
+
+    def add_page(self, n, rows, page):
+        text = notion_export.render_notion_page(page, self.ctx, self.filing.tags(page["properties"]))
+        if text is not None:
+            self.entries.append((self.ctx.files[page["id"]], text))
+
+    def save(self, dest, progress=jobs.no_progress):
+        if self.walked and not self.entries:         # every page was left out
+            raise HTTPException(status_code=400, detail="nested too deep to write as a Notion page")
+        return super().save(dest, progress)
+
+    def finish(self):
+        if len(self.entries) + len(self.files) + len(self.blobs) > notion_export.MAX_FILES:
+            self.ctx.warnings.append({"page_id": "", "title": self.base, "reason": (
+                f"over {notion_export.MAX_FILES:,} files, which Notion's importer is likely to fail on")})
+
+    def summary(self) -> dict:
+        return {**super().summary(), "warnings": self.ctx.warnings}
+
+
 class _BibtexBuilder(_Builder):
     """One ``.bib`` bibliography: the citation entry of every page that has
     paper metadata — ``properties.bibtex``, the entry the metadata lookup
@@ -1176,6 +1269,7 @@ _BUILDERS = {
     "notes-pdf": _NotesPdfBuilder,
     "annotated-pdf": _AnnotatedPdfBuilder,
     "notability": _NotabilityBuilder,
+    "notion": _NotionBuilder,
 }
 
 
@@ -1403,8 +1497,9 @@ def export_page(block_id: str, request: Request, mode: str = "readable", pdf: in
     as there), ``logseq-graph`` (a complete
     Logseq file graph, both switches pinned on), ``zotero-rdf`` (a one-item
     Zotero RDF library), ``bibtex`` (the page's citation entry as a .bib
-    file), or ``gamma`` (a scoped account backup any Gamma imports via
-    /api/import-data?mode=merge). ``sub_pages=1`` exports every page inside
+    file), ``notion`` (a zip for Notion's importer: the page as ``<Title>.md``
+    with its images, always a zip), or ``gamma`` (a scoped account backup any
+    Gamma imports via /api/import-data?mode=merge). ``sub_pages=1`` exports every page inside
     it too, laid out as a folder export lays out its pages: a format that
     writes one file for one page writes a zip for several, named for the
     page."""
@@ -1485,7 +1580,8 @@ def export_folder(folder_id: str, request: Request, mode: str = "readable", pdf:
     page's annotated PDF, the subfolders as directories), ``logseq-graph``
     (a complete Logseq file graph), ``zotero-rdf`` (a Zotero RDF library —
     subfolders become collections), ``bibtex`` (one .bib with every paper's
-    citation entry) or ``gamma`` (a scoped account backup any Gamma imports
+    citation entry), ``notion`` (a zip for Notion's importer: subfolders as
+    directories) or ``gamma`` (a scoped account backup any Gamma imports
     via /api/import-data?mode=merge). The web app exports through a job
     instead (``POST /api/jobs/export``); this is the share view's and the
     scripts' download — with a folder share token, a ``mode=bibtex`` URL is

@@ -33,6 +33,9 @@
 // is a `view` kept beside the tree ({editingId, folds}, EMPTY_VIEW below),
 // never a flag on a node, so revealing a block or opening an editor can't
 // be mistaken for an edit, and an edit can't be mistaken for a load.
+import { fenceInnerAt } from "../../editor/fences.js";
+import { findMathAtCursor } from "../../editor/latexCompletion.js";
+import { isWholeLine, parseLine, withoutFirstMarker } from "../../editor/mdLines.js";
 import { DEFAULT_HIGHLIGHT, normalizeColor } from "./palette.js";
 import { wallNow } from "./wallClock.js";
 
@@ -83,6 +86,12 @@ export function isHighlightBlock(b) {
   return Boolean(p && isRecord(p.pdf_position) && !isInkGroup(b) && !isRecord(p.text_box)
     && !isRecord(p.picture) && !isRecord(p.sheet));
 }
+
+// A plain note: text and nothing else. A block's fold and the moment it was
+// made (`t0`) are bookkeeping, not content; any other property makes it
+// something more (a highlight, a box, a picture, a sheet, a Zotero note),
+// which the editor's text-only behaviour leaves alone.
+export const isPlainNote = (b) => Object.keys(b?.properties || {}).every((k) => k === "collapsed" || k === "t0");
 
 // A highlight's colour as stored (#rrggbbaa, palette.js), the default for
 // a block without a readable one. An older rgba(…) string reads too.
@@ -453,12 +462,16 @@ export function makeNewBlock({ id = makeId(), content = "", properties = {}, chi
   return { id, children, content, properties: { t0: wallNow(), ...properties } };
 }
 
-// New empty sibling next to `id` — below by default (Enter), above with
-// `above` (the row's "+" handle with Alt held, Notion-style).
-export function addSiblingBlock(blocks, id, { above = false } = {}) {
-  const newBlock = makeNewBlock();
+// New sibling next to `id`, empty unless `content` — below by default
+// (Enter), above with `above` (the row's "+" handle with Alt held,
+// Notion-style), or its first child with `firstChild`. `keep`, when given,
+// becomes `id`'s text in the same transition (the new-block key's split:
+// one undo step, one op set). A caller that needs the id before the tree
+// changes makes the block itself and passes it as `newBlock`.
+export function addSiblingBlock(blocks, id, { above = false, content, keep, firstChild = false, newBlock = makeNewBlock({ content }) } = {}) {
+  const kept = keep === undefined ? blocks : setBlockText(blocks, id, keep);
   return {
-    blocks: insertSibling(blocks, id, newBlock, !above),
+    blocks: firstChild ? insertChild(kept, id, newBlock) : insertSibling(kept, id, newBlock, !above),
     newId: newBlock.id
   };
 }
@@ -676,4 +689,34 @@ export function visibleNeighbor(blocks, id, dir, view) {
   const i = flat.findIndex((b) => b.id === id);
   if (i < 0) return null;
   return flat[i + dir] || null;
+}
+
+// Backspace at the very start of plain note `id`: the block joins the one
+// shown above it, or, when that one is empty, takes its place. Text only
+// ever joins text: null when either block is no plain note, when the block
+// above hides children (or a join would hide the ones it is given), or when
+// the join would run into a fence, display math, a table, a divider, or this
+// block's quote. Its children keep their reading order: spliced in at its
+// place under a parent it merges into, otherwise last under the block above,
+// which they already follow. {blocks, gone (the block removed), focusId,
+// caret (where the caret goes in it)}; a thread on `gone` is the caller's to
+// test, the threads being no part of the tree.
+export function mergeIntoAbove(blocks, id, view) {
+  const block = findBlock(blocks, id);
+  const above = visibleNeighbor(blocks, id, -1, view);
+  if (!block || !above || !isPlainNote(block) || !isPlainNote(above)) return null;
+  const kids = block.children || [];
+  const folded = isFolded(above, view);
+  if (folded && above.children?.length) return null;
+  const text = block.content || "", aboveText = above.content || "";
+  if (!aboveText.trim()) return { blocks: removeBlockKeepChildren(blocks, above.id), gone: above.id, focusId: id, caret: 0 };
+  if (folded && kids.length) return null;
+  const first = text.split("\n", 1)[0], end = aboveText.length;
+  if (isWholeLine(aboveText.slice(aboveText.lastIndexOf("\n") + 1)) || fenceInnerAt(aboveText, end) || findMathAtCursor(aboveText, end)?.display) return null;
+  if (isWholeLine(first) || parseLine(first).depth) return null;
+  const merged = aboveText + withoutFirstMarker(text);
+  const next = above.id === getParentInfo(blocks, id).parent?.id
+    ? setBlockText(removeBlockKeepChildren(blocks, id), above.id, merged)
+    : updateBlockTree(removeBlockTree(blocks, id), above.id, (b) => ({ ...b, content: merged, children: [...(b.children || []), ...kids] }));
+  return { blocks: next, gone: id, focusId: above.id, caret: aboveText.length };
 }

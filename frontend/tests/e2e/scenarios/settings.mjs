@@ -819,11 +819,11 @@ export async function settingsScenarios(env) {
       // in Keyboard › Built in, next to the keys it swaps
       await nav(page, "Keyboard").click();
       await until(() => sync("Built in").then((v) => v === "saved"));
-      await row(page, "Enter makes").getByRole("button", { name: "New note", exact: true }).click();
+      await row(page, "Enter makes").getByRole("button", { name: "New line", exact: true }).click();
       await until(() => sync("Built in").then((v) => v === "syncing"));
       assertEq(await sync("Shortcuts"), "saved");
       await until(() => sync("Built in").then((v) => v === "saved"));
-      assertEq((await user.api("/api/prefs/profile")).value?.enterNewNote, true);
+      assertEq((await user.api("/api/prefs/profile")).value?.enterNewNote, false);
       await nav(page, "Appearance").click();
       assertEq(await sync("Theme"), "saved");
       // the top bar's buttons are an account preference shown under Appearance
@@ -833,8 +833,8 @@ export async function settingsScenarios(env) {
       await row(page, "Sync pill").getByRole("button", { name: "Synced pages", exact: true }).click();
       await until(async () => (await user.api("/api/prefs/profile")).value?.topbar?.modes?.sync === "auto");
       await nav(page, "Keyboard").click();
-      await row(page, "Enter makes").getByRole("button", { name: "New line", exact: true }).click();
-      await until(async () => (await user.api("/api/prefs/profile")).value?.enterNewNote === false);
+      await row(page, "Enter makes").getByRole("button", { name: "New note", exact: true }).click();
+      await until(async () => (await user.api("/api/prefs/profile")).value?.enterNewNote === true);
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
@@ -2098,6 +2098,9 @@ export async function settingsScenarios(env) {
       await page.getByRole("button", { name: "Back", exact: true }).click();
       await nav(page, "Keyboard").click();
       await row(page, "Enter makes").waitFor();
+      assert((await row(page, "Enter makes").innerText()).includes("Shift+Enter inserts a new line"), "a note by default");
+      await row(page, "Enter makes").getByRole("button", { name: "New line", exact: true }).click();
+      assert((await row(page, "Enter makes").innerText()).includes("Shift+Enter creates a new note"));
       await row(page, "Enter makes").getByRole("button", { name: "New note", exact: true }).click();
       assert((await row(page, "Enter makes").innerText()).includes("Shift+Enter inserts a new line"));
       await page.getByRole("button", { name: "Back", exact: true }).click();

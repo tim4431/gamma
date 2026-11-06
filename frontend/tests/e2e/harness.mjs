@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { chromium, firefox, webkit } from "playwright";
 import headed from "../../../tools/headed.cjs";
+import { WEBKIT_TOUCH_NOTE, cancelledLoad, clickAfterCancelledTap, touchPoints } from "./webkit.mjs";
 
 export const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const BACKEND = path.join(ROOT, "backend");
@@ -216,7 +217,10 @@ export class Account {
 // default.
 export async function launchBrowser({ scrollbars = false } = {}) {
   const headless = { headless: !flags.headed };
-  if (process.env.GAMMA_E2E_BROWSER === "webkit") return english(await webkit.launch(headless));
+  if (process.env.GAMMA_E2E_BROWSER === "webkit") {
+    console.log(`  ${WEBKIT_TOUCH_NOTE}`);
+    return english(await webkit.launch(headless));
+  }
   if (process.env.GAMMA_E2E_BROWSER === "firefox") return english(await firefox.launch(headless));
   const opts = scrollbars ? { ...headless, ignoreDefaultArgs: ["--hide-scrollbars"] } : headless;
   try {
@@ -235,10 +239,12 @@ export async function launchBrowser({ scrollbars = false } = {}) {
 // English unless a scenario asks for another locale. Tours offered by
 // themselves (docs/dev/onboarding.md) would cover what other scenarios
 // click, so every context turns "Suggest tours" off unless it passes
-// `suggestTours: true`.
+// `suggestTours: true`. A touch context in WebKit gets what Playwright's
+// WebKit leaves out of a touch screen (webkit.mjs), or with
+// `bareWebkitTap: true` Playwright's tap as it is.
 function english(browser) {
   const newContext = browser.newContext.bind(browser);
-  browser.newContext = async ({ suggestTours = false, ...options } = {}) => {
+  browser.newContext = async ({ suggestTours = false, bareWebkitTap = false, ...options } = {}) => {
     const ctx = await newContext({ locale: "en-US", ...options });
     await ctx.addInitScript((on) => { try { localStorage.setItem("gamma-suggest-tours", on ? "1" : "0"); } catch {} }, suggestTours);
     // A context without touch is a mouse machine whatever the host says:
@@ -248,6 +254,10 @@ function english(browser) {
     // controls and guide steps. A hasTouch context keeps Playwright's own
     // emulation.
     if (!options.hasTouch) await ctx.addInitScript(() => { Object.defineProperty(Navigator.prototype, "maxTouchPoints", { get: () => 0, configurable: true }); });
+    else if (browser.browserType().name() === "webkit") {
+      await ctx.addInitScript(touchPoints);
+      if (!bareWebkitTap) await ctx.addInitScript(clickAfterCancelledTap);
+    }
     const close = ctx.close.bind(ctx);
     ctx.close = async ({ lastLook: look = true, ...options } = {}) => {
       if (look) for (const page of ctx.pages()) await lastLook(page);
@@ -303,7 +313,9 @@ export async function openPage(ctx, url) {
   page.on("console", (m) => {
     if (m.type() === "error" && !/Failed to load resource/.test(m.text())) page.problems.push(`console: ${m.text().slice(0, 200)}`);
   });
-  page.on("pageerror", (e) => page.problems.push(`pageerror: ${String(e).slice(0, 200)}`));
+  page.on("pageerror", (e) => {
+    if (!cancelledLoad(String(e), page.url())) page.problems.push(`pageerror: ${String(e).slice(0, 200)}`);
+  });
   if (url) await page.goto(url);
   return page;
 }

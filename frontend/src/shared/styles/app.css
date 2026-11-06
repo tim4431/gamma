@@ -439,7 +439,7 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   margin-bottom: 1px;
 }
 
-/* Tight left gutter: the card's inner columns (collapse arrow + bullet dot)
+/* Tight left gutter: the card's inner columns (collapse arrow + marker slot)
    are what put whitespace before the text — keep them minimal. */
 .blockRow {
   display: flex;
@@ -1192,6 +1192,9 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   color: var(--text-muted);
   font-style: italic;
 }
+/* An empty plain note: its line stays, its word only comes with the row. */
+.blockPlaceholderQuiet { visibility: hidden; }
+.blockRow:is(:hover, .focused) .blockPlaceholderQuiet:not(.readOnly) { visibility: visible; }
 
 /* Click zone under the block tree — Notion-style "click below to write".
    Invisible under a non-empty tree; on an empty page it shows the invite. */
@@ -1663,7 +1666,12 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
    "+" (add a block) right under it. Invisible at rest, appear on row hover,
    and get a rounded pill background when hovered themselves. The "+" is
    taken out of flow so a one-line row stays one line tall — it hangs below
-   the ⋮⋮ over the next row's (empty) gutter, above it in z-order. */
+   the ⋮⋮ over the next row's gutter, above it in z-order. A next row that
+   sits shallower has the start of its line there instead, under the "+".
+   Layout containment makes that hanging ink overflow, as it paints the same:
+   counted as scrollable overflow it makes the row a scroller to CodeMirror,
+   which then clips the caret's scroll target, the editing bar's margin with it,
+   to the row. */
 .sortableBlockWrap > .rowHandles {
   flex: 0 0 auto;
   position: relative;
@@ -1671,6 +1679,7 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   width: 18px;
   height: 22px;
   margin-top: 1px;
+  contain: layout;
 }
 /* Both handles: a flat 18px-wide hit box that appears on row hover, and
    takes no press while it is out of sight. */
@@ -1711,6 +1720,9 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   opacity: 1;
   pointer-events: auto;
 }
+/* A one-line row is shorter than its "+" hangs: over the next row's handles,
+   which come later in the tree, it has to rise above them. */
+.sortableBlockWrap:is(:hover, :focus-within, :has(:hover)) > .rowHandles { z-index: 3; }
 /* Where nothing hovers, every row's ⋮⋮ stays, quiet, so its menu and drag
    are in reach; the "+" still comes with the row being edited. */
 @media (hover: none) {
@@ -1732,7 +1744,8 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 /* equal-width dot slot for alignment between highlight and non-highlight blocks */
 .dotSlot { width: 14px; min-width: 14px; display: inline-flex; align-items: center; justify-content: center; }
 .dotSlotEmpty { height: 16px; margin-top: 2px; }
-/* Outliner bullet for plain notes — quiet, but gives every block an anchor. */
+/* The quiet mark of a highlight, ink, box, picture or recording row while its
+   editor stands in for its own; a plain note has none. */
 .noteBulletDot {
   display: inline-block;
   width: 5px;
@@ -1762,7 +1775,7 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 .blockChildren {
   border-left: 1px solid var(--border-subtle);
   padding-left: 14px;
-  margin-left: 11px;  /* align line under the dot column of parent */
+  margin-left: 11px;  /* align line under the parent's fold caret */
 }
 
 /* Close-PDF feature */

@@ -6,12 +6,15 @@ import io
 import os
 import posixpath
 import shutil
+import time
+import tracemalloc
 import zipfile
 from urllib.parse import quote
 
 import pytest
 
-from gamma import import_zip, markdown_import, markdown_zip_import as mzi
+from gamma import (import_zip, markdown_import, markdown_zip_dialects, markdown_zip_import as mzi, markdown_zip_links,
+                   notion_import)
 from gamma.markdown_import import md_to_blocks
 from conftest import folder_names, label_names, login, make_folder, make_user
 
@@ -138,7 +141,7 @@ def test_notion_export_becomes_pages_sub_pages_mentions_and_uploads(guest):
     assert texts[3].startswith("![diagram.png](/api/uploads/") and texts[3].endswith(".png)")
     assert texts[4] == f"[[{by_title['Tasks']['id']}]]"
     toggle = home["children"][5]
-    assert toggle["content"] == "Toggle heading"
+    assert toggle["content"] == "- Toggle heading"
     assert [c["content"] for c in toggle["children"]] == ["Hidden paragraph under the toggle."]
 
     upload = texts[3][len("![diagram.png]("):-1]
@@ -192,13 +195,13 @@ def test_a_notion_database_keeps_every_row(guest):
 
 def test_csv_tables_split_by_rows_and_by_characters(monkeypatch):
     data = ("Name,Note\n" + "".join(f"r{i},{'x' * 20}\n" for i in range(5))).encode()
-    monkeypatch.setattr(mzi, "TABLE_ROWS", 2)
-    md, cut = mzi._csv_to_markdown(data)
+    monkeypatch.setattr(notion_import, "TABLE_ROWS", 2)
+    md, cut = notion_import._csv_to_markdown(data)
     assert cut == 0
     assert [t.count("\n") - 1 for t in md.split("\n\n")] == [2, 2, 1]
-    monkeypatch.setattr(mzi, "TABLE_ROWS", 500)
-    monkeypatch.setattr(mzi, "TABLE_CHARS", 60)   # a row is 29 characters
-    md, _ = mzi._csv_to_markdown(data)
+    monkeypatch.setattr(notion_import, "TABLE_ROWS", 500)
+    monkeypatch.setattr(notion_import, "TABLE_CHARS", 60)   # a row is 29 characters
+    md, _ = notion_import._csv_to_markdown(data)
     assert [t.count("\n") - 1 for t in md.split("\n\n")] == [2, 2, 1]
 
 
@@ -444,6 +447,94 @@ def test_gamma_markdown_export_round_trips(guest):
     assert again["pages_created"] == 0 and again["pages_skipped"] == 2
 
 
+def test_a_multi_line_area_note_or_link_label_keeps_a_page_readable(guest):
+    """An area highlight has no quote, so its note is its first line, and a
+    link's label can run over lines too: every line stays under its bullet,
+    so one such block costs the page's plain blocks no marker."""
+    page = guest.post("/api/blocks", json={"parent_id": "root", "content": "Area notes"}).json()
+    folder = make_folder(guest, "areas")
+    guest.put(f"/api/blocks/{page['id']}", json={"properties": {"folders": [folder]}})
+    area = {"pdf_position": {"page": 1, "rects": []}}
+    _put_children(guest, page["id"], [
+        {"id": "a-a", "content": "alpha", "properties": {}, "children": []},
+        {"id": "a-h", "content": "one\ntwo", "properties": area, "children": []},
+        {"id": "a-b", "content": "beta", "properties": {}, "children": [
+            {"id": "a-l", "content": "see\nthere", "properties": {"link_url": "https://x.y"}, "children": []},
+        ]},
+    ])
+    r = guest.get(f"/api/folders/{folder}/export?mode=readable&highlights=1&notes=1&pdf=1")
+    assert r.status_code == 200, r.text
+    zf = zipfile.ZipFile(io.BytesIO(r.content))
+    text = zf.read(next(n for n in zf.namelist() if n.startswith("Area notes"))).decode()
+    assert "\n- one\n  two\n" in text and "\n  - [see\n    there](https://x.y)\n" in text
+
+    report = _import(guest, _zip({"Area notes.md": text}))
+    assert _shape(_subtree(guest, report["pages"][0]["id"]))["children"] == [
+        {"content": "alpha", "children": []},
+        {"content": "one\ntwo", "children": []},
+        {"content": "beta", "children": [{"content": "[see\nthere](https://x.y)", "children": []}]},
+    ]
+
+
+def _plain_and_list_blocks():
+    return [
+        {"id": "o-x", "content": "x", "properties": {}, "children": [
+            {"id": "o-y", "content": "- y\n  more", "properties": {}, "children": [
+                {"id": "o-n", "content": "1. n", "properties": {}, "children": []},
+            ]},
+            {"id": "o-t", "content": "- [ ] t", "properties": {}, "children": []},
+            {"id": "o-q", "content": "> q\n> r", "properties": {}, "children": []},
+            {"id": "o-f", "content": "```py\n- no\n\nlist\n```", "properties": {}, "children": []},
+        ]},
+        {"id": "o-b", "content": "- b", "properties": {}, "children": []},
+    ]
+
+
+_OUTLINE = [
+    {"content": "x", "children": [
+        {"content": "- y\n  more", "children": [{"content": "1. n", "children": []}]},
+        {"content": "- [ ] t", "children": []},
+        {"content": "> q\n> r", "children": []},
+        {"content": "```py\n- no\n\nlist\n```", "children": []},
+    ]},
+    {"content": "- b", "children": []},
+]
+
+
+def test_a_readable_export_gives_plain_and_list_blocks_back_as_they_were(guest):
+    """``x`` is written ``- x`` and ``- y`` is written ``- - y``: the file is
+    known by its shape, so each comes back as it was."""
+    page = guest.post("/api/blocks", json={"parent_id": "root", "content": "Outline page"}).json()
+    _put_children(guest, page["id"], _plain_and_list_blocks())
+    folder = make_folder(guest, "outlined")
+    guest.put(f"/api/blocks/{page['id']}", json={"properties": {"folders": [folder]}})
+    r = guest.get(f"/api/folders/{folder}/export?mode=readable&highlights=1&notes=1&pdf=1")
+    zipped = zipfile.ZipFile(io.BytesIO(r.content))
+    text = zipped.read(next(n for n in zipped.namelist() if n.endswith(".md"))).decode()
+    assert "- x\n  - - y\n" in text and "\n- - b\n" in text
+
+    report = _import(guest, io.BytesIO(r.content), folder=make_folder(guest, "again"))
+    assert _shape(_subtree(guest, report["pages"][0]["id"]))["children"] == _OUTLINE
+    # one file of it, uploaded alone: its H1 stays a block, as any upload's does
+    r = guest.post("/api/import/markdown", files={"file": ("other.md", text.replace("Outline", "Lone").encode(), "text/markdown")})
+    assert r.status_code == 200, r.text
+    assert _shape(_subtree(guest, r.json()["block_id"]))["children"] == [{"content": "# Lone page", "children": _OUTLINE}]
+
+
+def test_a_stored_file_made_a_page_reads_as_an_upload_does(guest):
+    """POST /pages/from-file is ``markdown_page`` too: a readable export's
+    bullets are blocks, any other file's are list blocks."""
+    def from_file(name, text):
+        url = guest.post("/api/upload-file", files={"file": (name, text, "text/markdown")}).json()["url"]
+        r = guest.post("/api/pages/from-file", json={"filename": url.rsplit("/", 1)[1], "original": name})
+        assert r.status_code == 200, r.text
+        return _shape(_subtree(guest, r.json()["page"]["id"]))["children"]
+
+    assert from_file("list.md", b"- a\n- b\n") == [{"content": "- a", "children": []}, {"content": "- b", "children": []}]
+    assert from_file("out.md", b"---\ntitle: Out\n---\n\n# Out\n\n- a\n") == [
+        {"content": "# Out", "children": [{"content": "a", "children": []}]}]
+
+
 def test_gamma_single_md_upload_honours_front_matter_folder(guest):
     src = b"---\ntitle: Filed note\nfolder: papers/misc\n---\n# Filed note\n\n- one\n"
     r = guest.post("/api/import/markdown", files={"file": ("filed.md", src, "text/markdown")},
@@ -491,12 +582,13 @@ def test_md_to_blocks_list_continuation_rules():
 """
     tree = md_to_blocks(text)
     assert [n["content"] for n in tree] == [
-        "item one\ncontinues item one",
-        "code item\n```js\na();\n\nb();\n```",
-        "toggle",
-        "para item\n\nsecond paragraph of the item",
+        "- item one\n  continues item one",
+        "- code item",
+        "- toggle",
+        "- para item\n\n  second paragraph of the item",
     ]
-    assert [c["content"] for c in tree[0]["children"]] == ["nested"]
+    assert [c["content"] for c in tree[0]["children"]] == ["- nested"]
+    assert [c["content"] for c in tree[1]["children"]] == ["```js\na();\n\nb();\n```"]
     assert [c["content"] for c in tree[2]["children"]] == ["child paragraph after a blank line"]
 
 
@@ -727,12 +819,12 @@ def test_a_folder_notion_export_with_look_alike_directories(guest):
 
 
 def test_notion_quote_tails_and_callouts():
-    tidy = mzi._drop_quote_tails
+    tidy = notion_import._drop_quote_tails
     assert tidy("- Toggle\n    \n    > Quote.\n    > \n- Next") == "- Toggle\n    \n    > Quote.\n- Next"
     assert tidy("> a\n>\n> b\n> ") == "> a\n>\n> b"
-    assert tidy(mzi._convert_asides("<aside>\n💡\n\n> Quoted.\n> \n\n</aside>")) == "> [!info] 💡\n> > Quoted."
+    assert tidy(notion_import._convert_asides("<aside>\n💡\n\n> Quoted.\n> \n\n</aside>")) == "> [!info] 💡\n> > Quoted."
     # after a first line of text, the blank line still parts paragraphs
-    assert mzi._convert_asides("<aside>\n💡 **Tip:** one.\n\nTwo.\n</aside>") == "> [!info] 💡 **Tip:** one.\n>\n> Two."
+    assert notion_import._convert_asides("<aside>\n💡 **Tip:** one.\n\nTwo.\n</aside>") == "> [!info] 💡 **Tip:** one.\n>\n> Two."
 
 
 def test_notion_relations_become_mentions():
@@ -740,11 +832,11 @@ def test_notion_relations_become_mentions():
     page_of = lambda nid, path: pages.get(nid)  # noqa: E731
     cell = (f"| x | v1.2 release (Home/v1%202%20release%20{'1' * 32}.md), Beta, comma (Beta,%20comma%20{'2' * 32}.md), "
             f"1) Intro (1)%20Intro%20{'3' * 32}.md) |")
-    assert mzi._link_relations(cell, page_of) == ("| x | [[P1]], [[P2]], [[P3]] |", 3)
+    assert notion_import._link_relations(cell, page_of) == ("| x | [[P1]], [[P2]], [[P3]] |", 3)
     line = f"Blocked by: System Design: Chat App (System%20Design%20Chat%20App%20{'4' * 32}.md)"
-    assert mzi._link_relations(line, page_of) == ("Blocked by: [[P4]]", 1)
+    assert notion_import._link_relations(line, page_of) == ("Blocked by: [[P4]]", 1)
     kept = f"Other: Elsewhere (Elsewhere%20{'5' * 32}.md)"
-    assert mzi._link_relations(kept, page_of) == (kept, 0)
+    assert notion_import._link_relations(kept, page_of) == (kept, 0)
 
 
 def test_a_notion_page_uploaded_alone_is_not_imported_again(guest):
@@ -841,7 +933,7 @@ def test_big_relation_cells_and_untitled_rows_stay_fast():
     ids = [f"{i:032x}" for i in range(3000)]
     cell = "| x | " + ", ".join(f"T{i} (T{i}%20{nid}.md)" for i, nid in enumerate(ids)) + " |"
     t = time.perf_counter()
-    text, linked = mzi._link_relations(cell, lambda nid, href: "P" + nid[-4:])
+    text, linked = notion_import._link_relations(cell, lambda nid, href: "P" + nid[-4:])
     assert linked == 3000 and time.perf_counter() - t < 2
 
     class Plan:
@@ -853,7 +945,7 @@ def test_big_relation_cells_and_untitled_rows_stay_fast():
     db = Plan(f"Tasks {'f' * 32}.csv", "Tasks", [["Name", "Due"]] + [["", f"day {i}"] for i in range(2000)])
     notes = [Plan(f"Untitled {i:032x}.md", "Untitled", fields={"Due": f"day {i}"}) for i in range(2000)]
     t = time.perf_counter()
-    tree = mzi._flat_tree([db] + notes, lambda plan, href: None)
+    tree = notion_import._flat_tree([db] + notes, lambda plan, href: None)
     assert time.perf_counter() - t < 5
     assert len(tree) == 2000 and set(tree.values()) == {db.page_id}
 
@@ -876,7 +968,7 @@ def test_rows_differing_only_by_punctuation_keep_their_databases(guest):
 
 
 def test_titles_ending_in_hashes():
-    take = mzi._take_title
+    take = markdown_zip_dialects._take_title
     assert take("# C#\n\nbody", None) == ("C#", "body")
     assert take("# Plan ##\n\nbody", None) == ("Plan", "body")
     # what Gamma's export writes for the titles "Issue #" and "Plan ##"
@@ -997,7 +1089,7 @@ def test_a_link_to_an_absent_csv_finds_the_page_of_its_id(guest):
 
 
 def test_asides_in_code_stay_and_in_toggles_stay_whole():
-    convert = mzi._convert_asides
+    convert = notion_import._convert_asides
     fenced = "```html\n<aside>\nnote\n</aside>\n```"
     assert convert(fenced) == fenced
     assert convert("Use `<aside>` and `</aside>` always.") == "Use `<aside>` and `</aside>` always."
@@ -1011,13 +1103,13 @@ def test_a_callout_or_quote_in_a_toggle_is_one_child():
         return [(b["content"], [c["content"] for c in b["children"]]) for b in md_to_blocks(text)]
 
     notion = "- Toggle\n    \n    <aside>\n    💡\n    \n    Callout text.\n    \n    Second para.\n    \n    </aside>\n    \n- Next\n"
-    assert shape(mzi._convert_asides(notion)) == [
-        ("Toggle", ["> [!info] 💡\n> Callout text.\n>\n> Second para."]), ("Next", [])]
+    assert shape(notion_import._convert_asides(notion)) == [
+        ("- Toggle", ["> [!info] 💡\n> Callout text.\n>\n> Second para."]), ("- Next", [])]
     assert shape("- Toggle\n\n    First para.\n\n    > Quote one\n    > quote two\n\n    Last para.\n") == [
-        ("Toggle", ["First para.", "> Quote one\n> quote two", "Last para."])]
-    # a fence opened right below a child paragraph is still the item's, as it was
+        ("- Toggle", ["First para.", "> Quote one\n> quote two", "Last para."])]
+    # a fence opened right below a child paragraph is a child too, after it
     assert shape("- Item\n\n    Para.\n    ```py\n    x = 1\n    ```\n") == [
-        ("Item\n  ```py\n  x = 1\n  ```", ["Para."])]
+        ("- Item", ["Para.", "```py\nx = 1\n```"])]
 
 
 def test_only_notion_notes_have_their_asides_converted(guest):
@@ -1041,7 +1133,7 @@ def test_vault_heading_links_match_as_obsidian_does(guest):
 def test_relations_to_emoji_titles():
     pages = {"1" * 32: "P1", "2" * 32: "P2"}
     text = f"| x | 🎉 (%F0%9F%8E%89%20{'1' * 32}.md), ✅ (%E2%9C%85%20{'2' * 32}.md) |"
-    assert mzi._link_relations(text, lambda nid, path: pages.get(nid)) == ("| x | [[P1]], [[P2]] |", 2)
+    assert notion_import._link_relations(text, lambda nid, path: pages.get(nid)) == ("| x | [[P1]], [[P2]] |", 2)
 
 
 def test_rows_of_one_name_sharing_every_value_stay_fast():
@@ -1058,6 +1150,258 @@ def test_rows_of_one_name_sharing_every_value_stay_fast():
     fields = dict(zip("ABCD", same[1:]))
     notes = [Plan(f"Standup {i:032x}.md", "Standup", fields=dict(fields)) for i in range(4000)]
     t = time.perf_counter()
-    tree = mzi._flat_tree([db] + notes, lambda plan, href: None)
+    tree = notion_import._flat_tree([db] + notes, lambda plan, href: None)
     assert time.perf_counter() - t < 5
     assert len(tree) == 4000
+
+
+# --- a small zip stays small ---------------------------------------------------
+
+def _peak(work) -> int:
+    """The bytes ``work`` holds at its most."""
+    tracemalloc.start()
+    try:
+        work()
+        return tracemalloc.get_traced_memory()[1]
+    finally:
+        tracemalloc.stop()
+
+
+def _quickly(work, *args, seconds=2):
+    start = time.perf_counter()
+    result = work(*args)
+    assert time.perf_counter() - start < seconds
+    return result
+
+
+def test_a_view_s_order_widens_no_row():
+    """A wide header over thousands of one-cell rows, in the view's order:
+    an 18 KB zip of this once held 518 MB."""
+    data = (",".join(f"c{i}" for i in range(8000)) + "\n" + "x\n" * 8000).encode()
+    held = []
+    assert _peak(lambda: held.append(notion_import._csv_to_markdown(data, ["c7", "c3"]))) < 64_000_000
+    table, cut = held[0]
+    assert cut == 7960
+    assert table.split("\n")[0].startswith("| c7 | c3 | c0 | c1 |")
+    assert table.split("\n")[2].startswith("|   |   | x |   |") and table.split("\n")[2].count("|") == 41
+
+
+def test_a_view_s_order_leaves_a_long_row_s_cells_after_the_header_s():
+    table, cut = notion_import._csv_to_markdown(b"a,b\n1,2,3\n4\n", ["b", "a"])
+    assert cut == 0 and table.split("\n") == ["| b | a |   |", "| --- | --- | --- |", "| 2 | 1 | 3 |", "|   | 4 |   |"]
+
+
+@pytest.mark.parametrize("segment", ["a/", "a 0000-0000/"], ids=["plain", "partial id"])
+@pytest.mark.parametrize("note", ["Note.md", f"{NOTION_HOME}.md"], ids=["plain", "notion"])
+def test_one_long_entry_name_costs_its_length(guest, segment, note):
+    """Directories 32,000 deep, each kept as a prefix, once took a gigabyte
+    of a 125 KB zip."""
+    name = "d0/" + segment * (64_000 // len(segment)) + "x.png"
+    buf = _zip({note: "# Note\n", name: PNG})
+    assert _peak(lambda: _quickly(_preview, guest, buf)) < 128_000_000
+
+
+def test_a_directory_holding_only_directories_still_takes_its_page(guest):
+    one, two = "bbbb3333000000000000000000003333", "cccc4444000000000000000000004444"
+    report = _import(guest, _zip({
+        "Recipes 0000bbbb0000bbbb0000bbbb0000bbbb.md": "# Recipes\n",
+        f"Recipes/Mezze {one}.md": "# Mezze\n\nFirst.\n",
+        f"Recipes/Mezze {two}.md": "# Mezze\n\nSecond.\n",
+        f"Recipes/Mezze/Note {'a' * 32}.md": "# Note of the first\n",
+        "Recipes/Mezze cccc-4444/deeper/still/x.png": PNG,
+    }))
+    page = {p["title"]: p for p in report["pages"]}
+    parent = _subtree(guest, page["Note of the first"]["parent"])
+    assert parent["properties"].get("notion_id") == one
+
+
+@pytest.mark.parametrize("top", ["", "top/"], ids=["at the top", "in a directory"])
+@pytest.mark.parametrize("beside, flat", [(None, True), ("d/e/x.png", False)], ids=["flat", "a directory of directories"])
+def test_a_directory_of_directories_beside_the_pages_is_no_flat_export(guest, top, beside, flat):
+    a, b = "cccc5555000000000000000000005555", "dddd6666000000000000000000006666"
+    files = {f"{top}Flat {a}.md": f"# Flat\n\n[Under it](Under%20it%20{b}.md)\n", f"{top}Under it {b}.md": "# Under it\n"}
+    if top:
+        files["other.md"] = "# Other\n"
+    if beside:
+        files[f"{top}{beside}"] = PNG
+    page = {p["title"]: p for p in _preview(guest, _zip(files))["pages"]}
+    assert bool(page["Under it"]["parent"]) is flat
+
+
+def _damaged(files: dict, name: str) -> io.BytesIO:
+    """A zip whose member ``name`` fails its checksum, read to its end."""
+    data = _zip(files).getvalue()
+    good = files[name].encode("utf-8")
+    assert data.count(good) == 1
+    return io.BytesIO(data.replace(good, good[:-1] + b"#"))
+
+
+@pytest.mark.parametrize("extra", [{}, {f"{NOTION_HOME}.md": "# Home\n"}], ids=["plain", "notion"])
+def test_an_unreadable_html_nothing_links_fails_nothing(guest, extra):
+    files = {"Readable note.md": "# Readable note\n\ntext\n", "broken.html": "<html><body>nothing to see</body></html>",
+             **extra}
+    report = _preview(guest, _damaged(files, "broken.html"))
+    assert "Readable note" in [p["title"] for p in report["pages"]]
+    assert _reasons(report)["broken.html"] == "this file could not be read"
+    assert "Readable note" in [p["title"] for p in _import(guest, _damaged(files, "broken.html"))["pages"]]
+
+
+@pytest.mark.parametrize("name", ["broken.md", f"{NOTION_DB}.csv"], ids=["note", "database"])
+def test_an_unreadable_note_or_table_fails_nothing(guest, name):
+    files = {"Readable note.md": "# Readable note\n\ntext\n", name: "Name,Status\nWrite,Done\n"}
+    for report in (_preview(guest, _damaged(files, name)), _import(guest, _damaged(files, name))):
+        assert [p["title"] for p in report["pages"]] == ["Readable note"]
+        assert _reasons(report)[name] == "this file could not be read"
+
+
+@pytest.mark.parametrize("name, data", [("broken.html", "<html><body>nothing to see</body></html>"),
+                                        ("broken.pdf", "%PDF-1.4 not much of one")], ids=["html", "pdf"])
+def test_an_unreadable_file_a_note_links_keeps_the_link_as_written(guest, name, data):
+    files = {"Linking note.md": f"# Linking note\n\n[it]({name})\n", name: data}
+    report = _import(guest, _damaged(files, name))
+    assert _reasons(report)[name] == "this file could not be read" and report["assets_stored"] == 0
+    note = _subtree(guest, report["pages"][0]["id"])
+    assert [node["content"] for node in note["children"]] == [f"[it]({name})"]
+
+
+def test_an_unreadable_view_leaves_the_table_its_rows(guest):
+    view = f"{NOTION_DB}.csv"
+    files = {f"{NOTION_DB}_all.csv": "Name,Status\nWrite,Done\n", view: "Status,Name\nDone,Write\n"}
+    report = _import(guest, _damaged(files, view))
+    assert _reasons(report)[view] == "this file could not be read"
+    table = _subtree(guest, report["pages"][0]["id"])["children"][0]["content"]
+    assert table.split("\n")[0] == "| Name | Status |" and "Write" in table
+
+
+def test_a_note_opening_with_blank_lines_keeps_them_unless_a_bibtex_block_follows():
+    assert mzi._take_bibtex("\n\ntext\n") == (None, "\n\ntext\n")
+    assert mzi._take_bibtex("\n\n```bibtex\n@a{b}\n```\n\ntext\n") == ("@a{b}", "text\n")
+
+
+_OUTLINE_SHAPE = "title: What is X?\n---\n# What is X?\n\n- Intro\n  - a\n  - b\n    - c\n"
+
+
+def _bullets(node):
+    return [(c["content"], _bullets(c)) for c in node["children"]]
+
+
+@pytest.mark.parametrize("front, back", [
+    ("---\ngamma_id: abc\n", [("- Intro", [("- a", []), ("- b", [("- c", [])])])]),
+    ("---\n", [("Intro", [("a", []), ("b", [("c", [])])])]),
+], ids=["folder sync's file", "the readable export's"])
+def test_a_file_of_folder_sync_keeps_its_bullets(guest, front, back):
+    note = front + _OUTLINE_SHAPE
+    page = _import(guest, _zip({"What is X.md": note}))["pages"][0]
+    assert _bullets(_subtree(guest, page["id"])) == back
+    r = guest.post("/api/import/markdown", files={"file": ("What is X.md", note + " ", "text/markdown")})
+    assert r.status_code == 200, r.text
+    assert _bullets(_subtree(guest, r.json()["block_id"])) == [("# What is X?", back)]
+
+
+# --- a small note stays quick ----------------------------------------------------
+
+@pytest.mark.parametrize("unit", ["](", "[a](", "[a](b", "[", "[a", "[[x]", "[a](<", "![a](", "[a\n", '[a](b "'])
+@pytest.mark.parametrize("tail", ["", " )"], ids=["no close", "a close at the end"])
+def test_a_body_of_unclosed_links_is_linear_work(unit, tail):
+    body = unit * (300_000 // len(unit)) + tail
+    links = markdown_zip_links
+    for work in (notion_import._escape_tags, notion_import._link_lines,
+                 lambda text: links.MD_LINKS_RE.sub("", text), lambda text: links.WRITTEN_LINKS_RE.sub("", text)):
+        _quickly(work, body)
+
+
+def test_a_run_of_hashes_in_a_wikilink_is_quick():
+    assert not _quickly(markdown_zip_links._WIKILINK_RE.search, "[[" + "#" * 64 + "x")
+    assert markdown_zip_links._WIKILINK_RE.search("[[Note#A#B|x]]").groups() == ("", "Note", "#A#B", "x")
+
+
+def test_spaces_in_a_name_or_a_line_are_linear_work():
+    spaces = " " * 300_000
+    assert _quickly(markdown_zip_links._notion_id, spaces) is None
+    assert _quickly(notion_import._PARTIAL_ID_RE.search, spaces) is None
+    assert _quickly(markdown_zip_dialects._ANCHOR_END_RE.search, f"a{spaces}b") is None
+    assert _quickly(markdown_zip_dialects._H1_RE.match, f"# a{spaces}b").group(1) == f"a{spaces}b"
+    assert _quickly(mzi._HEADING_TEXT_RE.match, f"## a{spaces}b").group(1) == f"a{spaces}b"
+    assert markdown_zip_dialects._H1_RE.match("# Title  ##  ").group(1) == "Title"
+
+
+@pytest.mark.parametrize("line", ["#" + " " * 300_000, "# " + "\t" * 300_000, "#\t" + " " * 300_000],
+                         ids=["spaces", "tabs", "both"])
+def test_a_heading_of_only_spaces_is_no_heading_and_is_quick(line):
+    assert _quickly(markdown_zip_dialects._H1_RE.match, line) is None
+    assert _quickly(mzi._HEADING_TEXT_RE.match, line) is None
+
+
+@pytest.mark.parametrize("name", ["Note.md", f"{NOTION_HOME}.md"], ids=["plain", "notion"])
+def test_a_note_of_a_heading_of_only_spaces_is_quick(guest, name):
+    report = _quickly(_preview, guest, _zip({name: "#" + " " * 300_000}), seconds=5)
+    assert len(report["pages"]) == 1
+
+
+@pytest.mark.parametrize("line, text", [
+    ("#   Title", "Title"), ("#\tTitle\t", "Title"), ("# C#", "C#"), ("# Title  ##  ", "Title"),
+    ("# a  b", "a  b"), ("# # x", "# x"),
+])
+def test_a_heading_s_text_ends_where_it_did(line, text):
+    assert markdown_zip_dialects._H1_RE.match(line).group(1) == text
+    assert mzi._HEADING_TEXT_RE.match(line).group(1) == text
+
+
+def test_a_cell_of_spaces_is_linear_work():
+    table, _ = _quickly(notion_import._csv_to_markdown, b'a\n"y' + b" " * 300_000 + b'z"\n')
+    assert table.split("\n")[2] == f"| y{' ' * 300_000}z |"
+
+
+def test_a_cell_s_lines_join_as_one_break_each():
+    table, _ = notion_import._csv_to_markdown('a\n" x \n \n\t y\n z  w "\n'.encode())
+    assert table.split("\n")[2] == "| x<br>y<br>z  w |"
+
+
+def test_an_aside_s_first_line_of_open_tags_is_linear_work():
+    tags = "<img " * 80_000
+    assert _quickly(notion_import._convert_asides, f"<aside>\n{tags}\n</aside>") == f"> [!info] {tags.rstrip()}"
+
+
+@pytest.mark.parametrize("first, after", [
+    ("<img src=a>", ["> text"]),
+    ("<img src=a><img src=b>", ["> text"]),
+    ("<img src=a> word", [">", "> text"]),
+    ("<img src=a", [">", "> text"]),
+    ("<img src=a> <img src=b", [">", "> text"]),
+])
+def test_a_blank_after_a_first_line_of_only_an_icon_goes(first, after):
+    converted = notion_import._convert_asides(f"<aside>\n{first}\n\ntext\n</aside>")
+    assert converted.split("\n") == [f"> [!info] {first}", *after]
+
+
+def test_relations_behind_a_run_of_spaces_are_linear_work():
+    relation = f"a (a%20{'0' * 32}.md)"
+    text = " " * 200_000 + ", ".join([relation] * 8000)
+    assert _quickly(notion_import._link_relations, text, lambda nid, path: "page")[1] == 8000
+
+
+def test_a_line_s_table_is_read_for_each_line():
+    relation = f"a (a%20{'0' * 32}.md)"
+    text = f"| {relation}, {relation} | x |\nName: {relation}, {relation}\n"
+    assert notion_import._link_relations(text, lambda nid, path: "page") == (
+        "| [[page]], [[page]] | x |\nName: [[page]], [[page]]\n", 4)
+
+
+def test_backtick_runs_nothing_closes_are_quick():
+    _quickly(notion_import._escape_tags, "".join("`" * n + " " for n in range(800, 0, -1)))
+
+
+def test_unclosed_asides_are_linear_work():
+    body = "<aside>\n" * 100_000
+    assert _quickly(notion_import._convert_asides, body) == body
+
+
+@pytest.mark.parametrize("line, escaped", [
+    ("](a <b>", "](a \\<b>"),
+    ("[x](a<b>c) <d>", "[x](a<b>c) \\<d>"),
+    ("[x](a) ](b <c>", "[x](a) ](b \\<c>"),
+    ("`a ) <b>` <c>", "`a ) <b>` \\<c>"),
+    ("\\<a> <u>x</u> <img src=y>", "\\<a> <u>x</u> <img src=y>"),
+])
+def test_a_tag_escapes_past_a_link_s_target_whether_it_closes_or_not(line, escaped):
+    assert notion_import._escape_tags(line) == escaped

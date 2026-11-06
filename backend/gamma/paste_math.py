@@ -4,7 +4,7 @@ write it, turned into the ``$ … $`` and ``$$ … $$`` notes render.
 Applied to text on its way into a note (the AI's ``edit_block`` and
 ``create_block`` content), never on screen: in Markdown ``\\[`` is also an
 escaped bracket, which Gamma writes itself (``text_box.escape_markdown``,
-``zotero_notes._escape``: "\\[n = 30\\]"), so a ``\\[ … \\]`` converts only
+``zotero_notes.escape``: "\\[n = 30\\]"), so a ``\\[ … \\]`` converts only
 when it is shaped as a formula is written. frontend/src/editor/pasteMath.js
 is the twin of the rules here (a paste); tests/shared/pastemath.json pins
 both.

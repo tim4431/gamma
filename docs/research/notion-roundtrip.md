@@ -3,11 +3,14 @@
 Survey made on 5 November 2026 before any Gamma → Notion route existed. It
 asks what Notion's exports really are, what Notion takes back in, what the API
 offers instead, how other importers cope, and how much of a page survives the
-trip each way. Three decisions came out of it and **all three are still
-undecided**; they are listed [at the end](#the-three-open-decisions) with the
-options and the recommendation, not as a plan. The mechanics of the import
-as it stands are in
-[dev/import_export.md](../dev/import_export.md#markdown-zips-obsidian-vaults-notion-exports-gamma-exports-zipped-notes),
+trip each way. Three decisions came out of it and have been taken, **1a, 2a and
+3B**, [at the end](#the-three-decisions) with their options. The survey stays
+as it was found, corrected where the HTML export later showed it wrong;
+[what survives each route](#what-survives-each-route) is as built. The mechanics
+are in
+[dev/import_export.md](../dev/import_export.md#markdown-zips-obsidian-vaults-notion-exports-gamma-exports-zipped-notes)
+([the HTML export](../dev/import_export.md#notions-html-export),
+[the Notion zip](../dev/import_export.md#notion-export)),
 the mapping for Obsidian in [obsidian.md](obsidian.md), sub-pages in
 [sub-pages.md](sub-pages.md); this note does not repeat them.
 
@@ -40,14 +43,14 @@ Markdown equivalent". Everything else below comes from the files.
 | | Markdown & CSV | HTML |
 |---|---|---|
 | Both keep | Text, headings 1 to 3, lists, to-dos, code with its language, TeX, the full title (`# H1`; `<title>`), the database CSVs | same |
-| Ids | Page ids in file names, no block ids | Page and block ids (`id=`), but none on a toggle heading |
-| Block types | A toggle is a bullet with indented children; a toggle heading a plain heading (both verified 2026-11-05) | `ul.toggle` or `details.toggle` with its open state; toggle headings by font size |
+| Ids | Page ids in file names, no block ids | Page and block ids (`id=`); a toggle heading's is on its `h2` since 2026, and there was none before |
+| Block types | A toggle is a bullet with indented children; a toggle heading a plain heading (both verified 2026-11-05) | `ul.toggle` or `details.toggle`; toggle headings by font size, or `summary > h2` since 2026 |
 | Colour | Dropped, callouts' too | Block and text colours, callout colour, select colours |
 | Underline | Written as `<u>` (verified 2026-11-05) | A styled span |
 | Page | No icon, no cover | Icon, cover and its offset, font |
 | Layout | Columns one after another (inferred from one template) | Column widths (a 2024 sample) |
 | Tables | The first row always becomes the header | Header flags, widths, cell colours |
-| Images | Alt text, the caption again as a paragraph, no width | Caption, width, alignment |
+| Images | Alt text, the caption again as a paragraph, no width | Caption, width, alignment, no alt text |
 | Bookmarks | A bare link | Title, description, preview image |
 | Database values | Text only; dates in the exporter's locale | Property types; since 2026 ISO dates in `<time datetime>` |
 | Comments | Never | Optional; the markup has not been seen |
@@ -65,6 +68,57 @@ wrappers in December 2025, bare `details.toggle` and `input.checkbox` by July
 2026, with a Trilium test still showing the wrappers in 2026. Dates in Markdown
 carry no ISO form, and obsidian-importer needed day-order inference across the
 export to read them (issue #672); in Gamma they stay text.
+
+### What the HTML export holds
+
+Read after the survey, over 76 HTML pages of every era, the developer's 8 among
+them (Markdown and HTML of one page with subpages, 2026-11-05).
+
+**The format of 2026 is `data-notion-*` attributes.** The eras below are inferred
+from samples, not dated exactly, and a zip holds one era while people arrive with
+old ones, so a reader has to take them all.
+
+- To 2024: `figure.callout`, `ul.toggle`, `div.checkbox`, the emoji as text,
+  MathML `annotation`, `language-Python`.
+- Autumn 2025 to early 2026: the `display:contents` wrappers, and `dir=`.
+- By August 2026: `input.checkbox`, `data-notion-image`, `data-notion-highlight`.
+- The developer's, November 2026: `aside.callout` with `data-notion-callout`,
+  `-callout-icon` and `-callout-background`; bare `details.toggle` and
+  `summary > h2`; `data-notion-equation` and `-inline-equation` with no MathML
+  left; `data-notion-code-syntax`; `data-notion-file` and `-file-alias`;
+  `data-notion-page-id` on links; `data-notion-page-icon` on the `article`.
+
+**No real sample of colour exists in that format.** The developer's export has no
+coloured text: the fixture's red and yellow never reached Notion, since the
+pasted HTML lost them, and its one callout is the default gray. In the other 2026
+pages every mark and block is gray too. The colours real exports show are all in
+pages of the older class form (`mark.highlight-*`, `block-color-*`). 2026 still
+writes that class beside its attribute, on the gray ones at least, so Gamma's
+reader takes both, and its colour rows rest on that vocabulary and on a page
+written by hand. Also with no 2026 sample: a bookmark, columns, a caption, video, a
+callout with an image icon, date and person mentions, status, a bundled image or
+file, a full-page database, H4, a closed toggle, a synced block, comments, a flat
+HTML export and a page description.
+
+**What the export does not say.** No image alt text, which the Markdown export
+has. No toggle state in practice: 82 of 82 `details` carry `open`, the closed ones
+are hand-written, so `open` says nothing. No parent: only directories,
+`figure.link-to-page` and `tr` ids imply one, and a child page and a link to a
+page are the same markup, the `figure`'s id being the target page's. Also no views,
+filters, sorts, formula and rollup definitions, relation targets, select order,
+person ids, synced identity, block mentions or `_all.csv`.
+
+**Where ids sit.** On `p`, headings, `ul` and `ol` (not `li`), `blockquote`, `hr`,
+`figure`, `pre`, `aside`, `details.toggle`, `nav`, `table`. A `tr` id is a row
+page's, a `div.collection-content` id the database's, equal to its CSV's. Some
+pages have none at all, so nothing may need one.
+
+**Telling a page from any other HTML.** A page matches
+`<article\b[^>]*\bclass="page\b` and holds `class="page-body"`, and `<article`
+follows the stylesheet at up to 17,696 bytes. All Notion pages match, saved web
+pages and plain HTML do not, and `index.html` is told by neither mark. No zip
+seen holds pages in both `.html` and `.md`: each case of the two together is a
+Markdown export with `index.html` as its manifest.
 
 ### The folder change of about November 2025
 
@@ -107,21 +161,23 @@ top pages (an inference; the survey's two reports differ on it).
   and titles hold commas. The path is relative to the page that holds the
   database in a CSV and to the row page in a row's property line, so one
   relation has two spellings. Only the id in the path is safe.
-- **`.csv` and `_all.csv`.** The plain CSV is the exported view in the view's
-  column order; `_all.csv` has every property, title first and the rest sorted
+- **`.csv` and `_all.csv`.** In a Markdown zip the plain CSV is the exported view
+  in the view's column order; `_all.csv` has every property, title first and the rest sorted
   (verified 2026-11-05). Rows were equal in every sample, though one guide
   says `_all` ignores the view's filter (reported). A linked view has a `.csv`
   alone, filtered, no row directory: its rows live under the source database,
   so one row can appear in several CSVs. Three 2026 flat exports hold only
   `_all.csv`; the developer's 2026 flat export holds both. Why is unknown; the
-  view-export setting is a guess.
+  view-export setting is a guess. An HTML zip has one CSV, in `_all`'s order, and
+  the view's order is in the page's table.
 - **Database stubs.** In 2024 a full-page database had no `.md`. In 2025 and
   2026 it can also have a stub: `# Name`, a link to its CSV, then `filters:` and
   `sort:` lines ending in a space. The stub's id is the CSV's. System databases
   leave bare pages such as `# Home views`, and the CSV they link may be absent.
 - **Row pages** start with `Key: value` lines: no blank lines between them,
   the title left out, empty properties left out, not in CSV column order. HTML
-  lists the empty ones. The body may open with another `# H1`, so only the first
+  lists some of the empty ones: a row of the developer's shows Checkbox, Formula
+  and an empty Multi-select, not all ten. The body may open with another `# H1`, so only the first
   is the title.
 
 ### `index.html`
@@ -178,6 +234,16 @@ Since July 2026 the desktop app opens `.md` files with an "Import to Notion"
 button, announced beside the Markdown API. If that path shares the API's parser,
 a zip carries nearly what the API carries, minus updates and ids. That is a
 guess worth one test.
+
+**Still unknown now the zip is built.** It sends each of those in its safe form
+([dev/import_export.md](../dev/import_export.md#notion-export)), so an answer
+changes one row of `notion_blocks.CAPS`, and the zip itself can serve as a probe.
+Added to the list by what it writes: whether a title comes from the file name or a
+leading H1 (it writes the H1 only where the two differ, or where an H1 of the
+notes would open the file); percent-encoded paths; an SVG image; a line ended with
+two spaces; a list indented by 4; a table whose header row is empty; and whether
+`\*x\* \$5 \<tag>` comes in as text. That a ZIP goes in by Settings → Import is
+the help page's word, not a run.
 
 Nothing documented updates an imported page, and Gamma never learns the ids
 Notion assigns. That a second send duplicates is an inference from this, the
@@ -243,7 +309,7 @@ Markdown because it wants the CSVs; Gamma's began as a reader of Markdown zips.
 | Project | Reads | What it does | Gamma |
 |---|---|---|---|
 | [obsidian-importer](https://github.com/obsidianmd/obsidian-importer) (@143eaea) | HTML; refuses a Markdown export by name (PR #364); API since v1.8.0, which its maintainer pointed to on #450 | Title from `<title>`; directory fallback for the id-less layout; merged per-item lists; locale dates (#672) | Same answer to cut names: the H1. Rejected refusing Markdown: a user with that zip gets a tree, not an error. Date inference not taken |
-| [AFFiNE](https://github.com/toeverything/AFFiNE) (@8bbbfcf) | HTML; warns on a zip that starts with a CSV | Maps every path suffix to a page; skips empty page bodies; types columns from markup | Same need met by Gamma's path-then-basename rule. The rest waits for an HTML reader |
+| [AFFiNE](https://github.com/toeverything/AFFiNE) (@8bbbfcf) | HTML; warns on a zip that starts with a CSV | Maps every path suffix to a page; skips empty page bodies; types columns from markup | Same need met by Gamma's path-then-basename rule. Gamma's HTML reader takes rows from the CSV and types no column |
 | [Docmost](https://github.com/docmost/docmost) (@7520c329) | `.md` and `.html` | Handles `Title abcd-wxyz/`, partial-id folders claiming their files before plain ones; colours from the export's `<style>` (#1795); a link whose text is the title becomes a mention | Took the pairing, and added that a name which only looks like it (`Budget 2024-2025/`) stays a title. Its placeholder page for a bare folder not taken: such a directory stays a folder |
 | [TriliumNext](https://github.com/TriliumNext/Trilium) | HTML; refuses Markdown | Strips ids from both sides to pair `Title/`; detects flattened exports by CSV titles matching row pages; keeps `details[open]` | Took the idea of row names, and went further: flat trees need link lines as well, and rows ranked by value fit |
 | [AppFlowy-Collab](https://github.com/AppFlowy-IO/AppFlowy-Collab) (@be5aa89) | Markdown & CSV | Keeps `_all.csv`, resolves relations across CSVs into typed grids | Keeps `_all.csv` too, in the view's column order; relations become mentions. No typed grid: Gamma has none |
@@ -257,37 +323,41 @@ For fixtures, obsidian-importer's `notion-testspace.zip` (MIT, HTML, December
 2024) and 2anki's pages (MIT, HTML, 2020 to 2026) can be copied with their notice;
 AppFlowy's carry third-party articles and photos and are for modelling on; the
 personal and company exports have no licence and were used for facts only.
-Gamma's tests are hand-written, which is why they missed so much until they were
-compared with the real bytes.
+Gamma's tests were hand-written, which is why they missed so much until they were
+compared with the real bytes; `tests/notion_fixtures/` now holds the developer's
+two exports of one page, with the personal details taken out.
 
 ## What survives each route
 
-What a route can carry once its reader or writer exists; the first column is the
-only one running today. PDF highlights lose their positions on every route and
-keep their quote and page number; Gamma's folders and labels have no Notion home,
-a parent page per folder being the nearest. No route keeps a colour outside
-Notion's palette.
+What each route does as built. Notion → Gamma runs on both formats. The zip is
+written and nobody has imported one, so its column says what the zip holds, and
+what Notion does with that only where a source says. The API column is the
+model's writer and reader, pure tested code that nothing sends. PDF highlights lose
+their positions on every route and keep their quote and page number. Gamma's
+folders and labels have no Notion home: in the zip a folder is a directory and
+the labels a `Tags:` line. No route keeps a colour outside Notion's palette.
 
-| Construct | Notion → Gamma, Markdown | Notion → Gamma, HTML (no reader) | Gamma → Notion, file (no writer) | Either way, API (nothing built) |
+| Construct | Notion → Gamma, Markdown | Notion → Gamma, HTML | Gamma → Notion, the zip | API form (not sent) |
 |---|---|---|---|---|
-| Paragraph vs bullet | In the export; Gamma's import makes both one block | Kept | Documented; nested children untested | Kept |
-| Toggle | A bullet | Kept, with open state | `<details>` reported lost; `<toggle>` untested | Kept |
-| Toggle heading | A plain heading | Kept, no block id | Expected a plain heading, untested | Kept |
-| Callout | Emoji kept, colour lost | Icon and colour | Plain block (2023 test) | Kept |
-| Colour | Lost | Kept | Reset (2023 test) | Nine named, others nearest |
-| Underline | `<u>` | Kept | Untested | Kept |
-| Equation | `$`, `$$` | Exact TeX | Undocumented | Kept, block 1,000 characters |
-| Image | File, caption twice, no width | Caption, width | Reported for Markdown, documented for HTML | Uploaded; Free 5 MiB; width believed not settable |
-| Sub-pages | Kept, flat ones inferred | Kept, ids known | Untested | Kept |
-| Links between pages | Become mentions, label lost | Carry ids | Untested | Mentions, once the target exists |
-| Database | Table page and row pages, types lost | Types known, still a table | New database, row bodies apart (2023 test) | Possible; not in a first version |
-| Comments | None | Option, markup unseen | Not imported | Posted as the token's user |
-| Ids, sending again | Page ids; re-import adds nothing | Page and block ids | No ids; expected to duplicate | Ids come back; updates in place |
+| Paragraph vs bullet | Kept: `- x` a list block, text a paragraph | Kept | Written as such; a paragraph with children or in a list goes as a bullet, nested children untested | Kept |
+| Toggle | A bullet with children | Folded block with children; with none, a paragraph | `- x` with its children; `<details>` reported lost, `<toggle>` untested | `<toggle>` |
+| Toggle heading | A plain heading, flat | Heading folded with its children | Heading, children after it; expected a plain heading | `<toggle heading>` |
+| Callout | `> [!info]`, icon kept, colour lost | `> [!type]` by colour, icon kept; colours of one type merge | A quote opening with its icon; a plain block in the 2023 test | `<callout icon color>`, colour from the type |
+| Colour | Lost | Spans, `==x==`, a block's on its runs; no 2026 sample | Text colours go, a background is bold; reset in the 2023 test | Nine named |
+| Underline | `<u>` | `<u>` | `<u>`, untested | `<u>` |
+| Equation | `$`, `$$` | Exact TeX | `$`, `$$`, undocumented | `$$`, block 1,000 characters |
+| Image | File, alt, caption as a paragraph, no width | File, caption as alt, width; the export has no alt | Bundled beside the page, reported for Markdown, untested; no width | `![c](url)`; uploads not built |
+| Sub-pages | Kept, flat ones inferred | Kept, flat ones inferred, no flat sample | `Title.md` beside `Title/` and a link line, no ids, untested | `<page url>` |
+| Links between pages | Mentions, label lost | Mentions, label lost | Relative `.md` links, a block's to its page, untested | `<mention>` once the target exists |
+| Database | Table page and row pages, relations as mentions, types lost | The same, in the view's column order with the uncut name | Pipe table, rows as sub-pages, no CSV; row bodies apart in the 2023 test | Read as a page; not written |
+| Comments | None | Not read | Left out | Not built |
+| Ids, sending again | Page ids; re-import adds nothing | Page ids; re-import adds nothing, a page from Markdown stays as it is; block ids not kept | No ids; expected to duplicate | Id map not built |
 
 ## What real exports taught
 
 The reports were written before the importer met the zips. Fixing it over 27 zips
-(some are HTML or AppFlowy's own format and are refused, two are copies; older
+(some were HTML, then read for their CSVs alone or refused when they had none,
+some are AppFlowy's own format and are refused, two are copies; older
 exports kept their tree, and the three 2026 flat ones went from 0 nested pages to
 15, 26 and 18) turned up what they had not expected. Only the developer's pair
 has a known answer: the flat tree matches the folder export, 9 of 10 nested.
@@ -323,9 +393,12 @@ has a known answer: the flat tree matches the folder export, 9 of 10 nested.
   an emoji alone on a callout's first line. A page export's files can sit under a
   `Private & Shared/` directory. And underline is not dropped: `<u>` is written.
 
-## The three open decisions
+## The three decisions
 
-Undecided as of 2026-11-05. Each recommendation is the survey's, not a choice made.
+The developer took **1a, 2a and 3B**, with a direction: notes follow the logic of
+an open Notion, closer to native Markdown and LaTeX, without Notion's complex
+features. The options stay here as they stood on 2026-11-05, each "recommended"
+being the survey's. On 3 that was A, so B is where the build left the survey.
 
 ### 1. How pages reach Notion and come back
 
@@ -339,6 +412,10 @@ Undecided as of 2026-11-05. Each recommendation is the survey's, not a choice ma
   (the image swap, `<page>` in place), a secret on the server and outbound HTTPS.
 - **c. Files only.** Smallest and needs no network. Gamma → Notion stays lossy, and
   an API later means building the model then.
+
+**Taken: a.** The HTML reader, the Notion zip, the model and the v2 writer and
+reader are built. The probe has not been run, and token, rate limiter, uploads and
+id map wait for it.
 
 ### 2. How far to restructure
 
@@ -361,6 +438,14 @@ images, and the readable front matter is invalid YAML for a title holding `:`.
 - **c. Minimal.** Fastest, but a third renderer of about 250 lines inherits every
   divergence, and the function grows.
 
+**Taken: a.** `ZipRun` runs in stages with a dialect per source and Notion's rules
+in `notion_import.py`, and `export_walk.py` serves the Notion zip alone. The Logseq
+export moved by no byte, and the readable export only for a multi-line area note
+or link label, which now stays under its bullet so that the import knows the file.
+3B did reach three others, in list blocks and nested plain blocks only: the vault
+writes one marker on a list block, the Notes PDF draws no dot on a nested
+paragraph, and a list block reaches a Zotero note as a list item.
+
 ### 3. How imported paragraphs look
 
 Gamma draws a dot on every block, and an outline has no paragraph.
@@ -374,8 +459,17 @@ Gamma draws a dot on every block, and an outline has no paragraph.
   the core editor reaching well past Notion: does a Gamma page get the style, does
   Enter continue it, per block or per page, what of a paragraph with children?
 
-What would settle most of it: the probe zips imported into a throwaway workspace
-and exported back, and the HTML export of the developer's test page.
+**Taken: B**, against the survey's recommendation. Every page, per block, from the
+block's raw Markdown: plain text is a paragraph and a list is its marker. Enter
+makes a new block and continues a list, and a paragraph can hold children. No
+`notion` property is stored: a toggle is a folded block with children, so what is
+folded in Gamma is a toggle on the way out. Past outlines read as indented
+paragraphs, as their markers were stripped on import and nothing can tell them
+apart. See [ui-design.md](../dev/ui-design.md) and
+[hotkeys.md](../dev/hotkeys.md).
+
+What would settle what is left: the probe zips imported into a throwaway workspace
+and exported back, and a second HTML export holding what the first lacks.
 
 ## Sources
 

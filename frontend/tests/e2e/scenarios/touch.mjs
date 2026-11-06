@@ -21,6 +21,38 @@ const UPRIGHT = { ...TABLET, viewport: { width: 834, height: 1194 } };
 export async function touchScenarios({ server, browser, alice, makePdf, step, until, sleep, assert, assertEq, assertNoProblems, openPage }) {
   if (!wanted("touch")) return;
 
+  // The press every bar button and window grip makes, on a bare page. iOS
+  // sends this click and Chromium does too. Playwright's WebKit does not
+  // (e2e/webkit.mjs), so there the click comes from the harness. Its
+  // absence is asserted, so a Playwright that starts sending it fails here
+  // rather than running each bar tap twice.
+  await step("touch: a tap on a button that cancels its pointerdown clicks it once, with no mouse events (under WebKit the click is the harness's)", async () => {
+    const webkit = browser.browserType().name() === "webkit";
+    const tapped = async (options) => {
+      const ctx = await browser.newContext({ ...TABLET, ...options });
+      try {
+        const page = await ctx.newPage();
+        // A document of its own: setContent's document.open() would drop
+        // the listeners the harness put on the window.
+        await page.route("**/tap-probe", (route) => route.fulfill({ contentType: "text/html",
+          body: "<!doctype html><button style='width:200px;height:80px'>Press</button>" }));
+        await page.goto(`${server.base}/tap-probe`);
+        await page.evaluate(() => {
+          window.seen = [];
+          const button = document.querySelector("button");
+          button.addEventListener("pointerdown", (e) => e.preventDefault());
+          for (const type of ["mousedown", "mouseup", "click"]) button.addEventListener(type, () => window.seen.push(type));
+        });
+        await page.locator("button").tap();
+        await sleep(150);
+        return (await page.evaluate(() => window.seen)).join();
+      } finally { await ctx.close(); }
+    };
+    if (webkit) assertEq(await tapped({ bareWebkitTap: true }), "", "Playwright's own tap in WebKit: if it clicks now, retire clickAfterCancelledTap");
+    assertEq(await tapped(), "click", "the tap");
+    return webkit ? "WebKit sent no click: the harness's stood in for the one iOS is meant to send" : "";
+  });
+
   // A paper with notes, for the docks, the menus and the editor.
   const up = await alice.upload("/api/uploads", makePdf([["One behaviour for mouse and finger", "A second line"], ["Page two"]]),
     "touch.pdf", "application/pdf");
@@ -795,6 +827,116 @@ export async function touchScenarios({ server, browser, alice, makePdf, step, un
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
+
+  // A one-line row whose "+" hangs past it once made the row a scroller to
+  // CodeMirror, which cut the bar's margin off the caret's scroll target:
+  // writing block after block ended up behind the bar.
+  for (const [device, viewport] of [["a phone", { width: 390, height: 844 }], ["an upright tablet", UPRIGHT.viewport]]) {
+    await step(`touch: on ${device}, Enter near the editing bar keeps each new row's caret above it, and so does the bar's New block`, async () => {
+      const made = await alice.api("/api/pages", { method: "POST", body: { title: `Touch long page ${device}` } });
+      const rows = Array.from({ length: 45 }, (_, i) => `Long page row ${i + 1}`);
+      const positions = generateNKeysBetween(null, null, rows.length);
+      await alice.api(`/api/pages/${made.id}/ops`, { method: "POST", body: { client: "e2e",
+        ops: rows.map((content, i) => ({ op: "insert", id: `lp${viewport.width}x${i}`, parent: made.id, position: positions[i], content })) } });
+      const ctx = await alice.context(browser, { ...TABLET, viewport });
+      try {
+        const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&page=${made.id}`);
+        const bar = page.locator(".editBar:not(.moving)");
+        await page.locator(".blockRow", { hasText: rows[0] }).first().locator(".blockBody").tap();
+        await bar.waitFor();
+        const barTop = () => bar.evaluate((el) => el.getBoundingClientRect().top);
+        // The last row wholly above the bar.
+        const low = await page.evaluate((top) => [...document.querySelectorAll(".blockRowWrap")]
+          .filter((el) => el.getBoundingClientRect().bottom <= top).pop()?.dataset.blockId, await barTop());
+        await page.locator(`.blockRowWrap[data-block-id="${low}"] > .blockRow .blockBody`).tap();
+        await until(() => page.evaluate((id) => document.activeElement?.closest(".blockRowWrap")?.dataset.blockId === id, low), { what: "the low row's editor is open" });
+        await page.keyboard.press("End");
+        const open = () => page.evaluate(() => document.activeElement?.closest(".blockRowWrap")?.dataset.blockId);
+        const clear = async (what) => {
+          const fits = async () => {
+            const bottom = await page.evaluate(() => document.activeElement?.querySelector(".cm-line:last-child")?.getBoundingClientRect().bottom);
+            return bottom != null && bottom <= await barTop();
+          };
+          await until(fits, { what: `the caret above the bar ${what}` });
+          await sleep(150);
+          assert(await fits(), `the caret stays above the bar ${what}`);
+        };
+        const pressed = async (press, n) => {
+          const was = await open();
+          await press();
+          await until(async () => { const id = await open(); return !!id && id !== was; }, { what: `new block ${n}'s editor` });
+          await clear(`after new block ${n}`);
+          await page.keyboard.type("x");
+          await clear(`typing in new block ${n}`);
+        };
+        for (let n = 1; n <= 8; n++) await pressed(() => page.keyboard.press("Enter"), n);
+        await pressed(() => page.locator('.editBar [data-command="block.newBelow"]').tap(), 9);
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+    });
+
+    // An editor mounts with its caret at the end and App then places it, so
+    // a row taller than the pane once scrolled to its end, the caret thrown
+    // out of view above.
+    await step(`touch: on ${device}, a row taller than the pane keeps the caret in view on a hop, Enter inside it, a bar Move and Tab`, async () => {
+      const made = await alice.api("/api/pages", { method: "POST", body: { title: `Touch tall row ${device}` } });
+      const tall = Array.from({ length: 1500 }, (_, i) => `word${i}`).join(" ");
+      const rows = ["Tall above", tall, "Tall below"];
+      const positions = generateNKeysBetween(null, null, rows.length);
+      const ids = rows.map((_, i) => `tr${viewport.width}x${i}`);
+      await alice.api(`/api/pages/${made.id}/ops`, { method: "POST", body: { client: "e2e",
+        ops: rows.map((content, i) => ({ op: "insert", id: ids[i], parent: made.id, position: positions[i], content })) } });
+      const ctx = await alice.context(browser, { ...TABLET, viewport });
+      try {
+        const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&page=${made.id}`);
+        const bar = page.locator(".editBar:not(.moving)");
+        await page.locator(".blockRow", { hasText: rows[0] }).first().locator(".blockBody").tap();
+        await bar.waitFor();
+        // The caret's line as the page draws it, and what it has to stay
+        // between: the pane's top and the bar's.
+        const inView = () => page.evaluate(() => {
+          const sel = getSelection(), node = sel.focusNode;
+          const pane = document.activeElement?.closest(".blockList");
+          if (!pane || node?.nodeType !== Node.TEXT_NODE || sel.focusOffset >= node.length) return false;
+          const range = document.createRange();
+          range.setStart(node, sel.focusOffset);
+          range.setEnd(node, sel.focusOffset + 1);
+          const caret = range.getClientRects()[0];
+          return !!caret && caret.top >= pane.getBoundingClientRect().top
+            && caret.bottom <= document.querySelector(".editBar").getBoundingClientRect().top;
+        });
+        const clear = async (what) => {
+          await until(inView, { what: `the caret in view ${what}` });
+          await sleep(200); // the scroll a mount asks for lands on a later frame
+          assert(await inView(), `the caret stays in view ${what}`);
+        };
+        const openRow = () => page.evaluate(() => document.activeElement?.closest(".blockRowWrap")?.dataset.blockId);
+        await page.keyboard.press("ArrowDown");
+        await until(async () => await openRow() === ids[1], { what: "the hop opened the tall row" });
+        await clear("after a hop into it");
+        await page.keyboard.press("Home");
+        await page.keyboard.press("ArrowRight");
+        await page.keyboard.press("ArrowRight");
+        await page.keyboard.press("Enter");
+        await until(async () => { const id = await openRow(); return !!id && id !== ids[1]; }, { what: "Enter's new row" });
+        const tail = await openRow();
+        await clear("after Enter inside it");
+        await page.locator('.editBar [data-command="block.moveUp"]').tap();
+        await until(() => page.evaluate(({ tail, cut }) => {
+          const rows = [...document.querySelectorAll(".blockRowWrap")].map((el) => el.dataset.blockId);
+          return rows.indexOf(tail) >= 0 && rows.indexOf(tail) < rows.indexOf(cut);
+        }, { tail, cut: ids[1] }), { what: "the bar moved the tail up" });
+        await until(async () => await openRow() === tail, { what: "the editor back open after the move" });
+        await clear("after a bar Move");
+        await page.keyboard.press("Tab");
+        await until(() => page.evaluate((id) => document.querySelector(`.sortableBlockWrap[data-block-id="${id}"]`)?.dataset.depth === "1", tail),
+          { what: "Tab indented the tail" });
+        await until(async () => await openRow() === tail, { what: "the editor back open after Tab" });
+        await clear("after Tab");
+        assertNoProblems(page);
+      } finally { await ctx.close(); }
+    });
+  }
 
   await step("touch: the editing bar's inline code and strikethrough wrap a selection; prose gets autocorrect", async () => {
     const ctx = await alice.context(browser, TABLET);

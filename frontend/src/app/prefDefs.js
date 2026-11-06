@@ -287,9 +287,9 @@ export const PREFS = {
   searchDetailsPaper: flag("gamma-search-details", ACCOUNT, false),
 
   // --- Notes (Settings → Keyboard › Built in) ---
-  // Enter key in the note editor: off (default) = Enter types a line break and
-  // Shift+Enter starts a new note; on = the Logseq-style swap of the two.
-  enterNewNote: flag("gamma-enter-new-note", ACCOUNT, false),
+  // Enter key in the note editor: on (default) = Enter starts a new note and
+  // Shift+Enter types a line break; off = the swap of the two.
+  enterNewNote: flag("gamma-enter-new-note", ACCOUNT, true),
   // The "Linked from N pages" section under a page's notes
   // (editor/BacklinksPanel.jsx): off by default — a page's own notes end
   // the page unless the links into it are asked for. `backlinksCollapsed`

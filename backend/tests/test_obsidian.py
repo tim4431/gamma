@@ -2,12 +2,15 @@
 and pages → a vault (the ``obsidian`` export mode), including the round trip."""
 
 import io
+import itertools
 import zipfile
+
+import pytest
 
 from conftest import folder_names, label_names, make_folder, make_label, make_page
 
 from gamma.markdown_import import md_to_blocks, parse_frontmatter
-from gamma.obsidian_export import vault_name
+from gamma.obsidian_export import VaultContext, render_vault_page, vault_name
 
 PNG = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
 PDF = b"%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\n"
@@ -143,8 +146,8 @@ def test_vault_import_pages_links_embeds_and_properties(guest):
     assert "# Different heading" in by_content
     key = by_content["The key result."]                    # anchor stripped
     method = by_content["## Method"]
-    first = by_content["first bullet"]
-    second = by_content["second"]
+    first = by_content["- first bullet"]
+    second = by_content["- second"]
     assert "^" not in key["content"] and "^" not in first["content"]
     assert not any(b["content"].startswith("^") for b in deep_blocks)
 
@@ -379,14 +382,345 @@ def test_obsidian_round_trip(guest):
     assert new_a["properties"]["folders"] == [restored]
     assert new_a["properties"]["labels"] == [make_label(guest, "t1")]  # the same label, by name
     b_note = new_b["children"][0]
-    # Document style is lossy in one way: what follows a heading belongs to
-    # it on re-import. Everything else — nesting, multi-line blocks, the
-    # mention, the synced block, the sized image — comes back as it was.
+    # Document style is lossy in two ways: what follows a heading belongs to
+    # it on re-import, and a plain block with children, written as a list
+    # item, comes back a bullet. Everything else — nesting, multi-line blocks,
+    # the mention, the synced block, the sized image — comes back as it was.
     heading = new_a["children"][0]
     assert [c["content"] for c in new_a["children"]] == ["# Heading"]
     assert [(c["content"], [g["content"] for g in c["children"]]) for c in heading["children"]] == [
         ("first line\nsecond line", []),
         ("```python\nx = 1\n\ny = 2\n```", []),
         (f"![pic|200]({img})", []),
-        (f"see [[{new_b['id']}]] and ![[{b_note['id']}]]", ["$$\na = b\n$$"]),
+        (f"- see [[{new_b['id']}]] and ![[{b_note['id']}]]", ["$$\na = b\n$$"]),
     ]
+
+
+# --- a vault read back with its markers kept ----------------------------------
+
+def _block(content, *children):
+    return {"content": content, "children": list(children)}
+
+
+def _vault_text(tree) -> str:
+    """The note the vault export writes for a page of the blocks ``tree``."""
+    ids = itertools.count()
+
+    def with_ids(nodes):
+        return [{**node, "id": f"b{next(ids)}", "children": with_ids(node["children"])} for node in nodes]
+
+    return render_vault_page({"id": "page", "content": "Cycle", "children": with_ids(tree)}, VaultContext(None))
+
+
+@pytest.mark.parametrize("child", [
+    _block("x\ny"),
+    _block("- x\n  y"),
+    _block("1. x\n   y"),
+    _block("- [ ] x\n  y"),
+    _block("- a\n- b"),
+    _block("```py\nx\n\ny\n```"),
+    _block("- a\n  ```py\n  x\n  ```"),
+    _block("a\n```py\nx\n```"),
+    _block("> a\n> b"),
+    _block("> [!tip] t\n> b"),
+    _block("$$\nx\n$$"),
+    _block("$$x$$"),
+    _block("text\n$$\nx\n$$"),
+    _block("- a", _block("- b", _block("1. c")), _block("- [ ] d")),
+    _block("1. a", _block("- b")),
+    _block("10. a", _block("b")),
+    _block("a", _block("b", _block("c\nd"))),
+    _block("- a\nb"),
+    _block("- ```x``` y", _block("- z")),
+    _block("- a", _block("- b\n- c")),
+    _block("- a\n```py\ndef f():\n    return 1\n- b\n```"),
+    _block("- a\n$$\n- x\n$$"),
+    _block("````\n```\n- x\n```\n````"),
+    _block("- a\n~~~~\n~~~\n- x\n~~~\n~~~~"),
+    _block("- "),
+    _block("1. ", _block("- ")),
+    _block("---"),
+], ids=lambda child: child["content"][:12])
+def test_a_vault_written_block_stops_changing_after_one_cycle(child):
+    """Blocks are read back with their markers kept and written again: what
+    the first cycle gives, the next give too, so a block gains no indent or
+    marker however often a vault goes round."""
+    tree, texts = [_block("p", child)], []
+    for _ in range(3):
+        texts.append(_vault_text(tree))
+        tree = md_to_blocks(texts[-1])
+    assert texts[1:] == [texts[1]] * 2
+    assert md_to_blocks(texts[2]) == tree
+
+
+def test_a_wrapped_block_comes_back_exactly():
+    tree = [_block("- p", _block("- x\n  y"), _block("- [ ] x\n  y"), _block("1. x\n   y"), _block("$$\nx\n$$"))]
+    assert md_to_blocks(_vault_text(tree)) == tree
+
+
+@pytest.mark.parametrize("content,under", [("- x", "  "), ("1. x", "   "), ("10) x", "    "), ("- [ ] x", "  ")])
+def test_a_nested_list_block_writes_one_marker_and_its_children_at_its_text(content, under):
+    text = _vault_text([_block("p", _block(content, _block("kid")))])
+    assert f"\n  {content}\n  {under}- kid\n" in text
+
+
+def test_a_block_with_no_marker_of_its_own_is_written_as_before():
+    text = _vault_text([_block("p", _block("x\ny", _block("> q")), _block("2 x"), _block("-x"), _block("12345. x"))])
+    assert "- p\n  - x\n    y\n    - > q\n  - 2 x\n  - -x\n  - 12345. x\n" in text
+
+
+def test_a_list_block_s_next_lines_stay_in_it():
+    tree = [_block("p", _block("- a\n  b"), _block("1. a\n   b"), _block("- a\n- b"), _block("- a\nb"))]
+    assert "- p\n  - a\n    b\n  1. a\n     b\n  - a\n  - b\n  - a\n    b\n" in _vault_text(tree)
+
+
+@pytest.mark.parametrize("code", [
+    "```py\ndef f():\n    return 1\n- b\n\n1. c\n```",
+    "~~~\n    x\n- b\n~~~",
+    "$$\n- x + y &= 3 \\\\\n1. & z\n$$",
+    "````\n```\n- b\n```\n- c\n````",
+], ids=["fence", "tilde", "math", "long fence"])
+def test_a_list_block_s_code_moves_under_its_marker_whole(code):
+    """Indented or list-shaped lines of a fence at a list block's left edge
+    go with the fence: they stay in the item, and the same code comes back."""
+    text = _vault_text([_block("p", _block("- a\n" + code))])
+    assert "\n  - a\n" + "\n".join(f"    {line}" for line in code.split("\n")) + "\n" in text
+    tree = md_to_blocks(text)
+    assert tree == [_block("- p", _block("- a", _block(code)))]
+    assert md_to_blocks(_vault_text(tree)) == tree
+
+
+def test_a_top_level_list_block_moves_its_fence_too():
+    text = _vault_text([_block("- a\n```py\n    x\n- y\n```", _block("kid"))])
+    assert "- a\n  ```py\n      x\n  - y\n  ```\n  - kid\n" in text
+
+
+def test_inline_code_opens_no_fence_in_a_list_block():
+    assert "- p\n  - a\n    ```x``` y\n  - b\n" in _vault_text([_block("p", _block("- a\n```x``` y\n- b"))])
+
+
+def test_the_lines_after_a_list_block_s_fence_are_laid_out_again():
+    assert "- p\n  - a\n    ```\n    - x\n    ```\n  - b\n" in _vault_text([_block("p", _block("- a\n```\n- x\n```\n- b"))])
+
+
+def test_a_text_box_s_page_line_stays_under_its_marker():
+    box = {**_block("1. x"), "properties": {"text_box": {"x": 1, "y": 1}, "pdf_page": 3}}
+    assert "- p\n  1. x\n     p. 3\n" in _vault_text([_block("p", box)])
+
+
+# --- round trips through a zip ------------------------------------------------
+
+_CYCLES = itertools.count()
+
+
+def _new_folder(client):
+    return make_folder(client, f"cycle {next(_CYCLES)}")
+
+
+def _exported(client, folder, mode):
+    r = client.get(f"/api/folders/{folder}/export", params={"mode": mode})
+    assert r.status_code == 200, r.text
+    return r.content
+
+
+def _notes(data):
+    with zipfile.ZipFile(io.BytesIO(data)) as zf:
+        return sorted(zf.read(name) for name in zf.namelist() if name.endswith(".md"))
+
+
+def _cycles(client, folder, mode):
+    """The folder of one page through an export and an import into a new
+    folder, over and over: the page each cycle brings back, up to the one
+    that writes the file it read, which any further cycle would too (and
+    which an import skips). Three is as many as a page may take."""
+    pages = []
+    data = _exported(client, folder, mode)
+    for _ in range(3):
+        folder = _new_folder(client)
+        pages += _import(client, io.BytesIO(data), folder=folder)["pages"]
+        data, read = _exported(client, folder, mode), data
+        if _notes(data) == _notes(read):
+            return pages
+    pytest.fail("the page is still changing")
+
+
+def _page_of(client, title, blocks):
+    """A folder holding a page of ``blocks``, as ``_put_children`` takes them
+    with ids made up: strings, or ``(content, children)``."""
+    ids = itertools.count()
+
+    def nodes(items):
+        return [{"id": f"c{next(_CYCLES)}-{next(ids)}", "content": item if isinstance(item, str) else item[0],
+                 "properties": {}, "children": [] if isinstance(item, str) else nodes(item[1])} for item in items]
+    folder = _new_folder(client)
+    page = make_page(client, title, properties={"folders": [folder]})
+    _put_children(client, page["id"], nodes(blocks))
+    return folder
+
+
+@pytest.mark.parametrize("blocks,back", [
+    (["---", "important text", "---", "tail"], ["***", "important text", "---", "tail"]),
+    (["---", "title: Hijacked", "---", "tail"], ["***", "title: Hijacked", "---", "tail"]),
+    (["", "---", "folder: x", "---", "tail"], ["***", "folder: x", "---", "tail"]),
+    (["---\ntitle: Hijacked\n---\ntail"], ["***\ntitle: Hijacked\n---\ntail"]),
+    (["---  \ntitle: Hijacked\n---\nend"], ["***\ntitle: Hijacked\n---\nend"]),
+], ids=["text", "hijack", "blank first block", "one block", "spaces after it"])
+def test_a_vault_page_that_opens_with_a_divider_keeps_what_follows_it(guest, blocks, back):
+    for page in _cycles(guest, _page_of(guest, "Opens divided", blocks), "obsidian"):
+        assert page["title"] == "Opens divided"
+        assert [c["content"] for c in _subtree(guest, page["id"])["children"]] == back
+
+
+def test_front_matter_leaves_a_page_s_opening_divider_as_it_is():
+    children = [{**_block(text), "id": text} for text in ("---", "x")]
+    page = {"id": "page", "content": "Tagged", "children": children}
+    assert render_vault_page(page, VaultContext(None), tags=["t"]) == "---\ntags:\n  - t\n---\n\n---\n\nx\n"
+    assert _vault_text([_block("---"), _block("x")]) == "***\n\nx\n"
+    assert _vault_text([_block("x"), _block("---")]) == "x\n\n---\n"
+
+
+@pytest.mark.parametrize("mode", ["obsidian", "readable"])
+@pytest.mark.parametrize("title", ['Say "hi" [now]', "back\\slash: x", "'Tis", 'Say "hi"'])
+def test_a_title_with_quotes_stays_as_it_is_every_cycle(guest, title, mode):
+    for page in _cycles(guest, _page_of(guest, title, ["x"]), mode):
+        assert page["title"] == title
+
+
+def test_a_vault_title_in_quotes_keeps_them_every_cycle(guest):
+    for page in _cycles(guest, _page_of(guest, '"double"', ["x"]), "obsidian"):
+        assert page["title"] == '"double"'
+
+
+def test_a_readable_title_in_quotes_loses_them_once(guest):
+    """The readable export writes a title bare, so ``title: "double"`` is a
+    quoted value: what it loses it loses once, and no backslash comes."""
+    for page in _cycles(guest, _page_of(guest, '"double"', ["x"]), "readable"):
+        assert page["title"] == "double"
+
+
+@pytest.mark.parametrize("mode", ["obsidian", "readable", "notion"])
+@pytest.mark.parametrize("code,inner", [
+    ("````md\n```\ninner\n```\n````", "```\ninner\n```"),
+    ("~~~~\n~~~\ninner\n~~~\n~~~~", "~~~\ninner\n~~~"),
+], ids=["ticks", "tildes"])
+def test_a_long_fence_comes_back_whole_from_a_zip(guest, mode, code, inner):
+    folder = _page_of(guest, "Long fence", [code, "after", ("host", [code, "- next"])])
+    for page in _cycles(guest, folder, mode):
+        blocks = [node["content"] for node in _flat(_subtree(guest, page["id"]))]
+        assert sum(inner in content for content in blocks) == 2 and "inner" not in blocks
+        assert "after" in blocks and "- next" in blocks
+
+
+@pytest.mark.parametrize("mode", ["obsidian", "readable"])
+def test_an_empty_list_item_comes_back_empty(guest, mode):
+    folder = _page_of(guest, "Empty items", ["- ", "1. ", "x", ("host", ["- "]), "-", "- "])
+    for page in _cycles(guest, folder, mode):
+        blocks = [node["content"] for node in _flat(_subtree(guest, page["id"]))]
+        assert blocks.count("- ") == 3 and blocks.count("1. ") == 1 and blocks.count("-") == 1
+
+
+@pytest.mark.parametrize("mode", ["obsidian", "readable"])
+@pytest.mark.parametrize("todo", ["- [ ] ", "- [x] "])
+def test_an_empty_todo_stays_a_todo(guest, mode, todo):
+    folder = _page_of(guest, "Empty todos", [todo, "x", ("host", [todo]), todo])
+    for page in _cycles(guest, folder, mode):
+        blocks = [node["content"] for node in _flat(_subtree(guest, page["id"]))]
+        assert blocks.count(todo) == 3
+
+
+@pytest.mark.parametrize("mode,fence", [("obsidian", "```"), ("notion", "````")])  # (Notion's widens)
+def test_code_holding_an_indented_fence_comes_back_whole(guest, mode, fence):
+    code = "py\ndef f():\n    \"\"\"\n    ```\n    x\n    ```\n    \"\"\"\n"
+    for page in _cycles(guest, _page_of(guest, "Indented fence", [f"```{code}```", "after"]), mode):
+        assert [c["content"] for c in _subtree(guest, page["id"])["children"]] == [f"{fence}{code}{fence}", "after"]
+
+
+@pytest.mark.parametrize("block,back", [
+    ("intro\n```\ncode\n```", ["intro", "```\ncode\n```"]),
+    ("intro\n````\n```\n````", ["intro", "````\n```\n````"]),
+    ("intro\n~~~\ncode\n~~~", ["intro", "~~~\ncode\n~~~"]),
+], ids=["ticks", "long", "tildes"])
+def test_a_linked_block_ending_in_a_fence_leaves_the_page_after_it(guest, block, back):
+    kid = f"fenced{next(_CYCLES)}"
+    folder = _new_folder(guest)
+    page = make_page(guest, "Fence last", properties={"folders": [folder]})
+    _put_children(guest, page["id"], [
+        {"id": kid, "content": block, "properties": {}, "children": []},
+        {"id": f"{kid}-link", "content": f"see [[{kid}]]", "properties": {}, "children": []},
+        {"id": f"{kid}-head", "content": "# Heading", "properties": {}, "children": []},
+        {"id": f"{kid}-list", "content": "- a list", "properties": {}, "children": []},
+    ])
+    data = _exported(guest, folder, "obsidian")
+    page = _import(guest, io.BytesIO(data), folder=_new_folder(guest))["pages"][0]
+    children = _subtree(guest, page["id"])["children"]
+    assert [c["content"] for c in children[:2]] == back
+    assert children[2]["content"] == f"see [[{children[1]['id']}]]"
+    assert [(c["content"], [g["content"] for g in c["children"]]) for c in children[3:]] == [("# Heading", ["- a list"])]
+
+
+def test_a_linked_heading_with_a_fence_under_it_leaves_the_page_after_it(guest):
+    kid = f"fenced{next(_CYCLES)}"
+    folder = _new_folder(guest)
+    page = make_page(guest, "Fence last", properties={"folders": [folder]})
+    _put_children(guest, page["id"], [
+        {"id": kid, "content": "# Head\n```\ncode\n```", "properties": {}, "children": []},
+        {"id": f"{kid}-link", "content": f"see [[{kid}]]", "properties": {}, "children": []},
+        {"id": f"{kid}-next", "content": "# Next", "properties": {}, "children": []},
+    ])
+    data = _exported(guest, folder, "obsidian")
+    page = _import(guest, io.BytesIO(data), folder=_new_folder(guest))["pages"][0]
+    head, last = _subtree(guest, page["id"])["children"]
+    code, link = head["children"]
+    assert (head["content"], code["content"], link["content"]) == ("# Head", "```\ncode\n```", f"see [[{code['id']}]]")
+    assert last["content"] == "# Next"
+
+
+def _linked_page(client, child):
+    """A folder of a page whose block ``child``, under ``host``, a sibling
+    mentions; and that block's id."""
+    kid = f"kid{next(_CYCLES)}"
+    folder = _new_folder(client)
+    page = make_page(client, "Linked", properties={"folders": [folder]})
+    node = {"id": kid, "content": child, "properties": {}, "children": []}
+    _put_children(client, page["id"], [
+        {"id": f"{kid}-host", "content": "host", "properties": {}, "children": [node]},
+        {"id": f"{kid}-link", "content": f"see [[{kid}]]", "properties": {}, "children": []},
+    ])
+    return folder, kid
+
+
+def _no_settings(data):
+    """A vault's zip without ``.obsidian``: folder sync's files, zipped."""
+    out = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(data)) as source, zipfile.ZipFile(out, "w") as zf:
+        for name in source.namelist():
+            if ".obsidian" not in name.split("/"):
+                zf.writestr(name, source.read(name))
+    return out.getvalue()
+
+
+@pytest.mark.parametrize("child", ["$$\nb\n$$", "$$c$$", "| x |\n| --- |\n| 1 |", "---", "***",
+                                   "- ", "1. ", "- [ ] ", "- [x] "])
+@pytest.mark.parametrize("keep", [lambda data: data, _no_settings], ids=["vault", "no .obsidian"])
+def test_a_linked_block_a_bullet_wraps_comes_back_unwrapped(guest, child, keep):
+    folder, _ = _linked_page(guest, child)
+    data = _exported(guest, folder, "obsidian")
+    for _ in range(3):
+        folder = _new_folder(guest)
+        page = _import(guest, io.BytesIO(keep(data)), folder=folder)["pages"][0]
+        host, link = _subtree(guest, page["id"])["children"]
+        assert [node["content"] for node in host["children"]] == [child]
+        assert link["content"] == f"see [[{host['children'][0]['id']}]]"
+        data = _exported(guest, folder, "obsidian")
+
+
+def test_a_paper_keeps_its_bibtex_through_a_vault(guest):
+    folder = _new_folder(guest)
+    page = make_page(guest, "A paper", properties={
+        "folders": [folder], "bibtex": "@article{mykey2020,\n  title={A paper},\n}",
+        "meta": {"title": "A paper", "doi": "10.1/x", "authors": ["Ada Doe"], "year": "2020", "source": "manual"}})
+    _put_children(guest, page["id"], [{"id": f"note{next(_CYCLES)}", "content": "a note", "properties": {}, "children": []}])
+    for back in _cycles(guest, folder, "obsidian"):
+        back = _subtree(guest, back["id"])
+        assert "mykey2020" in back["properties"]["bibtex"]
+        assert [node["content"] for node in back["children"]] == ["a note"]

@@ -49,7 +49,7 @@ await ctx.addCookies([{ name: 'session', value: SESSION, url: BASE }]);
 await ctx.addInitScript(() => {
   try {
     localStorage.setItem('gamma-ui-scale', '1.3');
-    // Enter = new block (Settings → Notes); the default is Shift+Enter.
+    // Enter = new block (Settings → Keyboard), the default, whatever this browser kept.
     localStorage.setItem('gamma-enter-new-note', '1');
   } catch {}
 });

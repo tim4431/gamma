@@ -38,6 +38,7 @@ export const SLASH_COMMANDS = [
   },
   { name: "bullet", group: "text", icon: "bullet", label: T("Bulleted list"), hint: T("A list with bullet points"), keywords: ["list", "ul", "unordered"], run: I.bullet },
   { name: "number", group: "text", icon: "number", label: T("Numbered list"), hint: T("A list numbered 1, 2, 3"), keywords: ["list", "ol", "ordered"], run: I.number },
+  { name: "text", group: "text", icon: "text", label: T("Text"), hint: T("Plain text, without a list or heading marker"), keywords: ["paragraph", "plain"], run: I.text },
   { name: "quote", group: "text", icon: "quote", label: T("Quote"), hint: T("A quotation, set off with a bar"), keywords: ["blockquote", "cite", "quotation"], run: I.quote },
   {
     name: "callout", group: "text", icon: "callout", label: T("Callout"), hint: T("A colored box: note, tip, warning, danger"),

@@ -25,7 +25,7 @@ SOFT = '#f2f0ea'      # a block, a field, a chip
 INK = '#1a1a18'       # text
 MUTED = '#6b6a65'     # secondary text
 BAR = '#cfccc4'       # body lines of a paper
-BAR_DARK = '#8d8a82'  # a paper's title bars, bullets
+BAR_DARK = '#8d8a82'  # a paper's title bars
 AMBER = '#e8a020'     # the accent: pointer, strokes, active things
 YELLOW = '#ffe28f'    # a highlight
 SELECT = '#9bcdff'    # a text selection
@@ -124,10 +124,6 @@ def block(x, y, w, h, color=None):
     if color:
         out += f'<rect x="{x}" y="{y}" width="6" height="{h}" rx="3" fill="{color}"/>'
     return out
-
-
-def bullet(x, y):
-    return f'<circle cx="{x}" cy="{y}" r="5" fill="{BAR_DARK}"/>'
 
 
 def chip(x, y, text, fill=CHIP, ink=CHIP_INK, size=18):

@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { bibliographyPreviewUrl, bibliographyUrl, exportFormatOf, exportJobBody, exportQuery, exportSummary, hasReviewStep,
-  importSource, offersSubPages, resolveExport, resolveImport } from "../src/transfers/transferFormats.js";
+  importSource, notionFiles, offersSubPages, resolveExport, resolveImport } from "../src/transfers/transferFormats.js";
 
 const allOff = Object.freeze({ highlights: false, notes: false, bundle: false });
 // The annotated PDF's own options, as every other format's payload has them,
@@ -182,6 +182,45 @@ test("a Notability note has no switches: it exports straight from the first step
   assert.equal(exportFormatOf("notability").label, "Notability");
 });
 
+test("Notion's zip reviews its two switches and always bundles, and its text claims nothing of what Notion keeps", () => {
+  const zip = resolveExport({ format: "notion", highlights: true, notes: true, bundle: false }, paper);
+  assert.equal(zip.definition.category, "Notes");
+  assert.equal(zip.needsReview, true);
+  assert.deepEqual(zip.controls.map(({ key }) => key), ["highlights", "notes"]);
+  assert.deepEqual(zip.controls.map(({ hint }) => hint), ["Quotes with page numbers", "Your notes as paragraphs and lists"]);
+  assert.deepEqual(zip.payload, { format: "notion", highlights: true, notes: true, bundle: true, ...noCards });
+  assert.equal(resolveExport({ format: "notion" }, { hasPdf: false }).definition.id, "notion");
+  assert.deepEqual(exportJobBody(zip.payload, { pageId: "p1" }),
+    { page_id: "p1", sub_pages: false, mode: "notion", pdf: true, highlights: true, notes: true });
+  assert.equal(exportFormatOf("notion").label, "Notion");
+
+  const rest = "PDFs, recordings and other files stay out. What Notion keeps of the rest is up to its importer.";
+  assert.equal(exportSummary(zip), `A .zip for Notion's importer: this page as Markdown with quoted highlights and your notes, images and handwriting included. ${rest}`);
+  assert.match(exportSummary(resolveExport({ format: "notion", highlights: true, notes: true }, { folder: "Reading" }), "Reading"),
+    /^A \.zip for Notion's importer: every page in the folder as Markdown with quoted highlights and your notes, images and handwriting included\./);
+});
+
+test("Notion's card names the images each switch leaves in the zip", () => {
+  const rest = "PDFs, recordings and other files stay out. What Notion keeps of the rest is up to its importer.";
+  const card = (highlights, notes) => {
+    const zip = resolveExport({ format: "notion", highlights, notes }, paper);
+    const { title, hint } = notionFiles(zip.payload);
+    return [exportSummary(zip), title, hint];
+  };
+  assert.deepEqual(card(true, true),
+    [`A .zip for Notion's importer: this page as Markdown with quoted highlights and your notes, images and handwriting included. ${rest}`,
+      "Images and handwriting included", "PDFs, recordings and other files stay out"]);
+  assert.deepEqual(card(false, true),
+    [`A .zip for Notion's importer: this page as Markdown with no quotes and your notes, images included, handwriting left out. ${rest}`,
+      "Images included", "Handwriting, PDFs, recordings and other files stay out"]);
+  assert.deepEqual(card(true, false),
+    [`A .zip for Notion's importer: this page as Markdown with quoted highlights, handwriting included, images left out. ${rest}`,
+      "Handwriting included", "Images, PDFs, recordings and other files stay out"]);
+  assert.deepEqual(card(false, false),
+    [`A .zip for Notion's importer: this page as Markdown with the title and metadata only — both switches are off. ${rest}`,
+      "No images or handwriting", "The .zip holds the Markdown alone"]);
+});
+
 test("each import source says what its picker takes, the note apps several files", () => {
   assert.equal(importSource("notability").multiple, true);
   assert.equal(importSource("goodnotes").accept, ".goodnotes,.zip,application/zip");
@@ -192,7 +231,7 @@ test("each import source says what its picker takes, the note apps several files
 
 test("a page with pages inside it offers Include pages inside on every format's review, off by default", () => {
   const nested = { ...paper, hasMeta: true, subPages: 3 };
-  for (const format of ["pdf", "bibtex", "notespdf", "markdown", "notability", "obsidian", "logseq", "zotero", "gamma"]) {
+  for (const format of ["pdf", "bibtex", "notespdf", "markdown", "notability", "notion", "obsidian", "logseq", "zotero", "gamma"]) {
     const result = resolveExport({ format, highlights: true, notes: true, bundle: true }, nested);
     assert.equal(result.definition.id, format);
     const control = result.controls.find(({ key }) => key === "subPages");

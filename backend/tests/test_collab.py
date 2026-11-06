@@ -168,6 +168,138 @@ def test_ops_insert_retry_is_idempotent(guest):
     assert len(kids) == 1 and kids[0]["properties"] == {"k": 1}
 
 
+def _rows(client, *texts):
+    """A page with one row per text → the page's id and the rows' ids."""
+    page = make_page(client, "Merge page")["id"]
+    ids, keys = [f"{page}{i}" for i in range(len(texts))], _keys(len(texts))
+    assert _ops(client, page, [{"op": "insert", "id": b, "parent": page, "position": k, "content": text}
+                               for b, k, text in zip(ids, keys, texts)]).status_code == 200
+    return page, ids
+
+
+def _texts(client, page_id):
+    def walk(rows):
+        return [(r["content"], walk(r["children"])) if r["children"] else r["content"] for r in rows]
+    return walk(_tree(client, page_id))
+
+
+def test_ops_merge_joins_the_texts_as_they_are_now(guest):
+    page, (one, two, _tail) = _rows(guest, "one", "- two", "tail")
+    # someone typed in both after the writer read them: the join holds it all
+    assert _ops(guest, page, [{"op": "set", "id": one, "content": "one!"},
+                              {"op": "set", "id": two, "content": "- two!"}]).status_code == 200
+    r = _ops(guest, page, [{"op": "merge", "id": two, "into": one, "marker": "- "}])
+    assert r.status_code == 200, r.text
+    # the log and the fan-out know the ops they always knew
+    assert r.json()["ops"] == [{"op": "set", "id": one, "content": "one!two!"}, {"op": "delete", "id": two}]
+    assert _texts(guest, page) == ["one!two!", "tail"]
+    assert guest.get(f"/api/pages/{page}/ops?since=2").json()["batches"][0]["ops"] == r.json()["ops"]
+
+
+def test_ops_merge_behind_a_rescue_of_its_target_joins_once(guest):
+    # a client's text on a block gone here brings it back as it was before
+    # the join, the merge behind it: `base` is that client's and read by no one
+    page, (three,) = _rows(guest, "three")
+    two, key = f"{page}t", "Zz"
+    r = _ops(guest, page, [{"op": "insert", "id": two, "parent": page, "position": key, "content": "two"},
+                           {"op": "move", "id": two, "parent": page, "position": key},
+                           {"op": "merge", "id": three, "into": two, "base": "two"},
+                           {"op": "set", "id": two, "content": "twothree typed", "base": "twothree"}])
+    assert r.status_code == 200, r.text
+    assert _texts(guest, page) == ["twothree typed"]
+
+
+def test_ops_merge_keeps_a_start_that_is_no_marker_any_more(guest):
+    page, (one, two) = _rows(guest, "one", "two")
+    assert _ops(guest, page, [{"op": "merge", "id": two, "into": one, "marker": "- "}]).status_code == 200
+    assert _texts(guest, page) == ["onetwo"]
+
+
+def test_ops_two_merges_compose_in_either_order(guest):
+    # the block above merges last: it takes what the first merge stored
+    page, (one, two, three, _tail) = _rows(guest, "one", "two", "three", "tail")
+    assert _ops(guest, page, [{"op": "merge", "id": three, "into": two}]).status_code == 200
+    assert _ops(guest, page, [{"op": "merge", "id": two, "into": one}]).status_code == 200
+    assert _texts(guest, page) == ["onetwothree", "tail"]
+
+    # the block above merges first: the second is refused and its block stays
+    page, (one, two, three, tail) = _rows(guest, "one", "two", "three", "tail")
+    assert _ops(guest, page, [{"op": "merge", "id": two, "into": one}]).status_code == 200
+    r = _ops(guest, page, [{"op": "set", "id": tail, "content": "tail!"}, {"op": "merge", "id": three, "into": two}])
+    assert r.status_code == 404
+    assert (r.json()["conflict"], r.json()["missing"], r.json()["index"]) == ("missing", two, 1)
+    assert _texts(guest, page) == ["onetwo", "three", "tail"], "nothing of the batch was written"
+
+
+def test_ops_merge_brings_the_children_as_they_are_now(guest):
+    k1, k2, k3 = _keys(3)
+    # under another block: last there, in order
+    page, (one, two, _after) = _rows(guest, "one", "two", "after")
+    assert _ops(guest, page, [
+        {"op": "insert", "id": f"{page}a", "parent": one, "position": k1, "content": "low"},
+        {"op": "insert", "id": f"{page}b", "parent": two, "position": k1, "content": "kid1"},
+        {"op": "insert", "id": f"{page}c", "parent": two, "position": k2, "content": "kid2"},
+    ]).status_code == 200
+    r = _ops(guest, page, [{"op": "merge", "id": two, "into": one}])
+    assert r.status_code == 200, r.text
+    assert [(o["op"], o["id"]) for o in r.json()["ops"]] == [
+        ("move", f"{page}b"), ("move", f"{page}c"), ("set", one), ("delete", two)]
+    assert _texts(guest, page) == [("onetwo", ["low", "kid1", "kid2"]), "after"]
+
+    # under its parent: in the block's place, between its siblings
+    page, (parent, _other) = _rows(guest, "parent", "other")
+    before, child, last, g1, g2 = (f"{page}{x}" for x in "abcde")
+    assert _ops(guest, page, [
+        {"op": "insert", "id": before, "parent": parent, "position": k1, "content": "before"},
+        {"op": "insert", "id": child, "parent": parent, "position": k2, "content": "child"},
+        {"op": "insert", "id": last, "parent": parent, "position": k3, "content": "last"},
+        {"op": "insert", "id": g1, "parent": child, "position": k1, "content": "g1"},
+        {"op": "insert", "id": g2, "parent": child, "position": k2, "content": "g2"},
+    ]).status_code == 200
+    assert _ops(guest, page, [{"op": "merge", "id": child, "into": parent}]).status_code == 200
+    assert _texts(guest, page) == [("parentchild", ["before", "g1", "g2", "last"]), "other"]
+
+
+def test_ops_merge_is_refused_when_the_page_changed_under_it(guest):
+    page, (one, two) = _rows(guest, "one", "two")
+    _elsewhere, (there,) = _rows(guest, "elsewhere")
+    kid = f"{page}k"
+    assert _ops(guest, page, [{"op": "insert", "id": kid, "parent": two, "content": "kid"}]).status_code == 200
+
+    r = _ops(guest, page, [{"op": "merge", "id": "gone", "into": one}])
+    assert (r.status_code, r.json()["conflict"], r.json()["missing"]) == (404, "missing", "gone")
+    r = _ops(guest, page, [{"op": "merge", "id": two, "into": "gone"}])
+    assert (r.status_code, r.json()["conflict"], r.json()["missing"]) == (404, "missing", "gone")
+    r = _ops(guest, page, [{"op": "merge", "id": two, "into": there}])
+    assert (r.status_code, r.json()["conflict"]) == (403, "moved")
+    for into in (kid, two):
+        r = _ops(guest, page, [{"op": "merge", "id": two, "into": into}])
+        assert (r.status_code, r.json()["conflict"]) == (400, "cycle")
+
+    # the page itself is no block to join, and the trees hold no text to join
+    assert _ops(guest, page, [{"op": "merge", "id": two, "into": page}]).status_code == 403
+    assert _ops(guest, page, [{"op": "merge", "id": page, "into": one}]).status_code == 403
+    assert _ops(guest, "folders", [{"op": "merge", "id": "a", "into": "b"}]).status_code == 400
+    assert _texts(guest, page) == ["one", ("two", ["kid"])]
+
+
+def test_ops_merge_retried_is_answered_not_applied_again(guest):
+    page, (one, two) = _rows(guest, "one", "two")
+    body = {"client": "t", "batch": "b1", "ops": [{"op": "merge", "id": two, "into": one}]}
+    first = guest.post(f"/api/pages/{page}/ops", json=body)
+    again = guest.post(f"/api/pages/{page}/ops", json=body)
+    assert again.status_code == 200 and again.json()["seq"] == first.json()["seq"]
+    assert _texts(guest, page) == ["onetwo"]
+
+
+def test_ops_merge_moves_a_mention_and_keeps_an_upload(guest, monkeypatch):
+    page, (one, two) = _rows(guest, "one", "see ![p](/api/uploads/merged.png)")
+    dropped = []
+    monkeypatch.setattr("gamma.upload_gc.schedule", lambda ws, names: dropped.extend(names))
+    assert _ops(guest, page, [{"op": "merge", "id": two, "into": one}]).status_code == 200
+    assert dropped == [], "the text and its picture moved blocks, nothing lost them"
+
+
 def test_ops_that_drop_an_upload_hand_it_to_the_orphan_check(guest, monkeypatch):
     from gamma import upload_gc
     ws = workspace_of(guest_name())

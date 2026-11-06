@@ -241,7 +241,7 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 | Sharing a page or folder | a page or a folder gets its first share link (`share.created`: the Share popover's Share button) | (press Share,) the link, with a clip of Copy link and the page opening in someone else's window (`share-link`; a folder's link opens every page filed there, now and later: `shareTarget`), who has access, general access naming Stop sharing beside the link (worded for what an anyone-with-the-link share exposes when it is one, `shareAudience`) — inside the Share popover, top to bottom |
 | Your highlights | the third highlight of a load (`highlight.created`, `count: 3`) | the highlight made last (`pick: "recent"`, `guide/recent.js`): a clip of the round trip, the highlight clicked lighting its note and the note lighting the passage (`highlight-jump`; a click also quotes it in the next chat message), a scene right-clicking it (recolour, link, delete); then its card in the notes, which jumps back (`optional`: the Notes window may be closed) |
 | Editing tables | the user makes a table (/table, or a pasted spreadsheet or html table) and it first renders (`table.created`); opening a page that has one offers nothing | (add one with /table,) a cell to type into, the + strips and the row/column handles (a clip of a row sliding in and its handle coming up: `table-grow`), the corner handle (copy, move or delete the whole table), the others with a scene clicking it — on the table just made when the page has several, each card clear of the table |
-| Moving notes around | the eighth note made in a load (`block.created`, `count: 8`: Shift+Enter, or the + under a handle); not on a touch screen, nor in the notebook view | the last note's ⋮⋮ (a scene carrying it down and to the right, where a nested note lands: a drag by `offset`), its menu (a scene clicking it), the + under it (a scene clicking it, then Alt-clicking it). The handles show on hover and while pointed at (`[data-guide-active]`) |
+| Moving notes around | the eighth note made in a load (`block.created`, `count: 8`: Enter, or the + under a handle); not on a touch screen, nor in the notebook view | the last note's ⋮⋮ (a scene carrying it down and to the right, where a nested note lands: a drag by `offset`), its menu (a scene clicking it), the + under it (a scene clicking it, then Alt-clicking it). The handles show on hover and while pointed at (`[data-guide-active]`) |
 | Handwriting | the first stroke (`ink.stroke`) | (draw something, with a scene writing on the page,) the drawing's note block and its caption, tap the pen again for its style (Pen, Ballpoint, Brush, Pencil or Calligraphy), line, Smoothing, colour and width, the eraser and the lasso on one card (a clip of the eraser rubbing out a stray stroke and the lasso carrying a word: `ink-lasso`; Ctrl+Z brings back what was erased), More at the strip's end for shapes and the ruler (a clip of Shapes picked and a box and an arrow drawn: `ink-shape`), then the Text tool (a scene clicking T, then the page); finishing re-arms the pen |
 | The PDF viewer | a PDF is opened (`page.opened`) with its viewer on screen (`viewerTools`), in a load whose offer Arrange windows did not take | the table of contents (if any), zoom and fit, the pen, Translate (if on), the selection mode on a touch screen; after The notebook view, only the outline and Translate |
 | The notebook view | the notebook view is open (`notebookView`, state) | zoom and fit, the pen, the paper, Notes view (a drawing of the one page behind both views); after The PDF viewer, the paper and Notes view |
@@ -251,7 +251,7 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 | Working together | another account or a link visitor comes onto the page (`peer.joined`; your own second tab or the desktop app beside the browser is nobody else) | the avatar stack (a face marks their block), undo |
 | Shared workspaces | the account belongs to a shared workspace (state) | the account menu's switcher and card |
 | hint: math keys | the live formula preview comes up (`math.previewed`); version 2 since Tab, not Enter, accepts a suggestion | the preview: Tab accepts or jumps on, `\` looks up a symbol |
-| hint: new-note key | Enter breaks a line in a note with text in it (`note.lineBreak`), where Enter is not the new-note key (`enterNewNote: false`, Settings → Keyboard), unless a note was made already (`doneOn: block.created`) | the editor: Shift+Enter starts a note, Tab nests it |
+| hint: new-note key | Enter breaks a line in a note with text in it (`note.lineBreak`), where Enter is set to make a new line (`enterNewNote: false`, Settings → Keyboard; a note is the default), unless a note was made already (`doneOn: block.created`) | the editor: Shift+Enter starts a note, Tab nests it |
 | hint: / menu | the / menu comes up (`slash.opened`) — like Add, opening it is the intent | the menu: `/eq`, `/red` |
 | hint: Paste as | the chooser comes up after a paste (`paste.offered`) | the chooser: a block link can be a live Synced block |
 | hint: mentions | the @ menu comes up (`mention.opened`) | the menu: a page, a person, `@fri 3pm` for a reminder (dates are English words; the Chinese copy says so) |
@@ -828,7 +828,7 @@ text / rectangle toggle), `guideAvailable`, `sharedWorkspace`, `shareTarget`
 desktop library — or `""`), `shareAudience`,
 `unfiledLibrary`, `emptyLibrary`, `growingLibrary`, `annotatedPage`,
 `notebookView`, `viewerTools`, `clonedWorkspace`, `installable`, `connectorHere`,
-`cloudLinkable`, `prefsChanged`, `enterNewNote` (Enter starts a note: Settings →
+`cloudLinkable`, `prefsChanged`, `enterNewNote` (Enter starts a note, the default: Settings →
 Keyboard), `unverifiedMeta` (the open paper's ⓘ shows its red !, the button on
 screen), `firstRunDone` (the first tour was done when this load's profile
 arrived), `guest` (a guest account: no Zotero link, assistant or Inbox),
@@ -958,7 +958,7 @@ where the thing happens:
 | `ref.search` | BlockTree, when the `[[` search shows results |
 | `math.previewed` | MathLivePreview, when it comes up |
 | `block.created` | BlockTree: a new note from the new-note Enter, or the + under a handle |
-| `note.lineBreak` | BlockTree: the line-break Enter in a note with text, where Enter is not the new-note key |
+| `note.lineBreak` | BlockTree: a plain Enter that broke a line in a note with text, where Enter is set to make a new line |
 | `slash.opened`, `paste.offered` | SlashMenuPopup (its `event`), when the / menu or the Paste as chooser comes up |
 | `mention.opened` | MentionMenuPopup, when the @ menu comes up |
 | `object.selected` `{kind}` | MdObject, when a picture, table or diagram in the notes is selected |
@@ -1298,8 +1298,8 @@ frontend/tests/e2e/scenarios/triggeredGuide.mjs   offers and hints: tables (made
   whose anchor is there or gone passes without a warning; the Add tour ends
   in the View menu on Import; the library tour's filter scene types nothing
   for real; closing Chat offers where it waits, and opening View answers the
-  card before it covers the menu; the first New chat points at History; a line break offers
-  Shift+Enter with the caret kept; the highlights tour walks the highlight,
+  card before it covers the menu; the first New chat points at History; on an account whose Enter makes a
+  new line, a line break offers Shift+Enter with the caret kept; the highlights tour walks the highlight,
   its menu and its note; nothing is offered
   twice, or at all once Suggest tours is off in Settings. The guides offered
   on everyday moves (a line break, `/`, a paste, a fourth tab…) are settled

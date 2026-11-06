@@ -966,11 +966,15 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
       const view = viewRef.current;
       if (!view) return;
       const len = view.state.doc.length;
+      // Replaces the scroll an editor asks for as it mounts, which aims at
+      // the end of the text: the caret placed here is the one to bring clear
+      // of the editing bar.
       view.dispatch({
         selection: {
           anchor: Math.max(0, Math.min(anchor, len)),
           head: Math.max(0, Math.min(head ?? anchor, len)),
         },
+        scrollIntoView: editBarSpace() > 0,
       });
     },
     focus() { viewRef.current?.focus(); },
@@ -1092,7 +1096,9 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
       if (p != null) pos = Math.max(0, Math.min(p, pos));
     }
     if (clickPos?.insertLine) view.dispatch({ changes: { from: pos, insert: "\n" }, selection: { anchor: pos } });
-    else view.dispatch({ selection: { anchor: pos } });
+    // A key opened this editor, under the editing bar perhaps: focus scrolls
+    // nothing, so the caret is brought clear of the bar here.
+    else view.dispatch({ selection: { anchor: pos }, scrollIntoView: autoFocus && !clickPos && editBarSpace() > 0 });
     if (clickPos && !pinScroll) keepUnderPointer(view, pos, clickPos.y);
     // Opened by a press on the rendered text: while the button stays down
     // the drag selects, as in any editor — the press landed on the rendered
