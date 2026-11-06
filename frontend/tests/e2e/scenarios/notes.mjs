@@ -331,6 +331,26 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     } finally { await p2.close(); }
   });
 
+  await step("notes: a two-backtick code span is one inline code in the editor, as in the rendered view", async () => {
+    const src = await alice2.api("/api/pages", { method: "POST", body: { title: "Code spans" } });
+    await alice2.api(`/api/pages/${src.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "codespan1", parent: src.id, position: "a0", content: "Run ``a`**b**`` now" }] } });
+    const ctxC = await alice2.context(browser);
+    const p2 = await openPage(ctxC, `${server.base}/?ws=${second.id}&page=${src.id}`);
+    try {
+      const rendered = row(p2, "Run").locator(".blockRendered code");
+      await rendered.waitFor();
+      assertEq(await rendered.innerText(), "a`**b**", "the rendered view's code span");
+      await editRow(p2, "Run");
+      const code = p2.locator(".blockEditorCm .cmInlineCode");
+      await code.first().waitFor();
+      assertEq(JSON.stringify(await code.allInnerTexts()), JSON.stringify(["a`**b**"]), "the editor shows the same span, its backticks hidden");
+      assertEq(await p2.locator(".blockEditorCm .cmStrong").count(), 0, "and nothing bold inside it");
+      await closeEditor(p2);
+      assertNoProblems(p2);
+    } finally { await ctxC.close(); }
+  });
+
   await step("notes: the handle menu duplicates and deletes a block", async () => {
     const wrap = page.locator(".sortableBlockWrap", { hasText: "third" }).first();
     await wrap.hover();

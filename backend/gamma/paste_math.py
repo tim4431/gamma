@@ -23,7 +23,7 @@ CLOSES_LINE = re.compile(r"\n[ \t>]*\Z")
 BLOCK_START = re.compile(r"[ \t>]*(?:\n|\Z|(?:[-+*]|[0-9]+[.)])[ \t]|#{1,6}[ \t]|\|)")
 CLOSING_MARK = re.compile(r"[)\]},.;:!?]")
 # A code fence's opening line, after the quote marks and list marker
-# Markdown allows in front (frontend diagramMarkdown.FENCE_LINE).
+# Markdown allows in front (frontend shared/lib/mdCode.FENCE_LINE).
 FENCE = re.compile(r"(?:[ \t]*>)*(?:[ \t]*(?:[-+*]|[0-9]+[.)])[ \t]+)?[ \t]*(`{3,}|~{3,})([^\r\n]*)")
 # All a line may hold before a \[ that stands alone on it.
 LINE_PREFIX = re.compile(r"(?:[ \t]*>)*[ \t]*(?:(?:[-+*]|[0-9]+[.)])[ \t]+)?")
@@ -85,22 +85,36 @@ def _fences(text: str) -> list:
 
 
 def _code_spans(text: str) -> list:
-    """The inline code spans in ``text``, ``(start, end)``: a run of
-    backticks to the next run as long on its line (CommonMark's rule, kept
-    to one line), found in one pass."""
+    """The inline code spans in ``text``, ``(start, end)`` in order, by
+    CommonMark's rule kept to one line: a run of backticks opens a span that
+    the next run of the same length closes ("``a`b``" is one span). A
+    backslash escapes an opener's first backtick ("\\`x`" is no code), never
+    a closer's: inside code a backslash is literal. The twin of the
+    frontend's shared/lib/mdCode.codeSpans."""
     spans, off = [], 0
     for line in text.split("\n"):
-        runs = list(BACKTICKS.finditer(line))
-        nxt, last = [-1] * len(runs), {}
-        for k in range(len(runs) - 1, -1, -1):
-            n = len(runs[k].group())
-            nxt[k] = last.get(n, -1)
-            last[n] = k
-        k = 0
+        runs = [(m.start(), len(m.group())) for m in BACKTICKS.finditer(line)]
+        by_length, seen = {}, {}
+        for k, (_at, n) in enumerate(runs):
+            by_length.setdefault(n, []).append(k)
+        floor, k = 0, 0
         while k < len(runs):
-            if nxt[k] >= 0:
-                spans.append((off + runs[k].start(), off + runs[nxt[k]].end()))
-                k = nxt[k]
+            at, n = runs[k]
+            slashes = 0
+            while at - slashes - 1 >= floor and line[at - slashes - 1] == "\\":
+                slashes += 1
+            if slashes % 2:
+                at, n = at + 1, n - 1
+            closers = by_length.get(n, [])
+            i = seen.get(n, 0)
+            while i < len(closers) and closers[i] <= k:
+                i += 1
+            seen[n] = i
+            if n and i < len(closers):
+                close_at = runs[closers[i]][0]
+                spans.append((off + at, off + close_at + n))
+                k = closers[i]
+                floor = close_at + n
             k += 1
         off += len(line) + 1
     return spans
