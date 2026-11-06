@@ -1,7 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { allItemIds, filterImportPages, selectItems, buildImportTree, rowItemIds, treeItemIds, treeSize, resultPages, importSummary,
-  firstRow, importLinks, orderLikeSource, pageKey } from "../src/transfers/importReview.js";
+  firstRow, importLinks, orderLikeSource, pageKey, reviewRefused } from "../src/transfers/importReview.js";
 
 test("filters preserve hidden selections; folder selection deduplicates items in multiple locations", () => {
   const pages = [
@@ -161,4 +161,11 @@ test("a sub-page ticked without its parent shows where the import files it then,
   assert.deepEqual(names(filtered.folders.get("Notion")), []);
   assert.deepEqual(names(filtered.folders.get("Notion").folders.get("Top")), ["Mid"]);
   assert.deepEqual(names(filtered.folders.get("Notion").folders.get("Top").files[0].inside), ["Deep"]);
+});
+
+test("a review's job that failed on the file is refused; one a restart or a bug cut short may be tried again", () => {
+  assert.equal(reviewRefused("could not read the Zotero export: File is not a zip file"), true);
+  assert.equal(reviewRefused("not a Gamma export"), true);
+  assert.equal(reviewRefused("interrupted: the server restarted while this ran — start it again"), false);
+  assert.equal(reviewRefused("unexpected error (KeyError: 'pages')"), false);
 });

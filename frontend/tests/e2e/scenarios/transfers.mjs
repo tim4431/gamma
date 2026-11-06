@@ -68,7 +68,7 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
         if (request.method() !== "POST") return;
         const path = new URL(request.url()).pathname;
         if (path === "/api/jobs/import") imports++; // the import itself is a background job
-        if (path === "/api/import/review") uploads++;
+        if (path === "/api/jobs/import-preview") uploads++; // so is its review
       });
       let review = await selectZip();
       assert(await review.getByText("Empty folder", { exact: true }).isVisible());
@@ -212,8 +212,9 @@ open(os.path.join(root, 'files', '5', 'dataset.bin'), 'wb').write(os.urandom(40 
       await (await chooser).setFiles(folder);
       const review = page.getByRole("dialog", { name: "Review Zotero import", exact: true });
       await review.getByRole("heading", { name: "Library after import", exact: true }).waitFor();
-      assertEq(posts.filter((p) => /^\/api\/import\/review\/parts\/[0-9a-f]+$/.test(p)).length, 2, "40 MB goes up as two parts");
-      assert(!posts.includes("/api/import/review"), "never as one request");
+      assertEq(posts.filter((p) => /^\/api\/jobs\/import-preview\/parts\/[0-9a-f]+$/.test(p)).length, 2, "40 MB goes up as two parts");
+      assert(!posts.includes("/api/jobs/import-preview"), "never as one request");
+      assert(posts.some((p) => /^\/api\/jobs\/import-preview\/parts\/[0-9a-f]+\/finish$/.test(p)), "the finish starts the review's job");
       await choice(review, "Import to library").click();
       const report = page.getByRole("dialog", { name: "Import complete", exact: true });
       await report.waitFor();
@@ -428,7 +429,7 @@ with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as z:
       let release;
       const gate = new Promise(resolve => { release = resolve; });
       // `*`: the upload's URL carries the workspace (?ws=…).
-      await page.route("**/api/import/review*", async route => {
+      await page.route("**/api/jobs/import-preview*", async route => {
         const response = await route.fetch();
         await Promise.race([gate, new Promise(resolve => setTimeout(resolve, 3000))]);
         await route.fulfill({ response });
@@ -474,7 +475,7 @@ with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as z:
       // The upload's answer is held until released (`*`: its URL carries ?ws=…).
       let release;
       const gate = new Promise(resolve => { release = resolve; });
-      await page.route("**/api/import/review*", async route => {
+      await page.route("**/api/jobs/import-preview*", async route => {
         const response = await route.fetch();
         await gate;
         await route.fulfill({ response });
@@ -523,10 +524,10 @@ with zipfile.ZipFile(sys.argv[1], 'w', zipfile.ZIP_DEFLATED) as z:
 
       // An upload that fails while the question is open takes the question
       // away, so one Escape then closes the dialog.
-      await page.unroute("**/api/import/review*");
+      await page.unroute("**/api/jobs/import-preview*");
       let fail;
       const failing = new Promise(resolve => { fail = resolve; });
-      await page.route("**/api/import/review*", async route => { await failing; await route.abort(); });
+      await page.route("**/api/jobs/import-preview*", async route => { await failing; await route.abort(); });
       review = await pick("failing.md", "# Failing Markdown\nAn upload the network loses.");
       await review.press("Escape");
       await question.waitFor();
@@ -559,7 +560,7 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       page.on("request", request => {
         const { pathname } = new URL(request.url());
         if (request.method() !== "POST") return;
-        if (pathname === "/api/import/review") uploads++;
+        if (pathname === "/api/jobs/import-preview") uploads++;
         if (/^\/api\/import\/review\/[0-9a-f]{40}\/keepalive$/.test(pathname)) keepalives++;
       });
       const dialog = await openDialog(page, "Import");
@@ -642,6 +643,182 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
       await page.locator(".taskRow.done", { hasText: "Import Racing start.md" }).waitFor();
       assertEq(deletes.length, 1, "the review left to its import is not dropped");
       assertNoProblems(page, [/^POST \/api\/jobs\/import\S* -> 500$/]);
+    } finally { await ctx.close(); }
+  });
+
+  // The review is read by a background job: a dialog closed while it
+  // reads leaves it to the job, whose row in Background tasks opens the
+  // dialog on the review once it is read; Cancel stops and drops one.
+  await step("transfer: a review closed while the server reads it goes on in Background tasks and opens from its row", async () => {
+    const { ctx, page } = await setup();
+    try {
+      await page.waitForSelector(".folderNewBtn");
+      const deletes = [];
+      page.on("request", request => {
+        const { pathname } = new URL(request.url());
+        if (request.method() === "DELETE" && pathname.startsWith("/api/import/review/")) deletes.push(pathname);
+      });
+      // The server's review is quick: its listing is held at "running".
+      let hold = true;
+      await page.route(/\/api\/jobs(\?.*)?$/, async (route) => {
+        const response = await route.fetch();
+        const body = await response.json();
+        for (const job of body.jobs || []) {
+          if (hold && job.kind === "import-preview") {
+            Object.assign(job, { state: "running", finished_at: "", stoppable: true,
+              progress: { done: 1, total: 2, unit: "items", item: "Held review note" } });
+          }
+        }
+        await route.fulfill({ response, json: body });
+      });
+      const pick = async (name) => {
+        const dialog = await openDialog(page, "Import");
+        await choice(dialog, "Markdown notes").click();
+        const chooser = page.waitForEvent("filechooser");
+        await choice(dialog, "Choose file…").click();
+        await (await chooser).setFiles({ name: `${name}.md`, mimeType: "text/markdown", buffer: Buffer.from(`# ${name}\nA note reviewed by a job.`) });
+        const review = page.getByRole("dialog", { name: "Review Markdown import", exact: true });
+        await review.getByText("1 of 2 items · Held review note", { exact: true }).waitFor();
+        return review;
+      };
+
+      let review = await pick("Held review");
+      assert((await review.innerText()).includes("the review goes on in Background tasks"), "the dialog says it may close");
+      await review.press("Escape"); // nothing to lose: no question
+      await review.waitFor({ state: "detached" });
+      assertEq(await page.getByRole("alertdialog").count(), 0, "a close while the server reads asks nothing");
+      await page.click("button[aria-label='Background tasks']");
+      const title = "Review Held review.md";
+      const row = page.locator(".taskRow", { hasText: title });
+      await row.waitFor();
+      assert((await row.innerText()).includes("1 of 2 items"), "the row shows how far the review got");
+      hold = false;
+      await page.locator(".taskRow.done", { hasText: title }).waitFor();
+      assertEq(deletes.length, 0, "the review a closed dialog left is kept");
+      await row.getByRole("button", { name: `Open ${title}`, exact: true }).click();
+      review = page.getByRole("dialog", { name: "Review Markdown import", exact: true });
+      await review.getByRole("checkbox", { name: "Import Held review", exact: true }).waitFor();
+      assert((await review.innerText()).includes("Held review.md"), "the dialog names the file it reviews");
+      await choice(review, "Import to library").click();
+      const report = page.getByRole("dialog", { name: "Import complete", exact: true });
+      await report.waitFor();
+      assert((await report.innerText()).includes("1 new page"));
+      await choice(report, "Done").click();
+      await page.click("button[aria-label='Background tasks']");
+      await page.locator(".taskRow.done", { hasText: "Import Held review.md" }).waitFor();
+      assertEq(await page.locator(".taskRow", { hasText: title }).count(), 0, "the import's row stands for the review");
+      await page.keyboard.press("Escape");
+
+      // Cancel while the server reads: the review is stopped and dropped.
+      hold = true;
+      review = await pick("Dropped review");
+      await choice(review, "Cancel").click();
+      await review.waitFor({ state: "detached" });
+      await until(() => deletes.length === 1, { what: "the cancelled review's DELETE" });
+      hold = false;
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  // A dialog opened on a review's row knows the review from the job's
+  // params, so its Cancel stops and drops one still being read; the pill
+  // of a review read while its dialog was closed opens it after its row
+  // was cleared: the dialog finds the job gone from the server and reads
+  // the review still kept; and a review the server's restart cut short
+  // offers Retry preview, which drops the upload the restart left.
+  await step("transfer: a review reopened from its row is dropped by its Cancel, its pill opens it after its row is cleared, and one a restart cut short is retried", async () => {
+    const { ctx, page } = await setup();
+    try {
+      await page.waitForSelector(".folderNewBtn");
+      const deletes = [];
+      page.on("request", request => {
+        const { pathname } = new URL(request.url());
+        if (request.method() === "DELETE" && pathname.startsWith("/api/import/review/")) deletes.push(pathname);
+      });
+      // The server's review is quick: its listing is held at "running", or
+      // that of the file `cut` shows as jobs.recover leaves it.
+      let hold = true, cut = "";
+      const interrupted = "interrupted: the server restarted while this ran — start it again";
+      const reviewIds = new Map(); // a review job's file → the review it reads
+      await page.route(/\/api\/jobs(\?.*)?$/, async (route) => {
+        const response = await route.fetch();
+        const body = await response.json();
+        for (const job of body.jobs || []) {
+          if (job.kind !== "import-preview") continue;
+          reviewIds.set(job.params.filename, job.params.review_id);
+          if (job.params.filename === cut) {
+            Object.assign(job, { state: "failed", error: interrupted, stoppable: false });
+          } else if (hold) {
+            Object.assign(job, { state: "running", finished_at: "", stoppable: true,
+              progress: { done: 1, total: 2, unit: "items", item: "Held review note" } });
+          }
+        }
+        await route.fulfill({ response, json: body });
+      });
+      const held = "1 of 2 items · Held review note";
+      const choose = async (name) => {
+        const dialog = await openDialog(page, "Import");
+        await choice(dialog, "Markdown notes").click();
+        const chooser = page.waitForEvent("filechooser");
+        await choice(dialog, "Choose file…").click();
+        await (await chooser).setFiles({ name: `${name}.md`, mimeType: "text/markdown", buffer: Buffer.from(`# ${name}\nA note reviewed by a job.`) });
+        return page.getByRole("dialog", { name: "Review Markdown import", exact: true });
+      };
+      const pick = async (name) => {
+        const review = await choose(name);
+        await review.getByText(held, { exact: true }).waitFor();
+        await review.press("Escape"); // left to its job
+        await review.waitFor({ state: "detached" });
+      };
+      const tray = () => page.click("button[aria-label='Background tasks']");
+      const rows = (title) => page.locator(".taskRow", { hasText: title });
+
+      await pick("Reopened review");
+      await tray();
+      const title = "Review Reopened review.md";
+      await rows(title).getByRole("button", { name: `Open ${title}`, exact: true }).click();
+      let review = page.getByRole("dialog", { name: "Review Markdown import", exact: true });
+      await review.getByText(held, { exact: true }).waitFor();
+      assertEq(deletes.length, 0, "the review a closed dialog left is kept");
+      await choice(review, "Cancel").click();
+      await review.waitFor({ state: "detached" });
+      await until(() => deletes.length === 1, { what: "the reopened review's DELETE" });
+      assertEq(deletes[0], `/api/import/review/${reviewIds.get("Reopened review.md")}`, "Cancel drops the review its row named");
+      await tray();
+      await until(async () => (await rows(title).count()) === 0, { what: "the dropped review's row leaving" });
+      await tray();
+
+      await pick("Pill review");
+      hold = false;
+      const pill = page.locator(".statusPill", { hasText: "The review of Pill review.md is ready." });
+      await pill.waitFor();
+      await tray();
+      await page.getByRole("button", { name: "Clear finished", exact: true }).click();
+      await until(async () => (await rows("Review Pill review.md").count()) === 0, { what: "the cleared row" });
+      await tray();
+      await pill.getByRole("button", { name: "Open", exact: true }).click();
+      review = page.getByRole("dialog", { name: "Review Markdown import", exact: true });
+      await review.getByRole("checkbox", { name: "Import Pill review", exact: true }).waitFor();
+      assert((await review.innerText()).includes("Pill review.md"), "the dialog names the file it reviews");
+      await choice(review, "Cancel").click();
+      await review.waitFor({ state: "detached" });
+      await until(() => deletes.length === 2, { what: "the pill review's DELETE" });
+      assertEq(deletes[1], `/api/import/review/${reviewIds.get("Pill review.md")}`);
+
+      cut = "Restarted review.md";
+      review = await choose("Restarted review");
+      await review.getByText(`The review failed: ${interrupted}`, { exact: true }).waitFor();
+      const left = reviewIds.get(cut);
+      cut = "";
+      await choice(review, "Retry preview").click();
+      await review.getByRole("checkbox", { name: "Import Restarted review", exact: true }).waitFor();
+      assertEq(deletes[2], `/api/import/review/${left}`, "Retry preview drops what the restart left");
+      assert(reviewIds.get("Restarted review.md") !== left, "and reviews the file anew");
+      await choice(review, "Cancel").click();
+      await review.waitFor({ state: "detached" });
+      await until(() => deletes.length === 4, { what: "the retried review's DELETE" });
+      // The dialog asked the server for the cleared job by its id.
+      assertNoProblems(page, [/^GET \/api\/jobs\/[0-9a-f]{24}\S* -> 404$/]);
     } finally { await ctx.close(); }
   });
 
@@ -764,7 +941,7 @@ open(sys.argv[3], 'wb').write(b"noteSN_FILE_VER_20230015" + bytes(64))
       assert(!(await review.innerText()).includes("Choose what to import"), "nothing to choose from");
       await choice(review, "Cancel").click();
       await review.waitFor({ state: "detached" });
-      assertNoProblems(page, [/^POST \/api\/import\/review\S* -> 400$/]);
+      assertNoProblems(page);
 
       // The .ntb comes in as its note would: a notebook of its page, its typed
       // text as the page's note and its stroke on the sheet.

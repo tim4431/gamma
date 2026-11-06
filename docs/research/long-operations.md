@@ -144,6 +144,19 @@ counted row of Background tasks; the rest is listed as open.
   answer that question, would cancel them without a word.
 - The synchronous endpoints stay for scripts, as the other kinds' twins do.
 
+Later, the import's review became a job too (`import-preview`), which the
+import dialog follows: started by the upload itself (`POST
+/api/jobs/import-preview`, or the finish of `…/parts` for one past
+32 MiB), it reads the review to the end however long it takes and keeps
+it beside the staged upload, where the dialog reads it once the job is
+done (`GET /api/import/review/{id}`). A dialog closed meanwhile leaves the
+review to its job, whose row opens it again; Cancel stops it and drops the
+upload. The Gamma preview no longer copies the upload or unpacks its
+`uploads/`: it reads the staged zip in place and unpacks only the
+databases and the `.ink` files (the one step that reads uploads, 41,
+converts those). `POST /api/import/review` keeps answering in the request,
+for scripts.
+
 Reviewing the design against the code turned up a gap in the job registry
 itself: the report that marks the point of no return set it before looking
 at a stop, so a Stop pressed after the final copy's last report and before
@@ -173,23 +186,19 @@ delete's does.
 
 In the order they matter:
 
-1. The import preview as a job, or a phase of the import job: the
-   largest archives, the ones the parts protocol exists for, are the ones
-   whose preview a proxy cuts, and the review is thrown away with them.
-   The Gamma preview could also skip unpacking `uploads/`.
-2. Sync now without `?wait=1`: post, then follow the status the round
+1. Sync now without `?wait=1`: post, then follow the status the round
    already keeps.
-3. One request for the library's bulk actions (trash many pages, apply
+2. One request for the library's bulk actions (trash many pages, apply
    many page patches), on `ops.apply_batches`.
-4. The orphan purge in chunks (above).
-5. Empty Recently deleted: `purge_unused` once after the loop, one
+3. The orphan purge in chunks (above).
+4. Empty Recently deleted: `purge_unused` once after the loop, one
    connection, the `deleted_with` map read once.
-6. Progress for the off-site copies' first round and a folder link's
+5. Progress for the off-site copies' first round and a folder link's
    rounds (`say` is thrown away in `folder_links._folder_round`).
-7. A share view's export of a big shared folder (the share host sits
+6. A share view's export of a big shared folder (the share host sits
    behind Cloudflare and the share view has no jobs).
-8. A workspace being deleted taking no more changes (above), which needs
+7. A workspace being deleted taking no more changes (above), which needs
    the web app to learn a lost write right mid-session.
-9. Smaller: a publish that only changes the audience still runs a full
+8. Smaller: a publish that only changes the audience still runs a full
    round; unlinking Zotero clears marks page by page; the health table's
    and the backup list's scans (above).

@@ -474,3 +474,214 @@ def test_import_job_reports_progress_and_can_be_stopped(accounts, monkeypatch):
     assert "Stoppable note 0" in titles and "Stoppable note 2" not in titles
     with pytest.raises(Exception):
         import_staging.get(plan["review_id"], account_of("review-owner"), workspace_of("review-owner"))
+
+
+# --- The review as a background job (POST /api/jobs/import-preview) ------------------
+
+def preview_job(client, data, source, name="review.zip", **options):
+    """Start a review's job and wait for it → the finished job."""
+    from gamma import jobs
+    started = client.post("/api/jobs/import-preview", data={"source": source, **options},
+                          files={"file": (name, data, "application/zip")})
+    assert started.status_code == 200, started.text
+    job = started.json()
+    assert job["kind"] == "import-preview" and job["params"]["filename"] == name
+    return jobs.wait(job["id"])
+
+
+def test_a_review_read_as_a_job_is_kept_for_its_dialog(accounts):
+    """The review a job read is kept with the staged upload: its result
+    counts it, ``GET /import/review/{id}`` answers it as the request would
+    have, for its owner alone, and the import takes the review's row's
+    place in Background tasks."""
+    owner, other = accounts["review-owner"], accounts["review-other"]
+    data = archive({f"job{i}.md": f"# Reviewed by a job {i}\ntext" for i in range(2)})
+    inline = review(owner, data, "markdown-zip")
+    owner.delete(f"/api/import/review/{inline['review_id']}")
+
+    job = preview_job(owner, data, "markdown-zip", name="notes.zip")
+    assert job["state"] == "done", job["error"]
+    token = job["params"]["review_id"]
+    assert job["result"] == {"review_id": token, "pages": 2, "warnings": 0}
+    assert job["params"]["source"] == "markdown-zip" and job["params"]["size"] == len(data)
+    assert job["title"] == "Review notes.zip"
+    kept = owner.get(f"/api/import/review/{token}")
+    assert kept.status_code == 200, kept.text
+    plan = kept.json()
+    assert plan["review_id"] == token
+    assert [p["title"] for p in plan["pages"]] == [p["title"] for p in inline["pages"]]
+    assert plan["entries"] == inline["entries"]
+    assert other.get(f"/api/import/review/{token}").status_code == 404
+    assert other.get(f"/api/jobs/{job['id']}").status_code == 404
+    assert job["id"] in {j["id"] for j in owner.get("/api/jobs").json()["jobs"]}
+
+    ids = [i for p in plan["pages"] for i in p["selection_ids"]]
+    assert report(commit(owner, plan, ids))["pages_created"] == 2
+    assert owner.get(f"/api/jobs/{job['id']}").status_code == 404, "the import's row stands for it now"
+    assert owner.get(f"/api/import/review/{token}").status_code == 404, "imported: the review is over"
+
+
+def test_a_review_in_parts_starts_its_job_once_whole(accounts):
+    """Past 32 MiB the upload comes in parts at /jobs/import-preview/parts;
+    the finish starts the job (400 while bytes are missing), and a second
+    finish answers the same job."""
+    from gamma import jobs
+    owner = accounts["review-owner"]
+    data = archive({f"part{i}.md": f"# Review job in parts {i}\n" + "text " * 400 for i in range(3)})
+    opened = owner.post("/api/jobs/import-preview/parts", json={"source": "markdown-zip", "size": len(data),
+                                                                "name": "parts.zip"})
+    assert opened.status_code == 200, opened.text
+    token = opened.json()["token"]
+
+    def send(offset, chunk):
+        return owner.post(f"/api/jobs/import-preview/parts/{token}", data={"offset": str(offset)},
+                          files={"part": ("part", chunk, "application/octet-stream")})
+
+    half = len(data) // 2
+    assert send(0, data[:half]).json() == {"received": half}
+    missing = owner.post(f"/api/jobs/import-preview/parts/{token}/finish")
+    assert missing.status_code == 400 and f"{half} of" in missing.json()["detail"]
+    assert owner.get(f"/api/import/review/{token}").status_code == 409, "still arriving"
+    assert send(half, data[half:]).json() == {"received": len(data)}
+    started = owner.post(f"/api/jobs/import-preview/parts/{token}/finish")
+    assert started.status_code == 200, started.text
+    job = started.json()
+    assert job["kind"] == "import-preview" and job["params"]["review_id"] == token
+    assert job["params"]["filename"] == "parts.zip"
+    assert jobs.wait(job["id"])["state"] == "done"
+    assert owner.post(f"/api/jobs/import-preview/parts/{token}/finish").json()["id"] == job["id"]
+    plan = owner.get(f"/api/import/review/{token}").json()
+    assert len(plan["pages"]) == 3
+    assert owner.delete(f"/api/import/review/{token}").json() == {"ok": True}
+    assert owner.get(f"/api/jobs/{job['id']}").status_code == 404, "a discarded review's row goes with it"
+
+
+def test_a_review_job_stops_and_drops_its_upload(accounts, monkeypatch):
+    """A running review is stopped at its next item: by its Stop, or by a
+    discard (the dialog's Cancel), whose stop drops the upload. Meanwhile
+    its review is not there to read and its import does not start; a
+    review the source refuses fails its job and drops the upload too."""
+    import threading
+    from gamma import import_staging, jobs
+    from gamma.routers import imports
+
+    owner = accounts["review-owner"]
+    me, ws = account_of("review-owner"), workspace_of("review-owner")
+    reached, release = threading.Event(), threading.Event()
+    real = imports.import_markdown_zip
+
+    def gated(*args, progress=None, **kwargs):
+        def report(**fields):
+            if fields.get("done") == 1:  # hold the review after its first note
+                reached.set()
+                release.wait(10)
+            progress(**fields)
+        return real(*args, progress=report, **kwargs)
+
+    monkeypatch.setattr(imports, "import_markdown_zip", gated)
+    data = archive({f"held{i}.md": f"# Held review {i}\ntext" for i in range(3)})
+
+    def held():
+        reached.clear()
+        release.clear()
+        job = owner.post("/api/jobs/import-preview", data={"source": "markdown-zip"},
+                         files={"file": ("held.zip", data, "application/zip")}).json()
+        assert reached.wait(10)
+        return job, job["params"]["review_id"]
+
+    job, token = held()
+    live = owner.get(f"/api/jobs/{job['id']}").json()
+    assert live["state"] == "running" and live["stoppable"]
+    assert live["progress"]["unit"] == "items" and live["progress"]["total"] == 3
+    assert owner.get(f"/api/import/review/{token}").status_code == 409
+    refused = owner.post("/api/jobs/import", json={"review_id": token, "selected": []})
+    assert refused.status_code == 409 and "still being read" in refused.json()["detail"]
+    assert owner.post(f"/api/jobs/{job['id']}/cancel").json()["stopping"] is True
+    release.set()
+    assert jobs.wait(job["id"])["state"] == "cancelled"
+    with pytest.raises(HTTPException):
+        import_staging.get(token, me, ws)
+
+    job, token = held()
+    assert owner.delete(f"/api/import/review/{token}").json() == {"ok": True}
+    release.set()
+    assert jobs.wait(job["id"])["state"] == "cancelled"
+    with pytest.raises(HTTPException):
+        import_staging.get(token, me, ws)
+
+    monkeypatch.setattr(imports, "import_markdown_zip", real)
+    failed = preview_job(owner, b"not a zip at all", "markdown-zip", name="broken.zip")
+    assert failed["state"] == "failed" and failed["error"] == "not a zip file"
+    with pytest.raises(HTTPException):
+        import_staging.get(failed["params"]["review_id"], me, ws)
+
+
+def test_a_review_job_is_refused_before_the_upload_is_kept(accounts, guest, monkeypatch):
+    """What a review job is refused for is said as it starts, nothing
+    staged: a guest's Gamma export, an unknown source, and a start the
+    account's full tasks refuse (429), whose upload goes."""
+    from gamma import import_staging, jobs
+    data = accounts["review-donor"].get("/api/export").content
+    refused = guest.post("/api/jobs/import-preview", data={"source": "gamma"}, files={"file": ("backup.zip", data)})
+    assert refused.status_code == 403
+    owner = accounts["review-owner"]
+    assert owner.post("/api/jobs/import-preview", data={"source": "nope"},
+                      files={"file": ("a.zip", b"x")}).status_code == 400
+    before = set(import_staging._root().iterdir())
+    monkeypatch.setattr(jobs, "MAX_ACTIVE_PER_ACCOUNT", 0)
+    full = owner.post("/api/jobs/import-preview", data={"source": "markdown-zip"},
+                      files={"file": ("a.zip", archive({"one.md": "# Full\ntext"}))})
+    assert full.status_code == 429
+    assert set(import_staging._root().iterdir()) <= before, "the refused start's upload is gone"
+
+
+def test_a_gamma_review_unpacks_only_its_databases_and_handwriting(accounts, monkeypatch, tmp_path):
+    """A Gamma export's review reads the zip where it lies and unpacks its
+    databases and its .ink files, never a PDF: a backup from before step 41
+    still has its stroke file converted, so the page it is on misses
+    nothing, and a PDF in the zip counts as there by its name alone."""
+    import json
+    import sqlite3
+    import zipfile as zipmod
+    from contextlib import closing
+    from gamma import ink as inkmod
+    from gamma.db import PAGES_SCHEMA, register_functions
+    from gamma.storage import content_digest
+
+    v1 = {"format": "gamma-ink", "version": 1, "space": {"kind": "pdf-page", "page": 1, "width": 612, "height": 792},
+          "strokes": [{"id": "a", "tool": "pen", "color": "#1f1f1f", "size": 1.6, "opacity": 1, "pen": True,
+                       "ch": "xyp", "pts": [12040, 30512, 620, 18, -3, 700]}]}
+    old = json.dumps(v1, sort_keys=True, separators=(",", ":")).encode()
+    old_name = f"{content_digest(old)}.ink"
+    pdf = _annotated_pdf(b"Only named by the review")
+    pdf_name = f"{content_digest(pdf)}.pdf"
+    db = tmp_path / "pages.db"
+    with closing(sqlite3.connect(str(db))) as conn:
+        register_functions(conn)
+        for stmt in PAGES_SCHEMA:
+            conn.execute(stmt)
+        rows = [("pg41", "root", "Handwriting before step 41", {"doc_id": pdf_name[:-4]}),
+                ("g1", "pg41", "", {"ink_url": f"/api/uploads/{old_name}", "ink_strokes": 1})]
+        conn.executemany("INSERT INTO unified_blocks (id, parent_id, position, content, properties, page_id, "
+                         "created_at, updated_at) VALUES (?, ?, 'a0', ?, ?, 'pg41', 't0', 't0')",
+                         [(i, parent, content, json.dumps(props)) for i, parent, content, props in rows])
+        conn.execute("PRAGMA user_version = 40")
+        conn.commit()
+    data = archive({"pages.db": db.read_bytes(), f"uploads/{old_name}": old, f"uploads/{pdf_name}": pdf})
+
+    opened, real_open = [], zipmod.ZipFile.open
+    monkeypatch.setattr(zipmod.ZipFile, "open", lambda self, name, *a, **k:
+                        opened.append(getattr(name, "filename", name)) or real_open(self, name, *a, **k))
+    owner = accounts["review-owner"]
+    job = preview_job(owner, data, "gamma", name="old-export.zip")
+    assert job["state"] == "done", job["error"]
+    plan = owner.get(f"/api/import/review/{job['params']['review_id']}").json()
+    page = next(p for p in plan["pages"] if p["title"] == "Handwriting before step 41")
+    assert not page["missing"] and page["warnings"] == [], page
+    new = inkmod.dumps(inkmod.upgrade_v1(json.loads(old)))
+    assert f"uploads/{content_digest(new)}.ink" in page["source_paths"], "step 41 converted the stroke file"
+    assert "pages.db" in opened and f"uploads/{old_name}" in opened
+    assert f"uploads/{pdf_name}" not in opened, opened
+    owner.delete(f"/api/import/review/{job['params']['review_id']}")
+    # the same export reviewed in the request reads it the same way
+    assert review(owner, data, "gamma")["pages"] == plan["pages"]

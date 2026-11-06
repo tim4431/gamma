@@ -60,6 +60,12 @@ export const TASK_KINDS = {
     icon: "import", open: "import",
     title: ({ params }) => t("Import {file}", { file: params.filename || t("a file") }),
   },
+  // The import's review, read from the staged upload: its row opens the
+  // import dialog on it. No retry: the upload goes when it fails.
+  "import-preview": {
+    icon: "import", open: "import",
+    title: ({ params }) => t("Review {file}", { file: params.filename || t("a file") }),
+  },
   indexing: {
     icon: "search",
     title: () => t("Indexing PDFs for search"),
