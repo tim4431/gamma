@@ -161,6 +161,20 @@ def test_a_folder_chat_may_rename_a_label_on_a_sub_page_that_went_with_its_paren
     assert text.startswith("ok"), text
 
 
+def test_a_label_on_a_live_sub_page_is_reached_where_its_top_is_filed(org):
+    """_label_out_of_reach counts a live sub-page by the folders its top is
+    filed in (it is filed nowhere of its own)."""
+    c, ids = org
+    label = make_label(c, "spa-live")
+    top = _page(c, "Live top", folders=[ids["readout"]])
+    _page(c, "Live inside", parent_page=top, properties={"labels": [label]})
+    text, _ = run_agent_tool(ids["ws"], folder(ids["cooling"]), "rename_label", {"label": "spa-live", "name": "x"})
+    assert "outside this chat's folder" in text, text
+    text, _ = run_agent_tool(ids["ws"], folder(ids["readout"]), "rename_label",
+                             {"label": "spa-live", "name": "spa-live 2"})
+    assert text.startswith("ok"), text
+
+
 def test_save_paper_leaves_a_sub_page_filed_where_its_top_is(org):
     c, ids = org
     top = _page(c, "Review", folders=[ids["readout"]])

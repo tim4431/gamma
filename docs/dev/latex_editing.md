@@ -46,7 +46,7 @@ its space, and so does one ending a padded one-line display formula, which
 remark-math strips. Neither kind converts in these places:
 
 - after an escaped backslash (`\\[2pt]`);
-- in code (fences of every shape and code spans);
+- in code: fences of every shape and code spans (`mdCode.js`, below);
 - inside a dollar formula the text already holds (`\text{for \(x\)}` in a
   `$$ … $$`);
 - inside an address. An address runs from `://` or `www.` to the next
@@ -94,6 +94,27 @@ previews show it so (`joinBlockText`, `AiGhostRow`). `dollarMath`'s `keep`
 is the text the AI read. The pairs and dollar spans that text holds in its
 prose stay as written. `tests/shared/pastemath.json` holds the cases both
 suites check.
+
+Where code is, everything here reads one way: `shared/lib/mdCode.js`
+(`codeFences`, `codeSpans`, `mapProse`), with `paste_math._fences` and
+`_code_spans` its backend twins. A code span is CommonMark's, kept to one
+line: a run of backticks opens it and the next run of the same length
+closes it, so ``` ``a`b`` ``` is one span. A backslash escapes an opener's
+first backtick (`` \`x` `` is no code), never a closer's, since a backslash
+inside code is literal. The editor reads the same spans: `mdScan.protectedSpans`
+(where mentions, links and pictures are not read) and the inline-code mark
+of `mdMarks.scanMarks`, which hides a span's backtick runs whatever their
+length and whose Ctrl+E unwraps them whole.
+
+A chat reply's math follows a rule of its own, declared as the other half
+of a pair with `dollarMath`: `diagramMarkdown.normalizeChatMarkdown`
+([diagrams.md](diagrams.md) "The fence layer") turns every `\[ … \]` into a
+`$$` block and every `\( … \)` into `$ … $`. A model writes `\[ x \]` only
+as display math, while in a note `\[x\]` may be an escaped bracket, so a
+reply must not follow the note rule, and a note must not follow the
+reply's. The two share only where code is (`mdCode.mapProse`), so a reply's
+code spans, one backtick or two, and its fences stay as written.
+`tests/mdCode.test.mjs` checks the pair.
 
 Left open: a pasted formula can still pair with a lone `$` the note
 already had elsewhere (`Budget: $500` on the line above). The paste
@@ -226,7 +247,7 @@ outside the warmed set.
 Validation (from `frontend`):
 
 ```sh
-node --test tests/latexInput.test.mjs tests/latexCompletion.test.mjs tests/latexLint.test.mjs tests/pasteMath.test.mjs
+node --test tests/latexInput.test.mjs tests/latexCompletion.test.mjs tests/latexLint.test.mjs tests/pasteMath.test.mjs tests/mdCode.test.mjs
 npm run e2e:latex
 ```
 

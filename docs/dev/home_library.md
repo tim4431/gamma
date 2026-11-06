@@ -689,8 +689,11 @@ folder's "Delete N pages too" all call `DELETE /api/blocks/{id}` on the
 page root, and the server moves the page there (`ops.trash_page`) with
 the pages inside it ("Sub-pages" above). The confirmations say where it
 goes and for how long, and for a page with pages inside it how many go
-with it ("Move this page and the 2 pages inside it to Recently
-deleted?"). Their tabs close too, and none is a place a closed tab goes
+with it; one page is quoted by its title ("Move "Notes" and the 2 pages
+inside it to Recently deleted?"), several are counted ("Move these 3
+pages to Recently deleted?"). The library's Delete and the header's
+button ask the same question, built by `deleteConfirm` in
+`library/libraryUtils.js`. Their tabs close too, and none is a place a closed tab goes
 back to. A selection holding a page and a page inside it sends the outer
 one only, so the cascade takes the rest rather than one going alone
 first. Many pages go as a batch (`library/pageBatch.js`, [tasks.md](tasks.md)

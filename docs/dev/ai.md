@@ -590,7 +590,10 @@ with or without a document or a custom prompt, `FIGURE_PROMPT` tells the
 model what the reply view draws: a `mermaid` fence for flow, sequence,
 state and class diagrams, an `svg` fence holding one `<svg>` for any other
 drawing, with the restrictions the sanitizer enforces ([diagrams.md](diagrams.md)),
-and to prefer prose or a table when they say it as well.
+and to prefer prose or a table when they say it as well. The reply view
+reads the model's `\( … \)` and `\[ … \]` as math, every pair of them
+outside code (`normalizeChatMarkdown`), by a rule apart from a note's,
+where `\[x\]` may be an escaped bracket ([latex_editing.md](latex_editing.md)).
 
 `gather_inputs` returns the context in two parts, and `build_messages`
 places them apart on purpose. The **document part** (the pages' sections:

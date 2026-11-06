@@ -1,0 +1,83 @@
+/* Tab groups side by side (workspace/TabGroups.jsx, docs/dev/tab_groups.md):
+   the frames the groups stand in, their strips, the drop zones a dragged
+   tab shows, and the read view of a page in a group that is not live
+   (PagePane.jsx). The one-group layout draws none of this: its strip is the
+   topbar's and its page the work area as before. */
+.tabGroups { display: flex; flex: 1; min-width: 0; min-height: 0; }
+.tabGroups > [data-panel-group], .tabSplitPanel > [data-panel-group] { flex: 1; }
+.tabSplitPanel { display: flex; min-width: 0; min-height: 0; }
+.tabGroup { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; position: relative; }
+/* The strip over a group: the topbar's chrome and geometry, so the active
+   tab's band joins the page under it as it does in the topbar. */
+.tabGroupHead {
+  display: flex;
+  align-items: center;
+  gap: var(--topbar-gap, 6px);
+  padding: 0 8px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-page);
+  flex-shrink: 0;
+}
+.tabGroupHead .tabStrip { padding-top: 3px; }
+.tabGroupHead .tabStrip.dropEnd { box-shadow: inset -2px 0 0 var(--accent-fill); }
+/* Where a tab dragged from another group would go: a bar at the edge of the
+   tab it would stand before (or after the last). */
+.tab.dropBefore { box-shadow: inset 2px 0 0 var(--accent-fill); }
+.tab.dropAfter { box-shadow: inset -2px 0 0 var(--accent-fill); }
+/* A group that is not live: its active tab reads quieter, as the page in
+   it is a view and not the one being worked on. */
+.tabGroup:not(.live) .tabGroupHead .tab.active { color: var(--text-muted); }
+.tabGroup:not(.live) .tabGroupHead .tab.active .tabTitle { opacity: 0.75; }
+.tabGroupBody { display: flex; flex: 1; min-width: 0; min-height: 0; position: relative; }
+.tabGroupBody > [data-panel-group] { flex: 1; }
+/* The work area sized itself to the window (app.css .main); in a frame with
+   a strip over it, it fills the frame instead. */
+.tabGroup.framed .main { height: 100% !important; }
+/* While a tab is dragged, each group's body is covered by a layer that reads
+   where it would land; the zone it names is drawn over the half it would
+   take (an edge: a split), or the whole body (the middle: into the group). */
+.tabDropLayer { position: absolute; inset: 0; z-index: calc(var(--z-dock) + 2); }
+.tabDropZone {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--accent-fill) 22%, transparent);
+  border: 2px solid var(--accent-fill);
+  border-radius: var(--radius-md);
+  transition: inset var(--dur-fast) var(--ease-out);
+}
+.tabDropZone.zone-left { inset: 0 50% 0 0; }
+.tabDropZone.zone-right { inset: 0 0 0 50%; }
+.tabDropZone.zone-top { inset: 0 0 50% 0; }
+.tabDropZone.zone-bottom { inset: 50% 0 0 0; }
+
+/* The read view of a page in a group that is not live: its PDF, or its
+   notes rendered. A press on it makes the group live. */
+.pagePane { display: flex; flex: 1; flex-direction: column; min-width: 0; min-height: 0; background: var(--bg-surface); }
+.pagePane .viewerWrap { height: auto !important; flex: 1 1 auto; min-height: 0; }
+.pagePaneNotes { flex: 1; min-height: 0; overflow: auto; padding: 14px 18px 40px; }
+.pagePaneNotes h3 { margin: 0 0 12px; font-size: var(--fs-lg); font-weight: 600; color: var(--text-primary); }
+.readBlock { padding: 2px 0 2px calc(var(--depth, 0) * 18px); }
+.readBlock .blockRendered { padding: 3px 0; }
+.readQuote {
+  margin: 2px 0 4px;
+  padding: 2px 10px;
+  border-left: 3px solid var(--hl-color, var(--accent-fill));
+  color: var(--text-secondary);
+  font-size: var(--fs-sm);
+  line-height: 1.4;
+}
+.pagePaneHint, .pagePaneEmpty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 24px;
+  text-align: center;
+  color: var(--text-tertiary);
+  font-size: var(--fs-sm);
+}
+.pagePaneEmpty .uiBtn { margin-top: 4px; }
+.pagePaneEmpty p { margin: 0; max-width: 32ch; }

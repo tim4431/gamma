@@ -7,6 +7,7 @@ import { escapedAt } from "./latexInput.js";
 import { scanFences } from "./fences.js";
 import { scanImageSyntax } from "./mdMarks.js";
 import { quoteMarksAt } from "./mdLines.js";
+import { codeSpans } from "../shared/lib/mdCode.js";
 
 // All CLOSED math spans in the text: [{from, to, display}] with from/to
 // including the delimiters. Same tokenizer as latexEditor's findMathAtCursor
@@ -46,12 +47,12 @@ export function mathTex(text, s) {
 // Ranges markdown syntax must not be recognized inside (math, ``` fences,
 // inline code), sorted: mdPreprocess rewrites only outside them, and the
 // image scan skips them, so the nth scanned image is the nth rendered one.
+// Inline code is mdCode.codeSpans, the spans a paste reads as code too
+// ("``a`b``" one span).
 export function protectedSpans(content) {
   const spans = scanMathSpans(content).map((s) => ({ from: s.from, to: s.to }));
   for (const f of scanFences(content)) spans.push({ from: f.from, to: f.to });
-  for (const m of content.matchAll(/`[^`\n]+`/g)) {
-    spans.push({ from: m.index, to: m.index + m[0].length });
-  }
+  for (const [from, to] of codeSpans(content)) spans.push({ from, to });
   return spans.sort((a, b) => a.from - b.from);
 }
 const inSpan = (spans, pos) => spans.some((s) => pos >= s.from && pos < s.to);

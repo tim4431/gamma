@@ -75,7 +75,8 @@ fence's sanitized drawing.
   each with its `kind` (`"mermaid"` or `"svg"`), the opening line's range,
   its info string split into `lang`, `meta` and `width`, and where the whole
   fence ends (`end`, `closed`). Fences in quotes and list items count, and
-  both backticks and tildes are supported.
+  both backticks and tildes are supported. The fences are
+  `shared/lib/mdCode.codeFences`, the ones a note's paste reads as code.
 - `remarkDiagrams` marks each diagram fence in the rendered HTML as
   `data-diagram-kind`, `data-diagram-pending` (the closing fence has not
   arrived yet) and `data-diagram-width`. A streaming reply therefore waits for
@@ -84,8 +85,17 @@ fence's sanitized drawing.
   opening line; a stale index edits nothing.
 - `diagramFence(kind, source)` writes a fence long enough that backticks in
   the source cannot close it (selection copy).
-- `mapOutsideCodeFences` and `normalizeChatMarkdown` keep math rewrites out
-  of fenced code, so diagram labels and SVG text stay as written.
+- `mapOutsideCodeFences` keeps the rendered view's rewrites out of fenced
+  code, so diagram labels and SVG text stay as written.
+- `normalizeChatMarkdown` is the chat's Markdown before `ChatMarkdown`
+  (`shared/ui/Widgets.jsx`) renders it: every `\[ … \]` becomes a `$$`
+  block and every `\( … \)` `$ … $`, with `|` in inline math as `\vert`
+  so GFM reads no table cell. It works outside fences and code spans
+  (`mdCode.mapProse`, the code a note's paste reads too), so a reply's
+  diagram labels, code and `` `\(x\)` `` stay as written. Its math rule
+  is not the note's (`pasteMath.dollarMath`), on purpose: a model writes
+  `\[ x \]` only as display math, while in a note `\[x\]` may be an
+  escaped bracket. [latex_editing.md](latex_editing.md) has the pair.
 
 The two kinds share one index sequence: the nth diagram of a note, whatever
 its kind, is the nth fence `scanDiagramFences` reports and the nth figure
@@ -244,7 +254,7 @@ PDF exports print a diagram's fence as a code block, and the note editor
 From `frontend/`:
 
 ```sh
-node --test tests/diagramMarkdown.test.mjs tests/svgSanitize.test.mjs tests/copyImage.test.mjs
+node --test tests/diagramMarkdown.test.mjs tests/mdCode.test.mjs tests/svgSanitize.test.mjs tests/copyImage.test.mjs
 npm run build
 npm run e2e -- --group diagrams
 ```

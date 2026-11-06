@@ -49,6 +49,7 @@ export const GROUPS = [
   { id: "inbox", files: ["inbox.mjs"], s: 15 },
   { id: "block-properties", files: ["blockProperties.mjs"], s: 15 },
   { id: "ink-ai", files: ["inkAi.mjs"], s: 17 },
+  { id: "tab-groups", files: ["tabGroups.mjs"], s: 25 },
   { id: "quick-open", files: ["quickOpen.mjs"], s: 14 },
   { id: "folders", files: ["folders.mjs"], s: 14 },
   { id: "sub-pages", files: ["subPages.mjs"], s: 14 },
@@ -112,6 +113,10 @@ export const RULES = [
   ["frontend/src/shared/illustrations/**", GUIDES],
   ["frontend/src/shared/**", ALL],
   ["frontend/src/app/**", ALL],
+  // the tab groups' pure model and the read view of a page in a group that is not live
+  ["frontend/src/workspace/tabGroups.js", ["tab-groups"]],
+  ["frontend/src/workspace/PagePane.jsx", ["tab-groups"]],
+  ["frontend/src/workspace/**", ALL], // the frames every page stands in
   ["frontend/src/main.jsx", ALL],
   ["frontend/src/guide/**", GUIDES],
   // the handwriting state App composes (docs/dev/handwriting.md "Client"): a

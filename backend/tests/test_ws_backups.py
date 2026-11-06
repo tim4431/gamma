@@ -60,6 +60,9 @@ def test_snapshot_round_trip(owner, other):
     # the download is a plain /api/export zip
     z = owner.get(f"/api/workspaces/{ws}/backups/{b['name']}/download")
     assert z.status_code == 200 and z.headers["content-type"].startswith("application/zip")
+    # the listing names the file as the download's Content-Disposition does, for a host that saves it
+    assert f'filename="{listed[1]["filename"]}"' in z.headers["content-disposition"]
+    assert listed[1]["filename"].startswith("gamma-backup-") and listed[1]["filename"].endswith(f"-{b['name']}.zip")
     zf = zipfile.ZipFile(io.BytesIO(z.content))
     manifest = json.loads(zf.read("manifest.json"))
     assert manifest["format"] == "gamma-backup-1" and manifest["workspace"] == ws and manifest["label"] == "before"

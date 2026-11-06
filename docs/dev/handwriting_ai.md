@@ -632,7 +632,7 @@ that a lasso edit taking pictures makes ([pictures.md](pictures.md#the-lasso)):
 
 ## SVG
 
-`inkSvg(strokes, {pad = 4, background = null})` (`ink/inkSvg.js`) →
+`inkSvg(strokes, {background = null})` (`ink/inkSvg.js`) →
 `{markup, width, height}`, or null when no stroke has a sample. The hook
 (`selectionSvg`) passes it `selectedStrokes(sel, inkOf).strokes`: every
 tool, and none of the selection's pictures. On a sheet of dark paper (the
@@ -642,7 +642,7 @@ transparent picture pasted on white would lose.
 
 - The document is `<svg xmlns="http://www.w3.org/2000/svg" width="W"
   height="H" viewBox="0 0 W H">` around the strokes' union `strokeBounds`
-  grown by `pad`, its corner and size on the 1/100 grid, outward. With a
+  grown by 4 pt on every side, its corner and size on the 1/100 grid, outward. With a
   `background`, a `<rect>` of it fills the document first. One `<g
   transform="translate(-x0 -y0)">` holds a `<path>` for each part drawn.
 - The strokes go in the layer's draw order, plane by plane (`ink.js`
@@ -751,7 +751,7 @@ redraw writes both flags on every curve.
   block left the tree is gone), `requestTooBig` (strokes, samples or
   bytes past one file, highlighters counted), and `askInkAi` over a faked
   fetch (the pings skipped, an error line, a refusal's detail and status).
-- `frontend/tests/inkSvg.test.mjs`: a pen's outline, the pad, a dashed
+- `frontend/tests/inkSvg.test.mjs`: a pen's outline, the 4 pt pad, a dashed
   pen, a highlighter, a pencil's bands, a filled shape, the planes' order,
   a background under the strokes with the highlighter unblended, none
   without one, escaped attributes that read back, and null for no

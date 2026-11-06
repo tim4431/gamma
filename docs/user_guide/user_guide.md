@@ -11,6 +11,7 @@ Read papers, keep what you learn. This guide shows each part of Gamma in a short
 | [Notebooks](#notebooks) | Sheets of paper to write on |
 | [Follow links and translate](#follow-links-and-translate) | Citations, Back, translation in place |
 | [Notes](#notes) | Markdown and math that render as you type |
+| [Pages side by side](#pages-side-by-side) | A paper in one group, your notes in another; split, drag, join |
 | [Outline and links between pages](#outline-and-links-between-pages) | Nesting, moving notes, `[[` links, `@` mentions and reminders |
 | [AI chat](#ai-chat) | Ask about the paper, with clickable citations; every AI service you can connect |
 | [The library agent](#the-library-agent) | Let the AI organize and edit, with your approval; what each tool does |
@@ -150,6 +151,15 @@ Notes are a nested outline. Highlights and free notes are the same kind of block
 - **Pasting keeps the structure**: pasted lines land at the level of the line you paste onto, in its quote or beside its list item, and a pasted list keeps its sub-items. The **Paste as** menu offers **Nested** (one level in) and **As copied**. The `/` line commands (headings, lists, to-dos, quote, callout) keep a line's quote and indentation.
 - **Formatting bar**: select text in the note you are editing and a bar of tools opens above it: bold, italic, underline, strikethrough, code, equation, link, highlight and **Color**, which offers text colors and background tints. A pressed button shows what the selection already has; press it again to take that off. Escape puts the bar away. On a touch screen the same tools sit in the bar above the keyboard.
 - **Formatting keys** are Obsidian's: Ctrl+B, Ctrl+I, Ctrl+U, Ctrl+K and so on. Underline and colors are written as the HTML that Obsidian and GitHub show. Rendered notes copy as rich text; math copies as LaTeX.
+
+## Pages side by side
+
+Read a paper on one side while you write up your notes on the other, each in a tab group of its own.
+
+- **Split**: right-click a tab → **Split right** or **Split down**, and the page gets a group of its own beside the others, with its own tab strip. Or drag a tab onto the edge of a page: the band that lights up is where it lands (the left, right, top or bottom half splits the group; the middle joins it). Drag a tab onto another group's strip to move it there. **Split right**, **Split down** and **Join tab groups** are in the command palette too.
+- **One group is live**: the page you are working on, with its PDF, notes, chat and tools. The other groups show their page to read: a paper's PDF, scrolled and zoomed as you like, or a page's notes as they render. Click into one of them, or its tab, to work on it there; the page opens where you were reading. Opening a page from the library, a link or Ctrl+P puts it in the live group, and a page already open in another group brings that group forward.
+- **Resize** by dragging the bar between groups. Close a group's last tab and the group goes; **Join tab groups** puts every tab back in one strip. A tab alone in its group splits off an empty group, with the library in it, to pick a page for.
+- Your open tabs still follow your account. How they are arranged is this browser's, like your window layout; another device shows the same tabs in one strip until you split them there. A phone shows one page at a time.
 
 ## Outline and links between pages
 
@@ -525,7 +535,7 @@ Both are in the **View menu (≡)**, on a page or on the home library (with a fo
 - **The Gamma iPad app** (beta) keeps a copy of one workspace on the iPad for handwriting with no connection. Install Apple's TestFlight app, then open [the TestFlight invitation](https://testflight.apple.com/join/nTmSHDx6) on the iPad. The chevron at the right end of its server bar hides the bar (⌘⇧B with a keyboard), and **View → Server bar** brings it back (**More** when the iPad is upright).
 - **The Gamma Android app** does the same on an Android phone or tablet (Android 10 or later, 64-bit ARM), with a stylus (S Pen, USI, Wacom) captured natively. Download `Gamma-<version>-android-arm64.apk` from the [releases](https://github.com/tim4431/Gamma/releases/latest) on the device, open it, and allow your browser to install apps when Android asks; install the next release's APK over it to update. It will also be on Google Play once listed there. A click of the pen's button with the tip off the screen switches to the eraser and back, and holding the button down while the tip touches the screen erases; **Settings → Reading & editing → Stylus** says what the buttons do. The chevron at the right end of its server bar hides the bar (Ctrl+Shift+B with a keyboard), and **View → Server bar** brings it back.
 
-On a phone everything becomes full-screen views behind one bottom bar: Library, PDF, Notes, Chat, Add, Search, Share and More. On a desktop the Notes and Chat windows dock left, right or bottom by dragging their grip, and tabs sync to your account.
+On a phone everything becomes full-screen views behind one bottom bar: Library, PDF, Notes, Chat, Add, Search, Share and More. On a desktop the Notes and Chat windows dock left, right or bottom by dragging their grip, tabs sync to your account, and tabs split into [groups side by side](#pages-side-by-side).
 
 ## Settings
 
@@ -579,6 +589,6 @@ Account menu → **Settings**, or **Ctrl+,**; the card with your name at the top
 | Ctrl+click a highlight | Quote it into the chat |
 | Ctrl+drag across note text | Attach that passage to the chat |
 | Double-click | Open a library card; collapse a window (on its grip) |
-| Right-click a tab | Pin it, pin its page to the library, or see the page's properties |
+| Right-click a tab | Pin it, pin its page to the library, split it into a group of its own, join the groups, or see the page's properties |
 | Ctrl+Shift+S | In the browser extension: save this page to Gamma |
 | Esc | Close popups, clear selections, cancel modes |
