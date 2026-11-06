@@ -50,6 +50,7 @@ const startup = require('./lib/startup');
 const keeping = require('./lib/keeping');
 const cloudSignIn = require('./lib/cloudSignIn');
 const openFiles = require('./lib/openFiles');
+const { loadPage } = require('./lib/loadPage');
 const { hostPath } = require('./lib/hostPath');
 const folderAccessFor = require('./lib/folderAccess');
 const microphone = require('./lib/microphone');
@@ -109,6 +110,7 @@ let barExpanded = false;
 const allowedOrigins = new Set();
 // Test hook: records what would have opened externally.
 const externalOpens = [];
+const errorBoxes = []; // under GAMMA_SHELL_TEST: each step of the suite asks for none
 let tray = null; // the tray icon while the app keeps running in the background
 let notice = null; // a short line in the bar after a shell action ("Quantum is being written to …")
 let noticeTimer = null;
@@ -1348,7 +1350,7 @@ async function signInWithCloud(startUrl) {
     showNotice('Gamma Cloud sign-in finished for a server that is no longer open. Open it and sign in again.');
     return;
   }
-  await content.webContents.loadURL(...cloudSignIn.claimRequest(origin, flow, answer.result)).catch(() => {});
+  await loadPage(content.webContents, ...cloudSignIn.claimRequest(origin, flow, answer.result)).catch(() => {});
   refreshGamma();
 }
 
@@ -1401,6 +1403,7 @@ function openPdfFiles(files) {
 // An error in a native message box. The test scripts' minimized runs log it
 // instead, so a step that fails leaves no dialog on the screen.
 function errorBox(opts) {
+  if (process.env.GAMMA_SHELL_TEST) errorBoxes.push(`${opts.message} ${opts.detail}`);
   if (TEST_MINIMIZED) console.error(`[shell] ${opts.message} ${opts.detail}`);
   else (win ? dialog.showMessageBox(win, opts) : dialog.showMessageBox(opts)).catch(() => {});
 }
@@ -1653,7 +1656,7 @@ function openGammaWorkspace(id, page) {
   const q = new URLSearchParams({ ws: String(id || '') });
   if (page) q.set('page', page);
   target.search = '?' + q;
-  return content.webContents.loadURL(target.href);
+  return loadPage(content.webContents, target.href);
 }
 
 // What the shell bar (and the launcher, for the switcher part) renders.
@@ -1784,7 +1787,7 @@ async function openServerNow(id) {
       if (ws.adminUser) creds = { username: ws.adminUser, password: ws.adminPassword };
     }
     allowedOrigins.add(new URL(url).origin);
-    await content.webContents.loadURL(url);
+    await loadPage(content.webContents, url);
     if (ws.type === 'remote') remoteHealth.set(ws.id, { ok: true, at: Date.now() });
     current = { id: ws.id, name: ws.name, type: ws.type, url };
     gamma = null;
@@ -2266,6 +2269,7 @@ if (process.env.GAMMA_SHELL_TEST) {
     gamma: () => gamma,
     theme: () => currentTheme(),
     externalOpens,
+    errorBoxes,
     copied: () => copied,
     update: () => updater.state(),
     remoteHealth,

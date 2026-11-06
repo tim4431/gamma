@@ -45,11 +45,20 @@ async function assertWindowDown() {
   assert.equal(up, 0, 'the step left the window up');
 }
 
+// A box is what a user would see go wrong, in a step that may well go on to
+// pass: a false "Could not open the clone" did for a long time.
+async function assertNoErrorBox() {
+  if (!launched) return;
+  const boxes = await launched.evaluate(() => global.__gammaShell.errorBoxes.splice(0)).catch(() => []);
+  assert.deepEqual(boxes, [], 'the step opened an error box');
+}
+
 async function step(name, fn) {
   const t0 = Date.now();
   try {
     const note = await fn();
     await assertWindowDown();
+    await assertNoErrorBox();
     results.push({ name, ok: true, note: note || '', ms: Date.now() - t0 });
     console.log(`  ok    ${name}${note ? '  — ' + note : ''}`);
   } catch (e) {
@@ -57,6 +66,8 @@ async function step(name, fn) {
     console.log(`  FAIL  ${name}\n        ${String((e && e.stack) || e).split('\n').join('\n        ')}`);
     if (!continueOnFail) throw e;
   } finally {
+    // A failed step's boxes are its own, not the next step's.
+    if (launched) await launched.evaluate(() => { global.__gammaShell.errorBoxes.length = 0; }).catch(() => {});
     if (!headed && launched) {
       await launched.evaluate(({ BaseWindow }) => {
         for (const w of BaseWindow.getAllWindows()) if (!w.isMinimized()) w.minimize();
