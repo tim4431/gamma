@@ -103,6 +103,12 @@ def _slug(ws: str) -> str:
     return "".join(c if c.isalnum() else "-" for c in _name_of(ws)).strip("-")[:40] or ws
 
 
+def _backup_filename(ws: str, name: str) -> str:
+    """What the snapshot ``name``'s download is saved as (its
+    Content-Disposition), which the listing gives each one as ``filename``."""
+    return f"gamma-backup-{_slug(ws)}-{name}.zip"
+
+
 def _export_name(ws: str, uploads: bool) -> str:
     return f"gamma-export{'' if uploads else '-db'}-{_slug(ws)}-{page_now()[:10]}.zip"
 
@@ -442,10 +448,11 @@ class BackupCreate(BaseModel):
 def list_backups(ws: str, request: Request):
     """``{backups: [{name, size_bytes, created_at, label, uploads,
     upload_files, by, scheduled, task_id, auto, missing_uploads,
-    damaged}]}`` (``ws_backup.info``), newest first, plus the per-workspace
-    cap."""
+    damaged}]}`` (``ws_backup.info``), each with the ``filename`` its
+    download is saved as, newest first, plus the per-workspace cap."""
     _member(request, ws, "viewer")
-    return {"backups": ws_backup.list_backups(ws), "max": ws_backup.MAX_PER_WORKSPACE}
+    return {"backups": [{**b, "filename": _backup_filename(ws, b["name"])} for b in ws_backup.list_backups(ws)],
+            "max": ws_backup.MAX_PER_WORKSPACE}
 
 
 # Sync def: zipping a library runs in the threadpool.
@@ -466,7 +473,7 @@ def download_backup(ws: str, name: str, request: Request):
     _member(request, ws, "viewer")
     _named(ws, name)
     return FileResponse(str(ws_backup.backup_path(ws, name)), media_type="application/zip",
-                        filename=f"gamma-backup-{_slug(ws)}-{name}.zip")
+                        filename=_backup_filename(ws, name))
 
 
 # Sync def: unzip + sqlite restore runs in the threadpool.

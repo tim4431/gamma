@@ -1151,10 +1151,11 @@ Labels are library-wide, so reach works differently for them.
 `create_label` and `label_page` (on a page in reach) work in any folder
 chat. `rename_label` and `delete_label` work only when every page carrying
 the label is in reach (`_label_out_of_reach`). That is always true at the
-library root, and for a label on no page. A page in Recently deleted
-counts by the folders a restore puts it back in (`trashed_folders`: one
-that went there with another page by that page's), and a sub-page by
-where its top is filed.
+library root, and for a label on no page. Each page carrying it is
+judged by `_label_page_reached`: a page in Recently deleted by the folders
+a restore puts it back in (`trashed_folders`: one that went there with
+another page by that page's), a live sub-page by where its top is filed,
+and any other page by its own folders.
 
 Previews carry `title` (the folder's path, the label's name or the page's
 title) and a `diff`. A rename shows the word diff. `label_page` shows the

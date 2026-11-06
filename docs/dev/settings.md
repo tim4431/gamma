@@ -184,6 +184,10 @@ takes no second one, nor a restore; a workspace being deleted
 (`workspace-delete`) counts as one. Its list reloads once the job ends,
 wherever the job was started, and a deleted workspace leaves the pane. A restore into the open workspace reloads the tab that started
 it. Settings → Server's server backups work the same way (`server-backup`).
+A snapshot's Download saves it under the name the listing gives it
+(`filename`, its download's Content-Disposition,
+`gamma-backup-<workspace>-<name>.zip`), so a host that saves files
+([android.md](android.md) "Saving files") names it as a browser does.
 Settings → Workspaces → Data exports a workspace (a `workspace-export` job
 whose zip downloads by itself once ready) and merges or restores a zip into
 one (a `restore` job over the uploaded file); Export all is one
