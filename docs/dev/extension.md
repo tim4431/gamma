@@ -46,7 +46,8 @@ install steps, unpacked included, in
    also names the new page on save (`auto_title`, so the metadata lookup may
    still replace it).
 6. **Ctrl+Shift+S** saves the current page with the default folder.
-7. **Options**: saved-server switcher, server URL, sign in / out, default folder + labels, *prefer
+7. **Options**: saved-server switcher, server URL, sign in / out, default folder (the popup's own
+   folder field) + labels, *prefer
    open-access fallback* and *keep a PDF copy* (the app's `oaFallback` /
    `pdfSaveLocal` prefs, sent as `allow_oa` / `save_copy`), and whether
    connected publisher sessions refresh automatically.
@@ -71,6 +72,7 @@ browser tab ──detect.js──▶ worker.js ──fetch, cookies──▶ Gam
  JSON-LD, DOI regex,        save pipeline                GET  /api/library/lookup
  selection                  context menus, command       GET  /api/library/preview
                             popup.html · options.html    GET  /api/library/folders
+                                                         POST /api/pages/folders/ops
                                                          POST /api/clip/note
                                                          POST /api/uploads · GET /api/session
 ```
@@ -91,13 +93,13 @@ helpers — never re-implement it in the extension.
 | `pageRecord.js` | the page's own citation record (`gammaPageRecord`): the Highwire `citation_*` tags, Dublin Core and PRISM filling gaps, read as Zotero's Embedded Metadata translator reads them (below, "Detection") — a classic script before `detect.js`, pure, tested in `tests/` |
 | `saveLog.js` | a save's log (below, "The save log"): the header, each timed step, the detection and a download's answer as lines, the last five kept — pure, tested in `tests/` |
 | `detect.js` | content script (`document_idle`): identifier extraction, re-run on SPA URL changes; answers `get-detection` / `get-selection` / `fetch-pdf` (downloads a PDF from inside the page and relays it base64, with the answer's status, type and size — publisher bot checks that 403 the worker's fetch accept the page's own same-origin request) |
-| `api.js` | settings (`chrome.storage.sync`: `server, servers, workspaces, defaultFolders, folder, labels, allowOa, saveCopy, autoRefreshSessions`), `api()` fetch wrapper (`credentials: "include"`, the chosen workspace as `X-Gamma-Workspace`, JSON `detail` → `ApiError{status}`), `login/logout/whoAmI`, and the workspace and default folder (below) |
+| `api.js` | settings (`chrome.storage.sync`: `server, servers, workspaces, defaultFolders, folder, labels, allowOa, saveCopy, autoRefreshSessions`), `api()` fetch wrapper (`credentials: "include"`, the chosen workspace as `X-Gamma-Workspace`, JSON `detail` → `ApiError{status}`), `login/logout/whoAmI`, the workspace and default folder, and the folder tree (`folderTree`, `namedKid`, `makeFolder`; below) |
 | `publisherSessions.js` | Publisher-host validation and the connection flow (checks the active tab and account, then sends a snapshot to Gamma with the browser's `navigator.userAgent`); the automatic-refresh rule (`shouldAutoRefresh`, `REFRESH_AFTER` / `RETRY_AFTER`) and the status text (`describeSession`) — pure, tested in `tests/` |
-| `popup.html/js/css` | setup (no server) → offline (server unreachable, with Retry) → sign-in → main view; the footer shows a connection dot (green signed in / amber signed out / red unreachable) beside `host · user`, the publisher-session **cookie button** and an options gear (the app's SettingsIcon). The folder and the labels are one control (`chipField`): the app's `categoryTag` chip input over a ctxMenu of suggestions — typing filters them, arrow keys + Enter pick one, Enter commits what was typed, Backspace in an empty input removes the last chip, and text typed but not committed still counts at Save. Labels take any number (a comma commits one too) and suggest the library's labels holding the text. The folder holds one, since a clip files into one folder (none is the library root): it suggests every other folder whose path holds the typed names in order, each within one name of the path (`phys/c` finds *Physics / Clocks*), and a path no folder has as *New folder “…”*, sent as `folder_path`. A save remembers its folder (the worker, once it succeeds) but not its labels — each popup prefills only the options-page default labels. `popup.css` reads the app's design tokens and repeats `shared/styles/app.css`'s control recipes (buttons, fields, the switch, the menu surface, the focus ring) — keep those in step when the app's recipes change. *Clip selected text* and *Copy the save log* (whenever the tab has one) share one row of quiet links at the bottom, under the actions and any result; the log link copies the tab's last save log. `?tab=<id>` targets a specific tab when opened as a page (tests) |
+| `popup.html/js/css` | setup (no server) → offline (server unreachable, with Retry) → sign-in → main view; the footer shows a connection dot (green signed in / amber signed out / red unreachable) beside `host · user`, the publisher-session **cookie button** and an options gear (the app's SettingsIcon). The folder and the labels are one control (`chipField`, `ui.js`): the app's `categoryTag` chip input over a ctxMenu of suggestions — typing filters them, arrow keys + Enter pick one, Enter commits what was typed, Backspace in an empty input removes the last chip, and text typed but not committed still counts at Save. Labels take any number (a comma commits one too) and suggest the library's labels holding the text. When there are some, *New label “…”* follows for text no label has, or with nothing typed *New label…*, a name input in place; alone, either would lie over Save, which takes typed text as it is. A new label is a chip like any, which the save makes by its name. The folder holds one, since a clip files into one folder (none is the library root). With nothing typed its menu is the tree (below, "The folder tree"); typed, it suggests every other folder whose path holds the typed names in order, each within one name of the path (`phys/c` finds *Physics / Clocks*), and a path no folder has as *New folder “…”*, sent as `folder_path`. A save remembers its folder (the worker, once it succeeds) but not its labels — each popup prefills only the options-page default labels. `popup.css` reads the app's design tokens and repeats `shared/styles/app.css`'s control recipes (buttons, fields, the switch, the menu surface, the focus ring) — keep those in step when the app's recipes change. *Clip selected text* and *Copy the save log* (whenever the tab has one) share one row of quiet links at the bottom, under the actions and any result; the log link copies the tab's last save log. `?tab=<id>` targets a specific tab when opened as a page (tests) |
 | `tokens.css`, `fonts/` | committed copies of the app's `shared/styles/tokens.css` and the Latin subset of Inter, like the desktop shell's ([ui-design.md](ui-design.md#the-desktop-shell-and-the-extension)): `npm run copy-tokens` in `frontend/` refreshes them, and `frontend/tests/themes.test.mjs` fails while a copy differs from its source |
 | `theme.js` | a classic script in the head of both pages, before the stylesheets: the app's pinned theme isn't knowable here, so it sets `data-theme` / `data-scheme` to Light or Dark from `prefers-color-scheme`, live |
-| `options.html/js` | server + host permission, account, saving defaults (the workspace and the folder picked from the signed-in account's libraries), *Copy recent saves* (the last five save logs) |
-| `ui.js` | controls shared by the popup and options: the icons (mirroring `Icons.jsx`), ctxMenu rows (`menuRow`), `placeMenu` (a menu opens under its field, or over it when it would not fit below and there is more room above, cut to the room it has: Chrome sizes a popup to its content, so a menu hanging past the footer would stretch the window), and the pickers — `menuSelect` (the app's MenuSelect over `[{value, label, icon}]`, a value no item carries falling back to the first) with `folderPicker` ("Library root", every folder by its path; the options page's) and `workspacePicker` (the libraries by name) over it |
+| `options.html/js` | server + host permission, account, saving defaults (the workspace picked from the signed-in account's libraries, the popup's folder field, whose choice is stored as it is made), *Copy recent saves* (the last five save logs) |
+| `ui.js` | controls shared by the popup and options: the icons (mirroring `Icons.jsx`), ctxMenu rows (`menuRow`, a tree's row too), `placeMenu` (a menu opens under its field, or over it when it would not fit below and there is more room above, cut to the room it has: Chrome sizes a popup to its content, so a menu hanging past the footer would stretch the window), `menuSelect` (the app's MenuSelect over `[{value, label, icon}]`, a value no item carries falling back to the first) with `workspacePicker` (the libraries by name; it empties the folder field as a switch starts) over it, `chipField`, and `folderChipField` (the folder field: a `chipField` over the library's folders, with the tree) |
 | `serverList.js` | shared saved-server rows for options and the popup footer: active checkmark, switch action and remove button, using the existing menu/close-button styles |
 | `assets/icons/` | blue tile (paper detected) and grey tile (nothing) at 16/32/48/128, generated with Pillow |
 
@@ -247,8 +249,10 @@ default (`defaultFolder`). After a successful save the
 worker makes that save's folder the default (`rememberFolder`). A folder
 named by path (a typed new folder) is looked up in
 `GET /api/library/folders` for its id. An id the library no longer lists
-shows as "Library root" in the pickers; a save without the popup checks
-for it (`checkedDefaultFolder`), forgets it and saves to the root.
+leaves the folder field empty, the library root; a save without the popup
+checks for it (`checkedDefaultFolder`), forgets it and saves to the root.
+A folder list that could not be read says nothing of that id: the field
+shows a *Default folder* chip, a save goes to the id, and the default stays.
 
 The setting `folder` is a path, the form a stored default had before
 folders had ids. It belongs to the account's default workspace. While no
@@ -257,6 +261,69 @@ default: the popup shows the folder of that path (else that path as a new
 folder), the options page the folder of that path, and the
 next save sends it as `folder_path` once, after which `rememberFolder`
 stores the id and clears `folder`.
+
+**The folder tree** is the folder field's menu with nothing typed, on both
+surfaces (`folderChipField`). `folderTree` builds it from the list's `path`s,
+keeping the list's order on each level: most recently used first, and a
+folder takes its subfolders' times. A folder's parent is the folder at the
+path above it. The list names no parents, and the paths of siblings sharing
+a name say nothing of whose children are whose, so those show under the
+first of them; that is only where a row sits, since each row files by its own
+id. This needs nothing new of a server with folder ids. One from before them
+(v0.2.15) lists bare paths, which read as a list that could not be read.
+
+Only the folders above the chosen one start open, the chosen one checked and
+scrolled to, and nothing is remembered between popups: the saved folder comes
+back open anyway. A chevron folds a folder, a click on the row picks it. The
+focus stays in the field: Up and Down move through the rows, Right opens a
+folder and then goes into it, Left closes it and then goes up to its parent,
+Enter picks, and `+` is the row's "+". Tab leaves for the next field, which
+takes the rows and the scrolling menu out of the Tab order. A press anywhere
+in the field opens the menu, the chip's × aside.
+
+A row's "+" (shown with its highlight, since one row per folder would double
+what a menu of five or six rows holds) opens a name input under that folder,
+and the last row, *New folder…*, stays in sight and becomes one in place. A
+folder is made there and then, not by the save: one `insert` on the folder
+tree (`POST /api/pages/folders/ops`, `makeFolder`), as the app's New folder
+does ([home_library.md](home_library.md) "Folders and labels"), by an id the
+Connector mints. Two things decide this. Filing by `folder_path` cannot name
+a parent holding `/` or one of two siblings sharing a name, where a paper
+would silently land in another folder; and the options page has no Save. So
+an abandoned popup can leave an empty folder, as the app's New folder can.
+The name is taken whole, `/` included, and one a sibling already has (matched
+as the server's `blocks_store.named` does) picks that sibling and makes
+nothing. Typing a path in the field itself is unchanged: *New folder “…”* goes
+as `folder_path`, made by the save.
+
+Enter commits the name, and so does leaving the input, as in the app, since
+dropping a typed name would send the paper to the folder it was meant not to
+go to. A blur with the input still the active element is the window losing
+the focus, and ends nothing. Escape, an empty input, using another row of
+the menu or a chip's × cancels it (those two being the user's choice, which the
+field then shows). Enter belonging to an
+input method's composition does nothing, here and in the chip fields. Escape
+is `preventDefault`ed while a menu or a name input is open, or Chrome closes
+the popup with it.
+
+The chip changes at once and the write follows, with the chip's `owed` the
+write not yet known to have landed. A save carries it (`make`), and `savePaper`
+sends it first, under the save's own pin: so the popup may close, as with any
+save, and a switch of library can't split the folder from the clip. It goes by
+the same id, an insert being create-if-absent, so a write already on its way
+or a lost answer still makes one folder. Refused, the save stops with the
+reason and nothing is clipped, so a paper never goes to a folder other than the
+chip's. A failure before Save shows the same way (`showFailure`), the chip
+stays what was asked for, and the user retries or changes it. On the options
+page a choice takes effect at once, so a new folder is stored once it exists
+and a refusal brings back the stored default. On both surfaces the field
+empties as a switch of workspace starts (`workspacePicker`), so what it held
+stays with the library it was named in and an answer that lands during one
+finds another chip and does nothing. The options page also refills when the
+popup picks another library, even during a refill of its own, or a folder named
+there would be made in one it isn't showing. A save tells the field its folder
+landed, so a late answer to the field's own write says nothing, and a folder
+only the save made joins the tree.
 
 Server side (`clip.py`, sync `def` — it downloads):
 
@@ -312,8 +379,8 @@ Server side (`clip.py`, sync `def` — it downloads):
    ([home_library.md](home_library.md) "Folders and labels"); the page is
    filed by id in `properties.folders` / `properties.labels`. The request
    names the folder by its id (`folder`, picked from the tree; 400 when it
-   is no folder) or by its names (`folder_path`, `"a/b"`: the popup's "New
-   folder…", made where missing), and the labels by name (made when
+   is no folder) or by its names (`folder_path`, `"a/b"`: a path typed in the
+   popup, *New folder “…”*, made where missing), and the labels by name (made when
    missing) — resolved and made first, through the trees' ops
    (`_filing`, `ops.ensure_filing`). Then one op batch on the page by the
    clipping account (`_file_page`), fanned out to the page's open tabs like
@@ -586,20 +653,34 @@ signed in to the same server works the same way.
 - `extension/tests/*.test.mjs` (`node --test extension/tests/*.test.mjs`) —
   the pure modules: `ids.js`, `pageRecord.js`, `publisherSessions.js`,
   `handoff.js` and `saveLog.js`, plus
-  API settings, the default folder, folder paths, origin guards, and the
+  API settings, the default folder, folder paths, the folder tree, origin guards, and the
   chosen workspace (the header, a save's pin, a default folder per
   workspace, forgetting one the account can no longer write to). The
   `check` workflow runs them on every PR ([github_actions.md](github_actions.md#checkyml));
   the `.e2e.mjs` files below are run by hand, headless unless `--headed`.
 - `node extension/tests/folders.e2e.mjs` — full Chromium against a fake
-  server answering `/api/library/folders` and `/api/clip`: the options page
-  lists folders by path and the popup's folder field suggests them as you
-  type (name by name), a save sends the picked or typed folder's id, a
-  typed new folder's path and label names, Backspace leaves the library
-  root, the default is remembered by id per server, a path stored by an
-  older version is sent once and replaced by its id, and in a window sized
-  like the popup a long menu opens on the side with more room and stays
-  inside it.
+  server answering `/api/library/folders`, `/api/clip` and
+  `/api/pages/folders/ops`, the last of which can hold its answer or refuse:
+  both surfaces show the tree open above the chosen folder and the folder
+  field suggests folders as you type (name by name), a save sends the picked
+  or typed folder's id, a typed new folder's path and label names, Backspace
+  leaves the library root, the default is remembered by id per server, a path
+  stored by an older version is sent once and replaced by its id, and in a
+  window sized like the popup a long menu opens on the side with more room
+  and stays inside it. The tree: chevrons pick nothing, the keys walk it, a
+  name input's op names its parent by id (one holding `/`, the second of two
+  of a name) and a save files by the new id; a sibling's name makes nothing,
+  and neither does Escape, an empty input, another row or the window's blur;
+  a composing Enter does nothing; Tab reaches the labels; leaving the input
+  commits; a chip's × cancels a name; a save waits for a held op, also with
+  the popup closed, and sends no clip for a refused one, sending the same id
+  again; an unread list, or one of bare paths, keeps the default; the options
+  page stores a new folder once it exists; a stored path no folder has can be
+  cleared; a label named in place is a chip the save makes, and a label no one
+  has leaves Save uncovered. Escape is the one thing a popup opened as a tab cannot
+  show: Chrome closing the real popup on an Escape left unhandled was checked
+  by hand over DevTools (`chrome.action.openPopup`), as Playwright does not
+  surface that target.
 - `node extension/tests/save.e2e.mjs` — full Chromium against a fake
   server whose `/api/clip` answers a clip without bytes with the paywall
   400 when `web_fallback` is off, and a fake Atypon publisher whose ePDF
@@ -629,7 +710,10 @@ signed in to the same server works the same way.
 - `node extension/tests/workspaces.e2e.mjs` — full Chromium against a fake
   server whose `/api/session` lists three libraries (one read-only): both
   pickers offer the two writable ones, picking one stores it and refills
-  the folder picker from that library, saves carry `X-Gamma-Workspace` and
+  the folder field from that library, a folder still being made across a
+  switch moves neither library's default, a save pressed in one library
+  stays there through a switch, an options page left open follows the popup's
+  choice, saves carry `X-Gamma-Workspace` and
   the folder remembered for that workspace, the popup names the library
   holding an already-saved paper, keeps the picker over that notice and
   looks the paper up again on a switch, the

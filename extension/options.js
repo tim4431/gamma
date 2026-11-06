@@ -1,15 +1,15 @@
 import {
-  api, checkedWorkspace, chooseWorkspace, defaultFolder, folderByPath, getSettings, login, logout, normalizeServer,
-  originPattern, rememberFolder, removeServer, setSettings, whoAmI, writableWorkspaces,
+  api, checkedWorkspace, currentWorkspace, defaultFolder, getSettings, login, logout, normalizeServer, originPattern,
+  rememberFolder, removeServer, setSettings, whoAmI, writableWorkspaces,
 } from "./api.js";
 import { RECENT_KEY } from "./saveLog.js";
 import { renderServerList } from "./serverList.js";
-import { folderPicker, workspacePicker } from "./ui.js";
+import { folderChipField, workspacePicker } from "./ui.js";
 
 const $ = (id) => document.getElementById(id);
 let busy = false;
 let workspaceSelect = null;  // the workspace picker (ui.js), filled from the signed-in account
-let folderSelect = null;  // the default folder's picker (ui.js), filled from the signed-in library
+let folderField = null;  // the default folder's field (ui.js), filled from the signed-in library
 
 function setBusy(value) {
   busy = value;
@@ -49,8 +49,8 @@ async function refreshAccount() {
   $("signed-in").classList.add("hidden");
   $("who").textContent = "";
   status("account-status", "");
-  folderSelect.set([], "");
-  $("folder-btn").disabled = true;
+  folderField.load([], { folder: "", folder_path: "" });
+  $("folder").disabled = true;
   $("workspace-btn").disabled = true;
   $("workspace-row").classList.add("hidden");
   if (!settings.server) {
@@ -85,15 +85,13 @@ async function fillWorkspaces(list) {
   $("workspace-row").classList.toggle("hidden", workspaces.length <= 1);
 }
 
-// The connected server's folders, the default among them; a path stored
-// before folders had ids shows as the folder of that path.
+// The connected server's folders, the default among them.
 async function fillFolders() {
   const settings = await getSettings();
-  let folders = [];
+  let folders = null;
   try { ({ folders } = await api("/library/folders")); } catch {}
-  const { folder, folder_path } = defaultFolder(settings);
-  folderSelect.set(folders, folder_path ? folderByPath(folders, folder_path) : folder);
-  $("folder-btn").disabled = false;
+  folderField.load(folders, defaultFolder(settings));
+  $("folder").disabled = false;
 }
 
 async function connect(raw = $("server").value) {
@@ -158,14 +156,6 @@ async function saveDefaults() {
   saved();
 }
 
-// Each library has its own folders, so the picker below is refilled — and
-// with it the default folder this server remembers for this workspace.
-async function saveWorkspace(workspace) {
-  if (!await chooseWorkspace(await getSettings(), workspace)) return;
-  await fillFolders();
-  saved();
-}
-
 async function saveFolder(folder) {
   await rememberFolder(await getSettings(), { folder, folder_path: "" });
   saved();
@@ -185,8 +175,15 @@ async function copyLogs() {
 document.addEventListener("DOMContentLoaded", async () => {
   const s = await getSettings();
   $("server").value = s.server;
-  workspaceSelect = workspacePicker($("workspace-btn"), $("workspace-menu"), saveWorkspace);
-  folderSelect = folderPicker($("folder-btn"), $("folder-menu"), saveFolder);
+  folderField = folderChipField({ box: $("folder-box"), input: $("folder"), menu: $("folder-menu"),
+                                  onChange: (chip) => saveFolder(chip ? chip.value.folder : ""),
+                                  onError: (err) => { status("save-status", err.message, "err"); fillFolders(); } });
+  // Each library has its own folders, so the field is refilled — and with it
+  // the default folder this server remembers for this workspace.
+  workspaceSelect = workspacePicker($("workspace-btn"), $("workspace-menu"), folderField, async () => {
+    await fillFolders();
+    saved();
+  });
   $("labels").value = (s.labels || []).join(", ");
   $("allow-oa").checked = !!s.allowOa;
   $("save-copy").checked = !!s.saveCopy;
@@ -198,8 +195,12 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("logout").onclick = doLogout;
   $("copy-logs").onclick = copyLogs;
   for (const id of ["labels", "allow-oa", "save-copy", "auto-sessions"]) $(id).addEventListener("change", saveDefaults);
-  chrome.storage.onChanged.addListener((changes, area) => {
-    if (area !== "sync" || !(changes.server || changes.servers) || busy) return;
+  chrome.storage.onChanged.addListener(async (changes, area) => {
+    if (area !== "sync") return;
+    // The popup chose another library, whose folders this page must show: one
+    // named here would be made there. That doesn't wait for a refill under way.
+    const moved = changes.workspaces && currentWorkspace(await getSettings()) !== workspaceSelect.value;
+    if (!moved && (busy || !(changes.server || changes.servers))) return;
     setBusy(true);
     getSettings().then(async (settings) => {
       $("server").value = settings.server;

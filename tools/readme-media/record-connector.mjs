@@ -276,7 +276,7 @@ try {
     return {
       bReady: on('found') && /Parallel Implementation/i.test($('title')?.textContent || '') && /Levine/.test($('sub')?.textContent || ''),
       bFolderMenu: on('folder-menu'),
-      bFolder: /Neutral atoms/.test($('folder-btn')?.textContent || '') && !on('folder-menu'),
+      bFolder: /Neutral atoms/.test(document.querySelector('#folder-box .categoryTagText')?.textContent || '') && !on('folder-menu'),
       bLabel: [...document.querySelectorAll('#labels-box .categoryTag')].some((c) => c.textContent.trim() === 'rydberg gates'),
       bProgress: on('progress'),
       // The progress row first reads "starting…", then "saving to your
@@ -308,7 +308,12 @@ try {
   await sleep(900);   // the eye reads the title and authors
   // A folder.
   mark('bFolderGo');
-  await clickAt(B, hb, '#folder-btn', 480, 0.55, 0.5);
+  await clickAt(B, hb, '#folder', 480, 0.55, 0.5);
+  // The tree: Quantum opens on its chevron, then the subfolder is picked.
+  const parent = B.locator('#folder-menu .ctxMenuItem').filter({ hasText: /^Quantum$/ }).first();
+  await parent.waitFor();
+  await sleep(250);
+  await clickAt(B, hb, parent.locator('.treeTwist'), 400, 0.5, 0.5);
   const item = B.locator('#folder-menu .ctxMenuItem').filter({ hasText: /Neutral atoms$/ }).first();
   await item.waitFor();
   if (!INSPECT) await take.frame('folderMenu', '#folder-menu');

@@ -3,7 +3,9 @@
 // workspace pickers over GET /api/session's `workspaces`, the
 // X-Gamma-Workspace header every library request then carries, a default
 // folder remembered per workspace, "already in your library" answered by
-// the chosen one, and a workspace the account loses being forgotten.
+// the chosen one, and a workspace the account loses being forgotten. A folder
+// still being made when the workspace changes stays with the library it was
+// named in.
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
 import { mkdtemp, rm } from "node:fs/promises";
@@ -28,6 +30,9 @@ let workspaces = WORKSPACES;
 let solo = false;                  // answer with one library only
 const clips = [];
 let clipped;
+let treeOpsWait = null;            // holds POST /api/pages/folders/ops back, while a promise
+let listWait = null;               // and GET /api/library/folders
+let listLater;                     // which lets that go
 
 const http = createServer(async (req, res) => {
   const ws = req.headers["x-gamma-workspace"] || "";
@@ -41,7 +46,11 @@ const http = createServer(async (req, res) => {
     res.end(JSON.stringify({ user: "alice", default_workspace: "w-home",
       workspaces: solo ? [WORKSPACES[0]] : workspaces }));
   } else if (req.url === "/api/library/folders") {
+    await listWait;
     res.end(JSON.stringify({ folders: FOLDERS[ws] || [], labels: [] }));
+  } else if (req.url === "/api/pages/folders/ops") {
+    await treeOpsWait;
+    res.end('{"seq":1,"at":"","ops":[]}');
   } else if (req.url.startsWith("/api/library/lookup")) {
     // The paper sits in the Lab library only.
     if (ws === "w-lab") res.end(JSON.stringify({ block_id: "p-lab", title: "Test paper", open_url: "/?block=p-lab" }));
@@ -84,11 +93,60 @@ try {
   await options.locator("#workspace-menu .ctxMenuItem", { hasText: "Lab" }).click();
   await options.waitForFunction(() => document.getElementById("save-status").textContent === "Saved.");
   assert.deepEqual((await sync()).workspaces, { [origin]: "w-lab" });
-  // The folder picker followed: the Lab library's own folders.
-  await options.locator("#folder-btn").click();
-  assert.deepEqual(await options.locator("#folder-menu .ctxMenuText").allTextContents(), ["Library root", "Lab / 2026"]);
+  // An options page in the middle of a refill follows a library chosen in the
+  // popup all the same, there and back.
+  listWait = new Promise((resolve) => { listLater = resolve; });
+  await options.reload();
+  await options.waitForFunction(() => !document.getElementById("workspace-btn").disabled);
+  await worker.evaluate((origin) => chrome.storage.sync.set({ workspaces: { [origin]: "" } }), origin);
+  listLater();
+  listWait = null;
+  await options.waitForFunction(() => document.getElementById("workspace-btn").textContent === "Home");
+  await worker.evaluate((origin) => chrome.storage.sync.set({ workspaces: { [origin]: "w-lab" } }), origin);
+  await options.waitForFunction(() => document.getElementById("workspace-btn").textContent === "Lab");
+  await options.waitForFunction(() => !document.getElementById("folder").disabled);
+
+  // The folder field followed: the Lab library's own folders.
+  const folderChip = (text) => options.waitForFunction((text) => document.querySelector("#folder-box .categoryTagText")?.textContent === text, text);
+  const chooseWorkspace = async (name) => {
+    await options.locator("#workspace-btn").click();
+    await options.locator("#workspace-menu .ctxMenuItem", { hasText: name }).click();
+  };
+  await options.locator("#folder").click();
+  assert.deepEqual(await options.locator("#folder-menu .ctxMenuText").allTextContents(), ["Lab / 2026", "New folder…"]);
   await options.locator("#folder-menu .ctxMenuItem", { hasText: "Lab / 2026" }).click();
-  await options.waitForFunction(() => document.getElementById("folder-btn").title === "Lab / 2026");
+  await folderChip("Lab / 2026");
+  await options.waitForFunction(() => document.getElementById("save-status").textContent === "Saved.");
+  assert.deepEqual((await sync()).defaultFolders, { [`${origin}#w-lab`]: "f-lab" });
+
+  // A folder named here and answered during a switch to Home, before Home's
+  // list is in or after it, is the Lab's business: it takes no place in Home,
+  // and neither library's default moves.
+  await options.locator("#folder").click();
+  await options.locator("#folder-menu .ctxMenuItem", { hasText: "New folder…" }).click();
+  await options.locator("#folder-menu .ctxMenuInput").fill("Held");
+  let release;
+  treeOpsWait = new Promise((resolve) => { release = resolve; });
+  await options.locator("#folder-menu .ctxMenuInput").press("Enter");
+  await folderChip("Held");
+  let listed;
+  listWait = new Promise((resolve) => { listed = resolve; });
+  await chooseWorkspace("Home");
+  await options.waitForFunction(() => !document.querySelector("#folder-box .categoryTag"));
+  release();
+  treeOpsWait = null;
+  await options.waitForTimeout(100);  // the answer lands, with nothing to do
+  listed();
+  listWait = null;
+  await options.waitForFunction(() => !document.getElementById("folder").disabled);
+  await options.waitForTimeout(100);
+  assert.equal(await options.locator("#folder-box .categoryTag").count(), 0);
+  await options.locator("#folder").click();
+  assert.deepEqual(await options.locator("#folder-menu .ctxMenuText").allTextContents(), ["Inbox", "New folder…"],
+    "Home's own folders");
+  await options.locator("#folder").press("Escape");
+  await chooseWorkspace("Lab");
+  await folderChip("Lab / 2026");
   assert.deepEqual((await sync()).defaultFolders, { [`${origin}#w-lab`]: "f-lab" });
 
   // ---- the popup: the chosen library answers "already saved?" ----
@@ -112,16 +170,25 @@ try {
   assert.equal(await popup.locator("#refile").textContent(), "Add to another folder…");
 
   // Switching to Home looks the paper up again there — not saved.
+  listWait = new Promise((resolve) => { listLater = resolve; });
   await popup.locator("#workspace-btn").click();
   await popup.locator("#workspace-menu .ctxMenuItem", { hasText: "Home" }).click();
+  // The Lab's folders go as the switch starts, before Home's are in: until
+  // then there is no tree to name a folder in.
+  await popup.waitForFunction(() => !document.querySelector("#folder-box .categoryTag"));
+  listLater();
+  listWait = null;
   await popup.locator("#found").waitFor();
   // Home has no default folder: the field is empty, the library root.
   await popup.waitForFunction(() => !document.querySelector("#folder-box .categoryTag"));
   assert.equal(await popup.locator("#workspace-btn").textContent(), "Home");
   assert.deepEqual((await sync()).workspaces, { [origin]: "" }, "the account's default is stored as no choice");
+  // An options page left open follows the choice, or a folder named there
+  // would be made in a library it isn't showing.
+  await options.waitForFunction(() => document.getElementById("workspace-btn").textContent === "Home");
   await popup.locator("#folder").click();
   assert.deepEqual(await popup.locator("#folder-menu .ctxMenuText").allTextContents(),
-    ["Inbox"], "Home's folders, not the Lab's");
+    ["Inbox", "New folder…"], "Home's folders, not the Lab's");
   await popup.locator("#folder-menu .ctxMenuItem", { hasText: "Inbox" }).click();
   let done = new Promise((resolve) => { clipped = resolve; });
   await popup.locator("#save").click();
@@ -162,6 +229,27 @@ try {
   assert.deepEqual({ ws: clips.at(-1).ws, folder: clips.at(-1).folder }, { ws: "w-lab", folder: "f-lab" },
     "the chosen library and its default folder");
 
+  // ---- a save goes where it was pressed, with the folder named there ----
+  popup = await openPopup();
+  await popup.locator("#refile").click();
+  await popup.waitForFunction(() => document.querySelector("#folder-box .categoryTagText")?.textContent === "Lab / 2026");
+  await popup.locator("#folder").click();
+  await popup.locator("#folder-menu .ctxMenuItem", { hasText: "New folder…" }).click();
+  await popup.locator("#folder-menu .ctxMenuInput").fill("Pressed");
+  await popup.locator("#folder-menu .ctxMenuInput").press("Enter");
+  treeOpsWait = new Promise((resolve) => { release = resolve; });
+  done = new Promise((resolve) => { clipped = resolve; });
+  await popup.locator("#save").click();
+  await popup.locator("#workspace-btn").click();
+  await popup.locator("#workspace-menu .ctxMenuItem", { hasText: "Home" }).click();
+  release();
+  treeOpsWait = null;
+  await done;
+  assert.equal(clips.at(-1).ws, "w-lab", "the library it was pressed in, whatever is chosen since");
+  assert.ok(clips.at(-1).folder && clips.at(-1).folder !== "f-lab");
+  await popup.close();
+  await worker.evaluate(([origin]) => chrome.storage.sync.set({ workspaces: { [origin]: "w-lab" } }), [origin]);
+
   // ---- a library the account loses is forgotten ----
   workspaces = [WORKSPACES[0], { ...WORKSPACES[1], role: "viewer" }, WORKSPACES[2]];
   // The next session check is where the Connector notices (the popup's, or
@@ -180,7 +268,7 @@ try {
   assert.equal(await popup.locator("#existing-where").textContent(), "Already in your library");
   await popup.close();
   await options.reload();
-  await options.waitForFunction(() => !document.getElementById("folder-btn").disabled);
+  await options.waitForFunction(() => !document.getElementById("folder").disabled);
   assert.equal(await options.locator("#workspace-row").isVisible(), false);
 
   assert.deepEqual(errors, []);
