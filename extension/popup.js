@@ -1,10 +1,9 @@
 import {
-  api, chooseWorkspace, currentWorkspace, defaultFolder, folderByPath, getSettings, login, normalizeServer,
-  originPattern, removeServer, setSettings,
+  api, currentWorkspace, defaultFolder, getSettings, login, normalizeServer, originPattern, removeServer, setSettings,
 } from "./api.js";
 import { renderServerList } from "./serverList.js";
 import { connectPublisher, describeSession, publisherHost, publisherRoot } from "./publisherSessions.js";
-import { icon, menuRow, placeMenu, workspacePicker } from "./ui.js";
+import { chipField, folderChipField, icon, workspacePicker } from "./ui.js";
 
 const $ = (id) => document.getElementById(id);
 const show = (id, on = true) => $(id).classList.toggle("hidden", !on);
@@ -12,10 +11,9 @@ const show = (id, on = true) => $(id).classList.toggle("hidden", !on);
 let tab = null;
 let state = null;
 let workspaceSelect = null;                // the workspace picker (ui.js); "" = the account's default
-let folderField = null;                    // the folder field (chipField): one chip, none = the library root
+let folderField = null;                    // the folder field (folderChipField): one chip, none = the library root
 let labelField = null;                     // the labels field (chipField): a chip per label
-let libraryFolders = [];                   // the library's folders and label names
-let labelNames = [];                       // (GET /api/library/folders), suggested as you type
+let labelNames = [];                       // the library's labels (GET /api/library/folders), suggested as you type
 let pub = null;                            // publisher sessions: the worker's `publisher-status` answer
 let cookieTimer = 0;                       // the cookie button's "done" flash
 let serverBusy = false;
@@ -373,183 +371,33 @@ async function fillPickers(st) {
   const settings = st.settings;
   show("workspace-row", (st.workspaces || []).length > 1);
   workspaceSelect.set(st.workspaces || [], currentWorkspace(settings));
-  let library = { folders: [], labels: [] };
+  let library = null;
   try { library = await api("/library/folders"); } catch {}
-  libraryFolders = library.folders;
-  labelNames = library.labels.map((l) => l.name);
-  // The default folder; a path stored before folders had ids picks the folder
-  // of that path, else comes up as a new folder (the save makes it). An id the
-  // library no longer lists leaves the field empty: the library root.
-  const { folder, folder_path } = defaultFolder(settings);
-  const found = libraryFolders.find((f) => f.id === folder);
-  folderField.set(folder_path ? [folderFromText(folder_path)] : found ? [folderChip(found)] : []);
+  labelNames = library ? library.labels.map((l) => l.name) : [];
+  folderField.load(library && library.folders, defaultFolder(settings));
   // Prefill the options-page default labels only — the last save's labels are
   // deliberately not remembered (a save remembers just its folder).
   labelField.set([...new Set((settings.labels || []).map((s) => String(s).trim()).filter(Boolean))].map(labelChip));
 }
 
-// The app's categoryTag chip input over a ctxMenu of suggestions, for the
-// folder and the labels alike: typing filters the menu, the arrow keys move
-// through it, Enter commits the highlighted row or else what was typed,
-// Backspace on an empty input removes the last chip. A chip, and a row, is
-// `{text, value, icon, row?, chipIcon?, title?}`: `row` is the menu's
-// wording when it differs from the chip's, `chipIcon` a glyph on the chip.
-// `suggest(fragment, chips)` lists the rows, `fromText(fragment)` makes the
-// chip typed text stands for. `single` keeps one chip, which a commit
-// replaces; `separator` commits as it is typed (the labels' ","). A fragment
-// left uncommitted still counts: `values()` reads the box as a save does.
-function chipField({ box, input, menu, suggest, fromText, single = false, separator = "" }) {
-  const placeholder = input.placeholder;
-  const same = (a, b) => a.text.toLowerCase() === b.text.toLowerCase();
-  let chips = [];
-  let rows = [];
-  let sel = -1;  // the highlighted row
-  const field = {
-    set(list) { chips = list; input.value = ""; render(); },
-    values() {
-      const typed = input.value.trim() ? fromText(input.value.trim()) : null;
-      if (!typed || !typed.text) return chips;
-      if (single) return [typed];
-      return chips.some((c) => same(c, typed)) ? chips : [...chips, typed];
-    },
-  };
-  const close = () => { sel = -1; menu.classList.add("hidden"); };
-  function add(chip) {
-    if (!chip.text) return;
-    if (single) chips = [chip];
-    else if (!chips.some((c) => same(c, chip))) chips = [...chips, chip];
-  }
-  // The labels' menu stays open for the next one; the folder is chosen.
-  function commit(chip) {
-    add(chip);
-    input.value = "";
-    sel = -1;
-    render();
-    if (single) close(); else update();
-  }
-  function render() {
-    for (const el of box.querySelectorAll(".categoryTag")) el.remove();
-    for (const c of chips) {
-      const el = document.createElement("span");
-      el.className = "categoryTag";
-      el.title = c.title || c.text;
-      if (c.chipIcon) el.append(icon(c.chipIcon, "", 12));
-      const text = document.createElement("span"); text.className = "categoryTagText"; text.textContent = c.text;
-      const x = document.createElement("button");
-      x.type = "button"; x.className = "uiClose uiCloseSm"; x.tabIndex = -1; x.append(icon("x")); x.title = `Remove "${c.text}"`;
-      x.addEventListener("mousedown", (e) => e.preventDefault());
-      x.addEventListener("click", () => { chips = chips.filter((other) => other !== c); render(); update(); });
-      el.append(text, x);
-      box.insertBefore(el, input);
-    }
-    // One folder chip leaves nothing to prompt for; none reads "Library root".
-    input.placeholder = single && chips.length ? "" : placeholder;
-  }
-  function highlight(i) {
-    sel = i;
-    [...menu.children].forEach((el, j) => el.classList.toggle("selected", j === i));
-    if (i >= 0) menu.children[i].scrollIntoView({ block: "nearest" });
-  }
-  function update() {
-    rows = document.activeElement === input ? suggest(input.value.trim(), chips) : [];
-    if (!rows.length) { close(); return; }
-    sel = Math.min(sel, rows.length - 1);
-    menu.replaceChildren(...rows.map((r, i) => {
-      const row = menuRow(r.row || r.text, r.icon, false, () => commit(r));
-      row.classList.toggle("selected", i === sel);
-      row.addEventListener("mouseenter", () => highlight(i));
-      return row;
-    }));
-    placeMenu(menu);
-  }
-  box.addEventListener("pointerdown", (e) => {
-    if (e.target === box) { e.preventDefault(); input.focus(); }
-  });
-  // A press on the menu (its scrollbar too) leaves the focus in the input.
-  menu.addEventListener("mousedown", (e) => e.preventDefault());
-  input.addEventListener("input", () => {
-    if (separator && input.value.includes(separator)) {
-      const parts = input.value.split(separator);
-      for (const p of parts.slice(0, -1)) if (p.trim()) add(fromText(p.trim()));
-      input.value = parts.at(-1).trimStart();
-      render();
-    }
-    sel = -1;
-    update();
-  });
-  input.addEventListener("keydown", (e) => {
-    const open = !menu.classList.contains("hidden");
-    if (e.key === "ArrowDown" && rows.length) {
-      e.preventDefault();
-      if (open) highlight(Math.min(sel + 1, rows.length - 1)); else update();
-    } else if (e.key === "ArrowUp" && open) {
-      e.preventDefault(); highlight(Math.max(sel - 1, -1));
-    } else if (e.key === "Enter") {
-      e.preventDefault();
-      if (open && sel >= 0) commit(rows[sel]);
-      else if (input.value.trim()) commit(fromText(input.value.trim()));
-    } else if (e.key === "Backspace" && !input.value && chips.length) {
-      chips = chips.slice(0, -1); render(); update();
-    } else if (e.key === "Escape") close();
-  });
-  // Focus opens the menu, and so does a click once focused (after a pick, or Escape).
-  input.addEventListener("focus", update);
-  input.addEventListener("click", update);
-  input.addEventListener("blur", close);
-  render();
-  return field;
-}
-
-// Up to eight of the library's labels holding the fragment, but those chosen.
-function labelSuggestions(fragment, chips) {
+// Up to eight of the library's labels holding the fragment, but those chosen,
+// then a way to a new one: the fragment no label has, or "New label…", naming
+// it in place. That only joins a menu with something else to show: alone it
+// would lie over Save, the next thing down, which takes typed text as it is. A
+// new label is a chip like any; the save makes it by its name.
+function labelSuggestions(fragment, chips, naming) {
   const frag = fragment.toLowerCase();
   const chosen = new Set(chips.map((c) => c.value.toLowerCase()));
-  return labelNames.filter((l) => !chosen.has(l.toLowerCase()) && l.toLowerCase().includes(frag)).slice(0, 8).map(labelChip);
-}
-
-const labelChip = (name) => ({ text: name, value: name, icon: "tag" });
-
-// Every folder whose path holds the fragment, the chosen one aside, most
-// recently used first (the server's order); a fragment no folder's path
-// matches whole is offered as a new folder.
-function folderSuggestions(fragment, chips) {
-  const chosen = chips.length ? chips[0].value.folder : null;
-  const rows = libraryFolders.filter((f) => f.id !== chosen && pathHolds(f.path, fragment)).map(folderChip);
-  if (pathNames(fragment).length && !folderByPath(libraryFolders, fragment)) rows.push(newFolderChip(fragment));
+  const rows = labelNames.filter((l) => !chosen.has(l.toLowerCase()) && l.toLowerCase().includes(frag)).slice(0, 8).map(labelChip);
+  if (naming !== null) rows.push({ draft: labelChip, placeholder: "Label name", depth: 0, last: true });
+  else if (rows.length && !frag) rows.push({ row: "New label…", icon: "plus", start: "", last: true });
+  else if (rows.length && !chosen.has(frag) && !labelNames.some((l) => l.toLowerCase() === frag)) {
+    rows.push({ ...labelChip(fragment), icon: "plus", row: `New label “${fragment}”` });
+  }
   return rows;
 }
 
-const pathNames = (path) => path.split("/").map((name) => name.trim()).filter(Boolean);
-
-// Whether a folder's path (its names) holds a typed one: each typed name,
-// in order, within one of as many consecutive names of the path, so
-// "phys/c" finds "Physics / Clocks" and "2026" any folder named with it.
-function pathHolds(names, fragment) {
-  const want = pathNames(fragment.toLowerCase());
-  const have = names.map((name) => name.toLowerCase());
-  for (let i = 0; i + want.length <= have.length; i++) {
-    if (want.every((w, j) => have[i + j].includes(w))) return true;
-  }
-  return false;
-}
-
-// A chip's value is the filing POST /api/clip takes: a folder id, or a new
-// folder's path (made by the save).
-const folderChip = (f) => ({ text: f.path.join(" / "), value: { folder: f.id, folder_path: "" },
-                             icon: "folder", chipIcon: "folder" });
-
-function newFolderChip(path) {
-  const names = pathNames(path);
-  const text = names.join(" / ");
-  return { text, value: { folder: "", folder_path: names.join("/") }, icon: "folderPlus", chipIcon: "folderPlus",
-           row: `New folder “${text}”`, title: `${text} — a new folder, made when you save` };
-}
-
-// The folder a typed path names, else a new one of that path.
-function folderFromText(path) {
-  const found = libraryFolders.find((f) => f.id === folderByPath(libraryFolders, path));
-  return found ? folderChip(found) : newFolderChip(path);
-}
+const labelChip = (name) => ({ text: name, value: name, icon: "tag" });
 
 // As POST /api/clip names it: a folder id, or a typed new folder's path;
 // neither is the library root.
@@ -564,9 +412,17 @@ function chosenLabels() {
 
 // ---------- actions ----------
 
+async function showFailure(err) {
+  $("result").className = "msg err";
+  $("result").textContent = err.message;
+  show("result");
+  if (err.status === 401) { state = await send({ type: "auth-changed" }); showLogin(state); }
+}
+
 async function doSave({ candidate, force, asPage = false } = {}) {
   const c = candidate || state.candidate;
   const folder = chosenFolder();  // the worker remembers it once the save succeeds
+  const make = folderField.owed();
   const labels = chosenLabels();
   $("save").disabled = true; $("save-anyway").disabled = true; $("save-page").disabled = true;
   show("result", false);
@@ -580,9 +436,10 @@ async function doSave({ candidate, force, asPage = false } = {}) {
     const origins = [...new Set(fetchUrls.map((u) => { try { return originPattern(new URL(u).origin); } catch { return ""; } }))]
       .filter(Boolean);
     if (origins.length) { try { await chrome.permissions.request({ origins }); } catch {} }
-    const out = await send({ type: "save", tabId: tab.id, candidate: c, ...folder, labels, asPage,
+    const out = await send({ type: "save", tabId: tab.id, candidate: c, ...folder, make, labels, asPage,
                              source_url: force ? (tab && tab.url) : undefined });
     show("progress", false);
+    folderField.landed();
     // The paper is in the library now: the popup reads as it will when
     // reopened on this tab (as the web page, when that is what was saved).
     state = { ...state, hit: out, ...(asPage ? { candidate: c, preview: null } : {}) };
@@ -594,10 +451,7 @@ async function doSave({ candidate, force, asPage = false } = {}) {
     $("dot").className = "dot ok";
   } catch (err) {
     show("progress", false);
-    $("result").className = "msg err";
-    $("result").textContent = err.message;
-    show("result");
-    if (err.status === 401) { state = await send({ type: "auth-changed" }); showLogin(state); }
+    await showFailure(err);
   } finally {
     $("save").disabled = false; $("save-anyway").disabled = false; $("save-page").disabled = false;
   }
@@ -692,14 +546,10 @@ document.addEventListener("DOMContentLoaded", async () => {
   $("login-form").addEventListener("submit", doLogin);
   $("login-btn").onclick = doLogin;
   $("offline-retry").onclick = () => refresh(true);
-  workspaceSelect = workspacePicker($("workspace-btn"), $("workspace-menu"), async (value) => {
-    if (!await chooseWorkspace(await getSettings(), value)) return;
-    // The other library has its own folders and labels, and its own answer
-    // to "already saved?" — look this tab up again there.
-    await refresh();
-  });
-  folderField = chipField({ box: $("folder-box"), input: $("folder"), menu: $("folder-menu"), single: true,
-                            suggest: folderSuggestions, fromText: folderFromText });
+  folderField = folderChipField({ box: $("folder-box"), input: $("folder"), menu: $("folder-menu"), onError: showFailure });
+  // The other library has its own folders and labels, and its own answer to
+  // "already saved?" — look this tab up again there.
+  workspaceSelect = workspacePicker($("workspace-btn"), $("workspace-menu"), folderField, () => refresh());
   labelField = chipField({ box: $("labels-box"), input: $("labels"), menu: $("label-menu"), separator: ",",
                            suggest: labelSuggestions, fromText: labelChip });
   document.addEventListener("pointerdown", (e) => {

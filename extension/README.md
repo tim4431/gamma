@@ -63,9 +63,12 @@ Edge and other Chromium browsers load it the same way. Firefox needs a
   another, pick the other one. Each server remembers its own choice, and
   each library its own default folder.
 - On a paper's landing page or PDF tab the icon shows **PDF / arX / DOI**;
-  click it, pick a folder and labels, **Save to Gamma**. Type in the folder
-  field to find a folder (`phys/c` finds *Physics / Clocks*) or name a new
-  one; the labels field works the same way. The popup names the
+  click it, pick a folder and labels, **Save to Gamma**. The folder field
+  opens your folders as a tree: a folder's arrow shows what is inside it, its
+  **+** names a new subfolder there, and **New folder…** makes one at the top
+  (the arrow keys work too, and `+` on a highlighted folder). Type in it to
+  find a folder (`phys/c` finds *Physics / Clocks*) or name a new one; the
+  labels field works the same way, with **New label…**. The popup names the
   paper (title, authors, year, venue looked up from the DOI / arXiv id when
   the tab is a bare PDF). ✓ means the paper is already in your library, and
   clicking opens it. If that library page carries a different title, the
@@ -135,7 +138,7 @@ See [backend storage details](../docs/dev/paper_metadata.md#connected-publisher-
 | `tokens.css`, `fonts/` | committed copies of the app's design tokens and the Latin subset of Inter; `npm run copy-tokens` in `frontend/` refreshes them |
 | `theme.js` | sets Light or Dark (the tokens' `data-theme` / `data-scheme`) from the OS before the stylesheets paint |
 | `options.html/js` | server, account, saving defaults, copying recent save logs |
-| `ui.js`, `serverList.js` | controls shared by popup and options: icons, menu rows and their placement, the folder and workspace pickers, the saved-server rows |
+| `ui.js`, `serverList.js` | controls shared by popup and options: icons, menu rows and their placement, the workspace picker, the folder and label fields, the saved-server rows |
 | `assets/icons/` | enabled/disabled toolbar icons, manifest icons, and notification icon |
 
 No build step: plain ES modules.

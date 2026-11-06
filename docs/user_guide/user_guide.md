@@ -452,7 +452,7 @@ Settings → Workspaces › Clones and Zotero links → **Link a Zotero library�
 
 The browser extension saves the paper you are reading in one click: PDF, metadata, folder and labels. Add it from the [Chrome Web Store](https://chromewebstore.google.com/detail/gamma-connector/njpeklephhndnpakmlaancinpnabcomn) (Chrome, Edge and other Chromium browsers), then click its toolbar button and enter your Gamma's address. Each [release](https://github.com/tim4431/Gamma/releases/latest) also carries it as a zip to load unpacked at `chrome://extensions`.
 
-- The badge lights up on a page with a paper. Click it, pick a folder and labels, **Save to Gamma**. Type in either field to find a folder or label, or to name a new one. **Ctrl+Shift+S** saves with the default folder.
+- The badge lights up on a page with a paper. Click it, pick a folder and labels, **Save to Gamma**. The folder field opens your folders as a tree: a folder's arrow shows what is inside it, its **+** makes a subfolder there, and **New folder…** makes one at the top. Type in either field to find a folder or label, or to name a new one; **New label…** names one too. **Ctrl+Shift+S** saves with the default folder.
 - Right-click to save a link, a page, or clip a selection as a quote.
 - With several libraries, pick which one saves go to in the popup's **Workspace** row.
 - **Publisher sign-ins**: the cookie button sends your browser's sign-in for that journal to your server, so it can fetch that publisher's PDFs by itself from then on.
