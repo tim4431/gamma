@@ -50,7 +50,7 @@ import { useSelectionToolbar } from "./useSelectionToolbar.js";
 import { dispatch as dispatchHotkey } from "../shared/lib/hotkeys.js";
 import { blockStartInSource, gapInSource, renderedGaps, sourceOffsetAtPoint } from "./clickToSource";
 import { highlightCode, makeCopyButton } from "./codeHighlight";
-import { fenceInnerAt } from "./fences.js";
+import { codeMarksAt, codePaste, fenceInnerAt } from "./fences.js";
 import { backspacePlan, enterPlan, pastePlacements } from "./mdLines.js";
 import { dollarMath, pasteMath } from "./pasteMath.js";
 import { isOutlineCopy, isSourceCopy, sourceCopied } from "./sourceCopy.js";
@@ -1371,9 +1371,20 @@ const BlockRow = React.memo(function BlockRow({
       // Placed, the lines keep their indentation: only the blank lines
       // around them go.
       const shape = (s) => s.replace(/^\s*\n/, "").trimEnd();
-      // Code takes a paste as it is, but for a quote's marks on every line.
-      const code = fenceInnerAt(val, from);
-      const placed = ta?.view && !tsvMd && (!code || code.quote) && !findMathAtCursor(val, from)?.display
+      // Code and $$ take a paste as it is, each line behind their own marks
+      // (a quote's, a list item's indent), so it stays in them.
+      const coded = ta?.view ? codePaste(val, from, clip) : null;
+      if (coded !== null) {
+        e.preventDefault();
+        const insert = coded;
+        ta.view.dispatch({
+          changes: { from, to, insert },
+          selection: { anchor: from + insert.length },
+          userEvent: "input",
+        });
+        return;
+      }
+      const placed = ta?.view && !tsvMd && codeMarksAt(val, from) === null
         ? pastePlacements(val, from, to, shape(mathed), shape(clip)) : null;
       if (placed && !multiline && !converted) {
         e.preventDefault();
@@ -1748,7 +1759,7 @@ const BlockRow = React.memo(function BlockRow({
                   const ta = ref.current;
                   const selStart = ta.selectionStart, selEnd = ta.selectionEnd;
                   e.preventDefault();
-                  const ins = e.key !== "Enter" ? "  " : codeBreak(ta.value, selStart);
+                  const ins = e.key !== "Enter" ? "  " : codeBreak(ta.value, selStart, selEnd);
                   ta.view?.dispatch({
                     changes: { from: selStart, to: selEnd, insert: ins },
                     selection: { anchor: selStart + ins.length },

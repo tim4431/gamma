@@ -381,15 +381,15 @@ which a vault writes) gives way to that block; `- $$x$$ is it`, `- |x| is it`,
 is inline code wherever it stands, in the zip's own passes over a note too (they
 read the parser's `_FENCE_LINE_RE`). A fence closes only on a line that is all
 its mark and at least as long as what opened it (`markdown_import.shuts_fence`,
-the rule of `notion_nfm` and, for mark and length, the editor's `scanFences`),
+the rule of `notion_nfm` and, for mark and length, the editor's `mdCode.codeFences`),
 in a list item too, so a ```` fence can hold ``` lines. On the page a line four
 columns past its fence is code (`shuts_code`, CommonMark's rule; the vault's
-`%%` pass reads it too); the editor closes at column 0 alone, and in a list item
-any indent closes. Lines indented under a list item continue
+`%%` pass reads it too), and in a list item any indent
+closes. Lines indented under a list item continue
 that item, whether directly below it or after a blank line when aligned with
 the item's text. Text indented deeper after a blank line becomes a child block,
 which is how Notion exports a toggle's content. So does a fence or `$$` opened
-on an item's next line, because the editor only sees those at column 0.
+on an item's next line: the editor draws a fence's card only at column 0.
 
 `$$` opens multi-line math only at the start of a line's text with no pair on
 that line, as in remark-math, in an item as at the top: `- costs $$ and more`
