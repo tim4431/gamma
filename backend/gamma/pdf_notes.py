@@ -55,7 +55,7 @@ import io
 import math
 from collections import namedtuple
 
-from pypdf import PdfReader, PdfWriter
+from pypdf import PdfReader
 from pypdf.annotations import Link
 from pypdf.generic import (
     ArrayObject,
@@ -70,7 +70,7 @@ from pypdf.generic import (
 from . import pdf_cards, pdf_free_space
 from .logbuf import log
 from .pdf_cards import BAR, FONT_SIZE, LEADING, PAD_X, PAD_Y, clip, inner_width
-from .pdf_export import display_size, page_frame, parse_css_color, pdf_point_to_viewer
+from .pdf_export import copy_pdf, display_size, page_frame, parse_css_color, pdf_point_to_viewer
 from .pdf_glyphs import GlyphFonts
 from .pdf_image import XObjectStore
 from .pdf_typeset import fill_rect, finalize_cid, font_resources, num
@@ -441,9 +441,7 @@ def render_notes(pdf_bytes: bytes, highlights, *, notes_at: str = "beside", uplo
     """
     if notes_at not in NOTES_AT:
         raise ValueError(f"notes_at must be one of {NOTES_AT}")
-    reader = PdfReader(io.BytesIO(pdf_bytes))
-    writer = PdfWriter()
-    writer.append(reader)
+    writer = copy_pdf(PdfReader(io.BytesIO(pdf_bytes)))
     pages = writer.pages
     frames = [page_frame(page) for page in pages]
     sizes = [display_size(view, rotation) for view, rotation in frames]

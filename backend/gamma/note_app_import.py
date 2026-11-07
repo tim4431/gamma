@@ -67,7 +67,7 @@ from .import_zip import READ_ERRORS, DirectoryTooLarge, check_ratio, new_walk, o
 from .logbuf import log
 from .notebook import paper_ops
 from .ops import after_commit, apply_batches
-from .pdf_export import display_size, page_frame
+from .pdf_export import copyable, display_size, page_frame
 from .picture import image_size, picture_type
 from .recording import mp4_duration_ms
 from .storage import IMAGE_EXTENSIONS, is_pdf, store_file, store_file_stream
@@ -127,7 +127,7 @@ def compose_pdf(frames: list, papers: list, readers: dict) -> bytes:
     writer = PdfWriter()
     for frame, paper in zip(frames, papers):
         if frame.pdf is not None:
-            writer.add_page(readers[frame.pdf].pages[frame.pdf_page - 1])
+            writer.add_page(copyable(readers[frame.pdf].pages[frame.pdf_page - 1]))
             continue
         writer.add_blank_page(paper["width"], paper["height"])
         page = writer.pages[-1]  # add_blank_page's return value is not the page the writer keeps

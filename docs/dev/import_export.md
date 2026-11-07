@@ -145,7 +145,12 @@ line break without a box. A glyph counts when its centre lies in a quad, so
 a highlight that starts mid-line quotes from there, one across lines quotes
 both lines joined by a space (a word hyphenated across them keeps its
 hyphen, as MuPDF extracts it), and a quad's edge never drags in the glyph it
-touches. A file MuPDF can't open imports its highlights without quotes.
+touches. A file MuPDF can't open imports its highlights without quotes. A
+server whose PyMuPDF does not load is another matter, since a block keeps
+the quote it is made with: the import stops with the ImportError, writes
+nothing, and the next one makes the blocks with their quotes. Every reader
+of `GlyphPages` goes by the same rule, so a relocation fails without moving
+a highlight, and a Zotero round tries the unit again.
 
 Only what the page shows is imported (`pdf_export.annotation_shown`): an
 annotation flagged Hidden or NoView, or a review-state stamp (`/State`,
