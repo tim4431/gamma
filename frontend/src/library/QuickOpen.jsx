@@ -1,22 +1,23 @@
-// Quick open (Ctrl+P): a VS Code-style palette over the library. Its pages
-// are rankLibraryPages' rows drawn by PageOption, as in the chat's @ picker:
-// an empty query lists the recently viewed pages, then the open tabs, then
-// the rest by last edit, each group under its heading with its time on the
-// right. Typing ranks pages, folders and labels through createLibraryMatcher
-// — the home listing's search: typo-tolerant, on the title or the
-// folder/label chips (a sub-page also on the pages it is in, its row's
-// second line), title hits first — in sections of their own with the
-// matched characters marked, and ends with two actions: search inside notes
-// and PDFs for the query (Ctrl+Enter; the workspace search opens with it) and
-// create a page titled with it (Shift+Enter). ↑↓ moves, Enter opens, Esc
-// closes. Rows are the chat mention picker's option style.
+// Quick open (Ctrl+P): a VS Code-style palette over the library, drawn by
+// the shared palette (shared/ui/Palette.jsx: the field, the keys, the focus
+// hold). Its pages are rankLibraryPages' rows drawn by PageOption, as in the
+// chat's @ picker and the page pickers (PagePicker.jsx): an empty query lists
+// the recently viewed pages, then the open tabs, then the rest by last edit,
+// each group under its heading with its time on the right. Typing ranks
+// pages, folders and labels through createLibraryMatcher — the home listing's
+// search: typo-tolerant, on the title or the folder/label chips (a sub-page
+// also on the pages it is in, its row's second line), title hits first — in
+// sections of their own with the matched characters marked, and ends with two
+// actions: search inside notes and PDFs for the query (Ctrl+Enter; the
+// workspace search opens with it) and create a page titled with it
+// (Shift+Enter). ↑↓ moves, Enter opens, Esc closes.
 //
 // A query starting with ">" is the command palette (Ctrl+Shift+P opens it
 // with the prefix typed): `commands()` — App's list of what applies right
 // now, each {id, label, group, keyLabel, run} (docs/dev/hotkeys.md) —
 // filtered by the same matcher on the label and group, Enter runs the pick.
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { FolderIcon, LabelIcon, PlusIcon, SearchIcon, TerminalIcon } from "../shared/ui/Icons";
 import { commandIcon } from "../app/commandIcons.jsx";
 import { chordLabel } from "../shared/lib/hotkeys.js";
@@ -26,7 +27,7 @@ import { createLibraryMatcher, rankLibraryPages } from "./librarySearch";
 import { filedIn, folderPath } from "./libraryUtils";
 import { t, tn } from "../shared/i18n/i18n.js";
 import { guideEvents } from "../guide/events.js";
-import { DialogOverlay } from "../shared/ui/Surfaces";
+import Palette from "../shared/ui/Palette";
 import { IconSwap } from "../shared/ui/MotionWidgets";
 
 const MAX_ROWS = 40;
@@ -40,33 +41,14 @@ export default function QuickOpen({
   tree, folderMeta = {}, onOpenFolder, onOpenLabel, onSearch, onCreate,
 }) {
   const [query, setQuery] = useState("");
-  const [active, setActive] = useState(0);
-  const listRef = useRef(null);
-  const inputRef = useRef(null);
   const commandMode = query.startsWith(COMMAND_PREFIX);
   const q = query.trim();
   const canSearch = !!onSearch;
   const canCreate = !!onCreate;
 
-  useEffect(() => { if (open) { setQuery(prefix); setActive(0); } }, [open, prefix]);
-  // Modal focus: autoFocus only runs at mount, and a page that finishes
-  // loading right after Ctrl+P may focus its editor — the keystrokes meant
-  // for the palette would land in the page. Pull focus back while open.
-  useEffect(() => {
-    if (!open) return undefined;
-    const hold = (e) => {
-      const input = inputRef.current;
-      if (input && !input.closest('[role="dialog"]')?.contains(e.target)) input.focus();
-    };
-    document.addEventListener("focusin", hold, true);
-    return () => document.removeEventListener("focusin", hold, true);
-  }, [open]);
-  useEffect(() => { setActive(0); }, [query]);
+  useEffect(() => { if (open) setQuery(prefix); }, [open, prefix]);
   // The command palette found (the guide's palette hint retires on it).
   useEffect(() => { if (open && commandMode) guideEvents.emit("commands.opened"); }, [open, commandMode]);
-  useEffect(() => {
-    listRef.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
-  }, [active]);
 
   // The commands that apply: App builds the list from its current state.
   const commandList = useMemo(() => (open && commandMode && commands ? commands() : []), [open, commandMode, commands]);
@@ -127,7 +109,7 @@ export default function QuickOpen({
     onClose();
     // A command runs once the palette is gone: with the input still focused,
     // a command that looks at the focus (rename, undo) would decline, and
-    // the focus hold above would pull focus back from what it opens.
+    // the palette's focus hold would pull focus back from what it opens.
     if (r.cmd) setTimeout(r.cmd.run, 0);
     else if (r.folder) onOpenFolder(r.folder.id);
     else if (r.label) onOpenLabel(r.label.id);
@@ -142,20 +124,11 @@ export default function QuickOpen({
     : onCreate
       ? t("↑↓ choose · Enter open · {search} search everywhere · {create} new page · > commands", { search: chordLabel(SEARCH_CHORD), create: chordLabel(CREATE_CHORD) })
       : t("↑↓ choose · Enter open · {search} search everywhere · > commands", { search: chordLabel(SEARCH_CHORD) });
-  const optionProps = (r, i, extra) => ({
-    type: "button", role: "option", tabIndex: -1,
-    "aria-selected": i === active,
-    className: `slashMenuItem chatMentionOption quickOpenRow${i === active ? " selected" : ""}`,
-    onPointerDown: (e) => e.preventDefault(),
-    onMouseEnter: () => setActive(i),
-    onClick: () => choose(r),
-    ...extra,
-  });
-  const rowOf = (r, i) => {
+  const rowOf = (r, props) => {
     if (r.cmd) {
       const CmdIcon = commandIcon(r.cmd);
       return (
-        <button key={r.key} {...optionProps(r, i, { title: r.cmd.label })}>
+        <button {...props} title={r.cmd.label}>
           <CmdIcon size={16} />
           <span><strong>{r.cmd.label}</strong><small>{r.cmd.group}</small></span>
           {r.cmd.keyLabel && <em className="quickOpenTag quickOpenKey">{r.cmd.keyLabel}</em>}
@@ -165,7 +138,7 @@ export default function QuickOpen({
     if (r.action) {
       const search = r.action === "search";
       return (
-        <button key={r.key} {...optionProps(r, i, { "data-action": r.action })}>
+        <button {...props} data-action={r.action}>
           {search ? <SearchIcon size={16} /> : <PlusIcon size={16} />}
           <span className="quickOpenAction">
             {search ? t("Search inside notes and PDFs for “{q}”", { q }) : t("Create page “{q}”", { q })}
@@ -179,7 +152,7 @@ export default function QuickOpen({
       const parent = folderPath(tree, f.parent);
       const count = tn("{n} page", "{n} pages", folderMeta[f.id]?.count || 0);
       return (
-        <button key={r.key} {...optionProps(r, i, { title: folderPath(tree, f.id), "data-kind": "folder" })}>
+        <button {...props} title={folderPath(tree, f.id)} data-kind="folder">
           <FolderIcon size={16} className="quickOpenFolderIcon" />
           <span>
             <strong><MarkedText text={f.name} query={q} /></strong>
@@ -191,66 +164,41 @@ export default function QuickOpen({
     }
     if (r.label) {
       return (
-        <button key={r.key} {...optionProps(r, i, { title: r.label.name, "data-kind": "label" })}>
+        <button {...props} title={r.label.name} data-kind="label">
           <LabelIcon size={16} />
           <span><strong><MarkedText text={r.label.name} query={q} /></strong></span>
           <em className="quickOpenTime">{tn("{n} page", "{n} pages", labelCounts.get(r.label.id) || 0)}</em>
         </button>
       );
     }
-    return <PageOption key={r.key} {...optionProps(r, i)} row={r} tree={tree} query={q} currentPageId={currentPageId} />;
+    return <PageOption {...props} row={r} tree={tree} query={q} currentPageId={currentPageId} />;
   };
   return (
-    <DialogOverlay className="quickOpenOverlay" onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="reportModal quickOpen" role="dialog" aria-label={commandMode ? t("Command palette") : t("Open a page")}>
-        <div className="quickOpenInput" data-guide="palette.input">
-          <IconSwap swap={commandMode} from={<SearchIcon size={16} />} to={<TerminalIcon size={16} />} />
-          <input
-            ref={inputRef}
-            autoFocus
-            className="searchInput"
-            placeholder={placeholder}
-            aria-label={placeholder}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.nativeEvent.isComposing || e.keyCode === 229) return;
-              const action = e.key !== "Enter" || commandMode || !q ? null
-                : (e.ctrlKey || e.metaKey) && onSearch ? "search"
-                : e.shiftKey && onCreate ? "create" : null;
-              if (e.key === "ArrowDown" || e.key === "ArrowUp") {
-                e.preventDefault();
-                setActive((i) => (i + (e.key === "ArrowDown" ? 1 : -1) + results.length) % (results.length || 1));
-              } else if (action) {
-                e.preventDefault();
-                runAction(action);
-              } else if (e.key === "Enter") {
-                e.preventDefault();
-                choose(results[active]);
-              } else if (e.key === "Escape") {
-                e.preventDefault();
-                onClose();
-              }
-            }}
-          />
-        </div>
-        <div ref={listRef} className="quickOpenList" role="listbox" aria-label={commandMode ? t("Commands") : t("Pages")}>
-          {results.map((r, i) => (
-            <React.Fragment key={r.key}>
-              {r.section && r.section !== results[i - 1]?.section ? (
-                <div className="quickOpenSection" role="presentation">{sectionTitle[r.section]}</div>
-              ) : null}
-              {rowOf(r, i)}
-            </React.Fragment>
-          ))}
-          {!results.length && (
-            <div className="popoverHint">
-              {commandMode ? t("No matching commands.") : pages.length ? t("No matching pages.") : t("No pages yet.")}
-            </div>
-          )}
-        </div>
-        <div className="chatMentionHint">{hint}</div>
-      </div>
-    </DialogOverlay>
+    <Palette
+      label={commandMode ? t("Command palette") : t("Open a page")}
+      listLabel={commandMode ? t("Commands") : t("Pages")}
+      icon={<IconSwap swap={commandMode} from={<SearchIcon size={16} />} to={<TerminalIcon size={16} />} />}
+      guide="palette.input"
+      placeholder={placeholder}
+      query={query}
+      onQuery={setQuery}
+      rows={results}
+      sectionTitle={sectionTitle}
+      renderRow={rowOf}
+      onChoose={choose}
+      // Ctrl+Enter searches everywhere for the query, Shift+Enter makes it a page
+      onKeyDown={(e) => {
+        const action = e.key !== "Enter" || commandMode || !q ? null
+          : (e.ctrlKey || e.metaKey) && onSearch ? "search"
+          : e.shiftKey && onCreate ? "create" : null;
+        if (!action) return false;
+        e.preventDefault();
+        runAction(action);
+        return true;
+      }}
+      onClose={onClose}
+      empty={commandMode ? t("No matching commands.") : pages.length ? t("No matching pages.") : t("No pages yet.")}
+      hint={hint}
+    />
   );
 }

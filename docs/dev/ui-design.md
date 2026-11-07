@@ -188,6 +188,7 @@ already exists. Bespoke CSS classes are for **layout only**.
 | `uiClose` (+ `uiCloseSm`/`uiCloseLg`) | every × close button: round, `--ctl-close` 26 px (Sm 22 for chips and rows, Lg 31 for dialogs and panes) |
 | `MenuButton` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | a row's or a card's "⋯": the visible way into the menu its right-click or held finger opens ([below](#one-behaviour-for-mouse-and-finger)) |
 | `aiKeyInput` | every text/number/password input in dialogs and settings |
+| `Palette` ([shared/ui/Palette.jsx](../../frontend/src/shared/ui/Palette.jsx)) / `PagePicker` ([library/PagePicker.jsx](../../frontend/src/library/PagePicker.jsx)) | every dialog that picks one thing from a long list by typing: a field near the top of the window, the options in sections under it (↑↓ go round, Enter takes, Esc closes), a line saying what a pick does and the keys. Quick open (Ctrl+P and the command palette) is one; `PagePicker` is the palette over library pages, with quick open's rows (`PageOption`, a sub-page naming the pages it is in) and its ranking: Move to page, Move into page, the PDF's link dialog. A new page picker is a `PagePicker`, never a list of its own |
 | `switch` / `switchTrack` | every on/off toggle |
 | `MenuSelect` / `ActionMenu` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | every dropdown: Codex-style pill trigger + checkmarked `ContextMenu`. No native `<select>` anywhere |
 | `useMenuTrigger` ([Menus.jsx](../../frontend/src/shared/ui/Menus.jsx)) | the menus a toolbar's buttons open on the press, one at a time per toolbar: the recording player's mode and speed, the tool strip's More, Tool and Style, the selection menu's Style and Convert ([below](#menus-and-submenus)) |
@@ -631,9 +632,9 @@ up there (`backdropPress` in `shared/ui/press.js`). A click alone lands on
 the nearest element both ends of the press share, so text selected in a
 field with a drag let go past the dialog's edge would otherwise close it,
 or raise the unsaved-edits question. Every `reportOverlay` dialog uses it
-(Settings, its `SubDialog` editors, the confirm box, the link, label and
-move-block dialogs, the chat's page picker); Quick Open closes on its own
-`mousedown` check instead.
+(Settings, its `SubDialog` editors, the confirm box, the external-link
+prompt, Rename label, the chat's page picker, and the palette: Quick Open
+and the page pickers).
 
 A dialog that holds work a close would lose asks first on the backdrop,
 Escape and ×. An edited draft asks "Discard your unsaved edits?"; other

@@ -129,7 +129,6 @@ import {
 } from "../shared/model/blockModel";
 import { chordLabel, dispatch as dispatchHotkey, effectiveKeys, isTextField } from "../shared/lib/hotkeys.js";
 import { APP_COMMANDS, liveAppCommands } from "./appCommands.js";
-import { stepList } from "../shared/ui/listKeys.js";
 import { BLOCK_COMMANDS } from "../editor/blockCommands.js";
 import { commandById, commandChord } from "./commands.js";
 import { CommandMenuItem } from "./CommandMenuItem.jsx";
@@ -246,8 +245,6 @@ import {
   defaultPageTitle,
   metadataToDraft,
   citationKeyOf,
-  normalizeLinkInput,
-  scorePaperMatch,
   NO_LABEL,
   NO_LABEL_TITLE,
   PATH_SEP,
@@ -273,6 +270,8 @@ const ChatDock = lazySurface(() => import("../chat/ChatDock"));
 const SettingsDialog = lazySurface(() => import("../settings/SettingsDialog"));
 const GuideOverlay = lazySurface(() => import("../guide/GuideOverlay"));
 const QuickOpen = lazySurface(() => import("../library/QuickOpen"));
+const PagePicker = lazySurface(() => import("../library/PagePicker"));
+const LinkDialog = lazySurface(() => import("../pdf/LinkDialog"));
 const RecentlyDeleted = lazySurface(() => import("../library/RecentlyDeleted"));
 const ReportProblem = lazySurface(() => import("../support/ReportProblem"));
 const SharePopover = lazySurface(() => import("../sharing/SharePopover"), (m) => m.SharePopover);
@@ -1504,17 +1503,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     rereadFamily();
     batchStatus(done(result.done.length), result, ids.length);
   }
-  // "Move into page…": a page picker (the move dialog) over every page but
-  // the moved ones and the pages inside them, where they cannot go.
-  async function pickPageParent(ids) {
-    const pages = await fetchHomeBlocks({ still: true });
-    const byId = new Map(pages.map((p) => [p.id, p]));
-    const out = new Set([...ids, ...pageDescendants(pages, ids)]);
-    setMoveBlockDialog({ pageIds: ids, query: "",
-      pages: pages.filter((p) => !out.has(p.id)).map((p) => ({ ...p, _path: pagePathLabel(byId, p.id) })) });
+  // "Move into page…": the move picker over every page but the moved ones
+  // and the pages inside them, where they cannot go (moveExclude).
+  function pickPageParent(ids) {
+    pickMovePage({ pageIds: ids });
   }
   function movePagesInto(ids, parent) {
-    setMoveBlockDialog(null);
     const title = parent.content || t("Untitled");
     placePages(ids, () => ({ parent_page: parent.id }), t("Move {n} pages into “{title}”", { n: ids.length, title }),
       (n) => tn("Moved {n} page into “{title}”.", "Moved {n} pages into “{title}”.", n, { title }));
@@ -3531,10 +3525,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [confirmBox, setConfirmBox] = useState(null); // {title, message, confirmLabel, danger, onConfirm, altLabel, altDanger, onAlt, onCancel}
   // Cancel, Escape and the backdrop all close it the same way, onCancel told.
   const cancelConfirm = () => { const fn = confirmBox?.onCancel; setConfirmBox(null); fn?.(); };
-  const [moveBlockDialog, setMoveBlockDialog] = useState(null); // {blockId | fragment | pageIds, query, pages}
+  // What the Move to page picker (library/PagePicker.jsx) moves: {blockId},
+  // an object's {fragment}, or {pageIds} (Move into page).
+  const [movePicker, setMovePicker] = useState(null);
   const [linkPrompt, setLinkPrompt] = useState(null); // external URL clicked inside the PDF
-  const [linkDialog, setLinkDialog] = useState(null); // {position, quote, editBlockId?} — making or changing a manual reference link
-  const [linkDialogInput, setLinkDialogInput] = useState("");
+  const [linkDialog, setLinkDialog] = useState(null); // {position, quote, editBlockId?, url?} — making or changing a manual reference link (pdf/LinkDialog.jsx)
   // A highlight copied via "Copy as reference point" — link dialogs in other
   // papers offer it as a target, so links can point at an exact passage.
   const [refPoint, setRefPoint] = useState(null); // {pageId, pageTitle, blockId, quote}
@@ -4224,7 +4219,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!homeLoaded) return undefined;
-    return whenIdle(() => { preloadPdfEngine(); QuickOpen.preload(); }, 1500);
+    return whenIdle(() => { preloadPdfEngine(); QuickOpen.preload(); PagePicker.preload(); }, 1500);
   }, [homeLoaded]);
   // What a drag on the PDF does — text selection (default) or rectangle
   // drawing. A mouse holds Ctrl; a finger has no Ctrl, so a touch screen gets
@@ -7974,7 +7969,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const ld = linkDialog;
     if (!ld) return;
     setLinkDialog(null);
-    setLinkDialogInput("");
     if (ld.editBlockId) {
       // Re-pointing (or clearing) the link on an existing highlight block
       setBlocks(updateBlockTree(blocks, ld.editBlockId, (b) => ({
@@ -8668,20 +8662,32 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const obj = src ? findObject(src.content || "", kind, idx) : null;
     return obj ? { src, obj } : null;
   }
-  // The "move to page" picker, for a block (`blockId`) or an object
-  // (`fragment`); "Move into page…" picks with it too (`pageIds`, pickPageParent).
-  async function pickMovePage(what) {
-    try {
-      const d = await apiJson(`${API}/blocks/root/children`);
-      const pages = (d.children || []).filter((p) => p.id !== focusedBlockId);
-      setMoveBlockDialog({ ...what, query: "", pages });
-    } catch (err) { setStatus(t("Could not list pages: {message}", { message: err.message })); }
+  // The Move to page picker, for a block (`blockId`) or an object
+  // (`fragment`); "Move into page…" picks with it too (`pageIds`,
+  // pickPageParent). It opens at once over the listing, which is read again
+  // behind it, so a page made or deleted on another device since shows (not
+  // in a share view, whose listing is not the library's).
+  function pickMovePage(what) {
+    setMovePicker(what);
+    if (!shareMode) fetchHomeBlocks({ still: true });
   }
+  // Where it cannot go: the page a block or an object leaves, or the moved
+  // pages and the pages inside them. A sub-page is a page like any other
+  // (its row names the pages it is in), and a block's or an object's move
+  // offers the open page's own sub-pages first.
+  const moveExclude = useMemo(() => {
+    if (!movePicker) return null;
+    const ids = movePicker.pageIds || [focusedBlockId];
+    return new Set([...ids, ...(movePicker.pageIds ? pageDescendants(homeBlocks, ids) : [])]);
+  }, [movePicker, homeBlocks, focusedBlockId]);
+  const moveFirst = useMemo(() => (movePicker && !movePicker.pageIds
+    ? homeBlocks.filter((p) => p._parentPage === focusedBlockId).map((p) => p.id) : []), [movePicker, homeBlocks, focusedBlockId]);
+  // The link dialog's (pdf/LinkDialog.jsx): this page.
+  const linkExclude = useMemo(() => new Set([focusedBlockId]), [focusedBlockId]);
   // An image / table / diagram to the end of another page: a new block there
   // holding its markdown, the object cut from its block here. The local cut
   // stays undoable (an undo leaves the copy on the other page).
   async function doMoveFragment(frag, page) {
-    setMoveBlockDialog(null);
     const title = (page.content || t("Untitled")).slice(0, 60);
     const found = objectAt(frag.sourceId, frag.kind, frag.idx);
     if (!found) return;
@@ -8698,15 +8704,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setStatus(t("Move failed: {message}", { message: err.message }));
     }
   }
+  // The picker's pick: what it was opened for goes to `page`.
+  function moveToPicked(page) {
+    const what = movePicker;
+    setMovePicker(null);
+    if (what?.fragment) doMoveFragment(what.fragment, page);
+    else if (what?.pageIds) movePagesInto(what.pageIds, page);
+    else if (what?.blockId) doMoveBlock(what.blockId, page);
+  }
   // Move a block subtree to the end of another page: sync any queued edits
   // first, then re-parent server-side (reorder carries parent_id). The block
   // leaves this page through the room's delete, which the server logs with
   // the move: removed here as an edit it would go out as a delete of a block
   // that lives on the other page by then, which the server refuses (403).
   async function doMoveBlock(blockId, page) {
-    if (moveBlockDialog?.fragment) return doMoveFragment(moveBlockDialog.fragment, page);
-    if (moveBlockDialog?.pageIds) return movePagesInto(moveBlockDialog.pageIds, page);
-    setMoveBlockDialog(null);
     const title = (page.content || t("Untitled")).slice(0, 60);
     try {
       await persistBlocks(blocks);
@@ -8725,12 +8736,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setStatus(t("Move failed: {message}", { message: err.message }));
     }
   }
-  const movePageMatches = (() => {
-    if (!moveBlockDialog) return [];
-    const q = moveBlockDialog.query.trim().toLowerCase();
-    const all = moveBlockDialog.pages;
-    return (q ? all.filter((p) => (p.content || "").toLowerCase().includes(q)) : all).slice(0, 12);
-  })();
   // Leaving home or changing folders drops the file-manager selection.
   useEffect(() => { clearSelection(); setHomeMenu(null); }, [folderFilter, labelFilter, homeMode]);
   // A folder or label the view names that the listing's trees lack (deleted
@@ -12789,7 +12794,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 }
                 if (extras?.link) {
                   setLinkDialog({ position, quote });
-                  setLinkDialogInput("");
                   hideTip?.();
                   return;
                 }
@@ -12813,7 +12817,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   openThread(id, highlightEl(id), { compose: true, toggle: false, pdf: true });
                 } else if (action === "link") {
                   setLinkDialog({ position: null, quote: highlights.find((x) => x.id === id)?.quote || "", editBlockId: id });
-                  setLinkDialogInput("");
                 }
               }}
             />
@@ -13022,17 +13025,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}>
             <div className="reportModalTitle">{t("Rename label")}</div>
             <div className="reportModalHint confirmMessage">{t("Renames “{name}” on every page that carries it.", { name: labelName(libTree, labelRenaming.id) })}</div>
-            <div className="shareRow">
-              <input
-                autoFocus
-                value={labelRenaming.draft}
-                onFocus={(e) => e.currentTarget.select()}
-                onChange={(e) => setLabelRenaming((s) => ({ ...s, draft: e.target.value }))}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") renameLabel(labelRenaming.id, labelRenaming.draft);
-                  else if (e.key === "Escape") setLabelRenaming(null);
-                }}
-              />
+            <input
+              autoFocus
+              className="aiKeyInput"
+              aria-label={t("Label name")}
+              value={labelRenaming.draft}
+              onFocus={(e) => e.currentTarget.select()}
+              onChange={(e) => setLabelRenaming((s) => ({ ...s, draft: e.target.value }))}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.nativeEvent.isComposing) renameLabel(labelRenaming.id, labelRenaming.draft);
+                else if (e.key === "Escape") setLabelRenaming(null);
+              }}
+            />
+            <div className="reportModalBtns">
+              <button className="uiBtn" onClick={() => setLabelRenaming(null)}>{t("Cancel")}</button>
               <button
                 className="uiBtn primary"
                 disabled={!labelRenaming.draft.trim()}
@@ -13042,48 +13048,26 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           </div>
         </DialogOverlay>
       ) : null}
-      {moveBlockDialog ? (
-        <DialogOverlay {...backdropPress(() => setMoveBlockDialog(null))}>
-          <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => stepList(e, e.currentTarget.querySelector("[data-find]"), [...e.currentTarget.querySelectorAll(".moveBlockList .ctxMenuItem")])}>
-            <div className="reportModalTitle">{moveBlockDialog.pageIds ? t("Move into page")
-              : moveBlockDialog.fragment ? t("Move to page") : t("Move block to page")}</div>
-            <div className="reportModalHint confirmMessage">{moveBlockDialog.pageIds
-              ? tn("The page goes inside the one you pick and is listed there, under Pages inside, rather than in the library.",
-                "The {n} pages go inside the one you pick and are listed there, under Pages inside, rather than in the library.", moveBlockDialog.pageIds.length)
-              : moveBlockDialog.fragment
-              ? t("It becomes a block of its own at the end of the chosen page.")
-              : t("The block and its sub-blocks move to the end of the chosen page.")}</div>
-            <div className="shareRow">
-              <input
-                autoFocus data-find
-                placeholder={t("Filter pages…")}
-                value={moveBlockDialog.query}
-                onChange={(e) => setMoveBlockDialog((s) => ({ ...s, query: e.target.value }))}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") setMoveBlockDialog(null);
-                  else if (e.key === "Enter" && movePageMatches.length && !e.nativeEvent.isComposing) {
-                    doMoveBlock(moveBlockDialog.blockId, movePageMatches[0]);
-                  }
-                }}
-              />
-            </div>
-            <div className="moveBlockList">
-              {movePageMatches.map((p) => (
-                <MenuItem key={p.id} icon={FileTextIcon} onClick={() => doMoveBlock(moveBlockDialog.blockId, p)}
-                  // a page inside another names where it is
-                  trailing={p._path ? <span className="ctxMenuKey">{p._path}</span> : null}
-                  onKeyDown={(e) => { if (e.key === "Escape") setMoveBlockDialog(null); }}>
-                  {p.content || t("Untitled")}
-                </MenuItem>
-              ))}
-              {!movePageMatches.length ? (
-                <div className="confirmMessage">{t("No matching page.")}</div>
-              ) : null}
-            </div>
-          </div>
-        </DialogOverlay>
-      ) : null}
+      {movePicker ? <LazyBoundary><PagePicker
+        label={movePicker.pageIds ? t("Move into page") : movePicker.fragment ? t("Move to page") : t("Move block to page")}
+        placeholder={movePicker.pageIds ? t("Move into page…") : movePicker.fragment ? t("Move to page…") : t("Move block to page…")}
+        note={movePicker.pageIds
+          ? tn("The page goes inside the one you pick and is listed there, under Pages inside, rather than in the library.",
+            "The {n} pages go inside the one you pick and are listed there, under Pages inside, rather than in the library.", movePicker.pageIds.length)
+          : movePicker.fragment
+          ? t("It becomes a block of its own at the end of the chosen page.")
+          : t("The block and its sub-blocks move to the end of the chosen page.")}
+        hint={t("↑↓ choose · Enter move · Esc close")}
+        pages={homeBlocks}
+        exclude={moveExclude}
+        tree={libTree}
+        recentViews={recentViews}
+        openTabs={openTabs}
+        first={moveFirst}
+        firstTitle={t("Inside this page")}
+        onPick={moveToPicked}
+        onClose={() => setMovePicker(null)}
+      /></LazyBoundary> : null}
       {linkPrompt ? (
         <DialogOverlay {...backdropPress(() => setLinkPrompt(null))}>
           <div className="reportModal confirmModal linkPromptModal" onClick={(e) => e.stopPropagation()}>
@@ -13123,72 +13107,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           </div>
         </DialogOverlay>
       ) : null}
-      {linkDialog ? (
-        <DialogOverlay {...backdropPress(() => setLinkDialog(null))}>
-          <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}>
-            <div className="reportModalTitle">{linkDialog.editBlockId ? t("Change reference link") : t("Link reference to a page")}</div>
-            {linkDialog.quote ? (
-              <div className="reportModalHint linkRefQuote">“{linkDialog.quote.slice(0, 160)}{linkDialog.quote.length > 160 ? "…" : ""}”</div>
-            ) : null}
-            <div className="reportModalHint">{t("Paste a DOI, arXiv id, or URL — or pick one of your pages. The selection becomes a clickable link on the PDF.")}</div>
-            <div className="shareRow">
-              <input
-                autoFocus
-                placeholder={t("10.1103/…  ·  1810.11086  ·  https://…")}
-                value={linkDialogInput}
-                onChange={(e) => setLinkDialogInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && linkDialogInput.trim()) {
-                    e.preventDefault();
-                    createLinkHighlight({ url: normalizeLinkInput(linkDialogInput) });
-                  } else if (e.key === "Escape") { setLinkDialog(null); }
-                }}
-              />
-              <button
-                className="uiBtn primary"
-                disabled={!linkDialogInput.trim()}
-                onClick={() => createLinkHighlight({ url: normalizeLinkInput(linkDialogInput) })}
-              >{t("Link")}</button>
-            </div>
-            {refPoint && refPoint.pageId !== focusedBlockId ? (
-              <>
-                <div className="popoverSection">{t("Copied reference point")}</div>
-                <button
-                  className="reportPageItem linkPageItem"
-                  onClick={() => createLinkHighlight({ pageId: refPoint.pageId, blockId: refPoint.blockId })}
-                  title={t("Link to this exact highlight — clicking the link opens the paper and jumps to it")}
-                >
-                  <span className="reportPageName">{refPoint.pageTitle} — “{refPoint.quote.slice(0, 60)}{refPoint.quote.length > 60 ? "…" : ""}”</span>
-                  <span className="linkLikelyBadge">{t("highlight")}</span>
-                </button>
-              </>
-            ) : null}
-            <div className="popoverSection">{t("Your pages (best match first)")}</div>
-            <div className="reportPageList">
-              {(() => {
-                const cands = homeBlocks
-                  .filter((b) => b.id !== focusedBlockId)
-                  .map((b) => ({ b, score: scorePaperMatch(linkDialog.quote || "", b) }))
-                  .sort((x, y) => y.score - x.score
-                    || (y.b.updated_at || "").localeCompare(x.b.updated_at || ""));
-                if (!cands.length) return <div className="popoverHint">{t("No other pages in your library yet.")}</div>;
-                return cands.map(({ b, score }) => (
-                  <button key={b.id} className="reportPageItem linkPageItem" onClick={() => createLinkHighlight({ pageId: b.id })}>
-                    <span className="reportPageName">{b.content || t("Untitled")}</span>
-                    {score >= 6 ? <span className="linkLikelyBadge">{t("likely")}</span> : null}
-                  </button>
-                ));
-              })()}
-            </div>
-            <div className="reportModalBtns">
-              {linkDialog.editBlockId ? (
-                <button className="uiBtn" onClick={() => createLinkHighlight({})} title={t("Turn this back into a plain highlight")}>{t("Remove link")}</button>
-              ) : null}
-              <button className="uiBtn" onClick={() => setLinkDialog(null)}>{t("Cancel")}</button>
-            </div>
-          </div>
-        </DialogOverlay>
-      ) : null}
+      {linkDialog ? <LazyBoundary><LinkDialog
+        quote={linkDialog.quote || ""}
+        url={linkDialog.url || ""}
+        linked={!!linkDialog.editBlockId && !!highlights.find((x) => x.id === linkDialog.editBlockId)?.linkTarget}
+        pages={homeBlocks}
+        exclude={linkExclude}
+        tree={libTree}
+        recentViews={recentViews}
+        openTabs={openTabs}
+        refPoint={refPoint && refPoint.pageId !== focusedBlockId ? refPoint : null}
+        onLink={createLinkHighlight}
+        onClose={() => setLinkDialog(null)}
+      /></LazyBoundary> : null}
       {/* Mounted once first wanted, then kept, as when they loaded with the
           app (useLatch): closed, they render nothing and run no requests. */}
       {quickOpenMounted ? <LazyBoundary><QuickOpen
@@ -13808,8 +13739,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               className="ctxMenuItem"
               onClick={() => {
                 const h = highlights.find((x) => x.id === highlightMenu.id);
-                setLinkDialog({ position: null, quote: h?.quote || "", editBlockId: highlightMenu.id });
-                setLinkDialogInput(h?.linkTarget?.url || "");
+                setLinkDialog({ position: null, quote: h?.quote || "", editBlockId: highlightMenu.id, url: h?.linkTarget?.url || "" });
                 setHighlightMenu(null);
               }}
             >

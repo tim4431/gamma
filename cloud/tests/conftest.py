@@ -1,11 +1,11 @@
-import atexit
 import os
-import shutil
-import tempfile
+import sys
 from pathlib import Path
 
-_DATA = Path(tempfile.mkdtemp(prefix="gammacloud-test-"))
-atexit.register(shutil.rmtree, _DATA, ignore_errors=True)
+sys.path.append(str(Path(__file__).resolve().parents[2] / "tests"))
+from testrun import own_folder, pytest_configure, pytest_enter_pdb, pytest_leave_pdb, pytest_runtest_logreport  # noqa: E402,F401  (hooks)
+
+_DATA = Path(own_folder("gammacloud-test-"))
 os.environ["GAMMA_CLOUD_DATA_DIR"] = str(_DATA)
 os.environ["GAMMA_CLOUD_MAIL"] = "memory"
 os.environ["GAMMA_CLOUD_PUBLIC_URL"] = "http://testserver"

@@ -464,6 +464,42 @@ interactions are exercised by the browser suite below, plus one standalone
 browser regression: `npm run e2e:latex` bundles the block
 editor with esbuild over an in-memory fixture ([latex_editing.md](latex_editing.md)).
 
+### What a run leaves behind
+
+Nothing when it ends normally, and nothing stays up when it does not.
+
+Every pytest process of the server's and the account server's suites owns one
+folder in the system temp directory (`tests/testrun.py`, which both
+`conftest.py` files import first): `gamma-test-*` or `gammacloud-test-*`, holding
+`data/`, the data directory, and `tmp/`, where `tempfile` points, so import
+staging, export spools and pytest's `tmp_path` land there too. The folder goes
+when the process exits, a failed test's `tmp_path` with it; pass
+`--basetemp=<dir>` to keep those. A killed process cannot remove its folder, so
+the next run removes any more than a day old.
+
+A run also ends itself when it stops getting anywhere. The timeout in
+`pytest.ini` bounds a test and nothing else, and a run has stuck between tests:
+an xdist controller waiting for a worker that was waiting for the controller
+sat for five days with every process idle
+([research/test-temp-files.md](../research/test-temp-files.md#the-run-that-stalled)).
+With no test finished for 15 minutes a controller, or a run without workers,
+exits with status 1 and its workers go as their channel closes. So a run that
+stops at status 1 with no summary stalled: every thread's stack is in
+`stalled.log` in its folder, which stays for that day. The stacks go to a file
+because a full stderr pipe would stop the dump and the exit after it. A worker
+cannot judge a stall, being idle while the others finish, so it only has a
+two-hour limit, for one too stuck to notice its channel closing. A pause in
+`pdb` or at a `breakpoint()` stops the clock; an IDE's debugger paused that long
+ends the run.
+
+The browser suite follows the same rules with what it has. A run that passes
+removes its `gamma-e2e-*` folders, and one that fails keeps them without the
+copy of the build, for three days: `run.mjs` removes older ones when it starts.
+A process with no step finished for 15 minutes ends with status 1 (not under
+`--headed`). Workers leave when their parent is gone, and a backend reads a
+stdin pipe only the process that started it holds, so killing a run takes its
+workers, backends and browsers with it.
+
 ### Browser end-to-end suite
 
 ```bash
@@ -563,7 +599,8 @@ the accounts `alice` / `bob`, and drives Playwright's Chromium
 (`playwright` is a devDependency; the browser is downloaded once on first
 launch). A failed step saves a screenshot of every open page plus the
 pages' recorded problems and the server log's tail under the temp dir's
-`failures/`, and the temp dir is kept (the summary prints its path). A page
+`failures/`, and the temp dir is kept without its copy of the build (the
+summary prints its path). A page
 the step closed on its way out (the usual `finally { await ctx.close() }`)
 is there too, as `-closed.jpg`: closing a context or a page during a step
 first keeps its last look. The

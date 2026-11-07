@@ -61,6 +61,24 @@ const servers = [];
 // copies: those variables are dropped, and a scenario sets its own.
 const baseEnv = () => Object.fromEntries(Object.entries(process.env).filter(([key]) => !/^GAMMA_(S3_|OFFSITE)/.test(key)));
 
+// uvicorn on a port, gone with this process however that ends: stdin is a pipe
+// only this process holds, so the backend of a killed run reads its end and
+// exits rather than stay up for good, holding its port and its folder.
+const SERVE = "import os, sys, threading, uvicorn; "
+  + "threading.Thread(target=lambda: (sys.stdin.read(), os._exit(0)), daemon=True).start(); "
+  + "uvicorn.run('app:app', host='127.0.0.1', port=int(sys.argv[1]))";
+
+// A failed run's folder is kept to be read; a killed run could not remove its own.
+const KEPT_FOR = 3 * 24 * 60 * 60 * 1000;
+
+export function sweepRuns() {
+  for (const name of fs.readdirSync(os.tmpdir())) {
+    if (!name.startsWith("gamma-e2e-")) continue;
+    const dir = path.join(os.tmpdir(), name);
+    try { if (Date.now() - fs.statSync(dir).mtimeMs > KEPT_FOR) fs.rmSync(dir, { recursive: true, force: true }); } catch {}
+  }
+}
+
 // `env` adds to the backend's environment (a second Gamma started as another
 // kind of server, e.g. the publish scenario's share host).
 export class Server {
@@ -98,8 +116,8 @@ export class Server {
     await this.manage("setup");
     this.port = await freePort();
     const log = fs.openSync(this.logPath, "a");
-    this.proc = spawn(PYTHON, ["-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", String(this.port)], {
-      cwd: BACKEND, stdio: ["ignore", log, log],
+    this.proc = spawn(PYTHON, ["-c", SERVE, String(this.port)], {
+      cwd: BACKEND, stdio: ["pipe", log, log],
       env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, GAMMA_STATIC_DIR: dist, TMPDIR: this.tmpDir, PYTHONIOENCODING: "utf-8", GAMMA_UPDATE_CHECK: "off", GAMMA_MODEL_CATALOG: "off", GAMMA_METADATA_LOOKUP: "off", ...this.env },
     });
     const t0 = Date.now();
@@ -117,10 +135,12 @@ export class Server {
       else this.proc.kill("SIGTERM");
       await sleep(300);
     }
-    // The temp dir survives on --keep and after any failure (its
-    // failures/ folder holds the screenshots and log tails).
-    if (flags.keep || results.some((r) => !r.ok)) console.log(`kept: ${this.dir}`);
-    else { try { fs.rmSync(this.dir, { recursive: true, force: true }); } catch {} }
+    // The temp dir survives on --keep and after any failure (its failures/
+    // folder holds the screenshots and log tails), a failure's without the
+    // copy of the build, which says nothing about it.
+    const failed = results.some((r) => !r.ok);
+    if (flags.keep || failed) console.log(`kept: ${this.dir}`);
+    if (!flags.keep) { try { fs.rmSync(failed ? path.join(this.dir, "dist") : this.dir, { recursive: true, force: true }); } catch {} }
   }
 }
 

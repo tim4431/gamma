@@ -61,4 +61,12 @@ test("page pickers: recents, open tabs, then the rest; a query ranks titles and 
   assert.equal(ids(rankLibraryPages(pages, tree, "cavtiy readout", opts)), "a", "typos are forgiven");
   assert.equal(ids(rankLibraryPages(pages, tree, "3000", opts)), "e", "separators are skipped");
   assert.equal(ids(rankLibraryPages(pages, tree, "no-such-page", opts)), "");
+
+  // A picker's suggestions (PagePicker's `first`) lead, in their order, and
+  // only break ties under a query.
+  const first = rankLibraryPages(pages, tree, "", { ...opts, first: ["c", "b"] });
+  assert.equal(ids(first), "cbdae");
+  assert.equal(sections(first), "first first recent recent tabs");
+  assert.equal(ids(rankLibraryPages(pages, tree, "cavity", { ...opts, first: ["b"] })), "bac", "a suggestion wins a tie");
+  assert.equal(ids(rankLibraryPages(pages, tree, "", { ...opts, exclude: new Set(["d", "b"]) })), "aec", "excluded pages are not listed");
 });
