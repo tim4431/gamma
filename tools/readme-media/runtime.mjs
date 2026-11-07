@@ -93,6 +93,7 @@ export async function launchRetinaExtension(extension, { height = VIEW.height } 
   const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'gamma-media-profile-'));
   const context = await chromium.launchPersistentContext(profile, { ...RETINA, headless: false, args: [
     ...retinaArgs(port, height), `--disable-extensions-except=${extension}`, `--load-extension=${extension}`, '--headless=new'] });
+  context.once('close', () => { try { fs.rmSync(profile, { recursive: true, force: true }); } catch {} });
   await context.addInitScript(() => { try { localStorage.setItem('gamma-suggest-tours', '0'); } catch {} });
   cdpPorts.set(context, port);
   // This window keeps room for a browser frame: grow it until the page area

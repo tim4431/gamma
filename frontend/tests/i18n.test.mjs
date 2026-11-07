@@ -6,8 +6,9 @@ import path from "node:path";
 import { catalogLocales, checkCatalog, readCatalog, scanSources } from "../tools/i18n.mjs";
 
 // The scanner finds every literal-keyed call and nothing else.
-test("scanSources picks up t(), tn() and T() literals only", () => {
+test("scanSources picks up t(), tn() and T() literals only", (t) => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "i18n-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   fs.writeFileSync(path.join(dir, "a.jsx"), [
     'const a = t("Copy link");',
     "const b = t('It\\'s \"quoted\"', { n });",

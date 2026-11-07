@@ -16,6 +16,7 @@ on:
     paths:
       - "cloud/**"
       - ".github/workflows/cloud.yml"
+      - "tests/testrun.py"
   workflow_dispatch:
 
 concurrency:
