@@ -104,7 +104,7 @@ test("every preference declares one scope; the profile carries exactly the accou
   }
   const account = new Set(ACCOUNT_PREFS);
   // Appearance, reading, library, chat behaviour, budgets and prompts follow the account…
-  for (const name of ["theme", "pdfDarkPage", "embAnnots", "translateLang", "enterNewNote", "searchDetailsHome",
+  for (const name of ["theme", "pdfDarkPage", "embAnnots", "translateLang", "enterNewBlock", "searchDetailsHome",
     "fileLabels", "recentThumbs", "agentEnabled", "agentPerms", "chatEffort", "chatContextChars", "toolRounds",
     "toolRoundsUnlimited", "chatSystem", "inkTools"]) {
     assert.ok(account.has(name), `${name} is account-scoped`);

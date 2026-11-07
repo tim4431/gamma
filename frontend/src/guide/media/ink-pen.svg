@@ -68,9 +68,7 @@
   <path class="m-glyph" d="M227 18h.01M230 18h.01M227 21h.01M230 21h.01M227 24h.01M230 24h.01" />
   <rect class="m-line" x="236" y="19" width="26" height="4" rx="2" />
   <path class="m-rule" d="M220 30H308" />
-  <circle class="m-line-dim" cx="230" cy="42" r="1.5" />
   <rect class="m-line-dim" x="236" y="40.5" width="62" height="3" rx="1.5" />
-  <circle class="m-line-dim" cx="230" cy="54" r="1.5" />
   <rect class="m-line-dim" x="236" y="52.5" width="48" height="3" rx="1.5" />
   <g class="m-appear" style="--m-at: 0.62">
     <rect class="m-chip" x="226" y="62" width="9" height="9" rx="2.5" />

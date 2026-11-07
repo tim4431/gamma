@@ -914,6 +914,16 @@ def test_highlight_note_blocks_and_their_popup_text():
     assert popup_text(blocks) == "own\n- first\n  - two\nlines\n  - under an empty note"
 
 
+@pytest.mark.parametrize("note, line", [
+    ("- item", "- item"), ("* item", "* item"), ("1. item", "1. item"), ("- [ ] item", "- [ ] item"), ("-", "-"),
+    ("-item", "- -item"), ("plain", "- plain"),
+])
+def test_a_list_block_in_a_popup_keeps_its_one_marker(note, line):
+    from gamma.pdf_export import popup_text
+
+    assert popup_text([(0, "own", "h"), (1, note, "a"), (2, note, "b")]) == f"own\n{line}\n  {line}"
+
+
 def test_notes_on_the_page_keep_its_size_and_clear_of_the_highlight():
     """notes_at=page puts a card in the page's own free space, next to its
     highlight: the page keeps its size, the text is page content, and it

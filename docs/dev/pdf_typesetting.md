@@ -58,7 +58,8 @@ the viewer stores positions in (scaled by the position's `width` /
 pdf.js, pdfium and MuPDF show a page, or the media box when the two do not
 meet. `pdf_notes` places its cards in the same frame. A popup's text
 (`highlight_note_text`) is the highlight's own note and the notes under it,
-as an indented bullet list (`popup_text` of `highlight_note_blocks`).
+as an indented list, a bullet each unless a note is a list item with its own
+marker (`popup_text` of `highlight_note_blocks`; Zotero's comment is the same).
 A text box or a picture on a PDF page among them is left out with the
 notes under it, since it is written as its own `/FreeText` or `/Stamp`.
 One under a sheet stays a line, a picture as its `![caption](url)` line:

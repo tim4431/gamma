@@ -826,7 +826,7 @@ before a reload waits until a page can take it. The web half is
    `.zip`, as the picker sends them, and a `.goodnotes` the GoodNotes
    import's the same way. A `.zip` opens the Import dialog with the file
    already chosen. It asks which export it is, offering the sources that
-   read an archive (Zotero, Markdown, Notability, GoodNotes, Gamma), and
+   read an archive (Zotero, Markdown, Notability, GoodNotes, Notion, Gamma), and
    goes on to that source's review with no picker.
    An image becomes a picture where the Picture button puts one: the
    surface in view, else the sheet among the notes that shows the most of
@@ -1591,6 +1591,15 @@ Only an iPad can show these, and none has been run yet:
     have to draw it from the range's rects
     ([research/pen-logic.md](../research/pen-logic.md)). *Only Draw with
     Apple Pencil* and Scribble on and off.
+37. The editing bar's taps. New block and Line break must run their
+    command and keep the keyboard up, and Return on the on-screen keyboard
+    must make a block, during composition too. The bar cancels `pointerdown`
+    and runs from the click, which WebKit's iOS test requires but only a
+    device can show: under Playwright's WebKit the suite sends that click
+    itself ([debugging.md](debugging.md#webkit-and-firefox)). Also check that
+    the keyboard stays up through the focus change of a New block tap, that
+    the bar sits on the real keyboard, and that a finger's sideways pan of
+    the bar's tools works (`touch-action: pan-x`).
 
 ### Not built yet
 
@@ -1719,15 +1728,17 @@ screen, not the device (`PHONE_MQ` / `useIsPhone` in App.jsx):
 
 ### The editing bar
 
-The notes take Tab, Shift+Enter and Ctrl chords for their structure and
-formatting. The iPad's on-screen keyboard has no Tab or Ctrl, and no
-dependable Shift+Return ([research/touch.md](../research/touch.md)). So
-while a note's editor is open on a touch screen, a bar sits on top of the
-keyboard (`editor/EditBar.jsx`):
+The notes take Tab, Enter, Shift+Enter and Ctrl chords for their structure
+and formatting. The iPad's on-screen keyboard has no Tab or Ctrl, and no
+dependable Shift+Return ([research/touch.md](../research/touch.md)), so by
+default its Return can only make a new block. So while a note's editor is
+open on a touch screen, a bar sits on top of the keyboard
+(`editor/EditBar.jsx`):
 
 **Insert** (the `/` menu) · Outdent · Indent · Move up · Move down · New
-block · Bold · Italic · Underline · Inline code · Strikethrough · Link ·
-Inline equation · Next math argument · Undo · Redo … **Done**
+block · Line break · Bold · Italic · Underline · Inline code ·
+Strikethrough · Link · Inline equation · Next math argument · Undo · Redo
+… **Done**
 
 The iPad app shows this same bar, since it is the web app.
 
@@ -1735,9 +1746,9 @@ The iPad app shows this same bar, since it is the web app.
   ([hotkeys.md](hotkeys.md)), run with the context the row's keydown
   dispatches with (`commandContext` in `BlockTree.jsx`). So a button does
   what the same command does from a key or the palette.
-  - Four of them exist for the bar and have no default chord:
-    `block.insertMenu`, `block.newBelow`, `block.math` and
-    `block.nextSlot` (each is described in [hotkeys.md](hotkeys.md)).
+  - Five of them exist for the bar and have no default chord:
+    `block.insertMenu`, `block.newBelow`, `block.lineBreak`, `block.math`
+    and `block.nextSlot` (each is described in [hotkeys.md](hotkeys.md)).
   - Undo and Redo are the page's block history (App's `undoBlocks`), as
     Ctrl+Z.
   - A button whose command's `when` fails is greyed out: Outdent at the
@@ -1792,7 +1803,12 @@ The iPad app shows this same bar, since it is the web app.
     panel and under the editor's own popups.
   - The room it takes at the visual viewport's bottom (`editBarSpace()`)
     is the editor's bottom scroll margin, so the caret scrolls into view
-    above it. Caret-anchored popups (the slash menu, the math preview,
+    above it. An editor a key opens scrolls as it mounts, since focus
+    scrolls nothing, and a caret placed from outside
+    (`setSelectionRange`) replaces that scroll's target, or a row taller
+    than the pane would scroll to its end. A row must not overflow its own
+    box downward or to the right: that makes it a scroller to CodeMirror,
+    which clips that margin to the row. Caret-anchored popups (the slash menu, the math preview,
     `useCaretAnchored`) leave that room free.
   - On a narrow screen the tools scroll sideways and Done stays at the end.
 - **The keyboard stays up.** iPadOS keeps it while focus stays in the
@@ -1862,15 +1878,19 @@ the panes scroll.
   applies inside math or a code fence), where Move up / down, Indent and
   Outdent apply (their `when`), Next math argument's hop and where it
   applies, and the bar's four commands starting unbound.
+- `frontend/tests/webkitHarness.test.mjs`: what the suite adds under
+  WebKit ([debugging.md](debugging.md#webkit-and-firefox)), the click after a
+  tap Playwright's WebKit drops, and the cancelled loads it lets pass.
 - `tests/e2e/scenarios/touch.mjs` (`npm run e2e -- --only touch`), by
-  finger on an emulated tablet: Inline code and Strikethrough wrap a
+  finger on an emulated tablet: a button that cancels its `pointerdown`, the
+  bar's press, is clicked once with no mouse events; Inline code and Strikethrough wrap a
   selection, Next math argument shows only in a math argument and hops to
   the next, the typing aids are on in prose and off in math, a tapped
   picture's toolbar ⋯ opens the object menu, and a highlight made with
   Notes folded shows no bar until they open, its note's editor then
   focused under the bar.
 - `tests/e2e/scenarios/ipad.mjs` (`npm run e2e -- --only ipad`), in
-  Chromium touch contexts:
+  touch contexts, Chromium's and with `GAMMA_E2E_BROWSER=webkit` WebKit's:
   - Tablet-sized: the manifest parses with `standalone` display, and every
     icon it and the `apple-touch-icon` link name is a real PNG.
     `theme-color` matches what sits under the status bar (the library with
@@ -1893,15 +1913,16 @@ the panes scroll.
     - A stand-in visual viewport plays the keyboard. The bar lands on it
       when its event comes before the move, stays on it when the view
       scrolls, and finds it back on the next tap when it returns with no
-      event. Through a pan that goes on for 40 frames it never shows, and
-      it shows where the pan stops.
+      event. Through a pan that goes on for 40 frames it steps aside within
+      6 frames and stays out of sight, and it shows where the pan stops.
     - Indent, Outdent and Move down change the saved tree, and after each
       the same block's editor still has the focus.
     - Landscape, the bar stays in sight every frame from one editor to the
-      next: Shift+Enter, Tab and Shift+Tab, the bar's New block, Indent and
+      next: Enter, Tab and Shift+Tab, the bar's New block, Indent and
       Outdent, another note tapped; its Indent and Outdent follow the open
       block.
-    - New block focuses a new empty block.
+    - New block focuses a new empty block; Line break stays in the block,
+      the caret on a new line.
     - Bold wraps the selection; Undo and Redo take it back and put it
       back, and so do the keyboard's `historyUndo` / `historyRedo` input
       events.

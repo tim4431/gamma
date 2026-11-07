@@ -40,7 +40,8 @@ from . import bibtex as bibtex_mod
 from .blocks_store import (FOLDERS, LABELS, PATH_SEP, filing, folder_paths, folder_subtree_ids, label_names,
                            load_props, page_attachment, page_parents, top_of)
 from .highlights import is_highlight, is_link, page_of
-from .markdown_export import _BLOCK_REF_RE, _link_label, resolve_block_links
+from .markdown_export import _BLOCK_REF_RE, _link_label, block_text, resolve_block_links
+from .markdown_import import _FENCE_LINE_RE, EMPTY_ITEM_RE, _fence_marks, shuts_code
 from .note_markup import obsidian_image_sizes
 from .notebook import is_sheet
 from .picture import is_picture, markdown_of, picture_page
@@ -54,10 +55,27 @@ _HEADING_RE = re.compile(r"^#{1,6}\s+\S")
 # Blocks whose anchor must sit on its own line after them (Obsidian's rule
 # for lists, quotes, callouts, tables and fences).
 _COMPOUND_RE = re.compile(r"^(```|~~~|>|\||\$\$|[-*+] |\d+[.)] )")
+# A block that is a list item as it stands (the importer's list marker).
+_LIST_BLOCK_RE = re.compile(r"[-*+] |\d{1,4}[.)] ")
 _MARKER_RE = re.compile(r"[^A-Za-z0-9-]")
 _RESERVED_NAME = re.compile(r"(?i)(con|prn|aux|nul|com[1-9]|lpt[1-9])")
+# How a note's first line opens front matter (``markdown_import._FRONTMATTER_RE``).
+_OPENS_FRONT_MATTER_RE = re.compile(r"---[ \t]*\n")
 
 APP_JSON = json.dumps({"attachmentFolderPath": "attachments"}, indent=2) + "\n"
+
+
+def _code_closer(line, closer):
+    """What closes the fence or ``$$`` block open at a block's left edge after
+    ``line``, as the importer reads one: ``closer`` is that mark before it,
+    None outside one."""
+    if closer == "$$":
+        return None if "$$" in line else closer
+    if closer:
+        return None if shuts_code(line, closer, 0) else closer
+    if _FENCE_LINE_RE.match(line) and not line[0].isspace():
+        return _fence_marks(line)
+    return "$$" if line.startswith("$$") and "$$" not in line[2:] else None
 
 
 def vault_name(title: str) -> str:
@@ -225,19 +243,20 @@ class VaultContext:
         return marker
 
 
-def name_files(fil: Filing, pages) -> dict:
+def name_files(fil: Filing, pages, directory=None) -> dict:
     """``{page id: stem}``, each page's file path without its extension,
     for ``pages`` ((page id, title, properties), parents before children,
     in the order given): unique ignoring case (``unique_name``) in the
-    directory ``fil`` gives it (``Filing.directory``). The library pages
-    are named first, so a sub-page, whose directory may be a folder's of
-    the same name, never takes a library page's name; then the sub-pages,
-    each after its parent."""
+    directory ``directory`` gives it (called as ``Filing.directory``, which
+    is the default). The library pages are named first, so a sub-page,
+    whose directory may be a folder's of the same name, never takes a
+    library page's name; then the sub-pages, each after its parent."""
+    place = directory or fil.directory
     used, stems = set(), {}
     for library in (True, False):
         for pid, title, props in pages:
             if (pid not in fil.parents) == library:
-                stems[pid] = unique_name(used, fil.directory(pid, props, stems), vault_name(title), "")
+                stems[pid] = unique_name(used, place(pid, props, stems), vault_name(title), "")
     return {pid: stems[pid] for pid, _, _ in pages}
 
 
@@ -340,6 +359,8 @@ def render_vault_page(page, ctx: VaultContext, tags=(), highlights=True, notes=T
         r.top(child, lines)
     text = "\n".join(lines)
     text = re.sub(r"\n{3,}", "\n\n", text).strip("\n")
+    if not fm and _OPENS_FRONT_MATTER_RE.match(text):    # a divider, but it would open front matter
+        text = "***" + text[3:]
     return text + "\n"
 
 
@@ -349,7 +370,7 @@ class _Renderer:
         self.highlights, self.notes = highlights, notes
 
     def _content(self, node):
-        content = obsidian_image_sizes((node.get("content") or "").strip())
+        content = obsidian_image_sizes(block_text(node))
         content = resolve_links(content, self.ctx, self.page_id)
         return content if self.notes else ""
 
@@ -458,7 +479,8 @@ class _Renderer:
                 self.top(child, lines, under_sheet)
 
     def _paragraph(self, content, marker, lines):
-        if marker and _COMPOUND_RE.match(content):
+        # (text after a fence's closing line would leave the fence open)
+        if marker and (_COMPOUND_RE.match(content) or _FENCE_LINE_RE.match(content.rpartition("\n")[2])):
             lines += [content, "", f"^{marker}", ""]
         elif marker:
             lines += [f"{content} ^{marker}", ""]
@@ -483,6 +505,7 @@ class _Renderer:
         quote = (props.get("quote") or "").strip() if is_highlight(props) else ""
         pad = " " * indent
         emitted = True
+        width = 2  # the text column under the marker
 
         if region:
             lines.append(f"{pad}- {region}" + (f" ^{marker}" if marker else ""))
@@ -502,15 +525,31 @@ class _Renderer:
             if link := self._box_link(props, on_sheet):
                 lines.append(f"{pad}  {link}")
         elif content:
+            # A list block is its own item, with its one marker. Its next lines
+            # are laid out already: only text at its left edge moves under
+            # the marker, where it stays in the item, and a fence or $$ block
+            # at that edge moves whole, whatever its lines look like.
+            own = _LIST_BLOCK_RE.match(content)
+            width = len(own.group()) if own else width
+            under = " " * width
             clines = content.split("\n")
-            lines.append(f"{pad}- {clines[0]}" + (f" ^{marker}" if marker else ""))
-            lines += [f"{pad}  {c}" for c in clines[1:]]
+            # (the anchor of a block that is only a marker goes below it: the
+            # import would read it as the item's text, the marker's space lost)
+            alone = marker and EMPTY_ITEM_RE.fullmatch(content)
+            lines.append(f"{pad}{'' if own else '- '}{clines[0]}" + (f" ^{marker}" if marker and not alone else ""))
+            if alone:
+                lines.append(f"{pad}{under}^{marker}")
+            closer = None
+            for c in clines[1:]:
+                laid_out = own and not closer and (not c or c[0].isspace() or _LIST_BLOCK_RE.match(c))
+                lines.append(f"{pad}{c}" if laid_out else f"{pad}{under}{c}")
+                closer = _code_closer(c, closer)
             link = self._box_link(props, on_sheet)
             if link:
-                lines.append(f"{pad}  {link}")
+                lines.append(f"{pad}{under}{link}")
         else:
             emitted = False
 
-        child_indent = indent + 2 if emitted else indent
+        child_indent = indent + width if emitted else indent
         for child in node["children"]:
             self.item(child, child_indent, lines, under_sheet)

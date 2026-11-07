@@ -19,6 +19,7 @@ import tracemalloc
 import zipfile
 import zlib
 from types import SimpleNamespace
+from urllib.parse import quote
 
 import pymupdf
 import pytest
@@ -1124,13 +1125,14 @@ def test_the_markdown_and_obsidian_zips_bundle_the_picture(guest):
     page = guest.post("/api/pages", json={"title": "Picture bundle"}).json()["id"]
     _put_children(guest, page, [_placed("picMd", url, content="bundled")])
     name = url.rsplit("/", 1)[1]
-    for mode, folder_name in (("readable", "assets"), ("obsidian", "attachments"), ("logseq-graph", "assets")):
+    for mode, folder_name in (("readable", "assets"), ("obsidian", "attachments"), ("logseq-graph", "assets"),
+                              ("notion", "Picture bundle")):
         r = guest.get(f"/api/pages/{page}/export?mode={mode}")
         assert r.status_code == 200, r.text
         with zipfile.ZipFile(io.BytesIO(r.content)) as z:
             assert z.read(f"{folder_name}/{name}") == data, mode
             text = "".join(z.read(n).decode() for n in z.namelist() if n.endswith(".md"))
-        assert f"({'../' if mode == 'logseq-graph' else ''}{folder_name}/{name})" in text, mode
+        assert f"({'../' if mode == 'logseq-graph' else ''}{quote(folder_name)}/{name})" in text, mode
 
 
 def test_the_zotero_export_carries_the_picture_in_the_copy_and_as_an_attachment(guest):

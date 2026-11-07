@@ -41,8 +41,9 @@ websocket-delivered state. Selectors the scenarios already use: `.folderNewBtn`
 `[data-page="N"] .textLayer span`, `.plainTip .colorBtn`, `[data-hl-id]`,
 `.searchPopover .searchInput`, `button[aria-label='Share']` → `.sharePopover`,
 `.presenceBar .peerAvatar`, `.peerChips`. Editor rules that matter: plain
-Enter is a line break and Shift+Enter a new block (unless the
-`gamma-enter-new-note` preference is set), Escape does not close the editor
+Enter makes a new block and Shift+Enter a line break (the other way round
+when the `gamma-enter-new-block` preference is off; in a code fence or `$$`
+either is a line break), Escape does not close the editor
 (blur does: `closeEditor` in `scenarios/notes.mjs`), Tab / Shift+Tab remount
 the row and keep its editor open, the caret where it was.
 

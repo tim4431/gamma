@@ -3,9 +3,13 @@ import { uploadFile } from "../shared/lib/uploadParts";
 import { t, T } from "../shared/i18n/i18n.js";
 import { zipFolder } from "./folderZip.js";
 
+// A Notion export goes to the Markdown reader too, which tells its dialect
+// itself (gamma/markdown_zip_dialects.py): the card and the title are its own.
+const MARKDOWN_ZIP = { endpoint: "markdown-zip", instructions: T("Notes become pages; linked files travel with the selected notes. Links to deselected notes stay as written.") };
 const FORMATS = {
   zotero: { label: T("Zotero"), endpoint: "zotero", instructions: T("Collections become folders. An item's other files and links go under Attachments on its page, and a standalone note becomes a page of its own. Existing PDFs are kept.") },
-  markdown: { label: T("Markdown"), endpoint: "markdown-zip", instructions: T("Notes become pages; linked files travel with the selected notes. Links to deselected notes stay as written.") },
+  markdown: { label: T("Markdown"), ...MARKDOWN_ZIP },
+  notion: { label: T("Notion"), ...MARKDOWN_ZIP },
   gamma: { label: T("Gamma"), endpoint: "gamma", instructions: T("Selected pages include their notes, attachments and chats. Pages already in your library are kept unchanged.") },
   notability: { label: T("Notability"), endpoint: "notability", instructions: T("Each note becomes a page with its handwriting, typed text, pictures and recordings. Notes already imported are skipped.") },
   goodnotes: { label: T("GoodNotes"), endpoint: "goodnotes", instructions: T("Each notebook becomes a page with its handwriting, typed text, pictures and recordings. Notebooks already imported are skipped.") },
@@ -15,7 +19,8 @@ export function importFormat(source, file) {
   if (!format) throw new Error("Unsupported import source");
   return source === "markdown" && !/\.zip$/i.test(file.name) ? { ...format, endpoint: "markdown-file" } : format;
 }
-// The dialog's source of a staged review's (an import job's params.source).
+// The dialog's source of a staged review's (an import job's params.source,
+// the endpoint, so a Notion review reopens as Markdown's).
 export function dialogSource(endpoint) {
   return Object.keys(FORMATS).find((source) => FORMATS[source].endpoint === endpoint)
     || (endpoint === "markdown-file" ? "markdown" : "zotero");

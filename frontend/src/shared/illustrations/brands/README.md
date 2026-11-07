@@ -9,6 +9,6 @@ with no runtime downloads.
 - ChatGPT (OpenAI mark) and Claude: [Simple Icons v13.21.0 SVG assets](https://github.com/simple-icons/simple-icons/tree/13.21.0/icons), retrieved 2026-09-19 (CC0). Embedded in the README connections illustration with theme-aware brand colors.
 - DeepSeek: [Simple Icons v16.32.0 SVG asset](https://github.com/simple-icons/simple-icons/blob/16.32.0/icons/deepseek.svg), retrieved 2026-09-25 (CC0). Marks DeepSeek Harness in the README connections illustration.
 - Gamma: generated from `design/brand/marks/favicon.svg`, with its background plate removed. Run `node tools/branding/build.mjs` from the repository root; do not edit this copy directly.
-- Notion: [Simple Icons SVG asset](https://github.com/simple-icons/simple-icons/blob/develop/icons/notion.svg), retrieved 2026-09-16 (CC0). Used in the README connections illustration; the Zotero PNG is embedded there so the SVG has no external image dependencies.
+- Notion: [Simple Icons SVG asset](https://github.com/simple-icons/simple-icons/blob/develop/icons/notion.svg), retrieved 2026-09-16 (CC0). Marks the Notion export card, and is used in the README connections illustration; the Zotero PNG is embedded there so the SVG has no external image dependencies.
 
 Brand references: [Obsidian](https://obsidian.md/brand), [Zotero](https://www.zotero.org/support/brand), [Logseq](https://github.com/logseq/logseq).

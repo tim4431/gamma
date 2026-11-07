@@ -5,8 +5,9 @@ import obsidian from "./brands/obsidian.svg";
 import logseq from "./brands/logseq.svg";
 import zotero from "./brands/zotero.png";
 import gamma from "./brands/gamma.svg";
+import notion from "./brands/notion.svg";
 
-const APP_ICONS = { obsidian, logseq, gamma };
+const APP_ICONS = { obsidian, logseq, gamma, notion };
 
 // Familiar app marks and shared file icons; the card owns hover and selection.
 // Zotero's mark is a picture fetched as the dialog opens: it fades in.

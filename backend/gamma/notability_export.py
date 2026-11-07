@@ -60,6 +60,7 @@ _HEADING = re.compile(r"^[ \t]{0,3}#{1,6}[ \t]+(?P<text>.*)$")
 _QUOTE = re.compile(r"^[ \t]{0,3}>[ \t]?(?P<text>.*)$")
 _NUMBERED = re.compile(r"^(?P<n>\d{1,6})\. (?P<text>.*)$", re.S)
 _TODO = re.compile(r"^- \[(?P<box>[ x])\] (?P<text>.*)$", re.S)
+_BULLET = re.compile(r"^[-*+] (?P<text>.*)$", re.S)
 SVG_PNG_SIDE = 2048  # the longer side of the PNG an SVG picture goes into a note as
 
 # What a page loses on its way into a note, by kind, as the export's
@@ -515,8 +516,8 @@ class _Page:
         """The notes, in order, as the text typed on the pages: a paragraph
         per block, its lines kept apart by nmap.LINE_SEPARATOR; a top-level
         note a plain paragraph, a deeper one a bullet at its depth, a note
-        that reads "n. …" a numbered item and "- [ ] …" a checklist item, as
-        the import reads them back (nmap.flow_blocks)."""
+        that reads "n. …" a numbered item, "- [ ] …" a checklist item and
+        "- …" a bullet, as the import reads them back (nmap.flow_blocks)."""
         runs: list[nw.Run] = []
         tree: list[dict] = []
         stack: list[tuple[int, dict]] = []
@@ -749,20 +750,23 @@ def box_runs(md: str, size: float, rgba: tuple, resolve_ref=None) -> list[nw.Run
 
 def flow_runs(content: str, depth: int, resolve_ref=None) -> list[nw.Run]:
     """One note as one paragraph of the typed text: its lines joined by
-    nmap.LINE_SEPARATOR; a bullet at ``depth`` below the top, a numbered item
-    or a checklist item when it reads as one (the import's markers),
-    else plain; a heading bold."""
+    nmap.LINE_SEPARATOR; a numbered item, a checklist item or a bullet when
+    it reads as one (the import's markers), a bullet at ``depth`` below the
+    top, else plain; a heading bold."""
     base = nw.Run("")
     heading = _HEADING.match(content.split("\n", 1)[0])
     if heading:
         content = f"**{heading.group('text')}**" + content[len(content.split("\n", 1)[0]):]
-    numbered, todo = _NUMBERED.match(content), _TODO.match(content)
+    numbered, todo, bullet = _NUMBERED.match(content), _TODO.match(content), _BULLET.match(content)
     if numbered:
         base = replace(base, list_style=2, number=int(numbered.group("n")), level=depth)
         content = numbered.group("text")
     elif todo:
         base = replace(base, list_style=3, checked=todo.group("box") == "x", level=depth)
         content = todo.group("text")
+    elif bullet:
+        base = replace(base, list_style=1, level=depth)
+        content = bullet.group("text")
     elif depth:
         base = replace(base, list_style=1, level=depth)
     runs: list[nw.Run] = []

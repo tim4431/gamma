@@ -80,7 +80,7 @@ export function notesPlaceOf(list) {
 }
 
 // `shared`: what App lends every view, {refCache, onFetchRefs, onCacheRef,
-// libTree, fileChipCtx, commentsOn, keybindings, enterNewNote, pages,
+// libTree, fileChipCtx, commentsOn, keybindings, enterNewBlock, pages,
 // textScaleStyle, darkPage, hideEmbeddedAnnots, canWrite, labels}.
 export default function PagePane({ pageId, title, dock = false, overlay, scroll, startPage = 0, zoom: zoomIn = "page-width",
   pdfHidden = false, notebookView = false, notesPlace = null, shared, onScroll, onZoom, onNotesPlace, onActivate }) {
@@ -301,7 +301,7 @@ function NotesView({ pageId, block, children_, title, dock, attachment, hasSheet
     const handlers = {};
     for (const name of ["onShowOnPage", "onInsertSheet", "onNewPage", "onInvite", "onReminderSet", "onAddSheetAfter", "onEnterAttachMode",
       "onUnlinkHighlight", "onMoveHighlight", "onOpenLinkTarget", "onUndo", "onChangeText", "onCaret", "onResolveMerge", "onMergeOpen",
-      "onAddChild", "onIndent", "onOutdent", "onHop", "onMoveBlock", "onTranscribe", "onCommentPreload", "onProperties",
+      "onAddChild", "onNewBlock", "onMergeAbove", "onIndent", "onOutdent", "onHop", "onMoveBlock", "onTranscribe", "onCommentPreload", "onProperties",
       "onPropertiesPreload", "onDuplicate", "onMoveToPage", "onMoveObject", "onPasteBlocks", "onStatus", "onBlockDragOver",
       "onBlockDragLeave", "onBlockDrop"]) handlers[name] = noop;
     return {
@@ -310,7 +310,7 @@ function NotesView({ pageId, block, children_, title, dock, attachment, hasSheet
       preview: canWrite, readOnly: !canWrite, rootId: pageId, view, focusedId: null, flashingId: null, foldMoving: null,
       aiMarks: null, aiLive: null, aiScan: null, pages: shared?.pages, sheetNumbers, inlineSheets: !(notebookView && hasSheets),
       captureArea: () => null, docNonce: 0, docKey: url, refLabelsById, highlightColors, refCache: shared?.refCache,
-      peers: EMPTY, merges: null, mergeOpen: null, enterNewNote: shared?.enterNewNote, keybindings: shared?.keybindings,
+      peers: EMPTY, merges: null, mergeOpen: null, enterNewBlock: shared?.enterNewBlock, keybindings: shared?.keybindings,
       commentCounts: null, commentOpenFor: null,
       setFocusedId: noop, registerRef: noop, getTree: () => children_, lookupBlock: (id) => byId.get(id), mergeNav: () => null,
       onFetchRefs: shared?.onFetchRefs || noop, onCacheRef: shared?.onCacheRef || noop,

@@ -1,8 +1,8 @@
 """Exporting pages: one driver (``_run_export``) walks the selected page
 subtrees and feeds them to the format's ``_Builder`` — Markdown, an Obsidian
-vault, a Logseq graph, a Zotero RDF library, a scoped Gamma backup, a BibTeX
-bibliography, the notes typeset as a PDF document, or the annotated PDFs
-themselves. Most builders produce a zip; a bare .md (nothing to bundle), the
+vault, a Logseq graph, a Zotero RDF library, a zip for Notion's importer, a
+scoped Gamma backup, a BibTeX bibliography, the notes typeset as a PDF document,
+or the annotated PDFs themselves. Most builders produce a zip; a bare .md (nothing to bundle), the
 .bib, the notes PDF and one page's annotated PDF are single files. A page's
 export takes the pages inside it too when asked (``sub_pages``), laid out
 as a folder's pages are. The same builders serve the downloads
@@ -29,7 +29,7 @@ from starlette.background import BackgroundTask
 
 from .. import bibtex as bibtex_mod
 from .. import ink as inkmod
-from .. import comments, jobs, notability_export, notebook, pdf_text, pdf_translated
+from .. import comments, jobs, notability_export, notebook, notion_export, pdf_text, pdf_translated
 from ..auth import require_user, require_ws, resolve_ws, share_scope
 from ..blocks_store import (
     BLOCK_COLUMNS, FOLDERS, LABELS, PATH_SEP, TREES, assert_block_in_scope, block_to_dict,
@@ -63,6 +63,7 @@ from ..highlights import is_highlight, is_ink, is_link
 from ..storage import attachment_disposition, upload_refs
 from ..picture import is_picture, normalize_picture, picture_page, stack_order
 from ..text_box import box_page, is_text_box, normalize_text_box
+from .uploads import _pages_upload_names
 from ..obsidian_export import (APP_JSON, Filing, VaultContext, referenced_blocks, render_vault_page, unique_name,
                                vault_name)
 from ..pdf_document import render_document
@@ -308,6 +309,30 @@ def _walk_tree(node):
         yield from _walk_tree(child)
 
 
+def _reach(conn, scope) -> set | None:
+    """The pages a share's export may read from (``ShareScope.pages``, the
+    allows_page rule, in one read); None for a member, who may read them all."""
+    return None if scope is None else set(scope.pages(conn))
+
+
+def _ref_resolver(conn, reach=None):
+    """``block_ref_resolver`` as an export reads it. ``reach`` (``_reach``)
+    is the one rule of every format through a share: a block on a page
+    outside it resolves to nothing, as a deleted one does, so a [[ref]] or an
+    ![[embed]] of it stays as typed, the id the share view's own chip shows,
+    and nothing it holds reaches the file. GET /api/blocks answers 403 for
+    the same block."""
+    resolve_ref = block_ref_resolver(conn)
+    if reach is None:
+        return resolve_ref
+
+    def resolve(block_id):
+        ref = resolve_ref(block_id)
+        return ref if ref and ref["page_id"] in reach else None
+
+    return resolve
+
+
 def _image_resolver(uploads_dir):
     """``resolve_image`` for note_html: upload filename → (mime, base64)."""
     def resolve(filename):
@@ -330,8 +355,13 @@ class _Builder:
     """opts: {"pdf": bool, "highlights": bool, "notes": bool, "comments":
     bool, "notes_at": where an annotated PDF's notes go (``NOTES_AT``),
     "folder_scope": the exported folder's id | None (None: one page is
-    exported), "author": the account exporting}. ``filing`` (``obsidian_export.Filing``)
-    names the pages' folders and labels once ``begin`` has run."""
+    exported), "author": the account exporting, "share": the request's
+    ShareScope | None}. ``filing`` (``obsidian_export.Filing``) names the
+    pages' folders and labels once ``begin`` has run. Through a share,
+    ``reach`` is what its [[refs]] and ![[embeds]] may read (``_ref_resolver``)
+    and ``save`` packs only ``readable``, the uploads the share can read
+    (``_can_bundle``): both hold for every format here, so a builder has no
+    share rule of its own for them."""
     suffix = ".zip"  # appended to the base slug for the download name
     roots_only = False  # True: the driver hands over the page's own row, not its subtree
 
@@ -347,11 +377,16 @@ class _Builder:
         self.filing = None
         self.used = set()   # the arcnames taken (``unique_name``)
         self.stems = {}     # page id → its file's path without the extension, for the pages inside it
+        self.reach = None
+        self.readable = set()
 
     def begin(self, conn, root_ids):
         """Sees the whole export set before any page is walked (the DB
         connection is only open during the walk, not in ``save``)."""
         self.filing = Filing(conn, self.opts.get("folder_scope"))
+        self.reach = _reach(conn, self.opts.get("share"))
+        if self.reach is not None:
+            self.readable = _pages_upload_names(conn, list(self.reach))
 
     def add_page(self, n: int, rows, page):
         raise NotImplementedError
@@ -374,11 +409,29 @@ class _Builder:
             shutil.rmtree(self._spool, ignore_errors=True)
             self._spool = None
 
+    def _can_bundle(self, name) -> bool:
+        """Whether the export may hold the upload ``name``: through a share,
+        only what the share can read (``readable``, the rule of
+        ``GET /api/uploads/…?share=`` read once, since an export asks it of
+        every file). A handwriting picture goes by its ink."""
+        if self.opts.get("share") is None:
+            return True
+        drawn = name.endswith(".svg") and not (self.uploads_dir / name).is_file()
+        return (f"{name[:-4]}.ink" if drawn else name) in self.readable
+
+    def _bundled(self) -> tuple[set, list]:
+        """The ``assets`` and ``files`` the zip may hold (``_can_bundle``);
+        what is no upload (a spooled PDF, a note) is the export's own."""
+        return ({name for name in self.assets if self._can_bundle(name)},
+                [(arcname, path) for arcname, path in self.files
+                 if path.parent != self.uploads_dir or self._can_bundle(path.name)])
+
     def save(self, dest, progress=jobs.no_progress) -> tuple[str, str]:
         """Write the export to ``dest``: ``(download name, media type)``."""
         try:
             self.finish()
-            _write_zip(dest, self.entries, self.assets, self.uploads_dir, self.files, self.blobs, progress)
+            assets, files = self._bundled()
+            _write_zip(dest, self.entries, assets, self.uploads_dir, files, self.blobs, progress)
         finally:
             self.discard()
         return f"{self.base}{self.suffix}", "application/zip"
@@ -404,9 +457,13 @@ class _Builder:
         export: ``Filing.directory``. A page export mirrors no folder: the
         page's file at the top, a page inside it in its parent's directory
         when the parent's file is in the zip (``Filing.parent_dir``)."""
+        return self.place(page["id"], page["properties"], self.stems)
+
+    def place(self, page_id, props, stems) -> str:
+        """``directory`` as ``name_files`` asks it, of the files it has named."""
         if self.opts.get("folder_scope") is None:
-            return self.filing.parent_dir(page["id"], self.stems)
-        return self.filing.directory(page["id"], page["properties"], self.stems)
+            return self.filing.parent_dir(page_id, stems)
+        return self.filing.directory(page_id, props, stems)
 
     def file_name(self, page, ext: str) -> str:
         """The arcname of the page's own file: its title (``vault_name``)
@@ -432,7 +489,7 @@ class _Builder:
         ``<stem>.svg`` next to each ``<stem>.ink`` upload (``ink_svg_name``);
         no such file exists, so it is generated here as a zip blob."""
         for name in page_assets:
-            if not name.endswith(".svg"):
+            if not name.endswith(".svg") or not self._can_bundle(name):
                 continue
             source = self.uploads_dir / (name[:-4] + ".ink")
             arc = f"{prefix}{name}"
@@ -478,7 +535,7 @@ class _MarkdownBuilder(_Builder):
             self.used.add(arcname)
             self.filenames[rid] = arcname
             self.stems[rid] = arcname[:-3]
-        self.resolve_ref = block_ref_resolver(conn)
+        self.resolve_ref = _ref_resolver(conn, self.reach)
 
     def add_page(self, n, rows, page):
         arcname = self.filenames.get(page["id"]) \
@@ -510,6 +567,23 @@ class _MarkdownBuilder(_Builder):
         return super().save(dest, progress)
 
 
+def _named_pages(conn, root_ids) -> list[tuple]:
+    """``root_ids`` as ``obsidian_export.name_files`` takes them: (page id,
+    title, properties), those no longer there left out."""
+    pages = []
+    for rid in root_ids:
+        row = conn.execute("SELECT content, properties FROM unified_blocks WHERE id = ?",
+                           (rid,)).fetchone()
+        if row is None:
+            continue
+        try:
+            props = json.loads(row[1] or "{}")
+        except (TypeError, ValueError):
+            props = {}
+        pages.append((rid, row[0] or "", props))
+    return pages
+
+
 class _ObsidianBuilder(_Builder):
     """An Obsidian vault (``obsidian_export``): ``<dir>/<Title>.md`` per page
     (directories = the folders below the exported folder, a sub-page's
@@ -526,25 +600,16 @@ class _ObsidianBuilder(_Builder):
 
     def begin(self, conn, root_ids):
         super().begin(conn, root_ids)
-        self.ctx = VaultContext(block_ref_resolver(conn), include_pdf=self.opts["pdf"])
-        pages = []
-        for rid in root_ids:
-            row = conn.execute("SELECT content, properties FROM unified_blocks WHERE id = ?",
-                               (rid,)).fetchone()
-            if row is None:
-                continue
-            try:
-                props = json.loads(row[1] or "{}")
-            except (TypeError, ValueError):
-                props = {}
-            pages.append((rid, row[0] or "", props))
+        self.ctx = VaultContext(_ref_resolver(conn, self.reach), include_pdf=self.opts["pdf"])
+        pages = _named_pages(conn, root_ids)
         self.ctx.name_pages(self.filing, pages)
         # Every block that something links to needs its ^anchor written, and
         # a page may be rendered before the page that links into it — so the
         # link-bearing blocks are scanned up front (links from outside the
-        # export only add harmless anchors).
+        # export only add harmless anchors; a share scans its own pages).
         texts = (r[0] for r in conn.execute(
-            "SELECT content FROM unified_blocks WHERE content LIKE '%[[%'"))
+            "SELECT content, page_id FROM unified_blocks WHERE content LIKE '%[[%'")
+                 if self.reach is None or r[1] in self.reach)
         referenced_blocks(texts, self.ctx)
         if self.opts["pdf"]:
             for rid, title, _ in pages:
@@ -628,7 +693,7 @@ class _ZoteroBuilder(_Builder):
     def begin(self, conn, root_ids):
         super().begin(conn, root_ids)
         # [[refs]] in a text box read as the text they name, as in the annotated PDF.
-        self.resolve_ref = block_ref_resolver(conn)
+        self.resolve_ref = _ref_resolver(conn, self.reach)
 
     def _item_key(self, page, props) -> str:
         """The page's Zotero key when it came from Zotero, else its id: the
@@ -985,7 +1050,7 @@ class _NotesPdfBuilder(_Builder):
                 return render_document(
                     self.pages, uploads_dir=self.uploads_dir,
                     highlights=self.opts["highlights"], notes=self.opts["notes"],
-                    resolve_ref=block_ref_resolver(conn))
+                    resolve_ref=_ref_resolver(conn, self.reach))
         except Exception as e:
             log.warning(f"[notes pdf export] '{self.base}' failed: {e}")
             raise HTTPException(status_code=400, detail=f"could not build the PDF: {e}")
@@ -1021,7 +1086,7 @@ class _AnnotatedPdfBuilder(_Builder):
             data, filename, _, _ = annotated_page_pdf(
                 self.ws, [block_to_dict(r) for r in rows], page["id"], highlights=self.opts["highlights"],
                 notes=self.opts["notes"], comments=self.opts["comments"], notes_at=self.opts["notes_at"],
-                author=self.opts.get("author", ""),
+                author=self.opts.get("author", ""), reach=self.reach,
                 translation=translation if page["id"] == translated_page else None)
         except HTTPException as e:
             self.skip(page, str(e.detail))
@@ -1065,7 +1130,7 @@ class _NotabilityBuilder(_Builder):
 
     def begin(self, conn, root_ids):
         super().begin(conn, root_ids)
-        self.resolve_ref = block_ref_resolver(conn)  # the walk's connection: open while the pages are written
+        self.resolve_ref = _ref_resolver(conn, self.reach)  # the walk's connection: open while the pages are written
 
     def add_page(self, n, rows, page):
         if self._spool is None:
@@ -1100,6 +1165,66 @@ class _NotabilityBuilder(_Builder):
 
     def summary(self) -> dict:
         return {**super().summary(), "warnings": self.warnings}
+
+
+class _NotionBuilder(_Builder):
+    """A zip for Notion's importer (``notion_export``), a zip however few
+    pages it holds: ``<dir>/<Title>.md`` per page, filed as the annotated
+    PDFs are (``directory``), each page's images in a directory named for
+    it. Links resolve against the export set, so every page is named before
+    the first one renders. The PDFs stay out whatever the ``pdf`` switch
+    says, since Notion drops them; what a page loses is listed under its
+    title in the result's ``warnings``, an upload a share cannot read
+    (``_can_bundle``) among them."""
+    suffix = "-notion.zip"
+
+    def __init__(self, ws, base, opts):
+        super().__init__(ws, base, opts)
+        self.ctx = None
+        self.sizes = {}              # arcname of a bundled file → its size
+
+    def begin(self, conn, root_ids):
+        super().begin(conn, root_ids)
+        self.ctx = notion_export.NotionContext(_ref_resolver(conn, self.reach), self._bundle,
+                                               self.opts["highlights"], self.opts["notes"])
+        self.ctx.name_pages(self.filing, _named_pages(conn, root_ids), self.place)
+
+    def _bundle(self, name, stem) -> int | None:
+        """The upload ``name`` beside the page file ``stem``: its size, None
+        for a file that is gone, which ``_write_zip`` would pass over without
+        a word, or that the export may not hold. A handwriting picture has no
+        file: it is rendered here."""
+        arcname = f"{stem}/{name}"
+        if arcname not in self.sizes and not self._can_bundle(name):
+            self.sizes[arcname] = None
+        if arcname not in self.sizes:
+            path = self.uploads_dir / name
+            if path.is_file():
+                self.files.append((arcname, path))
+                self.sizes[arcname] = path.stat().st_size
+            else:
+                self.render_ink_svgs([name], prefix=f"{stem}/")
+                if self.blobs and self.blobs[-1][0] == arcname:
+                    self.sizes[arcname] = len(self.blobs[-1][1])
+        return self.sizes.get(arcname)
+
+    def add_page(self, n, rows, page):
+        text = notion_export.render_notion_page(page, self.ctx, self.filing.tags(page["properties"]))
+        if text is not None:
+            self.entries.append((self.ctx.files[page["id"]], text))
+
+    def save(self, dest, progress=jobs.no_progress):
+        if self.walked and not self.entries:         # every page was left out
+            raise HTTPException(status_code=400, detail="nested too deep to write as a Notion page")
+        return super().save(dest, progress)
+
+    def finish(self):
+        if len(self.entries) + len(self.files) + len(self.blobs) > notion_export.MAX_FILES:
+            self.ctx.warnings.append({"page_id": "", "title": self.base, "reason": (
+                f"over {notion_export.MAX_FILES:,} files, which Notion's importer is likely to fail on")})
+
+    def summary(self) -> dict:
+        return {**super().summary(), "warnings": self.ctx.warnings}
 
 
 class _BibtexBuilder(_Builder):
@@ -1174,6 +1299,7 @@ _BUILDERS = {
     "notes-pdf": _NotesPdfBuilder,
     "annotated-pdf": _AnnotatedPdfBuilder,
     "notability": _NotabilityBuilder,
+    "notion": _NotionBuilder,
 }
 
 
@@ -1220,8 +1346,8 @@ def _notes_place(notes_at: str) -> str:
 def _export_opts(pdf=True, highlights=True, notes=True, folder_scope=None, author="", comments=False,
                  notes_at="beside", share=None) -> dict:
     """The switches as the builders read them; ``share`` the request's
-    ShareScope (None for a member), which confines a ``gamma`` export to
-    what the share shows."""
+    ShareScope (None for a member), which confines the export to what the
+    share shows (``_Builder``)."""
     notes_at = _notes_place(notes_at)
     return {"pdf": bool(pdf), "highlights": bool(highlights), "notes": bool(notes), "comments": bool(comments),
             "notes_at": notes_at, "folder_scope": folder_scope, "author": author, "share": share}
@@ -1280,10 +1406,11 @@ def annotated_pdf(ws: str, block_id: str, *, highlights=True, notes=False, comme
     with connect_pages_db(ws) as conn:
         assert_block_in_scope(conn, block_id, scope)
         rows = fetch_subtree(conn, block_id) if page_root_id(conn, block_id) else []
+        reach = _reach(conn, scope)
     if not rows:
         raise HTTPException(status_code=404, detail="page not found")
     return annotated_page_pdf(ws, [block_to_dict(r) for r in rows], block_id, highlights=highlights,
-                              notes=notes, comments=comments, notes_at=notes_at, author=author)
+                              notes=notes, comments=comments, notes_at=notes_at, author=author, reach=reach)
 
 
 def _translated(pdf_bytes: bytes, translation, doc_id: str) -> bytes:
@@ -1303,12 +1430,14 @@ def _translated(pdf_bytes: bytes, translation, doc_id: str) -> bytes:
 
 
 def annotated_page_pdf(ws: str, blocks: list[dict], block_id: str, *, highlights=True, notes=False,
-                       comments=False, notes_at="beside", author="", translation=None) -> tuple[bytes, str, int, int]:
+                       comments=False, notes_at="beside", author="", translation=None,
+                       reach=None) -> tuple[bytes, str, int, int]:
     """``annotated_pdf`` of a page whose blocks (``block_to_dict``, the root
     among them) are already read — what a folder export feeds it.
     ``translation`` (an ``ExportTranslation``) is the translated view the
     viewer shows of the page's PDF, written into the file before its
-    annotations (``_translated``)."""
+    annotations (``_translated``). ``reach`` is what a share's [[refs]] may
+    read (``_ref_resolver``)."""
     root = next(b for b in blocks if b["id"] == block_id)
     doc_id = root["properties"].get("doc_id")
     page_sheets = [] if doc_id else notebook.sheets_of(blocks, block_id)
@@ -1326,7 +1455,7 @@ def annotated_page_pdf(ws: str, blocks: list[dict], block_id: str, *, highlights
             drawn += len(boxes) + len(inks) + len(pictures[-1])
             sheets.append((sheet["paper"], boxes, inks))
         with connect_pages_db(ws) as conn:
-            pdf_bytes = notebook.notebook_pdf(sheets, resolve_ref=block_ref_resolver(conn), pictures=pictures,
+            pdf_bytes = notebook.notebook_pdf(sheets, resolve_ref=_ref_resolver(conn, reach), pictures=pictures,
                                               uploads_dir=uploads)
         return pdf_bytes, f"{slugify(root.get('content'), block_id)}.pdf", drawn, 0
     if not doc_id:
@@ -1359,7 +1488,7 @@ def annotated_page_pdf(ws: str, blocks: list[dict], block_id: str, *, highlights
                 pdf_bytes, written = annotate_pdf(
                     pdf_bytes, marks if highlights else [], author=author,
                     ink=_collect_ink(blocks, uploads) if highlights else (),
-                    text_boxes=boxes, replaced=replaced, resolve_ref=block_ref_resolver(conn),
+                    text_boxes=boxes, replaced=replaced, resolve_ref=_ref_resolver(conn, reach),
                     pictures=pictures, uploads_dir=uploads)
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"could not annotate PDF: {str(e) or type(e).__name__}") from e
@@ -1376,7 +1505,7 @@ def annotated_page_pdf(ws: str, blocks: list[dict], block_id: str, *, highlights
                     threads.setdefault(thread["block_id"], []).append(thread["comments"])
                 pdf_bytes, drawn = render_notes(
                     pdf_bytes, _collect_cards(blocks, notes=notes, threads=threads), notes_at=notes_at,
-                    uploads_dir=uploads, resolve_ref=block_ref_resolver(conn))
+                    uploads_dir=uploads, resolve_ref=_ref_resolver(conn, reach))
         except Exception as e:
             raise HTTPException(status_code=400, detail=f"could not render notes: {e}")
 
@@ -1401,8 +1530,9 @@ def export_page(block_id: str, request: Request, mode: str = "readable", pdf: in
     as there), ``logseq-graph`` (a complete
     Logseq file graph, both switches pinned on), ``zotero-rdf`` (a one-item
     Zotero RDF library), ``bibtex`` (the page's citation entry as a .bib
-    file), or ``gamma`` (a scoped account backup any Gamma imports via
-    /api/import-data?mode=merge). ``sub_pages=1`` exports every page inside
+    file), ``notion`` (a zip for Notion's importer: the page as ``<Title>.md``
+    with its images, always a zip), or ``gamma`` (a scoped account backup any
+    Gamma imports via /api/import-data?mode=merge). ``sub_pages=1`` exports every page inside
     it too, laid out as a folder export lays out its pages: a format that
     writes one file for one page writes a zip for several, named for the
     page."""
@@ -1483,7 +1613,8 @@ def export_folder(folder_id: str, request: Request, mode: str = "readable", pdf:
     page's annotated PDF, the subfolders as directories), ``logseq-graph``
     (a complete Logseq file graph), ``zotero-rdf`` (a Zotero RDF library —
     subfolders become collections), ``bibtex`` (one .bib with every paper's
-    citation entry) or ``gamma`` (a scoped account backup any Gamma imports
+    citation entry), ``notion`` (a zip for Notion's importer: subfolders as
+    directories) or ``gamma`` (a scoped account backup any Gamma imports
     via /api/import-data?mode=merge). The web app exports through a job
     instead (``POST /api/jobs/export``); this is the share view's and the
     scripts' download — with a folder share token, a ``mode=bibtex`` URL is

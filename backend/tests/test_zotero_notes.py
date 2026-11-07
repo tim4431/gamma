@@ -47,6 +47,23 @@ def test_numbered_siblings_are_ordered_runs():
                                '<ol start="5"><li>c</li><li>d</li></ol><ol><li>again</li></ol>')
 
 
+def test_a_bullets_marker_is_its_list_item():
+    tree = node("root", node("- a", node("- nested")), node("plain"), node("- **b**"))
+    html = note_html(tree)
+    assert html == "<p>root</p><ul><li>a<ul><li>nested</li></ul></li><li>plain</li><li><strong>b</strong></li></ul>"
+    assert note_tree(html) == node("root", node("a", node("nested")), node("plain"), node("**b**"))
+    # What the marker leaves is read as a block's text is.
+    assert note_html(node("root", node("- ## x"))) == "<p>root</p><ul><li><h2>x</h2></li></ul>"
+    assert note_html(node("root", node("- - x"))) == "<p>root</p><ul><li>- x</li></ul>"
+
+
+@pytest.mark.parametrize("content", ["- [ ] to do", "- [x] done", "- [X] done", "- [ ]", "-", "-x", r"\- x", "* x"])
+def test_a_to_do_and_what_only_looks_like_a_bullet_stay_text(content):
+    html = note_html(node("root", node(content)))
+    assert html.startswith("<p>root</p><ul><li>-") or html.startswith("<p>root</p><ul><li>*")
+    assert note_html(node(content)).startswith("<p>")
+
+
 def test_empty_blocks_are_skipped():
     tree = node("root", node(""), node("  ", node("")), node("kept"))
     assert note_html(tree) == "<p>root</p><ul><li>kept</li></ul>"
@@ -72,6 +89,13 @@ def test_a_numbered_or_several_element_root_is_the_first_item():
     assert note_html(node("1. first", node("2. second"))) == "<ol><li>first</li><li>second</li></ol>"
     assert note_html(node("Energy:\n$$E = mc^2$$", node("next"))) == (
         '<ul><li><p>Energy:</p><pre class="math">$$E = mc^2$$</pre></li><li>next</li></ul>')
+
+
+def test_a_bullet_root_is_the_first_item():
+    html = note_html(node("- first", node("second"), node("1. third")))
+    assert html == "<ul><li>first</li><li>second</li></ul><ol><li>third</li></ol>"
+    assert note_tree(html) == node("first", node("second"), node("1. third"))
+    assert note_tree(note_html(node("- alone"))) == node("alone")
 
 
 def test_inline_markup():

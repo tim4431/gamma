@@ -385,9 +385,10 @@ Shape C was built as designed above, with these differences.
   `parent:`, so the import pairs a directory with the page beside it: a
   directory whose name carries a Notion id, beside a note or a database
   CSV named exactly as it is, holds that page's sub-pages
-  (`markdown_zip_import.paired_page`) and makes no folder; a database's
-  rows become sub-pages of its table page. A front-matter `parent:` still
-  wins, a directory that pairs with nothing stays a folder, and vaults
+  (`NotionDialect.paired_page`, in `gamma/notion_import.py`) and makes no
+  folder; a database's rows become sub-pages of its table page. A
+  front-matter `parent:` still wins, a directory that pairs with nothing
+  stays a folder, and vaults
   and plain zips, which carry no Notion ids, are unchanged. A parent left
   out of the selection leaves the note filed by its directory; one
   imported before is named as the parent, and existing pages are not

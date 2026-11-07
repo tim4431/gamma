@@ -228,6 +228,18 @@ test("every data-guide attribute in the source is registered", () => {
   for (const id of Object.keys(ANCHORS)) assert.ok(used.has(id), `anchor ${id} is registered but no element carries it`);
 });
 
+// A row of notes is a bar on its own: plain text has no dot in the app, so a
+// drawing of one has none either. The MCP clip's dot is a terminal's tool call.
+test("a clip's note rows draw no dot", () => {
+  const dir = new URL("../src/guide/media/", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
+  const dot = /<circle class="m-line(?:-dim)?" cx="[\d.]+" cy="([\d.]+)" r="[\d.]+" \/>\s*<rect class="m-line(?:-dim)?" x="[\d.]+" y="([\d.]+)" width="[\d.]+" height="([\d.]+)"/g;
+  for (const name of readdirSync(dir).filter((n) => n.endsWith(".svg") && n !== "assistants-mcp.svg")) {
+    for (const [, cy, y, h] of readFileSync(join(dir, name), "utf8").matchAll(dot)) {
+      assert.ok(Math.abs(Number(y) + Number(h) / 2 - Number(cy)) > 0.5, `guide/media/${name}: a dot at y ${cy} beside its row`);
+    }
+  }
+});
+
 test("a step's drawing is a registered id with a file, and every drawing is used", () => {
   const dir = new URL("../src/guide/media/", import.meta.url).pathname.replace(/^\/([A-Za-z]:)/, "$1");
   const files = new Set(readdirSync(dir).filter((n) => n.endsWith(".svg")).map((n) => n.replace(/\.svg$/, "")));
@@ -549,8 +561,8 @@ test("the October hints come after their moment and retire when the feature is f
   assert.equal(offered("new-chat", at("chat.archived", { discard: true })), false, "the Alt+click user knows already");
   assert.equal(offered("pdf-switch", at("chat.sent", { pdf: true })), true);
   assert.equal(offered("pdf-switch", at("chat.sent", { pdf: false })), false, "text only: nothing to say");
-  assert.equal(offered("new-note-key", at("note.lineBreak"), { enterNewNote: false }), true);
-  assert.equal(offered("new-note-key", at("note.lineBreak"), { enterNewNote: true }), false, "Enter already makes notes here");
+  assert.equal(offered("new-note-key", at("note.lineBreak"), { enterNewBlock: false }), true);
+  assert.equal(offered("new-note-key", at("note.lineBreak"), { enterNewBlock: true }), false, "Enter already makes notes here");
   assert.equal(retiresOffer(TOURS["new-note-key"], at("block.created")), true);
   assert.equal(offered("objects", at("object.selected", { kind: "image" }), { touch: true }), false, "a long press there, not a right-click");
   const palette = TOURS["command-palette"];
@@ -583,7 +595,7 @@ test("the highlights and notes tours come once the user has made several", () =>
   const notes = TOURS.notes;
   assert.equal(canOffer(notes, { facts: { ...facts, notebookView: false, touch: false }, progress: null, event: at("block.created"), seen: 8 }), true);
   assert.equal(canOffer(notes, { facts: { ...facts, notebookView: false, touch: true }, progress: null, event: at("block.created"), seen: 8 }), false,
-    "a finger neither drags the handle nor has a + under it");
+    "a finger neither drags the handle nor has a + beside it");
   assert.deepEqual(notes.steps.find((s) => s.id === "notes-add").scene.at(-1), { click: "notes.addBelow", key: "Alt" });
 });
 

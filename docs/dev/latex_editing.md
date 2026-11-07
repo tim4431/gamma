@@ -21,7 +21,7 @@ In Markdown `\[` is also an escaped bracket. Gamma keeps the two apart in
 three ways:
 
 - It writes a literal bracket with only its opener escaped: `[x]` becomes
-  `\[x]` (`text_box.escape_markdown`, `zotero_notes._escape`), because only
+  `\[x]` (`text_box.escape_markdown`, `zotero_notes.escape`), because only
   `[` opens a link, an image, a footnote, a task box or a `[[ref]]`. That
   leaves no closer to pair. An older note may still hold `\[x\]`.
 - A paste of the note source Gamma itself last copied (a copy or cut in an
@@ -95,9 +95,11 @@ is the text the AI read. The pairs and dollar spans that text holds in its
 prose stay as written. `tests/shared/pastemath.json` holds the cases both
 suites check.
 
-Where code is, everything here reads one way: `shared/lib/mdCode.js`
-(`codeFences`, `codeSpans`, `mapProse`), with `paste_math._fences`,
-`_code_spans` and `map_prose` its backend twins. A code span is CommonMark's, kept to one
+Where code is, a paste, the editor's marks and the chat read one way:
+`shared/lib/mdCode.js` (`codeFences`, `codeSpans`, `mapProse`), with
+`paste_math._fences`, `_code_spans` and `map_prose` its backend twins. The
+keys read a caret in code through `fences.fenceInnerAt` ([hotkeys.md](hotkeys.md)),
+which goes by quote depth and reads no fence in a list. A code span is CommonMark's, kept to one
 line: a run of backticks opens it and the next run of the same length
 closes it, so ``` ``a`b`` ``` is one span. A backslash escapes an opener's
 first backtick (`` \`x` `` is no code), never a closer's, since a backslash

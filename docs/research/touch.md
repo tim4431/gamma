@@ -47,7 +47,7 @@ notes. The web app has no counterpart.
 **Structure.**
 - Indent and outdent are Tab and Shift+Tab. Move up and down have no chord
   and live in the command palette, which only Ctrl+Shift+P opens.
-- A new block is Shift+Enter by default (`enterNewNote`, account-wide,
+- A new block is Shift+Enter by default (the Enter preference, account-wide,
   default false). The soft keyboard has neither Tab nor a dependable
   Shift+Return.
 - Reordering is HTML5 drag on the handle. Reports disagree on whether

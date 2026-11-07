@@ -1,6 +1,6 @@
 """Notes and the AI: live rendering, the outline, [[links]], the chat, the library agent."""
 from scene import (AMBER, BAR, BAR_DARK, BLUE, CARD, EDGE, FIG_LINE, INK, MATH, MONO, MUTED, SOFT, YELLOW, anim,
-                   bullet, button, chip, field, frame, hide, key, keytimes, panel, paper, pointer, show, typed)
+                   button, chip, field, frame, hide, key, keytimes, panel, paper, pointer, show, typed)
 from branding import _advance
 
 LINK = '#e8f0fb'  # the pale blue behind a callout, a [[link]] chip, a citation
@@ -55,8 +55,6 @@ def notes():
     X = 180
     y1, y2, y3 = 268, 392, 506
     body = [LIFT]
-    for y, t in ((y1, 0.95), (y2, 4.3), (y3, 8.4)):
-        body.append('<g>' + bullet(152, y - 9) + show(loop, t) + '</g>')
     # A display equation typed as LaTeX, a live preview over it, rendered when the caret leaves.
     body.append('<g>' + typed(r'$$ N(t) = N_0 e^{-\Gamma t} $$', X, y1, loop, 1.2, 3.8, 30, family=MONO)
                 + hide(loop, 4.3) + '</g>')
@@ -110,15 +108,15 @@ def notes():
 
 
 def outline():
-    """Shift+Enter makes a note, Tab nests it, the ⋮⋮ handle moves one."""
+    """Enter makes a note, Tab nests it, the ⋮⋮ handle moves one."""
     loop = 11
     size, step = 26, 78
     rows = [206 + i * step for i in range(4)]
-    HX, BX, TX = 336, 366, 390
+    HX, TX = 336, 390
     A, B, C, N = 'Calibrate the 420 nm laser', 'Measure T1 of the clock state', 'Write up the blockade data', 'check the beam waist'
 
     def line(text):
-        return bullet(BX, rows[0] - 9) + label(text, TX, rows[0], size)
+        return label(text, TX, rows[0], size)
 
     def at(i, inner, *motion):
         return f'<g transform="translate(0 {rows[i] - rows[0]})"><g>{inner}{"".join(motion)}</g></g>'
@@ -130,7 +128,7 @@ def outline():
         at(0, line(A), track(loop, (6.3, 0, 0), (6.9, 0, step))),
         at(1, line(B), track(loop, *insert, *drop)),
         # The new note: typed, then indented by Tab; it moves with the note it is under.
-        at(1, '<g>' + bullet(BX, rows[0] - 9) + typed(N, TX, rows[0], loop, 2.2, 3.6, size)
+        at(1, '<g>' + typed(N, TX, rows[0], loop, 2.2, 3.6, size)
            + track(loop, (4.2, 0, 0), (4.45, 40, 0)) + '</g>' + show(loop, 1.9),
            track(loop, (6.3, 0, 0), (6.9, 0, step))),
         # The dragged note: lifted on a card while it moves up past the others.
@@ -140,10 +138,10 @@ def outline():
            track(loop, *insert, (5.9, 0, step), (7.0, 0, -2 * step))),
     ]
     body = [LIFT, '<g>' + ''.join(rows_svg) + breathe(loop) + '</g>']
-    # The caret at the end of the first note, until Shift+Enter.
+    # The caret at the end of the first note, until Enter.
     body.append(f'<g><rect x="{end_a + 4:.0f}" y="{rows[0] - 24}" width="2.5" height="32" fill="{AMBER}"/>'
                 + show(loop, 1.0, 1.8) + '</g>')
-    body.append('<g>' + key(end_a + 36, rows[0] - 30, 'Shift+Enter', 20) + show(loop, 1.5, 2.7) + '</g>')
+    body.append('<g>' + key(end_a + 36, rows[0] - 30, 'Enter', 20) + show(loop, 1.5, 2.7) + '</g>')
     body.append('<g>' + key(TX + 40 + width(N, size) + 36, rows[1] - 30, 'Tab', 20) + show(loop, 3.95, 5.0) + '</g>')
     rest = (1000, 500)
     grab = HX - 16
@@ -153,7 +151,7 @@ def outline():
         loop, [0, 0.3, 0.9, 1.1, 1.7, 4.6, 5.3, 5.9, 7.0, 7.5, 8.5], press=(1.0, 5.75)))
     scene = panel(290, 50, 820, 520, 'Notes') + ''.join(body)
     return frame('Notes are a nested outline',
-                 'Three one-line notes. Shift+Enter starts a new note under the first and a line is typed; Tab indents '
+                 'Three one-line notes. Enter starts a new note under the first and a line is typed; Tab indents '
                  'it under the note above. Then the ⋮⋮ handle of the last note is dragged up, and it moves above the '
                  'first while the others slide down.', scene)
 
@@ -164,8 +162,7 @@ def page_links():
     y, size = 256, 24
     lead = 'Compare the fidelity with '
     cx = 156 + width(lead, size)
-    body = [LIFT, bullet(132, 186) + f'<rect x="156" y="180" width="400" height="11" rx="5.5" fill="{BAR}"/>',
-            bullet(132, y - 9)]
+    body = [LIFT, f'<rect x="156" y="180" width="400" height="11" rx="5.5" fill="{BAR}"/>']
     body.append(typed(lead, 156, y, loop, 0.8, 2.8, size))
     body.append('<g>' + typed('[[', cx, y, loop, 3.1, 3.4, size) + hide(loop, 4.65) + '</g>')
     # The picker: three page titles, the first one marked.
@@ -194,8 +191,8 @@ def page_links():
                         [0, 3.6, 4.3, 4.8, 5.8], press=(4.5,)))
     scene = (panel(80, 60, 640, 500, 'Lab notes')
              + panel(rx, 60, 540, 500, 'Rydberg arrays')
-             + bullet(rx + 46, 186) + f'<rect x="{rx + 68}" y="180" width="360" height="11" rx="5.5" fill="{BAR}"/>'
-             + bullet(rx + 46, 228) + f'<rect x="{rx + 68}" y="222" width="280" height="11" rx="5.5" fill="{BAR}"/>'
+             + f'<rect x="{rx + 68}" y="180" width="360" height="11" rx="5.5" fill="{BAR}"/>'
+             + f'<rect x="{rx + 68}" y="222" width="280" height="11" rx="5.5" fill="{BAR}"/>'
              + ''.join(body))
     return frame('Link notes and pages',
                  'In a note “[[” is typed and a picker lists three page titles; “Rydberg arrays” is clicked and becomes a '
