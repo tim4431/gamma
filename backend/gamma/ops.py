@@ -28,6 +28,14 @@ can edit one page at once and only the touched rows move:
   applied op echoes it, so a newer edit or move someone made is never undone.
 - ``move {id, parent, position?}`` — cycle-checked, same collision rule.
 - ``delete {id}`` — the subtree.
+- ``merge {id, into, marker?}`` — block ``id`` joined to the end of ``into``:
+  the two texts as they are now, ``id``'s without a leading ``marker`` (the
+  list or heading marker it had), its children as they are now under
+  ``into``, ``id`` gone. One op holds through a race where a set and a
+  delete lose text: of two merges the later joins what the earlier stored,
+  or is refused and its block stays. Logged and fanned out as the moves, the
+  set and the delete it came to, so the log, a catch-up and a mirror know no
+  fifth op.
 
 Every touched block (and every insert parent) must be inside the page; the
 page root may only be ``set`` (a share editor: content only — rename — never
@@ -209,7 +217,15 @@ class DeleteOp(BaseModel):
     id: str
 
 
-Op = Annotated[Union[SetOp, InsertOp, MoveOp, DeleteOp], Field(discriminator="op")]
+class MergeOp(BaseModel):
+    op: Literal["merge"]
+    id: str
+    into: str
+    marker: str = ""  # what the block's text loses at its start, when it still starts with it
+    base: str | None = None  # the text `into` had when it was joined: the client's, for a rescue (never read here)
+
+
+Op = Annotated[Union[SetOp, InsertOp, MoveOp, DeleteOp, MergeOp], Field(discriminator="op")]
 
 
 class CursorState(BaseModel):
@@ -259,7 +275,7 @@ class _Batch:
         self.dropped: set[str] = set()
         self.added: set[str] = set()
         self.doc_deleted = False  # a deleted block carried a PDF (doc_id)
-        self.chats_filed = 0  # folder chats a tree delete filed into the library's history
+        self.chats_filed: dict[str, str] = {}  # folder chats a tree delete filed into the library's history
         # block id → (the people its text named before the batch, and names now), for the Inbox
         self.people: dict[str, tuple[set, set]] = {}
         self.texts: dict[str, str] = {}  # and the text now
@@ -341,7 +357,7 @@ class _Batch:
                          or parent in {r[0] for r in fetch_subtree(self.conn, block_id)}):
             raise OpError(400, "cannot move a block into its own subtree", conflict=CYCLE)
 
-    # --- the four ops --------------------------------------------------------
+    # --- the five ops --------------------------------------------------------
 
     def set(self, op: dict) -> None:
         block_id = op["id"]
@@ -542,8 +558,41 @@ class _Batch:
             # mirror or the iPad relays one): filed into the library chat's
             # history in this transaction. Local import: the router imports ops.
             from .routers.chats import file_into_home
-            self.chats_filed += file_into_home(self.conn, [r[0] for r in rows])
+            self.chats_filed.update(file_into_home(self.conn, [r[0] for r in rows]))
         self.applied.append({"op": "delete", "id": block_id})
+
+    def merge(self, op: dict) -> None:
+        """Block ``id`` joined to the end of ``into``, both as they are now.
+        Its children keep their reading order: in its place when ``into`` is
+        its parent, else last under ``into``, which they already follow. A
+        refusal leaves both blocks as they are. A client's copy of ``into``
+        already holds this block's text, so its ``missing`` is sent again
+        only with text ``into`` must not lose, as it was before the join
+        (collabSession ``refused``), and the merge after it."""
+        block_id, into = op["id"], op["into"]
+        if self.tree:
+            raise OpError(400, "folders and labels do not merge")
+        self.require_in_page(block_id)
+        if self.page_id in (block_id, into):
+            raise OpError(403, "the page itself cannot be merged")
+        self.check_parent(into, block_id)
+        parent, position, text = self.conn.execute(
+            "SELECT parent_id, position, content FROM unified_blocks WHERE id = ?", (block_id,)).fetchone()
+        stored = self.conn.execute("SELECT content FROM unified_blocks WHERE id = ?", (into,)).fetchone()[0]
+        text, marker = text or "", op.get("marker") or ""
+        if text.startswith(marker):
+            text = text[len(marker):]
+        low, high = last_child_position(self.conn, into), None
+        if parent == into:
+            low = position
+            high = self.conn.execute("SELECT MIN(position) FROM unified_blocks WHERE parent_id = ? AND position > ?",
+                                     (into, position)).fetchone()[0]
+        for row in self.conn.execute("SELECT id FROM unified_blocks WHERE parent_id = ? ORDER BY position, id",
+                                     (block_id,)).fetchall():
+            low = generate_key_between(low, high)
+            self.move({"id": row[0], "parent": into, "position": low})
+        self.set({"id": into, "content": (stored or "") + text})
+        self.delete({"id": block_id})
 
 
 def _memo(memo: dict, fn, *args):
@@ -739,7 +788,8 @@ def apply_ops(conn, page_id: str, ops: list[dict], *, actor: str, client: str = 
     one it has) diffed across the whole batch, for the Inbox
     (``_Batch.mention_changes``).
     ``chats_filed``: the folder conversations a tree delete filed into the
-    library chat's history (``after_commit`` adds ``shares_stopped``). ``dropped_uploads``: the
+    library chat's history, ``{history id: folder}`` (``after_commit`` adds
+    ``shares_stopped``). ``dropped_uploads``: the
     upload names the batch stopped referencing (the names it started
     referencing have their orphan rows cleared in the same transaction —
     gamma/upload_gc.py); ``doc_deleted``: a deleted block carried a PDF.
@@ -820,6 +870,8 @@ def _apply(conn, page_id: str, ops: list[dict], *, actor: str, client: str = "",
                 batch.move(op)
             elif kind == "delete":
                 batch.delete(op)
+            elif kind == "merge":
+                batch.merge(op)
             else:
                 raise OpError(400, f"unknown op: {kind!r}")
         except OpError as e:

@@ -342,7 +342,7 @@ def _layout(md: str, box: dict, surface_width: float, resolve_ref=None):
                 y += h * scale
                 widest = max(widest, w * scale)
                 continue
-            p = ("text", plain(latex_spans(p[1])), 1, 0, "")  # no ziamath, or it choked
+            p = ("text", plain(latex_spans(p[1])), 1, 0, "")  # ziamath choked
         _kind, spans, scale, level, marker = p
         fs, indent = size * scale, level * _NEST * size
         if marker and not level:  # "[ ] x" outside a list reads as typed
@@ -402,7 +402,7 @@ def pdf_ops(md: str, box: dict, surface_width: float, glyphs, fonts: set, resolv
 def pdf_resources(fonts: set, glyphs):
     """The /Resources of a stream drawn by ``pdf_ops``: the base-14 fonts
     it used and the document's Type 3 fonts."""
-    from PyPDF2.generic import DictionaryObject, NameObject
+    from pypdf.generic import DictionaryObject, NameObject
 
     from .pdf_typeset import font_resources
 

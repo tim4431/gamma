@@ -708,7 +708,7 @@ export async function textBoxScenarios({ server, browser, alice, bob, makePdf, s
     await page.waitForSelector('.nbSheet [data-box-id="tbStalePage"]', { timeout: 5000 });
     const staleRow = page.locator('.blockRowWrap[data-block-id="tbStalePage"]');
     await staleRow.waitFor({ timeout: 5000 });
-    assertEq(await staleRow.locator(".blockMeta").first().innerText(), "note", "no page named");
+    assertEq(await staleRow.locator(".blockMeta").count(), 0, "no page named");
     await account.api("/api/blocks/tbStalePage", { method: "DELETE" });
     await until(async () => !(await page.$('[data-box-id="tbStalePage"]')), { what: "that box removed again" });
     assertNoProblems(page);

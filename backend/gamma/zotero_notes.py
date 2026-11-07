@@ -25,7 +25,8 @@ import re
 import urllib.parse
 from html.parser import HTMLParser
 
-from .note_markup import BARE_URL, INLINE_RE, LINK_PARTS, LINK_TARGET, LITERAL_SPANS
+from .note_markup import (ALT_SIZE_RE, BARE_URL, INLINE_RE, LINK_PARTS, LINK_TARGET, LITERAL_SPANS, WIDTH_SUFFIX,
+                          alt_and_width)
 
 MARK_STYLE = "background-color: #ffd40080"  # Gamma's ==mark== in a Zotero note
 
@@ -36,7 +37,7 @@ MARK_STYLE = "background-color: #ffd40080"  # Gamma's ==mark== in a Zotero note
 _COLOR_VALUE_RE = re.compile(r"#[0-9a-f]{3,8}|[a-z]+|(?:rgba?|hsla?)\([0-9.,%\s/+-]*\)")
 
 
-def _style(css: str) -> dict:
+def css_style(css: str) -> dict:
     """A run's inline CSS → ``{"color": v, "background": v}`` (either absent),
     each a plain color value. Gamma's editor writes ``background``, Zotero's
     ``background-color``; both are the background."""
@@ -50,7 +51,7 @@ def _style(css: str) -> dict:
     return out
 
 
-_MARK = _style(MARK_STYLE)
+_MARK = css_style(MARK_STYLE)
 
 
 def _zotero_css(style: dict) -> str:
@@ -65,17 +66,14 @@ def _gamma_css(style) -> str:
 
 # --- export: block markdown → note HTML ----------------------------------------
 
-# A markdown image (Obsidian "|300" size in the alt, or the legacy Logseq
-# suffix), or a span INLINE_RE reads as written, in which nothing is an
+# A markdown image (its size in the alt or after it, note_markup's image
+# sizes), or a span INLINE_RE reads as written, in which nothing is an
 # image ("\![a](b)" is a link, "`![a](b)`" code): images are found with the
-# group "src" set.
+# group "src" set. A note's <img> holds the size as its width attribute.
 _IMAGE_RE = re.compile(
     LITERAL_SPANS
     + r"|!\[(?P<alt>[^\]\n]*)\]\(\s*(?P<src>" + LINK_TARGET + r")(?:[ \t][^)\n]*)?\)"
-    r"(?:\{:width\s+(?P<lw>\d+)\})?")
-# The display width Gamma keeps in an image's alt ("fig|300", mdMarks.js
-# ALT_WIDTH_RE), which a note's <img> holds as its width attribute.
-_ALT_WIDTH_RE = re.compile(r"(.*?)\|(\d+)(?:x\d+)?", re.S)
+    r"(?:" + WIDTH_SUFFIX + ")?")
 # What an alt read from HTML drops: the characters that would end it or
 # read as markup around it.
 _ALT_DROP_RE = re.compile(r"[\[\]\\`$*~=<>]")
@@ -84,6 +82,8 @@ _DATA_IMAGE_RE = re.compile(LITERAL_SPANS + r"|!\[(?P<alt>[^\]\n]*)\]\((?P<src>d
 _UPLOAD_SRC_RE = re.compile(r"/api/uploads/([0-9a-fA-F]+\.[A-Za-z0-9]+)")
 _PLACEHOLDER_RE = re.compile("\x00(\\d+)\x01")
 _ORDERED_RE = re.compile(r"(\d{1,9})[.)](?:[ \t]+|$)")
+# A bullet's marker; a to-do's box has no list item in a note, so "- [ ] x" is text.
+_BULLET_RE = re.compile(r"^- (?!\[[ xX]\](?:\s|$))")
 # A fence opening a code block (a backtick fence's info string holds no backtick).
 _FENCE_RE = re.compile(r"[ \t]{0,3}(?:(`{3,})[^`\n]*|(~{3,})[^\n]*)")
 _HEADING_RE = re.compile(r"[ \t]{0,3}(#{1,6})[ \t]+(.*)")
@@ -183,7 +183,7 @@ def _element_at(lines: list[str], i: int):
     return None
 
 
-def _elements(content: str) -> list[tuple]:
+def block_elements(content: str) -> list[tuple]:
     """A block's markdown → its block elements in order: ``("code", text)``,
     ``("math", source)``, ``("heading", level, text)``, ``("quote", text)``,
     ``("rule",)``, ``("table", rows)`` and ``("para", text)``. A paragraph runs,
@@ -245,7 +245,7 @@ def _spans_html(text: str, resolve_ref, in_link: bool = False) -> str:
         elif which == "esc":
             out.append(_esc(body[1]))
         elif which == "color":
-            style = _style(body[len('<span style="'):body.index('">')])
+            style = css_style(body[len('<span style="'):body.index('">')])
             inner = _spans_html(_inner(which, body), resolve_ref, in_link)
             out.append(f'<span style="{_zotero_css(style)}">{inner}</span>' if style else inner)
         elif which in _WRAP_TAGS:
@@ -266,10 +266,9 @@ def _spans_html(text: str, resolve_ref, in_link: bool = False) -> str:
 
 def _image_html(src: str, alt: str, width, resolve_image) -> str:
     """An image as a note's <img>, its alt and Gamma's display width
-    ("fig|300", or the legacy "{:width 300}") as attributes."""
-    size = _ALT_WIDTH_RE.fullmatch(alt or "")
-    if size:
-        alt, width = size.group(1), size.group(2)
+    (``note_markup.alt_and_width``: "fig|300", or Logseq's ``width`` read
+    after the image) as attributes."""
+    alt, width = alt_and_width(alt, width)
     attrs = (f' alt="{_attr(alt)}"' if alt else "") + (f' width="{int(width)}"' if width else "")
     upload = _UPLOAD_SRC_RE.fullmatch(src)
     if upload:
@@ -327,14 +326,15 @@ class _Render:
         return self.inline(el[1]) if bare else f"<p>{self.inline(el[1])}</p>"
 
     def item(self, content: str) -> str:
-        elements = _elements(content)
+        elements = block_elements(content)
         bare = len(elements) == 1
         return "".join(self.element(el, bare) for el in elements)
 
     def lists(self, nodes: list[dict]) -> str:
-        """Sibling blocks as list runs: a ``<ul>``, or an ``<ol>`` for a run of
-        siblings numbered on from each other (``N.`` or ``N)``, the number
-        taken off), each item's children a nested run."""
+        """Sibling blocks as list runs: a ``<ul>`` (a bullet's ``- `` taken
+        off), or an ``<ol>`` for a run of siblings numbered on from each other
+        (``N.`` or ``N)``, the number taken off), each item's children a
+        nested run."""
         out, tag, last = [], None, None
         for node in nodes:
             if _empty(node):
@@ -349,7 +349,8 @@ class _Render:
                 out.append(f'<ol start="{number}">' if ordered and number != 1 else f"<{want}>")
                 tag = want
             last = number
-            out.append("<li>" + self.item(content[ordered.end():] if ordered else content)
+            marker = ordered or _BULLET_RE.match(content)
+            out.append("<li>" + self.item(content[marker.end():] if marker else content)
                        + self.lists(node.get("children") or []) + "</li>")
         if tag:
             out.append(f"</{tag}>")
@@ -360,8 +361,8 @@ def note_html(node: dict, resolve_image=None, resolve_ref=None) -> str:
     """A block subtree (a ``build_tree`` node: ``content`` and ``children``;
     other keys are ignored) → one Zotero note's HTML: the root as its block
     element, its children as a list after it. A root that is a numbered item
-    or holds several elements is the list's first item instead, which is how
-    ``note_tree`` reads it back. ``resolve_image(filename) -> (mime, base64) |
+    or a bullet, or holds several elements, is the list's first item instead,
+    which is how ``note_tree`` reads it back. ``resolve_image(filename) -> (mime, base64) |
     None`` embeds pasted uploads as data URIs (a "(image: <name>)" placeholder
     when it gives none); ``resolve_ref(id) -> {content, ...} | None`` reads a
     [[ref]] as the text of the block it names. The exact inverse of
@@ -371,8 +372,8 @@ def note_html(node: dict, resolve_image=None, resolve_ref=None) -> str:
     children = node.get("children") or []
     if not content:
         return render.lists(children)
-    elements = _elements(content)
-    if len(elements) == 1 and not _ORDERED_RE.match(content):
+    elements = block_elements(content)
+    if len(elements) == 1 and not _ORDERED_RE.match(content) and not _BULLET_RE.match(content):
         return render.element(elements[0], bare=False) + render.lists(children)
     return render.lists([{"content": content}] + list(children))
 
@@ -398,6 +399,8 @@ _ORDER = ("link", "color", "mark", "underline", "strike", "bold", "italic")
 _WS_RE = re.compile(r"[ \t\n\r\f]+")              # HTML's whitespace (not &nbsp;)
 _BARE_URL_RE = re.compile(BARE_URL)                 # INLINE_RE's url
 _URL_START_RE = re.compile(r"https?:(/)/")
+# An "@" that starts a word, where a mention would read (mentions.MENTION_RE).
+_MENTION_AT_RE = re.compile(r"(?<![A-Za-z0-9_@./+\\-])@(?=[A-Za-z0-9_])")
 _ENTITY_RE = re.compile(r"&#?[0-9A-Za-z]+;")
 _EDGE_RE = re.compile(r"[\s\\]+$")              # what a mark may not close on
 # A line start that would read as a heading, quote or list item (the
@@ -408,31 +411,41 @@ _LINE_START_RE = re.compile(r"([#>]|[-+](?=\s))|\d{1,9}([.)])(?=\s)")
 _WHOLE_LINE_RE = re.compile(r"(\+|-+|=+)[ \t]*|\d{1,9}([.)])[ \t]*")
 
 
-class _El:
+class El:
     __slots__ = ("tag", "attrs", "children")
 
     def __init__(self, tag: str, attrs: dict):
         self.tag, self.attrs, self.children = tag, attrs, []
 
 
-class _Parser(HTMLParser):
-    """Note HTML → a tree of ``_El`` and text, forgiving as a browser is about
-    an unclosed <p> or <li>; scripts, styles and the head are left out."""
+class Parser(HTMLParser):
+    """Note HTML → a tree of ``El`` and text, forgiving as a browser is about
+    an unclosed <p> or <li>; scripts, styles and the head are left out. A
+    subclass can bound ``max_open``, which bounds every walk up the open
+    elements: what nests past it lies flat in the last one kept."""
+    max_open = float("inf")
 
-    def __init__(self):
+    def __init__(self, keep_p: bool = False, hidden=()):
         super().__init__(convert_charrefs=True)
-        self.root = _El("", {})
+        self.keep_p = keep_p                     # a <p> stays open around a block (Notion's export)
+        self.left_out = _HIDDEN | set(hidden)
+        self.root = El("", {})
         self.stack = [self.root]
         self.hidden = 0
+        self.past = 0                            # how many of what is open went past max_open
 
     def handle_starttag(self, tag, attrs):
         if self.hidden:
             self.hidden += 0 if tag in _VOID else 1
             return
-        if tag in _HIDDEN:
+        if tag in self.left_out:
             self.hidden = 1
             return
-        if self.stack[-1].tag == "p" and tag in _BLOCKS | _TRANSPARENT:
+        if len(self.stack) >= self.max_open:
+            self.stack[-1].children.append(El(tag, dict(attrs)))
+            self.past += tag not in _VOID
+            return
+        if not self.keep_p and self.stack[-1].tag == "p" and tag in _BLOCKS | _TRANSPARENT:
             self.stack.pop()
         if tag == "li":
             for i in range(len(self.stack) - 1, 0, -1):
@@ -441,7 +454,7 @@ class _Parser(HTMLParser):
                 if self.stack[i].tag == "li":
                     del self.stack[i:]
                     break
-        el = _El(tag, dict(attrs))
+        el = El(tag, dict(attrs))
         self.stack[-1].children.append(el)
         if tag not in _VOID:
             self.stack.append(el)
@@ -454,6 +467,9 @@ class _Parser(HTMLParser):
     def handle_endtag(self, tag):
         if self.hidden:
             self.hidden -= 1
+            return
+        if self.past:
+            self.past -= 1
             return
         for i in range(len(self.stack) - 1, 0, -1):
             if self.stack[i].tag == tag:
@@ -470,27 +486,27 @@ class _Parser(HTMLParser):
             kids.append(data)
 
 
-def _parse(html: str) -> _El:
-    parser = _Parser()
+def _parse(html: str) -> El:
+    parser = Parser()
     parser.feed(html or "")
     parser.close()
     return parser.root
 
 
-def _tag(node) -> str | None:
+def node_tag(node) -> str | None:
     return None if isinstance(node, str) else node.tag
 
 
-def _text(node) -> str:
+def node_text(node) -> str:
     """Every bit of text under a node, a <br> a line break."""
     if isinstance(node, str):
         return node
     if node.tag == "br":
         return "\n"
-    return "".join(_text(c) for c in node.children)
+    return "".join(node_text(c) for c in node.children)
 
 
-def _classes(el: _El) -> list[str]:
+def classes(el: El) -> list[str]:
     return (el.attrs.get("class") or "").split()
 
 
@@ -500,7 +516,7 @@ def _flow(nodes) -> list[tuple]:
     transparent container's children stand in its place."""
     out, loose = [], []
     for node in nodes:
-        tag = _tag(node)
+        tag = node_tag(node)
         if tag in _TRANSPARENT or tag in _BLOCKS:
             if loose:
                 out.append(("inline", loose))
@@ -541,12 +557,12 @@ def _image_md(attrs: dict) -> tuple:
     elif not src.startswith(("http://", "https://")):
         return ("text", "(image)")
     alt = " ".join(_ALT_DROP_RE.sub("", attrs.get("alt") or "").split())
-    if _ALT_WIDTH_RE.fullmatch(alt):             # an alt ending "|300" is no width
+    if ALT_SIZE_RE.fullmatch(alt):               # an alt ending "|300" is no width
         alt = alt.replace("|", " ")
     width = (attrs.get("width") or "").strip()
     if width.isdigit() and int(width):
         alt += f"|{int(width)}"
-    return ("img", f"![{alt}]({_url_md(src)})")
+    return ("raw", f"![{alt}]({_url_md(src)})")
 
 
 def _math_md(text: str) -> str | None:
@@ -564,7 +580,7 @@ def _span_marks(css: str, marks: dict) -> dict:
     """The marks a <span>'s style adds: Gamma's highlight for exactly
     MARK_STYLE, else its color, merged into an enclosing one; Zotero writes
     strike-through as a text-decoration."""
-    style, marks = _style(css), dict(marks)
+    style, marks = css_style(css), dict(marks)
     if style == _MARK:
         marks["mark"] = True
     elif style:
@@ -580,10 +596,10 @@ def _span_marks(css: str, marks: dict) -> dict:
 
 def _leaves(nodes, marks: dict, out: list, one_line: bool):
     """Inline HTML → leaves: ``(kind, text, marks)`` for "text", "code",
-    "math" and "img", ``("br",)`` for a line break (a space when
-    ``one_line``)."""
+    "math" and "raw" (finished markdown: an image), ``("br",)`` for a line
+    break (a space when ``one_line``)."""
     for node in nodes:
-        tag = _tag(node)
+        tag = node_tag(node)
         if tag is None:
             out.append(("text", node, marks))
         elif tag == "br":
@@ -591,10 +607,10 @@ def _leaves(nodes, marks: dict, out: list, one_line: bool):
         elif tag == "img":
             out.append((*_image_md(node.attrs), marks))
         elif tag == "code":
-            out.append(("code", _text(node), marks))
-        elif tag == "span" and "math" in _classes(node):
-            math = _math_md(_text(node))
-            out.append(("math", math, marks) if math else ("text", _text(node), marks))
+            out.append(("code", node_text(node), marks))
+        elif tag == "span" and "math" in classes(node):
+            math = _math_md(node_text(node))
+            out.append(("math", math, marks) if math else ("text", node_text(node), marks))
         elif tag in _TAG_MARKS:
             _leaves(node.children, {**marks, _TAG_MARKS[tag]: True}, out, one_line)
         elif tag == "a":
@@ -632,7 +648,7 @@ def _collapse(leaves: list) -> list:
             space = True
             continue
         kind, text, marks = leaf
-        if kind != "img":
+        if kind != "raw":
             text = _WS_RE.sub(" ", text)
         if kind == "text" and space:
             text = text.lstrip(" ")
@@ -812,7 +828,7 @@ def _delimiter(token) -> str:
     kind = token[0]
     if kind == "code":
         return f"`{token[1]}`"
-    if kind in ("math", "img", "url", "italic"):
+    if kind in ("math", "raw", "url", "italic"):
         return token[1]
     if kind == "br":
         return "\n"
@@ -837,7 +853,7 @@ def _italics(tokens: list) -> list:
     while i < len(out):
         if out[i] == ("open", ("italic", True)):
             close = out.index(("close", ("italic", True)), i)
-            body = "".join(shown(t) for t in out[i + 1:close] if t[0] != "img")
+            body = "".join(shown(t) for t in out[i + 1:close] if t[0] != "raw")
             prev = shown(out[i - 1])[-1] if i and out[i - 1][0] != "br" else ""
             nxt = shown(out[close + 1])[0] if close + 1 < len(out) and out[close + 1][0] != "br" else ""
             if out[close + 1:close + 2] != [("close", ("bold", True))] and "*" not in body:
@@ -859,7 +875,7 @@ def _italics(tokens: list) -> list:
     return merged
 
 
-def _escape(text: str, prev: str, nxt: str, dollars: bool) -> str:
+def escape(text: str, prev: str, nxt: str, dollars: bool, mentions: bool = False) -> str:
     """Literal text as markdown that reads as typed, between the characters
     ``prev`` and ``nxt`` of what surrounds it ("" at a line's start or end):
     backslash, ``*``, backtick and ``[`` always (a ``]`` opens nothing, and
@@ -871,11 +887,16 @@ def _escape(text: str, prev: str, nxt: str, dollars: bool) -> str:
     starts an entity; the first "/" of a web address (text outside a link
     holds none, ``_split`` made each a link; one in a link's label would run
     on past its end); a line start that would read as a heading, quote, list
-    item or rule; and a line that would read as a table's delimiter row."""
+    item or rule; a line that would read as a table's delimiter row; and,
+    with ``mentions``, an "@" that would read as a mention with what is
+    next."""
     escape_at = {m.start(1) for m in _URL_START_RE.finditer(text)}
-    if not prev:                                 # at a line's start
+    if mentions:
+        escape_at |= {m.start() for m in _MENTION_AT_RE.finditer(text + nxt)}
+    if not prev:                                 # at a line's start, past any indent
         whole_line = not nxt
-        m = _LINE_START_RE.match(text) or (whole_line and _WHOLE_LINE_RE.fullmatch(text))
+        indent = len(text) - len(text.lstrip(" \t"))
+        m = _LINE_START_RE.match(text, indent) or (whole_line and _WHOLE_LINE_RE.fullmatch(text, indent))
         if m:
             escape_at.add(m.start(1) if m.group(1) else m.start(2))
         if whole_line and "|" in text and "-" in text and all(_DELIM_CELL_RE.fullmatch(c) for c in _cells(text)):
@@ -896,9 +917,24 @@ def _escape(text: str, prev: str, nxt: str, dollars: bool) -> str:
     return "".join(out)
 
 
-def _markdown(leaves: list) -> str:
-    """A paragraph's leaves → its markdown."""
-    tokens = _italics(_bare_urls(_tidy(_tokens(_split(_collapse(leaves))))))
+def _lines(leaves: list) -> list:
+    """Each line break in text as the ``("br",)`` it is, so that ``escape``
+    sees the line's start."""
+    out = []
+    for leaf in leaves:
+        if leaf[0] == "text" and "\n" in leaf[1]:
+            for i, line in enumerate(leaf[1].split("\n")):
+                out += [("br",)] * bool(i) + [("text", line, leaf[2])] * bool(line)
+        else:
+            out.append(leaf)
+    return out
+
+
+def markdown(leaves: list, collapse: bool = True, mentions: bool = False) -> str:
+    """A paragraph's leaves → its markdown; ``collapse`` applies HTML's
+    whitespace rules first, and ``mentions`` keeps a literal "@name" from
+    reading as a mention."""
+    tokens = _italics(_bare_urls(_tidy(_tokens(_split(_collapse(leaves) if collapse else _lines(leaves))))))
     outs = [None if t[0] == "text" else _delimiter(t) for t in tokens]
 
     # Literal "$" is escaped on a line holding two or more (math could pair them).
@@ -908,14 +944,14 @@ def _markdown(leaves: list) -> str:
             for j in range(start, i):
                 dollars[j] = count >= 2
             count, start = 0, i + 1
-        elif token[0] != "img":
+        elif token[0] != "raw":
             count += (token[1] if token[0] == "text" else outs[i]).count("$")
 
     for i, token in enumerate(tokens):
         if token[0] == "text":
             prev = outs[i - 1][-1] if i and tokens[i - 1][0] != "br" else ""
             nxt = outs[i + 1][0] if i + 1 < len(tokens) and tokens[i + 1][0] != "br" else ""
-            outs[i] = _escape(token[1], prev, nxt, dollars[i])
+            outs[i] = escape(token[1], prev, nxt, dollars[i], mentions)
     md = "".join(outs).strip("\n")
     # A no-break space is text to HTML, but text of nothing else is blank:
     # Zotero 5's editor wrote each empty line as <p>&nbsp;</p>.
@@ -927,17 +963,17 @@ def _inline_md(nodes, one_line: bool = False) -> str:
     (a heading, a table cell)."""
     leaves = []
     _leaves(nodes, {}, leaves, one_line)
-    return _markdown(leaves)
+    return markdown(leaves)
 
 
-def _pre_md(el: _El) -> str:
+def _pre_md(el: El) -> str:
     """A <pre> as a fenced code block, its text verbatim (a fence longer than
     any backtick line in it), or a ``pre.math`` as display math."""
-    text = _text(el)
+    text = node_text(el)
     text = (text[1:] if text.startswith("\n") else text).rstrip("\n")
     if not text.strip():
         return ""
-    if "math" in _classes(el):
+    if "math" in classes(el):
         tex = text.strip()
         return tex if tex.startswith("$$") and tex.endswith("$$") and len(tex) > 4 else f"$${tex}$$"
     runs = [len(m.group(1)) for m in re.finditer(r"^[ \t]{0,3}(`{3,})", text, re.M)]
@@ -965,18 +1001,18 @@ def _quote_lines(nodes) -> list[str]:
     return out
 
 
-def _table_md(el: _El) -> str:
+def _table_md(el: El) -> str:
     """A <table> as a GFM table: its first row the header, every row as wide
     as the widest, a "|" in a cell escaped."""
     def rows(node):
         for child in node.children:
-            if _tag(child) == "tr":
+            if node_tag(child) == "tr":
                 yield child
-            elif _tag(child) in ("thead", "tbody", "tfoot"):
+            elif node_tag(child) in ("thead", "tbody", "tfoot"):
                 yield from rows(child)
 
     table = [[_inline_md(cell.children, one_line=True).replace("|", "\\|")
-              for cell in tr.children if _tag(cell) in ("td", "th")] for tr in rows(el)]
+              for cell in tr.children if node_tag(cell) in ("td", "th")] for tr in rows(el)]
     table = [row for row in table if row]
     if not any(any(row) for row in table):
         return ""
@@ -1031,7 +1067,7 @@ def _item(nodes, prefix: str | None) -> dict | None:
     return {"content": content, "children": children} if content or children else None
 
 
-def _items(list_el: _El) -> list[dict]:
+def _items(list_el: El) -> list[dict]:
     """A <ul> or <ol> → its items' nodes; an <ol>'s are numbered by position
     from its ``start``. A list straight inside a list (no <li> around it)
     belongs to the item before it."""
@@ -1041,7 +1077,7 @@ def _items(list_el: _El) -> list[dict]:
         number = int(start) if start.isdigit() and len(start) < 10 else 1
     items = []
     for child in list_el.children:
-        tag = _tag(child)
+        tag = node_tag(child)
         if tag is None and not child.strip():
             continue
         if tag in ("ul", "ol"):

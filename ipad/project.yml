@@ -10,7 +10,7 @@ name: GammaIPad
 options:
   bundleIdPrefix: net.blitzbuild
   deploymentTarget:
-    iOS: "17.0"
+    iOS: "17.5"
   createIntermediateGroups: true
 settings:
   base:
@@ -168,6 +168,7 @@ targets:
             mv "$dylib" "$folder/$name"
             echo "Frameworks/$name.framework/$name" > "${dylib%.dylib}.fwork"
             echo "python/app_packages/pymupdf/$lib.fwork" > "$folder/$name.origin"
+            # MinimumOSVersion is the deployment target (options above).
             cat > "$folder/Info.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
           <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -194,7 +195,7 @@ targets:
               <string>$platform</string>
             </array>
             <key>MinimumOSVersion</key>
-            <string>17.0</string>
+            <string>17.5</string>
           </dict>
           </plist>
           EOF

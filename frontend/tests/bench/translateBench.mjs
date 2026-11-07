@@ -83,6 +83,7 @@ function pageRange(spec, count) {
 
 function compileFixture() {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "gamma-bench-tex-"));
+  process.once("exit", () => fs.rmSync(dir, { recursive: true, force: true }));
   fs.copyFileSync(FIXTURE_TEX, path.join(dir, "paper.tex"));
   for (let pass = 0; pass < 2; pass++) {
     try {

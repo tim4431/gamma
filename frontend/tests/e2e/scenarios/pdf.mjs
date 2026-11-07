@@ -1343,6 +1343,60 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
     await account.api(`/api/blocks/${citing.id}`, { method: "DELETE" });
   });
 
+  // The link dialog (pdf/LinkDialog.jsx, a page picker): a page searched and
+  // picked, a DOI typed ("Link to …" leads), and Change link… opening on the
+  // link's address with Remove link under it.
+  await step("pdf: the link dialog links a selection to a picked page or a typed DOI, and Change link… removes one", async () => {
+    const up = await account.upload("/api/uploads", makePdf([["Cited by the Rydberg paper", "doi 10.1103/PhysRevLett.1 below"]]), "linking.pdf", "application/pdf");
+    const linking = await account.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Linking paper" } });
+    const doiUrl = "https://doi.org/10.1103/PhysRevLett.1";
+    const regions = async () => {
+      const walk = (b) => [b, ...(b.children || []).flatMap(walk)];
+      return walk((await account.api(`/api/blocks/${linking.id}/subtree`)).block).filter((b) => b.properties?.pdf_position);
+    };
+    const c = await account.context(browser);
+    try {
+      const p = await openPage(c, `${server.base}/?page=${linking.id}&ws=${account.ws}`);
+      await waitForPdf(p, 1);
+      const dialog = p.getByRole("dialog", { name: "Link reference to a page" });
+      const openFor = async (needle) => {
+        await dragSelectPdfText(p, 1, needle);
+        const btn = p.locator('.plainTip button[title^="Link this reference"]');
+        await btn.waitFor({ timeout: 5000 });
+        await btn.dispatchEvent("mousedown");
+        await dialog.waitFor();
+      };
+      const field = dialog.getByRole("textbox");
+
+      await openFor("Rydberg paper");
+      await field.fill("rydberg");
+      const option = dialog.getByRole("option").filter({ has: p.locator("strong", { hasText: /^Rydberg paper$/ }) });
+      await option.waitFor();
+      await option.click();
+      await until(async () => (await regions()).some((b) => b.properties.link_page_id === pageId), { what: "a link to the picked page" });
+
+      await openFor("PhysRevLett");
+      await field.fill("10.1103/PhysRevLett.1");
+      const lead = dialog.locator('[role="option"][aria-selected="true"]');
+      await until(async () => (await lead.innerText()).includes(doiUrl), { what: "Link to the DOI leads" });
+      await p.keyboard.press("Enter");
+      const doi = await until(async () => (await regions()).find((b) => b.properties.link_url === doiUrl), { what: "a link to the DOI" });
+
+      await p.click(`[data-page="1"] div[data-hl-id="${doi.id}"]`, { button: "right" });
+      await p.locator(".ctxMenuItem", { hasText: "Change link…" }).click();
+      const change = p.getByRole("dialog", { name: "Change reference link" });
+      await change.waitFor();
+      assertEq(await change.getByRole("textbox").inputValue(), doiUrl, "the link's address in the field");
+      await p.keyboard.press("ArrowDown");
+      assert((await change.locator('[role="option"][aria-selected="true"]').innerText()).includes("Remove link"), "Remove link under it");
+      await p.keyboard.press("Enter");
+      await until(async () => !(await regions()).find((b) => b.id === doi.id)?.properties.link_url, { what: "the link removed" });
+      assertNoProblems(p);
+      await p.close();
+    } finally { await c.close(); }
+    await account.api(`/api/blocks/${linking.id}`, { method: "DELETE" });
+  });
+
   // Settings → Reading › PDFs › Smooth wheel scrolling (shared/lib/smoothWheel.js).
   await step("pdf: smooth wheel scrolling glides one notch over several frames at any zoom; off, it is the browser's jump", async () => {
     const lines = Array.from({ length: 30 }, (_, n) => `Wheel line ${n + 1}`);

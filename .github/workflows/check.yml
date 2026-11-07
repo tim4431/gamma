@@ -78,6 +78,26 @@ jobs:
       - working-directory: backend
         run: python -m pytest tests -q -n auto --dist loadfile
 
+  # The same suite on the iPad's and Android's Python with their pins
+  # (backend/requirements-mobile.txt), so a server change that breaks only
+  # in the apps fails on the PR and not on a device.
+  backend-mobile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements-mobile.txt -r requirements-dev.txt
+      - working-directory: backend
+        run: python -m pytest tests -q -n auto --dist loadfile
+
   frontend:
     runs-on: ubuntu-latest
     steps:

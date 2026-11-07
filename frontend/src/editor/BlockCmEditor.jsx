@@ -18,7 +18,8 @@ import { emptyLeftPair, escapedAt, leftDelimiterEdit, rightDelimiterAt } from ".
 import { latexErrors, visibleLatexErrors } from "./latexLint";
 import { calloutType } from "./callouts";
 import { highlightCode, makeCopyButton } from "./codeHighlight";
-import { fenceInnerAt, scanFences } from "./fences.js";
+import { codeMarksAt, codePaste, fenceInnerAt, scanFences } from "./fences.js";
+import { codeFences } from "../shared/lib/mdCode.js";
 import { scanImageSyntax, scanMarks } from "./mdMarks";
 import { mathTex, parseTable, protectedSpans, scanImages, scanMathSpans, scanTables } from "./mdScan";
 import { NO_MENTIONS, mentionChip, mentionChipClass, proseMentions } from "./mentions.js";
@@ -331,10 +332,19 @@ function buildInlineDecos(state, ctx) {
   // ``` fences claim their range FIRST — a "$" or "**" inside code is code.
   // A closed, untouched fence renders as a highlighted card; a touched or
   // still-open one stays raw and gets mono/tinted line styling below.
+  // Code draws as nothing else, each line from behind the marks the line pass
+  // below hides or draws.
+  for (const f of codeFences(text)) {
+    if (!f.prefix) { claimed.push([f.from, f.end]); continue; }
+    let at = f.from;
+    for (const line of text.slice(f.from, f.end).split("\n")) {
+      claimed.push([at + (at === f.from ? f.prefix.length : Math.min(f.cont.length, line.length)), at + line.length]);
+      at += line.length + 1;
+    }
+  }
   const fences = text.includes("```") ? scanFences(text) : [];
   const rawFences = [];
   for (const f of fences) {
-    claimed.push([f.from, f.to]);
     if (f.closed && !touched(f.from, f.to)) {
       const code = f.innerTo > f.innerFrom ? text.slice(f.innerFrom, f.innerTo - 1) : "";
       ranges.push(Decoration.replace({
@@ -926,12 +936,17 @@ const typingAids = EditorView.contentAttributes.compute(["doc", "selection"], (s
 function pasteWithMath(e, view) {
   if (view.state.readOnly) return;
   const clip = (e.clipboardData?.getData("text/plain") || "").replace(/\r\n?/g, "\n");
-  if (isSourceCopy(clip)) return;
-  const text = pasteMath(view.state.doc.toString(), view.state.selection.main.from, clip);
+  const doc = view.state.doc.toString(), { from } = view.state.selection.main;
+  const coded = codePaste(doc, from, clip);
+  if (coded === null && isSourceCopy(clip)) return;
+  const text = coded ?? pasteMath(doc, from, clip);
   if (text === clip) return;
   e.preventDefault();
   view.dispatch(view.state.replaceSelection(text), { userEvent: "input.paste", scrollIntoView: true });
 }
+
+const noteCopy = (view) => sourceCopied(copiedText(view.state),
+  { marks: codeMarksAt(view.state.doc.toString(), view.state.selection.main.from) });
 
 // `pinScroll`: opening scrolls nothing (keepUnderPointer), for an editor
 // drawn where its text was, in the same type (a text box's). `ownHistory`:
@@ -966,11 +981,15 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
       const view = viewRef.current;
       if (!view) return;
       const len = view.state.doc.length;
+      // Replaces the scroll an editor asks for as it mounts, which aims at
+      // the end of the text: the caret placed here is the one to bring clear
+      // of the editing bar.
       view.dispatch({
         selection: {
           anchor: Math.max(0, Math.min(anchor, len)),
           head: Math.max(0, Math.min(head ?? anchor, len)),
         },
+        scrollIntoView: editBarSpace() > 0,
       });
     },
     focus() { viewRef.current?.focus(); },
@@ -1011,8 +1030,8 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
           },
           // What CodeMirror's own copy then puts on the clipboard, remembered
           // as the note's source (sourceCopy.js).
-          copy: (e, view) => { sourceCopied(copiedText(view.state)); return false; },
-          cut: (e, view) => { sourceCopied(copiedText(view.state)); return false; },
+          copy: (e, view) => { noteCopy(view); return false; },
+          cut: (e, view) => { noteCopy(view); return false; },
           // Alt+Tab / app switch blurs the element too, but it stays
           // document.activeElement and the browser refocuses it on return —
           // only a blur while the window itself has focus (clicking away)
@@ -1092,7 +1111,9 @@ const BlockCmEditor = React.forwardRef(function BlockCmEditor({
       if (p != null) pos = Math.max(0, Math.min(p, pos));
     }
     if (clickPos?.insertLine) view.dispatch({ changes: { from: pos, insert: "\n" }, selection: { anchor: pos } });
-    else view.dispatch({ selection: { anchor: pos } });
+    // A key opened this editor, under the editing bar perhaps: focus scrolls
+    // nothing, so the caret is brought clear of the bar here.
+    else view.dispatch({ selection: { anchor: pos }, scrollIntoView: autoFocus && !clickPos && editBarSpace() > 0 });
     if (clickPos && !pinScroll) keepUnderPointer(view, pos, clickPos.y);
     // Opened by a press on the rendered text: while the button stays down
     // the drag selects, as in any editor — the press landed on the rendered

@@ -244,7 +244,7 @@ def _sticker(data: bytes, side: float) -> bytes:
         if raster is None:
             raise ValueError("the PDF has no page")
         return raster.png()
-    except Exception as exc:  # noqa: BLE001 — PyMuPDF missing, a PDF it cannot render, or one with no page
+    except Exception as exc:  # noqa: BLE001 — a PDF PyMuPDF cannot render, or one with no page
         log.info(f"[goodnotes] a sticker did not render ({exc!r})")
         raise ValueError("a sticker that does not render") from None
 

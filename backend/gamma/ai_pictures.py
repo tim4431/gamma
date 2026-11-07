@@ -202,7 +202,7 @@ def read_stored(ws: str, url: str):
     if media == "image/svg+xml":
         try:
             data, media = svg_png(data, RENDER_MAX_SIDE)[0], "image/png"
-        except (ValueError, ImportError) as error:
+        except ValueError as error:
             log.info(f"[ai_pictures] an SVG that does not draw: {error}")
             return None
     return normalize(data, media)

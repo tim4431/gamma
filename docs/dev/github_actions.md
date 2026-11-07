@@ -22,13 +22,13 @@ Watchtower (the `update-demo-server`, `update-share-host` and
 
 | Workflow | File | Runs when | Produces |
 |---|---|---|---|
-| `check` | `check.yml` | every pull request to `main`, except one that only touches the account server or the website | pass/fail: brand asset consistency, the mobile apps' pins resolved, backend pytest, frontend unit tests + build and the desktop shell's unit tests, the browser suite (two shards on two runners, 3 workers each), extension unit tests + zip (~5 min) |
+| `check` | `check.yml` | every pull request to `main`, except one that only touches the account server or the website | pass/fail: brand asset consistency, the mobile apps' pins resolved, the backend suite on the apps' Python 3.13 and pins (`backend-mobile`), backend pytest, frontend unit tests + build and the desktop shell's unit tests, the browser suite (two shards on two runners, 3 workers each), extension unit tests + zip (~5 min) |
 | `desktop` | `desktop.yml` | manual dispatch only (`release` skill) | Windows installer, macOS dmg + zip, Debian/Ubuntu deb, the update-feed files, the Android APK (when signed), the browser extension's `gamma-connector-<version>.zip` and the AI plugins → GitHub Release `v<version>`; after it, the MSIX to the Microsoft Store and the Android bundle to Google Play's internal track when their secrets exist; a Docker tag `<version>`; from `main`, an empty commit on `main` with the next `ipad-test-release-NNN` marker (TestFlight) |
 | `chrome-store` | `chrome-store.yml` | dispatched by the desktop release (from `main`, not a pre-release) when the `CWS_*` variables exist; daily at 09:17 UTC for a release the store skipped; manual dispatch with a tag | the release's Connector zip uploaded to the Chrome Web Store and submitted for review (API V2) |
 | `docker` | `docker.yml` | every push to `main` except one that only touches the account server or the website; dispatched by the desktop release with a version; manual dispatch from any branch (a `sha-<short>` image only) | `ghcr.io/tim4431/gamma:sha-<short>` on every run; `:latest` only from `main`; `:<version>` and `:<major.minor>` when dispatched with a version; linux/amd64 + arm64 |
 | `cloud` | `cloud.yml` | a pull request touching `cloud/`; manual dispatch from any branch (`update-account-server` skill) | pass/fail: the account server's pytest; when dispatched and green, `ghcr.io/tim4431/gamma-cloud:latest` + `:sha-<short>` (`cloud/Dockerfile`, amd64) |
 | `fleet` | `fleet.yml` | a pull request or a push to `main` touching `cloud/fleet/`; manual dispatch from any branch | pass/fail: the fleet agent's pytest; on a push to main or a dispatch, when green, `ghcr.io/tim4431/gamma-fleet:latest` + `:sha-<short>` (`cloud/fleet/Dockerfile`, amd64; [hosted.md](hosted.md)) |
-| `site` | `site.yml` | a PR or a push to `main` touching `sites/`, `docs/` (the artwork it copies and the documents it renders), `desktop/ui/fonts/` (the font it copies), `PRIVACY.md` or `TERMS.md`; manual dispatch from any branch (`build-site` skill) | pass/fail: the site builds with every internal link resolving and its Worker passes a dry run; on a push or dispatch, gammapdf.com: `sites/dist` deployed as a Cloudflare Worker (static assets only; needs `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`; [sites/README.md](../../sites/README.md)) |
+| `site` | `site.yml` | a PR or a push to `main` touching `sites/`, `docs/` (the artwork it copies and the documents it renders), `desktop/ui/fonts/` (the font it copies), `docker-compose.yml.example` (the file the front page shows), `PRIVACY.md` or `TERMS.md`; manual dispatch from any branch (`build-site` skill) | pass/fail: the site builds with every internal link resolving and its Worker passes a dry run; on a push or dispatch, gammapdf.com: `sites/dist` deployed as a Cloudflare Worker (static assets only; needs `CLOUDFLARE_API_TOKEN` + `CLOUDFLARE_ACCOUNT_ID`; [sites/README.md](../../sites/README.md)) |
 | `ipad` | `ipad.yml` | a pull request touching `ipad/`, the server's mobile entry and pins (`backend/gamma_mobile.py`, `backend/requirements-mobile.txt`), `backend/requirements.txt`, the ink fixtures its tests read (`tests/shared/inkwidth.json`, `inkhold.json`), the desktop app's chrome pages the app carries (`desktop/ui/`), `tools/build_frontend_if_needed.mjs` or the workflow; manual dispatch | pass/fail on macOS: the app's Python, wheels, server code and web app prepared (`ipad/scripts/build-python.sh`), the Xcode project generated (XcodeGen), the XCTest suite on an iPad simulator with the embedded server started, an unsigned device build ([ipad/README.md](../../ipad/README.md)) |
 | `android` | `android.yml` | a pull request touching `android/`, the server's mobile entry and pins, `backend/requirements.txt`, the ink fixtures, `desktop/ui/`, `tools/build_frontend_if_needed.mjs` or the workflow; manual dispatch | pass/fail on Ubuntu: the JVM unit tests, an unsigned 64-bit ARM release build checked for 16 KB alignment, and the device tests on an x86_64 Android 16 emulator with the embedded server started |
 | `Assistant plugin package` | `codex-plugin.yml` | PRs touching the plugin or its tooling, or manual dispatch | plugin packaging and installer tests on Windows/macOS/Linux and preview plugin release assets (`plugins-<os>` artifacts) |
@@ -44,7 +44,7 @@ PR → main ──▶ check (pytest, npm test + build, e2e, extension zip)   ←
 PR touching android/ ──▶ android.yml: unit tests, release build, emulator   ← beside check
 PR touching ipad/ ──────▶ ipad.yml: simulator tests, device build           ← beside check
 merge ───────▶ docker.yml  ghcr :latest                              ← every merge (not cloud/- or sites/-only ones)
-         └──▶ site.yml    check → gammapdf.com                      ← only when sites/, docs/, desktop/ui/fonts/, PRIVACY.md or TERMS.md changed
+         └──▶ site.yml    check → gammapdf.com                      ← only when sites/, docs/, desktop/ui/fonts/, docker-compose.yml.example, PRIVACY.md or TERMS.md changed
          └──▶ fleet.yml   test → ghcr gamma-fleet :latest           ← only when cloud/fleet/ changed
 PR touching cloud/ ──▶ cloud.yml: test                            ← instead of check, for cloud/-only PRs
 PR touching sites/ ──▶ site.yml: check                            ← instead of check, for sites/-only PRs
@@ -422,13 +422,17 @@ store item that only the dashboard can create:
 
 ## `check.yml`
 
-Six parallel Ubuntu jobs on every PR to `main`: brand asset consistency,
+Seven parallel Ubuntu jobs on every PR to `main`: brand asset consistency,
 the mobile apps' pins (`bash tools/check_mobile_pins.sh` under Python
 3.13: every pin of `backend/requirements-mobile.txt`, which the iPad and
 Android share, resolves to wheels for the iPad's device and simulator and
 for Android's arm64 and x86_64, so a pin that stops resolving fails here
 and not in `ipad.yml`'s macOS run or `android.yml`, which a backend-only PR
 starts neither of),
+the backend suite under the apps' Python and pins (`backend-mobile`:
+Python 3.13 with `requirements-mobile.txt` + `requirements-dev.txt`, run as
+the 3.12 job below is, so a server change that breaks only in the apps
+fails on the PR),
 backend pytest (Python 3.12, `requirements.txt` + `requirements-dev.txt`,
 `-n auto` over pytest-xdist; the job is capped at 20 minutes and a single
 test at 300 s, after which it fails with every thread's stack instead of
@@ -562,8 +566,8 @@ The public demo and the share host run `main`'s `:latest`, like the NAS: a
 Watchtower in each compose project polls GHCR every hour (the example's
 six, shortened) and recreates the container when a merge has published a
 new image, as in `docker-compose.yml.example`. The two on the VPS each
-have a scope (`demo`, `share`), since an unscoped one updates every
-labelled container and stops every other Watchtower on the host. The
+have a scope (`demo`, `share`), since two unscoped ones would both update
+every labelled container and each would remove the other. The
 `update-demo-server`, `update-share-host` and `update-server` skills do the
 same pull at once ([cloud/deploy/demo/README.md](../../cloud/deploy/demo/README.md),
 [cloud/deploy/README.md](../../cloud/deploy/README.md) "The free share
@@ -595,13 +599,14 @@ dispatch, it needs the file on `main` once before the first run.
 
 gammapdf.com ([sites/README.md](../../sites/README.md)); it depends on no
 app code, only on `sites/`, `PRIVACY.md`, `TERMS.md`, `desktop/ui/fonts/` (the
-Inter file the pages use) and `docs/`: the artwork the build copies and the
+Inter file the pages use), `docker-compose.yml.example` (the front page shows
+it) and `docs/`: the artwork the build copies and the
 user guide it renders as a page, so a change under `docs/` on `main` deploys
 the site.
 `check`: `npm ci`, `node build.mjs --strict` (fails on an internal link,
 picture or anchor that resolves to nothing), the key pages present in `dist/` (index,
-download, 404, pricing, privacy, terms, the user guide, the sitemap,
-`_redirects`, `_headers`, the favicon, the font), no `<!--#include` left unexpanded, and `wrangler
+404, pricing, privacy, terms, the user guide, the sitemap,
+`_redirects`, `_headers`, the favicon, the font), no `<!--#` build directive left unexpanded, and `wrangler
 deploy --dry-run` (bundles the Worker and reads `wrangler.jsonc` — no
 credentials). Runs on a PR touching those paths and first on every deploy. `deploy` (a push to `main` touching those paths, or
 a dispatch from any branch — the `build-site` skill, `gh workflow run

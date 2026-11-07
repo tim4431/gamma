@@ -7,8 +7,17 @@ A highlight block can make a PDF region clickable through
 targets a particular highlight on the destination page, by its block id (a
 highlight's id is its block's, [api.md](api.md) "The highlight shape"):
 "Copy as reference point" on a highlight keeps that id for another paper's
-link dialog. App derives the viewer's `linkTarget` (`{url, pageId,
-blockId}`) from those properties, and opening the link jumps to the block
+link dialog. The link dialog (`pdf/LinkDialog.jsx`, from a selection's link
+button or a highlight's "Link to page…" / "Change link…") is a page picker
+(`library/PagePicker.jsx`): its field takes a DOI, an arXiv id or a web
+address (`isLinkInput`; `normalizeLinkInput` makes it a URL), and "Link to …"
+leads the list while it reads as one, or else searches the pages as Ctrl+P
+does. With nothing typed it lists Remove link for a passage that links
+already, the copied reference point, then the pages the passage names
+(`scorePaperMatch` 6 or more: its DOI or arXiv id, the authors, title
+words) as Best matches before the recent pages. "Change link…" opens with
+a URL link's address in the field. App derives the viewer's `linkTarget`
+(`{url, pageId, blockId}`) from those properties, and opening the link jumps to the block
 once the page is up. `linkProps` writes them and drops (null) the keys the
 target does not set, all three when the link is removed; an empty string,
 which older clients stored, reads as unset everywhere. A new link region

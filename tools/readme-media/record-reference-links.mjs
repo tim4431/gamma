@@ -125,7 +125,7 @@ await beat(600);
 await centerCitation();
 const R1 = await citationAnchor();
 await glide(R1.x, R1.y, 22);
-M.m0 = mark();                    // camera zoom-in begins here (≈ show citation)
+M.m0 = mark();                    // the demo starts here (the citation shown)
 await beat(1400);                 // hold on the citation before jumping
 console.log('SCRIPT: citation ready');
 
@@ -178,13 +178,13 @@ await beat(350);
 await page.evaluate(() => document.querySelector('.pdfViewer')?.scrollTo({ top: 0, behavior: 'smooth' }));
 await page.waitForSelector('[data-page="1"] .textLayer span', { timeout: 10000 });
 await beat(400);
-M.mFetch = mark();               // camera zoom-out begins here (reveal the fetched paper)
+M.mFetch = mark();               // the fetched paper opens
 await beat(1700);
 M.tEnd = mark();
 if (!loaded) throw new Error('Fetched paper did not open');
 console.log('SCRIPT: new paper loaded =', loaded);
 
-// persist marks + ROIs for the post zoom
+// marks and the citation/reference points for render-suite.py's crop
 fs.writeFileSync(SCRATCH + '/links_zoom.json', JSON.stringify({
   cssW: VW, cssH: VH, vidW: VW, vidH: VH,
   m0: M.m0, mFetch: M.mFetch, tEnd: M.tEnd,

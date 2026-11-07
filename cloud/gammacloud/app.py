@@ -80,6 +80,9 @@ async def lifespan(app: FastAPI):
     if stale:
         log.warning("%s set but not read: the sign-up settings live in cloud.db (Admin > Settings); "
                     "remove them from the environment", ", ".join(stale))
+    if os.environ.get("GAMMA_CLOUD_DESKTOP_CLIENT_ID"):
+        log.warning("GAMMA_CLOUD_DESKTOP_CLIENT_ID set but not read: the desktop client is always %s, the id "
+                    "every Gamma sidecar sends; remove it from the environment", config.DESKTOP_CLIENT_ID)
     try:
         yield
     finally:

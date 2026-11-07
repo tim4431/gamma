@@ -311,7 +311,7 @@ def test_restore_page_brings_several_back(org):
     assert f"- that page was not filed in this chat's folder — restore it from the library root: {elsewhere}" in text
     assert f"Changed: {t1}, {t2}, {t3}" in text
     assert all(f"](/?page={p})" in text for p in (t1, t2, t3))
-    assert action["changes"] == 3 and "revert" not in action
+    assert action["changes"] == 3 and action["revert"] == {"restore": [t1, t2, t3]}
     assert _parents(ids["ws"], [t1, t2, t3, elsewhere]) == ["root", "root", "root", "trash"]
     many = _trashed(c, shelf, 25, "many")
     text, action = run_agent_tool(ids["ws"], folder(shelf), "restore_page", {"page_ids": many})

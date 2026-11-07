@@ -3,8 +3,8 @@
 Raw captures and timing manifests stay in ignored artifacts/readme-media/suite
 (the connector's take, recorded by record-connector.mjs on take.mjs, in
 artifacts/readme-media/connector). Notes, library, search and the connector
-are retina captures rendered by compose.py; metadata, reference-links and the
-AI previews are the earlier WebM recordings.
+are retina captures rendered by compose.py; metadata and reference-links are
+1x WebM recordings.
 """
 import argparse
 from functools import lru_cache
@@ -24,7 +24,7 @@ from render_feature_demos import CASES as FEATURES
 FF = get_ffmpeg_exe()
 SUITE = ROOT / 'artifacts/readme-media/suite'
 OUT = ROOT / 'docs/assets/demos'
-NAMES = ['notes', 'library', 'search', 'metadata', 'agent', 'download-and-chat', 'reference-links', 'connector']
+NAMES = ['notes', 'library', 'search', 'metadata', 'reference-links', 'connector']
 
 
 def run(*args):
@@ -33,14 +33,6 @@ def run(*args):
 
 def read(directory, name):
     return json.loads((directory / name).read_text(encoding='utf-8'))
-
-
-def duration(source):
-    log = subprocess.run([FF, '-hide_banner', '-i', str(source)], capture_output=True, text=True).stderr
-    m = re.search(r'Duration: (\d+):(\d+):([\d.]+)', log)
-    if not m:
-        raise ValueError(f'No video duration: {source}')
-    return int(m[1])*3600 + int(m[2])*60 + float(m[3])
 
 
 class Browser:
@@ -241,26 +233,19 @@ def search(directory):
 
 
 def shot(name, directory):
-    filenames = {'metadata': 'video_meta_path.txt', 'agent': 'video_agent.txt',
-                 'download-and-chat': 'video_path.txt', 'reference-links': 'video_links_path.txt'}
+    filenames = {'metadata': 'video_meta_path.txt', 'reference-links': 'video_links_path.txt'}
     source = Path((directory / filenames[name]).read_text().strip())
     if name == 'metadata':
         m = read(directory, 'meta_zoom.json')
         # Fixed detail crop keeps both popovers and the Share control readable.
         return source, m['m0'], m['tEnd']-0.5, 'crop=848:530:592:0'
-    if name == 'agent':
-        m = read(directory, 'agent_marks.json')
-        return source, m['m0']-0.25, m['mEnd']-1, None
-    if name == 'reference-links':
-        m = read(directory, 'links_zoom.json')
-        cx = (m['R1']['x'] + m['R2']['x']) / 2
-        cy = (m['R1']['y'] + m['R2']['y']) / 2
-        # Leave enough room on the right for the centered Fetch modal.
-        x = max(120, min(480, round(cx-480))) // 2 * 2
-        y = max(0, min(300, round(cy-300))) // 2 * 2
-        return source, m['m0']-0.25, m['tEnd'], f'crop=960:600:{x}:{y}'
-    m = read(directory, 'hero-marks.json')
-    return source, m['m0']-0.25, min(duration(source), m['end']), None
+    m = read(directory, 'links_zoom.json')
+    cx = (m['R1']['x'] + m['R2']['x']) / 2
+    cy = (m['R1']['y'] + m['R2']['y']) / 2
+    # Leave enough room on the right for the centered Fetch modal.
+    x = max(120, min(480, round(cx-480))) // 2 * 2
+    y = max(0, min(300, round(cy-300))) // 2 * 2
+    return source, m['m0']-0.25, m['tEnd'], f'crop=960:600:{x}:{y}'
 
 
 def render(name):
@@ -271,7 +256,7 @@ def render(name):
     if end <= start:
         raise ValueError(f'Invalid timeline: {name}')
     # Keep up to 1.4 s of long static holds. No interpolation or blanket speedup:
-    # pointer movement, typing, and streaming retain their real capture cadence.
+    # pointer movement and typing retain their real capture cadence.
     log = subprocess.run([FF, '-hide_banner', '-i', str(source), '-vf', 'freezedetect=n=0.0003:d=2.5',
                           '-an', '-f', 'null', '-'], capture_output=True, text=True, check=True).stderr
     cuts, frozen = [], None
@@ -294,17 +279,14 @@ def render(name):
     master = directory / 'master.mkv'
     concat_segments(master, [source], parts, tail)
     output = directory / 'rendered.webp'
-    # This shot contains full-page scrolling; a smaller raster and quality 75
-    # keep it compact while retaining the actual pointer/streaming cadence.
-    width, quality, effort = (1040, 75, 4) if name in ('download-and-chat', 'reference-links') else (1120, 85, 6)
+    # The reference-links shot contains full-page scrolling; a smaller raster and
+    # quality 75 keep it compact while retaining the actual pointer cadence.
+    width, quality, effort = (1040, 75, 4) if name == 'reference-links' else (1120, 85, 6)
     report = {'name': name, 'fps': 25, 'width': width, 'quality': quality, 'effort': effort,
               **encode_webp(master, output, f'fps=25,scale={width}:-2:flags=lanczos', quality, effort),
               'segments': segments, 'source': str(source), 'crop': crop}
     (directory / 'render.json').write_text(json.dumps(report, indent=2), encoding='utf-8')
-    # The agent and download-and-chat captures feed no README slot; they stay
-    # scratch previews (the README's AI story is render_feature_demos.py).
-    target = directory / 'preview.webp' if name in ('agent', 'download-and-chat') else OUT / f'demo-{name}.webp'
-    publish(output, target)
+    publish(output, OUT / f'demo-{name}.webp')
     print(json.dumps(report), flush=True)
 
 
@@ -315,8 +297,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('cases', nargs='+', choices=NAMES + [*FEATURES, 'all'])
     args = parser.parse_args()
-    published = [n for n in NAMES if n not in ('agent', 'download-and-chat')] + [*FEATURES]
-    for name in published if 'all' in args.cases else args.cases:
+    for name in [*NAMES, *FEATURES] if 'all' in args.cases else args.cases:
         if name in FEATURES:
             FEATURES[name]()
         else:

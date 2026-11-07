@@ -14,6 +14,8 @@ const EXPORT_SWITCH_TEXT = {
       t("Each highlighted passage as a blockquote with its page number.")],
     obsidian: [t("Quote callouts linking the PDF page"),
       t("Each highlighted passage as a [!quote] callout whose title opens the bundled PDF at that page.")],
+    notion: [t("Quotes with page numbers"),
+      t("Each highlighted passage as a quote with its page number.")],
     zotero: [t("Embedded into the exported PDF copies"),
       t("Written into the exported PDF copies as standard annotations — Zotero's own “Include Annotations” convention, its reader picks them up on import.")],
   },
@@ -26,6 +28,8 @@ const EXPORT_SWITCH_TEXT = {
       t("Your own writing, nested under the highlight it belongs to.")],
     obsidian: [t("Headings, paragraphs and lists"),
       t("Your own writing as a document: top-level headings and paragraphs, deeper blocks as nested lists, mentions and synced blocks as wikilinks.")],
+    notion: [t("Your notes as paragraphs and lists"),
+      t("Your own writing in each page's Markdown file: headings, paragraphs and lists, with mentions as links between the files.")],
     zotero: [t("Zotero notes on each item"),
       t("Top-level notes become Zotero notes attached to the item; writing under a highlight travels in its annotation popup.")],
   },
@@ -80,6 +84,10 @@ const EXPORT_FORMATS = [
     hint: T("A .note with the handwriting, to open in Notability"), editable: [],
     fixed: { highlights: false, notes: true, bundle: true },
     folder: { hint: T("Each page as a .note, in one .zip") } },
+  // Its zip holds the images the switches leave (notionFiles) and never the
+  // PDFs (routers/export.py _NotionBuilder), so it has no Bundle switch.
+  { id: "notion", mode: "notion", label: "Notion", category: "Notes",
+    hint: T("Pages for Notion's importer"), editable: ["highlights", "notes"], fixed: { bundle: true } },
   { id: "obsidian", mode: "obsidian", label: T("Obsidian"), category: "Library",
     hint: T("A vault with notes, links and attachments"), editable: ["highlights", "notes", "bundle"] },
   { id: "logseq", mode: "logseq-graph", label: T("Logseq"), category: "Library",
@@ -228,6 +236,26 @@ export function exportSummary(resolved, folder) {
   return `${summary} ${inside}`;
 }
 
+// What a Notion zip holds beside its Markdown, which the switches decide: the
+// images go with your notes, the handwriting with your highlights
+// (export_walk.py). `summary` ends the format's sentence, `title` and `hint`
+// are the preview's files row.
+export function notionFiles({ highlights, notes }) {
+  if (notes && highlights) {
+    return { summary: t(", images and handwriting included"), title: t("Images and handwriting included"),
+      hint: t("PDFs, recordings and other files stay out") };
+  }
+  if (notes) {
+    return { summary: t(", images included, handwriting left out"), title: t("Images included"),
+      hint: t("Handwriting, PDFs, recordings and other files stay out") };
+  }
+  if (highlights) {
+    return { summary: t(", handwriting included, images left out"), title: t("Handwriting included"),
+      hint: t("Images, PDFs, recordings and other files stay out") };
+  }
+  return { summary: "", title: t("No images or handwriting"), hint: t("The .zip holds the Markdown alone") };
+}
+
 function formatSummary({ payload, noPdfCopy, translated }, folder) {
   const { format, highlights, notes, comments } = payload;
   // An annotated PDF takes the translation the viewer shows in place of the
@@ -279,6 +307,15 @@ function formatSummary({ payload, noPdfCopy, translated }, folder) {
       return highlights || notes
         ? t("Markdown with {quotes}{notes}.", { quotes: highlights ? t("quoted highlights") : t("no quotes"), notes: notes ? t(" and your notes") : "" })
         : t("Markdown with the title and metadata only — both switches are off.");
+    case "notion": {
+      // It says what the zip holds: what Notion's importer keeps of it has
+      // not been tried yet (docs/research/notion-roundtrip.md).
+      const page = folder ? t("every page in the folder") : t("this page");
+      return [highlights || notes
+        ? t("A .zip for Notion's importer: {page} as Markdown with {quotes}{notes}{files}.", { page, quotes: highlights ? t("quoted highlights") : t("no quotes"), notes: notes ? t(" and your notes") : "", files: notionFiles(payload).summary })
+        : t("A .zip for Notion's importer: {page} as Markdown with the title and metadata only — both switches are off.", { page }),
+      t("PDFs, recordings and other files stay out. What Notion keeps of the rest is up to its importer.")].join(" ");
+    }
     default:
       return "";
   }
@@ -293,12 +330,14 @@ const IMPORT_SOURCES = [
   { id: "annots", label: T("Annotations in this PDF"), category: "This paper", hint: T("Bring embedded highlights and notes into Gamma"), strip: true, actionLabel: T("Import"),
     instructions: T("Highlights, notes, boxes and pictures (image stamps) saved inside this PDF (a Gamma export, SumatraPDF, Acrobat…) become regular blocks. Importing twice adds nothing — each annotation is matched to the block it already made.") },
   { id: "zotero", label: T("Zotero library"), category: "Library", hint: T("Papers, collections, tags and notes"), strip: true, archive: true, actionLabel: T("Choose .zip…"), folderLabel: T("Choose folder…"), accept: ".zip,application/zip" },
-  { id: "markdown", label: T("Markdown notes"), category: "Notes", hint: T("Markdown files, Obsidian vaults or Notion exports"), archive: true, actionLabel: T("Choose file…"), accept: ".md,.markdown,.zip,text/markdown,application/zip",
-    instructions: T("A single .md becomes a note page. A .zip of Markdown — a zipped Obsidian vault, Notion's Export → Markdown & CSV (subpages included), a Gamma Markdown export, or any zipped folder of notes — becomes one page per file: folders become folders, links between the notes ([[wikilinks]] included) become mentions, ![[block]] embeds synced blocks, tags labels, and images and files come along. Notes already imported are skipped.") },
+  { id: "markdown", label: T("Markdown notes"), category: "Notes", hint: T("Markdown files or Obsidian vaults"), archive: true, actionLabel: T("Choose file…"), accept: ".md,.markdown,.zip,text/markdown,application/zip",
+    instructions: T("A single .md becomes a note page. A .zip of Markdown — a zipped Obsidian vault, a Gamma Markdown export, or any zipped folder of notes — becomes one page per file: folders become folders, links between the notes ([[wikilinks]] included) become mentions, ![[block]] embeds synced blocks, tags labels, and images and files come along. Notes already imported are skipped.") },
   { id: "notability", label: T("Notability notes"), category: "Notes", hint: T("Handwriting, PDFs, typed text and recordings"), archive: true, actionLabel: T("Choose files…"), accept: ".note,.ntb,.zip,application/zip", multiple: true,
     instructions: T("Pick one or more .note or .ntb files, or a .zip of them: Notability's exports with File Format “Note” or “NTB” (in a note, the options icon → Export Options; in the library, press and hold a note → Export Options). Each note becomes a page: a PDF note keeps its PDF, a paper note becomes a notebook, and its handwriting, typed text and pictures come along, and from a “Note” export its recordings. Notes already imported are skipped.") },
   { id: "goodnotes", label: T("GoodNotes notebooks"), category: "Notes", hint: T("Handwriting, papers, PDFs, typed text and recordings"), archive: true, actionLabel: T("Choose files…"), accept: ".goodnotes,.zip,application/zip", multiple: true,
     instructions: T("Pick one or more .goodnotes files, or a .zip of them: GoodNotes' own format, which its iPad, iPhone and Mac apps export (a document's menu → Export → GoodNotes; a folder exports as one .zip). Each notebook becomes a page: one on GoodNotes' papers becomes a notebook of sheets, one on a PDF keeps the PDF, and its handwriting, shapes, typed text, pictures and recordings come along. GoodNotes on Android, Windows and the web exports PDF only: import that as a paper, then Annotations in this PDF. Notebooks already imported are skipped.") },
+  { id: "notion", label: T("Notion pages"), category: "Notes", hint: T("Pages, subpages, databases and files"), archive: true, actionLabel: T("Choose .zip…"), accept: ".zip,application/zip",
+    instructions: T("Pick the .zip Notion exports: a page's ••• menu → Export, with Include subpages on, or Settings → General → Export all workspace content. Choose Markdown & CSV or HTML; only HTML keeps toggles and colours. Pages inside pages stay inside them, databases become tables, links between pages become mentions, and images and files come along. Pages already imported are skipped.") },
   { id: "logseq", label: T("Logseq highlights"), category: "This paper", hint: T("A PDF and its .edn, with optional notes"), actionLabel: T("Choose files…"),
     instructions: T("Pick a Logseq .pdf and its .edn (a .md of notes is optional). The paper and its highlights land in your library as a new page.") },
   { id: "gamma", label: T("Gamma export (.zip)"), category: "Library", hint: T("Merge pages, files and chats from Gamma"), archive: true, actionLabel: T("Choose .zip…"), accept: ".zip,application/zip",

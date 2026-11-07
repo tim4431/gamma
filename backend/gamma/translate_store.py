@@ -10,30 +10,19 @@ service. A paragraph is found by its source text's hash (``src_hash``), so
 a page segmented again finds its paragraphs whatever their order.
 
 Derived data, like the PDF text index beside it, though it comes back only
-by paying a model again: no migration (the tables are made on first use,
-``ensure_schema``), dropped with their document
-(``purge``, from ``pdf_index.purge_unused``), and never the reason a
-translation fails: every function logs its own errors and carries on as if
-nothing were kept. routers/translate.py decides who writes (the request's
-``keep``, an account that may change the workspace); docs/dev/translation.md
-describes the whole path.
+by paying a model again: the tables come from ``db.DATA_SCHEMA``, which
+every data.db connection applies; the rows go with their document
+(``purge``, from ``pdf_index.purge_unused``); and a kept translation is
+never the reason a translation fails: every function logs its own errors
+and carries on as if nothing were kept. routers/translate.py decides who
+writes (the request's ``keep``, an account that may change the workspace);
+docs/dev/translation.md describes the whole path.
 """
 
 import hashlib
 
 from .db import connect_data_db, page_now
 from .logbuf import log
-
-SCHEMA = (
-    # src: the first 32 hex digits of the SHA-256 of the source text as sent
-    # (tokens and breaks included); brief: made with the paper's brief.
-    "CREATE TABLE IF NOT EXISTS pdf_translations (doc_id TEXT NOT NULL, lang TEXT NOT NULL, "
-    "model TEXT NOT NULL, src TEXT NOT NULL, text TEXT NOT NULL, brief INTEGER NOT NULL DEFAULT 0, "
-    "at TEXT NOT NULL, PRIMARY KEY (doc_id, lang, model, src)) WITHOUT ROWID",
-    "CREATE TABLE IF NOT EXISTS pdf_translation_briefs (doc_id TEXT NOT NULL, lang TEXT NOT NULL, "
-    "model TEXT NOT NULL, brief TEXT NOT NULL, at TEXT NOT NULL, "
-    "PRIMARY KEY (doc_id, lang, model)) WITHOUT ROWID",
-)
 
 # Paragraphs kept per document, language and model. A paper is a few
 # hundred to a few thousand; past this many something is translating far
@@ -48,11 +37,6 @@ _REPLACE = ("INSERT INTO pdf_translations (doc_id, lang, model, src, text, brief
             "brief = excluded.brief, at = excluded.at")
 _UPSERT = _REPLACE + " WHERE excluded.brief >= pdf_translations.brief"
 _ONE = "doc_id = ? AND lang = ? AND model = ?"
-
-
-def ensure_schema(conn) -> None:
-    for stmt in SCHEMA:
-        conn.execute(stmt)
 
 
 def src_hash(text: str, stamp: str = "") -> str:
@@ -78,7 +62,6 @@ def lookup(ws: str, doc_id: str, lang: str, model: str, srcs, need_brief: bool =
         return {}
     try:
         with connect_data_db(ws) as conn:
-            ensure_schema(conn)
             return dict(conn.execute(f"SELECT src, text FROM pdf_translations WHERE {_ONE} AND brief >= ? "
                                      f"AND src IN ({_marks(srcs)})", (doc_id, lang, model, int(need_brief), *srcs)))
     except Exception as e:  # noqa: BLE001 — derived data: translate as if none were kept
@@ -98,7 +81,6 @@ def put(ws: str, doc_id: str, lang: str, model: str, rows, brief: bool, replace:
     one = (doc_id, lang, model)
     try:
         with connect_data_db(ws) as conn:
-            ensure_schema(conn)
             count = conn.execute(f"SELECT COUNT(*) FROM pdf_translations WHERE {_ONE}", one).fetchone()[0]
             if count + len(rows) > MAX_ROWS:
                 have = {r[0] for r in conn.execute(
@@ -126,7 +108,6 @@ def get_brief(ws: str, doc_id: str, lang: str, model: str) -> str | None:
     """The paper's kept brief (rendered, as the system prompt carries it)."""
     try:
         with connect_data_db(ws) as conn:
-            ensure_schema(conn)
             row = conn.execute(f"SELECT brief FROM pdf_translation_briefs WHERE {_ONE}", (doc_id, lang, model)).fetchone()
     except Exception as e:  # noqa: BLE001 — derived data: as if none were kept
         log.warning(f"[translate_store] reading a kept brief failed: {e}")
@@ -137,7 +118,6 @@ def get_brief(ws: str, doc_id: str, lang: str, model: str) -> str | None:
 def put_brief(ws: str, doc_id: str, lang: str, model: str, brief: str) -> None:
     try:
         with connect_data_db(ws) as conn:
-            ensure_schema(conn)
             conn.execute("INSERT OR REPLACE INTO pdf_translation_briefs (doc_id, lang, model, brief, at) "
                          "VALUES (?, ?, ?, ?, ?)", (doc_id, lang, model, brief, page_now()))
     except Exception as e:  # noqa: BLE001 — derived data
@@ -162,7 +142,6 @@ def stats(ws: str) -> dict:
     being the kept text's UTF-8 size, translations and briefs."""
     try:
         with connect_data_db(ws) as conn:
-            ensure_schema(conn)
             paragraphs, size = conn.execute(
                 "SELECT COUNT(*), COALESCE(SUM(LENGTH(CAST(text AS BLOB))), 0) FROM pdf_translations").fetchone()
             size += conn.execute(
@@ -184,7 +163,6 @@ def clear(ws: str) -> int:
     paragraphs went."""
     try:
         with connect_data_db(ws) as conn:
-            ensure_schema(conn)
             conn.execute("DELETE FROM pdf_translation_briefs")
             return conn.execute("DELETE FROM pdf_translations").rowcount
     except Exception as e:  # noqa: BLE001 — derived data
@@ -197,7 +175,6 @@ def forget(ws: str, doc_id: str) -> int:
     and model; how many paragraphs went."""
     try:
         with connect_data_db(ws) as conn:
-            ensure_schema(conn)
             return _delete(conn, doc_id)
     except Exception as e:  # noqa: BLE001 — derived data
         log.warning(f"[translate_store] forgetting {doc_id}'s translations failed: {e}")
@@ -209,7 +186,6 @@ def purge(conn, live_docs) -> int:
     ``live_docs``, on the caller's data.db connection (pdf_index.purge_unused
     commits). How many documents went."""
     try:
-        ensure_schema(conn)
         stale = [d for d in _documents(conn) if d not in live_docs]
         for doc_id in stale:
             _delete(conn, doc_id)

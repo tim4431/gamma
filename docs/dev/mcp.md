@@ -57,7 +57,7 @@ The same tab explains how to invoke the plugin (`/gamma:gamma`) and, under
 connection without reinstalling the plugin. Confirm a changed remote public URL
 in **Settings → Server** first, then reopen the setup tab and sign in again.
 Frontend command generation lives in `frontend/src/settings/assistantSetup.js`;
-both clients share shell-literal quoting, with `codexSetup.js` retained as an alias.
+both clients share shell-literal quoting.
 
 Start Claude Code and open `/mcp`. Select `gamma` and authenticate in your browser;
 sign in to Gamma and approve the workspace. Start a new session. Check `/mcp` or
@@ -469,8 +469,7 @@ the computed release version and publishes these assets on the same `vX.Y.Z` rel
 
 Both ZIPs contain identical bytes; separate names make the client downloads easy
 to find while keeping one build. The Codex installers retain their published names
-and behavior. The old `package_codex_plugin.py` entry point still builds the shared
-package; `release_codex_plugin.py` still emits only the original Codex asset names.
+and behavior.
 
 Build-only runs keep them as CI artifacts. Keeping them on the existing
 release preserves the desktop updater's latest-release convention. Preview the

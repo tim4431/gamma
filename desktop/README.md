@@ -36,6 +36,9 @@ npm run smoke                   # quick self-test: temp local server → health 
 npm run e2e                     # full suite (docs/checklist.md), ~3 min
 ```
 
+`npm install` leaves out the Electron binary itself: the first `npm start`,
+smoke or e2e run downloads it (`npx install-electron` does it up front).
+
 `npm run smoke`, `npm run e2e` and `node test/security.e2e.js` keep the window
 minimized, so they run while you work; `--headed` shows it
 (`npm run smoke -- --headed`), and `GAMMA_TEST_HEADED=1` does for a whole shell.
@@ -59,7 +62,8 @@ the launcher's Updates row accordingly.
 Packaging and releasing: [docs/release.md](docs/release.md).
 
 Packaging inputs live in `assets/`: the app icon, macOS entitlements,
-`appx/` tiles, and `store/` listing artwork. `scripts/store-art.js` regenerates
-the Store images through `npm run store-art`. `build/` is for generated
-PyInstaller work/spec files; `dist/`, `dist-backend/`, and `dist-store/` hold
-build outputs. See the [repository map](../docs/dev/repository.md).
+`appx/` tiles, and `store/` listing artwork. `npm run store-art` regenerates
+the Store images with the shared brand generator, `tools/branding/build.mjs`.
+`build/` is for generated PyInstaller work/spec files; `dist/`,
+`dist-backend/`, and `dist-store/` hold build outputs. See the
+[repository map](../docs/dev/repository.md).

@@ -373,8 +373,8 @@ def library(recordings: list[dict]) -> bytes:
 # --- files ---------------------------------------------------------------------------------
 
 def pdf(sizes=((612, 792),)) -> bytes:
-    """Blank PyPDF2 pages of these sizes."""
-    from PyPDF2 import PdfWriter
+    """A PDF of blank pages of these sizes."""
+    from pypdf import PdfWriter
     writer = PdfWriter()
     for w, h in sizes:
         writer.add_blank_page(w, h)

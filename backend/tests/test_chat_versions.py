@@ -46,7 +46,7 @@ def test_a_save_from_an_older_copy_is_refused_with_the_stored_one(tabs):
     # A's own next checkpoint is based on its last write: refused, not lost.
     r = c.put(f"/api/chats/{key}", json={"messages": a + _msgs("A: q2"), "updated_at": version})
     assert r.status_code == 409 and r.json()["messages"] == a + b
-    # A save without a version is unconditional (older clients).
+    # A save without a version is unconditional (what a script seeding the chat sends).
     assert c.put(f"/api/chats/{key}", json={"messages": a + b}).status_code == 200
 
 

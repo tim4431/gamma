@@ -365,13 +365,7 @@ re-recording ink-import, notes or native-agentic, check those frames still land
 on the payoff and run it. A cut copies the demo's frames as they are and encodes
 only its first one again, so it needs no master.
 
-## Optional experiments
-
-The retained `agent` and `download-and-chat` cases need the account's AI
-provider. They are not part of README production: `render-suite.py` writes
-their renders as `preview.webp` next to the capture, and no README slot uses
-them. The three `gen-*.py` GIF experiments are also retained for reuse; they
-write to scratch and have no callers.
+## Shared helpers
 
 `runtime.mjs` resolves Playwright through the frontend dependency, so no second
 Node project is needed, and holds the recorders' shared pieces: the retina

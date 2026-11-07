@@ -12,9 +12,12 @@ import { groupsBySurface, pasteTargetOf, surfaceLabel } from "./inkSurfaces.js";
 // height}): its box (a PDF page's .pdfPageWrap, a sheet's .nbSheet) cut
 // to its viewer and the window; null when none of it shows.
 export function visiblePart(page, size) {
+  // the open page's surfaces, never a tab group's view of another page
+  // (workspace/PagePane.jsx), whose PDF pages bear the same numbers
+  const own = ":not([data-read-view] *)";
   const el = typeof page === "string"
-    ? document.querySelector(`.nbViewer .nbSheet[data-sheet-id="${CSS.escape(page)}"]`) || document.querySelector(`.nbSheet[data-sheet-id="${CSS.escape(page)}"]`)
-    : document.querySelector(`.pdfPageWrap[data-page="${page}"]`);
+    ? document.querySelector(`.nbViewer .nbSheet[data-sheet-id="${CSS.escape(page)}"]${own}`) || document.querySelector(`.nbSheet[data-sheet-id="${CSS.escape(page)}"]${own}`)
+    : document.querySelector(`.pdfPageWrap[data-page="${page}"]${own}`);
   const r = el?.getBoundingClientRect();
   if (!r?.width || !size?.width) return null;
   const view = el.closest(".pdfViewer, .nbViewer")?.getBoundingClientRect();

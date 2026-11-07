@@ -168,7 +168,7 @@ let publisherCache = null;
 
 async function publisherStatus(force = false) {
   const auth = await checkAuth();
-  if (!auth.configured || !auth.auth || auth.is_guest || auth.user === "guest") return { supported: false };
+  if (!auth.configured || !auth.auth || auth.is_guest) return { supported: false };
   const fresh = publisherCache && Date.now() - publisherCache.at < PUBLISHER_TTL
     && publisherCache.user === auth.user && publisherCache.origin === auth.origin;
   if (!force && fresh) return publisherCache;

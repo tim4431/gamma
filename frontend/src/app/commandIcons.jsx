@@ -65,6 +65,7 @@ const COMMAND_ICONS = {
   "block.deleteLine": DeleteLineIcon,
   "block.newAbove": InsertAboveIcon,
   "block.newBelow": InsertBelowIcon,
+  "block.lineBreak": CornerDownLeftIcon,
   "block.insertMenu": SlashIcon,
   "block.indent": IndentIcon,
   "block.outdent": OutdentIcon,

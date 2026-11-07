@@ -348,10 +348,12 @@ It has six states (`pages_billing.plan_state`):
 - **Cancelled or read-only.** For Lite and Plus, a section saying that
   the library is kept but closed until a plan opens it again
   ([cloud_accounts.md](cloud_accounts.md) "Who the shared server takes"),
-  with Resume. For Pro, when the server stops being readable and
+  and that files beyond the free allowance may be deleted 90 days after
+  the plan ended, as TERMS.md says, with Resume. For Pro, when the server stops being readable and
   when it is deleted (`stops_at` and `deletes_at` of `hosted.status_for`,
   the lifecycle's own dates), Export (`<server url>/?settings=backups`,
-  while the server is read-only) and Resume (a new checkout of the same
+  which opens the server's Settings → Backups, while the server is
+  read-only) and Resume (a new checkout of the same
   price, shown only while checkout is open), followed by the billing
   history and the plan cards. `unpaid` is still held: it offers Fix payment
   and no cards.
@@ -427,6 +429,11 @@ footer links there too.
 The front page makes no call to the account server, so the *Coming soon*
 label on its Gamma Cloud row is static text, changed by hand when a plan goes
 on sale.
+
+The pricing page's Free Download and *Self-hosting* links go to the front
+page's `#download` and `#selfhost` sections. So do the account server's links:
+`/#selfhost` directly, and `{SITE}/download` through the site's `_redirects`,
+which sends it to `/#download` now that `/download` is no page of its own.
 
 ## Running it locally with Stripe test mode
 

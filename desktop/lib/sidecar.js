@@ -1,14 +1,15 @@
-// Local-workspace server lifecycle. A "sidecar" is one Gamma backend process
-// bound to 127.0.0.1 — on the port it had last time when that is free, else
-// a free one — with GAMMA_DATA_DIR pointing at the workspace's data
-// directory. Two launch modes, resolved in this order:
+// Local-server lifecycle. A "sidecar" is one Gamma backend process bound to
+// 127.0.0.1 — on the port it had last time when that is free, else a free
+// one — with GAMMA_DATA_DIR pointing at the server's data directory. Which
+// backend runs (resolveBackend):
 //
-//   1. explicit settings (pythonPath + backendDir) — run uvicorn from a repo
-//   2. packaged: the frozen backend bundled under resources/gamma-server
-//   3. dev auto-detect: ../backend/venv relative to this file (the repo layout)
-//
-// A Mac App Store build runs the bundled server only: an App Store app may
-// not run code it was not reviewed with (App Review 2.4.5).
+//   - packaged: the frozen server bundled under resources/gamma-server, and
+//     only that one. The installed app shares its profile with a dev run of
+//     the tree, and a Mac App Store app may not run code it was not reviewed
+//     with (App Review 2.4.5).
+//   - dev run: uvicorn from a source checkout, the launcher's settings
+//     (pythonPath, backendDir, staticDir) where set, else ../backend/venv and
+//     ../frontend/dist relative to this file (the repo layout).
 //
 // The server seeds itself on an empty data dir (schema + first admin); the
 // shell passes GAMMA_ADMIN_USER/GAMMA_ADMIN_PASSWORD so the one-time password
@@ -20,7 +21,10 @@ const fs = require('fs');
 const path = require('path');
 const { startupError } = require('./startup');
 
-const running = new Map(); // workspace id -> { child, port, url, logPath, access }
+const running = new Map(); // server id -> { child, port, url, logPath, access }
+// Processes spawned and not yet answering: a quit stops these too, so a
+// server still starting (a background host at launch) is not left running.
+const starting = new Set();
 
 function freePort() {
   return new Promise((resolve, reject) => {
@@ -76,25 +80,20 @@ function detectDev(settings) {
 }
 
 function resolveBackend(settings, { isPackaged, resourcesPath }) {
-  const dev = detectDev(settings);
-  const explicit = !process.mas && settings.pythonPath && fs.existsSync(settings.pythonPath);
-  if (explicit) return { mode: 'dev', ...dev };
-
   if (isPackaged) {
     const exe = path.join(
       resourcesPath,
       'gamma-server',
       process.platform === 'win32' ? 'gamma-server.exe' : 'gamma-server'
     );
-    if (fs.existsSync(exe)) return { mode: 'frozen', exe };
+    if (!fs.existsSync(exe)) throw new Error(`Bundled server missing: ${exe}`);
+    return { mode: 'frozen', exe };
   }
-
-  if (!process.mas && fs.existsSync(dev.pythonPath)) return { mode: 'dev', ...dev };
-  throw new Error(
-    isPackaged
-      ? 'Bundled server missing and no Python configured in launcher settings.'
-      : `No backend found: expected ${dev.pythonPath} (or set a Python path in launcher settings).`
-  );
+  const dev = detectDev(settings);
+  if (!fs.existsSync(dev.pythonPath)) {
+    throw new Error(`No backend found: expected ${dev.pythonPath} (or set a Python path in launcher settings).`);
+  }
+  return { mode: 'dev', ...dev };
 }
 
 async function healthy(url, timeoutMs = 1500) {
@@ -204,8 +203,10 @@ async function start(ws, settings, appInfo, { avoid = [] } = {}) {
   child.stderr.on('data', (d) => logStream.write(d));
 
   let exited = false;
+  starting.add(child);
   child.once('exit', (code) => {
     exited = true;
+    starting.delete(child);
     logStream.write(`--- server exited (code ${code}) ---\n`);
     if (running.get(ws.id)?.child === child) running.delete(ws.id);
   });
@@ -216,11 +217,13 @@ async function start(ws, settings, appInfo, { avoid = [] } = {}) {
     if (await healthy(url)) {
       // `access`: the folder grants it started with (lib/folderAccess.js).
       const entry = { child, port, url, logPath, access: appInfo?.access || 0 };
+      starting.delete(child);
       running.set(ws.id, entry);
       return entry;
     }
     await new Promise((r) => setTimeout(r, 250));
   }
+  starting.delete(child);
   killChild(child);
   throw startupError('timeout', logPath, logFrom);
 }
@@ -258,10 +261,12 @@ function stop(id) {
 function stopAll() {
   for (const [, entry] of running) killChild(entry.child);
   running.clear();
+  for (const child of starting) killChild(child);
+  starting.clear();
 }
 
 function status(id) {
   return running.get(id) || null;
 }
 
-module.exports = { start, stop, stopAll, status, detectDev, pickPort, stillUp };
+module.exports = { start, stop, stopAll, status, detectDev, resolveBackend, pickPort, stillUp };

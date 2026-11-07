@@ -177,7 +177,7 @@
   min-width: 0;
 }
 
-:is(.statusPill .pillText, .reportPageName, .chatFileChipName, .attachName) {
+:is(.statusPill .pillText, .chatFileChipName, .attachName) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -394,16 +394,13 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   background: var(--bg-input);
 }
 
+/* The notes: a Notes window's body (.dockWindowBody .sidebar) or, with no
+   viewer showing, the center (.main.pdfHidden .sidebar), which size it. */
 .sidebar {
-  flex: 0 0 var(--sidebar-width, 420px) !important;
-  width: var(--sidebar-width, 420px) !important;
   min-width: 300px !important;
-  max-width: 75vw !important;
-  height: 100% !important;
   display: flex !important;
   flex-direction: column !important;
   overflow: hidden !important;
-  border-left: 1px solid var(--border) !important;
   background: var(--bg-surface);
   padding: 12px !important;
   position: relative !important;
@@ -434,6 +431,10 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   scrollbar-gutter: stable;
   min-height: 0;
   padding-bottom: 24px;
+  /* Its box reaches the pane's edge, so that a top-level row's "+" is not
+     clipped there. Its content stays where the pane's padding puts it. */
+  margin-left: -12px;
+  padding-left: 12px;
 }
 
 .blockRowWrap {
@@ -441,7 +442,7 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   margin-bottom: 1px;
 }
 
-/* Tight left gutter: the card's inner columns (collapse arrow + bullet dot)
+/* Tight left gutter: the card's inner columns (collapse arrow + marker slot)
    are what put whitespace before the text — keep them minimal. */
 .blockRow {
   display: flex;
@@ -1194,6 +1195,9 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   color: var(--text-muted);
   font-style: italic;
 }
+/* An empty plain note: its line stays, its word only comes with the row. */
+.blockPlaceholderQuiet { visibility: hidden; }
+.blockRow:is(:hover, .focused) .blockPlaceholderQuiet:not(.readOnly) { visibility: visible; }
 
 /* Click zone under the block tree — Notion-style "click below to write".
    Invisible under a non-empty tree; on an empty page it shows the invite. */
@@ -1532,19 +1536,9 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 }
 
 @media (max-width: 900px) {
-  .main {
-    flex-direction: column !important;
-  }
-
   .sidebar {
-    width: 100% !important;
-    max-width: none !important;
-    min-width: 0 !important;
-    height: 42% !important;
-    border-left: none !important;
-    border-top: 1px solid var(--border) !important;
+    min-width: 220px !important;
   }
-
 }
 
 .highlightDotBtn {
@@ -1582,29 +1576,6 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   width: 12px;
   min-width: 12px;
   height: 20px;
-}
-
-.layout-horizontal .main {
-  flex-direction: row !important;
-}
-
-.layout-horizontal .viewerWrap {
-  flex: 1 1 auto !important;
-  width: auto !important;
-  height: 100% !important;
-}
-
-.layout-horizontal .sidebar {
-  flex: 0 0 var(--sidebar-width, 420px) !important;
-  width: var(--sidebar-width, 420px) !important;
-  height: 100% !important;
-  max-width: 75vw !important;
-}
-
-@media (max-width: 900px) {
-  .layout-horizontal .sidebar {
-    min-width: 220px !important;
-  }
 }
 
 /* --- drag-and-drop overlay: the library imports files, an open page takes
@@ -1681,24 +1652,39 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   align-items: flex-start;
   gap: 0;
 }
-/* Notion-like handles in ONE narrow gutter column: ⋮⋮ (drag / menu) with the
-   "+" (add a block) right under it. Invisible at rest, appear on row hover,
-   and get a rounded pill background when hovered themselves. The "+" is
-   taken out of flow so a one-line row stays one line tall — it hangs below
-   the ⋮⋮ over the next row's (empty) gutter, above it in z-order. */
+/* Notion's handles, side by side on the row's first line: "+" (add a block),
+   then ⋮⋮ (drag / menu), then the row. Invisible at rest, appear on row hover,
+   and get a rounded pill background when hovered themselves. They stand 6px
+   left of the row's box, in the indent at depth and in the pane's padding at
+   the top level, which the .blockList reaches into; further left is the sash's
+   6px hit margin, where a press would resize the pane. The drop rule in
+   App's onBlockDragOver counts the 30px that stay inside the box.
+   --row-line is the height of the row's first line, so that they sit level
+   with it at any text size; a heading's is taller. */
+.sortableBlockWrap {
+  --row-line: calc(var(--fs-body) * var(--text-scale, 1) * 1.45);
+}
+.sortableBlockWrap:has(> .blockRowWrap > .blockRow > .blockBody :is(.blockRendered > h1:first-child, .cm-content > .cmH1:first-child)) {
+  --row-line: calc(var(--fs-body) * var(--text-scale, 1) * 1.45 * 1.3);
+}
+.sortableBlockWrap:has(> .blockRowWrap > .blockRow > .blockBody :is(.blockRendered > h2:first-child, .cm-content > .cmH2:first-child)) {
+  --row-line: calc(var(--fs-body) * var(--text-scale, 1) * 1.25 * 1.3);
+}
 .sortableBlockWrap > .rowHandles {
   flex: 0 0 auto;
-  position: relative;
-  z-index: 2;
-  width: 18px;
+  display: flex;
+  justify-content: flex-end;
+  width: 36px;
   height: 22px;
-  margin-top: 1px;
+  margin-left: -6px;
+  margin-top: calc((var(--row-line) - 18px) / 2); /* the row's 2px padding, then centred on the line */
 }
 /* Both handles: a flat 18px-wide hit box that appears on row hover, and
    takes no press while it is out of sight. */
 .rowHandles > .addHandle,
 .rowHandles > .dragHandle {
-  width: 18px;
+  flex: 0 0 18px;
+  height: 22px;
   padding: 0;
   border-radius: var(--radius-xs);
   display: flex;
@@ -1713,14 +1699,9 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   user-select: none;
 }
 .rowHandles > .addHandle {
-  position: absolute;
-  left: 0;
-  top: 22px;
-  height: 18px;
   cursor: pointer;
 }
 .rowHandles > .dragHandle {
-  height: 22px;
   margin-right: 0;
   font-size: var(--fs-lg);
   font-weight: 600;
@@ -1754,7 +1735,8 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 /* equal-width dot slot for alignment between highlight and non-highlight blocks */
 .dotSlot { width: 14px; min-width: 14px; display: inline-flex; align-items: center; justify-content: center; }
 .dotSlotEmpty { height: 16px; margin-top: 2px; }
-/* Outliner bullet for plain notes — quiet, but gives every block an anchor. */
+/* The quiet mark of a highlight, ink, box, picture or recording row while its
+   editor stands in for its own; a plain note has none. */
 .noteBulletDot {
   display: inline-block;
   width: 5px;
@@ -1784,7 +1766,7 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 .blockChildren {
   border-left: 1px solid var(--border-subtle);
   padding-left: 14px;
-  margin-left: 11px;  /* align line under the dot column of parent */
+  margin-left: 11px;  /* align line under the parent's fold caret */
 }
 
 /* Close-PDF feature */
@@ -2033,13 +2015,11 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   overflow-wrap: anywhere;
 }
 
-/* When PDF is hidden, sidebar takes full width */
+/* With no viewer showing, the notes take the center. */
 .main.pdfHidden .sidebar {
-  flex: 1 1 auto !important;
-  width: 100% !important;
-  max-width: none !important;
-  height: 100% !important;
-  border-left: none !important;
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
 }
 
 .categoryFrontmatter {
@@ -3097,16 +3077,14 @@ mark.searchMark {
   flex-direction: column;
   overflow: hidden;
 }
-/* windows fill their body regardless of legacy layout-* sizing rules */
+/* The Notes and Chat windows fill their body, as narrow as their slot is:
+   min-width beats .sidebar's own floor, so the notes wrap rather than run
+   under the slot's edge. */
 .dockWindowBody .sidebar,
 .dockWindowBody .chatPanel {
-  flex: 1 1 auto !important;
-  width: auto !important;
-  height: auto !important;
-  max-width: none !important;
-  min-height: 0 !important;
-  border-top: none !important;
-  border-left: none !important;
+  flex: 1 1 auto;
+  min-width: 0 !important;
+  min-height: 0;
 }
 .chatPanel.chatWindow { padding: 0 6px 6px; display: flex; flex-direction: column; overflow: hidden; }
 
@@ -3441,6 +3419,21 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   color: var(--text-dim);
 }
 
+/* Reverting several of the AI's changes (chat/RevertChanges.jsx): the page
+   picker's rows, one per change, under a row per message that asked for
+   them; a reverted row muted with its tag, a stopped one's question under it. */
+.revertDialog { width: min(560px, calc(100vw - 32px)); }
+.revertDialogGroup { margin-top: 4px; font-weight: 600; color: var(--text-secondary); }
+.revertDialogGroup:first-child { margin-top: 0; }
+.revertDialogGroup .attachName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.revertDialogRow { align-items: flex-start; padding-left: 28px; line-height: 1.45; }
+.revertDialogRow input { margin-top: 0.15em; }
+.revertDialogRow > svg { flex: none; margin-top: 0.2em; color: var(--text-muted); }
+.revertDialogRow.reverted .chatChangeText { color: var(--text-muted); }
+.revertDialogRow .chatChangeTag { display: inline-flex; align-items: center; gap: 3px; }
+.revertDialogAsk { margin: 0 0 4px 50px; font-size: var(--fs-xs); }
+.revertDialogDone { margin-right: auto; align-self: center; color: var(--text-muted); font-size: var(--fs-xs); }
+
 .chatAttachToggle.on {
   color: #8ab4f8;
   border-color: #8ab4f8;
@@ -3535,7 +3528,6 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatPanel {
   display: flex;
   flex-direction: column;
-  border-top: 1px solid var(--border);
   overflow: hidden;
 }
 /* Chat settings popover (header ⚙): model, effort, context slider, tools */
@@ -4335,17 +4327,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
   min-height: 60px;
   max-height: 40vh;
 }
-.reportPageItem {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 6px;
-  border-radius: var(--radius-xs);
-  cursor: pointer;
-  font-size: var(--fs-xs);
-  color: var(--text-secondary);
-}
-.reportPageItem:hover { background: var(--bg-hover); }
 .reportModalBtns {
   display: flex;
   flex-wrap: wrap;
@@ -5055,9 +5036,9 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .chatChange { display: flex; align-items: flex-start; gap: 7px; min-width: 0; }
 .chatChange > svg { flex: none; margin-top: 0.2em; color: var(--text-muted); }
 .chatChangeText { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-/* Taking a note change back (chat/AgentChanges.jsx): a frameless undo icon
-   at the row's end, "Revert all" in the head, a reverted row muted with its
-   tag, and the prompt a row shows when the note changed since. */
+/* Taking a change back (chat/AgentChanges.jsx): a frameless undo icon at
+   the row's end, "Revert…" in the head, a reverted row muted with its tag,
+   and the prompt a row shows when the note changed since. */
 /* The compact buttons give back what they stand above an 18 px line (16 in
    the head), so a row keeps its text's height. */
 .chatChange .ctlBtn.chatChangeRevert { flex: none; width: var(--ctl-icon-btn-xs); height: var(--ctl-icon-btn-xs); margin-block: calc((18px - var(--ctl-icon-btn-xs)) / 2); }
@@ -6191,19 +6172,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
   justify-content: center;
 }
 .linkTipBtn:hover { background: var(--bg-hover); }
-.linkRefQuote { font-style: italic; color: var(--text-tertiary); }
-.linkPageItem { background: none; border: none; width: 100%; text-align: left; font-family: inherit; font-weight: inherit; line-height: inherit; color: var(--text-secondary); justify-content: space-between; }
-.linkLikelyBadge {
-  flex-shrink: 0;
-  font-size: var(--fs-2xs);
-  font-weight: 600;
-  color: var(--accent);
-  background: var(--accent-bg-light);
-  border: 1px solid var(--accent-fill);
-  border-radius: var(--radius-full);
-  padding: 0 7px;
-  margin-left: 8px;
-}
 .blockLinkChip {
   display: inline-flex;
   align-items: center;
@@ -6253,7 +6221,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
   color: var(--text-primary);
 }
 .ctxMenuItem:hover:not(:disabled) { background: var(--bg-hover); }
-.moveBlockList .ctxMenuItem:focus-visible { background: var(--bg-hover); outline: none; }
 /* Menu rows with a leading glyph (e.g. the tab menu's pin/close). */
 .ctxMenuItemIconed {
   display: flex;
@@ -6688,9 +6655,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
 }
 .importDrop.over { border-color: var(--accent); color: var(--text-primary); background: var(--bg-surface); }
 .confirmMessage { font-size: var(--fs-xs); color: var(--text-secondary); line-height: 1.5; }
-/* Move-block dialog: the page list scrolls; rows are the shared ctxMenuItem. */
-.moveBlockList { display: flex; flex-direction: column; max-height: 300px; overflow-y: auto; margin-top: 2px; }
-.moveBlockList .ctxMenuItem { border-radius: var(--radius-sm); }
 /* Three actions (Cancel / Fetch / Open in browser) don't fit the 420px confirm
    width — they wrapped onto two rows. */
 .linkPromptModal { width: min(520px, calc(100vw - 32px)); }

@@ -57,7 +57,7 @@ def _ink(points=((40, 60), (260, 340))):
 
 
 def _pdf(path, pages=2):
-    from PyPDF2 import PdfWriter
+    from pypdf import PdfWriter
     writer = PdfWriter()
     for _ in range(pages):
         writer.add_blank_page(width=PAGE_W, height=PAGE_H)
@@ -258,7 +258,7 @@ def test_earlier_pictures_stay_in_the_conversation_newest_first(pictured):
     assert len(history[0]["pictures_sent"]["images"]) == 1
     assert history[0]["pictures_sent"]["lines"].endswith("(1 picture attached to this message is not shown again.)")
     assert "pictures_sent" not in history[4]
-    payload = SimpleNamespace(history=history, prompt="now?", selection="", selections=[], note_selections=[])
+    payload = SimpleNamespace(history=history, prompt="now?", selections=[], note_selections=[])
     messages = build_messages(payload, "")
     assert messages[0]["role"] == "user" and len(messages[0]["images"]) == 1
     assert messages[0]["content"].startswith("first\n\nPictures attached to this message")
@@ -416,7 +416,7 @@ def test_delete_block_takes_a_subtree_and_reverts_it(org):
     assert refused.value.status == 400
     # Pages are not the agent's to delete; out of scope is out of scope.
     text, action = run_agent_tool(ids["ws"], scope, "delete_block", {"block_id": page})
-    assert "cannot delete pages" in text and action["error"]
+    assert "delete_page" in text and action["error"]
     text, _ = run_agent_tool(ids["ws"], folder(ids["cooling"]), "delete_block", {"block_id": top})
     assert text.startswith("error")
     # The revert endpoint takes the kind.

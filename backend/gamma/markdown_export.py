@@ -18,6 +18,7 @@ from urllib.parse import quote as urlquote
 from . import bibtex as bibtex_mod
 from .blocks_store import TRASH, block_to_dict, page_attachment
 from .highlights import is_highlight, is_ink, is_link, page_of
+from .markdown_import import EMPTY_ITEM_RE
 from .note_markup import obsidian_image_sizes
 from .notebook import is_sheet
 from .picture import is_picture, markdown_of, picture_page
@@ -148,7 +149,7 @@ def render_readable(page, highlights=True, notes=True, resolve_ref=None, page_fi
         _render_readable_block(child, 0, lines, highlights, notes,
                                resolve_ref, page_file, page["id"])
 
-    return "\n".join(lines).rstrip() + "\n"
+    return "\n".join(lines).rstrip("\n") + "\n"
 
 
 # [[id]] mention / ![[id]] synced-block embed — the same id charset the
@@ -205,6 +206,22 @@ def resolve_block_links(md, resolve_ref, page_file=None, page_id=None, nested=Fa
     return _BLOCK_REF_RE.sub(repl, md)
 
 
+def block_text(node) -> str:
+    """A block's text for an export: stripped, but an empty list block keeps
+    the space that makes it one, or it comes back a dash."""
+    content = (node.get("content") or "").lstrip()
+    return content if EMPTY_ITEM_RE.fullmatch(content) else content.rstrip()
+
+
+def _bullet(text, indent, lines):
+    """``text`` as one list item, its next lines under the marker: only
+    bullets start a line of this export, which is how the import knows it
+    (``markdown_import.readable_outline``)."""
+    first, *rest = text.split("\n")
+    lines.append(f"{indent}- {first}")
+    lines += [f"{indent}  {line}" for line in rest]
+
+
 def _render_readable_block(node, depth, lines, highlights=True, notes=True,
                            resolve_ref=None, page_file=None, page_id=None, on_sheet=False):
     """One block and its subtree. ``on_sheet``: a sheet of paper is among
@@ -215,7 +232,7 @@ def _render_readable_block(node, depth, lines, highlights=True, notes=True,
     # A picture is placed on the page as a text box is, so the notes switch
     # takes it out with the other notes and the highlights switch leaves it.
     picture_line = markdown_of(node.get("content"), props["picture"]) if notes and is_picture(props) else ""
-    content = obsidian_image_sizes((node.get("content") or "").strip())
+    content = obsidian_image_sizes(block_text(node))
     content = resolve_block_links(content, resolve_ref, page_file, page_id)
     # The two export switches. A highlight block carries both a PDF region and
     # (often) writing of your own, so dropping highlights keeps its text as a
@@ -241,7 +258,7 @@ def _render_readable_block(node, depth, lines, highlights=True, notes=True,
         if not label and resolve_ref and props.get("link_page_id"):
             ref = resolve_ref(props["link_page_id"])
             label = _link_label((ref or {}).get("content"), "")
-        lines.append(f"{indent}- [{label or link_href}]({link_href})")
+        _bullet(f"[{label or link_href}]({link_href})", indent, lines)
         emitted = True
     elif is_highlight(props):
         quote = (props.get("quote") or "").strip()
@@ -259,7 +276,7 @@ def _render_readable_block(node, depth, lines, highlights=True, notes=True,
                 for c in content.split("\n"):
                     lines.append(f"{indent}  {c}")
             else:
-                lines.append(f"{indent}- {content}")
+                _bullet(content, indent, lines)
                 emitted = True
     elif is_ink(props):
         # A handwriting group: its picture (the builder renders the .ink file
@@ -293,10 +310,7 @@ def _render_readable_block(node, depth, lines, highlights=True, notes=True,
             lines.append(f"{indent}  `p.{page_no}`")
         emitted = True
     elif content:
-        clines = content.split("\n")
-        lines.append(f"{indent}- {clines[0]}")
-        for c in clines[1:]:
-            lines.append(f"{indent}  {c}")
+        _bullet(content, indent, lines)
         # A text box on a PDF page is your writing placed there: the note,
         # then the page line a highlight carries.
         page_no = box_page(props, on_sheet)

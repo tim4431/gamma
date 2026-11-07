@@ -1,18 +1,20 @@
 """The per-document manifest: what the viewer needs to lay a PDF out before
 pdf.js has parsed a byte — its size in bytes, page count, and every page's
 size in points — derived once per stored file into the workspace's
-``data.db`` (``pdf_docs``), next to the other derived per-document data (the
-PDF text index). Read by ``GET /api/pdf-info/{doc_id}``; the viewer lays out
-its page boxes from it while the bytes are still arriving, and picks the
-transport (one download or range requests) from the byte size
-(docs/dev/pdf_loading.md).
+``data.db`` (``pdf_docs``, a table of ``db.DATA_SCHEMA``), next to the
+other derived per-document data (the PDF text index). Read by
+``GET /api/pdf-info/{doc_id}``; the viewer lays out its page boxes from it
+while the bytes are still arriving, and picks the transport (one download
+or range requests) from the byte size (docs/dev/pdf_loading.md).
 
 Computed on a background thread when a PDF is stored (``schedule``), by the
 search indexer when it walks a document anyway, and on demand by the
-endpoint for anything that predates the table. A file neither PyMuPDF nor
-the PyPDF2 fallback can read is stored with ``pages = 0`` so it is not
-parsed again on every open. Rows of documents no page carries any more are
-purged with the text index (``pdf_index.purge_unused``)."""
+endpoint for anything that predates the table. A file PyMuPDF cannot read
+is stored with ``pages = 0`` so it is not parsed again on every open; a
+PyMuPDF that does not load stores nothing (``page_sizes`` raises its
+ImportError), so the file is measured once it loads. Rows of documents
+no page carries any more are purged with the text index
+(``pdf_index.purge_unused``)."""
 
 import json
 import threading
@@ -30,16 +32,6 @@ WAIT_S = 60
 _inflight: dict[tuple[str, str], threading.Event] = {}
 _inflight_lock = threading.Lock()
 
-SCHEMA = [
-    "CREATE TABLE IF NOT EXISTS pdf_docs (doc_id TEXT PRIMARY KEY, bytes INTEGER NOT NULL, "
-    "pages INTEGER NOT NULL, dims TEXT NOT NULL, ver INTEGER NOT NULL DEFAULT 0, at TEXT NOT NULL)",
-]
-
-
-def ensure_schema(conn) -> None:
-    for stmt in SCHEMA:
-        conn.execute(stmt)
-
 
 def _shape(doc_id: str, size: int, dims: list) -> dict:
     return {"doc_id": doc_id, "bytes": size, "pages": len(dims), "dims": dims}
@@ -48,7 +40,6 @@ def _shape(doc_id: str, size: int, dims: list) -> dict:
 def get(ws: str, doc_id: str) -> dict | None:
     """The stored manifest at the current VERSION, or None."""
     with connect_data_db(ws) as conn:
-        ensure_schema(conn)
         row = conn.execute(
             "SELECT bytes, dims FROM pdf_docs WHERE doc_id = ? AND ver = ?", (doc_id, VERSION)
         ).fetchone()
@@ -94,7 +85,6 @@ def _compute(ws: str, doc_id: str) -> dict | None:
     size = path.stat().st_size
     dims = [[round(w, 2), round(h, 2)] for w, h in pdf_text.page_sizes(str(path))]
     with connect_data_db(ws) as conn:
-        ensure_schema(conn)
         conn.execute(
             "INSERT OR REPLACE INTO pdf_docs (doc_id, bytes, pages, dims, ver, at) VALUES (?, ?, ?, ?, ?, ?)",
             (doc_id, size, len(dims), json.dumps(dims, separators=(",", ":")), VERSION, page_now()),
@@ -123,7 +113,6 @@ def schedule(ws: str, doc_id: str) -> None:
 def purge(conn, live_docs) -> int:
     """Delete the manifests of documents not in ``live_docs``. Returns how
     many went."""
-    ensure_schema(conn)
     stale = [r[0] for r in conn.execute("SELECT doc_id FROM pdf_docs").fetchall() if r[0] not in live_docs]
     conn.executemany("DELETE FROM pdf_docs WHERE doc_id = ?", [(d,) for d in stale])
     return len(stale)

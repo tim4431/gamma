@@ -27,7 +27,7 @@ import { SyncSettings } from "./SettingsSync";
 import { WorkspaceBackups } from "./SettingsBackups";
 import { ServerSettings } from "./SettingsServer";
 import { dotTone } from "../app/notices";
-import { resolveSettingsPane } from "./settingsNavigation";
+import { resolveSettingsPane, settingsSection } from "./settingsNavigation";
 import { hostCaps, searchSettings } from "./settingsSearch.js";
 import { SettingsReadsContext, createSettingsReads, useSettingsRead } from "./settingsReads.js";
 import { TranslationSettings } from "./SettingsTranslation";
@@ -1208,10 +1208,9 @@ export default function SettingsDialog({
       headingRef.current = null; setHeading(null);
       setQuery(""); setPending(null); setMobileIndex(false); return;
     }
-    const legacyTarget = { notes: t("Enter makes"), search: t("On the home page"), viewer: t("Imported annotations"),
-      context: t("Single paper"), "ai-advanced": t("Context size"), prompts: t("Prompts"), handwriting: t("Reset presets"),
-      topbar: t("Top bar"), "viewer-tools": t("Viewer tools") }[activePane];
-    if (legacyTarget) setJump({ label: legacyTarget });
+    // A section entry point opens its pane at the section's row.
+    const label = settingsSection(activePane);
+    if (label) setJump({ label: t(label) });
   }, [activePane]);
   // Looking at a pane resolves the notices pointing at it (app/useNotices.js).
   React.useEffect(() => {

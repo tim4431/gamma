@@ -1,11 +1,12 @@
 # gammapdf.com
 
-The product website: the front page, the download and pricing pages, and the
+The product website: the front page, the pricing page, and the
 repository's documents rendered as pages (the user guide, the privacy policy,
 the Gamma Cloud terms), served by a Cloudflare Worker with static assets.
-Nothing here is part of the app. The front page, `/download` and `/pricing`
-are written by hand; the front page tells three stories and shows six tiles,
-and the README and the user guide keep the full feature list. The artwork and
+Nothing here is part of the app. The front page and `/pricing` are written by
+hand; the front page tells three stories, shows six tiles and carries the
+download and self-hosting sections, and the README and the user guide keep the
+full feature list. The artwork, badges and
 demos are the README's, the font is the app's, and every other page is a
 Markdown file of the repository rendered at build time. The pricing page's
 numbers follow the account server's plans
@@ -13,7 +14,7 @@ numbers follow the account server's plans
 
 ```
 sites/
-  site/            the hand-written pages as deployed: index.html, download.html,
+  site/            the hand-written pages as deployed: index.html,
                    pricing.html, styles.css, site.js, docnav.js, 404.html,
                    robots.txt, _redirects, _headers, and media/ with the cuts of
                    the demos and their stills
@@ -31,10 +32,16 @@ sites/
 
 `npm run build` runs `build.mjs`, which:
 
-1. copies `site/` to `dist/`, expanding the includes in every `.html`;
+1. copies `site/` to `dist/`, expanding the includes in every `.html`, and
+   each `<!--#repofile path -->` into that file of the repository, escaped
+   for HTML, with LF line ends; a file that is missing fails the build. The
+   self-hosting section's compose block is
+   `<!--#repofile docker-compose.yml.example -->`: what the page shows is the
+   repository's file, never a copy, so it is edited there;
 2. copies what the pages use from the repository into `dist/media/`: the
    favicon (`frontend/public/media/icons/`), the logo and the hero PNG, which
-   is the page's `og:image` (`docs/assets/branding/`), the native-agentic
+   is the page's `og:image` (`docs/assets/branding/`), the TestFlight and
+   Chrome Web Store badges (`docs/assets/badges/`), the native-agentic
    demo (`docs/assets/demos/`), the hero
    still (`docs/assets/screenshots/hero-app.webp`, shot by
    `tools/readme-media/shoot-hero.mjs`), and the app's Latin subset of Inter
@@ -48,8 +55,7 @@ sites/
    `prefers-reduced-motion` the still stays.
    `tools/readme-media/site-cuts.py` writes them from the published demos;
    run it after re-recording one. The README's
-   illustrations, its other demos and the Chrome Web Store badge are not
-   copied; a picture a rendered document shows
+   illustrations and its other demos are not copied; a picture a rendered document shows
    reaches `dist/media/` through the next step;
 3. renders the Markdown documents listed in `DOCS` at the top of `build.mjs`:
 
@@ -84,18 +90,24 @@ sites/
 
 The pages have no framework. They self-host Inter from the app's Latin
 subset: `styles.css` declares `/media/inter.woff2` and `_headers` preloads
-it, so no font comes from a third party. The pages make two kinds of outbound
-request. `site.js` asks the GitHub API for the release list to fill in the
+it, so no font comes from a third party. The pages make three kinds of outbound
+request. On the front page `site.js` asks the GitHub API for the release list
+to fill in the
 version, the per-OS installer links, the extension zip and the Android APK (a
 visitor on Android gets the APK once a release carries one), and for the star
-count, which the header shows whenever the API answers. It names the primary
-download buttons after the visitor's system and, on `/download`, marks the
-visitor's card and moves it first in the DOM, so the keyboard order follows
-what the eye sees. On the pricing page it also
+count, which the hero's Star on GitHub button shows whenever the API answers;
+when it does not, its place in the button goes. It names the primary
+download buttons after the visitor's system and marks the visitor's card in
+the download section. On the pricing page it also
 asks the account server which paid plans are on sale
 (`https://account.gammapdf.com/api/plans`, [docs/dev/billing.md](../docs/dev/billing.md)
 "The website") and turns the button of a plan not sold right now into a
 disabled *Coming soon*; `_headers` lets that origin through `connect-src`.
+The Windows card's badge is Microsoft's own image, from
+`https://get.microsoft.com`, the one picture from outside the site: it is
+lazy, so the browser fetches it as the section comes near, `_headers`
+lets that origin through `img-src`, and `site.js` swaps a plain button in
+when it cannot load.
 Every element keeps a working fallback if a call fails. There are no
 cookies and no analytics, and `PRIVACY.md`'s "The website" section lists
 these requests, so a new one is added there.
@@ -117,10 +129,11 @@ redirect from `www.` and plain `http://` to `https://gammapdf.com` is the
 Worker script's job. It is one 301 hop, so search engines index only the
 https apex. The pages themselves link to the targets, not to the short
 links: the build's link check knows only the pages it built, so an
-`href="/android"` fails `--strict`. `/download` is not a short link but a
-page, `site/download.html`, so the header, the footer and the account
-server's pages land on it. Its cards link to the latest release and carry
-`data-asset`, which `site.js` points at the file once a release has it.
+`href="/android"` fails `--strict`. `/download` is not a page: it goes to
+the front page's `#download` section (`/#download`, a 302 that keeps the
+fragment), because the account server's deployed pages link to it. The
+section's cards link to the latest release and carry `data-asset`, which
+`site.js` points at the file once a release has it.
 `_headers` sets the security headers, a preload of the font on every page but
 the guide's demos, which do not use it, and a one-day cache on `/media/*`.
 
@@ -148,7 +161,7 @@ npm run deploy     # build + wrangler deploy
 ```
 
 From CI: `.github/workflows/site.yml` checks a PR that touches `sites/`,
-`docs/`, `desktop/ui/fonts/`, `PRIVACY.md` or `TERMS.md` (a strict build, the key pages present, includes
+`docs/`, `desktop/ui/fonts/`, `docker-compose.yml.example`, `PRIVACY.md` or `TERMS.md` (a strict build, the key pages present, build directives
 expanded, a wrangler dry run), and checks + deploys on a push to `main`
 touching them or on a manual dispatch from any branch — the `build-site`
 skill (`gh workflow run site.yml --ref dev`), so the site ships without a
@@ -177,16 +190,21 @@ needs two repository secrets:
 
 ## Editing the site
 
-- The front page tells three stories, each a heading, a sentence and a clip,
-  then six tiles, and does not follow the README feature by feature. The
+- The front page tells three stories, each a heading and a sentence beside a
+  clip, then six tiles, and does not follow the README feature by feature. The
   README, the guide and the Store listing (`desktop/assets/store/listing.md`)
   keep the full list; when a feature changes, check the story or tile that
   names it.
 - Its Gamma Cloud *Coming soon* label is static text
   ([docs/dev/billing.md](../docs/dev/billing.md) "The website").
+- The download section's Server and assistant cards spell out their commands
+  by hand: keep them in step with the README's install section and the user
+  guide's "Connect an assistant". Only the compose block comes from the file
+  itself, and the sentence beside it says its Watchtower service keeps Gamma
+  upgraded.
 - The front page's `id="selfhost"` and `id="download"` stay: the account
-  server's pages link to the first and old links land on the second, and the
-  build's link check sees neither.
+  server's pages link to the first and reach the second through `/download`,
+  and the build's link check does not see those pages.
 - The survey behind the page, and why it was cut in November 2026, are in
   [docs/research/website.md](../docs/research/website.md).
 - The page must work without `site.js` (it does: every link has a static

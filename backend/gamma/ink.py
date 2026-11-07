@@ -1455,13 +1455,13 @@ def pdf_path_resources(ops: bytes):
     sets — the output of ``pdf_path_ops``, or a whole content stream that
     holds it — or None when it sets none. The name carries the state
     (``pdf_alpha_op``)."""
-    from PyPDF2.generic import DictionaryObject, FloatObject, NameObject
+    from pypdf.generic import DictionaryObject, FloatObject, NameObject
     found = sorted({(m.group(1), int(m.group(2))) for m in _GS_RE.finditer(ops)})
     if not found:
         return None
     out = DictionaryObject()
     for multiply, alpha in found:
-        value = f"{alpha / 1000:g}"      # a string, or PyPDF2 writes the float's every binary digit
+        value = alpha / 1000
         state = DictionaryObject({NameObject("/Type"): NameObject("/ExtGState"),
                                   NameObject("/CA"): FloatObject(value), NameObject("/ca"): FloatObject(value)})
         if multiply:
@@ -1488,14 +1488,14 @@ class GrainPatterns:
         self._patterns: dict = {}
 
     def resources(self, ops: bytes):
-        from PyPDF2.generic import DictionaryObject, NameObject
+        from pypdf.generic import DictionaryObject, NameObject
         names = sorted({m.group(1).decode() for m in _GRAIN_RE.finditer(ops)})
         if not names:
             return None
         return DictionaryObject({NameObject("/" + name): self._pattern(name) for name in names})
 
     def _image(self, data: bytes, space: str):
-        from PyPDF2.generic import DecodedStreamObject, NameObject, NumberObject
+        from pypdf.generic import DecodedStreamObject, NameObject, NumberObject
         stream = DecodedStreamObject()
         stream.set_data(zlib.compress(data, 9))
         stream.update({NameObject("/Type"): NameObject("/XObject"), NameObject("/Subtype"): NameObject("/Image"),
@@ -1509,7 +1509,7 @@ class GrainPatterns:
         whose soft mask is the tile's alpha, smoothed when magnified as the
         screen's pattern is (``/Interpolate``: pdf.js draws it in blocks
         without)."""
-        from PyPDF2.generic import BooleanObject, NameObject
+        from pypdf.generic import BooleanObject, NameObject
         ref = self._images.get(rgb)
         if ref is None:
             if self._mask is None:
@@ -1522,7 +1522,7 @@ class GrainPatterns:
         return ref
 
     def _pattern(self, name: str):
-        from PyPDF2.generic import ArrayObject, DecodedStreamObject, DictionaryObject, FloatObject, NameObject, NumberObject
+        from pypdf.generic import ArrayObject, DecodedStreamObject, DictionaryObject, FloatObject, NameObject, NumberObject
         ref = self._patterns.get(name)
         if ref is None:
             rgb, *matrix = name[len("Grain"):].split("_")

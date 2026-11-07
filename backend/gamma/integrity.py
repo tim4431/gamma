@@ -81,25 +81,27 @@ def record(results: dict, source: str) -> None:
 
 
 def failures() -> dict:
-    """``{relative path: {result, at, source}}`` for every database file
-    whose latest check failed and that still exists (a deleted workspace's
-    entry is ignored)."""
-    return {rel: v for rel, v in _read().items() if (config.DATA_DIR / rel).exists()}
+    """``{relative path: {result, at, source}}`` for every database file a
+    check covers (``db_files``: users.db and the workspaces' files) whose
+    latest check failed and that still exists. Another entry is ignored: a
+    deleted workspace's, or one of a file no check reads again, which no
+    passing check could clear."""
+    return {rel: v for rel, v in _read().items()
+            if (rel == "users.db" or rel.startswith("workspaces/")) and (config.DATA_DIR / rel).exists()}
 
 
 def db_files() -> list[Path]:
-    """Every SQLite file of the data directory, whichever layout it is in."""
+    """users.db and every workspace's pages.db and data.db."""
     files = []
     if config.USERS_DB.exists():
         files.append(config.USERS_DB)
-    for root in (config.LEGACY_USERS_DIR, config.WORKSPACES_DIR):
-        if root.is_dir():
-            for d in sorted(root.iterdir()):
-                if d.name.startswith("."):
-                    continue  # a deleted workspace's leftover (workspaces.remove_leftovers)
-                for name in ("pages.db", "data.db"):
-                    if (d / name).is_file():
-                        files.append(d / name)
+    if config.WORKSPACES_DIR.is_dir():
+        for d in sorted(config.WORKSPACES_DIR.iterdir()):
+            if d.name.startswith("."):
+                continue  # a deleted workspace's leftover (workspaces.remove_leftovers)
+            for name in ("pages.db", "data.db"):
+                if (d / name).is_file():
+                    files.append(d / name)
     return files
 
 

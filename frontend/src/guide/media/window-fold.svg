@@ -37,39 +37,28 @@
   <path class="m-glyph" d="M120 15h.01M123 15h.01M120 18h.01M123 18h.01M120 21h.01M123 21h.01" />
   <rect class="m-line" x="128" y="16" width="24" height="4" rx="2" />
   <path class="m-rule" d="M114 26H306" />
-  <circle class="m-line-dim" cx="122" cy="37" r="1.6" />
   <rect class="m-line-dim" x="127" y="35.25" width="120" height="3.5" rx="1.75" />
-  <circle class="m-line-dim" cx="122" cy="49" r="1.6" />
   <rect class="m-line-dim" x="127" y="47.25" width="96" height="3.5" rx="1.75" />
-  <circle class="m-line-dim" cx="132" cy="61" r="1.6" />
   <rect class="m-line-dim" x="137" y="59.25" width="104" height="3.5" rx="1.75" />
-  <circle class="m-line-dim" cx="132" cy="73" r="1.6" />
   <rect class="m-line-dim" x="137" y="71.25" width="80" height="3.5" rx="1.75" />
-  <circle class="m-line-dim" cx="122" cy="85" r="1.6" />
   <rect class="m-line-dim" x="127" y="83.25" width="132" height="3.5" rx="1.75" />
   <!-- the rows the room uncovers, each as Notes' bottom edge passes it -->
   <g class="m-appear" style="--m-at: 0.258">
-    <circle class="m-line-dim" cx="132" cy="97" r="1.6" />
     <rect class="m-line-dim" x="137" y="95.25" width="92" height="3.5" rx="1.75" />
   </g>
   <g class="m-appear" style="--m-at: 0.272">
-    <circle class="m-line-dim" cx="122" cy="109" r="1.6" />
     <rect class="m-line-dim" x="127" y="107.25" width="110" height="3.5" rx="1.75" />
   </g>
   <g class="m-appear" style="--m-at: 0.285">
-    <circle class="m-line-dim" cx="132" cy="121" r="1.6" />
     <rect class="m-line-dim" x="137" y="119.25" width="70" height="3.5" rx="1.75" />
   </g>
   <g class="m-appear" style="--m-at: 0.298">
-    <circle class="m-line-dim" cx="122" cy="133" r="1.6" />
     <rect class="m-line-dim" x="127" y="131.25" width="124" height="3.5" rx="1.75" />
   </g>
   <g class="m-appear" style="--m-at: 0.311">
-    <circle class="m-line-dim" cx="122" cy="145" r="1.6" />
     <rect class="m-line-dim" x="127" y="143.25" width="88" height="3.5" rx="1.75" />
   </g>
   <g class="m-appear" style="--m-at: 0.324">
-    <circle class="m-line-dim" cx="132" cy="157" r="1.6" />
     <rect class="m-line-dim" x="137" y="155.25" width="100" height="3.5" rx="1.75" />
   </g>
 

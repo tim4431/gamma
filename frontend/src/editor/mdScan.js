@@ -4,22 +4,24 @@
 // (BlockCmEditor.jsx), so all of them agree on which construct is "the nth
 // one". Pure: no DOM, no React.
 import { escapedAt } from "./latexInput.js";
-import { scanFences } from "./fences.js";
 import { scanImageSyntax } from "./mdMarks.js";
 import { quoteMarksAt } from "./mdLines.js";
-import { codeSpans } from "../shared/lib/mdCode.js";
+import { codeFences, codeSpans, codeTest } from "../shared/lib/mdCode.js";
 
 // All CLOSED math spans in the text: [{from, to, display}] with from/to
 // including the delimiters. Same tokenizer as latexEditor's findMathAtCursor
-// (escaped \$ skipped), but only complete pairs — an unclosed opener stays
-// raw text while it's being typed. Inline spans must sit on one line and be
-// non-empty; "$5 and $3" across prose otherwise pairs into a bogus formula.
+// (escaped \$ and a dollar in code skipped, a lone "$" ending with its
+// paragraph), but only complete pairs — an unclosed opener stays raw text
+// while it's being typed. Inline
+// spans must sit on one line and be non-empty; "$5 and $3" across prose
+// otherwise pairs into a bogus formula.
 export function scanMathSpans(text) {
   const re = /\$\$?/g;
+  const inCode = codeTest(text);
   const spans = [];
   let m, open = null;
   while ((m = re.exec(text))) {
-    if (escapedAt(text, m.index)) continue;
+    if (escapedAt(text, m.index) || inCode(m.index)) continue;
     const tok = { i: m.index, len: m[0].length };
     if (!open) {
       open = tok;
@@ -27,7 +29,7 @@ export function scanMathSpans(text) {
       const inner = text.slice(open.i + open.len, tok.i);
       const ok = inner.trim() && (open.len === 2 || !inner.includes("\n"));
       if (ok) spans.push({ from: open.i, to: tok.i + tok.len, display: open.len === 2 });
-      open = null;
+      open = !ok && open.len === 1 && /\n[ \t]*\n/.test(inner) ? tok : null;
     } else {
       // Mismatched pair ($ ... $$): treat the later token as a fresh opener.
       open = tok;
@@ -44,31 +46,32 @@ export function mathTex(text, s) {
   return quoteMarksAt(text, s.from) ? tex.replace(/\n(?:[ \t]*>)+[ \t]?/g, "\n") : tex;
 }
 
-// Ranges markdown syntax must not be recognized inside (math, ``` fences,
+const fenceSpans = (content) => codeFences(content).map((f) => ({ from: f.from, to: f.end }));
+
+// Ranges markdown syntax must not be recognized inside (math, code fences,
 // inline code), sorted: mdPreprocess rewrites only outside them, and the
 // image scan skips them, so the nth scanned image is the nth rendered one.
-// Inline code is mdCode.codeSpans, the spans a paste reads as code too
-// ("``a`b``" one span).
+// Code is mdCode's, what a paste reads as code too ("``a`b``" one span).
 export function protectedSpans(content) {
-  const spans = scanMathSpans(content).map((s) => ({ from: s.from, to: s.to }));
-  for (const f of scanFences(content)) spans.push({ from: f.from, to: f.to });
+  const spans = [...scanMathSpans(content).map((s) => ({ from: s.from, to: s.to })), ...fenceSpans(content)];
   for (const [from, to] of codeSpans(content)) spans.push({ from, to });
   return spans.sort((a, b) => a.from - b.from);
 }
 const inSpan = (spans, pos) => spans.some((s) => pos >= s.from && pos < s.to);
 
-// The images the rendered view shows, in order. The syntax (Obsidian
-// `![alt|300]` size, legacy Logseq `{:width N}` suffix) is scanImageSyntax in
-// mdMarks.js; both forms render, edits write the Obsidian form.
+// The images the rendered view shows, in order. The syntax (the Obsidian
+// `![alt|300]` size or Logseq's `{:width N}` after the image) is
+// scanImageSyntax in mdMarks.js, which the view renders with too; edits
+// write the Obsidian form.
 export function scanImages(content) {
   const spans = protectedSpans(content);
   return scanImageSyntax(content).filter((im) => !inSpan(spans, im.from));
 }
 
-// The multi-line constructs (``` fences, $$ display math) a line boundary
+// The multi-line constructs (code fences, $$ display math) a line boundary
 // must not fall inside — what clickToSource's gapInSource takes as `spans`.
 export function blockSpans(content) {
-  return [...scanMathSpans(content), ...scanFences(content)];
+  return [...scanMathSpans(content), ...fenceSpans(content)];
 }
 
 // GFM row → trimmed cells (outer pipes dropped, unescaped | splits — per the
@@ -86,9 +89,9 @@ const DELIM_CELL_RE = /^:?-+:?$/;
 // stay the nth entry — but marked editable:false (ops would have to re-prefix
 // every line with ">"; not worth it).
 export function scanTables(content) {
-  // Only multi-line spans can hide a fake "table" (a ``` fence or $$ display
+  // Only multi-line spans can hide a fake "table" (a code fence or $$ display
   // math with | characters on its lines); inline spans can't span rows.
-  const spans = scanFences(content).concat(
+  const spans = fenceSpans(content).concat(
     scanMathSpans(content).filter((s) => content.slice(s.from, s.to).includes("\n")),
   );
   const lines = [];

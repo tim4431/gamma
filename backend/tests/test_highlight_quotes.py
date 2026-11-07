@@ -1,16 +1,22 @@
 """The quote of an imported highlight is the text under its quads: PyMuPDF's
 glyph boxes (pdf_text.GlyphPages), a glyph counted when its centre is
-covered (pdf_text.quote_under). Guards the two failures of the reader this
-replaced, which matched one point per line: a highlight from a line's start
-quoting the line above it (PyPDF2's text visitor reports a line at the next
-line's position), and one starting mid-line quoting nothing."""
+covered (pdf_text.quote_under). Guards the two ways a quote matched by one
+point per line goes wrong: a highlight from a line's start quoting the line
+above it, and one starting mid-line quoting nothing."""
 
 import io
+import sys
 
-from PyPDF2 import PdfReader
+import pytest
+from pypdf import PdfReader
 
+from conftest import make_page
+
+from gamma import pdf_text
+from gamma.highlight_relocate import Doc
 from gamma.pdf_text import GlyphPages, quote_under
 from gamma.routers.imports import _extract_pdf_annotations
+from gamma.zotero_annotations import Pages
 
 LEFT, TOP, LEAD, SIZE = 72, 700, 12, 10  # Courier: every glyph 6 pt wide at 10 pt
 LINES = ["Line one of the paragraph is here.",
@@ -116,6 +122,50 @@ def test_without_glyphs_or_a_readable_file_the_highlight_imports_without_a_quote
         assert glyphs.page(1) == []
         found = _extract_pdf_annotations(PdfReader(io.BytesIO(pdf_bytes)), glyphs)
     assert [(r["content"], r["quote"]) for r in found] == [("plain", "")]
+
+
+def _without_pymupdf(monkeypatch):
+    monkeypatch.setattr(pdf_text, "_mupdf", None)
+    monkeypatch.setitem(sys.modules, "pymupdf", None)  # `import pymupdf` raises ImportError
+
+
+def test_a_pymupdf_that_does_not_load_is_no_file_without_glyphs(monkeypatch):
+    """Each reader of the glyphs would keep an empty answer, or act on it:
+    an import's empty quotes, a relocation's highlights lost, a Zotero
+    annotation's page missing."""
+    pdf_bytes = _pdf([("plain", [_quad(LEFT, _x(10), 0)])])
+    with monkeypatch.context() as m:
+        _without_pymupdf(m)
+        for read in (lambda g: g.page(1), lambda g: g.page_count(), lambda g: g.frame(1), lambda g: g.label(1)):
+            with GlyphPages(pdf_bytes) as glyphs, pytest.raises(ImportError):
+                read(glyphs)
+        with pytest.raises(ImportError):
+            Doc(pdf_bytes)
+        with Pages(pdf_bytes) as pages, pytest.raises(ImportError):
+            pages.page(1)
+        with GlyphPages(pdf_bytes) as glyphs, pytest.raises(ImportError):
+            _extract_pdf_annotations(PdfReader(io.BytesIO(pdf_bytes)), glyphs)
+    assert _quotes(pdf_bytes) == {"plain": "Line one o"}
+
+
+def test_an_import_without_pymupdf_writes_nothing_and_the_next_one_quotes(guest, monkeypatch):
+    pdf_bytes = _pdf([("plain", [_quad(_x(11), _x(len(LINES[2])), 2)])])
+    up = guest.post("/api/uploads", files={"file": ("a.pdf", pdf_bytes, "application/pdf")})
+    assert up.status_code == 200, up.text
+    doc_id = up.json()["doc_id"]
+    page = make_page(guest, "Quoted", properties={"doc_id": doc_id, "source_url": up.json()["source_url"]})
+    body = {"block_id": page["id"], "doc_id": doc_id}
+
+    with monkeypatch.context() as m:
+        _without_pymupdf(m)
+        r = guest.post("/api/import/pdf-annotations", json=body)
+    assert r.status_code == 400 and "pymupdf" in r.json()["detail"]
+    assert guest.get(f"/api/blocks/{page['id']}/children").json()["children"] == []
+
+    r = guest.post("/api/import/pdf-annotations", json=body)
+    assert (r.status_code, r.json()["imported"]) == (200, 1)
+    [block] = guest.get(f"/api/blocks/{page['id']}/children").json()["children"]
+    assert block["properties"]["quote"] == "is the one we highlight."
 
 
 def test_quote_under_counts_a_glyph_by_its_centre_and_skips_read_as_one_space():

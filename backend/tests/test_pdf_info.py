@@ -13,7 +13,7 @@ from conftest import workspace_of, guest_name
 
 
 def _pdf(pages=1, rotate_last=0, width=612, height=792):
-    from PyPDF2 import PdfWriter
+    from pypdf import PdfWriter
 
     w = PdfWriter()
     for i in range(pages):
@@ -73,6 +73,46 @@ def test_unreadable_pdf_is_recorded_as_zero_pages_and_not_cached(guest):
     assert r.status_code == 200
     assert r.json()["pages"] == 0 and r.json()["dims"] == []
     assert r.headers["cache-control"] == "no-store"
+
+
+def test_a_reader_that_does_not_load_stores_no_manifest_and_no_index(guest, monkeypatch):
+    """PyMuPDF failing to import (a build whose MuPDF does not load) is not
+    an unreadable file: the manifest and the search index (which keep an
+    unreadable file's empty answer for good) store nothing, so the file is
+    measured and indexed once the reader loads."""
+    import sys
+
+    import pytest
+
+    from gamma.pdf_index import ensure_schema
+    from gamma.routers import search as search_mod
+
+    doc_id = _upload(guest, _pdf(pages=2))
+    ws = workspace_of(guest_name())
+    for _ in range(50):  # let the upload's own background walk finish first
+        if pdf_meta.get(ws, doc_id):
+            break
+        time.sleep(0.05)
+    with sqlite3.connect(ws_db_path(ws, "data.db")) as conn:
+        conn.execute("DELETE FROM pdf_docs WHERE doc_id = ?", (doc_id,))
+        conn.commit()
+
+    def indexed():
+        with sqlite3.connect(ws_db_path(ws, "data.db")) as conn:
+            ensure_schema(conn)
+            return conn.execute("SELECT pages FROM pdf_fts_docs WHERE doc_id = ?", (doc_id,)).fetchone()
+
+    with monkeypatch.context() as m:
+        m.setattr(pdf_text, "_mupdf", None)
+        m.setitem(sys.modules, "pymupdf", None)  # `import pymupdf` raises ImportError
+        with pytest.raises(ImportError):
+            pdf_meta.ensure(ws, doc_id)
+        with pytest.raises(ImportError):
+            search_mod._index_doc(ws, doc_id)
+    assert pdf_meta.get(ws, doc_id) is None and indexed() is None
+    assert pdf_meta.ensure(ws, doc_id)["pages"] == 2
+    search_mod._index_doc(ws, doc_id)
+    assert indexed() is not None
 
 
 def test_unknown_and_malformed_ids(guest):

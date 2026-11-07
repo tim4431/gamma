@@ -143,7 +143,7 @@ def test_pdf_references_preserve_selection_metadata_and_budget(org, monkeypatch)
 
     monkeypatch.setattr(ai_context, "selection_context", selection)
     payload = AIChatRequest(prompt="Compare", page_id=ids["a"],
-        pages=[ids["a"], ids["note"], "missing"], selection="cavity results",
+        pages=[ids["a"], ids["note"], "missing"], selections=[{"text": "cavity results"}],
         multi_context_char_limit=6000, agent_scope="page")
     _, context, coverage, message_context, _ = ai_context.gather_inputs(ids["ws"], payload, False)
     # The windows around the selection skip the head slice (the document

@@ -2,7 +2,7 @@
 // into a note as the $ … $ and $$ … $$ notes render (remark-math and
 // scanMathSpans read only dollars). It is converted on the way in, never on
 // screen: in Markdown "\[" is also an escaped bracket, and Gamma writes those
-// itself (text_box.escape_markdown, zotero_notes._escape: "\[n = 30\]"), so
+// itself (text_box.escape_markdown, zotero_notes.escape: "\[n = 30\]"), so
 // a \[ … \] converts only when it is shaped as a formula is written.
 // backend/gamma/paste_math.py applies the same rules to what the AI writes;
 // tests/shared/pastemath.json pins both. Code is shared/lib/mdCode.js's
@@ -242,15 +242,7 @@ export function dollarMath(text, keep = "") {
 // What a paste at `pos` in `doc` puts in: `text` converted, unless it lands
 // in source — a code fence, inline code or math — where it stays as copied.
 export function pasteMath(doc, pos, text) {
-  const fenced = codeFences(doc), spans = codeSpans(doc);
-  if (fenced.some((f) => pos >= f.inner && pos <= f.to) || spans.some(([a, b]) => pos > a && pos < b)) return text;
-  // Dollars in code are no math: blanked before asking.
-  const code = [...fenced.map((f) => [f.from, f.end]), ...spans].sort((x, y) => x[0] - y[0]);
-  let prose = "", at = 0;
-  for (const [a, b] of code) {
-    if (a < at) continue;
-    prose += doc.slice(at, a) + doc.slice(a, b).replace(/[^\n]/g, " ");
-    at = b;
-  }
-  return findMathAtCursor(prose + doc.slice(at), pos) ? text : dollarMath(text);
+  if (codeFences(doc).some((f) => pos >= f.inner && pos <= f.mark)
+    || codeSpans(doc).some(([a, b]) => pos > a && pos < b)) return text;
+  return findMathAtCursor(doc, pos) ? text : dollarMath(text);
 }

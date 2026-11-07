@@ -882,3 +882,12 @@ def test_a_folder_exports_each_page_as_a_note_in_one_zip(owner, ws):
     assert sorted(zf.namelist()) == ["First note.note", "Week 2/Second note.note"]
     note = zf.read("Week 2/Second note.note")
     assert reimport(owner, note, "Second note.note")["pages"][0]["title"] == "Second note"
+
+
+def test_a_list_block_is_a_list_item_at_its_depth():
+    top, nested = nexp.flow_runs("- item", 0), nexp.flow_runs("* item\nmore", 2)
+    assert (top[0].text, top[0].list_style, top[0].level) == ("item", 1, 0)
+    assert (nested[0].text, nested[0].list_style, nested[0].level) == ("item", 1, 2)
+    assert nexp.flow_runs("- [x] done", 1)[0].list_style == 3
+    assert nexp.flow_runs("1. first", 1)[0].list_style == 2
+    assert nexp.flow_runs("-not a list", 0)[0].list_style == 0

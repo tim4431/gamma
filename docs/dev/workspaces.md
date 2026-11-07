@@ -259,8 +259,7 @@ account's links go with the account. Deleting an account also revokes,
 at Zotero, a Zotero key Gamma had Zotero make for it, as a disconnect does
 (a failure there is logged and never stops the deletion).
 Their browser caches use `user@workspace`; another account opening the same
-shared library gets its own reading state. Unscoped legacy session caches are
-not restored because their owner is unknown.
+shared library gets its own reading state.
 
 ## Request contract
 
@@ -421,7 +420,9 @@ is refused whole. Then the unpacked copies are normalized to the current
 shapes (`_normalize_copies`, [user_db.md](user_db.md) "pages.db"): a
 backup from before schema version 28 has its chats moved from its data.db
 into its pages.db, and every backup has its notes index built again from
-its rows (it may have been built under other normalization rules).
+its rows (it may have been built under other normalization rules) and its
+data.db given the tables it lacks (`db.DATA_SCHEMA`: a replace copies it
+over the live file, under connections that applied them already).
 
 - **Replace** keeps what the workspace holds
   now as an automatic `pre-restore` snapshot with its uploads, and swaps the

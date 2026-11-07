@@ -46,13 +46,14 @@ const LEGACY_FILE = 'workspaces.json'; // the registry's name before servers had
 
 const DEFAULTS = {
   settings: {
-    // Overrides for dev mode; empty strings mean "auto-detect the repo layout".
+    // A dev run's server overrides (a packaged build ignores them); empty
+    // strings mean "auto-detect the repo layout".
     pythonPath: '',
     backendDir: '',
     staticDir: '',
     // Reopen the last server at launch instead of showing the launcher.
     openLastOnLaunch: true,
-    // Last data-theme the Gamma page reported ('' = never seen → dark).
+    // Last data-theme the Gamma page reported ('' = never seen: follow the OS).
     lastTheme: '',
     // Folder new local servers are created in ('' = <userData>/workspaces).
     dataRoot: '',
@@ -76,12 +77,13 @@ let userDataDir = null;
 function init(dir) {
   userDataDir = dir;
   fs.mkdirSync(dir, { recursive: true });
-  // One-time rename of the registry file; the old copy stays for a rollback.
+  // One-time rename of the registry file, its list moved from `workspaces`
+  // to `servers`; the old copy stays for a rollback.
   const legacy = path.join(dir, LEGACY_FILE);
   if (!fs.existsSync(filePath()) && fs.existsSync(legacy)) {
     try {
-      const raw = JSON.parse(fs.readFileSync(legacy, 'utf8'));
-      save({ ...raw, servers: raw.servers || raw.workspaces || [] });
+      const { workspaces, ...rest } = JSON.parse(fs.readFileSync(legacy, 'utf8'));
+      save({ ...rest, servers: rest.servers || workspaces || [] });
     } catch {}
   }
 }
@@ -93,10 +95,9 @@ function filePath() {
 function load() {
   try {
     const raw = JSON.parse(fs.readFileSync(filePath(), 'utf8'));
-    const list = Array.isArray(raw.servers) ? raw.servers : Array.isArray(raw.workspaces) ? raw.workspaces : [];
     return {
       settings: { ...DEFAULTS.settings, ...(raw.settings || {}) },
-      servers: list,
+      servers: Array.isArray(raw.servers) ? raw.servers : [],
       mirrors: Array.isArray(raw.mirrors) ? raw.mirrors : [],
       access: Array.isArray(raw.access) ? raw.access : [],
       lastOpened: raw.lastOpened || null,
@@ -109,8 +110,7 @@ function load() {
 
 function save(state) {
   fs.mkdirSync(userDataDir, { recursive: true });
-  const { workspaces, ...rest } = state; // never write the old key back
-  fs.writeFileSync(filePath(), JSON.stringify(rest, null, 2));
+  fs.writeFileSync(filePath(), JSON.stringify(state, null, 2));
 }
 
 function defaultDataRoot() {

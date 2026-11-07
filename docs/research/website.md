@@ -76,9 +76,20 @@ and 4 images. The platform and self-hosting sections became the `/download`
 page, with two of the FAQ's questions, and "Is Gamma free?" became a note on
 `/pricing`.
 
+Later that month the developer compared this page with the one before it and
+took three things back: the centred hero with the Star on GitHub button and its
+arrow, each story's text and clip in two columns, and the download and
+self-hosting sections, at the bottom of the front page again. The `/download`
+page went, and its address now leads to the section. The section shows the
+store badges and the Server, Claude Code and Codex commands, and self-hosting
+shows `docker-compose.yml.example`, which the build copies in. The shorter
+clips, the tiles, the band and the pricing page stayed, and the closing call to
+action went. The page now runs 7.3
+screens at 1920×911 (10.2 at 390 wide), with 931 words, 29 links and 7 images.
+
 Tone: lead with what the reader does, state privacy as fact, no adjectives
 for their own sake. Testimonials, press and community counts were left out:
 there is nothing honest to show there yet, and the survey found them optional.
 The GitHub star count is fetched live. At first it showed only once it was
-large enough to say something; since November 2026 the header shows it
-whenever the API answers.
+large enough to say something; since November 2026 the hero's Star on GitHub
+button shows it whenever the API answers.

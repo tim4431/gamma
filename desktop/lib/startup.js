@@ -1,11 +1,12 @@
 // Why opening a server failed, in words a user can act on.
 //
-// A sidecar that dies during startup used to reach the launcher as a raw tail
-// of its log — and since the log file is appended to across runs, that tail was
-// usually a dozen irrelevant INFO lines from the last good run with the real
-// cause somewhere below. This module answers two questions instead: what
-// happened (one sentence plus the server's own wording) and what would fix it
-// (`action`, which the launcher turns into a button).
+// A sidecar that exits during startup, or never answers, leaves its reason in
+// its log, a file appended to across runs. This module reads back only the
+// failing run's lines and answers two questions: what happened (one sentence
+// plus the server's own wording) and what would fix it (`action`, which the
+// launcher turns into a button). A server that cannot upgrade its data
+// directory is no failure here: it stays up, and the window shows its guidance
+// page (lib/sidecar.js healthy).
 
 const fs = require('fs');
 
@@ -24,23 +25,6 @@ function logTail(logPath, from = 0, lines = 60) {
 // First rule whose pattern appears in the log wins; the matched line is kept as
 // `detail` so the server still speaks for itself.
 const FAILURES = [
-  {
-    match: /newer than this Gamma/i,
-    summary: 'This library was written by a newer version of Gamma.',
-    hint: 'Update the app, then open the server again. If you meant to go back to this version, restore the matching snapshot from the backups folder inside the data folder.',
-    action: 'update',
-  },
-  {
-    match: /upgrades from \d+ at the earliest/i,
-    summary: 'This library is too old for this version of Gamma.',
-    hint: 'Open it once with an in-between Gamma release to upgrade its data, then come back here.',
-  },
-  {
-    match: /migration step \d+[^\n]*failed/i,
-    summary: 'Upgrading this library’s data failed.',
-    hint: 'A snapshot was taken before the upgrade started — the backups folder inside the data folder holds it.',
-    action: 'data',
-  },
   {
     match: /EADDRINUSE|address already in use/i,
     summary: 'The port the server picked was taken by something else.',
@@ -62,7 +46,7 @@ const FAILURES = [
   {
     match: /ModuleNotFoundError|ImportError|No module named/i,
     summary: 'The server’s Python environment is missing a package.',
-    hint: 'In a source checkout: install backend/requirements.txt into the virtualenv the launcher’s advanced settings point at.',
+    hint: 'In a source checkout: install backend/requirements.txt into the virtualenv the server runs from (backend/venv, or the Python set in the launcher’s advanced settings).',
   },
 ];
 
@@ -117,7 +101,7 @@ const OPEN_FAILURES = [
 function diagnoseOpen(message) {
   const text = String(message || '');
   for (const rule of OPEN_FAILURES) {
-    if (rule.match.test(text)) return { summary: rule.summary, hint: rule.hint, action: 'retry', detail: text };
+    if (rule.match.test(text)) return { summary: rule.summary, hint: rule.hint, action: rule.action || 'retry', detail: text };
   }
   return { summary: 'Could not open this server.', hint: '', action: 'retry', detail: text };
 }

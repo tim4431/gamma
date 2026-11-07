@@ -2,7 +2,8 @@
 bundles as its local-workspace server.
 
 Run with a Python that has backend/requirements.txt installed (the repo venv
-locally, the CI interpreter on runners):
+locally, the CI interpreter on runners); it installs the pinned PyInstaller
+and its hooks (PYINSTALLER) into that Python first when they differ:
 
     python desktop/build_backend.py
 
@@ -14,19 +15,29 @@ import os
 import shutil
 import subprocess
 import sys
+from importlib import metadata
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
 DESKTOP = REPO / "desktop"
 DIST = DESKTOP / "dist-backend"
+# The freeze's own pins, as backend/requirements.txt pins what it freezes:
+# the hooks decide what goes into the bundle as much as PyInstaller does
+# (certifi's CA bundle comes through its hook, for one).
+PYINSTALLER = {"pyinstaller": "6.22.3", "pyinstaller-hooks-contrib": "2026.9"}
 
 
 def ensure_pyinstaller():
-    try:
-        import PyInstaller  # noqa: F401
-    except ImportError:
-        print("[build] installing pyinstaller ...")
-        subprocess.check_call([sys.executable, "-m", "pip", "install", "pyinstaller"])
+    def installed(name):
+        try:
+            return metadata.version(name)
+        except metadata.PackageNotFoundError:
+            return None
+
+    if any(installed(name) != pin for name, pin in PYINSTALLER.items()):
+        pins = [f"{name}=={pin}" for name, pin in PYINSTALLER.items()]
+        print(f"[build] installing {' '.join(pins)} ...")
+        subprocess.check_call([sys.executable, "-m", "pip", "install", *pins])
 
 
 def main():

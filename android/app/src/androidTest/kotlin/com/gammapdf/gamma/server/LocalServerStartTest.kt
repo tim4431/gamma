@@ -33,10 +33,10 @@ import org.junit.runner.RunWith
  * answer /api/health, and a PDF uploaded to the server is read through
  * PyMuPDF. CI has no other check of the packaged server, so a missing wheel,
  * a library that does not load or an import error fails here instead of on
- * a tablet. /api/health proves the start but not the reader: a server
- * without PyMuPDF starts too (pdf_text falls back to PyPDF2). A page picture
- * proves it: render_page answers nothing without PyMuPDF, and page-image
- * answers 404.
+ * a tablet. /api/health proves the start but not the reader, which the
+ * server imports at its first PDF read: the manifest's page sizes and a page
+ * picture both come from PyMuPDF, and page-image answers 404 when it draws
+ * nothing.
  *
  * The server runs on a data directory of the test's own, made fresh each
  * run in the app's cache, with a vault of its own and a seed for a vault
@@ -158,8 +158,8 @@ class LocalServerStartTest {
                 failed("GET /api/pdf-info (the manifest walk)", manifest, server)
             }
 
-            // The picture: MuPDF rendered the page. Without PyMuPDF the server
-            // answers 404 here, whatever the calls above said.
+            // The picture: MuPDF rendered the page, or the server answers 404
+            // here.
             val picture = call("GET", "$api/ai/page-image/$pageId?page=1", cookie = cookie)
             if (picture.status != 200 || !picture.type.startsWith("image/") || picture.body.size <= 2048) {
                 failed("GET /api/ai/page-image (MuPDF rendering the page)", picture, server)

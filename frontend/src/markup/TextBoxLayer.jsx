@@ -272,7 +272,7 @@ const TextBox = React.memo(function TextBox({ block, width, height, readOnly, ar
     e.preventDefault();
     e.stopPropagation();
     if (replayState && !armed && !selected && playback.seekBefore(block.properties.t0)) return;
-    if (readOnly) { actions.onJump(block.id); return; }
+    if (readOnly) { actions.onJump?.(block.id); return; }
     if (!armed && !selected) { actions.onBoxSelect(block.id); return; }
     const rendered = ref.current.querySelector(".textBoxText");
     const offset = rendered ? sourceOffsetAtPoint(rendered, block.content || "", e.clientX, e.clientY) : null;

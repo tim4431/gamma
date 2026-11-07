@@ -94,7 +94,8 @@
 .noteSheet.inkArmed .nbSheet { cursor: crosshair; }
 .noteSheet.inkTouchDraw .nbSheet { touch-action: none; }
 .blockBody:has(> .noteSheet) { position: relative; }
-.blockBody:has(> .noteSheet) > :is(.blockRendered, .blockEditor) { padding-right: calc(4 * var(--ctl-icon-btn) + 8px); }
+/* The title's line is as tall as the tools beside it, so they stay above the paper. */
+.blockBody:has(> .noteSheet) > :is(.blockRendered, .blockEditor) { min-height: var(--ctl-icon-btn); padding-right: calc(4 * var(--ctl-icon-btn) + 8px); }
 .noteSheetBar { position: absolute; top: 0; right: 0; display: flex; align-items: center; gap: 2px; }
 .noteSheetFoot { display: flex; justify-content: flex-end; padding-top: 4px; }
 .noteSheet .nbPaperMenu { position: static; margin: 0 0 6px auto; max-width: 100%; }

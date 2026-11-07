@@ -1,14 +1,18 @@
 """A tiny in-process rate limiter for the abuse-prone endpoints (register,
 login, reset, token). Fixed-window counters in a dict — resets on restart.
-The first line of defence is Cloudflare's rate rules in front of the
-server; this one stops trivial guessing from a single host."""
+The endpoints are sync, so the threads of the one worker's threadpool share
+the table, under one lock. The first line of defence is Cloudflare's rate
+rules in front of the server; this one stops trivial guessing from a single
+host."""
 
 import ipaddress
+import threading
 import time
 
 from fastapi import HTTPException, Request
 
 _buckets: dict[str, list] = {}  # key -> [window start, hits, window length]
+_lock = threading.Lock()
 
 
 def client_ip(request: Request) -> str:
@@ -53,20 +57,30 @@ def agent_of(request: Request | None) -> str:
 _MAX_KEYS = 50000
 
 
+def _sweep(now: float) -> None:
+    """Drop every window that is over. Keys are per IP and per e-mail, so a
+    scan can grow the table; each bucket keeps its own length, so a day's
+    count lasts its day while an hour's clears after the hour. Called with
+    the lock held."""
+    for k in [k for k, b in _buckets.items() if now - b[0] >= b[2]]:
+        del _buckets[k]
+
+
 def check(key: str, max_hits: int, window_seconds: int) -> None:
+    """Count one hit for ``key``; raise 429 once it exceeds ``max_hits``
+    within the window, which starts on the first hit. A new key past
+    ``_MAX_KEYS`` sweeps the table first."""
     now = time.monotonic()
-    if len(_buckets) > _MAX_KEYS:
-        # Keys are per IP and per e-mail, so a scan can grow the dict: drop
-        # every window that is over. Each bucket keeps its own length, so a
-        # day's count lasts its day while an hour's clears after the hour.
-        for k in [k for k, b in _buckets.items() if now - b[0] >= b[2]]:
-            del _buckets[k]
-    bucket = _buckets.get(key)
-    if bucket is None or now - bucket[0] >= window_seconds:
-        bucket = _buckets[key] = [now, 0, window_seconds]
-    bucket[1] += 1
-    if bucket[1] > max_hits:
-        retry = max(1, int(window_seconds - (now - bucket[0])))
+    with _lock:
+        bucket = _buckets.get(key)
+        if bucket is None or now - bucket[0] >= window_seconds:
+            if bucket is None and len(_buckets) > _MAX_KEYS:
+                _sweep(now)
+            bucket = _buckets[key] = [now, 0, window_seconds]
+        bucket[1] += 1
+        hits, started = bucket[1], bucket[0]
+    if hits > max_hits:
+        retry = max(1, int(window_seconds - (now - started)))
         raise HTTPException(status_code=429, detail="Too many attempts. Wait a bit and try again.",
                             headers={"Retry-After": str(retry)})
 
@@ -75,19 +89,24 @@ def full(key: str, max_hits: int, window_seconds: int) -> int:
     """The seconds until ``key``'s window ends when it already holds
     ``max_hits``, else 0; counts no hit. For a limit counted only once what
     it guards has happened (``check`` then counts it)."""
-    bucket = _buckets.get(key)
-    if not bucket:
-        return 0
-    elapsed = time.monotonic() - bucket[0]
-    if elapsed >= window_seconds or bucket[1] < max_hits:
+    now = time.monotonic()
+    with _lock:
+        bucket = _buckets.get(key)
+        if not bucket:
+            return 0
+        started, hits = bucket[0], bucket[1]
+    elapsed = now - started
+    if elapsed >= window_seconds or hits < max_hits:
         return 0
     return max(1, int(window_seconds - elapsed))
 
 
 def reset(key: str) -> None:
-    _buckets.pop(key, None)
+    with _lock:
+        _buckets.pop(key, None)
 
 
 def clear() -> None:
     """Tests."""
-    _buckets.clear()
+    with _lock:
+        _buckets.clear()

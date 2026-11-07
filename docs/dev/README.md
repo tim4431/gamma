@@ -86,7 +86,7 @@ These describe the implementation unless explicitly marked as plans.
 | The typesetting engine both PDF writers share, and the annotated-PDF export | [PDF typesetting](pdf_typesetting.md) |
 | Background jobs, the tasks tray, and adding a kind of long work | [Background tasks](tasks.md) |
 | Folders and labels, pages inside pages, page cards, recents, and trash | [Home library](home_library.md) |
-| Pages side by side: the open tabs arranged into groups, each with its strip and its page, split by a tab's menu or a drag onto a group's edge; the live group and the read views of the others; this browser's arrangement over the synced tabs | [Tab groups](tab_groups.md) |
+| Pages side by side: the open tabs arranged into groups, each with its strip and its page, split by a tab's menu or a drag onto a group's edge; the live group and the views of the others, drawn as the page itself, with the docked windows around the groups; this browser's arrangement over the synced tabs | [Tab groups](tab_groups.md) |
 | Provider configuration, chat, and the library agent | [AI](ai.md) |
 | Agent tools and guardrails | [AI tools](ai_tools.md) |
 | Long-paper context and grounding | [AI context](ai_context.md) |

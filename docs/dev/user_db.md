@@ -86,10 +86,10 @@ All state is SQLite + files on disk under a data directory (env
     Everything that names a workspace's pages (open tabs, recents, reading
     positions) is kept in that workspace's pages.db (`workspace_prefs`,
     below) from migration step 34 on. The rows here with a workspace id are
-    the copies from before it, left for the release before to read; they go
-    with their workspace, their membership and their account, and the
-    release after drops them. `db.get_pref` / `set_pref` / `update_pref`
-    pick the store by `db.pref_scope`. A value the server
+    the copies from before it, which the step's workspace part reads when
+    it upgrades a workspace still behind it; they go with their workspace,
+    their membership and their account. `db.get_pref` / `set_pref` /
+    `update_pref` pick the store by `db.pref_scope`. A value the server
     edits in part (the provider entries, the translation keys, the seen
     notices) is changed through `db.update_pref(user, key, change)`: the
     read and the write share one `BEGIN IMMEDIATE` transaction, so two
@@ -334,8 +334,9 @@ All state is SQLite + files on disk under a data directory (env
   function itself. A restored backup is brought to the current shape
   before anything reads it or anything live is touched
   (`ws_backup._normalize_copies`, which runs the `normalize.py` steps of
-  migrations 26–30 and 33 and the workspace steps above the copy's version,
-  in the order [migrations.md](migrations.md) "Writing a step" gives). A
+  migrations 26–30 and 33 on a copy stamped below the base, the workspace
+  steps above the copy's version and the notes index's rebuild, in the
+  order [migrations.md](migrations.md) "Writing a step" gives). A
   restore never replaces the live
   change log ([workspaces.md](workspaces.md) "Export and backups"). Backups
   copy it with the sqlite backup API, which is WAL-safe. Nothing may
@@ -348,22 +349,24 @@ All state is SQLite + files on disk under a data directory (env
   thumbnails, synced via `/api/page-snaps` — too big for the prefs KV;
   captured again as a PDF is read), the viewer's per-document manifests
   `pdf_docs` (byte size, page count, page sizes — `gamma/pdf_meta.py`,
-  [pdf_loading.md](pdf_loading.md); computed again when a PDF opens) and
-  the PDF text index `pdf_fts` / `pdf_fts_docs` (extracted PDF text per
-  page — schema + queries `gamma/pdf_index.py`, extraction
+  [pdf_loading.md](pdf_loading.md); computed again when a PDF opens), the
+  kept translations `pdf_translations` / `pdf_translation_briefs`
+  (`gamma/translate_store.py`, [translation.md](translation.md) "Kept
+  translations"; asked of the model again, at its cost, when they are
+  gone) and the PDF text index `pdf_fts` / `pdf_fts_docs` (extracted PDF
+  text per page — schema + queries `gamma/pdf_index.py`, extraction
   `routers/search.py`; extracted again by the next search), with its
   `pdf_fts_rows` side table mapping a paper to its rows' rowids, so a
   paper's rows are deleted by rowid instead of a scan of the whole FTS
-  table, and the kept translations and briefs `pdf_translations` /
-  `pdf_translation_briefs` (`gamma/translate_store.py`,
-  [translation.md](translation.md); they come back only by asking a model
-  again, which costs tokens). The index is built on demand (a search starts the workspace's
+  table. The index is built on demand (a search starts the workspace's
   indexing job), a few hundred PDF pages per transaction; the rows of
   papers no block carries, by `doc_id` or by a duplicated page's upload
   address, are purged when a page or a PDF goes
   (`pdf_index.purge_unused`). Derived data: no migration step — the
-  tables are `CREATE ... IF NOT EXISTS`, and a new `pdf_fts_rows` takes
-  over the rows already there when it is created. Open it through
+  tables are `CREATE ... IF NOT EXISTS`, the index's from
+  `pdf_index.SCHEMA` (a new `pdf_fts_rows` takes over the rows already
+  there when it is created), the others from `db.DATA_SCHEMA`, which every
+  connection and a restored copy apply. Open it through
   `db.connect_data_db(ws)`: WAL and the busy timeout, like pages.db.
   Shared by the workspace's members.
 
@@ -728,9 +731,10 @@ not served: the server shows one page saying what to run instead.
 `db.connect_users_db()` raises
 `SchemaOutdated` on an old file so nothing reads it with new assumptions;
 a workspace whose own step fails answers a 503 with the guidance while the
-others are served. Content normalization of a workspace's files
-(`gamma/normalize.py`) and the workspace steps above a backup's version run
-on every backup restore. Rules, versions, the floor and how to write a step:
+others are served. A backup restore runs the workspace steps above the
+backup's version, and the content normalization of a workspace's files
+(`gamma/normalize.py`) on a copy stamped below the base. Rules,
+versions, the floor and how to write a step:
 [migrations.md](migrations.md). A server linked to Gamma Cloud
 reports its schema version, with its build, to the account server
 ([cloud_accounts.md](cloud_accounts.md), "The server list").

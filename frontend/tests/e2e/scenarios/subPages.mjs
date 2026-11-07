@@ -10,7 +10,8 @@ import { openDialog } from "./transfers.mjs";
 // inside" make one; the library lists only the pages outside any, while
 // the parent's "N pages inside" panel and the child's crumbs show where it
 // is; Quick open finds it with its path; "Move to library" and "Move into
-// page…" take it out and put one in; deleting the parent takes the pages
+// page…" take it out and put one in, and Move to page… offers a block the
+// open page's pages inside first; deleting the parent takes the pages
 // inside along and Restore brings the tree back, from Recently deleted, a
 // link's missing-page notice (which then opens the linked page) or the
 // open page's own notice; a page share of the parent reaches the pages
@@ -152,10 +153,10 @@ export async function subPageScenarios(env) {
       await fileRow(page, "Child two").waitFor();
       await fileRow(page, "Loose page").click({ button: "right" });
       await page.locator(".ctxMenuItem", { hasText: "Move into page…" }).click();
-      const dialog = page.locator(".confirmModal", { hasText: "Move into page" });
+      const dialog = page.getByRole("dialog", { name: "Move into page" });
       await dialog.waitFor();
-      await dialog.locator("input[data-find]").fill("Family");
-      await dialog.locator(".moveBlockList .ctxMenuItem", { hasText: "Family top" }).click();
+      await dialog.getByRole("textbox").fill("Family");
+      await dialog.getByRole("option").filter({ has: page.locator("strong", { hasText: /^Family top$/ }) }).click();
       await fileRow(page, "Loose page").waitFor({ state: "detached" });
       const stored = await props(loose.id);
       assertEq(stored.parent_page, top.id, "inside the picked page");
@@ -163,6 +164,34 @@ export async function subPageScenarios(env) {
       assertEq(titles((await family(top.id)).sub_pages), "Loose page|Child one", "the target lists it");
       await page.goto(at(top.id));
       await until(async () => (await panelRows(page).allInnerTexts()).join("|") === "Loose page|Child one", { what: "the target's panel lists it" });
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("sub-pages: Move to page… offers the open page's pages inside first, each naming where it is, and a block moves into one", async () => {
+    await user.api(`/api/pages/${top.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "submove1", parent: top.id, position: "a8", content: "Goes inside" }] } });
+    const ctx = await user.context(browser);
+    const page = await openPage(ctx, at(top.id));
+    try {
+      const wrap = page.locator(".sortableBlockWrap", { hasText: "Goes inside" }).first();
+      await wrap.hover();
+      await wrap.locator(".dragHandle").click();
+      await page.locator(".ctxMenuItem", { hasText: "Move to page…" }).click();
+      const dialog = page.getByRole("dialog", { name: "Move block to page" });
+      await dialog.waitFor();
+      const names = () => dialog.locator('[role="option"] strong').allInnerTexts();
+      await until(async () => (await names()).slice(0, 2).sort().join("|") === "Child one|Loose page", { what: "the open page's pages inside lead" });
+      assertEq(await dialog.locator(".quickOpenSection").first().innerText(), "Inside this page");
+      assert(!(await names()).includes("Family top"), "the open page is no target");
+      await dialog.getByRole("textbox").fill("child one");
+      const option = dialog.getByRole("option").filter({ has: page.locator("strong", { hasText: /^Child one$/ }) });
+      await until(async () => (await dialog.getByRole("option").count()) === 1, { what: "the query narrows to the page" });
+      assertEq(await option.locator("small").innerText(), "Family top", "a page inside names the page it is in");
+      await page.keyboard.press("Enter");
+      await until(async () => (await user.api(`/api/blocks/${childOne}/subtree`)).block.children.some((b) => b.content === "Goes inside"),
+        { what: "the block moved into the page inside" });
+      await until(async () => (await page.locator(".sortableBlockWrap", { hasText: "Goes inside" }).count()) === 0, { what: "and left the open page" });
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });
@@ -485,11 +514,11 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
     try {
       await page.locator(".fileList").waitFor({ timeout: 15000 });
       const dialog = await openDialog(page, "Import");
-      await choice(dialog, "Markdown notes").click();
+      await choice(dialog, "Notion pages").click();
       const chooser = page.waitForEvent("filechooser");
-      await choice(dialog, "Choose file…").click();
+      await choice(dialog, "Choose .zip…").click();
       await (await chooser).setFiles(zip);
-      const review = page.getByRole("dialog", { name: "Review Markdown import", exact: true });
+      const review = page.getByRole("dialog", { name: "Review Notion import", exact: true });
       const target = review.getByRole("region", { name: "Library after import", exact: true });
       await target.getByText("Notion bottom", { exact: true }).waitFor({ timeout: 15000 });
       assert((await review.innerText()).includes("Library / Notion dest"), "the import goes to the open folder");

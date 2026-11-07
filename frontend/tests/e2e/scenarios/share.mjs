@@ -5,10 +5,13 @@
 // the page, and a folder share (the folder view's link button; the listing a
 // visitor browses; the folder copied into another library by the listing's
 // Add to my library and by its link pasted into another Gamma's +, which
-// is a second server).
-import { Account, Server } from "../harness.mjs";
+// is a second server), and what a visitor's export holds.
+import { execFileSync } from "node:child_process";
+import path from "node:path";
+import { Account, ROOT, Server } from "../harness.mjs";
 import { tree, same, editRow, closeEditor, PNG_1PX } from "./notes.mjs";
 import { waitForPdf } from "./pdf.mjs";
+import { openDialog } from "./transfers.mjs";
 
 export async function shareScenarios({ server, browser, alice, bob, step, until, sleep, assert, assertEq, assertNoProblems, openPage }, { alice2, pdfPageId }) {
   await step("share chat: saved conversation is read-only on desktop and phone", async () => {
@@ -408,6 +411,42 @@ export async function shareScenarios({ server, browser, alice, bob, step, until,
     await page.locator(".blockRow", { hasText: "figure" }).locator(".blockBody").click();
     await sleep(400); // a negative check: nothing to wait for, so give an editor time to (not) appear
     assert((await page.$(".blockEditorCm")) == null, "no editor opens on a view-only share");
+    assertNoProblems(page);
+    await ctx.close();
+  });
+
+  await step("share: a visitor's export holds the shared page, never a block or a file outside it", async () => {
+    const python = process.env.GAMMA_E2E_PYTHON || path.join(ROOT, "backend", "venv", process.platform === "win32" ? "Scripts/python.exe" : "bin/python");
+    const picture = await account.upload("/api/upload-image", PNG_1PX, "private.png", "image/png");
+    const pictureName = picture.url.split("/").pop().split("?")[0];
+    const hidden = await account.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Hiddentitleword" } });
+    const secret = await account.api("/api/blocks", { method: "POST", body: { parent_id: hidden.id, content: `TOPSECRETWORD ![](${picture.url})` } });
+    const shared = await account.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "Page for the visitor" } });
+    await account.api("/api/blocks", { method: "POST", body: { parent_id: shared.id, content: `Openword and [[${secret.id}]]` } });
+    await account.api("/api/blocks", { method: "POST", body: { parent_id: shared.id, content: `![[${secret.id}]]` } });
+    const { token: visitorToken } = await account.api(`/api/share/${shared.id}`, { method: "POST" });
+    const ctx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+    const page = await openPage(ctx, `${server.base}/?share=${visitorToken}`);
+    await page.locator(".blockRow", { hasText: "Openword" }).waitFor();
+    for (const format of ["Markdown", "Obsidian", "Notion"]) {
+      const dialog = await openDialog(page, "Export");
+      await dialog.getByRole("button", { name: format, exact: true }).click();
+      await dialog.getByRole("button", { name: "Next", exact: true }).click();
+      const download = page.waitForEvent("download");
+      await dialog.getByRole("button", { name: "Export", exact: true }).click();
+      // A page with no file to bundle comes as one .md, a vault and a Notion export as a zip.
+      const held = execFileSync(python, ["-c", `
+import json, sys, zipfile
+name = sys.argv[1]
+if zipfile.is_zipfile(name):
+    z = zipfile.ZipFile(name)
+    print(json.dumps({n: z.read(n).decode("utf-8", "replace") for n in z.namelist()}))
+else:
+    print(json.dumps(open(name, encoding="utf-8").read()))
+`, await (await download).path()]).toString();
+      assert(held.includes("Openword"), `${format}: the shared page is in the export`);
+      for (const word of ["TOPSECRETWORD", "Hiddentitleword", pictureName]) assert(!held.includes(word), `${format}: nothing names ${word}`);
+    }
     assertNoProblems(page);
     await ctx.close();
   });

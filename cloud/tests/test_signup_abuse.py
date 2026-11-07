@@ -3,6 +3,8 @@ without limit: alias-aware uniqueness, the throwaway-domain list, and
 rate-limit buckets that neither an IPv6 prefix nor a mail alias can walk
 out of, nor a scan that fills the limiter's table."""
 
+import sys
+import threading
 from contextlib import closing
 from types import SimpleNamespace
 
@@ -179,6 +181,36 @@ def test_a_full_table_drops_each_window_by_its_own_length(monkeypatch):
     with pytest.raises(HTTPException) as e:
         ratelimit.check("day", 1, 86400)                          # still counted
     assert e.value.status_code == 429 and int(e.value.headers["Retry-After"]) == 86400 - 7200
+
+
+def test_threads_share_a_full_table(monkeypatch):
+    """The sync endpoints run in the threadpool, so the table is hit from
+    several threads at once while new keys keep sweeping it: no count is
+    lost, and no sweep trips over another's."""
+    monkeypatch.setattr(ratelimit, "_MAX_KEYS", 8)
+    threads, calls = 8, 2000
+    errors = []
+
+    def hammer(n):
+        try:
+            for i in range(calls):
+                ratelimit.check(f"scan:{n}:{i}", 1, 0)            # a window over at once: every new key sweeps
+                ratelimit.check("shared", threads * calls, 3600)
+        except Exception as e:
+            errors.append(e)
+
+    interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        workers = [threading.Thread(target=hammer, args=(n,)) for n in range(threads)]
+        for w in workers:
+            w.start()
+        for w in workers:
+            w.join()
+    finally:
+        sys.setswitchinterval(interval)
+    assert errors == []
+    assert ratelimit._buckets["shared"][1] == threads * calls
 
 
 def test_a_prefix_rotation_shares_the_register_allowance(client):

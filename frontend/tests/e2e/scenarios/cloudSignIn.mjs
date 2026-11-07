@@ -5,7 +5,7 @@
 // is covered by backend/tests/test_cloud_auth.py; here the browser is never
 // sent there (the button's target is asserted, not followed), except on the
 // Gamma servers a step starts against the fake account server (fakeCloud.mjs).
-import { Account, Server, wanted } from "../harness.mjs";
+import { Account, Server, settingsPane, wanted } from "../harness.mjs";
 import { FakeCloud } from "../fakeCloud.mjs";
 
 export async function cloudSignInScenarios(env) {
@@ -14,11 +14,10 @@ export async function cloudSignInScenarios(env) {
   await server.manage("create-user", "cloud-admin", "cloud-admin-pw");
   await server.manage("set-admin", "cloud-admin", "on");
   const admin = await new Account(server, "cloud-admin", "cloud-admin-pw").login();
-  const settingsNav = (page, name) => page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name, exact: true });
   async function openSettings(page, pane) {
     await page.getByRole("button", { name: "Account & settings", exact: true }).click();
     await page.getByRole("menuitem", { name: "Settings…", exact: true }).click();
-    await settingsNav(page, pane).click();
+    await settingsPane(page, pane);
   }
 
   const cloudRow = (page) => page.locator('.setRow[data-setting="Gamma Cloud"]');
@@ -73,7 +72,7 @@ export async function cloudSignInScenarios(env) {
       await until(() => admin.api("/api/admin/settings").then((v) => v.cloud.enabled && v.cloud.policy === "claim"));
       await chip("on").waitFor();
       // the account pane offers the link, saying what it gives
-      await settingsNav(page, "Account & sync").click();
+      await settingsPane(page, "Account & sync");
       await cloudRow(page).getByRole("button", { name: "Link Gamma Cloud account", exact: true }).waitFor();
       await cloudRow(page).getByText(BENEFITS, { exact: true }).waitFor();
       await assertNoProblems(page);
@@ -480,7 +479,7 @@ export async function cloudSignInScenarios(env) {
       await assertNoProblems(page);
 
       // a third to a shared workspace, as a viewer, from its Manage page
-      await settingsNav(page, "Workspaces").click();
+      await settingsPane(page, "Workspaces");
       await page.locator(".aiProvRow").filter({ hasText: "Mailed lab" }).getByRole("button", { name: "Manage" }).click();
       await page.getByRole("button", { name: "Invite", exact: true }).click();
       const invite = page.getByRole("dialog", { name: "Invite to Mailed lab", exact: true });
