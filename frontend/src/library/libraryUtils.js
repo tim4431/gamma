@@ -177,6 +177,47 @@ export function pageDescendants(pages, ids) {
   return queue.slice(ids.length);
 }
 
+// App's page list (`pageBlocks`): the listing's rows, `_parentPage` added,
+// as the home view's cards and rows, the [[ and @ pickers and the chips
+// read them: {id, content ("Untitled" when empty), _pageId, _attachment,
+// _preview, _folders, _labels (ids the trees have), _folderChips,
+// _labelChips ({id, name}, filingChips), _createdAt, _updatedAt, _pinned,
+// _parentPage, _path, _subPages}. A page is filed by its top, so a
+// sub-page's folders are its top's (the server's blocks_store.filed_folders)
+// and its labels its own; `_path` is where it is (pagePathLabel, "" for a
+// library page) and `_subPages` how many pages are right inside it.
+export function pageBlocksOf(rows, tree) {
+  const byId = new Map(rows.map((b) => [b.id, b]));
+  const chains = rows.map((b) => (b._parentPage ? pageAncestors(byId, b.id) : []));
+  const inside = new Map();
+  for (const chain of chains) {
+    const parent = chain.at(-1)?.id;
+    if (parent) inside.set(parent, (inside.get(parent) || 0) + 1);
+  }
+  return rows.map((b, i) => {
+    const chain = chains[i];
+    const own = filingChips(tree, b.properties);
+    const folders = chain.length ? filingChips(tree, byId.get(chain[0].id).properties).folders : own.folders;
+    return {
+      id: b.id,
+      content: b.content || t("Untitled"),
+      _pageId: b.id,
+      _attachment: pageAttachment(b),
+      _preview: b.preview || "",
+      _folders: folders.map((c) => c.id),
+      _labels: own.labels.map((c) => c.id),
+      _folderChips: folders,
+      _labelChips: own.labels,
+      _createdAt: b.created_at || "",
+      _updatedAt: b.updated_at || "",
+      _pinned: b.properties?.pinned || "",
+      _parentPage: b._parentPage || "",
+      _path: chain.map((a) => a.title).join(PAGE_PATH_SEP),
+      _subPages: inside.get(b.id) || 0,
+    };
+  });
+}
+
 // The confirmation of deleting pages `ids` (the library's Delete and the
 // page header's trash button): {title, message, inside}. The pages inside
 // them go to Recently deleted with them (the server's cascade), so `inside`

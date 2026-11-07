@@ -13,7 +13,6 @@
 // A page link is the [[id]] the [[ picker writes. The server reads the same
 // syntax (backend/gamma/mentions.py); tests/shared/mentions.json pins both.
 import { T, fmtDate, t } from "../shared/i18n/i18n.js";
-import { pagePathLabel } from "../library/libraryUtils.js";
 import { rankRefPages } from "./refLists.js";
 import { fuzzyIndices } from "./slashCommands.js";
 
@@ -303,10 +302,11 @@ function remindTargets(rest, people, me) {
 //   people  {kind: "person", user, you} — `people` ([{username}], the
 //           workspace's; `me` first, "(You)"), then {kind: "invite"} when
 //           `canInvite`
-//   pages   {kind: "page", id, title, isPdf, path} — `pages` by title
+//   pages   {kind: "page", id, title, isPdf, path} — `pages` (App's page
+//           list, libraryUtils.pageBlocksOf) by title, chips and path
 //           (rankRefPages: the recent ones before anything is typed), not
 //           the open page (`rootId`); `path` is where the page is: a
-//           sub-page's pages above it, else its first folder
+//           sub-page's pages above it (`_path`), else its first folder
 // Every row has a `key` and its `section`. Empty when nothing answers,
 // which closes the menu.
 export function mentionRows({ query = "", people = [], me = "", pages = [], rootId = "", canInvite = false, now = new Date() }) {
@@ -340,10 +340,9 @@ export function mentionRows({ query = "", people = [], me = "", pages = [], root
   if (canInvite && (!q || (q.length >= 2 && "invite".startsWith(q)))) add("people", { kind: "invite", key: "invite" });
 
   // Link to page.
-  const pagesById = new Map(pages.map((p) => [p.id, p]));
   rankRefPages(pages, q, rootId).slice(0, PAGE_ROWS).forEach((p) => add("pages", {
     kind: "page", key: `page:${p.id}`, id: p.id, title: p.content, isPdf: !!p._attachment,
-    path: pagePathLabel(pagesById, p.id) || p._folderChips?.[0]?.name || "",
+    path: p._path || p._folderChips?.[0]?.name || "",
   }));
   return rows;
 }

@@ -1,5 +1,5 @@
 import { DASH_CLASS, buildSearchRegex, normalizeQuery } from "../shared/lib/textnorm.js";
-import { filingChips, pagePathLabel } from "./libraryUtils.js";
+import { filingChips, pagePathLabel, topPageOf } from "./libraryUtils.js";
 
 // Damerau-Levenshtein distance (adjacent transpositions count as one edit),
 // capped: returns max+1 as soon as the budget is provably blown. Both inputs
@@ -143,7 +143,10 @@ export function createLibraryMatcher(query) {
 // App's recents queue ([{id, at}], newest first) and `openTabs` the tab strip.
 // A query ranks through createLibraryMatcher on the title, and as weaker
 // hits the page's folder/label chips and, for a sub-page, the path of pages
-// it is in (libraryUtils.pagePathLabel, from the pages' `_parentPage`).
+// it is in (libraryUtils.pagePathLabel, from the pages' `_parentPage`). A
+// sub-page's folder chips are its top's (libraryUtils.topPageOf, the
+// server's blocks_store.filed_folders): folders it carries itself count
+// for nothing.
 // Ties, and the whole list with no query, go recently viewed first, then
 // open tabs, then the rest by last edit. Rows are {page, section, time,
 // path}: `section` is "pages" under a query, else "recent" / "tabs" /
@@ -157,8 +160,9 @@ export function rankLibraryPages(pages, tree, query, { recentViews = [], openTab
   const match = createLibraryMatcher(query);
   const byId = new Map(pages.map((page) => [page.id, page]));
   const chipNames = (page, path) => {
-    const chips = filingChips(tree, page.properties);
-    return [...chips.folders, ...chips.labels].map((c) => c.name).concat(path || []);
+    const { folders } = filingChips(tree, topPageOf(byId, page.id)?.properties);
+    const { labels } = filingChips(tree, page.properties);
+    return [...folders, ...labels].map((c) => c.name).concat(path || []);
   };
   return pages
     .map((page) => {

@@ -58,6 +58,10 @@ export const FolderFilesIcon = (p) => (
     <path d="M18 10.5V14h3" />
   </Icon>
 );
+// Two stacked pages — a page with pages inside it (the library's chip).
+export const PagesIcon = (p) => (
+  <Icon {...p}><rect x="10" y="2" width="11" height="14" rx="2" /><path d="M3 8v11a3 3 0 0 0 3 3h9" /></Icon>
+);
 export const FileIcon = (p) => (
   <Icon {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /></Icon>
 );

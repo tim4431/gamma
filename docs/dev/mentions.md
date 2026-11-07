@@ -6,7 +6,9 @@ Typing `@` in a note opens a menu with three sections, as in Notion:
   default.
 - **People**: the workspace's members (you first, marked "(You)"), then
   Invite….
-- **Link to page**: pages by title, each with its folder path.
+- **Link to page**: pages by title, folder, label or path, each with
+  where it is (its folder, or for a page inside another the pages it is
+  in).
 
 Each pick writes plain text into the note. The editor and the rendered view
 draw that text as a chip.
@@ -86,8 +88,12 @@ person's `PersonAvatar` in the icon column.
   may share the page (App's `onInvite`: not a viewer, a share view or a
   guest).
 - **Link to page.** Pages come from `rankRefPages`, the `[[` picker's
-  ranking, which gives the recent ones before anything is typed. The open
-  page is never offered.
+  ranking, which gives the recent ones before anything is typed: the
+  title, then as weaker hits the page's folder and label chips by name
+  and, for a page inside another, the pages it is in, its folders being
+  its top's ([home_library.md](home_library.md#sub-pages) "In the
+  pickers"). A row names where the page is: a sub-page's path, else its
+  first folder. The open page is never offered.
 - **Picking** (Enter, Tab or a click) replaces the typed `@query` with the
   row's text (`mentionText`) and a space. Change and caret go in one editor
   transaction, so keys typed right after land after the mention.
@@ -232,7 +238,9 @@ person who sets a reminder a day passes that within three years.
   and `frontend/tests/mentions.test.mjs`: the syntax.
 - `frontend/tests/mentions.test.mjs`: labels, the date words, the trigger,
   the rows and each pick's text. `frontend/tests/reminders.test.mjs`: due,
-  the wake-up moment and a card's line.
+  the wake-up moment and a card's line. `frontend/tests/refLists.test.mjs`
+  and `subPages.test.mjs`: the page rows' matching (chips by name, a
+  sub-page's path and its top's folders).
 - `backend/tests/test_mentions.py`: the people endpoint, reminders across a
   personal and a shared workspace (another person's, one in code, one in a
   workspace its person cannot open), a page in Recently deleted, the done
@@ -245,4 +253,5 @@ person who sets a reminder a day passes that within three years.
   It covers the bare menu's sections, each pick's text and chip, a name no
   one has, Escape, Invite… opening the Share popover, and a reminder due in
   another workspace: its card, Open, and a dismissal that holds after a
-  reload.
+  reload. The `sub-pages` group finds a page inside another by its label's
+  name, its path named on the row.

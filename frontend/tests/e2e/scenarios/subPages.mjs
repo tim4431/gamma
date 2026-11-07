@@ -19,7 +19,10 @@ import { openDialog } from "./transfers.mjs";
 // open page's own notice; a page share of the parent reaches the pages
 // inside, one of the child reaches nothing above. A label on a page inside
 // counts in the label's tile and view, the search's folder chip keeps its
-// notes, and its Properties name the page it is inside. A Notion export's
+// notes, and its Properties name the page it is inside. A page's row and
+// card count the pages inside it, a pinned page inside shows its path and
+// its preview, and Quick open, the [[ picker and the @ menu match it on its
+// top's folder and its label's name. A Notion export's
 // pages inside pages come in as sub-pages, reviewed under their page, and
 // a page's export takes the pages inside it with "Include pages inside".
 export async function subPageScenarios(env) {
@@ -409,6 +412,88 @@ export async function subPageScenarios(env) {
       await page.locator(".homeFindInput").fill("Inside label");
       await page.locator(".homeSearchBanner").waitFor({ timeout: 15000 });
       assertEq(await found(page).count(), 0, "a folder its top is not in does not find it");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  // Hearth top, filed in Quartz drawer, holds Ledger inside, which is
+  // pinned, labelled Zircon tag, has a note and carries a folder of its own
+  // (Basalt stray, as an import or a merge can leave): the library says the
+  // top holds a page, the pinned card shows the page inside by its path and
+  // its first note, and Quick open, the [[ picker and the @ menu find it by
+  // its top's folder and its label's name, never by the folder it carries.
+  await step("sub-pages: a page with pages inside says so on its row and card; a pinned page inside shows its path and preview; the pickers match its top's folder and its label by name", async () => {
+    const quartz = await user.folder("Quartz drawer");
+    const stray = await user.folder("Basalt stray");
+    const zircon = await user.label("Zircon tag");
+    const hearth = await user.api("/api/pages", { method: "POST", body: { title: "Hearth top", folders: [quartz] } });
+    const ledger = await user.api("/api/pages", { method: "POST", body: { title: "Ledger inside", parent_page: hearth.id } });
+    // a later set keeps the folder: only setting parent_page drops them
+    await user.api(`/api/pages/${ledger.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "ledgernote", parent: ledger.id, position: "a0", content: "ledger first note" },
+      { op: "set", id: ledger.id, props: { labels: [zircon], folders: [stray], pinned: new Date().toISOString() } }] } });
+    assertEq(JSON.stringify((await props(ledger.id)).folders), JSON.stringify([stray]), "the page inside carries a folder of its own");
+    const src = await user.api("/api/pages", { method: "POST", body: { title: "Picker source page" } });
+    await user.api(`/api/pages/${src.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "ledgersrc", parent: src.id, position: "a0", content: "pick from here" }] } });
+    const ctx = await user.context(browser);
+    const page = await openPage(ctx, home);
+    try {
+      const holds = fileRow(page, "Hearth top").locator(".pagesTagBadge");
+      await holds.waitFor({ timeout: 15000 });
+      assertEq(await holds.innerText(), "1", "the row counts the page inside");
+      assertEq(await holds.getAttribute("title"), "1 page inside");
+      const pinned = page.locator(".pinnedStrip .pageCard", { hasText: "Ledger inside" });
+      await pinned.waitFor({ timeout: 15000 });
+      assertEq(await pinned.locator(".insideTagBadge").innerText(), "Hearth top", "the pinned card names the page it is in");
+      assertEq(await pinned.locator(".folderTagBadge").count(), 0, "and shows no folder chip");
+      assert((await pinned.locator(".pageCardPreview").innerText()).includes("ledger first note"), "its cover previews its first note");
+      await page.getByRole("button", { name: "Grid view", exact: true }).click();
+      const card = page.locator(".fileGrid .pageCard", { has: page.locator(".pageCardTitle", { hasText: /^Hearth top$/ }) });
+      await card.waitFor({ timeout: 15000 });
+      assertEq(await card.locator(".pagesTagBadge").innerText(), "1", "the card counts it too");
+      await page.getByRole("button", { name: "List view", exact: true }).click();
+
+      // Quick open: the top's folder and the title; the folder it carries
+      // neither shows on its row nor finds it
+      await page.keyboard.press("Control+p");
+      const dialog = page.getByRole("dialog", { name: "Open a page" });
+      await dialog.waitFor();
+      const query = dialog.getByRole("textbox", { name: "Search pages by title or label" });
+      await query.fill("quartz ledger");
+      const option = dialog.locator('[role="option"][data-kind="page"]').filter({ hasText: "Ledger inside" });
+      await option.waitFor();
+      assertEq(await dialog.locator('[role="option"][data-kind="page"]').count(), 1, "only the page inside answers");
+      await option.locator(".labelTagBadge", { hasText: "Zircon tag" }).waitFor();
+      assertEq(await option.locator(".folderTagBadge").count(), 0, "its row shows its label but not the folder it carries");
+      await query.fill("basalt stray");
+      await dialog.locator('[role="option"][data-kind="folder"]', { hasText: "Basalt stray" }).waitFor();
+      assertEq(await option.count(), 0, "the folder it carries does not find it");
+      await page.keyboard.press("Escape");
+
+      // the [[ picker and the @ menu in a note of another page
+      await page.goto(at(src.id));
+      await editRow(page, "pick from here");
+      // the page's row, not a block row under its path
+      const pageRow = (popup) => popup.locator(".refPopupItem").filter({ has: page.locator(".refPopupText", { hasText: /^Ledger inside$/ }) });
+      const picker = page.locator('.refPopup[data-guide="editor.refSearch"]');
+      // a query typed, its row checked, the query taken out again
+      const typed = async (text, check) => {
+        await page.keyboard.type(text);
+        await check();
+        await page.keyboard.press("Escape");
+        for (let i = 0; i < text.length; i++) await page.keyboard.press("Backspace");
+      };
+      await typed(" [[quartz ledger", async () => {
+        await pageRow(picker).waitFor();
+        assertEq(await pageRow(picker).locator(".refPopupMeta").innerText(), "Page · Hearth top", "the [[ row names where it is");
+      });
+      await typed(" [[zircon", () => pageRow(picker).waitFor());
+      await page.keyboard.type(" @zircon");
+      const menu = page.locator(".mentionMenu");
+      await pageRow(menu).waitFor();
+      assert((await pageRow(menu).innerText()).includes("Hearth top"), "the @ row names where it is");
+      await page.keyboard.press("Escape");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

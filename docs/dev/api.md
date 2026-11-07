@@ -406,8 +406,8 @@ those of `doc_id`, `source_url`, `original_filename`, `folders`, `labels`
 (`GET /blocks/{id}` or its subtree). `preview` is the first ~240 chars of the
 page's first few child blocks that are no highlight, joined with ` · ` (one
 `idx_ub_parent` seek per listed page, so the cost follows the pages, not the
-blocks; `""` when there are none, and for a sub-page, whose preview is never
-read).
+blocks; `""` when there are none). A sub-page has one too: its card in the
+pinned and recents strips or a label view shows it.
 Beside `children` the listing carries the two trees, read in the same
 snapshot:
 

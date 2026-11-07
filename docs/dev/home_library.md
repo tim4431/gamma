@@ -71,7 +71,8 @@ the library.
   marked (`MarkedText` in SearchPanel.jsx over `markedParts` from
   `search/snippets.js`); a typo-only match stays unmarked. A page row shows
   its folder and label chips (`CardLabels`, as on a file row), so a
-  label-only match reads as one.
+  label-only match reads as one; a sub-page's row its labels only, its
+  path on the second line saying where it is.
 - A typed list ends with two actions. *Search inside notes and PDFs for "q"*
   (Ctrl+Enter) opens the workspace search with the query (App's
   `openSearchWith`). *Create page "q"* (Shift+Enter, only where
@@ -247,35 +248,47 @@ adds "Left out N pages inside other pages, filed with their tops." Labels stay p
 
 **Listing and counting.** `GET /blocks/root/children` lists every page,
 sub-pages included, each with `parent`, its effective parent (`""` for a
-library page), and a sub-page with an empty `preview` (no preview query
-runs for it). App keeps `parent` as `_parentPage` on the listing's rows
-and on its page blocks, and the home view's own surfaces draw from the
-library pages alone (`libraryPages`): the root feed and a folder's listing
-(`scopePages`), the folder counts and dates (`folderMeta`), "No label",
-the count of Delete folder, the "Start your library" check and the
-guide's triggers. A label view and a label's count are the exception: they
-take in the sub-pages carrying the label (`labelScopePages`: at the root
-every page, in a folder the pages whose top is filed there), and a
-sub-page without a label is not in "No label". So does the filter box's
-search: with a query, the view's sub-pages (the same `labelScopePages`)
-that match by title, label or path join the matches, after the library
-pages that match, each row with an `insideTagBadge` chip naming its path
-(`CardLabels`' `inside`, shown whatever the File labels preference); with
-the box empty they are not listed, and a label view, "No label" and the
-folders-only and labels views add none. Every other surface keeps
-every page: tabs, the recents and pinned strips (a sub-page may be pinned,
-and the strips' page menu offers it Move to library), and the pickers,
-which name a sub-page's path. Quick open and the chat's `@` and `+`
-pickers rank through `rankLibraryPages`, which matches the path too, as a
-weaker hit, so typing a parent's title lists the pages inside it after the
-title hits; Quick open's and the `@` picker's rows show the path on their
-second line, the `+` picker after the title. The move dialogs (Move into
-page…, Move block to page, "Moving one" below) match the same way
-(`movePageRows`: the title, then the path as a weaker hit) and show the
-path after the title, so two sub-pages of one name read apart. The `[[` picker's meta reads
-"kind · path" and the `@` menu's page row the path, each else the page's
-first folder. The Ctrl+F search panel names a hit's page "Parent › Child",
-the pages above it muted and shrinking first.
+library page), and its `preview`, a sub-page's as a library page's. App
+keeps `parent` as `_parentPage` on the listing's rows and on its page
+blocks (`pageBlocksOf` in libraryUtils.js), which also give a sub-page
+its top's folders (`_folders`, `_folderChips`: what `filed_folders`
+answers on the server) beside its own labels, its path (`_path`), and
+every page the count of the pages right inside it (`_subPages`). The home
+view's own surfaces draw from the library pages alone (`libraryPages`):
+the root feed and a folder's listing (`scopePages`), the folder counts
+and dates (`folderMeta`), "No label", the count of Delete folder, the
+"Start your library" check and the guide's triggers. A label view and a
+label's count are the exception: they take in the sub-pages carrying the
+label (`labelScopePages`: at the root every page, in a folder the pages
+whose top is filed there), and a sub-page without a label is not in "No
+label". So does the filter box's search: with a query, the view's
+sub-pages (the same `labelScopePages`) that match by title, label or path
+join the matches, after the library pages that match; with the box empty
+they are not listed, and a label view, "No label" and the folders-only
+and labels views add none. Every other surface keeps every page: tabs,
+the recents and pinned strips (a sub-page may be pinned, and the strips'
+page menu offers it Move to library), and the pickers, which name a
+sub-page's path. A sub-page's card or row, wherever one shows (the
+strips, a label view, the filter's matches), names its path in place of
+folder chips, and its cover previews its first notes as any page's does
+("The card" below); a page with pages inside it says how many.
+
+**In the pickers.** A sub-page matches on its title, then, as weaker
+hits, its top's folders, its own labels and its path, so typing
+a parent's title lists the pages inside it after the title hits. Quick
+open and the chat's `@` and `+` pickers rank through `rankLibraryPages`
+(over the listing's rows, `topPageOf` for the folders); their rows show
+the path, Quick open's and the `@` picker's on their second line, the `+`
+picker's after the title, and a sub-page's row shows its label chips
+only. The `[[` picker and the editor's `@` menu rank through
+`rankRefPages` (editor/refLists.js) over App's page blocks, folder and
+label chips by name; the `[[` picker's meta reads "kind · path" and the
+`@` menu's page row the path, each else the page's first folder. The
+move dialogs (Move into page…, Move block to page, "Moving one" below)
+match the title, then the path (`movePageRows`), and show the path after
+the title, so two sub-pages of one name read apart. The Ctrl+F search
+panel names a hit's page "Parent › Child", the pages above it muted and
+shrinking first.
 
 **Reaching one.** Three ways, none of them a page tree in a sidebar:
 
@@ -370,7 +383,8 @@ filing and shares), `test_sub_pages_lifecycle.py` (trash, restore, delete
 for good, the mirror and publishing), `test_sub_pages_ai.py`,
 `test_sub_pages_export.py`, `test_sub_pages_import.py` (a Notion export's
 tree), `frontend/tests/subPages.test.mjs` (the client
-helpers) and the browser suite's `sub-pages` group
+helpers, App's page list and the pickers' matching), `refLists.test.mjs`
+(the `[[` picker's) and the browser suite's `sub-pages` group
 (`frontend/tests/e2e/scenarios/subPages.mjs`).
 
 ## Listing, sorting, filtering
@@ -571,7 +585,15 @@ same card; only the grid stretches it to fill the row, and the recents strip
 The chips (`CardLabels`, also reused by the list rows) are display-only and
 gated by the Folders and Labels switches of Settings → Appearance → Library
 (`gamma-home-file-labels`: off/labels/folders/both); a label chip's menu
-opens on a right-click or a held finger.
+opens on a right-click or a held finger. Two chips say where a page is
+and what it holds rather than how it is filed, so they show whatever the
+switches say (on a card with the switches off, they take the chip line
+the card otherwise leaves out): a page with pages inside it leads with
+`.pagesTagBadge`, a two-pages glyph (`PagesIcon`) and how many are right
+inside it ("N pages inside" on hover; `_subPages`), and a sub-page shows
+its path (`.insideTagBadge`, `inside`: "Top › Mid", cut first when the
+line is full) in place of folder chips, since it is filed with its top
+("Sub-pages" above).
 
 A card takes its menu as `onMenu`: a right-click or a held finger
 (`menuPress`), or the "⋯" in the cover's top-left corner

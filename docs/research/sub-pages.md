@@ -299,7 +299,9 @@ Shape C was built as designed above, with these differences.
   the library lists) and after its own sub-page writes; a sub-page made or
   moved in by another client shows at the next open. The listing still
   carries every page, each with `parent` (the effective one, not the
-  stored key), and skips a sub-page's preview.
+  stored key). It first skipped a sub-page's preview; since 2026-11-06 it
+  reads one for every page, as a sub-page's card shows in the pinned and
+  recents strips and a label view.
 - **The crumbs name pages only.** No folder path comes before them: a page
   inside another shows no folder chips at all, and its label field offers
   labels only, since its folders are its top's.
@@ -439,7 +441,6 @@ Shape C was built as designed above, with these differences.
   pages no longer published (their text kept here). A page moved into a
   page there whose turn comes before that page's deletion here keeps a
   stored `parent_page` naming the deleted page.
-- The `[[` picker does not match a page's path, as Ctrl+P does.
 - Empty and the 30-day sweeper find a page's cascaded rows by reading the
   trash for each page they delete (`ops._went_with`, with a cheap text
   test first); an indexed `deleted_with` column would need a migration
@@ -463,7 +464,15 @@ pages, as Delete does), Move to folder hidden by one sub-page in a
 selection, the move dialogs matching titles only and Move block to page
 showing no path, and Recently deleted not saying a sub-page deleted on
 its own comes back inside its parent (home_library.md "Moving one" and
-"Recently deleted").
+"Recently deleted"). Also fixed that day: the `[[` picker and the
+editor's `@` menu now match a sub-page's path and every page's folders
+and labels by name rather than id (`rankRefPages`); a library row or
+card counts the pages inside a page in a chip of its own; and a
+sub-page's card (the strips, a label view) shows its path in place of
+folder chips and a preview of its notes, which the listing now reads for
+it, while Quick open matches it on its top's folders rather than its own
+(home_library.md "Listing and counting", "In the pickers" and "The
+card").
 
 Sharing and publishing:
 
@@ -516,14 +525,6 @@ The library and the page:
 
 - The Pages inside rows have no menu and no drag, and no page is a drop
   target for "move into this page".
-- A library row or card gives no sign that a page has pages inside it.
-- A sub-page's card where one is shown (the pinned and recents strips, a
-  label view) has no preview text (the listing runs none for a sub-page),
-  shows its own folder chips rather than its path, and Quick open matches
-  it on those own folders.
-- The `[[` picker and the editor's `@` menu match folders and labels by
-  id rather than name (`rankRefPages`), for every page, as well as not
-  matching a sub-page's path.
 
 Deliberate, worth a second look: "Start your library" and the first-run
 tour count library pages only, so a new user whose pages all sit inside

@@ -234,6 +234,7 @@ import {
   isFreshLibrary,
   welcomePageOf,
   pagePathLabel,
+  pageBlocksOf,
   pageDescendants,
   topmostPages,
   deleteConfirm,
@@ -8655,27 +8656,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const pageOnly = !!focusedBlockId && !pageAttach && !notebook;
   // Phone: navigating to another page (or home) closes any overlay panel.
   useEffect(() => { setPhonePanel(null); }, [focusedBlockId, homeMode]);
-  const pageBlocks = useMemo(() => {
-    return homeBlocks.map((b) => {
-      // what it is filed in: the ids the trees have, and as chips
-      const chips = filingChips(libTree, b.properties);
-      return {
-        id: b.id,
-        content: b.content || t("Untitled"),
-        _pageId: b.id,
-        _attachment: pageAttachment(b),
-        _preview: b.preview || "",
-        _folders: chips.folders.map((c) => c.id),
-        _labels: chips.labels.map((c) => c.id),
-        _folderChips: chips.folders,
-        _labelChips: chips.labels,
-        _createdAt: b.created_at || "",
-        _updatedAt: b.updated_at || "",
-        _pinned: b.properties?.pinned || "",
-        _parentPage: b._parentPage,
-      };
-    });
-  }, [homeBlocks, libTree]);
+  // what each page is filed in (a sub-page in its top's folders), where it
+  // is and how many pages it holds (libraryUtils.pageBlocksOf)
+  const pageBlocks = useMemo(() => pageBlocksOf(homeBlocks, libTree), [homeBlocks, libTree]);
   const pagesById = useMemo(() => new Map(pageBlocks.map((b) => [b.id, b])), [pageBlocks]);
   // The home view's own pages: a sub-page is reached through its parent
   // (the crumbs, Pages inside, a link), so the listing, the root feed and
@@ -8825,12 +8808,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // the sub-pages carrying it too: every page at root, and in a folder the
   // pages whose top is filed there. A sub-page carrying none is no part of
   // the "No label" rollup: it is filed with its parent.
-  const labelScopePages = useMemo(() => {
-    if (!folderFilter) return pageBlocks;
-    return pageBlocks.filter((b) => {
-      return topPageOf(pagesById, b.id)._folders.includes(folderFilter);
-    });
-  }, [pageBlocks, pagesById, folderFilter]);
+  const labelScopePages = useMemo(
+    () => (folderFilter ? pageBlocks.filter((b) => b._folders.includes(folderFilter)) : pageBlocks),
+    [pageBlocks, folderFilter]
+  );
   // Per-label rollup over the pages in scope — the flat mirror of folderMeta,
   // so label tiles sort and count exactly like folder tiles. At the root
   // every label is in it (a label is a block, carried or not); in a folder
@@ -8911,25 +8892,23 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // and a page also matches on its chips, so "cs229" surfaces its papers.
     const match = createLibraryMatcher(homeQuery);
     if (!match) return items;
+    // a page's chips by name, and a sub-page's path (a label view's)
     for (const it of items) {
       it._match = match(it._title, it.kind === "page"
-        ? [...it.block._folderChips, ...it.block._labelChips].map((c) => c.name)
+        ? [...it.block._folderChips, ...it.block._labelChips].map((c) => c.name).concat(it.block._path || [])
         : []) > 0;
     }
     // A page inside another is no row of the listing, but its search finds
     // one: this view's sub-pages (at the root every one, in a folder those
     // whose top is filed there) that match by title, label or the pages
-    // they are in, as Ctrl+P matches them, after the library's own matches
-    // and each with its path. A label view lists its sub-pages already, and
-    // "No label" none.
+    // they are in, as Ctrl+P matches them, after the library's own matches.
+    // A label view lists its sub-pages already, and "No label" none.
     const inside = labelFilter || labelMode || homeKinds === "folders" ? [] : labelScopePages
-      .filter((b) => b._parentPage)
-      .map((b) => ({ b, path: pagePathLabel(pagesById, b.id) }))
-      .filter(({ b, path }) => match(b.content, [...b._labelChips.map((c) => c.name), ...(path ? [path] : [])]) > 0)
-      .map(({ b, path }) => pageItem(b, { _path: path, _match: true }));
+      .filter((b) => b._parentPage && match(b.content, b._labelChips.map((c) => c.name).concat(b._path || [])) > 0)
+      .map((b) => pageItem(b, { _match: true }));
     if (cmp) inside.sort(cmp);
     return [...items.filter((it) => it._match), ...inside, ...items.filter((it) => !it._match)];
-  }, [libTree, scopePages, labelScopePages, pagesById, labelFilter, levelFolders, folderMeta, scopeLabels, labelMeta, viewedAtById, homeSort, homeKinds, homeQuery]);
+  }, [libTree, scopePages, labelScopePages, labelFilter, levelFolders, folderMeta, scopeLabels, labelMeta, viewedAtById, homeSort, homeKinds, homeQuery]);
   const homeVisibleItems = useMemo(() => homeItems.slice(0, homeShowCount), [homeItems, homeShowCount]);
   // The listing is a list that moves (ListMotion, docs/dev/ui-design.md
   // "Lists that change"): within one listing an item added, removed or
@@ -10291,7 +10270,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   <PageCard key={b._pageId} title={b.content} glyph={<FileGlyph isPdf={!!b._attachment} />} preview={b._preview}
                     snap={recentThumbs ? pageSnaps[b._pageId]?.img : null}
                     kind={pageKindLabel(b._attachment)} time={formatRelativeTime(b._viewedAt)}
-                    folders={b._folderChips} labels={b._labelChips} labelMode={fileLabels}
+                    folders={b._folderChips} labels={b._labelChips} inside={b._path} pages={b._subPages} labelMode={fileLabels}
                     className={selectedPages.has(b._pageId) ? "selected" : ""}
                     onClick={() => openPage(b._pageId)}
                     onMenu={openPageMenu(b._pageId, b.content)}>
@@ -10335,7 +10314,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       tip={t("{content}\nClick to select · double-click to open", { content: b.content })}
                       kind={pageKindLabel(b._attachment)}
                       time={formatRelativeTime(b._updatedAt)}
-                      folders={b._folderChips} labels={b._labelChips} labelMode={fileLabels}
+                      folders={b._folderChips} labels={b._labelChips} inside={b._path} pages={b._subPages} labelMode={fileLabels}
                       draggable
                       onDragStart={(e) => { e.dataTransfer.setData("text/plain", b._pageId); e.dataTransfer.effectAllowed = "move"; }}
                       checked={selecting && selectedPages.has(b._pageId)}
@@ -10589,7 +10568,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           tip={t("{content}\nClick to select · double-click to open", { content: b.content })}
                           kind={pageKindLabel(b._attachment)}
                           time={cardTime(item)}
-                          folders={b._folderChips} labels={b._labelChips} inside={item._path} labelMode={fileLabels}
+                          folders={b._folderChips} labels={b._labelChips} inside={b._path} pages={b._subPages} labelMode={fileLabels}
                           renameNode={isEditing ? (
                             <input
                               autoFocus
@@ -10762,7 +10741,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                             <span className="fileRowName">{b.content || t("Untitled")}</span>
                           )}
                           <CardLabels className="fileRowLabels" folders={b._folderChips} labels={b._labelChips}
-                            inside={item._path} mode={fileLabels} onLabelMenu={(l) => openTagMenu("label", l)} />
+                            inside={b._path} pages={b._subPages} mode={fileLabels} onLabelMenu={(l) => openTagMenu("label", l)} />
                           {rowColumns(item, pageKindLabel(b._attachment), menu, lib.pin ? (
                             <button
                               className={`pinBtn fileRowPin ${isPinned ? "pinned" : ""}`}

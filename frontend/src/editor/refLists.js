@@ -10,19 +10,22 @@ import { REF_RE } from "./refLabels.js";
 const PICKER_ROWS = 8;
 const RECENT_PAGES = 4; // offered before anything is typed
 
-// App's page list ([{id, content, _attachment, _folders, _labels,
-// _updatedAt}]) → the pages the query names, best first: the library's own
-// title matcher (typo-tolerant, folder/label chips as a weaker hit). An
-// empty query offers the most recently edited pages. `excludeId` is the
-// open page (a note linking its own page is no link).
+// App's page list (libraryUtils.pageBlocksOf: [{id, content, _folderChips,
+// _labelChips, _path, _updatedAt, …}]) → the pages the query names, best
+// first: the library's own title matcher (typo-tolerant), with the
+// folder and label chips by name and a sub-page's path as weaker hits, as
+// Ctrl+P matches (librarySearch.rankLibraryPages; a sub-page's folders are
+// its top's). An empty query offers the most recently edited pages.
+// `excludeId` is the open page (a note linking its own page is no link).
 export function rankRefPages(pages, query, excludeId) {
   const list = (pages || []).filter((p) => p.id !== excludeId);
   const q = (query || "").trim();
   if (!q) return [...list].sort((a, b) => (b._updatedAt || "").localeCompare(a._updatedAt || "")).slice(0, RECENT_PAGES);
   const match = createLibraryMatcher(q);
   if (!match) return [];
+  const chips = (p) => [...(p._folderChips || []), ...(p._labelChips || [])].map((c) => c.name).concat(p._path || []);
   return list
-    .map((p, i) => ({ p, i, s: match(p.content || "", [...(p._folders || []), ...(p._labels || [])]) }))
+    .map((p, i) => ({ p, i, s: match(p.content || "", chips(p)) }))
     .filter((x) => x.s > 0)
     .sort((a, b) => b.s - a.s || a.i - b.i)
     .map((x) => x.p);
