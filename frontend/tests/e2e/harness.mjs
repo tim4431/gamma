@@ -344,6 +344,17 @@ export async function openPage(ctx, url) {
   return page;
 }
 
+// Settings → a pane by its sidebar button, once that pane is the one shown.
+// A pane whose reads are not in keeps the one before on screen for up to
+// HOLD_MS, its own button already marked (docs/dev/settings.md "What a pane
+// reads"), so what a step looks for next could match in the pane before: the
+// Server pane lists the shared workspaces with a Manage of their own.
+// `name` is the button's label, which is also the pane head's.
+export async function settingsPane(page, name) {
+  await page.getByRole("navigation", { name: "Settings categories" }).getByRole("button", { name, exact: true }).click();
+  await page.locator(`.settingsPane .setHead[data-setting="${name}"]`).waitFor();
+}
+
 // A chat model the browser can see, so the chat's composer is enabled without
 // a real provider (with no AI connected it shows the setup card and refuses
 // to send). Scenarios that drive the chat route /api/ai/models here on their
