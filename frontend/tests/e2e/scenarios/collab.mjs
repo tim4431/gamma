@@ -426,9 +426,12 @@ export async function collabScenarios({ server, browser, alice, bob, makePdf, st
       await ready?.(pg.id);
       const ops = ["one", "two", "three of bob's", "tail"].map((content, i) => ({ op: "insert", id: `${pg.id}${i}`, parent: pg.id, position: `a${i}`, content }));
       await aliceT.api(`/api/pages/${pg.id}/ops`, { method: "POST", body: { client: "setup", ops } });
+      // A row of the page, not the body: the last race's card under Recently
+      // viewed holds this text before the page opens, and going offline then
+      // leaves bob on the home view.
       for (const p of [A, B]) {
         await p.goto(`${server.base}/?page=${pg.id}&ws=${teamId}`);
-        await bodyHas(p, "three of bob's");
+        await shown(p, "three of bob's");
       }
       return { id: pg.id, tree: () => tree(aliceT, pg.id) };
     };
