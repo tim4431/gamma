@@ -818,6 +818,11 @@ def test_ink_is_an_image_with_its_caption_under_it():
         Block("image", [text("Handwriting")], attrs={"url": "/api/uploads/ab.svg"})]
 
 
+@pytest.mark.parametrize("url", ["", None])
+def test_ink_whose_file_is_not_stored_yet_is_its_caption(url):
+    assert model_of({**node("cap", node("kid")), "properties": {"ink_url": url}}) == [para("cap", para("kid"))]
+
+
 def recording_node(*names, content="", children=()):
     segments = [{"url": f"/api/uploads/ab{name}.webm", "dur": 1000} for name in names]
     return {"content": content, "properties": {"recording": {"dur": 61000, "segments": segments}},

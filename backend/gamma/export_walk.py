@@ -17,7 +17,7 @@ tests/test_export_walk.py holds all three to the same blocks.
 
 from dataclasses import dataclass
 
-from .highlights import is_highlight, is_link, page_of
+from .highlights import is_highlight, is_ink, is_link, page_of
 from .notebook import is_sheet
 from .picture import is_picture, markdown_of, picture_page
 from .recording import is_recording
@@ -44,7 +44,7 @@ def _kind(props, text, quote, picture) -> str | None:
         return "region"
     if is_highlight(props):
         return "highlight" if quote or text else None
-    if props.get("ink_url"):
+    if is_ink(props):
         return "ink"
     if is_recording(props):
         return "recording"
@@ -74,7 +74,7 @@ def _items(nodes, highlights, notes, on_sheet) -> list[Item]:
         # A highlight carries both a PDF region and (often) writing of your
         # own, so dropping highlights keeps its text as a plain note. A picture
         # that links stays a picture, on no page, as in the readable export.
-        if not highlights and (is_highlight(props) or is_link(props) or props.get("ink_url")
+        if not highlights and (is_highlight(props) or is_link(props) or is_ink(props)
                                or is_recording(props)):
             props = {"picture": props["picture"]} if picture else {}
         text = (node.get("content") or "").strip() if notes else ""

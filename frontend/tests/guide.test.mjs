@@ -591,7 +591,7 @@ test("the highlights and notes tours come once the user has made several", () =>
   const notes = TOURS.notes;
   assert.equal(canOffer(notes, { facts: { ...facts, notebookView: false, touch: false }, progress: null, event: at("block.created"), seen: 8 }), true);
   assert.equal(canOffer(notes, { facts: { ...facts, notebookView: false, touch: true }, progress: null, event: at("block.created"), seen: 8 }), false,
-    "a finger neither drags the handle nor has a + under it");
+    "a finger neither drags the handle nor has a + beside it");
   assert.deepEqual(notes.steps.find((s) => s.id === "notes-add").scene.at(-1), { click: "notes.addBelow", key: "Alt" });
 });
 

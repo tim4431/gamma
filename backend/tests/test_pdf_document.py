@@ -153,6 +153,11 @@ def test_a_nested_plain_note_draws_no_dot_and_a_list_keeps_its_marker(monkeypatc
     assert _drawn_bullets(monkeypatch, _note("top", _note("- item"), _note("3. item"))) == ["", "3."]
 
 
+def test_a_nested_caption_with_no_drawing_draws_no_dot_as_a_plain_note(monkeypatch):
+    assert _drawn_bullets(monkeypatch, _note("top", _note("not stored yet", ink_url=""))) == []
+    assert _drawn_bullets(monkeypatch, _note("top", _note("file gone", ink_url="/api/uploads/gone.ink"))) == []
+
+
 def test_a_highlight_s_own_note_keeps_its_dot(monkeypatch):
     place = {"pageNumber": 1, "boundingRect": {"x1": 0, "y1": 0, "x2": 1, "y2": 1}, "rects": []}
     assert _drawn_bullets(monkeypatch, _note("my note", pdf_position=place, quote="a passage")) == [""]

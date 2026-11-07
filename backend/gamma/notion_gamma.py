@@ -735,7 +735,10 @@ def _region(item, mentions: _Mentions) -> list:
 
 def _ink(item) -> list:
     """A handwriting group: its picture, which the export renders under the
-    ink's own stem (``markdown_export.ink_svg_name``), and the caption."""
+    ink's own stem (``markdown_export.ink_svg_name``), and the caption. A
+    group whose file is not stored yet has only its caption."""
+    if not item.props.get("ink_url"):
+        return blocks_of(item.text)
     label = f"Handwriting (p. {item.page_no})" if item.page_no else "Handwriting"
     url = re.sub(r"\.ink$", ".svg", item.props["ink_url"])
     return [Block("image", _literal(label), attrs={"url": url}), *blocks_of(item.text)]

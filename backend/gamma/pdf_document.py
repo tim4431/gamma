@@ -889,7 +889,7 @@ def _emit_block(cv: _Canvas, node: dict, depth: int, highlights: bool, notes: bo
         if content:
             cv.gap(BLOCK_GAP)
             inset = QUOTE_PAD if emitted else 0
-            _emit_chunks(cv, content, x + inset, width - inset, bullet=bool(depth or inset))
+            _emit_chunks(cv, content, x + inset, width - inset, bullet=bool(inset))
             emitted = True
     elif is_pic:
         # A picture placed on a page: drawn as placed, then a line naming

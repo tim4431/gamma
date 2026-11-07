@@ -218,6 +218,8 @@ def one(props=None, content="text", **switches):
     ({"link_page_id": "other"}, "region", None),
     ({"pdf_position": position(3), "quote": "q"}, "highlight", 3),
     ({"ink_url": "/api/uploads/a.ink", "pdf_position": position(4)}, "ink", 4),
+    ({"ink_url": "", "pdf_position": position(4)}, "ink", 4),
+    ({"ink_url": None}, "ink", None),
     (recording("r"), "recording", None),
     (picture("p", pdf_page=5), "picture", 5),
     (picture("p"), "picture", None),

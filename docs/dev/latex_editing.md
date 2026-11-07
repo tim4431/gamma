@@ -95,9 +95,11 @@ is the text the AI read. The pairs and dollar spans that text holds in its
 prose stay as written. `tests/shared/pastemath.json` holds the cases both
 suites check.
 
-Where code is, everything here reads one way: `shared/lib/mdCode.js`
-(`codeFences`, `codeSpans`, `mapProse`), with `paste_math._fences` and
-`_code_spans` its backend twins. A code span is CommonMark's, kept to one
+Where code is, a paste, the editor's marks and the chat read one way:
+`shared/lib/mdCode.js` (`codeFences`, `codeSpans`, `mapProse`), with
+`paste_math._fences` and `_code_spans` its backend twins. The keys read a
+caret in code through `fences.fenceInnerAt` ([hotkeys.md](hotkeys.md)), which
+goes by quote depth and reads no fence in a list. A code span is CommonMark's, kept to one
 line: a run of backticks opens it and the next run of the same length
 closes it, so ``` ``a`b`` ``` is one span. A backslash escapes an opener's
 first backtick (`` \`x` `` is no code), never a closer's, since a backslash

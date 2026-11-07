@@ -1743,7 +1743,7 @@ const BlockRow = React.memo(function BlockRow({
                   return;
                 }
                 // Which Enter starts a new note is a preference (Settings →
-                // Notes); the other one falls through to a plain line break.
+                // Keyboard); the other one falls through to a plain line break.
                 const newNoteKey = enterNewBlock ? !e.shiftKey : e.shiftKey;
                 if (e.key === "Enter" && newNoteKey) {
                   e.preventDefault();
