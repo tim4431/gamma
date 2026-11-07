@@ -22,7 +22,11 @@ function precompress() {
     configResolved(config) {
       outDir = path.resolve(config.root, config.build.outDir);
     },
-    async closeBundle() {
+    // Rollup calls this after a failed build too, with its error: then there
+    // is nothing to compress, and on a fresh checkout no dist to read, whose
+    // ENOENT would be the error the build reports in place of the real one.
+    async closeBundle(error) {
+      if (error) return;
       const entries = await fs.readdir(outDir, { recursive: true, withFileTypes: true });
       const files = entries.filter((e) => e.isFile() && COMPRESSIBLE.test(e.name))
         .map((e) => path.join(e.parentPath, e.name));
@@ -80,9 +84,4 @@ export default defineConfig({
       "/api": { target: "http://127.0.0.1:9001", ws: true },
     },
   },
-  preview: {
-    host: "127.0.0.1",
-    port: 4173,
-    allowedHosts: ["annotation.amogadgetlab.com"]
-  }
 });

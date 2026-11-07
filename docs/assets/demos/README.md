@@ -18,9 +18,11 @@ delivery rules and regeneration steps are in
 | [metadata](demo-metadata.webp) | 13.2 s | 1120 x 714 | 1.10 MiB |
 | [reference-links](demo-reference-links.webp) | 15.2 s | 1040 x 662 | 4.58 MiB |
 
-The first seven are the README's, in its order; the website shows those
-seven, metadata and reference-links. Library is shown nowhere; it and its
-recorder are kept for re-use.
+The first seven are the README's, in its order; the website shows
+native-agentic and, as shorter cuts (`sites/site/media/`, written by
+[site-cuts.py](../../../tools/readme-media/site-cuts.py)), ink-import and
+notes. Metadata, reference-links and library
+are shown nowhere; they and their recorders are kept for re-use.
 The ten total about 20.2 MiB; each is below 5 MiB. The eight 1600 × 900
 animations are retina captures; the README's seven come to 11.24 MiB. The
 AI reading, AI in notes, Notability import, collab and connector clips are

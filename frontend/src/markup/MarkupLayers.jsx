@@ -4,6 +4,7 @@
 // from PageToolsContext, the surface's marks from App's Map (useMarks).
 import { useMemo, useRef, useState } from "react";
 import { InkLayer, Strokes, useHasWet } from "../ink/InkLayer";
+import { penToolOn } from "../ink/pencilActions.js";
 import { usePageTools } from "./PageTools";
 import { PictureLayer, StillPictures } from "./PictureLayer";
 import { TextBoxLayer } from "./TextBoxLayer";
@@ -90,10 +91,14 @@ export function useMarks({ ink, inkSelection, inkFlash, boxes, boxSel, boxFlash,
 // onZoomStroke(box) hears of each stroke it commits. `carry`: the lasso
 // selection's live preview, {ids, value}, which its ink layer reports
 // while the selection is dragged or its handles are; the picture layer
-// draws those pictures carried by it.
-export function MarkupLayers({ surface, wrapRef, width, height, marks, active = true, chrome = true, onZoomStroke }) {
-  const { readOnly, ink, text, actions } = usePageTools();
-  const wet = useHasWet(surface);
+// draws those pictures carried by it. `onPenDrag(e)`: a surface with a drag
+// of its own for a pen with nothing armed (a PDF page's, InkLayer.jsx).
+export function MarkupLayers({ surface, wrapRef, width, height, marks, active = true, chrome = true, onZoomStroke, onPenDrag }) {
+  // `preview`: the surface is a view of a page that is not the one open
+  // (workspace/PagePane.jsx), whose page numbers the open page's peers'
+  // strokes, its surface sizes and its journal must not reach.
+  const { readOnly, ink, text, actions, preview } = usePageTools();
+  const wet = useHasWet(preview ? null : surface);
   const [carry, setCarry] = useState(null);
   const edit = readOnly || text.armed ? {} : actions;
   if (!active && !marks.ink.length && !marks.boxes.length && !marks.pictures.length) return null;
@@ -106,7 +111,8 @@ export function MarkupLayers({ surface, wrapRef, width, height, marks, active = 
         <InkLayer pageNumber={surface} wrapRef={wrapRef} width={width} height={height} blocks={marks.ink}
           // the pictures a highlighter multiplies into
           pictures={marks.pictures}
-          tool={ink.tool} penTool={ink.penTool} penOnly={ink.penOnly} pressure={ink.pressure} eraserMode={ink.eraserMode}
+          tool={ink.tool} penTool={penToolOn(!!onPenDrag, ink)} penInk={!!ink.penTool} onPenDrag={onPenDrag}
+          penOnly={ink.penOnly} pressure={ink.pressure} eraserMode={ink.eraserMode}
           eraserSize={ink.eraserSize} eraserFilter={ink.eraserFilter} drawHold={ink.drawHold} scribble={ink.scribble}
           fingerUndo={ink.fingerUndo} lassoMode={ink.lassoMode} lassoPictures={ink.lassoPictures} selection={marks.inkSelection}
           flash={marks.inkFlash} onCarry={setCarry}
@@ -126,7 +132,7 @@ export function MarkupLayers({ surface, wrapRef, width, height, marks, active = 
           onUndoGesture={readOnly || !chrome ? undefined : actions.onUndoGesture}
           // the zoom window's box on its page; while a window is open a blank tap on any page moves it there
           chrome={chrome} onZoomStroke={onZoomStroke} zoom={chrome && ink.zoom?.page === surface ? ink.zoom : null}
-          onZoom={chrome && ink.zoom && !readOnly ? actions.onZoom : undefined} />
+          onZoom={chrome && ink.zoom && !readOnly ? actions.onZoom : undefined} view={!!preview} />
       )}
     </>
   );

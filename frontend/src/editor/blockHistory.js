@@ -455,9 +455,13 @@ export function observeTree(s, blocks, o, editingId = null) {
       return;
     }
     s.lastEdit = box ? { box, at: now } : kind === true ? null : { id: kind, at: now, editing };
-    // A content change from an editor carries the selection it started from.
+    // A content change from an editor carries the selection it started from,
+    // and so does a change of shape a key made from one (a split or a merge,
+    // `keyed`), whose editor has closed by now. That one is spent here.
     const before = o.caretBeforeRef?.current;
-    const caret = kind !== true && before?.id === kind ? { ...before } : caretOf(s, prevEditing, o);
+    const carried = kind === true ? before?.keyed : before?.id === kind;
+    const caret = carried ? { id: before.id, from: before.from, to: before.to } : caretOf(s, prevEditing, o);
+    if (before?.keyed) o.caretBeforeRef.current = null;
     // Only the newest entry keeps the redo steps it cleared (a fold may take it back).
     const top = s.undo[s.undo.length - 1];
     if (top?.redo) delete top.redo;

@@ -31,8 +31,8 @@ translate. The drawing's top-left is (0, 0); ``ascent`` is where its baseline
 sits below that, which is what inline placement needs to line up with the
 surrounding text.
 
-Everything is best-effort: unparsable LaTeX, a missing ziamath, or no CJK font
-on the box returns None and the caller falls back to what it can draw.
+Everything is best-effort: LaTeX ziamath cannot lay out, or no CJK font on the
+box, returns None and the caller falls back to what it can draw.
 """
 
 import re
@@ -242,9 +242,7 @@ def math(tex: str, size: float = 8.0):
     """
     try:
         import ziamath
-    except ImportError:
-        return None
-    try:
+
         m = ziamath.Math.fromlatex(tex, size=size)
         bbox, margin = m.node.bbox, m.margin
         vx, vy = bbox.xmin - margin, -bbox.ymax - margin
@@ -280,10 +278,8 @@ _CJK_FONTS = (
 @lru_cache(maxsize=1)
 def cjk_font():
     """The first usable CJK outline font on this box, or None."""
-    try:
-        import ziafont
-    except ImportError:
-        return None
+    import ziafont
+
     for path in _CJK_FONTS:
         if not Path(path).is_file():
             continue

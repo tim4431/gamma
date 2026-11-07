@@ -5,9 +5,9 @@ Gamma's — the shell treats Gamma as a black box (HTTP API + env config), so
 nothing in `backend/` or `frontend/` needs to know about it:
 
 - [desktop/README.md](../../desktop/README.md) — overview + run / develop.
-- [desktop/docs/architecture.md](../../desktop/docs/architecture.md) — the
-  workspace model (local sidecar servers + remote URLs), the window (shell
-  bar with the workspace switcher + content view), remote reachability
+- [desktop/docs/architecture.md](../../desktop/docs/architecture.md) —
+  servers (local sidecar servers + remote URLs) and Gamma's workspaces in
+  the switcher, the window (shell bar + content view), remote reachability
   probes, in-app updates, shell state, file map, invariants.
 - [desktop/docs/release.md](../../desktop/docs/release.md) — package, the
   `desktop` workflow, secret-gated code signing, the auto-update feed,

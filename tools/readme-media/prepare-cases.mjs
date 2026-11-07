@@ -13,19 +13,16 @@ if (!cases.notes) {
 if (requested.has('notes')) {
   await account.api(`/api/blocks/${cases.notes}/children`, { method: 'PUT', body: { blocks: [] } });
 }
-if (['metadata', 'download-and-chat', 'reference-links', 'agent'].some(n => requested.has(n))) {
+if (requested.has('metadata') || requested.has('reference-links')) {
   const { children } = await account.api('/api/blocks/root/children');
   for (const p of children) {
     const source = p.properties?.source_url || '';
     const arxiv = p.properties?.meta?.arxiv_id;
     const remove = (requested.has('metadata') && (arxiv === '2312.03982' || source.includes('2312.03982')))
-      || (requested.has('reference-links') && (arxiv === '0904.2557' || source.includes('0904.2557')))
-      || (requested.has('download-and-chat') && (p.content === 'Attention Is All You Need' || source.includes('3f5ee243547dee91fbd053c1c4a845aa')));
+      || (requested.has('reference-links') && (arxiv === '0904.2557' || source.includes('0904.2557')));
     if (remove) await account.api(`/api/blocks/${p.id}`, { method: 'DELETE' });
-    else if (requested.has('agent')) await account.api(`/api/blocks/${p.id}`, { method: 'PUT', body: { properties: { folders: null } } });
   }
   await account.api('/api/prefs/open-tabs', { method: 'PUT', body: { value: [] } });
-  if (requested.has('agent') || requested.has('download-and-chat')) await account.api('/api/chats/home', { method: 'DELETE' });
 }
 if (requested.has('library') || requested.has('search')) {
   const { children: roots } = await account.api('/api/blocks/root/children');

@@ -47,6 +47,23 @@ def test_numbered_siblings_are_ordered_runs():
                                '<ol start="5"><li>c</li><li>d</li></ol><ol><li>again</li></ol>')
 
 
+def test_a_bullets_marker_is_its_list_item():
+    tree = node("root", node("- a", node("- nested")), node("plain"), node("- **b**"))
+    html = note_html(tree)
+    assert html == "<p>root</p><ul><li>a<ul><li>nested</li></ul></li><li>plain</li><li><strong>b</strong></li></ul>"
+    assert note_tree(html) == node("root", node("a", node("nested")), node("plain"), node("**b**"))
+    # What the marker leaves is read as a block's text is.
+    assert note_html(node("root", node("- ## x"))) == "<p>root</p><ul><li><h2>x</h2></li></ul>"
+    assert note_html(node("root", node("- - x"))) == "<p>root</p><ul><li>- x</li></ul>"
+
+
+@pytest.mark.parametrize("content", ["- [ ] to do", "- [x] done", "- [X] done", "- [ ]", "-", "-x", r"\- x", "* x"])
+def test_a_to_do_and_what_only_looks_like_a_bullet_stay_text(content):
+    html = note_html(node("root", node(content)))
+    assert html.startswith("<p>root</p><ul><li>-") or html.startswith("<p>root</p><ul><li>*")
+    assert note_html(node(content)).startswith("<p>")
+
+
 def test_empty_blocks_are_skipped():
     tree = node("root", node(""), node("  ", node("")), node("kept"))
     assert note_html(tree) == "<p>root</p><ul><li>kept</li></ul>"
@@ -72,6 +89,13 @@ def test_a_numbered_or_several_element_root_is_the_first_item():
     assert note_html(node("1. first", node("2. second"))) == "<ol><li>first</li><li>second</li></ol>"
     assert note_html(node("Energy:\n$$E = mc^2$$", node("next"))) == (
         '<ul><li><p>Energy:</p><pre class="math">$$E = mc^2$$</pre></li><li>next</li></ul>')
+
+
+def test_a_bullet_root_is_the_first_item():
+    html = note_html(node("- first", node("second"), node("1. third")))
+    assert html == "<ul><li>first</li><li>second</li></ul><ol><li>third</li></ol>"
+    assert note_tree(html) == node("first", node("second"), node("1. third"))
+    assert note_tree(note_html(node("- alone"))) == node("alone")
 
 
 def test_inline_markup():
@@ -101,11 +125,13 @@ def test_images():
     html = note_html(node("![a|300](/api/uploads/abc123.png) ![b](/api/uploads/deadbeef.png)"),
                      resolve_image=resolve_image)
     assert html == f'<p><img src="data:image/png;base64,{PNG}" alt="a" width="300"/> (image: deadbeef.png)</p>'
-    # The alt and Gamma's display width come back from the <img>, the legacy
-    # Logseq width too.
+    # The alt and Gamma's display width come back from the <img>; Logseq's
+    # width after an image goes as its width too, outside code.
     assert note_tree(html)["content"] == f"![a|300](data:image/png;base64,{PNG}) (image: deadbeef.png)"
     assert note_html(node("![x](https://e.com/i.png){:width 120}")) == (
         '<p><img src="https://e.com/i.png" alt="x" width="120"/></p>')
+    assert note_html(node("![x](https://e.com/Foo_(bar).png){:width 120} `![y](u){:width 3}`")) == (
+        '<p><img src="https://e.com/Foo_(bar).png" alt="x" width="120"/> <code>![y](u){:width 3}</code></p>')
     assert note_html(node("![](https://e.com/i.png) ![](data:image/gif;base64,R0lG)")) == (
         '<p><img src="https://e.com/i.png"/> <img src="data:image/gif;base64,R0lG"/></p>')
     # Marks and links around an image still read as one, an escaped "!" is a link,

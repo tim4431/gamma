@@ -15,21 +15,22 @@ never touched. The window stays minimized, so a run does not take the
 screen; on Windows it also takes no focus and has no taskbar button, and a
 step that leaves it up fails. The background step brings it back for a
 moment, unfocused, to test that. The restore and focus a user gets run under
-`--headed`, which keeps the window up to watch. Each item below names the e2e
-step that covers it (**auto**) or says it is a manual look (**manual**).
+`--headed`, which keeps the window up to watch. A step that opens an error box
+fails too, on any system. Each item below names the e2e step that covers it
+(**auto**) or says it is a manual look (**manual**).
 
 ## 1. Lifecycle
 
 | # | Check | How |
 |---|---|---|
-| 1.1 | First start shows the launcher; the shell bar reads *Servers*; layout is bar 38 px + content below | auto: *first start shows the launcher + shell bar* |
+| 1.1 | First start shows the launcher; the shell bar reads *Servers*; layout is bar 38 px + content below; the *Advanced: run local servers from a source checkout* settings show in a dev run only | auto: *first start shows the launcher + shell bar* |
 | 1.2 | Create a local server → card appears, data dir created under `workspaces/<id>` | auto: *create a local server from the launcher* |
 | 1.3 | Open it → sidecar starts on a free `127.0.0.1` port from the dynamic range (49152–65535), Gamma loads, silent admin login lands, bar shows the name + reload button | auto: *open it: sidecar starts, Gamma loads, auto-login lands* |
 | 1.4 | Quit → every sidecar process is gone (no orphan `gamma-server.exe`/python), window bounds saved | auto: *quit: every sidecar stops, window bounds persist* |
 | 1.5 | Relaunch → the last server reopens by itself, at the same address, data intact, chrome already in the persisted theme | auto: *relaunch reopens the last server with its data intact* |
 | 1.6 | *Reopen last server at launch* switched off → launcher at start | manual (toggle in the launcher, restart) |
 | 1.7 | Cold start of the frozen server stays well under the 60 s health budget on a slow disk | manual: watch the *Starting …* status; `logs/<id>.log` has the uvicorn banner |
-| 1.8 | A server that will not start explains itself on the launcher (cause, the server's own line, the fixing button, log folded away) | auto: *a server that will not start is explained, not dumped*; manual: open a data dir written by a newer Gamma |
+| 1.8 | A server that will not start explains itself on the launcher (cause, the server's own line, the fixing button, log folded away) | auto: *a server that will not start is explained, not dumped*; manual: open a server whose data folder Gamma cannot write (make it read-only). A data folder written by a newer Gamma is no startup failure: it opens on the server's guidance page in the window |
 | 1.9 | A local server keeps its address: the bar menu shows `127.0.0.1:<port>` beside a running local server, its launcher card shows the address with *Copy address*, the credentials dialog names it, and a restart or relaunch comes back on the same port; a port another program took is given up for a new one, shown in the same places | auto: *the bar menu shows each running local server's address …*, *launcher lists sizes …*, *storage folder: …* and *relaunch …* assert the same origin; `npm test` (`test/sidecar.test.js`): the port another program holds, a new one from the dynamic range; manual: the Gamma Connector set to that address, signed in with the credentials, saves a paper into the server, and still does after a relaunch |
 
 ## 2. Switching (the reason the shell bar exists)
@@ -56,7 +57,7 @@ step that covers it (**auto**) or says it is a manual look (**manual**).
 
 | # | Check | How |
 |---|---|---|
-| 3.1 | Layout: `users.db`, `workspaces/<id>/pages.db`, `workspaces/<id>/data.db`, `workspaces/<id>/uploads/` (one dir per Gamma workspace; a pre-workspace `users/<name>/` layout is upgraded at first start, snapshot under `backups/`) | auto: *data dir has the standard GAMMA_DATA_DIR layout* |
+| 3.1 | Layout: `users.db`, `workspaces/<id>/pages.db`, `workspaces/<id>/data.db`, `workspaces/<id>/uploads/` (one dir per Gamma workspace; an older data folder is upgraded at first start, snapshot under `backups/`, and one below the upgrade floor opens on the server's guidance page) | auto: *data dir has the standard GAMMA_DATA_DIR layout* |
 | 3.2 | An uploaded PDF lands in `uploads/` under its content-hash name, exactly once | auto: *upload a PDF + create a paper page with a math note* |
 | 3.3 | Launcher shows size on disk per local server + the *last opened* badge | auto: *launcher lists sizes, last-opened badge …* |
 | 3.4 | Remove → *keep files* leaves the folder; *delete everything* removes it (only under the default or the configured storage root) | auto (remove) + manual (check the folder) |
@@ -70,7 +71,7 @@ step that covers it (**auto**) or says it is a manual look (**manual**).
 | # | Check | How |
 |---|---|---|
 | 4.1 | Page export in every mode returns 200 with content: `readable`, `notes-pdf`, `logseq-graph`, `zotero-rdf`, `gamma` | auto: *page exports in every mode* |
-| 4.2 | `notes-pdf` and `export-pdf` (annotated PDF) are real PDFs — the frozen bundle carries PyPDF2, PyMuPDF's native libraries and the ziamath/ziafont fonts | auto (same step; `%PDF` magic asserted) |
+| 4.2 | `notes-pdf` and `export-pdf` (annotated PDF) are real PDFs — the frozen bundle carries pypdf, PyMuPDF's native libraries and the ziamath/ziafont fonts | auto (same step; `%PDF` magic asserted) |
 | 4.3 | Markdown import creates a page | auto: *markdown import creates a page* |
 | 4.4 | Backup zip (*Export my data*) downloads through the browser download path into a file | auto: *backup zip downloads through the browser download path* |
 | 4.5 | Save dialog appears for downloads in the real app (tests bypass it via `GAMMA_SHELL_DOWNLOAD_DIR`) | manual |
@@ -105,7 +106,7 @@ step that covers it (**auto**) or says it is a manual look (**manual**).
 | 6.4 | Launcher and bar use Gamma's tokens/controls/icons (no emoji, no bespoke colors) | manual: compare with Settings in Gamma |
 | 6.5 | Alt reveals the native menu on Windows; accelerators work without it (Ctrl+R reload, Ctrl+Shift+I devtools, Ctrl+0/±) | manual |
 | 6.6 | Rename from the launcher updates the bar immediately | auto: *rename + remove from the launcher* + bar name via pushState |
-| 6.7 | Linux: title-bar overlay controls as on Windows (6.2); the desktop entry shows the icon in the launcher/dock; `gamma` on PATH starts the app | manual (build on Linux) |
+| 6.7 | Linux: title-bar overlay controls follow the desktop's title-bar layout (on GNOME only a close button), recolor with the theme and stay clear of the bar's content at whichever end holds them (buttons moved to the left in GNOME Tweaks clear the logo and the switcher once the window is focused again, the menu opens past them); the desktop entry shows the icon in the launcher/dock; `gamma` on PATH starts the app | manual (build on Linux) |
 
 ## 7. Updates
 
@@ -156,6 +157,7 @@ started after the app opened a folder can use it.
 |---|---|---|
 | `npm run e2e` (dev tree, Windows 11, minimized) | 2026-11-05 | 35/35 passed |
 | `npm run e2e:packaged` (frozen bundle, Windows 11) | 2026-09-02 | 21/21 passed |
+| `npm run e2e` (dev tree, Ubuntu under `xvfb-run -a`, Electron 45) | 2026-11-06 | 35/35 passed with *background*'s minimized-window round trip left out: Xvfb has no window manager, so a window there never reads as minimized and the step fails at it |
 
 Manual items last looked at 2026-09-01 on Windows 11: 1.6, 2.4, 2.5, 6.2,
 6.4, 6.5 (screenshots of the bar + launcher in dark and light). Not yet

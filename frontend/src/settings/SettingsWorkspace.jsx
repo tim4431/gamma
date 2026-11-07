@@ -650,9 +650,10 @@ export function WorkspacesSettings({ value, onServer, onAccount }) {
   const [busy, setBusy] = React.useState(false);
   const accounts = useAccounts();
   const currentId = workspace?.id;
-  const signedIn = !!me && me !== "guest";
-  const [mirrors, refreshMirrors] = useMirrors(signedIn);
-  const [links, refreshLinks] = useZoteroLinks(signedIn);
+  // `value` comes only to a signed-in account that is no guest (App.jsx),
+  // so the account's clones and Zotero links are always read.
+  const [mirrors, refreshMirrors] = useMirrors();
+  const [links, refreshLinks] = useZoteroLinks();
 
   const refresh = React.useCallback(() => {
     reload().then(() => setError(""), (err) => setError(err.message));
@@ -785,11 +786,9 @@ export function WorkspacesSettings({ value, onServer, onAccount }) {
               </Empty>
             )}
           </Section>
-          {signedIn ? (
-            <MirrorsSection mirrors={mirrors} links={links} refresh={refreshClones} workspaces={all} currentId={currentId}
-              switchWorkspace={switchWorkspace} closeSettings={closeSettings} confirm={confirm} setStatus={setStatus} onAccount={onAccount}
-              refreshSession={refreshSession} />
-          ) : null}
+          <MirrorsSection mirrors={mirrors} links={links} refresh={refreshClones} workspaces={all} currentId={currentId}
+            switchWorkspace={switchWorkspace} closeSettings={closeSettings} confirm={confirm} setStatus={setStatus} onAccount={onAccount}
+            refreshSession={refreshSession} />
         </>
       ) : null}
 

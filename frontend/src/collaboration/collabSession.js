@@ -42,6 +42,11 @@
 //     out again and the page is refetched; every fetched tree gets this
 //     tab's unsaved edits laid over it (`overlay`), so a reload never shows
 //     — or bases a diff on — a page without them;
+//   - sends a block joined to another as one op (blockOps.withMerges): a
+//     merge refused keeps its block on the server, and the refetch brings
+//     it back here; a heal of the block it joins to, which goes only for
+//     text written there, sends that block as it was before the join and
+//     the merge behind it;
 //   - holds a page's edits while the page is in Recently deleted (the
 //     server's 404 for it, or a `trashed` message): nothing is dropped or
 //     sent until the page loads again (restored).
@@ -51,7 +56,7 @@
 // advances it; remote ops advance it too. Positions live in one Map shared
 // with blockOps.
 import {
-  PLACED, applyOps, diffTrees, indexTree, propsPatch, pushOp, seedPositions, someNode, withTexts,
+  PLACED, applyOps, diffTrees, indexTree, propsPatch, pushOp, seedPositions, someNode, withMerges, withTexts,
 } from "../shared/model/blockOps.js";
 import { t } from "../shared/i18n/i18n.js";
 
@@ -156,19 +161,37 @@ function storedPlaced(s, ops) {
   return out;
 }
 
+// The block whose text `op` writes: a content set's, a merge's target.
+const textOf = (op) => (op.op === "merge" ? op.into : op.op === "set" && op.content !== undefined ? op.id : null);
+
 // Split `ops` into those that no longer apply now that the blocks in
 // `gone` vanished (their own ops, and inserts under them — whose ids join
-// `gone`, so ops on those go too — and moves into them) and the rest.
+// `gone`, so ops on those go too — and moves and merges into them) and the
+// rest.
 function dependents(ops, gone) {
   const kept = [], dropped = [];
   for (const op of ops) {
     const under = (op.op === "insert" || op.op === "move") && gone.has(op.parent);
-    if (gone.has(op.id) || under) {
+    if (gone.has(op.id) || under || (op.op === "merge" && gone.has(op.into))) {
       if (op.op === "insert") gone.add(op.id);
       dropped.push(op);
     } else kept.push(op);
   }
   return { kept, dropped };
+}
+
+// The blocks a merge in `ops` joins to, each with its text before the first
+// of `ops` wrote to it. The base holds what those ops come to, so a rescue
+// sending the base's text would have the merge add its block's a second time.
+function unjoined(ops) {
+  const first = new Map(), out = new Map();
+  for (const op of ops) {
+    const id = textOf(op);
+    if (id === null) continue;
+    if (!first.has(id)) first.set(id, op.base ?? "");
+    if (op.op === "merge") out.set(id, first.get(id));
+  }
+  return out;
 }
 
 // How many of the queue's ops hide() has named into batches (`sealed`).
@@ -392,8 +415,8 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
   function forget(s, ops) {
     const late = [];
     for (const op of ops) {
-      if (op.op !== "set" || op.content === undefined) continue;
-      const d = settle(s, op.id);
+      if (textOf(op) === null) continue;
+      const d = settle(s, textOf(op));
       if (d) late.push(d.op);
     }
     land(s, late);
@@ -406,15 +429,16 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
   // of failing; a move then puts the block where this tab has it — the
   // server may hold it under a block this very batch deletes (someone moved
   // it there meanwhile), and it must leave before that delete takes it along.
-  function rescue(s, id) {
+  // `ops`: the batch and the queue behind it, which go out after these.
+  function rescue(s, id, ops) {
     if (!id || s.rescues >= MAX_RESCUES) return null;
     const hit = indexTree(s.base, s.pageId).get(id);
     if (!hit) return null;
-    const out = [];
+    const out = [], before = unjoined(ops);
     const walk = (node, parent) => {
       const position = s.pos.get(node.id);
       out.push({ op: "insert", id: node.id, parent, ...(position ? { position } : {}),
-        content: node.content || "", props: node.properties || {} });
+        content: before.get(node.id) ?? (node.content || ""), props: node.properties || {} });
       if (node === hit.node) out.push({ op: "move", id: node.id, parent, ...(position ? { position } : {}) });
       for (const c of node.children || []) walk(c, node.id);
     };
@@ -511,24 +535,34 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
                 || Object.keys(propsPatch(op.props, got.props)).length)) late.push(got);
             continue;
           }
-          if (op.op !== "set" || op.content === undefined) continue;
-          const d = settle(s, op.id);
+          const id = textOf(op);
+          if (id === null) continue;
+          const d = settle(s, id);
           if (d === false) continue;
+          // (a merge sends no text: the join here is what it was to come to)
+          const sent = op.op === "merge" ? indexTree(s.base, s.pageId).get(id)?.node.content : op.content;
           if (d && d.seq > ackSeq) { // theirs is newer: it wins
             late.push(d.op);
             if (d.cursor) lateCursors.push(d);
-          } else if (stored.has(op.id) && stored.get(op.id) !== op.content) {
+          } else if (stored.has(id) && stored.get(id) !== sent) {
             // The server merged our change onto text someone else wrote
             // since our base: their spans and ours both survive. Lands
             // like a remote op — only now that no newer set of ours for the
             // block is queued or in flight (that one's base is the text we
             // sent, so the server patches it onto the merge and its ack
             // brings the whole result).
-            late.push({ op: "set", id: op.id, content: stored.get(op.id) });
+            late.push({ op: "set", id, content: stored.get(id) });
           }
         }
         land(s, late);
         if (s === st.session) for (const d of lateCursors) placePeer(d.client, d.cursor);
+        // A child our merge carried over that this tab doesn't hold (someone
+        // else's merge had just given it to the block, or they made it
+        // there): its move passed it by, and only a refetch shows it.
+        if (s === st.session && ops.some((op) => op.op === "merge")) {
+          const here = indexTree(s.base, page);
+          if ((res.ops || []).some((op) => op.op === "move" && !here.has(op.id))) o().onReload?.(page);
+        }
         saved = true;
       } catch (err) {
         saved = refused(s, batch, err);
@@ -559,8 +593,16 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
     }
     // A block this batch already re-sent is missing again: the batch itself
     // removes it on the server (deletes what holds it there) — no rescue
-    // can help, it is a conflict like any other.
-    const lost = status === 404 && !batch.rescued?.has(data.missing) ? rescue(s, data.missing) : null;
+    // can help, it is a conflict like any other. Nor for a block only a merge
+    // of ours needs: whoever took it meant it to go, so the merge goes as a
+    // conflict and its block stays. Text of ours on or under that block
+    // brings it back, and the merge with it (`rescue` sends the text from
+    // before the join).
+    const waiting = [...batch.ops, ...s.queue];
+    const others = waiting.filter((op) => op.op !== "merge" || op.into !== data.missing);
+    const wanted = others.length === waiting.length
+      || dependents(others, new Set([data.missing])).dropped.some((op) => op.content !== undefined);
+    const lost = status === 404 && wanted && !batch.rescued?.has(data.missing) ? rescue(s, data.missing, waiting) : null;
     if (lost) {
       // The server never got this block (its insert was lost), lost it
       // since, or holds it under a block this batch deletes: send it again,
@@ -638,8 +680,8 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
       // keystroke folded into a set that already carries text adds
       // nothing; text folded into a queued props-only set makes one more.
       const into = pushOp(s.queue, op, sealedOps(s)); // never into a batch hide() named
-      if (op.op === "set" && op.content !== undefined && into?.content === undefined) {
-        s.inflight.set(op.id, (s.inflight.get(op.id) || 0) + 1);
+      if (textOf(op) !== null && into?.content === undefined) {
+        s.inflight.set(textOf(op), (s.inflight.get(textOf(op)) || 0) + 1);
       }
     }
     onQueued?.();
@@ -705,7 +747,8 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
     // text that can be saved, so the change is diffed — and sent — again
     // once it is short enough; meanwhile the notice says why.
     const held = new Map();
-    for (const op of diffTrees(s.base, tree, page, s.pos)) {
+    const before = s.base;
+    for (const op of diffTrees(before, tree, page, s.pos)) {
       if (typeof op.content !== "string" || op.content.length <= MAX_CONTENT) { ops.push(op); continue; }
       held.set(op.id, { text: op.content, base: op.op === "insert" ? "" : op.base ?? "" });
       if (op.op === "insert") ops.push({ ...op, content: "" });
@@ -715,8 +758,9 @@ export function createCollabSession({ clientId, api, openSocket, keepalivePost, 
     s.tooLong = held;
     s.base = heldBack(s, tree);
     if (held.size || wasLong) notice();
-    if (ops.length) enqueue(ops, now);
-    return ops;
+    const joined = withMerges(ops, before, page);
+    if (joined.length) enqueue(joined, now);
+    return joined;
   }
 
   // Whether this block's text is held back as too long to save (the editor

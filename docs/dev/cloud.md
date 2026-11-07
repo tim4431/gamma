@@ -46,7 +46,7 @@ portal), [billing.md](billing.md) (plans and Stripe) and
 | **Caddy** | TLS and routing by hostname: `account` → the account server, `app`/`share`/`<user>-pages` → the shared server, `demo` → the demo, `<label>-user` → `gamma-<label>` | the account project on the VPS; one per routed host besides | — |
 | **Cloudflare** | DNS for the zone (a wildcard plus named records), the proxy and certificate in front of everything, Turnstile on sign-up, the rate rules | — | — |
 | **Stripe** | Checkout, the Customer Portal, subscriptions, invoices, tax. The account server keeps a copy of each subscription and is told by webhook. | — | the source of truth for money |
-| **Website** | `sites/`: the front page, pricing, the rendered docs | a Cloudflare Worker | — |
+| **Website** | `sites/`: the front page with the download and self-hosting sections, pricing, the rendered docs | a Cloudflare Worker | — |
 
 One VPS runs the account server, the shared server, Caddy and one fleet
 agent. A second host runs an agent and a Caddy of its own, and the
@@ -219,9 +219,12 @@ page, the CLI and the `/api/admin/*` API call the same functions.
   minutes. A
   container's client secret exists in clear only in the job that creates
   it, and is blanked when the job ends; so are environment values.
-- Each hosted container trusts `X-Forwarded-For` from the fleet network's
-  pinned subnet only, and the account server reads the client address
-  from Cloudflare's header only, which is why the origin must accept
+- Caddy passes Cloudflare's `CF-Connecting-IP` as `X-Forwarded-For` to
+  every Gamma it routes, and each believes it only from the pinned subnet
+  its Caddy connects from: for the share host the account project's
+  network, for the demo `gamma-edge`, for a hosted container
+  `gamma-fleet`. The account server reads the client address from
+  Cloudflare's header itself. That is why the origin must accept
   Cloudflare alone (the deploy README's lock-down).
 - The bucket key reaches every container; it must be scoped to that one
   bucket.
@@ -237,7 +240,7 @@ page, the CLI and the `/api/admin/*` API call the same functions.
 | the fleet agent | *Update* on its row of the Machines tab (a helper replaces it), the `update-fleet` skill from a branch, or the daily pull `bootstrap.sh --auto-update` installs; hosted containers keep running through it |
 | hosted containers | an upgrade run on the Servers tab, or automatic upgrades |
 | the shared server | runs `main`'s `:latest`, which the account project's Watchtower pulls within an hour of a merge; the `update-share-host` skill does it at once; *Update* on its row of the Machines tab pulls the newest image of its tag |
-| the demo | *Update* on its row of the Machines tab for the newest image of its tag; the `update-demo-server` skill to pin it to main's newest |
+| the demo | runs `main`'s `:latest`, which its project's Watchtower pulls within an hour of a merge; the `update-demo-server` skill does it at once; *Update* on its row of the Machines tab pulls the newest image of its tag |
 | Caddy | *Update* on its row of the Machines tab |
 | the website | the `build-site` skill |
 

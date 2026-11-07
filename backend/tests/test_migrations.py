@@ -1,9 +1,10 @@
-"""gamma/migrations.py — the versioned upgrade of the data directory, run
-against a hand-built pre-workspace layout (schema version 0): every account
-directory becomes a workspace, personal prefs move to users.db, shares are
-re-keyed, a snapshot is taken first, a second run is a no-op, and a newer
-data directory is refused. Runs in its own temp data directory (the
-``data_dir`` fixture) so the suite's shared one is never touched."""
+"""gamma/migrations.py — the versioned upgrade of the data directory: each
+step from a hand-built users.db of schema version 24's shape (stamped with
+the version the step starts from) up, reruns that change nothing, the
+snapshot taken first, a failed step explained with it, and the refusal of a
+directory below MIN_UPGRADABLE or newer than this Gamma. Runs in its own temp
+data directory (the ``data_dir`` fixture) so the suite's shared one is never
+touched."""
 
 import json
 import sqlite3
@@ -216,7 +217,7 @@ def test_v46_adds_the_file_links_and_push_columns(data_dir):
 def test_v39_moves_the_done_reminders_into_their_table(data_dir):
     """The account-wide ``reminders-done`` pref ({key: when}) becomes a
     row per key in ``reminders_done``, its workspace not yet known; the
-    pref stays for the release before, and a rerun keeps what is there."""
+    pref rows stay, and a rerun keeps what is there."""
     connect_users_db().close()
     with closing(sqlite3.connect(str(data_dir / "users.db"))) as conn:
         conn.execute("DROP TABLE reminders_done")
@@ -1282,9 +1283,10 @@ def test_v34_moves_the_workspace_prefs_into_the_workspace(data_dir, monkeypatch)
     # The prefs that name a workspace's pages (every key but the account-wide
     # ones) move into its pages.db, workspace_prefs, when it is first opened
     # after the upgrade, which itself changes only users.db's stamp; users.db
-    # keeps its rows for the release before. A second run keeps a row
-    # written since and takes back one older than users.db's; a backup's
-    # copy gets the table empty.
+    # keeps its rows. The account-wide keys are the step's own list, frozen
+    # with reminders-done in it. A second run keeps a row written since and
+    # takes back one older than users.db's; a backup's copy gets the table
+    # empty.
     from gamma import db, seed, ws_backup
 
     monkeypatch.setattr(migrations, "_snapshot", ())
@@ -1296,6 +1298,7 @@ def test_v34_moves_the_workspace_prefs_into_the_workspace(data_dir, monkeypatch)
         conn.execute("PRAGMA user_version = 0")
     rows = [("u-a", WS34, "open-tabs", '["t1"]', OLD), ("u-a", WS34, "read-pos", '{"d": 3}', OLD),
             ("u-b", WS34, "recent-views", '["r"]', OLD), ("u-a", WS34, "ai-provider", '"legacy"', OLD),
+            ("u-a", WS34, "reminders-done", "{}", OLD),
             ("u-a", "", "open-tabs", '["no workspace"]', OLD), ("u-a", "", "profile", "{}", OLD),
             ("u-a", "wsElse34", "open-tabs", '["else"]', OLD)]
     with closing(sqlite3.connect(str(config.USERS_DB))) as conn:
@@ -1316,7 +1319,7 @@ def test_v34_moves_the_workspace_prefs_into_the_workspace(data_dir, monkeypatch)
     assert moved == [("u-a", "open-tabs", '["t1"]', OLD), ("u-a", "read-pos", '{"d": 3}', OLD),
                      ("u-b", "recent-views", '["r"]', OLD)]
     assert not migrations.is_behind(WS34) and db.get_pref("u-a", "open-tabs", WS34) == (["t1"], OLD)
-    with closing(sqlite3.connect(str(config.USERS_DB))) as conn:  # left for the release before
+    with closing(sqlite3.connect(str(config.USERS_DB))) as conn:  # users.db keeps its rows
         assert sorted(conn.execute("SELECT * FROM user_prefs")) == sorted(rows)
 
     later = db.set_pref("u-a", "open-tabs", ["t2"], WS34)
@@ -1660,15 +1663,18 @@ def test_v44_rebuilds_the_kind_column_with_its_picture_case():
     assert migrations.workspace_format() >= 44
 
 
-def test_a_restored_backup_keeps_a_picture_on_its_page(data_dir):
-    """Every restore runs the step-30 shape over the copy
-    (ws_backup._normalize_copies), which drops ``pdf_page`` from every block
-    but a text box and a picture, whose only page it is; a copy from before
-    step 44 gets the picture case of ``kind`` on the way."""
+@pytest.mark.parametrize("stamp", [43, 0])
+def test_a_restored_backup_keeps_a_picture_on_its_page(data_dir, stamp):
+    """A copy from before step 44 gets the picture case of ``kind`` on the
+    way (ws_backup._normalize_copies). One stamped at the base or above
+    keeps its blocks as they are; one stamped below it, as a scoped Gamma
+    export is, goes through the step-30 shape, which drops ``pdf_page``
+    from every block but a text box and a picture, whose only page it
+    is."""
     from gamma import ws_backup
     from gamma.db import BLOCK_HOT_INDEXES, PAGES_SCHEMA
 
-    copy = data_dir / "restored44"
+    copy = data_dir / f"restored{stamp}"
     copy.mkdir()
     old = next(s for s in PAGES_SCHEMA if s.startswith("CREATE TABLE IF NOT EXISTS unified_blocks"))
     line = "WHEN json_type(properties, '$.picture') = 'object' THEN 'picture'"
@@ -1683,7 +1689,7 @@ def test_a_restored_backup_keeps_a_picture_on_its_page(data_dir):
             [("pg", "root", "a0", "{}", "pg"), ("i", "pg", "a0", json.dumps({"picture": pic, "pdf_page": 2}), "pg"),
              ("b", "pg", "a1", json.dumps({"text_box": {"x": 1}, "pdf_page": 2}), "pg"),
              ("n", "pg", "a2", json.dumps({"pdf_page": 2}), "pg")])
-        conn.execute("PRAGMA user_version = 43")
+        conn.execute(f"PRAGMA user_version = {stamp}")
         conn.commit()
     ws_backup._normalize_copies(copy)
     with closing(sqlite3.connect(str(copy / "pages.db"))) as conn:
@@ -1691,7 +1697,8 @@ def test_a_restored_backup_keeps_a_picture_on_its_page(data_dir):
                                                                      "WHERE id IN ('i', 'b', 'n')")}
         assert conn.execute("PRAGMA user_version").fetchone()[0] == SCHEMA_VERSION
     assert got == {"i": ({"picture": pic, "pdf_page": 2}, "picture"),
-                   "b": ({"text_box": {"x": 1}, "pdf_page": 2}, "text_box"), "n": ({}, "note")}
+                   "b": ({"text_box": {"x": 1}, "pdf_page": 2}, "text_box"),
+                   "n": ({"pdf_page": 2} if stamp else {}, "note")}
 
 
 def test_each_version_is_one_step_and_the_newest_is_the_schema_version():

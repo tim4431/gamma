@@ -15,9 +15,7 @@ isolated server with that export and, for AI, the scripted model.
 | Notes | Type markdown, a page reference, nested display math with autocomplete, then `/note` makes a sheet and a stylus sketches on it | `run-case.mjs notes`; isolated copy of the curated export; 130% interface size; CDP pen input; text and sheet strokes checked after reload |
 | Search | In the atom-arrays paper, Ctrl+F finds "rydberg" and Enter steps through its matches; Ctrl+P finds the "quantum computing" label and opens its two papers | `run-case.mjs search`; topic labels prepared, the account's paper-view search reset to compact |
 | Library (unused) | Home search, title and PDF results, folder filter, open a highlighted match | `run-case.mjs library`; Quantum subfolders prepared, recents populated by navigation |
-| Agent (scratch preview) | Ask to organize papers, show real tool calls and the resulting folders | `run-case.mjs agent`; requires configured AI |
 | Metadata | Fetch a paper, watch fields fill, copy BibTeX and slide citation | `run-case.mjs metadata`; arXiv 2312.03982 removed first; never fill metadata by hand |
-| Q&A (scratch preview) | Paste Attention paper URL, select and highlight a sentence, ask for a short explanation | `run-case.mjs download-and-chat`; requires configured AI |
 | Reference links | Click citation 36, jump to its reference, fetch the linked paper | `run-case.mjs reference-links`; arXiv 0904.2557 removed so Fetch appears; fixed detail crop includes the citation and modal |
 | Collaboration | A shared workspace's page seen by its owner: Maya types a question, Sam adds to the takeaway, the owner pastes Fig. 1c, d and drags it larger | `record-collab.mjs`; isolated server; the others are real sessions in a second browser whose keystrokes are sent after 40 ms (`fastPeerTyping`) so words arrive key by key; picture width on every screen, peers' words and a reload checked |
 | Connector | A PRL paper's APS page, the toolbar badge, the real popup: folder, label, Save, open in Gamma | `record-connector.mjs` on take.mjs, isolated server; full Chromium at 2× with the unpacked extension; APS requests fetched with curl past its bot check, institution notices removed; popup opened through its `?tab=` hook and hung under a composited toolbar; PDF, folder and label checked |
@@ -29,9 +27,10 @@ isolated server with that export and, for AI, the scripted model.
   otherwise ask for the demo login.
 - AI configuration belongs to the account, not the exported workspace. The two
   README AI demos save the scripted model (`take.mjs` `demoModel`) on an
-  isolated account; the retained AI experiments (agent, download-and-chat) use a
-  disposable personal workspace on the existing demo account. Notes, the
-  Notability import, collaboration and the connector use isolated accounts.
+  isolated account. Library, search, metadata and reference-links record in a
+  disposable personal workspace on the existing demo account
+  (`suite-workspace.mjs`); notes, the Notability import, collaboration and the
+  connector use isolated accounts.
 - Capture with `launchRetina()` and `startCapture()`, not `recordVideo`: Chrome's
   screencast is capped at the window's CSS size, so device-scale emulation still
   records 1×, and CSS zoom on `<html>` misplaces the app's popups (the rects are

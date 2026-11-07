@@ -178,6 +178,15 @@
      the Gamma pair). Not a --bg-* token: it is the paper, not a surface,
      and the canvas multiplies onto it. */
   --pdf-paper: var(--ground);
+  /* Scrims, the dimming laid over the app under what takes the clicks:
+     a dialog (.reportOverlay); the tour's centred card (.guideDim); the
+     finish card's and the welcome deck's lighter one (.guideScrim); a
+     zoomed picture (.lightbox).
+     Black in every theme, so a dark theme names no values of its own. */
+  --scrim: rgba(0, 0, 0, 0.45);
+  --scrim-tour: rgba(0, 0, 0, 0.42);
+  --scrim-soft: rgba(0, 0, 0, 0.22);
+  --scrim-lightbox: rgba(0, 0, 0, 0.75);
 
   /* The dark recipe, also the default before a scheme is set: chrome and
      wells go darker than the content (toward black), raised surfaces,

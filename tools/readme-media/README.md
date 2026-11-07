@@ -9,6 +9,7 @@ the storytelling the README demos follow is in
 |---|---|
 | This directory | Recorders, renderers, shared helpers and [shot recipes](WORKFLOW.md) |
 | `docs/assets/demos/` | Published WebP animations |
+| `sites/site/media/` | The website's cuts of the demos and the stills of its clips (`site-cuts.py`) |
 | `docs/assets/screenshots/` | Documentation stills |
 | `extension/store/` | Chrome Web Store screenshots (`shoot-store.mjs`, [recipe](WORKFLOW.md#stills)) beside the brand build's promo images |
 | `android/store-screenshots/` | Google Play phone screenshots, taken in the Android app on an emulator (`shoot-play.mjs`, [recipe](WORKFLOW.md#stills)) |
@@ -330,7 +331,7 @@ node tools/readme-media/suite-workspace.mjs --remove
 note page, removes a paper that must visibly be fetched, or resets tabs. Run
 library and search before reference-links, which removes and fetches the
 QEC paper again. The library search demo is shown nowhere at the moment; the
-README and the website show search. A failed recording leaves the workspace
+README shows search. A failed recording leaves the workspace
 available for inspection; remove it after finishing. Never read account
 databases for credentials or commit cookies, passwords, exports, or raw
 recordings.
@@ -357,13 +358,14 @@ contact sheets in `artifacts/readme-media/qa/`. Review the contact sheets and
 loop playback before updating README links. Timing manifests, masters and
 render reports stay next to the captures in scratch.
 
-## Optional experiments
+`site-cuts.py` derives what the website shows from the published demos: the
+front page's cuts of ink-import and notes and the stills of its three clips,
+in `sites/site/media/`. Their frames are at the top of the script. After
+re-recording ink-import, notes or native-agentic, check those frames still land
+on the payoff and run it. A cut copies the demo's frames as they are and encodes
+only its first one again, so it needs no master.
 
-The retained `agent` and `download-and-chat` cases need the account's AI
-provider. They are not part of README production: `render-suite.py` writes
-their renders as `preview.webp` next to the capture, and no README slot uses
-them. The three `gen-*.py` GIF experiments are also retained for reuse; they
-write to scratch and have no callers.
+## Shared helpers
 
 `runtime.mjs` resolves Playwright through the frontend dependency, so no second
 Node project is needed, and holds the recorders' shared pieces: the retina

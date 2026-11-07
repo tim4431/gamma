@@ -9,7 +9,7 @@ const local = (state, sets = {}, error = "") => ({
   state, error,
   ...Object.fromEntries(["pending", "inflight", "failed", "awaitingCloud"].map((k) => [k, new Set(sets[k] || [])])),
 });
-const NOTES = ["enterNewNote"];
+const NOTES = ["enterNewBlock"];
 const THEME = ["theme"];
 const read = (tag) => [tag.state, tag.label, tag.icon];
 
@@ -52,7 +52,7 @@ test("a change to one name spins only the sections holding it", () => {
     }
   }
   // a section holding several names spins for any of them
-  assert.equal(profileSyncState(local("pending", { pending: NOTES }), null, ["theme", "enterNewNote"], clock).state, "syncing");
+  assert.equal(profileSyncState(local("pending", { pending: NOTES }), null, ["theme", "enterNewBlock"], clock).state, "syncing");
   // a section without names never spins
   assert.equal(profileSyncState(local("pending", { pending: NOTES }), null, [], clock).state, "account");
 });

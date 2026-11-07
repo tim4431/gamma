@@ -74,7 +74,8 @@ Download SVG are [handwriting_ai.md](handwriting_ai.md).
   - `inkhold.json`, the hold's stillness and refit rule, runs in the node
     tests and the iPad app's XCTest.
 - e2e: `tests/e2e/scenarios/ink.mjs` (the draft journal's restore too),
-  `inkEditing.mjs`, `inkShapes.mjs` (group `ink-shapes`: the Shapes tool,
+  `inkEditing.mjs`, `pen.mjs` (group `pen`: what a pen's press is, on the
+  page and under both shells), `inkShapes.mjs` (group `ink-shapes`: the Shapes tool,
   the ruler, the calligraphy pen, shape handles and fills), `inkZoom.mjs`
   (group `ink-zoom`: the zoom window, a picture in it, and transcribing a
   selection), `inkAi.mjs` (group `ink-ai`: Redraw as shapes, Convert to
@@ -103,7 +104,8 @@ Download SVG are [handwriting_ai.md](handwriting_ai.md).
       opens the file picker, not a tool that stays armed, and none on a
       read-only page), then a pressed *Ruler*, *Shapes* and *Zoom window*
       button, each only while it is on (below);
-    - a hand (nothing armed: scroll and select text);
+    - a hand (nothing armed: scroll and select text; on a PDF a stylus
+      selects too, unless *Stylus draws on PDFs right away* is on);
     - **More** (⋯, "More handwriting tools") and close;
     - Undo / Redo, pinned at the right end as the last two buttons.
 - **More** opens a menu on the press, which takes the button's tooltip
@@ -755,8 +757,8 @@ Download SVG are [handwriting_ai.md](handwriting_ai.md).
     *Eraser returns to the last tool*, *Erases*, *Draw and hold*,
     *Scribble to erase*. The presets themselves (`inkTools`) are the
     account's too, though they are edited on the strip.
-  - **This device**, this browser's: *Draws with*, *Stylus draws right
-    away*, *Pressure-sensitive strokes*, *Undo with fingers*, *Hover
+  - **This device**, this browser's: *Draws with*, *Stylus draws on PDFs
+    right away*, *Pressure-sensitive strokes*, *Undo with fingers*, *Hover
     preview*.
   - **Apple Pencil** in the iPad app, **Stylus** in the Android app (the
     pen section, shown only under a host that forwards the pen's gestures),
@@ -771,9 +773,24 @@ Download SVG are [handwriting_ai.md](handwriting_ai.md).
     The Shapes tool's are the account's (`inkShapeKind` and
     `inkShapeFill`), the ruler's units and the zoom window's height this
     device's (`inkRulerUnits` and `inkZoomHeight`).
-- **A stylus draws right away** even with the strip closed (Settings →
-  Reading & editing → This device; on by default), with the last pen
-  preset armed on the strip. The pen's eraser end and barrel button erase.
+- **A stylus does what is armed**, on every device:
+  - With an ink tool armed it is that tool, over a PDF's text and in
+    rectangle mode alike.
+  - With nothing armed (the strip closed, or the hand) on a PDF page it
+    does what a mouse does. A drag selects text, and the popup opens at its
+    lift; with the strip's text highlighter on the selection is highlighted
+    at its lift; in rectangle mode (the viewer's selection mode) the drag
+    draws the rectangle. A tap clicks what lies under it or selects a
+    stroke, and a drag on a selection of strokes moves it.
+  - With nothing armed on paper, a notebook's or a sheet among the notes,
+    and in the zoom window's panel, there is no text to select, so it
+    writes, with the last pen preset armed on the strip.
+  - Its eraser end and barrel button erase with nothing armed too.
+  - *Stylus draws on PDFs right away* (Settings → Reading & editing → This
+    device, `inkPenWritesPdf`, off by default) makes a PDF page write as
+    paper does. Its key is new: every browser had stored the on that
+    `gamma-ink-auto-pen` defaulted to (`usePersistedState` stores a default
+    too), so a changed default would have reached no one.
   - **Fingers never draw** when *Draws with* is *Pen only* (`inkPenOnly`,
     default on touch screens): they keep scrolling and pinch-zooming.
   - The first finger that scrolls a page while a tool is armed says so on
@@ -1256,7 +1273,7 @@ Version 1 is handled in these places and nowhere else:
   converts the `/GammaInk` payload of an annotated PDF exported before
   the upgrade, then stores it. Exports write the v2 strokes verbatim into
   `/GammaInk`.
-- **Backup restore** runs the step like any other (migration rule 7), so
+- **Backup restore** runs the step like any other (migration rule 6), so
   a zip made before the upgrade comes back converted.
 - **The client** converts a v1 file it is served (a copy that has not
   run the step yet) as it loads it, so it renders: `ink.js` `loadedInk`,
@@ -2307,10 +2324,16 @@ reach.
   the pen's two gestures as `usePencil` applies them: the Pencil's double
   tap and squeeze, or the Android app's clicks of a stylus's button
   (`tap`) and of its second button (a squeeze without a phase).
+  - `penToolOn(pageDrag, {penTool, penWritesPdf})` is what a pen writes
+    with on a surface while nothing is armed: the stylus pen, except on a
+    surface with a drag of its own for a pen (`onPenDrag`, a PDF page's),
+    where only `inkPenWritesPdf` lets it.
   - `backTool(prefs, state)` is the tool to go back to: the one armed
     before, when it is still on the strip and not the current one, else
-    the stylus pen. The gestures' *Switch to last tool* and
-    `useInkStrip`'s `inkBack` both read it.
+    the stylus pen. The hand counts as on the strip, so hand, eraser, hand
+    comes back to the hand and *Switch to last tool* toggles a tool and the
+    hand. The gestures' *Switch to last tool* and `useInkStrip`'s `inkBack`
+    both read it.
   - `stylusPen(tools, pen)` is that pen. It is `pen`, the last pen armed,
     while that is a pen preset on the strip, else the strip's first pen,
     else its first preset (undefined for an empty strip).
@@ -2809,10 +2832,42 @@ reach.
     palette through `usePalette` (`shared/ui/paletteContext.js`).
   - Imports run from `markup/` to `ink/`, never back.
   - Claiming input: a capture-phase `pointerdown` listener on the page
-    wrapper takes the pointer when a tool is armed or a stylus touches the
-    page (`pointerType === "pen"` with *Stylus draws right away*). So text
-    selection and the area drag never see it, and other pointers pass
-    through.
+    wrapper takes the pointer when `pressUse` gives it something to use:
+    the armed tool, or for a pen its eraser end or barrel, or the stylus
+    pen where it writes (`penToolOn`). So text selection and the area drag
+    never see it, and other pointers pass through.
+    - A pen with nothing to write with is the mouse: a tap on a stroke
+      selects it, and a drag on a selection moves it. Anything else goes
+      to the surface's `onPenDrag`, on a PDF page only. The layer posts no
+      claim and keeps the pen as `drawing` in mode `page` until it lifts
+      anywhere (`trackUp`), which keeps the pan off, makes fingers palms
+      (`inkPenDown()`, below) and keeps `inkBusy()` true, so a gesture
+      waits for the drag.
+    - Its touch is cancelled as an armed pen's is (below), so the system
+      starts no pan, long press or selection of its own, and a tap sends no
+      click. `trackUp` sends a tap's click itself (`press.js` `clickAt`),
+      on a device whose pen sends touch events: a desktop's sends none and
+      keeps its own click.
+    - `PdfPage`'s `penDrag` takes that press, past a text box, a picture
+      and a note badge, which keep theirs. `PdfViewer` clears the selection
+      and the popup, since a cancelled `pointerdown` sends no `mousedown`.
+      In rectangle mode the drag is `beginAreaDrag`, where a second contact
+      under a pen is a palm, and the wrapper's own `onPointerDown` leaves
+      pens to this path. Otherwise it is `pdf/penSelect.js`.
+    - `beginPenSelect`: a stylus selects no text by itself, the browser
+      pans with it, so the drag is read from its pointer events and the
+      selection set from the caret under it (`shared/lib/caret.js`) with
+      `setBaseAndExtent`, one path for the iPad, Android and a desktop's
+      pen. A caret counts only in a text node of the text layer: over a gap
+      the browsers answer the top of the layer, and the focus stays where
+      it was. Past 8 css px a press is a drag, and `data-pen-select` on the
+      viewer lets only the text answer the caret's hit test (app.css), so a
+      highlight, a link box or ink over the text never stops it. Before
+      that nothing is transparent, so a tap still lands on them.
+    - `PdfViewer`'s `selectionchange` waits while `data-pen-select` is set.
+      The lift calls `syncSelPopup(null, true)` as a mouse's release does,
+      and the popup or the highlighter takes the selection. The bar of a
+      highlight the highlighter made outlives the empty selection it leaves.
     - Pointer-up encodes the stroke and swallows the click it would deliver
       to whatever lies beneath.
     - Lost capture, `pointercancel` and window blur discard the unfinished
@@ -2835,12 +2890,20 @@ reach.
     alone does not stop native panning).
     - They match stylus touches, or any touch while a pen pointer is down,
       and leave finger scrolling and pinch zoom alone between strokes.
+    - A pen with nothing to write with is cancelled the same way, every
+      event from its `touchstart` on, which stops the pan, the long press
+      and the tap alike in both engines. Chromium has no `Touch.touchType`,
+      so there a stylus's touches are known by the pen pointer that went
+      down first.
     - The global `html { touch-action: manipulation }` (app.css) removes
       Chrome's double-tap zoom while keeping panning and pinch zoom.
-  - Palms: while a pen is down, finger touches on that page are swallowed
-    and kept from the viewer's pan/pinch handlers. A pen takes over an
-    unfinished finger stroke when the palm landed first, and a second
-    contact never takes over a pen.
+  - Palms: while a pen is down on any layer (`inkPenDown()`, its own drag
+    or a stroke the host took), finger touches on any page are swallowed
+    and kept from the viewer's pan and pinch, and `viewerZoom` (`held`)
+    neither pinches nor pans for one in a gap. A pen takes over an
+    unfinished finger stroke, or a palm moving a selection, when the palm
+    landed first, and a second contact never takes over a pen, nor stops a
+    press of its on a rectangle, a text box or a picture, nor a tap.
   - A second finger makes a finger's stroke a pinch: the stroke in
     progress is discarded.
   - A finger moving alone over a page with a tool armed and *Pen only* on
@@ -3089,8 +3152,8 @@ reach.
         title "Drag to lengthen or shorten the ruler").
     - The capture-phase `pointerdown` gates it like the selection's hit
       box. A pen on the band with a stroke tool (a pen or highlighter
-      preset, or the stylus pen with nothing armed; not its eraser end or
-      barrel, `writesOnBand`) starts a stroke there.
+      preset, or the stylus pen where it writes with nothing armed; not its
+      eraser end or barrel, `writesOnBand`) starts a stroke there.
     - Every other pointer, and every pointer while the eraser, the lasso or
       the Shapes tool is armed, is left to the band (the knob and the ends
       are `NOT_INK`). The band's own handlers move the ruler: previewed in
@@ -3503,7 +3566,7 @@ reach.
   - `buildTrips(fence, build)` keeps the first build with names and answers
     whether this one trips the fence, which happens once.
 - `ink/useInkStrip.js`: the tool strip's state, `useInkStrip({focusedBlockId,
-  readOnly, inkStale, inkTools, setInkToolsRaw, inkAutoPen, inkShapeKind,
+  readOnly, inkStale, inkTools, setInkToolsRaw, inkShapeKind,
   inkShapeFill, inkEraserReturn})`, which App calls above the text boxes
   (an armed ink tool makes them inert).
   - It returns the state and what derives from it (`inkUi`, `inkVisible`,
@@ -3527,7 +3590,8 @@ reach.
       Text tool, `shape` for the Shapes tool, or `null` for the hand;
     - its `options` row (`true`, or `"ruler"` for the ruler's);
     - `pen`, the last pen preset, which a stylus writes with when nothing
-      is armed. It is resolved among the visible presets, so a hidden pen
+      is armed and the surface lets it (`penToolOn`). It is resolved among
+      the visible presets, so a hidden pen
       falls back to the first visible pen, else the first visible preset
       (`pencilActions.js` `stylusPen`, `inkPenPreset`).
   - `"shape"` is one of the reserved tool ids (`pencilActions.js`
@@ -3569,8 +3633,8 @@ reach.
     named).
   - `visibleTools(list)` is the list without the hidden ones, what the
     strip, the key table and the stylus's `backTool` read.
-  - `inkBack()` is the previous distinct tool, else the stylus pen
-    (`pencilActions.js` `backTool` over `inkPrevRef`, which follows the
+  - `inkBack()` is the previous distinct tool, the hand among them, else
+    the stylus pen (`pencilActions.js` `backTool` over `inkPrevRef`, which follows the
     armed tool after each commit).
   - `inkEraserLifted()`, the end of App's `handleInkEraseEnd`
     (`onEraseEnd`), picks it with the options row closed when
@@ -3579,8 +3643,8 @@ reach.
       `useStripKeys`) and stops while a held squeeze is open
       (`noteSqueezeUse()`, `usePencil`: its release goes back).
     - A squeeze that toggles the eraser still toggles it. With the return
-      on, the lift re-arms the pen and the next squeeze arms the eraser
-      again.
+      on, the lift gives back the tool armed before it and the next squeeze
+      arms the eraser again.
 - `ink/stripState.js` (pure; `frontend/tests/stripState.test.mjs`): the
   strip's updates as functions of `inkUi`, one for each write of
   `useInkStrip`.
@@ -4198,8 +4262,8 @@ reach.
       the zoom window").
     - *Handwriting settings…* is `SettingsIcon` and `onOpenSettings()`,
       which App wires to `openSettingsPane("handwriting")`. That is the
-      settings alias (`settings/settingsNavigation.js`) for the Reading &
-      editing pane, scrolled to the section's first row, *Reset presets*.
+      section entry point (`settings/settingsNavigation.js`) for the Reading
+      & editing pane, scrolled to the section's first row, *Reset presets*.
     - A preset's ⋯ (`ctlBtn`, `MoreIcon`, aria-label "Tool menu", title
       "Move, hide, reset or remove this tool", `aria-haspopup`,
       `aria-expanded`) lists these, each through `onChangeTools(list)` with
@@ -4400,9 +4464,9 @@ reach.
     way. A surface's slice is kept while its parts are unchanged, so a
     memoized page re-renders only for its own marks.
   - `PageTools.jsx` `PageToolsContext` carries the tools to every layer:
-    `{readOnly, ink: {tool, penTool, penOnly, pressure, eraserMode,
-    eraserSize, eraserFilter, drawHold, scribble, fingerUndo, lassoMode,
-    lassoPictures, hoverPreview}, text, actions}`. `lassoPictures` is
+    `{readOnly, ink: {tool, penTool, penWritesPdf, penOnly, pressure,
+    eraserMode, eraserSize, eraserFilter, drawHold, scribble, fingerUndo,
+    lassoMode, lassoPictures, hoverPreview}, text, actions}`. `lassoPictures` is
     whether the lasso takes pictures.
     - `drawHold` and `scribble` are the account flags, `eraserFilter`
       `'all' | 'pen' | 'highlighter'`, `fingerUndo` `'off' | 'tap' |

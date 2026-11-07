@@ -261,13 +261,14 @@ the box empty they are not listed, and a label view, "No label" and the
 folders-only and labels views add none. Every other surface keeps
 every page: tabs, the recents and pinned strips (a sub-page may be pinned,
 and the strips' page menu offers it Move to library), and the pickers,
-which name a sub-page's path. Quick open and the chat's `@` and `+`
+which name a sub-page's path. Quick open, the page pickers (Move to
+page, Move into page, the link dialog) and the chat's `@` and `+`
 pickers rank through `rankLibraryPages`, which matches the path too, as a
 weaker hit, so typing a parent's title lists the pages inside it after the
-title hits; Quick open's and the `@` picker's rows show the path on their
-second line, the `+` picker after the title. The `[[` picker's meta reads
-"kind · path" and the `@` menu's page row the path, each else the page's
-first folder. The Ctrl+F search panel names a hit's page "Parent › Child",
+title hits; Quick open's, the page pickers' and the `@` picker's rows
+show the path on their second line, the `+` picker after the title. The
+`[[` picker's meta reads "kind · path" and the `@` menu's page row the
+path, each else the page's first folder. The Ctrl+F search panel names a hit's page "Parent › Child",
 the pages above it muted and shrinking first.
 
 **Reaching one.** Three ways, none of them a page tree in a sidebar:
@@ -308,15 +309,24 @@ copied.
 page's family again after.
 
 - **Move into page…** (the home page menu, for one page or a selection,
-  and a tab's menu) opens the Move to page dialog as "Move into page": a
-  filter over every page but the moved ones and the pages inside them,
-  where they cannot go, a sub-page's row showing its path. A pick puts each
-  page inside the one picked, and the server drops their folders. "Moved N
-  pages into “Title”."
+  and a tab's menu) opens the move picker (`PagePicker`, below) as "Move
+  into page…" over every page but the moved ones and the pages inside them,
+  where they cannot go. A pick puts each page inside the one picked, and the
+  server drops their folders. "Moved N pages into “Title”."
 - **Move to library** (the same menus, for a sub-page) sends
   `{parent_page: null, folders: <its top's folders, or null>}`, so the page
   lands in the folders it was listed under until then. "Moved N pages to
   the library."
+
+A block's **Move to page…** (its handle menu and the palette; an image,
+table or diagram's "Another page…") goes to a sub-page as to any page
+([collab.md](collab.md) "Ops": `/blocks/{id}/reorder` with the target as
+`parent_id`). Its picker and Move into page's are one: `PagePicker`
+(`library/PagePicker.jsx`), quick open's look, keys and rows over the
+listing App holds, read again behind it as it opens. A sub-page's row names
+the pages it is in; a block's or an object's picker leaves out the open
+page and lists the open page's own sub-pages first, under "Inside this
+page" (`rankLibraryPages`' `first`), before the recent pages.
 
 **Shares.** A page share reaches the shared page and every page inside it
 (`ShareScope.allows_page`: one whose ancestors hold the shared page), and a
@@ -689,8 +699,11 @@ folder's "Delete N pages too" all call `DELETE /api/blocks/{id}` on the
 page root, and the server moves the page there (`ops.trash_page`) with
 the pages inside it ("Sub-pages" above). The confirmations say where it
 goes and for how long, and for a page with pages inside it how many go
-with it ("Move this page and the 2 pages inside it to Recently
-deleted?"). Their tabs close too, and none is a place a closed tab goes
+with it; one page is quoted by its title ("Move "Notes" and the 2 pages
+inside it to Recently deleted?"), several are counted ("Move these 3
+pages to Recently deleted?"). The library's Delete and the header's
+button ask the same question, built by `deleteConfirm` in
+`library/libraryUtils.js`. Their tabs close too, and none is a place a closed tab goes
 back to. A selection holding a page and a page inside it sends the outer
 one only, so the cascade takes the rest rather than one going alone
 first. Many pages go as a batch (`library/pageBatch.js`, [tasks.md](tasks.md)
@@ -771,8 +784,9 @@ directly, the page's live descendants with it. Endpoints:
 [api.md](api.md) "Recently deleted". Editors and owners
 trash and restore; a viewer and a share link cannot. A folder chat's agent
 can list the pages that were filed under its folder and restore them on
-request (`list_deleted`, `restore_page`, [ai_tools.md](ai_tools.md)); it
-cannot trash or delete a page. A trashed page's files
+request (`list_deleted`, `restore_page`, [ai_tools.md](ai_tools.md)), and
+move pages there on request (`delete_page`, `ops.trash_page`); it never
+deletes a page for good. A trashed page's files
 stay referenced, so they count against the storage quota until the page is
 deleted for good. Then the orphan check takes over
 ([user_db.md](user_db.md) "Stored files").

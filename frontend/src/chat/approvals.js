@@ -15,8 +15,11 @@ const listOf = (items = [], total = 0) => items.join(", ")
 
 // The page tools that take a list of pages (gamma/ai_tools.py): a card for
 // two or more pages carries `count`, and one line per page in its `diff`.
-const BATCH_TOOLS = new Set(["rename_page", "move_page", "label_page", "restore_page"]);
+const BATCH_TOOLS = new Set(["rename_page", "move_page", "label_page", "restore_page", "delete_page"]);
 export const isBatchPreview = (tool, preview) => BATCH_TOOLS.has(tool) && typeof preview?.count === "number";
+
+// A call that deletes something: its card's Allow once is the red button.
+export const isDeletion = (tool) => /^delete_/.test(tool || "");
 
 function batchTitle(tool, preview) {
   const n = preview.count;
@@ -26,6 +29,7 @@ function batchTitle(tool, preview) {
       return preview.to ? tn("Move {n} page to {folder}", "Move {n} pages to {folder}", n, { folder: preview.to })
         : tn("Move {n} page to the library root", "Move {n} pages to the library root", n);
     case "label_page": return tn("Change the labels of {n} page", "Change the labels of {n} pages", n);
+    case "delete_page": return tn("Move {n} page to Recently deleted", "Move {n} pages to Recently deleted", n);
     default: return tn("Restore {n} page from Recently deleted", "Restore {n} pages from Recently deleted", n);
   }
 }
@@ -66,6 +70,7 @@ export function approvalTitle(approval, { titleOf = () => "", permission = "" } 
       return preview.to ? t("Save “{title}” to {folder}", { title, folder: preview.to })
         : t("Save “{title}” to the library root", { title });
     case "restore_page": return t("Restore “{title}” from Recently deleted", { title });
+    case "delete_page": return t("Move “{title}” to Recently deleted", { title });
     case "rename_folder": return t("Rename the folder “{title}”", { title });
     case "rename_label": return t("Rename the label “{title}”", { title });
     case "create_label": return t("Make the label “{title}”", { title });
@@ -100,13 +105,22 @@ export function deletedKind(what) {
   }[what]?.() || t("note");
 }
 
-// What a folder's or a label's deletion takes besides itself, one line each,
-// from its card's preview (gamma/ai_tools.py _preview_delete_folder /
-// _preview_delete_label): the subfolders, the pages that lose the filing and
-// stay, and the folders whose AI chats move to the library chat's history.
+// What a deletion takes besides itself, one line each, from its card's
+// preview (gamma/ai_tools.py _preview_delete_folder / _preview_delete_label /
+// _preview_delete_page): a folder's subfolders, the pages that lose the
+// filing and stay, and the folders whose AI chats move to the library chat's
+// history; the pages inside deleted pages, and how long Recently deleted
+// keeps them.
 export function deletionNotes(tool, preview = {}) {
   const notes = [];
-  if (tool === "delete_folder") {
+  if (tool === "delete_page") {
+    if (preview.inside) {
+      notes.push(tn("{n} page inside goes too.", "{n} pages inside go too.", preview.inside));
+    }
+    notes.push(tn("Recently deleted keeps it for {days} days, and you can revert it from the reply.",
+      "Recently deleted keeps them for {days} days, and you can revert it from the reply.",
+      preview.count || 1, { days: preview.days || 30 }));
+  } else if (tool === "delete_folder") {
     if (preview.subfolder_count) {
       notes.push(tn("Its subfolder goes with it: {list}", "Its {n} subfolders go with it: {list}",
         preview.subfolder_count, { list: listOf(preview.subfolders, preview.subfolder_count) }));
@@ -116,8 +130,8 @@ export function deletionNotes(tool, preview = {}) {
         preview.page_count, { list: listOf(preview.pages, preview.page_count) })
       : t("No pages are filed in it."));
     if (preview.chats) {
-      notes.push(tn("{n} AI chat of {list} moves to the library chat's history and stays there if you revert.",
-        "{n} AI chats of {list} move to the library chat's history and stay there if you revert.",
+      notes.push(tn("{n} AI chat of {list} moves to the library chat's history; a revert brings it back.",
+        "{n} AI chats of {list} move to the library chat's history; a revert brings them back.",
         preview.chats, { list: listOf(preview.chat_folders, preview.chat_folder_count) }));
     }
   } else if (tool === "delete_label") {

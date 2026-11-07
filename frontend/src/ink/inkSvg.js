@@ -63,21 +63,24 @@ function strokePaths(s, blend = true) {
   return out;
 }
 
+// The pt of room around the strokes on every side.
+const PAD = 4;
+
 // `strokes` (any groups', in the order given) → {markup, width, height}: an
 // SVG document `width` × `height` pt around their union box (strokeBounds,
-// the drawn width included) grown by `pad` on every side, its corner and
+// the drawn width included) grown by PAD on every side, its corner and
 // size on the 1/100 grid (outward), the strokes in the layer's draw order,
 // plane by plane (ink.js strokePlane: band 0's other strokes, band 0's
 // highlighters, band 1's other strokes, band 1's highlighters), each plane
 // in the given order. With `background` (a colour), a rect of it under them
 // all, and highlighters unblended (see above); without, nothing under them.
 // null when no stroke has a sample.
-export function inkSvg(strokes, { pad = 4, background = null } = {}) {
+export function inkSvg(strokes, { background = null } = {}) {
   const drawn = (strokes || []).filter((s) => strokeBounds(s));
   const box = drawn.reduce((acc, s) => unionBox(acc, strokeBounds(s)), null);
   if (!box) return null;
-  const x0 = floor2(box[0] - pad), y0 = floor2(box[1] - pad);
-  const width = ceil2(box[2] + pad - x0), height = ceil2(box[3] + pad - y0);
+  const x0 = floor2(box[0] - PAD), y0 = floor2(box[1] - PAD);
+  const width = ceil2(box[2] + PAD - x0), height = ceil2(box[3] + PAD - y0);
   // (a stable sort: each plane keeps the order given)
   const paths = [...drawn].sort((a, b) => strokePlane(a) - strokePlane(b)).flatMap((s) => strokePaths(s, !background));
   const markup = [

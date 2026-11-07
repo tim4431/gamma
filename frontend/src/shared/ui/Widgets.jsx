@@ -10,6 +10,7 @@ import rehypeKatex from "rehype-katex";
 import "katex/dist/katex.min.css";
 import { CheckIcon, CopyIcon, ExternalLinkIcon, FileGlyph, FileTextIcon, PinIcon, XIcon } from "./Icons";
 import { useWheelPan } from "./wheelPan";
+import { tabDrag, useTabDrag } from "./tabDrag.js";
 import { useMenuAim } from "./menuAim";
 import { doublePress, menuPress } from "./press.js";
 import { assetUrl, copyText } from "../lib/utils";
@@ -536,11 +537,29 @@ function OpenTabs({
   onClose,
   onTogglePin,
   onContext,
+  groupId = null,
+  onDropTab,
 }) {
   // Drag-reorder bookkeeping is private to the strip: the dragged tab id as a
   // ref (read during dragover) with a state twin for the .dragging style.
   const dragTab = useRef(null);
   const [draggingId, setDraggingId] = useState(null);
+  // A tab dragged from another group's strip (workspace/TabGroups.jsx,
+  // tabDrag.js): it is taken on the drop, before the tab it is over (its
+  // left half) or after it, else at the end; `hint` is that index while the
+  // drag is over this strip.
+  const drag = useTabDrag();
+  const foreign = !!drag && !!onDropTab && drag.from !== groupId;
+  const [hint, setHint] = useState(null);
+  useEffect(() => { if (!foreign) setHint(null); }, [foreign]);
+  const dropForeign = (event, index) => {
+    event.preventDefault();
+    if (!foreign) return;
+    const id = drag.id;
+    setHint(null);
+    tabDrag.end();
+    onDropTab(id, index);
+  };
   const stripRef = useRef(null);
   const tabElements = useRef(new Map());
   const wheelPan = useWheelPan();
@@ -599,13 +618,22 @@ function OpenTabs({
   return (
     <>
       <div ref={setStrip} role="tablist" data-guide="header.tabs"
-        className={`tabStrip${overflow.over && !overflow.atEnd ? " fadeEnd" : ""}`}>
+        className={`tabStrip${overflow.over && !overflow.atEnd ? " fadeEnd" : ""}${foreign && hint === tabs.length ? " dropEnd" : ""}`}
+        onDragOver={(event) => {
+          // the strip's own room, past the last tab
+          if (!foreign || event.target !== event.currentTarget) return;
+          event.preventDefault();
+          event.dataTransfer.dropEffect = "move";
+          setHint(tabs.length);
+        }}
+        onDragLeave={(event) => { if (foreign && !event.currentTarget.contains(event.relatedTarget)) setHint(null); }}
+        onDrop={(event) => { if (foreign && event.target === event.currentTarget) dropForeign(event, tabs.length); }}>
         {/* Measured in the window: a close that narrows a strip scrolled to
             its end scrolls it back, and the tabs before the one closed
             glide over its place from the left. */}
         <ListMotion keys={tabs.map((tab) => tab.id)} still={still || !acted} enter="rise" leave="tab"
           strip={["role", "aria-selected"]}>
-          {tabs.map((tab) => (
+          {tabs.map((tab, i) => (
             <div
               key={tab.id}
               data-motion-key={tab.id}
@@ -615,19 +643,29 @@ function OpenTabs({
                 if (element) tabElements.current.set(tab.id, element);
                 else tabElements.current.delete(tab.id);
               }}
-              className={`tab ${tab.id === activeId ? "active" : ""} ${draggingId === tab.id ? "dragging" : ""} ${tab.pinned ? "pinned" : ""}`}
+              className={`tab ${tab.id === activeId ? "active" : ""} ${draggingId === tab.id ? "dragging" : ""} ${tab.pinned ? "pinned" : ""}${foreign && hint === i ? " dropBefore" : ""}${foreign && hint === i + 1 && i === tabs.length - 1 ? " dropAfter" : ""}`}
               title={tab.title}
               draggable
               onDragStart={(event) => {
                 dragTab.current = tab.id;
                 setDraggingId(tab.id);
                 event.dataTransfer.effectAllowed = "move";
+                try { event.dataTransfer.setData("application/x-gamma-tab", tab.id); } catch {}
+                tabDrag.begin(tab.id, groupId);
               }}
               onDragEnd={() => {
                 dragTab.current = null;
                 setDraggingId(null);
+                tabDrag.end();
               }}
               onDragOver={(event) => {
+                if (foreign) {
+                  event.preventDefault();
+                  event.dataTransfer.dropEffect = "move";
+                  const box = event.currentTarget.getBoundingClientRect();
+                  setHint(event.clientX < box.left + box.width / 2 ? i : i + 1);
+                  return;
+                }
                 const draggedId = dragTab.current;
                 if (!draggedId || draggedId === tab.id) return;
                 event.preventDefault();
@@ -637,7 +675,7 @@ function OpenTabs({
                 if (event.currentTarget.hasAttribute("data-moving")) return;
                 onReorder(draggedId, tab.id);
               }}
-              onDrop={(event) => event.preventDefault()}
+              onDrop={(event) => dropForeign(event, hint ?? tabs.length)}
               onClick={() => {
                 if (tab.id !== activeId) onOpen(tab.id);
               }}
@@ -757,7 +795,7 @@ function BlockDropIndicator({ target }) {
     );
   }
   const indentStep = 14;
-  const baseOffset = 28;
+  const baseOffset = 40; // 22px short of a row's text, where App's onBlockDragOver starts to nest
   const left = target.rect.left + baseOffset + target.depth * indentStep;
   return (
     <div

@@ -52,6 +52,7 @@ export const TEXT_INSERTS = {
   highlight: (ctx) => replaceRange(ctx, "==x==", 2, 1),
   math: (ctx) => replaceRange(ctx, "$x$", 1, 1),
   equation: (ctx) => replaceRange(ctx, "$$x$$", 2, 1),
+  text: (ctx) => retype(ctx, "text"),
   h1: (ctx) => retype(ctx, "h1"),
   h2: (ctx) => retype(ctx, "h2"),
   h3: (ctx) => retype(ctx, "h3"),

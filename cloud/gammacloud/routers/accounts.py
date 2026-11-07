@@ -71,13 +71,7 @@ def verify_message(conn, account, next: str = "") -> tuple[str, str, str, str]:
     return (account["email"], *accounts.verify_mail(account, token))
 
 
-# --- config for the pages -----------------------------------------------------
-
-@router.get("/config")
-def public_config():
-    return {"registration": settings.registration(), "turnstile_sitekey": settings.turnstile_sitekey(),
-            "issuer": config.PUBLIC_URL, "plans": list(config.PLANS)}
-
+# --- the plans on sale, for the website ---------------------------------------
 
 @router.get("/plans")
 def plans_on_sale():

@@ -282,6 +282,28 @@ def test_logseq_import_into_an_existing_page_tells_the_page_and_never_duplicates
     assert len(c.get(f"/api/blocks/{page_id}/children").json()["children"]) == len(children)
 
 
+def test_a_logseq_notes_image_size_comes_in_as_gammas_and_still_never_duplicates(owner):
+    c, _ = owner
+    pdf = _pdf("logseq sizes")
+    doc_id = c.post("/api/uploads", files={"file": ("sized.pdf", pdf, "application/pdf")}).json()["doc_id"]
+    page_id = c.post(f"/api/blocks/by-doc/{doc_id}", json={"default_title": "sized"}).json()["id"]
+    stored = "a picture ![a](https://e.com/a.png){:width 300}"
+    _block(c, page_id, stored)  # as an import wrote it, Logseq's size kept
+    md = f"- {stored}\n- another ![b](https://e.com/b.png){{:width 120}}\n"
+    r = c.post("/api/import/logseq", files={
+        "pdf": ("sized.pdf", pdf, "application/pdf"),
+        "edn": ("hls.edn", b"{:highlights []}", "application/octet-stream"),
+        "md": ("hls.md", md.encode(), "text/markdown")})
+    assert r.status_code == 200 and r.json()["imported"] == 1, r.text
+    assert [b["content"] for b in c.get(f"/api/blocks/{page_id}/children").json()["children"]] == [
+        stored, "another ![b|120](https://e.com/b.png)"]
+    # A quote is the PDF's text: only the notes' sizes change.
+    from gamma.logseq_import import parse_logseq_md
+    parsed = parse_logseq_md("- q ![a](u){:width 3}\n  ls-type:: annotation\n\t- note ![a](u){:width 3}\n")
+    assert parsed[0]["content"] == "q ![a](u){:width 3}"
+    assert parsed[0]["children"][0]["content"] == "note ![a|3](u)"
+
+
 # --- every writer tells the page's open tabs ----------------------------------
 
 def test_clip_of_a_saved_paper_files_it_through_the_page_room(owner):
@@ -306,7 +328,7 @@ def test_clip_of_a_saved_paper_files_it_through_the_page_room(owner):
 
 def _annotated_pdf(ws, name, monkeypatch):
     """A stored PDF whose one embedded highlight the importer finds."""
-    from PyPDF2 import PdfWriter
+    from pypdf import PdfWriter
 
     import gamma.routers.imports as imports_mod
     from gamma.highlights import position as highlight_position

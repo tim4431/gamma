@@ -123,7 +123,7 @@ await beat(200);
 await page.click('[aria-label="Copy slide citation"]');
 console.log('SCRIPT: slide citation copied');
 await beat(1300);
-M.mOut = mark();                          // camera zoom-out begins
+M.mOut = mark();                          // the final hold begins
 await beat(1500);
 M.tEnd = mark();
 

@@ -17,7 +17,6 @@
   overflow-x: auto;
   scroll-snap-type: x proximity;
   padding: 4px 0;
-  -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
 }
 .carouselTrack::-webkit-scrollbar {
@@ -606,7 +605,6 @@
   overflow-x: auto;
   scroll-snap-type: x proximity;
   padding-bottom: 4px;
-  -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
 }
 .pinnedStrip::-webkit-scrollbar {
@@ -663,7 +661,8 @@
   font-size: var(--fs-2xs);
 }
 
-/* Quick open (Ctrl+P): the page palette, docked near the top like VS Code's. */
+/* The palette (shared/ui/Palette.jsx), docked near the top like VS Code's:
+   quick open (Ctrl+P) and the page pickers (Move to page, the link dialog). */
 .quickOpenOverlay { align-items: flex-start; padding-top: 12vh; }
 .quickOpen { width: min(560px, calc(100vw - 32px)); padding: 8px; gap: 0; }
 .quickOpenInput { display: flex; align-items: center; gap: 8px; padding: 0 4px 6px; color: var(--text-muted); }
@@ -683,6 +682,9 @@
 .quickOpenRow .quickOpenFolderIcon { color: var(--accent); }
 .quickOpenRow .kindGlyph { flex-shrink: 0; }
 .quickOpen .chatMentionHint { padding: 6px 6px 0; }
+/* What a pick does (a page picker's), before the keys. */
+.quickOpenHint { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 2px 12px; }
+.quickOpenNote { color: var(--text-muted); min-width: 0; }
 .quickOpenKey { font-family: var(--font-mono); }
 
 /* --- Phone (the compact layout, .phoneUI on .app) ------------------------

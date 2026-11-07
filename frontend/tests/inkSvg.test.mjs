@@ -49,11 +49,8 @@ test("a pen stroke: a document around its box grown by the pad, its filled outli
   assert.equal(paths(parse(inkSvg([pen({ opacity: 0.5 })]).markup))[0].getAttribute("fill-opacity"), "0.5");
 });
 
-test("the pad, and a stroke without a colour in the first ink colour", () => {
-  const s = pen({ color: undefined });
-  const [x0, , x1] = strokeBounds(s);
-  const out = inkSvg([s], { pad: 0 });
-  assert.ok(out.width >= x1 - x0 && out.width < x1 - x0 + 0.03);
+test("a stroke without a colour in the first ink colour", () => {
+  const out = inkSvg([pen({ color: undefined })]);
   assert.equal(paths(parse(out.markup))[0].getAttribute("fill"), "#1f1f1f");
 });
 

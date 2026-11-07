@@ -4,7 +4,9 @@
 // checks the result plus where the selection lands.
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { expandBlankLines, insertLink, isUrl, markedAt, scanMarks, toggleMark } from "../src/editor/mdMarks.js";
+import {
+  expandBlankLines, insertLink, isUrl, markedAt, scanImageSyntax, scanMarks, sizedImagesHtml, toggleMark,
+} from "../src/editor/mdMarks.js";
 import { BLOCK_COMMANDS } from "../src/editor/blockCommands.js";
 
 // Apply {from, to, insert} changes addressed to the original text.
@@ -127,4 +129,20 @@ test("expandBlankLines keeps every blank line after the first as an empty paragr
   assert.equal(expandBlankLines("a\n\n\nb"), "a\n\n&nbsp;\n\nb", "two blank lines show one empty line");
   assert.equal(expandBlankLines("a\n\n\n\nb"), "a\n\n&nbsp;\n\n&nbsp;\n\nb");
   assert.equal(expandBlankLines("a\n  \n\t\nb"), "a\n\n&nbsp;\n\nb", "whitespace-only lines are blank");
+});
+
+test("images are read with either size, and the rendered view sizes the ones the scan finds", () => {
+  const text = "![a|300](/u/a.png) ![b](/u/b.png){:width 120} ![c](/u/c.png) ![d|200x90](/u/d.png)";
+  assert.deepEqual(scanImageSyntax(text).map(({ alt, url, width }) => [alt, url, width]), [
+    ["a", "/u/a.png", 300], ["b", "/u/b.png", 120], ["c", "/u/c.png", null], ["d", "/u/d.png", 200]]);
+  // Logseq's size is part of the image, so an edit of it rewrites it whole.
+  const [, logseq] = scanImageSyntax(text);
+  assert.equal(text.slice(logseq.from, logseq.to), "![b](/u/b.png){:width 120}");
+  assert.equal(sizedImagesHtml(text),
+    '<img src="/u/a.png" alt="a" width="300" /> <img src="/u/b.png" alt="b" width="120" /> ' +
+    '![c](/u/c.png) <img src="/u/d.png" alt="d" width="200" />');
+  // The size after the image wins over one in its alt, in the scan and the view.
+  assert.equal(sizedImagesHtml("![e|80](/u/e.png){:width 160}"), '<img src="/u/e.png" alt="e" width="160" />');
+  assert.equal(sizedImagesHtml("![[embed1]] and ![|120](/u/f.png)"),
+    '![[embed1]] and <img src="/u/f.png" alt="" width="120" />');
 });

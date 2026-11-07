@@ -1,9 +1,8 @@
 # Deploying the account server
 
 How `account.gammapdf.com` runs: the `gamma-cloud` image on a small VPS
-with Caddy terminating TLS on the host's own ports, DNS at Cloudflare. A
-Cloudflare Tunnel variant exists for a host without a public address (a
-NAS). The service itself is described in
+with Caddy terminating TLS on the host's own ports, DNS at Cloudflare.
+The service itself is described in
 [docs/dev/cloud_accounts.md](../../docs/dev/cloud_accounts.md).
 
 ```
@@ -13,9 +12,8 @@ deploy/
                        ../fleet/deploy/)
   Caddyfile            TLS for CADDY_HOST → account:9002; *.gammapdf.com → share / gamma-demo /
                        gamma-<label> (hosted servers)
-  compose.tunnel.yml   layered on compose.yml: cloudflared instead of caddy
-  compose.build.yml    layered on compose.yml: build from ./src instead of pulling
-  Dockerfile.local     the image built from a copy of cloud/ (compose.build.yml)
+  compose.build.yml    layered on compose.yml: build cloud/Dockerfile from a copy of cloud/ in ./src
+                       instead of pulling
   .env.example         → .env: public URL, SMTP, Google/GitHub, Stripe, hosting, hostname
                        (not the sign-up gate)
   share.env.example    → share.env: the share host's cloud client and page hosts
@@ -46,13 +44,15 @@ project, `/root/Container/gamma-fleet/`
 ([../fleet/deploy/README.md](../fleet/deploy/README.md), the
 `update-fleet` skill).
 
+Caddy passes Cloudflare's `CF-Connecting-IP` on as `X-Forwarded-For` to
+every Gamma it routes: the share host, the demo and the hosted servers.
 The Gamma image believes `X-Forwarded-For` from loopback only
 (`FORWARDED_ALLOW_IPS`), so every proxied Gamma here names its proxy: the
 share host trusts this project's default network, whose subnet
-`compose.yml` pins (`10.201.0.0/24`), and the demo trusts `gamma-edge`'s
-(`EDGE_SUBNET` in its `.env`). Without that every visitor would share the
-proxy's rate limits. A host whose default network predates the pin needs
-`docker compose down && docker compose up -d` once to recreate it.
+`compose.yml` pins (`10.201.0.0/24`), the demo trusts `gamma-edge`'s
+(`EDGE_SUBNET` in its `.env`) and each hosted server `gamma-fleet`'s.
+Without that every visitor would share the proxy's rate limits, the
+sign-ins at `app.gammapdf.com` among them.
 
 ## First deployment on a VPS
 
@@ -233,12 +233,14 @@ above.
   the API and the pages; only `/jwks` is cacheable (5 min).
 - **Access** is NOT used: the portal must be reachable by everyone.
 - **Origin lock-down.** The server takes the client address (rate limits,
-  the address on the Devices page) from Cloudflare's `CF-Connecting-IP`.
-  On the VPS, Caddy also answers direct connections to port 443, so anyone
-  who knows the host's address can bypass Cloudflare, including its rate
-  rules, and set that header themselves. Accept Cloudflare only: allow 443
-  from the ranges at <https://www.cloudflare.com/ips/> in the host's
-  firewall, or in the Caddyfile before `reverse_proxy`:
+  the address on the Devices page) from Cloudflare's `CF-Connecting-IP`,
+  and so do the share host, the demo and the hosted servers, through the
+  `X-Forwarded-For` Caddy makes from it (their sign-in and other rate
+  limits). On the VPS, Caddy also answers direct connections to port 443,
+  so anyone who knows the host's address can bypass Cloudflare, including
+  its rate rules, and set that header themselves. Accept Cloudflare only:
+  allow 443 from the ranges at <https://www.cloudflare.com/ips/> in the
+  host's firewall, or in the Caddyfile before `reverse_proxy`:
 
   ```
   @direct not remote_ip <the Cloudflare ranges>
@@ -247,8 +249,7 @@ above.
 
   Before switching it on, check that Caddy sees the real peer address and
   not Docker's gateway: with access logging on, a request through the
-  hostname must log a Cloudflare address. The tunnel variant opens no port
-  and needs none of this.
+  hostname must log a Cloudflare address.
 
 ## Sign in with Google and GitHub
 
@@ -340,9 +341,8 @@ Setting it up once:
    site serves the internal certificate behind it (SSL mode "Full").
 2. The shared server's client on the account server, with both callbacks:
    `docker compose exec account python manage.py create-client "Gamma Cloud" share-host https://app.gammapdf.com/api/auth/cloud/callback https://share.gammapdf.com/api/auth/cloud/callback`
-   (the secret is shown once). A client made before `app.gammapdf.com`
-   existed takes the new callback with
-   `manage.py client-redirect <client id> https://app.gammapdf.com/api/auth/cloud/callback`.
+   (the secret is shown once). `manage.py client-redirect <client id>
+   <callback>` adds a callback to an existing client.
 3. `share.env` from `share.env.example`: the client id and secret, and
    `GAMMA_CLOUD_ADMIN_SUBJECT` = your cloud account id, so your first sign-in
    there makes you its admin. The image also seeds an `admin` account with a
@@ -468,7 +468,8 @@ cd ~/Container/gamma-account && docker compose pull account && docker compose up
 (`/update-account-server` does this after checking the publish finished,
 and verifies the running commit afterwards.) To run a patch from source
 instead, copy `cloud/` to `./src` and layer `compose.build.yml` with
-`--build`.
+`--build`; it builds `cloud/Dockerfile` with that copy as its context, as
+`cloud.yml` does with the repository's `cloud/`.
 
 The server upgrades its own `cloud.db` at start with a copy taken first
 (`data/backups/*-v<N>.db`) and refuses a database written by a newer
@@ -480,11 +481,3 @@ There is no scheduled backup. The server copies `cloud.db` to
 `data/backups/*-v<N>.db` before a schema upgrade (the last 3 kept), and
 `manage.py backup` takes a `*-manual.db` on demand. Treat any copy as a
 secret.
-
-## The tunnel variant (a NAS)
-
-Zero Trust → Networks → Tunnels → create, public hostname
-`account.gammapdf.com` → `http://account:9002`, the connector token into
-`.env` as `TUNNEL_TOKEN`, then
-`docker compose -f compose.yml -f compose.tunnel.yml up -d`. No port is
-opened and Cloudflare terminates TLS; the DNS record is the tunnel's.

@@ -18,7 +18,7 @@ export function sendsOnEnter(e, onScreen = touchTyping()) {
 }
 
 // Whether an Enter sends a comment (comments/CommentComposer.jsx). The field
-// is a note's editor, so Enter breaks the line as in a note and Shift+Enter
+// is a note's editor holding one block, so Enter breaks the line and Shift+Enter
 // sends. On an on-screen keyboard Return breaks the line, Shift or not, and
 // the button sends. Ctrl/⌘+Enter sends on either.
 export function sendsOnShiftEnter(e, onScreen = touchTyping()) {

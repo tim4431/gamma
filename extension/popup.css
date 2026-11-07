@@ -70,6 +70,7 @@ code, kbd { font-family: var(--font-mono); }
    box (:focus-within above), not the inner input. A folder chip leads with
    its folder glyph, and a long path ends in an ellipsis. */
 .tagField { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; padding: 4px 6px; min-height: 32px; cursor: text; }
+.tagField:has(.tagInput:disabled) { opacity: 0.6; cursor: default; }
 .categoryTag {
   display: inline-flex; align-items: center; gap: 2px; max-width: 100%;
   background: var(--bg-raised); color: var(--accent);
@@ -157,6 +158,25 @@ code, kbd { font-family: var(--font-mono); }
 .ctxMenuIcon { display: inline-flex; align-items: center; justify-content: center; width: 14px; color: var(--text-muted); flex-shrink: 0; }
 .ctxMenuText { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ctxMenuCheck { margin-left: auto; flex-shrink: 0; color: var(--text-primary); }
+/* A folder tree's row (ui.js menuRow): indented by its depth, tighter than a
+   plain row since the menu holds few, its "+" shown with its highlight. */
+.ctxMenuItem.treeRow { gap: 6px; padding: 4px 6px 4px calc(6px + var(--depth) * 12px); }
+.treeTwist, .treeAdd {
+  display: inline-flex; align-items: center; justify-content: center; width: 20px; height: 20px;
+  flex-shrink: 0; border-radius: var(--radius-sm); color: var(--text-dim);
+}
+.treeRow .treeTwist { margin-right: -2px; }
+.treeTwist:not(:empty):hover, .treeAdd:hover { background: var(--bg-active); color: var(--text-primary); }
+.treeRow[aria-expanded="false"] .treeTwist svg { rotate: -90deg; }
+.treeAdd { visibility: hidden; }
+.treeRow.selected .treeAdd { visibility: visible; }
+/* A name typed for something new, in place (the app's .ctxMenuInput), under
+   the folder it goes in. */
+.menuName { padding: 4px 8px 4px calc(8px + var(--depth) * 12px); }
+.ctxMenuInput { padding: 5px 8px; }
+/* The way to something new stays in sight below a list that scrolls. */
+.ctxMenu:has(> .menuLast) { padding-bottom: 0; scroll-padding-bottom: 36px; }
+.menuLast { position: sticky; bottom: 0; background: var(--bg-elevated); border-top: 1px solid var(--border-subtle); }
 
 .msg { margin: 0 16px 10px; padding: 8px 11px; border-radius: var(--radius-md); font-size: var(--fs-sm); overflow-wrap: anywhere; }
 /* A notice that opens a section sits clear of the head's rule. */

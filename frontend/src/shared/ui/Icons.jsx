@@ -40,6 +40,11 @@ export const FolderIcon = (p) => (
 export const FolderPlusIcon = (p) => (
   <Icon {...p}><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" /><path d="M12 10v6" /><path d="M9 13h6" /></Icon>
 );
+// A folder with a minus: deleting folders and labels (Settings → AI → Tool
+// usage), beside the trash can of deleting pages.
+export const FolderMinusIcon = (p) => (
+  <Icon {...p}><path d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z" /><path d="M9 13h6" /></Icon>
+);
 export const FilePlusIcon = (p) => (
   <Icon {...p}><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" /><path d="M14 2v6h6" /><path d="M12 18v-6" /><path d="M9 15h6" /></Icon>
 );
@@ -299,6 +304,17 @@ export const PanelTopIcon = (p) => (
 );
 export const LayoutIcon = (p) => (
   <Icon {...p}><rect x="3" y="4" width="18" height="16" rx="2" /><path d="M3 15h18" /></Icon>
+);
+// Tab groups (workspace/TabGroups.jsx): a split into columns or rows, and
+// every tab back in one group.
+export const SplitColumnsIcon = (p) => (
+  <Icon {...p}><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M12 3v18" /></Icon>
+);
+export const SplitRowsIcon = (p) => (
+  <Icon {...p}><rect x="3" y="3" width="18" height="18" rx="2" /><path d="M3 12h18" /></Icon>
+);
+export const OnePaneIcon = (p) => (
+  <Icon {...p}><rect x="3" y="3" width="18" height="18" rx="2" /></Icon>
 );
 export const MonitorIcon = (p) => (
   <Icon {...p}><rect x="2" y="3" width="20" height="14" rx="2" /><line x1="8" y1="21" x2="16" y2="21" /><line x1="12" y1="17" x2="12" y2="21" /></Icon>

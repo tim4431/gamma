@@ -48,15 +48,14 @@ import io
 import json
 import re
 
-from PyPDF2 import PdfReader, PdfWriter
-from PyPDF2.generic import (
+from pypdf import PdfReader, PdfWriter
+from pypdf.generic import (
     ArrayObject,
     DecodedStreamObject,
     DictionaryObject,
     FloatObject,
     IndirectObject,
     NameObject,
-    NullObject,
     NumberObject,
     TextStringObject,
 )
@@ -66,23 +65,6 @@ DEFAULT_COLOR = (1.0, 226 / 255, 143 / 255, 0.65)  # the viewer's yellow
 # Where a Zotero copy's highlights and area notes keep their alpha instead of
 # /CA (module docstring); routers/imports.py reads it first.
 GAMMA_ALPHA = "/GammaAlpha"
-
-
-class ExportPdfReader(PdfReader):
-    """Keep dangling optional references from breaking PyPDF2's clone path."""
-
-    def get_object(self, indirect_reference):
-        obj = super().get_object(indirect_reference)
-        if obj is None:
-            # Missing indirect objects have PDF null semantics. PyPDF2 reads
-            # them as Python None, which its writer cannot clone. Retain the
-            # reference so the null is registered/deduplicated in the writer.
-            obj = NullObject()
-            obj.indirect_reference = indirect_reference
-            self.cache_indirect_object(
-                indirect_reference.generation, indirect_reference.idnum, obj
-            )
-        return obj
 
 
 def parse_css_color(value):
@@ -158,7 +140,7 @@ def _page_box(page, key):
 
 
 def page_frame(page):
-    """(view box, rotation) of a PyPDF2 page — the frame both mappers need.
+    """(view box, rotation) of a pypdf page — the frame both mappers need.
     The view box is the part of the page a viewer shows, and so the frame the
     client stores positions in: the crop box clipped to the media box, as
     pdf.js, pdfium and MuPDF clip it; the media box when there is no crop box
@@ -176,8 +158,42 @@ def page_frame(page):
 
 
 def _resolve(obj):
-    """PyPDF2 dict access can hand back unresolved IndirectObject references."""
+    """pypdf dict access can hand back unresolved IndirectObject references."""
     return obj.get_object() if hasattr(obj, "get_object") else obj
+
+
+def page_annotations(page) -> list:
+    """``page``'s /Annots as (entry, dictionary) pairs, without the entries
+    that lead to no dictionary, which a viewer passes over too: a null, or a
+    reference to an object the file has lost."""
+    annots = _resolve(page.get("/Annots"))
+    pairs = [(ref, _resolve(ref)) for ref in annots] if isinstance(annots, list) else []
+    return [(ref, obj) for ref, obj in pairs if isinstance(obj, DictionaryObject)]
+
+
+def copyable(page):
+    """``page``, fit for pypdf's copies of a page (``copy_pdf``,
+    ``PdfWriter.add_page``), which take every /Annots entry for a dictionary
+    and every /A for an action and raise on a file where one is not: only
+    ``page_annotations`` stay, and an annotation loses an /A that is no
+    action, which does nothing in a viewer either."""
+    if "/Annots" in page:
+        kept = page_annotations(page)
+        for _ref, obj in kept:
+            action = _resolve(obj.get("/A"))
+            if "/A" in obj and not (isinstance(action, DictionaryObject) and "/S" in action):
+                del obj[NameObject("/A")]
+        page[NameObject("/Annots")] = ArrayObject(ref for ref, _obj in kept)
+    return page
+
+
+def copy_pdf(reader) -> PdfWriter:
+    """A new writer holding ``reader``'s pages, each ``copyable`` first."""
+    for page in reader.pages:
+        copyable(page)
+    writer = PdfWriter()
+    writer.append(reader)
+    return writer
 
 
 # --- embedded annotations as the importer takes them --------------------------------
@@ -227,14 +243,18 @@ def reply_parent(annot):
 
 def first_rect(annot):
     """(x0, y0, x1, y1) of an annotation's first quad (/QuadPoints) or its
-    /Rect, in user space; None without either."""
-    qp = _resolve(annot.get("/QuadPoints"))
-    if qp:
-        nums = [float(_resolve(v)) for v in qp]
-        if len(nums) >= 8:
-            xs, ys = nums[0:8:2], nums[1:8:2]
-            return min(xs), min(ys), max(xs), max(ys)
-    r = [float(_resolve(v)) for v in (_resolve(annot.get("/Rect")) or ())]
+    /Rect, in user space; None without either, or when they hold anything
+    but numbers."""
+    try:
+        qp = _resolve(annot.get("/QuadPoints"))
+        if qp:
+            nums = [float(_resolve(v)) for v in qp]
+            if len(nums) >= 8:
+                xs, ys = nums[0:8:2], nums[1:8:2]
+                return min(xs), min(ys), max(xs), max(ys)
+        r = [float(_resolve(v)) for v in (_resolve(annot.get("/Rect")) or ())]
+    except (TypeError, ValueError):
+        return None
     if len(r) != 4:
         return None
     return min(r[0], r[2]), min(r[1], r[3]), max(r[0], r[2]), max(r[1], r[3])
@@ -254,9 +274,7 @@ def drop_annotations(page, doomed) -> int:
     resolved dictionaries) off ``page``'s /Annots, with their threads:
     the replies and review states that answer them (/IRT), at any depth, and
     their /Popup windows. Returns how many annotations went."""
-    from PyPDF2.generic import ArrayObject
-
-    items = [(ref, _resolve(ref)) for ref in (_resolve(page.get("/Annots")) or ())]
+    items = page_annotations(page)
     gone = set(doomed)
     while True:
         more = {id(obj) for _ref, obj in items if id(obj) not in gone and (
@@ -278,8 +296,7 @@ def _drop_replaced(page, pnum: int, keys) -> None:
     /Stamp, no reply, whose key is among ``keys`` (the ``imported_annot`` of
     the blocks the import made of them), with its thread."""
     doomed = set()
-    for ref in _resolve(page.get("/Annots")) or ():
-        obj = _resolve(ref)
+    for _ref, obj in page_annotations(page):
         subtype = str(obj.get("/Subtype", ""))
         if (subtype in REPLACED_TYPES and annotation_shown(obj) and reply_parent(obj) is None
                 and (rect := first_rect(obj)) and annotation_key(pnum, subtype, rect) in keys):
@@ -628,10 +645,20 @@ def highlight_note_blocks(block, children_by_id) -> list[tuple[int, str, str]]:
     return out
 
 
+# A note that opens as a list item has the marker a popup's list would add.
+_LIST_ITEM_RE = re.compile(r"(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)")
+
+
+def nested_note_line(depth: int, text: str) -> str:
+    """A note ``depth`` under a highlight as a line of its popup's list: a
+    bullet, unless it is a list item already."""
+    return "  " * (depth - 1) + ("" if _LIST_ITEM_RE.match(text) else "- ") + text
+
+
 def popup_text(blocks) -> str:
     """``highlight_note_blocks`` as an annotation popup's text: the
-    highlight's own note, the notes under it as an indented bullet list."""
-    return "\n".join(md if not depth else "  " * (depth - 1) + "- " + md for depth, md, *_ in blocks)
+    highlight's own note, the notes under it as an indented list."""
+    return "\n".join(nested_note_line(depth, md) if depth else md for depth, md, *_ in blocks)
 
 
 def highlight_note_text(block, children_by_id) -> str:
@@ -701,7 +728,7 @@ def _picture_annotation(writer, images, pic, rotation, crop, author, resolve_ref
     if text:
         annot[NameObject("/Contents")] = TextStringObject(text)
     if "opacity" in placed:
-        annot[NameObject("/CA")] = FloatObject(f"{placed['opacity']:g}")  # a string, or every binary digit
+        annot[NameObject("/CA")] = FloatObject(placed["opacity"])
     _sign(annot, author)
     if pic.get("modified"):
         annot[NameObject("/M")] = TextStringObject(_pdf_date(pic["modified"]))
@@ -742,9 +769,7 @@ def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=(),
     from .pdf_image import XObjectStore
     from .pdf_typeset import finalize_cid
 
-    reader = ExportPdfReader(io.BytesIO(pdf_bytes))
-    writer = PdfWriter()
-    writer.append(reader)
+    writer = copy_pdf(PdfReader(io.BytesIO(pdf_bytes)))
     glyphs = GlyphFonts(writer)
     if replaced:
         keys = set(replaced)
@@ -826,12 +851,12 @@ def page_with_ink(src, page_no: int, inks, *, pictures=(), text_boxes=(), replac
     ``annotate_pdf``) leave the copy first, so each is drawn once. The
     agent's view_ink and its pictures of the page as the user sees it
     render it (gamma/ink_view.py)."""
-    reader = ExportPdfReader(io.BytesIO(src) if isinstance(src, (bytes, bytearray)) else str(src))
+    reader = PdfReader(io.BytesIO(src) if isinstance(src, (bytes, bytearray)) else str(src))
     pages = len(reader.pages)
     if not 1 <= page_no <= pages:
         return b"", pages
     writer = PdfWriter()
-    writer.add_page(reader.pages[page_no - 1])
+    writer.add_page(copyable(reader.pages[page_no - 1]))
     page = writer.pages[0]
     if replaced:
         _drop_replaced(page, page_no, set(replaced))

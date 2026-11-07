@@ -359,25 +359,10 @@ def ensure_personal(user_id: str, *, welcome: bool = False) -> str:
     return ws_id
 
 
-def set_default(user_id: str, ws: str) -> None:
-    """Make one of the account's personal workspaces its default."""
-    update(ws, {}, default_for=user_id)
-
-
-def rename(ws: str, name: str) -> dict:
-    return update(ws, {"name": name})
-
-
 def set_access(ws: str, access: str, public_role: str) -> dict:
     """Private (members only) or public (every signed-in account gets
     ``public_role``). Shared workspaces only."""
     return update(ws, {"access": access, "public_role": public_role})
-
-
-def set_quota(ws: str, quota_mb: int | None) -> dict:
-    """A shared workspace's own upload cap in MB (None = unlimited). A
-    personal workspace is metered through its account instead."""
-    return update(ws, {"quota_mb": quota_mb})
 
 
 def set_kind(ws: str, kind: str) -> dict:

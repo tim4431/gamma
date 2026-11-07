@@ -1,4 +1,4 @@
-// A disposable workspace on the demo account retains its real AI configuration.
+// A disposable personal workspace on the demo account, loaded with the curated export, for the suite cases.
 import fs from 'node:fs';
 import path from 'node:path';
 import { ROOT } from './runtime.mjs';
@@ -19,8 +19,6 @@ if (process.argv.includes('--remove')) {
   if (fs.existsSync(file) && !JSON.parse(fs.readFileSync(file)).removed) throw new Error('An existing suite workspace is available; reuse or remove it first.');
   const base = process.env.BASE_URL || 'http://127.0.0.1:9001';
   const account = await new Account({ base }, process.env.DEMO_USER || 'demo', process.env.DEMO_PASSWORD).login();
-  const models = await account.api('/api/ai/models');
-  console.log('AI enabled:', models.enabled, 'available models:', models.models?.length);
   const workspace = await account.api('/api/workspaces', { method: 'POST', body: { name: 'Demo recording', kind: 'personal' } });
   account.ws = workspace.id;
   fs.writeFileSync(path.join(dir, 'session.txt'), account.session);

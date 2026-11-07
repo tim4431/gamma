@@ -406,6 +406,10 @@ look, gives way on `{taken: true}`, answers `hold`, and commits the
 samples the shell hands back at the lift through its own path. What
 follows is how the Android shell does its part, generally for any
 stylus that reports `TOOL_TYPE_STYLUS` (an S Pen, a USI pen, Wacom EMR).
+With nothing armed on a PDF page the page claims nothing and selects text
+or draws the rectangle ([handwriting.md](handwriting.md) "Claiming
+input"): the stylus reaches the WebView as it came, and what stops the
+pan and the palm is the page's `onTouch`.
 
 1. **Where.** `PenLayer` is a `FrameLayout` holding the page's WebView
    and the live line's views. Its `dispatchTouchEvent` sees every touch
@@ -516,8 +520,12 @@ with `gesture: "tap"` and `action: "switchEraser"`, the second
 choice for each ([settings.md](settings.md)). A press during which the
 pen touches the screen, leaves its range (`ACTION_HOVER_EXIT`) or is
 cancelled is no click, and no new press counts until the button has been
-seen up while the pen hovers: a button held while writing reaches the
-page as the barrel, which erases. The layer feeds every stylus
+seen up while the pen hovers. The first button held as the pen touches
+down reaches the page as an eraser (`PenRouter`'s rewrite, which also
+keeps Chromium's own stylus text selection off that stroke), the second
+held then goes on as an ordinary stroke, and either pressed later does
+nothing, since Chromium reports a contact's buttons as 1. The
+layer feeds every stylus
 MotionEvent to `PenButtons`, from the touch stream and from the generic
 one (hover, and `ACTION_BUTTON_PRESS` and `RELEASE`), and passes each on
 to the page unchanged. Some styluses also report their buttons as keys
@@ -1125,10 +1133,10 @@ that refuses, so the person's library is never touched. It waits up to
 three minutes for `/api/health`, signs in, uploads a one-page PDF it
 builds, makes the page for it, reads the manifest (`/api/pdf-info`, one
 page of 612 × 792 points) and asks for a page picture
-(`/api/ai/page-image`). A server without PyMuPDF starts and counts pages
-all the same, but answers 404 there, so the picture is the proof that the
-wheels load and render; a call that does not answer as expected fails
-with the server's log tail. It skips when the app starts its own server
+(`/api/ai/page-image`). Both come from PyMuPDF, which the server imports
+at its first PDF read (`/api/health` proves only the start), so they are
+the proof that the wheels load and render; a call that does not answer as
+expected fails with the server's log tail. It skips when the app starts its own server
 (its last server opened was This device), since an interpreter starts
 once per process. It asks the app's server, which is already starting
 before any test runs, rather than the interpreter, which starts only once
@@ -1401,8 +1409,8 @@ Checked on an emulator (an Android 16 tablet image, WebView 133):
   and the silent sign-in lands on the library as `admin`.
 - `LocalServerStartTest` passes: health, sign-in, the PDF's upload, its
   page, `pdf-info`, and a page picture from PyMuPDF.
-- A stylus stroke (`adb shell input stylus`) is claimed by the page,
-  drawn by the front-buffered live line, delivered as one `stroke` and
+- A stylus stroke (`adb shell input stylus`) with a pen armed is claimed
+  by the page, drawn by the front-buffered live line, delivered as one `stroke` and
   committed. Draw and hold snaps a held straight line: `hold`, then
   `{shape: line}`, the haptic, and the `stroke` with `held`. A stylus tap
   is declined (the claim comes after the touch ended), and the page draws
@@ -1433,8 +1441,8 @@ hardware (an S Pen tablet, a USI pen, a Wacom EMR device):
    samples); and, on a device whose stylus and touchscreen are separate
    input devices, a palm that must not abandon a captured stroke (a
    gesture is one device's here).
-5. **The buttons.** A click while hovering sends `pencil`, and a button
-   held while writing erases; whether Samsung's Air Command takes hover
+5. **The buttons.** A click while hovering sends `pencil`, and the first
+   button held as the pen touches down erases; whether Samsung's Air Command takes hover
    clicks; whether a real pen's button keys reach the app at all (the
    emulator's `input keyevent` did not); the eraser end erasing; the tail
    button left to the system.
@@ -1506,6 +1514,14 @@ hardware (an S Pen tablet, a USI pen, a Wacom EMR device):
 24. **The iPad after the move** of its entry to `backend/gamma_mobile.py`
     and its pins to `backend/requirements-mobile.txt`: `ipad.yml` must run
     on a Mac.
+25. **A stylus with nothing armed on a PDF page.** A drag selects text
+    without panning and the popup opens at its lift, a tap clicks a link
+    (the page's own click), a palm on the page, on the next page or in a
+    gap neither pans nor pinches during the drag, and a pen held still
+    starts no system word selection. Blink shows no handles for a
+    selection set from script, so the page's popup is all that finishes
+    one. The cost of unbuffered dispatch on such a stroke, which no claim
+    follows.
 
 ## Not built yet
 

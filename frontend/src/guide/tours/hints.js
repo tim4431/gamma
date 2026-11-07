@@ -15,14 +15,15 @@ export const mathKeys = {
   steps: [{ id: "math-keys", anchor: "editor.mathPreview", placement: "top", title: T("{key:Tab} accepts a suggestion, or jumps to the next { }; {key:\\} looks up a symbol.") }],
 };
 
-// Enter broke a line in a note that has text, where Enter is not the
-// new-note key (Settings → Keyboard): most outliners do the reverse.
-// Retired once the user has made a note with the right key.
+// Enter broke a line in a note that has text, on an account whose Enter
+// makes a new line (Settings → Keyboard; the default makes a note): which
+// key makes a note there is not obvious. Retired once the user has made a
+// note with the right key.
 export const newNoteKey = {
   id: "new-note-key",
   version: 1,
   hint: true,
-  requires: { enterNewNote: false, editable: true },
+  requires: { enterNewBlock: false, editable: true },
   trigger: { event: "note.lineBreak", doneOn: { event: "block.created" } },
   steps: [{ id: "new-note-key", anchor: "notes.editor", placement: "left",
     title: T("{key:Shift-Enter} starts a new note; {key:Tab} nests it under the one above.") }],

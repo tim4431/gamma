@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { canRedo, canRevert, forReplay, markReverted, revertKind, revertOrder, revertRefusal } from "../src/chat/aiRevert.js";
+import { canRedo, canRevert, forReplay, markReverted, revertKind, revertRefusal, revertible } from "../src/chat/aiRevert.js";
 import { createChatSession } from "../src/chat/chatSession.js";
 
 const edit = (id, extra = {}) => ({ kind: "edit", tool: "edit_block", block_id: id, page_id: "p",
@@ -17,7 +17,7 @@ test("only the agent's recorded note changes can be reverted, once", () => {
   assert.equal(canRevert({ kind: "rename", tool: "rename_page", page_id: "p", summary: "Renamed", revert: {} }), false);
 });
 
-test("a deleted folder or label reverts from its library row, outside Revert all", () => {
+test("a deleted folder or label reverts from its library row", () => {
   const folderDelete = { kind: "delete", tool: "delete_folder", block_id: "f", title: "X", count: 1,
     summary: "Deleted the folder “X”", revert: { tree: "folders", blocks: [], pages: {} } };
   assert.equal(canRevert(folderDelete), true);
@@ -26,7 +26,21 @@ test("a deleted folder or label reverts from its library row, outside Revert all
   // A rename is undone by another call, whatever it carries.
   assert.equal(canRevert({ kind: "rename", tool: "rename_folder", block_id: "f", summary: "Renamed the folder “X” → “Y”",
     from: "X", to: "Y", revert: { tree: "folders" } }), false);
-  assert.deepEqual(revertOrder([edit("b1"), folderDelete]), [0]);
+});
+
+test("pages deleted or restored revert from their library row, as kind trash", () => {
+  const deleted = { kind: "delete", tool: "delete_page", summary: "Deleted 2 pages", changes: 2,
+    items: [{ page_id: "a", title: "A", inside: 0 }, { page_id: "b", title: "B", inside: 1 }], revert: { trash: ["a", "b"] } };
+  const restored = { kind: "restore", tool: "restore_page", page_id: "a", title: "A", to: "", summary: "Restored “A”",
+    revert: { restore: ["a"] } };
+  for (const a of [deleted, restored]) {
+    assert.equal(canRevert(a), true, a.tool);
+    assert.equal(canRedo({ ...a, reverted: true }), true, a.tool);
+    assert.equal(revertKind(a), "trash", a.tool);
+  }
+  // A restore saved before it recorded its pages has nothing to revert.
+  assert.equal(canRevert({ ...restored, revert: undefined }), false);
+  assert.equal(canRevert({ ...deleted, revert: { trash: [] } }), false);
 });
 
 test("a page tool's change reverts from its library row, one page or many, without a block id", () => {
@@ -43,8 +57,6 @@ test("a page tool's change reverts from its library row, one page or many, witho
   assert.equal(canRevert(moved), true);
   assert.equal(canRevert({ ...moved, revert: { pages: [] } }), false);
   assert.equal(canRevert({ ...moved, revert: { pages: {} } }), false);
-  // A restore records none.
-  assert.equal(canRevert({ kind: "restore", tool: "restore_page", summary: "Restored 2 pages", changes: 2, items: [] }), false);
   assert.equal(canRevert({ kind: "rename", tool: "rename_folder", block_id: "f", summary: "Renamed the folder “X” → “Y”",
     revert: { pages: [["a", "title", "x", "y"]] } }), false);
   // The endpoint's kind: "pages" for a page tool, the action's own otherwise.
@@ -53,8 +65,6 @@ test("a page tool's change reverts from its library row, one page or many, witho
   assert.equal(revertKind(edit("b1")), "edit");
   assert.equal(revertKind({ kind: "delete", tool: "delete_folder", block_id: "f", revert: { tree: "folders", pages: { a: ["f"] } } }),
     "delete");
-  // Revert all is the notes' only.
-  assert.deepEqual(revertOrder([edit("b1"), renamed]), [0]);
 });
 
 test("a revert or redo that left pages as they were keeps how many; a clean one drops the count", () => {
@@ -92,9 +102,18 @@ test("the replay leaves the reverting texts out and keeps the mark", () => {
   assert.deepEqual(sent[1], { kind: "read", tool: "read_block" });
 });
 
-test("revert all goes newest first and skips what can't be reverted", () => {
-  const actions = [edit("b1"), { kind: "read", tool: "read_block" }, edit("b2", { reverted: true }), edit("b3")];
-  assert.deepEqual(revertOrder(actions), [3, 0]);
+test("the conversation's changes to revert go newest first, library and notes, and skip what can't be reverted", () => {
+  const renamed = { kind: "rename", tool: "rename_page", summary: "Renamed", revert: { pages: [["a", "title", "x", "y"]] } };
+  const messages = [
+    { id: "q1", role: "user", text: "fix" },
+    { id: "r1", role: "ai", actions: [edit("b1"), { kind: "read", tool: "read_block" }, edit("b2", { reverted: true }), renamed] },
+    { id: "q2", role: "user", text: "again", actions: [edit("bx")] },
+    { id: "r2", role: "ai", actions: [edit("b3")] },
+    { role: "ai", actions: [edit("b4")] }, // no id: nothing can mark it
+  ];
+  assert.deepEqual(revertible(messages).map(({ id, index }) => [id, index]), [["r2", 0], ["r1", 3], ["r1", 0]]);
+  assert.equal(revertible(messages)[1].action, renamed);
+  assert.deepEqual(revertible([]), []);
 });
 
 test("a revert marks its actions on its own message only", () => {

@@ -701,7 +701,7 @@ def test_list_folders_shows_the_tree_with_counts(org):
 
 
 def _blank_pdf(path, pages=2):
-    from PyPDF2 import PdfWriter
+    from pypdf import PdfWriter
     w = PdfWriter()
     for _ in range(pages):
         w.add_blank_page(width=200, height=300)

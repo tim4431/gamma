@@ -1,6 +1,6 @@
-"""The backend runs on Python 3.11 and up (docs/dev/debugging.md): CI and
-the Docker image on 3.12, the iPad on 3.13, a checkout's venv maybe on a
-newer one. What a newer Python accepts and an older one refuses fails here
+"""The backend runs on Python 3.11 and up (docs/dev/debugging.md): the
+Docker image on 3.12, the iPad and Android on 3.13, CI's suite on both, a
+checkout's venv maybe on a newer one. What a newer Python accepts and an older one refuses fails here
 too: syntax past 3.11, and an annotation that does not evaluate. Before
 3.14 a function's annotations are evaluated as it is defined, so one that
 names what it cannot be (a class's own ``int`` method, in a later method's

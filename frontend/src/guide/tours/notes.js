@@ -1,7 +1,7 @@
 import { T } from "../../shared/i18n/i18n.js";
 // Offered on the eighth note made in a load: by then moving and nesting
 // notes pays. The ⋮⋮ handle drags (further right nests) and opens the
-// note's menu; the + under it adds a note, Alt+click above. The handles show
+// note's menu; the + beside it adds a note, Alt+click above. The handles show
 // on hover, and while the guide points at one ([data-guide-active]). The
 // steps point at the last note's handles (`pick: "last"`). Mouse only: on a
 // touch screen the handle neither drags nor has a + beside every note.

@@ -11,8 +11,9 @@ import kotlin.math.abs
  * which goes back to the last tool. A press the pen touches the screen during,
  * or leaves range during (ACTION_HOVER_EXIT, ACTION_CANCEL), is no click, and
  * no new press counts until the button is seen up while the pen hovers: a
- * button held while writing reaches the page as the barrel (buttons & 2),
- * which erases, so nothing is sent for it. Some styluses report their buttons
+ * primary button held as the pen touches down reaches the page as an eraser
+ * (PenRouter's rewrite), the secondary held then goes on as an ordinary
+ * stroke, and neither sends anything. Some styluses report their buttons
  * as key events too (API 34 KEYCODE_STYLUS_BUTTON_PRIMARY and SECONDARY), by
  * the same rules; a key click within `window` seconds of the motion click of
  * the same button is that click, counted once.

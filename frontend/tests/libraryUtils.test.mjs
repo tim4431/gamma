@@ -7,7 +7,7 @@ import {
   NO_LABEL, NO_LABEL_TITLE, addToFolder, childFolders, defaultPageTitle, filedIn, findNamed, findPageForUrl,
   firstFolderPath, folderChain, folderEntries, folderNeighbour, folderPath, folderPosition, folderPositions, folderSubtree, folderTargets,
   formatFullDate, formatRelativeTime, formatShortDate,
-  attachmentFile, inFolder, isFreshLibrary, labelName, libraryTree, normalizeLinkInput, pageAttachment,
+  attachmentFile, inFolder, isFreshLibrary, isLinkInput, labelName, libraryTree, normalizeLinkInput, pageAttachment,
   siblingFolders,
 } from "../src/library/libraryUtils.js";
 
@@ -171,6 +171,17 @@ test("normalizeLinkInput turns identifiers into URLs", () => {
   assert.equal(normalizeLinkInput("doi: 10.1/x"), "https://doi.org/10.1/x");
   assert.equal(normalizeLinkInput("10.1/x"), "https://doi.org/10.1/x");
   assert.equal(normalizeLinkInput("  "), "");
+});
+
+// The link dialog's field: a link it offers to link to, or a search of the pages.
+test("isLinkInput tells a link from a search", () => {
+  for (const link of ["https://x.test/a", "http://x.test", "2101.00001", "2101.00001v2", "arXiv:2101.00001",
+    "arxiv: 2101.00001", "10.1103/PhysRevLett.1", "doi: 10.1103/abc", " 10.48550/arXiv.2101.00001 "]) {
+    assert.equal(isLinkInput(link), true, link);
+  }
+  for (const search of ["", "attention", "Cavity readout", "2101", "10.1103", "https://", "arxiv attention"]) {
+    assert.equal(isLinkInput(search), false, search);
+  }
 });
 
 test("pageAttachment and defaultPageTitle", () => {

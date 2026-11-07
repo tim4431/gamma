@@ -318,7 +318,7 @@ class Layout:
 
     def _display_math(self, tex: str, x: float):
         drawn = vector_text.math(tex, FONT_SIZE * DISPLAY_MATH_SCALE)
-        if not drawn:                               # no ziamath, or it choked
+        if not drawn:                               # ziamath choked
             self._lines(plain(latex_spans(tex)), x)
             return
         drawing, w, h, _ascent = drawn

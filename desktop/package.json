@@ -7,9 +7,9 @@
   "main": "main.js",
   "private": true,
   "scripts": {
-    "store-art": "node scripts/store-art.js",
+    "store-art": "node ../tools/branding/build.mjs",
     "start": "electron .",
-    "test": "node --test test/keeping.test.js test/cloudSignIn.test.js test/sidecar.test.js test/openFiles.test.js test/hostPath.test.js test/folderAccess.test.js test/microphone.test.js test/registry.test.js test/main.test.js test/headed.test.js",
+    "test": "node --test test/keeping.test.js test/cloudSignIn.test.js test/sidecar.test.js test/startup.test.js test/openFiles.test.js test/hostPath.test.js test/folderAccess.test.js test/microphone.test.js test/registry.test.js test/main.test.js test/headed.test.js test/loadPage.test.js test/windowControls.test.js",
     "smoke": "node test/smoke.js",
     "smoke:packaged": "node test/smoke.js --packaged",
     "e2e": "node test/e2e.js",
@@ -20,7 +20,7 @@
     "pack:mas-dev": "umask 022 && electron-builder --config electron-builder.mas.cjs --mac mas-dev --publish never"
   },
   "devDependencies": {
-    "electron": "^38.0.0",
+    "electron": "^45.2.3",
     "electron-builder": "^26.0.12",
     "playwright-core": "^1.55.0"
   },

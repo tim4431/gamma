@@ -419,8 +419,8 @@ test("every key of docs/research/block-properties.md's catalog has an entry, wit
     "collapsed", "zotero_readonly", "zotero_author", "doc_id", "source_url", "original_filename", "folders", "labels", "pinned",
     "meta", "meta_error", "auto_title", "bibtex", "cite_key", "ppt_cite", "web_url", "web_meta", "web_clips", "markdown_import",
     "notion_id", "aliases", "notability_import", "goodnotes_import", "zotero_key", "zotero_pdf", "zotero_note", "zotero_rdf",
-    "zotero_annotation", "zotero_attachments", "zotero_attachment", "seeded", "deleted_at", "deleted_by", "parent_page", "deleted_with", "highlight_id",
-    "link_highlight_id", "sourceUrl", "folder", "category", "summary", "guide_demo"];
+    "zotero_annotation", "zotero_attachments", "zotero_attachment", "seeded", "deleted_at", "deleted_by", "parent_page", "deleted_with",
+    "summary", "guide_demo"];
   for (const key of keys) {
     assert.ok(named.has(key), `${key} is named in the doc's catalog`);
     assert.ok(CATALOG[key]?.label && CATALOG[key].hint && CATALOG[key].section, `${key} has a catalog entry`);
@@ -429,7 +429,7 @@ test("every key of docs/research/block-properties.md's catalog has an entry, wit
     "recording.started", "recording.segments", "recording.dur", "recording.by", "recording.at"]) {
     assert.ok(CATALOG[key]?.label && CATALOG[key].hint, key);
   }
-  for (const key of ["highlight_id", "link_highlight_id", "sourceUrl", "folder", "category", "summary", "guide_demo"]) {
+  for (const key of ["summary", "guide_demo"]) {
     assert.equal(CATALOG[key].legacy, true, key);
   }
 });

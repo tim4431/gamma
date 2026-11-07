@@ -472,6 +472,24 @@ def test_text_survives_the_round_trip_whitespace_and_escapes_aside():
     assert r.kept == {"F", "G"}
 
 
+def test_a_bullet_is_represented_as_its_list_item():
+    root = blk("R", "Root", blk("A", "- a", blk("B", "- b")), blk("C", "plain"), blk("D", "- 1) one"),
+               blk("T", "- [ ] to do"), blk("L", "- ![](https://x.org/p.png)", blk("U", "- under a picture")))
+    r = represented(root)
+    assert [(b, c) for b, _, c in r.blocks] == [("R", "Root"), ("A", "a"), ("B", "b"), ("C", "plain"),
+                                                ("D", r"1\) one"), ("T", r"\- \[ ] to do")]
+    assert r.html == ("<p>Root</p><ul><li>a<ul><li>b</li></ul></li><li>plain</li><li>1) one</li>"
+                      "<li>- [ ] to do</li></ul>")
+    assert r.bullets == {"A", "B", "D"} and r.kept == {"L", "U"} and not r.unsettable
+
+
+def test_a_bullet_root_is_settable():
+    r = represented(blk("R", "- root", blk("A", "child")))
+    assert r.blocks == [("R", 0, "root"), ("A", 1, "child")]
+    assert r.html == "<ul><li>root</li><li>child</li></ul>"
+    assert r.bullets == {"R"} and not r.unsettable
+
+
 def test_the_note_merge_reads_a_blocks_text_by_the_writers_rule():
     from gamma import zotero_merge, zotero_notes
     assert zotero_merge.block_text is zotero_notes.block_text
@@ -609,6 +627,76 @@ def test_a_pulled_paragraph_edit_sets_that_block_alone():
     assert edits == [{"op": "set", "id": "A", "content": "First point, revised"}]
     assert page.kids["R"] == ["A", "H", "B", "I", "W", "E"]  # nested highlight, picture, ink: in place
     assert page.kids["B"] == ["C", "K"]
+
+
+def test_a_pull_leaves_an_unchanged_bullet_alone():
+    r = represented(blk("R", "- root", blk("A", "- a", blk("B", "- b"))))
+    assert note_edits(r, r.html) == []
+    assert note_edits(r, note_tree(r.html)) == []
+
+
+def test_a_changed_pull_keeps_a_bullets_marker():
+    root = blk("R", "- root", blk("A", "- a", blk("B", "- b")), blk("C", "plain"))
+    html = "<ul><li>root 2</li><li>a 2<ul><li>b</li></ul></li><li>plain 2</li></ul>"
+    r, page, edits = apply_note(root, html)
+    assert edits == [{"op": "set", "id": "R", "content": "- root 2"}, {"op": "set", "id": "A", "content": "- a 2"},
+                     {"op": "set", "id": "C", "content": "plain 2"}]
+    again = represented(page.tree("R"))
+    assert again.html == html and note_edits(again, html) == []
+
+
+def test_a_line_zotero_adds_to_a_list_comes_in_plain():
+    r = represented(blk("R", "Root", blk("A", "- a")))
+    assert note_edits(r, "<p>Root</p><ul><li>a</li><li>b</li></ul>") == [
+        {"op": "insert", "id": "new:2", "parent": "R", "after": "A", "content": "b"}]
+
+
+def test_a_pull_that_makes_a_bullet_something_else_drops_its_marker():
+    r = represented(blk("R", "Root", blk("A", "- a"), blk("B", "- b", blk("C", "c"))))
+    assert note_edits(r, "<p>Root</p><ol><li>a</li></ol><ul><li><ul><li>c</li></ul></li></ul>") == [
+        {"op": "set", "id": "A", "content": "1. a"}, {"op": "set", "id": "B", "content": ""}]
+
+
+def test_a_lossy_edit_of_a_bullet_root_keeps_its_marker():
+    r = represented(blk("R", "- About [[blk1]]", blk("A", "child")))
+    assert r.unsettable == {"R"} and r.bullets == {"R"}
+    edits = note_edits(r, "<ul><li>About something else</li><li>child</li></ul>")
+    assert edits == [{"op": "lossy", "id": "R", "content": "- About something else"}]
+
+
+def test_a_note_sent_before_bullets_were_list_items_holds_the_marker_once():
+    root = blk("R", "- root", blk("A", "- a"), blk("B", "- b"), blk("C", "- 1) one"), blk("P", "plain"))
+    r = represented(root)
+    # read as it stands: nothing to change, the dash being the block's own marker
+    assert note_edits(r, "<p>- root</p><ul><li>- a</li><li>plain</li></ul>") == [{"op": "delete", "id": "C"},
+                                                                                {"op": "delete", "id": "B"}]
+    # its words changed, or a number under the dash: the one marker, whatever the words read as
+    edits = note_edits(r, "<p>- root</p><ul><li>- a</li><li>- b 2</li><li>- 1) one</li><li>plain</li></ul>")
+    assert edits == [{"op": "set", "id": "B", "content": "- b 2"}, {"op": "set", "id": "C", "content": "- 1) one"}]
+
+
+def test_a_literal_dash_stays_where_it_is_the_blocks_own():
+    r = represented(blk("R", "Root", blk("A", r"- \- a"), blk("P", r"\- b")))
+    assert [c for _, _, c in r.blocks] == ["Root", r"\- a", r"\- b"] and r.bullets == {"A"}
+    assert note_edits(r, r.html) == []
+    assert note_edits(r, "<p>Root</p><ul><li>- a 2</li><li>- b 2</li></ul>") == [
+        {"op": "set", "id": "A", "content": r"- \- a 2"}, {"op": "set", "id": "P", "content": r"\- b 2"}]
+
+
+@pytest.mark.parametrize("order", ["cab", "bac"])
+def test_a_bullet_zotero_reorders_keeps_its_marker(order):
+    root = blk("R", "Root", blk("A", "- a"), blk("B", "- b"), blk("C", "- c"))
+    html = "<p>Root</p><ul>" + "".join(f"<li>{x}</li>" for x in order) + "</ul>"
+    r, page, edits = apply_note(root, html)
+    assert [e["content"] for e in edits if e["op"] == "insert"] == [f"- {order[0]}"]
+    again = represented(page.tree("R"))
+    assert len(again.bullets) == 3 and again.html == html
+
+
+def test_a_plain_block_zotero_reorders_stays_plain():
+    root = blk("R", "Root", blk("A", "a"), blk("B", "- b"), blk("C", "c"))
+    edits = note_edits(represented(root), "<p>Root</p><ul><li>c</li><li>a</li><li>b</li></ul>")
+    assert [e["content"] for e in edits if e["op"] == "insert"] == ["c"]
 
 
 def test_a_pulled_paragraph_is_inserted_in_place():

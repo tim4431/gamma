@@ -1,6 +1,7 @@
 """The agent's library tools beyond reading and filing: cite (the citation
 records kept with pages), save_paper (the clip ingest, as the reply's Save
-to library runs it) and Recently deleted (list_deleted, restore_page).
+to library runs it) and Recently deleted (list_deleted, restore_page,
+delete_page, and the revert of a deletion or a restore).
 Upstream fetches are faked and the metadata thread is stubbed out."""
 
 import io
@@ -12,6 +13,7 @@ import gamma.routers.clip as clip_mod
 import gamma.routers.pdf as pdf_mod
 from conftest import make_folder
 from gamma.ai_tools import MAX_SAVES, Tally, approval_preview, run_agent_tool
+from gamma.db import connect_pages_db
 
 from ai_fixtures import FakeResp, ai_provider, folder, org, props  # noqa: F401  (fixtures)
 
@@ -270,6 +272,105 @@ def test_list_and_restore_deleted_pages_within_the_folder(org):
     assert "not deleted" in text and action["noop"]
     text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "restore_page", {"page_id": "nope"})
     assert text.startswith("error") and action["error"]
+
+
+def _revert(c, action, redo=False):
+    return c.post("/api/ai/revert", json={"kind": "trash", "block_id": "", "revert": action["revert"], "redo": redo})
+
+
+def _where(ws, page_id):
+    """"library", "trash" or "gone": where a page is — a page that went to
+    Recently deleted inside another is listed only through that one."""
+    with connect_pages_db(ws) as conn:
+        row = conn.execute("SELECT parent_id FROM unified_blocks WHERE id = ?", (page_id,)).fetchone()
+    return {"root": "library", "trash": "trash"}.get(row[0], "gone") if row else "gone"
+
+
+def test_a_restore_reverts_to_recently_deleted_and_redoes(org):
+    c, ids = org
+    page = _page(c, "a restore to revert", {"folders": [ids["readout"]]})
+    assert c.delete(f"/api/blocks/{page}").status_code == 200
+    _, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "restore_page", {"page_id": page})
+    assert action["revert"] == {"restore": [page]}
+    r = _revert(c, action)
+    assert r.status_code == 200 and r.json() == {"page_id": "", "noop": False}, r.text
+    assert _where(ids["ws"], page) == "trash"
+    assert _revert(c, action).json()["noop"], "deleted already: nothing to do"
+    assert _revert(c, action, redo=True).status_code == 200
+    assert _where(ids["ws"], page) == "library" and props(c, page)["properties"]["folders"] == [ids["readout"]]
+
+
+def test_delete_page_moves_pages_to_recently_deleted_and_reverts(org):
+    c, ids = org
+    shelf = make_folder(c, "readout/doomed")
+    one, two = _page(c, "doomed one", {"folders": [shelf]}), _page(c, "doomed two", {"folders": [ids["readout"]]})
+    inner = _page(c, "doomed inner", {"parent_page": two})
+    args = {"page_ids": [one, two, inner, ids["note"], "nope"]}
+    text, action = run_agent_tool(ids["ws"], folder(ids["readout"]), "delete_page", args)
+    assert text.startswith("ok — moved 2 of 5 pages to Recently deleted, with the 1 page inside."), text
+    assert f"Already so, not changed: {inner}\n" in text and "outside this chat's scope" in text
+    assert text.endswith("\nThey stay there for 30 days: restore_page brings them back, and the user can revert "
+                         "this from the reply."), text
+    assert (action["kind"], action["changes"], action["inside"]) == ("delete", 2, 1)
+    assert [i["title"] for i in action["items"]] == ["doomed one", "doomed two"]
+    assert action["revert"] == {"trash": [one, two]}
+    assert [_where(ids["ws"], p) for p in (one, two, inner, ids["note"])] == ["trash", "trash", "trash", "library"]
+    listed = {p["id"]: p for p in c.get("/api/trash").json()["pages"]}
+    assert listed[two]["sub_pages"] == 1 and inner not in listed, "the inner page went with its page"
+
+    # A revert restores them where they were, the inner page inside its page; a redo deletes them again.
+    r = _revert(c, action)
+    assert r.status_code == 200 and r.json() == {"page_id": "", "noop": False}, r.text
+    assert [_where(ids["ws"], p) for p in (one, two, inner)] == ["library"] * 3
+    assert props(c, one)["properties"]["folders"] == [shelf]
+    assert props(c, inner)["properties"]["parent_page"] == two
+    assert _revert(c, action, redo=True).status_code == 200
+    assert [_where(ids["ws"], p) for p in (one, two, inner)] == ["trash"] * 3
+    # One page restored by hand since is passed by; one deleted for good is counted.
+    assert c.post(f"/api/trash/{one}/restore").status_code == 200
+    assert c.delete(f"/api/trash/{two}").status_code == 200
+    r = _revert(c, action)
+    assert r.status_code == 200 and r.json() == {"page_id": "", "noop": True, "kept": 1}, r.text
+    assert c.delete(f"/api/blocks/{one}").status_code == 200
+    assert c.delete(f"/api/trash/{one}").status_code == 200
+    r = _revert(c, action)
+    assert r.status_code == 409 and r.json()["conflict"] == "kept", r.text
+
+
+def test_delete_page_one_page_and_its_refusals(org):
+    c, ids = org
+    page = _page(c, "a lone page to delete", {"folders": [ids["cooling"]]})
+    text, _ = run_agent_tool(ids["ws"], folder(ids["readout"]), "delete_page", {"page_ids": [page]})
+    assert text.startswith("error") and "outside this chat's scope" in text and _where(ids["ws"], page) == "library"
+    text, action = run_agent_tool(ids["ws"], folder(ids["cooling"]), "delete_page", {"page_ids": [page]})
+    assert text.startswith('ok — moved "a lone page to delete"'), text
+    assert (action["kind"], action["page_id"], action["title"], action["inside"]) == (
+        "delete", page, "a lone page to delete", 0)
+    assert action["summary"] == "Deleted “a lone page to delete”" and action["revert"] == {"trash": [page]}
+    text, action = run_agent_tool(ids["ws"], folder(ids["cooling"]), "delete_page", {"page_ids": [page]})
+    assert "in Recently deleted already" in text and action["noop"]
+    # A page chat has no delete_page; delete_block refuses a page and names the tool that deletes one.
+    text, _ = run_agent_tool(ids["ws"], {"type": "page", "page_id": ids["a"]}, "delete_page", {"page_ids": [ids["a"]]})
+    assert "unknown tool" in text
+    text, _ = run_agent_tool(ids["ws"], folder(""), "delete_block", {"block_id": ids["a"]})
+    assert text.startswith("error") and "delete_page" in text and _where(ids["ws"], ids["a"]) == "library"
+
+
+def test_the_approval_card_shows_what_a_page_deletion_takes(org):
+    c, ids = org
+    shelf = make_folder(c, "readout/cards-doomed")
+    one, two = _page(c, "card doomed one", {"folders": [shelf]}), _page(c, "card doomed two", {"folders": [shelf]})
+    _page(c, "card doomed inner", {"parent_page": two})
+    scope = {**folder(shelf), "can_write": True}
+    preview, answer = approval_preview(ids["ws"], scope, "delete_page", {"page_ids": [one]})
+    assert answer is None and preview == {"page_id": one, "title": "card doomed one",
+                                          "diff": [["del", "card doomed one"]], "inside": 0, "days": 30}
+    preview, answer = approval_preview(ids["ws"], scope, "delete_page", {"page_ids": [one, two, ids["note"]]})
+    assert answer is None
+    assert (preview["count"], preview["inside"], preview["left_out_count"]) == (2, 1, 1)
+    assert preview["diff"] == [["del", "card doomed one"], ["ctx", "\n"], ["del", "card doomed two"]]
+    assert preview["left_out"] == ["“loose note”"] and preview["digest"]
+    assert _where(ids["ws"], one) == _where(ids["ws"], two) == "library", "a preview deletes nothing"
 
 
 def test_the_approval_card_shows_what_a_restore_would_bring_back(org):

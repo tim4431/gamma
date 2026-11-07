@@ -1,7 +1,9 @@
 # www → apex lives in src/index.js: sources here must be relative paths.
+# The download section lives on the front page; deployed account pages link to /download.
+/download            /#download 302
+/download/           /#download 302
 # Short links used in the app, the README and release notes.
-/download            https://github.com/tim4431/Gamma/releases/latest 302
-/download/windows    https://apps.microsoft.com/detail/9N8WGWR2J2MV 302
+/download/windows   https://apps.microsoft.com/detail/9N8WGWR2J2MV 302
 /download/macos      https://github.com/tim4431/Gamma/releases/latest 302
 /download/linux      https://github.com/tim4431/Gamma/releases/latest 302
 /download/extension  https://chromewebstore.google.com/detail/gamma-connector/njpeklephhndnpakmlaancinpnabcomn 302

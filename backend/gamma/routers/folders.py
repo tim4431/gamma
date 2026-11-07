@@ -33,7 +33,7 @@ def delete_tree_block(ws: str, tree: str, block_id: str, *, actor: str) -> dict:
         except OpError as e:
             raise HTTPException(status_code=e.status, detail=e.detail)
     return {"ids": sorted(r[0] for r in rows), "pages": list(carried),
-            "chats": results[0]["chats_filed"], "shares": results[0].get("shares_stopped", 0)}
+            "chats": len(results[0]["chats_filed"]), "shares": results[0].get("shares_stopped", 0)}
 
 
 def _writer(request: Request) -> str:

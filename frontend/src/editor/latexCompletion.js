@@ -5,6 +5,9 @@
 // re-exports these next to the preview and popup components;
 // tests/latexCompletion.test.mjs pins the matching rules.
 import { escapedAt, leftDelimiterEdit, rightDelimiterAt } from "./latexInput.js";
+import { codeTest } from "../shared/lib/mdCode.js";
+
+const BLANK_LINE = /\n[ \t]*\n/;
 
 // --- command catalog -------------------------------------------------------
 // Order = rank within an equal match tier. Entries: name, args (brace count
@@ -348,13 +351,20 @@ export function latexCompletionEdit(value, start, end, entry, display) {
 // A "$" the caret sits right in front of is never an escaped one: "$\|$" is
 // the auto-paired closer with a \command being started before it, not a
 // literal dollar — reading it as "\$" would swallow the closer and preview
-// the whole rest of the line as math.
+// the whole rest of the line as math. A dollar in code is none (mdCode.codeTest),
+// and a lone "$" ends with its paragraph.
 export function findMathAtCursor(value, cursor) {
   const re = /\$\$?/g;
+  const inCode = codeTest(value);
   let m, open = null;
   while ((m = re.exec(value))) {
-    if (m.index !== cursor && escapedAt(value, m.index)) continue;
+    if ((m.index !== cursor && escapedAt(value, m.index)) || inCode(m.index)) continue;
     const tok = { i: m.index, len: m[0].length };
+    if (open?.len === 1 && BLANK_LINE.test(value.slice(open.i, tok.i))) {
+      const start = open.i + 1, end = value.indexOf("\n", start);
+      if (cursor >= start && cursor <= end) return { start, end, display: false };
+      open = null;
+    }
     if (!open) {
       if (tok.i >= cursor) return null;
       open = tok;

@@ -7,6 +7,7 @@
 // deciding between wrap and unwrap. Pure string functions, no CodeMirror —
 // the editor adapts the results.
 import { T } from "../shared/i18n/locales.js";
+import { codeSpans } from "../shared/lib/mdCode.js";
 
 // A colored run: the text color and/or a background tint, as inline CSS. Its
 // opening tag varies with the style, so the table's `marker` names the kind.
@@ -21,9 +22,11 @@ const COLOR_SPAN_RE = /<span style="(?:(?:color|background(?:-color)?):[^";<>]+;
 // italic inside, "*a **b** c*" the reverse, and "***x***" is bold+italic in
 // one — its `layers` are what Ctrl+B / Ctrl+I peel off. `close` is the
 // closing delimiter where it is not the opening `marker` again. Every
-// pattern's first group is the span's content.
+// pattern's first group is the span's content. Code has no pattern: its
+// spans are mdCode.codeSpans, CommonMark's backtick runs ("``a`b``" is one),
+// the code a paste and the rendered view read.
 export const INLINE_MARKS = [
-  { marker: "`", cls: "cmInlineCode", re: /`([^`\n]+)`/g },
+  { marker: "`", cls: "cmInlineCode" },
   { marker: "<u>", close: "</u>", cls: "cmUnderline", re: /<u>((?:(?!<\/?u>)[^\n])+?)<\/u>/g },
   { marker: COLOR_MARK, close: "</span>", cls: "cmColorSpan", re: COLOR_SPAN_RE },
   { marker: "==", cls: "cmHighlight", re: /==(?!\s)([^=\n]+?)(?<!\s)==/g },
@@ -50,18 +53,32 @@ export function scanMarks(text, claimed = []) {
   const inside = (s, t) => t.marker !== "`" && s.from >= t.from + t.openLen && s.to <= t.to - t.closeLen;
   const nests = (s, t) => !(t.from < s.to && t.to > s.from) || inside(s, t) || inside(t, s);
   for (const mark of INLINE_MARKS) {
-    const closeLen = (mark.close ?? mark.marker).length;
-    for (const m of text.matchAll(mark.re)) {
-      const from = m.index, to = m.index + m[0].length;
-      const span = { marker: mark.marker, cls: mark.cls, layers: mark.layers, from, to,
-        openLen: m[0].length - m[1].length - closeLen, closeLen };
-      if (mark.marker === COLOR_MARK) span.style = m[0].slice(SPAN_OPEN.length, span.openLen - 2).trim();
-      if (overlaps(from, to) || !spans.every((s) => nests(s, span))) continue;
+    for (const found of markMatches(text, mark)) {
+      const span = { marker: mark.marker, cls: mark.cls, layers: mark.layers, ...found };
+      if (mark.marker === COLOR_MARK) span.style = text.slice(span.from + SPAN_OPEN.length, span.from + span.openLen - 2).trim();
+      if (overlaps(span.from, span.to) || !spans.every((s) => nests(s, span))) continue;
       spans.push(span);
     }
   }
   for (const s of spans) claimed.push([s.from, s.to]);
   return spans.sort((a, b) => a.from - b.from || b.to - a.to);
+}
+
+// A mark's spans in text, {from, to, openLen, closeLen}: a code span's
+// delimiters are its backtick runs, however long.
+function* markMatches(text, mark) {
+  if (mark.marker === "`") {
+    for (const [from, to] of codeSpans(text)) {
+      let n = 0;
+      while (text[from + n] === "`") n++;
+      yield { from, to, openLen: n, closeLen: n };
+    }
+    return;
+  }
+  const closeLen = (mark.close ?? mark.marker).length;
+  for (const m of text.matchAll(mark.re)) {
+    yield { from: m.index, to: m.index + m[0].length, openLen: m[0].length - m[1].length - closeLen, closeLen };
+  }
 }
 
 // Whether a span carries `marker` — directly, or as one layer of "***".
@@ -95,10 +112,13 @@ function markTarget(text, from, to, marker) {
   const close = closeOf(marker);
   const spans = scanMarks(text);
   if (from === to) {
+    // A code span's delimiter can be a run of backticks, so a caret inside
+    // "``" of "``a`b``" looks like an empty pair: the span it sits in wins.
+    const span = enclosingMark(spans, marker, from, from);
+    if (span && marker === "`") return { span, at: [from, from], on: true };
     if (text.slice(from - marker.length, from) === marker && text.slice(from, from + close.length) === close) {
       return { pair: true, on: true };
     }
-    const span = enclosingMark(spans, marker, from, from);
     return { span, at: [from, from], on: !!span };
   }
   const sel = text.slice(from, to);
@@ -150,8 +170,9 @@ export function toggleMark(text, from, to, marker) {
   // a line break). When every such line is already wrapped, unwrap them all.
   if (target.lines) {
     if (target.on) {
+      const removed = target.wrapped.reduce((n, s) => n + delims(s, open, close).reduce((x, y) => x + y), 0);
       return { changes: target.wrapped.flatMap((s) => unwrapChanges(s, open, close)),
-        selection: { anchor: a, head: b - L * target.lines.length } };
+        selection: { anchor: a, head: b - removed } };
     }
     const changes = [];
     target.lines.forEach((ln, i) => {
@@ -164,7 +185,8 @@ export function toggleMark(text, from, to, marker) {
     // The selection maps into the unwrapped text; a position inside a
     // delimiter clamps to the content's edge.
     const s = target.span;
-    const shift = (p) => Math.min(Math.max(p - open.length, s.from), s.to - L);
+    const [o, c] = delims(s, open, close);
+    const shift = (p) => Math.min(Math.max(p - o, s.from), s.to - o - c);
     return { changes: unwrapChanges(s, open, close), selection: { anchor: shift(a), head: shift(b) } };
   }
   if (a === b) return { changes: [{ from: a, to: a, insert: open + close }], selection: { anchor: a + open.length } };
@@ -174,11 +196,15 @@ export function toggleMark(text, from, to, marker) {
   };
 }
 
-// The delimiters `open` / `close` of a span deleted (one layer of a "***").
-const unwrapChanges = (s, open, close) => [
-  { from: s.from, to: s.from + open.length, insert: "" },
-  { from: s.to - close.length, to: s.to, insert: "" },
-];
+// How long the delimiters an unwrap takes off a span are: `open` / `close`
+// (one layer of a "***"), or a code span's own backtick runs ("``a`b``").
+const delims = (s, open, close) => (s.marker === "`" ? [s.openLen, s.closeLen] : [open.length, close.length]);
+
+// A span's delimiters deleted.
+const unwrapChanges = (s, open, close) => {
+  const [o, c] = delims(s, open, close);
+  return [{ from: s.from, to: s.from + o, insert: "" }, { from: s.to - c, to: s.to, insert: "" }];
+};
 
 // Ctrl+K: turn the selection into a markdown link. With a URL known (the
 // clipboard's) the link is complete and the caret lands after it; otherwise
@@ -196,11 +222,13 @@ export function insertLink(text, from, to, url = "") {
 
 export const isUrl = (s) => /^https?:\/\/\S+$/i.test((s || "").trim());
 
-// Images: `![alt](url)`, sized Obsidian-style (`![alt|300](url)`) or with the
-// legacy Logseq `{:width N}` suffix. `![[embeds]]` can't match — their "alt"
+// Images: `![alt](url)`, sized Obsidian-style (`![alt|300](url)`, what edits
+// write) or with Logseq's `{:width N}` after it (the imports rewrite that to
+// the first, a paste keeps it). `![[embeds]]` can't match — their "alt"
 // holds an unclosed "[" and no "(". Every occurrence in text, in order:
 // [{from, to, alt, url, width}] with from/to including the whole construct;
-// callers that must skip code/math spans filter the result.
+// callers that must skip code/math spans filter the result. The one reader
+// of both sizes here; the server's twin is gamma/note_markup.py's.
 const IMG_RE = /!\[([^\]\n]*)\]\(([^)\n]+)\)(\{:width\s+(\d+)\})?/g;
 const ALT_WIDTH_RE = /^(.*?)\|(\d+)(?:x\d+)?$/;
 export function scanImageSyntax(text) {
@@ -215,6 +243,19 @@ export function scanImageSyntax(text) {
     out.push({ from: m.index, to: m.index + m[0].length, alt, url: m[2], width });
   }
   return out;
+}
+
+// The rendered view's sized images: each image of `text` with a width as
+// the <img> that shows it so wide; one without stays markdown. Read with
+// scanImageSyntax, so the view shows the images the tools count.
+export function sizedImagesHtml(text) {
+  let out = "", at = 0;
+  for (const im of scanImageSyntax(text)) {
+    if (im.width == null) continue;
+    out += `${text.slice(at, im.from)}<img src="${im.url}" alt="${im.alt}" width="${im.width}" />`;
+    at = im.to;
+  }
+  return out + text.slice(at);
 }
 
 // Blank lines the rendered view keeps. Markdown folds any run of blank lines

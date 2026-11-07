@@ -58,6 +58,13 @@ export function stylusPen(tools, pen) {
 }
 const stylusPenId = (prefs) => stylusPen(prefs.tools, prefs.pen)?.id ?? null;
 
+// What a pen writes with on a surface while no tool is armed: `pageDrag`,
+// the surface has a drag of its own for a pen (a PDF page's, InkLayer.jsx
+// onPenDrag), and the preference `penWritesPdf` puts that aside; `penTool`
+// the stylus pen. Anywhere else, paper and the zoom window's panel, there is
+// nothing else for a pen to do.
+export const penToolOn = (pageDrag, { penTool, penWritesPdf }) => (pageDrag && !penWritesPdf ? null : penTool);
+
 // The strip's tools that are no preset; useInkStrip.js reads the list too.
 export const RESERVED_TOOLS = ["eraser", "select", "text", "shape"];
 
@@ -65,10 +72,12 @@ export const RESERVED_TOOLS = ["eraser", "select", "text", "shape"];
 // still on the strip and not the current one, else the pen a stylus writes
 // with (stylusPen). The gestures' Switch to last tool, the eraser's return
 // to the last tool and the Shapes tool's off (useInkStrip.js inkBack) all
-// pick it. The reserved tools count as on the strip.
+// pick it. The reserved tools count as on the strip, and so does the hand
+// (null), which a pen acts on differently from any tool on a PDF page:
+// from the hand to the eraser and back is the hand again.
 export function backTool(prefs = {}, state = {}) {
   const { tool = null, previous = null } = state;
-  const known = RESERVED_TOOLS.includes(previous) || (prefs.tools || []).some((x) => x.id === previous);
+  const known = previous === null || RESERVED_TOOLS.includes(previous) || (prefs.tools || []).some((x) => x.id === previous);
   return known && previous !== tool ? previous : stylusPenId(prefs);
 }
 
@@ -92,7 +101,7 @@ function act(choice, prefs, state) {
     case "holdPrevious":
       return { pick: backTool(prefs, state) };
     case "options":
-      // With the hand armed the Pencil writes with the stylus pen: its row.
+      // The hand has no row: the stylus pen is armed with its own.
       return { ui: tool ? { open: true, options: options !== true } : { open: true, tool: stylusPenId(prefs), options: true } };
     case "undo":
       return { undo: true };

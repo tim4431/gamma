@@ -17,8 +17,10 @@ choices take httptools for HTTP and, on Linux and macOS, uvloop for the event
 loop (pip skips uvloop on Windows by its platform marker); `--reload` watches
 with watchfiles. No command names them.
 
-CI and the Docker image run Python 3.12 and the iPad and Android apps 3.13, so a venv on a
-newer Python may accept what they refuse. `tests/test_python_versions.py`
+The Docker image runs Python 3.12 and the iPad and Android apps 3.13, and CI
+runs the suite on both: 3.12 with the server's pins, 3.13 with the apps'
+(`requirements-mobile.txt`). A venv on a newer Python may accept what they
+refuse. `tests/test_python_versions.py`
 fails on either kind locally: syntax past 3.11, and an annotation that does
 not evaluate (from 3.14 annotations are evaluated only when asked for, before
 it as each function is defined, so a class whose method is named `int` stops
@@ -348,7 +350,8 @@ forgets to stub a metadata / PDF / AI fetch fails at once instead of
 passing slowly on the network. `pytest.ini` names `tests/`, so a bare
 `pytest` from `backend/` works too. The suite runs in parallel with
 pytest-xdist: every worker process imports `conftest.py` and so gets its own
-throwaway data directory, and `--dist loadfile` keeps each file's tests on
+throwaway data directory (`gamma-test-…` under the OS temp dir, removed when
+the process exits), and `--dist loadfile` keeps each file's tests on
 one worker in file order (tests inside a file may build on each other;
 files never may). The shared `client` fixture carries the cookie of the last
 login on that worker, so a "not signed in" check uses the `anon` fixture (a
@@ -461,6 +464,42 @@ interactions are exercised by the browser suite below, plus one standalone
 browser regression: `npm run e2e:latex` bundles the block
 editor with esbuild over an in-memory fixture ([latex_editing.md](latex_editing.md)).
 
+### What a run leaves behind
+
+Nothing when it ends normally, and nothing stays up when it does not.
+
+Every pytest process of the server's and the account server's suites owns one
+folder in the system temp directory (`tests/testrun.py`, which both
+`conftest.py` files import first): `gamma-test-*` or `gammacloud-test-*`, holding
+`data/`, the data directory, and `tmp/`, where `tempfile` points, so import
+staging, export spools and pytest's `tmp_path` land there too. The folder goes
+when the process exits, a failed test's `tmp_path` with it; pass
+`--basetemp=<dir>` to keep those. A killed process cannot remove its folder, so
+the next run removes any more than a day old.
+
+A run also ends itself when it stops getting anywhere. The timeout in
+`pytest.ini` bounds a test and nothing else, and a run has stuck between tests:
+an xdist controller waiting for a worker that was waiting for the controller
+sat for five days with every process idle
+([research/test-temp-files.md](../research/test-temp-files.md#the-run-that-stalled)).
+With no test finished for 15 minutes a controller, or a run without workers,
+exits with status 1 and its workers go as their channel closes. So a run that
+stops at status 1 with no summary stalled: every thread's stack is in
+`stalled.log` in its folder, which stays for that day. The stacks go to a file
+because a full stderr pipe would stop the dump and the exit after it. A worker
+cannot judge a stall, being idle while the others finish, so it only has a
+two-hour limit, for one too stuck to notice its channel closing. A pause in
+`pdb` or at a `breakpoint()` stops the clock; an IDE's debugger paused that long
+ends the run.
+
+The browser suite follows the same rules with what it has. A run that passes
+removes its `gamma-e2e-*` folders, and one that fails keeps them without the
+copy of the build, for three days: `run.mjs` removes older ones when it starts.
+A process with no step finished for 15 minutes ends with status 1 (not under
+`--headed`). Workers leave when their parent is gone, and a backend reads a
+stdin pipe only the process that started it holds, so killing a run takes its
+workers, backends and browsers with it.
+
 ### Browser end-to-end suite
 
 ```bash
@@ -484,6 +523,8 @@ A context without `hasTouch` reports no touch points whatever the host has
 digitizer through, and a Remote Desktop session from a touch device brings
 the client's ten points, which turn on the touch-only controls and guide
 steps.
+#### WebKit and Firefox
+
 `GAMMA_E2E_BROWSER=webkit` or `GAMMA_E2E_BROWSER=firefox` (after
 `npx playwright install webkit` or `firefox`) runs the suite in that engine.
 Native touch gestures need Chromium's CDP, so there the touch scenario checks
@@ -492,7 +533,44 @@ That is browser emulation, not an iPad measurement. Both engines skip the
 steps gated on `browser.browserType().name() === "chromium"`. The other steps
 that open a CDP session fail in both. So does every context that asks for the
 clipboard permissions: WebKit lacks `clipboard-write`, Firefox both.
-Neither engine passes the whole suite.
+Neither engine passes the whole suite. The `touch` and `ipad` groups pass
+under WebKit, and the iPad app is a WKWebView, so that is the run to make for
+a change to touch editing. It is still no iPad:
+
+- Playwright's WebKit is not the iOS port, and its tap is a patch to the
+  engine, not a finger. It sends `touchstart` and `touchend`, and the mouse
+  events and the click only if neither was handled, a cancelled
+  `pointerdown` counting as handled. So a tap on the editing bar or a window
+  grip, which cancel `pointerdown` and run from the click, did nothing there.
+  WebKit's iOS test
+  `pointerevents/ios/pointer-events-prevent-default-allows-click-event.html`
+  requires the click, so the gap is Playwright's.
+- `tests/e2e/webkit.mjs` puts it back for a `hasTouch` context: the one
+  click, from inside `touchend`, when `pointerdown` was cancelled and neither
+  touch event was. It also reports five touch points where this build reports
+  none, which turns on CodeMirror's `browser.ios`. A run prints this at the
+  start, and the first `touch` step asserts that Playwright's own tap still
+  sends no click, so an upgrade that fixes it fails there. A pass shows what
+  the app does with that click, not that an iPad sends it
+  ([device check 37](ipad.md#device-checks)).
+- No on-screen keyboard or real visual viewport comes with it, `page.keyboard`
+  is a hardware key, and this build reports a Mac user agent and platform
+  Win32 unless a context sets one.
+- A step that cannot check something there says so in its result line. This
+  build has no `overscroll-behavior`, and with no `clipboard-write` the PDF
+  popup's Copy runs but its text is not read back.
+- WebKit rejects the fetches a page still has open as it navigates, in the
+  words of a CORS failure, and they show as unhandled rejections on the page
+  being left. Logged against a run's navigations, each fell between the
+  main-frame navigation request and its commit, beside Playwright's `Load
+  request cancelled`. `cancelledLoad` lets that message pass for the page's
+  own origin, which cannot fail an access control check, and no other.
+
+`GAMMA_E2E_BROWSER=webkit npm run e2e -- --group touch,ipad --continue` runs
+them; `--only` skips the setup steps, so its failures prove nothing here.
+
+#### The tab-close scenario
+
 
 `node tests/e2e/tabClose.mjs` is a scratch scenario apart from the groups. A
 note is typed, a stroke drawn or a setting changed, and `page.close()` follows
@@ -514,13 +592,15 @@ A step that times a close passes `{lastLook: false}` to `page.close` or
 python — or the interpreter `GAMMA_E2E_PYTHON` names — over a fresh
 `GAMMA_DATA_DIR` under the OS temp dir, on a free port, serving a copy of
 `frontend/dist` taken at start, so a build during the run cannot break its
-page loads, with the update check, the models.dev catalog and the paper
+page loads, with a `TMPDIR` of its own in that temp dir, so what it stages
+there (an import review's upload) goes with it, with the update check, the models.dev catalog and the paper
 registry lookups switched off so no step waits on the internet), creates
 the accounts `alice` / `bob`, and drives Playwright's Chromium
 (`playwright` is a devDependency; the browser is downloaded once on first
 launch). A failed step saves a screenshot of every open page plus the
 pages' recorded problems and the server log's tail under the temp dir's
-`failures/`, and the temp dir is kept (the summary prints its path). A page
+`failures/`, and the temp dir is kept without its copy of the build (the
+summary prints its path). A page
 the step closed on its way out (the usual `finally { await ctx.close() }`)
 is there too, as `-closed.jpg`: closing a context or a page during a step
 first keeps its last look. The
@@ -543,7 +623,11 @@ with it on. `arrived(locator)` waits until a surface has grown in before
 its box is read; `assertMenuFrom` does. `live(selector)` leaves out the
 copies of closed surfaces on their way out, for a count taken the moment
 a menu closes. Role-based locators skip those copies by themselves (they
-are `aria-hidden`).
+are `aria-hidden`). `settingsPane(page, name)` clicks a Settings sidebar
+button and waits for that pane's head: the pane before stays on screen
+until the new one's reads are in ([settings.md](settings.md#what-a-pane-reads)),
+and a locator taken in that moment can match there (the Server pane's
+shared workspaces have a Manage of their own).
 
 A git worktree has no `backend/venv` of its own, and the harness looks for
 the interpreter there, so run the suite in one with `GAMMA_E2E_PYTHON`
@@ -594,7 +678,7 @@ left `ref`. `RULES` in `select.mjs` maps each source path (first matching
 glob wins) to the groups that exercise it. `frontend/src/guide/**` goes to
 the three tour groups. `frontend/src/markup/**` (the page layers and the
 tool strip, whose anchors the ink tour uses) goes to the ink groups (ink,
-ink-editing, ink-shapes, ink-zoom, ink-ai), pdf-touch, touch, notebooks,
+ink-editing, ink-shapes, ink-zoom, ink-ai, pen), pdf-touch, touch, notebooks,
 triggered-guide, textbox, pictures and comments (a press on a margin card
 with a pen or the Text tool armed). The pictures group also runs for
 `frontend/src/ink/`, `notebook/`, `editor/` and `pdf/`, and for
@@ -753,8 +837,8 @@ The scenarios live in `tests/e2e/scenarios/`:
   Settings select it beside their own groups.
 
 - `notes.mjs`: New page → title → first block (the seed-block insert),
-  Shift+Enter / Tab / Shift+Tab / Backspace, Enter as a line break vs the
-  Enter-as-new-block preference, Ctrl+Z, the handle menu, todo checkboxes,
+  Enter / Tab / Shift+Tab / Backspace, Shift+Enter as a line break vs the
+  Enter-as-a-line-break preference, Ctrl+Z, the handle menu, todo checkboxes,
   an uploaded image (its URL must carry the workspace), the workspace
   switcher. Runs in a NON-default workspace on purpose.
 - `blockProperties.mjs`: the read-only Properties popover
@@ -852,6 +936,10 @@ The scenarios live in `tests/e2e/scenarios/`:
     `test_ink.py`). The partial eraser, and one swept in three long jumps
     over two groups: every stroke it crossed cut at its edge, one undo
     entry, which redo brings back whole.
+  - What a pen's press is (`pen.mjs`, its own group): with nothing armed a
+    drag selects text, highlights it under the text highlighter and draws
+    the rectangle in rectangle mode, an armed tool takes the pen over all
+    of these, paper is written on, and both shells claim nothing.
   - Pen input: coalesced sample timing, pressure and lift endpoints in the
     uploaded file, prediction, palm suppression and palm-first pen
     takeover, cleanup after `pointercancel` / lost capture. Chromium's
@@ -1168,7 +1256,7 @@ The scenarios live in `tests/e2e/scenarios/`:
   top's folder; the search panel's folder chip keeps a hit inside a page
   inside; a page inside's Page properties show "Inside page" under Filing,
   whose Open page opens the parent; a Notion "Markdown & CSV" zip imported
-  into a folder is reviewed with each page under its parent and comes in
+  through the Notion pages card into a folder is reviewed with each page under its parent and comes in
   as a page tree, a database's rows inside its page, only its top pages
   filed and no folder made for its directories; a page's export offers
   "Include pages inside" off by default (Gamma gets a review step for it),
@@ -1395,7 +1483,7 @@ Bash, `gradlew.bat` from PowerShell. What each test covers:
   ([guests.md](guests.md)) — don't park test data there. In backend tests
   the `guest` fixture's account name is `conftest.guest_name()`.
 - Every endpoint that touches a database or files, and every slow one
-  (downloads, AI calls, PyPDF2), is a **sync `def`**, so FastAPI's
+  (downloads, AI calls, PDF parsing), is a **sync `def`**, so FastAPI's
   threadpool runs it. One uvicorn process serves every request and page
   socket from one event loop, and SQLite calls block: an `async def`
   endpoint waiting on a workspace's write lock (`db.BUSY_TIMEOUT_S`, 10 s)

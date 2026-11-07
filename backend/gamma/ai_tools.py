@@ -28,16 +28,16 @@ picture; the citation records kept with pages; full-text-search the reachable
 pages' notes and PDF text via the two FTS indexes; search the scholarly record
 and read a document that is not in the library (``ai_web.py`` — read-only,
 nothing stored); list Recently deleted.  Writes: rename pages, file them
-into (sub)folders, label them and restore deleted ones — each of those
-tools takes a list of pages, one card and one step for the lot, and the
-user can revert a rename, move or label change; rename folders, make and
-rename labels, and delete a folder or a label — never its pages;
-a deletion always asks and the user can revert it (folder scope only);
-edit, create, move and delete note blocks (a deletion the user can
-revert); save a paper to the library (both scopes, each under its own
-permission). Deliberately NOT offered under any permission: deleting pages
-or files, moving folders, deleting a shared folder or the chat's own
-folder, or touching pages outside the scope — and every successful call is
+into (sub)folders, label them, move them to Recently deleted and restore
+deleted ones — each of those tools takes a list of pages, one card and
+one step for the lot, and the user can revert each call; rename folders,
+make and rename labels, and delete a folder or a label — never its pages,
+and the user can revert it (folder scope only); edit, create, move and
+delete note blocks (a deletion the user can revert); save a paper to the
+library (both scopes, each under its own permission). Deliberately NOT
+offered under any permission: deleting pages for good or files, moving
+folders, deleting a shared folder or the chat's own folder, or touching
+pages outside the scope — and every successful call is
 streamed back to the UI as an ``action`` event so the user sees exactly
 what the agent did.  The
 human-facing description lives in ``docs/dev/ai_tools.md``; the base role
@@ -68,7 +68,7 @@ from fractional_indexing import generate_key_between
 
 from . import bibtex as bibtex_mod
 from . import item_types
-from .ai_permissions import ASK_ONLY, permission_state
+from .ai_permissions import permission_state
 from .ai_pictures import (parts as _parts, ink_picture_url, page_doc_id, parse_box, picture_url_of_page, read_stored,
                           render_region, store_picture, upload_name)
 from .ai_context import (DEPRECATED_TOOLS, MAX_AREA_CROPS, area_highlight, canonical_tool,
@@ -77,9 +77,9 @@ from .ai_context import (DEPRECATED_TOOLS, MAX_AREA_CROPS, area_highlight, canon
 from .blocks_store import (BLOCK_ID_RE, FOLDERS, LABELS, PATH_SEP, TRASH, block_kind, block_to_dict, descend,
                            existing_in, fetch_subtree, filed_folders, filing, folder_chain, folder_inserts,
                            folder_paths, folder_subtree_ids, label_by_name, label_inserts, label_names, load_props,
-                           named, page_attachment, page_in_folder, page_parent, page_parents, page_root_id,
-                           root_pages, top_of, trashed_folders, tree_children, tree_parents, valid_block_id,
-                           write_lock)
+                           named, page_attachment, page_descendants, page_in_folder, page_parent, page_parents,
+                           page_root_id, root_pages, top_of, trashed_folders, tree_children, tree_parents,
+                           valid_block_id, write_lock)
 from .db import connect_data_db, connect_pages_db
 from .highlights import is_ink
 from .ops import (MAX_OPS, after_commit, after_commits, apply_batches, apply_ops, delete_tree, ensure_filing,
@@ -167,8 +167,8 @@ AGENT_PROMPT = (
     "e.g. to compare papers or write a summary; cite a PDF by its page number and "
     "say when something comes from the user's own notes. When asked to organize, "
     "apply an explicit bulk instruction (e.g. a naming scheme) to every matching "
-    "page without asking again; ask first when the request is ambiguous. You "
-    "cannot delete pages. After making changes, finish with a "
+    "page without asking again; ask first when the request is ambiguous. Delete "
+    "only what the user asked to delete. After making changes, finish with a "
     "short summary of what you changed. Your earlier tool calls and their results "
     "stay in this conversation so you remember what you already listed, read and "
     "changed — but they are snapshots from earlier turns: the user edits their "
@@ -1124,7 +1124,8 @@ def _plan_delete_block(conn, scope: dict, args: dict):
         return None, error
     block, page_id, page_title = loaded
     if block["parent_id"] == "root":
-        return None, "error: that id is a page — the agent cannot delete pages (the user does, from the library)"
+        return None, ("error: that id is a page — delete_block deletes notes; a page is deleted with "
+                      "delete_page, in a folder chat")
     rows = fetch_subtree(conn, block["id"])
     what = _DELETED_KIND.get(block_kind(block["parent_id"], page_id, block["properties"]), "note")
     return {"block": block, "page_id": page_id, "title": page_title, "what": what, "rows": rows}, None
@@ -3117,15 +3118,110 @@ def _run_restore_page(conn, ws: str, scope: dict, args: dict):
     paths = folder_paths(conn)
     items = [{"page_id": p["page_id"], "title": p["title"], "to": ", ".join(paths_text(paths, p["folders"]))}
              for p in done]
+    revert = {"restore": [p["page_id"] for p in done]}  # ai_revert._plan_trash: a revert deletes them again
     if batch["asked"] == 1:
         p = done[0]
         where = quoted_paths(paths, p["folders"]) or "the library root"
         return (f'ok — restored [{p["title"]}](/?page={p["page_id"]}) (page_id {p["page_id"]}) to {where}',
-                {"kind": "restore", **items[0], "summary": f"Restored “{p['title'][:60]}”"})
+                {"kind": "restore", **items[0], "summary": f"Restored “{p['title'][:60]}”", "revert": revert})
     n = len(done)
     return (_batch_text(f"restored {_of(n, batch['asked'])}", done, batch, links=True),
             {"kind": "restore", "summary": f"Restored {n} page{'s' if n != 1 else ''}", "changes": n,
-             "items": items})
+             "items": items, "revert": revert})
+
+
+def _plan_trash_one(conn, scope: dict, page_id: str, reach) -> tuple:
+    """One page of a delete_page call: ``({page_id, title, inside, before,
+    after}, None)`` — its title and the pages inside it, which go to
+    Recently deleted with it (``inside``: ids, ``page_descendants``), both
+    held by the digest (``before``) — or ``(None, answer)``: a page in
+    Recently deleted already, one outside the chat's reach, no page."""
+    loaded, error = _load_scoped_page(conn, scope, {"page_id": page_id}, reach)
+    if error:
+        if error == _NO_PAGE and conn.execute(
+                "SELECT 1 FROM unified_blocks WHERE id = ? AND parent_id = ?", (page_id, TRASH)).fetchone():
+            return None, "ok — that page is in Recently deleted already"
+        return None, error
+    page_id, title, _, _ = loaded
+    inside = page_descendants(conn, page_id)
+    return {"page_id": page_id, "title": title, "inside": inside, "before": [title, inside], "after": TRASH}, None
+
+
+def _plan_delete_page(conn, scope: dict, args: dict):
+    """``(batch, None)``: the pages a delete_page call names (``_batch``),
+    or ``(None, error)``. A page inside another page of the call goes with
+    that one, as the app's Delete of a selection sends the outer page only:
+    it counts as already so."""
+    ids, error = _page_ids_arg(args)
+    if error:
+        return None, error
+    reach = _reach(conn, scope)
+    batch = _batch(ids, lambda page_id: _plan_trash_one(conn, scope, page_id, reach))
+    outer = {sub: p["page_id"] for p in batch["plans"] for sub in p["inside"]}
+    for p in [p for p in batch["plans"] if p["page_id"] in outer]:
+        batch["plans"].remove(p)
+        batch["same"].append((p["page_id"], f"ok — it is inside page {outer[p['page_id']]} and goes with it"))
+    return batch, None
+
+
+def _preview_delete_page(conn, scope: dict, args: dict):
+    batch, error = _plan_delete_page(conn, scope, args)
+    answer = error or _batch_answer(scope, batch, "deleted")
+    if answer:
+        return None, answer
+    plans = batch["plans"]
+    inside = sum(len(p["inside"]) for p in plans)
+    if batch["asked"] == 1:
+        return {"page_id": plans[0]["page_id"], "title": plans[0]["title"], "diff": [["del", plans[0]["title"]]],
+                "inside": inside, "days": KEEP_DAYS}, None
+    return _batch_preview(conn, batch, [[["del", p["title"]]] for p in plans],
+                          _digest("delete_page", "", plans), inside=inside, days=KEEP_DAYS), None
+
+
+def _run_delete_page(conn, ws: str, scope: dict, args: dict):
+    """Move the pages to Recently deleted as the app's Delete does
+    (``ops.trash_page``, one each: a trashing commits on its own and tells
+    the page's room), each with the pages inside it. A page that fails is
+    reported, the others go — every page that went is in the result and in
+    the action, whose ``revert`` restores them (ai_revert._plan_trash)."""
+    from .ops import OpError, trash_page
+
+    batch, error = _plan_delete_page(conn, scope, args)
+    answer = error or _batch_answer(scope, batch, "deleted") or _changed_since(
+        scope, _digest("delete_page", "", batch["plans"]))
+    if answer:
+        return answer, None
+    done = []
+    for p in batch["plans"]:
+        try:
+            trash_page(ws, conn, p["page_id"], actor=scope.get("actor", ""), client="ai")
+        except Exception as e:  # one page's failure leaves the others standing
+            # A trashing commits before it fans out: a page out of the
+            # library went, whatever failed after that.
+            if conn.execute("SELECT 1 FROM unified_blocks WHERE id = ? AND parent_id = 'root'",
+                            (p["page_id"],)).fetchone():
+                if not isinstance(e, OpError):
+                    log.warning(f"[ai_tools] delete_page {p['page_id']} failed: {e}")
+                batch["refused"].append((p["page_id"], f"error: {e.detail if isinstance(e, OpError) else e}"))
+                continue
+        done.append(p)
+    if not done:
+        return (batch["refused"][-1][1] if batch["asked"] == 1
+                else "error: none of these pages could be deleted:\n" + _left_out_lines(batch)), None
+    went = sum(len(p["inside"]) for p in done)
+    along = f", with the {went} page{'s' if went != 1 else ''} inside" if went else ""
+    keep = (f"They stay there for {KEEP_DAYS} days: restore_page brings them back, and the user can revert "
+            "this from the reply.")
+    revert = {"trash": [p["page_id"] for p in done]}
+    items = [{"page_id": p["page_id"], "title": p["title"], "inside": len(p["inside"])} for p in done]
+    if batch["asked"] == 1:
+        p = done[0]
+        return (f'ok — moved "{p["title"]}" (page_id {p["page_id"]}) to Recently deleted{along}. {keep}',
+                {"kind": "delete", **items[0], "summary": f"Deleted “{p['title'][:60]}”", "revert": revert})
+    n = len(done)
+    return (_batch_text(f"moved {_of(n, batch['asked'])} to Recently deleted{along}", done, batch) + "\n" + keep,
+            {"kind": "delete", "summary": f"Deleted {n} page{'s' if n != 1 else ''}", "changes": n,
+             "inside": went, "items": items, "revert": revert})
 
 
 # The names a card or result shows before it counts the rest: a deletion's
@@ -3184,6 +3280,20 @@ def _find_label(conn, raw) -> tuple[tuple | None, str | None]:
     return (found[0], dict(have)[found[0]]), None
 
 
+def _label_page_reached(conn, scope: dict, reach: set[str], sub_pages: dict, page_id: str,
+                        parent_id: str, props: dict) -> bool:
+    """Whether a folder chat (its folder subtree ``reach``) reaches a page
+    carrying a label, for ``_label_out_of_reach``: a live sub-page (a key of
+    ``sub_pages``, ``page_parents``) by where its top is filed; a page in
+    Recently deleted by the folders a restore puts it back in
+    (``trashed_folders``); any other page by its own folders."""
+    if page_id in sub_pages:
+        return page_in_folder(conn, page_id, _scope_folder(scope))
+    if parent_id == TRASH:
+        return _filed_in(reach, trashed_folders(conn, props))
+    return _filed_in(reach, filing(props, FOLDERS))
+
+
 def _label_out_of_reach(conn, scope: dict, label_id: str, name: str) -> str | None:
     """None when the chat reaches every page carrying the label (``_reach``;
     the library root reaches all), else the refusal. A label is
@@ -3194,13 +3304,11 @@ def _label_out_of_reach(conn, scope: dict, label_id: str, name: str) -> str | No
     reach = _reach(conn, scope)
     if reach is None:
         return None
-    inside = page_parents(conn)  # a sub-page is filed where its top is
+    sub_pages = page_parents(conn)
     outside = sum(1 for page_id, parent_id, raw in conn.execute(
         "SELECT p.id, p.parent_id, p.properties FROM unified_blocks p WHERE p.parent_id IN ('root', ?) AND EXISTS "
         "(SELECT 1 FROM json_each(p.properties, '$.labels') l WHERE l.value = ?)", (TRASH, label_id))
-        if not (page_in_folder(conn, page_id, _scope_folder(scope)) if page_id in inside
-                else _filed_in(reach, trashed_folders(conn, load_props(raw)) if parent_id == TRASH
-                               else filing(load_props(raw), FOLDERS))))
+        if not _label_page_reached(conn, scope, reach, sub_pages, page_id, parent_id, load_props(raw)))
     if not outside:
         return None
     return (f'error: the label "{name}" is also on {outside} page{"s" if outside != 1 else ""} '
@@ -3595,25 +3703,33 @@ def _preview_delete_folder(conn, scope: dict, args: dict):
 def _run_delete_folder(conn, ws: str, scope: dict, args: dict):
     """The UI's "Keep pages" delete (``ops.delete_tree``): the folder and its
     subfolders go, their pages stay, filed in their other folders or at the
-    library root, and their AI chats move to the library chat's history —
-    where they stay if the user reverts. The checks, the revert record and
-    the deletion run under one write lock."""
+    library root, and their AI chats move to the library chat's history,
+    which the revert record keeps (``chats``: ``{history id: folder}``), so
+    a revert puts them back. The checks, the revert record and the deletion
+    run under one write lock."""
     write_lock(conn)
     plan, answer = _plan_delete_folder(conn, scope, args)
     if not plan:
         conn.rollback()
         return answer, None
     _, _, results = delete_tree(ws, conn, FOLDERS, plan["id"], actor=scope.get("actor", ""), client="ai")
-    path, subs, n, chats = plan["path"], len(plan["subfolders"]), len(plan["pages"]), results[0]["chats_filed"]
+    moved = results[0]["chats_filed"]
+    path, subs, n, chats = plan["path"], len(plan["subfolders"]), len(plan["pages"]), len(moved)
     text = (f'ok — deleted the folder "{path}"'
             + (f" with its {subs} subfolder{'s' if subs != 1 else ''}" if subs else "")
             + (f"; its {n} page{'s stay' if n != 1 else ' stays'} in the library, filed in "
                "their other folders or at the library root" if n else "")
             + (f"; {chats} AI chat{'s' if chats != 1 else ''} of these folders moved to the library "
-               "chat's history, where a revert leaves them" if chats else "")
+               "chat's history, and a revert brings them back" if chats else "")
             + ". The user can revert it from the reply.")
     return text, {"kind": "delete", "block_id": plan["id"], "title": path, "count": n, "chats": chats,
-                  "summary": f"Deleted the folder “{path}”", "revert": plan["revert"]}
+                  "summary": f"Deleted the folder “{path}”",
+                  "revert": {**plan["revert"], **({"chats": moved} if moved else {})}}
+
+
+# The deletions whose card names one folder or label (``block_id``): an
+# allowed card deletes only that one (ai_agent.ApprovalGate).
+TREE_DELETES = frozenset({"delete_folder", "delete_label"})
 
 
 # --- registry ------------------------------------------------------------------
@@ -4157,6 +4273,25 @@ TOOLS = [
         },
     },
     {
+        "perm": "delete", "kind": "delete", "scopes": ("folder",), "mutating": True, "run": _run_delete_page,
+        "preview": _preview_delete_page,
+        "spec": {
+            "name": "delete_page",
+            "description": (
+                f"Move pages to Recently deleted, as the user's Delete does. `page_ids`: the pages, up to "
+                f"{BATCH_MAX} in one call (exact ids from list_pages). The pages inside a page go with it. A "
+                "deleted page keeps its notes, highlights, files and chats; it is deleted for good after "
+                f"{KEEP_DAYS} days, and until then restore_page brings it back and the user can revert the "
+                "call from the reply. A page that cannot be deleted is left out and named in the result; "
+                "the others go. Only for pages the user asked to delete."),
+            "parameters": {
+                "type": "object",
+                "properties": {"page_ids": {"type": "array", "items": {"type": "string"}}},
+                "required": ["page_ids"],
+            },
+        },
+    },
+    {
         "perm": "organize", "kind": "rename", "scopes": ("folder",), "mutating": True,
         "run": _run_rename_folder, "preview": _preview_rename_folder,
         "spec": {
@@ -4243,8 +4378,8 @@ TOOLS = [
                 "goes. The folders' AI chats move to the library chat's history. `folder` is an "
                 "id or path, read like move_page's. Refused for the current folder and the ones "
                 "above it, and for a folder with a share link (the user stops sharing it first). "
-                "Each call shows the user what goes and waits for their answer, and they can "
-                "revert it from the reply. Only for a folder the user asked to delete."),
+                "The user can revert it from the reply, chats included. Only for a folder the "
+                "user asked to delete."),
             "parameters": {
                 "type": "object",
                 "properties": {"folder": {"type": "string"}},
@@ -4260,9 +4395,8 @@ TOOLS = [
             "description": (
                 "Delete a label and take it off every page that carries it; no page is deleted. "
                 "`label` is its name, as list_pages shows it. In a folder below the library root, "
-                "only a label that no page outside the folder carries. Each call waits for the "
-                "user's answer, and they can revert it from the reply. Only for a label the user "
-                "asked to delete."),
+                "only a label that no page outside the folder carries. The user can revert it "
+                "from the reply. Only for a label the user asked to delete."),
             "parameters": {
                 "type": "object",
                 "properties": {"label": {"type": "string"}},
@@ -4326,8 +4460,10 @@ TOOLS = [
             "description": (
                 "Add a new note block. `parent_id` is a page id (top-level note) or a "
                 "block id (nested child); `after_id` optionally names the sibling to "
-                "insert after (default: last). One block = one outline bullet — for "
-                "several bullets, create several blocks. Returns the new block's id."),
+                "insert after (default: last). One block is one paragraph, list item, "
+                "heading or table. Start a list item with `- `, `1. ` or `- [ ] `; "
+                "plain text is a paragraph. For several items, create several blocks. "
+                "Returns the new block's id."),
             "parameters": {
                 "type": "object",
                 "properties": {"parent_id": {"type": "string"},
@@ -4457,13 +4593,12 @@ def tool_states(perms, *, granted=(), can_ask: bool = True) -> dict:
     registry, read from a request's map (ai_permissions.permission_state:
     a permission left out allows reading and asks before a change). The
     permissions in ``granted`` (the conversation's "Allow in this chat") are
-    allowed, except an ask-only one (``ASK_ONLY``), and a request that
-    cannot ask (``can_ask`` false: no stream to show the card on) arms none
-    of its asking tools."""
+    allowed, and a request that cannot ask (``can_ask`` false: no stream to
+    show the card on) arms none of its asking tools."""
     states = {}
     for t in TOOLS:
         state = _state_of(perms, t)
-        if state == "ask" and t["perm"] in granted and t["perm"] not in ASK_ONLY:
+        if state == "ask" and t["perm"] in granted:
             state = "allow"
         if state == "ask" and not can_ask:
             state = "off"
@@ -4666,8 +4801,13 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
     if "restore_page" in names:
         text += (
             f"\nDeleted pages stay in Recently deleted for {KEEP_DAYS} days: list_deleted finds "
-            "them and restore_page brings them back when the user asks. Deleting pages stays impossible.")
-    batched = [n for n in ("rename_page", "move_page", "label_page", "restore_page") if n in names]
+            "them and restore_page brings them back when the user asks.")
+    if "delete_page" in names:
+        text += (
+            "\nYou can delete pages with delete_page: they go to Recently deleted with the pages "
+            "inside them, and the user can revert it. Delete only the pages the user asked to "
+            "delete, and say which went.")
+    batched = [n for n in ("rename_page", "move_page", "label_page", "restore_page", "delete_page") if n in names]
     if batched:
         tools = ", ".join(batched[:-1]) + " and " + batched[-1] if len(batched) > 1 else batched[0]
         text += (
@@ -4684,8 +4824,8 @@ def agent_system(scope: dict, perms: dict | None = None, base: str = "") -> str:
     if "delete_folder" in names or "delete_label" in names:
         text += (
             "\nYou can delete a folder (with its subfolders) or a label with delete_folder and "
-            "delete_label, never a page: the pages stay in the library. Each call asks the user, "
-            "every time; call them only for what the user asked to delete.")
+            "delete_label; their pages stay in the library. Call them only for what the user "
+            "asked to delete.")
     web = [n for n in ("search_papers", "related_papers", "search_web", "fetch_paper") if n in names]
     if web:
         text += (

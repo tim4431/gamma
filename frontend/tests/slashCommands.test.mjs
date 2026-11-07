@@ -35,6 +35,13 @@ test("a command's own name first, then names it begins, then label words, then k
   assert.deepEqual(names("red"), ["red-text", "red-background"], "colors show once typed");
 });
 
+test("/text is the way back to plain text", () => {
+  assert.equal(names("text")[0], "text");
+  assert.equal(names("paragraph")[0], "text");
+  assert.equal(names("plain")[0], "text");
+  assert.equal(filterSlashCommands("", ALL)[0].name, "h1", "a heading still leads the bare list");
+});
+
 test("fuzzy matches jump to word starts, VS Code style", () => {
   assert.equal(names("hn")[0], "note", "Handwritten Note");
   assert.equal(names("cb")[0], "code", "Code Block");

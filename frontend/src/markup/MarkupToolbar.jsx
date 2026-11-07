@@ -295,7 +295,7 @@ export function MarkupToolbar({ tools, active, options, eraserMode, eraserSize, 
         ) : null}
         <span className="pdfInkSep" />
         <button type="button" className={"ctlBtn inkToolBtn" + (active === null ? " modeActive" : "")}
-          onClick={() => onPick(null)} title={t("Hand (V): scroll and select text; a stylus still writes")} aria-label={t("Hand")}
+          onClick={() => onPick(null)} title={t("Hand (V): scroll and select text")} aria-label={t("Hand")}
           aria-pressed={active === null}><HandIcon size={16} /></button>
         <span className="pdfInkSep" />
         <button type="button" className="ctlBtn" {...menus.trigger("more")} title={t("More handwriting tools")} aria-label={t("More handwriting tools")}

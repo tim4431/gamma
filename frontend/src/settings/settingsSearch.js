@@ -60,7 +60,7 @@ const entries = [
   e("reading", t("Draw and hold"), t("Handwriting"), t("Hold the pen still to straighten a line or clean up a shape"), "handwriting straight line shape circle rectangle snap recognise hold pen ink"),
   e("reading", t("Scribble to erase"), t("Handwriting"), t("A dense back-and-forth with the pen erases the ink under it"), "handwriting scratch out scribble erase gesture pen ink"),
   e("reading", t("Draws with"), t("This device"), t("Pen only, or pen and finger"), "handwriting pen finger touch stylus ink"),
-  e("reading", t("Stylus draws right away"), t("This device"), t("Without opening the tools first"), "handwriting pen ink"),
+  e("reading", t("Stylus draws on PDFs right away"), t("This device"), t("Without opening the tools first"), "handwriting pen ink stylus select text"),
   e("reading", t("Pressure-sensitive strokes"), t("This device"), t("Pen strokes thicken with pressure"), "handwriting pen ink width"),
   e("reading", t("Undo with fingers"), t("This device"), t("Two fingers undo, three redo"), "handwriting undo redo two three finger tap double tap gesture touch ink"),
   e("reading", t("Hover preview"), t("This device"), t("The footprint over the page shows the pen's style"), "handwriting hover cursor footprint ring brush pencil dashed dotted pen ink"),
@@ -163,8 +163,8 @@ export const SETTINGS_SEARCH = entries;
 // A native host's flags as the pen section reads them, its rows and their
 // search entries alike: `apple` in the iPad app, `stylus` under any other
 // host, and a gesture's own flag where the host forwards that gesture
-// (pencilGestures; an iPad build older than the flag forwards both). Null
-// for no host.
+// (pencilGestures; a host without the list, the iPad app, forwards both).
+// Null for no host.
 export function hostCaps(host) {
   if (!host) return null;
   const gestures = Array.isArray(host.pencilGestures) ? host.pencilGestures : ["tap", "squeeze"];

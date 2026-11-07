@@ -11,7 +11,8 @@ a marketing page; light and dark; no framework, no build. The pages carry
 a few lines of inline script that post JSON to ``/api``. Every value but
 a constant or a number goes through ``esc`` in the page and ``_js`` in a
 script: ``json.dumps`` alone leaves ``</script>`` in a string to close the
-block (``/reset/confirm?token=`` once did).
+block, so ``_js`` writes ``<``, ``>`` and ``&`` as escapes (a reset link's
+token reaches ``reset_confirm_page``'s script this way).
 """
 
 import html

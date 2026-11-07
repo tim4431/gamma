@@ -85,7 +85,11 @@ def test_an_invalid_request_says_who_sent_what(client, http):
     """uvicorn's bare "Invalid HTTP request received." gains the sender and
     the shape of what arrived (logbuf._InvalidRequestDetail), from a real
     server with either parser. h11 waits for a line end before it parses,
-    so the bare TLS handshake only trips httptools (the Docker image's)."""
+    so the bare TLS handshake only trips httptools (the Docker image's).
+    The mobile pins install plain uvicorn, without httptools: h11 is the
+    parser the apps run."""
+    if http == "httptools":
+        pytest.importorskip("httptools")
     import socket
     import threading
     import time

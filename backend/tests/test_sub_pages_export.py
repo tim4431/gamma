@@ -17,7 +17,7 @@ import zipfile
 from urllib.parse import quote, unquote
 
 import pytest
-from PyPDF2 import PdfReader
+from pypdf import PdfReader
 
 from conftest import account_of, login, make_folder, make_user, workspace_of
 from gamma import bibtex, blocks_store
@@ -183,6 +183,20 @@ def test_the_zip_import_reads_the_parent_back(owner, guest, lab, mode):
                                                                                [f"SPX back {mode}", "Sub"]]
     family = guest.get(f"/api/pages/{top['id']}/family").json()
     assert [p["id"] for p in family["sub_pages"]] == [child["id"]]
+
+
+def test_a_notion_zip_reads_back_with_its_directories_as_folders(owner, guest, lab):
+    """It holds no ids, so it is a Plain zip: a directory pairs with the file
+    beside it only in a zip that has ids (``Paper/Child.md``), so sub-pages
+    come back as pages in a folder. Only Notion, once it has written ids
+    into its own export of them, gives the tree back."""
+    data = owner.get(f"/api/folders/{lab['folder']}/export", params={"mode": "notion"}).content
+    pages = _import(guest, data, make_folder(guest, "SPX back notion"))
+    by_title = {p["title"]: p for p in pages.values()}
+    assert not any("parent_page" in _props(guest, p["id"]) for p in pages.values())
+    assert by_title["Top"]["folders"] == [["SPX back notion", "Sub"]]
+    assert by_title["Child"]["folders"] == [["SPX back notion", "Sub", "Top"]]
+    assert by_title["Grandchild"]["folders"] == [["SPX back notion", "Sub", "Top", "Child"]]
 
 
 def test_a_parent_that_is_not_in_the_import_leaves_a_library_page(guest):
@@ -414,6 +428,9 @@ _TREE_EXPORTS = {
     "notability": lambda t, b, leaf: (
         (f"{t}-notability.zip", ["Tree.note", "Tree/Branch.note", "Tree/Branch/Leaf.note"]),
         ("Tree.note", "note")),
+    "notion": lambda t, b, leaf: (
+        (f"{t}-notion.zip", ["Tree.md", "Tree/Branch.md", "Tree/Branch/Leaf.md"]),
+        (f"{t}-notion.zip", ["Tree.md"])),
     "logseq-graph": lambda t, b, leaf: (
         (f"{t}-logseq.zip", sorted(["logseq/config.edn"] + [f"pages/{p}{s}.md" for s in (t, b, leaf)
                                                             for p in ("", "hls__")])),

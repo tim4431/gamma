@@ -24,6 +24,9 @@ async function run() {
       res.end('<!doctype html><p id="remote">Synthetic remote server</p>');
     }
   });
+  // A server that sends everything to another origin: the guard refuses the
+  // redirect in the content view, so the load is cancelled, with no did-fail-load.
+  const redirector = http.createServer((req, res) => { res.writeHead(302, { Location: 'https://example.org/signin' }); res.end(); });
   let app;
   try {
     // The OS's pick, again if it is below 9100: those ports are the developer's,
@@ -79,11 +82,35 @@ async function run() {
     }, { origin, fileUrl });
     await content.waitForURL(fileUrl);
     assert.equal(await content.evaluate(() => typeof window.gammaShell), 'undefined');
-    console.log('PASS: bundled chrome bridge works, remote/local untrusted documents have no bridge, role HTML is inert, remote file navigation is blocked.');
+
+    await new Promise((resolve) => redirector.listen(0, '127.0.0.1', resolve));
+    const redirecting = `http://127.0.0.1:${redirector.address().port}`;
+    const refused = await app.evaluate(async (_, { url, fixture }) => {
+      const shell = global.__gammaShell;
+      const { id } = shell.registry.addRemote('Redirecting', url);
+      const open = async () => {
+        const t0 = Date.now();
+        const error = await shell.openServer(id).then(() => '', (e) => e.message);
+        return { error, ms: Date.now() - t0 };
+      };
+      const alone = await open();
+      // Right after another load, still finishing: what a queued open meets.
+      await shell.openServer(shell.registry.addRemote('Just before', fixture).id);
+      const overlapped = await open();
+      return { alone, overlapped, opened: shell.externalOpens.slice() };
+    }, { url: redirecting, fixture: origin.replace('127.0.0.1', 'localhost') });
+    for (const open of [refused.alone, refused.overlapped]) {
+      assert.match(open.error, /ERR_FAILED/, 'the open fails');
+      assert.ok(open.ms < 10_000, `the open fails at once, not after a wait: ${open.ms} ms`);
+    }
+    assert.ok(refused.opened.includes('https://example.org/signin'), 'the redirect went to the system browser');
+    console.log('PASS: bundled chrome bridge works, remote/local untrusted documents have no bridge, role HTML is inert, remote file navigation is blocked, a refused redirect fails the open at once.');
   } finally {
     if (app) await app.close();
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
+    redirector.closeAllConnections();
+    if (redirector.listening) await new Promise((resolve) => redirector.close(resolve));
     fs.rmSync(profile, { recursive: true, force: true });
   }
 }

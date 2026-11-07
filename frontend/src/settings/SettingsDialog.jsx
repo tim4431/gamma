@@ -27,7 +27,7 @@ import { SyncSettings } from "./SettingsSync";
 import { WorkspaceBackups } from "./SettingsBackups";
 import { ServerSettings } from "./SettingsServer";
 import { dotTone } from "../app/notices";
-import { resolveSettingsPane } from "./settingsNavigation";
+import { resolveSettingsPane, settingsSection } from "./settingsNavigation";
 import { hostCaps, searchSettings } from "./settingsSearch.js";
 import { SettingsReadsContext, createSettingsReads, useSettingsRead } from "./settingsReads.js";
 import { TranslationSettings } from "./SettingsTranslation";
@@ -296,11 +296,11 @@ function ViewerSettings({ value }) {
         </div>
         <Toggle
           icon={PenIcon}
-          label={t("Stylus draws right away")}
+          label={t("Stylus draws on PDFs right away")}
           hint={t("Without opening the tools first")}
-          title={t("With a stylus (Apple Pencil, Surface Pen, Wacom…), touching the page draws with the pen tool even when the handwriting tools are closed. Fingers and the mouse still select text. Turn off if your stylus keeps leaving marks while you navigate.")}
-          checked={value.inkAutoPen}
-          onChange={value.setInkAutoPen}
+          title={t("With a stylus (Apple Pencil, Surface Pen, Wacom…), touching a PDF page draws with the pen even with no tool armed. Off, until you arm a tool the stylus does what the mouse does: it selects text, or draws the rectangle in rectangle mode. On notebook paper a stylus always writes.")}
+          checked={value.inkPenWritesPdf}
+          onChange={value.setInkPenWritesPdf}
         />
         <Toggle
           icon={ActivityIcon}
@@ -1208,10 +1208,9 @@ export default function SettingsDialog({
       headingRef.current = null; setHeading(null);
       setQuery(""); setPending(null); setMobileIndex(false); return;
     }
-    const legacyTarget = { notes: t("Enter makes"), search: t("On the home page"), viewer: t("Imported annotations"),
-      context: t("Single paper"), "ai-advanced": t("Context size"), prompts: t("Prompts"), handwriting: t("Reset presets"),
-      topbar: t("Top bar"), "viewer-tools": t("Viewer tools") }[activePane];
-    if (legacyTarget) setJump({ label: legacyTarget });
+    // A section entry point opens its pane at the section's row.
+    const label = settingsSection(activePane);
+    if (label) setJump({ label: t(label) });
   }, [activePane]);
   // Looking at a pane resolves the notices pointing at it (app/useNotices.js).
   React.useEffect(() => {

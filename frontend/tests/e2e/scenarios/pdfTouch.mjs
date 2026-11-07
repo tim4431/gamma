@@ -342,12 +342,12 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
     await page.reload(); // Start independently of the previous fling and its instrumentation.
     await waitForPdf(page);
     assert(await page.evaluate(() => matchMedia("(pointer: coarse)").matches), "touch device uses a coarse pointer");
-    const nativeFullscreen = await page.evaluate(() => !!(document.fullscreenEnabled || document.webkitFullscreenEnabled));
+    const nativeFullscreen = await page.evaluate(() => !!document.fullscreenEnabled);
     const enterFullscreen = async () => {
       await page.getByRole("button", { name: "Full screen", exact: true }).tap();
       await page.getByRole("button", { name: "Exit full screen", exact: true }).waitFor();
       if (nativeFullscreen) {
-        assert(await page.evaluate(() => (document.fullscreenElement || document.webkitFullscreenElement) === document.documentElement), "touch enters native fullscreen for the whole app");
+        assert(await page.evaluate(() => document.fullscreenElement === document.documentElement), "touch enters native fullscreen for the whole app");
         assertEq(await page.locator(".app.pseudoFullscreen").count(), 0);
       } else {
         await page.locator(".app.pseudoFullscreen").waitFor();
@@ -355,7 +355,7 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
     };
     const checkExited = async () => {
       await page.getByRole("button", { name: "Full screen", exact: true }).waitFor();
-      assert(await page.evaluate(() => !document.fullscreenElement && !document.webkitFullscreenElement), "native fullscreen exited");
+      assert(await page.evaluate(() => !document.fullscreenElement), "native fullscreen exited");
       assertEq(await page.locator(".app.pseudoFullscreen").count(), 0);
       assertEq(await page.locator("html.appFocusFullscreen").count(), 0);
     };
@@ -364,7 +364,7 @@ export async function pdfTouchScenarios({ server, browser, alice, makePdf, step,
     await checkExited();
     await enterFullscreen();
     if (nativeFullscreen) {
-      await page.evaluate(() => (document.exitFullscreen || document.webkitExitFullscreen).call(document));
+      await page.evaluate(() => document.exitFullscreen());
     } else {
       await page.keyboard.press("Escape");
     }

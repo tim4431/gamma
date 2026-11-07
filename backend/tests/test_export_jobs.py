@@ -62,7 +62,7 @@ def lab(user):
 
 
 def test_a_folder_as_annotated_pdfs_in_one_zip(user, lab):
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
 
     job = _export(user, folder=lab["folder"], mode="annotated-pdf", highlights=True, notes=False)
     r = _download(user, job)
@@ -116,6 +116,7 @@ def test_the_folder_download_offers_annotated_pdfs_too(user, lab):
     ("zotero-rdf", "-zotero.zip", "-zotero.zip"),
     ("gamma", "-gamma.zip", "-gamma.zip"),
     ("notes-pdf", "-notes.pdf", "-notes.pdf"),
+    ("notion", "-notion.zip", "-notion.zip"),
 ])
 def test_every_format_exports_as_a_job(user, lab, mode, page_suffix, folder_suffix):
     page_job = _export(user, page_id=lab["note"]["id"], mode=mode)
@@ -123,7 +124,7 @@ def test_every_format_exports_as_a_job(user, lab, mode, page_suffix, folder_suff
     assert _download(user, page_job).content
     folder_job = _export(user, folder=lab["folder"], mode=mode)
     assert folder_job["artifact"]["name"] == f"EJ lab{folder_suffix}"
-    assert folder_job["result"] == {"pages": 3, "skipped": []}
+    assert (folder_job["result"]["pages"], folder_job["result"]["skipped"]) == (3, [])
     body = _download(user, folder_job).content
     assert body.startswith(b"%PDF") if mode == "notes-pdf" else zipfile.ZipFile(io.BytesIO(body)).namelist()
 

@@ -21,11 +21,10 @@
 <!--#include header -->
 
 <main id="main">
-  <section class="pricing wrap">
-    <div class="pricing__head">
-      <p class="eyebrow">Pricing</p>
-      <h1>Free on your desk. Hosted when you want it.</h1>
-      <p class="lead">The desktop app and the server are free and open source, and stay that way. A paid plan is a library we keep running for you, so your devices stay in sync, share links work with the laptop closed, and assistants reach your library. Lite and Plus are an account on Gamma Cloud; Pro is a server of your own for a group.</p>
+  <section class="page wrap">
+    <div class="head">
+      <h1>Free on your desk.<br>Hosted when you want&nbsp;it.</h1>
+      <p class="lead">The app and the server are free and open source. A paid plan is a library we keep running for you: an account on Gamma Cloud with Lite and Plus, a server of your own with Pro.</p>
     </div>
 
     <div class="plans">
@@ -33,78 +32,71 @@
         <h2 class="plan__name">Free</h2>
         <p class="plan__price">$0</p>
         <p class="plan__alt">Open source, forever</p>
-        <ul>
-          <li>The desktop app: your library on your own disk</li>
-          <li>Self-host a Gamma server for your group</li>
-          <li>5 published pages on the share host</li>
-          <li>AI with your own key or a ChatGPT sign-in</li>
-          <li>No hosted library</li>
-        </ul>
         <a class="btn btn--ghost" href="/#download">Download</a>
+        <ul>
+          <li>The desktop app, your library on your own disk</li>
+          <li>Self-host a Gamma server for your group</li>
+          <li>5 published pages on the share host, with a free Gamma Cloud account</li>
+          <li>AI with your own key or a paid ChatGPT plan</li>
+        </ul>
       </article>
 
       <article class="plan">
         <h2 class="plan__name">Lite</h2>
         <p class="plan__price">$2<small> a month</small></p>
         <p class="plan__alt">or $20 a year: two months free</p>
+        <a class="btn btn--primary" href="https://account.gammapdf.com/plan" data-plan="lite">Choose Lite</a>
         <ul>
           <li>Your library on Gamma Cloud, always on</li>
-          <li>One account; share links (view or edit) still work for anyone</li>
+          <li>One account; share links still work for anyone</li>
           <li>1 GB for uploads</li>
           <li>Unlimited published pages</li>
           <li>Desktop offline copies, iPad, the browser extension, Codex and Claude Code over MCP</li>
-          <li>An account on our shared server; Pro is a server of your own</li>
         </ul>
-        <a class="btn btn--primary" href="https://account.gammapdf.com/plan" data-plan="lite">Choose Lite</a>
       </article>
 
       <article class="plan plan--featured">
         <h2 class="plan__name">Plus</h2>
         <p class="plan__price">$5<small> a month</small></p>
         <p class="plan__alt">or $50 a year: two months free</p>
-        <ul>
-          <li>Your library on Gamma Cloud, always on</li>
-          <li>One account; share links (view or edit) still work for anyone</li>
-          <li>6 GB for uploads</li>
-          <li>Unlimited published pages</li>
-          <li>Desktop offline copies, iPad, the browser extension, Codex and Claude Code over MCP</li>
-          <li>An account on our shared server; Pro is a server of your own</li>
-        </ul>
         <a class="btn btn--primary" href="https://account.gammapdf.com/plan" data-plan="plus">Choose Plus</a>
+        <ul>
+          <li>Everything in Lite</li>
+          <li>6 GB for uploads</li>
+        </ul>
       </article>
 
       <article class="plan">
         <h2 class="plan__name">Pro</h2>
         <p class="plan__price">$20<small> a month</small></p>
         <p class="plan__alt">or $200 a year: two months free</p>
+        <a class="btn btn--primary" href="https://account.gammapdf.com/plan" data-plan="pro">Choose Pro</a>
         <ul>
-          <li>A Gamma server of your own, which you administer</li>
-          <li>10 accounts, shared workspaces with roles and live cursors</li>
+          <li>A Gamma server of your own, for 10 accounts with shared workspaces</li>
           <li>100 GB pooled, per-workspace quotas</li>
           <li>Invite members by e-mail</li>
           <li>One shared AI connection the admin adds for the whole server</li>
           <li>Hourly off-site copies, 30 kept</li>
         </ul>
-        <a class="btn btn--primary" href="https://account.gammapdf.com/plan" data-plan="pro">Choose Pro</a>
       </article>
     </div>
 
     <div class="pricing__notes">
       <div>
-        <h3>You pay for always on, not for the app</h3>
-        <p>Every feature of Gamma is in the free app. A plan adds a library that is always reachable; the storage figure is its cap, not the product.</p>
+        <h3>Is Gamma free?</h3>
+        <p>Yes, free and open source, with no account. Every feature is in the free app; a plan adds a library that is always reachable.</p>
       </div>
       <div>
         <h3>Run it yourself instead</h3>
-        <p>The same server is one Docker image you can host on your own machine or VPS, with no account with us. <a href="/#selfhost">Self-hosting →</a></p>
+        <p>The same server is one Docker image, with no account with us. <a href="/#selfhost">Self-hosting</a></p>
       </div>
       <div>
         <h3>Change or cancel any time</h3>
-        <p>Switch plans or cancel from your <a href="https://account.gammapdf.com/plan">Gamma Cloud account</a>. A cancelled plan runs to the end of the period you paid for. After that a Lite or Plus library is kept but closed until you subscribe again, and a Pro server stays readable for 30 days so you can export everything.</p>
+        <p>From your <a href="https://account.gammapdf.com/plan">Gamma Cloud account</a>. A cancelled plan runs to the end of the period you paid for. A Lite or Plus library is then closed; subscribe again to reopen it. Files beyond the free allowance may be deleted after 90 days, so export first. A Pro server stays readable for 30 days so you can export everything.</p>
       </div>
       <div>
         <h3>Payments</h3>
-        <p>Checkout, invoices and card details are handled by Stripe; Gamma never sees your card. Prices are in US dollars; tax is added where it applies. Payments are not refunded: see the <a href="/terms/">terms</a>.</p>
+        <p>Stripe handles checkout, invoices and cards; Gamma never sees your card. Prices are in US dollars, with tax added where it applies. Payments are not refunded: see the <a href="/terms/">terms</a>.</p>
       </div>
     </div>
   </section>

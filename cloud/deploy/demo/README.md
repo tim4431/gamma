@@ -43,9 +43,10 @@ when a merge has published a new image. It updates only containers labelled
 `com.centurylinklabs.watchtower.enable=true` with the scope `demo` (the
 demo), never the account project (whose own Watchtower, scope `share`,
 keeps the share host current) or the fleet's servers on the same host.
-Each needs its scope: an unscoped Watchtower updates every labelled
-container and stops every other Watchtower when it starts. The `update-demo-server`
-skill (`.claude/skills/`) does the same pull at once, after a merge.
+Each needs its scope: two unscoped Watchtowers would both update every
+labelled container, and each would remove the other when it starts. The
+`update-demo-server` skill (`.claude/skills/`) does the same pull at once,
+after a merge.
 
 ## First deployment
 

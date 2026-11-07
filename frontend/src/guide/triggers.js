@@ -60,11 +60,9 @@ export function answersOffer(tour, event) {
   return !!tour.trigger?.answeredBy && !!event && eventMatches(tour.trigger.answeredBy, event.name, event.payload);
 }
 
+// A tour's progress in browser storage, one key per account and tour.
 export function guideProgressKey(tour, scope) {
-  // Keep the existing manually launched first-run tour's storage compatible.
-  return tour.id !== "first-run"
-    ? `gamma-guide:${encodeURIComponent(scope)}:${tour.id}`
-    : `gamma-guide:${tour.id}`;
+  return `gamma-guide:${encodeURIComponent(scope)}:${tour.id}`;
 }
 
 // Where progress is kept: localStorage, or sessionStorage on a demo server

@@ -6,14 +6,16 @@ import ipaddress
 import os
 import socket
 import sys
-import tempfile
 import threading
 import time
 import traceback
 from pathlib import Path
 
+sys.path.append(str(Path(__file__).resolve().parents[2] / "tests"))
+from testrun import own_folder, pytest_configure, pytest_enter_pdb, pytest_leave_pdb, pytest_runtest_logreport  # noqa: E402,F401  (hooks)
+
 # Must happen BEFORE importing gamma — config reads the environment at import.
-os.environ["GAMMA_DATA_DIR"] = tempfile.mkdtemp(prefix="gamma-test-")
+os.environ["GAMMA_DATA_DIR"] = own_folder("gamma-test-")
 os.environ["GAMMA_SYNC_INTERVAL"] = "0"  # mirror rounds run only when a test asks
 for var in ("GAMMA_STATIC_DIR", "GAMMA_AI_ANTHROPIC_API_KEY", "GAMMA_AI_OPENAI_API_KEY",
             "GAMMA_AI_API_KEY", "ANTHROPIC_AUTH_TOKEN", "GAMMA_AI_MODELS", "GAMMA_AI_MODEL",
@@ -370,7 +372,6 @@ def data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DATA_DIR", tmp_path)
     monkeypatch.setattr(config, "USERS_DB", tmp_path / "users.db")
     monkeypatch.setattr(config, "WORKSPACES_DIR", tmp_path / "workspaces")
-    monkeypatch.setattr(config, "LEGACY_USERS_DIR", tmp_path / "users")
     monkeypatch.setattr(config, "BACKUPS_DIR", tmp_path / "backups")
     monkeypatch.setattr(db_mod, "USERS_DB", tmp_path / "users.db")
     monkeypatch.setattr(db_mod, "WORKSPACES_DIR", tmp_path / "workspaces")

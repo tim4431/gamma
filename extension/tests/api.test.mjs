@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  api, checkedDefaultFolder, checkedWorkspace, defaultFolder, folderByPath, getSettings, rememberFolder, removeServer,
-  setSettings, whoAmI, writableWorkspaces,
+  api, checkedDefaultFolder, checkedWorkspace, defaultFolder, folderByPath, folderTree, getSettings, makeFolder, namedKid,
+  rememberFolder, removeServer, setSettings, whoAmI, writableWorkspaces,
 } from "../api.js";
 
 function settings(t, server) {
@@ -175,6 +175,79 @@ test("a folder path names the folder whose names it joins, as the clip splits it
   assert.equal(folderByPath(folders, "reading/2026"), "f2");
   assert.equal(folderByPath([...folders, { id: "f5", path: ["reading"] }], "reading"), "f5");
   assert.equal(folderByPath([...folders, { id: "f5", path: ["reading"] }], "READING"), "f1");
+});
+
+test("the folder list becomes a tree, each level in the list's order", () => {
+  const names = (nodes) => nodes.map((f) => f.name);
+  const { roots, byId } = folderTree([
+    { id: "c", path: ["B", "x"] },        // a child listed before its parent
+    { id: "b", path: ["B"] },
+    { id: "a", path: ["A"] },
+    { id: "d", path: ["B", "y"] },
+    { id: "e", path: ["B", "x", "deep"] },
+  ]);
+  assert.deepEqual(names(roots), ["B", "A"]);
+  assert.deepEqual(names(byId.get("b").kids), ["x", "y"]);
+  assert.deepEqual(names(byId.get("c").kids), ["deep"]);
+  assert.equal(byId.get("e").parent.parent, byId.get("b"));
+  assert.equal(byId.get("b").parent, null);
+});
+
+test("a tree goes by names: one holding a slash is one name", () => {
+  const { roots, byId } = folderTree([
+    { id: "whole", path: ["a/b"] },
+    { id: "kid", path: ["a/b", "c"] },
+    { id: "split", path: ["a", "b"] },
+  ]);
+  assert.deepEqual(roots.map((f) => f.id), ["whole"].concat("split"));
+  assert.equal(byId.get("kid").parent, byId.get("whole"));
+  // The parent of the third isn't listed: it stays, under its whole path.
+  assert.equal(byId.get("split").name, "a / b");
+});
+
+test("the children of siblings sharing a name show under the first, each keeping its id", () => {
+  const { roots, byId } = folderTree([
+    { id: "one", path: ["Twin"] },
+    { id: "two", path: ["Twin"] },
+    { id: "kid", path: ["Twin", "x"] },
+  ]);
+  assert.deepEqual(roots.map((f) => f.id), ["one", "two"]);
+  assert.deepEqual(byId.get("one").kids.map((f) => f.id), ["kid"]);
+  assert.deepEqual(byId.get("two").kids, []);
+});
+
+test("a folder's kid is found by name: exactly, else ignoring case", () => {
+  const { roots } = folderTree([{ id: "lower", path: ["atoms"] }, { id: "upper", path: ["Atoms"] }, { id: "a", path: ["a/b"] }]);
+  assert.equal(namedKid(roots, "Atoms").id, "upper");
+  assert.equal(namedKid(roots, "  atoms ").id, "lower");
+  assert.equal(namedKid(roots, "ATOMS").id, "lower");
+  assert.equal(namedKid(roots, "A/B").id, "a");
+  assert.equal(namedKid(roots, "ions"), null);
+});
+
+test("a folder is made by one insert on the folder tree, in the chosen workspace", async (t) => {
+  const { stored } = settings(t, "http://gamma.example");
+  stored.workspaces = { "http://gamma.example": "w-lab" };
+  const calls = [];
+  t.mock.method(globalThis, "fetch", async (url, init) => {
+    calls.push({ url: url.href, init });
+    return response(url.href, { seq: 1, ops: [] });
+  });
+  await makeFolder({ id: "id-1", parent: "", name: "Top" });
+  await makeFolder({ id: "id-2", parent: "id-1", name: "Inside" }, { workspace: "w-pinned" });
+  assert.equal(calls[0].url, "http://gamma.example/api/pages/folders/ops");
+  assert.equal(calls[0].init.method, "POST");
+  assert.equal(calls[0].init.headers["X-Gamma-Workspace"], "w-lab");
+  assert.deepEqual(JSON.parse(calls[0].init.body), { client: "", ops: [{ op: "insert", id: "id-1", parent: "folders", content: "Top" }] });
+  assert.deepEqual(JSON.parse(calls[1].init.body).ops, [{ op: "insert", id: "id-2", parent: "id-1", content: "Inside" }]);
+  assert.equal(calls[1].init.headers["X-Gamma-Workspace"], "w-pinned", "a save's pin holds");
+});
+
+test("a refused folder says which", async (t) => {
+  settings(t, "http://gamma.example");
+  t.mock.method(globalThis, "fetch", async () => new Response('{"detail":"read-only"}', { status: 403 }));
+  await assert.rejects(makeFolder({ id: "id", parent: "", name: "Top" }),
+    (err) => err.status === 403 && err.message === "Couldn't make the folder “Top”: read-only");
 });
 
 test("a save's folder becomes the server's default, a path by the id it now has", async (t) => {

@@ -7,7 +7,7 @@ from conftest import make_folder, make_page, require_math_renderer, workspace_of
 from test_pdf_export import _object_kinds, _open
 
 from gamma.note_markup import MATH, TEXT
-from gamma.pdf_document import PAGE_H, chunks, inline, render_document
+from gamma.pdf_document import PAGE_H, _Canvas, chunks, inline, render_document
 from gamma.pdf_typeset import BOLD, ITALIC, LINK, MARK, MONO, STRIKE, UNDERLINE
 
 
@@ -136,6 +136,33 @@ def _lines(md):
     return [[(p, st.bits) for _k, p, _lv, st in c["spans"]] for c in chunks(md) if c["kind"] == "text"]
 
 
+def _drawn_bullets(monkeypatch, *blocks):
+    """The markers beside the lines of a page of ``blocks``: "" is a dot."""
+    drawn, bullet = [], _Canvas._bullet
+    monkeypatch.setattr(_Canvas, "_bullet", lambda canvas, marker, *rest: (drawn.append(marker), bullet(canvas, marker, *rest)))
+    render_document([{"id": "p", "content": "Page", "properties": {}, "children": list(blocks)}])
+    return drawn
+
+
+def _note(content, *children, **props):
+    return {"id": content, "content": content, "properties": props, "children": list(children)}
+
+
+def test_a_nested_plain_note_draws_no_dot_and_a_list_keeps_its_marker(monkeypatch):
+    assert _drawn_bullets(monkeypatch, _note("top", _note("plain", _note("deeper")))) == []
+    assert _drawn_bullets(monkeypatch, _note("top", _note("- item"), _note("3. item"))) == ["", "3."]
+
+
+def test_a_nested_caption_with_no_drawing_draws_no_dot_as_a_plain_note(monkeypatch):
+    assert _drawn_bullets(monkeypatch, _note("top", _note("not stored yet", ink_url=""))) == []
+    assert _drawn_bullets(monkeypatch, _note("top", _note("file gone", ink_url="/api/uploads/gone.ink"))) == []
+
+
+def test_a_highlight_s_own_note_keeps_its_dot(monkeypatch):
+    place = {"pageNumber": 1, "boundingRect": {"x1": 0, "y1": 0, "x2": 1, "y2": 1}, "rects": []}
+    assert _drawn_bullets(monkeypatch, _note("my note", pdf_position=place, quote="a passage")) == [""]
+
+
 def test_a_mark_crosses_the_line_breaks_of_its_paragraph():
     # As the note shows them: a paragraph's lines are one run of text, so a
     # mark opened on one line and closed on a later one styles every line
@@ -193,6 +220,11 @@ def test_image_width_suffix_is_parsed_not_printed():
     imgs = [c for c in got if c["kind"] == "image"]
     assert imgs and imgs[0]["px_w"] == 240
     assert not any("width" in str(c.get("spans", "")) for c in got if c["kind"] == "text")
+    # A source with a balanced pair and a title, and the size after the
+    # image winning over one in its alt.
+    got = chunks('![shot](https://x.org/Foo_(bar).png "t"){:width 240} ![a|200](/api/uploads/ab12.png){:width 300}')
+    assert [(c["src"], c["alt"], c["px_w"]) for c in got if c["kind"] == "image"] == [
+        ("https://x.org/Foo_(bar).png", "shot", 240), ("/api/uploads/ab12.png", "a", 300)]
 
 
 def test_obsidian_pipe_width_is_parsed_and_kept_out_of_the_alt():
@@ -289,7 +321,7 @@ def test_render_document_starts_each_page_on_a_fresh_sheet():
 
 
 def test_links_become_real_pdf_annotations():
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
 
     pdf = render_document([_page("Links", None, [
         _block("b1", "see [the paper](https://arxiv.org/abs/2401.00001) for more")])])
@@ -300,7 +332,7 @@ def test_links_become_real_pdf_annotations():
 
 
 def test_page_titles_and_headings_become_bookmarks():
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
 
     pdf = render_document([_page("Paper one", None, [_block("b1", "## A section")])])
     outline = PdfReader(io.BytesIO(pdf)).outline
@@ -348,7 +380,7 @@ def test_math_and_cjk_are_selectable_type3_text(guest):
 def test_type3_fonts_hold_each_glyph_once_and_map_back_to_unicode():
     """One glyph program per distinct glyph — a repeated x is stored once —
     with widths, an encoding and a ToUnicode CMap that all agree."""
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
 
     require_math_renderer()
     pdf = render_document([_page("Glyphs", None, [_block("b1", r"$x + x + x$ and $\alpha$")])])
@@ -378,8 +410,8 @@ def test_cid_font_is_one_indirect_object_per_writer_and_lets_the_writer_go():
     import gc
     import weakref
 
-    from PyPDF2 import PdfWriter
-    from PyPDF2.generic import IndirectObject
+    from pypdf import PdfWriter
+    from pypdf.generic import IndirectObject
 
     from gamma.pdf_typeset import CID, HELV, cid_used, finalize_cid, font_resources
 
@@ -574,7 +606,7 @@ def test_handwriting_keeps_the_pencil_s_grain_at_its_scale_with_one_tile_per_col
     import statistics
 
     import pymupdf
-    from PyPDF2 import PdfReader, PdfWriter
+    from pypdf import PdfReader, PdfWriter
 
     from gamma import ink as inkmod
     from gamma.pdf_document import MARGIN_TOP, _Canvas
@@ -607,7 +639,7 @@ def test_handwriting_keeps_the_pencil_s_grain_at_its_scale_with_one_tile_per_col
     want = [inkmod._GRAIN_ALPHAS[tile[((py - 56) % 64) * 64 + (px - 200) % 64]] / 255 for px, py in inside]
     assert statistics.correlation(got, want) > 0.95
     # one tile image per colour and one soft mask for the document; a pattern per colour and placement
-    def refs(d):        # a dictionary's values as the references they are (PyPDF2's [] resolves them)
+    def refs(d):        # a dictionary's values as the references they are (pypdf's [] resolves them)
         return {k: d.raw_get(k) for k in d}
     pages = [refs(page["/Resources"]["/Pattern"]) for page in PdfReader(io.BytesIO(pdf)).pages]
     assert [len(p) for p in pages] == [2, 1]

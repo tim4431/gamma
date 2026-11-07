@@ -105,8 +105,6 @@ def test_an_admin_switches_registration_and_the_form_follows(client):
     assert r.status_code == 200
     assert settings.registration() == "open"
     assert "Invite code" not in client.get("/register").text
-    # and the public config the pages read
-    assert client.get("/api/config").json()["registration"] == "open"
 
 
 def test_a_blank_secret_keeps_the_stored_one_and_null_clears_it(client):

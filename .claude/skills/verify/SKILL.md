@@ -41,8 +41,9 @@ websocket-delivered state. Selectors the scenarios already use: `.folderNewBtn`
 `[data-page="N"] .textLayer span`, `.plainTip .colorBtn`, `[data-hl-id]`,
 `.searchPopover .searchInput`, `button[aria-label='Share']` → `.sharePopover`,
 `.presenceBar .peerAvatar`, `.peerChips`. Editor rules that matter: plain
-Enter is a line break and Shift+Enter a new block (unless the
-`gamma-enter-new-note` preference is set), Escape does not close the editor
+Enter makes a new block and Shift+Enter a line break (the other way round
+when the `gamma-enter-new-block` preference is off; in a code fence or `$$`
+either is a line break), Escape does not close the editor
 (blur does: `closeEditor` in `scenarios/notes.mjs`), Tab / Shift+Tab remount
 the row and keep its editor open, the caret where it was.
 
@@ -57,7 +58,7 @@ cd backend
 GAMMA_DATA_DIR=<scratch>/data venv/Scripts/python.exe manage.py setup           # guest account + files
 GAMMA_DATA_DIR=<scratch>/data venv/Scripts/python.exe manage.py create-user tim pw
 GAMMA_DATA_DIR=<scratch>/data GAMMA_STATIC_DIR=/d/Codes/Github/gamma/frontend/dist \
-  venv/Scripts/python.exe -m uvicorn app:app --host 127.0.0.1 --port 9101        # background; 9001/9002 are the developer's
+  timeout 2h venv/Scripts/python.exe -m uvicorn app:app --host 127.0.0.1 --port 9101  # background; 9001/9002 are the developer's
 ```
 
 Seed through the API with a cookie jar (`curl -c jar -X POST :9101/api/login
@@ -77,4 +78,6 @@ Gotchas:
 - `POST /api/metadata/fetch` answers 404 for a PDF without an arXiv id / DOI —
   designed, not a failure.
 
-Kill the uvicorn process when done (the suite does this itself).
+Kill the uvicorn process when done (the suite does this itself). The `timeout`
+is for when that does not happen: a background server outlives the session
+that started it, and one stayed up for eight days.

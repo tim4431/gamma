@@ -1,0 +1,4 @@
+﻿Name,Checkbox,Date,Formula,Groups,Multi-select,Number,Person,Select,URL
+RT-001 Alpha,Yes,"November 6, 2026",12,Group A (Round%20trip/Groups/Group%20A%2040f85cc797e780979671c7aba1a2a0df.html),"math, unicode",3.14159,Ada Example,Ready,https://github.com/tim4431/Gamma
+"RT-002 Beta, comma",No,,18,,,,,,
+RT-003 “Gamma” 中文,No,,17,,,,,,
