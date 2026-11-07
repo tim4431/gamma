@@ -5,7 +5,7 @@ websockets==17.1
 diff-match-patch==20241021
 bcrypt==5.0.0
 pydantic==2.13.2
-PyPDF2==3.0.1
+pypdf==6.21.4
 PyMuPDF==1.28.2
 python-multipart==0.0.26
 fractional-indexing==0.1.3

@@ -31,7 +31,8 @@ it on the account side to route `<label>-user.gammapdf.com` to
 `root@69.63.206.178`, folder `/root/Container/gamma-fleet/`, next to the
 account server's `/root/Container/gamma-account/` and the demo's
 `/root/Container/gamma-demo/`. The `update-fleet` skill
-(`.claude/skills/`) updates it.
+(`.claude/skills/`) updates it. Never run two agents on one host: both
+would work the same Docker daemon.
 
 **Two kinds of host.** A proxy finds a hosted server by its container
 name on `gamma-fleet`, and a Docker network's names resolve only on its
@@ -99,25 +100,6 @@ own host, so every host needs a proxy beside its servers:
 The account side (`GAMMA_CLOUD_HOSTED_DOMAIN`, the Caddyfile's wildcard
 route, a first server by hand) is in the account server's README,
 [Hosted servers](../../deploy/README.md#hosted-servers).
-
-### Moving from the account project's `fleet` service
-
-Older account compose files ran the agent as their own `fleet` service
-behind the `fleet` profile. Never run two agents on one host. Both
-would work the same Docker daemon, so stop the old one first:
-
-1. Copy the account project's new `compose.yml` (it has no `fleet`
-   service) and run `docker compose up -d --remove-orphans` there. That
-   removes the old agent's container. The hosted containers are not
-   compose services and keep running.
-2. Start this folder's `.env` from `.env.example` (step 4's `curl`), which
-   holds `GAMMA_FLEET_ACCOUNT_URL`: the old service set that address in
-   the compose file, not in `.env`, and the agent refuses to start without
-   it. Then move `GAMMA_FLEET_HOST_TOKEN` and the `GAMMA_FLEET_S3_*` lines
-   by hand from the account project's `.env` into it, and delete them and
-   `COMPOSE_PROFILES=fleet` from the account one. The token stays the same
-   host.
-3. Steps 4 and 5 above.
 
 ### On a fresh host
 

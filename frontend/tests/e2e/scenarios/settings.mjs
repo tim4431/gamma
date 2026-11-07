@@ -228,6 +228,24 @@ export async function settingsScenarios(env) {
     }
   });
 
+  await step("settings: a ?settings= link (Gamma Cloud's Export) opens Settings on its pane and leaves the address", async () => {
+    const ctx = await user.context(browser);
+    try {
+      await ctx.addInitScript(() => localStorage.setItem("gamma-ai-login-check", "off"));
+      const page = await openPage(ctx, `${server.base}/?settings=backups`);
+      const dialog = page.getByRole("dialog", { name: "Settings", exact: true });
+      await dialog.waitFor();
+      await until(async () => (await nav(page, "Backups").getAttribute("aria-current")) === "page", { what: "the Backups pane" });
+      await until(() => !new URL(page.url()).searchParams.has("settings"), { what: "the parameter to leave the address" });
+      await page.reload();
+      await page.waitForSelector(".folderNewBtn");
+      assertEq(await dialog.count(), 0, "a reload does not open it again");
+      assertNoProblems(page);
+    } finally {
+      await ctx.close();
+    }
+  });
+
   await step("settings: Ctrl+, opens it; Ctrl+F goes to the settings search, Enter and the arrows pick a match", async () => {
     const { ctx, page } = await setup();
     try {
@@ -644,7 +662,7 @@ export async function settingsScenarios(env) {
       await page.getByRole("button", { name: "Codex CLI", exact: true }).click();
       await page.getByRole("button", { name: "Windows PowerShell", exact: true }).click();
       const commandField = page.getByRole("textbox", { name: "Codex setup command", exact: true });
-      // the commands themselves are pinned by codexSetup.test.mjs / assistantSetup.test.mjs;
+      // the commands themselves are pinned by assistantSetup.test.mjs;
       // here: each field carries this server's URL and follows the platform switch
       const windowsCommand = await commandField.inputValue();
       assert(windowsCommand.includes(`'${server.base}/mcp'`), "the setup command names this server");
@@ -2614,7 +2632,9 @@ export async function settingsScenarios(env) {
       await until(() => seen.length === 1, { what: "the ack of the visited pane" });
       assertEq(seen[0], "backup-failed:t1");
       await nav(page, "Server").locator(".noticeDot").waitFor();
-      assertEq(await nav(page, "Backups").locator(".noticeDot").count(), 0);
+      // the ack goes out in the tick that drops the dot, whose render can
+      // land after it on a loaded machine
+      await until(async () => await nav(page, "Backups").locator(".noticeDot").count() === 0, { what: "the visited pane's dot to go" });
       assertEq(await account.locator(".noticeDot").getAttribute("data-tone"), "warn");
       await nav(page, "Server").click();
       await until(() => seen.length === 2, { what: "the second ack" });

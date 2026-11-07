@@ -7,6 +7,7 @@ import string
 
 from .colors import logseq_color
 from .highlights import from_scaled
+from .note_markup import obsidian_image_sizes
 
 
 def parse_edn(text):
@@ -124,7 +125,9 @@ def map_color(c):
 
 
 def parse_logseq_md(text):
-    """Parse a Logseq PDF-highlights .md file into a block tree."""
+    """Parse a Logseq PDF-highlights .md file into a block tree. A note's
+    image size, ``![alt](url){:width 300}`` in Logseq, becomes the one
+    Gamma stores, ``![alt|300](url)``."""
     lines = text.split('\n')
 
     def count_tabs(line):
@@ -165,6 +168,8 @@ def parse_logseq_md(text):
                 else:
                     break
             i = j
+            if props.get('ls-type') != 'annotation':  # an annotation's text is its quote, as the PDF has it
+                content = obsidian_image_sizes(content)
             block = {'content': content, 'indent': tabs, 'properties': props, 'children': []}
             while len(stack) > 1 and stack[-1]['indent'] >= tabs:
                 stack.pop()

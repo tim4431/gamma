@@ -326,10 +326,9 @@ A model that reads text only is offered neither this nor `view_ink`
 The model's eyes on a PDF: `page_id` + 1-based `pdf_page` rasterize that
 page through MuPDF (`pdf_text.render_page`, under the same lock as every
 other PyMuPDF call, the picture encoded outside it) with its longer side at
-`RENDER_MAX_SIDE` px (1568 —
-past that providers downscale anyway), JPEG through Pillow when it is
-installed, else a PNG written in-process. The result text names the page,
-the document's page count and the picture's size; the picture itself rides
+`RENDER_MAX_SIDE` px (1568 — past that providers downscale anyway), a JPEG
+through Pillow. The result text names the page, the document's page count
+and the picture's size; the picture itself rides
 on the action as `images` (`[(media_type, base64)]`). `run_agent_tool` keeps
 it there and the chat loop moves it onto the model's tool result
 (`{"role": "tool", …, "images"}`) before the chip is streamed — so the
@@ -397,9 +396,9 @@ Nothing is drawn by hand. Both paths reuse an export
   the nib's slanted ends. Ink imported
   from the PDF and still embedded in it (`pdf_export.still_embedded`) is
   not added twice. When the PDF
-  is missing or PyPDF2 cannot copy the page (an encrypted file), the
-  strokes are drawn on blank paper of the page's size, and the result says
-  so.
+  is missing or pypdf cannot copy the page (a file that needs a user
+  password to open), the strokes are drawn on blank paper of the page's
+  size, and the result says so.
 
 `pdf_text.render_page` rasterizes either, whole at `RENDER_MAX_SIDE` or
 cropped under its 4× zoom cap, and `pdf_text.image_part` encodes the picture

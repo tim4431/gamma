@@ -33,9 +33,8 @@
 # is its own compose project, cloud/fleet/deploy/ (/root/Container/gamma-fleet/
 # on the VPS), which shares only the gamma-fleet network with this one.
 #
-# Variants layered with -f: compose.tunnel.yml replaces caddy with a
-# Cloudflare Tunnel (no open port; a NAS); compose.build.yml builds the
-# image from a copy of the source in ./src instead of pulling it.
+# Layered with -f, compose.build.yml builds the account image from a copy
+# of the source in ./src instead of pulling it.
 
 services:
   account:
@@ -55,9 +54,10 @@ services:
       com.centurylinklabs.watchtower.enable: "true"
       com.centurylinklabs.watchtower.scope: share
     environment:
-      # Caddy (or the tunnel) reaches it over this project's network, whose
-      # subnet is pinned below: its X-Forwarded-For is believed, anyone
-      # else's is not (the image trusts loopback only).
+      # Caddy reaches it over this project's network, whose subnet is
+      # pinned below: its X-Forwarded-For (the visitor, from
+      # CF-Connecting-IP) is believed, anyone else's is not (the image
+      # trusts loopback only).
       FORWARDED_ALLOW_IPS: 10.201.0.0/24
     volumes:
       - ./share-data:/data
@@ -69,17 +69,16 @@ services:
   # ./share-data as it starts (snapshot first). It touches only containers
   # with both labels above: never `account` (a branch build, also :latest)
   # or caddy. The scope keeps it apart from the demo's Watchtower on this
-  # host: an unscoped one updates every labelled container and stops every
-  # other Watchtower when it starts. DOCKER_API_VERSION: the archived
-  # image's client defaults to an API that Docker 29 refuses. A
-  # compose.override.yml naming a sha-<short> tag for `share` is a rollback
-  # pin (the update-share-host skill): Watchtower follows the tag the
-  # container runs, and a sha- tag never moves.
+  # host: two unscoped ones would both update every labelled container, and
+  # each would remove the other when it starts. A compose.override.yml
+  # naming a sha-<short> tag for `share` is a rollback pin (the
+  # update-share-host skill): Watchtower follows the tag the container runs,
+  # and a sha- tag never moves. The image is the maintained fork of
+  # Watchtower, pinned to its major version; it holds the Docker socket,
+  # which is root on this host.
   watchtower:
     container_name: gamma-share-watchtower
-    image: containrrr/watchtower
-    environment:
-      DOCKER_API_VERSION: "1.44"
+    image: nickfedor/watchtower:1
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     command: --cleanup --label-enable --scope share --interval 3600
@@ -110,9 +109,7 @@ volumes:
   caddy-config:
 
 networks:
-  # Pinned so the share host can trust exactly it (FORWARDED_ALLOW_IPS). A
-  # host whose network predates the pin: `docker compose down && docker
-  # compose up -d` once recreates it.
+  # Pinned so the share host can trust exactly it (FORWARDED_ALLOW_IPS).
   default:
     ipam:
       config:

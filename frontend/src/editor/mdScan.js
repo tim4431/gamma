@@ -57,9 +57,10 @@ export function protectedSpans(content) {
 }
 const inSpan = (spans, pos) => spans.some((s) => pos >= s.from && pos < s.to);
 
-// The images the rendered view shows, in order. The syntax (Obsidian
-// `![alt|300]` size, legacy Logseq `{:width N}` suffix) is scanImageSyntax in
-// mdMarks.js; both forms render, edits write the Obsidian form.
+// The images the rendered view shows, in order. The syntax (the Obsidian
+// `![alt|300]` size or Logseq's `{:width N}` after the image) is
+// scanImageSyntax in mdMarks.js, which the view renders with too; edits
+// write the Obsidian form.
 export function scanImages(content) {
   const spans = protectedSpans(content);
   return scanImageSyntax(content).filter((im) => !inSpan(spans, im.from));

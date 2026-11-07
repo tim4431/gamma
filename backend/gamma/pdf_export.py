@@ -48,15 +48,14 @@ import io
 import json
 import re
 
-from PyPDF2 import PdfReader, PdfWriter
-from PyPDF2.generic import (
+from pypdf import PdfReader, PdfWriter
+from pypdf.generic import (
     ArrayObject,
     DecodedStreamObject,
     DictionaryObject,
     FloatObject,
     IndirectObject,
     NameObject,
-    NullObject,
     NumberObject,
     TextStringObject,
 )
@@ -66,23 +65,6 @@ DEFAULT_COLOR = (1.0, 226 / 255, 143 / 255, 0.65)  # the viewer's yellow
 # Where a Zotero copy's highlights and area notes keep their alpha instead of
 # /CA (module docstring); routers/imports.py reads it first.
 GAMMA_ALPHA = "/GammaAlpha"
-
-
-class ExportPdfReader(PdfReader):
-    """Keep dangling optional references from breaking PyPDF2's clone path."""
-
-    def get_object(self, indirect_reference):
-        obj = super().get_object(indirect_reference)
-        if obj is None:
-            # Missing indirect objects have PDF null semantics. PyPDF2 reads
-            # them as Python None, which its writer cannot clone. Retain the
-            # reference so the null is registered/deduplicated in the writer.
-            obj = NullObject()
-            obj.indirect_reference = indirect_reference
-            self.cache_indirect_object(
-                indirect_reference.generation, indirect_reference.idnum, obj
-            )
-        return obj
 
 
 def parse_css_color(value):
@@ -158,7 +140,7 @@ def _page_box(page, key):
 
 
 def page_frame(page):
-    """(view box, rotation) of a PyPDF2 page — the frame both mappers need.
+    """(view box, rotation) of a pypdf page — the frame both mappers need.
     The view box is the part of the page a viewer shows, and so the frame the
     client stores positions in: the crop box clipped to the media box, as
     pdf.js, pdfium and MuPDF clip it; the media box when there is no crop box
@@ -176,7 +158,7 @@ def page_frame(page):
 
 
 def _resolve(obj):
-    """PyPDF2 dict access can hand back unresolved IndirectObject references."""
+    """pypdf dict access can hand back unresolved IndirectObject references."""
     return obj.get_object() if hasattr(obj, "get_object") else obj
 
 
@@ -254,8 +236,6 @@ def drop_annotations(page, doomed) -> int:
     resolved dictionaries) off ``page``'s /Annots, with their threads:
     the replies and review states that answer them (/IRT), at any depth, and
     their /Popup windows. Returns how many annotations went."""
-    from PyPDF2.generic import ArrayObject
-
     items = [(ref, _resolve(ref)) for ref in (_resolve(page.get("/Annots")) or ())]
     gone = set(doomed)
     while True:
@@ -701,7 +681,7 @@ def _picture_annotation(writer, images, pic, rotation, crop, author, resolve_ref
     if text:
         annot[NameObject("/Contents")] = TextStringObject(text)
     if "opacity" in placed:
-        annot[NameObject("/CA")] = FloatObject(f"{placed['opacity']:g}")  # a string, or every binary digit
+        annot[NameObject("/CA")] = FloatObject(placed["opacity"])
     _sign(annot, author)
     if pic.get("modified"):
         annot[NameObject("/M")] = TextStringObject(_pdf_date(pic["modified"]))
@@ -742,7 +722,7 @@ def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=(),
     from .pdf_image import XObjectStore
     from .pdf_typeset import finalize_cid
 
-    reader = ExportPdfReader(io.BytesIO(pdf_bytes))
+    reader = PdfReader(io.BytesIO(pdf_bytes))
     writer = PdfWriter()
     writer.append(reader)
     glyphs = GlyphFonts(writer)
@@ -826,7 +806,7 @@ def page_with_ink(src, page_no: int, inks, *, pictures=(), text_boxes=(), replac
     ``annotate_pdf``) leave the copy first, so each is drawn once. The
     agent's view_ink and its pictures of the page as the user sees it
     render it (gamma/ink_view.py)."""
-    reader = ExportPdfReader(io.BytesIO(src) if isinstance(src, (bytes, bytearray)) else str(src))
+    reader = PdfReader(io.BytesIO(src) if isinstance(src, (bytes, bytearray)) else str(src))
     pages = len(reader.pages)
     if not 1 <= page_no <= pages:
         return b"", pages

@@ -61,7 +61,8 @@ class ChatSaveRequest(StorableBody):
     messages: list | None = None   # None = keep the stored messages (a rename)
     title: str | None = None       # None = keep the stored title
     # The version (the active row's updated_at) the client's copy is based
-    # on, "" = it saw no conversation; None = unconditional (older clients).
+    # on, "" = it saw no conversation; None = unconditional (a script or a
+    # test seeding the conversation; the app always sends a version).
     updated_at: str | None = None
 
 
@@ -69,7 +70,9 @@ class ChatArchiveRequest(StorableBody):
     bucket: str
     messages: list = []   # the client's current conversation (authoritative)
     title: str = ""
-    updated_at: str | None = None  # the version the client's copy is based on (see ChatSaveRequest)
+    # The version the client's copy is based on (see ChatSaveRequest); None
+    # files the copy and drops the stored one unchecked (a script or a test).
+    updated_at: str | None = None
     discard: bool = False  # Alt+click New chat: the client's copy goes instead of into history
 
 

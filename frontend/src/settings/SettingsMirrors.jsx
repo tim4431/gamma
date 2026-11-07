@@ -46,8 +46,8 @@ import { T, t } from "../shared/i18n/i18n.js";
 // ("21 of 79 pages", the file in flight): `running` asks the read to come
 // again every 2 s, as does a Zotero link between two bounded rounds of one
 // fill.
-function useListed(enabled, { data, error, reload }, key, running, setRunning) {
-  const list = !enabled || (error && !data) ? [] : data ? data[key] || [] : null;
+function useListed({ data, error, reload }, key, running, setRunning) {
+  const list = error && !data ? [] : data ? data[key] || [] : null;
   const now = !!list?.some((m) => m.status?.running || (linkKind(m) === "zotero" && zoteroFollowing(m.status)));
   if (now !== running) setRunning(now);
   const refresh = React.useCallback(() => { reload().catch(() => {}); }, [reload]);
@@ -55,19 +55,19 @@ function useListed(enabled, { data, error, reload }, key, running, setRunning) {
 }
 
 // The account's mirrors (null while loading), the pane's read, kept while
-// the dialog is open (settingsReads.js). `enabled` false (a guest, or
-// signed out) reads nothing: the endpoint would refuse.
-export function useMirrors(enabled = true) {
+// the dialog is open (settingsReads.js). Only the panes App.jsx renders
+// for a signed-in account that is no guest call it, so it always reads.
+export function useMirrors() {
   const [running, setRunning] = React.useState(false);
-  const read = useSettingsRead(enabled ? LINK_BASES.mirror : null, { poll: running ? 2000 : 0 });
-  return useListed(enabled, read, "mirrors", running, setRunning);
+  const read = useSettingsRead(LINK_BASES.mirror, { poll: running ? 2000 : 0 });
+  return useListed(read, "mirrors", running, setRunning);
 }
 
 // The account's Zotero links, read as the mirrors are.
-export function useZoteroLinks(enabled = true) {
+export function useZoteroLinks() {
   const [running, setRunning] = React.useState(false);
-  const read = useSettingsRead(enabled ? LINK_BASES.zotero : null, { poll: running ? 2000 : 0 });
-  return useListed(enabled, read, "links", running, setRunning);
+  const read = useSettingsRead(LINK_BASES.zotero, { poll: running ? 2000 : 0 });
+  return useListed(read, "links", running, setRunning);
 }
 
 // The row's status line: the state in a few words, the file in flight

@@ -24,6 +24,8 @@ blocks and how they nest:
 
 import re
 
+from .note_markup import obsidian_image_sizes
+
 # blocks per document. A 5 MB file of real notes holds about 100,000; only
 # one of nothing but very short lines gets past this (a 5 MB file of "- x"
 # lines is 1.3 million blocks: a minute and a gigabyte to write, a page no
@@ -135,15 +137,17 @@ def _dedent(raw: str, col: int) -> str:
 
 # Obsidian's foldable callout marker — ``> [!note]+ Title`` / ``[!note]-`` —
 # has no meaning here; the ``+``/``-`` would only keep the callout from
-# rendering, so it is dropped wherever markdown is parsed into blocks.
+# rendering, so it is dropped wherever markdown is parsed into blocks. A
+# Logseq image size (``![alt](url){:width 300}``) becomes the one Gamma
+# stores, ``![alt|300](url)``, there too.
 _CALLOUT_FOLD_RE = re.compile(r"^(\s*(?:>\s*)+\[![^\]\n]+\])[+-](?=\s|$)", re.M)
 
 
 def md_to_blocks(text: str) -> list:
     """Parse markdown into a tree of ``{"content": str, "children": [...]}``.
     Raises TooManyBlocks past MAX_BLOCKS blocks, where it stops reading."""
-    text = _CALLOUT_FOLD_RE.sub(r"\1", text)
-    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    lines = obsidian_image_sizes(_CALLOUT_FOLD_RE.sub(r"\1", text)).split("\n")
     root = {"content": "", "children": []}
     headings = [(0, root)]   # (heading level, node) — nesting for everything
     lists = []               # (indent width, node, text column) — the current list run

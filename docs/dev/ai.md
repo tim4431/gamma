@@ -84,8 +84,10 @@ ones (ids are `<entryId>:<model>`; the wire format comes from the entry's
 own first model, else the server's first) — AI endpoints must use it, not
 module-level config constants for credentials or model routing. Env vars set
 each protocol's administrator-controlled default base URL
-(`config.AI_BASE_URLS`: `GAMMA_AI_ANTHROPIC_BASE_URL`,
-`GAMMA_AI_OPENAI_BASE_URL`, `GAMMA_AI_CHATGPT_BASE_URL`).
+(`config.AI_BASE_URLS`: `GAMMA_AI_ANTHROPIC_BASE_URL`, or `GAMMA_AI_BASE_URL`
+when it is unset, as older `.env` files name it; `GAMMA_AI_OPENAI_BASE_URL`,
+`GAMMA_AI_CHATGPT_BASE_URL`). Only `GAMMA_` variables count: an
+`ANTHROPIC_BASE_URL` in the environment is not read.
 
 The client offers one connection's models at a time. `providerModels` in
 `chat/modelPrefs.js` cuts the registry down to the active connection (the
@@ -875,8 +877,9 @@ the union of its rects there, and `highlightSpot` for a clicked highlight's
 stored position). `box` is `[x0, y0, x1, y1]` as fractions of the page,
 top-left origin. The request sends them as `selections`, each whole, at
 most 12 (`MAX_SELECTIONS`; App refuses a thirteenth Ctrl+selection with a
-status line). The older `selection` string ("---"-joined text) is still
-read when `selections` is empty (`ai_context.request_selections`).
+status line). The server reads them with `ai_context.request_selections`,
+which drops an entry without text and treats a page or box it cannot use
+as unknown.
 
 The single-paper text context then centres on the passages instead of the
 start of the paper (`selection_context`):
@@ -1320,8 +1323,8 @@ block_edit}` → `"allow"` / `"ask"` / `"off"`, and a pre-kind flat map is
 applied to every kind on read.
 A stored boolean is the older on / off value (`normalizePerm`): `false` is
 Off, and `true` is the permission's default. So a change that was on asks,
-and reading stays allowed. The server reads a sent boolean as on / off,
-`true` meaning Allow, which is what an older tab sends.
+and reading stays allowed. The server reads only the three states: any
+other value takes the permission's default.
 The chat header's ⚙ popover carries the same picker for the kind of chat it
 is opened in: `AgentToolPicker` in `settings/AssistantTools.jsx`, grouped
 rows with the same state menus and presets. It is bound to the same map, so

@@ -133,7 +133,7 @@ to `assets`. This lets the packager discover `assets/appx/` and the app icon.
 Its application file list includes `assets/icon.png` for the Electron window;
 Store artwork and signing inputs do not need to ship inside the application.
 
-`npm run store-art` delegates to the unified `tools/branding/build.mjs` generator,
+`npm run store-art` runs the unified `tools/branding/build.mjs` generator,
 which refreshes all brand outputs, including `desktop/assets/store/` and
 `desktop/assets/appx/`. It uses the frontend's locked Playwright/Chromium, Python 3,
 and the hero's system font stack; generation works offline. See the

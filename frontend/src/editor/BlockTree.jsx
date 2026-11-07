@@ -41,7 +41,7 @@ import { FileChip, parseUploadUrl, postFile, uploadFilesAsLines } from "../trans
 import { findMathAtCursor, LatexAcPopup, MathLivePreview } from "./LatexEditor";
 import { useMathUi } from "./useMathUi.js";
 import { BlockCmEditor, OBJECT_DRAG_TYPE } from "./BlockCmEditor";
-import { expandBlankLines } from "./mdMarks";
+import { expandBlankLines, sizedImagesHtml } from "./mdMarks";
 import { BLOCK_COMMANDS } from "./blockCommands.js";
 import { EditBarHost, useEditBarRow } from "./EditBar";
 import SelectionToolbar from "./SelectionToolbar";
@@ -85,8 +85,8 @@ const _dragState = { draggingId: null, dropTarget: null, fragment: null };
 // may replace what the card shows (BlockRow's embedEditRef).
 const _embedWrites = new Map();
 
-// Source → markdown the renderer understands: sized images (Obsidian
-// ![alt|300] and legacy Logseq {:width}), ![[embeds]],
+// Source → markdown the renderer understands: sized images (mdMarks'
+// sizedImagesHtml), ![[embeds]],
 // [[refs]], ==highlights== and @mentions rewritten OUTSIDE math and inline-code spans
 // (a "==" inside $...$ must stay LaTeX). `nested` is the inside-an-embed
 // render: embeds degrade to ref chips so transclusion can't recurse.
@@ -140,10 +140,7 @@ function mdPreprocessProse(content, nested) {
   }
   // Outside math, ``` fences and inline code (where two overlap, the earlier
   // wins in applyOutsideSpans) — a [[ref]] or == inside code stays literal.
-  return applyOutsideSpans(content, protectedSpans(content), (seg) => mentionMarkdown(seg
-    // Sized images: legacy Logseq {:width N} first, then Obsidian ![alt|300].
-    .replace(/!\[([^\]]*)\]\(([^)]+)\)\{:width\s+(\d+)\}/g, '<img src="$2" alt="$1" width="$3" />')
-    .replace(/!\[([^\]|]*)\|(\d+)(?:x\d+)?\]\(([^)]+)\)/g, '<img src="$3" alt="$1" width="$2" />')
+  return applyOutsideSpans(content, protectedSpans(content), (seg) => mentionMarkdown(sizedImagesHtml(seg)
     .replace(/!\[\[([a-zA-Z0-9_-]+)\]\]/g, nested ? "[$1](blockref:$1)" : "[$1](blockembed:$1)")
     .replace(REF_RE, "[$1](blockref:$1)")
     // A hand-typed [[title]] no page answered (the editor links one that

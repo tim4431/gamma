@@ -128,9 +128,10 @@ def _outside_code(s: str, fn) -> str:
     return "".join(out) + fn(s[pos:])
 
 
-def _map_prose(text: str, fn) -> str:
+def map_prose(text: str, fn) -> str:
     """``text`` with ``fn`` applied to what lies outside its fences and code
-    spans."""
+    spans, as the frontend's shared/lib/mdCode.mapProse does; note_markup's
+    image-size rewrite skips code with it too."""
     out, pos = [], 0
     for start, _inner, _to, end in _fences(text):
         out.append(_outside_code(text[pos:start], fn) + text[start:end])
@@ -367,7 +368,7 @@ def _kept_in(text: str) -> set:
         return s
 
     if text:
-        _map_prose(text, collect)
+        map_prose(text, collect)
     return kept
 
 
@@ -380,8 +381,8 @@ def dollar_math(text: str, keep: str = "") -> str:
     if not text:
         return text
     kept = _kept_in(keep)
-    plain = _map_prose(text, lambda s: _convert(s, kept, False))
-    return text if plain == text else _map_prose(text, lambda s: _convert(s, kept, True))
+    plain = map_prose(text, lambda s: _convert(s, kept, False))
+    return text if plain == text else map_prose(text, lambda s: _convert(s, kept, True))
 
 
 def _in_math(doc: str, pos: int) -> bool:

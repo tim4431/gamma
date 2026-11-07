@@ -118,13 +118,16 @@ The tag is an icon and one muted word ("account" or "browser") in the
 small caption size; the sentence is its hover `title` and its
 `aria-label`, and `data-sync` carries the state for tests.
 
-The last open page and viewer layout use `app/sessionState.js`, separately from
-synced preferences. Its key is `gamma-session:<user>@<workspace>`. Reads wait
-for workspace selection; changing scope cancels pending saves. Saves are
-debounced (300 ms) and written early on `pagehide` and on going hidden
-(Firefox can stop a `pagehide` listener), so a reload or a close right after
-a change (closing the notes window, say) keeps it. Old unscoped
-session caches are ignored because their account owner cannot be determined.
+The last open page and its viewer layout (the zoom, whether the PDF is closed
+and whether Notes shows) use `app/sessionState.js`, separately from synced
+preferences; the PDF page a paper was last read at is the synced `read-pos`
+preference. The session's key is `gamma-session:<user>@<workspace>`, and
+nothing reads a key without the account, so another account that used the
+browser never sees it. Reads wait for workspace selection; changing scope
+cancels pending saves. Saves are debounced (300 ms) and written early on
+`pagehide` and on going hidden (Firefox can stop a `pagehide` listener), so a
+reload or a close right after a change (closing the notes window, say) keeps
+it.
 
 ## Periodic backup tasks
 
@@ -277,7 +280,7 @@ short hint what it does, and the hover `title` the rest.
 
 The account card:
 
-- **Account & sync** (pane id `account`; `sync` is an alias): the signed-in
+- **Account & sync** (pane id `account`): the signed-in
   account's row, storage meter and Gamma Cloud link row.
   Under it, the sync section
   ([SettingsSync.jsx](../../frontend/src/settings/SettingsSync.jsx)):
@@ -346,8 +349,8 @@ Preferences:
   order, with a grip to drag it and the modes it offers, and Reset,
   [below](#bars-order-and-modes)), and last **Suggest tours**
   (`suggestTours`: off, no tour or hint is offered by itself,
-  [onboarding.md](onboarding.md)). The old `library` pane id is an alias
-  of this pane, and `topbar` and `viewer-tools` open it at their sections.
+  [onboarding.md](onboarding.md)). `topbar` and `viewer-tools` open this
+  pane at their sections.
 - **Reading & editing**: how papers and notes behave, one section per
   subject. **PDFs**: imported annotations (a Keep / Remove segmented choice),
   open-access fallback, metadata auto-fetch and saving external PDFs.
@@ -460,8 +463,8 @@ Preferences:
     choice; default `system`; hint "What squeezing Apple Pencil Pro
     does", or "What a click of the pen's second button does").
   - Each of the two shows only where the host forwards its gesture: the
-    host's `pencilGestures` lists `tap` or `squeeze`, and a host that
-    lists none forwards both (the iPad app).
+    host's `pencilGestures` lists `tap` or `squeeze`, and a host without
+    the list forwards both (the iPad app).
   - Under `nativeHost()?.haptics`, **Haptics** (`Toggle`, `inkHaptics`,
     flag, default on; hint "A tick in Apple Pencil Pro when a shape
     snaps, the lasso selects or the tool changes", or "A tick when a shape
@@ -518,7 +521,7 @@ Preferences:
   differs from the default, red caps and "Also used by …" when two commands
   share a chord — and **Built in**, the outliner's fixed keys read-only, led
   by the Enter key's one choice: "Enter makes" New note / New line
-  (`enterNewNote`; the legacy `notes` pane id lands here).
+  (`enterNewNote`).
 
 AI:
 
@@ -563,8 +566,7 @@ AI:
   **Prompts** is the accordion, with one Cancel / Save pair as its action.
   **Context size** holds the three text budgets and "Pictures per message"
   (the chat's picture budget, [ai.md](ai.md#pictures)), with the Standard /
-  Larger / Custom preset as its action. The old `ai-advanced`, `context` and `prompts` pane ids are
-  aliases of this pane, each jumping to its section.
+  Larger / Custom preset as its action.
 - **Tool usage** (pane id `tools`): **Tools**, the master switch and, per chat
   kind (folder / PDF / notes), a permission table (`AgentToolMatrix` in
   `AssistantTools.jsx`). Rows explain library reading, web research and changes;
@@ -852,10 +854,16 @@ one caption per pane. Picking one opens the pane and focuses the matching
 `tests/settingsSearch.test.mjs` fails when an entry's target is no
 `data-setting` its pane renders. The search box and the Keyboard filter
 carry their own × (the browser's is hidden).
-Legacy pane names resolve through `resolveSettingsPane`; old notes, search,
-viewer, context, ai-advanced and prompts entry points also jump to their
-section, as do `handwriting`, `topbar` and `viewer-tools`, the targets of
-the strip's and the bars' settings rows.
+Three names open a pane at one of its sections, the targets of the strip's
+and the bars' settings rows: `handwriting` (Reading & editing at Reset
+presets), `topbar` and `viewer-tools` (Appearance at the Top bar or the
+Viewer tools section). One table in `settingsNavigation.js` holds them:
+`resolveSettingsPane` gives the pane and `settingsSection` the row the
+dialog jumps to. Any other name is a pane's own. A link names one as
+`/?settings=<pane>` (Gamma Cloud's Export for a read-only Pro server is
+`/?settings=backups`, [billing.md](billing.md)): App opens Settings there
+once the library has loaded, after a sign-in if one is needed, and takes the
+parameter out of the address. A share view ignores it.
 
 The desktop surface has a persistent search header and labeled sidebar. On
 phones the Back button opens a labeled category list. All controls remain
@@ -1049,8 +1057,8 @@ the topbar's own background, not on a button, link, tab or popover, offers
 highlighter and the ⋯, which have their own menus, "Customize viewer
 tools…". The ⋯ menu ends with Customize….
 They call `openSettingsPane("topbar")` and `openSettingsPane("viewer-tools")`:
-pane aliases of Appearance (`settingsNavigation.js`) that the dialog's
-jump map in `SettingsDialog.jsx` takes to the section's header.
+section entry points of Appearance in `settingsNavigation.js`, which the
+dialog opens at the section's header.
 
 **The editor.**
 [settings/BarLayoutSection.jsx](../../frontend/src/settings/BarLayoutSection.jsx)
@@ -1147,10 +1155,11 @@ accept a `draft` value for dismissal protection. See
 
 ## Verification
 
-`npm test` covers permission presets, search visibility, legacy pane aliases
-and the panes' shared reads (`tests/settingsReads.test.mjs`).
+`npm test` covers permission presets, search visibility, the section entry
+points and the panes' shared reads (`tests/settingsReads.test.mjs`).
 After building, `npm run e2e -- --only settings` exercises the actual UI:
-preferences and reload, management navigation, prompt/connection draft guards,
+preferences and reload, management navigation, a `/?settings=backups` link,
+prompt/connection draft guards,
 the bars' layouts (a top bar row dragged by its grip, the header following
 it through a reload, an arrow key's move and what the live region says,
 Reset; a viewer tool hidden into the strip's ⋯ menu and its Customize…,

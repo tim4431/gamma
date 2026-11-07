@@ -23,8 +23,8 @@ from types import SimpleNamespace
 import pymupdf
 import pytest
 from PIL import Image, ImageOps
-from PyPDF2 import PdfReader, PdfWriter
-from PyPDF2.generic import (ArrayObject, DecodedStreamObject, DictionaryObject, FloatObject, NameObject,
+from pypdf import PdfReader, PdfWriter
+from pypdf.generic import (ArrayObject, DecodedStreamObject, DictionaryObject, FloatObject, NameObject,
                             NumberObject, TextStringObject)
 
 from ai_fixtures import folder, notes, org  # noqa: F401  (fixtures)

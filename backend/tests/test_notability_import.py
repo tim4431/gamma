@@ -152,7 +152,7 @@ def test_a_note_on_its_own_pdf_keeps_the_pdf(accounts):
 
 
 def test_a_mixed_note_is_one_composed_pdf():
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
     from test_pdf_export import PAGE_H, PAGE_W, _pdf_with_dangling_reference
 
     source = _pdf_with_dangling_reference()
@@ -838,8 +838,8 @@ def test_a_viewer_cannot_import(accounts):
 
 def test_one_pdf_under_several_names_is_read_once(accounts, monkeypatch):
     owner = accounts["nbi_owner"]
-    opened, real = [], app.ExportPdfReader
-    monkeypatch.setattr(app, "ExportPdfReader", lambda *a, **k: opened.append(1) or real(*a, **k))
+    opened, real = [], app.PdfReader
+    monkeypatch.setattr(app, "PdfReader", lambda *a, **k: opened.append(1) or real(*a, **k))
     names = [PDF, PDF.lower(), f"PDFs/{PDF}"]  # each resolves to the one file
     result = imported(owner, note("One PDF, three names", layout=[(n, 1) for n in names], pdfs={n: 2 for n in names},
                                   files={f"PDFs/{PDF}": fx.pdf()}), "Names.note")

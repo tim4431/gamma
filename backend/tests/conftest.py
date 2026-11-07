@@ -2,8 +2,10 @@
 with AI providers unconfigured, using FastAPI's in-process TestClient (no
 network, no running server needed)."""
 
+import atexit
 import ipaddress
 import os
+import shutil
 import socket
 import sys
 import tempfile
@@ -13,7 +15,11 @@ import traceback
 from pathlib import Path
 
 # Must happen BEFORE importing gamma — config reads the environment at import.
-os.environ["GAMMA_DATA_DIR"] = tempfile.mkdtemp(prefix="gamma-test-")
+# The process removes the directory when it exits, so no run leaves one in
+# the temp dir (every xdist worker makes its own).
+_DATA_DIR = tempfile.mkdtemp(prefix="gamma-test-")
+atexit.register(shutil.rmtree, _DATA_DIR, ignore_errors=True)
+os.environ["GAMMA_DATA_DIR"] = _DATA_DIR
 os.environ["GAMMA_SYNC_INTERVAL"] = "0"  # mirror rounds run only when a test asks
 for var in ("GAMMA_STATIC_DIR", "GAMMA_AI_ANTHROPIC_API_KEY", "GAMMA_AI_OPENAI_API_KEY",
             "GAMMA_AI_API_KEY", "ANTHROPIC_AUTH_TOKEN", "GAMMA_AI_MODELS", "GAMMA_AI_MODEL",
@@ -370,7 +376,6 @@ def data_dir(tmp_path, monkeypatch):
     monkeypatch.setattr(config, "DATA_DIR", tmp_path)
     monkeypatch.setattr(config, "USERS_DB", tmp_path / "users.db")
     monkeypatch.setattr(config, "WORKSPACES_DIR", tmp_path / "workspaces")
-    monkeypatch.setattr(config, "LEGACY_USERS_DIR", tmp_path / "users")
     monkeypatch.setattr(config, "BACKUPS_DIR", tmp_path / "backups")
     monkeypatch.setattr(db_mod, "USERS_DB", tmp_path / "users.db")
     monkeypatch.setattr(db_mod, "WORKSPACES_DIR", tmp_path / "workspaces")

@@ -1413,7 +1413,7 @@ def export_page(block_id: str, request: Request, mode: str = "readable", pdf: in
     return page_builder(ws, block_id, mode, opts, scope, sub_pages=bool(sub_pages)).response()
 
 
-# Sync on purpose: PyPDF2 rewriting is CPU-bound; the threadpool keeps the loop free.
+# Sync on purpose: pypdf rewriting is CPU-bound; the threadpool keeps the loop free.
 @router.get("/pages/{block_id}/export-pdf")
 def export_page_pdf(block_id: str, request: Request, notes: int = 0, highlights: int = 1, comments: int = 0,
                     notes_at: str = "beside", sub_pages: int = 0):

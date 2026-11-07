@@ -149,11 +149,10 @@ final class SavedServersTests: XCTestCase {
 /// PDF uploaded to it is read through PyMuPDF. CI has no other check of the
 /// bundle, so a wrong layout, a broken framework conversion, a missing
 /// wheel or an import error fails here instead of on an iPad. /api/health
-/// proves the start but not the reader: a server without PyMuPDF starts
-/// too (pdf_text falls back to PyPDF2, and the manifest's page count comes
-/// through that as well). A page picture proves it: render_page answers
-/// nothing without PyMuPDF, and page-image answers 404. The server is
-/// started with an account the test knows: the Keychain's, as the
+/// proves the start but not the reader, which the server imports at its
+/// first PDF read: the manifest's page sizes and a page picture both come
+/// from PyMuPDF, and page-image answers 404 when it draws nothing. The
+/// server is started with an account the test knows: the Keychain's, as the
 /// app's, or one the test seeds itself where the Keychain refuses
 /// (LocalServer's seed): the test host on CI is unsigned
 /// (CODE_SIGNING_ALLOWED=NO in ipad.yml) and has no Keychain
@@ -272,10 +271,8 @@ final class LocalServerStartTests: XCTestCase {
             fail("GET /api/pdf-info (the manifest walk)", manifest, server)
             return
         }
-        // The picture: MuPDF rendered the page. Without PyMuPDF the server
-        // answers 404 here, whatever the calls above said. The page is one
-        // line of text on white: 40 KB as JPEG, 19 KB as the server's own
-        // PNG when Pillow is missing.
+        // The picture: MuPDF rendered the page, or the server answers 404
+        // here. The page is one line of text on white: 40 KB as JPEG.
         let pictureURL = try XCTUnwrap(URL(string: "\(api.absoluteString)/ai/page-image/\(pageID)?page=1"))
         let picture = try await get(pictureURL)
         guard picture.status == 200, picture.type.hasPrefix("image/"), picture.body.count > 2048 else {

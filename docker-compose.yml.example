@@ -34,11 +34,14 @@ services:
   # runs an upgrade's global steps as it starts and each workspace's own as
   # the workspace is first opened (a snapshot of the databases is taken
   # first; see docs/dev/migrations.md). Scoped to this container, so it
-  # never touches others on the host. Remove the service to update by hand
-  # with `docker compose pull && docker compose up -d`.
+  # never touches others on the host. The image is the maintained fork of
+  # Watchtower (github.com/nicholas-fedor/watchtower), pinned to its major
+  # version; it holds the Docker socket, which is root on the host. Remove
+  # the service to update by hand with
+  # `docker compose pull && docker compose up -d`.
   watchtower:
     container_name: gamma-watchtower
-    image: containrrr/watchtower
+    image: nickfedor/watchtower:1
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
     command: --cleanup --interval 21600 gamma

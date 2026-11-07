@@ -69,6 +69,10 @@ export class Server {
     this.dir = fs.mkdtempSync(path.join(os.tmpdir(), "gamma-e2e-"));
     this.dataDir = path.join(this.dir, "data");
     this.logPath = path.join(this.dir, "server.log");
+    // The backend's own temp files (an import review's staged upload, an
+    // export) go here too, so stop() takes them with the rest.
+    this.tmpDir = path.join(this.dir, "tmp");
+    fs.mkdirSync(this.tmpDir);
     this.port = 0;
     this.proc = null;
   }
@@ -78,7 +82,7 @@ export class Server {
   // 5 s keep-alive, and the next request would go down a socket it had closed.
   async manage(...args) {
     const { stdout } = await execFileAsync(PYTHON, ["manage.py", ...args], {
-      cwd: BACKEND, env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, ...this.env }, encoding: "utf8",
+      cwd: BACKEND, env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, TMPDIR: this.tmpDir, ...this.env }, encoding: "utf8",
     });
     return stdout;
   }
@@ -95,7 +99,7 @@ export class Server {
     const log = fs.openSync(this.logPath, "a");
     this.proc = spawn(PYTHON, ["-m", "uvicorn", "app:app", "--host", "127.0.0.1", "--port", String(this.port)], {
       cwd: BACKEND, stdio: ["ignore", log, log],
-      env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, GAMMA_STATIC_DIR: dist, PYTHONIOENCODING: "utf-8", GAMMA_UPDATE_CHECK: "off", GAMMA_MODEL_CATALOG: "off", GAMMA_METADATA_LOOKUP: "off", ...this.env },
+      env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, GAMMA_STATIC_DIR: dist, TMPDIR: this.tmpDir, PYTHONIOENCODING: "utf-8", GAMMA_UPDATE_CHECK: "off", GAMMA_MODEL_CATALOG: "off", GAMMA_METADATA_LOOKUP: "off", ...this.env },
     });
     const t0 = Date.now();
     while (Date.now() - t0 < 30000) {

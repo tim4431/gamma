@@ -131,7 +131,6 @@ manifest metadata for drift and copies an explicit allowlist of distributable fi
 There are no symlinks or cross-plugin references that could break in a client cache.
 
 `tools/package_plugins.py` creates both marketplace catalogs around this one plugin.
-`tools/package_codex_plugin.py` remains a compatibility entry point.
 `tools/release_plugins.py` versions both manifests together and produces both
 downloads from identical package bytes, preserving existing Codex asset names and
 setup scripts. Connection, authentication, and read tools remain in the shared

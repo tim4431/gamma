@@ -351,7 +351,8 @@ It has six states (`pages_billing.plan_state`):
   with Resume. For Pro, when the server stops being readable and
   when it is deleted (`stops_at` and `deletes_at` of `hosted.status_for`,
   the lifecycle's own dates), Export (`<server url>/?settings=backups`,
-  while the server is read-only) and Resume (a new checkout of the same
+  which opens the server's Settings → Backups, while the server is
+  read-only) and Resume (a new checkout of the same
   price, shown only while checkout is open), followed by the billing
   history and the plan cards. `unpaid` is still held: it offers Fix payment
   and no cards.

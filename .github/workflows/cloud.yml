@@ -67,7 +67,7 @@ jobs:
             type=sha
       - uses: docker/build-push-action@v7
         with:
-          context: .
+          context: cloud
           file: cloud/Dockerfile
           platforms: linux/amd64
           push: true

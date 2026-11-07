@@ -32,7 +32,7 @@ def _blank_pdf_bytes(width=612):
     """width varies per test: uploads dedupe by content hash, so two tests
     using identical bytes would share one file — and orphan cleanup would then
     rightly keep it while the other test's page still references it."""
-    from PyPDF2 import PdfWriter
+    from pypdf import PdfWriter
     w = PdfWriter()
     w.add_blank_page(width=width, height=792)
     buf = io.BytesIO()

@@ -213,6 +213,34 @@ def test_workspace_prefs_are_kept_in_their_workspace(alice):
 
 # --- AI provider entries (GUI key management) ---------------------------------
 
+def test_only_gamma_variables_move_a_protocol_default_url():
+    """``config.AI_BASE_URLS`` reads ``GAMMA_AI_<PROTOCOL>_BASE_URL`` (and,
+    for the anthropic slot, ``GAMMA_AI_BASE_URL`` after it, the name older
+    .env files use) only: an ``ANTHROPIC_BASE_URL`` a developer's shell or
+    a proxy tool exports (the desktop app hands its environment to the
+    server) leaves the Anthropic default as it is. (Subprocess: config
+    reads them at import.)"""
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    def anthropic_default(**env):
+        base = {k: v for k, v in os.environ.items() if not k.endswith("BASE_URL")}
+        return subprocess.run([sys.executable, "-c", "from gamma import config; print(config.AI_BASE_URLS['anthropic'])"],
+                              capture_output=True, text=True, check=True, env={**base, **env},
+                              cwd=str(Path(__file__).resolve().parent.parent)).stdout.strip()
+
+    assert anthropic_default(ANTHROPIC_BASE_URL="http://127.0.0.1:9/proxy") == "https://api.anthropic.com"
+    assert anthropic_default(GAMMA_AI_ANTHROPIC_BASE_URL="https://api.deepseek.com/anthropic/") \
+        == "https://api.deepseek.com/anthropic"
+    assert anthropic_default(ANTHROPIC_BASE_URL="http://127.0.0.1:9/proxy",
+                             GAMMA_AI_BASE_URL="https://api.deepseek.com/anthropic") \
+        == "https://api.deepseek.com/anthropic"
+    assert anthropic_default(GAMMA_AI_BASE_URL="https://older.example",
+                             GAMMA_AI_ANTHROPIC_BASE_URL="https://newer.example") == "https://newer.example"
+
+
 def test_guest_cannot_store_keys(guest):
     r = guest.get("/api/ai/settings")
     assert r.status_code == 200

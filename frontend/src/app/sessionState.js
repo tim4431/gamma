@@ -1,8 +1,8 @@
 // Session persistence localStorage wrapper.
 // Saves viewer layout state so bare `/` restores the last workspace.
 
-// One saved session per account and workspace. Never read the old unscoped
-// cache: it may belong to another account that used this browser.
+// One saved session per account and workspace, so another account that used
+// this browser never reads it.
 let scope = "";
 const STORAGE_KEY = () => `gamma-session:${scope}`;
 
@@ -12,16 +12,12 @@ export function setSessionScope(user, ws) {
   scope = user && ws ? `${user}@${ws}` : "";
 }
 
-// Fields to persist. Add new ones here and they'll auto-save + restore.
+// The fields a save keeps (App saves and restores each one itself).
 const SESSION_FIELDS = [
   "focusedBlockId",
   "pdfScale",
-  "orientation",
   "pdfHidden",
   "notesVisible",
-  "sidebarWidth",
-  "sidebarHeight",
-  "pdfPageNumber",
 ];
 
 let saveTimer = null;

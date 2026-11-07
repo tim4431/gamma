@@ -68,7 +68,7 @@ and a cluster needs a router that understands the workspace header.
 | Job queue | Threads in the web process | The `jobs` table claimed by worker processes |
 | Blobs | Local uploads directory | A storage seam with an S3-compatible driver, built and then dropped: the files stay local, a bucket holds their off-site copies (item 8) |
 | `users.db` | One file | Stays SQLite; replicated with LiteFS only when a second node exists |
-| Migrations | Startup pass over every workspace | Per workspace on first open after an upgrade; `users.db` steps readable one release back |
+| Migrations | Startup pass over every workspace | Per workspace on first open after an upgrade |
 | Backups | Zip snapshots on local disk | Litestream or scheduled backup-API copies to the bucket; the zip stays the export format |
 | Static files | FastAPI | Precompressed assets, served by the app or a reverse proxy |
 
@@ -157,15 +157,18 @@ planned, the item says so under *Built*.
     *Built:* `WS_VERSION_BASE = 33`, so no walk initialises the stamps and
     steps up to 33 stay eager. A workspace step is a normalizer the restore
     also runs. The container entrypoint runs `migrate --global-only`
-    ([migrations.md](../dev/migrations.md)).
+    ([migrations.md](../dev/migrations.md)). `users.db` is not kept
+    readable by the release before: no deployment serves one data
+    directory from two releases, and a release refuses data a newer one
+    wrote (`NewerDataError`).
 11. **Workspace-scoped preferences move into the workspace.** Open tabs,
     recents and reading positions become a per-user table in `pages.db`;
     they are the most frequent small writes and would otherwise forward to
     a `users.db` primary in a cluster.
     *Built* (step 34) as `workspace_prefs` in `pages.db`. The users.db rows
-    stay one release, for the compatibility rule. Workspace zips empty the
-    table and overwrite the freed pages, so no member's reading state
-    travels.
+    stay, for the step to read in a workspace still behind it. Workspace
+    zips empty the table and overwrite the freed pages, so no member's
+    reading state travels.
 12. **Database backups to the bucket**: a scheduled backup-API copy of
     each database through the blob seam, and a generated Litestream
     configuration for deployments that run it. The zip snapshot stays the

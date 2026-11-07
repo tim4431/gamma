@@ -186,7 +186,7 @@ a plausible hallucination):
   unchecked and one wrongly flagged is not.
   - **Its title is the document's own:** near-identical (≥0.92, `_alike`)
     to the first page's largest type. Only when there is no largest type
-    (an unreadable layout, the PyPDF2 fallback) does a run of up to three
+    (an unreadable layout) does a run of up to three
     whole lines of the first page count instead, 15 characters at least
     (`TITLE_MIN`) and not opening with a numbered section heading ("1
     Introduction", "IV. DISCUSSION"; "C. elegans …" is a title). Beside a

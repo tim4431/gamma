@@ -242,7 +242,7 @@ def test_chat_reports_context_coverage(org, monkeypatch):
     monkeypatch.setattr("gamma.ai_context.page_count", lambda src: 22)
     doc_id = "d" * 24  # page a's doc_id
 
-    r = c.post("/api/ai/chat", json={"prompt": "hi", "doc_id": doc_id, "stream": True,
+    r = c.post("/api/ai/chat", json={"prompt": "hi", "page_id": ids["a"], "stream": True,
                                      "context_char_limit": 500})
     assert r.status_code == 200
     lines = [json.loads(l) for l in r.text.splitlines() if l.strip()]
@@ -254,15 +254,21 @@ def test_chat_reports_context_coverage(org, monkeypatch):
     assert cover["chars"] == 500
     assert [l for l in lines if "delta" in l]
 
-    # Fits whole: no truncation reported.
+    # A request naming the PDF by doc_id alone gets the page carrying it.
     r = c.post("/api/ai/chat", json={"prompt": "hi", "doc_id": doc_id, "stream": True,
+                                     "context_char_limit": 500})
+    (cover,) = [json.loads(l) for l in r.text.splitlines() if l.strip()][0]["context"]
+    assert cover["page_id"] == ids["a"] and cover["doc_id"] == doc_id
+
+    # Fits whole: no truncation reported.
+    r = c.post("/api/ai/chat", json={"prompt": "hi", "page_id": ids["a"], "stream": True,
                                      "context_char_limit": 5000})
     (cover,) = [json.loads(l) for l in r.text.splitlines() if l.strip()][0]["context"]
     assert cover["partial"] is False and cover["pages_shown"] == 3
 
     # Native attachment on a provider that takes it.
     monkeypatch.setattr("gamma.ai_context.load_pdf_b64", lambda u, d: "UERG")
-    r = c.post("/api/ai/chat", json={"prompt": "hi", "doc_id": doc_id, "stream": True,
+    r = c.post("/api/ai/chat", json={"prompt": "hi", "page_id": ids["a"], "stream": True,
                                      "attach_pdf": True})
     (cover,) = [json.loads(l) for l in r.text.splitlines() if l.strip()][0]["context"]
     assert cover["native"] is True and cover["native_requested"] is True
@@ -271,7 +277,7 @@ def test_chat_reports_context_coverage(org, monkeypatch):
     # A file that never reached the provider says why: too large, or none.
     for loaded, reason in (("", "too_large"), (None, "missing")):
         monkeypatch.setattr("gamma.ai_context.load_pdf_b64", lambda u, d, loaded=loaded: loaded)
-        r = c.post("/api/ai/chat", json={"prompt": "hi", "doc_id": doc_id, "stream": True,
+        r = c.post("/api/ai/chat", json={"prompt": "hi", "page_id": ids["a"], "stream": True,
                                          "attach_pdf": True})
         (cover,) = [json.loads(l) for l in r.text.splitlines() if l.strip()][0]["context"]
         assert cover["native"] is False and cover["native_requested"] is True
@@ -295,7 +301,7 @@ def test_chat_reports_context_coverage(org, monkeypatch):
     monkeypatch.setattr(ai_mod, "_open_ai", lambda *a, **kw: _Ctx([
         {"type": "content_block_delta", "delta": {"type": "text_delta", "text": "ok"}}]))
     monkeypatch.setattr(ai_mod, "_read_reply", lambda resp, proto, *a: "ok")
-    r = c.post("/api/ai/chat", json={"prompt": "hi", "doc_id": doc_id, "stream": False,
+    r = c.post("/api/ai/chat", json={"prompt": "hi", "page_id": ids["a"], "stream": False,
                                      "context_char_limit": 500})
     assert r.status_code == 200 and r.json()["context"][0]["partial"] is True
 
@@ -563,9 +569,9 @@ def test_chat_permissions_gate_tools_and_execution(org, monkeypatch):
     before = props(c, ids["a"])["content"]
     r = c.post("/api/ai/chat", json={"prompt": "rename stuff", "agent_scope": "folder",
                                      "folder": ids["readout"], "stream": True,
-                                     "permissions": {"rename": False, "move": False, "save": False,
-                                                     "restore": False, "organize": False,
-                                                     "organize_delete": False, "block_edit": False}})
+                                     "permissions": {"rename": "off", "move": "off", "save": "off",
+                                                     "restore": "off", "organize": "off",
+                                                     "organize_delete": "off", "block_edit": "off"}})
     assert r.status_code == 200
     assert [t["name"] for t in seen["tools"]] == [
         "list_pages", "list_folders", "read_page", "read_block", "read_chats", "view_pdf_page",
@@ -578,7 +584,7 @@ def test_chat_permissions_gate_tools_and_execution(org, monkeypatch):
     seen.clear()
     r = c.post("/api/ai/chat", json={"prompt": "hi", "agent_scope": "folder", "folder": ids["readout"],
                                      "stream": True,
-                                     "permissions": {k: False for k in ALL_PERMS}})
+                                     "permissions": {k: "off" for k in ALL_PERMS}})
     assert r.status_code == 200
     assert seen["tools"] is None
 
@@ -652,7 +658,7 @@ def test_view_pdf_page_picture_reaches_the_next_round_not_the_chip(org, monkeypa
     only the text."""
     c, ids = org
     import gamma.routers.ai as ai_mod
-    from PyPDF2 import PdfWriter
+    from pypdf import PdfWriter
 
     pdf = tmp_path / "one.pdf"
     w = PdfWriter()

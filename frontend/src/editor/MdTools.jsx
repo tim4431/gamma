@@ -32,8 +32,8 @@ import {
 export function applyImageEdit(content, idx, action, payload) {
   const im = scanImages(content)[idx];
   if (!im) return null;
-  // Edits always write the Obsidian form (`![alt|300](url)`), so a legacy
-  // `{:width N}` image is normalized the first time it's touched.
+  // Edits write the Obsidian form (`![alt|300](url)`). A Logseq
+  // `{:width N}` after the image is inside its range, so it goes too.
   const rebuild = (alt, width) =>
     `![${alt}${width ? `|${width}` : ""}](${im.url})`;
   if (action === "width") {

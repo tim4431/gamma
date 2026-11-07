@@ -101,11 +101,13 @@ def test_images():
     html = note_html(node("![a|300](/api/uploads/abc123.png) ![b](/api/uploads/deadbeef.png)"),
                      resolve_image=resolve_image)
     assert html == f'<p><img src="data:image/png;base64,{PNG}" alt="a" width="300"/> (image: deadbeef.png)</p>'
-    # The alt and Gamma's display width come back from the <img>, the legacy
-    # Logseq width too.
+    # The alt and Gamma's display width come back from the <img>; Logseq's
+    # width after an image goes as its width too, outside code.
     assert note_tree(html)["content"] == f"![a|300](data:image/png;base64,{PNG}) (image: deadbeef.png)"
     assert note_html(node("![x](https://e.com/i.png){:width 120}")) == (
         '<p><img src="https://e.com/i.png" alt="x" width="120"/></p>')
+    assert note_html(node("![x](https://e.com/Foo_(bar).png){:width 120} `![y](u){:width 3}`")) == (
+        '<p><img src="https://e.com/Foo_(bar).png" alt="x" width="120"/> <code>![y](u){:width 3}</code></p>')
     assert note_html(node("![](https://e.com/i.png) ![](data:image/gif;base64,R0lG)")) == (
         '<p><img src="https://e.com/i.png"/> <img src="data:image/gif;base64,R0lG"/></p>')
     # Marks and links around an image still read as one, an escaped "!" is a link,

@@ -84,9 +84,4 @@ export default defineConfig({
       "/api": { target: "http://127.0.0.1:9001", ws: true },
     },
   },
-  preview: {
-    host: "127.0.0.1",
-    port: 4173,
-    allowedHosts: ["annotation.amogadgetlab.com"]
-  }
 });

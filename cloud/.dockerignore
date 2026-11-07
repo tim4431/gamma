@@ -1,0 +1,9 @@
+venv
+.venv
+data
+tests
+fleet
+deploy
+**/__pycache__
+**/*.pyc
+**/*.db

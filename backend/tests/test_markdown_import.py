@@ -204,3 +204,21 @@ $$"""
     assert r.status_code == 200, r.text
     tree = r.json()["blocks"]
     assert [b["content"] for b in tree] == ["Result:", math, "Done."]
+
+
+def test_a_logseq_image_size_comes_in_as_the_alts(guest):
+    """A Logseq ``{:width N}`` becomes the ``![alt|N]`` Gamma stores in every
+    import that parses with md_to_blocks (here the paste as blocks); code
+    keeps it as written."""
+    text = ("- ![image.png](../assets/image_1.png){:width 300}\n"
+            "- ```md\n  ![x](u){:width 4}\n  ```\n"
+            "- keep `![y](u){:width 5}` as code")
+    r = guest.post("/api/markdown-blocks", json={"text": text})
+    assert r.status_code == 200, r.text
+    assert [b["content"] for b in r.json()["blocks"]] == [
+        "![image.png|300](../assets/image_1.png)",
+        "```md\n![x](u){:width 4}\n```",
+        "keep `![y](u){:width 5}` as code",
+    ]
+    assert md_to_blocks("![a](/api/uploads/ab12.png){:width 240}\r\n")[0]["content"] == (
+        "![a|240](/api/uploads/ab12.png)")

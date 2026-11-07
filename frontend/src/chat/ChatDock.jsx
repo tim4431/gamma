@@ -1549,7 +1549,7 @@ export default function ChatDock({
     };
     // Analyser feeds the live waveform; recording works fine without it.
     try {
-      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const audioCtx = new AudioContext();
       const analyser = audioCtx.createAnalyser();
       analyser.fftSize = 1024;
       audioCtx.createMediaStreamSource(stream).connect(analyser);

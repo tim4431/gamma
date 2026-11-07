@@ -132,11 +132,9 @@ class AIChatRequest(BaseModel):
     chat_key: str = ""
     # PDF passages the user selected — focus the answer on them:
     # `selections` = [{text, page (1-based, where the viewer saw it start),
-    # box ([x0, y0, x1, y1] fractions of that page, top-left origin)}]; the
-    # older `selection` string ("---"-joined text, no positions) is read
-    # when it is empty (ai_context.request_selections). What the question
-    # quotes of them shares `context_char_limit` (ai_context.passage_budget).
-    selection: str = ""
+    # box ([x0, y0, x1, y1] fractions of that page, top-left origin)}]
+    # (ai_context.request_selections). What the question quotes of them
+    # shares `context_char_limit` (ai_context.passage_budget).
     selections: list = Field(default_factory=list, max_length=MAX_SELECTIONS)
     # What the user pointed the message at inside the NOTES: the block their
     # cursor is on (the agent's "this block"), blocks they attached as chips

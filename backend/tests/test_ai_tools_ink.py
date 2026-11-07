@@ -30,7 +30,7 @@ def _ink(kind="pdf-page", color="#ff0000", width=PAGE_W, height=PAGE_H,
 
 
 def _pdf(path, pages=1):
-    from PyPDF2 import PdfWriter
+    from pypdf import PdfWriter
     w = PdfWriter()
     for _ in range(pages):
         w.add_blank_page(width=PAGE_W, height=PAGE_H)
@@ -64,8 +64,8 @@ def _grain_at(px, py, zoom=2):
 
 def _blank_page(width, height, rotation=0, crop=None):
     """A blank one-page PDF, turned by ``rotation`` and cropped to ``crop``."""
-    from PyPDF2 import PdfWriter
-    from PyPDF2.generic import ArrayObject, FloatObject, NameObject, NumberObject
+    from pypdf import PdfWriter
+    from pypdf.generic import ArrayObject, FloatObject, NameObject, NumberObject
 
     writer = PdfWriter()
     writer.add_blank_page(width=width, height=height)
@@ -169,8 +169,8 @@ def test_page_with_ink_draws_the_strokes_on_that_page(tmp_path):
 def test_stamped_strokes_land_where_they_were_drawn_on_a_turned_page(rotation):
     """The stamp maps display space through the page's frame, as /Ink does."""
     import io
-    from PyPDF2 import PdfWriter
-    from PyPDF2.generic import NameObject, NumberObject
+    from pypdf import PdfWriter
+    from pypdf.generic import NameObject, NumberObject
 
     writer = PdfWriter()
     writer.add_blank_page(width=PAGE_W, height=PAGE_H)

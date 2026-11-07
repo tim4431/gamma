@@ -14,7 +14,7 @@ PDF = b"%PDF-1.4\n1 0 obj<</Type/Catalog>>endobj\ntrailer<</Root 1 0 R>>\n%%EOF\
 
 
 def _blank_pdf_bytes():
-    from PyPDF2 import PdfWriter
+    from pypdf import PdfWriter
     w = PdfWriter()
     w.add_blank_page(width=612, height=792)
     buf = io.BytesIO()

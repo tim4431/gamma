@@ -264,10 +264,10 @@ def test_web_tools_prompt_and_permission_gate():
     # Without a web engine search_web is not armed, and the prompt says so.
     assert "search_web," not in text and "Settings → AI → Tool usage → Online search" in text
     assert "two to four short concept queries" in text and "related_papers, and fetch" in text
-    text = agent_system(folder(""), {"web_search": False})
+    text = agent_system(folder(""), {"web_search": "off"})
     assert "Web reach: fetch_paper go" in text
     assert "search_papers" not in text.split("Web reach")[1]
-    assert "Web reach" not in agent_system(folder(""), {"web_search": False, "web_read": False})
+    assert "Web reach" not in agent_system(folder(""), {"web_search": "off", "web_read": "off"})
     # With an engine it rides along, with the one-look rule for blocked fetches.
     text = agent_system({**folder(""), "web_engine": "brave"})
     assert "Web reach: search_papers, related_papers, search_web, fetch_paper" in text

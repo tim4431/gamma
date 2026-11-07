@@ -17,8 +17,10 @@ choices take httptools for HTTP and, on Linux and macOS, uvloop for the event
 loop (pip skips uvloop on Windows by its platform marker); `--reload` watches
 with watchfiles. No command names them.
 
-CI and the Docker image run Python 3.12 and the iPad and Android apps 3.13, so a venv on a
-newer Python may accept what they refuse. `tests/test_python_versions.py`
+The Docker image runs Python 3.12 and the iPad and Android apps 3.13, and CI
+runs the suite on both: 3.12 with the server's pins, 3.13 with the apps'
+(`requirements-mobile.txt`). A venv on a newer Python may accept what they
+refuse. `tests/test_python_versions.py`
 fails on either kind locally: syntax past 3.11, and an annotation that does
 not evaluate (from 3.14 annotations are evaluated only when asked for, before
 it as each function is defined, so a class whose method is named `int` stops
@@ -348,7 +350,8 @@ forgets to stub a metadata / PDF / AI fetch fails at once instead of
 passing slowly on the network. `pytest.ini` names `tests/`, so a bare
 `pytest` from `backend/` works too. The suite runs in parallel with
 pytest-xdist: every worker process imports `conftest.py` and so gets its own
-throwaway data directory, and `--dist loadfile` keeps each file's tests on
+throwaway data directory (`gamma-test-…` under the OS temp dir, removed when
+the process exits), and `--dist loadfile` keeps each file's tests on
 one worker in file order (tests inside a file may build on each other;
 files never may). The shared `client` fixture carries the cookie of the last
 login on that worker, so a "not signed in" check uses the `anon` fixture (a
@@ -514,7 +517,8 @@ A step that times a close passes `{lastLook: false}` to `page.close` or
 python — or the interpreter `GAMMA_E2E_PYTHON` names — over a fresh
 `GAMMA_DATA_DIR` under the OS temp dir, on a free port, serving a copy of
 `frontend/dist` taken at start, so a build during the run cannot break its
-page loads, with the update check, the models.dev catalog and the paper
+page loads, with a `TMPDIR` of its own in that temp dir, so what it stages
+there (an import review's upload) goes with it, with the update check, the models.dev catalog and the paper
 registry lookups switched off so no step waits on the internet), creates
 the accounts `alice` / `bob`, and drives Playwright's Chromium
 (`playwright` is a devDependency; the browser is downloaded once on first
@@ -1399,7 +1403,7 @@ Bash, `gradlew.bat` from PowerShell. What each test covers:
   ([guests.md](guests.md)) — don't park test data there. In backend tests
   the `guest` fixture's account name is `conftest.guest_name()`.
 - Every endpoint that touches a database or files, and every slow one
-  (downloads, AI calls, PyPDF2), is a **sync `def`**, so FastAPI's
+  (downloads, AI calls, PDF parsing), is a **sync `def`**, so FastAPI's
   threadpool runs it. One uvicorn process serves every request and page
   socket from one event loop, and SQLite calls block: an `async def`
   endpoint waiting on a workspace's write lock (`db.BUSY_TIMEOUT_S`, 10 s)

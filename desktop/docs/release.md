@@ -3,7 +3,7 @@
 ## Package locally
 
 ```bash
-python desktop/build_backend.py   # freeze backend (venv python; ~50 MB onedir)
+python desktop/build_backend.py   # freeze backend (venv python, given the pinned PyInstaller; ~50 MB onedir)
 cd desktop && npm run pack        # unpacked app in dist/{win,linux}-unpacked or dist/mac* (fast test)
 npm run e2e:packaged              # the suite against the frozen bundle
 npm run dist                      # real installer (NSIS .exe / .dmg + .zip / .deb)
@@ -28,6 +28,13 @@ package. The unpacked `dist/linux-unpacked` dir has no setuid
 `chrome-sandbox` (the deb's postinst sets that up, plus an AppArmor profile
 on Ubuntu ≥ 24.04), so `test/smoke.js` and `test/e2e.js` start it with
 `--no-sandbox`; on a headless machine wrap them in `xvfb-run -a`.
+
+macOS is a `.dmg` and a `.zip` for Apple silicon, the architecture of the
+machine that builds it (the frozen backend is that machine's). It needs
+macOS 13 or later, as Electron does: Electron's `Info.plist` carries that
+as `LSMinimumSystemVersion`, so an older macOS refuses to open the app.
+The update notice on macOS only links to the release page and does not
+know the floor, so the release notes name it.
 
 The Mac App Store's `.pkg` is a build of its own, made by hand on a Mac
 that holds the App Store team's certificates: *Mac App Store* below.
@@ -193,7 +200,7 @@ listing's *Store logos* (9:16 poster art, 1:1 box art) and *Store display
 images* (300/150/71 px app tile icons) are pre-rendered in `assets/store/`;
 `npm run store-art` regenerates them, together with the package assets in
 `assets/appx/`, from the logo mark with Playwright's Chromium
-(`scripts/store-art.js` delegates to the shared brand generator). Generation
+(it runs the shared brand generator, `tools/branding/build.mjs`). Generation
 uses the frontend's locked Playwright, Python 3 and the shared hero logo/font stack;
 no font download is needed. See [brand sources](../../design/brand/README.md).
 The package version must increase per submission
@@ -327,7 +334,7 @@ upload checks.
 | Every executable runs in the App Sandbox (2.4.5(i)) | `assets/entitlements.mas.plist` for the app: the sandbox, network client and server (remote servers, Gamma Cloud, the AI; the local servers on `127.0.0.1` that the Connector and Gamma Cloud sign-in's loopback reach), user-selected files read-write and app-scoped bookmarks (below), the microphone. `assets/entitlements.mas.inherit.plist` (sandbox + inherit) for every other binary, the frozen server included, which therefore runs in the app's sandbox. No home-folder exception, no Full Disk Access |
 | Electron's Mac App Store runtime, which avoids private API | the `mas` targets: electron-builder fetches that runtime itself; `process.mas` is true at run time |
 | Updates through the App Store only (2.4.5(vii)) | `lib/updater.js` reports `unsupported` (reason `mas`) and never loads electron-updater; the local servers get `GAMMA_UPDATES=mas` and `GAMMA_UPDATE_CHECK=off`, so Settings → Server asks GitHub nothing and says the App Store delivers updates |
-| No code the review did not see (2.4.5(iv), 2.5.2) | the bundled server only: the launcher's *run local servers from a source checkout* settings are hidden and `lib/sidecar.js` ignores them |
+| No code the review did not see (2.4.5(iv), 2.5.2) | the bundled server only, as in every packaged build: the launcher's *run local servers from a source checkout* settings are hidden and `lib/sidecar.js` ignores them |
 | Nothing at login without consent and a helper (2.4.5(iii)) | no login item: *Start at login* is hidden in the launcher and the menus. The servers stop when the app quits |
 | A purpose string for each protected resource (5.1.1) | `NSMicrophoneUsageDescription`, for recording into a note and dictating to the assistant, from the base config's `mac.extendInfo` (the dmg carries the same); the app asks macOS before a page gets the microphone ([architecture.md](architecture.md#the-microphone)) |
 | A 1024 px icon (ITMS-90236 rejected build 1) | `assets/icon.png` is 1024 px, made by the brand generator (`design/brand/outputs.json`), so the `.icns` electron-builder derives has its 512@2x image |

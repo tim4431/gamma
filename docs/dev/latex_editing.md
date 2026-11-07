@@ -96,8 +96,8 @@ prose stay as written. `tests/shared/pastemath.json` holds the cases both
 suites check.
 
 Where code is, everything here reads one way: `shared/lib/mdCode.js`
-(`codeFences`, `codeSpans`, `mapProse`), with `paste_math._fences` and
-`_code_spans` its backend twins. A code span is CommonMark's, kept to one
+(`codeFences`, `codeSpans`, `mapProse`), with `paste_math._fences`,
+`_code_spans` and `map_prose` its backend twins. A code span is CommonMark's, kept to one
 line: a run of backticks opens it and the next run of the same length
 closes it, so ``` ``a`b`` ``` is one span. A backslash escapes an opener's
 first backtick (`` \`x` `` is no code), never a closer's, since a backslash

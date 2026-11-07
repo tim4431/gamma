@@ -4,9 +4,8 @@ result. Outbound calls only; the account server never reaches the host.
 
 Environment:
 
-- ``GAMMA_FLEET_ACCOUNT_URL`` (required): the account server, e.g.
-  ``http://account:9002`` on the same compose network, or
-  ``https://account.gammapdf.com`` from another host.
+- ``GAMMA_FLEET_ACCOUNT_URL`` (required): the account server over its
+  public address, e.g. ``https://account.gammapdf.com``.
 - ``GAMMA_FLEET_HOST_TOKEN`` (required): the host's token from Admin →
   Machines → Add machine (or ``manage.py add-host``).
 - ``GAMMA_FLEET_NETWORK`` (default ``gamma-fleet``): the Docker network the

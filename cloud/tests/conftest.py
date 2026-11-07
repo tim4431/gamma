@@ -1,8 +1,11 @@
+import atexit
 import os
+import shutil
 import tempfile
 from pathlib import Path
 
 _DATA = Path(tempfile.mkdtemp(prefix="gammacloud-test-"))
+atexit.register(shutil.rmtree, _DATA, ignore_errors=True)
 os.environ["GAMMA_CLOUD_DATA_DIR"] = str(_DATA)
 os.environ["GAMMA_CLOUD_MAIL"] = "memory"
 os.environ["GAMMA_CLOUD_PUBLIC_URL"] = "http://testserver"

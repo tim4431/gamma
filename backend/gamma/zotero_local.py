@@ -50,6 +50,7 @@ from .blocks_store import (BLOCK_COLUMNS, FOLDERS, LABELS, TRASH, TREES, attachm
 from .db import connect_pages_db, ws_uploads_dir
 from .logbuf import log
 from .markdown_export import block_ref_resolver, build_tree
+from .note_markup import WIDTH_SUFFIX, alt_and_width
 from .notebook import is_sheet
 from .ops import MAX_OPS, MOVED, OpError, after_commits, apply_batches, delete_tree, move_across_pages, notify_commit
 from .ops import restore_page as ops_restore_page
@@ -74,11 +75,11 @@ META_ORDER = ("title", "authors", "year", "venue", "volume", "pages", "doi", "ar
 # (private-use characters no note text holds) around the attachment key.
 _PIC_OPEN, _PIC_CLOSE = chr(0xE000), chr(0xE001)
 _PIC_RE = re.compile(f"{_PIC_OPEN}([{KEY_ALPHABET}]{{8}}){_PIC_CLOSE}")
-# A stored picture in a block's markdown: Gamma's own upload, an optional width.
+# A stored picture in a block's markdown: Gamma's own upload, its size in
+# the alt or after it (note_markup's image sizes).
 _UPLOAD_IMG_RE = re.compile(r"!\[(?P<alt>[^\]\n]*)\]\(\s*/api/uploads/(?P<name>[0-9a-fA-F]+\.[A-Za-z0-9]+)\s*\)"
-                            r"(?:\{:width\s+(?P<lw>\d+)\})?")
+                            r"(?:" + WIDTH_SUFFIX + ")?")
 _CODE_RE = re.compile(r"``[^`\n]+``|`[^`\n]+`")
-_ALT_WIDTH_RE = re.compile(r"(.*?)\|(\d+)(?:x\d+)?", re.S)
 _IMG_TAG_RE = re.compile(r"<img\b[^>]*>", re.I)
 _ATTR_RE = re.compile(r"""([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'>/]+))""")
 
@@ -432,10 +433,7 @@ def _keyed(content: str, image_key, attrs: dict) -> str:
         key = image_key(m.group("name"))
         if not key or not KEY_RE.fullmatch(key):
             return m.group()
-        alt, width = m.group("alt"), m.group("lw")
-        size = _ALT_WIDTH_RE.fullmatch(alt or "")
-        if size:
-            alt, width = size.group(1), size.group(2)
+        alt, width = alt_and_width(m.group("alt"), m.group("lw"))
         attrs.setdefault(key, (alt or "", width or ""))
         return f"{_PIC_OPEN}{key}{_PIC_CLOSE}"
     return _UPLOAD_IMG_RE.sub(swap, content)

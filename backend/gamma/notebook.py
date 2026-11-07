@@ -125,8 +125,8 @@ def notebook_pdf(sheets: list[tuple[dict, list, list]], resolve_ref=None, pictur
     with (``ink.GrainPatterns``, one tile per colour for the whole document)
     among the page's resources. A picture whose file cannot be read is left
     out (``pdf_image.XObjectStore`` logs why)."""
-    from PyPDF2 import PdfWriter
-    from PyPDF2.generic import DecodedStreamObject, NameObject
+    from pypdf import PdfWriter
+    from pypdf.generic import DecodedStreamObject, NameObject
 
     from . import ink as inkmod
     from .pdf_glyphs import GlyphFonts
@@ -178,7 +178,7 @@ def placed_ops(pictures, boxes, width, images, glyphs, resolve_ref=None) -> tupl
     graphics states of the pictures' opacities (``ink.pdf_path_resources``).
     The sheet PDF and the AI's picture of a PDF page draw them so
     (``notebook_pdf``, ``pdf_export.page_with_ink``)."""
-    from PyPDF2.generic import DictionaryObject, NameObject
+    from pypdf.generic import DictionaryObject, NameObject
 
     from . import ink as inkmod
     from . import picture, text_box

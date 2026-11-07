@@ -29,12 +29,13 @@ space by one ``cm`` at the top of the content stream.
 import io
 import re
 
-from PyPDF2 import PdfWriter
-from PyPDF2.generic import DecodedStreamObject, DictionaryObject, NameObject
+from pypdf import PdfWriter
+from pypdf.annotations import Link
+from pypdf.generic import DecodedStreamObject, DictionaryObject, NameObject
 
 from . import vector_text
 from .logbuf import log
-from .note_markup import INLINE_RE, LINK_PARTS, LINK_TARGET, MATH, TEXT, latex_spans
+from .note_markup import INLINE_RE, LINK_PARTS, LINK_TARGET, MATH, TEXT, WIDTH_SUFFIX, alt_and_width, latex_spans
 from .pdf_export import parse_css_color
 from .pdf_glyphs import GlyphFonts
 from .pdf_image import XObjectStore
@@ -114,14 +115,13 @@ _QUOTE_RE = re.compile(r"^\s{0,3}>\s?(.*)$")
 _CALLOUT_RE = re.compile(r"^\[!(\w+)\][+-]?\s*(.*)$")
 _TODO_RE = re.compile(r"^(\s*)(?:([-*+])\s+)?\[([ xX])\]\s+(.*)$")
 _LIST_RE = re.compile(r"^(\s*)([-*+]|\d{1,3}[.)])\s+(.*)$")
-# An ![](…) image — sized Obsidian-style (``![alt|300](url)``) or with the
-# legacy Logseq ``{:width N}`` suffix — or an ![[id]] synced-block embed;
-# each leaves the text flow as its own chunk. A source reads as a link's
-# target does (``LINK_TARGET``), so "Foo_(bar).png" is one source.
+# An ![](…) image — its size in the alt or after it (note_markup's image
+# sizes) — or an ![[id]] synced-block embed; each leaves the text flow as
+# its own chunk. A source reads as a link's target does (``LINK_TARGET``),
+# so "Foo_(bar).png" is one source.
 _MEDIA_RE = re.compile(
-    r"!\[(?P<alt>[^\]]*)\]\(\s*(?P<src>" + LINK_TARGET + r")(?:\s[^)]*)?\)(?:\{:width\s+(?P<pxw>\d+)\})?"
+    r"!\[(?P<alt>[^\]]*)\]\(\s*(?P<src>" + LINK_TARGET + r")(?:\s[^)]*)?\)(?:" + WIDTH_SUFFIX + ")?"
     r"|!\[\[(?P<refid>[a-zA-Z0-9_-]+)\]\]")
-_ALT_WIDTH_RE = re.compile(r"(.*?)\|(\d+)(?:x\d+)?$")
 _DELIM_CELL_RE = re.compile(r":?-+:?")
 
 # The constructs that wrap their content: the characters that open and close
@@ -219,10 +219,7 @@ def _text_chunks(lines, style: Style, resolver=None):
             if m.group("refid"):
                 chunks.append({"kind": "embed", "id": m.group("refid")})
             else:
-                alt, pxw = m.group("alt"), m.group("pxw")
-                pipe = _ALT_WIDTH_RE.fullmatch(alt or "")
-                if pipe:                         # Obsidian ![alt|300](url)
-                    alt, pxw = pipe.group(1), pxw or pipe.group(2)
+                alt, pxw = alt_and_width(m.group("alt"), m.group("lw"))
                 chunks.append({"kind": "image", "src": m.group("src"), "alt": alt,
                                "px_w": int(pxw) if pxw else None})
             pos = m.end()
@@ -465,8 +462,8 @@ class _Canvas:
         self.y += 3.0
 
     def image(self, src: str, x: float, width: float, alt: str = "", px_w=None):
-        """``px_w`` is the editor's ``{:width N}`` (CSS px) — the drawn width,
-        still capped at the column."""
+        """``px_w`` is the image's size from the editor (``![alt|300]``, CSS
+        px): the drawn width, still capped at the column."""
         info = self.images.resolve(src)
         if not info:
             self.paragraph(inline(alt.strip() or "image", Style(ITALIC, None)),
@@ -535,7 +532,7 @@ class _Canvas:
 
     def display_math(self, tex: str, x: float, width: float, size: float = BODY_SIZE):
         drawn = vector_text.math(tex, size * DISPLAY_MATH_SCALE)
-        if not drawn:                    # no ziamath, or it choked: approximate
+        if not drawn:                    # ziamath choked: approximate
             self.paragraph(plain(latex_spans(tex)), x, width, size)
             return
         drawing, w, h, _ascent = drawn
@@ -713,19 +710,11 @@ class _Canvas:
                    fonts=page["fonts"])
 
     def _link_annotations(self, index: int, links):
-        if not links:
-            return
-        try:
-            from PyPDF2.generic import AnnotationBuilder
-        except ImportError:                      # older PyPDF2: text stays, link doesn't
-            log.info("[pdf-document] no AnnotationBuilder; links are not clickable")
-            return
         for x0, y0, x1, y1, href in links:
             try:
                 self.writer.add_annotation(
                     page_number=index,
-                    annotation=AnnotationBuilder.link(
-                        rect=(x0, PAGE_H - y1, x1, PAGE_H - y0), url=href))
+                    annotation=Link(rect=(x0, PAGE_H - y1, x1, PAGE_H - y0), url=href))
             except Exception as e:
                 log.info(f"[pdf-document] could not link {href[:60]}: {e}")
 

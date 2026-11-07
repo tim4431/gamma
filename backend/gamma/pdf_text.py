@@ -1,19 +1,23 @@
 """Shared PDF reading: page text, page sizes, the outline, a page as a
 picture, the glyph boxes under a highlight, and the page labels as pdf.js
-reads them (``read_page_labels``) — through PyMuPDF (import
-name ``pymupdf``), with PyPDF2 as the fallback for text and sizes, but only
-when PyMuPDF is not installed or can't open the file at all: an empty
-result is an answer (scanned pages have no text layer for PyPDF2 to find
-either), not a failure. Used by the AI context builder, metadata lookup,
-/pdf-text-status, the search indexer, the manifest walk and the highlight
-import, so extraction fixes land once.
+reads them (``read_page_labels``) — through PyMuPDF (import name
+``pymupdf``). A file it cannot open raises from the text walk and the page
+pictures and reads as nothing in the rest (no pages, no outline, no
+glyphs); an empty text is an answer (a scanned page has no text layer),
+not a failure. A PyMuPDF that does not load is neither: its ImportError
+comes out of the reads that would otherwise answer nothing (page sizes,
+page count, outline, title guess) as it does from the text walk, so the
+search index and the manifest (pdf_meta), which keep an unreadable file's
+empty answer for good, store nothing and read the file once it loads.
+Used by the AI context builder, metadata lookup, /pdf-text-status, the
+search indexer, the manifest walk and the highlight import, so extraction
+fixes land once.
 
 MuPDF carries the base-14 fonts and Droid Sans Fallback inside the library,
 so a page whose fonts are not embedded (CJK text above all) renders and
 reads the same on every server, with no system font to find, and its text
 extraction knows each glyph's font and box; and it has an iOS wheel. Those
-are the reasons it reads here rather than pdfium, which read here before
-(docs/research/pypdfium2-vs-pymupdf.md).
+are the reasons it is the reader (docs/research/pypdfium2-vs-pymupdf.md).
 """
 
 import base64
@@ -59,11 +63,7 @@ MAX_PAGES = 5000
 # library. And it frees its objects by reference count, under the GIL, so a
 # document is closed and a page dropped explicitly, inside the lock, as soon
 # as it is done with, and that is the end of them: nothing is finalized
-# later, on another thread. (pypdfium2, which read here before, closed its
-# objects from weakref finalizers that the cyclic GC ran on whatever thread
-# allocated next — a native crash of the whole server when that landed
-# inside another thread's call — and needed its finalizer wrapped in this
-# lock as a net. There is nothing to net now.)
+# later, on another thread.
 class _MuPdfLock:
     """The one PyMuPDF lock, handed over in turn between a walk's pages.
 
@@ -101,9 +101,8 @@ _lock = _MuPdfLock()
 # TEXT_PRESERVE_LIGATURES, so a ligature comes out as its letters ("fi",
 # not "ﬁ"; search folds them anyway, and the AI and the metadata regexes
 # read plain letters better). TEXT_DEHYPHENATE stays off: an end-of-line
-# hyphen stays as written, where pdfium joined some of them — search
-# re-joins the words (gamma/textnorm.py) and the AI reads the page as it
-# is. Lines end in "\n" (pdfium's ended in "\r\n"). _RAWDICT_FLAGS is the
+# hyphen stays as written — search re-joins the words (gamma/textnorm.py)
+# and the AI reads the page as it is. Lines end in "\n". _RAWDICT_FLAGS is the
 # glyph walk's: without TEXT_PRESERVE_IMAGES, which would copy every
 # image's bytes into the dictionary (a second on an image-heavy page) for
 # boxes nobody reads.
@@ -114,11 +113,9 @@ _RAWDICT_FLAGS = 0
 
 def _pymupdf():
     """The pymupdf module, imported on first use (70 ms and 30 MB: a server
-    that never reads a PDF never pays it, and one without PyMuPDF installed
-    starts all the same and falls back to PyPDF2), with MuPDF's own chatter
-    on the console turned off; the warnings it would have printed are
-    gathered instead, for the log line of a failed open (``_mupdf_warnings``).
-    ImportError when it is not installed."""
+    that never reads a PDF never pays it), with MuPDF's own chatter on the
+    console turned off; the warnings it would have printed are gathered
+    instead, for the error of a failed open (``_mupdf_warnings``)."""
     global _mupdf, _TEXT_FLAGS, _RAWDICT_FLAGS
     if _mupdf is None:
         import pymupdf
@@ -132,7 +129,7 @@ def _pymupdf():
 def _mupdf_warnings() -> str:
     """What MuPDF has warned since ``_mupdf_open`` last emptied its store —
     read under the lock, right after an open failed, that is the open's own
-    messages — as a suffix for a log line ("; MuPDF: ..."); "" when nothing."""
+    messages — as a suffix for an error ("; MuPDF: ..."); "" when nothing."""
     if _mupdf is None:
         return ""
     try:
@@ -146,13 +143,13 @@ def _mupdf_open(src):
     """A PyMuPDF document of ``src`` (a path or PDF bytes); called under the
     lock. ``filetype="pdf"`` so an image or XPS file is never opened as a
     document of its own kind. A file whose password the empty-password try
-    did not satisfy counts as unreadable, as pdfium's refusal did: it is
-    closed again and the caller falls back."""
+    did not satisfy counts as unreadable: it is closed again and a
+    ValueError raised."""
     mupdf = _pymupdf()
     # PyMuPDF keeps every warning MuPDF raises, in any call, in one list for
     # the process (turning the display off only stops the printing), and
     # nothing of its own ever empties it. Emptied before each open, it holds
-    # one open's messages: a failed open's log line carries its own, not the
+    # one open's messages: a failed open's error carries its own, not the
     # repairs of every damaged file read since the last failure, and a
     # server that reads such files for weeks does not grow a list of them.
     mupdf.TOOLS.reset_mupdf_warnings()
@@ -167,17 +164,17 @@ def _mupdf_open(src):
 
 
 def _open(src):
-    """Open a PDF as ``("mupdf", doc)``, or ``("pypdf2", reader)`` when
-    PyMuPDF is not installed or can't open the file at all. src is a path
-    str or PDF bytes."""
+    """The PyMuPDF document of ``src`` (a path str or PDF bytes), opened
+    under the lock (a caller may hold it already). A file that does not
+    open raises a ValueError whose message carries MuPDF's warnings, read
+    in the same turn of the lock (``_mupdf_warnings``); a PyMuPDF that does
+    not load raises its ImportError, never that ValueError."""
     with _lock:
+        _pymupdf()
         try:
-            return "mupdf", _mupdf_open(src)
+            return _mupdf_open(src)
         except Exception as e:
-            reason = f"{e}{_mupdf_warnings()}"
-    log.warning(f"[pdf-text] PyMuPDF open failed ({reason}), falling back to PyPDF2")
-    from PyPDF2 import PdfReader
-    return "pypdf2", PdfReader(io.BytesIO(src) if isinstance(src, (bytes, bytearray)) else str(src))
+            raise ValueError(f"{e}{_mupdf_warnings()}") from e
 
 
 def _warn_truncated(total: int, max_pages: int):
@@ -224,7 +221,7 @@ def unrotated(page):
 def user_unit(page) -> float:
     """The page's /UserUnit: how many points one unit of MuPDF's page space
     is. MuPDF (1.26 on) folds it into page.rect, the bbox log, the text
-    boxes and the pixmap; pdf.js (4.4.168, the viewer's), pdfium and PyPDF2
+    boxes and the pixmap; pdf.js (4.4.168, the viewer's), pdfium and pypdf
     leave it out, so a measure that leaves here in points divides by it. 1
     when the key is absent, not a number or unreadable (MuPDF then ignores
     it too); the magnitude of a negative one, which MuPDF applies as a
@@ -347,19 +344,6 @@ def text_cache_clear() -> None:
         _text_cache_chars = 0
 
 
-def _pypdf2_texts(pdf, max_pages: int, start_page: int):
-    _warn_truncated(len(pdf.pages), max_pages)
-    for i, pg in enumerate(pdf.pages):
-        if i >= max_pages:
-            return
-        if i + 1 < start_page:
-            continue
-        try:
-            yield pg.extract_text() or ""
-        except Exception:
-            yield ""
-
-
 def iter_page_texts(src, max_pages: int = MAX_PAGES, start_page: int = 1, cache: bool = True):
     """Yield per-page text for pages ``start_page``..``max_pages`` (1-based).
     src is a path str or PDF bytes. Takes the lock per page, never across
@@ -367,17 +351,14 @@ def iter_page_texts(src, max_pages: int = MAX_PAGES, start_page: int = 1, cache:
     before comes from the page-text cache without opening the file; the
     file is opened at the first page that is not there. ``cache=False``
     reads past the cache and leaves nothing in it (the search indexer's
-    walk over a library would otherwise push out the papers being read)."""
+    walk over a library would otherwise push out the papers being read).
+    Raises as ``_open`` does when the file will not open."""
     key = _text_key(src) if cache else None
     entry = _text_entry(key)
-    pdf = None  # the PyMuPDF document, once opened (a PyPDF2 reader is never held here)
+    pdf = None  # the document, once opened
     try:
         if entry is None:
-            kind, opened = _open(src)
-            if kind == "pypdf2":
-                yield from _pypdf2_texts(opened, max_pages, start_page)
-                return
-            pdf = opened
+            pdf = _open(src)
             with _lock:
                 total = len(pdf)
             entry = _text_remember(key, total)
@@ -386,11 +367,7 @@ def iter_page_texts(src, max_pages: int = MAX_PAGES, start_page: int = 1, cache:
             text = entry.pages[i]
             if text is None:
                 if pdf is None:
-                    kind, opened = _open(src)
-                    if kind == "pypdf2":  # the file is not what it was: no cache for it
-                        yield from _pypdf2_texts(opened, max_pages, i + 1)
-                        return
-                    pdf = opened
+                    pdf = _open(src)
                 text = _read_page(pdf, i, _text)
                 _text_store(entry, i, text)
             yield text
@@ -452,23 +429,15 @@ def page_sizes(src) -> list[tuple[float, float]]:
     (``page.rect``) and divided by the page's /UserUnit, which MuPDF folds
     into page.rect and pdf.js's scale-1 viewport does not (``user_unit``) —
     the same box pdf.js measures that viewport from, so a layout built from
-    these is exact. Empty when the file is unreadable. No text extraction;
-    takes the lock per page, like iter_page_texts."""
+    these is exact. Empty when the file is unreadable; ImportError when
+    PyMuPDF does not load. No text extraction; takes the lock per page,
+    like iter_page_texts."""
     def _size(page):
         unit = user_unit(page)
         return (page.rect.width / unit, page.rect.height / unit)
 
     try:
-        kind, pdf = _open(src)
-        if kind == "pypdf2":
-            out = []
-            for pg in pdf.pages:
-                box = pg.mediabox
-                w, h = float(box.width), float(box.height)
-                if (int(pg.get("/Rotate") or 0) // 90) % 2:
-                    w, h = h, w
-                out.append((w, h))
-            return out
+        pdf = _open(src)
         try:
             with _lock:
                 total = len(pdf)
@@ -476,6 +445,8 @@ def page_sizes(src) -> list[tuple[float, float]]:
         finally:
             with _lock:
                 pdf.close()
+    except ImportError:
+        raise
     except Exception as e:
         log.warning(f"[pdf-text] page sizes failed: {e}")
         return []
@@ -548,14 +519,14 @@ def title_guess(src, max_chars: int = 300) -> str:
     a metadata lookup queries Crossref with before the text head, whose
     reading order starts with a running header, a journal banner or a
     "Downloaded from" line as often as with the title. "" when the file
-    cannot be read, has no pages or no text, or opened through PyPDF2,
-    which knows no sizes. Takes the lock like every other read."""
+    cannot be read or has no pages or no text; ImportError when PyMuPDF
+    does not load. Takes the lock like every other read."""
     try:
-        kind, pdf = _open(src)
+        pdf = _open(src)
+    except ImportError:
+        raise
     except Exception as e:  # noqa: BLE001 — a guess is never worth an error
         log.warning(f"[pdf-text] title guess failed: {e}")
-        return ""
-    if kind == "pypdf2":
         return ""
     try:
         with _lock:
@@ -572,20 +543,21 @@ def title_guess(src, max_chars: int = 300) -> str:
 
 
 def page_count(src) -> int:
-    """How many pages a PDF has (0 = unreadable). No text extraction; a
-    file in the page-text cache answers without being opened."""
+    """How many pages a PDF has (0 = unreadable; ImportError when PyMuPDF
+    does not load). No text extraction; a file in the page-text cache
+    answers without being opened."""
     entry = _text_entry(_text_key(src))
     if entry is not None:
         return entry.total
     with _lock:
         try:
-            kind, pdf = _open(src)
-            if kind == "pypdf2":
-                return len(pdf.pages)
+            pdf = _open(src)
             try:
                 return len(pdf)
             finally:
                 pdf.close()
+        except ImportError:
+            raise
         except Exception as e:
             log.warning(f"[pdf-text] page count failed: {e}")
             return 0
@@ -638,16 +610,6 @@ class Raster:
         return _png(right - left, bottom - top, channels, rows)
 
 
-def _raster_open(src):
-    """``_mupdf_open`` for the page pictures; called under the lock. A
-    failure is raised again as a ValueError whose message carries MuPDF's
-    warnings, read in the same turn of the lock (``_mupdf_warnings``)."""
-    try:
-        return _mupdf_open(src)
-    except Exception as e:
-        raise ValueError(f"{e}{_mupdf_warnings()}") from e
-
-
 def _draw(page, zoom, box, alpha: bool) -> Raster:
     """``page`` drawn as ``page_raster`` says; called under the lock."""
     mupdf = _pymupdf()
@@ -680,11 +642,11 @@ def page_raster(src, page_no: int, zoom, box=None, alpha: bool = False) -> tuple
     included: an /Ink or /Highlight without an appearance stream (what
     pdf_export writes) gets one synthesized, which view_ink relies on.
     Holds the lock for the open, the render and the close, like the other
-    short walks; the caller encodes the raster outside it. Raises a
-    ValueError with MuPDF's warnings when PyMuPDF is missing or cannot open
-    the file, one that needs a password included."""
+    short walks; the caller encodes the raster outside it. Raises as
+    ``_open`` does when the file will not open, one that needs a password
+    included."""
     with _lock:
-        pdf = _raster_open(src)
+        pdf = _open(src)
         try:
             total = len(pdf)
             if page_no < 1 or page_no > total:
@@ -701,8 +663,7 @@ def page_rasters(src, page_nos, zoom):
     draw (logged). Takes the lock once per page, like iter_page_texts, so
     what the caller makes of a raster (a crop, a PNG) is made outside it.
     Raises as page_raster does when the file will not open."""
-    with _lock:
-        pdf = _raster_open(src)
+    pdf = _open(src)
     try:
         with _lock:
             total = len(pdf)
@@ -721,13 +682,10 @@ def page_rasters(src, page_nos, zoom):
 
 
 def _encode_raster(raster: Raster) -> tuple[bytes, str]:
-    """``(bytes, media type)`` of a rendered page: JPEG through Pillow when
-    it is installed (a scan is a photo — several times smaller), else a PNG
-    written here."""
-    try:
-        from PIL import Image
-    except ImportError:
-        return raster.png(), "image/png"
+    """``(bytes, media type)`` of a rendered page: JPEG through Pillow (a
+    scan is a photo — several times smaller than a PNG)."""
+    from PIL import Image
+
     buf = io.BytesIO()
     image = Image.frombuffer(raster.mode, (raster.width, raster.height), raster.data, "raw",
                              raster.mode, raster.stride, 1)
@@ -738,12 +696,11 @@ def _encode_raster(raster: Raster) -> tuple[bytes, str]:
 def outline(src) -> list[tuple[int, str, int]]:
     """The PDF's own table of contents (its bookmarks) as ``(level, title,
     1-based page)`` in document order; entries without a page destination
-    are skipped. [] when the file has none or can't be read."""
+    are skipped. [] when the file has none or can't be read; ImportError
+    when PyMuPDF does not load."""
     with _lock:
         try:
-            kind, pdf = _open(src)
-            if kind == "pypdf2":
-                return []
+            pdf = _open(src)
             try:
                 entries = []
                 for level, title, page_no in pdf.get_toc(simple=True):
@@ -753,6 +710,8 @@ def outline(src) -> list[tuple[int, str, int]]:
                 return entries
             finally:
                 pdf.close()
+        except ImportError:
+            raise
         except Exception as e:
             log.warning(f"[pdf-text] outline read failed: {e}")
             return []
@@ -767,11 +726,11 @@ def render_page(src, page_no: int, max_side: int = RENDER_MAX_SIDE, box=None):
     """Rasterize one page (1-based) for a vision model: ``(image, pages)``
     where image is ``(bytes, media_type, width, height)`` — the page scaled
     so its longer side is ``max_side`` px — or None when the page number is
-    out of range; ``(None, 0)`` when the file can't be rendered (PyMuPDF
-    missing, or unable to open it). ``box`` = ``(x0, y0, x1, y1)`` as
-    fractions of the page, top-left origin, renders just that region (its
-    longer side at ``max_side`` px, zoom capped). Drawn by ``page_raster``,
-    annotations included, under the lock; the image is encoded outside it."""
+    out of range; ``(None, 0)`` when the file will not open. ``box`` =
+    ``(x0, y0, x1, y1)`` as fractions of the page, top-left origin, renders
+    just that region (its longer side at ``max_side`` px, zoom capped).
+    Drawn by ``page_raster``, annotations included, under the lock; the
+    image is encoded outside it."""
     def zoom(width, height):
         scale = max_side / max(width, height, 1)
         return min(scale, _CROP_MAX_SCALE) if box else scale
@@ -894,14 +853,11 @@ class GlyphPages:
     def _open(self) -> bool:
         """Open the file on first use; False when it can't be."""
         if self._pdf is None and not self._failed:
-            with _lock:
-                try:
-                    self._pdf = _mupdf_open(self._src)
-                except Exception as e:
-                    reason = f"{e}{_mupdf_warnings()}"
-                    self._failed = True
-            if self._failed:
-                log.warning(f"[pdf-text] PyMuPDF open failed ({reason}); highlights import without quotes")
+            try:
+                self._pdf = _open(self._src)
+            except Exception as e:
+                self._failed = True
+                log.warning(f"[pdf-text] PyMuPDF open failed ({e}); highlights import without quotes")
         return self._pdf is not None
 
     def _read(self, page_no: int, read, what: str):

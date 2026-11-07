@@ -1133,10 +1133,10 @@ that refuses, so the person's library is never touched. It waits up to
 three minutes for `/api/health`, signs in, uploads a one-page PDF it
 builds, makes the page for it, reads the manifest (`/api/pdf-info`, one
 page of 612 × 792 points) and asks for a page picture
-(`/api/ai/page-image`). A server without PyMuPDF starts and counts pages
-all the same, but answers 404 there, so the picture is the proof that the
-wheels load and render; a call that does not answer as expected fails
-with the server's log tail. It skips when the app starts its own server
+(`/api/ai/page-image`). Both come from PyMuPDF, which the server imports
+at its first PDF read (`/api/health` proves only the start), so they are
+the proof that the wheels load and render; a call that does not answer as
+expected fails with the server's log tail. It skips when the app starts its own server
 (its last server opened was This device), since an interpreter starts
 once per process. It asks the app's server, which is already starting
 before any test runs, rather than the interpreter, which starts only once

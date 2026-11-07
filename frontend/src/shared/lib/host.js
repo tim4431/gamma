@@ -7,11 +7,12 @@
 // draws, `snap` the line along the ruler's edge among them), hold (it sends
 // `hold` when a captured pen stays still), pencil (it forwards the pen's
 // gestures: the Apple Pencil's double tap and squeeze, a stylus's button
-// clicks), pencilGestures (which of them, of "tap" and "squeeze"; an iPad
-// build older than the flag forwards both), pencilPhases (a squeeze's start
-// and cancel come too, as `squeeze`), pencilRoll (its samples carry the
-// pen's barrel roll), haptics (it plays `haptic`), openFiles (it holds the
-// files the system opens in the app), shellBar (its own bar above the page
+// clicks), pencilGestures (which of them, of "tap" and "squeeze"; a host
+// that declares `pencil` without the list, as the iPad app does, forwards
+// both), pencilPhases (a squeeze's start and cancel come too, as
+// `squeeze`), pencilRoll (its samples carry the pen's barrel roll), haptics
+// (it plays `haptic`), openFiles (it holds the files the system opens in
+// the app), shellBar (its own bar above the page
 // can be hidden, and `shellBar` sets and reports it), save (it takes the
 // files the web saves, shared/lib/saveFile.js), editMenu (it turns its own
 // edit menu over a selection off while the page says, `editMenu`)} — a

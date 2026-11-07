@@ -360,7 +360,7 @@ export function UsersSettings({ value, selfOnly = false, onServer }) {
             {u.is_admin ? <span className="uiTag admin">{t("admin")}</span> : null}
             {u.is_guest ? <span className="uiTag">{t("guest")}</span> : null}
           </span>
-          {u.is_guest ? <span className="aiProvDesc">{t("shared demo workspace, resets daily")}</span> : null}
+          {u.is_guest ? <span className="aiProvDesc">{t("throwaway account, deleted when it expires")}</span> : null}
           <QuotaMeter usedBytes={u.used_bytes} quotaMb={u.quota_mb ?? defaults?.quota_mb} />
         </span>
         <span className="aiProvActions">

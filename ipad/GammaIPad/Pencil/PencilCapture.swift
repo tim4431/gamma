@@ -219,8 +219,7 @@ final class PencilCapture: UIGestureRecognizer {
         let space = surface ?? view
         let point = touch.preciseLocation(in: space)
         // the barrel roll (an Apple Pencil Pro), which turns a calligraphy nib
-        var roll: Double? = nil
-        if #available(iOS 17.5, *) { roll = Double(touch.rollAngle) }
+        let roll = Double(touch.rollAngle)
         recorder.add(x: Double(point.x), y: Double(point.y), force: Double(touch.force),
                      maximumForce: Double(touch.maximumPossibleForce), time: touch.timestamp,
                      altitude: Double(touch.altitudeAngle), azimuth: Double(touch.azimuthAngle(in: space)), roll: roll)
@@ -416,10 +415,10 @@ struct ClaimQueue<Touch: Hashable> {
 /// never going back, then, when the Pencil reports its tilt, `a` and `z`,
 /// its altitude and azimuth in degrees (the web converts them back to
 /// radians, as WebKit gives a page's pointer events), and after them, when
-/// it reports its barrel roll (iPadOS 17.5), `r`, in degrees in [0, 360),
-/// clockwise as seen (PointerEvent.twist's convention: the page turns a
-/// calligraphy nib by the first sample's). The lift reports no force, so a
-/// zero keeps the last pressure, as the web's own sampling does.
+/// it reports its barrel roll, `r`, in degrees in [0, 360), clockwise as
+/// seen (PointerEvent.twist's convention: the page turns a calligraphy nib
+/// by the first sample's). The lift reports no force, so a zero keeps the
+/// last pressure, as the web's own sampling does.
 ///
 /// It also keeps the stroke's stillness anchor (shapes.js stillSince): the
 /// latest sample that landed more than `PencilCapture.holdSlop` from the

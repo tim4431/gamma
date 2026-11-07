@@ -52,6 +52,7 @@ from collections import Counter
 from datetime import UTC, datetime
 
 from fastapi import HTTPException
+from pypdf import PdfReader
 
 from . import config, jobs
 from . import ink as inkmod
@@ -66,7 +67,7 @@ from .import_zip import READ_ERRORS, DirectoryTooLarge, check_ratio, new_walk, o
 from .logbuf import log
 from .notebook import paper_ops
 from .ops import after_commit, apply_batches
-from .pdf_export import ExportPdfReader, display_size, page_frame
+from .pdf_export import display_size, page_frame
 from .picture import image_size, picture_type
 from .recording import mp4_duration_ms
 from .storage import IMAGE_EXTENSIONS, is_pdf, store_file, store_file_stream
@@ -113,14 +114,13 @@ def open_upload(data, refused: str, refuse=None):
 
 def compose_pdf(frames: list, papers: list, readers: dict) -> bytes:
     """The note's pages as one PDF, in the frames' order. A PDF page goes in
-    by ``add_page`` from its reader (``pdf_export.ExportPdfReader``, whose
-    dangling references do not break PyPDF2's clone), keeping its boxes,
+    by ``add_page`` from its reader (``open_pdf``'s), keeping its boxes,
     rotation, links and annotations; a page used twice is copied twice. A
     paper page (a frame without a PDF) is a blank page of its paper's size
     (``papers``, one per frame) with the paper painted on it, as
     ``notebook_pdf`` paints a sheet."""
-    from PyPDF2 import PdfWriter
-    from PyPDF2.generic import DecodedStreamObject, NameObject
+    from pypdf import PdfWriter
+    from pypdf.generic import DecodedStreamObject, NameObject
 
     from .pdf_typeset import num
 
@@ -192,11 +192,11 @@ def open_pdf(entry, name: str, tag: str = "import") -> tuple | None:
         data = entry.read()
         if not is_pdf(data):
             return None
-        reader = ExportPdfReader(io.BytesIO(data), strict=False)
+        reader = PdfReader(io.BytesIO(data), strict=False)
         if reader.is_encrypted:
             reader.decrypt("")
         sizes = [display_size(*page_frame(page)) for page in reader.pages]
-    except Exception as exc:  # noqa: BLE001 — any PDF PyPDF2 cannot read becomes paper
+    except Exception as exc:  # noqa: BLE001 — any PDF pypdf cannot read becomes paper
         log.info(f"[{tag}] {name}: unreadable PDF ({exc!r})")
         return None
     return (sizes, reader, data) if sizes else None

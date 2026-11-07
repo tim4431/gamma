@@ -17,7 +17,6 @@
   overflow-x: auto;
   scroll-snap-type: x proximity;
   padding: 4px 0;
-  -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
 }
 .carouselTrack::-webkit-scrollbar {
@@ -606,7 +605,6 @@
   overflow-x: auto;
   scroll-snap-type: x proximity;
   padding-bottom: 4px;
-  -webkit-overflow-scrolling: touch;
   scrollbar-width: none;
 }
 .pinnedStrip::-webkit-scrollbar {

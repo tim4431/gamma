@@ -227,9 +227,9 @@ def _send(guest, data, preview=False, **form):
 
 
 def _pdf_object(v):
-    """A test value as a PyPDF2 object: a str starting with "/" a name,
+    """A test value as a pypdf object: a str starting with "/" a name,
     any other str a string, a tuple an array, a dict a dictionary."""
-    from PyPDF2.generic import ArrayObject, DictionaryObject, FloatObject, NameObject, NumberObject, TextStringObject
+    from pypdf.generic import ArrayObject, DictionaryObject, FloatObject, NameObject, NumberObject, TextStringObject
     if hasattr(v, "write_to_stream"):
         return v
     if isinstance(v, tuple):
@@ -256,8 +256,8 @@ def _zotero_annot(subtype, key, rect, **keys):
 def _with_annotations(*annots):
     """``_annotated_pdf``'s page carrying these annotations in place of its
     own."""
-    from PyPDF2 import PdfReader, PdfWriter
-    from PyPDF2.generic import NameObject
+    from pypdf import PdfReader, PdfWriter
+    from pypdf.generic import NameObject
 
     w = PdfWriter()
     w.append(PdfReader(io.BytesIO(_annotated_pdf())))
@@ -274,7 +274,7 @@ def _zotero_annotated_pdf():
     pdf-worker writes them into an export with "Include Annotations"
     (annotationToRaw, Zotero 9): a Zotero id on each, no /CA on the markup,
     a text annotation's own box and turn in /Zotero:* keys."""
-    from PyPDF2.generic import TextStringObject
+    from pypdf.generic import TextStringObject
 
     return _with_annotations(
         _zotero_annot("/Highlight", "HLAAAAAA", (72, 716, 300, 732),

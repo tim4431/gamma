@@ -197,10 +197,11 @@ jobs:
           name: frontend-dist
           path: frontend/dist
 
+      # build_backend.py installs its pinned PyInstaller and hooks itself.
       - name: Install backend deps
         run: |
           python -m pip install --upgrade pip
-          pip install -r backend/requirements.txt pyinstaller
+          pip install -r backend/requirements.txt
 
       - name: Freeze backend
         run: python desktop/build_backend.py
@@ -600,7 +601,7 @@ jobs:
             [ -n "$deb" ] && btn "Download for Debian / Ubuntu" A81D33 debian "$base/$deb"
             echo
             echo
-            echo -n "Windows 10/11 x64 · macOS on Apple Silicon"
+            echo -n "Windows 10/11 x64 · macOS 13 or later on Apple Silicon"
             [ -n "$zipmac" ] && echo -n " ([also as .zip]($base/$zipmac))"
             echo " · Debian / Ubuntu x64. The desktop app is self-contained — no Python or Node needed — and updates itself (Help → *Check for Updates…*)."
             echo

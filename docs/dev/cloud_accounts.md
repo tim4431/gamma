@@ -12,10 +12,13 @@ verified locally with the published keys. Code: `cloud/` (package
 it shares with Gamma are copies, so the account server can move to its own
 repository without a change: the fixed-window rate limiter, the PKCE rules
 and the public-URL rules (`servers.norm_url`, from
-`server_settings.validate_public_url`). The rate limiter has drifted from
-`backend/`'s: it drops `on_first_exceed` and prunes stale keys, each
-bucket by its own window length, so a full table drops an hour's count
-after its hour and a day's only after its day.
+`server_settings.validate_public_url`). The rate limiter differs from
+`backend/`'s on purpose: it has no `on_first_exceed` and adds `full` (a
+limit counted only once what it guards has happened); it reads
+`CF-Connecting-IP` and counts an IPv6 address by its /64 ("Running"); and
+a full table drops only the windows that are over, each by its own length,
+so a day's count lasts its day, where `backend/`'s also drops the oldest
+windows.
 
 Status: **v0**, plus the preference profile, the linked-server list, the
 username lookup (the account server's half of steps 7 and 8 of the plan)
@@ -61,7 +64,6 @@ every variable), fixed for the life of the container:
 - the data directory;
 - the public URL — the OIDC issuer; the request's Host is never trusted;
 - the mail backend: `console` logs the links, `smtp` sends them;
-- the desktop client id;
 - the Google and GitHub OAuth clients — a provider is off until both its
   id and secret are set; setup in the deploy README;
 - the Zotero app (`GAMMA_CLOUD_ZOTERO_CLIENT_KEY` / `_SECRET`) the Zotero
@@ -118,7 +120,9 @@ the cache after the commit, so no reader caches a value that rolls back. A
 The environment variables these replaced (`config.RETIRED_ENV`) are not
 read; `app.py` warns at startup about any still set. A fresh database takes
 the defaults. `manage.py settings` shows and sets the same values from the
-shell.
+shell. `app.py` warns as well when `GAMMA_CLOUD_DESKTOP_CLIENT_ID` is set,
+which nothing reads: the desktop client's id is fixed ("The OIDC
+provider").
 
 The Docker image (`cloud/Dockerfile`) runs uvicorn on 9002. The client
 address (rate limits, the address on a device or browser row) is
@@ -179,8 +183,7 @@ compare as strings.
 
 [cloud/deploy/README.md](../../cloud/deploy/README.md): the `gamma-cloud`
 image on a VPS, `compose.yml` running it with Caddy for TLS behind
-Cloudflare DNS; `compose.tunnel.yml` swaps Caddy for a Cloudflare Tunnel on
-a host without a public address. The state is the `data/` folder. The
+Cloudflare DNS. The state is the `data/` folder. The
 README covers `.env.example` (public URL, SMTP, hostname), the first admin
 and invites, the sign-up settings, the Cloudflare rate rules, updating and
 rollback.
@@ -793,10 +796,11 @@ without one), which is how a Gamma server learns where to publish without a
 token; the two endpoints of a server connection ("Connecting a server");
 and, while the Zotero broker is on, its two ("Connecting Zotero").
 
-**Clients.** The *desktop* client (`GAMMA_CLOUD_DESKTOP_CLIENT_ID`,
-default `gamma-desktop`) is public and built in: every local Gamma sidecar
-is this client, nothing is registered per install, and its redirect URI
-must be `http://127.0.0.1:<any port>/api/auth/cloud/callback` (or
+**Clients.** The *desktop* client (the fixed id `gamma-desktop`,
+`config.DESKTOP_CLIENT_ID`, the one Gamma's backend sends) is public and
+built in: every local Gamma sidecar is this client, nothing is registered
+per install, and its redirect URI must be
+`http://127.0.0.1:<any port>/api/auth/cloud/callback` (or
 `localhost`, `[::1]`), a loopback the sidecar itself serves; it may always
 ask for `offline_access`. A Gamma server at a public address cannot be
 this client: it needs a confidential one. *share-host* and *container*
@@ -1170,12 +1174,13 @@ and the CLI call the same functions.
   the throwaway-domain list and the admin's additions, the allowed domains
   in both modes with and without a code, the IPv6 /64 bucket,
   the login and reset windows counted per inbox across aliases, a full
-  limiter table dropping each window by its own length, and the
-  upgrade's backfill.
+  limiter table dropping each window by its own length, threads sharing
+  a full table without losing a count, and the upgrade's backfill.
 - `test_oidc.py`: discovery and JWKS, the full desktop PKCE flow with a
-  decoded ID token, refresh rotation, code replay, redirect and PKCE
-  checks, the unverified gate, sign-in on the authorize page, cancel, a
-  confidential client with basic auth and revoke, key rotation.
+  decoded ID token, the fixed desktop client id, refresh rotation, code
+  replay, redirect and PKCE checks, the unverified gate, sign-in on the
+  authorize page, cancel, a confidential client with basic auth and
+  revoke, key rotation.
 - `test_admin.py`: gating, the admin flows, an invite from creation through
   off and on to spent with the accounts that used it, the configuration
   never carrying a secret, the test mail and its limit, that a bearer
@@ -1940,13 +1945,16 @@ service with the suffix.
 Deploying page hosts takes a wildcard DNS record, `*.gammapdf.com`
 pointing at the share host (named records such as `account` keep
 precedence over the wildcard), and a wildcard site in front of the
-container. `cloud/deploy/Caddyfile` sends `share.gammapdf.com` and every
-`<name>-pages.gammapdf.com` to the `share` service of
-`cloud/deploy/compose.yml` (its settings in `share.env.example`). Behind
-Cloudflare in "Full" mode Caddy's internal certificate covers the
-wildcard, so no DNS challenge is needed. The proxy passes the `Host`
-header through (Caddy does by default); the app reads the username out of
-it. Setup steps: [cloud/deploy/README.md](../../cloud/deploy/README.md)
+container. `cloud/deploy/Caddyfile` sends `app.gammapdf.com`,
+`share.gammapdf.com` and every `<name>-pages.gammapdf.com` to the `share`
+service of `cloud/deploy/compose.yml` (its settings in
+`share.env.example`). Behind Cloudflare in "Full" mode Caddy's internal
+certificate covers the wildcard, so no DNS challenge is needed. The proxy
+passes the `Host` header through (Caddy does by default); the app reads
+the username out of it. It also passes Cloudflare's `CF-Connecting-IP` as
+`X-Forwarded-For`, which the share host believes from the project's
+pinned network only, so its rate limits count each visitor rather than
+each Cloudflare edge. Setup steps: [cloud/deploy/README.md](../../cloud/deploy/README.md)
 "The free share host".
 
 The rest of the plan's cloud mode is configuration, not code: registration

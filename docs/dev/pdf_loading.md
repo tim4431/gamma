@@ -14,10 +14,11 @@ throws a parsed document away.**
 Every stored PDF gets one row in the workspace's `data.db`, table `pdf_docs`:
 byte size, page count, and every page's size in PDF points with `/Rotate`
 applied (the same box pdf.js measures its scale-1 viewport from, so a layout
-built from it is exact). It is derived data next to the PDF text index, so it
-is created with `CREATE TABLE IF NOT EXISTS` (no migration step), lives in
-backups harmlessly, and is purged with the index when no page carries the
-document any more (`pdf_index.purge_unused`).
+built from it is exact). It is derived data next to the PDF text index, so
+its `CREATE TABLE IF NOT EXISTS` is in `db.DATA_SCHEMA`, which every
+`data.db` connection applies (no migration step); it lives in backups
+harmlessly, and is purged with the index when no page carries the document
+any more (`pdf_index.purge_unused`).
 
 Who writes it: `storage.store_pdf` (imports, a PDF the fetch handoff held),
 `storage.store_pdf_stream` (uploads, a file chip's PDF among them) and
@@ -37,23 +38,20 @@ story). Each size is `page.rect`, the page box with `/Rotate` applied,
 divided by the page's `/UserUnit`: MuPDF folds that key into `page.rect`,
 pdf.js's scale-1 viewport (4.4.168) does not, and the manifest must be in the
 viewer's points (`pdf_text.user_unit`). MuPDF has the box once the page is
-loaded, without running its content stream, so
-the walk is cheap: 67 ms over a 484-page book and 44 ms over a 1,310-page
-one, where pdfium, which parsed each page for it, took 584 and 923 ms
+loaded, without running its content stream, so the walk is cheap: 67 ms
+over a 484-page book and 44 ms over a 1,310-page one
 ([research/pypdfium2-vs-pymupdf.md](../research/pypdfium2-vs-pymupdf.md)).
 The lock is taken per page (and once each for the open and the close), not
 for the whole document, so a manifest walk runs between the pages of a book
 the search indexer is reading. Every page it loads is dropped, and the
 document closed, explicitly inside the lock: PyMuPDF frees its objects by
 reference count, so that is the end of them, and nothing is finalized later
-on another thread (pypdfium2 closed its objects from weakref finalizers the
-cyclic GC ran on whatever thread allocated next, which crashed the server
-when that was inside another thread's call; the net `pdf_text.py` held for
-it, `_serialize_finalizers`, is gone). A file neither PyMuPDF nor the PyPDF2
-fallback can read is stored with `pages: 0` so it is not parsed again on
-every open. The endpoint
-sends that answer `no-store` and a real one with a day of `private` caching
-(a doc id is a content hash, its manifest never changes).
+on another thread. A file PyMuPDF cannot read is stored with `pages: 0` so
+it is not parsed again on every open. The endpoint sends that answer
+`no-store` and a real one with a day of `private` caching (a doc id is a
+content hash, its manifest never changes). When PyMuPDF itself does not
+load, nothing is stored and the endpoint fails, so the viewer takes the
+path without a manifest and the file is measured once the reader loads.
 
 Access is the file's own rule: a workspace member, or a share token confined
 to the shared page's document (`_share_can_read_upload`). The check reads the

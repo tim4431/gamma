@@ -212,20 +212,15 @@ message, and it doesn't stop fabrication — the tools are the better lever.
   (`textnorm.INDEX_VERSION` bumped so old indexes rebuild lazily.)
 - **Extraction lock** (`pdf_text._lock`): PyMuPDF's documentation says it is
   not thread-safe (running it on several threads "may cause incorrect
-  behaviour or even crash Python itself"; pdfium, which read here before,
-  showed it: two overlapping extractions both died with "Failed to load
-  page", even on different files). Sync endpoints run in FastAPI's
+  behaviour or even crash Python itself"). Sync endpoints run in FastAPI's
   threadpool and the search indexer runs in a background thread, so a chat
   could collide with its own indexing, get the failure sentinel as context,
   and answer blind. Every PyMuPDF call is serialized behind one lock
   (`_MuPdfLock`), and every document is closed and every page dropped
   explicitly inside it: PyMuPDF frees by reference count, so nothing is
-  finalized later on another thread (pypdfium2 closed its objects from
-  weakref finalizers the cyclic GC ran on whatever thread allocated next,
-  and needed them netted through the lock; that net,
-  `_serialize_finalizers`, is gone). The walks over every page
-  take the lock per page, not per document, so a chat's extraction runs
-  between the pages of a book being indexed instead of after it (measured:
+  finalized later on another thread. The walks over every page take the
+  lock per page, not per document, so a chat's extraction runs between the
+  pages of a book being indexed instead of after it (measured:
   `/pdf-text-status` during a 5,000-page reindex, 5.6 s → 77 ms). The lock
   is handed over in turn: a bare `RLock` is unfair, and on Linux the walk
   took it back after each page before a waiting thread woke. So a fresh
@@ -233,10 +228,9 @@ message, and it doesn't stop fabrication — the tools are the better lever.
   and the walk's next page lines up behind it. One more fact about PyMuPDF
   shapes the calls under the lock: it holds the GIL inside every call, so a
   page's text or a render stalls the event loop — every request and every
-  WebSocket — for those milliseconds (pdfium, called through ctypes,
-  released it). That is why every call in `pdf_text` is one page's text,
-  size, glyphs or picture, never a pass over a whole document inside the
-  library. A page becomes pixels through `pdf_text.page_raster` (the AI's
+  WebSocket — for those milliseconds. That is why every call in `pdf_text`
+  is one page's text, size, glyphs or picture, never a pass over a whole
+  document inside the library. A page becomes pixels through `pdf_text.page_raster` (the AI's
   page pictures, GoodNotes stickers). `pdf_text.page_rasters` draws
   several pages of a file opened once (the Logseq export's area crops).
   Both draw under the lock and hand back a `Raster`, which the caller

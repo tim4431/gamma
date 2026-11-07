@@ -62,7 +62,7 @@ def lab(user):
 
 
 def test_a_folder_as_annotated_pdfs_in_one_zip(user, lab):
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
 
     job = _export(user, folder=lab["folder"], mode="annotated-pdf", highlights=True, notes=False)
     r = _download(user, job)

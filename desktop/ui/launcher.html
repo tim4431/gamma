@@ -197,7 +197,7 @@
         <label>Frontend dist directory</label>
         <input class="uiInput mono" id="setStatic" spellcheck="false" />
         <div class="row">
-          <span class="detected" id="detected"></span>
+          <span class="detected">Dev mode: repo auto-detected.</span>
           <button class="uiBtn sm" id="btnSaveSettings">Save</button>
         </div>
       </div>
@@ -432,13 +432,14 @@
   }
 
   // The Settings block, the desktop's alone: the iPad and Android apps' state has no settings.
-  // A Mac App Store build has no login item and runs only its bundled server.
+  // A Mac App Store build has no login item. A packaged build runs only its bundled
+  // server (lib/sidecar.js), so the source-checkout settings are a dev run's alone.
   function renderSettings() {
     $('swOpenLast').checked = Boolean(state.settings.openLastOnLaunch);
     $('swBackground').checked = Boolean(state.settings.background);
     $('swLogin').checked = Boolean(state.settings.openAtLogin);
     $('rowLogin').hidden = Boolean(state.mas);
-    $('advanced').hidden = Boolean(state.mas);
+    $('advanced').hidden = Boolean(state.packaged);
     renderUpdate(state.update || {});
     $('setPython').value = state.settings.pythonPath || '';
     $('setBackend').value = state.settings.backendDir || '';
@@ -446,7 +447,6 @@
     $('setPython').placeholder = state.detected.pythonPath;
     $('setBackend').placeholder = state.detected.backendDir;
     $('setStatic').placeholder = state.detected.staticDir;
-    $('detected').textContent = state.packaged ? 'Packaged app: the bundled server is used unless a Python path is set.' : 'Dev mode: repo auto-detected.';
     $('dataRootText').textContent = state.dataRoot;
     $('btnDataRootReset').hidden = !state.settings.dataRoot;
     showDataMove(state.dataMove);
@@ -630,9 +630,7 @@
       acts.appendChild(b);
     };
     const server = () => (state ? state.servers.find((s) => s.id === f.server) : null);
-    if (f.action === 'update') {
-      act('Check for updates', () => { gammaShell.updateCheck(); $('btnUpdate').scrollIntoView({ block: 'center', behavior: 'smooth' }); }, true);
-    } else if (f.action === 'data' && f.server) {
+    if (f.action === 'data' && f.server) {
       act('Open data folder', () => gammaShell.revealData(f.server), true);
     } else if (f.action === 'access' && f.server) {
       // Mac App Store: choose the server's folder again, then open it.

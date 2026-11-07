@@ -7,7 +7,7 @@ description: Publish the Gamma Cloud account server (ghcr.io/tim4431/gamma-cloud
 
 `account.gammapdf.com` runs via docker compose on the VPS
 `root@69.63.206.178`, folder `/root/Container/gamma-account/` (services
-`account`, `share`, `caddy`; Cloudflare in front). The account server ships on its
+`account`, `share`, `watchtower`, `caddy`; Cloudflare in front). The account server ships on its
 own: `.github/workflows/cloud.yml`, dispatched from ANY branch, runs the
 `cloud/` tests and publishes `ghcr.io/tim4431/gamma-cloud:latest` (plus
 `:sha-<short>`); this skill builds through the `build-cloud` skill and deploys the result. A merge to
@@ -26,9 +26,8 @@ touches only `share` (its labels and the scope `share`) and never
 `account`. Deploying `share` is the `update-share-host` skill's, and so is
 a `compose.override.yml` on the host (a rollback pin for `share`, which
 `docker compose` loads by itself): never edit, compare or copy it here.
-The `up -d` below leaves `share` running as it is unless a copied
-`compose.yml` changed its settings, and starts `watchtower` when a copied
-`compose.yml` first brings it.
+The `up -d` below leaves `share` and `watchtower` running as they are
+unless a copied `compose.yml` changed them.
 
 ## Publish from the branch
 
@@ -48,7 +47,14 @@ ssh root@69.63.206.178 "cd /root/Container/gamma-account && docker inspect --for
 ```
 
 If it already equals the run's `headSha`, there is nothing to deploy — say so
-and stop.
+and stop, after one check: a `watchtower` that `docker compose ps watchtower`
+does not show running has stopped, and the share host no longer follows
+`main` by itself. Say so and, with the user's agreement, start it alone (it
+touches no other service):
+
+```bash
+ssh root@69.63.206.178 "cd /root/Container/gamma-account && docker compose up -d --no-deps watchtower"
+```
 
 ## Deploy files changed?
 
@@ -64,7 +70,8 @@ ssh root@69.63.206.178 "cat /root/Container/gamma-account/Caddyfile"   | diff - 
 Show the user any difference and copy a file over (`git show <headSha>:cloud/deploy/<file> | ssh root@69.63.206.178 "cat > /root/Container/gamma-account/<file>"`)
 only once they agree. `.env` is never copied — new variables from
 `.env.example` (`git diff <old>..<headSha> -- cloud/deploy/.env.example`) are
-named to the user to add by hand.
+named to the user to add by hand. Caddy reads a copied `Caddyfile` only on a
+reload (Update below).
 
 The public demo (demo.gammapdf.com) is NOT in this project: it is its own
 compose project in `/root/Container/gamma-demo/` (the `update-demo-server`
@@ -74,11 +81,7 @@ where the demo answers as `gamma-demo`. `compose.yml` refuses to start while
 that network is missing; on a new host create it first
 (`docker network inspect gamma-edge >/dev/null 2>&1 || docker network create --subnet 10.202.0.0/24 gamma-edge`;
 the demo trusts that subnet). The project's own default network has a pinned
-subnet the share host trusts (`FORWARDED_ALLOW_IPS`); when a copied
-`compose.yml` brings that pin to a host whose network predates it, `up -d`
-cannot change the network in place: with the user's agreement, run
-`docker compose down && docker compose up -d` once (the portal and the share
-host are gone for those seconds).
+subnet the share host trusts (`FORWARDED_ALLOW_IPS`).
 
 ## Update
 
@@ -89,6 +92,13 @@ services the compose file has dropped:
 
 ```bash
 ssh root@69.63.206.178 "cd /root/Container/gamma-account && docker compose pull account && docker compose up -d --remove-orphans"
+```
+
+After copying a `Caddyfile`, reload it (`up -d` does not restart Caddy for
+it; a reload has no downtime):
+
+```bash
+ssh root@69.63.206.178 "cd /root/Container/gamma-account && docker compose exec caddy caddy reload --config /etc/caddy/Caddyfile"
 ```
 
 At start the server upgrades `cloud.db` itself, snapshotting it first to
