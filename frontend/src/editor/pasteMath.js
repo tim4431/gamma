@@ -2,7 +2,7 @@
 // into a note as the $ … $ and $$ … $$ notes render (remark-math and
 // scanMathSpans read only dollars). It is converted on the way in, never on
 // screen: in Markdown "\[" is also an escaped bracket, and Gamma writes those
-// itself (text_box.escape_markdown, zotero_notes._escape: "\[n = 30\]"), so
+// itself (text_box.escape_markdown, zotero_notes.escape: "\[n = 30\]"), so
 // a \[ … \] converts only when it is shaped as a formula is written.
 // backend/gamma/paste_math.py applies the same rules to what the AI writes;
 // tests/shared/pastemath.json pins both. Code is shared/lib/mdCode.js's

@@ -375,7 +375,8 @@ def test_the_text_exports_bundle_the_svg_as_it_is(guest):
     page = guest.post("/api/pages", json={"title": "SVG bundle"}).json()["id"]
     _put_children(guest, page, [_placed("svgMd", url, content="bundled")])
     name = url.rsplit("/", 1)[1]
-    for mode, folder_name in (("readable", "assets"), ("obsidian", "attachments"), ("logseq-graph", "assets")):
+    for mode, folder_name in (("readable", "assets"), ("obsidian", "attachments"), ("logseq-graph", "assets"),
+                              ("notion", "SVG bundle")):
         r = guest.get(f"/api/pages/{page}/export?mode={mode}")
         assert r.status_code == 200, r.text
         with zipfile.ZipFile(io.BytesIO(r.content)) as z:

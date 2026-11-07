@@ -845,7 +845,7 @@ def _emit_chunks(cv: _Canvas, md: str, x: float, width: float, color=TEXT_COLOR,
 def _emit_block(cv: _Canvas, node: dict, depth: int, highlights: bool, notes: bool,
                 on_sheet: bool = False):
     """One block and its subtree. Mirrors the Markdown export's switches: with
-    highlights off a highlight block keeps its own writing as a plain bullet;
+    highlights off a highlight block keeps its own writing as a plain note;
     with notes off only the quoted passages remain. ``on_sheet``: a sheet of
     paper is among the block's ancestors, so a text box or a picture under
     it is on that sheet. A picture is placed on the page as a text box is,
@@ -944,8 +944,9 @@ def _emit_block(cv: _Canvas, node: dict, depth: int, highlights: bool, notes: bo
         _emit_chunks(cv, content, x, width)
         emitted = True
     elif content:
+        # A plain note is indented text, as on the page; a list keeps its marker.
         cv.gap(BLOCK_GAP)
-        _emit_chunks(cv, content, x, width, bullet=bool(depth))
+        _emit_chunks(cv, content, x, width)
         emitted = True
 
     # A block with nothing to show doesn't consume an indent level, so its

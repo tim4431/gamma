@@ -484,6 +484,8 @@ A context without `hasTouch` reports no touch points whatever the host has
 digitizer through, and a Remote Desktop session from a touch device brings
 the client's ten points, which turn on the touch-only controls and guide
 steps.
+#### WebKit and Firefox
+
 `GAMMA_E2E_BROWSER=webkit` or `GAMMA_E2E_BROWSER=firefox` (after
 `npx playwright install webkit` or `firefox`) runs the suite in that engine.
 Native touch gestures need Chromium's CDP, so there the touch scenario checks
@@ -492,7 +494,44 @@ That is browser emulation, not an iPad measurement. Both engines skip the
 steps gated on `browser.browserType().name() === "chromium"`. The other steps
 that open a CDP session fail in both. So does every context that asks for the
 clipboard permissions: WebKit lacks `clipboard-write`, Firefox both.
-Neither engine passes the whole suite.
+Neither engine passes the whole suite. The `touch` and `ipad` groups pass
+under WebKit, and the iPad app is a WKWebView, so that is the run to make for
+a change to touch editing. It is still no iPad:
+
+- Playwright's WebKit is not the iOS port, and its tap is a patch to the
+  engine, not a finger. It sends `touchstart` and `touchend`, and the mouse
+  events and the click only if neither was handled, a cancelled
+  `pointerdown` counting as handled. So a tap on the editing bar or a window
+  grip, which cancel `pointerdown` and run from the click, did nothing there.
+  WebKit's iOS test
+  `pointerevents/ios/pointer-events-prevent-default-allows-click-event.html`
+  requires the click, so the gap is Playwright's.
+- `tests/e2e/webkit.mjs` puts it back for a `hasTouch` context: the one
+  click, from inside `touchend`, when `pointerdown` was cancelled and neither
+  touch event was. It also reports five touch points where this build reports
+  none, which turns on CodeMirror's `browser.ios`. A run prints this at the
+  start, and the first `touch` step asserts that Playwright's own tap still
+  sends no click, so an upgrade that fixes it fails there. A pass shows what
+  the app does with that click, not that an iPad sends it
+  ([device check 37](ipad.md#device-checks)).
+- No on-screen keyboard or real visual viewport comes with it, `page.keyboard`
+  is a hardware key, and this build reports a Mac user agent and platform
+  Win32 unless a context sets one.
+- A step that cannot check something there says so in its result line. This
+  build has no `overscroll-behavior`, and with no `clipboard-write` the PDF
+  popup's Copy runs but its text is not read back.
+- WebKit rejects the fetches a page still has open as it navigates, in the
+  words of a CORS failure, and they show as unhandled rejections on the page
+  being left. Logged against a run's navigations, each fell between the
+  main-frame navigation request and its commit, beside Playwright's `Load
+  request cancelled`. `cancelledLoad` lets that message pass for the page's
+  own origin, which cannot fail an access control check, and no other.
+
+`GAMMA_E2E_BROWSER=webkit npm run e2e -- --group touch,ipad --continue` runs
+them; `--only` skips the setup steps, so its failures prove nothing here.
+
+#### The tab-close scenario
+
 
 `node tests/e2e/tabClose.mjs` is a scratch scenario apart from the groups. A
 note is typed, a stroke drawn or a setting changed, and `page.close()` follows
@@ -753,8 +792,8 @@ The scenarios live in `tests/e2e/scenarios/`:
   Settings select it beside their own groups.
 
 - `notes.mjs`: New page → title → first block (the seed-block insert),
-  Shift+Enter / Tab / Shift+Tab / Backspace, Enter as a line break vs the
-  Enter-as-new-block preference, Ctrl+Z, the handle menu, todo checkboxes,
+  Enter / Tab / Shift+Tab / Backspace, Shift+Enter as a line break vs the
+  Enter-as-a-line-break preference, Ctrl+Z, the handle menu, todo checkboxes,
   an uploaded image (its URL must carry the workspace), the workspace
   switcher. Runs in a NON-default workspace on purpose.
 - `blockProperties.mjs`: the read-only Properties popover

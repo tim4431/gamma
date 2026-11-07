@@ -38,15 +38,10 @@
   <path class="m-glyph" d="M215 18h.01M218 18h.01M215 21h.01M218 21h.01M215 24h.01M218 24h.01" />
   <rect class="m-line" x="224" y="19" width="26" height="4" rx="2" />
   <path class="m-rule" d="M208 30H308" />
-  <circle class="m-line-dim" cx="218" cy="42" r="1.5" />
   <rect class="m-line-dim" x="224" y="40.5" width="72" height="3" rx="1.5" />
-  <circle class="m-line-dim" cx="226" cy="54" r="1.5" />
   <rect class="m-line-dim" x="232" y="52.5" width="60" height="3" rx="1.5" />
-  <circle class="m-line-dim" cx="226" cy="66" r="1.5" />
   <rect class="m-line-dim" x="232" y="64.5" width="48" height="3" rx="1.5" />
-  <circle class="m-line-dim" cx="218" cy="78" r="1.5" />
   <rect class="m-line-dim" x="224" y="76.5" width="66" height="3" rx="1.5" />
-  <circle class="m-line-dim" cx="218" cy="90" r="1.5" />
   <rect class="m-line-dim" x="224" y="88.5" width="50" height="3" rx="1.5" />
   <g class="m-appear" style="--m-at: 0.58">
     <rect class="m-line-dim" x="224" y="102.5" width="20" height="3" rx="1.5" />

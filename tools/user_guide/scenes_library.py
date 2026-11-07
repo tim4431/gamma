@@ -1,6 +1,6 @@
 """The library: add a paper, folders and labels, search, metadata and citations, sharing."""
 from scene import (AMBER, BAR, BAR_DARK, BLUE, CARD, CHIP, CHIP_INK, EDGE, GREEN, INK, MONO, MUTED, RED, SOFT, YELLOW,
-                   anim, block, bullet, button, chip, field, frame, hide, move, panel, paper, pointer, show, typed,
+                   anim, block, button, chip, field, frame, hide, move, panel, paper, pointer, show, typed,
                    typewriter)
 
 
@@ -95,8 +95,8 @@ def add_paper():
     # The opened paper: a page beside its notes.
     body.append('<g>' + f'<rect x="{wx + 2}" y="{wy + 70}" width="{ww - 4}" height="{wh - 72}" rx="12" fill="{CARD}"/>'
                 + paper(170, 132, 470, 420, 8, seed=2)
-                + panel(690, 132, 540, 420, 'Notes', bullet(736, 252) + f'<rect x="756" y="246" width="330" height="11" rx="5" fill="{BAR}"/>'
-                        + bullet(736, 300) + f'<rect x="756" y="294" width="250" height="11" rx="5" fill="{BAR}"/>')
+                + panel(690, 132, 540, 420, 'Notes', f'<rect x="756" y="246" width="330" height="11" rx="5" fill="{BAR}"/>'
+                        + f'<rect x="756" y="294" width="250" height="11" rx="5" fill="{BAR}"/>')
                 + show(loop, 6.0, 8.5) + '</g>')
     # The + popover: a link typed in, Enter.
     body.append(icon_ring(*plus, loop, 1.0, 4.0))
@@ -247,8 +247,8 @@ def metadata():
     body = []
     ix, iy = 1220, 177
     body.append('<g>' + paper(130, 128, 400, 430, 10, seed=1)
-                + panel(560, 128, 710, 430, 'Notes', bullet(606, 248) + f'<rect x="626" y="242" width="380" height="11" rx="5" fill="{BAR}"/>'
-                        + bullet(606, 296) + f'<rect x="626" y="290" width="300" height="11" rx="5" fill="{BAR}"/>')
+                + panel(560, 128, 710, 430, 'Notes', f'<rect x="626" y="242" width="380" height="11" rx="5" fill="{BAR}"/>'
+                        + f'<rect x="626" y="290" width="300" height="11" rx="5" fill="{BAR}"/>')
                 + f'<circle cx="{ix}" cy="{iy}" r="15" fill="none" stroke="{MUTED}" stroke-width="2"/>'
                 f'<circle cx="{ix}" cy="{iy - 6}" r="1.8" fill="{MUTED}"/><path d="M{ix} {iy - 1} V{iy + 7}" stroke="{MUTED}" stroke-width="2.4" stroke-linecap="round"/>'
                 + '</g>')
@@ -308,12 +308,12 @@ def share():
     body.append(paper(130, 128, 330, 430, 10, seed=4)
                 + panel(490, 128, 350, 430, 'Notes', block(526, 228, 278, 52, YELLOW)
                         + f'<rect x="546" y="249" width="200" height="10" rx="5" fill="{BAR}"/>'
-                        + bullet(536, 314) + f'<rect x="556" y="308" width="220" height="11" rx="5" fill="{BAR}"/>'))
+                        + f'<rect x="556" y="308" width="220" height="11" rx="5" fill="{BAR}"/>'))
     # Maya, invited with Edit, joins: her avatar in the top bar, her cursor typing in the notes.
     body.append('<g>' + f'<circle cx="{wx + ww - 160}" cy="{wy + 34}" r="17" fill="{BLUE}"/>'
                 f'<text x="{wx + ww - 160}" y="{wy + 41}" text-anchor="middle" font-size="18" font-weight="600" fill="#ffffff">M</text>'
                 + show(loop, 5.2) + '</g>')
-    body.append('<g>' + bullet(536, 362) + typewriter('Matches our run.', 556, 369, loop, 5.8, 7.6, size=20, caret=BLUE, label=('Maya', BLUE))
+    body.append('<g>' + typewriter('Matches our run.', 556, 369, loop, 5.8, 7.6, size=20, caret=BLUE, label=('Maya', BLUE))
                 + show(loop, 5.5) + '</g>')
     body.append(icon_ring(*link, loop, 1.0))
     # The popover: first only Share; pressed, it grows into the access controls.

@@ -4338,8 +4338,10 @@ TOOLS = [
             "description": (
                 "Add a new note block. `parent_id` is a page id (top-level note) or a "
                 "block id (nested child); `after_id` optionally names the sibling to "
-                "insert after (default: last). One block = one outline bullet — for "
-                "several bullets, create several blocks. Returns the new block's id."),
+                "insert after (default: last). One block is one paragraph, list item, "
+                "heading or table. Start a list item with `- `, `1. ` or `- [ ] `; "
+                "plain text is a paragraph. For several items, create several blocks. "
+                "Returns the new block's id."),
             "parameters": {
                 "type": "object",
                 "properties": {"parent_id": {"type": "string"},

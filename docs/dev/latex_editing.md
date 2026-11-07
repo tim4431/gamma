@@ -21,7 +21,7 @@ In Markdown `\[` is also an escaped bracket. Gamma keeps the two apart in
 three ways:
 
 - It writes a literal bracket with only its opener escaped: `[x]` becomes
-  `\[x]` (`text_box.escape_markdown`, `zotero_notes._escape`), because only
+  `\[x]` (`text_box.escape_markdown`, `zotero_notes.escape`), because only
   `[` opens a link, an image, a footnote, a task box or a `[[ref]]`. That
   leaves no closer to pair. An older note may still hold `\[x\]`.
 - A paste of the note source Gamma itself last copied (a copy or cut in an

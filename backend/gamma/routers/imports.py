@@ -490,9 +490,9 @@ def _meta(file: UploadFile, folder: str = "", strip: bool = False) -> dict:
 def import_markdown_zip_endpoint(request: Request, file: UploadFile = File(...),
                                  folder: str = Form(""), selected: str | None = Form(None)):
     """A zip of Markdown notes → one page per .md (see markdown_zip_import):
-    an Obsidian vault, Notion's Markdown & CSV export, a Gamma Markdown or
-    vault export, or any zipped folder of notes. ``folder`` (a folder id)
-    is the destination: the zip's folder tree is made below it."""
+    an Obsidian vault, Notion's Markdown & CSV or HTML export, a Gamma
+    Markdown or vault export, or any zipped folder of notes. ``folder`` (a
+    folder id) is the destination: the zip's folder tree is made below it."""
     ws = require_ws(request, write=True)
     return _commit_markdown_zip(ws, actor_of(request), file.file, _meta(file, folder), parse_selection(selected))
 
@@ -557,20 +557,22 @@ def import_selected_gamma(request: Request, file: UploadFile = File(...), select
 
 class MarkdownBlocksRequest(BaseModel):
     text: str
+    outline: bool = False
 
 
 @router.post("/markdown-blocks")
 def markdown_blocks(payload: MarkdownBlocksRequest, request: Request):
     """Parse markdown text into a ``{content, children}`` block tree — the
     editor's "paste as blocks" helper, same parser as the .md file import.
-    Nothing is stored; the client inserts the tree through its normal
-    tree-edit/autosave path. 413 past 5 MB or MAX_BLOCKS blocks: the paste
-    stays text."""
+    ``outline``: the text is Gamma's own copy of a block and its sub-blocks,
+    every ``- `` of it a block (editor/sourceCopy.js). Nothing is stored; the
+    client inserts the tree through its normal tree-edit/autosave path. 413
+    past 5 MB or MAX_BLOCKS blocks: the paste stays text."""
     require_user_id(request)
     if len(payload.text.encode("utf-8", errors="ignore")) > MAX_MARKDOWN_BYTES:
         raise HTTPException(status_code=413, detail="text exceeds 5 MB")
     try:
-        return {"blocks": md_to_blocks(payload.text)}
+        return {"blocks": md_to_blocks(payload.text, outline=payload.outline)}
     except TooManyBlocks as exc:
         raise HTTPException(status_code=413, detail=f"text has {exc}")
 

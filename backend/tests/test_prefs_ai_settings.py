@@ -63,7 +63,7 @@ def test_profile_is_one_account_wide_object(alice):
     from conftest import account_of, workspace_of
     assert "profile" in db.USER_PREF_KEYS
     me = account_of("prefs_alice")
-    profile = {"theme": "sepia", "enterNewNote": True, "agentPerms": {"pdf": {"block_edit": False}}}
+    profile = {"theme": "sepia", "enterNewBlock": True, "agentPerms": {"pdf": {"block_edit": False}}}
     r = alice.put("/api/prefs/profile", json={"value": profile}, headers={"X-Gamma-Workspace": workspace_of("prefs_alice")})
     assert r.status_code == 200 and r.json()["updated_at"]
     body = alice.get("/api/prefs/profile", headers={"X-Gamma-Workspace": "some-other-workspace"}).json()
@@ -85,9 +85,9 @@ def test_profile_patch_sets_only_the_named_entries(alice):
     me = account_of("prefs_alice")
     db.set_profile(me, {"theme": "dark", "language": "en"})
     before = db.get_profile(me)[1]
-    r = alice.patch("/api/prefs/profile", json={"set": {"language": "zh", "enterNewNote": True}})
+    r = alice.patch("/api/prefs/profile", json={"set": {"language": "zh", "enterNewBlock": True}})
     assert r.status_code == 200
-    assert r.json()["value"] == {"theme": "dark", "language": "zh", "enterNewNote": True}
+    assert r.json()["value"] == {"theme": "dark", "language": "zh", "enterNewBlock": True}
     assert r.json()["updated_at"] > before
     assert db.get_profile(me) == (r.json()["value"], r.json()["updated_at"])
     assert alice.patch("/api/prefs/profile", json={"set": {"chatSystem": "x" * (70 * 1024)}}).status_code == 413
@@ -157,9 +157,9 @@ def test_session_carries_the_theme_and_language_the_first_screen_needs(alice, gu
     from gamma import db
     from conftest import account_of
     me = account_of("prefs_alice")
-    db.set_profile(me, {"theme": "gamma-dark", "language": "zh", "enterNewNote": True})
+    db.set_profile(me, {"theme": "gamma-dark", "language": "zh", "enterNewBlock": True})
     assert alice.get("/api/session").json()["profile"] == {"theme": "gamma-dark", "language": "zh"}
-    db.set_profile(me, {"enterNewNote": True})
+    db.set_profile(me, {"enterNewBlock": True})
     assert alice.get("/api/session").json()["profile"] == {}
     # a guest's preferences stay in its browser
     assert "profile" not in guest.get("/api/session").json()

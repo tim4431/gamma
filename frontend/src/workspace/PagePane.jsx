@@ -14,7 +14,7 @@ import PdfViewer from "../pdf/PdfViewer";
 import { PageToolsContext } from "../markup/PageTools.jsx";
 import { BlockMarkdown } from "../editor/BlockTree";
 import { NO_LABELS } from "../editor/refLabels.js";
-import { blockQuote, blocksToHighlights, isHighlightBlock } from "../shared/model/blockModel.js";
+import { blockQuote, blocksToHighlights, isHighlightBlock, isPlainNote } from "../shared/model/blockModel.js";
 import { pageAttachment } from "../library/libraryUtils.js";
 import { API, apiJson, attachmentViewerUrl } from "../shared/lib/utils";
 import { highlightColor } from "../shared/model/palette.js";
@@ -130,18 +130,21 @@ export default function PagePane({ pageId, title, overlay, scroll, onScroll, onA
 }
 
 // The notes rendered: each block's text as a note shows it, a highlight's
-// quote over its note, children under their parent. Handwriting, sheets and
-// other blocks without text are left out.
+// quote over its note, children under their parent. An empty plain note is a
+// blank line, the gap it is in the live view; handwriting, sheets and other
+// blocks without text are left out.
 function ReadBlocks({ blocks, depth }) {
   return blocks.map((block) => {
     const quote = isHighlightBlock(block) ? blockQuote(block) : "";
     const text = block.content || "";
     const rows = block.children?.length ? <ReadBlocks blocks={block.children} depth={depth + 1} /> : null;
-    if (!quote && !text.trim() && !rows) return null;
+    const gap = !quote && !text.trim() && isPlainNote(block);
+    if (!quote && !text.trim() && !rows && !gap) return null;
     return (
       <div key={block.id} className="readBlock" data-block-id={block.id} style={{ "--depth": depth }}>
         {quote ? <blockquote className="readQuote" style={{ "--hl-color": highlightColor(block.properties?.color) }}>{quote}</blockquote> : null}
         {text.trim() ? <div className="blockRendered"><BlockMarkdown content={text} blockId={`pane:${block.id}`} refLabels={NO_LABELS} nested /></div> : null}
+        {gap ? <div className="blockRendered"><p>&nbsp;</p></div> : null}
         {rows}
       </div>
     );

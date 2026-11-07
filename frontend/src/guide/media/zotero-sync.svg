@@ -28,11 +28,8 @@
   <rect class="m-line-dim" x="28" y="164" width="60" height="3.5" rx="1.75" />
   <rect class="m-line-dim" x="28" y="171" width="52" height="3.5" rx="1.75" />
   <rect class="m-card" x="102" y="54" width="32" height="128" rx="3" />
-  <circle class="m-line-dim" cx="108" cy="64" r="1.4" />
   <rect class="m-line-dim" x="112" y="62.5" width="17" height="3" rx="1.5" />
-  <circle class="m-line-dim" cx="108" cy="74" r="1.4" />
   <rect class="m-line-dim" x="112" y="72.5" width="13" height="3" rx="1.5" />
-  <circle class="m-line-dim" cx="108" cy="84" r="1.4" />
   <rect class="m-line-dim" x="112" y="82.5" width="16" height="3" rx="1.5" />
   <!-- the folder that comes back from Zotero -->
   <g class="m-appear" style="--m-at: 0.66">

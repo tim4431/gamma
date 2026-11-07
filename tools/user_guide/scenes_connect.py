@@ -1,7 +1,7 @@
 """Working with others and other tools: a shared workspace, offline copies, the Gamma
 Connector, assistants (Codex, Claude Code), import and export."""
 from scene import (AMBER, BAR, BAR_DARK, BG, BLUE, CARD, EDGE, GREEN, INK, MONO, MUTED, SOFT, TINT, YELLOW,
-                   anim, block, bullet, button, chip, frame, mark, move, panel, paper, pointer, show, stroke,
+                   anim, block, button, chip, frame, mark, move, panel, paper, pointer, show, stroke,
                    keytimes, typed, typewriter)
 
 LIGHT = '#eeebe4'     # text on the dark terminal
@@ -73,9 +73,7 @@ def collab():
                + f'<text x="300" y="196" font-family="Georgia, serif" font-size="20" font-style="italic" fill="{MUTED}">“Repeated measurements reveal</text>'
                f'<text x="300" y="225" font-family="Georgia, serif" font-size="20" font-style="italic" fill="{MUTED}">the coherence time of the array.”</text>')
     # You click under it and type; Maya types into the next note at the same time.
-    out.append('<g>' + bullet(286, 303) + show(loop, 1.0) + '</g>')
     out.append(typed('Compare the two trapping geometries.', 308, 311, loop, 1.4, 5.8, 24))
-    out.append('<g>' + bullet(286, 393) + show(loop, 1.6) + '</g>')
     out.append(typewriter('Add the lifetime data from Fig. 3.', 308, 401, loop, 2.0, 6.8, size=24, caret=BLUE, label=('Maya', BLUE)))
     # Sam reads the passage's last line, then rests beside it.
     out.append(remote_cursor('Sam', GREEN, [(318, 229), (318, 229), (600, 229), (600, 229), (760, 212), (760, 212), (318, 229)],
@@ -124,11 +122,9 @@ def sync():
                f'<path d="M78 400 H502 L486 424 Q484 428 478 428 H102 Q96 428 94 424 Z" fill="#e9e6de" stroke="{EDGE}" stroke-width="1.5"/>'
                f'<rect x="138" y="170" width="160" height="13" rx="4" fill="{BAR_DARK}"/>'
                f'<path d="M134 206 H446" stroke="{EDGE}" stroke-width="1.5"/>'
-               + bullet(146, 238) + f'<rect x="162" y="233" width="220" height="10" rx="5" fill="{BAR}"/>'
+               + f'<rect x="162" y="233" width="220" height="10" rx="5" fill="{BAR}"/>'
                f'<text x="290" y="470" text-anchor="middle" font-size="20" fill="{MUTED}">laptop</text>')
-    out.append('<g>' + bullet(146, 284) + show(loop, 0.5) + '</g>')
     out.append(typed('Lifetime: 42 µs', 162, 291, loop, 0.7, 2.3, 22))
-    out.append('<g>' + bullet(146, 330) + show(loop, 6.0) + '</g>')
     out.append(typed('Check trap depth', 162, 337, loop, 6.2, 8.0, 22))
     # The sync pill: green when up to date, a dot for unsynced edits, an arc spinning in a round.
     px, py = 414, 176
@@ -147,13 +143,13 @@ def sync():
                f'<rect x="1095" y="124" width="50" height="8" rx="4" fill="{EDGE}"/>'
                f'<rect x="1044" y="156" width="104" height="11" rx="4" fill="{BAR_DARK}"/>'
                f'<path d="M1040 186 H1200" stroke="{EDGE}" stroke-width="1.5"/>'
-               + bullet(1050, 214) + f'<rect x="1062" y="209" width="120" height="9" rx="4.5" fill="{BAR}"/>'
+               + f'<rect x="1062" y="209" width="120" height="9" rx="4.5" fill="{BAR}"/>'
                f'<text x="1120" y="470" text-anchor="middle" font-size="20" fill="{MUTED}">phone</text>')
     for i, (text, t) in enumerate((('Lifetime: 42 µs', 4.3), ('Check trap depth', 11.0))):
         cy = 250 + i * 34
         out.append(f'<rect x="1036" y="{cy - 15}" width="168" height="28" rx="6" fill="{AMBER}" opacity="0">'
                    + anim('opacity', '0;0;0.25;0;0', loop, 0, t, t + 0.1, t + 1.2, loop) + '</rect>')
-        out.append('<g>' + bullet(1050, cy - 1) + f'<text x="1062" y="{cy + 5}" font-size="16" fill="{INK}">{text}</text>' + show(loop, t) + '</g>')
+        out.append('<g>' + f'<text x="1062" y="{cy + 5}" font-size="16" fill="{INK}">{text}</text>' + show(loop, t) + '</g>')
     # The note travels: laptop -> server -> phone, once online and once back from the flight.
     out += [pulse(*l1, y, loop, 2.7, 3.4), pulse(*l2, y, loop, 3.5, 4.3),
             pulse(*l1, y, loop, 9.4, 10.1), pulse(*l2, y, loop, 10.2, 11.0)]

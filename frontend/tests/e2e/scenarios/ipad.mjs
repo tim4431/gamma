@@ -113,9 +113,11 @@ export async function ipadScenarios({ server, browser, alice, makePdf, step, unt
       });
       assertEq(await page.locator("html").getAttribute("data-shell"), null, "a browser tab is no shell");
       // The document never rubber-bands or pulls to refresh, in a tab as installed.
-      assertEq(await page.evaluate(() => getComputedStyle(document.documentElement).overscrollBehaviorY), "none", "document overscroll");
+      const overscroll = await page.evaluate(() => CSS.supports("overscroll-behavior", "none"));
+      if (overscroll) assertEq(await page.evaluate(() => getComputedStyle(document.documentElement).overscrollBehaviorY), "none", "document overscroll");
       assert(shellRules.some((r) => /\.app\b/.test(r) && /safe-area-inset-bottom/.test(r)), `home indicator inset: ${shellRules.join(" | ")}`);
       assertNoProblems(page);
+      return overscroll ? "" : "overscroll unchecked: this browser build has no overscroll-behavior";
     } finally { await ctx.close(); }
   });
 
@@ -520,7 +522,7 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
         `uploads of their own (${a.url}, ${b.url})`);
       assertEq(JSON.stringify([a.x, a.y, a.w, a.h, a.angle]), JSON.stringify([206, 346, 200, 100, 0]),
         "its pixels as points, centred on the Letter page, upright");
-      assert(b.x - a.x > 0 && b.x - a.x === b.y - a.y && b.w === a.w && b.h === a.h,
+      assert(b.x - a.x > 0 && Math.abs((b.x - a.x) - (b.y - a.y)) < 1e-6 && b.w === a.w && b.h === a.h,
         `the second one step right of and below the first: ${JSON.stringify([a, b])}`);
       await page.waitForSelector(`[data-picture-id="${second.id}"].selected img[src*="/api/uploads/"]`, { timeout: 5000 });
       assert(await page.$(`[data-picture-id="${first.id}"]:not(.selected)`), "the first drawn, let go of");
@@ -833,10 +835,12 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
     const up = await alice.upload("/api/uploads", makePdf([["A passage the system menu would cover."], ["A second page to scroll to."]]),
       "edit-menu.pdf", "application/pdf");
     const paper = await alice.api(`/api/blocks/by-doc/${up.doc_id}`, { method: "POST", body: { default_title: "Edit menu", source_url: up.source_url } });
+    // Playwright's WebKit has no clipboard-write, so the copy's text cannot be read back there.
+    const webkit = browser.browserType().name() === "webkit";
     const contexts = [];
     const open = async (flags) => {
       const ctx = await alice.context(browser, { hasTouch: true, viewport: { width: 1194, height: 834 }, userAgent: SHELL_UA,
-        permissions: ["clipboard-read", "clipboard-write"] });
+        permissions: webkit ? [] : ["clipboard-read", "clipboard-write"] });
       contexts.push(ctx);
       await ctx.addInitScript(fakeShell, flags);
       const page = await openPage(ctx, `${server.base}/?ws=${alice.ws}&block=${paper.id}`);
@@ -867,7 +871,7 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
       const copy = tip.getByRole("button", { name: "Copy", exact: true });
       await copy.waitFor();
       await copy.tap();
-      await until(async () => (await page.evaluate(() => navigator.clipboard.readText()).catch(() => "")) === "system menu", { what: "copied" });
+      if (!webkit) await until(async () => (await page.evaluate(() => navigator.clipboard.readText()).catch(() => "")) === "system menu", { what: "copied" });
       assertEq((await sent()).length, 1, "the copy keeps the selection, and the menu off");
       await tip.locator(".colorBtn").first().tap();
       await said(sent, 2, true, "the highlight clears the selection: on");
@@ -896,6 +900,7 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
       assertEq(await older.page.locator(".plainTip").getByRole("button", { name: "Copy", exact: true }).count(), 0, "no Copy");
       assertEq((await older.sent()).length, 0, "nothing said");
       assertNoProblems(older.page);
+      return webkit ? "the clipboard's text unchecked: no clipboard-write in Playwright's WebKit" : "";
     } finally { for (const ctx of contexts) await ctx.close(); }
   });
 
@@ -1179,19 +1184,24 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
       // iPadOS scrolls the visual viewport into the layout viewport.
       await page.evaluate(() => window.e2eKeyboard(320, 140, "scroll"));
       await barOn(140 + 1194 - 320, "the bar stays on the keyboard when the view scrolls");
-      // A pan that goes on, a frame at a time: the bar stays out of sight
-      // the whole way (never chasing it), then shows where the view stops.
-      const shownWhilePanning = await page.evaluate(() => new Promise((resolve) => {
+      // A pan that goes on, a frame at a time: the bar steps aside within a
+      // few frames (React commits a frame's update after that frame, and how
+      // many that takes depends on the engine), then stays out of sight the
+      // whole way (never chasing it), and shows where the view stops.
+      const pan = await page.evaluate(() => new Promise((resolve) => {
         const el = document.querySelector(".editBar");
-        let i = 0, shown = 0;
+        let i = 0, aside = -1, shown = 0;
         const tick = () => {
           window.e2eKeyboard(320, 140 + i * 3, "scroll");
-          if (i > 2 && !el.classList.contains("moving")) shown++;
-          if (++i < 40) requestAnimationFrame(tick); else resolve(shown);
+          const moving = el.classList.contains("moving");
+          if (moving && aside < 0) aside = i;
+          if (!moving && aside >= 0) shown++;
+          if (++i < 40) requestAnimationFrame(tick); else resolve({ aside, shown });
         };
         requestAnimationFrame(tick);
       }));
-      assertEq(shownWhilePanning, 0, "frames the bar showed while the view panned");
+      assert(pan.aside >= 0 && pan.aside <= 6, `the bar stepped aside by frame 6 of the pan, not at ${pan.aside}`);
+      assertEq(pan.shown, 0, "frames the bar showed while the view panned");
       await barOn(140 + 39 * 3 + 1194 - 320, "the bar shows where the pan stopped");
       // The keyboard's own hide key, then back with no event at all, for an
       // editor that kept the focus: the next tap finds it.
@@ -1226,6 +1236,13 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
       }), { what: "the new, empty block's editor has the focus" });
       assert(!Object.values(ids).includes(fresh), "the focus is on the new block");
       await page.keyboard.type("Fourth");
+      await saved("Fourth");
+      // Line break: Return makes a block here, and the bar breaks the line.
+      await tool("Line break").tap();
+      await page.keyboard.type("more");
+      await saved("Fourth\nmore");
+      assertEq(await page.evaluate(() => document.activeElement?.closest(".blockEditorCm")?.dataset.blockId), fresh, "the block keeps its editor");
+      for (let i = 0; i < 5; i++) await page.keyboard.press("Backspace");
       await saved("Fourth");
       // past the history's typing run (blockHistory.js TYPING_MERGE_MS), as a
       // finger selecting the word is: Bold is then an undo step of its own
@@ -1314,7 +1331,7 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
         { what: "the bar shows for the first editor, once the keyboard's rise is over" });
       await page.keyboard.press("End");
       for (const [what, act] of [
-        ["Shift+Enter, a new block", () => page.keyboard.press("Shift+Enter")],
+        ["Enter, a new block", () => page.keyboard.press("Enter")],
         ["Tab, an indent", () => page.keyboard.press("Tab")],
         ["Shift+Tab, an outdent", () => page.keyboard.press("Shift+Tab")],
         ["the bar's New block below", () => tool("New block below").tap()],

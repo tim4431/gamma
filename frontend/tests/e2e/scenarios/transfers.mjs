@@ -971,6 +971,100 @@ open(sys.argv[1], 'wb').write(n.bytes())
     } finally { await ctx.close(); }
   });
 
+  await step("transfer: a Notion HTML export comes in whole, a toggle closed and a database a table", async () => {
+    const zip = path.join(server.dir, "Notion HTML export.zip");
+    execFileSync(python, ["-c", `
+import pathlib, sys, zipfile
+root = pathlib.Path(sys.argv[1])
+with zipfile.ZipFile(sys.argv[2], 'w') as z:
+    for path in sorted(root.rglob('*')):
+        if path.is_file():
+            z.write(path, path.relative_to(root).as_posix())
+`, path.join(ROOT, "backend", "tests", "notion_fixtures", "roundtrip_html"), zip]);
+    const { ctx, page } = await setup();
+    try {
+      await page.waitForSelector(".folderNewBtn");
+      const dialog = await openDialog(page, "Import");
+      await choice(dialog, "Markdown notes").click();
+      assert((await dialog.innerText()).includes("Markdown & CSV or HTML"), "the card names both of Notion's exports");
+      const chooser = page.waitForEvent("filechooser");
+      await choice(dialog, "Choose file…").click();
+      await (await chooser).setFiles(zip);
+      const review = page.getByRole("dialog", { name: "Review Markdown import", exact: true });
+      await review.getByRole("checkbox", { name: "Import Grandchild A1 — Unicode 中文", exact: true }).waitFor({ timeout: 15000 });
+      await choice(review, "Import to library").click();
+      const report = page.getByRole("dialog", { name: "Import complete", exact: true });
+      await report.waitFor({ timeout: 15000 });
+      assert((await report.innerText()).includes("10 new pages"), `every page of the export: ${await report.innerText()}`);
+      await choice(report, "Done").click();
+
+      const pages = (await alice.api("/api/blocks/root/children")).children;
+      const byTitle = (title) => pages.find((p) => p.content === title);
+      assertEq(["Child A — structure", "Cases", "RT-001 Alpha"].map((title) => byTitle(title)?.parent).join("|"),
+        [byTitle("Round trip").id, byTitle("Round trip").id, byTitle("Cases").id].join("|"), "the tree came in as sub-pages");
+      await page.goto(`${server.base}/?page=${byTitle("Round trip").id}&ws=${alice.ws}`);
+      await page.getByText("Toggle fixture", { exact: true }).waitFor({ timeout: 15000 });
+      assertEq(await page.getByText("Nested toggle child", { exact: true }).count(), 0, "a toggle comes in closed");
+      await page.goto(`${server.base}/?page=${byTitle("Cases").id}&ws=${alice.ws}`);
+      const heads = page.locator(".blockList table th");
+      await heads.first().waitFor({ timeout: 15000 });
+      assertEq((await heads.allInnerTexts()).slice(0, 4).map((text) => text.trim()).join("|"), "Name|Select|Multi-select|Date",
+        "the table's columns stand as in Notion's view");
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
+  await step("transfer: a page out for Notion is a zip of Markdown, its card saying what the zip holds", async () => {
+    const { ctx, page } = await setup();
+    try {
+      const made = await alice.api("/api/blocks", { method: "POST", body: { parent_id: "root", content: "E2E Notion export" } });
+      await alice.api("/api/blocks", { method: "POST", body: { parent_id: made.id, content: "A note for Notion" } });
+      await page.goto(`${server.base}/?page=${made.id}&ws=${alice.ws}`);
+      await page.getByText("A note for Notion", { exact: true }).waitFor();
+      const dialog = await openDialog(page, "Export");
+      const card = choice(dialog, "Notion");
+      assertEq(await dialog.getByRole("group", { name: "Notes choices", exact: true }).getByRole("button").count(), 4);
+      assertEq(await card.locator(".formatAppIcon").count(), 1, "the card carries Notion's mark");
+      await card.click();
+      await choice(dialog, "Next").click();
+      assertEq(await dialog.getByRole("checkbox").count(), 2, "Highlights and Notes, and no Bundle switch");
+      assert(await toggle(dialog, "Highlights").isVisible());
+      assert(await toggle(dialog, "Notes").isVisible());
+      const review = await dialog.innerText();
+      assert(review.includes("Images and handwriting included"), "the preview says the images are in the zip");
+      assert(!review.includes("PDFs and images travel"), "and not that the PDFs are");
+      assert(review.includes("is up to its importer"), "the summary leaves what Notion keeps open");
+      const files = dialog.locator('[data-preview="bundled-files"]');
+      await toggle(dialog, "Notes").uncheck();
+      await files.getByText("Handwriting included", { exact: true }).waitFor();
+      assert((await dialog.innerText()).includes("handwriting included, images left out"), "the summary agrees with the row");
+      await toggle(dialog, "Highlights").uncheck();
+      await files.getByText("No images or handwriting", { exact: true }).waitFor();
+      await toggle(dialog, "Notes").check();
+      await files.getByText("Images included", { exact: true }).waitFor();
+      await toggle(dialog, "Highlights").check();
+      await files.getByText("Images and handwriting included", { exact: true }).waitFor();
+      if (flags.keep) await page.screenshot({ animations: "disabled", path: `${server.dir}/export-notion.png` });
+      const request = page.waitForRequest((r) => r.method() === "POST" && new URL(r.url()).pathname === "/api/jobs/export");
+      const download = page.waitForEvent("download");
+      await choice(dialog, "Export").click();
+      assertEq((await request).postDataJSON().mode, "notion");
+      const file = await download;
+      assertEq(file.suggestedFilename(), `E2E Notion export-${made.id}-notion.zip`);
+      const zipped = JSON.parse(execFileSync(python, ["-c", "import json, sys, zipfile; z = zipfile.ZipFile(sys.argv[1]); print(json.dumps({n: z.read(n).decode() for n in z.namelist()}))",
+        await file.path()]).toString());
+      assertEq(Object.keys(zipped).join(","), "E2E Notion export.md");
+      assert(zipped["E2E Notion export.md"].includes("A note for Notion"), "the note is in the page's file");
+      await dialog.getByText("1 page exported.", { exact: true }).waitFor();
+      const done = await dialog.innerText();
+      assert(done.includes("Settings → Import → ZIP"), "the step says how to import it");
+      assert(done.includes("does not update them"), "and that a second import is a second copy");
+      await choice(dialog, "Done").click();
+      await dialog.waitFor({ state: "detached" });
+      assertNoProblems(page);
+    } finally { await ctx.close(); }
+  });
+
   await step("transfer: format selection, live options, back navigation and a real notes PDF", async () => {
     const { ctx, page } = await setup();
     try {

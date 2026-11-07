@@ -4,8 +4,9 @@ note pages in the first fill, their pictures; a pulled note as a block-level
 diff that keeps what Zotero never saw (a nested highlight, a commented
 child, a reference, a picture, a drawing), rendering under the write lock
 the regions it decided alone; a Zotero trash lifting those blocks; Gamma's
-edits of a note, its own notes sent together as "Notes from Gamma" (the one
-heading they are known by) once the page is still; both sides changed and
+edits of a note, a bullet as a list item both ways, its own notes sent
+together as "Notes from Gamma" (the one heading they are known by) once the
+page is still; both sides changed and
 the resolutions; a note's first line deleted here; lossy notes never written
 back (adopt mine and force included), a force taking Zotero's version of
 one counting it under "replaced here" and resolving its open row (also
@@ -271,6 +272,75 @@ def test_an_edit_of_a_note_here_goes_to_zotero_with_its_picture_key(me, made, fa
     calls = len(fake.calls)
     _sync(me, ws)
     assert _writes(fake, calls) == []
+
+
+def test_a_bullet_goes_to_zotero_as_a_list_item_and_keeps_its_marker_when_zotero_changes_it(me, made, fake, owner_id):
+    keys = made["keys"]
+    ws = _link(me)
+    _sync(me, ws)
+    page = _page_of(ws, keys["attention"])
+    first = _kids(ws, _region_root(ws, keys["note"]))[0][0]
+    _edit(ws, owner_id, page, [{"op": "set", "id": first, "content": "- a bullet"}])
+    _sync(me, ws)
+    html = _note(fake, keys["note"])
+    assert "<li>a bullet</li>" in html and "- a bullet" not in html
+    calls = len(fake.calls)
+    _sync(me, ws)
+    assert _writes(fake, calls) == []
+    # Zotero's words come in under the marker, and nothing goes back
+    fake.edit(LIB, keys["note"], note=html.replace("a bullet", "a better bullet"))
+    _sync(me, ws)
+    assert _block(ws, first)["content"] == "- a better bullet"
+    calls = len(fake.calls)
+    _sync(me, ws)
+    assert _writes(fake, calls) == []
+
+
+def test_a_note_sent_before_bullets_were_list_items_taken_from_zotero_keeps_one_marker(me, made, fake, owner_id):
+    keys = made["keys"]
+    ws = _link(me)
+    _sync(me, ws)
+    page = _page_of(ws, keys["attention"])
+    first = _kids(ws, _region_root(ws, keys["note"]))[0][0]
+    _edit(ws, owner_id, page, [{"op": "set", "id": first, "content": "- a bullet"}])
+    _sync(me, ws)
+    # the note as such a note stands: the dash its text, both bases on it, and Zotero edits another line
+    old = _note(fake, keys["note"]).replace("<li>a bullet</li>", "<li>- a bullet</li>")
+    with connect_pages_db(ws) as conn:
+        row = zotero_sync_rows.read_rows(conn, "key = ?", (keys["note"],))[keys["note"]]
+        hashed = {"note": zotero_sync_blocks.note_hash(old)}
+        row.update(zbase={**row["zbase"], **hashed}, gbase={**row["gbase"], **hashed})
+        zotero_sync_rows.write_rows(conn, [row])
+        conn.commit()
+    fake.edit(LIB, keys["note"], note=old.replace("Positional encoding", "Positional encoding, Zotero's"))
+    _sync(me, ws)
+    [conflict] = _conflicts(me, ws, "zotero_note")
+    r = me.post(f"/api/zotero/links/{ws}/conflicts/{conflict['id']}", json={"choice": "theirs"})
+    assert r.status_code == 200, r.text
+    assert _block(ws, first)["content"] == "- a bullet"
+    assert "Positional encoding, Zotero's" in [c for _, c in _kids(ws, _region_root(ws, keys["note"]))]
+    _sync(me, ws)  # sent back as Zotero's, the dash gone from it
+    assert "<li>a bullet</li>" in _note(fake, keys["note"]) and "- a bullet" not in _note(fake, keys["note"])
+
+
+def test_zoteros_words_taken_for_a_bullet_root_gamma_cannot_set_keep_its_marker(me, made, fake, owner_id):
+    keys = made["keys"]
+    ws = _link(me)
+    _sync(me, ws)
+    page = _page_of(ws, keys["attention"])
+    root = _region_root(ws, keys["note"])
+    line = _kids(ws, root)[1][0]
+    _edit(ws, owner_id, page, [{"op": "set", "id": root, "content": f"- About [[{line}]]"}])
+    _sync(me, ws)
+    fake.edit(LIB, keys["note"], note=_note(fake, keys["note"]).replace("About Self-attention", "Zotero words"))
+    _sync(me, ws)
+    assert _block(ws, root)["content"] == f"- About [[{line}]]"
+    [conflict] = _conflicts(me, ws, "zotero_lossy")
+    r = me.post(f"/api/zotero/links/{ws}/conflicts/{conflict['id']}", json={"choice": "theirs"})
+    assert r.status_code == 200, r.text
+    assert _block(ws, root)["content"] == "- Zotero words"
+    _sync(me, ws)
+    assert "<li>Zotero words" in _note(fake, keys["note"])
 
 
 def test_the_pages_own_notes_go_together_as_notes_from_gamma_once_the_page_is_still(me, made, fake, owner_id):

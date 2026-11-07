@@ -22,12 +22,14 @@
 // (the selection carries its mark: a toolbar button shows pressed), "off",
 // or "blocked" (it does nothing there: greyed out); it never stops the key,
 // which a blocked mark swallows (markCommands.js).
+import { insertNewlineAndIndent } from "@codemirror/commands";
 import { t } from "../shared/i18n/i18n.js";
-import { getParentInfo } from "../shared/model/blockModel.js";
+import { getParentInfo, isPlainNote } from "../shared/model/blockModel.js";
 import { fenceInnerAt } from "./fences.js";
-import { mathTabJump } from "./latexCompletion.js";
-import { toggleQuotePlan } from "./mdLines.js";
+import { findMathAtCursor, mathTabJump } from "./latexCompletion.js";
+import { enterPlan, isWholeLine, lineAt, newBlockPlan, quoteMarksAt, toggleQuotePlan } from "./mdLines.js";
 import { toggleTodoLine } from "./mdMarks.js";
+import { scanMathSpans } from "./mdScan.js";
 import {
   linkStateAt, markStateAt, mathStateAt, runInsertLink, runInsertMath, runInsertSlash, runToggleMark,
 } from "./markCommands.js";
@@ -38,6 +40,72 @@ export const GROUP_FORMAT = t("Formatting");
 // Where the block stands among its siblings: what moving and nesting it can
 // do (the editing bar greys a button out, the palette leaves it out).
 const place = (c) => getParentInfo(c.tree, c.block.id);
+
+// Where the formula around the caret ends in its line's text, or null. A
+// "$" on another line opens nothing here, so a stray one above takes no
+// formula apart. The second look, a letter at the caret, reads what an
+// auto-paired closer waits in and scanMathSpans refuses: "$|$" (to it a "$$"),
+// "$ |$" and "$\|$" (to it an escaped dollar; findMathAtCursor's exception).
+function formulaEnd(line, at) {
+  const around = (text) => scanMathSpans(text).find((s) => s.from < at && at < s.to);
+  const filled = around(line.slice(0, at) + "x" + line.slice(at));
+  return around(line)?.to ?? (filled ? filled.to - 1 : null);
+}
+
+// mdLines.newBlockPlan with a formula never cut: once the selection has gone,
+// a caret inside a closed formula (formulaEnd) splits past its closing "$" and
+// the spaces after it, which go, so the formula stays here and what follows it
+// goes on. An unclosed "$x" splits at the caret, and a table row stays uncut.
+export function splitPlan(text, from, to = from) {
+  const t = text.slice(0, from) + text.slice(to);
+  const line = lineAt(t, from);
+  const end = isWholeLine(line.text) ? null : formulaEnd(line.text, from - line.from);
+  if (end === null) return newBlockPlan(text, from, to);
+  const past = line.from + end;
+  return newBlockPlan(t, past, past + /^[ \t]*/.exec(t.slice(past))[0].length);
+}
+
+// The new-block key, for the row's keydown and block.newBelow: a plain note
+// with its editor open splits at the caret and goes on with its list
+// (splitPlan, App's onNewBlock). Any other row gets an empty
+// sibling, and so does a press in code or math, where the keydown never
+// comes here and a split would break the fence (the editing bar's way out of
+// one). Whether a block was made.
+export function newBlockKey(c) {
+  const view = c.editor?.view;
+  if (view && isPlainNote(c.block)) {
+    const text = view.state.doc.toString();
+    const { from, to } = view.state.selection.main;
+    if (!fenceInnerAt(text, from) && !findMathAtCursor(text, from)?.display) {
+      const plan = splitPlan(text, from, to);
+      c.row.onNewBlock?.(c.block.id, plan);
+      return !plan.stay;
+    }
+  }
+  c.row.onEnterSibling?.(c.block.id);
+  return true;
+}
+
+// The line break in code or display math, null anywhere else. A fence's new
+// line keeps the fence's own marks, a quote's or none: a "> x" in a plain
+// fence is code, and so is the inner level of "> > x" in a quoted one. In
+// math it keeps the marks of the line.
+export function codeBreak(text, pos) {
+  const fence = fenceInnerAt(text, pos);
+  if (fence) return "\n" + (quoteMarksAt(text, pos) && fence.quote);
+  return findMathAtCursor(text, pos)?.display ? "\n" + quoteMarksAt(text, pos) : null;
+}
+
+// The line-break key's edit, for block.lineBreak: what the row's keydown
+// does, in its order: codeBreak, and anywhere else a list or quote goes on
+// (mdLines.enterPlan). {from, to, insert, pos}, or null where the keydown
+// leaves the key to CodeMirror's Enter.
+function lineBreakAt(text, from, to = from) {
+  const insert = codeBreak(text, from);
+  if (insert) return { from, to, insert, pos: from + insert.length };
+  return from === to ? enterPlan(text, from) : null;
+}
+
 const hasPrev = (c) => (place(c)?.index || 0) > 0;
 const hasNext = (c) => { const p = place(c); return !!p && p.index < p.siblings.length - 1; };
 const nested = (c) => !!place(c)?.parent;
@@ -134,7 +202,25 @@ export const BLOCK_COMMANDS = [
     // What the new-note Enter does (Settings → Keyboard, "Enter makes"),
     // for the editing bar and anyone who wants it on another key.
     id: "block.newBelow", label: t("New block below"), group: GROUP_NOTES, keys: null, edits: true,
-    run: (c) => { c.row.onEnterSibling?.(c.block.id); },
+    run: (c) => { newBlockKey(c); },
+  },
+  {
+    // The other Enter, for the same: Return makes a block on an on-screen
+    // keyboard, which has no dependable Shift+Return.
+    id: "block.lineBreak", label: t("Line break"), group: GROUP_NOTES, keys: null, edits: true, needsEditor: true,
+    run: (c) => {
+      const view = c.editor.view;
+      const { from, to } = view.state.selection.main;
+      const plan = lineBreakAt(view.state.doc.toString(), from, to);
+      if (!plan) return insertNewlineAndIndent(view);
+      view.dispatch({
+        changes: { from: plan.from, to: plan.to, insert: plan.insert },
+        selection: { anchor: plan.pos },
+        scrollIntoView: true,
+        userEvent: plan.insert.startsWith("\n") ? "input" : "delete",
+      });
+      return true;
+    },
   },
   {
     // The slash menu without typing "/" (editor/SlashMenu.jsx).

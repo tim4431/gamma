@@ -28,11 +28,8 @@
   <!-- the blocks after the sheet, moved down out of the way -->
   <g class="m-leave" style="--m-at: 0.61">
     <g class="m-move" style="--m-at: 0.565; --m-dx: 0; --m-dy: -22">
-      <circle class="m-line-dim" cx="76" cy="156" r="1.6" />
       <rect class="m-line-dim" x="84" y="154.25" width="96" height="3.5" rx="1.75" />
-      <circle class="m-line-dim" cx="76" cy="168" r="1.6" />
       <rect class="m-line-dim" x="84" y="166.25" width="70" height="3.5" rx="1.75" />
-      <circle class="m-line-dim" cx="76" cy="180" r="1.6" />
       <rect class="m-line-dim" x="84" y="178.25" width="84" height="3.5" rx="1.75" />
     </g>
   </g>

@@ -49,7 +49,7 @@ export async function triggeredGuideScenarios(env) {
   // Type /table into the row's block and close the editor: the table renders.
   const makeTable = async (page, rowText) => {
     await editRow(page, rowText);
-    await page.keyboard.press("Enter");
+    await page.keyboard.press("Shift+Enter");
     await page.keyboard.type("/table");
     await page.locator(".slashMenu .slashMenuItem", { hasText: "2×2 table" }).click();
     await until(async () => (await page.locator(".blockEditorCm .cm-content").textContent()).includes("|"), { what: "the table source is in the editor" });
@@ -159,7 +159,7 @@ export async function triggeredGuideScenarios(env) {
       const { ctx, page } = await open(`&page=${pg.id}`);
       try {
         await editRow(page, "paste here");
-        await page.keyboard.press("Enter");
+        await page.keyboard.press("Shift+Enter");
         await page.evaluate((data) => {
           const dt = new DataTransfer();
           for (const [type, value] of Object.entries(data)) dt.setData(type, value);
@@ -710,9 +710,10 @@ export async function triggeredGuideScenarios(env) {
     } finally { await ctx.close(); }
   });
 
-  await step("triggered guide: a line break in a note offers the key that makes a new one, and the editor keeps its caret", async () => {
+  await step("triggered guide: where Enter makes a new line, a line break in a note offers the key that makes a new one, and the editor keeps its caret", async () => {
     const pg = await user.api("/api/pages", { method: "POST", body: { title: "Enter page" } });
     await user.api("/api/blocks", { method: "POST", body: { parent_id: pg.id, content: "First thought" } });
+    await user.api("/api/prefs/profile", { method: "PATCH", body: { set: { enterNewBlock: false } } });
     const { ctx, page } = await open(`&page=${pg.id}`, { offers: ["new-note-key"] });
     try {
       await editRow(page, "First thought");
@@ -725,7 +726,10 @@ export async function triggeredGuideScenarios(env) {
       await page.getByRole("button", { name: "Got it" }).click();
       assertEq(await progress(page, "new-note-key"), "done");
       assertNoProblems(page);
-    } finally { await ctx.close(); }
+    } finally {
+      await ctx.close();
+      await user.api("/api/prefs/profile", { method: "PATCH", body: { set: { enterNewBlock: true } } });
+    }
   });
 
   await step("triggered guide: the highlights tour points at the highlight, its menu, then its note", async () => {

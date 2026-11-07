@@ -4,6 +4,7 @@
 // a button out when its command's `when` fails.
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { EditorSelection, EditorState } from "@codemirror/state";
 import { mathInsertAt, slashInsertAt } from "../src/editor/markCommands.js";
 import { BLOCK_COMMANDS } from "../src/editor/blockCommands.js";
 
@@ -72,8 +73,52 @@ test("next math argument is Tab's hop, offered only where Tab would hop", () => 
   assert.equal(cmd.when({ editor: null }), false);
 });
 
+test("Line break is the row's line-break key: a list goes on, code and math take a plain new line", () => {
+  const cmd = BLOCK_COMMANDS.find((c) => c.id === "block.lineBreak");
+  assert.equal(cmd.needsEditor, true);
+  // The command on a real editor state, for the fall through to CodeMirror.
+  const broken = (text, from, to = from) => {
+    const view = {
+      state: EditorState.create({ doc: text, selection: EditorSelection.range(from, to) }),
+      dispatch(tr) { view.state = (tr.startState ? tr : view.state.update(tr)).state; },
+    };
+    assert.equal(cmd.run({ editor: { view } }), true);
+    const out = view.state.doc.toString();
+    return [out, out.slice(0, view.state.selection.main.head)];
+  };
+  assert.deepEqual(broken("plain", 2), ["pl\nain", "pl\n"]);
+  assert.deepEqual(broken("- a", 3), ["- a\n- ", "- a\n- "], "the list goes on, in this block");
+  assert.deepEqual(broken("> a", 3), ["> a\n> ", "> a\n> "], "and a quote");
+  assert.deepEqual(broken("- ", 2), ["", ""], "an empty item ends");
+  assert.deepEqual(broken("plain", 1, 4), ["p\nn", "p\n"], "a selection goes");
+  assert.deepEqual(broken("```\n- code\n```", 10), ["```\n- code\n\n```", "```\n- code\n"], "no list in a fence");
+  assert.deepEqual(broken("$$\n- x\n$$", 6), ["$$\n- x\n\n$$", "$$\n- x\n"], "nor in display math");
+  assert.deepEqual(broken("> $$\n> x\n> $$", 8), ["> $$\n> x\n> \n> $$", "> $$\n> x\n> "], "math in a quote keeps its marks");
+
+  assert.deepEqual(broken("> ```\n> ab\n> ```", 10), ["> ```\n> ab\n> \n> ```", "> ```\n> ab\n> "], "a quoted fence keeps its marks");
+  assert.deepEqual(broken("> ```\n> - ab\n> ```", 12), ["> ```\n> - ab\n> \n> ```", "> ```\n> - ab\n> "], "and goes on with no list");
+  assert.deepEqual(broken("~~~\n- a\n~~~", 7), ["~~~\n- a\n\n~~~", "~~~\n- a\n"], "no list in a tilde fence");
+
+  // With no marker to go on, the key is CodeMirror's Enter.
+  assert.deepEqual(broken("- a\n  cont", 10), ["- a\n  cont\n  ", "- a\n  cont\n  "], "an item's continuation keeps its indent");
+  assert.deepEqual(broken("    indented", 12), ["    indented\n    ", "    indented\n    "], "and an indented line");
+  assert.deepEqual(broken("ab   cd", 2), ["ab\ncd", "ab\n"], "the spaces at the caret go");
+  assert.deepEqual(broken("  word", 2, 6), ["\n  ", "\n  "], "a selection after the indent starts its line over");
+
+  // A fence comes first: what looks like math in one is code.
+  assert.deepEqual(broken("```\n$$\n> x\n$$\n```", 10), ["```\n$$\n> x\n\n$$\n```", "```\n$$\n> x\n"], "no quote marks in a fence");
+
+  let sent;
+  const view = {
+    state: { doc: { toString: () => "- a" }, selection: { main: { from: 3, to: 3 } } },
+    dispatch: (spec) => { sent = spec; },
+  };
+  assert.equal(cmd.run({ editor: { view } }), true);
+  assert.deepEqual(sent, { changes: { from: 3, to: 3, insert: "\n- " }, selection: { anchor: 6 }, scrollIntoView: true, userEvent: "input" });
+});
+
 test("the bar's new commands are in the catalog, unbound", () => {
-  for (const id of ["block.newBelow", "block.insertMenu", "block.math", "block.nextSlot"]) {
+  for (const id of ["block.newBelow", "block.lineBreak", "block.insertMenu", "block.math", "block.nextSlot"]) {
     const c = BLOCK_COMMANDS.find((x) => x.id === id);
     assert.ok(c, id);
     assert.equal(c.keys, null, `${id} starts unbound`);

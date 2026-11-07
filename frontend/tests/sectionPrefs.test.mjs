@@ -26,7 +26,7 @@ function accountSections() {
 }
 
 test("the helper accepts account preferences and throws on anything else", () => {
-  assert.deepEqual([...accountPrefs(["theme", "enterNewNote"])], ["theme", "enterNewNote"]);
+  assert.deepEqual([...accountPrefs(["theme", "enterNewBlock"])], ["theme", "enterNewBlock"]);
   assert.throws(() => accountPrefs(["noSuchPref"]), /unknown preference "noSuchPref"/);
   assert.throws(() => accountPrefs(["uiScale"]), /"uiScale" is not an account preference/);
 });

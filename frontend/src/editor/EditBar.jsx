@@ -1,9 +1,10 @@
 // The editing bar (docs/dev/ipad.md "The editing bar"): on a touch screen,
 // while a note's editor is open, a strip pinned above the on-screen keyboard
 // with what a hardware keyboard does by keys — the insert menu, outdent and
-// indent, moving the block, a new block, bold, italic, underline, inline
-// code, strikethrough, link, inline math, Tab's hop in a math snippet, undo
-// and redo, and Done. Each tool is a catalog command (app/commands.js).
+// indent, moving the block, a new block, a line break, bold, italic,
+// underline, inline code, strikethrough, link, inline math, Tab's hop in a
+// math snippet, undo and redo, and Done. Each tool is a catalog command
+// (app/commands.js).
 // Where a pointer selects text, the selection toolbar
 // (editor/SelectionToolbar.jsx) offers the formatting instead.
 // A block command runs with the context the row's keydown dispatches with,
@@ -35,7 +36,8 @@ import { touchTyping } from "../shared/lib/pointer.js";
 // after a remount; a new block and undo move it themselves.
 const GROUPS = [
   [["block.insertMenu", true]],
-  [["block.outdent", true], ["block.indent", true], ["block.moveUp", true], ["block.moveDown", true], ["block.newBelow", false]],
+  [["block.outdent", true], ["block.indent", true], ["block.moveUp", true], ["block.moveDown", true], ["block.newBelow", false],
+    ["block.lineBreak", true]],
   [["block.bold", true], ["block.italic", true], ["block.underline", true], ["block.code", true], ["block.strike", true],
     ["block.link", true], ["block.math", true], ["block.nextSlot", true]],
   [["app.undo", false], ["app.redo", false]],

@@ -2,16 +2,16 @@
 
 The View menu's (≡) Import…/Export… dialogs and every pipeline behind them: embedded
 PDF annotations, Logseq graphs, Zotero libraries, Markdown notes (Obsidian
-vaults, Notion exports), Notability notes, GoodNotes notebooks, Markdown and Obsidian vault export, the notes
+vaults, Notion exports), Notability notes, GoodNotes notebooks, Markdown, Obsidian vault and Notion export, the notes
 typeset as their own PDF, the BibTeX bibliography, and the annotated-PDF
 writer (its internals and the shared typesetting engine are in
 [pdf_typesetting.md](pdf_typesetting.md)). Code: `gamma/routers/imports.py`, `gamma/zotero_import.py`,
 `gamma/zotero_export.py`, `gamma/zotero_notes.py`, `gamma/logseq_import.py`, `gamma/markdown_import.py`,
-`gamma/markdown_zip_import.py`, `gamma/import_zip.py` (the zip walk the library imports share),
+`gamma/markdown_zip_import.py`, `gamma/markdown_zip_links.py`, `gamma/markdown_zip_dialects.py`, `gamma/notion_import.py`, `gamma/notion_html.py`, `gamma/notion_blocks.py`, `gamma/notion_gamma.py`, `gamma/notion_nfm.py`, `gamma/import_zip.py` (the zip walk the library imports share),
 `gamma/notability_import.py`, `gamma/notability.py`, `gamma/notability_archive.py`,
 `gamma/notability_map.py`, `gamma/notability_export.py`, `gamma/notability_write.py`,
 `gamma/note_app_import.py` (what the Notability and GoodNotes imports share), `gamma/goodnotes_import.py`,
-`gamma/goodnotes.py`, `gamma/goodnotes_codec.py`, `gamma/goodnotes_map.py`, `gamma/rtf.py`, `gamma/markdown_export.py`, `gamma/obsidian_export.py`, `gamma/pdf_export.py`,
+`gamma/goodnotes.py`, `gamma/goodnotes_codec.py`, `gamma/goodnotes_map.py`, `gamma/rtf.py`, `gamma/markdown_export.py`, `gamma/obsidian_export.py`, `gamma/notion_export.py`, `gamma/export_walk.py`, `gamma/pdf_export.py`,
 `gamma/pdf_notes.py`, `gamma/pdf_document.py`, `gamma/pdf_typeset.py`,
 `gamma/note_markup.py`, `gamma/vector_text.py`, `gamma/pdf_glyphs.py`,
 `gamma/pdf_image.py`, `gamma/text_box.py`, `gamma/picture.py`, `gamma/bibtex.py`,
@@ -369,12 +369,78 @@ front-matter `folder:` path files it in the folder at that path below it,
 made where missing in the page's own transaction), and converts the document into nested Gamma blocks through
 `gamma/markdown_import.py`. Headings and indented lists retain hierarchy;
 paragraphs, fenced code, math and other Markdown stay as raw block content for
-the normal editor renderer. Lines indented under a list item continue that
-item, whether directly below it or after a blank line when aligned with the
-item's text. That is how the Markdown export writes a multi-line block, and a
-fence or `$$` opened that way swallows its lines, blank ones included. Text
-indented deeper after a blank line becomes a child block, which is how Notion
-exports a toggle's content. In mixed folder uploads, Markdown note pages and PDF pages
+the normal editor renderer. A list item keeps its marker, as a list block does:
+`- x` and `* x` are the block `- x`, `1. x` stays, and a task is `- [ ] x`.
+A bullet that only wraps a block of its own (`- # H`, `- ```py`, `- - x`,
+which a vault writes) gives way to that block; `- $$x$$ is it`, `- |x| is it`,
+`- >5` and `- ```x``` y` are bullets, and a line that closes the fence it opens
+is inline code wherever it stands, in the zip's own passes over a note too (they
+read the parser's `_FENCE_LINE_RE`). A fence closes only on a line that is all
+its mark and at least as long as what opened it (`markdown_import.shuts_fence`,
+the rule of `notion_nfm` and, for mark and length, the editor's `scanFences`),
+in a list item too, so a ```` fence can hold ``` lines. On the page a line four
+columns past its fence is code (`shuts_code`, CommonMark's rule; the vault's
+`%%` pass reads it too); the editor closes at column 0 alone, and in a list item
+any indent closes. Lines indented under a list item continue
+that item, whether directly below it or after a blank line when aligned with
+the item's text. Text indented deeper after a blank line becomes a child block,
+which is how Notion exports a toggle's content. So does a fence or `$$` opened
+on an item's next line, because the editor only sees those at column 0.
+
+`$$` opens multi-line math only at the start of a line's text with no pair on
+that line, as in remark-math, in an item as at the top: `- costs $$ and more`
+keeps what follows out of it, while `- $$`, `- [ ] $$` and `1. $$` take the lines
+below whatever they look like (a row like `- x + y &= 3 \\` is no list item). One
+left mid-line in an item closes on the item's next `$$`, as `scanMathSpans` pairs
+them in a block, so `- is $$`, `  x`, `  $$` stays one block. That `$$` may start
+its line, even at column 0, and opens nothing, unless it is a formula of its own:
+a `$$` alone on its line, remark-math's close, comes next, within the item or, for
+a `$$` at column 0, anywhere below.
+
+One limit: a `$$` at the start of a line that opens and is never closed takes the
+rest of the document into its block, at the top or in an item, with no text lost.
+`- $$ never closed`, `- next`, a blank line and a paragraph are one block. The
+opener looks at its own line and not for a closer below it, so this is remark-math's
+reading at the top level, while in an item remark-math ends the math with the
+item and `scanMathSpans` leaves it raw.
+
+Gamma's readable export writes every block as a `- ` bullet, so `x` is `- x`
+and the list block `- x` is `- - x`, and there the marker says only "a block".
+`markdown_import.readable_outline` knows such a file by the one shape that
+writer has: a front-matter `title` and no `gamma_id` (the folder sync's, whose
+bullets are lists), then the H1, BibTeX if any, and only `- `
+lines at the start of a line, so every branch of the writer keeps a block's next
+lines under its bullet (`_bullet`). `md_to_blocks(..., outline=True)` then reads each
+`- ` as a separator, which gives the blocks back as they were, from old zips
+too, with a fence or `$$` kept in its item with all its lines. A note of another
+app with that shape loses its markers, and a readable file edited out of that
+shape keeps them, as does an old zip's page with a multi-line area-highlight note
+or link label, which the writer used to leave at the start of a line; no text
+goes either way. What each caller passes:
+
+| Caller | `outline` |
+|---|---|
+| Zip (`ZipRun.parse`) | `plan.outline`: `readable_outline`, for a note of no Notion id outside a vault. A vault's note and a Notion page of that shape keep their lists |
+| `POST /api/import/markdown`, `POST /pages/from-file` (`markdown_page`) | `readable_outline` |
+| `POST /api/markdown-blocks` | The request's `outline`, which the editor sends for its own copy of a subtree (`sourceCopy.isOutlineCopy`) |
+| `seed.py` (the welcome page) | Never: its lists stay lists |
+
+Pages imported before markers were kept read as indented paragraphs. The
+markers are gone, so nothing repairs them.
+
+An empty list block is its marker and a space (`- `, `1. `), and the readable
+and vault exports keep that space (`markdown_export.block_text`), which is what
+tells it from a block that is only a dash: `- -` reads as `-`, `- - ` as `- `.
+
+A front-matter value loses one pair of quotes and no more, so `'Tis` and
+`Say "hi"` stay as they are (`_fm_scalar`). A double-quoted value is read as
+JSON, which is how the vault writes one, unless that fails or gives a control
+character: a hand-written `"C:\foo"` is a path, not a form feed. A `'it''s'`
+is `it's`, and a `[a, b]` list keeps the commas inside its quoted items. The
+readable export writes a title bare, so a title that is all in quotes (`"x"`)
+loses them there once.
+
+In mixed folder uploads, Markdown note pages and PDF pages
 are filed in the same subfolders; unsupported files are skipped.
 `POST /api/import/markdown` answers the page's `folders` (ids).
 
@@ -397,12 +463,35 @@ download SVG separately; backend PDF exports retain code-block output. See
 `POST /api/import/markdown-zip` (Import dialog → "Markdown notes", pick a
 `.zip`; `gamma/markdown_zip_import.py`) turns a zip of `.md` files into one
 page per file. One logic covers a zipped Obsidian vault, Notion's Export →
-"Markdown & CSV" (with subpages), Gamma's own Markdown export and any zipped
-folder of notes, because they only differ in naming and link conventions
-(the survey behind the Obsidian mapping: [docs/research/obsidian.md](../research/obsidian.md)):
+"Markdown & CSV" or HTML (with subpages), Gamma's own Markdown export and any
+zipped folder of notes, as stages of `ZipRun`
+(the survey behind the Obsidian mapping: [docs/research/obsidian.md](../research/obsidian.md)).
+What differs is the zip's dialect, picked once after the walk
+(`gamma/markdown_zip_dialects.py`, Notion's in `gamma/notion_import.py`):
+**Vault** with `.obsidian` in any path, else **Notion** with a 32-hex id in a
+note's or CSV's name or a page of Notion's HTML export among its `.html` files
+([below](#notions-html-export)), else **Plain**, which Gamma's exports are too.
+
+| Rule | Notion | Vault | Plain |
+|---|---|---|---|
+| `notion_id`, match by id | Yes | No | none hold one |
+| Id left out of the title | Yes | Yes | none hold one |
+| CSV | A table page with an id, else as Plain | As Plain | A file a note can link; left out with a warning if none does |
+| Directory pairing, flat tree, stubs, cut titles, absent CSVs | Yes | No | No |
+| Relations | Yes | No | No |
+| Asides, quote tails, link and property lines | Each file with an id | No | No |
+| `^id` anchors | None in a file with an id, else as Plain | All | Those a `#^id` link in the zip names |
+| Wikilinks | Text in a file with an id, else links | Yes | Yes |
+| `%%comments%%` | No | Yes | No |
+
+The rest of this section holds for every dialect unless it says otherwise:
 
 - **Title**: front-matter `title`, else the leading `# H1` (stripped from
-  the body — Notion and Gamma both write one), else the filename with
+  the body — Notion and Gamma both write one; a closing run of `#` counts
+  only after a space, as in CommonMark, so `# C#` is "C#", though an H1
+  whose whole text is the front-matter title repeats it: the export writes
+  the title "Issue #" as `# Issue #`, and an H1 taken for the title loses
+  its Markdown escapes, so `# Foo \[bar]` is "Foo [bar]"), else the filename with
   Notion's `Title <32-hex id>` suffix removed. In an Obsidian vault
   (recognised by its `.obsidian/` folder) the filename is the title, as in
   Obsidian itself, and the H1 stays in the body unless it repeats the title.
@@ -434,14 +523,61 @@ folder of notes, because they only differ in naming and link conventions
   is the value's (the layout the exports write, `Top.md` beside
   `Top/Child.md`), then a wikilink's exact vault path, then as a link is.
   Notion writes no `parent:`: it puts the pages inside `Title <id>.md` in
-  a directory of the same name beside it, `Title <id>/`, at every depth,
-  and a database's row pages in `Name <id>/` beside its `Name <id>.csv`.
-  So a note directly in a directory whose name carries a Notion id, beside
-  a note (`.md` or `.markdown`) or a database (`.csv`, or the `_all.csv`)
-  named exactly as the directory is, goes inside that note's or that
-  database's page (`paired_page`). A vault or a plain zip carries no
+  a directory beside it, at every depth, and a database's row pages in a
+  directory beside its `Name <id>.csv`. Until about November 2025 that
+  directory was named as the file (`Title <id>/`); since, it is the title
+  alone (`Title/`), and a second page of the title in one directory gets
+  its id's first and last four digits (`Title abcd-wxyz/`). So a note
+  directly in a directory goes inside the note (`.md` or `.markdown`) or
+  database (`.csv`, or the `_all.csv`) beside it that the directory names
+  (`paired_page`, `owner_of`): `Title <id>/` the file named exactly so;
+  `Title abcd-wxyz/` the one of that title whose id starts and ends so (a
+  name that only looks like that, `Budget 2024-2025/`, and matches no page
+  of the shorter title is a plain title); plain `Title/` the one file of
+  that title with a Notion id not claimed by a partial-id directory, and
+  when several are left, the one whose lines link into the directory,
+  else the database whose rows the notes in it are (a page and a database
+  of one title side by side). Titles compare as `_norm_name` does (NFC,
+  spaces collapsed, case folded). A vault or a plain zip carries no
   Notion ids, so its `Topic.md` beside `Topic/` stays a page beside a
-  folder, and a directory that pairs with nothing stays a folder. When the
+  folder, and a directory that pairs with nothing stays a folder. A
+  database's page can also come as a note of the database's own id beside
+  its CSV (`People <id>.md`: a line linking to the CSV, then the view's
+  `filters:` and `sort:`); that note is folded into the database's page,
+  its other lines above the table, links to it resolving there.
+  A flat Notion export ("Create folders for subpages" off) has every page,
+  database and attachment in one directory and no directory in it. When a
+  zip's Notion files all sit in one directory that holds no directory,
+  its tree is taken from the pages (`_flat_tree`). A page's sub-pages and
+  databases are its lines that are one link to them (`_link_lines`: how
+  Notion writes a sub-page, a database or a link to a page) under their
+  title — the H1's or the file name's, compared by letters and digits
+  (`_title_key`: `[**Plan**](…)` names `Plan`) — or under no label (an
+  untitled page). A file with no Notion id beside them is no page of the
+  export, and a link to it nests nothing. A database's rows are notes
+  titled as its CSV's first column (an empty cell, or a wholly blank row,
+  is "Untitled"): per row name as many notes of that title as it has such
+  rows. All databases' offers are ranked together, so a note goes where
+  its values fit and the zip's order does not decide: those whose
+  property values match a row's cells best first, then those sharing more
+  columns, then those no page links to. Exact titles go first, for every
+  database, then titles by letters and digits (`C` is not `C++`), where a
+  note a page links to must also match a value. Both ask a note with
+  property lines for one of the columns (a row page can show a property
+  its CSV leaves out); rows still without a page then take any note of
+  their title, since Notion leaves a row's empty properties out and a
+  first line such as `Attendees: Ada` reads as one. A note a database
+  takes is its row whichever page links to
+  it. A callout's lines are no link lines (a navigation box's links are
+  mostly not its page's sub-pages), so a sub-page or database linked only
+  inside a callout gets no parent. Walked breadth-first from the files nothing names, then from the
+  first file still unreached in zip order (a sub-page whose line links
+  back to its top names it too), the first to name a file is its parent,
+  so a link to a page from its sibling never takes it from the page
+  above. Top-level pages of a workspace export that link to each other
+  would nest under the first: this tree is inferred, and no flat export
+  seen carries Notion's `index.html` manifest
+  ([research note](../research/notion-roundtrip.md)). When the
   parent is another chosen note of the zip, or one imported before (the
   same digest or `notion_id`), the note's page stores that note's page id
   as `parent_page`, written by `insert_page_tree` with the rest (every
@@ -465,39 +601,91 @@ folder of notes, because they only differ in naming and link conventions
   its parent.
 - **Links**: a link to another note in the zip becomes a `[[page]]` mention
   of the page it produced — Markdown links (Notion's percent-encoded
-  `[Sub](Parent%20<id>/Sub%20<id>.md)`, Gamma's `[label](Page-id.md)` and
+  `[Sub](Parent%20<id>/Sub%20<id>.md)`, whose balanced `( )` stay unencoded
+  as in `Tasks%20(grid%20view)%20<id>.csv`, Gamma's `[label](Page-id.md)` and
   `*(from [title](file.md))*`) and Obsidian wikilinks (`[[Note]]`,
   `[[Note|alias]]`, `[[folder/Note]]`) alike. A target is resolved relative
   to the note, then as an exact vault path, then by basename anywhere in the
   zip (nearest directory wins), case-insensitively — Obsidian's own rule.
-  `[[Note#Heading]]` and `[[Note#^id]]` point at that heading block or
+  `[[Note#Heading]]` and `[[Note#^id]]` point at that heading block
+  (matched as Obsidian's `stripHeading` does, punctuation read as spaces:
+  `## Learn C#` by `[[Note#Learn C]]`, the first of two alike winning) or
   anchored block (`^id` markers are indexed per note and removed from the
-  text; an anchor on its own line belongs to the block before it),
+  text; an anchor on its own line belongs to the block before it; a
+  dialect keeps them as above, because `E = m c ^2` ends the same way and
+  folder sync writes real ones with no `.obsidian`, so `plan_files` reads
+  every body for `#^id` before it parses the first; an anchor taken off a
+  bullet's first line, `- $$ ^id`, leaves what it hid, and a bullet that only
+  wraps a block gives way to it),
   `![[Note#^id]]` becomes a Gamma synced block `![[id]]`, while `![[Note]]`
   and `![[Note#Heading]]` degrade to mentions (a Gamma embed shows one
   block). A link or image pointing at a bundled file uploads it
   (`store_file_stream`, content-hash dedup, the storage quota — a file over
   it is a warning and the link stays as typed) and points at
   `/api/uploads/…`; `![[img.png|300]]` / `|300x200` becomes the editor's
-  `![|300](url)` size form, other pipe text the alt. Links that resolve to
-  nothing stay as typed (so a Gamma `[[id]]` is never touched).
+  `![|300](url)` size form, other pipe text the alt. A CSV that is no table
+  page is such a file; one no new note links is left out with a warning
+  once the pages are written, and a zip holding no note and no table page is
+  a 400. Links that resolve to
+  nothing stay as typed (so a Gamma `[[id]]` is never touched). A link to
+  a Notion `Name <id>.csv` the export left out reaches the page of that id,
+  the way a `.md` link reaches a database; a page's link to its own absent
+  CSV stays as typed, with the warning.
 - **Obsidian specifics**: front-matter `tags` (list, flow list or comma
   string; `tag` too) become labels, label blocks made by name where missing
   (a name keeps its `/` and `,`), `aliases`
-  are kept in `properties.aliases`; `> [!type]+`/`-` fold markers are
-  dropped (in `md_to_blocks`, so pasted text loses them too);
-  `%%comments%%` are removed in a vault (inline or block, never inside
-  fences). Inline `#tags`, footnotes and task states pass through as text.
+  are kept in `properties.aliases`; `> [!type]+`/`-` fold markers stay
+  (the editor folds a callout by them); `%%comments%%` are removed in a
+  vault (inline or block, never inside fences). Inline `#tags` and
+  footnotes pass through as text. A task is written as the editor's
+  `- [ ] text` / `- [x] text`, whatever bullet, case or spacing it came
+  with (Notion writes `- [ ]  text`), so pasted text keeps it too, an empty
+  task's included. A fence indented under a list item comes without that
+  indent.
 - **Notion specifics**: a database `Name <id>.csv` becomes a page holding
-  the table (`_all.csv` preferred when both exist — it has every row). Every
+  the table (`_all.csv` preferred when both exist — it has every row — in
+  the column order of the view's CSV, since `_all` sorts its columns). Every
   row is kept, 500 rows (or 100,000 characters) to a table, each table a
   block of its own under the header, so each renders and stays under a
-  block's 200,000 characters. Columns past 40 are left out with a warning.
+  block's 200,000 characters, but for a single row past that: it stays
+  whole, to read, and takes shortening before it saves. A CSV's lines end
+  as the file ends them, a bare CR too, and one that cannot be read is a
+  warning, the rest of the zip imported. Columns past 40 are left out with a warning.
   Its row pages `Name <id>/Row <id>.md` are pages inside it (above). Two
   databases of one name in one page (Notion's `Untitled <id>`) are two
-  pages, each holding its own rows, since their ids differ;
-  `<aside>` callouts become `> [!info]` callouts;
-  the row pages' `Property: value` lines stay as text.
+  pages, each holding its own rows, since their ids differ. Notion cuts a
+  file's name at 50 characters and a CSV has no H1, so a database of a
+  longer title takes it from its stub note or the line linking to it. A
+  stub's text that takes the page past `MAX_BLOCKS` stays out with a
+  warning and the table comes in: its page already has rows and links by
+  the write stage, so `fold` checks it (`ZipRun.too_many`);
+  in a Notion note `<aside>`, its tags alone on their lines and indented
+  as the block is (in a toggle or a list item; in a code block it is
+  code, and other sources' `<aside>` stays HTML), becomes a `> [!info]`
+  callout, its first line the
+  title (since 2026 Notion writes the icon alone on that line; the blank
+  line after an icon-only line goes, after a line of text it stays and
+  parts paragraphs); the empty `>` line Notion ends each quote with is
+  dropped, also when the quote is indented in a list item or toggle or
+  sits in a callout (`_drop_quote_tails`); the row pages' `Property:
+  value` lines stay as text. Such a note's headings hold nothing: they
+  stand side by side with what follows them (`flat_headings`), as they do
+  in Notion. Notion escapes nothing, so a `<tag>` in its text is written
+  `\<tag>`, in a database's cells too, or the note would read it as HTML
+  and drop it (`_escape_tags`): not in code (a fence in a quote or callout,
+  or opened on a list item's line, included), math or a link's target, and
+  not `<u>` or a callout's `<img>` icon, which Notion means as HTML. A
+  relation, in a database cell or a row's
+  property line, is written `Title (…%20<id>.md)` (the path relative to
+  where Notion pleased: the database's page for a cell, the row for a
+  line) and becomes a mention of the page its path names when that file
+  has the id (a zip can hold one page twice), else of the page of that id,
+  of the import or the library (`_link_relations`). Its title runs from the relation before it,
+  the cell's `|` or the line's `Name: ` up to the path, and must start
+  with the file's name compared by letters and digits only (`_loose`:
+  Notion writes `GAOS 1.0` as `GAOS 1 0 <id>.md` and cuts names at 50
+  characters, sometimes inside a parenthesis, which a link's target may
+  then leave unclosed).
 - **Gamma specifics**: the front matter's `source:` restores the PDF when it
   is bundled (`assets/<sha>.pdf`, or the vault export's quoted
   `"[[Paper.pdf]]"` → `doc_id`, the page becomes a paper again) or the
@@ -508,9 +696,15 @@ folder of notes, because they only differ in naming and link conventions
   string), the ```` ```bibtex ```` block → `properties.bibtex`. Highlights come back as their quote blocks, not as
   positioned highlights — the Gamma format (`?mode=gamma`) is the lossless
   route; Markdown is for notes and for other apps.
-- **Idempotent**: a `.md` already imported (same bytes — `markdown_import`
-  digest — or the same `notion_id`) is skipped, and links to it resolve to
-  the existing page, so re-importing an export adds nothing.
+- **Idempotent**: a `.md` already imported is skipped, and links to it
+  resolve to the existing page, so re-importing an export adds nothing. A
+  note with a Notion id is the page of that `notion_id`; any other is the
+  page of its bytes (the `markdown_import` digest). Two Notion pages of one
+  template have the same bytes, so for a Notion note the digest finds only
+  the page made from that very file alone (`POST /import/markdown`: no
+  Notion id, the same `original_filename`), and that page once per import.
+  A database's stub note imported again resolves to the database's page
+  with its CSV.
 - **In short batches**: a page's bundled files are stored while its links
   are rewritten, outside any transaction. Its rows then wait with the next
   ones, and every `PAGES_PER_COMMIT` (50) pages go in as one short
@@ -525,8 +719,15 @@ folder of notes, because they only differ in naming and link conventions
   the server instead is a zip-bomb rule, Apache POI's: an entry past 1 MiB
   that unpacks to over 100 times its packed size (`MAX_RATIO`) is not read,
   with a warning, and an archive that does so as a whole is refused (413).
-  Notes pack about 4:1 and photos or PDFs 1:1, a zip bomb about 1000:1. A
-  bundled file has no size cap: it is streamed into storage, never read
+  Notes pack about 4:1 and photos or PDFs 1:1, a zip bomb about 1000:1. What
+  a small file can ask of the server is linear in it: no pattern over a note's
+  text, a CSV's cell or a file's name rescans the line per unclosed `](`, `[`,
+  `<img` or space run (a link's target holds no `](`, a label no unbalanced
+  `[`, a heading's first run of spaces gives nothing back, and a code span's
+  mark is read to 16 backticks), and a long entry name or a wide CSV costs its
+  bytes, with no directory prefix kept and no row widened. A file that cannot
+  be read, a page, a table or a bundled file, is a warning and fails nothing.
+  A bundled file has no size cap: it is streamed into storage, never read
   whole.
   A nested zip is spooled, and a bundled file stored, only while the disk
   keeps `import_staging.MIN_FREE_BYTES` free (507 for the zip, a warning
@@ -566,6 +767,89 @@ of names from the library's top (`[["Imports", "Notes"]]`: names may hold
 (skipped or merged) page's its current ones, and a sub-page's, new or
 existing, its top's.
 The report's `folder` is the destination's id.
+
+## Notion's HTML export
+
+Notion's Export → HTML comes through the zip import above: the same stages, the
+same **Notion** dialect, the same rules for folders, pages inside pages, links,
+files, selection and re-imports. Only the way a page is read out of its file
+differs (`PageSource`): `NotionHtmlSource` in `gamma/notion_import.py` takes the
+page through `notion_html.read_page` into the block model (`notion_blocks`) and
+`notion_gamma.to_gamma` writes that as Markdown nodes. So its links, images and
+sub-pages take the road a Markdown export's take (`rewrite_links`, `owner_of`,
+`paired_page`, `_flat_tree`), while a block of code or a formula is not looked
+in at all, and a link around code and math is found by `WRITTEN_LINKS_RE`.
+
+- **Sniffing** (`html_pages`, `notion_html.is_notion_page`): a `.html` is a page
+  of Notion's when its first 64 KB hold the article mark
+  (`<article … class="page…"`) and the body mark (`class="page-body"`). The
+  stylesheet comes first, so the article starts up to 17,696 bytes in. A page's
+  properties come before its body and run as long as they like, so a file with
+  the article mark alone is read on, to the 5 MB of `MAX_MARKDOWN_BYTES`. A file
+  longer than that counts as a page, for the import to say it left it out. One
+  such page makes the zip Notion's whatever its file names hold, unless it is a
+  vault. Any other `.html`, `index.html` included, stays a bundled file, so a zip
+  of plain HTML with no note and no CSV stays a 400. One that cannot be read
+  counts as no page, with a warning, since every `.html` of a zip is looked at,
+  linked or not.
+- **The page**: its title is `h1.page-title`, else the file name; its id the
+  `article`'s, else the file name's. Every era is read, as a zip holds one era
+  but people arrive with old ones: what 2026 writes in `data-notion-*` attributes
+  an older export says in classes and in the KaTeX under a formula. The parser is
+  the standard library's, the Zotero notes' with a `<p>` that stays open at a
+  `<div>`, because Notion writes a paragraph's children in a `div.indented`
+  inside the `<p>`, where an HTML5 parser would move them out. A page deeper
+  than 200 elements goes on as flat text with a warning, one not in UTF-8 is left
+  out with a warning, and so is one past `MAX_BLOCKS`. The parser keeps 256
+  elements open (`_Parser.max_open`; a Zotero note's has no limit) and reads what
+  nests past that flat, so tags that close nothing cost a bounded walk on a 5 MB
+  file.
+- **Blocks**:
+
+  | Notion | Gamma |
+  |---|---|
+  | Bullet, number, to-do | `- x`, `N. x` from the list's `start`, `- [ ] x`, one block per `li`, its children blocks |
+  | Toggle with children | The text, `collapsed` and the children: `details[open]` says nothing (82 of 82 in the samples carry it), so every one comes in closed |
+  | Toggle with none | A plain block: a later Tab under a `collapsed` one would hide what is indented |
+  | Toggle heading | The heading, `collapsed` and the children. Any other heading holds nothing, as `flat_headings` has it on the Markdown route |
+  | Callout | `> [!type] icon`, the type by colour: gray, brown and none `info`, red `danger`, orange and yellow `warning`, green `tip`, blue `note`, purple and pink `important`. No more of the colour is kept |
+  | Text colour, background | The editor's span (`mdMarks.js`), a background its tint. `yellow_background` is `==x==`, brown the export's own `#9f765a`. Notion's `teal` is its green. `tests/shared/notioncolors.json` pins these |
+  | A block's colour | Falls on its runs, not on code, equations or tables |
+  | Underline, date | `<u>x</u>`, `@2026-10-09` |
+  | Formula | The TeX of `data-notion-equation`, or of the older `annotation` |
+  | Text | Literal: `$5`, `<tag>`, `[x]`, `@name` and `1. Intro` are escaped, not read |
+  | Image | `![caption\|W](src)`. The export has no alt text, so the caption stands there, hidden, and the width is kept |
+  | File, audio, video | `[name](url)` |
+  | Bookmark, embed | `[title](url)` without its description; a bare address |
+  | Table of contents, empty paragraph, page icon and cover | Dropped |
+  | Columns, synced block | Read in place, one after another |
+
+  A link to a block goes to its page: every anchored link in the samples is a
+  table of contents'.
+- **Databases**: the CSV stays the source of rows, as on the Markdown route, and
+  `_RELATION_RE` takes `.html` paths in its cells. An HTML zip holds one CSV for
+  a database, every column in `_all`'s order, so the table in the page gives the
+  view's order and `h4.collection-title` the name the file name cut
+  (`db_order`, `db_title`; pages plan before CSVs). A `div.collection-content`
+  is a line naming the database: a mention of its table page once its id, the
+  CSV's, is in `csv_by_id`, its name otherwise. A row page's `table.properties`
+  becomes one first block of `Key: value` lines, as the Markdown export writes
+  them. Those values are what the page shows, which `_row_fit` matches against
+  the CSV's cells: a date here is ISO and a relation a title where the cell has
+  the long form, so neither counts towards the row in a flat export, and two rows
+  of one name that differ in nothing else go by zip order. With directories no
+  row is matched.
+- **A page already imported from Markdown** is that page of `notion_id`, so it is
+  skipped and HTML never upgrades it: delete it first to get what HTML keeps.
+  A zip of `.md` and `.html` for one id is in no sample and has no special case.
+
+`tests/test_notion_html.py` has the reader, `tests/test_notion_html_zip.py` the
+zip, on `tests/notion_fixtures/`: the two exports of one synthetic page of
+November 2026, and a page written by hand in the older eras' markup, which holds
+the colour the Notion page lacks. A flat HTML export is in no sample, so its test
+is hand-made too. What the 2026 format leaves unseen, a coloured block or callout
+among it, is in the
+[research note](../research/notion-roundtrip.md#what-the-html-export-holds).
 
 ## Zotero library import
 
@@ -1515,8 +1799,8 @@ computed by the same function on the note's own layout:
 - The page's notes (each block that is on no surface, in document order)
   are the typed text (`flow_runs`): a paragraph per note at its depth, a
   top-level note plain and a deeper one a bullet, "n. …" a numbered item,
-  "- [ ] …" a checklist item, a heading bold, a note's lines joined by a
-  line separator.
+  "- [ ] …" a checklist item, "- …" a bullet at any depth, a heading bold, a
+  note's lines joined by a line separator.
 - A recording's segments are each a recording of Notability's, named after
   it.
 
@@ -1705,10 +1989,10 @@ it runs. A share that reaches the page reaches every page inside it
 share does not reach is refused (403). Without the flag, or on a page with
 none inside, a page's export is the page alone. Where the
 folders are directories (the vault, the annotated PDFs, Notability, the
-folder sync), a sub-page's file goes in a directory named for its parent,
+Notion zip, the folder sync), a sub-page's file goes in a directory named for its parent,
 beside the parent's file, when the parent's is in the same export
 (`Filing.directory`, `parent_dir`), else where its top's folders put it.
-A page's export of the annotated PDFs or the Notability notes mirrors no
+A page's export of the annotated PDFs, the Notability notes or the Notion zip mirrors no
 folder (`_Builder.directory`): the page's file is at the zip's top and each
 page inside it in its parent's directory (`Filing.parent_dir`). The vault
 keeps the page under its folders, as it does alone (`<folder>/<Title>.md`,
@@ -1718,7 +2002,7 @@ Zotero, Gamma) hold every page as a folder export does.
 It walks the selected pages exactly once (subtree
 fetch, `build_tree`, a progress report) and feeds each page to a per-format
 `_Builder` keyed by the mode: `_MarkdownBuilder`, `_ObsidianBuilder`,
-`_NotesPdfBuilder`, `_AnnotatedPdfBuilder`, `_NotabilityBuilder`,
+`_NotesPdfBuilder`, `_AnnotatedPdfBuilder`, `_NotabilityBuilder`, `_NotionBuilder`,
 `_LogseqBuilder`, `_ZoteroBuilder`, `_GammaBuilder`. The builder accumulates zip parts, and
 `save(dest)` writes the download, returning its name and media type. The
 job saves to its file; `response()` saves to a temporary file and answers
@@ -1821,10 +2105,32 @@ folder by its link, below) the export carries only what the share shows
 Each page's filing is cut to the folders and labels kept, and of the chats
 only each page's active conversation travels (the one
 `GET /chats/{page}?share=` reads): no archived conversation and no folder
-view's chat. A member's own export is unchanged. The other formats through
-a share still name the folder's whole path (the download's name, a `.bib`'s
-header, a Markdown page's front matter) and render embeds of pages outside
-the share.
+view's chat. A member's own export is unchanged.
+
+Every format keeps to the share the same way, in `_Builder` and so with no
+rule of a builder's own (`tests/test_share_export.py` runs all of `_BUILDERS`,
+and the `/export-pdf` route):
+
+- A `[[ref]]` or `![[embed]]` of a block on a page the share does not reach
+  resolves to nothing (`_ref_resolver`, by `ShareScope.pages`), at any depth
+  of embeds. It stays as typed, or reads as its bare id in a PDF, a Zotero
+  note or a Notability note, which is the chip the share view itself draws, so
+  the block's text, its page's title and the pictures in it stay out. A
+  vault's `^anchors` come from the share's own pages.
+- An upload the share cannot read stays out of any zip, whatever named it
+  (`_can_bundle`, the rule of `GET /api/uploads/…?share=` read once per
+  export, `uploads._pages_upload_names`); the Notion zip warns of it.
+
+Logseq and Gamma write a ref as stored, and BibTeX reads page properties
+alone, so they read no block outside the pages exported to begin with.
+`POST /api/jobs/export` takes no share: it works in the signed-in account's
+own workspace.
+
+Folder and label names are not held back this way. The formats but Gamma's
+still write the folder's whole path (the download's name, a `.bib`'s header)
+and a page's folders and labels where they write them (a Markdown page's front
+matter, the vault's directories and tags, Zotero's collections and tags, the
+Notion zip's `Tags:`), a page share's too.
 
 ### Importing a shared page or folder by link
 
@@ -1888,7 +2194,7 @@ token can already download, and the import takes what it is given.
 
 The View menu's single "Export…" entry → `ExportDialog` in `transfers/ImportExport.jsx`.
 Step one is a format card. The PDF row holds Annotated PDF, the Notes row PDF,
-Markdown and Notability, the ZIP row Obsidian, Logseq, Zotero and Gamma. Double-click or
+Markdown, Notability and Notion, the ZIP row Obsidian, Logseq, Zotero and Gamma. Double-click or
 Next confirms. Formats with editable options get a review step: the
 Highlights, Notes and Bundle-the-files switches beside an illustrative page
 (`shared/illustrations/TransferPreview.jsx`, an example of the options, not
@@ -1947,7 +2253,7 @@ open one and offers the switch.
 Export starts the export as a background job ([tasks.md](tasks.md)).
 `exportJobBody` turns the payload into the job's body: the page or folder,
 the server's mode for the format (each format's `mode`: `annotated-pdf`,
-`notes-pdf`, `readable`, `notability`, `obsidian`, `logseq-graph`,
+`notes-pdf`, `readable`, `notability`, `notion`, `obsidian`, `logseq-graph`,
 `zotero-rdf`, `bibtex`, `gamma`)
 and the three flags, for a page `sub_pages`, and for an annotated PDF `comments` and `notes_at`. The dialog then shows its last step, the job's
 (`ExportJobStep`). While the job runs it shows its progress (pages, then
@@ -1959,9 +2265,10 @@ The finished step names the file and its size, says "Saved to your
 downloads" once the automatic download has happened (`job.downloaded`;
 the button then reads "Download again"), counts the pages, lists the
 pages left out with the reason, what the file could not keep of a page
-(the result's `warnings`, a Notability note's), and says what to do next:
-Zotero's steps, Obsidian's unzip-into-a-vault, Gamma's Import → Gamma
-export, BibTeX's beside-your-.tex, Notability's open-it-there. A failed or
+(the result's `warnings`, a Notability note's or a Notion zip's page's), and
+says what to do next: Zotero's steps, Obsidian's unzip-into-a-vault, Gamma's
+Import → Gamma export, BibTeX's beside-your-.tex, Notability's open-it-there,
+Notion's Settings → Import → ZIP. A failed or
 stopped export offers Start again, with the job's params (`sub_pages`,
 `comments` and `notes_at` included); one that wrote the viewer's
 translation, which its params cannot hold, offers Export again… instead,
@@ -2213,20 +2520,31 @@ one page.
   after `title:`), `tags` (the page's labels by name), `aliases`, `source`
   (the bundled PDF as a quoted wikilink `"[[Paper.pdf]]"`, else the URL),
   `doi`, `authors` (list), `year`; then the BibTeX fence as in the readable
-  export.
+  export. A page with none of these writes no front matter, and if its text
+  would then open with a `---` line, that divider is written `***`, as in the
+  Notion export: a second `---` below it would close it as front matter, and
+  the text between would go.
 - **Outline → document** (the Logseq importer's flattening): a top-level
   heading block is a heading and its children follow as document content;
   a top-level leaf block is a paragraph; a top-level block with children is
   a list item with its subtree as a nested list (2-space indents,
-  multi-line content indented under the bullet). Re-importing therefore
-  nests everything after a heading under it — the one lossy step; the Gamma
-  format stays the lossless route.
+  multi-line content indented under the bullet). A list block is an item
+  as it stands, not one inside another: `- x`, `1. x` or `- [ ] x` with one
+  marker, its children at the marker's text column; only such blocks differ
+  from any other block here. Its next lines keep their layout, but text at
+  its left edge moves under the marker, and a fence or `$$` block there moves
+  whole, list-shaped and indented lines included. Re-importing has two lossy steps: everything
+  after a heading nests under it, and a plain block written as a list item
+  comes back a bullet, its text whole, because a vault's lists stay lists. The
+  Gamma format stays the lossless route.
 - **Links**: `[[id]]` / `![[id]]` whose target is in the export become
   `[[Title]]` for a page (`[[dir/Title]]` when two exported pages share a
   name — Obsidian's rule), `[[Title#^id]]` / `![[Title#^id]]` for a block
   (`[[#^id]]` on the same page), and the target block gets ` ^id` written:
   on its bullet line in a list, at the end of a paragraph, on its own line
-  after a fence / table / quote / callout. `anchor_marker` makes the id
+  after a fence / table / quote / callout, a block that ends in a fence (text
+  after a closing line would leave it open) or, under the bullet, a block that
+  is only a marker (it would be read as the item's text). `anchor_marker` makes the id
   Obsidian-legal (letters, digits, dashes). Only linked blocks carry
   anchors; `begin` scans the workspace's link-bearing blocks up front so a
   target renders with its anchor even when the linking page comes later.
@@ -2255,6 +2573,107 @@ labels, the quoted `source` into the paper, `parent` into the page it is
 inside) — `test_obsidian.py` has the round trip, and
 `test_sub_pages_export.py` the nested layouts of every format, with and
 without `sub_pages`, and their round trips.
+
+## Notion export
+
+`?mode=notion` on both export endpoints (`_NotionBuilder` →
+`gamma/notion_export.py`) writes a zip for Notion's file importer (Settings →
+Import → ZIP). Always a zip, even for one page. Nobody has run one through
+Notion yet: the layout copies Notion's own exports and a construct in doubt goes
+out in its safest form ([what is unknown](../research/notion-roundtrip.md#what-notions-importer-takes)),
+so the Export dialog says what the zip holds and leaves the rest to the
+importer. A second import makes the pages a second time, since the importer
+gives back no ids; the finished step says so. The Notion card sits in the Notes
+row with the Highlights and Notes switches and no Bundle switch.
+
+A page goes `export_walk.walk` (what each block is to an export, by the readable
+export's rules) → `notion_gamma.from_gamma` (the block model of `notion_blocks`,
+where one block's content can be several blocks) → `notion_blocks.lower_for_file`
+→ `notion_nfm.write(form="file")`. The readable and vault exports keep their own
+walkers, and `test_export_walk.py` holds the three to the same blocks. Each
+construct in doubt is one row of `notion_blocks.CAPS`, so what a probe finds
+changes a row and no block code:
+
+| Construct | In the zip | `CAPS` row |
+|---|---|---|
+| Callout | A quote opening with its icon: `> 💡 text`. Type and colour go | `callout` |
+| Toggle, paragraph with children | `- x` with its children nested; a paragraph in a list is a bullet | `toggle`, `paragraph_children` |
+| Folded heading | The heading, its children after it | `toggle_heading` |
+| H4 and below | `###`, as the help page says the importer reads them | `heading_level` |
+| `==x==`, a background | Bold; a text colour goes | `color` |
+| Underline | `<u>x</u>`, which Notion's own Markdown export writes | `underline` |
+| Date | `@2026-10-09` as text | `date` |
+| Sub-page, a page alone on a line | A link line | `page` |
+| Table with no header | An empty header row | `headerless_table` |
+| Line break inside a block | Two spaces and a newline | `hard_break` |
+| Nested list | Indented by 4, Notion's own | `list_indent` |
+| Markdown characters in text | Escaped; a probe of `\*x\* \$5 \<tag>` decides | `escape` |
+
+- **Files**: `Paper.md`, its images in `Paper/`, a sub-page in `Paper/Child.md`,
+  filed as the annotated PDFs are (`_Builder.directory`): a page's export mirrors
+  no folder, a folder's has its subfolders as directories
+  (`Reading/Other.md`). Names are `vault_name`, unique in their directory
+  (`name_files`), and hold no id, even a page imported from Notion: a kept
+  ` <id>` in a title is the worst failure on offer.
+- **Title**: the file name is the title. A page opens with an H1 of its title
+  only when the name cannot hold it (it had to change, or was numbered) or when an
+  H1 of the notes would open the file: whichever of the two Notion's importer
+  takes for the title, and a read back takes the H1, no title is lost.
+- **Metadata**: no front matter, which Notion would show as text. The `bibtex`
+  fence comes first, as the zip import reads one only at a body's start, then
+  `DOI:`, `Authors:`, `Year:` and `Tags:` lines and the PDF's name. A divider
+  opening the file is `***`, which opens no front matter.
+- **Pages inside pages**: a `[[child]]` alone on a line stays there as a link,
+  and any other page inside gets a link line at the page's end. A database is
+  its table page: the table as pipes, its rows as sub-pages, their property lines
+  as text, and no CSV, which could not make relations and would duplicate.
+- **Links**: a mention of a page in the export is a relative `.md` link,
+  percent-encoded as Notion's own are; a mention of a block links its page;
+  one outside the export is its label. A block's label is its first line less
+  a list marker, or its page's title when that line has no words, as a code
+  block's or an image's has not.
+- **Images and other files**: an uploaded image goes in the page's directory
+  (`Paper/<sha>.png`), its `|300` size gone, and an image from the web stays at
+  its address. Handwriting is rendered as an SVG beside it, untried in Notion.
+  A PDF, a recording or any other file stays out, as Notion's
+  importer drops them, whatever `pdf` says: its name as text, a link if it has a
+  web address, and a warning. A recording has no name to give: it is its length
+  in bold, the word `audio` (`part 1`, `part 2` for several segments), then its
+  title.
+- **The switches** mean what they do in the Markdown export, and between them
+  decide what the zip holds beside the Markdown (`notionFiles` says it on the
+  card's summary and the preview's files row). With Highlights on, a highlight
+  is a quote with its `p. N`, then your note, and handwriting comes along;
+  off, the highlight's own text is a paragraph, and link regions, handwriting and
+  recordings go. Notes off leaves out the text of every block, and with it the
+  images and pictures, and keeps the quotes, handwriting and a recording's
+  length and `audio` line. Both off, a page is its title and paper record.
+- **Warnings** (the job's `warnings`, under each page's title): a file left out,
+  an image gone from storage, a file over the 5 MB of Notion's Free plan, a zip
+  over the 10,000 files the help page calls likely to fail, a text too long for
+  its marks and a page too deep to write.
+- **Limits of a page**: a text past 20,000 characters (`_LONGEST_MARKED`) keeps
+  its bold and other marks as typed, since `_MARK_RE` costs the square of the
+  length on delimiters left open; its code, formulas, images and links still
+  read, but for a link whose label holds a bracket. A link's title and a
+  `\( \)` are bounded in `_ATOM_RE` for the same reason, at 2,000 and 1,000
+  characters: past that each is typed text. A page nested too deep for the
+  pipeline, which recurses a level at a time, is left out (about 250 levels);
+  a link to it from another page is left pointing at no file, and an export
+  with no page left fails with the reason. Warnings reach a job's result only:
+  the download routes (the share view's, scripts') answer the file alone.
+
+Read straight back into Gamma the zip is **Plain**, having no ids: `Paper/` is a
+folder and not sub-pages, a plain block with children is a bullet, and what
+follows a heading nests under it. Titles and text come back, and
+`test_notion_export_return.py` pins all of this. A tree comes back only from
+Notion's own re-export, once Notion has given the pages ids.
+
+`notion_nfm.write(form="nfm")` and `read` speak Notion-flavored Markdown, the API's
+form, and `notion_nfm.Links` is the seam: `page` and `asset` answer a relative path
+here and would answer a Notion URL there. They are tested and nothing sends them:
+token, rate limiter, uploads and id map are not built
+([the API route](../research/notion-roundtrip.md#the-api-route)).
 
 ## Notes as a PDF document
 
@@ -2289,7 +2708,8 @@ whole and a parenthesis around an address stays text. The grammar lives in
 with a bar in the highlight's own colour and a `p. N` marker, and the
 Highlights/Notes switches mean exactly what they do in the Markdown export
 (drop highlights and a highlight block keeps its own writing as a plain
-bullet). A text box and a picture placed on a page have rules of their own
+note). A plain note is indented text, as on the page, and a list block keeps
+its own marker. A text box and a picture placed on a page have rules of their own
 ([text boxes](#text-boxes-in-the-exports), [pictures](#pictures-in-the-exports)).
 Links become real `/Link` annotations, page titles and headings
 become PDF bookmarks. Layout constants (A4, margins, sizes) live at the top of

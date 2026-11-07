@@ -628,10 +628,20 @@ def highlight_note_blocks(block, children_by_id) -> list[tuple[int, str, str]]:
     return out
 
 
+# A note that opens as a list item has the marker a popup's list would add.
+_LIST_ITEM_RE = re.compile(r"(?:[-*+]|\d{1,9}[.)])(?:[ \t]|$)")
+
+
+def nested_note_line(depth: int, text: str) -> str:
+    """A note ``depth`` under a highlight as a line of its popup's list: a
+    bullet, unless it is a list item already."""
+    return "  " * (depth - 1) + ("" if _LIST_ITEM_RE.match(text) else "- ") + text
+
+
 def popup_text(blocks) -> str:
     """``highlight_note_blocks`` as an annotation popup's text: the
-    highlight's own note, the notes under it as an indented bullet list."""
-    return "\n".join(md if not depth else "  " * (depth - 1) + "- " + md for depth, md, *_ in blocks)
+    highlight's own note, the notes under it as an indented list."""
+    return "\n".join(nested_note_line(depth, md) if depth else md for depth, md, *_ in blocks)
 
 
 def highlight_note_text(block, children_by_id) -> str:

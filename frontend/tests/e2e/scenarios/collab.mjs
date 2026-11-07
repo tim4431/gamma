@@ -9,7 +9,8 @@
 // keeping both people's keystrokes, a word taken back while a save waits
 // for its retry kept taken back through a tab switch, a two-batch paste
 // leaving the idle tab silent, typing kept through Recently deleted and a
-// restore, a highlight one person makes on the PDF showing up for the
+// restore, a merge losing the race to another merge keeping its text either
+// way round, a highlight one person makes on the PDF showing up for the
 // other, and a stroke one person is drawing showing on the other's page
 // before it is saved (ink-live), and going from it at once when undone
 // before its save.
@@ -276,7 +277,7 @@ export async function collabScenarios({ server, browser, alice, bob, makePdf, st
   await step("collab: undo takes back only alice's typing, never the text bob wrote in her note", async () => {
     const pg = await scratchPage("Undo with others", ["existing block"]);
     await editRow(A, "existing block");
-    await A.keyboard.press("Shift+Enter"); // a new note …
+    await A.keyboard.press("Enter"); // a new note …
     await A.keyboard.type("alice made this"); // … and typing in it
     await closeEditor(A);
     const texts = async () => (await pg.tree()).map((b) => b.content);
@@ -382,7 +383,7 @@ export async function collabScenarios({ server, browser, alice, bob, makePdf, st
     B.on("request", onRequest);
     const lines = Array.from({ length: 520 }, (_, i) => `- line ${i}`);
     await editRow(A, "paste here");
-    await A.keyboard.press("Shift+Enter");
+    await A.keyboard.press("Enter");
     await A.evaluate((text) => {
       const dt = new DataTransfer();
       dt.setData("text/plain", text);
@@ -412,6 +413,105 @@ export async function collabScenarios({ server, browser, alice, bob, makePdf, st
     await until(async () => (await pg.tree())[0]?.content === "bob types here before after", { what: "the waiting edit saved after the restore" });
     await until(async () => !(await B.$(".pageTrashedNotice")), { what: "the notice gone" });
     assertNoProblems(B);
+  });
+
+  await step("collab: two people's Backspace merges never lose a block's text, whichever lands first", async () => {
+    const atStart = async (p, text) => { await editRow(p, text); await p.keyboard.press("Control+Home"); };
+    const texts = async (pg) => (await pg.tree()).map((b) => b.content);
+    const stored = (pg, want) => until(async () => same(await texts(pg), want), { what: `the server holds ${JSON.stringify(want)}` });
+    const shown = (p, text) => until(async () => (await p.$$eval(".blockRow", (rows) => rows.map((r) => r.textContent))).some((t) => t.includes(text)), { what: `"${text}" on a row` });
+    const expected = [/ERR_INTERNET_DISCONNECTED|Failed to fetch|WebSocket|net::ERR|404/];
+    const racePage = async (title, ready) => {
+      const pg = await aliceT.api("/api/pages", { method: "POST", body: { title } });
+      await ready?.(pg.id);
+      const ops = ["one", "two", "three of bob's", "tail"].map((content, i) => ({ op: "insert", id: `${pg.id}${i}`, parent: pg.id, position: `a${i}`, content }));
+      await aliceT.api(`/api/pages/${pg.id}/ops`, { method: "POST", body: { client: "setup", ops } });
+      for (const p of [A, B]) {
+        await p.goto(`${server.base}/?page=${pg.id}&ws=${teamId}`);
+        await bodyHas(p, "three of bob's");
+      }
+      return { id: pg.id, tree: () => tree(aliceT, pg.id) };
+    };
+
+    // Alice's merge lands first and takes the block bob's would join: bob's
+    // is refused and his block stays, on the server and on his screen.
+    const refused = await racePage("Merge race, refused");
+    await ctxB.setOffline(true);
+    try {
+      await atStart(B, "three of bob's");
+      await B.keyboard.press("Backspace");
+      await shown(B, "twothree of bob's");
+      await closeEditor(B);
+      await atStart(A, "two");
+      await A.keyboard.press("Backspace");
+      await stored(refused, ["onetwo", "three of bob's", "tail"]);
+      await closeEditor(A);
+    } finally {
+      await ctxB.setOffline(false);
+    }
+    await until(async () => !(await B.textContent("body")).includes("twothree"), { what: "bob's refused join gone from his screen", timeout: 15000 });
+    await shown(B, "three of bob's");
+    await shown(B, "onetwo");
+    await stored(refused, ["onetwo", "three of bob's", "tail"]);
+
+    // The block he joined goes while he types in it offline, and his save is
+    // refused before the room tells him (his socket held back, as a socket
+    // still down is): his words bring it back, the merge behind it, the text
+    // joined once.
+    let socket = null, held = null;
+    const typed = await racePage("Merge race, typed", (id) => ctxB.routeWebSocket((url) => url.pathname === `/api/ws/page/${id}`, (ws) => {
+      socket = ws;
+      const server = ws.connectToServer();
+      ws.onMessage((m) => server.send(m));
+      server.onMessage((m) => (held ? held.push(m) : ws.send(m)));
+    }));
+    await ctxB.setOffline(true);
+    held = [];
+    try {
+      await atStart(B, "three of bob's");
+      await B.keyboard.press("Backspace");
+      await shown(B, "twothree of bob's");
+      await B.keyboard.type("words ");
+      await shown(B, "twowords three of bob's");
+      await closeEditor(B);
+      await aliceT.api(`/api/pages/${typed.id}/ops`, { method: "POST", body: { client: "setup", ops: [{ op: "delete", id: `${typed.id}1` }] } });
+      await stored(typed, ["one", "three of bob's", "tail"]);
+    } finally {
+      await ctxB.setOffline(false);
+    }
+    await stored(typed, ["one", "twowords three of bob's", "tail"]);
+    for (const m of held) socket.send(m);
+    held = null;
+    await shown(A, "twowords three of bob's");
+    await shown(B, "twowords three of bob's");
+
+    // Bob's merge lands first and fills the block alice's takes: hers joins
+    // what his stored, the answer brings it to her screen.
+    const joined = await racePage("Merge race, joined");
+    await ctxA.setOffline(true);
+    try {
+      await atStart(A, "two");
+      await A.keyboard.press("Backspace");
+      await shown(A, "onetwo");
+      await closeEditor(A);
+      await atStart(B, "three of bob's");
+      await B.keyboard.press("Backspace");
+      await stored(joined, ["one", "twothree of bob's", "tail"]);
+      await closeEditor(B);
+    } finally {
+      await ctxA.setOffline(false);
+    }
+    await stored(joined, ["onetwothree of bob's", "tail"]);
+    await shown(A, "onetwothree of bob's");
+    await shown(B, "onetwothree of bob's");
+
+    // One undo step, as without a race: the block she merged comes back, and
+    // nothing bob wrote goes with the step.
+    await A.keyboard.press("Control+z");
+    await until(async () => (await texts(joined)).length === 3, { what: "alice's undo brings her block back" });
+    const after = (await texts(joined)).join("|");
+    assert(after.includes("two") && after.includes("three of bob's") && after.endsWith("tail"), `after the undo: ${after}`);
+    assertNoProblems(A, expected); assertNoProblems(B, expected);
   });
 
   let sharedPaperId = null;   // the paper both tabs are left on, for the ink-live step
