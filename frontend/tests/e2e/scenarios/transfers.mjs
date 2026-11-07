@@ -985,12 +985,12 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
     try {
       await page.waitForSelector(".folderNewBtn");
       const dialog = await openDialog(page, "Import");
-      await choice(dialog, "Markdown notes").click();
+      await choice(dialog, "Notion pages").click();
       assert((await dialog.innerText()).includes("Markdown & CSV or HTML"), "the card names both of Notion's exports");
       const chooser = page.waitForEvent("filechooser");
-      await choice(dialog, "Choose file…").click();
+      await choice(dialog, "Choose .zip…").click();
       await (await chooser).setFiles(zip);
-      const review = page.getByRole("dialog", { name: "Review Markdown import", exact: true });
+      const review = page.getByRole("dialog", { name: "Review Notion import", exact: true });
       await review.getByRole("checkbox", { name: "Import Grandchild A1 — Unicode 中文", exact: true }).waitFor({ timeout: 15000 });
       await choice(review, "Import to library").click();
       const report = page.getByRole("dialog", { name: "Import complete", exact: true });
@@ -1189,9 +1189,9 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
       assert(await choice(dialog, "On the page").isDisabled(), "the notes' place waits on the Notes switch");
       await choice(dialog, "Close Export").click();
       dialog = await openDialog(page, "Import");
-      assertEq(await dialog.getByRole("group", { name: "Import from" }).getByRole("button").count(), 7);
+      assertEq(await dialog.getByRole("group", { name: "Import from" }).getByRole("button").count(), 8);
       assertEq(await choice(dialog, "Annotations in this PDF").getAttribute("aria-pressed"), "true");
-      for (const [type, count] of [["This paper", 2], ["Notes", 3], ["Library", 2]]) {
+      for (const [type, count] of [["This paper", 2], ["Notes", 4], ["Library", 2]]) {
         assertEq(await dialog.getByRole("group", { name: `${type} choices`, exact: true }).getByRole("button").count(), count);
       }
       if (flags.keep) await page.screenshot({ animations: "disabled", path: `${server.dir}/import-sources.png` });
@@ -1207,6 +1207,11 @@ with zipfile.ZipFile(sys.argv[2], 'w') as z:
       const markdownChooser = page.waitForEvent("filechooser");
       await choice(dialog, "Markdown notes").dblclick();
       assertEq(await (await markdownChooser).element().getAttribute("accept"), ".md,.markdown,.zip,text/markdown,application/zip");
+      await dialog.waitFor({ state: "detached" });
+      dialog = await openDialog(page, "Import");
+      const notionChooser = page.waitForEvent("filechooser");
+      await choice(dialog, "Notion pages").dblclick();
+      assertEq(await (await notionChooser).element().getAttribute("accept"), ".zip,application/zip");
       await dialog.waitFor({ state: "detached" });
       dialog = await openDialog(page, "Import");
       await choice(dialog, "Zotero library").click();

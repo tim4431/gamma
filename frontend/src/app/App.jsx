@@ -7135,7 +7135,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       importEmbeddedAnnots(focusedBlockId, docId, false, o.strip);
       return;
     }
-    if (["zotero", "markdown", "gamma", "notability", "goodnotes"].includes(o.source)) {
+    if (["zotero", "markdown", "notion", "gamma", "notability", "goodnotes"].includes(o.source)) {
       const review = (file) => setImportReview({ source: o.source, file, strip: o.strip,
         folder: homeMode && folderFilter ? folderFilter : "" });
       const { label, accept, multiple } = importSource(o.source);
@@ -11458,7 +11458,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             icon={ImportIcon}
             data-guide="view.import"
             onClick={() => { setOpenPopover(null); setImportOpen(true); }}
-            title={t("Bring in notes and highlights: a Zotero library, Notability notes, GoodNotes notebooks, Markdown, a Logseq export, a Gamma export, or the annotations saved inside this PDF")}
+            title={t("Bring in notes and highlights: a Zotero library, Notability notes, GoodNotes notebooks, Notion pages, Markdown, a Logseq export, a Gamma export, or the annotations saved inside this PDF")}
           >{t("Import…")}</MenuItem>
         ),
       ],

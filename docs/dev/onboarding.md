@@ -968,7 +968,7 @@ where the thing happens:
 | `recording.stopped` `{id}`, `recording.played` `{id}` | App: the recorder's `onDone` once a recording is saved, and `playRecording` once its playback starts |
 | `search.results` `{pdf}`, `search.filtered` `{kind}` | SearchPanel: a query's answers all came (`pdf`: some are text inside a PDF, this one's or the library's), and a folder or label made a chip (`confirmLabel`) |
 | `comment.created` `{reply}` | `comments/useComments.js`'s `add`, once the server stored it (`reply`: in a thread that was there) |
-| `import.finished` `{source}` | `tasks/useAppJobs.js`'s `onJobFinished`: an import this tab started finished (`source`: an `IMPORT_SOURCES` id) |
+| `import.finished` `{source}` | `tasks/useAppJobs.js`'s `onJobFinished`: an import this tab started finished (`source`: the server's name for it, `FORMATS`' `endpoint` in `transfers/importApi.js`, which is the card's id but for Markdown's and Notion's `markdown-zip` and `markdown-file`) |
 | `page.fileReplaced` `{id}` | App's remote op apply, when the open page's PDF changed from one file to another elsewhere (a followed file on disk, another tab) |
 | `zotero.connected` | ZoteroAccountRow's `connected`, and ZoteroLinkDialog whenever it shows the account connected |
 | `zotero.linked` `{workspace}` | SettingsMirrors' `submitLink`, before the app switches to the linked workspace |

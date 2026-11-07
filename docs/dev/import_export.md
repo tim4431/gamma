@@ -217,13 +217,14 @@ The View menu's single "Import…" entry → `ImportDialog` in `transfers/Import
 export dialog's counterpart. Step one is a source card: annotations embedded
 in this PDF, a Logseq .pdf + .edn, a Zotero library (its export folder or a
 .zip of it), Markdown notes (one
-`.md` or a `.zip` such as a Notion export), Notability notes (one or more
+`.md` or a `.zip`), Notability notes (one or more
 `.note` files, or a `.zip` of them), GoodNotes notebooks (one or more
-`.goodnotes` files, or a `.zip` of them), or a Gamma export .zip. Double-click
+`.goodnotes` files, or a `.zip` of them), Notion pages (the `.zip` of a Notion
+export), or a Gamma export .zip. Double-click
 or Next confirms. Only Zotero gets a review step, its export guide.
 Annotations in this PDF imports at once, and it and Zotero (for the
 annotations inside its exported PDFs) send the strip preference above.
-Markdown, Notability, GoodNotes, Logseq and Gamma open the
+Markdown, Notability, GoodNotes, Notion, Logseq and Gamma open the
 file picker directly, with their preparation notes under the selected card.
 `resolveImport` in `transfers/transferFormats.js` decides both.
 The Notability and GoodNotes pickers take several files, which go up as one
@@ -238,7 +239,7 @@ one shared to the app from another app ([ipad.md "Opened files"](ipad.md#opened-
 [android.md](android.md) "Opened files"). The
 dialog is then titled with the file's name and asks which export it is.
 It offers only the sources that read an archive (`archive` in
-`resolveImport`: Zotero, Markdown, Notability, GoodNotes and Gamma). Its
+`resolveImport`: Zotero, Markdown, Notability, GoodNotes, Notion and Gamma). Its
 button is *Import*, and the file goes straight to that source's review
 with no picker. A `.note` or `.ntb` shared to the app skips the dialog and
 opens the Notability review, a `.goodnotes` the GoodNotes review.
@@ -460,9 +461,14 @@ import/export and render as diagrams in the frontend. The diagram toolbar can
 download SVG separately; backend PDF exports retain code-block output. See
 [diagrams.md](diagrams.md).
 
-`POST /api/import/markdown-zip` (Import dialog → "Markdown notes", pick a
-`.zip`; `gamma/markdown_zip_import.py`) turns a zip of `.md` files into one
-page per file. One logic covers a zipped Obsidian vault, Notion's Export →
+`POST /api/import/markdown-zip` (Import dialog → "Markdown notes" or "Notion
+pages", pick a `.zip`; `gamma/markdown_zip_import.py`) turns a zip of `.md`
+files into one page per file. For a `.zip` the two cards differ only in their
+text (`IMPORT_SOURCES` in `transfers/transferFormats.js`) and the review's
+title (`FORMATS` in `transfers/importApi.js`), and only Markdown's picker takes
+a `.md` as well: the server reads the zip's dialect, so a Notion export under
+Markdown notes reads the same. A review opened again from its job, which keeps
+the endpoint, is titled Markdown's. One logic covers a zipped Obsidian vault, Notion's Export →
 "Markdown & CSV" or HTML (with subpages), Gamma's own Markdown export and any
 zipped folder of notes, as stages of `ZipRun`
 (the survey behind the Obsidian mapping: [docs/research/obsidian.md](../research/obsidian.md)).

@@ -1211,7 +1211,7 @@ The scenarios live in `tests/e2e/scenarios/`:
   top's folder; the search panel's folder chip keeps a hit inside a page
   inside; a page inside's Page properties show "Inside page" under Filing,
   whose Open page opens the parent; a Notion "Markdown & CSV" zip imported
-  into a folder is reviewed with each page under its parent and comes in
+  through the Notion pages card into a folder is reviewed with each page under its parent and comes in
   as a page tree, a database's rows inside its page, only its top pages
   filed and no folder made for its directories; a page's export offers
   "Include pages inside" off by default (Gamma gets a review step for it),
