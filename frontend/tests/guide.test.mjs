@@ -557,8 +557,8 @@ test("the October hints come after their moment and retire when the feature is f
   assert.equal(offered("new-chat", at("chat.archived", { discard: true })), false, "the Alt+click user knows already");
   assert.equal(offered("pdf-switch", at("chat.sent", { pdf: true })), true);
   assert.equal(offered("pdf-switch", at("chat.sent", { pdf: false })), false, "text only: nothing to say");
-  assert.equal(offered("new-note-key", at("note.lineBreak"), { enterNewNote: false }), true);
-  assert.equal(offered("new-note-key", at("note.lineBreak"), { enterNewNote: true }), false, "Enter already makes notes here");
+  assert.equal(offered("new-note-key", at("note.lineBreak"), { enterNewBlock: false }), true);
+  assert.equal(offered("new-note-key", at("note.lineBreak"), { enterNewBlock: true }), false, "Enter already makes notes here");
   assert.equal(retiresOffer(TOURS["new-note-key"], at("block.created")), true);
   assert.equal(offered("objects", at("object.selected", { kind: "image" }), { touch: true }), false, "a long press there, not a right-click");
   const palette = TOURS["command-palette"];

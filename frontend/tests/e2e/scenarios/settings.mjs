@@ -5,6 +5,7 @@ import http from "node:http";
 import path from "node:path";
 import { TOPBAR } from "../../../src/app/topbarItems.js";
 import { VIEWER_TOOLS } from "../../../src/app/viewerToolItems.js";
+import { closeEditor, editRow, newPageViaUi, same, tree } from "./notes.mjs";
 
 export async function settingsScenarios(env) {
   const { server, browser, step, openPage, assert, assertEq, assertNoProblems, until, sleep, flags } = env;
@@ -823,7 +824,7 @@ export async function settingsScenarios(env) {
       await until(() => sync("Built in").then((v) => v === "syncing"));
       assertEq(await sync("Shortcuts"), "saved");
       await until(() => sync("Built in").then((v) => v === "saved"));
-      assertEq((await user.api("/api/prefs/profile")).value?.enterNewNote, false);
+      assertEq((await user.api("/api/prefs/profile")).value?.enterNewBlock, false);
       await nav(page, "Appearance").click();
       assertEq(await sync("Theme"), "saved");
       // the top bar's buttons are an account preference shown under Appearance
@@ -834,9 +835,122 @@ export async function settingsScenarios(env) {
       await until(async () => (await user.api("/api/prefs/profile")).value?.topbar?.modes?.sync === "auto");
       await nav(page, "Keyboard").click();
       await row(page, "Enter makes").getByRole("button", { name: "New note", exact: true }).click();
-      await until(async () => (await user.api("/api/prefs/profile")).value?.enterNewNote === true);
+      await until(async () => (await user.api("/api/prefs/profile")).value?.enterNewBlock === true);
       assertNoProblems(page);
     } finally { await ctx.close(); }
+  });
+
+  await step("settings: Enter moved every account to a new block once: what the old preference holds is not read, and a choice made since stays and syncs", async () => {
+    await server.manage("create-user", "enter-mover", "enter-mover-pw");
+    const mover = await new Account(server, "enter-mover", "enter-mover-pw").login();
+    const profile = () => mover.api("/api/prefs/profile");
+    const stored = (page, key) => page.evaluate((key) => localStorage.getItem(key), key);
+    const enterMakes = (page, name) => row(page, "Enter makes").getByRole("button", { name, exact: true });
+    const keyboard = async (page) => {
+      await openSettings(page);
+      await nav(page, "Keyboard").click();
+    };
+    let id;
+    const treeIs = (lines, what) => until(async () => same(await tree(mover, id), lines.map((content) => ({ content, children: [] }))), { what });
+    // A browser from before: the old key's off, nothing under the new one.
+    const contexts = [];
+    const oldBrowser = async (account) => {
+      const ctx = await (account ? account.context(browser) : browser.newContext());
+      contexts.push(ctx);
+      await ctx.addInitScript(() => { try { localStorage.setItem("gamma-enter-new-note", "0"); } catch {} });
+      const pushed = [];
+      ctx.on("request", (r) => { if (r.method() === "PATCH" && r.url().endsWith("/api/prefs/profile")) pushed.push(r.postDataJSON().set); });
+      return { ctx, pushed };
+    };
+    try {
+      // An account from before: its first load stored the whole profile, and off is the old entry's.
+      const first = await mover.context(browser);
+      contexts.push(first);
+      await openPage(first, `${server.base}/?ws=${mover.ws}`);
+      await until(async () => (await profile()).value?.enterNewBlock === true, { what: "the first load's profile" });
+      const { enterNewBlock: _, ...kept } = (await profile()).value;
+      await mover.api("/api/prefs/profile", { method: "PUT", body: { value: { ...kept, enterNewNote: false } } });
+
+      // Both old copies of off go unread: Enter makes a block, and the first load adds the new entry once.
+      const here = await oldBrowser(mover);
+      const pageA = await openPage(here.ctx, `${server.base}/?ws=${mover.ws}`);
+      id = await newPageViaUi(pageA, "Enter moved");
+      await pageA.keyboard.type("one");
+      await pageA.keyboard.press("Enter");
+      await pageA.keyboard.type("two");
+      await pageA.keyboard.press("Enter");
+      await pageA.keyboard.type("three");
+      await closeEditor(pageA);
+      await treeIs(["one", "two", "three"], "Enter made blocks");
+      await until(async () => (await profile()).value?.enterNewBlock === true, { what: "the new entry pushed" });
+      assertEq((await profile()).value.enterNewNote, false, "the old entry stays in the profile, unread");
+      assertEq(JSON.stringify(here.pushed.filter((set) => "enterNewBlock" in set).map((set) => set.enterNewBlock)), "[true]", "the first load pushed the new entry once");
+      await keyboard(pageA);
+      assertEq(await enterMakes(pageA, "New note").getAttribute("aria-pressed"), "true", "Settings shows the move");
+
+      // New line chosen here survives a reload.
+      await enterMakes(pageA, "New line").click();
+      await until(async () => (await profile()).value?.enterNewBlock === false, { what: "the choice saved" });
+      await pageA.reload();
+      await editRow(pageA, "one");
+      await pageA.keyboard.press("Enter");
+      await pageA.keyboard.type("line");
+      await closeEditor(pageA);
+      await treeIs(["one\nline", "two", "three"], "Enter broke the line after a reload");
+      assertEq((await profile()).value.enterNewBlock, false);
+      await keyboard(pageA);
+      assertEq(await enterMakes(pageA, "New line").getAttribute("aria-pressed"), "true", "the choice shows after a reload");
+
+      // A second old browser takes the choice from the server and writes nothing back.
+      const { updated_at: chosenAt } = await profile();
+      const there = await oldBrowser(mover);
+      const pageB = await openPage(there.ctx, pageA.url());
+      await until(async () => (await stored(pageB, "gamma-enter-new-block")) === "0", { what: "the server's choice replaced the default" });
+      await editRow(pageB, "two");
+      await pageB.keyboard.press("Enter");
+      await pageB.keyboard.type("line");
+      await closeEditor(pageB);
+      await treeIs(["one\nline", "two\nline", "three"], "Enter broke the line in the other browser");
+      await sleep(1500); // past a push's settling delay
+      const after = await profile();
+      assertEq(after.value.enterNewBlock, false, "nothing wrote the default back");
+      assertEq(after.updated_at, chosenAt, "the profile was not written");
+      assertEq(there.pushed.length, 0, "the other browser pushed nothing");
+
+      // New note chosen again reaches it on a pull (a wake pulls at most every 15 s).
+      await enterMakes(pageA, "New note").click();
+      await until(async () => (await profile()).value?.enterNewBlock === true, { what: "the second choice saved" });
+      await until(async () => {
+        await pageB.evaluate(() => window.dispatchEvent(new Event("focus")));
+        return (await stored(pageB, "gamma-enter-new-block")) === "1";
+      }, { timeout: 20000, every: 500, what: "the other browser's pull" });
+      await editRow(pageB, "three");
+      await pageB.keyboard.press("Enter");
+      await pageB.keyboard.type("four");
+      await closeEditor(pageB);
+      await treeIs(["one\nline", "two\nline", "three", "four"], "Enter made a block in the other browser");
+      assertEq(await stored(pageB, "gamma-enter-new-note"), "0", "the old key stays where it was");
+      assertNoProblems(pageA);
+      assertNoProblems(pageB);
+
+      // A guest's preferences live in its browser alone: the new key decides there too.
+      const guest = await oldBrowser();
+      const pageG = await openPage(guest.ctx, `${server.base}/`);
+      await pageG.click(".loginGuestBtn");
+      await newPageViaUi(pageG, "Guest page");
+      await pageG.keyboard.type("first");
+      await pageG.keyboard.press("Enter");
+      await pageG.keyboard.type("second");
+      await closeEditor(pageG);
+      await pageG.locator(".blockRow", { hasText: "second" }).waitFor();
+      assertEq(await pageG.locator(".blockRow", { hasText: "first" }).filter({ hasText: "second" }).count(), 0, "a guest's Enter makes a block");
+      await keyboard(pageG);
+      assertEq(await enterMakes(pageG, "New note").getAttribute("aria-pressed"), "true", "a guest's Settings shows New note");
+      assertEq(guest.pushed.length, 0, "a guest pushes no profile");
+      assertNoProblems(pageG);
+    } finally {
+      for (const ctx of contexts) await ctx.close();
+    }
   });
 
   await step("settings: the top bar's buttons hide into the account menu, open their panels from it, and come back with Reset", async () => {

@@ -713,7 +713,7 @@ export async function triggeredGuideScenarios(env) {
   await step("triggered guide: where Enter makes a new line, a line break in a note offers the key that makes a new one, and the editor keeps its caret", async () => {
     const pg = await user.api("/api/pages", { method: "POST", body: { title: "Enter page" } });
     await user.api("/api/blocks", { method: "POST", body: { parent_id: pg.id, content: "First thought" } });
-    await user.api("/api/prefs/profile", { method: "PATCH", body: { set: { enterNewNote: false } } });
+    await user.api("/api/prefs/profile", { method: "PATCH", body: { set: { enterNewBlock: false } } });
     const { ctx, page } = await open(`&page=${pg.id}`, { offers: ["new-note-key"] });
     try {
       await editRow(page, "First thought");
@@ -728,7 +728,7 @@ export async function triggeredGuideScenarios(env) {
       assertNoProblems(page);
     } finally {
       await ctx.close();
-      await user.api("/api/prefs/profile", { method: "PATCH", body: { set: { enterNewNote: true } } });
+      await user.api("/api/prefs/profile", { method: "PATCH", body: { set: { enterNewBlock: true } } });
     }
   });
 

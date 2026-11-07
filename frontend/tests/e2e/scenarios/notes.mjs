@@ -1722,8 +1722,8 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     const { value: profile } = await alice.api("/api/prefs/profile");
     const ctxD = await alice.context(browser);
     try {
-      await alice.api("/api/prefs/profile", { method: "PUT", body: { value: { ...(profile || {}), enterNewNote: false } } });
-      await ctxD.addInitScript(() => { try { localStorage.setItem("gamma-enter-new-note", "0"); } catch {} });
+      await alice.api("/api/prefs/profile", { method: "PUT", body: { value: { ...(profile || {}), enterNewBlock: false } } });
+      await ctxD.addInitScript(() => { try { localStorage.setItem("gamma-enter-new-block", "0"); } catch {} });
       const p = await openPage(ctxD, `${server.base}/?ws=${alice.defaultWs}`);
       const id = await newPageViaUi(p, "Default ws page");
       await p.keyboard.type("hello");

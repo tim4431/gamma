@@ -23,7 +23,7 @@ export const newNoteKey = {
   id: "new-note-key",
   version: 1,
   hint: true,
-  requires: { enterNewNote: false, editable: true },
+  requires: { enterNewBlock: false, editable: true },
   trigger: { event: "note.lineBreak", doneOn: { event: "block.created" } },
   steps: [{ id: "new-note-key", anchor: "notes.editor", placement: "left",
     title: T("{key:Shift-Enter} starts a new note; {key:Tab} nests it under the one above.") }],

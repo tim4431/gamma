@@ -251,7 +251,7 @@ an amber **Tip** chip over one plain sentence that says why it helps, with
 | Working together | another account or a link visitor comes onto the page (`peer.joined`; your own second tab or the desktop app beside the browser is nobody else) | the avatar stack (a face marks their block), undo |
 | Shared workspaces | the account belongs to a shared workspace (state) | the account menu's switcher and card |
 | hint: math keys | the live formula preview comes up (`math.previewed`); version 2 since Tab, not Enter, accepts a suggestion | the preview: Tab accepts or jumps on, `\` looks up a symbol |
-| hint: new-note key | Enter breaks a line in a note with text in it (`note.lineBreak`), where Enter is set to make a new line (`enterNewNote: false`, Settings → Keyboard; a note is the default), unless a note was made already (`doneOn: block.created`) | the editor: Shift+Enter starts a note, Tab nests it |
+| hint: new-note key | Enter breaks a line in a note with text in it (`note.lineBreak`), where Enter is set to make a new line (`enterNewBlock: false`, Settings → Keyboard; a note is the default), unless a note was made already (`doneOn: block.created`) | the editor: Shift+Enter starts a note, Tab nests it |
 | hint: / menu | the / menu comes up (`slash.opened`) — like Add, opening it is the intent | the menu: `/eq`, `/red` |
 | hint: Paste as | the chooser comes up after a paste (`paste.offered`) | the chooser: a block link can be a live Synced block |
 | hint: mentions | the @ menu comes up (`mention.opened`) | the menu: a page, a person, `@fri 3pm` for a reminder (dates are English words; the Chinese copy says so) |
@@ -828,7 +828,7 @@ text / rectangle toggle), `guideAvailable`, `sharedWorkspace`, `shareTarget`
 desktop library — or `""`), `shareAudience`,
 `unfiledLibrary`, `emptyLibrary`, `growingLibrary`, `annotatedPage`,
 `notebookView`, `viewerTools`, `clonedWorkspace`, `installable`, `connectorHere`,
-`cloudLinkable`, `prefsChanged`, `enterNewNote` (Enter starts a note, the default: Settings →
+`cloudLinkable`, `prefsChanged`, `enterNewBlock` (Enter starts a note, the default: Settings →
 Keyboard), `unverifiedMeta` (the open paper's ⓘ shows its red !, the button on
 screen), `firstRunDone` (the first tour was done when this load's profile
 arrived), `guest` (a guest account: no Zotero link, assistant or Inbox),

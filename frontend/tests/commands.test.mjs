@@ -96,8 +96,9 @@ test("fixedKeys follows the Enter preference", () => {
   assert.deepEqual(fixedKeys(false)[0][0], ["Shift-Enter"]);
   assert.deepEqual(fixedKeys(true)[0][0], ["Enter"]);
   assert.deepEqual(fixedKeys(true)[1][0], ["Shift-Enter"]);
-  assert.equal(PREFS.enterNewNote.default, true, "Enter makes a new note unless the account says otherwise");
-  assert.equal(readProfile({ enterNewNote: false }).enterNewNote, false, "a stored choice stays");
+  assert.equal(PREFS.enterNewBlock.default, true, "Enter makes a new note unless the account says otherwise");
+  assert.equal(readProfile({ enterNewBlock: false }).enterNewBlock, false, "a stored choice stays");
+  assert.equal("enterNewBlock" in readProfile({ enterNewNote: false }), false, "the old preference's off is no choice");
 });
 
 test("fixedKeys names all that Backspace does", () => {

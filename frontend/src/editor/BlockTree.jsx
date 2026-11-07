@@ -688,7 +688,7 @@ const BlockRow = React.memo(function BlockRow({
   onEnterSibling,
   onNewBlock,
   onMergeAbove,
-  enterNewNote,
+  enterNewBlock,
   onAddChild,
   onPasteBlocks,
   onIndent,
@@ -1744,7 +1744,7 @@ const BlockRow = React.memo(function BlockRow({
                 }
                 // Which Enter starts a new note is a preference (Settings →
                 // Notes); the other one falls through to a plain line break.
-                const newNoteKey = enterNewNote ? !e.shiftKey : e.shiftKey;
+                const newNoteKey = enterNewBlock ? !e.shiftKey : e.shiftKey;
                 if (e.key === "Enter" && newNoteKey) {
                   e.preventDefault();
                   if (newBlockKey(commandContext())) guideEvents.emit("block.created");
@@ -1758,7 +1758,7 @@ const BlockRow = React.memo(function BlockRow({
                   const cursor = ta?.selectionStart;
                   // A line break in a note with text in it, where Enter is
                   // not the new-note key: the guide says which key is.
-                  if (!enterNewNote && ta?.value.trim()) guideEvents.emit("note.lineBreak");
+                  if (!enterNewBlock && ta?.value.trim()) guideEvents.emit("note.lineBreak");
                   const plan = ta && cursor === ta.selectionEnd ? enterPlan(ta.value, cursor) : null;
                   if (plan) {
                     e.preventDefault();

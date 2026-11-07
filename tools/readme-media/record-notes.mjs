@@ -50,7 +50,7 @@ await ctx.addInitScript(() => {
   try {
     localStorage.setItem('gamma-ui-scale', '1.3');
     // Enter = new block (Settings → Keyboard), the default, whatever this browser kept.
-    localStorage.setItem('gamma-enter-new-note', '1');
+    localStorage.setItem('gamma-enter-new-block', '1');
   } catch {}
 });
 await addCursor(ctx);

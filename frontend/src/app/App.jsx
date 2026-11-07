@@ -2858,7 +2858,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     translateEffort, setTranslateEffort, translateParallel, setTranslateParallel,
     translateSpeed, setTranslateSpeed, translateKeep, setTranslateKeep,
     searchDetailsHome, setSearchDetailsHome, searchDetailsPaper, setSearchDetailsPaper,
-    enterNewNote, setEnterNewNote, backlinksVisible, setBacklinksVisible,
+    enterNewBlock, setEnterNewBlock, backlinksVisible, setBacklinksVisible,
     keybindings, setKeybindings,
     statusBarVisible, setStatusBarVisible, suggestTours, setSuggestTours, tourProgress, setTourProgress,
     inboxSystemNotifications, setInboxSystemNotifications,
@@ -8376,7 +8376,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       editable: !readOnly,
       // which Enter starts a new note (Settings → Keyboard): the Shift+Enter
       // hint is for an account whose Enter breaks the line
-      enterNewNote: !!enterNewNote,
+      enterNewBlock: !!enterNewBlock,
       // the open paper's details are unverified (the ⓘ button's red "!"),
       // with the notes header that carries the button on screen
       unverifiedMeta: !!(focusedBlockId && !homeMode && pageMeta && metaSrc?.warn && !metaBusy)
@@ -10786,7 +10786,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   mergeOpen,
                   onMergeOpen: setMergeOpen,
                   mergeNav,
-                  enterNewNote,
+                  enterNewBlock,
                   // `above` inserts before `id` instead (the "+" handle with
                   // Alt held).
                   onEnterSibling: (id, { above = false } = {}) => {
@@ -13070,7 +13070,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setStatus,
           refreshQuota, // keep the storage meters in sync without a re-login
         }}
-        keyboard={{ keybindings, setKeybindings, enterNewNote, setEnterNewNote }}
+        keyboard={{ keybindings, setKeybindings, enterNewBlock, setEnterNewBlock }}
         library={{
           // the batch metadata lookup (a background job) uses the same
           // prompt/model/context prefs as the per-paper fetch in the
