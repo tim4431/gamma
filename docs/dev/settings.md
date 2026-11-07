@@ -6,7 +6,7 @@ Where every setting lives, and how the Settings dialog is built.
 
 | Layer | Storage | Examples |
 |---|---|---|
-| Per browser | `localStorage`, one `gamma-*` key per preference, all declared in `PREFS` ([frontend/src/app/prefDefs.js](../../frontend/src/app/prefDefs.js)) with scope `browser` — except `gamma-link-name`, the share view's display name for a visitor without an account, owned by `src/collaboration/linkName.js` because the fetch wrapper reads it outside React | what describes this device: the interface size (`gamma-ui-scale`, applied pre-paint by `index.html`), the status bar, the handwriting input rules, finger undo, the hover preview, the tool strip's eraser and lasso choices and, in the iPad app, what the Apple Pencil's gestures do and its haptics (`gamma-ink-*`: `gamma-ink-pen-only`, `gamma-ink-pen-writes-pdf`, `gamma-ink-pressure`, `gamma-ink-finger-undo`, `gamma-ink-hover-preview`, `gamma-ink-eraser`, `gamma-ink-eraser-size`, `gamma-ink-lasso`, `gamma-ink-lasso-pictures`, `gamma-ink-pencil-tap`, `gamma-ink-pencil-squeeze`, `gamma-ink-haptics`, the ruler's units `gamma-ink-ruler-units` and the zoom window's height `gamma-ink-zoom-height`; the presets themselves, `gamma-ink-tools`, and the Shapes tool's kind and fill are the account's), the style of new text boxes (`gamma-text-box-style`), whether Inbox items ring as system notifications (`gamma-inbox-notifications`, `inboxSystemNotifications`: the browser's permission is this device's; Settings → Appearance › Interface › Inbox notifications, [comments.md](comments.md) "The Inbox") and how a recording plays back (`gamma-replay-mode`, `gamma-replay-rate`, `gamma-replay-follow`; its lead-in `gamma-replay-lead-in` and the automatic transcript `gamma-recording-transcribe` are the account's), the metadata and translation model picks and dictation (they name this server's provider entries, like the chat model `gamma-chat-model`), whether a shown "Linked from" section is folded (`gamma-backlinks-collapsed`; whether it is shown at all is the account's `gamma-backlinks`) and whether a page's "N pages inside" section is (`gamma-sub-pages-collapsed`, `subPagesCollapsed`; it shows whenever the page has sub-pages, [home_library.md](home_library.md#sub-pages)); outside `PREFS`, diagnostics tracing (`gamma-debug-log`) |
+| Per browser | `localStorage`, one `gamma-*` key per preference, all declared in `PREFS` ([frontend/src/app/prefDefs.js](../../frontend/src/app/prefDefs.js)) with scope `browser` — except `gamma-link-name`, the share view's display name for a visitor without an account, owned by `src/collaboration/linkName.js` because the fetch wrapper reads it outside React | what describes this device: the interface size (`gamma-ui-scale`, applied pre-paint by `index.html`), the status bar, the handwriting input rules, finger undo, the hover preview, the tool strip's eraser and lasso choices and, in the iPad app, what the Apple Pencil's gestures do and its haptics (`gamma-ink-*`: `gamma-ink-pen-only`, `gamma-ink-pen-writes-pdf`, `gamma-ink-pressure`, `gamma-ink-finger-undo`, `gamma-ink-hover-preview`, `gamma-ink-eraser`, `gamma-ink-eraser-size`, `gamma-ink-lasso`, `gamma-ink-lasso-pictures`, `gamma-ink-pencil-tap`, `gamma-ink-pencil-squeeze`, `gamma-ink-haptics`, the ruler's units `gamma-ink-ruler-units` and the zoom window's height `gamma-ink-zoom-height`; the presets themselves, `gamma-ink-tools`, and the Shapes tool's kind and fill are the account's), the style of new text boxes (`gamma-text-box-style`), whether Inbox items ring as system notifications (`gamma-inbox-notifications`, `inboxSystemNotifications`: the browser's permission is this device's; Settings → Appearance › Interface › Inbox notifications, [comments.md](comments.md) "The Inbox") and how a recording plays back (`gamma-replay-mode`, `gamma-replay-rate`, `gamma-replay-follow`; its lead-in `gamma-replay-lead-in` and the automatic transcript `gamma-recording-transcribe` are the account's), the metadata and translation model picks and dictation (they name this server's provider entries, like the chat model `gamma-chat-model`), whether a shown "Linked from" section is folded (`gamma-backlinks-collapsed`; whether it is shown at all is the account's `gamma-backlinks`) and whether a page's "N pages inside" section is (`gamma-sub-pages-collapsed`, `subPagesCollapsed`; it shows whenever the page has sub-pages, [home_library.md](home_library.md#sub-pages)); outside `PREFS`, diagnostics tracing (`gamma-debug-log`) and the papers this browser left showing their translation (`gamma-translated:<user>@<workspace>`, `pdf/translateRecall.js`, [translation.md](translation.md#a-paper-opened-again)) |
 | Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache, and `gamma-profile-seen` keeps the profile as this browser last took it from an account or sent it, whichever account that was (which local value is this browser's own, "Reading & editing" below) | appearance (theme — the pre-paint script in `index.html` reads `gamma-theme`, resolves System to light or dark the way App.jsx's theme effect does and sets `data-theme` with its `data-scheme`, so the first frame has the right tokens ([ui-design.md](ui-design.md#tokens)) — flip page colors, the colour palette (`palette`, the swatches highlights, pens and text boxes offer), whether tours are suggested, `suggestTours`, and which tours the account has seen, `tourProgress`, written by the guide and shown nowhere, [onboarding.md](onboarding.md#storage)), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, smooth wheel scrolling, how search opens, how a replaced PDF's highlights are matched — `relocateMinMatch` and `relocateExactChars`, which the server's highlight run also reads from the profile as it starts ([highlight_relocation.md](highlight_relocation.md#the-thresholds)) — the handwriting habits `gamma-ink-draw-hold`, `gamma-ink-scribble-erase`, `gamma-ink-eraser-return` and `gamma-ink-eraser-filter`, the tool strip's presets `gamma-ink-tools`, and the Shapes tool's kind and fill `gamma-ink-shape-kind` and `gamma-ink-shape-fill`), translation (language, selection translation, effort, speed, parallel requests, whether translations are kept, `translateKeep`; the viewer's button is the strip's translate mode), the Enter key, library display and PDF fetching, the topbar's buttons and the viewer's side strip (`topbar`, `viewerTools`: their order, and where each item shows, [below](#bars-order-and-modes)), the strip's text highlighter's colour (`highlighterColor`: the last swatch picked for a text highlight, as a highlight stores it, set where it acts, [below](#bars-order-and-modes)), chat behaviour (tools switch, per-kind tool permissions, reasoning effort, speed, the login connection check, tool limits, snapshot clearing), context budgets, prompts, keyboard shortcuts (`keybindings`: command id → chord or null, [hotkeys.md](hotkeys.md)) |
 | Session only | React state, nothing stored | the Ctrl+scroll text size of the notes list and the chat transcript (`useTextScale` in [Widgets.jsx](../../frontend/src/shared/ui/Widgets.jsx)) — resets on reload |
 | Per account, synced | `/api/prefs/{key}` (small JSON KV: the account-wide keys in `users.db` `user_prefs`, the others in the workspace's `pages.db` `workspace_prefs`, [user_db.md](user_db.md)) | per account AND workspace, kept in that workspace and left out of its exports and backups: open tabs (`open-tabs`), the recently-viewed queue (`recent-views`), reading positions (`read-pos`) — they name one workspace's pages (pins are no pref: a pinned page or folder carries `properties.pinned` on its block, [home_library.md](home_library.md) "Pinned"); account-wide: active AI key (`ai-provider`) and the preference profile (`profile`, previous row). Server wins on load, localStorage (keyed `user@workspace`) is the instant-paint cache. The recents-card cover thumbnails are workspace data, through their own `/api/page-snaps` store (`page_snaps` in the workspace's `data.db` — over the prefs size cap) |
@@ -482,14 +482,21 @@ Preferences:
   home page and on a page (Full panel / Find bar).
 - **Language and Translation** (pane id `translation`,
   [SettingsTranslation.jsx](../../frontend/src/settings/SettingsTranslation.jsx)),
-  in four sections. **Language**: the interface language (a `MenuSelect`:
-  System / English / 中文, [i18n.md](i18n.md)). **Viewer & selection**: the viewer's
+  in five sections. **Language**: the Interface language row (a `MenuSelect`:
+  System / English / 中文, [i18n.md](i18n.md)), named apart from the
+  translation's language. **Viewer & selection**: the viewer's
   Translation button (the strip's translate mode in `viewerTools`: on, the
-  button is on the strip; off, a row of its ⋯ menu, [below](#bars-order-and-modes)), the
-  language (`translateLang`; with none stored, the first of the browser's
+  button is on the strip; off, a row of its ⋯ menu that opens the button's
+  menu, [below](#bars-order-and-modes)), Translate into
+  (`translateLang`, also a flyout of the translate button's menu; with none
+  stored, the first of the browser's
   languages on offer — `defaultTranslateLang` in `app/prefDefs.js`, en-* →
   English — else Simplified Chinese), the selection popup's translate button
-  and translate-on-select. **Service** (the account's tag, for Keep
+  and translate-on-select. Each row's hint says what tells it apart, since
+  its tooltip is out of reach on touch: "Translate with" says a chat model
+  reads the paper first and keeps its terms while a service is quick and
+  needs no AI, and Keep translations says a paper translated again needs no
+  AI call. **Service** (the account's tag, for Keep
   translations; the services' keys are the account's too, kept on the
   server): "Translate with" (a chat model or a set-up translation service;
   a browser pref, tagged on its row), the Microsoft (free) row with only
@@ -497,17 +504,36 @@ Preferences:
   remove. Then **Keep translations** (`translateKeep`, default on, sent as
   `keep` with every translation and brief request: the server keeps a
   stored PDF's translations and its brief in the workspace,
-  [translation.md](translation.md) "Kept translations") and **Kept in this
+  [translation.md](translation.md) "Kept translations"; a paper this
+  browser left showing its translation opens translated from them, "A paper
+  opened again". Off, or for a viewer of the workspace, nothing is kept, so
+  a paper translated then opens in the original) and **Kept in this
   workspace**, a line from `GET /api/translations/stats` ("N paragraphs in
   M documents (size)", or "Nothing kept yet") with Clear
   (`DELETE /api/translations`, asked first in a confirm dialog, then the
   viewer drops what it shows of them; hidden for a viewer of the
-  workspace, disabled while nothing is kept). The pane
-  reads `/translate/engines` and `/translations/stats`
-  ([below](#what-a-pane-reads)). **Speed**: translation effort (Default
+  workspace, disabled while nothing is kept). **Glossary** (no scope tag:
+  the terms are the workspace's, kept on the server in its pages.db,
+  [translation.md](translation.md) "The glossary"): a line on what the terms
+  do, then a row per term of the language Translate into names (`aiProvRow`,
+  the term over its translation and who added it), from `GET
+  /api/translate/terms?lang=`. A writer of the workspace has the section's
+  **Add term** (disabled at 500 terms) and each row's Edit and delete; both
+  open one `SubDialog` with Term and Translation fields (100 characters
+  each; the Term's hint says case does not matter but in an acronym such as
+  LED, which matches in capitals only). A refusal shows in the dialog in the
+  interface's language (`translateClient.termRefusal`: the term there
+  already, the language full). A reader sees the rows alone. The selection translator's Add to
+  glossary writes the same table. The pane
+  reads `/translate/engines`, `/translations/stats` and the glossary of the
+  target language (`termsOf(lang)` in `settingsReads.js`; the dialog's `who`
+  carries the language) ([below](#what-a-pane-reads)). **Speed**: translation effort (Default
   asks for the model's lowest level; hidden while a translation service is
-  picked, or with no AI connection), translation speed (Default / flex /
-  fast, also hidden for services), and parallel requests. `translateSpeed`
+  picked, or with no AI connection), translation speed (Default / Flex /
+  Fast, also hidden for services; the tiers' names are `SPEED_LABELS` in
+  `chat/modelPrefs.js`, which the chat's Default speed reads too), and
+  parallel requests (1 to `TRANSLATE_PARALLEL_MAX`, the input's `max` and
+  its hint's number). `translateSpeed`
   syncs with the account independently of chat speed; unsupported tiers use
   the provider's usual routing.
 - **Keyboard** ([SettingsKeyboard.jsx](../../frontend/src/settings/SettingsKeyboard.jsx),
@@ -891,7 +917,9 @@ again, unless it was edited since.
 
 `PANE_READS` names each pane's reads, in the order they go out: what the
 top of the pane shows first, since the browser keeps six requests in
-flight to the server. A read may lead to others once it lands (Backups: each
+flight to the server. A pane's reads are worked out from `who` (an
+administrator, signed in, the translation's target language for the
+glossary's path). A read may lead to others once it lands (Backups: each
 workspace's snapshots), and one marked `later` (the server log, the account
 pickers' directory, the Users pane's invitations, the Account pane's Zotero
 connection) goes out with the rest without being waited for. They
@@ -1013,9 +1041,9 @@ highlighter, or Turn off the text highlighter; Translate's
 current action; Paper of this page; Notes view; Toggle selection mode;
 then Customize…. A row closes the menu. Translate hidden is how the
 translate button is turned off, so there is no separate translate switch:
-Translation › Viewer & selection › Translation button sets the same mode
-(on, always; off, hidden), and `SECTION_PREFS` lists `viewerTools` under
-both sections.
+Language and Translation › Viewer & selection › Translation button sets
+the same mode (on, always; off, hidden), and `SECTION_PREFS` lists
+`viewerTools` under both sections.
 
 **The text highlighter.** Its button toggles App's `highlighterOn`
 (session state, like the rectangle mode) and draws its colour as a bar

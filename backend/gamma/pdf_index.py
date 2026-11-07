@@ -17,6 +17,7 @@ import sqlite3
 from contextlib import contextmanager
 
 from . import pdf_meta, translate_store
+from .blocks_store import attachment_file, load_props, page_attachment
 from .db import connect_data_db, page_now
 from .logbuf import log
 from .textnorm import INDEX_VERSION
@@ -117,16 +118,28 @@ def drop_docs(conn: sqlite3.Connection, doc_ids) -> None:
         conn.execute("DELETE FROM pdf_fts_docs WHERE doc_id = ?", (doc_id,))
 
 
+def _live_docs(pages_conn: sqlite3.Connection) -> set:
+    """The stored papers the workspace's blocks carry, Recently deleted
+    included: by ``doc_id``, or by the upload address alone, which is all a
+    duplicated page holds (``attachment_file``)."""
+    live = {r[0] for r in pages_conn.execute(
+        "SELECT DISTINCT doc_id FROM unified_blocks WHERE doc_id IS NOT NULL")}
+    for row in pages_conn.execute("""SELECT properties FROM unified_blocks WHERE instr(properties, '"source_url"')"""):
+        live.add(attachment_file(page_attachment(load_props(row[0]))))
+    live.discard("")
+    return live
+
+
 def purge_unused(ws: str, pages_conn: sqlite3.Connection) -> None:
     """Sweep data.db after a PDF may have left the workspace (a page deleted
     for good, a block carrying a PDF deleted, a PDF detached, a restore):
     the index rows, the manifests and the kept translations of papers no
-    block carries any more — nothing else cleans them up. Costs a scan of
-    the ``doc_id`` index, so callers run it only when a PDF may have gone.
+    block carries any more (``_live_docs``) — nothing else cleans them up.
+    Reads every block's properties, so callers run it only when a PDF may
+    have gone, and once for a pass over many pages (``trash._swept_after``).
     Never raises (derived data)."""
     try:
-        live = {r[0] for r in pages_conn.execute(
-            "SELECT DISTINCT doc_id FROM unified_blocks WHERE doc_id IS NOT NULL")}
+        live = _live_docs(pages_conn)
         with connect_data_db(ws) as conn:
             ensure_schema(conn)
             drop_docs(conn, [r[0] for r in conn.execute("SELECT doc_id FROM pdf_fts_docs") if r[0] not in live])

@@ -1,6 +1,6 @@
 // Formula detection for the PDF translated view: which runs of a line are
 // math, merged into spans the model sees as {v1}, {v2}… and the overlay draws
-// back as crops of the page (pdf/PdfViewer.jsx TransMath). Pure, like
+// back as crops of the page (pdf/TransOverlay.jsx TransMath). Pure, like
 // pdf/pdfTranslate.js, which calls it per line of a block.
 // docs/dev/translation.md "Formulas" describes the rules.
 //
@@ -49,6 +49,24 @@ const ITALIC_FONT = /ital|oblique|^CMTI|^CMMI/i;
 // for another code page ("AdvOTdd3b7348.I+03", the Greek): case matters.
 const ITALIC_SUFFIX = /-?It$|-I$|\.B?I(\+\d+)?$/;
 const isItalic = (f) => ITALIC_FONT.test(f) || ITALIC_SUFFIX.test(f);
+// The weight and slant of a text face, for a block set whole in one
+// (pdf/pdfTranslate.js). Bold has its word in most names, with heavier ones
+// beside it, Nimbus's "Medi" ("GraphikNaturel-Medium" is no bold), and
+// Helvetica Neue's and AIP's short forms ("…-Bd", "AdvOT19ee2aa8.B"); TeX's
+// families say it in their letters, as Computer Modern and cm-super's Type 1
+// names do: BX, B and SSBX; SX is the sans. Those slant by theirs too: TI,
+// SL and SI, and the bold BI, BL and SO. A slant's short form takes its capital
+// (Nimbus's "-ReguItal", URW's "-Ital") or it would read "DS-Digital" and
+// "Capitalis". Apart from isItalic, which decides what goes to the model as a
+// formula: this reads a run that is text already, and marks a whole block.
+const BOLD_FACE = /bold|[-_,\s](?:demi(?!light)|heavy|black|blk|bd)|-medi(?:ital)?$|^CMB(?:X|\d)|^CMSSBX|^SF(?:BX|SX|BI|BL|SO)/i;
+const BOLD_SUFFIX = /\.BI?(\+\d+)?$/;
+const SLANTED_FACE = /italic|oblique|^CM(?:TI|MI|SL|SSI|BXTI|BXSL)|^SF(?:TI|SL|SI|BI|BL|SO)/i;
+const SHORT_ITALIC = /(?:^|[-_,\s]|[a-z])Ital|ITAL/;
+export function faceStyle(name) {
+  const f = (name || "").replace(/^[A-Z]{6}\+/, "");
+  return { bold: BOLD_FACE.test(f) || BOLD_SUFFIX.test(f), italic: SLANTED_FACE.test(f) || SHORT_ITALIC.test(f) || ITALIC_SUFFIX.test(f) };
+}
 // Words an italic run spells without being a variable: emphasis, "et al.".
 const ITALIC_WORDS = new Set(["a", "I", "an", "as", "at", "be", "by", "do", "et", "al", "go", "he", "if", "in", "is",
   "it", "me", "my", "no", "of", "on", "or", "so", "to", "up", "us", "we"]);
@@ -80,9 +98,7 @@ const UNMAPPED_CM = new RegExp(ADV_CM, "i");
 // An accent alone in its run: a hat, a tilde, a bar, a dot.
 const ACCENT = /^[\^~`\u00a8\u00af\u00b4\u02c6-\u02dd]+$/;
 
-function face(r) {
-  return String(r.face || "").replace(/^[A-Z]{6}\+/, "");
-}
+const face = (r) => r.face || "";
 
 // The edge characters are read off the run as extracted, so a run with a
 // space at that edge is no delimiter.

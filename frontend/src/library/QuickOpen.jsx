@@ -16,7 +16,7 @@
 // now, each {id, label, group, keyLabel, run} (docs/dev/hotkeys.md) —
 // filtered by the same matcher on the label and group, Enter runs the pick.
 
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { FolderIcon, LabelIcon, PlusIcon, SearchIcon, TerminalIcon } from "../shared/ui/Icons";
 import { commandIcon } from "../app/commandIcons.jsx";
 import { chordLabel } from "../shared/lib/hotkeys.js";
@@ -48,7 +48,9 @@ export default function QuickOpen({
   const canSearch = !!onSearch;
   const canCreate = !!onCreate;
 
-  useEffect(() => { if (open) { setQuery(prefix); setActive(0); } }, [open, prefix]);
+  // The box keeps the last query while closed: the prefix replaces it before
+  // the open palette paints, or a key typed at once would be undone.
+  useLayoutEffect(() => { if (open) { setQuery(prefix); setActive(0); } }, [open, prefix]);
   // Modal focus: autoFocus only runs at mount, and a page that finishes
   // loading right after Ctrl+P may focus its editor — the keystrokes meant
   // for the palette would land in the page. Pull focus back while open.

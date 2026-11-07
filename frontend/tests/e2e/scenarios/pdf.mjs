@@ -1190,14 +1190,14 @@ export async function pdfScenarios({ server, browser, alice, makePdf, step, unti
       await goTo(1);
       await button.click();
       await page.locator('[data-page="1"] .pdfTransPara').first().waitFor();
-      await page.getByRole("button", { name: "Hide translation", exact: true }).waitFor();
+      await page.getByRole("button", { name: "Show original", exact: true }).waitFor();
       // Page 2 isn't translated yet: the button offers to translate it.
       await goTo(2);
       await button.click();
       await page.locator('[data-page="2"] .pdfTransPara').first().waitFor();
       assert(requests.some((r) => r.texts.some((t) => t.includes("says hello"))), "page 2's text was sent");
       // On a translated page the button hides every page's translation.
-      await page.getByRole("button", { name: "Hide translation", exact: true }).click();
+      await page.getByRole("button", { name: "Show original", exact: true }).click();
       await page.getByRole("button", { name: "Show translation", exact: true }).waitFor();
       assertNoProblems(page);
     } finally {

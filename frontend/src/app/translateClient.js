@@ -1,8 +1,9 @@
 // App's side of the PDF translated view (docs/dev/translation.md): the
-// requests a job goes out as (each chunk, the paper's brief), forgetting a
-// document's translation, and following the jobs pdf/translateState.js runs
-// (app/translateFollow.js says what of them: a row per job, the reading
-// pill, how a job ended, the model hint).
+// requests a job goes out as (each chunk, the paper's brief), the lookup a
+// paper opened again is seeded from, forgetting a document's translation,
+// the workspace's glossary, and following the jobs pdf/translateState.js
+// runs (app/translateFollow.js says what of them: a row per job, the
+// reading pill, how a job ended, the model hint).
 import { useEffect, useRef, useState } from "react";
 import { API, apiJson, readNdjson } from "../shared/lib/utils";
 import { t } from "../shared/i18n/i18n.js";
@@ -13,7 +14,7 @@ import { createJobFollower } from "./translateFollow.js";
 // POST a translation request; throws on failure with the server's reason (a
 // 429 of the shared AI allowance says what to do), its HTTP `status` and
 // `retryAfter` (seconds: the account's AI calls are all in use), which
-// translatePlan.requestChunk reads to ask again.
+// translateJob.requestChunk reads to ask again.
 async function post(path, body, signal) {
   const res = await fetch(`${API}${path}`, {
     method: "POST",
@@ -41,7 +42,7 @@ const modelFields = ({ lang, model, effort, speed }) => ({ lang, model: model ||
 // a single provider call. The chunking, queueing and parallelism are the
 // job's (pdf/translateJob.js); a job keeps the requests it started with, so
 // its replies match the language and model its entries are kept under.
-// When it throws (`post`), the job asks again (translatePlan.requestChunk)
+// When it throws (`post`), the job asks again (translateJob.requestChunk)
 // and reports a request that still fails; the selection popup shows the
 // reason. `signal` is the job's AbortController: halting cancels the
 // requests still in flight.
@@ -94,13 +95,30 @@ export function briefRequest(settings) {
   };
 }
 
-// "Forget this translation" (the translate button's option menu) for the
-// document at `url`, whose stored PDF is `docId`, shown on page `pageId`:
-// the server forgets its kept translations and brief in every language and
-// model, and what it still had in memory (under the page, for a PDF opened
-// from its link without a stored copy); then the viewer drops the
-// document's entries, so the next click translates afresh.
-export async function forgetTranslation(url, docId, pageId, setStatus) {
+// The lookup of a paper's kept translations (POST /api/translations/lookup),
+// which the viewer seeds a paper this browser last left translated from
+// (translateState.seedPages): the page `pageId` names the paper, `texts` are
+// its units' texts as a job would send them, under the settings' language
+// and model. No model is asked and no AI provider is needed. Resolves to a
+// translation or null per text; throws as a chunk's request does.
+export function lookupRequest(settings) {
+  return async function translateLookup({ pageId, texts }, signal) {
+    const { lang, model } = modelFields(settings);
+    const res = await post("/translations/lookup", { page_id: pageId, lang, model, texts }, signal);
+    return (await res.json()).translations;
+  };
+}
+
+// "Forget this paper's translations" (the translate button's option menu,
+// once the reader confirms) for the document at `url`, whose stored PDF is
+// `docId`, shown on page `pageId`: the server forgets its kept translations
+// and brief in every language and model, for the whole workspace, and what
+// it still had in memory (under the page, for a PDF opened from its link
+// without a stored copy); then the viewer drops the document's entries, so
+// the next click translates afresh. This browser no longer counts the paper as
+// left translated (`recall`, pdf/translateRecall.js), so opening it again
+// looks nothing up.
+export async function forgetTranslation(url, docId, pageId, setStatus, recall = null) {
   const page = pageId ? `?page=${encodeURIComponent(pageId)}` : "";
   try {
     await apiJson(`${API}/translations/${encodeURIComponent(docId)}${page}`, { method: "DELETE" });
@@ -108,13 +126,14 @@ export async function forgetTranslation(url, docId, pageId, setStatus) {
     setStatus(t("Couldn't forget the translation: {message}", { message: err.message }));
     return;
   }
+  recall?.forget(docId);
   translateState.forget(url);
   setStatus(t("Translation forgotten"));
 }
 
 // Settings › Clear kept translations: the server forgets every translation
 // and brief the workspace keeps, and what it still had in memory; then the
-// viewer drops every document's entries, as "Forget this translation" drops
+// viewer drops every document's entries, as "Forget this paper's translations" drops
 // one's, so the next click translates afresh. Resolves to the server's
 // {removed}; throws as apiJson does, leaving the viewer as it was.
 export async function clearTranslations() {
@@ -122,6 +141,37 @@ export async function clearTranslations() {
   translateState.forgetAll();
   return res;
 }
+
+// The workspace's glossary in target language `lang` (/api/translate/terms,
+// docs/dev/translation.md "The glossary"): Settings › Glossary and the
+// selection translator's Add to glossary. Each change resolves to the
+// language's terms as the server then holds them ({terms, max, max_chars,
+// can_edit}); it throws as apiJson does, its message the reader's words for
+// a refusal (`termRefusal`). A changed term reaches no paragraph on screen:
+// those that use it are asked for again by Translate again, or once the
+// paper is read again.
+const termWrite = (method, body) => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+const refused = (source) => (err) => { throw Object.assign(new Error(termRefusal(err, source)), { status: err?.status }); };
+export const addTerm = (lang, source, target) => apiJson(`${API}/translate/terms`, termWrite("POST", { lang, source, target }))
+  .catch(refused(source));
+export const editTerm = (lang, was, source, target) => apiJson(`${API}/translate/terms`, termWrite("PUT", { lang, was, source, target }))
+  .catch(refused(source));
+
+// What a glossary write the server refused says, in the reader's language
+// (gamma/translate_terms.TermError): the term there already, the language
+// full (both 409, told apart by the server's words), the term edited gone
+// (404); anything else as the server said it.
+export function termRefusal(err, source = "") {
+  const message = err?.message || "";
+  if (err?.status === 409) {
+    return /already/.test(message) ? t("The glossary has “{term}” already", { term: source.trim() })
+      : t("The glossary is full in this language. Delete a term to add another.");
+  }
+  if (err?.status === 404) return t("That term is no longer in the glossary.");
+  return message || t("Couldn't add the term");
+}
+export const removeTerm = (lang, source) => apiJson(
+  `${API}/translate/terms?lang=${encodeURIComponent(lang)}&source=${encodeURIComponent(source)}`, { method: "DELETE" });
 
 // The session's end (logout, another account or workspace): the jobs stop,
 // their requests in flight aborted, and every document's translation goes
@@ -134,10 +184,10 @@ export function endTranslations() {
 
 // Follow the jobs of every document (app/translateFollow.js): `props` is
 // App's side at each render, which the follower reads when a job changes —
-// `screenUrl` (the PDF on screen), `langLabel`, `postPill`, `addTask`,
-// `updateTask`, `setStatus`, `retry`, `followsChat`, `openSettings`,
-// `exportsTranslation`, `openExport` and `statusFree`, as createJobFollower
-// takes them.
+// `screenUrl` (the PDF on screen), `title`, `langLabel`, `postPill`,
+// `addTask`, `updateTask`, `setStatus`, `retry`, `rerun`,
+// `translateReferences`, `followsChat`, `openSettings`, `exportsTranslation`,
+// `openExport` and `statusFree`, as createJobFollower takes them.
 export function useTranslateJobs(props) {
   const host = useRef(null);
   host.current = props;

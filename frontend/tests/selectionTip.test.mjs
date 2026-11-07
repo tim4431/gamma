@@ -21,6 +21,11 @@ test("the anchor: an area at its tip, a mouse selection at its release point, an
   assert.deepEqual(tipAnchor({ rect, point: { x: 480, y: 138 } }),
     { top: 138, bottom: 138, left: 480 - POINT_LEFT, gap: POINT_GAP });
   assert.deepEqual(tipAnchor({ rect, point: null }), { top: 100, bottom: 140, left: 200, gap: RECT_GAP });
+  // A pen's or a finger's selection in a translation: under the reflowed text
+  // selected (the second part of a paragraph a column break cut, in the right
+  // column), not under the original lines it keeps, which start in the left.
+  const shown = { top: 154, bottom: 166, left: 430, width: 120 };
+  assert.deepEqual(tipAnchor({ rect, shown, point: null }), { top: 154, bottom: 166, left: 430, gap: RECT_GAP });
 });
 
 test("placed from the point: below it and a little left, above it at the window's bottom, inside the window", () => {
@@ -69,15 +74,20 @@ test("a mouse selection's popup opens once the hand moves on from the release, a
   assert.equal(opened.length, 2, "dropped");
 });
 
-test("the PDF's text selection is one that starts in a text layer and is not collapsed", () => {
+test("the PDF's text selection is one that starts in a text layer, or has an end in a translation, and is not collapsed", () => {
   const layer = { closest: (s) => (s === ".textLayer" ? layer : null) };
   const note = { closest: () => null };
   const span = { nodeType: 1, closest: (s) => (s === ".textLayer" ? layer : null) };
+  const words = { nodeType: 1, closest: (s) => (s === ".pdfTransText" ? words : null) };
   const text = (parent) => ({ nodeType: 3, parentElement: parent });
-  const sel = (start, more = {}) => ({ isCollapsed: false, rangeCount: 1, getRangeAt: () => ({ startContainer: start }), ...more });
+  const sel = (start, more = {}) => ({ isCollapsed: false, rangeCount: 1, getRangeAt: () => ({ startContainer: start }),
+    anchorNode: start, focusNode: start, ...more });
   assert.equal(inTextLayer(sel(text(span))), true, "a text node in a page's span");
   assert.equal(inTextLayer(sel(span)), true, "an element of the layer");
   assert.equal(inTextLayer(sel(text(note))), false, "a note's text");
+  assert.equal(inTextLayer(sel(text(words))), true, "a translation's text");
+  assert.equal(inTextLayer(sel(text(words), { anchorNode: text(span) })), true, "a drag from the original into a translation");
+  assert.equal(inTextLayer(sel(text(note), { focusNode: text(words) })), true, "an end in a translation");
   assert.equal(inTextLayer(sel(text(span), { isCollapsed: true })), false, "a caret");
   assert.equal(inTextLayer(sel(text(span), { rangeCount: 0 })), false, "no range");
   assert.equal(inTextLayer(null), false, "no selection");

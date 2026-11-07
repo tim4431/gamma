@@ -203,8 +203,10 @@ function BibtexSteps({ url, folder }) {
 // `subPagesDirect` when it counts only those right inside it (resolveExport).
 // `onLeaveJob` lets the last step's breadcrumb walk back into the setup: the
 // job itself goes on in Background tasks, as closing the window would leave it.
-// `translated`: {pages, language} while the viewer shows the page's PDF
-// translated, which an annotated PDF of it writes (resolveExport), else null.
+// `translated`: {pages, language, counting} while the viewer shows the page's
+// PDF translated, which an annotated PDF of it writes (resolveExport), else
+// null. `busy`: the export cannot start yet (the translation is still being
+// read, or the last press is starting it).
 export function ExportDialog({ job, fetchJob, onDownload, onStop, onRetry, onLeaveJob, ...setup }) {
   const [resume, setResume] = React.useState(0);
   if (job) {
@@ -217,7 +219,7 @@ export function ExportDialog({ job, fetchJob, onDownload, onStop, onRetry, onLea
 }
 
 function ExportSetup({ opts, setOpts, hasPdf, pdfStored, hasMeta, pageId, folder, folderName, subPages = 0, subPagesDirect = false,
-  translated = null, startStep = 0, onCancel, onExport }) {
+  translated = null, busy = false, startStep = 0, onCancel, onExport }) {
   const [step, setStep] = React.useState(startStep);
   const context = { hasPdf, pdfStored, hasMeta, folder, subPages, subPagesDirect, translated };
   const resolved = resolveExport(opts, context);
@@ -247,11 +249,13 @@ function ExportSetup({ opts, setOpts, hasPdf, pdfStored, hasMeta, pageId, folder
   // Only the review step waits on the bibliography — nothing has been fetched
   // while the format cards are still up, so Next must not be held there.
   const bibNotReady = isBibtex && step === 1 && (bib.loading || !!bib.error || !entries.length);
+  // The host's wait holds the button only where it exports.
+  const waiting = busy && (step === 1 || !needsReview);
 
   return <TransferDialog title={folder ? t("Export “{folder}”", { folder: folderName }) : t("Export")} step={step} setStep={setStep}
     firstTitle={t("Choose a format")} secondTitle={t(definition.label)} needsReview={needsReview} onContinue={() => advance()}
     onCancel={onCancel} actionLabel={t("Export")} action={() => onExport(payload)} finalTitle={t("Export")}
-    secondaryAction={copyAction} wide={isBibtex && step === 1} busy={bibNotReady}>
+    secondaryAction={copyAction} wide={isBibtex && step === 1} busy={bibNotReady || waiting}>
     {step === 0 ? <>
       <FormatChoices label={t("Export format")} value={format} onChange={(format) => set({ format })} onConfirm={advance} options={formats} />
       {!needsReview ? <p className="reportModalHint">{summary}</p> : null}

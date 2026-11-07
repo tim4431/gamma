@@ -14,9 +14,9 @@ A **command** is declared once, as an object in one of two catalogs:
 
 - `id` — stable, `scope.name`; the account's overrides are keyed by it.
 - `label` / `group` — what the palette and the pane show (`t()` at module level, like any option list).
-- `keys` — the default chord, an array of them (`["Mod-y", "Mod-Shift-z"]`), or `null`: no keys until the account binds some, a palette entry meanwhile. Defaults are deliberately few: the keys Gamma always had (search, Ctrl+P, back, undo/redo, the formatting marks), plus Ctrl+Shift+P, F2, Delete, Ctrl+Shift+K, Ctrl+Shift+. (Toggle quote, GitHub's chord: it needs the open editor, so the palette cannot offer it), Ctrl+Shift+M (Comment on this note), Ctrl+, (settings, the convention everywhere), the ↑/↓ hop, and Ctrl+C / X / V / D / A on handwriting (the keys every editor gives copy, cut, paste, duplicate and select all; their `when` keeps them to the markup strip's selection and clipboard, so a note's editor and the browser keep theirs). F2 renames the page, or on the home library the one selected page. Delete is the file manager's key: it moves the pages selected on the home library to Recently deleted, after the confirmation, and the page menu shows it. Everything else (move, duplicate, new above, indent, fold, to-do, the view toggles, export, share…) starts unbound.
+- `keys` — the default chord, an array of them (`["Mod-y", "Mod-Shift-z"]`), or `null`: no keys until the account binds some, a palette entry meanwhile. Defaults are deliberately few: the keys Gamma always had (search, Ctrl+P, back, undo/redo, the formatting marks), plus Ctrl+Shift+P, F2, Delete, Ctrl+Shift+K, Ctrl+Shift+. (Toggle quote, GitHub's chord: it needs the open editor, so the palette cannot offer it), Ctrl+Shift+M (Comment on this note), Ctrl+, (settings, the convention everywhere), Ctrl+Shift+O (the PDF's translation shown or hidden, *The translation's commands* below), the ↑/↓ hop, and Ctrl+C / X / V / D / A on handwriting (the keys every editor gives copy, cut, paste, duplicate and select all; their `when` keeps them to the markup strip's selection and clipboard, so a note's editor and the browser keep theirs). F2 renames the page, or on the home library the one selected page. Delete is the file manager's key: it moves the pages selected on the home library to Recently deleted, after the confirmation, and the page menu shows it. Everything else (move, duplicate, new above, indent, fold, to-do, the view toggles, export, share…) starts unbound.
 - `scope` is the catalog the command sits in:
-  - [frontend/src/app/appCommands.js](../../frontend/src/app/appCommands.js) — the app commands, alive wherever focus is: search, the palettes, back, undo / redo, rename, share, metadata, page properties (the open page's read-only Properties popover, [ui-design.md](ui-design.md#the-properties-popover)), attach, the exports (the Export dialog preset to a format), download, import, new page, delete the selected pages, Recently deleted, show or hide chat / comments / PDF / notes, settings, report a problem, the PDF group's two held keys (*Held keys* below), and the Handwriting group — `ink.copy`, `ink.cut`, `ink.paste`, `ink.duplicate`, `ink.selectAll` — alive while the markup strip holds a selection or a tool ([handwriting.md](handwriting.md) "Copy, cut and paste"; their guards under *Widget keys* below).
+  - [frontend/src/app/appCommands.js](../../frontend/src/app/appCommands.js) — the app commands, alive wherever focus is: search, the palettes, back, undo / redo, rename, share, metadata, page properties (the open page's read-only Properties popover, [ui-design.md](ui-design.md#the-properties-popover)), attach, the exports (the Export dialog preset to a format), download, import, new page, delete the selected pages, Recently deleted, show or hide chat / comments / PDF / notes, settings, report a problem, the PDF group's translation commands and its two held keys (*The translation's commands* and *Held keys* below), and the Handwriting group — `ink.copy`, `ink.cut`, `ink.paste`, `ink.duplicate`, `ink.selectAll` — alive while the markup strip holds a selection or a tool ([handwriting.md](handwriting.md) "Copy, cut and paste"; their guards under *Widget keys* below).
   - [frontend/src/editor/blockCommands.js](../../frontend/src/editor/blockCommands.js) — the block commands, for a note whose editor is open: VSCode's line shortcuts with the block as the line (move, duplicate, delete line, new above, indent, fold, to-do, select), the hop to the neighbouring block on ↑ / ↓, Obsidian's formatting keys, Comment on this note (the block's thread popover, [comments.md](comments.md) "In the app"), and Block properties (unbound; the read-only Properties popover, [ui-design.md](ui-design.md#the-properties-popover)).
 - `when(ctx)` — applies only while this holds (a page is open, the block has children…).
 - `edits: true` — skipped on a read-only page (a share view, a viewer's workspace); the dispatcher and the palette check once, no handler repeats it. A block command without it (Comment on this note, Block properties) is offered there too.
@@ -46,7 +46,7 @@ The six surfaces read that catalog and nothing else:
 | Settings → Keyboard | everything, plus `fixed` and the conflicts | [settings/SettingsKeyboard.jsx](../../frontend/src/settings/SettingsKeyboard.jsx) |
 | the touch editing bar (block scope; its Undo / Redo call App's `undoBlocks`) | `label`, `when` (a button greys out, or a transient one hides), `run` | [editor/EditBar.jsx](../../frontend/src/editor/EditBar.jsx), given the row's `commandContext` ([ipad.md](ipad.md) "The editing bar") |
 | the selection toolbar (block scope: the formatting commands, over selected text) | `label`, the effective keys (in the titles), `state` (pressed or greyed out), `run` | [editor/SelectionToolbar.jsx](../../frontend/src/editor/SelectionToolbar.jsx), given the row's `commandContext` ([ui-design.md](ui-design.md#the-selection-toolbar)) |
-| a menu row (app scope: the View menu's Undo, Redo, Go to page, Command palette; the markup strip's More menu, `ink.paste` and `ink.selectAll`) | `label`, the effective keys, `when` (the row greys out), `run` | [app/CommandMenuItem.jsx](../../frontend/src/app/CommandMenuItem.jsx), given App's `appCmdRef` context ([ui-design.md](ui-design.md#menus-and-submenus)) |
+| a menu row (app scope: the View menu's Undo, Redo, Go to page, Command palette; the markup strip's More menu, `ink.paste` and `ink.selectAll`; the translate button's menu, the three `pdf.*` translation commands) | `label`, the effective keys, `when` (the row greys out), `run` | [app/CommandMenuItem.jsx](../../frontend/src/app/CommandMenuItem.jsx), given App's `appCmdRef` context ([ui-design.md](ui-design.md#menus-and-submenus)) |
 
 So a key, a palette entry, a bar or toolbar button, a menu row and the pane
 can never disagree.
@@ -92,6 +92,33 @@ The block context is `{ block, tree, row, editor, readOnly }`: `editor` is the o
 - **Ctrl+B / I / E / Shift+X / Shift+H / K** → `runToggleMark` / `runInsertLink` in [editor/markCommands.js](../../frontend/src/editor/markCommands.js). They are plain JS so node can load the catalog, and are swallowed inside math, fences and inline code. A system keyboard's or Format menu's `beforeinput` `formatBold`, `formatItalic` and `formatStrikeThrough` (the iPad keyboard's B and I) run `block.bold`, `block.italic` and `block.strike` in every `BlockCmEditor`.
 
 From the palette a block command runs on the **focused row** with `editor: null` (opening the palette closes any editor); `needsEditor` commands are left out there.
+
+## The translation's commands
+
+The PDF group holds what the translate button and its menu do
+([translation.md](translation.md#the-button)): `pdf.toggleTranslation`
+(Show or hide the translation, default Ctrl+Shift+O, ⇧⌘O on a Mac),
+`pdf.translatePage` and `pdf.translateDocument` (unbound). Their context
+is App's `translation`, null where the button does not apply (no PDF, the
+home library, a share view, the PDF closed or a phone's panel over it, where
+the strip is not shown either: the key would start a job on a viewer that is
+not on screen), else what the viewer reports (`pages`,
+`shown`, `running`, `current`, `docDone`) and the three actions. The toggle
+shows the original or the translation of every page; on a paper with
+nothing translated it translates the page being read, as the button's
+click does, and while a job runs with nothing shown yet it waits. The two
+that start a job wait for a running one, and each greys out when it has
+nothing to do: the page or every page translated already. The button's
+menu draws all three as `CommandMenuItem` rows, the toggle named for what
+it does now (Show original, Show translation) through the row's `label`.
+
+The key: Ctrl+Shift+T is the browser's (reopen a tab) and Alt is the peek's
+held key, so a chord with Alt would show the original as it is pressed.
+O is for the original. No command of either catalog and no shell (the
+desktop app's Ctrl+Shift+L and Ctrl+Shift+I, the iPad's and Android's
+Ctrl+Shift+L and Ctrl+Shift+B) uses it, and it is none of the chords a
+browser keeps for itself (*Rebinding* below), so Chrome's bookmark manager
+on Ctrl+Shift+O gives way to the page.
 
 ## Held keys
 

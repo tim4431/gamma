@@ -86,7 +86,12 @@ block) uses `--bg-selected`.
 - **One monospace stack**, `--font-mono`: code, raw math, key caps, cron
   fields, workspace folders. Bare `code`/`pre`/`kbd`/`samp` get it from a
   zero-specificity rule.
-- A component rule never names a font family; it uses one of the two tokens.
+- **One page face**, `--font-page`: the translated PDF page, nothing else. A
+  Latin serif with lining figures first (Times New Roman), so digits read as
+  digits beside formulas cropped from the page, then the serif CJK faces,
+  which `:lang()` rules in `tokens.css` pick for Traditional Chinese, Japanese
+  and Korean. It is set in the system's fonts, not bundled.
+- A component rule never names a font family; it uses one of the three tokens.
 - Counts, times and page numbers use `font-variant-numeric: tabular-nums`
   (the grouped rule under `body` in app.css), so they keep their width as
   the digits change.
@@ -421,7 +426,9 @@ click on a flyout's trigger opens it and never toggles it shut. A row that opens
 `SubMenuItem` — it renders its panel *inside* the parent menu's DOM (a
 portalled panel would sit outside the parent's outside-pointerdown test, and
 the parent would dismiss itself before a click on a flyout row could land),
-flips to the other side and clamps vertically when the viewport is tight.
+flips to the other side and clamps vertically when the viewport is tight,
+and with room on neither side (a phone's width) opens over its own menu,
+under its row and inside the window (`flyoutPlace` in placement.js).
 In the compact shell's More sheet a flyout opens inline under its row
 instead (`.phoneBottomBar .popover .ctxSubMenu`): beside it, the sheet's
 own scroll box would clip it. An open menu takes Escape first, on the
@@ -526,7 +533,10 @@ fails, with `disabledTitle` as its title then (the reason it does not
 apply). It runs the command with the context its key runs it with and
 then tells `onRun` (a menu that closes itself). Any other prop is the
 row's, and an id the catalog does not know renders nothing. The View menu's Undo, Redo, Go to page and
-Command palette are such rows: the way to them without a keyboard.
+Command palette are such rows: the way to them without a keyboard. So are
+the translate button's Translate this page, Translate whole document and
+its show-or-hide toggle, which `label` and `icon` name for what it does
+now (Show original, Show translation) while the key stays the command's.
 
 Submenus open on hover, and the hover-switching is guarded by
 [menuAim.js](../../frontend/src/shared/ui/menuAim.js): while a flyout is open, a
@@ -1035,8 +1045,10 @@ from it, and keeps its click and double-click from the row. Inside a
 `.rowMenuHost` it shows with its row (hover, `:focus-within`) where a
 pointer hovers, and always where none does (app.css). The library's list
 rows and cards, Select mode's selection, the chat history rows, the
-Properties popover's rows, and a picture's and a diagram's toolbar
-(`ObjectMenuButton` in `editor/MdObject.jsx`) carry one.
+Properties popover's rows, a picture's and a diagram's toolbar
+(`ObjectMenuButton` in `editor/MdObject.jsx`) and the PDF selection popup
+on a page that shows its translation (the paragraph's menu, round like the
+popup's other tools) carry one.
 
 ### Dock windows
 
@@ -1095,7 +1107,16 @@ own controls.
   (`viewer.selectMode`; the viewer tour's step for it requires the guide
   fact `touch`, [onboarding.md](onboarding.md)).
 - **Menus.** A highlight, its note badge, a link and the translate button
-  open their menus through `menuPress`.
+  open their menus through `menuPress`. A strip tool hidden in the ⋯ menu
+  keeps its menu: the Translate row opens the translate button's menu beside
+  itself rather than as a flyout, since that menu has a flyout of its own
+  (the language) and a menu's flyouts share one open state. A translated paragraph's menu
+  ([translation.md](translation.md#a-paragraphs-menu)) is the exception: a
+  hold on its text is the system's selection, so a mouse's right-click opens
+  it (one `onContextMenu` on the page, after the items' own), and a finger
+  or a pen reaches it through a visible way in, rule 1 under [Adding a
+  control](#adding-a-control): the selection popup's ⋯ (`MenuButton`), and
+  a failed paragraph's mark.
 - **A second finger** turns a one-finger gesture into a pinch: it cancels
   an area drag (`beginAreaDrag` takes the primary pointer only) as it
   cancels a finger's ink stroke ([handwriting.md](handwriting.md)).
@@ -1107,7 +1128,12 @@ own controls.
   the tip opens again where it is 350 ms after the scroll stops, as the
   system's own menu comes back. In the iPad app that menu is off over the
   PDF's text, since it opens where the tip does, and the tip carries Copy
-  in its place ([ipad.md](ipad.md#the-host-contract), `editMenu`).
+  in its place ([ipad.md](ipad.md#the-host-contract), `editMenu`). A
+  selection in a translation's text is the PDF's text too: a held finger or
+  a pen's drag selects it and the tip opens, for the original's blocks under
+  it ([translation.md](translation.md#selecting-translated-text)). No
+  `menuPress` sits on a translated paragraph: its hold is the selection's,
+  and the tip's ⋯ opens the paragraph's menu.
 - **When the tip shows.** A mouse selection released by its text waits
   for the mouse to move on (`MOVE_TO_SHOW`, 3 px, `pdf/selectionTip.js`),
   then opens where it was released: a double or triple click never has it

@@ -253,9 +253,10 @@ test("a page's annotated PDF says it writes the translation the viewer shows; no
   const translated = { pages: 3, language: "中文（简体）" };
   const all = resolveExport({ format: "pdf", highlights: true, notes: true, comments: false }, { ...paper, translated });
   assert.equal(exportSummary(all), "The PDF with highlight annotations and your notes in a column beside each page."
-    + " The translation into 中文（简体） shown on 3 pages of the PDF is written in place of their original text.");
+    + " The translation into 中文（简体） replaces the original text on 3 pages. To export the original, show it first with the translate button.");
   const one = resolveExport({ format: "pdf", highlights: false, notes: false, comments: false }, { ...paper, translated: { ...translated, pages: 1 } });
-  assert.equal(exportSummary(one), "The PDF as stored, with the translation into 中文（简体） shown on 1 page written in place of its original text. Nothing else is added.",
+  assert.equal(exportSummary(one), "The PDF as stored, with nothing else added. The translation into 中文（简体） replaces the original text on 1 page."
+    + " To export the original, show it first with the translate button.",
     "with every switch off it is no longer the file exactly as stored");
   // the switches, the payload and the job's body are those of the same export untranslated
   const plain = resolveExport({ format: "pdf", highlights: true, notes: true, comments: false }, paper);
@@ -265,7 +266,7 @@ test("a page's annotated PDF says it writes the translation the viewer shows; no
   assert.deepEqual(exportJobBody(all.payload, { pageId: "p1" }), exportJobBody(plain.payload, { pageId: "p1" }));
   // the pages inside come after it
   const inside = resolveExport({ format: "pdf", highlights: true, notes: false, subPages: true }, { ...paper, subPages: 2, translated });
-  assert.match(exportSummary(inside), /written in place of their original text\. The 2 pages inside it are exported with it\.$/);
+  assert.match(exportSummary(inside), /show it first with the translate button\. The 2 pages inside it are exported with it\.$/);
   // not for another format, a folder, a PDF the server does not store, or no page translated
   for (const [opts, context] of [
     [{ format: "notespdf", highlights: true, notes: true }, { ...paper, translated }],
@@ -280,4 +281,13 @@ test("a page's annotated PDF says it writes the translation the viewer shows; no
   }
   assert.equal(exportSummary(resolveExport({ format: "pdf", ...allOff }, { ...paper, translated: null })),
     "The PDF file exactly as stored, with nothing added.");
+});
+
+test("while the pages a paper keeps are read in, the summary names no number of pages", () => {
+  const counting = { pages: 2, language: "中文（简体）", counting: true };
+  const resolved = resolveExport({ format: "pdf", highlights: true, notes: false, comments: false }, { ...paper, translated: counting });
+  assert.equal(exportSummary(resolved), "The PDF with highlight annotations."
+    + " The translation into 中文（简体） replaces the original text on the pages it covers, which are being counted."
+    + " To export the original, show it first with the translate button.");
+  assert.doesNotMatch(exportSummary(resolved), /\b2 pages\b/);
 });

@@ -9,8 +9,9 @@ as the memory cache keys it, or ``engine:<id>`` for a machine-translation
 service. A paragraph is found by its source text's hash (``src_hash``), so
 a page segmented again finds its paragraphs whatever their order.
 
-Derived data, like the PDF text index beside it: no migration (the tables
-are made on first use, ``ensure_schema``), dropped with their document
+Derived data, like the PDF text index beside it, though it comes back only
+by paying a model again: no migration (the tables are made on first use,
+``ensure_schema``), dropped with their document
 (``purge``, from ``pdf_index.purge_unused``), and never the reason a
 translation fails: every function logs its own errors and carries on as if
 nothing were kept. routers/translate.py decides who writes (the request's
@@ -38,13 +39,14 @@ SCHEMA = (
 # hundred to a few thousand; past this many something is translating far
 # more than one paper's text under its id, and new rows are skipped.
 MAX_ROWS = 20000
-_CHUNK = 500      # source hashes per IN list
 _full: set = set()  # (ws, doc_id) already warned about MAX_ROWS in this process
 
-# A row made with the paper's brief is never replaced by one made without.
-_UPSERT = ("INSERT INTO pdf_translations (doc_id, lang, model, src, text, brief, at) VALUES (?, ?, ?, ?, ?, ?, ?) "
-           "ON CONFLICT (doc_id, lang, model, src) DO UPDATE SET text = excluded.text, "
-           "brief = excluded.brief, at = excluded.at WHERE excluded.brief >= pdf_translations.brief")
+# A row made with the paper's brief is never replaced by one made without,
+# unless the reader asked for the paragraph afresh (_REPLACE).
+_REPLACE = ("INSERT INTO pdf_translations (doc_id, lang, model, src, text, brief, at) VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "ON CONFLICT (doc_id, lang, model, src) DO UPDATE SET text = excluded.text, "
+            "brief = excluded.brief, at = excluded.at")
+_UPSERT = _REPLACE + " WHERE excluded.brief >= pdf_translations.brief"
 _ONE = "doc_id = ? AND lang = ? AND model = ?"
 
 
@@ -53,18 +55,19 @@ def ensure_schema(conn) -> None:
         conn.execute(stmt)
 
 
-def src_hash(text: str) -> str:
+def src_hash(text: str, stamp: str = "") -> str:
     """A source text's name in the store: over the text exactly as sent, so
-    it matches whatever block indices the page has."""
-    return hashlib.sha256(text.encode()).hexdigest()[:32]
+    it matches whatever block indices the page has, and the stamp of the
+    glossary terms it uses (gamma/translate_terms.py), so a changed term
+    names the texts that use it anew. A text that uses none ("") is named
+    as it was before there were glossaries."""
+    return hashlib.sha256((f"{text}\x00{stamp}" if stamp else text).encode()).hexdigest()[:32]
 
 
-def _in_chunks(conn, sql: str, args: tuple, srcs: list):
-    """The rows of ``sql`` (its ``{}`` an IN list) for every src, _CHUNK at a
-    time."""
-    for start in range(0, len(srcs), _CHUNK):
-        part = srcs[start:start + _CHUNK]
-        yield from conn.execute(sql.format(",".join("?" * len(part))), (*args, *part))
+def _marks(srcs) -> str:
+    """An IN list's placeholders, one per src: at most one request's texts
+    (routers/translate.py)."""
+    return ",".join("?" * len(srcs))
 
 
 def lookup(ws: str, doc_id: str, lang: str, model: str, srcs, need_brief: bool = False) -> dict:
@@ -76,17 +79,19 @@ def lookup(ws: str, doc_id: str, lang: str, model: str, srcs, need_brief: bool =
     try:
         with connect_data_db(ws) as conn:
             ensure_schema(conn)
-            return dict(_in_chunks(conn, f"SELECT src, text FROM pdf_translations WHERE {_ONE} AND brief >= ? "
-                                         f"AND src IN ({{}})", (doc_id, lang, model, int(need_brief)), srcs))
+            return dict(conn.execute(f"SELECT src, text FROM pdf_translations WHERE {_ONE} AND brief >= ? "
+                                     f"AND src IN ({_marks(srcs)})", (doc_id, lang, model, int(need_brief), *srcs)))
     except Exception as e:  # noqa: BLE001 — derived data: translate as if none were kept
         log.warning(f"[translate_store] reading kept translations failed: {e}")
         return {}
 
 
-def put(ws: str, doc_id: str, lang: str, model: str, rows, brief: bool) -> None:
+def put(ws: str, doc_id: str, lang: str, model: str, rows, brief: bool, replace: bool = False) -> None:
     """Keep ``rows`` (``(src_hash, translation)`` pairs), made with the
-    paper's brief or not. Past MAX_ROWS for the document, language and model
-    only the rows already kept are written again."""
+    paper's brief or not. ``replace``: they were asked for afresh ("Translate
+    again"), so they replace what is kept whatever it was made with. Past
+    MAX_ROWS for the document, language and model only the rows already kept
+    are written again."""
     rows = dict(rows)
     if not rows:
         return
@@ -96,8 +101,8 @@ def put(ws: str, doc_id: str, lang: str, model: str, rows, brief: bool) -> None:
             ensure_schema(conn)
             count = conn.execute(f"SELECT COUNT(*) FROM pdf_translations WHERE {_ONE}", one).fetchone()[0]
             if count + len(rows) > MAX_ROWS:
-                have = {r[0] for r in _in_chunks(
-                    conn, f"SELECT src FROM pdf_translations WHERE {_ONE} AND src IN ({{}})", one, list(rows))}
+                have = {r[0] for r in conn.execute(
+                    f"SELECT src FROM pdf_translations WHERE {_ONE} AND src IN ({_marks(rows)})", (*one, *rows))}
                 room = MAX_ROWS - count
                 fits = {}
                 for src, text in rows.items():
@@ -112,7 +117,7 @@ def put(ws: str, doc_id: str, lang: str, model: str, rows, brief: bool) -> None:
                                 f"by {model}; not keeping more")
                 rows = fits
             at = page_now()
-            conn.executemany(_UPSERT, [(*one, src, text, int(brief), at) for src, text in rows.items()])
+            conn.executemany(_REPLACE if replace else _UPSERT, [(*one, src, text, int(brief), at) for src, text in rows.items()])
     except Exception as e:  # noqa: BLE001 — derived data: the translation is answered all the same
         log.warning(f"[translate_store] keeping translations failed: {e}")
 

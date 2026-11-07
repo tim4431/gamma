@@ -8,9 +8,11 @@
    index.html links ahead of this file; this file only reads them. */
 
 /* A PDF text selection's colour: the text highlighter's while it is on (the
-   viewer sets --selection-color, pdf/PdfViewer.jsx), else a light blue. */
+   viewer sets --selection-color, pdf/PdfViewer.jsx), else a light blue. A
+   translation's text is selected as the text it replaces. */
 .textLayer ::selection,
-.textLayer span::selection {
+.textLayer span::selection,
+.pdfTransText ::selection {
   background: var(--selection-color, rgba(180, 200, 255, 0.5));
 }
 
@@ -228,7 +230,7 @@ body {
 :where(code, pre, kbd, samp) { font-family: var(--font-mono); }
 /* Counts, times and page numbers keep their width as the digits change. */
 :is(.pdfPageWidget, .pageCardTime, .pageCardCount, .fileRowDate, .chatHistAge,
-  .chatFindCount, .searchFindCount, .chatPlusCount, .pdfTransPct, .transferProgress) {
+  .chatFindCount, .searchFindCount, .chatPlusCount, .transferProgress) {
   font-variant-numeric: tabular-nums;
 }
 
@@ -1409,6 +1411,18 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   background: var(--border);
 }
 
+/* The popup's ⋯ (a translated paragraph's menu, MenuButton) is one of its
+   round tools, not a toolbar's square button. */
+.plainTip .colorBtn.rowMenuBtn {
+  width: 22px;
+  height: 22px;
+  border: 2px solid var(--border-hover);
+  border-radius: var(--radius-full);
+  background: var(--bg-raised);
+  color: var(--accent);
+}
+.plainTip .colorBtn.rowMenuBtn:hover { background: var(--bg-hover); }
+
 /* The selection translator under the color row (PdfViewer SelTranslation):
    a fold-out header, then the selectable translated text. */
 .plainTip:has(.selTrans) { width: min(420px, calc(100vw - 16px)); }
@@ -1432,6 +1446,14 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   user-select: text; cursor: text;
 }
 .selTransBody.error { color: var(--danger); cursor: default; }
+/* Add to glossary under the translation (PdfViewer GlossaryTermForm): the
+   term and its translation side by side, then a note and the buttons. */
+.selTransTerm { margin-top: 8px; display: grid; gap: 6px; }
+.selTransTermPair { display: grid; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); align-items: center; gap: 4px; color: var(--text-tertiary); }
+.selTransTermPair > svg { display: block; }
+.selTransTermBtns { display: flex; align-items: center; gap: 6px; }
+.selTransTermNote { flex: 1; min-width: 0; font-size: var(--fs-xs); color: var(--text-tertiary); }
+.selTransTermNote.error { color: var(--danger); }
 
 /* The AI agent at work on this page (App.handleAgentEvent → rowProps
    aiMarks/aiLive). A block it is reading pulses an accent ring; a block it
@@ -5604,7 +5626,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
   --scrollbar-thumb: var(--scrollbar-thumb-dark);
   --scrollbar-thumb-hover: var(--scrollbar-thumb-dark-hover); } /* dark surround + scrollbar even in the light theme */
 .pdfViewer.pdfDark .pdfPageWrap { background: #0f0f0f !important; }
-.pdfViewer.pdfDark :is(.pdfPageCanvas, .pdfTransMath > canvas) { filter: invert(0.94) hue-rotate(180deg); }
+.pdfViewer.pdfDark :is(.pdfPageCanvas, .pdfTransMath > canvas),
+.pdfViewer.pdfDark .pdfTransMask.tinted::after { filter: invert(0.94) hue-rotate(180deg); }
 :is(.pdfViewer.pdfDark, [data-theme="gamma-dark"] .pdfViewer) .pdfPageWrap .pdfFindMark { mix-blend-mode: screen !important; }
 /* Screened, a pastel wash turns into a mid-tone the light text can't be
    read on (about 2.4:1 on yellow). Every highlight instead draws the
@@ -5648,7 +5671,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
   background: var(--pdf-paper) !important;
   isolation: isolate;
 }
-[data-theme="gamma-dark"] .pdfViewer :is(.pdfPageCanvas, .pdfTransMath > canvas) {
+[data-theme="gamma-dark"] .pdfViewer :is(.pdfPageCanvas, .pdfTransMath > canvas),
+[data-theme="gamma-dark"] .pdfViewer .pdfTransMask.tinted::after {
   filter: invert(1) hue-rotate(180deg);
   mix-blend-mode: screen;
   opacity: 0.9;
@@ -5674,63 +5698,170 @@ a.shareBrand:hover { background: var(--bg-hover); }
    ground itself (~#2e2c29, about 12.6:1 - the "charcoal not pure black"
    eye-strain guidance) without a contrast() filter, which would darken the
    paper too. Figures fade toward paper by the same 18%, a mild wash. */
-:is([data-theme="sepia"], [data-theme="solarized"], [data-theme="gray"]) .pdfViewer:not(.pdfDark) :is(.pdfPageCanvas, .pdfTransMath > canvas) { mix-blend-mode: multiply; opacity: 0.82; }
-[data-theme="gamma-light"] .pdfViewer:not(.pdfDark) :is(.pdfPageCanvas, .pdfTransMath > canvas) { mix-blend-mode: multiply; }
+:is([data-theme="sepia"], [data-theme="solarized"], [data-theme="gray"]) .pdfViewer:not(.pdfDark) :is(.pdfPageCanvas, .pdfTransMath > canvas),
+:is([data-theme="sepia"], [data-theme="solarized"], [data-theme="gray"]) .pdfViewer:not(.pdfDark) .pdfTransMask.tinted::after { mix-blend-mode: multiply; opacity: 0.82; }
+[data-theme="gamma-light"] .pdfViewer:not(.pdfDark) :is(.pdfPageCanvas, .pdfTransMath > canvas),
+[data-theme="gamma-light"] .pdfViewer:not(.pdfDark) .pdfTransMask.tinted::after { mix-blend-mode: multiply; }
 
 /* --- AI translated view (overlay over the original text runs) ---
-   The layer sits between the canvas and the text layer: each block is an
-   opaque box in the page's background color, refilled with the translation.
-   pointer-events none — selection/highlighting always work on the original
-   text layer above; its ::selection background stays visible over the mask. */
+   The layer sits over the canvas and the text layer (z-index 1 to its 0), under
+   the highlights, find marks and link boxes: each block's lines are masked in
+   the page's background color and refilled with the translation. It is laid
+   out at one reference scale and carries one transform to the page's
+   (pdf/TransOverlay.jsx TransLayer), so its size and that transform are inline.
+   pointer-events none: only the translated text takes the pointer and the
+   selection, which stands for the original's blocks under it
+   (pdf/transSelect.js), and the original's spans take it where no translation
+   is drawn (.transMasked below). A paragraph's line height and first-line indent are inline too
+   (pdf/transBlock.js blockSetting). Nothing here clips: text that does not fit
+   at the floor runs out of its box, in sight.
+
+   Each page treatment says what the overlay is written in, once: the paper a
+   mask paints, the ink of the usual dark text, which is what the treatment
+   makes of black, and the filter that takes a coloured ink as near as a filter
+   can to what the page's own gets. They read the treatments' rules above and
+   apply to .pdfViewer, so a mask's ::after and a crop are treated by those
+   rules, not here.
+
+   A paragraph's stacking: the layer is the one stacking context, and all the
+   masks of all its blocks lie at a negative z-index under all its text, so a
+   mask never cuts the block before it. Nothing between a crop and the layer may
+   make a stacking context: not .pdfTransPara, not .pdfTransText, so no z-index,
+   opacity, transform, filter, contain or overflow on them, an animation's
+   included. One would isolate the crop's blend from the masks and cut them off
+   from each other. A landing's fade is the exception, on the text alone and for
+   its length: a crop has its own paper to blend with (.pdfTransMath), and the
+   fading text is still above every mask. On .pdfTransPara it would take the
+   masks into a context of their own. */
+.pdfViewer { --trans-paper: #fff; --trans-ink: #1c1c1c; --trans-filter: none; --trans-under: none; }
+.pdfViewer.pdfDark { --trans-paper: #0f0f0f; --trans-ink: #f0f0f0; --trans-filter: invert(0.94) hue-rotate(180deg); }
+[data-theme="gamma-dark"] .pdfViewer {
+  --trans-paper: var(--pdf-paper);
+  --trans-ink: color-mix(in srgb, #fff 90%, var(--pdf-paper));
+  --trans-filter: invert(1) hue-rotate(180deg) opacity(0.9);
+  --trans-under: var(--pdf-paper);
+}
+:is([data-theme="sepia"], [data-theme="solarized"], [data-theme="gray"]) .pdfViewer:not(.pdfDark) {
+  --trans-paper: var(--pdf-paper);
+  --trans-ink: color-mix(in srgb, var(--pdf-paper) 18%, #000);
+  --trans-filter: opacity(0.82);
+  --trans-under: var(--pdf-paper);
+}
+[data-theme="gamma-light"] .pdfViewer:not(.pdfDark) { --trans-paper: var(--pdf-paper); --trans-under: var(--pdf-paper); }
 .pdfTransLayer {
   position: absolute;
-  inset: 0;
+  left: 0;
+  top: 0;
   z-index: 1;
+  transform-origin: 0 0;
   pointer-events: none;
 }
 .pdfTransPara {
   position: absolute;
-  overflow: hidden;
   box-sizing: border-box;
-  pointer-events: none;
-  font-family: Georgia, "Times New Roman", "Songti SC", SimSun, "Noto Serif CJK SC", serif;
-  line-height: 1.28;
+  font-family: var(--font-page);
+  text-rendering: geometricPrecision; /* advances scale with the size, so the fit holds at any zoom */
   text-align: justify;
 }
+.pdfTransPara.ragged { text-align: start; }
+.pdfTransPara.centred { text-align: center; }
+.pdfTransPara.bold { font-weight: 600; }
+.pdfTransPara.italic { font-style: italic; }
+/* A CJK face with no bold of its own stays regular: at body size the browser's
+   synthetic bold fills its strokes in. Latin words beside it keep their bold. */
+.pdfTransPara.bold:is(:lang(zh), :lang(ja), :lang(ko)) { font-synthesis: none; }
 /* Masks cover exactly the ORIGINAL text lines (per-line rects) — a figure
-   the paragraph wraps around stays visible. */
+   the paragraph wraps around stays visible. A tinted block's masks paint the
+   page's ground (--ground, raw, pdf/transPaint.js) in the ::after, under the
+   canvas's own treatment (the rules above, whose selectors name it), on the
+   paper the page is on, so no treatment is worked out anywhere else. The
+   mask's stacking context, which its z-index makes, holds the blend. A
+   treatment that blends the canvas has the ground blend with the paper under
+   it (--trans-under, the ::before); one that does not paints the ground alone.
+   Both run past the mask, by a device pixel at the smallest zoom, and are cut
+   at its edge by the clip. A blended pair is cut once, as a group; two layers
+   each with an edge of their own, or an unblended pair the clip cuts one by
+   one, let the paper show through as a hairline round every mask. */
 .pdfTransMask {
   position: absolute;
-  background: #fff;
+  z-index: -2;
+  background: var(--trans-paper);
 }
-/* The translated text is real, selectable text (copy works). Its background
-   is inline, cloned per rendered line, so it stays readable where its line
-   breaks don't coincide with the original's masked lines. */
+.pdfTransMask.tinted { background: none; clip-path: inset(0); }
+.pdfTransMask.tinted::before, .pdfTransMask.tinted::after {
+  content: "";
+  position: absolute;
+  inset: -8px;
+}
+.pdfTransMask.tinted::before { background: var(--trans-under); }
+.pdfTransMask.tinted::after { background: var(--ground); }
+/* The translated text is real, selectable text (copy works). It is at least
+   its box and grows past it, so its height says whether it fits. Its size is
+   the block's times its own ratio (--size, --fit on the element), a body
+   paragraph's also under the page's cap (--cap on the layer), which applying
+   the cap is one write of. It has no background: past the masks it is on the
+   page's own ground. Over a figure it needs one, cloned per rendered line, or
+   its lines would run through the drawing. A line's background is painted with
+   its text, so that text goes below all others, its stacking context the one
+   exception to the rule above: a crop in it has its own paper to blend with. */
 .pdfTransText {
   position: absolute;
-  inset: 0;
-  overflow: hidden;
-  word-break: break-word;
-  color: #1c1c1c;
+  top: 0;
+  left: 0;
+  right: 0;
+  min-height: 100%;
+  font-size: calc(var(--size) * var(--fit));
+  overflow-wrap: anywhere;
+  -webkit-hyphens: auto;
+  hyphens: auto;
+  color: var(--trans-ink);
   pointer-events: auto;
   user-select: text;
   -webkit-user-select: text;
   cursor: text;
 }
-.pdfTransText > span {
-  background: #fff;
+.pdfTransPara.bodyText .pdfTransText { font-size: calc(var(--size) * min(var(--fit), var(--cap, 1))); }
+.pdfTransPara.overFigure .pdfTransText { z-index: -1; }
+.pdfTransPara.overFigure .pdfTransText > span {
+  background: var(--trans-paper);
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
 }
+/* A coloured ink, on the words only: a filter here makes a stacking context
+   per run, which is why it is on no ancestor of a crop. --ink and --ground are
+   a block's own inside it, over the theme's tokens of those names, which
+   nothing in a paragraph reads. */
+.pdfTransInk, .pdfTransPara.inked .pdfTransMath.bare {
+  color: var(--ink);
+  filter: var(--trans-filter);
+}
 /* A formula, citation marker or URL of the original inside the translated
-   text (pdf/PdfViewer.jsx TransMath). A formula is a crop of the page's own
+   text (pdf/TransOverlay.jsx TransMath). A formula is a crop of the page's own
    rendering, sized in em so it shrinks with the text and sitting on its
    baseline; its extracted text lies under it, transparent, so a copy of the
    translation carries it. Until the page has pixels to crop (it has not
    been drawn yet) the extracted text shows instead. The page colour
-   treatments above apply to the crop as to the page. The box's size rides
-   in --w, --h and --shift on the element, which .bare lets go. */
-.pdfTransMath { display: inline-block; position: relative; width: var(--w); height: var(--h); vertical-align: var(--shift); }
+   treatments above apply to the crop as to the page. Their blends take what is
+   under the crop in the layer's stacking context, which is no page, and the
+   text can run past the masks, so a crop brings the paper with it. Negative
+   margins keep a tall crop's layout box inside its line, so it hangs into the
+   leading, as it does on the page, and stretches nothing. Its paper would hide
+   the lines around it there, so crops lie over the masks and under all text,
+   their z-index the context their paper and canvas blend in. The box's size
+   rides in --w, --h, --top, --bottom and --shift on the element
+   (pdf/transBlock.js cropBox), which .bare lets go. */
+.pdfTransMath {
+  display: inline-block;
+  position: relative;
+  z-index: -1;
+  width: var(--w);
+  height: var(--h);
+  margin-block: var(--top) var(--bottom);
+  vertical-align: var(--shift);
+  text-indent: 0;
+  background: var(--trans-paper);
+}
+.pdfTransPara.overFigure .pdfTransMath { z-index: auto; } /* or under its own line's background */
 .pdfTransMath > canvas { display: block; width: 100%; height: 100%; }
 .pdfTransMath > .pdfTransMathText {
   position: absolute;
@@ -5740,14 +5871,15 @@ a.shareBrand:hover { background: var(--bg-hover); }
   color: transparent;
   font-size: 0.7em;
 }
-.pdfTransMath.bare { width: auto; height: auto; vertical-align: baseline; }
+.pdfTransMath.bare { z-index: auto; width: auto; height: auto; margin-block: 0; vertical-align: baseline; background: none; }
 .pdfTransMath.bare > canvas { display: none; }
 .pdfTransMath.bare > .pdfTransMathText { position: static; color: inherit; font-size: inherit; }
-/* Translation still arriving (pdfViewer TransPending / TransPara
+/* Translation still arriving (pdf/TransOverlay.jsx TransPending / TransPara
    streaming): queued paragraphs get a faint accent wash over their original
-   lines, in-flight ones shimmer, text being streamed types in behind a
-   caret, and a landed paragraph fades in. Original text stays readable
-   under the wash — only real translated text masks it. */
+   lines, in-flight ones shimmer, and text being streamed types in behind a
+   caret over the lines it has reached, the others staying washed. Original
+   text stays readable under the wash — only real translated text masks it,
+   so the shimmer's peak stays faint too. */
 .pdfTransPending { position: absolute; inset: 0; }
 .pdfTransPendingLine, .pdfCitationMark {
   position: absolute;
@@ -5757,12 +5889,32 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .pdfTransPending.busy .pdfTransPendingLine, .pdfCitationMark, .inkAiWork {
   background: linear-gradient(90deg,
     color-mix(in srgb, var(--accent) 10%, transparent) 0%,
-    color-mix(in srgb, var(--accent) 32%, transparent) 50%,
+    color-mix(in srgb, var(--accent) 20%, transparent) 50%,
     color-mix(in srgb, var(--accent) 10%, transparent) 100%);
   background-size: 200% 100%;
   animation: pdfTransShimmer 1.4s linear infinite;
 }
 @keyframes pdfTransShimmer { from { background-position: 200% 0; } to { background-position: -200% 0; } }
+/* A paragraph a job could not translate (TransFailed): a thin bar just left of
+   its original, in the warning tone at part strength, so it reads as a margin
+   mark and not over the text. It takes the pointer, wider than it looks, and
+   its press opens the paragraph's menu. Sizes are the layer's, at REF_SCALE. */
+.pdfTransFailed {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -10px;
+  width: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--warn) 70%, transparent);
+  pointer-events: auto;
+  cursor: pointer;
+}
+.pdfTransFailed::before { content: ""; position: absolute; inset: 0 -8px; }
+@media (hover: hover) { .pdfTransFailed:hover { background: var(--warn); } }
+.pdfTransFailed:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 /* AI citation marks (pdf/PdfCitationOverlay.jsx) sit under the text layer and
    let pointer input through; the notice replaces a match that failed. */
 .pdfCitationMark { z-index: 4; pointer-events: none; }
@@ -5781,42 +5933,68 @@ a.shareBrand:hover { background: var(--bg-hover); }
   background: var(--accent);
   animation: aiCaretBlink 0.9s steps(1) infinite;
 }
-.pdfTransPara.landed { animation: pdfTransLanded 0.6s ease-out; }
+/* A paragraph landing while the overlay is up fades its text in over the masks,
+   which are there at once. Words that streamed there are in sight already, so
+   they start from most of the way. A mount has neither class: nothing flashes. */
+.pdfTransPara.landing .pdfTransText { animation: pdfTransFade var(--dur-slow); }
+.pdfTransPara.landing.streamed .pdfTransText { --fade-from: 0.6; }
+@keyframes pdfTransFade { from { opacity: var(--fade-from, 0); } }
+/* The handwriting AI's landed flash (.inkAiWork.landed). */
 @keyframes pdfTransLanded {
   from { box-shadow: inset 0 0 0 100vmax color-mix(in srgb, var(--accent) 18%, transparent); }
   to { box-shadow: inset 0 0 0 100vmax transparent; }
 }
-/* While a page shows its translation, selection belongs to the TRANSLATED
-   text — the invisible original text layer stands down (it sits above the
-   overlay, so it would otherwise capture every drag). !important beats the
-   inline userSelect style set in pdf/PdfViewer.jsx. Highlights and link boxes
-   are separate divs above both and keep working. */
-.pdfPageWrap.transShown .textLayer {
-  pointer-events: none !important;
+/* Where a translation is drawn, selection belongs to the TRANSLATED text,
+   which lies over the text layer: the original's spans under its masks
+   (.transMasked, pdf/PdfViewer.jsx) stand down, so a drag across them selects
+   none of the hidden words. The other spans stay the original's, selectable
+   as on any page: a reference list left original, text in a figure, a
+   paragraph still waiting. !important beats the inline userSelect style set
+   in pdf/PdfViewer.jsx. Highlights and link boxes are separate divs above
+   both. A read-only page or an armed tool selects nothing, the translation
+   included (.still, set as the text layer's user-select is). */
+.textLayer .transMasked {
+  pointer-events: none;
   user-select: none !important;
   -webkit-user-select: none !important;
 }
-/* Flip-page-colors mode inverts the canvas with a CSS filter the overlay
-   doesn't inherit — paint the masks/text backgrounds to match the inverted
-   page instead. */
-.pdfViewer.pdfDark :is(.pdfTransMask, .pdfTransText > span) { background: #0f0f0f; }
-.pdfViewer.pdfDark .pdfTransText { color: #c9c9c9; }
-[data-theme="gamma-dark"] .pdfViewer :is(.pdfTransMask, .pdfTransText > span) { background: var(--pdf-paper); }
-[data-theme="gamma-dark"] .pdfViewer .pdfTransText { color: var(--text-primary); }
-/* Same for the eye-comfort ground: the masks are opaque divs above the
-   canvas, so the page tint's blend never reaches them. */
-:is([data-theme="sepia"], [data-theme="solarized"], [data-theme="gray"], [data-theme="gamma-light"]) .pdfViewer:not(.pdfDark) :is(.pdfTransMask, .pdfTransText > span) { background: var(--pdf-paper); }
-:is([data-theme="sepia"], [data-theme="solarized"]) .pdfViewer:not(.pdfDark) .pdfTransText { color: #2e2c29; }
-[data-theme="gray"] .pdfViewer:not(.pdfDark) .pdfTransText { color: #2c2c2c; }
+.pdfTransLayer.still .pdfTransText {
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: inherit;
+}
 /* Alt held = peek at the original (class set by the viewer). */
 .pdfViewer.transPeek .pdfTransLayer { visibility: hidden; }
-/* Tiny percentage under the zoom column's translate button while a job runs. */
-.pdfTransPct {
-  font-size: var(--fs-2xs);
-  color: var(--accent);
-  text-align: center;
-  line-height: 1;
-  padding-bottom: 2px;
+/* The strip's translate button while a job runs: a bar under the glyph fills
+   with the job's progress, where the highlighter's colour sits on its button,
+   so nothing on the strip moves as a job starts or ends. A click stops the
+   job, so the stop glyph takes the glyph's place under the pointer and the
+   keyboard's focus, and stays there where nothing hovers. */
+.pdfCtlBox .pdfTransBtn { position: relative; }
+.pdfTransBar {
+  position: absolute;
+  left: 7px;
+  right: 7px;
+  bottom: 3px;
+  height: 3px;
+  border-radius: 2px;
+  background: var(--border-light);
+  overflow: hidden;
+}
+.pdfTransBar > span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width var(--dur-fast) var(--ease-out);
+}
+.pdfTransBtn .pdfTransStop { display: none; }
+@media (hover: hover) {
+  .pdfTransBtn.running:is(:hover, :focus-visible) .pdfTransGlyph { display: none; }
+  .pdfTransBtn.running:is(:hover, :focus-visible) .pdfTransStop { display: block; }
+}
+@media (hover: none) {
+  .pdfTransBtn.running .pdfTransGlyph { display: none; }
+  .pdfTransBtn.running .pdfTransStop { display: block; }
 }
 /* The text highlighter's button on the strip: its colour under the icon,
    as on the markup strip's highlighters. */
@@ -5828,7 +6006,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .pdfViewer.pdfMoving .pdfPageWrap [data-hl-id] { pointer-events: none; }
 .pdfViewer.areaCursor .pdfPageWrap,
 .pdfViewer.areaCursor .textLayer,
-.pdfViewer.areaCursor .textLayer span {
+.pdfViewer.areaCursor .textLayer span,
+.pdfViewer.areaCursor .pdfTransText {
   cursor: crosshair;
 }
 /* Rectangle mode (the touch screen's toggle): one-finger drags must reach
@@ -5839,7 +6018,8 @@ a.shareBrand:hover { background: var(--bg-hover); }
   touch-action: none;
 }
 .pdfViewer.areaMode .textLayer,
-.pdfViewer.areaMode .textLayer span {
+.pdfViewer.areaMode .textLayer span,
+.pdfViewer.areaMode .pdfTransText {
   user-select: none !important;
   -webkit-user-select: none !important;
 }
@@ -6683,7 +6863,7 @@ a.shareBrand:hover { background: var(--bg-hover); }
    SVG of its own (InkLayer), which neither the dark page's filter nor the
    blend rules for [data-blend] reach. */
 .inkOverPictures { mix-blend-mode: multiply; }
-.pdfViewer .pdfPageWrap.inkHovering, .pdfPageWrap.inkHovering .textLayer { cursor: none; }
+.pdfViewer .pdfPageWrap.inkHovering, .pdfPageWrap.inkHovering :is(.textLayer, .pdfTransText) { cursor: none; }
 /* Drawn over an arbitrary PDF page, so fixed white/black like the lasso,
    not theme tokens. */
 .inkCursor {

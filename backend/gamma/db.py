@@ -891,6 +891,21 @@ PAGES_SCHEMA = [
         PRIMARY KEY (page_id, seq)
     ) WITHOUT ROWID""",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_page_ops_batch ON page_ops(page_id, client, batch_id) WHERE batch_id != ''",
+    # translation_terms = the workspace's glossary for the PDF translated
+    # view (gamma/translate_terms.py): per target language, one translation
+    # (`target`) per source term, the source compared without case; `by`
+    # who set it (an account id), `at` when. What people write, so here and
+    # not in data.db: a backup and a replace carry it; a merge, a Gamma page
+    # export and a mirror do not (docs/dev/translation.md "The glossary").
+    # Additive: no step (docs/dev/migrations.md rule 2).
+    """CREATE TABLE IF NOT EXISTS translation_terms (
+        lang TEXT NOT NULL,
+        source TEXT NOT NULL COLLATE NOCASE,
+        target TEXT NOT NULL,
+        by TEXT NOT NULL DEFAULT '',
+        at TEXT NOT NULL,
+        PRIMARY KEY (lang, source)
+    ) WITHOUT ROWID""",
     WORKSPACE_PREFS_SCHEMA,
     *CHATS_SCHEMA,
     *COMMENTS_SCHEMA,
@@ -899,11 +914,14 @@ PAGES_SCHEMA = [
 
 # data.db = what the workspace can lose and rebuild: the file may be
 # deleted, and everything in it comes back on demand. The PDF text index
-# (pdf_fts, gamma/pdf_index.py — extracted again by the next search) and
-# the viewer's PDF manifests (pdf_docs, gamma/pdf_meta.py — computed again
-# when a PDF opens), both created lazily by their modules, and the cover
-# thumbnails below (captured again as the PDF is read). Nothing a person
-# wrote lives here: the chats and the notes index are in pages.db.
+# (pdf_fts, gamma/pdf_index.py — extracted again by the next search), the
+# viewer's PDF manifests (pdf_docs, gamma/pdf_meta.py — computed again when
+# a PDF opens) and the kept translations and briefs (pdf_translations,
+# pdf_translation_briefs, gamma/translate_store.py — made again by a model,
+# so the one thing here that costs tokens to come back), all created lazily
+# by their modules, and the cover thumbnails below (captured again as the
+# PDF is read). Nothing a person wrote lives here: the chats and the notes
+# index are in pages.db.
 DATA_SCHEMA = [
     # page_snaps = the recents-card cover thumbnails (small JPEG data URLs
     # captured client-side from the rendered viewer), shared by the
