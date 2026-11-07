@@ -1,8 +1,9 @@
 // Assemble ./dist for `wrangler deploy`:
-//   ./site/**            copied as-is, `<!--#include name -->` expanded from ./templates;
+//   ./site/**            copied as-is, `<!--#include name -->` expanded from ./templates
+//                        and `<!--#repofile path -->` from the repository (below);
 //                        site/media holds the front page's cuts of two demos and the
 //                        stills of its clips, from tools/readme-media/site-cuts.py
-//   ./dist/media/**      brand artwork, demos, the screenshot, the favicon and the Inter font
+//   ./dist/media/**      brand artwork, demos, the screenshot, the badges, the favicon and the Inter font
 //                        with its licence, copied from the repository (the site keeps no
 //                        copies), plus any picture a rendered document shows
 //   ./dist/<page>/       the repository's Markdown rendered through ./templates:
@@ -34,6 +35,8 @@ const MEDIA = {
   'logo.svg': 'docs/assets/branding/gamma-logo.svg',
   'app.webp': 'docs/assets/screenshots/hero-app.webp',
   'hero-light.png': 'docs/assets/branding/gamma-hero-light.png',
+  'testflight-ipad.svg': 'docs/assets/badges/testflight-ipad.svg',
+  'chrome-web-store.png': 'docs/assets/badges/chrome-web-store.png',
   'demo-native-agentic.webp': 'docs/assets/demos/demo-native-agentic.webp',
   'inter.woff2': 'desktop/ui/fonts/inter-latin-wght-normal.woff2',
   'inter-OFL.txt': 'desktop/ui/fonts/OFL.txt',
@@ -57,7 +60,9 @@ const warnings = [];
 const warn = msg => warnings.push(msg);
 
 const template = name => fs.readFileSync(path.join(TEMPLATES, `${name}.html`), 'utf8');
-const expand = html => html.replace(/<!--#include (\w+) -->/g, (_, name) => expand(template(name)));
+const expand = html => html
+  .replace(/<!--#include (\w+) -->/g, (_, name) => expand(template(name)))
+  .replace(/<!--#repofile (\S+) -->/g, (_, file) => repofile(file));
 const write = (rel, content) => {
   const out = path.join(DIST, rel);
   fs.mkdirSync(path.dirname(out), { recursive: true });
@@ -67,6 +72,13 @@ const walk = dir => fs.readdirSync(dir, { withFileTypes: true, recursive: true }
   .filter(entry => entry.isFile())
   .map(entry => path.join(entry.parentPath ?? entry.path, entry.name));
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+// A file of the repository shown on a page, so the page cannot drift from it.
+// Line ends as git holds them, whatever the checkout did to them.
+const repofile = file => {
+  const from = path.join(ROOT, file);
+  if (!fs.existsSync(from)) throw new Error(`Missing repository file: ${file}`);
+  return esc(fs.readFileSync(from, 'utf8').replace(/\r\n/g, '\n'));
+};
 const unescapeHtml = s => s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
 const posix = p => p.split(path.sep).join('/');
 

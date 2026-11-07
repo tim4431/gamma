@@ -89,7 +89,7 @@ instead, and the merge waits.
    GAMMA_E2E_DIST="$SCRATCH/dist" npm run e2e -- --continue
    # cloud/, when the branch changes it — cloud.yml
    ../backend/venv/Scripts/python.exe -m pytest tests -q
-   # sites/, when the branch changes sites/, docs/, desktop/ui/fonts/, PRIVACY.md or TERMS.md — site.yml
+   # sites/, when the branch changes sites/, docs/, desktop/ui/fonts/, docker-compose.yml.example, PRIVACY.md or TERMS.md — site.yml
    node build.mjs --strict
    # android/, when the branch changes what android.yml watches (android/,
    # backend/requirements*.txt, backend/gamma_mobile.py, desktop/ui/, the

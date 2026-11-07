@@ -327,7 +327,7 @@ const PagePicture = React.memo(function PagePicture({ block, wrapRef, width, hei
   const onClick = (e) => {
     e.stopPropagation();
     if (replayState && !selected && playback.seekBefore(block.properties.t0)) return;
-    if (readOnly) { actions.onJump(block.id); return; }
+    if (readOnly) { actions.onJump?.(block.id); return; }
     if (!selected) actions.onPictureSelect(block.id);
   };
   // A right-click selects it, which opens its menu.

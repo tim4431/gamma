@@ -367,7 +367,9 @@ def _ended(sub: dict, summary: dict, hosted: dict | None) -> str:
         return (_strip(head, "", bad=True)
                 + "<section class=section><h2>What happens to your library</h2><div class=body><p class=plantext>"
                 "Everything in it is kept where it is, but it is closed: you cannot sign in to it without a plan. "
-                "Resume the plan to open it again as it was. Pages you published stay online.</p>"
+                "Resume the plan to open it again as it was. Pages you published stay online. "
+                "Files beyond the free allowance may be deleted 90 days after the plan ended, "
+                "and we tell you by e-mail before we do.</p>"
                 f"<div class=actions>{action}</div></div></section>")
     rows = ""
     if hosted.get("stops_at"):

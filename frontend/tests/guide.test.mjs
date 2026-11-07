@@ -745,9 +745,10 @@ test("the finish card lists only what the run made", () => {
 // the app marks data-guide-recent ("recent") — the table the user just made,
 // not the page's first — else the first. One inside inert content (a folded
 // dock window's body) is never one.
-test("a repeated anchor picks the newest, the marked, or the first element, never an inert one", () => {
+test("a repeated anchor picks the newest, the marked, or the first element, never an inert one nor a tab group's view of a page", () => {
   for (const id of ["notes.table", "notes.tableAdd", "notes.tableCorner"]) assert.equal(ANCHORS[id].pick, "recent", id);
-  const el = (marked = false, inert = false) => ({ closest: (sel) => ((marked && sel === "[data-guide-recent]") || (inert && sel === "[inert]") ? {} : null) });
+  const el = (marked = false, inert = false, view = false) => ({ closest: (sel) => ((marked && sel === "[data-guide-recent]") || (inert && sel === "[inert]")
+    || (view && sel === "[data-read-view]") ? {} : null) });
   const saved = globalThis.document;
   const dom = (...els) => { globalThis.document = { querySelectorAll: () => els }; };
   try {
@@ -767,6 +768,12 @@ test("a repeated anchor picks the newest, the marked, or the first element, neve
     assert.equal(anchorElement("header.home"), old);
     dom(folded);
     assert.equal(anchorElement("chat.citation"), null);
+    // the same anchors in a view of another page (workspace/PagePane.jsx)
+    const shown = el(false, false, true), markedShown = el(true, false, true);
+    dom(shown, old);
+    assert.equal(anchorElement("header.home"), old, "the open page's, not the view's");
+    dom(markedShown, old);
+    assert.equal(anchorElement("notes.tableAdd"), old, "the marked one is in a view");
   } finally { globalThis.document = saved; }
 });
 

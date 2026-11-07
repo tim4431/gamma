@@ -3037,10 +3037,13 @@ mark.searchMark {
   flex-direction: column;
   overflow: hidden;
 }
-/* The Notes and Chat windows fill their body. */
+/* The Notes and Chat windows fill their body, as narrow as their slot is:
+   min-width beats .sidebar's own floor, so the notes wrap rather than run
+   under the slot's edge. */
 .dockWindowBody .sidebar,
 .dockWindowBody .chatPanel {
   flex: 1 1 auto;
+  min-width: 0 !important;
   min-height: 0;
 }
 .chatPanel.chatWindow { padding: 0 6px 6px; display: flex; flex-direction: column; overflow: hidden; }

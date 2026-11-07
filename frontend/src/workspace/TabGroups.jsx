@@ -1,10 +1,17 @@
 // The open tabs' groups side by side (docs/dev/tab_groups.md): the layout
 // tree of workspace/tabLayout.js drawn with the dock's resizable panels,
-// each group a frame with its own tab strip over its page. The live group
-// holds `live`, App's work area (the open page and its windows); every
-// other group shows its active tab through `renderPane` (PagePane.jsx). One
-// group alone draws no frame: the strip stays in the topbar and `live`
-// fills the work area as before.
+// each group a frame with its own tab strip over its page. The groups split
+// the page's place only; the dock's windows stay around them. One group is
+// live: the page App has open shows in it, through `live` (App's page
+// view, div.main); every other group shows its active tab through
+// `renderPane` (PagePane.jsx). `live` is drawn once, in a host laid over
+// the live group's body, never inside it: a press that makes another group
+// live, a split or a join moves the host and remounts nothing in it, so the
+// viewer keeps its document, its zoom and its scroll, and the notes their
+// editor. `liveId` names the group the host stands over: the group of the
+// page on screen, which a press on another group's view changes only once
+// that page has opened. One group alone draws no frame: the strip stays in
+// the topbar and the host fills the page's place as before.
 //
 // A tab dragged from any strip (the browser's drag, which the strip's own
 // reorder already uses; tabDrag.js says which tab) can be dropped on
@@ -14,10 +21,11 @@
 // that side, the way VS Code's editor drop target and SiYuan's tab container
 // do (docs/research/tab-groups.md). A split's sizes are the layout's, kept
 // through onResize.
-import React, { useState } from "react";
+import React, { useLayoutEffect, useReducer, useRef, useState } from "react";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
 import { OpenTabs } from "../shared/ui/Widgets";
 import { useTabDrag } from "../shared/ui/tabDrag.js";
+import { activeGroup, groupById } from "./tabLayout.js";
 import "./workspace.css";
 
 // The zone of a group's body the pointer is in: an edge band (the lesser of
@@ -35,32 +43,36 @@ export function dropZoneAt(rect, x, y) {
   return "center";
 }
 
-export function TabGroups({ layout, single, tabsOf, live, renderPane, activeTabId, onActivate, onMoveTab, onSplit, onResize,
+export function TabGroups({ layout, liveId, single, tabsOf, live, renderPane, activeTabId, onActivate, onMoveTab, onSplit, onResize,
   sashMargins, strip }) {
-  if (single || layout.root.type === "group") {
-    return (
-      <div className="tabGroups">
-        <GroupFrame group={layout.root} framed={false} live tabs={tabsOf(layout.root)} activeTabId={activeTabId}
-          onActivate={onActivate} onMoveTab={onMoveTab} onSplit={onSplit} strip={strip}>{live}</GroupFrame>
-      </div>
-    );
-  }
+  const rootRef = useRef(null);
+  const hostRef = useRef(null);
+  const placeRef = useLiveHost(rootRef, hostRef);
+  const kickRef = useRef(null);
+  // One group drawn alone: the layout's only group, or on a phone (which
+  // keeps the arrangement without drawing it) the live one.
+  const one = single || layout.root.type === "group";
+  const alone = one ? (layout.root.type === "group" ? layout.root : groupById(layout, liveId) || activeGroup(layout)) : null;
+  const liveGroup = one ? alone.id : liveId;
   const renderNode = (node) => {
     if (node.type === "group") {
-      const isLive = node.id === layout.active;
+      const isLive = node.id === liveGroup;
       return (
-        <GroupFrame key={node.id} group={node} framed live={isLive} tabs={tabsOf(node)} activeTabId={isLive ? activeTabId : node.active}
+        <GroupFrame key={node.id} group={node} framed={!one} live={isLive} tabs={tabsOf(node)}
+          activeTabId={isLive && node.tabs.includes(activeTabId) ? activeTabId : node.active}
           onActivate={onActivate} onMoveTab={onMoveTab} onSplit={onSplit} strip={strip}>
-          {isLive ? live : renderPane(node)}
+          {isLive ? <div className="tabLiveSlot" data-live-slot="" /> : renderPane(node)}
         </GroupFrame>
       );
     }
     const direction = node.dir === "row" ? "horizontal" : "vertical";
     // Keyed by its children: a split that gained or lost one lays out afresh
-    // from the layout's sizes, instead of the panels' remembered ones.
+    // from the layout's sizes, instead of the panels' remembered ones. What
+    // remounts is the frames and the views to read; the live page is in the
+    // host, outside the tree.
     return (
       <PanelGroup key={node.children.map((child) => child.id).join("|")} direction={direction} className="tabSplit"
-        onLayout={(sizes) => onResize(node.id, sizes)}>
+        onLayout={(sizes) => { onResize(node.id, sizes); kickRef.current?.(); }}>
         {node.children.map((child, i) => (
           <React.Fragment key={child.id}>
             {i > 0 ? <PanelResizeHandle className={`sash sash-${direction}`} hitAreaMargins={sashMargins} /> : null}
@@ -72,7 +84,68 @@ export function TabGroups({ layout, single, tabsOf, live, renderPane, activeTabI
       </PanelGroup>
     );
   };
-  return <div className="tabGroups">{renderNode(layout.root)}</div>;
+  // The tree and the host are the root's first and second child whatever
+  // the layout's shape, so no change of shape remounts the host's page.
+  return (
+    <div className={`tabGroups${one ? " single" : ""}`} ref={rootRef}>
+      <div className="tabGroupsTree">{renderNode(one ? alone : layout.root)}</div>
+      <div className="tabLiveHost" ref={hostRef}>{live}</div>
+      <HostPlacer placeRef={placeRef} kickRef={kickRef} />
+    </div>
+  );
+}
+
+// The host laid over the live group's body (its slot, the body's only
+// child): placed after every render of the groups, after every move of a
+// sash between them (HostPlacer, below), and whenever the root or the slot
+// changes size otherwise (the window resized, a dock window opened beside),
+// from a resize observer, whose callback runs after layout and before paint.
+// Returns a ref to the placing function.
+function useLiveHost(rootRef, hostRef) {
+  const slotRef = useRef(null);
+  const observerRef = useRef(null);
+  const place = () => {
+    const root = rootRef.current, host = hostRef.current, slot = slotRef.current;
+    if (!root || !host || !slot) return;
+    const r = root.getBoundingClientRect(), b = slot.getBoundingClientRect();
+    const box = { left: `${b.left - r.left}px`, top: `${b.top - r.top}px`, width: `${b.width}px`, height: `${b.height}px` };
+    for (const key in box) if (host.style[key] !== box[key]) host.style[key] = box[key];
+  };
+  const placeRef = useRef(place);
+  placeRef.current = place;
+  useLayoutEffect(() => {
+    if (typeof ResizeObserver === "undefined") return undefined;
+    const ro = new ResizeObserver(() => placeRef.current());
+    observerRef.current = ro;
+    if (rootRef.current) ro.observe(rootRef.current);
+    return () => { ro.disconnect(); observerRef.current = null; slotRef.current = null; };
+  }, [rootRef]);
+  useLayoutEffect(() => {
+    const slot = rootRef.current?.querySelector(":scope > .tabGroupsTree [data-live-slot]") || null;
+    if (slot !== slotRef.current) {
+      if (slotRef.current) observerRef.current?.unobserve(slotRef.current);
+      slotRef.current = slot;
+      if (slot) observerRef.current?.observe(slot);
+    }
+    place();
+  });
+  return placeRef;
+}
+
+// A sash dragged between groups re-renders only its PanelGroup, the move
+// mostly too small to change the layout (tabLayout's resizeSplit), so the
+// groups do not render and only the slot's resize observer would place the
+// host: from its callback, after the page in the host had laid out at the
+// old size, which the browser then reports as a resize observer loop and
+// the page's own observers (the viewer's fit) take a frame late. The
+// split's onLayout runs in the same event as the panels' new sizes; it
+// kicks this placer, whose layout effect places the host in that commit,
+// before the browser lays the frame out. Only the placer renders.
+function HostPlacer({ placeRef, kickRef }) {
+  const [moves, kick] = useReducer((n) => n + 1, 0);
+  kickRef.current = kick;
+  useLayoutEffect(() => { if (moves) placeRef.current(); }, [moves, placeRef]);
+  return null;
 }
 
 // One group: its strip (when framed) over its body, and the drop layer
