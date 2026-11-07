@@ -37,6 +37,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 
 from ..auth import require_ws, resolve_ws, share_scope
+from ..blocks_store import FOLDERS
 from ..chat_export import export_file
 from ..db import connect_pages_db, page_now, stamp_after
 from ..json_response import OrjsonResponse
@@ -168,25 +169,42 @@ def _archive(database, bucket: str, messages: list, title: str, seen: str | None
     return _file(database, bucket, messages, title, now)
 
 
-def file_into_home(database, buckets) -> int:
+def file_into_home(database, buckets) -> dict[str, str]:
     """The conversations of buckets no view opens any more (deleted
     folders): each active one filed into the library chat's history
     (``home``) and every archived one moved there, inside the caller's
     transaction — a conversation is never dropped with its folder. Returns
-    how many conversations moved."""
+    ``{history id: the bucket it came from}`` for every conversation moved,
+    what a revert of the deletion moves back (``chats_back``)."""
     now = page_now()
     ids = json.dumps(sorted(buckets))
-    moved = 0
+    moved = dict(database.execute(
+        "SELECT id, bucket FROM chat_history WHERE bucket IN (SELECT value FROM json_each(?))", (ids,)).fetchall())
+    database.execute("UPDATE chat_history SET bucket = 'home' WHERE bucket IN (SELECT value FROM json_each(?))", (ids,))
     for bucket, title, raw in database.execute(
             "SELECT bucket, title, messages FROM chats WHERE bucket IN (SELECT value FROM json_each(?))",
             (ids,)).fetchall():
         database.execute("DELETE FROM chats WHERE bucket = ?", (bucket,))
         messages = json.loads(raw or "[]")
         if messages:
-            _file(database, "home", messages, title or derive_title(messages), now)
-            moved += 1
-    return moved + database.execute(
-        "UPDATE chat_history SET bucket = 'home' WHERE bucket IN (SELECT value FROM json_each(?))", (ids,)).rowcount
+            moved[_file(database, "home", messages, title or derive_title(messages), now)] = bucket
+    return moved
+
+
+def chats_back(database, moved: dict) -> int:
+    """The conversations ``file_into_home`` moved (``{history id: bucket}``)
+    put back in their folders' histories, where the folder is there again
+    and the conversation still in the library chat's history, inside the
+    caller's transaction: a reverted folder deletion. A conversation the
+    user deleted or that was filed elsewhere since stays as it is. Returns
+    how many came back."""
+    back = 0
+    for entry_id, bucket in moved.items():
+        if isinstance(entry_id, str) and isinstance(bucket, str) and database.execute(
+                "SELECT 1 FROM unified_blocks WHERE id = ? AND page_id = ?", (bucket, FOLDERS)).fetchone():
+            back += database.execute("UPDATE chat_history SET bucket = ? WHERE id = ? AND bucket = 'home'",
+                                     (bucket, entry_id)).rowcount
+    return back
 
 
 def _export(ws: str, bucket: str, messages: list, title: str) -> Response:

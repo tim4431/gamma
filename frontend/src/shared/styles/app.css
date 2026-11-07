@@ -3397,6 +3397,21 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
   color: var(--text-dim);
 }
 
+/* Reverting several of the AI's changes (chat/RevertChanges.jsx): the page
+   picker's rows, one per change, under a row per message that asked for
+   them; a reverted row muted with its tag, a stopped one's question under it. */
+.revertDialog { width: min(560px, calc(100vw - 32px)); }
+.revertDialogGroup { margin-top: 4px; font-weight: 600; color: var(--text-secondary); }
+.revertDialogGroup:first-child { margin-top: 0; }
+.revertDialogGroup .attachName { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.revertDialogRow { align-items: flex-start; padding-left: 28px; line-height: 1.45; }
+.revertDialogRow input { margin-top: 0.15em; }
+.revertDialogRow > svg { flex: none; margin-top: 0.2em; color: var(--text-muted); }
+.revertDialogRow.reverted .chatChangeText { color: var(--text-muted); }
+.revertDialogRow .chatChangeTag { display: inline-flex; align-items: center; gap: 3px; }
+.revertDialogAsk { margin: 0 0 4px 50px; font-size: var(--fs-xs); }
+.revertDialogDone { margin-right: auto; align-self: center; color: var(--text-muted); font-size: var(--fs-xs); }
+
 .chatAttachToggle.on {
   color: #8ab4f8;
   border-color: #8ab4f8;
@@ -5010,9 +5025,9 @@ a.shareBrand:hover { background: var(--bg-hover); }
 .chatChange { display: flex; align-items: flex-start; gap: 7px; min-width: 0; }
 .chatChange > svg { flex: none; margin-top: 0.2em; color: var(--text-muted); }
 .chatChangeText { flex: 1; min-width: 0; overflow-wrap: anywhere; }
-/* Taking a note change back (chat/AgentChanges.jsx): a frameless undo icon
-   at the row's end, "Revert all" in the head, a reverted row muted with its
-   tag, and the prompt a row shows when the note changed since. */
+/* Taking a change back (chat/AgentChanges.jsx): a frameless undo icon at
+   the row's end, "Revert…" in the head, a reverted row muted with its tag,
+   and the prompt a row shows when the note changed since. */
 /* The compact buttons give back what they stand above an 18 px line (16 in
    the head), so a row keeps its text's height. */
 .chatChange .ctlBtn.chatChangeRevert { flex: none; width: var(--ctl-icon-btn-xs); height: var(--ctl-icon-btn-xs); margin-block: calc((18px - var(--ctl-icon-btn-xs)) / 2); }

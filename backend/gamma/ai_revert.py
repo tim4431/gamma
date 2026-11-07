@@ -7,12 +7,19 @@ text just before and just after the write, a new block the text it was
 made with and where it went, a move the parent and key it left and the
 ones it went to, a deletion every block of the subtree it took. A folder's
 or label's deletion (``tree`` on its revert) records the blocks it took and
-each library page's ids of them. Its revert puts the blocks back under the
-same ids and refiles those pages, and its redo deletes it again
-(``ops.delete_tree``). The folders' chats stay in the library chat's
-history. The chat keeps the action with the reply, and its row under the
-reply sends it back here (``POST /api/ai/revert``) when the user reverts
-the change, or redoes one they reverted.
+each library page's ids of them, and a folder's the chats the deletion
+moved into the library chat's history. Its revert puts the blocks back
+under the same ids, refiles those pages and moves those chats back, and
+its redo deletes it again (``ops.delete_tree``). The chat keeps the action
+with the reply, and its row under the reply sends it back here
+(``POST /api/ai/revert``) when the user reverts the change, or redoes one
+they reverted.
+
+A delete_page call records the pages it moved to Recently deleted
+(``trash``), a restore_page call the pages it brought back (``restore``).
+The revert of either puts each page where the call found it — a deleted
+one restored, a restored one deleted again — and its redo does the call
+again (``_plan_trash``).
 
 A rename_page, move_page or label_page call records each page's title,
 folders or labels before and after it (``pages``). Its revert puts back
@@ -42,10 +49,11 @@ import json
 
 from . import textmerge
 from .ai_tools import BATCH_MAX, cross_page_refusal, text_diff
-from .blocks_store import (FOLDERS, LABELS, TREES, existing_in, fetch_subtree, filing, free_position, load_props,
-                           named, page_root_id, tree_children, write_lock)
+from .blocks_store import (FOLDERS, LABELS, TRASH, TREES, existing_in, fetch_subtree, filing, free_position,
+                           load_props, named, page_root_id, tree_children, write_lock)
 from .db import connect_pages_db
-from .ops import OpError, after_commit, after_commits, apply_batches, apply_ops, delete_tree, move_across_pages
+from .ops import (OpError, after_commit, after_commits, apply_batches, apply_ops, delete_tree, move_across_pages,
+                  restore_page, trash_page)
 
 CLIENT = "revert"  # the op log's writer for a revert or redo: not the agent's "ai", not any tab
 MALFORMED = "This change can't be reverted."
@@ -193,10 +201,12 @@ def _plan_delete(conn, block_id: str, revert: dict, force: bool, redo: bool):
 def _plan_tree_delete(conn, block_id: str, revert: dict, force: bool, redo: bool):
     """A deleted folder (with its subfolders) or label put back as it was —
     the same ids, parents, keys (re-keyed if taken), names and properties —
-    and the library pages that carried it filed in it again
-    (``("batches", …)`` for ``apply_batches``); a redo deletes it again as it
-    is then (``("tree", tree)``, ``ops.delete_tree``). Nothing here can be
-    forced."""
+    the library pages that carried it filed in it again and a folder's
+    chats moved back (``("batches", batches, 0, chats)``: ``apply_batches``,
+    then ``routers.chats.chats_back`` in the same transaction); a redo
+    deletes it again as it is then (``("tree", tree)``, ``ops.delete_tree``,
+    which files the chats into the library's history again). Nothing here
+    can be forced."""
     tree, rows, pages = revert.get("tree"), revert.get("blocks"), revert.get("pages")
     if tree not in TREES or not isinstance(rows, list) or not rows or not isinstance(pages, dict) \
             or not all(isinstance(r, list) and len(r) == 5 and isinstance(r[0], str) for r in rows) \
@@ -234,12 +244,70 @@ def _plan_tree_delete(conn, block_id: str, revert: dict, force: bool, redo: bool
         back = [i for i in carried if i in ids and i not in have]
         if back:
             batches.append((page_id, [{"op": "set", "id": page_id, "props": {tree: have + back}}]))
-    return "", ("batches", batches)
+    chats = revert.get("chats") if tree == FOLDERS and isinstance(revert.get("chats"), dict) else {}
+    return "", ("batches", batches, 0, {k: v for k, v in chats.items() if v in ids})
+
+
+def _trash_ids(revert: dict) -> tuple[list, bool] | None:
+    """A ``trash`` record's pages and whether the call deleted them
+    (``trash``: delete_page) or restored them (``restore``: restore_page);
+    None for a malformed one."""
+    for key, deleted in (("trash", True), ("restore", False)):
+        ids = revert.get(key)
+        if isinstance(ids, list) and ids and len(ids) <= BATCH_MAX and all(isinstance(i, str) for i in ids):
+            return list(dict.fromkeys(ids)), deleted
+    return None
+
+
+def _plan_trash(conn, block_id: str, revert: dict, force: bool, redo: bool):
+    """The pages a delete_page call moved to Recently deleted brought back,
+    or those a restore_page call brought back deleted again — with
+    ``redo``, the call made again — as ``("trash", [(page id, "restore" |
+    "trash")], kept)``, one ``ops.restore_page`` or ``ops.trash_page`` each.
+    A page already where it goes is passed by; one deleted for good since
+    is counted (``kept``), and when that is every page, nothing is written
+    (409 ``kept``). A page goes back with the pages inside it, as each of
+    those ops takes them. Nothing here is forced."""
+    record = _trash_ids(revert)
+    if record is None:
+        raise RevertError(400, MALFORMED)
+    ids, deleted = record
+    to_trash = deleted == redo  # a deletion's redo, a restore's revert
+    where = dict(conn.execute("SELECT id, parent_id FROM unified_blocks WHERE id IN (SELECT value FROM json_each(?))",
+                              (json.dumps(ids),)).fetchall())
+    steps, kept = [], 0
+    for page_id in ids:
+        parent = where.get(page_id)
+        if parent not in ("root", TRASH):
+            kept += 1  # deleted for good since (or never a page)
+        elif (parent == "root") == to_trash:
+            steps.append((page_id, "trash" if to_trash else "restore"))
+    if kept == len(ids):
+        raise RevertError(409, KEPT_TRASH, "kept", {"kept": kept})
+    return "", ("trash", steps, kept)
 
 
 # What a page tool's revert record names (``revert["pages"]``): the field
 # each change wrote, and the tree a folders or labels change files by.
 _PAGE_FIELDS = {"title": "", "folders": FOLDERS, "labels": LABELS}
+
+
+def _move_pages(ws: str, conn, steps: list, kept: int, actor: str) -> dict:
+    """``_plan_trash``'s steps run, each page its own ``ops.restore_page``
+    or ``ops.trash_page`` (each commits): ``{page_id: "", noop, kept?}``.
+    A page another tab moved meanwhile is passed by and counted with
+    ``kept`` (the op's 404); any other failure stops the rest, and the
+    pages moved before it stay moved, which a second try passes by."""
+    done = 0
+    for page_id, step in steps:
+        try:
+            (trash_page if step == "trash" else restore_page)(ws, conn, page_id, actor=actor, client=CLIENT)
+            done += 1
+        except OpError as e:
+            if e.status != 404:
+                raise
+            kept += 1
+    return {"page_id": "", "noop": not done, **({"kept": kept} if kept else {})}
 KEPT = "The pages changed since, or were deleted, and were left as they are."
 
 
@@ -303,8 +371,10 @@ def _plan_pages(conn, block_id: str, revert: dict, force: bool, redo: bool):
     return "", ("batches", batches, kept)
 
 
+KEPT_TRASH = "The pages were deleted for good since."
+
 _PLANS = {"edit": _plan_edit, "create": _plan_create, "move": _plan_move, "delete": _plan_delete,
-          "pages": _plan_pages}
+          "pages": _plan_pages, "trash": _plan_trash}
 
 
 def revert_change(ws: str, kind: str, block_id: str, revert: dict, *, force: bool = False,
@@ -316,7 +386,7 @@ def revert_change(ws: str, kind: str, block_id: str, revert: dict, *, force: boo
     written under one write lock, so nobody's edit lands in between.
     ``kind`` is one of ``_PLANS`` (the endpoint's model says so). Raises
     ``RevertError``."""
-    if not block_id and kind != "pages":
+    if not block_id and kind not in ("pages", "trash"):
         raise RevertError(400, MALFORMED)
     with connect_pages_db(ws) as conn:
         write_lock(conn)
@@ -329,12 +399,18 @@ def revert_change(ws: str, kind: str, block_id: str, revert: dict, *, force: boo
             if isinstance(plan, tuple) and plan[0] == "tree":
                 delete_tree(ws, conn, plan[1], block_id, actor=actor, client=CLIENT)  # commits
                 return {"page_id": page_id, "noop": False}
+            if isinstance(plan, tuple) and plan[0] == "trash":
+                conn.rollback()  # each op below takes the lock and commits on its own
+                return _move_pages(ws, conn, plan[1], plan[2], actor)
             if isinstance(plan, tuple) and plan[0] == "batches":
                 kept = {"kept": plan[2]} if len(plan) > 2 and plan[2] else {}
                 if not plan[1]:
                     conn.rollback()
                     return {"page_id": page_id, "noop": True, **kept}
                 results = apply_batches(conn, plan[1], actor=actor, client=CLIENT)
+                if len(plan) > 3 and plan[3]:
+                    from .routers.chats import chats_back  # local: keep gamma.* free of the routers package
+                    chats_back(conn, plan[3])
                 conn.commit()
                 after_commits(ws, conn, results)
                 return {"page_id": page_id, "noop": False, **kept}

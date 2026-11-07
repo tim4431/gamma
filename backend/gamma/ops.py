@@ -275,7 +275,7 @@ class _Batch:
         self.dropped: set[str] = set()
         self.added: set[str] = set()
         self.doc_deleted = False  # a deleted block carried a PDF (doc_id)
-        self.chats_filed = 0  # folder chats a tree delete filed into the library's history
+        self.chats_filed: dict[str, str] = {}  # folder chats a tree delete filed into the library's history
         # block id → (the people its text named before the batch, and names now), for the Inbox
         self.people: dict[str, tuple[set, set]] = {}
         self.texts: dict[str, str] = {}  # and the text now
@@ -558,7 +558,7 @@ class _Batch:
             # mirror or the iPad relays one): filed into the library chat's
             # history in this transaction. Local import: the router imports ops.
             from .routers.chats import file_into_home
-            self.chats_filed += file_into_home(self.conn, [r[0] for r in rows])
+            self.chats_filed.update(file_into_home(self.conn, [r[0] for r in rows]))
         self.applied.append({"op": "delete", "id": block_id})
 
     def merge(self, op: dict) -> None:
@@ -788,7 +788,8 @@ def apply_ops(conn, page_id: str, ops: list[dict], *, actor: str, client: str = 
     one it has) diffed across the whole batch, for the Inbox
     (``_Batch.mention_changes``).
     ``chats_filed``: the folder conversations a tree delete filed into the
-    library chat's history (``after_commit`` adds ``shares_stopped``). ``dropped_uploads``: the
+    library chat's history, ``{history id: folder}`` (``after_commit`` adds
+    ``shares_stopped``). ``dropped_uploads``: the
     upload names the batch stopped referencing (the names it started
     referencing have their orphan rows cleared in the same transaction —
     gamma/upload_gc.py); ``doc_deleted``: a deleted block carried a PDF.

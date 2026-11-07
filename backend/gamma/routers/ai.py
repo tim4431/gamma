@@ -192,8 +192,7 @@ class AIChatRequest(BaseModel):
     # "ask" / "off", gamma/ai_permissions.py; a key left out allows reading
     # and asks before a change) — everything off degrades to a plain chat.
     # `granted` names the permissions this conversation allowed on an
-    # approval card ("Allow in this chat"): they run without asking (not an
-    # ask-only permission, `ai_permissions.ASK_ONLY`).
+    # approval card ("Allow in this chat"): they run without asking.
     # agent_system overrides the base agent prompt (the
     # scope/permission lines are always appended); tool_rounds overrides the
     # agent round budget and read_char_limit the per-read_page-call document
@@ -1502,7 +1501,7 @@ def ai_approval_answer(approval_id: str, payload: AIApprovalAnswer, request: Req
 
 
 class AIRevert(BaseModel):
-    kind: Literal["edit", "create", "move", "delete", "pages"]
+    kind: Literal["edit", "create", "move", "delete", "pages", "trash"]
     block_id: str = Field(default="", max_length=64)  # "" for "pages": a page tool's record names its pages
     revert: dict   # the action's `revert`, as the tool recorded it
     force: bool = False

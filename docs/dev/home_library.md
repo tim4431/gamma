@@ -774,8 +774,9 @@ directly, the page's live descendants with it. Endpoints:
 [api.md](api.md) "Recently deleted". Editors and owners
 trash and restore; a viewer and a share link cannot. A folder chat's agent
 can list the pages that were filed under its folder and restore them on
-request (`list_deleted`, `restore_page`, [ai_tools.md](ai_tools.md)); it
-cannot trash or delete a page. A trashed page's files
+request (`list_deleted`, `restore_page`, [ai_tools.md](ai_tools.md)), and
+move pages there on request (`delete_page`, `ops.trash_page`); it never
+deletes a page for good. A trashed page's files
 stay referenced, so they count against the storage quota until the page is
 deleted for good. Then the orphan check takes over
 ([user_db.md](user_db.md) "Stored files").

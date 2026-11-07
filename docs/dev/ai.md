@@ -1292,15 +1292,14 @@ server, `chat/chatSettings.js` in the client):
 - **Off**: its tools are not offered, and a call is refused.
 
 Reading is allowed by default and changes ask: Save papers, Rename pages,
-Move pages, Restore deleted pages, Organize folders and labels and Edit
-note blocks start at Ask. The server gives a permission the request
-leaves out the same default, so a changing tool added later asks until the
-user allows it. **Use journal sign-ins** is part of fetching, not a call of
-its own, so it is only Allow or Off. **Delete folders and labels** is only
-Ask or Off: every deletion shows its card (`ai_permissions.ASK_ONLY`,
-`asksOnly` in `chat/chatSettings.js`). The server reads an Allow sent for it as Ask,
-never takes it from `granted`, and runs a card's `chat` or `always` answer
-as `once`.
+Move pages, Restore deleted pages, Delete pages, Organize folders and
+labels, Delete folders and labels and Edit note blocks start at Ask. The
+server gives a permission the request leaves out the same default, so a
+changing tool added later asks until the user allows it. **Use journal
+sign-ins** is part of fetching, not a call of its own, so it is only Allow
+or Off. Every other permission takes all three states, the deletions too:
+each deletion records what its revert needs ([ai_tools.md](ai_tools.md)
+"Reverting a note change"), so whether it asks first is the user's choice.
 
 Settings → AI → Tool usage → Tools compares permissions in a table: named, explained
 rows grouped into **Read your library**, **Web research**, and **Make changes**,
@@ -1312,14 +1311,13 @@ sit below its description. Each column offers four presets:
 - **Read library**: library reading only.
 - **Read & search**: reading, web search and fetching.
 - **Ask before changes**, the default: also the changing tools, each asking first.
-- **Allow all**: everything without asking, except deleting folders and
-  labels, which still asks.
+- **Allow all**: everything without asking, the deletions included.
 
 Individual changes show **Custom**. The stored map is account-synced. Its
 localStorage JSON is `gamma-ai-agent-perms` = `{folder, pdf, notes}` →
 `{list, read, block_read, view, search, web_search, web_read,
-publisher_cookies, save, rename, move, restore, organize, organize_delete,
-block_edit}` → `"allow"` / `"ask"` / `"off"`, and a pre-kind flat map is
+publisher_cookies, save, rename, move, restore, delete, organize,
+organize_delete, block_edit}` → `"allow"` / `"ask"` / `"off"`, and a pre-kind flat map is
 applied to every kind on read.
 A stored boolean is the older on / off value (`normalizePerm`): `false` is
 Off, and `true` is the permission's default. So a change that was on asks,
@@ -1345,11 +1343,12 @@ still `search`), Search papers online (`web_search` → `search_papers`,
 read-only and described in [ai_tools.md](ai_tools.md), the web engine in its
 "search_web" section), Save papers (`save` → `save_paper`, in every chat
 kind), Rename pages, Move pages, Restore deleted pages (`restore` →
-`restore_page`, folder chats only), Organize folders and labels
-(`organize` → `rename_folder`, `create_label`, `rename_label`,
+`restore_page`, folder chats only), Delete pages (`delete` →
+`delete_page`, to Recently deleted, folder chats only), Organize folders
+and labels (`organize` → `rename_folder`, `create_label`, `rename_label`,
 `label_page`, folder chats only), Delete folders and labels
-(`organize_delete` → `delete_folder`, `delete_label`, folder chats only, Ask
-or Off), and Edit note blocks (one permission
+(`organize_delete` → `delete_folder`, `delete_label`, folder chats only),
+and Edit note blocks (one permission
 for `edit_block`, `create_block`, `move_block`, `delete_block` and
 `clip_region`, which stores a picture for the notes). The "Read & search" preset (`chat/chatSettings.js` `READ_TOOLS`)
 includes the web permissions and the page viewer. **Use journal sign-ins**
@@ -1413,11 +1412,11 @@ A call of a tool whose permission is Ask waits for the user
    only that account can answer, and only once.
 4. Allowed, the call runs through `run_agent_tool` like any other, and its
    action carries `approval` (the decision). `chat` and `always` also allow
-   the permission for the rest of this reply, unless it is ask-only. An
-   ask-only call is planned again first, and runs only when it still names
-   the `block_id` its card showed; otherwise its action is an error chip,
-   and the model hears that the folder or label changed while the card
-   waited (`CHANGED_WHILE_ASKING`). A call naming several pages runs with
+   the permission for the rest of this reply. A folder's or label's
+   deletion (`ai_tools.TREE_DELETES`) is planned again first, and runs only
+   when it still names the `block_id` its card showed; otherwise its action
+   is an error chip, and the model hears that the folder or label changed
+   while the card waited (`CHANGED_WHILE_ASKING`). A call naming several pages runs with
    its card's `digest` (`run_agent_tool(…, approved=)`): planned again (a
    rename, move or label under the write lock, `ai_tools._batch_write`), it
    writes nothing when a listed page or the target changed while the card
@@ -1461,9 +1460,9 @@ the diff. Its four buttons are **Allow once** (primary), **Allow in this
 chat**, **Always allow** and **Don't allow** (ghost). Don't allow opens one
 line, "What should the assistant do instead? (optional)", with its own Don't
 allow (Enter) and Back (Escape). The buttons never take the focus
-themselves, so typing in the composer cannot answer a card. An ask-only
-permission's card offers Allow once (`primary danger`) and Don't allow
-only, and does not raise the hint.
+themselves, so typing in the composer cannot answer a card. A deletion's
+card (`isDeletion`: a `delete_*` tool) has the same four, its Allow once
+`primary danger`.
 
 - **Allow in this chat** is kept per account and conversation in this
   browser: localStorage `gamma-ai-chat-grants`, keyed by the conversation's

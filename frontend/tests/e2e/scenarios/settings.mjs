@@ -1984,15 +1984,18 @@ export async function settingsScenarios(env) {
         for (const kind of ["Folder chat", "PDF chat", "Notes chat"]) await choosePreset(kind, "Allow all");
         assertEq(await stateOf("Rename pages"), "Allow");
         assertEq(await permission("Rename pages", "PDF chat").count(), 0);
-        // Deleting folders and labels only asks or is off, and a folder chat's alone.
+        // The deletions take every state, Allow all allows them, and they are a folder chat's alone.
         assertEq(await stateOf("Organize folders and labels"), "Allow");
-        assertEq(await stateOf("Delete folders and labels"), "Ask", "deleting still asks under Allow all");
+        assertEq(await stateOf("Delete folders and labels"), "Allow", "Allow all allows deleting too");
+        assertEq(await stateOf("Delete pages"), "Allow");
         assertEq(await preset("Folder chat").innerText(), "Allow all");
-        assertEq(await permission("Delete folders and labels", "PDF chat").count(), 0);
-        await permission("Delete folders and labels").click();
-        assertEq(JSON.stringify(await menu.locator(".ctxMenuItem").allInnerTexts()), JSON.stringify(["Ask", "Off"]));
-        await page.keyboard.press("Escape");
-        await menu.waitFor({ state: "detached" });
+        for (const tool of ["Delete folders and labels", "Delete pages"]) {
+          assertEq(await permission(tool, "PDF chat").count(), 0, `${tool} is a folder chat's`);
+          await permission(tool).click();
+          assertEq(JSON.stringify(await menu.locator(".ctxMenuItem").allInnerTexts()), JSON.stringify(["Allow", "Ask", "Off"]));
+          await page.keyboard.press("Escape");
+          await menu.waitFor({ state: "detached" });
+        }
         assertEq(await permission("List pages", "Notes chat").count(), 0);
         await choosePreset("Folder chat", "Ask before changes");
         for (const tool of ["Rename pages", "Move pages", "Edit note blocks"]) {
