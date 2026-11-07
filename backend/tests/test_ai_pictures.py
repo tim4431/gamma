@@ -416,7 +416,7 @@ def test_delete_block_takes_a_subtree_and_reverts_it(org):
     assert refused.value.status == 400
     # Pages are not the agent's to delete; out of scope is out of scope.
     text, action = run_agent_tool(ids["ws"], scope, "delete_block", {"block_id": page})
-    assert "cannot delete pages" in text and action["error"]
+    assert "delete_page" in text and action["error"]
     text, _ = run_agent_tool(ids["ws"], folder(ids["cooling"]), "delete_block", {"block_id": top})
     assert text.startswith("error")
     # The revert endpoint takes the kind.

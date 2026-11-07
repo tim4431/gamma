@@ -22,6 +22,7 @@ const CATALOG = [
   ["rename", "edit", true],
   ["move", "edit", true],
   ["restore", "edit", true],
+  ["delete", "edit", true],
   ["organize", "edit", true],
   ["organize_delete", "edit", true],
   ["block_edit", "edit"],
@@ -31,14 +32,11 @@ const GROUP = Object.fromEntries(CATALOG.map(([key, group]) => [key, group]));
 export const permGroup = (key) => GROUP[key] || "library";
 const changesLibrary = (key) => GROUP[key] === "edit";
 // Using journal sign-ins is part of fetching a document, not a call of its
-// own to approve: it is on or off. Deleting a folder or a label always asks
-// (gamma/ai_permissions.py ASK_ONLY): a folder's chats move to the library
-// chat's history for good. Ask or Off.
-const STATES_OF = { publisher_cookies: ["allow", "off"], organize_delete: ["ask", "off"] };
+// own to approve: it is on or off. Every other permission takes all three,
+// the deletions too: each records what its revert needs, so whether one asks
+// first is the user's call.
+const STATES_OF = { publisher_cookies: ["allow", "off"] };
 export const permStates = (key) => STATES_OF[key] || PERM_STATES;
-// A permission Allow is never offered for: its every call asks (the approval
-// card has two answers, and "Allow in this chat" grants it nothing).
-export const asksOnly = (key) => !permStates(key).includes("allow");
 export const defaultPerm = (key) => (changesLibrary(key) ? "ask" : "allow");
 
 // A stored or sent value as a state. A boolean is the older on / off value:
@@ -54,8 +52,8 @@ export function normalizePerm(key, value) {
 export const permState = (perms, key) => normalizePerm(key, perms?.[key]);
 
 // The permissions a chat kind has: the folder chat all of them, a page chat
-// all but listing pages, renaming, moving or restoring them, and organizing
-// folders and labels.
+// all but listing pages, renaming, moving, restoring or deleting them, and
+// organizing folders and labels.
 export const toolsForKind = (kind) => CATALOG
   .filter(([, , folderOnly]) => kind === "folder" || !folderOnly).map(([key]) => key);
 
@@ -70,8 +68,7 @@ function presetState(preset, key) {
   const group = GROUP[key];
   if (group === "library") return "allow";
   if (group === "web") return preset === "library" ? "off" : "allow";
-  const state = { library: "off", read: "off", ask: "ask", all: "allow" }[preset];
-  return permStates(key).includes(state) ? state : "ask"; // Allow all still asks before a deletion
+  return { library: "off", read: "off", ask: "ask", all: "allow" }[preset];
 }
 
 export function presetPermissions(kind, preset) {

@@ -14,7 +14,7 @@
 import { t, tn } from "../shared/i18n/i18n.js";
 
 const CHANGE_KINDS = new Set(["rename", "move", "edit", "create", "delete", "save", "restore", "label"]);
-const LIBRARY_TOOLS = new Set(["rename_page", "move_page", "save_paper", "restore_page",
+const LIBRARY_TOOLS = new Set(["rename_page", "move_page", "save_paper", "restore_page", "delete_page",
   "rename_folder", "create_label", "rename_label", "label_page", "delete_folder", "delete_label"]);
 // The note-block mutators: their actions carry the page id(s) they touched,
 // so the open page's block tree can reload and show the change.
@@ -27,7 +27,7 @@ export function isChange(a) {
   return !!a && !a.error && !a.noop && CHANGE_KINDS.has(a.kind) && !/^ok\b/.test(a.summary || "");
 }
 
-// Where a change landed: "library" (a page renamed, filed, saved or
+// Where a change landed: "library" (a page renamed, filed, saved, deleted or
 // restored, or a folder or label changed) or "notes". Actions saved before
 // they named their `tool` can only be renames and moves.
 export function changePlace(a) {
@@ -127,6 +127,7 @@ export function runningLabel(step, titleOf = () => "") {
           : tn("Moving {n} page…", "Moving {n} pages…", n);
       case "label_page": return tn("Changing the labels of {n} page…", "Changing the labels of {n} pages…", n);
       case "restore_page": return tn("Restoring {n} page…", "Restoring {n} pages…", n);
+      case "delete_page": return tn("Deleting {n} page…", "Deleting {n} pages…", n);
       default: break;
     }
   }
@@ -161,6 +162,7 @@ export function runningLabel(step, titleOf = () => "") {
     case "save_paper": return t("Saving {source} to your library…", { source: args.title || args.source || t("a paper") });
     case "list_deleted": return t("Looking in Recently deleted…");
     case "restore_page": return title ? t("Restoring “{title}”…", { title }) : t("Restoring a page…");
+    case "delete_page": return title ? t("Deleting “{title}”…", { title }) : t("Deleting a page…");
     case "rename_page":
       if (args.title) {
         return title ? t("Renaming “{title}” to “{to}”…", { title, to: args.title }) : t("Renaming to “{to}”…", { to: args.title });

@@ -1,19 +1,19 @@
 // What an agent reply changed, listed under its steps pill (grouped by
-// chat/agentSteps.js): renamed, filed, saved or restored pages, renamed,
-// made, applied or deleted folders and labels, and edited, added or moved
-// notes, each with a link to what changed. A note change, pages the agent
-// renamed, moved or labelled (one or many in one call), and a deleted
-// folder or label have a revert button, and the notes' list a "Revert all"
-// when it holds more than one (chat/aiRevert.js, gamma/ai_revert.py). A
-// revert keeps what anyone wrote since. When the note changed where the
-// agent wrote, was filled in or moved on, the row asks first: it says so,
-// shows what reverting anyway would do as a word diff, and offers to do it.
-// "Revert all" goes newest first and stops at the first row that asks. A
-// reverted change stays listed, marked, with a redo button that puts it
-// back the same way (and asks the same way). A call that changed several
-// pages is one row that unfolds to its pages, and reverts them together;
-// pages changed since are left as they are, and a revert that would leave
-// every one says so instead.
+// chat/agentSteps.js): renamed, filed, saved, deleted or restored pages,
+// renamed, made, applied or deleted folders and labels, and edited, added or
+// moved notes, each with a link to what changed. A note change, pages the
+// agent renamed, moved, labelled, deleted or restored (one or many in one
+// call), and a deleted folder or label have a revert button
+// (chat/aiRevert.js, gamma/ai_revert.py). A revert keeps what anyone wrote
+// since. When the note changed where the agent wrote, was filled in or moved
+// on, the row asks first: it says so, shows what reverting anyway would do
+// as a word diff, and offers to do it. A reverted change stays listed,
+// marked, with a redo button that puts it back the same way (and asks the
+// same way). A call that changed several pages is one row that unfolds to
+// its pages, and reverts them together; pages changed since are left as
+// they are, and a revert that would leave every one says so instead.
+// "Revert…" in the head opens the dialog that takes back several changes at
+// once, this reply's or any of the conversation's (chat/RevertChanges.jsx).
 import React, { useContext, useState } from "react";
 import { API, apiJson } from "../shared/lib/utils";
 import { GammaNavContext } from "../shared/ui/Widgets";
@@ -22,16 +22,26 @@ import { BookIcon, BotIcon, CloudDownloadIcon, EyeIcon, FilePlusIcon, FolderIcon
   LabelIcon, ListIcon, PenIcon, PencilIcon, PlusIcon, QuoteIcon, RedoIcon, ScissorsIcon, SearchIcon, TrashIcon,
   UndoIcon, XIcon } from "../shared/ui/Icons";
 import { changeCount, changePlace, isChange, noteChangeText } from "./agentSteps";
-import { canRedo, canRevert, revertKind, revertOrder, revertRefusal } from "./aiRevert.js";
+import { canRedo, canRevert, revertKind, revertRefusal } from "./aiRevert.js";
 import { WordDiff } from "./ApprovalCard";
 
 // The icon of each action kind, in this list and on the tool chips under the
 // pill (ChatDock), each chip expanding to the raw call the server ran.
 export const ACTION_ICONS = { rename: PencilIcon, move: FolderIcon, search: SearchIcon, read: BookIcon, view: EyeIcon, ink: PenIcon, image: ImageIcon, cite: QuoteIcon, list: ListIcon, edit: PencilIcon, create: PlusIcon, delete: TrashIcon, clip: ScissorsIcon, websearch: GlobeIcon, fetch: CloudDownloadIcon, helper: BotIcon, save: FilePlusIcon, restore: HistoryIcon, label: LabelIcon, error: XIcon };
 
+// Take one change back, or with `redo` put a reverted one back, as its row
+// and the dialog do: POST /api/ai/revert → `{page_id, noop, kept?}`. A
+// refusal throws the API error, which `revertRefusal` reads.
+export function sendRevert(a, { force = false, redo = false } = {}) {
+  return apiJson(`${API}/ai/revert`, {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ kind: revertKind(a), block_id: a.block_id || "", revert: a.revert, force, redo }),
+  });
+}
+
 // What a row that stopped says, and the button that reverts (or redoes)
 // anyway — none when it can't be forced.
-function refusalCopy({ conflict, preview, detail, status }, redo) {
+export function refusalCopy({ conflict, preview, detail, status }, redo) {
   if (conflict === "changed") {
     return redo
       ? { text: t("The note was changed since. Redoing anyway makes this change:"), force: t("Redo anyway") }
@@ -56,15 +66,83 @@ function refusalCopy({ conflict, preview, detail, status }, redo) {
   return { text: status === 404 ? t("The note was deleted since.") : detail };
 }
 
+const labelChange = (a) => [...(a.added || []).map((n) => `+${n}`), ...(a.removed || []).map((n) => `−${n}`)].join(", ");
+const old = (text) => <s className="chatChangeOld">{text}</s>;
+const bold = (text) => <strong>{text}</strong>;
+
+// A change to the library, one page's: `page(id, label)` is how a page is
+// named (a link in the reply, plain text in the dialog).
+function libraryText(a, page) {
+  switch (a.tool) {
+    case "rename_folder": return t("Folder {from} renamed to {to}", { from: old(a.from), to: bold(a.to) });
+    case "rename_label": return t("Label {from} renamed to {to}", { from: old(a.from), to: bold(a.to) });
+    case "create_label": return t("Made the label {label}", { label: bold(a.to) });
+    case "label_page": return t("Labels of {page}: {change}", { page: page(a.page_id, a.title), change: labelChange(a) });
+    case "delete_folder": return a.count
+      ? tn("Deleted the folder {folder}; its {n} page stays in your library",
+        "Deleted the folder {folder}; its {n} pages stay in your library", a.count, { folder: bold(a.title) })
+      : t("Deleted the folder {folder}", { folder: bold(a.title) });
+    case "delete_label": return a.count
+      ? tn("Deleted the label {label} from {n} page", "Deleted the label {label} from {n} pages", a.count, { label: bold(a.title) })
+      : t("Deleted the label {label}", { label: bold(a.title) });
+    // No link: the page is in Recently deleted.
+    case "delete_page": return a.inside
+      ? tn("Moved {page} to Recently deleted, with {n} page inside", "Moved {page} to Recently deleted, with {n} pages inside",
+        a.inside, { page: bold(a.title) })
+      : t("Moved {page} to Recently deleted", { page: bold(a.title) });
+    default: break;
+  }
+  if (a.kind === "rename" && a.to) {
+    return <><s className="chatChangeOld">{a.from}</s> → {page(a.page_id, a.to)}</>;
+  }
+  if (a.kind === "move" && a.title) {
+    return <span title={a.from ? t("Was in: {folders}", { folders: a.from }) : undefined}>
+      {t("{page} moved to {folder}", { page: page(a.page_id, a.title), folder: <strong>{a.to || t("the library root")}</strong> })}
+    </span>;
+  }
+  if ((a.kind === "save" || a.kind === "restore") && a.title) {
+    const args = { page: page(a.page_id, a.title), folder: <strong>{a.to || t("the library root")}</strong> };
+    return a.kind === "restore" ? t("Restored {page} to {folder}", args)
+      : a.existed ? t("{page}, already in your library, filed in {folder}", args)
+        : t("Saved {page} to {folder}", args);
+  }
+  return page(a.page_id, a.summary); // saved before the structured fields
+}
+
+// A call that changed several pages: one sentence, its pages folded under it.
+function batchText(a) {
+  const n = a.items.length;
+  switch (a.tool) {
+    case "rename_page": return tn("Renamed {n} page", "Renamed {n} pages", n);
+    case "move_page": return tn("Moved {n} page to {folder}", "Moved {n} pages to {folder}", n,
+      { folder: <strong>{a.to || t("the library root")}</strong> });
+    case "label_page": return tn("Changed the labels of {n} page: {change}", "Changed the labels of {n} pages: {change}", n,
+      { change: labelChange(a) });
+    case "restore_page": return tn("Restored {n} page", "Restored {n} pages", n);
+    case "delete_page": return tn("Moved {n} page to Recently deleted", "Moved {n} pages to Recently deleted", n);
+    default: return a.summary;
+  }
+}
+
+// The sentence a change reads as. `links.page(id, label)` and
+// `links.block(action, label)` name a page and a note: links under the reply,
+// plain text in the dialog, where a link inside a checkbox's label would
+// tick it.
+export function changeText(a, { page, block }) {
+  if (changePlace(a) === "notes") return a.title ? noteChangeText(a, block(a, `“${a.title}”`)) : block(a, a.summary);
+  return a.items?.length ? batchText(a) : libraryText(a, page);
+}
+
 // `onReverted(indexes, answer, reverted)`: the actions at those indexes were
 // reverted (`reverted` false: redone) — the dock marks them in the saved
 // conversation. Without it (a viewer, the share view) nothing can be
 // reverted; `busy` (a reply streaming here) holds the buttons.
-export default function AgentChanges({ actions, onOpenPage, onReverted, busy = false }) {
+// `onRevertMany`: open the dialog on this reply's changes (none: the
+// conversation has fewer than two to take back).
+export default function AgentChanges({ actions, onOpenPage, onReverted, onRevertMany, busy = false }) {
   const nav = useContext(GammaNavContext);
   // index → {working} while its request runs, or {refusal, redo} once it stopped
   const [rows, setRows] = useState({});
-  const [all, setAll] = useState(false);
   const changes = actions.map((a, i) => ({ a, i })).filter(({ a }) => isChange(a));
   const library = changes.filter(({ a }) => changePlace(a) === "library");
   const notes = changes.filter(({ a }) => changePlace(a) === "notes");
@@ -74,29 +152,15 @@ export default function AgentChanges({ actions, onOpenPage, onReverted, busy = f
     if (state) next[i] = state; else delete next[i];
     return next;
   });
-  const working = all || Object.values(rows).some((r) => r.working);
+  const working = Object.values(rows).some((r) => r.working);
   const revertOne = async (i, { force = false, redo = false } = {}) => {
     setRow(i, { working: true });
     try {
-      const a = actions[i];
-      const answer = await apiJson(`${API}/ai/revert`, {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind: revertKind(a), block_id: a.block_id || "", revert: a.revert, force, redo }),
-      });
+      const answer = await sendRevert(actions[i], { force, redo });
       setRow(i, answer?.kept ? { kept: answer.kept } : null);
       onReverted([i], answer, !redo);
-      return true;
     } catch (err) {
       setRow(i, { refusal: revertRefusal(err), redo });
-      return false;
-    }
-  };
-  const revertAll = async () => {
-    setAll(true);
-    try {
-      for (const i of revertOrder(actions)) if (!(await revertOne(i))) break;
-    } finally {
-      setAll(false);
     }
   };
 
@@ -106,55 +170,8 @@ export default function AgentChanges({ actions, onOpenPage, onReverted, busy = f
   const blockLink = (a, label) => a.block_id && nav?.openBlock
     ? <button type="button" className="chatChangeLink" onClick={() => nav.openBlock(a.block_id, a.page_id)}>{label}</button>
     : pageLink(a.page_id, label);
-  const labelChange = (a) => [...(a.added || []).map((n) => `+${n}`), ...(a.removed || []).map((n) => `−${n}`)].join(", ");
-  const libraryRow = (a) => {
-    const old = (text) => <s className="chatChangeOld">{text}</s>;
-    const bold = (text) => <strong>{text}</strong>;
-    switch (a.tool) {
-      case "rename_folder": return t("Folder {from} renamed to {to}", { from: old(a.from), to: bold(a.to) });
-      case "rename_label": return t("Label {from} renamed to {to}", { from: old(a.from), to: bold(a.to) });
-      case "create_label": return t("Made the label {label}", { label: bold(a.to) });
-      case "label_page": return t("Labels of {page}: {change}", { page: pageLink(a.page_id, a.title), change: labelChange(a) });
-      case "delete_folder": return a.count
-        ? tn("Deleted the folder {folder}; its {n} page stays in your library",
-          "Deleted the folder {folder}; its {n} pages stay in your library", a.count, { folder: bold(a.title) })
-        : t("Deleted the folder {folder}", { folder: bold(a.title) });
-      case "delete_label": return a.count
-        ? tn("Deleted the label {label} from {n} page", "Deleted the label {label} from {n} pages", a.count, { label: bold(a.title) })
-        : t("Deleted the label {label}", { label: bold(a.title) });
-      default: break;
-    }
-    if (a.kind === "rename" && a.to) {
-      return <><s className="chatChangeOld">{a.from}</s> → {pageLink(a.page_id, a.to)}</>;
-    }
-    if (a.kind === "move" && a.title) {
-      return <span title={a.from ? t("Was in: {folders}", { folders: a.from }) : undefined}>
-        {t("{page} moved to {folder}", { page: pageLink(a.page_id, a.title), folder: <strong>{a.to || t("the library root")}</strong> })}
-      </span>;
-    }
-    if ((a.kind === "save" || a.kind === "restore") && a.title) {
-      const args = { page: pageLink(a.page_id, a.title), folder: <strong>{a.to || t("the library root")}</strong> };
-      return a.kind === "restore" ? t("Restored {page} to {folder}", args)
-        : a.existed ? t("{page}, already in your library, filed in {folder}", args)
-          : t("Saved {page} to {folder}", args);
-    }
-    return pageLink(a.page_id, a.summary); // saved before the structured fields
-  };
-  // A call that changed several pages: one sentence, its pages folded under it.
-  const batchRow = (a) => {
-    const n = a.items.length;
-    switch (a.tool) {
-      case "rename_page": return tn("Renamed {n} page", "Renamed {n} pages", n);
-      case "move_page": return tn("Moved {n} page to {folder}", "Moved {n} pages to {folder}", n,
-        { folder: <strong>{a.to || t("the library root")}</strong> });
-      case "label_page": return tn("Changed the labels of {n} page: {change}", "Changed the labels of {n} pages: {change}", n,
-        { change: labelChange(a) });
-      case "restore_page": return tn("Restored {n} page", "Restored {n} pages", n);
-      default: return a.summary;
-    }
-  };
-  const noteRow = (a) => (a.title ? noteChangeText(a, blockLink(a, `“${a.title}”`)) : blockLink(a, a.summary));
-  const revertible = onReverted ? notes.filter(({ a }) => canRevert(a)) : [];
+  const links = { page: pageLink, block: blockLink };
+  const many = onReverted && onRevertMany && changes.some(({ a }) => canRevert(a));
 
   const refusalRow = (i) => {
     const { refusal, redo } = rows[i];
@@ -185,7 +202,7 @@ export default function AgentChanges({ actions, onOpenPage, onReverted, busy = f
       </div>
     </div>
   );
-  const changeRow = ({ a, i }, place) => {
+  const changeRow = ({ a, i }) => {
     const Icon = ACTION_ICONS[a.kind] || PencilIcon;
     const row = rows[i];
     const redo = !!a.reverted;
@@ -196,11 +213,11 @@ export default function AgentChanges({ actions, onOpenPage, onReverted, busy = f
         <div className={`chatChange${redo ? " reverted" : ""}`}>
           <Icon size={14} />
           <span className="chatChangeText">
-            {place === "notes" ? noteRow(a) : a.items?.length ? batchRow(a) : libraryRow(a)}
+            {changeText(a, links)}
             {a.items?.length ? (
               <details className="chatChangeItems">
                 <summary>{t("Show the pages")}</summary>
-                {a.items.map((item, k) => <div key={k}>{libraryRow({ ...item, tool: a.tool, kind: a.kind })}</div>)}
+                {a.items.map((item, k) => <div key={k}>{libraryText({ ...item, tool: a.tool, kind: a.kind }, pageLink)}</div>)}
               </details>
             ) : null}
           </span>
@@ -216,21 +233,21 @@ export default function AgentChanges({ actions, onOpenPage, onReverted, busy = f
       </React.Fragment>
     );
   };
-  const group = (list, place) => list.length ? (
+  const group = (list, place, first) => list.length ? (
     <div className="chatChanges" key={place} data-guide="chat.changes">
       <div className="chatChangesHead">
         <span>{place === "library"
           ? t("Changed in your library · {n}", { n: list.reduce((n, { a }) => n + changeCount(a), 0) })
           : t("Changed in your notes · {n}", { n: list.length })}</span>
-        {place === "notes" && revertible.length > 1 ? (
-          <button type="button" className="uiBtn sm ghost chatChangesAll" disabled={working || busy} onClick={revertAll}
-            title={t("Revert every change listed here, newest first")}>
-            <UndoIcon size={12} />{t("Revert all")}
+        {first && many ? (
+          <button type="button" className="uiBtn sm ghost chatChangesAll" disabled={working || busy} onClick={onRevertMany}
+            title={t("Choose changes of this conversation to revert together")}>
+            <UndoIcon size={12} />{t("Revert…")}
           </button>
         ) : null}
       </div>
-      {list.map((c) => changeRow(c, place))}
+      {list.map(changeRow)}
     </div>
   ) : null;
-  return <>{group(library, "library")}{group(notes, "notes")}</>;
+  return <>{group(library, "library", true)}{group(notes, "notes", !library.length)}</>;
 }

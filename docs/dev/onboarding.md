@@ -950,7 +950,7 @@ where the thing happens:
 | `table.shown` | MdTableWrap, when an editable table mounts |
 | `sheet.created` `{id}` | App's three ways to make a sheet of paper: `addSheetAfter` (**+**, Add page, writing low on the last sheet), `insertSheetAt` (`/note` in an empty block) and `createNotebook` |
 | `job.started` `{kind}` | the tasks store's `adopt` — the one place both `start()` and `upload()` hand this tab a server job, so every kind counts once ([tasks.md](tasks.md)) |
-| `approval.shown` `{tool}` | `chat/ApprovalCard`, while it is up — not a card of an ask-only permission, which has two answers ([ai.md](ai.md) "Asking before a call") |
+| `approval.shown` `{tool}` | `chat/ApprovalCard`, while it is up ([ai.md](ai.md) "Asking before a call") |
 | `paper.fetched` | App's `openPdf`, once a paper fetched from an address (a URL, a DOI, an arXiv id) is open — not for a page the library already had |
 | `table.created`, `table.edited` | MdTableWrap: the first render of a table made with /table or a paste, and a cell editor's commit. BlockTree notes the block and where in it the table went (`noteTableMade`); the table that renders there takes `data-guide-recent`, so the table anchors (`pick: "recent"`) point at it and not at an older table on the page |
 | `conflict.shown` | MergeResolver's versions |

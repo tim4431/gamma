@@ -9,7 +9,8 @@
 // replay). A revert or redo that left pages as they were saves how many
 // (`kept`), which the replay tells the model. The request's history leaves
 // out `revert` and a batch's `items`. The rows that do it are
-// chat/AgentChanges.jsx; "Revert all" covers the notes only.
+// chat/AgentChanges.jsx, and the dialog that takes back several at once,
+// any of the conversation's, chat/RevertChanges.jsx.
 import { changePlace, isChange } from "./agentSteps.js";
 
 const REVERTIBLE = new Set(["edit", "create", "move", "delete"]);
@@ -20,20 +21,28 @@ const LIBRARY_REVERTIBLE = new Set(["delete_folder", "delete_label"]);
 // after, one page or many (`revert.pages`): their row reverts them together
 // (gamma/ai_revert.py _plan_pages), and needs no block id.
 const PAGE_REVERTIBLE = new Set(["rename_page", "move_page", "label_page"]);
+// The page tools that move pages into Recently deleted or out of it record
+// those pages (`revert.trash`, `revert.restore`): their row puts each back
+// where the call found it (gamma/ai_revert.py _plan_trash).
+const TRASH_REVERTIBLE = new Set(["delete_page", "restore_page"]);
+const listed = (ids) => Array.isArray(ids) && ids.length > 0;
 
 // A change recorded for reverting (changes saved by an older version have
 // no `revert`).
 function recorded(a) {
   if (!isChange(a) || !a.revert) return false;
-  if (PAGE_REVERTIBLE.has(a.tool)) return Array.isArray(a.revert.pages) && a.revert.pages.length > 0;
+  if (PAGE_REVERTIBLE.has(a.tool)) return listed(a.revert.pages);
+  if (TRASH_REVERTIBLE.has(a.tool)) return listed(a.revert.trash) || listed(a.revert.restore);
   if (!a.block_id) return false;
   return changePlace(a) === "notes" ? REVERTIBLE.has(a.kind) : LIBRARY_REVERTIBLE.has(a.tool);
 }
 
 // The revert endpoint's kind for an action: "pages" for a page tool's
 // record (a page move's own kind, "move", is the note move's there; a
-// deleted folder's or label's `revert.pages` is its own, kind "delete").
-export const revertKind = (a) => (PAGE_REVERTIBLE.has(a?.tool) ? "pages" : a?.kind);
+// deleted folder's or label's `revert.pages` is its own, kind "delete"),
+// "trash" for pages deleted or restored.
+export const revertKind = (a) => (PAGE_REVERTIBLE.has(a?.tool) ? "pages"
+  : TRASH_REVERTIBLE.has(a?.tool) ? "trash" : a?.kind);
 
 // A change this reply can still take back.
 export function canRevert(a) {
@@ -56,11 +65,17 @@ export function forReplay(actions) {
   });
 }
 
-// The indexes "Revert all" takes back, newest first: a later change to the
-// same note comes out before the one it was made on top of. It lists the
-// note changes only.
-export function revertOrder(actions = []) {
-  return actions.map((a, i) => (canRevert(a) && changePlace(a) === "notes" ? i : -1)).filter((i) => i >= 0).reverse();
+// Every change of a conversation that can still be taken back, as
+// `{id, index, action}` (the reply's message id, the action's index in it),
+// newest first — the latest reply's last change first, so a later change to
+// the same note or page comes out before the one it was made on top of.
+export function revertible(messages = []) {
+  const out = [];
+  for (const m of messages) {
+    if (!m?.id || m.role === "user") continue;
+    (m.actions || []).forEach((action, index) => { if (canRevert(action)) out.push({ id: m.id, index, action }); });
+  }
+  return out.reverse();
 }
 
 // `messages` with the actions at `indexes` of the message `id` marked

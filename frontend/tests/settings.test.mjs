@@ -49,21 +49,27 @@ test("a stored permission reads as a state", () => {
   assert.deepEqual(permStates("rename"), ["allow", "ask", "off"]);
 });
 
-test("deleting folders and labels only asks or is off; organizing them is a folder chat's change", () => {
-  assert.deepEqual(permStates("organize_delete"), ["ask", "off"]);
-  assert.equal(normalizePerm("organize_delete", "allow"), "ask", "an Allow stored for it asks");
-  assert.equal(normalizePerm("organize_delete", true), "ask");
-  assert.equal(normalizePerm("organize_delete", "off"), "off");
+test("the deletions take every state, ask by default and are a folder chat's changes", () => {
+  for (const key of ["organize_delete", "delete"]) {
+    assert.deepEqual(permStates(key), ["allow", "ask", "off"], key);
+    assert.equal(normalizePerm(key, "allow"), "allow", key);
+    assert.equal(normalizePerm(key, undefined), "ask", key);
+    assert.equal(normalizePerm(key, true), "ask", key);
+    assert.equal(normalizePerm(key, "off"), "off", key);
+  }
   assert.equal(normalizePerm("organize", undefined), "ask");
   assert.equal(normalizePerm("organize", "allow"), "allow");
   const all = presetPermissions("folder", "all");
   assert.equal(all.organize, "allow");
-  assert.equal(all.organize_delete, "ask", "Allow all still asks before a deletion");
+  assert.equal(all.organize_delete, "allow", "Allow all allows the deletions too");
+  assert.equal(all.delete, "allow");
   assert.equal(permissionPreset("folder", all), "all");
+  assert.equal(presetPermissions("folder", "ask").delete, "ask");
   assert.equal(presetPermissions("folder", "read").organize_delete, "off");
   assert.equal(presetPermissions("pdf", "all").organize, undefined);
   for (const kind of ["pdf", "notes"]) {
-    assert.deepEqual(toolsForKind(kind).filter((key) => key.startsWith("organize")), [], `a ${kind} chat has no organize*`);
+    assert.deepEqual(toolsForKind(kind).filter((key) => key.startsWith("organize") || key === "delete"), [],
+      `a ${kind} chat has no organize* and no delete`);
   }
 });
 
