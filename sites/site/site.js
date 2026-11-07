@@ -5,8 +5,8 @@
 //  - a plain button if the Microsoft Store badge cannot load
 //  - the front page's clips: a still until one comes near, then the animation
 //  - copy buttons on code blocks
-//  - the latest release: version, per-OS asset links, and the front page's star
-//    count (api.github.com; every element keeps a working fallback link)
+//  - on the front page, the latest release (version, per-OS asset links) and the
+//    star count (api.github.com; every element keeps a working fallback link)
 //  - on the pricing page, "Coming soon" for a plan Gamma Cloud does not sell
 //    right now (one call to its /api/plans; a failure leaves the page as written)
 (() => {
@@ -97,51 +97,53 @@
   // Latest release + stars. Silent on any failure (rate limit, offline).
   const fmt = n => n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : String(n);
   const assetFor = (release, test) => release?.assets?.find(a => test(a.name))?.browser_download_url;
-  fetch(`https://api.github.com/repos/${REPO}/releases?per_page=30`, { headers: { Accept: 'application/vnd.github+json' } })
-    .then(r => (r.ok ? r.json() : Promise.reject(r.status)))
-    .then(releases => {
-      const published = releases.filter(r => !r.draft && !r.prerelease);
-      const desktop = published.find(r => /^v\d/.test(r.tag_name));
-      if (desktop) {
-        // The space comes with the version: without one the line reads "Latest release."
-        document.querySelectorAll('[data-version]').forEach(el => { el.textContent = ` ${desktop.tag_name}`; });
-        document.querySelectorAll('[data-version-link]').forEach(a => { a.href = desktop.html_url; });
-        const links = {
-          exe: assetFor(desktop, n => /\.exe$/i.test(n)),
-          dmg: assetFor(desktop, n => /\.dmg$/i.test(n) && !/arm64/i.test(n)) || assetFor(desktop, n => /\.dmg$/i.test(n)),
-          deb: assetFor(desktop, n => /\.deb$/i.test(n)),
-        };
-        for (const [kind, url] of Object.entries(links)) {
-          if (url) document.querySelectorAll(`[data-asset="${kind}"]`).forEach(a => { a.href = url; });
+  if (document.querySelector('[data-version], [data-asset], [data-download]')) {
+    fetch(`https://api.github.com/repos/${REPO}/releases?per_page=30`, { headers: { Accept: 'application/vnd.github+json' } })
+      .then(r => (r.ok ? r.json() : Promise.reject(r.status)))
+      .then(releases => {
+        const published = releases.filter(r => !r.draft && !r.prerelease);
+        const desktop = published.find(r => /^v\d/.test(r.tag_name));
+        if (desktop) {
+          // The space comes with the version: without one the line reads "Latest release."
+          document.querySelectorAll('[data-version]').forEach(el => { el.textContent = ` ${desktop.tag_name}`; });
+          document.querySelectorAll('[data-version-link]').forEach(a => { a.href = desktop.html_url; });
+          const links = {
+            exe: assetFor(desktop, n => /\.exe$/i.test(n)),
+            dmg: assetFor(desktop, n => /\.dmg$/i.test(n) && !/arm64/i.test(n)) || assetFor(desktop, n => /\.dmg$/i.test(n)),
+            deb: assetFor(desktop, n => /\.deb$/i.test(n)),
+          };
+          for (const [kind, url] of Object.entries(links)) {
+            if (url) document.querySelectorAll(`[data-asset="${kind}"]`).forEach(a => { a.href = url; });
+          }
+          const mine = { macos: links.dmg, linux: links.deb }[os];
+          if (mine) document.querySelectorAll('[data-download]').forEach(a => { a.href = mine; });
         }
-        const mine = { macos: links.dmg, linux: links.deb }[os];
-        if (mine) document.querySelectorAll('[data-download]').forEach(a => { a.href = mine; });
-      }
-      // The Connector zip rides on the desktop release; older ones had their own extension-v* release.
-      const zip = published.map(r => assetFor(r, n => /^gamma-connector-.*\.zip$/i.test(n))).find(Boolean);
-      if (zip) document.querySelectorAll('[data-asset="extension"]').forEach(a => { a.href = zip; });
-      // The Android APK rides on the release too, when that release's build
-      // was signed; the newest release that carries one.
-      const apk = published.map(r => assetFor(r, n => /\.apk$/i.test(n))).find(Boolean);
-      if (apk) {
-        document.querySelectorAll('[data-asset="apk"]').forEach(a => { a.href = apk; });
-        if (os === 'android') {
-          name();
-          document.querySelectorAll('[data-download]').forEach(a => { a.href = apk; });
+        // The Connector zip rides on the desktop release; older ones had their own extension-v* release.
+        const zip = published.map(r => assetFor(r, n => /^gamma-connector-.*\.zip$/i.test(n))).find(Boolean);
+        if (zip) document.querySelectorAll('[data-asset="extension"]').forEach(a => { a.href = zip; });
+        // The Android APK rides on the release too, when that release's build
+        // was signed; the newest release that carries one.
+        const apk = published.map(r => assetFor(r, n => /\.apk$/i.test(n))).find(Boolean);
+        if (apk) {
+          document.querySelectorAll('[data-asset="apk"]').forEach(a => { a.href = apk; });
+          if (os === 'android') {
+            name();
+            document.querySelectorAll('[data-download]').forEach(a => { a.href = apk; });
+          }
         }
-      }
-    })
-    .catch(() => {});
+      })
+      .catch(() => {});
+  }
   const stars = document.querySelectorAll('[data-stars]');
   if (stars.length) {
     fetch(`https://api.github.com/repos/${REPO}`, { headers: { Accept: 'application/vnd.github+json' } })
       .then(r => (r.ok ? r.json() : Promise.reject(r.status)))
       .then(repo => {
         const n = repo.stargazers_count;
-        if (!Number.isFinite(n)) return;
+        if (!Number.isFinite(n)) throw n;
         stars.forEach(el => { el.textContent = fmt(n); el.hidden = false; });
       })
-      .catch(() => {});
+      .catch(() => stars.forEach(el => el.remove())); // its empty place would stay
   }
 
   // Plans on sale: the account server says which paid plans can be bought now.

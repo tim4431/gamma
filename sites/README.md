@@ -91,11 +91,12 @@ sites/
 The pages have no framework. They self-host Inter from the app's Latin
 subset: `styles.css` declares `/media/inter.woff2` and `_headers` preloads
 it, so no font comes from a third party. The pages make three kinds of outbound
-request. `site.js` asks the GitHub API for the release list to fill in the
+request. On the front page `site.js` asks the GitHub API for the release list
+to fill in the
 version, the per-OS installer links, the extension zip and the Android APK (a
-visitor on Android gets the APK once a release carries one), and on the front
-page for the star count, which the hero's Star on GitHub button shows whenever
-the API answers. It names the primary
+visitor on Android gets the APK once a release carries one), and for the star
+count, which the hero's Star on GitHub button shows whenever the API answers;
+when it does not, its place in the button goes. It names the primary
 download buttons after the visitor's system and marks the visitor's card in
 the download section. On the pricing page it also
 asks the account server which paid plans are on sale

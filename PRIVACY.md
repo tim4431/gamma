@@ -138,13 +138,12 @@ gammapdf.com sets no cookies and runs no analytics. Its pages, fonts and
 pictures come from the site itself, served through Cloudflare, all but the
 Microsoft Store badge. Your browser makes three other kinds of request:
 
-- **GitHub** (api.github.com), from every page but the guide's small demos:
-  the latest release, for the download links and the version, and, from the
-  front page, the repository's star count.
+- **GitHub** (api.github.com), from the front page only: the latest release,
+  for the download links and the version, and the repository's star count.
 - **Gamma Cloud** (account.gammapdf.com), from the pricing page only: which
   plans are on sale.
-- **Microsoft** (get.microsoft.com), from the front page only, as you near
-  its download section: the Microsoft Store badge.
+- **Microsoft** (get.microsoft.com), from the front page only: the Microsoft
+  Store badge.
 
 Each of these receives your IP address as part of the request, as any web
 request does. The site adds no identifiers of its own, and it works without

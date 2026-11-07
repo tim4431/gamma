@@ -214,12 +214,19 @@ main { padding-bottom: var(--rhythm); }
 .hero .cta { justify-content: center; margin-top: 30px; }
 .hero__meta { display: flex; flex-wrap: wrap; justify-content: center; gap: 0 8px; margin-top: 18px; color: var(--text-2); }
 .hero__meta a { color: inherit; }
+@media (max-width: 600px) { /* the link on its own line, so the version arriving late cannot wrap it */
+  .hero__meta .dot { display: none; }
+  .hero__meta a { flex-basis: 100%; }
+}
 .dot { color: var(--muted); }
 .eyebrow .dot { color: inherit; }
 .eyebrow br { display: none; }
 /* The hand-drawn arrow at the GitHub button, drawn in once after load */
 .cta__star { position: relative; display: inline-flex; }
-.cta__star .btn { min-width: 15.5em; justify-content: center; } /* room for the count, so the row stays put when it arrives */
+.cta .btn--primary { min-width: 15.5em; justify-content: center; } /* room for the label Android is given late */
+.stars { min-width: 3em; } /* the count's place, kept while it is on its way so nothing moves when it lands */
+.stars[hidden] { display: block; visibility: hidden; }
+@media (scripting: none) { .stars[hidden] { display: none; } }
 .stars::before { content: "★ "; }
 .pigtail { position: absolute; left: calc(100% + 2px); bottom: calc(50% - 11px); width: 92px; color: var(--accent); pointer-events: none; }
 .pigtail path { stroke-dasharray: 1; stroke-dashoffset: 1; animation: pigtail-draw 0.9s ease-out 0.6s forwards; }
