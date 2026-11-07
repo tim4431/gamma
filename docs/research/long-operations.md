@@ -95,14 +95,13 @@ counts, stops and reports failures honestly is the cheap fix.
 
 ## Found on the way
 
-- **The orphan purge never catches up after a big Empty.**
+- **The orphan purge never caught up after a big Empty.**
   `upload_gc`'s safety cap (`PURGE_MAX = 100`, `PURGE_SHARE = 0.2`)
-  refuses the whole purge when more files fall due at once. Emptying a
+  refused the whole purge when more files fell due at once. Emptying a
   trash of 300 PDF pages records 300 orphans within seconds, so 30 days
   later they all fall due together, and every six-hourly reconcile
-  refuses them again (a log warning only). The files stay stored and
-  counted against the quota. A purge in capped chunks, once the pages.db
-  checks pass, would recover. Not fixed here.
+  refused them again (a log warning only). The files stayed stored and
+  counted against the quota. Fixed below: the purge goes in capped chunks.
 - **Settings → Maintenance's health table** sums the length of every
   indexed page's text (`pdf_index.doc_chars`, a full scan of `pdf_fts`) on
   each read, and the pane reads it again after every paper a metadata
@@ -197,21 +196,32 @@ its round holds the lock, however long that round takes, so nothing
 follows for ever and nothing stops following a round still running. `?wait=1` stays, for
 scripts and the tests ([dev/mirror.md](../dev/mirror.md#rounds-and-cadence)).
 
+The orphan purge goes in capped chunks. The cap no longer refuses the
+whole purge: once the pages.db checks pass (a root row, pages, `PRAGMA
+quick_check`), a purge deletes the cap's worth (`upload_gc.purge_cap`: 100,
+or a fifth of the workspace's files when that is fewer, never fewer than
+10), the longest due first, and leaves the rest to the next six-hourly
+pass with a warning that counts them. The 300 files of the Empty above, in
+a workspace of 1,000, go in three passes; 5,000 go in fifty, under two
+weeks. The cap still bounds what one pass takes from a pages.db that
+reads wrong in a way the checks miss, which is why the chunks keep the
+full pass's cadence instead of running back to back
+([dev/user_db.md](../dev/user_db.md) "Stored files").
+
 ## Still open
 
 In the order they matter:
 
 1. One request for the library's bulk actions (trash many pages, apply
    many page patches), on `ops.apply_batches`.
-2. The orphan purge in chunks (above).
-3. Empty Recently deleted: `purge_unused` once after the loop, one
+2. Empty Recently deleted: `purge_unused` once after the loop, one
    connection, the `deleted_with` map read once.
-4. Progress for the off-site copies' first round and a folder link's
+3. Progress for the off-site copies' first round and a folder link's
    rounds (`say` is thrown away in `folder_links._folder_round`).
-5. A share view's export of a big shared folder (the share host sits
+4. A share view's export of a big shared folder (the share host sits
    behind Cloudflare and the share view has no jobs).
-6. A workspace being deleted taking no more changes (above), which needs
+5. A workspace being deleted taking no more changes (above), which needs
    the web app to learn a lost write right mid-session.
-7. Smaller: a publish that only changes the audience still runs a full
+6. Smaller: a publish that only changes the audience still runs a full
    round; unlinking Zotero clears marks page by page; the health table's
    and the backup list's scans (above).

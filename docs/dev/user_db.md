@@ -686,14 +686,20 @@ track of the ones nothing uses.
   (`storage.delete`). The references are read again under
   the workspace's write lock first, so no batch can add one meanwhile, and
   each due file's date with them, one file at a time (`storage.stat`,
-  never a listing of the workspace while writers wait; once the purge is
-  sure to be refused it asks no more). The purge refuses (a
+  never a listing of the workspace while writers wait; once the purge has
+  its cap's worth it asks no more). The purge refuses (a
   warning in the server log, nothing deleted) when the pages.db looks wrong:
-  no root row, no pages, a failing `PRAGMA quick_check`, or more files at
-  once than one purge may take (over 100, or over 10 and a fifth of the
-  workspace's files). A restore starts the restored records' 30 days over
-  and drops the shorter lives (`upload_gc.restart_clocks`), so it never
-  makes a file due soon.
+  no root row, no pages, a failing `PRAGMA quick_check`. One purge deletes
+  at most `upload_gc.purge_cap` files: 100, or a fifth of the workspace's
+  files when that is fewer, but never fewer than 10. It takes the longest
+  due first; the rest wait for the next full pass, and a warning in the
+  server log says how many. So a backlog goes a cap every six hours: an
+  Empty of Recently deleted that let 300 PDFs go makes them all due on one
+  day, thirty days on, and in a workspace of 1,000 files they go in three
+  passes, within a day. The cap still bounds what one pass can take from a
+  pages.db that reads wrong in a way the checks miss. A restore starts the
+  restored records' 30 days over and drops the shorter lives
+  (`upload_gc.restart_clocks`), so it never makes a file due soon.
 - **Elsewhere.** A workspace's deletion removes its files with its
   directory (`workspaces.remove_files`, `storage.delete_workspace`). A
   backup zip reads the files through the store, and a restore puts the ones
