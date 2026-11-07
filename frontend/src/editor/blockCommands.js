@@ -25,9 +25,9 @@
 import { insertNewlineAndIndent } from "@codemirror/commands";
 import { t } from "../shared/i18n/i18n.js";
 import { getParentInfo, isPlainNote } from "../shared/model/blockModel.js";
-import { fenceInnerAt } from "./fences.js";
+import { codeMarksAt, fenceInnerAt } from "./fences.js";
 import { findMathAtCursor, mathTabJump } from "./latexCompletion.js";
-import { enterPlan, isWholeLine, lineAt, newBlockPlan, quoteMarksAt, toggleQuotePlan } from "./mdLines.js";
+import { enterPlan, isWholeLine, lineAt, newBlockPlan, toggleQuotePlan } from "./mdLines.js";
 import { toggleTodoLine } from "./mdMarks.js";
 import { scanMathSpans } from "./mdScan.js";
 import {
@@ -86,14 +86,19 @@ export function newBlockKey(c) {
   return true;
 }
 
-// The line break in code or display math, null anywhere else. A fence's new
-// line keeps the fence's own marks, a quote's or none: a "> x" in a plain
-// fence is code, and so is the inner level of "> > x" in a quoted one. In
-// math it keeps the marks of the line.
-export function codeBreak(text, pos) {
-  const fence = fenceInnerAt(text, pos);
-  if (fence) return "\n" + (quoteMarksAt(text, pos) && fence.quote);
-  return findMathAtCursor(text, pos)?.display ? "\n" + quoteMarksAt(text, pos) : null;
+// The line break over [from, to] in code or display math, null anywhere else.
+// The new line keeps the marks of the line it opened on and no more: a "> x" in
+// a plain fence is code, and so is the inner level of "> > x" in a quoted one,
+// and a "- x" in a formula is no list. From among the marks a line holds, both
+// lines keep them, so a quote's blank line above stays in the quote.
+export function codeBreak(text, from, to = from) {
+  const marks = codeMarksAt(text, from);
+  if (marks === null) return null;
+  const line = lineAt(text, from), start = from - line.from, end = to - line.from;
+  let own = 0;
+  while (own < marks.length && line.text[own] === marks[own]) own++;
+  return line.text && start <= own && start < marks.length
+    ? marks.slice(start) + "\n" + marks.slice(0, Math.min(end, own)) : "\n" + marks;
 }
 
 // The line-break key's edit, for block.lineBreak: what the row's keydown
@@ -101,7 +106,7 @@ export function codeBreak(text, pos) {
 // (mdLines.enterPlan). {from, to, insert, pos}, or null where the keydown
 // leaves the key to CodeMirror's Enter.
 function lineBreakAt(text, from, to = from) {
-  const insert = codeBreak(text, from);
+  const insert = codeBreak(text, from, to);
   if (insert) return { from, to, insert, pos: from + insert.length };
   return from === to ? enterPlan(text, from) : null;
 }

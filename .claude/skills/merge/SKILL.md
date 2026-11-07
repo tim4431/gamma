@@ -79,6 +79,10 @@ instead, and the merge waits.
    # backend/requirements*.txt; a Python 3.13 on Linux or macOS (WSL here:
    # under a Windows Python, pip asks for pywin32, which no device has)
    bash tools/check_mobile_pins.sh
+   # backend/ — check: backend-mobile, when the branch changes backend/: the
+   # suite under the apps' Python and pins, in a Python 3.13 venv made once
+   # in the scratchpad from requirements-mobile.txt + requirements-dev.txt
+   "$SCRATCH/venv313/Scripts/python.exe" -m pytest tests -q -n auto --dist loadfile
    # frontend/ — check: e2e (~5 min), built into the scratchpad: a build
    # into frontend/dist would empty what the developer's 9001 server serves
    npx vite build --outDir "$SCRATCH/dist" --emptyOutDir
@@ -108,7 +112,8 @@ instead, and the merge waits.
    If a PR for the branch is already open, reuse it.
 
 5. **Wait for the checks**: `gh pr checks <n> --watch` (`check`: the
-   mobile pins, backend pytest, frontend unit tests + build, the desktop
+   mobile pins, the backend suite on the apps' Python 3.13 and pins
+   (`backend-mobile`), backend pytest, frontend unit tests + build, the desktop
    shell's unit tests, the browser suite in two shards, extension zip;
    ~5 min, skipped for a PR that only touches the account server or the
    website; `ipad`: the iPad app on a simulator, ~40 min, and `android`:

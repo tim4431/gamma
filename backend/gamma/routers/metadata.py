@@ -26,7 +26,6 @@ import html as html_lib
 import json
 import os
 import re
-import sqlite3
 import threading
 import time
 import unicodedata
@@ -1265,13 +1264,10 @@ def metadata_status(request: Request):
             "SELECT id, content, properties, updated_at FROM unified_blocks WHERE parent_id = 'root'"
         ).fetchall()
     index = {}
-    try:
-        with connect_data_db(ws) as conn:
-            chars = doc_chars(conn)
-            for doc_id, ver, pages in conn.execute("SELECT doc_id, ver, pages FROM pdf_fts_docs"):
-                index[doc_id] = {"ver": ver, "pages": pages or 0, "chars": chars.get(doc_id) or 0}
-    except sqlite3.OperationalError:
-        pass  # index tables don't exist yet — search has never run
+    with connect_data_db(ws) as conn:
+        chars = doc_chars(conn)  # applies the index's schema first
+        for doc_id, ver, pages in conn.execute("SELECT doc_id, ver, pages FROM pdf_fts_docs"):
+            index[doc_id] = {"ver": ver, "pages": pages or 0, "chars": chars.get(doc_id) or 0}
     stored = {name for name, _, _ in storage.list(ws)}  # one listing, not a lookup per paper
     papers = []
     for block_id, content, props_json, updated_at in rows:
@@ -1396,7 +1392,7 @@ class MetaFetchRequest(BaseModel):
     cite_model: str = ""
 
 
-# Sync endpoints: external lookups + PyPDF2 text extraction run in the threadpool.
+# Sync endpoints: external lookups + PyMuPDF text extraction run in the threadpool.
 @router.post("/metadata/fetch")
 def metadata_fetch(payload: MetaFetchRequest, request: Request):
     ws = require_ws(request, write=True)

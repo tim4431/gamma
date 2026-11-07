@@ -42,7 +42,7 @@ import { FileChip, parseUploadUrl, postFile, uploadFilesAsLines } from "../trans
 import { findMathAtCursor, LatexAcPopup, MathLivePreview } from "./LatexEditor";
 import { useMathUi } from "./useMathUi.js";
 import { BlockCmEditor, OBJECT_DRAG_TYPE } from "./BlockCmEditor";
-import { expandBlankLines } from "./mdMarks";
+import { expandBlankLines, sizedImagesHtml } from "./mdMarks";
 import { BLOCK_COMMANDS, codeBreak, newBlockKey } from "./blockCommands.js";
 import { EditBarHost, useEditBarRow } from "./EditBar";
 import SelectionToolbar from "./SelectionToolbar";
@@ -50,7 +50,7 @@ import { useSelectionToolbar } from "./useSelectionToolbar.js";
 import { dispatch as dispatchHotkey } from "../shared/lib/hotkeys.js";
 import { blockStartInSource, gapInSource, renderedGaps, sourceOffsetAtPoint } from "./clickToSource";
 import { highlightCode, makeCopyButton } from "./codeHighlight";
-import { fenceInnerAt } from "./fences.js";
+import { codeMarksAt, codePaste, fenceInnerAt } from "./fences.js";
 import { backspacePlan, enterPlan, pastePlacements } from "./mdLines.js";
 import { dollarMath, pasteMath } from "./pasteMath.js";
 import { isOutlineCopy, isSourceCopy, sourceCopied } from "./sourceCopy.js";
@@ -86,8 +86,8 @@ const _dragState = { draggingId: null, dropTarget: null, fragment: null };
 // may replace what the card shows (BlockRow's embedEditRef).
 const _embedWrites = new Map();
 
-// Source → markdown the renderer understands: sized images (Obsidian
-// ![alt|300] and legacy Logseq {:width}), ![[embeds]],
+// Source → markdown the renderer understands: sized images (mdMarks'
+// sizedImagesHtml), ![[embeds]],
 // [[refs]], ==highlights== and @mentions rewritten OUTSIDE math and inline-code spans
 // (a "==" inside $...$ must stay LaTeX). `nested` is the inside-an-embed
 // render: embeds degrade to ref chips so transclusion can't recurse.
@@ -141,10 +141,7 @@ function mdPreprocessProse(content, nested) {
   }
   // Outside math, ``` fences and inline code (where two overlap, the earlier
   // wins in applyOutsideSpans) — a [[ref]] or == inside code stays literal.
-  return applyOutsideSpans(content, protectedSpans(content), (seg) => mentionMarkdown(seg
-    // Sized images: legacy Logseq {:width N} first, then Obsidian ![alt|300].
-    .replace(/!\[([^\]]*)\]\(([^)]+)\)\{:width\s+(\d+)\}/g, '<img src="$2" alt="$1" width="$3" />')
-    .replace(/!\[([^\]|]*)\|(\d+)(?:x\d+)?\]\(([^)]+)\)/g, '<img src="$3" alt="$1" width="$2" />')
+  return applyOutsideSpans(content, protectedSpans(content), (seg) => mentionMarkdown(sizedImagesHtml(seg)
     .replace(/!\[\[([a-zA-Z0-9_-]+)\]\]/g, nested ? "[$1](blockref:$1)" : "[$1](blockembed:$1)")
     .replace(REF_RE, "[$1](blockref:$1)")
     // A hand-typed [[title]] no page answered (the editor links one that
@@ -1374,9 +1371,20 @@ const BlockRow = React.memo(function BlockRow({
       // Placed, the lines keep their indentation: only the blank lines
       // around them go.
       const shape = (s) => s.replace(/^\s*\n/, "").trimEnd();
-      // Code takes a paste as it is, but for a quote's marks on every line.
-      const code = fenceInnerAt(val, from);
-      const placed = ta?.view && !tsvMd && (!code || code.quote) && !findMathAtCursor(val, from)?.display
+      // Code and $$ take a paste as it is, each line behind their own marks
+      // (a quote's, a list item's indent), so it stays in them.
+      const coded = ta?.view ? codePaste(val, from, clip) : null;
+      if (coded !== null) {
+        e.preventDefault();
+        const insert = coded;
+        ta.view.dispatch({
+          changes: { from, to, insert },
+          selection: { anchor: from + insert.length },
+          userEvent: "input",
+        });
+        return;
+      }
+      const placed = ta?.view && !tsvMd && codeMarksAt(val, from) === null
         ? pastePlacements(val, from, to, shape(mathed), shape(clip)) : null;
       if (placed && !multiline && !converted) {
         e.preventDefault();
@@ -1751,7 +1759,7 @@ const BlockRow = React.memo(function BlockRow({
                   const ta = ref.current;
                   const selStart = ta.selectionStart, selEnd = ta.selectionEnd;
                   e.preventDefault();
-                  const ins = e.key !== "Enter" ? "  " : codeBreak(ta.value, selStart);
+                  const ins = e.key !== "Enter" ? "  " : codeBreak(ta.value, selStart, selEnd);
                   ta.view?.dispatch({
                     changes: { from: selStart, to: selEnd, insert: ins },
                     selection: { anchor: selStart + ins.length },

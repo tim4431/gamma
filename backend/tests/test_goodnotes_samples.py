@@ -19,7 +19,7 @@ from collections import Counter
 from pathlib import Path
 
 import pytest
-from PyPDF2 import PdfReader
+from pypdf import PdfReader
 
 from conftest import make_user
 from gamma import goodnotes as gn, goodnotes_import as gi, goodnotes_map as gm, ink, notability_map as nm

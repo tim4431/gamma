@@ -80,8 +80,8 @@ add a removal at each of the places that write, and have every process able to
 end itself.
 
 - **pytest:** `tests/testrun.py`, imported by both conftests.
-- **The browser suite:** the backend's temp variables point into its folder, a
-  kept run drops `dist/`, `run.mjs` sweeps, a process with no step finished ends
+- **The browser suite:** a backend's `TMPDIR` points into its folder, a kept run
+  drops `dist/`, `run.mjs` sweeps, a process with no step finished ends
   itself, and workers and backends leave with their parent.
 - **One-off servers:** the verify skill starts them under `timeout 2h`.
 

@@ -153,7 +153,7 @@ export function CommentComposer({ initial = "", placeholder, submitLabel, autoFo
     // note, but not inside a code fence or $$…$$, where only a quote's marks
     // go on; otherwise the editor's own.
     const at = ta.selectionStart;
-    const code = codeBreak(ta.value, at);
+    const code = codeBreak(ta.value, at, ta.selectionEnd);
     const plan = code === "\n" ? null
       : code ? { from: at, to: ta.selectionEnd, insert: code, pos: at + code.length }
       : at === ta.selectionEnd ? enterPlan(ta.value, at) : null;

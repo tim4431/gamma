@@ -55,6 +55,7 @@ const { hostPath } = require('./lib/hostPath');
 const folderAccessFor = require('./lib/folderAccess');
 const microphone = require('./lib/microphone');
 const { pages: shellPages, isShellPage, trustedShellSender } = require('./lib/shellSecurity');
+const windowControls = require('./lib/windowControls');
 
 const BAR_H = 38;
 // The Store's own updates page (Library → Get updates); needs no product id.
@@ -98,6 +99,9 @@ const THEMES = {
 let win = null;
 let bar = null; // shell bar view
 let content = null; // Gamma / launcher view
+// Linux: the ends of the bar the window controls take, 'left', 'right',
+// 'both' or 'none' (lib/windowControls); the bar keeps them clear.
+let wcoSides = 'right';
 let current = null; // { id, name, type, url } while a server is open
 let busy = null; // status text while a server is starting
 // Gamma's workspaces on the open server: { list, current, user } or null.
@@ -233,6 +237,15 @@ function applyTheme() {
   }
 }
 
+// The desktop's title-bar layout, pushed to the bar when it changes.
+function readWindowControls() {
+  windowControls.read(app.getLocale()).then((sides) => {
+    if (sides === wcoSides) return;
+    wcoSides = sides;
+    pushState();
+  }, () => {});
+}
+
 function createWindow() {
   const saved = registry.getWindowBounds();
   const p = palette();
@@ -282,6 +295,10 @@ function createWindow() {
   win.on('unmaximize', layout);
   win.on('minimize', layout);
   win.on('restore', layout);
+  if (process.platform === 'linux') {
+    readWindowControls();
+    win.on('focus', readWindowControls);
+  }
   if (TEST_MINIMIZED) {
     for (const v of [bar, content]) v.webContents.on('did-navigate', () => { sizedViews.add(v); emulateViewSize(v); });
   }
@@ -381,11 +398,12 @@ function revealFile(p) {
 }
 
 // Text on the clipboard; under the test harness only recorded, so a run
-// leaves the developer's clipboard alone.
+// leaves the developer's clipboard alone. The write is asynchronous, and a
+// refused one is dropped rather than left as an unhandled rejection.
 let copied = '';
 function copyText(text) {
   copied = text;
-  if (!process.env.GAMMA_SHELL_TEST) clipboard.writeText(text);
+  if (!process.env.GAMMA_SHELL_TEST) Promise.resolve(clipboard.writeText(text)).catch(() => {});
 }
 
 function setBarExpanded(on) {
@@ -1609,8 +1627,10 @@ function setOpenAtLogin(on) {
 
 // The OS login item: Electron's on Windows and macOS, an autostart entry on
 // Linux — a packaged app only (in dev it would register the electron
-// binary; under the test harness nothing is touched). Started that way the
-// app opens hidden, into the tray (`--hidden`). Not in the Mac App Store
+// binary; under the test harness nothing is touched). Started that way with
+// the background on, the app opens hidden, into the tray: Windows and Linux
+// pass it `--hidden`, and macOS, which passes a login item no arguments,
+// reports the login start (`wasOpenedAtLogin`). Not in the Mac App Store
 // build: a sandboxed app registers a login item only through a helper of
 // its own, which it does not have yet, and the launcher hides the switch.
 function applyLoginItem() {
@@ -1631,7 +1651,7 @@ function applyLoginItem() {
     }
     return;
   }
-  app.setLoginItemSettings({ openAtLogin: on, openAsHidden: true, args: ['--hidden'] });
+  app.setLoginItemSettings({ openAtLogin: on, args: ['--hidden'] });
 }
 
 // A clone or a folder on disk stays in sync only while Gamma runs: when one
@@ -1664,6 +1684,7 @@ function barState() {
   const state = registry.load();
   return {
     platform: process.platform,
+    wco: process.platform === 'linux' ? wcoSides : undefined,
     version: app.getVersion(),
     packaged: app.isPackaged,
     theme: currentTheme(),
@@ -2182,11 +2203,11 @@ app.whenReady().then(async () => {
   if (settings.background) ensureTray();
   applyLoginItem();
   const files = [...earlyPdfs.splice(0), ...openFiles.pdfPaths(process.argv.slice(1), process.cwd())];
-  // Started at login (`--hidden`; macOS says so itself): no window, the
-  // servers run in the background for the clones, the Zotero links and the
-  // folders on disk.
+  // Started at login (`--hidden`, or `wasOpenedAtLogin` on macOS, which
+  // passes a login item no arguments): no window, the servers run in the
+  // background for the clones, the Zotero links and the folders on disk.
   const hidden = !files.length && Boolean(settings.background) && (process.argv.includes('--hidden') ||
-    (process.platform === 'darwin' && app.getLoginItemSettings().wasOpenedAsHidden));
+    (process.platform === 'darwin' && app.getLoginItemSettings().wasOpenedAtLogin));
   if (hidden) startBackgroundHosts();
   else showWindow().finally(startBackgroundHosts);
   scheduleKeeping(3000); // what the servers keep, once they are up

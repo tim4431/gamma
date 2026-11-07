@@ -986,8 +986,8 @@ def test_a_zotero_export_is_not_imported_into_a_linked_workspace(me, made, fake)
 
 
 def test_the_embedded_import_leaves_the_annotations_the_link_keeps(me, made, fake, owner_id):
-    from PyPDF2 import PdfReader, PdfWriter
-    from PyPDF2.generic import (ArrayObject, DictionaryObject, FloatObject, NameObject, NumberObject,
+    from pypdf import PdfReader, PdfWriter
+    from pypdf.generic import (ArrayObject, DictionaryObject, FloatObject, NameObject, NumberObject,
                                 TextStringObject)
     from gamma.routers.imports import import_embedded_annotations
     keys = made["keys"]
@@ -1019,8 +1019,8 @@ def test_the_embedded_import_leaves_the_annotations_the_link_keeps(me, made, fak
 
 def _pdf_with_keyed_annotation(key: str, text: str) -> bytes:
     import io
-    from PyPDF2 import PdfReader, PdfWriter
-    from PyPDF2.generic import ArrayObject, DictionaryObject, FloatObject, NameObject, NumberObject, TextStringObject
+    from pypdf import PdfReader, PdfWriter
+    from pypdf.generic import ArrayObject, DictionaryObject, FloatObject, NameObject, NumberObject, TextStringObject
     annot = DictionaryObject({NameObject("/Type"): NameObject("/Annot"), NameObject("/Subtype"): NameObject("/Square"),
                               NameObject("/Rect"): ArrayObject(FloatObject(v) for v in (80, 430, 290, 600)),
                               NameObject("/F"): NumberObject(4),

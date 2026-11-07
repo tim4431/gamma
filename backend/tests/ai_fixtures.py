@@ -144,7 +144,7 @@ class FakeResp:
 
 def payload(history):
     from types import SimpleNamespace
-    return SimpleNamespace(history=history, prompt="now do it", selection="")
+    return SimpleNamespace(history=history, prompt="now do it")
 
 
 # --- the translation wire (translate_context.user_turn and segments) ----------------

@@ -17,7 +17,7 @@ import zipfile
 from urllib.parse import quote, unquote
 
 import pytest
-from PyPDF2 import PdfReader
+from pypdf import PdfReader
 
 from conftest import account_of, login, make_folder, make_user, workspace_of
 from gamma import bibtex, blocks_store

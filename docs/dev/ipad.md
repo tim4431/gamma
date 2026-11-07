@@ -186,9 +186,8 @@ smoothing; `pencil`, the Pencil brush's width from the tilt;
 `nib`; and `snap`, a stroke along the ruler's edge. A look a shell does
 not list is drawn as the plain line, and the page claims the stroke all
 the same: the committed stroke is the web's either way. `pencilRoll`
-says the `stroke` and `hold` samples carry the Pencil's barrel roll
-(iPadOS 17.5 and later), so a calligraphy preset's nib can follow it and
-its *Lock angle* pill shows.
+says the `stroke` and `hold` samples carry the Pencil's barrel roll, so a
+calligraphy preset's nib can follow it and its *Lock angle* pill shows.
 
 The web half is one module, `frontend/src/shared/lib/host.js`:
 `nativeHost()` (the object or null, read once), `postToHost(msg)` (a
@@ -682,12 +681,12 @@ the palm there is the page's `onTouch`. An ended touch stays in the
 that spot within that time is the page's own.
 
 **Gestures.** `PencilGestures` (`UIPencilInteraction`) forwards the double
-tap as `pencil`, and on iPadOS 17.5 and later the squeeze in its phases:
-`squeeze` `began` when it starts, `pencil` with `phase: "ended"` when it
-ends, or `squeeze` `cancelled` in its place when the system cancels it
-(the repeating `changed` is not sent), each with the system's preferred
-action. A squeeze in a phase the page does not know (a later shell's
-`changed`, a `squeeze` without a phase) does nothing. `ink/usePencil.js`
+tap as `pencil`, and the squeeze in its phases: `squeeze` `began` when it
+starts, `pencil` with `phase: "ended"` when it ends, or `squeeze`
+`cancelled` in its place when the system cancels it (the repeating
+`changed` is not sent), each with the system's preferred action. A
+squeeze in a phase the page does not know (a later shell's `changed`, a
+`squeeze` without a phase) does nothing. `ink/usePencil.js`
 applies `ink/pencilActions.js` with this browser's
 choice for each gesture, *Double tap* and *Squeeze* (`inkPencilTap`,
 `inkPencilSqueeze`, in Settings → Reading & editing → Apple Pencil, which
@@ -717,12 +716,12 @@ held squeeze is never lost. Each tool switch a gesture makes posts
 `haptic` `tool`, a pen lasso that selects posts `select` at its lift,
 and a hold that snaps posts `snap` (under `haptics`, with *Haptics* on:
 `ink/usePencil.js` `hostHaptic` checks both, and the shell plays what it is
-sent). On iPadOS 17.5 and later the shell plays each kind as Apple's
-feedback for its event (`PencilHaptics`, as `HapticFeel` picks it). The
-sources are Apple's "Playing haptic feedback in your app" and the WWDC24
-session "Squeeze the most out of Apple Pencil". Each feedback has one
-generator made for the web view (`init(view:)`, the impact's
-`init(style:view:)`), kept, and plays at `at` when there is one:
+sent). The shell plays each kind as Apple's feedback for its event
+(`PencilHaptics`, as `HapticFeel` picks it). The sources are Apple's
+"Playing haptic feedback in your app" and the WWDC24 session "Squeeze the
+most out of Apple Pencil". Each feedback has one generator made for the
+web view (`init(view:)`, the impact's `init(style:view:)`), kept, and
+plays at `at` when there is one:
 
 | Kind | Feedback | Apple's use |
 |---|---|---|
@@ -740,9 +739,8 @@ the Pencil was too far off to hover). The system goes by the place to
 play the feedback in an Apple Pencil Pro (device checks 16 and 21).
 Without a place, `select` and `tool` play their generator's call that
 takes none (`selectionChanged()`, `impactOccurred()`), and so does
-`snap`, as the light impact, since its canvas feedback needs one. Before
-17.5 every kind is the plain light impact. An iPad itself has no motor:
-only an Apple Pencil Pro plays these.
+`snap`, as the light impact, since its canvas feedback needs one. An iPad
+itself has no motor: only an Apple Pencil Pro plays these.
 
 ### Gamma Cloud
 
@@ -969,14 +967,9 @@ highlight's quote (`gamma/pdf_text.py`), page and region pictures for the
 AI's `view_pdf_page` and `view_ink` and for MCP, the annotated-PDF
 export's notes placed in the page's free space (`pdf_free_space.py`), the
 Logseq export's area-highlight pictures, and MuPDF's built-in fonts for a
-page whose fonts are not embedded. Before it, with pypdfium2 left out for
-want of an iOS wheel, each of those fell back
-([research/pypdfium2-ios.md](../research/pypdfium2-ios.md)). The imports
-stay guarded all the same, inside the functions that need them: a server
-without PyMuPDF starts, reads text and page sizes through PyPDF2, renders
-nothing, imports highlights without quotes and puts the notes in the
-margins, and the import's 70 ms and 30 MB are paid at the first PDF read,
-not at the start. The start test ([Tests](#tests)) is what catches a
+page whose fonts are not embedded. PyMuPDF is imported inside the
+functions that need it, so its 70 ms and 30 MB are paid at the first PDF
+read, not at the start. The start test ([Tests](#tests)) is what catches a
 bundle whose frameworks do not load.
 
 #### Where the data lives
@@ -1264,12 +1257,11 @@ confirm: [research/pymupdf-ios.md](../research/pymupdf-ios.md).
   silently afterwards and the test signs in again on its next run. Then
   it waits up to three minutes for `/api/health`, signs in as that
   account, uploads a one-page PDF it builds, creates the page for it and
-  reads the document back: the manifest (`/api/pdf-info`, one
-  page of 612 × 792 points) and
-  a page picture (`/api/ai/page-image`, an `image/*` body). The picture
-  is the proof that PyMuPDF's frameworks load and render: a server
-  without PyMuPDF starts and counts pages all the same (`pdf_text` falls
-  back to PyPDF2) but answers 404 there. It is CI's one check that the
+  reads the document back: the manifest (`/api/pdf-info`, one page of
+  612 × 792 points) and a page picture (`/api/ai/page-image`, an
+  `image/*` body). Both come from PyMuPDF, which the server imports at
+  its first PDF read (`/api/health` proves only the start), so they are
+  the proof that PyMuPDF's frameworks load and render. It is CI's one check that the
   bundle runs: a wrong layout, a broken framework conversion, a missing
   wheel or an import error fails here instead of on an iPad, and a call
   that does not answer as expected fails with the server's log tail. It

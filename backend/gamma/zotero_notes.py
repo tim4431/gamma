@@ -25,7 +25,8 @@ import re
 import urllib.parse
 from html.parser import HTMLParser
 
-from .note_markup import BARE_URL, INLINE_RE, LINK_PARTS, LINK_TARGET, LITERAL_SPANS
+from .note_markup import (ALT_SIZE_RE, BARE_URL, INLINE_RE, LINK_PARTS, LINK_TARGET, LITERAL_SPANS, WIDTH_SUFFIX,
+                          alt_and_width)
 
 MARK_STYLE = "background-color: #ffd40080"  # Gamma's ==mark== in a Zotero note
 
@@ -65,17 +66,14 @@ def _gamma_css(style) -> str:
 
 # --- export: block markdown → note HTML ----------------------------------------
 
-# A markdown image (Obsidian "|300" size in the alt, or the legacy Logseq
-# suffix), or a span INLINE_RE reads as written, in which nothing is an
+# A markdown image (its size in the alt or after it, note_markup's image
+# sizes), or a span INLINE_RE reads as written, in which nothing is an
 # image ("\![a](b)" is a link, "`![a](b)`" code): images are found with the
-# group "src" set.
+# group "src" set. A note's <img> holds the size as its width attribute.
 _IMAGE_RE = re.compile(
     LITERAL_SPANS
     + r"|!\[(?P<alt>[^\]\n]*)\]\(\s*(?P<src>" + LINK_TARGET + r")(?:[ \t][^)\n]*)?\)"
-    r"(?:\{:width\s+(?P<lw>\d+)\})?")
-# The display width Gamma keeps in an image's alt ("fig|300", mdMarks.js
-# ALT_WIDTH_RE), which a note's <img> holds as its width attribute.
-_ALT_WIDTH_RE = re.compile(r"(.*?)\|(\d+)(?:x\d+)?", re.S)
+    r"(?:" + WIDTH_SUFFIX + ")?")
 # What an alt read from HTML drops: the characters that would end it or
 # read as markup around it.
 _ALT_DROP_RE = re.compile(r"[\[\]\\`$*~=<>]")
@@ -268,10 +266,9 @@ def _spans_html(text: str, resolve_ref, in_link: bool = False) -> str:
 
 def _image_html(src: str, alt: str, width, resolve_image) -> str:
     """An image as a note's <img>, its alt and Gamma's display width
-    ("fig|300", or the legacy "{:width 300}") as attributes."""
-    size = _ALT_WIDTH_RE.fullmatch(alt or "")
-    if size:
-        alt, width = size.group(1), size.group(2)
+    (``note_markup.alt_and_width``: "fig|300", or Logseq's ``width`` read
+    after the image) as attributes."""
+    alt, width = alt_and_width(alt, width)
     attrs = (f' alt="{_attr(alt)}"' if alt else "") + (f' width="{int(width)}"' if width else "")
     upload = _UPLOAD_SRC_RE.fullmatch(src)
     if upload:
@@ -560,7 +557,7 @@ def _image_md(attrs: dict) -> tuple:
     elif not src.startswith(("http://", "https://")):
         return ("text", "(image)")
     alt = " ".join(_ALT_DROP_RE.sub("", attrs.get("alt") or "").split())
-    if _ALT_WIDTH_RE.fullmatch(alt):             # an alt ending "|300" is no width
+    if ALT_SIZE_RE.fullmatch(alt):               # an alt ending "|300" is no width
         alt = alt.replace("|", " ")
     width = (attrs.get("width") or "").strip()
     if width.isdigit() and int(width):

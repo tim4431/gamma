@@ -22,9 +22,20 @@ CLOSES_LINE = re.compile(r"\n[ \t>]*\Z")
 # item, a heading, a table row.
 BLOCK_START = re.compile(r"[ \t>]*(?:\n|\Z|(?:[-+*]|[0-9]+[.)])[ \t]|#{1,6}[ \t]|\|)")
 CLOSING_MARK = re.compile(r"[)\]},.;:!?]")
-# A code fence's opening line, after the quote marks and list marker
-# Markdown allows in front (frontend shared/lib/mdCode.FENCE_LINE).
-FENCE = re.compile(r"(?:[ \t]*>)*(?:[ \t]*(?:[-+*]|[0-9]+[.)])[ \t]+)?[ \t]*(`{3,}|~{3,})([^\r\n]*)")
+# What a line can start, once its containers are read (frontend
+# shared/lib/mdCode.js).
+FENCE_OPEN = re.compile(r"(`{3,}|~{3,})([^\n]*)\Z")
+FENCE_CLOSE = re.compile(r"(`{3,}|~{3,})[ \t]*\Z")
+LIST_MARKER = re.compile(r"(?:[-+*]|[0-9]{1,9}[.)])(?=[ \t]|\Z)")
+FOOTNOTE = re.compile(r"\[\^[^\][ \t\r\n]+\]:")
+DIVIDER = re.compile(r"([-*_])(?:[ \t]*\1){2,}[ \t]*\Z")
+HEADING = re.compile(r"#{1,6}(?:[ \t]|\Z)")
+# A quote on the stack of containers; a list item is its width in columns, a
+# footnote's definition 4. Past this many on one line the rest of it is text,
+# which keeps a line of nothing but markers from costing its length squared.
+QUOTE = 0
+MAX_CONTAINERS = 32
+DOUBLE_DOLLAR = re.compile(r"\$\$")
 # All a line may hold before a \[ that stands alone on it.
 LINE_PREFIX = re.compile(r"(?:[ \t]*>)*[ \t]*(?:(?:[-+*]|[0-9]+[.)])[ \t]+)?")
 # A sign only math uses; Markdown inside brackets, no TeX: a link, an
@@ -37,6 +48,7 @@ CJK = re.compile("[\u1100-\u11ff\u2e80-\u2fdf\u3005-\u3007\u3021-\u3029\u3038-\u
                  "\uf900-\ufaff\uff66-\uffdc\U00020000-\U0003ffff]")
 SCHEME = re.compile(r"[a-zA-Z][a-zA-Z0-9+.-]{1,31}:")
 BACKTICKS = re.compile(r"`+")
+CODE_OR_MATH = re.compile(r"`+|\$\$?")
 DOLLARS = re.compile(r"\$\$?")
 RUNS = re.compile(r"\$+")
 BACKSLASHED_DOLLAR = re.compile(r"(\\*)\$")
@@ -64,60 +76,209 @@ def _word(c: str) -> bool:
     return c != "" and c.isalnum() and not CJK.match(c)
 
 
+class _Line:
+    """A line read from its start: ``col`` is the column at index ``i``,
+    tabs going to the next stop of 4, ``at`` the column the innermost
+    container's text starts at."""
+
+    def __init__(self, text: str):
+        self.text, self.i, self.col, self.at = text, 0, 0, 0
+
+    def char(self) -> str:
+        return self.text[self.i] if self.i < len(self.text) else ""
+
+    def indent(self) -> int:
+        """The columns of indent from here, moving past it."""
+        while self.char() in (" ", "\t"):
+            self.col += 4 - self.col % 4 if self.char() == "\t" else 1
+            self.i += 1
+        return self.col - self.at
+
+    def enter_quote(self):
+        """Past a ">" and the one column after it that belongs to the mark."""
+        self.i += 1
+        self.col += 1
+        self.at = self.col
+        if self.char() == " ":
+            self.i += 1
+            self.col += 1
+            self.at += 1
+        elif self.char() == "\t":
+            self.at += 1
+
+    def enter_item(self, indent: int, length: int) -> int:
+        """Past a list marker of ``length`` characters, ``indent`` columns
+        in. Its text starts behind the spaces after it, or one column on
+        where there is none or they make it indented code. Its width."""
+        self.i += length
+        self.col += length
+        i, col = self.i, self.col
+        self.at = col
+        spaces = self.indent()
+        pad = 1 if self.i >= len(self.text) or spaces > 4 else spaces
+        if spaces > 4:
+            self.i, self.col = i, col
+        self.at = col + pad
+        return indent + length + pad
+
+    def enter_note(self, length: int):
+        """Past a footnote definition's label of ``length`` characters: its
+        first line's text starts behind the spaces after it."""
+        self.i += length
+        self.col += length
+        self.at = self.col
+        self.indent()
+        self.at = self.col
+
+
 def _fences(text: str) -> list:
-    """The code fences in ``text`` as ``(start, inner, to, end)``: the
-    opening line's start and end, the closing line's start and end (the
-    text's end while it is open). Quoted, listed and ~~~ fences count."""
-    out, opened, off = [], None, 0
-    for line in text.split("\n"):
-        m = FENCE.match(line)
+    """The code fences in ``text`` as ``(start, inner, mark, end)``, as the
+    renderer reads them: the opening line's start and end, where the
+    closing line's mark starts and that line's end (where the code ends
+    while it is open: the text's end, or the last line its container
+    held). The twin of the frontend's shared/lib/mdCode.codeFences."""
+    if "```" not in text and "~~~" not in text:
+        return []
+    out, stack, opened, paragraph, off = [], [], None, False, 0
+    for raw in text.split("\n"):
+        line = raw[:-1] if raw.endswith("\r") else raw
+        r = _Line(line)
+        # The containers this line is in; a blank one stays in a list item.
+        kept = 0
+        while kept < len(stack):
+            indent = r.indent()
+            if stack[kept] == QUOTE:
+                if indent > 3 or r.char() != ">":
+                    break
+                r.enter_quote()
+            elif r.i < len(line):
+                if indent < stack[kept]:
+                    break
+                r.at += stack[kept]
+            kept += 1
         if opened:
-            ticks = opened[2]
-            if m and m.group(1)[0] == ticks[0] and len(m.group(1)) >= len(ticks) and not m.group(2).strip(SPACE):
-                out.append((opened[0], opened[1], off, off + len(line)))
-                opened = None
-        elif m and not (m.group(1)[0] == "`" and "`" in m.group(2)):
-            opened = (off, off + len(line), m.group(1))
-        off += len(line) + 1
+            if kept == len(stack):
+                close = FENCE_CLOSE.match(line, r.i) if r.indent() < 4 else None
+                ticks = opened[2]
+                if close and close.group(1)[0] == ticks[0] and len(close.group(1)) >= len(ticks):
+                    out.append((opened[0], opened[1], off + r.i, off + len(raw)))
+                    opened = None
+                off += len(raw) + 1
+                continue
+            out.append((opened[0], opened[1], off - 1, off - 1))
+            opened = None
+        # The containers it opens.
+        indent, rest = r.indent(), line[r.i:]
+        while rest and indent < 4 and kept < MAX_CONTAINERS:
+            marker = None if DIVIDER.match(rest) else LIST_MARKER.match(rest)
+            note = FOOTNOTE.match(rest)
+            if rest[0] == ">":
+                r.enter_quote()
+                width = QUOTE
+            elif marker:
+                at = r.at
+                width = r.enter_item(indent, marker.end())
+                r.at = at + width
+            elif note:
+                r.enter_note(note.end())
+                width = 4
+            else:
+                break
+            del stack[kept:]
+            stack.append(width)
+            kept += 1
+            paragraph = False
+            indent, rest = r.indent(), line[r.i:]
+        # What the line itself is. A line of text with a paragraph open
+        # stays in the containers it left (a lazy line); anything else
+        # leaves them.
+        fence = FENCE_OPEN.match(rest) if indent < 4 else None
+        opens = fence and not (fence.group(1)[0] == "`" and "`" in fence.group(2))
+        starts = bool(opens or (indent < 4 and (HEADING.match(rest) or DIVIDER.match(rest))))
+        if not rest or starts or not paragraph:
+            del stack[kept:]
+        if opens:
+            opened = (off, off + len(raw), fence.group(1))
+        paragraph = bool(rest) and not starts and (paragraph or indent < 4)
+        off += len(raw) + 1
     if opened:
         out.append((opened[0], opened[1], len(text), len(text)))
     return out
 
 
-def _code_spans(text: str) -> list:
+def _code_spans(text: str, beside_math: bool = False) -> list:
     """The inline code spans in ``text``, ``(start, end)`` in order, by
     CommonMark's rule kept to one line: a run of backticks opens a span that
     the next run of the same length closes ("``a`b``" is one span). A
     backslash escapes an opener's first backtick ("\\`x`" is no code), never
-    a closer's: inside code a backslash is literal. The twin of the
-    frontend's shared/lib/mdCode.codeSpans."""
+    a closer's: inside code a backslash is literal. ``beside_math`` reads
+    them as the renderer does beside formulas, whichever starts first
+    holding the other. The twin of the frontend's shared/lib/mdCode.codeSpans."""
+    marks = CODE_OR_MATH if beside_math else BACKTICKS
     spans, off = [], 0
     for line in text.split("\n"):
-        runs = [(m.start(), len(m.group())) for m in BACKTICKS.finditer(line)]
-        by_length, seen = {}, {}
-        for k, (_at, n) in enumerate(runs):
-            by_length.setdefault(n, []).append(k)
+        runs = [(m.start(), m.group()) for m in marks.finditer(line)]
+        by_mark, seen = {}, {}
+        for k, (_at, mark) in enumerate(runs):
+            by_mark.setdefault(mark, []).append(k)
         floor, k = 0, 0
         while k < len(runs):
-            at, n = runs[k]
+            at, mark = runs[k]
+            dollar = mark[0] == "$"
             slashes = 0
             while at - slashes - 1 >= floor and line[at - slashes - 1] == "\\":
                 slashes += 1
             if slashes % 2:
-                at, n = at + 1, n - 1
-            closers = by_length.get(n, [])
-            i = seen.get(n, 0)
+                if dollar:
+                    k += 1
+                    continue
+                at, mark = at + 1, mark[1:]
+            closers = by_mark.get(mark, [])
+            i = seen.get(mark, 0)
             while i < len(closers) and closers[i] <= k:
                 i += 1
-            seen[n] = i
-            if n and i < len(closers):
+            seen[mark] = i
+            if mark and i < len(closers):
                 close_at = runs[closers[i]][0]
-                spans.append((off + at, off + close_at + n))
+                if not dollar:
+                    spans.append((off + at, off + close_at + len(mark)))
                 k = closers[i]
-                floor = close_at + n
+                floor = close_at + len(mark)
             k += 1
         off += len(line) + 1
     return spans
+
+
+def _fences_beside_math(text: str) -> list:
+    """The fences a formula leaves, ``(start, end)``: a line of ~~~ inside
+    a $$ is TeX, and whatever opens in a formula is none to math."""
+    in_span, kept = _code_test(text, False), []
+    opened, pos = False, 0
+    for f in _fences(text):
+        for m in DOUBLE_DOLLAR.finditer(text, pos, f[0]):
+            if not in_span(m.start()):
+                opened = not opened
+        pos = f[0] if opened else f[3]
+        if not opened:
+            kept.append((f[0], f[3]))
+    return kept
+
+
+def _code_test(text: str, fences: bool = True):
+    """A test of whether a position in ``text`` is code: in a code span
+    beside the formulas or, with ``fences``, in a fence outside them, its
+    delimiters too. Asked in ascending order (the frontend's
+    shared/lib/mdCode.codeTest)."""
+    if "`" not in text and "~~~" not in text:
+        return lambda pos: False
+    ranges = sorted((_fences_beside_math(text) if fences else []) + _code_spans(text, True))
+    k = [0]
+
+    def test(pos: int) -> bool:
+        while k[0] < len(ranges) and ranges[k[0]][1] <= pos:
+            k[0] += 1
+        return k[0] < len(ranges) and ranges[k[0]][0] <= pos
+    return test
 
 
 def _outside_code(s: str, fn) -> str:
@@ -128,9 +289,10 @@ def _outside_code(s: str, fn) -> str:
     return "".join(out) + fn(s[pos:])
 
 
-def _map_prose(text: str, fn) -> str:
+def map_prose(text: str, fn) -> str:
     """``text`` with ``fn`` applied to what lies outside its fences and code
-    spans."""
+    spans, as the frontend's shared/lib/mdCode.mapProse does; note_markup's
+    image-size rewrite skips code with it too."""
     out, pos = [], 0
     for start, _inner, _to, end in _fences(text):
         out.append(_outside_code(text[pos:start], fn) + text[start:end])
@@ -367,7 +529,7 @@ def _kept_in(text: str) -> set:
         return s
 
     if text:
-        _map_prose(text, collect)
+        map_prose(text, collect)
     return kept
 
 
@@ -380,17 +542,23 @@ def dollar_math(text: str, keep: str = "") -> str:
     if not text:
         return text
     kept = _kept_in(keep)
-    plain = _map_prose(text, lambda s: _convert(s, kept, False))
-    return text if plain == text else _map_prose(text, lambda s: _convert(s, kept, True))
+    plain = map_prose(text, lambda s: _convert(s, kept, False))
+    return text if plain == text else map_prose(text, lambda s: _convert(s, kept, True))
 
 
 def _in_math(doc: str, pos: int) -> bool:
     """Whether ``pos`` is in a ``$ … $`` or ``$$ … $$`` span, an unclosed
-    one included (latexCompletion.findMathAtCursor)."""
+    one included (latexCompletion.findMathAtCursor). A dollar in code is
+    none, and a lone $ ends with its paragraph."""
+    in_code = _code_test(doc)
     open_at, open_len = None, 0
     for m in DOLLARS.finditer(doc):
-        if m.start() != pos and escaped_at(doc, m.start()):
+        if (m.start() != pos and escaped_at(doc, m.start())) or in_code(m.start()):
             continue
+        if open_at is not None and open_len == 1 and BLANK_LINE.search(doc, open_at, m.start()):
+            if open_at + 1 <= pos <= doc.find("\n", open_at + 1):
+                return True
+            open_at = None
         if open_at is None:
             if m.start() >= pos:
                 return False
@@ -411,14 +579,7 @@ def paste_math(doc: str, pos: int, text: str) -> str:
     """What ``text`` put in at ``pos`` in ``doc`` becomes: converted, unless
     it lands in source (a code fence, inline code or math), where it stays as
     written (pasteMath.pasteMath)."""
-    fenced, spans = _fences(doc), _code_spans(doc)
-    if any(inner <= pos <= to for _s, inner, to, _e in fenced) or any(a < pos < b for a, b in spans):
+    if any(inner <= pos <= mark for _s, inner, mark, _e in _fences(doc)) \
+            or any(a < pos < b for a, b in _code_spans(doc)):
         return text
-    # Dollars in code are no math: blanked before asking.
-    prose, at = [], 0
-    for a, b in sorted([(f[0], f[3]) for f in fenced] + spans):
-        if a < at:
-            continue
-        prose.append(doc[at:a] + re.sub(r"[^\n]", " ", doc[a:b]))
-        at = b
-    return text if _in_math("".join(prose) + doc[at:], pos) else dollar_math(text)
+    return text if _in_math(doc, pos) else dollar_math(text)

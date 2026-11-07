@@ -61,12 +61,16 @@ function nextMarker(p) {
 const endedItem = (p) => (LIST_KINDS.has(p.kind) ? p.quote : p.quote.replace(/> ?$/, ""));
 
 // A line that is one thing whole: a table row, a divider, or a code fence's
-// or display math's delimiter. The new-block key does not cut one, and a
-// merge joins no text to one.
-const WHOLE_LINE_RE = /^ {0,3}(?:\||`{3,}|~{3,}|\$\$|([-*_])(?: *\1){2,} *$)/;
+// or display math's delimiter, at any indent and behind a list's marker. The
+// new-block key does not cut one, and a merge joins no text to one. A
+// backtick after the mark makes it inline code (```a``` b).
+const WHOLE_LINE_RE = /^ {0,3}(?:\||\$\$|([-*_])(?: *\1){2,} *$)/;
+const DELIMITER_RE = /^(?:`{3,}[^`]*$|~{3,}|\$\$[^$]*$)/;
 
 export function isWholeLine(line) {
-  return WHOLE_LINE_RE.test(line.slice(parseLine(line).quote.length));
+  const p = parseLine(line);
+  return WHOLE_LINE_RE.test(line.slice(p.quote.length))
+    || ((!p.kind || p.kind === "bullet" || p.kind === "number") && DELIMITER_RE.test(p.body));
 }
 
 // The line without its first n quote levels.
@@ -86,6 +90,14 @@ export function quoteMarksAt(text, pos) {
   const line = lineAt(text, pos);
   const { quote } = parseLine(line.text);
   return quote && pos - line.from >= quote.trimEnd().length ? quote : "";
+}
+
+// What a line starts with to sit where the text at `pos` does: the quote marks
+// and indent before it on its line, and as many spaces as any list marker.
+const MARKS_RE = /^(?:[ \t]*(?:>|(?:[-+*]|\d{1,9}[.)])(?=[ \t]|$)))*[ \t]*/;
+
+export function marksBefore(text, pos) {
+  return MARKS_RE.exec(text.slice(lineAt(text, pos).from, pos))[0].replace(/[^> \t]/g, " ");
 }
 
 // The line-break Enter at a caret (Obsidian-style): a quote or list line

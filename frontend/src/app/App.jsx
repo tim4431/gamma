@@ -1894,19 +1894,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     else if (folder) openTagMenu("folder", folder)(e);
     else if (label) openTagMenu("label", label)(e);
   }
-  const [pdfPageNumber, setPdfPageNumber] = useState(() => loadSession().pdfPageNumber || 1);
   const [pdfEffScale, setPdfEffScale] = useState(1); // actual render scale (incl. fit-width)
-  // Browser fullscreen (whole app, like F11). webkit-prefixed fallbacks are
-  // for iPadOS Safari, which never shipped the unprefixed API.
+  // Browser fullscreen (whole app, like F11).
   const [isFullscreen, setIsFullscreen] = useState(false);
   useEffect(() => {
-    const onFs = () => setIsFullscreen(!!(document.fullscreenElement || document.webkitFullscreenElement));
+    const onFs = () => setIsFullscreen(!!document.fullscreenElement);
     document.addEventListener("fullscreenchange", onFs);
-    document.addEventListener("webkitfullscreenchange", onFs);
-    return () => {
-      document.removeEventListener("fullscreenchange", onFs);
-      document.removeEventListener("webkitfullscreenchange", onFs);
-    };
+    return () => document.removeEventListener("fullscreenchange", onFs);
   }, []);
   // Use native fullscreen on touch devices too; app fullscreen is a fallback
   // for browsers where the Fullscreen API is unavailable or rejects the request.
@@ -1923,15 +1917,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     };
   }, [pseudoFullscreen]);
   function toggleFullscreen() {
-    if (document.fullscreenElement || document.webkitFullscreenElement) {
-      (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
     } else if (pseudoFullscreen) {
       setPseudoFullscreen(false);
-    } else if (!(document.fullscreenEnabled || document.webkitFullscreenEnabled)) {
+    } else if (!document.fullscreenEnabled) {
       setPseudoFullscreen(true);
     } else {
-      const el = document.documentElement;
-      (el.requestFullscreen || el.webkitRequestFullscreen)?.call(el)?.catch?.(() => setPseudoFullscreen(true));
+      document.documentElement.requestFullscreen().catch(() => setPseudoFullscreen(true));
     }
   }
   // Mobile browsers may omit the synthetic click after a scroll. Handle a
@@ -2286,8 +2279,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Last-read positions, synced like tabs so "jump to last read" follows the
   // account across browsers: blockId -> {page, at}. Per-paper entries merged
   // newest-wins, so two open windows only conflict when reading the SAME
-  // paper (last writer wins) — unlike the old single global session slot,
-  // which any window (or goHome's clearSession) could clobber.
+  // paper (last writer wins).
   const readPosRef = useRef({});
   const readPosLoadedRef = useRef(false); // first server response arrived
   const readPosPushTimerRef = useRef(null);
@@ -3062,6 +3054,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     askedCloudChoice.current = true;
     setSettingsOpen((cur) => cur || "account");
   }, [profileSync.cloudChoice]);
+  // A link to a Settings pane (`/?settings=backups`, Gamma Cloud's Export
+  // for a read-only Pro server) opens it once the library is there, signed
+  // in first if need be; the parameter then leaves the address.
+  useEffect(() => {
+    if (!wsReady || shareMode) return;
+    const url = new URL(window.location.href);
+    const pane = url.searchParams.get("settings");
+    if (!pane) return;
+    url.searchParams.delete("settings");
+    window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+    setSettingsOpen(pane);
+  }, [wsReady, shareMode]);
   // What wants a look (a newer release, errors in the log — app/notices.js):
   // the dot on the account button and on the Settings panes that resolve it;
   // "Settings…" lands on the strongest one.
@@ -5180,9 +5184,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       pdfScale,
       pdfHidden,
       notesVisible,
-      pdfPageNumber,
     });
-  }, [focusedBlockId, pdfScale, pdfHidden, notesVisible, pdfPageNumber]);
+  }, [focusedBlockId, pdfScale, pdfHidden, notesVisible]);
 
   // Synced per-paper read position, fed by the scroll tracker on every scroll
   // (a ref so the tracker effect needn't re-register). Guarded: only while
@@ -7399,7 +7402,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           prompt: "Extract the exact title of this document. Reply with ONLY the title text — no quotes, no authors, no extra words.",
-          doc_id: docId,
+          page_id: focusedBlockId,
           history: [],
           model: chatSendModel || "",
         }),
@@ -9319,12 +9322,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setTimeout(attempt, 100);
   }, [pdfHidden, highlights]);
 
-  // Jump to the last-read page when a document opens.
-  // Position comes from the account-synced per-paper map (read-pos pref),
-  // falling back to the legacy per-browser session slot only when it belongs
-  // to this page. Waits until this document's pages are rendered (however
-  // long that takes), then scrolls and holds the target until the layout
-  // stops shifting under it.
+  // Jump to the last-read page when a document opens, the page the
+  // account-synced per-paper map (read-pos pref) holds for it. Waits until
+  // this document's pages are rendered (however long that takes), then
+  // scrolls and holds the target until the layout stops shifting under it.
   useEffect(() => {
     coarseRestorePendingRef.current = false;
     if (pdfHidden || !pdfUrl) return;
@@ -9334,8 +9335,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // coarse last-read page is only for (re)opening a paper cold.
     if (tabScrollRef.current[fid]) { dbg("restore: exact tab position exists for", fid); return; }
     dbg("restore: waiting for doc;", fid, "entry:", readPosRef.current[fid] || null);
-    const sess = loadSession();
-    const sessSaved = fid && sess.focusedBlockId === fid ? sess.pdfPageNumber : 0;
     coarseRestorePendingRef.current = true;
     let cancelled = false;
     let tries = 0;
@@ -9372,7 +9371,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         return;
       }
       const entry = fid ? readPosRef.current[fid] : null;
-      const saved = entry?.page || sessSaved;
+      const saved = entry?.page;
       if (!saved || saved <= 1) { dbg("restore: nothing to restore (saved page", saved, ")"); done(); return; }
       dbg("restore: doc rendered, scrolling to page", saved);
       restoredPdfUrlRef.current = pdfUrl;
@@ -9428,12 +9427,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return () => { cancelled = true; done(); cancelCoarseRestoreRef.current = () => {}; };
   }, [pdfUrl, pdfHidden]);
 
-  // Track PDF scroll position — feeds the page indicator and the synced
-  // per-paper reading position.
+  // Track PDF scroll position — feeds the synced per-paper reading position.
   useEffect(() => {
     if (!pdfUrl || pdfHidden) return;
     let ticking = false;
-    let settle = 0;
     function onScroll(e) {
       // Fast bail without any DOM query: the notes/chat panes pass through
       // here too, but only the PDF scroller itself matters.
@@ -9462,16 +9459,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         }
         const n = found ? parseInt(found.dataset.page) : 0;
         if (!n) return;
-        // Record via the tracker, not a pdfPageNumber effect: scrolling
-        // within a page (or back to a page the state already shows) fires
-        // no state change, but must still re-assert this window's
-        // position over one pulled from another window.
+        // Every scroll records, within one page too: that re-asserts this
+        // window's position over one pulled from another window.
         recordScrollPageRef.current?.(n);
-        // The state (what the session restore saves) follows once the scroll
-        // rests: a flick through fifty pages is one render of the app, not
-        // fifty.
-        clearTimeout(settle);
-        settle = setTimeout(() => setPdfPageNumber(n), 300);
       });
     }
     // Capture-phase listener on the document: element scroll events don't
@@ -9482,7 +9472,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // and a remount silently drops a per-element listener, ending position
     // tracking for the rest of the session.
     document.addEventListener('scroll', onScroll, { capture: true, passive: true });
-    return () => { clearTimeout(settle); document.removeEventListener('scroll', onScroll, { capture: true }); };
+    return () => document.removeEventListener('scroll', onScroll, { capture: true });
   }, [pdfUrl, pdfHidden]);
 
   // Names the paper a citation pill points at, in the chat and in the notes:
@@ -12280,7 +12270,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     <MentionClock.Provider value={reminders.now}>
     <div
       ref={appRef}
-      className={`app layout-horizontal ${pseudoFullscreen ? "pseudoFullscreen" : ""} ${isPhone ? "phoneUI" : ""}`}
+      className={`app ${pseudoFullscreen ? "pseudoFullscreen" : ""} ${isPhone ? "phoneUI" : ""}`}
       data-drop={homeMode && lib.organize ? "upload" : focusedBlockId && !readOnly ? "files" : undefined}
       onDragOver={shareMode ? undefined : (e) => {
         if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes("Files")) return;

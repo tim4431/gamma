@@ -22,12 +22,12 @@ from dataclasses import replace
 from datetime import datetime
 
 from .markdown_import import _LIST_RE
-from .note_markup import BARE_URL, LINK_TARGET, LITERAL_SPANS
+from .note_markup import ALT_SIZE_RE, BARE_URL, LINK_TARGET, LITERAL_SPANS, alt_and_width
 from .notion_blocks import (_LIST_ITEMS, Block, _on_a_line, callout_color, callout_type, color_name, gamma_leaves,
                             merge_colors, style_color)
 from .picture import is_picture, markdown_of
 from .text_box import escape_markdown
-from .zotero_notes import _ALT_WIDTH_RE, _UPLOAD_SRC_RE, _element_at, _url_md, css_style, markdown, title_text
+from .zotero_notes import _UPLOAD_SRC_RE, _element_at, _url_md, css_style, markdown, title_text
 
 # mentions.MENTION_RE, repeated since that module reaches the database and this
 # one is pure; tests/shared/mentions.json holds this copy to it.
@@ -146,8 +146,7 @@ def _atom(m: re.Match) -> tuple:
     if which in ("embed", "ref"):
         return ("raw", body)
     if which == "image":
-        size = _ALT_WIDTH_RE.fullmatch(m.group("alt"))
-        alt, width = size.groups() if size else (m.group("alt"), m.group("lw"))
+        alt, width = alt_and_width(m.group("alt"), m.group("lw"))
         return ("image", _unescaped(alt), _address(m.group("src")), width)
     if which == "target":
         return ("target", _address(m.group("href")), body)
@@ -869,7 +868,7 @@ def _image_md(block: Block) -> str:
         return _text(block)
     alt = "".join(" " if leaf[0] == "br" else leaf[1] for leaf in block.rich)
     alt = " ".join(re.sub(r"[\[\]]", "", alt).split())
-    if _ALT_WIDTH_RE.fullmatch(alt):             # an alt ending "|300" is no width
+    if ALT_SIZE_RE.fullmatch(alt):               # an alt ending "|300" is no width
         alt = alt.replace("|", " ")
     width = block.attrs.get("width")
     return f"![{escape_markdown(alt)}{f'|{round(width)}' if width else ''}]({_url_md(url)})"

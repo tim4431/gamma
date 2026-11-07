@@ -312,6 +312,14 @@ def test_plain_zipped_folder_of_notes(own_library):
     assert plans["children"][0]["content"] == f"See [[{by_title['2026-09-01']['id']}]]."
 
 
+def test_a_zipped_logseq_graphs_pictures_keep_their_sizes(guest):
+    buf = _zip({"graph/pages/reading.md": "- ![image.png](../assets/image_1.png){:width 300}\n",
+                "graph/assets/image_1.png": PNG + b"logseq graph"})
+    report = _import(guest, buf)
+    note = _subtree(guest, report["pages"][0]["id"])["children"][0]["content"]
+    assert note.startswith("![image.png|300](/api/uploads/") and note.endswith(".png)"), note
+
+
 def test_names_are_kept_and_tags_become_labels(guest):
     """A directory's name is a folder's name as written ("," and "/"
     included in a front-matter name's own way: "/" separates), tags are

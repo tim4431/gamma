@@ -431,7 +431,7 @@ def paper(user):
 
 
 def test_a_page_exports_as_its_translated_annotated_pdf(user, paper):
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
 
     job = _finished(user, page_id=paper["id"], mode="annotated-pdf", highlights=True, notes=False,
                     translation=_translation(paper["doc_id"], paper["data"]))

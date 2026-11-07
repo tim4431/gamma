@@ -39,15 +39,6 @@ test("a failed run keeps its folder without the copy of the build", async (t) =>
   assert.deepEqual(fs.readdirSync(server.dir).sort(), ["data", "failures", "tmp"]);
 });
 
-test("the backend's temp files stay in the server's folder", (t) => {
-  ownTemp(t);
-  const server = new Server({ env: { GAMMA_SHARE_HOST: "1" } });
-  const inside = path.join(server.dir, "tmp");
-  assert.equal(fs.statSync(inside).isDirectory(), true);
-  for (const key of ["TMPDIR", "TEMP", "TMP"]) assert.equal(server.env[key], inside);
-  assert.equal(server.env.GAMMA_SHARE_HOST, "1");
-});
-
 test("a run sweeps old folders of the suite's and nothing else", (t) => {
   const temp = ownTemp(t);
   const days = (n) => new Date(Date.now() - n * 24 * 60 * 60 * 1000);

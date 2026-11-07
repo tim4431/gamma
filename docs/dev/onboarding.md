@@ -76,16 +76,15 @@ list. Then the footnote "Replay any tour from the account menu" and
 Esc, the scrim, a tile) keeps it. Only a tour with a `finishCard` ends this
 way; the others close after their last step.
 
-Progress is a localStorage key per account (`gamma-guide:<account>:<tourId>`;
-the first tour keeps its older `gamma-guide:first-run`) plus the account's
-synced copy, so a tour done in one browser is not offered in another (see
-"Storage"). On a
-demo server (`facts.demo`, from `GET /api/server-config`'s
-`demo`) the same keys live in sessionStorage (`guideStorage(demo)` in
-`triggers.js`), so every visit starts fresh ([guests.md](guests.md) "Demo
-mode"). Every new account starts with the Welcome page and its sample PDF
-(see "The welcome page and its sample PDF") and the Sketchbook, a notebook
-of cartoon drawings on what to try with the pen (see "The Sketchbook").
+Progress is a localStorage key per account
+(`gamma-guide:<account>:<tourId>`) plus the account's synced copy, so a tour
+done in one browser is not offered in another (see "Storage"). On a demo
+server (`facts.demo`, from `GET /api/server-config`'s `demo`) the same keys
+live in sessionStorage (`guideStorage(demo)` in `triggers.js`), so every
+visit starts fresh ([guests.md](guests.md) "Demo mode"). Every new account
+starts with the Welcome page and its sample PDF (see "The welcome page and
+its sample PDF") and the Sketchbook, a notebook of cartoon drawings on what
+to try with the pen (see "The Sketchbook").
 
 ## Manual tours (implemented)
 
@@ -1043,8 +1042,7 @@ included only when the PDF is visible. The share view shows none of it
 ## Storage
 
 Progress is kept in two places. Each tour has one localStorage key per account,
-`gamma-guide:<account>:<tourId>` (the first tour keeps its older
-`gamma-guide:first-run`), holding `{state, step?, version}`: `offered`,
+`gamma-guide:<account>:<tourId>`, holding `{state, step?, version}`: `offered`,
 `running` (with the step), `dismissed` (with the step it was left on) or
 `done`. The account keeps a copy without the step, the `tourProgress`
 preference (tour id → `{state, version}`). It travels in the profile to the

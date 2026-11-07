@@ -1,13 +1,12 @@
 """The quote of an imported highlight is the text under its quads: PyMuPDF's
 glyph boxes (pdf_text.GlyphPages), a glyph counted when its centre is
-covered (pdf_text.quote_under). Guards the two failures of the reader this
-replaced, which matched one point per line: a highlight from a line's start
-quoting the line above it (PyPDF2's text visitor reports a line at the next
-line's position), and one starting mid-line quoting nothing."""
+covered (pdf_text.quote_under). Guards the two ways a quote matched by one
+point per line goes wrong: a highlight from a line's start quoting the line
+above it, and one starting mid-line quoting nothing."""
 
 import io
 
-from PyPDF2 import PdfReader
+from pypdf import PdfReader
 
 from gamma.pdf_text import GlyphPages, quote_under
 from gamma.routers.imports import _extract_pdf_annotations

@@ -34,7 +34,7 @@ id of its own, which is the highlight's id — idempotent via `properties.import
 keys; opacity honors the annotation's `/GammaAlpha`, else its `/CA`, so a
 Gamma export → re-import round-trips exact colors (a Zotero copy keeps its
 alpha in the first, [below](#zotero-rdf-export)), and each channel is rounded, not truncated (an
-app that writes 0.831 means 212); PyPDF2 dict access returns `IndirectObject`s, always
+app that writes 0.831 means 212); pypdf's `.get()` hands back `IndirectObject`s unresolved, always
 `.get_object()` them. `/Ink` (freehand drawings from any PDF app, or a Gamma
 export) becomes a handwriting block: the strokes are stored as an `.ink`
 upload (`gamma/ink.py`), the block gets `ink_url` / `ink_strokes` /
@@ -95,8 +95,8 @@ image however many stamps draw it, and before the write lock
 read is bounded:
 
 - `pdf_image.stream_data` inflates a `/FlateDecode` by hand, never past the
-  size the image needs. PyPDF2's `get_data` would inflate it whole and keep
-  the result on the reader.
+  size the image needs. pypdf's `get_data` would inflate it whole, up to its
+  75 MB cap, and keep the result on the reader.
 - An image is opened only as the format its filter names (JPEG, JPEG 2000,
   or a rebuilt PNG). It is refused when its header's size is not its
   `/Width` and `/Height`, before anything is decoded.
@@ -146,8 +146,6 @@ a highlight that starts mid-line quotes from there, one across lines quotes
 both lines joined by a space (a word hyphenated across them keeps its
 hyphen, as MuPDF extracts it), and a quad's edge never drags in the glyph it
 touches. A file MuPDF can't open imports its highlights without quotes.
-PyPDF2's text visitor is no use for this: it reports each line at the
-position of the line after it, which once quoted the line above a highlight.
 
 Only what the page shows is imported (`pdf_export.annotation_shown`): an
 annotation flagged Hidden or NoView, or a review-state stamp (`/State`,
@@ -169,7 +167,9 @@ The Logseq import (`POST /api/import/logseq`, a .pdf + .edn and an optional
 .md) goes into the page carrying that PDF, made when there is none, under
 the write lock like every lookup by attachment. Highlights already on the
 page are skipped by their quote and notes by their text (a note written
-twice in the .md stays twice), so running it again adds nothing. Into an
+twice in the .md stays twice), so running it again adds nothing. A note's
+Logseq image size, `![alt](url){:width N}`, comes in as Gamma's
+`![alt|N](url)`, and the page's notes are compared in that form too. Into an
 existing page it logs one `reload` under the importing account. An EDN
 position keeps the page size in every rect; the import stores it once
 (`logseq_import.edn_highlight_position`, `highlights.from_scaled`), and an
@@ -370,7 +370,10 @@ front-matter `folder:` path files it in the folder at that path below it,
 made where missing in the page's own transaction), and converts the document into nested Gamma blocks through
 `gamma/markdown_import.py`. Headings and indented lists retain hierarchy;
 paragraphs, fenced code, math and other Markdown stay as raw block content for
-the normal editor renderer. A list item keeps its marker, as a list block does:
+the normal editor renderer, except a Logseq image size: `md_to_blocks`, and
+so every import that parses with it (the zips and the paste as blocks among
+them), turns `![alt](url){:width N}` outside code into the `![alt|N](url)`
+Gamma stores (`note_markup.obsidian_image_sizes`). A list item keeps its marker, as a list block does:
 `- x` and `* x` are the block `- x`, `1. x` stays, and a task is `- [ ] x`.
 A bullet that only wraps a block of its own (`- # H`, `- ```py`, `- - x`,
 which a vault writes) gives way to that block; `- $$x$$ is it`, `- |x| is it`,
@@ -378,15 +381,15 @@ which a vault writes) gives way to that block; `- $$x$$ is it`, `- |x| is it`,
 is inline code wherever it stands, in the zip's own passes over a note too (they
 read the parser's `_FENCE_LINE_RE`). A fence closes only on a line that is all
 its mark and at least as long as what opened it (`markdown_import.shuts_fence`,
-the rule of `notion_nfm` and, for mark and length, the editor's `scanFences`),
+the rule of `notion_nfm` and, for mark and length, the editor's `mdCode.codeFences`),
 in a list item too, so a ```` fence can hold ``` lines. On the page a line four
 columns past its fence is code (`shuts_code`, CommonMark's rule; the vault's
-`%%` pass reads it too); the editor closes at column 0 alone, and in a list item
-any indent closes. Lines indented under a list item continue
+`%%` pass reads it too), and in a list item any indent
+closes. Lines indented under a list item continue
 that item, whether directly below it or after a blank line when aligned with
 the item's text. Text indented deeper after a blank line becomes a child block,
 which is how Notion exports a toggle's content. So does a fence or `$$` opened
-on an item's next line, because the editor only sees those at column 0.
+on an item's next line: the editor draws a fence's card only at column 0.
 
 `$$` opens multi-line math only at the start of a line's text with no pair on
 that line, as in remark-math, in an item as at the top: `- costs $$ and more`
@@ -629,7 +632,8 @@ The rest of this section holds for every dialect unless it says otherwise:
   (`store_file_stream`, content-hash dedup, the storage quota — a file over
   it is a warning and the link stays as typed) and points at
   `/api/uploads/…`; `![[img.png|300]]` / `|300x200` becomes the editor's
-  `![|300](url)` size form, other pipe text the alt. A CSV that is no table
+  `![|300](url)` size form, other pipe text the alt, and a Logseq graph's
+  `![alt](../assets/x.png){:width 300}` comes in as `![alt|300](url)`. A CSV that is no table
   page is such a file; one no new note links is left out with a warning
   once the pages are written, and a zip holding no note and no table page is
   a 400. Links that resolve to
@@ -1799,7 +1803,7 @@ computed by the same function on the note's own layout:
 - A box holding one picture, as imports made one before a picture was a
   block of its own, is still a picture (`_boxed_picture`): in the box less
   its padding, as tall as the picture shown that wide. Its alt text is the
-  caption, less an Obsidian size that ends it (`_ALT_WIDTH`:
+  caption, less an Obsidian size that ends it (`note_markup.alt_and_width`:
   `![Figure 2|300x200](…)` gives "Figure 2"). It comes back a picture
   block.
 - The page's notes (each block that is on no surface, in document order)
@@ -2297,8 +2301,8 @@ parent's file (`Top-x.md`, `Top-x/Child-y.md`, Notion's layout), its
 `parent: ../Top-x.md`) when the parent is in the export; links between
 exported files and `assets/` paths are relative to each file
 (`../Other-z.md`, `../../assets/<sha>.png`); image sizes export in the
-Obsidian dialect — `obsidian_image_sizes` rewrites any legacy `{:width N}`
-to `![alt|N](url)`. Block links resolve against the export set
+Obsidian dialect — `obsidian_image_sizes` rewrites a Logseq `{:width N}`
+outside code to `![alt|N](url)`. Block links resolve against the export set
 (`resolve_block_links` + `_MarkdownBuilder.begin`'s page-id → filename map):
 a `[[ref]]` or PDF link region whose target page is in the same export
 becomes a relative link to that page's .md — so a folder zip is
@@ -2693,7 +2697,8 @@ starting on a fresh sheet).
 Each block's markdown is parsed twice: into chunks (headings, paragraphs,
 `>` quotes and `> [!type]` callouts, list items, `- [ ]` todos, fenced code,
 `---` rules, GFM tables, images — honoring the editor's size, Obsidian
-`![alt|300]` or legacy Logseq `{:width N}`, capped at the column —
+`![alt|300]` or Logseq's `{:width N}` after the image
+(`note_markup.alt_and_width`), capped at the column —
 `![[embed]]` synced blocks, `$$…$$` math) and each
 chunk's text into styled inline spans (bold, italic, `<u>underline</u>`,
 `code`, strike, `==mark==`, `[[refs]]`, links, `$…$` math; a colored
@@ -2872,7 +2877,7 @@ caption is written as a note's text.
 ## The PDF writers
 
 The typesetting engine both PDF writers draw with (`gamma/pdf_typeset.py`)
-and the annotated-PDF export (reading through `ExportPdfReader`, notes and
-comments as cards beside the page or on it, vector text as Type 3 fonts,
+and the annotated-PDF export (notes and comments as cards beside the page
+or on it, vector text as Type 3 fonts,
 images, fonts and content streams) are described in
 [pdf_typesetting.md](pdf_typesetting.md).

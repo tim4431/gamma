@@ -13,8 +13,8 @@ PAGE_W, PAGE_H = 612, 792
 
 
 def _blank_pdf(pages=1, rotate=0, crop=None, user_unit=None):
-    from PyPDF2 import PdfWriter
-    from PyPDF2.generic import NameObject, NumberObject, RectangleObject
+    from pypdf import PdfWriter
+    from pypdf.generic import NameObject, NumberObject, RectangleObject
 
     w = PdfWriter()
     for i in range(pages):
@@ -74,7 +74,7 @@ def _position(page=1, x1=100, y1=72, x2=300, y2=92, w=PAGE_W, h=PAGE_H, extra_re
 def test_annotate_roundtrips_through_import_extractor():
     """Burn a highlight in, then read it back with the importer's extractor —
     the two coordinate conversions must be exact inverses."""
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
     from gamma.routers.imports import _extract_pdf_annotations
 
     # Viewer rect at doubled render size: same normalized position.
@@ -101,8 +101,8 @@ def test_annotate_roundtrips_through_import_extractor():
 
 def _pdf_with_dangling_reference():
     """A readable page with a missing optional object, as in real arXiv PDFs."""
-    from PyPDF2 import PdfWriter
-    from PyPDF2.generic import DictionaryObject, NameObject, NullObject
+    from pypdf import PdfWriter
+    from pypdf.generic import DictionaryObject, NameObject, NullObject
 
     writer = PdfWriter()
     writer.add_blank_page(width=PAGE_W, height=PAGE_H)
@@ -124,8 +124,8 @@ def _pdf_with_dangling_reference():
 
 
 def test_annotate_preserves_document_with_dangling_reference():
-    from PyPDF2 import PdfReader
-    from PyPDF2.generic import NullObject
+    from pypdf import PdfReader
+    from pypdf.generic import NullObject
 
     source = _pdf_with_dangling_reference()
     # Ensure the fixture really exercises the unresolved-reference path.
@@ -150,8 +150,27 @@ def test_render_notes_with_dangling_reference():
     assert "Visible note" in _page_text(out)
 
 
+def test_annotate_an_aes_pdf_restricted_by_its_owner_password_only():
+    """A publisher's PDF encrypted with AES-256 under an owner password,
+    its user password empty, opens without one, so its copy gets the
+    highlights like any other's; the copy is written unencrypted."""
+    import pymupdf
+    from pypdf import PdfReader
+
+    doc = pymupdf.open()
+    doc.new_page(width=PAGE_W, height=PAGE_H).insert_text((72, 72), "restricted text")
+    source = doc.tobytes(encryption=pymupdf.PDF_ENCRYPT_AES_256, owner_pw="owner", user_pw="",
+                         permissions=pymupdf.PDF_PERM_PRINT)
+    assert PdfReader(io.BytesIO(source)).is_encrypted
+    out, written = annotate_pdf(source, [{"position": _position(), "note": "kept note"}])
+    reader = PdfReader(io.BytesIO(out))
+    assert written == 1 and len(reader.pages) == 1 and not reader.is_encrypted
+    assert "restricted text" in _page_text(out)
+    assert reader.pages[0]["/Annots"][0].get_object()["/Contents"] == "kept note"
+
+
 def test_annotate_multiline_and_skips_unusable():
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
 
     multiline = _position(extra_rects=[
         {"x1": 50, "y1": 100, "x2": 500, "y2": 120},
@@ -173,7 +192,7 @@ def test_annotate_multiline_and_skips_unusable():
 def test_annotate_area_as_square():
     """An area note (position carries area: true) exports as a /Square
     annotation over the rect, not a /Highlight with quad points."""
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
 
     pos = _position()
     pos["area"] = True
@@ -231,7 +250,7 @@ def test_annotate_on_a_crop_box_larger_than_the_media_box():
     """pdf.js, pdfium and MuPDF show the crop box clipped to the media box,
     the frame the viewer stores rects in: a highlight lands where it was
     drawn, and the import (a media-box flip) reads it back in place."""
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
     from gamma.routers.imports import _extract_pdf_annotations
 
     out, _ = annotate_pdf(_blank_pdf(crop=(-50, -60, 700, 900)), [{"position": _position(), "note": ""}])
@@ -244,7 +263,7 @@ def test_annotate_on_a_crop_box_larger_than_the_media_box():
 
 def test_annotate_rotated_page():
     """On a 90°-rotated page the viewer's x axis runs along PDF y."""
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
 
     # Rendered size is swapped (H x W); a rect near the view's top-left.
     pos = {"pageNumber": 1, "width": PAGE_H, "height": PAGE_W,
@@ -284,7 +303,7 @@ def _every_kind():
 
 def _by_kind(pdf_bytes):
     """Page 1's annotations by subtype (one of each in these tests)."""
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
 
     annots = [a.get_object() for a in PdfReader(io.BytesIO(pdf_bytes)).pages[0]["/Annots"]]
     return {str(a["/Subtype"]): a for a in annots}
@@ -294,7 +313,7 @@ def _plain(obj, drop=frozenset()):
     """A PDF object as plain Python to compare two files' objects:
     references resolved, a stream as its dictionary and data, without the
     keys in ``drop`` (at this level only) or the links back to the page."""
-    from PyPDF2.generic import ArrayObject, DictionaryObject, StreamObject
+    from pypdf.generic import ArrayObject, DictionaryObject, StreamObject
 
     obj = obj.get_object()
     if isinstance(obj, DictionaryObject):
@@ -329,7 +348,7 @@ def test_a_zotero_copy_reimports_at_the_alpha_it_was_drawn_with():
     """The importer reads /GammaAlpha before /CA, so a Zotero copy's marks
     come back in their own shade rather than at the alpha of a mark with
     no /CA."""
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
     from gamma.routers.imports import _extract_pdf_annotations
 
     out, written = annotate_pdf(_blank_pdf(), _every_kind()["highlights"], zotero=True)
@@ -359,7 +378,7 @@ def test_parse_css_color():
 
 
 def test_export_pdf_endpoint(guest):
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
 
     up = guest.post("/api/uploads", files={"file": ("p.pdf", _pdf_with_dangling_reference(), "application/pdf")})
     assert up.status_code == 200, up.text
@@ -412,7 +431,7 @@ def test_import_annotations_strip_rewrites_pdf(guest):
     squares) from the stored file after importing them as blocks, so they
     can't render twice — and marks the blocks annot_stripped so a later PDF
     export writes them again instead of assuming they're still embedded."""
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
 
     up = guest.post("/api/uploads", files={"file": ("a.pdf", _annotated_pdf(), "application/pdf")})
     assert up.status_code == 200, up.text
@@ -584,8 +603,8 @@ def _page_text(pdf_bytes, page=1):
 
 
 # What MuPDF logs a page drawing, by kind. A text entry is one run in one
-# font (not one per Tj, as pdfium counted), an image mask is an image, and
-# the clips and invisible text it also logs are not drawing.
+# font (not one per Tj), an image mask is an image, and the clips and
+# invisible text it also logs are not drawing.
 _KINDS = {"fill-text": "text", "stroke-text": "text", "fill-path": "path", "stroke-path": "path",
           "fill-image": "image", "fill-imgmask": "image", "fill-shade": "shading"}
 
@@ -642,7 +661,7 @@ def _extra(page_w=PAGE_W):
 
 
 def _box(pdf_bytes, key="/MediaBox", page=1):
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
 
     return [float(v) for v in PdfReader(io.BytesIO(pdf_bytes)).pages[page - 1][key]]
 
@@ -668,7 +687,7 @@ def _shown_words(pdf_bytes, page=1):
 
 def _notes_form(pdf_bytes, page=1):
     """The form XObject a page's column is drawn in."""
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
 
     return PdfReader(io.BytesIO(pdf_bytes)).pages[page - 1]["/Resources"]["/XObject"]["/GmNotes"]
 
@@ -713,7 +732,7 @@ def test_render_notes_on_every_rotation():
     """The column is on the right of the page as shown whatever /Rotate
     says: the box grows on the side the display's x axis runs to, so the
     page and its annotations stay where they were."""
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
 
     from gamma.pdf_notes import render_notes
 
@@ -769,7 +788,7 @@ def test_render_notes_leaves_the_page_content_as_it_was():
     behind a q … Q; nothing goes through merge_page, which parses every
     stream and writes it back uncompressed. The page's stream is the one it
     was, still compressed, and the pages without notes share one strip."""
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
 
     from gamma.pdf_notes import render_notes
 
@@ -788,7 +807,7 @@ def test_render_notes_leaves_the_page_content_as_it_was():
 
 
 def test_render_notes_turns_links_into_link_annotations():
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
 
     from gamma.pdf_notes import render_notes
 
@@ -1354,23 +1373,22 @@ def test_render_notes_cjk_extracts_without_an_outline_font(monkeypatch):
     assert "Bayes" in text and "公式是" in text
     assert "missing font descriptor" not in (pymupdf.TOOLS.mupdf_warnings() or "")
     # The map lists the three characters drawn, one bfchar each, never a
-    # bfrange over the plane: PyPDF2 reads it as those three (and the code
-    # width), where two whole-plane rows made it expand 63,000 entries a page.
-    from PyPDF2._cmap import build_char_map
-    from PyPDF2.errors import PdfReadWarning
+    # bfrange over the plane, whose two rows pypdf would expand into 63,000
+    # entries a page; pypdf reads the text back from it.
+    from pypdf import PdfReader
 
     form = _notes_form(out)                                       # the column's own resources
     fonts = form["/Resources"]["/Font"]
     name = next(n for n in fonts if fonts[n].get("/Subtype") == "/Type0")
     cmap = fonts[name]["/ToUnicode"].get_data()
     assert b"beginbfchar" in cmap and b"bfrange" not in cmap
-    with pytest.warns(PdfReadWarning, match="UniGB-UCS2-H"):     # the encoding PyPDF2 lacks
-        assert build_char_map(name, 200.0, form)[3] == {-1: 2, "公": "公", "式": "式", "是": "是"}
+    assert "Bayes 公式是" in PdfReader(io.BytesIO(out)).pages[0].extract_text()
 
 
 def test_render_notes_falls_back_when_math_renderer_is_missing(monkeypatch):
-    """Without ziamath the card must still say something sensible — the
-    unicode approximation — rather than dropping the expression."""
+    """When ziamath cannot lay it out the card must still say something
+    sensible — the unicode approximation — rather than dropping the
+    expression."""
     from gamma import pdf_notes, vector_text
 
     vector_text.math.cache_clear()

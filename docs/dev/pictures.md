@@ -412,9 +412,9 @@ workspace part only: `normalize.block_columns` finds the column's stored
 definition outdated and rebuilds it, as steps 29, 30 and 38 did
 ([migrations.md](migrations.md)). `SCHEMA_VERSION` and `workspace_format()`
 are 44. `blocks_store.block_kind` agrees with the column, and the search
-panel labels a hit "picture". A backup restore runs
-`normalize.highlight_shape`, which keeps a picture's `pdf_page` as it keeps
-a box's.
+panel labels a hit "picture". A restore of a copy stamped below the base,
+a scoped Gamma export among them, runs `normalize.highlight_shape`, which
+keeps a picture's `pdf_page` as it keeps a box's.
 
 **Merge.** Every change sends the whole `picture`. Taken as one value,
 one person's crop would undo another's move. So a `set` of `picture` whose
@@ -886,7 +886,8 @@ hidden annotations are in
 - One image decodes at most `MAX_DECODED_PIXELS` (40 Mpx), and
   `DecodeBudget` caps one import at `MAX_IMPORT_PIXELS` (200 Mpx).
 - `stream_data` inflates a stream by hand, never past the size its image
-  needs. PyPDF2's `get_data` would inflate it whole and cache the result.
+  needs. pypdf's `get_data` would inflate it whole, up to its 75 MB cap, and
+  cache the result.
 - Each image is opened as the format its filter names (PNG, JPEG, JPEG
   2000), and one whose header disagrees with `/Width` and `/Height` is
   refused before it is decoded.
@@ -1313,6 +1314,7 @@ format.
   rounded corners, text wrap or freehand crop.
 - A foreign stamp's skew is lost, and a stamp that draws more than one image
   or any text is no picture.
-- The import's bounds stop at the images: PyPDF2 still inflates object
-  streams without a bound, and `_rc_text` an `/RC` stream.
+- The import's bounds stop at the images: an object stream, and the `/RC`
+  stream `_rc_text` reads, are inflated whole, up to pypdf's own 75 MB cap
+  for each.
 - The annotated PDF is checked with MuPDF, not in Acrobat or macOS Preview.

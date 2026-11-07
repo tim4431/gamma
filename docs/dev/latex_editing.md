@@ -95,11 +95,36 @@ is the text the AI read. The pairs and dollar spans that text holds in its
 prose stay as written. `tests/shared/pastemath.json` holds the cases both
 suites check.
 
-Where code is, a paste, the editor's marks and the chat read one way:
-`shared/lib/mdCode.js` (`codeFences`, `codeSpans`, `mapProse`), with
-`paste_math._fences` and `_code_spans` its backend twins. The keys read a
-caret in code through `fences.fenceInnerAt` ([hotkeys.md](hotkeys.md)), which
-goes by quote depth and reads no fence in a list. A code span is CommonMark's, kept to one
+Where code is, the keys, a paste, the editor's marks and formulas and the chat
+read one way: `shared/lib/mdCode.js` (`codeFences`, `codeSpans`, `codeTest`,
+`mapProse`), with `paste_math._fences`, `_code_spans`, `_code_test` and
+`map_prose` its backend twins. `tests/shared/codefences.json` holds the cases both suites
+check, and `tests/mdCode.test.mjs` holds the reading to the renderer's own
+parser, on those cases and on random notes.
+
+`codeFences` keeps a stack of the quotes, list items and footnotes open at each
+line, as the parser does, so a fence ends with its container and a `> ``` ` in
+a plain fence is code. It does not read HTML blocks, `$$` blocks or indented
+code: a ``` line in a formula opens a fence, as it always has, and text the
+note's preprocessing would close a formula with stays out of it. A list starts
+wherever a marker stands, also under a paragraph, where the parser takes a
+number past 1 as text, and an empty item stays open across a blank line. Each
+fence carries `cont`, what a new line of its code starts with: a quote's marks,
+a list item's indent ([hotkeys.md](hotkeys.md)).
+
+A dollar in code is no math to `findMathAtCursor`, `scanMathSpans` and
+`_in_math`. Beside formulas `codeSpans(text, true)` reads code as the parser
+does, whichever starts first holding the other, so `` `$5` `` is code and
+`$\text{``a''}$` a formula (`codeTest`). A fence that opens inside a `$$` is
+none to them, so a TeX line starting with `~~~` loses nothing. A lone `$` ends
+with its paragraph: past a blank line the next dollar opens afresh, and a `$`
+on the next line can still close it.
+
+A paste of lines into marked code or display math goes through
+`fences.codePaste`, for a note's rows and for a comment's field alike: each line
+behind the marks, once, as `sourceCopy.js` records the marks a copy came with.
+
+A code span is CommonMark's, kept to one
 line: a run of backticks opens it and the next run of the same length
 closes it, so ``` ``a`b`` ``` is one span. A backslash escapes an opener's
 first backtick (`` \`x` `` is no code), never a closer's, since a backslash

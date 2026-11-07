@@ -40,6 +40,7 @@ from ..ops import (MAX_CONTENT, MAX_OPS, after_commit, after_commits, apply_batc
 from ..markdown_import import MAX_MARKDOWN_BYTES, TooManyBlocks, md_to_blocks
 from ..markdown_zip_import import import_markdown_zip, markdown_page
 from ..notability_import import import_notes
+from ..note_markup import obsidian_image_sizes
 from ..goodnotes_import import import_goodnotes
 from ..ink import InkError, dumps as ink_dumps, from_pdf_ink, parse_ink, pdf_position as ink_position
 from ..pdf_text import GlyphPages, quote_under
@@ -324,12 +325,14 @@ def import_logseq(
         # 5. Append blocks, skipping what an earlier import of these files
         #    already put there: highlights by their quote, notes by their
         #    text (as many times as they occur) — a re-run adds nothing twice.
+        #    A note is compared with its image sizes as the import writes them,
+        #    so one stored with Logseq's {:width N} is the same note.
         children = conn.execute(
             "SELECT content, json_extract(properties,'$.quote') FROM unified_blocks WHERE parent_id=?",
             (block_id,),
         ).fetchall()
         existing_quotes = {quote for _, quote in children if quote}
-        existing_notes = Counter(content for content, quote in children if not quote and content)
+        existing_notes = Counter(obsidian_image_sizes(content) for content, quote in children if not quote and content)
         n = max(1, len(import_blocks))
         last_child_pos = last_child_position(conn, block_id)
         positions = generate_n_keys_between(last_child_pos, None, n=n)
@@ -917,13 +920,13 @@ class _Drawn:
         if at not in self.found:
             try:
                 found = self._walk(form, image, set())
-            except Exception:  # content PyPDF2 cannot parse, or a filter not undone
+            except Exception:  # content pypdf cannot parse, or a filter not undone
                 found = None
             self.found[at] = (form, image, found)  # the objects kept with it, so their ids name them
         return self.found[at][2]
 
     def _walk(self, form, image, searched):
-        from PyPDF2.generic import ContentStream, DecodedStreamObject
+        from pypdf.generic import ContentStream, DecodedStreamObject
 
         searched.add(id(form))
         if self.left <= 0:
@@ -1239,7 +1242,7 @@ def _strip_embedded_annotations(ws: str, pdf_path, keep=frozenset()) -> tuple[in
     Note the file keeps its content-hash name even though its bytes change —
     the name is only a key (``doc_id`` property), never re-derived.
     ``pdf_path`` is the stored file's path."""
-    from PyPDF2 import PdfReader, PdfWriter
+    from pypdf import PdfReader, PdfWriter
 
     reader = PdfReader(os.fspath(pdf_path))
     doomed, keys = set(), set()
@@ -1327,7 +1330,7 @@ def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, a
     counts the annotations that make blocks, replies included. Shared by
     the per-paper endpoint below and the Zotero library import.
     ``pdf_path``: the stored file's path (``storage.find_upload_file``)."""
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
 
     from ..zotero_sync import get_link  # local: the engine reads the routers' change feed
     read_as = stored_stat(ws, pdf_path.name)  # the file ``found`` describes; a strip rewrites it
@@ -1467,7 +1470,7 @@ def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, a
     return {"found": count(found), "imported": inserted, "stripped": stripped}
 
 
-# Sync endpoint: PyPDF2 parsing is CPU-bound; the threadpool keeps the loop free.
+# Sync endpoint: pypdf parsing is CPU-bound; the threadpool keeps the loop free.
 @router.post("/import/pdf-annotations")
 def import_pdf_annotations(payload: PdfAnnotsRequest, request: Request):
     ws = require_ws(request, write=True)
@@ -1645,7 +1648,7 @@ def _stamped_pictures(pdf_path) -> set:
     of its annotations gives those pictures when the workspace has them
     (``_picture_url``). No image is read; empty for a PDF that does not
     read."""
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
 
     try:
         records = _extract_pdf_annotations(PdfReader(os.fspath(pdf_path)))
@@ -1948,7 +1951,7 @@ def _zotero_plan(zf, digests=None):
         raise HTTPException(status_code=400, detail=f"could not read the Zotero export: {exc}")
 
 
-# Sync endpoints: zip + PyPDF2 work is CPU-bound; the threadpool keeps the loop free.
+# Sync endpoints: zip + pypdf work is CPU-bound; the threadpool keeps the loop free.
 @router.post("/import/zotero/preview")
 def preview_zotero(request: Request, file: UploadFile = File(...), folder: str = Form("")):
     report = _preview_zotero(require_ws(request, write=True), file.file, _meta(file, folder))

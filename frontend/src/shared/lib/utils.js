@@ -7,6 +7,7 @@ import { t } from "../../shared/i18n/i18n.js";
 import { fmtBytes } from "./format.js";
 import { keepaliveFetch } from "./keepalive.js";
 import { dispositionName, saveBlob } from "./saveFile.js";
+import { sha256Hex } from "./sha256.js";
 // The paper metadata source wording (re-exported below), a module of its own
 // so the node tests import it without the browser.
 import { isUnverifiedPaperMeta, metaSourceInfo } from "./metaSource.js";
@@ -178,12 +179,17 @@ window.fetch = function (input, options) {
 };
 // -----------------------------------------------------------------------------
 
+// ---- Hashing ------------------------------------------------------------------
+// SHA-256 of the text's UTF-8 as hex, the digest the server's ids and upload
+// names are made of. crypto.subtle exists only in secure contexts (https /
+// localhost), so a server reached over plain HTTP from another machine gets
+// the pure digest of sha256.js, which gives the same hex.
 async function sha256(text) {
   const data = new TextEncoder().encode(text);
-  const hash = await crypto.subtle.digest("SHA-256", data);
-  return Array.from(new Uint8Array(hash))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  const subtle = globalThis.crypto?.subtle;
+  if (!subtle) return sha256Hex(data);
+  const hash = await subtle.digest("SHA-256", data);
+  return Array.from(new Uint8Array(hash), (b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 async function getDocIdForUrl(sourceUrl) {

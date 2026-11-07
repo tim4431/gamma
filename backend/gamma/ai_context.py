@@ -111,9 +111,8 @@ def _selection_box(value):
 def request_selections(payload) -> list[dict]:
     """The PDF passages a chat message is about, as ``{text, page, box}``:
     ``page`` is the 1-based PDF page the viewer saw the selection start on
-    (0 = unknown) and ``box`` its region on that page (None = unknown).
-    ``selections`` is the structured field; the older ``selection`` string
-    ("---"-joined passages, no positions) is still read when it is absent."""
+    (0 = unknown) and ``box`` its region on that page (None = unknown), read
+    from the request's ``selections``."""
     passages = []
     for item in getattr(payload, "selections", None) or []:
         if not isinstance(item, dict):
@@ -124,10 +123,6 @@ def request_selections(payload) -> list[dict]:
         if text:
             passages.append({"text": text, "page": page,
                              "box": _selection_box(item.get("box")) if page else None})
-    if not passages:
-        passages = [{"text": p.strip(), "page": 0, "box": None}
-                    for p in re.split(r"\n\s*---\s*\n", getattr(payload, "selection", "") or "")
-                    if p.strip()]
     # Whole: what the question quotes of each is final_prompt's to cut
     # (quoted_shares), and locating one needs only its start.
     return passages[:MAX_SELECTIONS]

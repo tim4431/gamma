@@ -122,7 +122,11 @@ test("progress survives reload, separates accounts, and tolerates broken browser
   const reload = createGuideProgress(storage);
   assert.equal(reload.read(aiTour, "alice").state, "dismissed");
   assert.equal(reload.read(aiTour, "bob"), null);
-  assert.equal(guideProgressKey(TOURS["first-run"], "alice"), "gamma-guide:first-run");
+  // the first-run tour too: one account finishing it leaves it for the next one in this browser
+  assert.equal(guideProgressKey(TOURS["first-run"], "alice"), "gamma-guide:alice:first-run");
+  progress.write(TOURS["first-run"], "alice", { state: "done" });
+  assert.equal(reload.read(TOURS["first-run"], "alice").state, "done");
+  assert.equal(reload.read(TOURS["first-run"], "bob"), null);
   values.set(guideProgressKey(aiTour, "bob"), "{broken");
   assert.equal(reload.read(aiTour, "bob"), null);
   const blocked = createGuideProgress(() => { throw new Error("Storage unavailable"); });

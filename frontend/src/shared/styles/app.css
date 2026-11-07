@@ -392,16 +392,13 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   background: var(--bg-input);
 }
 
+/* The notes: a Notes window's body (.dockWindowBody .sidebar) or, with no
+   viewer showing, the center (.main.pdfHidden .sidebar), which size it. */
 .sidebar {
-  flex: 0 0 var(--sidebar-width, 420px) !important;
-  width: var(--sidebar-width, 420px) !important;
   min-width: 300px !important;
-  max-width: 75vw !important;
-  height: 100% !important;
   display: flex !important;
   flex-direction: column !important;
   overflow: hidden !important;
-  border-left: 1px solid var(--border) !important;
   background: var(--bg-surface);
   padding: 12px !important;
   position: relative !important;
@@ -1517,19 +1514,9 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 }
 
 @media (max-width: 900px) {
-  .main {
-    flex-direction: column !important;
-  }
-
   .sidebar {
-    width: 100% !important;
-    max-width: none !important;
-    min-width: 0 !important;
-    height: 42% !important;
-    border-left: none !important;
-    border-top: 1px solid var(--border) !important;
+    min-width: 220px !important;
   }
-
 }
 
 .highlightDotBtn {
@@ -1567,29 +1554,6 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
   width: 12px;
   min-width: 12px;
   height: 20px;
-}
-
-.layout-horizontal .main {
-  flex-direction: row !important;
-}
-
-.layout-horizontal .viewerWrap {
-  flex: 1 1 auto !important;
-  width: auto !important;
-  height: 100% !important;
-}
-
-.layout-horizontal .sidebar {
-  flex: 0 0 var(--sidebar-width, 420px) !important;
-  width: var(--sidebar-width, 420px) !important;
-  height: 100% !important;
-  max-width: 75vw !important;
-}
-
-@media (max-width: 900px) {
-  .layout-horizontal .sidebar {
-    min-width: 220px !important;
-  }
 }
 
 /* --- drag-and-drop overlay: the library imports files, an open page takes
@@ -2029,13 +1993,11 @@ button.pdfOutlineChevron:hover { background: rgba(128, 128, 128, 0.28); color: v
   overflow-wrap: anywhere;
 }
 
-/* When PDF is hidden, sidebar takes full width */
+/* With no viewer showing, the notes take the center. */
 .main.pdfHidden .sidebar {
-  flex: 1 1 auto !important;
-  width: 100% !important;
-  max-width: none !important;
-  height: 100% !important;
-  border-left: none !important;
+  flex: 1 1 auto;
+  width: 100%;
+  height: 100%;
 }
 
 .categoryFrontmatter {
@@ -3093,18 +3055,14 @@ mark.searchMark {
   flex-direction: column;
   overflow: hidden;
 }
-/* windows fill their body regardless of legacy layout-* sizing rules, as
-   narrow as their slot is (the notes wrap rather than run under its edge) */
+/* The Notes and Chat windows fill their body, as narrow as their slot is:
+   min-width beats .sidebar's own floor, so the notes wrap rather than run
+   under the slot's edge. */
 .dockWindowBody .sidebar,
 .dockWindowBody .chatPanel {
-  flex: 1 1 auto !important;
-  width: auto !important;
-  height: auto !important;
-  max-width: none !important;
+  flex: 1 1 auto;
   min-width: 0 !important;
-  min-height: 0 !important;
-  border-top: none !important;
-  border-left: none !important;
+  min-height: 0;
 }
 .chatPanel.chatWindow { padding: 0 6px 6px; display: flex; flex-direction: column; overflow: hidden; }
 
@@ -3533,7 +3491,6 @@ html.appFocusFullscreen, html.appFocusFullscreen body { overflow: hidden; oversc
 .chatPanel {
   display: flex;
   flex-direction: column;
-  border-top: 1px solid var(--border);
   overflow: hidden;
 }
 /* Chat settings popover (header ⚙): model, effort, context slider, tools */

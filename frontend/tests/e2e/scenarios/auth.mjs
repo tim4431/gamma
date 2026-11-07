@@ -106,9 +106,11 @@ export async function authScenarios({ server, browser, alice, step, until, asser
       // The first-run tour is offered on the library, and the guide keeps
       // its progress for this visit only.
       await page.locator('[data-guide-offer="first-run"] .guideCard').waitFor({ timeout: 15000 });
-      const kept = await page.evaluate(() => ({
-        session: sessionStorage.getItem("gamma-guide:first-run"), local: localStorage.getItem("gamma-guide:first-run"),
-      }));
+      // the key names the guest account, whose name the demo picks
+      const kept = await page.evaluate(() => {
+        const keyIn = (store) => Object.keys(store).find((key) => /^gamma-guide:[^:]+:first-run$/.test(key));
+        return { session: sessionStorage.getItem(keyIn(sessionStorage) || ""), local: keyIn(localStorage) ?? null };
+      });
       assertEq(JSON.parse(kept.session)?.state, "offered");
       assertEq(kept.local, null, "nothing kept in localStorage");
       // The offer is the tour's welcome deck; its hero's tour begins with the

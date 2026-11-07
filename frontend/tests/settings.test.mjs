@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { normalizePerm, permStates, permissionPreset, presetPermissions, toolsForKind } from "../src/chat/chatSettings.js";
-import { resolveSettingsPane } from "../src/settings/settingsNavigation.js";
-import { searchSettings } from "../src/settings/settingsSearch.js";
+import { resolveSettingsPane, settingsSection } from "../src/settings/settingsNavigation.js";
+import { SETTINGS_SEARCH, searchSettings } from "../src/settings/settingsSearch.js";
 
 test("permission presets cover each chat kind's tools, and changes ask unless told otherwise", () => {
   for (const kind of ["folder", "pdf", "notes"]) {
@@ -77,17 +77,21 @@ test("settings search finds controls on nested AI pages without exposing inacces
   assert.deepEqual(searchSettings("no-such-setting", allowed), []);
 });
 
-test("legacy settings destinations resolve to the reorganized pages", () => {
-  for (const old of ["viewer", "search"]) assert.equal(resolveSettingsPane(old), "reading");
-  assert.equal(resolveSettingsPane("notes"), "keyboard");
-  for (const old of ["context", "ai-advanced", "prompts"]) assert.equal(resolveSettingsPane(old), "assistant");
-  assert.equal(resolveSettingsPane("library"), "appearance");
-  for (const id of ["assistant", "tools"]) assert.equal(resolveSettingsPane(id), id);
-  assert.equal(resolveSettingsPane("general"), "appearance");
-  assert.equal(resolveSettingsPane("workspace"), "workspaces");
-  assert.equal(resolveSettingsPane("advanced"), "diagnostics");
-  assert.equal(resolveSettingsPane("account"), "account");
-  for (const bar of ["topbar", "viewer-tools"]) assert.equal(resolveSettingsPane(bar), "appearance", `${bar}: Appearance, at its section`);
+test("a section entry point opens its pane at a row the pane has; any other name is a pane's own", () => {
+  const sections = { handwriting: ["reading", "Reset presets"], topbar: ["appearance", "Top bar"], "viewer-tools": ["appearance", "Viewer tools"] };
+  for (const [name, [pane, label]] of Object.entries(sections)) {
+    assert.equal(resolveSettingsPane(name), pane, name);
+    assert.equal(settingsSection(name), label, name);
+    // the jump focuses the row whose data-setting is the label: a row's label or a section's title on that pane
+    assert.ok(SETTINGS_SEARCH.some((entry) => entry.pane === pane && (entry.label === label || entry.section === label)), `${name}: ${label} on ${pane}`);
+  }
+  for (const id of ["appearance", "reading", "assistant", "tools", "account", "server"]) {
+    assert.equal(resolveSettingsPane(id), id);
+    assert.equal(settingsSection(id), "");
+  }
+  // a name no pane has passes through (the dialog shows Appearance for it)
+  assert.equal(resolveSettingsPane("notes"), "notes");
+  assert.equal(settingsSection("notes"), "");
 });
 
 test("every preference declares one scope; the profile carries exactly the account-scoped ones", async () => {

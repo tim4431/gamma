@@ -2,9 +2,9 @@
 # (a patch under test):
 #   rsync/scp the repository's cloud/ folder to ./src, then
 #   docker compose -f compose.yml -f compose.build.yml up -d --build
+# ./src/Dockerfile is cloud/Dockerfile, whose build context is that folder.
 services:
   account:
     image: gamma-cloud:local
     build:
       context: ./src
-      dockerfile: deploy/Dockerfile.local

@@ -590,8 +590,8 @@ its brief in the workspace's `data.db`, so a paper read again shows its
 translation without asking a model, after a restart too.
 `gamma/translate_store.py`:
 
-- **Tables** (made on first use, `ensure_schema`: derived data, like the
-  PDF text index, so no migration):
+- **Tables** (in `db.DATA_SCHEMA`, which every `data.db` connection
+  applies: derived data, like the PDF text index, so no migration):
   - `pdf_translations (doc_id, lang, model, src, text, brief, at)`, one row
     per paragraph, primary key `(doc_id, lang, model, src)`. `src` is the
     first 32 hex digits of the SHA-256 of the source text as sent (tokens

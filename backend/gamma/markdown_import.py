@@ -41,6 +41,8 @@ import json
 import re
 from dataclasses import dataclass
 
+from .note_markup import obsidian_image_sizes
+
 # blocks per document. A 5 MB file of real notes holds about 100,000; only
 # one of nothing but very short lines gets past this (a 5 MB file of "- x"
 # lines is 1.3 million blocks: a minute and a gigabyte to write, a page no
@@ -311,9 +313,12 @@ def md_to_blocks(text: str, *, outline: bool = False, flat_headings: bool = Fals
     ``$$`` below one is a child block; ``outline`` reads every ``- `` as a
     block separator instead (Gamma's own outlines, see the module's
     docstring). ``flat_headings`` puts every heading at the top with nothing
-    under it, as Notion's are. Raises TooManyBlocks past MAX_BLOCKS blocks,
-    where it stops reading."""
-    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    under it, as Notion's are. A Logseq image size outside code
+    (``![alt](url){:width 300}``) becomes the one Gamma stores,
+    ``![alt|300](url)``. Raises TooManyBlocks past MAX_BLOCKS blocks, where
+    it stops reading."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    lines = obsidian_image_sizes(text).split("\n")
     root = {"content": "", "children": []}
     headings = [(0, root)]   # (heading level, node) — nesting for everything
     lists: list[_Item] = []  # the current list run

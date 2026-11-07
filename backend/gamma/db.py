@@ -419,8 +419,9 @@ USERS_SCHEMA = [
     # USER_PREF_KEYS). The prefs per account AND workspace (open tabs,
     # recents — they name pages of that workspace) live in that workspace's
     # pages.db since step 34 (WORKSPACE_PREFS_SCHEMA); the rows here with a
-    # workspace id are their copies from before it, kept one release for
-    # the release before to read. See pref_scope.
+    # workspace id are their copies from before it, which the step's
+    # workspace part reads when it upgrades a workspace still behind it.
+    # They go with their workspace, membership and account. See pref_scope.
     """CREATE TABLE IF NOT EXISTS user_prefs (
         user_id TEXT NOT NULL,
         workspace_id TEXT NOT NULL DEFAULT '',
@@ -898,18 +899,34 @@ PAGES_SCHEMA = [
 ]
 
 # data.db = what the workspace can lose and rebuild: the file may be
-# deleted, and everything in it comes back on demand. The PDF text index
-# (pdf_fts, gamma/pdf_index.py — extracted again by the next search) and
-# the viewer's PDF manifests (pdf_docs, gamma/pdf_meta.py — computed again
-# when a PDF opens), both created lazily by their modules, and the cover
-# thumbnails below (captured again as the PDF is read). Nothing a person
-# wrote lives here: the chats and the notes index are in pages.db.
+# deleted, and everything in it comes back on demand: the cover
+# thumbnails, the viewer's PDF manifests and the kept translations below,
+# and the PDF text index (pdf_fts, extracted again by the next search),
+# whose tables gamma/pdf_index.py applies itself (pdf_index.SCHEMA), since
+# that is where an index older than its side table is taken over. Nothing
+# a person wrote lives here: the chats and the notes index are in pages.db.
 DATA_SCHEMA = [
     # page_snaps = the recents-card cover thumbnails (small JPEG data URLs
     # captured client-side from the rendered viewer), shared by the
     # workspace's members. Too big for the prefs KV, hence their own table
-    # + /api/page-snaps.
+    # + /api/page-snaps. Captured again as the PDF is read.
     "CREATE TABLE IF NOT EXISTS page_snaps (page_id TEXT PRIMARY KEY, img TEXT NOT NULL, at TEXT NOT NULL)",
+    # pdf_docs = the viewer's PDF manifests (gamma/pdf_meta.py): a stored
+    # file's size, page count and page sizes, computed again when a PDF
+    # opens.
+    "CREATE TABLE IF NOT EXISTS pdf_docs (doc_id TEXT PRIMARY KEY, bytes INTEGER NOT NULL, "
+    "pages INTEGER NOT NULL, dims TEXT NOT NULL, ver INTEGER NOT NULL DEFAULT 0, at TEXT NOT NULL)",
+    # The kept translations of the PDF translated view and the papers'
+    # briefs (gamma/translate_store.py), asked of the model again, at its
+    # cost, when they are gone. src: the first 32 hex digits of the SHA-256
+    # of the source text as sent (tokens and breaks included); brief: made
+    # with the paper's brief.
+    "CREATE TABLE IF NOT EXISTS pdf_translations (doc_id TEXT NOT NULL, lang TEXT NOT NULL, "
+    "model TEXT NOT NULL, src TEXT NOT NULL, text TEXT NOT NULL, brief INTEGER NOT NULL DEFAULT 0, "
+    "at TEXT NOT NULL, PRIMARY KEY (doc_id, lang, model, src)) WITHOUT ROWID",
+    "CREATE TABLE IF NOT EXISTS pdf_translation_briefs (doc_id TEXT NOT NULL, lang TEXT NOT NULL, "
+    "model TEXT NOT NULL, brief TEXT NOT NULL, at TEXT NOT NULL, "
+    "PRIMARY KEY (doc_id, lang, model)) WITHOUT ROWID",
 ]
 
 # Snapshots exist only to cover the (24-entry) recents queue; keep a few
@@ -1402,13 +1419,8 @@ PROFILE_PREF_KEY = "profile"
 # on it, the base of the next three-way merge. Never served by /api/prefs.
 PROFILE_BASE_PREF_KEY = "profile-base"
 NOTICES_SEEN_PREF_KEY = "notices-seen"  # gamma/notices.py: {notice id: fingerprint seen}
-# The dismissed reminders before step 39 moved them to users.db
-# ``reminders_done``: {reminder key: when it was done}, kept for the release
-# before, which reads them.
-REMINDERS_DONE_PREF_KEY = "reminders-done"
 USER_PREF_KEYS = frozenset({"ai-settings", "ai-provider", "translate-engines", "search-services",
                             PROFILE_PREF_KEY, PROFILE_BASE_PREF_KEY, NOTICES_SEEN_PREF_KEY,
-                            REMINDERS_DONE_PREF_KEY,
                             # gamma/zotero_account.py PREF_KEY: the connected
                             # Zotero account, its API key sealed; never served
                             # by /api/prefs, never in the synced profile.
@@ -1676,8 +1688,8 @@ def connect_pages_db(ws: str) -> Connection:
 
 def connect_data_db(ws: str) -> Connection:
     """THE way to open a workspace's data.db: WAL mode, the busy timeout and
-    the schema statements, like pages.db. The PDF index and manifests add
-    their own tables (gamma/pdf_index.py, gamma/pdf_meta.py)."""
+    the schema statements (``DATA_SCHEMA``), like pages.db. The PDF text
+    index adds its own tables (gamma/pdf_index.py)."""
     return _cached(ws_db_path(ws, "data.db"), ws, _open_ws_db, DATA_SCHEMA, False)
 
 

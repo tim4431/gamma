@@ -20,13 +20,20 @@
     background: var(--bg-page); /* chrome, like Gamma's own topbar under it */
     border-bottom: 1px solid var(--border);
     -webkit-app-region: drag;
-    /* Windows/Linux: the window's own controls are drawn over the bar's
-       right end (three 46 px buttons; Electron draws Linux's alike). The
-       titlebar-area env() values reach only a window's own page, never a
-       view like this one, so the space is kept free here. */
+    /* Windows/Linux: the window's own controls are drawn over the bar:
+       Windows' three 46 px buttons at its right end, on Linux the buttons
+       of the desktop's title-bar layout, at whichever ends main.js reads it
+       gives them (body[data-wco], lib/windowControls: only a close button
+       on the right on GNOME, on the left or both ends on some desktops and
+       in a right-to-left UI). The titlebar-area env() values reach only a
+       window's own page, never a view like this one, so those ends are
+       kept free here, 146 px each. */
     padding-right: 146px;
   }
   body[data-platform="darwin"] .bar { padding-left: 80px; padding-right: 8px; }
+  body[data-wco="left"] .bar { padding-left: 146px; padding-right: 8px; }
+  body[data-wco="both"] .bar { padding-left: 146px; }
+  body[data-wco="none"] .bar { padding-right: 8px; }
   .bar > * { -webkit-app-region: no-drag; }
   .bar .drag { -webkit-app-region: drag; flex: 1; height: 100%; }
   /* The logo: back to the launcher, every server. */
@@ -81,6 +88,7 @@
     padding: 5px; z-index: 2;
   }
   body[data-platform="darwin"] .menu { left: 106px; }
+  body[data-wco="left"] .menu:not(.right), body[data-wco="both"] .menu:not(.right) { left: 172px; }
   .menu[hidden] { display: none; }
   /* The sync panel, under its button at the bar's right end (placed by placePanel). */
   .menu.right, body[data-platform="darwin"] .menu.right { left: auto; min-width: 320px; max-width: 420px; max-height: 400px; overflow-y: auto; }
@@ -261,6 +269,8 @@
 
   function render() {
     paintTheme(state.theme);
+    if (state.wco) document.body.dataset.wco = state.wco;
+    else delete document.body.dataset.wco;
     const cur = state.current;
     const ws = currentWorkspace();
     // The button names the server and, once known, the Gamma workspace open

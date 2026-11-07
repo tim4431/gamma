@@ -31,14 +31,16 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from PIL import Image
+from pypdf import PdfReader
 
 from . import ink as inkmod
 from . import notability as nb
 from . import notability_map as nmap
 from . import notability_write as nw
+from .note_markup import alt_and_width
 from .notebook import DEFAULT_PAPER, normalize_paper, sheets_of
 from .pdf_image import svg_png
-from .pdf_export import ExportPdfReader, display_size, page_frame
+from .pdf_export import display_size, page_frame
 from .pdf_typeset import BOLD, ITALIC, LINK, MARK, MONO, STRIKE, UNDERLINE
 from .picture import (MIN_SIDE, URL_RE, caption_text, image_size, is_picture, normalize_picture, picture_page,
                       picture_type, stack_order)
@@ -52,7 +54,6 @@ STICKY_EDGE = nmap.STICKY_EDGE
 _DASH_CODES = {name: code for code, name in nb.DASH_PATTERNS.items()}
 _PICTURE = re.compile(r"^!\[(?P<alt>[^\]]*)\]\(\s*/api/uploads/(?P<name>[0-9A-Za-z_-]+\.(?:png|jpe?g|gif|webp|svg))\s*\)$",
                       re.I)
-_ALT_WIDTH = re.compile(r"(?P<alt>.*?)\|\d+(?:x\d+)?")  # an Obsidian size ending the alt text, as the editor reads it
 _LIST_ITEM = re.compile(r"^(?P<lead>[ \t]*)(?P<marker>[-*+]|\d{1,9}[.)])[ \t]+"
                         r"(?:\[(?P<box>[ xX])\][ \t]+)?(?P<text>.*)$")
 _HEADING = re.compile(r"^[ \t]{0,3}#{1,6}[ \t]+(?P<text>.*)$")
@@ -296,11 +297,11 @@ class _Page:
         if not path.is_file():
             raise ExportError("PDF not stored on the server")
         try:
-            reader = ExportPdfReader(str(path), strict=False)
+            reader = PdfReader(str(path), strict=False)
             if reader.is_encrypted:
                 reader.decrypt("")
             sizes = [display_size(*page_frame(page)) for page in reader.pages]
-        except Exception as exc:  # noqa: BLE001 — a PDF PyPDF2 cannot read has no pages to place
+        except Exception as exc:  # noqa: BLE001 — a PDF pypdf cannot read has no pages to place
             raise ExportError(f"the PDF could not be read ({exc.__class__.__name__})") from None
         if not sizes:
             raise ExportError("the PDF has no pages")
@@ -431,8 +432,7 @@ class _Page:
         w = max(MIN_SIDE, box["w"] - 2 * PAD)
         pic = normalize_picture({"url": url, "x": box["x"] + PAD, "y": box["y"] + PAD, "w": w, "h": w * ph / pw})
         alt = match.group("alt")
-        sized = _ALT_WIDTH.fullmatch(alt)
-        self._picture(pic, sized.group("alt") if sized else alt, image, frame)
+        self._picture(pic, alt_and_width(alt)[0], image, frame)
         return True
 
     def _picture_block(self, b: dict, frame) -> None:
@@ -490,7 +490,7 @@ class _Page:
         if kind == "image/svg+xml":
             try:
                 png, pw, ph = svg_png(data, SVG_PNG_SIDE)
-            except (ValueError, ImportError):
+            except ValueError:
                 self.left_out["picture svg"] += 1
                 return False
             self.draft.files[f"Images/Image {n}.png"] = png

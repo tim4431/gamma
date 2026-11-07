@@ -7,7 +7,7 @@ import tempfile
 import unittest
 from zipfile import ZipFile
 
-from release_codex_plugin import release
+from release_plugins import release_codex as release
 
 
 class ReleaseTest(unittest.TestCase):

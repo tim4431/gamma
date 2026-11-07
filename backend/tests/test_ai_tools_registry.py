@@ -27,28 +27,28 @@ def test_registry_scopes_and_permissions():
         "move_block", "delete_block", "clip_region"]
     assert agent_tools("") == []  # plain chat
     assert [t["name"] for t in agent_tools(
-        "folder", {"rename": False, "move": False, "block_edit": False, "save": False, "restore": False,
-                   "organize": False, "organize_delete": False})] == [
+        "folder", {"rename": "off", "move": "off", "block_edit": "off", "save": "off", "restore": "off",
+                   "organize": "off", "organize_delete": "off"})] == [
         "list_pages", "list_folders", "read_page", "read_block", "read_chats", "view_pdf_page", "view_ink", "view_image",
         "cite", "search_library", "search_papers", "related_papers", "fetch_paper", "list_deleted"]
-    names = [t["name"] for t in agent_tools("folder", {"search": False})]
+    names = [t["name"] for t in agent_tools("folder", {"search": "off"})]
     assert "search_library" not in names and "read_page" in names
     # "List pages" gates the folder tree and Recently deleted too; "Read
     # pages" the page chats and the citation records; the viewer handwriting.
-    names = [t["name"] for t in agent_tools("folder", {"list": False, "read": False, "view": False})]
+    names = [t["name"] for t in agent_tools("folder", {"list": "off", "read": "off", "view": "off"})]
     assert not {"list_pages", "list_folders", "list_deleted", "read_page", "read_chats", "cite",
                 "view_pdf_page", "view_ink", "view_image"} & set(names)
     # Restoring is a change of its own; listing what is deleted is reading.
     names = [t["name"] for t in agent_tools("folder", {"restore": "off"})]
     assert "restore_page" not in names and {"list_deleted", "save_paper"} <= set(names)
     # One permission gates all three note-editing tools.
-    names = [t["name"] for t in agent_tools("page", {"block_edit": False})]
+    names = [t["name"] for t in agent_tools("page", {"block_edit": "off"})]
     assert names == ["read_page", "read_block", "read_chats", "view_pdf_page", "view_ink", "view_image", "cite",
                      "search_library", "search_papers", "related_papers", "fetch_paper", "save_paper"]
     # The two web tools have their own permissions.
-    names = [t["name"] for t in agent_tools("page", {"web_search": False, "web_read": False})]
+    names = [t["name"] for t in agent_tools("page", {"web_search": "off", "web_read": "off"})]
     assert "search_papers" not in names and "fetch_paper" not in names and "read_page" in names
-    assert agent_tools("folder", {k: False for k in ALL_PERMS}) == []
+    assert agent_tools("folder", {k: "off" for k in ALL_PERMS}) == []
     assert agent_tools("folder", None) == ALL_TOOLS  # missing map = everything on
 
 
@@ -87,7 +87,7 @@ def test_agent_system_mentions_scope_and_armed_tools():
     assert 'the folder "readout / fast" (id f1)' in text and "rename_page" in text
     assert "the root of their library" in agent_system(folder(""))
     page_text = agent_system({"type": "page", "page_id": "p1"},
-                             {"search": False, "block_edit": False, "save": False})
+                             {"search": "off", "block_edit": "off", "save": "off"})
     assert 'page_id "p1"' in page_text
     assert "read_page" in page_text and "search_library" not in page_text
     assert "suggest them" in page_text  # no write tools armed
@@ -105,8 +105,8 @@ def test_agent_system_mentions_scope_and_armed_tools():
 
 
 def test_block_tools_gated_by_permissions():
-    armed = {t["name"] for t in agent_tools("page", {"block_read": False, "block_edit": False, "view": False,
-                                                        "web_search": False, "web_read": False, "save": False})}
+    armed = {t["name"] for t in agent_tools("page", {"block_read": "off", "block_edit": "off", "view": "off",
+                                                        "web_search": "off", "web_read": "off", "save": "off"})}
     assert armed == {"read_page", "read_chats", "cite", "search_library"}
 
 
@@ -121,10 +121,10 @@ def test_agent_system_explains_the_new_tools_only_when_armed():
     assert "save_paper adds a paper" in text and "never as a side effect" in text
     assert "restore_page brings them back" in text
     # Without note editing the transcription is not written anywhere.
-    read_only = agent_system({"type": "page", "page_id": "p1"}, {"block_edit": False})
+    read_only = agent_system({"type": "page", "page_id": "p1"}, {"block_edit": "off"})
     assert "view_ink" in read_only and "[illegible]" not in read_only
     assert "restore_page" not in read_only  # folder chats only
-    off = agent_system(folder(""), {"view": False, "read": False, "save": False, "restore": False})
+    off = agent_system(folder(""), {"view": "off", "read": "off", "save": "off", "restore": "off"})
     for phrase in ("Handwriting:", "cite returns", "save_paper adds", "Recently deleted for"):
         assert phrase not in off
 
@@ -145,12 +145,12 @@ def test_the_page_tools_take_lists_and_the_prompt_says_so():
     assert specs["label_page"]["required"] == ["page_ids"] and specs["restore_page"]["required"] == ["page_ids"]
     text = agent_system(folder(""))
     assert "Several pages at once: rename_page, move_page, label_page and restore_page each take" in text
-    text = agent_system(folder(""), {"rename": False})
+    text = agent_system(folder(""), {"rename": "off"})
     assert "Several pages at once: move_page, label_page and restore_page each take" in text
     assert "rename_page" not in text.split("Several pages at once")[1].split("\n")[0]
-    text = agent_system(folder(""), {"rename": False, "move": False, "organize": False})
+    text = agent_system(folder(""), {"rename": "off", "move": "off", "organize": "off"})
     assert "Several pages at once: restore_page takes a list" in text
-    off = agent_system(folder(""), {"rename": False, "move": False, "organize": False, "restore": False})
+    off = agent_system(folder(""), {"rename": "off", "move": "off", "organize": "off", "restore": "off"})
     assert "Several pages at once" not in off
     assert "Several pages at once" not in agent_system({"type": "page", "page_id": "p1"})
 

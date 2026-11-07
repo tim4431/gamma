@@ -12,7 +12,7 @@ import xml.etree.ElementTree as ET
 import zipfile
 
 from conftest import folder_names, fresh_client, make_folder, make_label, make_page
-from PyPDF2 import PdfReader
+from pypdf import PdfReader
 
 from gamma import ink as inkmod
 from gamma import zotero_notes
@@ -21,7 +21,7 @@ from gamma.zotero_import import PASS_THROUGH_BYTES, parse_zotero_rdf
 
 
 def _blank_pdf_bytes(width=612):
-    from PyPDF2 import PdfWriter
+    from pypdf import PdfWriter
     w = PdfWriter()
     w.add_blank_page(width=width, height=792)
     buf = io.BytesIO()
@@ -165,7 +165,7 @@ def test_zotero_export_note_images(guest):
     """Pasted images: embedded as data URIs inside the Zotero note, attached
     to the item as an image attachment, and replaced by a plain placeholder in
     the annotation comment (comments can't hold pictures)."""
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
 
     page = _paper(guest, "zxi")
     img = guest.post("/api/upload-image", files={"file": ("fig.png", _PNG, "image/png")})
@@ -896,13 +896,13 @@ def test_a_pdf_with_nothing_to_draw_goes_in_as_stored(guest, monkeypatch):
 
 
 def test_a_pdf_that_cannot_be_drawn_on_goes_in_as_stored(guest, monkeypatch):
-    """A PDF whose copy cannot be drawn (one PyPDF2 cannot open, as an
-    AES-encrypted publisher PDF) goes in as it is stored, and the export
-    goes on with its notes."""
+    """A PDF whose copy cannot be drawn (one that needs a user password to
+    open, say) goes in as it is stored, and the export goes on with its
+    notes."""
     from gamma.routers import export as export_router
 
     def fail(*args, **kwargs):
-        raise ValueError("PyCryptodome is required for AES algorithm")
+        raise ValueError("File has not been decrypted")
     monkeypatch.setattr(export_router, "annotate_pdf", fail)
     pdf = _blank_pdf_bytes()
     up = guest.post("/api/uploads", files={"file": ("p.pdf", pdf, "application/pdf")}).json()

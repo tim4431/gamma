@@ -157,7 +157,7 @@ docker compose up -d
 
 Open <http://localhost:9001> and log in with the seeded `admin` password from `docker logs gamma` (printed once on first start). Accounts, notes and uploaded PDFs live under the container's `/data` volume and survive upgrades. Behind a reverse proxy, set `FORWARDED_ALLOW_IPS` to the proxy (the template shows how), or every visitor shares the proxy's rate limits.
 
-Upgrades: the template runs [Watchtower](https://containrrr.dev/watchtower/) beside Gamma, which pulls each new image and restarts the container; Gamma then upgrades its data directory as it starts, and each workspace as it is first opened, after snapshotting the databases. Remove that service to update by hand (`docker compose pull && docker compose up -d`). A very old data directory may need one intermediate release first; if so, the server shows a page at its usual address saying exactly which image to run once, and nothing is changed until you do ([how upgrades work](./docs/dev/migrations.md)).
+Upgrades: the template runs [Watchtower](https://github.com/nicholas-fedor/watchtower) beside Gamma, which pulls each new image and restarts the container; Gamma then upgrades its data directory as it starts, and each workspace as it is first opened, after snapshotting the databases. Remove that service to update by hand (`docker compose pull && docker compose up -d`). A very old data directory may need one intermediate release first; if so, the server shows a page at its usual address saying exactly which image to run once, and nothing is changed until you do ([how upgrades work](./docs/dev/migrations.md)).
 
 Backups: a workspace exports as one zip from Settings → Workspaces, and snapshots live in Settings → Backups. Administrators snapshot the whole instance from Settings → Server (restore those with the server stopped: `manage.py backups --restore`) and can keep off-site copies of the databases and uploaded files in an S3-compatible bucket (Settings → Backups → *Off-site copies*). See [Backups and upgrades](./docs/user_guide/user_guide.md#backups-and-upgrades) and the [backup internals](./docs/dev/workspaces.md#export-and-backups). If you bind-mount `/data` to a host folder, set `PUID`/`PGID` to your user's ids (`id -u` / `id -g`) so the files belong to you instead of root.
 
@@ -174,7 +174,7 @@ For assistants (Codex, Claude Code) signing in to a remotely hosted Gamma, an ad
 <details>
 <summary><b>Run from source (development)</b></summary>
 
-Requires Python 3.11+ and Node 18+.
+Requires Python 3.11+ and Node 22+.
 
 **Backend**
 

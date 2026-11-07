@@ -47,18 +47,17 @@ drawn as a Form XObject whose /Matrix maps that frame to user space. It is
 appended to the page's content behind a ``q`` … ``Q`` pair that keeps the
 page's own graphics state out. The form has resources of its own, so
 nothing on the page is renamed, and the page's content streams are left as
-they are: PyPDF2's ``merge_page`` would parse every one of them and write it
-back uncompressed. Links in the cards become /Link annotations. The full
-text of the notes stays in the popup either way.
+they are, never parsed nor written back. Links in the cards become /Link
+annotations. The full text of the notes stays in the popup either way.
 """
 
 import io
 import math
 from collections import namedtuple
 
-from PyPDF2 import PdfWriter
-from PyPDF2.generic import (
-    AnnotationBuilder,
+from pypdf import PdfReader, PdfWriter
+from pypdf.annotations import Link
+from pypdf.generic import (
     ArrayObject,
     DecodedStreamObject,
     DictionaryObject,
@@ -71,7 +70,7 @@ from PyPDF2.generic import (
 from . import pdf_cards, pdf_free_space
 from .logbuf import log
 from .pdf_cards import BAR, FONT_SIZE, LEADING, PAD_X, PAD_Y, clip, inner_width
-from .pdf_export import ExportPdfReader, display_size, page_frame, parse_css_color, pdf_point_to_viewer
+from .pdf_export import display_size, page_frame, parse_css_color, pdf_point_to_viewer
 from .pdf_glyphs import GlyphFonts
 from .pdf_image import XObjectStore
 from .pdf_typeset import fill_rect, finalize_cid, font_resources, num
@@ -392,7 +391,7 @@ def _link(writer, index: int, matrix, x0, y0, x1, y1, href: str):
     a, b, c, d, e, f = matrix
     xs, ys = zip(*((a * x + c * y + e, b * x + d * y + f) for x, y in ((x0, y0), (x1, y1))))
     try:
-        writer.add_annotation(page_number=index, annotation=AnnotationBuilder.link(
+        writer.add_annotation(page_number=index, annotation=Link(
             rect=(min(xs), min(ys), max(xs), max(ys)), url=href))
     except Exception as e:
         log.info(f"[pdf-notes] could not link {href[:60]}: {e}")
@@ -442,7 +441,7 @@ def render_notes(pdf_bytes: bytes, highlights, *, notes_at: str = "beside", uplo
     """
     if notes_at not in NOTES_AT:
         raise ValueError(f"notes_at must be one of {NOTES_AT}")
-    reader = ExportPdfReader(io.BytesIO(pdf_bytes))
+    reader = PdfReader(io.BytesIO(pdf_bytes))
     writer = PdfWriter()
     writer.append(reader)
     pages = writer.pages

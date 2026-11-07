@@ -1,4 +1,4 @@
-// Run a checked-in legacy shot against the disposable suite workspace.
+// Run a suite case's recorder against the disposable suite workspace (notes on an isolated server).
 import fs from 'node:fs';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
@@ -6,7 +6,7 @@ import { ROOT } from './runtime.mjs';
 import { library, ATOMS } from './take.mjs';
 const name = process.argv[2];
 // The connector records on its own (record-connector.mjs on take.mjs).
-const names = ['notes', 'library', 'search', 'metadata', 'agent', 'download-and-chat', 'reference-links'];
+const names = ['notes', 'library', 'search', 'metadata', 'reference-links'];
 if (!names.includes(name)) throw new Error(`Choose: ${names.join(', ')}`);
 const suite = path.join(ROOT, 'artifacts/readme-media/suite');
 const isolated = name === 'notes';

@@ -220,6 +220,11 @@ def test_image_width_suffix_is_parsed_not_printed():
     imgs = [c for c in got if c["kind"] == "image"]
     assert imgs and imgs[0]["px_w"] == 240
     assert not any("width" in str(c.get("spans", "")) for c in got if c["kind"] == "text")
+    # A source with a balanced pair and a title, and the size after the
+    # image winning over one in its alt.
+    got = chunks('![shot](https://x.org/Foo_(bar).png "t"){:width 240} ![a|200](/api/uploads/ab12.png){:width 300}')
+    assert [(c["src"], c["alt"], c["px_w"]) for c in got if c["kind"] == "image"] == [
+        ("https://x.org/Foo_(bar).png", "shot", 240), ("/api/uploads/ab12.png", "a", 300)]
 
 
 def test_obsidian_pipe_width_is_parsed_and_kept_out_of_the_alt():
@@ -316,7 +321,7 @@ def test_render_document_starts_each_page_on_a_fresh_sheet():
 
 
 def test_links_become_real_pdf_annotations():
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
 
     pdf = render_document([_page("Links", None, [
         _block("b1", "see [the paper](https://arxiv.org/abs/2401.00001) for more")])])
@@ -327,7 +332,7 @@ def test_links_become_real_pdf_annotations():
 
 
 def test_page_titles_and_headings_become_bookmarks():
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
 
     pdf = render_document([_page("Paper one", None, [_block("b1", "## A section")])])
     outline = PdfReader(io.BytesIO(pdf)).outline
@@ -375,7 +380,7 @@ def test_math_and_cjk_are_selectable_type3_text(guest):
 def test_type3_fonts_hold_each_glyph_once_and_map_back_to_unicode():
     """One glyph program per distinct glyph — a repeated x is stored once —
     with widths, an encoding and a ToUnicode CMap that all agree."""
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
 
     require_math_renderer()
     pdf = render_document([_page("Glyphs", None, [_block("b1", r"$x + x + x$ and $\alpha$")])])
@@ -405,8 +410,8 @@ def test_cid_font_is_one_indirect_object_per_writer_and_lets_the_writer_go():
     import gc
     import weakref
 
-    from PyPDF2 import PdfWriter
-    from PyPDF2.generic import IndirectObject
+    from pypdf import PdfWriter
+    from pypdf.generic import IndirectObject
 
     from gamma.pdf_typeset import CID, HELV, cid_used, finalize_cid, font_resources
 
@@ -601,7 +606,7 @@ def test_handwriting_keeps_the_pencil_s_grain_at_its_scale_with_one_tile_per_col
     import statistics
 
     import pymupdf
-    from PyPDF2 import PdfReader, PdfWriter
+    from pypdf import PdfReader, PdfWriter
 
     from gamma import ink as inkmod
     from gamma.pdf_document import MARGIN_TOP, _Canvas
@@ -634,7 +639,7 @@ def test_handwriting_keeps_the_pencil_s_grain_at_its_scale_with_one_tile_per_col
     want = [inkmod._GRAIN_ALPHAS[tile[((py - 56) % 64) * 64 + (px - 200) % 64]] / 255 for px, py in inside]
     assert statistics.correlation(got, want) > 0.95
     # one tile image per colour and one soft mask for the document; a pattern per colour and placement
-    def refs(d):        # a dictionary's values as the references they are (PyPDF2's [] resolves them)
+    def refs(d):        # a dictionary's values as the references they are (pypdf's [] resolves them)
         return {k: d.raw_get(k) for k in d}
     pages = [refs(page["/Resources"]["/Pattern"]) for page in PdfReader(io.BytesIO(pdf)).pages]
     assert [len(p) for p in pages] == [2, 1]

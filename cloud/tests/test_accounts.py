@@ -304,7 +304,5 @@ def test_mail_failure(client, monkeypatch):
     assert r.status_code in (200, 503)
 
 
-def test_health_and_config(client):
+def test_health(client):
     assert client.get("/api/health").json() == {"ok": True}
-    cfg = client.get("/api/config").json()
-    assert cfg["registration"] == "invite" and cfg["issuer"] == "http://testserver"

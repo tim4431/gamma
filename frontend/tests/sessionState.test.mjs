@@ -31,6 +31,25 @@ test("reading state is isolated by account and workspace, including delayed save
   assert.deepEqual(loadSession(), {});
 });
 
+// A save keeps the session's own fields and drops whatever else the stored
+// copy holds.
+test("a save keeps only the session's fields", async (t) => {
+  const data = new Map();
+  t.mock.method(globalThis, "setTimeout", () => 1);
+  t.mock.method(globalThis, "clearTimeout", () => {});
+  globalThis.localStorage = {
+    getItem: (key) => data.get(key) ?? null,
+    setItem: (key, value) => data.set(key, value),
+    removeItem: (key) => data.delete(key),
+  };
+  t.after(() => { setSessionScope("", ""); delete globalThis.localStorage; });
+  setSessionScope("alice", "team");
+  data.set("gamma-session:alice@team", JSON.stringify({ focusedBlockId: "page-1", pdfPageNumber: 7, orientation: "horizontal", sidebarWidth: 420 }));
+  saveSession({ pdfScale: 2, pdfHidden: true, notesVisible: false, somethingElse: 1 });
+  flushSession();
+  assert.deepEqual(loadSession(), { focusedBlockId: "page-1", pdfScale: 2, pdfHidden: true, notesVisible: false });
+});
+
 // A close runs flushSession from pagehide and from visibilitychange: the
 // first writes the save the debounce holds, the second finds none.
 test("flushSession writes a pending save at once, and once", async (t) => {

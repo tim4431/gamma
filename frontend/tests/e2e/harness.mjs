@@ -84,14 +84,14 @@ export function sweepRuns() {
 export class Server {
   constructor({ env = {} } = {}) {
     servers.push(this);
+    this.env = env;
     this.dir = fs.mkdtempSync(path.join(os.tmpdir(), "gamma-e2e-"));
-    // The backend's temp files stay in the folder too: import staging sits
-    // outside the data dir, where removing the folder would miss it.
-    const tmp = path.join(this.dir, "tmp");
-    fs.mkdirSync(tmp);
-    this.env = { TMPDIR: tmp, TEMP: tmp, TMP: tmp, ...env };
     this.dataDir = path.join(this.dir, "data");
     this.logPath = path.join(this.dir, "server.log");
+    // The backend's own temp files (an import review's staged upload, an
+    // export) go here too, so stop() takes them with the rest.
+    this.tmpDir = path.join(this.dir, "tmp");
+    fs.mkdirSync(this.tmpDir);
     this.port = 0;
     this.proc = null;
   }
@@ -101,7 +101,7 @@ export class Server {
   // 5 s keep-alive, and the next request would go down a socket it had closed.
   async manage(...args) {
     const { stdout } = await execFileAsync(PYTHON, ["manage.py", ...args], {
-      cwd: BACKEND, env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, ...this.env }, encoding: "utf8",
+      cwd: BACKEND, env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, TMPDIR: this.tmpDir, ...this.env }, encoding: "utf8",
     });
     return stdout;
   }
@@ -118,7 +118,7 @@ export class Server {
     const log = fs.openSync(this.logPath, "a");
     this.proc = spawn(PYTHON, ["-c", SERVE, String(this.port)], {
       cwd: BACKEND, stdio: ["pipe", log, log],
-      env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, GAMMA_STATIC_DIR: dist, PYTHONIOENCODING: "utf-8", GAMMA_UPDATE_CHECK: "off", GAMMA_MODEL_CATALOG: "off", GAMMA_METADATA_LOOKUP: "off", ...this.env },
+      env: { ...baseEnv(), GAMMA_DATA_DIR: this.dataDir, GAMMA_STATIC_DIR: dist, TMPDIR: this.tmpDir, PYTHONIOENCODING: "utf-8", GAMMA_UPDATE_CHECK: "off", GAMMA_MODEL_CATALOG: "off", GAMMA_METADATA_LOOKUP: "off", ...this.env },
     });
     const t0 = Date.now();
     while (Date.now() - t0 < 30000) {

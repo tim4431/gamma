@@ -70,9 +70,19 @@ ssh root@69.63.206.178 "cd /root/Container/gamma-demo && docker compose ps && do
 
 This prints the image and the running commit (keep it for rollback). If the
 revision equals `<sha>` (Watchtower may have got there first), the image needs
-no deploy: say so, do step 3 only if `cloud/deploy/demo/` changed since that
-commit, and otherwise stop. A `gamma-demo-watchtower` missing from `ps`
-means the host's `compose.yml` predates it: step 3 brings it.
+no deploy: say so, and still compare `compose.yml` as step 3 does, since
+Watchtower updates the image but never the host's files. Files that match →
+stop there; a difference → go on through step 3 and step 4, whose `up -d`
+applies it.
+
+A `gamma-demo-watchtower` missing from `ps` has stopped, and the demo no
+longer follows `main` by itself: say so. Step 4's `up -d` starts it again;
+when the steps stop before step 4, start it alone after step 3, with the
+user's agreement:
+
+```bash
+ssh root@69.63.206.178 "cd /root/Container/gamma-demo && docker compose up -d --no-deps watchtower"
+```
 
 No `/root/Container/gamma-demo/` at all means a first deployment: follow
 [cloud/deploy/demo/README.md](../../../cloud/deploy/demo/README.md) "First
@@ -142,9 +152,10 @@ curl -s -o /dev/null -w "%{http_code}\n" https://demo.gammapdf.com/            #
 - `demo` is `Up … (healthy)`; the image's healthcheck needs up to about 30 s
   after start. Its revision label equals `<sha>`. `watchtower` is `Up` and its
   log names its next scheduled run (a `client version … is too old` there
-  means `DOCKER_API_VERSION` is missing from the host's `compose.yml`).
+  means the host's `compose.yml` still names the archived
+  `containrrr/watchtower` image: step 3 brings the current one).
 - `server-config` reports `"demo":true`. If it is missing, `GAMMA_DEMO=1` is
-  not in `demo.env` (or the build predates demo mode).
+  not in `demo.env`.
 - A 502 from the demo's name means Caddy cannot reach `gamma-demo`: check
   `docker network inspect gamma-edge` lists both the demo and Caddy. A 404
   means the account project's Caddyfile lacks the `@demo` handle. Both are

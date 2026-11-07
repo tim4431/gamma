@@ -9,15 +9,20 @@ let last = null;
 // each "- " a block and no list, so Paste as Blocks gets them back as they
 // were. The "- a\n- b" of one block is list source, and stays a list.
 let lastOutline = false;
+// The marks of the code it came out of (fences.codeMarksAt), which its lines hold.
+let lastMarks = null;
 
-export function sourceCopied(text, { outline = false } = {}) {
+export function sourceCopied(text, { outline = false, marks = null } = {}) {
   last = (text || "").replace(/\r\n?/g, "\n");
   lastOutline = outline;
+  lastMarks = marks;
 }
 
 export const isSourceCopy = (text) => last !== null && text === last;
 
 export const isOutlineCopy = (text) => lastOutline && isSourceCopy(text);
+
+export const copyMarks = (text) => (isSourceCopy(text) ? lastMarks : null);
 
 // The text CodeMirror's copy puts on the clipboard (its copiedRange): the
 // selected ranges, or with nothing selected the lines the carets are on.

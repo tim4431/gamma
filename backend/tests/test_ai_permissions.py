@@ -44,12 +44,12 @@ def test_a_permission_left_out_allows_reading_and_asks_before_a_change():
     assert permission_state({}, "read", False) == "allow"
     assert permission_state({}, "rename", True) == "ask"
     assert permission_state(None, "block_edit", True) == "ask"
-    # What tabs sent before Ask existed: on and off.
-    assert permission_state({"rename": True}, "rename", True) == "allow"
-    assert permission_state({"read": False}, "read", False) == "off"
     for state in ("allow", "ask", "off"):
         assert permission_state({"read": state}, "read", False) == state
-    assert permission_state({"rename": "sometimes"}, "rename", True) == "ask"
+    # Anything that is no state takes the default.
+    for value in ("sometimes", True, False, 1, None):
+        assert permission_state({"rename": value}, "rename", True) == "ask", value
+        assert permission_state({"read": value}, "read", False) == "allow", value
 
 
 def test_asking_tools_are_armed_and_tools_that_are_off_are_not():
@@ -80,7 +80,7 @@ def test_the_prompt_names_the_tools_that_ask():
 
 
 def test_deleting_folders_and_labels_can_only_ask_or_be_off():
-    for value in ("allow", True, None):
+    for value in ("allow", None):
         perms = {} if value is None else {"organize_delete": value}
         assert permission_state(perms, "organize_delete", True) == "ask", value
     assert permission_state({"organize_delete": "off"}, "organize_delete", True) == "off"

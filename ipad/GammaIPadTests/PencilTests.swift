@@ -621,18 +621,14 @@ final class GestureHoverTests: XCTestCase {
 }
 
 final class PencilActionTests: XCTestCase {
-    func testTheSystemsPreferredActionsKeepTheirNames() {
+    func testTheSystemsPreferredActionsHaveTheirWebNames() {
         XCTAssertEqual(PencilAction.name(.switchEraser), "switchEraser")
         XCTAssertEqual(PencilAction.name(.switchPrevious), "switchPrevious")
         XCTAssertEqual(PencilAction.name(.showColorPalette), "showColorPalette")
-        XCTAssertEqual(PencilAction.name(.showInkAttributes), "showInkAttributes")
-        XCTAssertEqual(PencilAction.name(.ignore), "ignore")
-    }
-
-    func testTheSqueezesActionsHaveTheirWebNames() throws {
-        guard #available(iOS 17.5, *) else { throw XCTSkip("iPadOS 17.5 actions") }
+        // the palette by the Pencil's tip keeps the name the web app knows
         XCTAssertEqual(PencilAction.name(.showContextualPalette), "showInkAttributes")
         XCTAssertEqual(PencilAction.name(.runSystemShortcut), "runSystemShortcut")
+        XCTAssertEqual(PencilAction.name(.ignore), "ignore")
     }
 }
 

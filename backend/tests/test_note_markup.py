@@ -1,12 +1,12 @@
-"""LaTeX → drawable spans (the fallback when the math renderer is out), and
-uploads → PDF image XObjects."""
+"""LaTeX → drawable spans (the fallback when the math renderer is out), image
+sizes, and uploads → PDF image XObjects."""
 
 import io
 import zlib
 
 
 from conftest import require_math_renderer
-from gamma.note_markup import MATH, SUB, SUP, SYMBOLS, TEXT, latex_spans
+from gamma.note_markup import MATH, SUB, SUP, SYMBOLS, TEXT, alt_and_width, latex_spans, obsidian_image_sizes
 from gamma.pdf_image import image_xobject
 from gamma.pdf_typeset import CID, font_of
 
@@ -41,6 +41,30 @@ def test_latex_becomes_symbols_and_scripts():
     assert flat(latex_spans(r"\sqrt{2}\times\mathbf{A}")) == "√2×A"
     # An unknown command keeps its name — that is what \sin, \log, \max need.
     assert flat(latex_spans(r"\argmax_x")) == "argmaxx"
+
+
+def test_logseq_image_sizes_become_the_alts():
+    assert obsidian_image_sizes("see ![c](/api/uploads/i.png){:width 120} and ![d|80](u)") == (
+        "see ![c|120](/api/uploads/i.png) and ![d|80](u)")
+    # A source with a balanced pair and a title, as a link's target reads.
+    assert obsidian_image_sizes('![a](https://x.org/Foo_(bar).png "t"){:width 300}') == (
+        '![a|300](https://x.org/Foo_(bar).png "t")')
+    # The size after the image wins over one in its alt, as on screen.
+    assert obsidian_image_sizes("![a|200](u){:width 300}") == "![a|300](u)"
+    # Code shows the syntax as written: a fence (a listed one too, as a Logseq
+    # outline writes it) and a code span.
+    code = "`![a](u){:width 3}`\n- ```md\n  ![b](u){:width 4}\n  ```\n- ![c](u){:width 5}"
+    assert obsidian_image_sizes(code) == code.replace("![c](u){:width 5}", "![c|5](u)")
+    assert obsidian_image_sizes("![a](u) {:width 3}") == "![a](u) {:width 3}"
+    assert obsidian_image_sizes(None) == ""
+
+
+def test_an_images_alt_and_width():
+    assert alt_and_width("fig|300") == ("fig", "300")
+    assert alt_and_width("fig|300x200", None) == ("fig", "300")
+    assert alt_and_width("fig|300", "120") == ("fig", "120")
+    assert alt_and_width("a|b") == ("a|b", None)
+    assert alt_and_width("", "90") == ("", "90")
 
 
 def _png(width, height, ctype, depth=8, filt=0):
@@ -129,8 +153,8 @@ def _drawn_over_blue(path, scale):
     """The picture at ``path`` through ``XObjectStore``, drawn to fill a page
     painted blue, rendered back by PyMuPDF."""
     import pymupdf
-    from PyPDF2 import PdfWriter
-    from PyPDF2.generic import DecodedStreamObject, DictionaryObject, IndirectObject, NameObject
+    from pypdf import PdfWriter
+    from pypdf.generic import DecodedStreamObject, DictionaryObject, IndirectObject, NameObject
 
     from gamma.pdf_image import XObjectStore
 
@@ -236,9 +260,9 @@ def _palette_png(width, height, palette):
 
 def test_palette_survives_as_raw_bytes(tmp_path):
     """The /Indexed lookup table must be a byte string. As a *text* string
-    PyPDF2 re-encodes it (UTF-16 as soon as a byte isn't PDFDocEncodable),
+    pypdf re-encodes it (UTF-16 as soon as a byte isn't PDFDocEncodable),
     which scrambles the palette and paints the picture one flat colour."""
-    from PyPDF2.generic import ByteStringObject
+    from pypdf.generic import ByteStringObject
 
     palette = bytes([255, 0, 0, 0, 200, 0, 32, 64, 255, 250, 250, 180])
     path = tmp_path / "p.png"

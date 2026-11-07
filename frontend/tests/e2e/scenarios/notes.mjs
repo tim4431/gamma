@@ -1335,6 +1335,63 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     }
   });
 
+  await step("notes: code in a list stays whole: Enter and a paste keep the item's indent, Tab indents, a $ stays one; dollars in inline code neither move a split nor stop one", async () => {
+    const { p, held, edit, left } = await keysPage("Listed code", [
+      ["lc1", "- ```\n  one\n  two\n  ```"], ["lc2", "  ```\n  one\n  ```"], ["lc3", "1. ```\n   one\n   ```"],
+      ["lc4", "`$5` and `$6` tail"], ["lc5", "use `$$` for display"], ["lc6", "- item\n- $$\n  x\n  $$"],
+    ]);
+    const caret = (at) => p.evaluate((at) => {
+      const view = document.querySelector(".blockEditorCm .cm-content").cmTile.root.view;
+      view.dispatch({ selection: { anchor: at < 0 ? view.state.doc.length + at : at } });
+    }, at);
+    const paste = (text) => p.evaluate((text) => {
+      const data = new DataTransfer();
+      data.setData("text/plain", text);
+      document.querySelector(".blockEditorCm .cm-content").dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true, cancelable: true }));
+    }, text);
+    const rest = [["  ```\n  one\n  ```"], ["1. ```\n   one\n   ```"], ["`$5` and `$6` tail"], ["use `$$` for display"], ["- item\n- $$\n  x\n  $$"]];
+    try {
+      await edit("lc1");
+      await caret("- ```\n  one".length);
+      await p.keyboard.press("Enter");
+      await p.keyboard.type("new");
+      await held([["- ```\n  one\n  new\n  two\n  ```"], ...rest], "a code line in the list item, no block");
+      await p.keyboard.press("Shift+Enter");
+      await p.keyboard.press("Tab");
+      await p.keyboard.type("$");
+      await held([["- ```\n  one\n  new\n    $\n  two\n  ```"], ...rest], "the other Enter too; Tab indents and a $ stays one");
+      await p.keyboard.press("Backspace");
+      await paste("aa\n  bb");
+      await held([["- ```\n  one\n  new\n    aa\n    bb\n  two\n  ```"], ...rest], "a paste keeps its lines in the item");
+      await paste("cc\n");
+      await held([["- ```\n  one\n  new\n    aa\n    bbcc\n  \n  two\n  ```"], ...rest], "and the line break it ends with");
+      await edit("lc2");
+      await caret(-"\n  ```".length);
+      await p.keyboard.press("Enter");
+      await edit("lc3");
+      await caret(-"\n   ```".length);
+      await p.keyboard.press("Enter");
+      await edit("lc6");
+      await caret(-"\n  $$".length);
+      await p.keyboard.press("Enter");
+      const whole = [["- ```\n  one\n  new\n    aa\n    bbcc\n  \n  two\n  ```"], ["  ```\n  one\n  \n  ```"], ["1. ```\n   one\n   \n   ```"],
+        ["`$5` and `$6` tail"], ["use `$$` for display"], ["- item\n- $$\n  x\n  \n  $$"]];
+      await held(whole, "an indented fence, a numbered one and math in a list");
+
+      await edit("lc4");
+      await left(" `$6` tail".length + 1);
+      await p.keyboard.press("Enter");
+      await held([...whole.slice(0, 3), ["`$5` an"], ["d `$6` tail"], ...whole.slice(4)], "the split at the caret, the code span whole");
+      await edit("lc5");
+      await left(3);
+      await p.keyboard.press("Enter");
+      await held([...whole.slice(0, 3), ["`$5` an"], ["d `$6` tail"], ["use `$$` for disp"], ["lay"], whole[5]], "a $$ in code stops no split");
+      assertNoProblems(p);
+    } finally {
+      await p.close();
+    }
+  });
+
   await step("notes: a fence in a quote or a callout and a ~~~ one stay whole under either Enter, the quote's marks going on; a typed ~~~ fence is one block", async () => {
     const { p, held, edit, left, newBlock } = await keysPage("Fenced", [
       ["qf1", "> ```py\n> abcd\n> ```"], ["qf2", "> [!note] t\n> ```py\n> abcd\n> ```"], ["qf3", "~~~py\ncode1\ncode2\n~~~"], ["qf4", "word"],

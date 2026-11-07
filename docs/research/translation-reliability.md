@@ -423,9 +423,10 @@ the plan above:
   took 57 s and the run 15.6 minutes. That added two items the plan did
   not have (below: retries, and failed chunks that no longer stop the job).
 - **Kept in `data.db`, not `pages.db`, and no migration.** The tables are
-  derived data, like the PDF text index beside them: made on first use,
-  dropped with their document by `pdf_index.purge_unused` (not `upload_gc`),
-  and never the reason a translation fails.
+  derived data, like the PDF text index beside them: created with every
+  `data.db` connection (`db.DATA_SCHEMA`), dropped with their document by
+  `pdf_index.purge_unused` (not `upload_gc`), and never the reason a
+  translation fails.
 - **One row per paragraph, not a blob per page.** `pdf_translations` is
   keyed by (document, language, model, the source text's hash: 32 hex
   digits, not 16), with no compression and no page column, so the server
