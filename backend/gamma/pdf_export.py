@@ -162,6 +162,40 @@ def _resolve(obj):
     return obj.get_object() if hasattr(obj, "get_object") else obj
 
 
+def page_annotations(page) -> list:
+    """``page``'s /Annots as (entry, dictionary) pairs, without the entries
+    that lead to no dictionary, which a viewer passes over too: a null, or a
+    reference to an object the file has lost."""
+    annots = _resolve(page.get("/Annots"))
+    pairs = [(ref, _resolve(ref)) for ref in annots] if isinstance(annots, list) else []
+    return [(ref, obj) for ref, obj in pairs if isinstance(obj, DictionaryObject)]
+
+
+def copyable(page):
+    """``page``, fit for pypdf's copies of a page (``copy_pdf``,
+    ``PdfWriter.add_page``), which take every /Annots entry for a dictionary
+    and every /A for an action and raise on a file where one is not: only
+    ``page_annotations`` stay, and an annotation loses an /A that is no
+    action, which does nothing in a viewer either."""
+    if "/Annots" in page:
+        kept = page_annotations(page)
+        for _ref, obj in kept:
+            action = _resolve(obj.get("/A"))
+            if "/A" in obj and not (isinstance(action, DictionaryObject) and "/S" in action):
+                del obj[NameObject("/A")]
+        page[NameObject("/Annots")] = ArrayObject(ref for ref, _obj in kept)
+    return page
+
+
+def copy_pdf(reader) -> PdfWriter:
+    """A new writer holding ``reader``'s pages, each ``copyable`` first."""
+    for page in reader.pages:
+        copyable(page)
+    writer = PdfWriter()
+    writer.append(reader)
+    return writer
+
+
 # --- embedded annotations as the importer takes them --------------------------------
 # routers/imports.py turns a PDF's own annotations into blocks; the export
 # replaces the embedded original of a text box or a picture it writes again.
@@ -209,14 +243,18 @@ def reply_parent(annot):
 
 def first_rect(annot):
     """(x0, y0, x1, y1) of an annotation's first quad (/QuadPoints) or its
-    /Rect, in user space; None without either."""
-    qp = _resolve(annot.get("/QuadPoints"))
-    if qp:
-        nums = [float(_resolve(v)) for v in qp]
-        if len(nums) >= 8:
-            xs, ys = nums[0:8:2], nums[1:8:2]
-            return min(xs), min(ys), max(xs), max(ys)
-    r = [float(_resolve(v)) for v in (_resolve(annot.get("/Rect")) or ())]
+    /Rect, in user space; None without either, or when they hold anything
+    but numbers."""
+    try:
+        qp = _resolve(annot.get("/QuadPoints"))
+        if qp:
+            nums = [float(_resolve(v)) for v in qp]
+            if len(nums) >= 8:
+                xs, ys = nums[0:8:2], nums[1:8:2]
+                return min(xs), min(ys), max(xs), max(ys)
+        r = [float(_resolve(v)) for v in (_resolve(annot.get("/Rect")) or ())]
+    except (TypeError, ValueError):
+        return None
     if len(r) != 4:
         return None
     return min(r[0], r[2]), min(r[1], r[3]), max(r[0], r[2]), max(r[1], r[3])
@@ -236,7 +274,7 @@ def drop_annotations(page, doomed) -> int:
     resolved dictionaries) off ``page``'s /Annots, with their threads:
     the replies and review states that answer them (/IRT), at any depth, and
     their /Popup windows. Returns how many annotations went."""
-    items = [(ref, _resolve(ref)) for ref in (_resolve(page.get("/Annots")) or ())]
+    items = page_annotations(page)
     gone = set(doomed)
     while True:
         more = {id(obj) for _ref, obj in items if id(obj) not in gone and (
@@ -258,8 +296,7 @@ def _drop_replaced(page, pnum: int, keys) -> None:
     /Stamp, no reply, whose key is among ``keys`` (the ``imported_annot`` of
     the blocks the import made of them), with its thread."""
     doomed = set()
-    for ref in _resolve(page.get("/Annots")) or ():
-        obj = _resolve(ref)
+    for _ref, obj in page_annotations(page):
         subtype = str(obj.get("/Subtype", ""))
         if (subtype in REPLACED_TYPES and annotation_shown(obj) and reply_parent(obj) is None
                 and (rect := first_rect(obj)) and annotation_key(pnum, subtype, rect) in keys):
@@ -732,9 +769,7 @@ def annotate_pdf(pdf_bytes: bytes, highlights, author: str = "", ink=(),
     from .pdf_image import XObjectStore
     from .pdf_typeset import finalize_cid
 
-    reader = PdfReader(io.BytesIO(pdf_bytes))
-    writer = PdfWriter()
-    writer.append(reader)
+    writer = copy_pdf(PdfReader(io.BytesIO(pdf_bytes)))
     glyphs = GlyphFonts(writer)
     if replaced:
         keys = set(replaced)
@@ -821,7 +856,7 @@ def page_with_ink(src, page_no: int, inks, *, pictures=(), text_boxes=(), replac
     if not 1 <= page_no <= pages:
         return b"", pages
     writer = PdfWriter()
-    writer.add_page(reader.pages[page_no - 1])
+    writer.add_page(copyable(reader.pages[page_no - 1]))
     page = writer.pages[0]
     if replaced:
         _drop_replaced(page, page_no, set(replaced))
