@@ -348,7 +348,8 @@ It has six states (`pages_billing.plan_state`):
 - **Cancelled or read-only.** For Lite and Plus, a section saying that
   the library is kept but closed until a plan opens it again
   ([cloud_accounts.md](cloud_accounts.md) "Who the shared server takes"),
-  with Resume. For Pro, when the server stops being readable and
+  and that files beyond the free allowance may be deleted 90 days after
+  the plan ended, as TERMS.md says, with Resume. For Pro, when the server stops being readable and
   when it is deleted (`stops_at` and `deletes_at` of `hosted.status_for`,
   the lifecycle's own dates), Export (`<server url>/?settings=backups`,
   while the server is read-only) and Resume (a new checkout of the same

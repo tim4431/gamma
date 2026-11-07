@@ -566,7 +566,7 @@ def test_plan_page_for_a_library_on_the_shared_server(client, stripe, monkeypatc
     stripe.subs["sub_1"]["status"] = "canceled"
     send(client, "customer.subscription.deleted", {"id": "sub_1"})
     page = client.get("/plan").text
-    assert "What happens to your library" in page and "it is closed" in page and "data-resume='plus_month'" in page
+    assert "What happens to your library" in page and "it is closed" in page and "90 days after the plan ended" in page and "data-resume='plus_month'" in page
     assert ">Open<" not in page                                                       # nothing leads into a closed library
     assert "Readable until" not in page and "Export" not in page
     # each plan is sold only while its home is configured
