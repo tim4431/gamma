@@ -3075,13 +3075,15 @@ mark.searchMark {
   flex-direction: column;
   overflow: hidden;
 }
-/* windows fill their body regardless of legacy layout-* sizing rules */
+/* windows fill their body regardless of legacy layout-* sizing rules, as
+   narrow as their slot is (the notes wrap rather than run under its edge) */
 .dockWindowBody .sidebar,
 .dockWindowBody .chatPanel {
   flex: 1 1 auto !important;
   width: auto !important;
   height: auto !important;
   max-width: none !important;
+  min-width: 0 !important;
   min-height: 0 !important;
   border-top: none !important;
   border-left: none !important;

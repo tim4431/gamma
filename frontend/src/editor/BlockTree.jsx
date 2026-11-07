@@ -693,6 +693,12 @@ const BlockRow = React.memo(function BlockRow({
   onToggle,
   onDelete,
   onStartEdit,
+  // A preview tree's (BlockTree `preview`, below): it looks as the editable
+  // one does and edits nothing; a press is handed to onStartEdit.
+  preview = false,
+  // The press another view of this row took, for the editor that opens on
+  // it: {x, y, offset, insertLine} as a press here would have taken.
+  takeClickPos,
   registerRef,
   readOnly,
   lookupBlock, // a block of the page by id (App's tree), at event time
@@ -762,6 +768,11 @@ const BlockRow = React.memo(function BlockRow({
   // The viewer's state for this row (blockModel's `view`): its editor open,
   // its children folded.
   const editing = view?.editingId === block.id;
+  // An editor opening without a press of this row's own (a press on the
+  // same row in a view of the page, which made it live) takes that press,
+  // so the caret lands where it was. Kept in the ref the row's own press
+  // fills, which the editor reads as it mounts and the row then clears.
+  if (editing && !readOnly && !clickPosRef.current && takeClickPos) clickPosRef.current = takeClickPos(block.id) || null;
   const collapsed = isFolded(block, view);
   // The hover line in the gap between two of the rendered view's blocks
   // (paragraphs, formulas, lists…): clicking it opens the editor on a line
@@ -815,6 +826,9 @@ const BlockRow = React.memo(function BlockRow({
     if (newVal !== block.content) onChangeText(block.id, newVal);
   };
   const stableTaskToggle = useRef((idx, checked) => taskToggleRef.current?.(idx, checked)).current;
+  const previewPressRef = useRef(null);
+  previewPressRef.current = () => onStartEdit(block.id, true, null);
+  const stablePreviewPress = useRef(() => previewPressRef.current()).current;
   // In-place edits on ![[embed]] cards write to the SOURCE block. A source on
   // the current page goes through onChangeText (state + debounced autosave —
   // a direct PUT would be reverted by the page's own autosave); a cross-page
@@ -887,7 +901,7 @@ const BlockRow = React.memo(function BlockRow({
       // caret merely touches, so the source shows only from inside it.
       clickPosRef.current = { x: e?.clientX || 0, y: e?.clientY || 0, offset: obj.from + 1 };
       setFocusedId(block.id);
-      onStartEdit(block.id, true);
+      onStartEdit(block.id, true, clickPosRef.current);
     } else if (action === "copy") {
       sourceCopied(content.slice(obj.from, obj.to));
       copyText(content.slice(obj.from, obj.to));
@@ -1104,6 +1118,8 @@ const BlockRow = React.memo(function BlockRow({
   }
 
   function handleFileDragOver(e) {
+    // a preview takes no files: the drop goes on to whatever holds the tree
+    if (preview) return;
     if (!e.dataTransfer?.types || !Array.from(e.dataTransfer.types).includes("Files")) return;
     if (!e.dataTransfer?.items) return;
     // Any file lands in the block: images inline, everything else — PDFs too;
@@ -1133,6 +1149,7 @@ const BlockRow = React.memo(function BlockRow({
   // Every dropped file lands in this block, one line each: images inline,
   // the rest as file chips (uploaded in order; a refused one is skipped).
   async function handleFileDrop(e) {
+    if (preview) return;
     e.preventDefault();
     e.stopPropagation();
     setFileDragOver(false);
@@ -1485,7 +1502,7 @@ const BlockRow = React.memo(function BlockRow({
               clickPosRef.current = { x: e.clientX, y: e.clientY, offset: frameOffset };
               setGapLine(null);
               e.preventDefault();
-              onStartEdit(block.id, true);
+              onStartEdit(block.id, true, clickPosRef.current);
               return;
             }
             const below = e.target.closest(".mdGapLine") && gapLine?.below;
@@ -1509,7 +1526,7 @@ const BlockRow = React.memo(function BlockRow({
             }
             setGapLine(null);
             e.preventDefault();
-            onStartEdit(block.id, true);
+            onStartEdit(block.id, true, clickPosRef.current);
           }
         }}
         onClick={(e) => {
@@ -1793,12 +1810,12 @@ const BlockRow = React.memo(function BlockRow({
               onMouseLeave={readOnly ? undefined : () => setGapLine(null)}>
               {(block.content || "").trim() ? (
                 <BlockMarkdown content={block.content || ""} blockId={block.id} refLabels={refLabels} onBlockRefClick={stableRefClick}
-                  onTaskToggle={readOnly ? undefined : stableTaskToggle}
-                  onEmbedEdit={readOnly ? undefined : stableEmbedEdit}
-                  onImageEdit={readOnly ? undefined : stableImageEdit}
-                  onTableEdit={readOnly ? undefined : stableTableEdit}
-                  onDiagramEdit={readOnly ? undefined : stableDiagramEdit}
-                  onObjectAction={readOnly ? undefined : stableObjectAction} />
+                  onTaskToggle={readOnly ? undefined : preview ? stablePreviewPress : stableTaskToggle}
+                  onEmbedEdit={readOnly || preview ? undefined : stableEmbedEdit}
+                  onImageEdit={readOnly || preview ? undefined : stableImageEdit}
+                  onTableEdit={readOnly || preview ? undefined : stableTableEdit}
+                  onDiagramEdit={readOnly || preview ? undefined : stableDiagramEdit}
+                  onObjectAction={readOnly || preview ? undefined : stableObjectAction} />
               ) : sheetNumber ? (
                 // an untitled notebook sheet reads as the page it stands for
                 <div className="blockPlaceholder blockSheetLabel">{t("Page {n}", { n: sheetNumber })}</div>
@@ -1916,6 +1933,7 @@ const SortableBlockRow = React.memo(function SortableBlockRow({ block, ...rowPro
   const handleRef = useRef(null);
 
   function onDragStart(e) {
+    if (rowProps.preview) { e.preventDefault(); return; }
     e.dataTransfer.setData("text/plain", block.id);
     e.dataTransfer.effectAllowed = "move";
     _dragState.draggingId = block.id;
@@ -1934,6 +1952,7 @@ const SortableBlockRow = React.memo(function SortableBlockRow({ block, ...rowPro
     if (draggedRef.current) return;
     e.preventDefault();
     e.stopPropagation();
+    if (rowProps.preview) { rowProps.onStartEdit?.(block.id, true, null); return; }
     setHandleMenu({ x: e.clientX, y: e.clientY });
   }
 
@@ -1949,6 +1968,7 @@ const SortableBlockRow = React.memo(function SortableBlockRow({ block, ...rowPro
   function onAddClick(e) {
     e.preventDefault();
     e.stopPropagation();
+    if (rowProps.preview) { rowProps.onStartEdit?.(block.id, true, null); return; }
     rowProps.onEnterSibling?.(block.id, { above: e.altKey });
     guideEvents.emit("block.created");
   }
@@ -1962,7 +1982,7 @@ const SortableBlockRow = React.memo(function SortableBlockRow({ block, ...rowPro
           ref={handleRef}
           className="dragHandle"
           data-guide="notes.handle"
-          draggable="true"
+          draggable={rowProps.preview ? "false" : "true"}
           onPointerEnter={rowProps.onPropertiesPreload}
           onDragStart={onDragStart}
           onDragEnd={onDragEnd}

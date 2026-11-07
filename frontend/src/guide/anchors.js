@@ -165,7 +165,9 @@ export const ATTR = "data-guide";
 
 export function anchorElement(id) {
   if (!id) return null;
-  const all = [...document.querySelectorAll(`[${ATTR}="${id}"]`)].filter((el) => !el.closest("[inert]"));
+  // a tab group's view of a page (workspace/PagePane.jsx) draws the page
+  // with its anchors, but the tour shows the open page's
+  const all = [...document.querySelectorAll(`[${ATTR}="${id}"]`)].filter((el) => !el.closest("[inert]") && !el.closest("[data-read-view]"));
   const pick = ANCHORS[id]?.pick;
   if (pick === "last") return all[all.length - 1] || null;
   if (pick === "recent") return all.find((el) => el.closest(`[${ATTR}-recent]`)) || all[0] || null;

@@ -43,6 +43,7 @@ import { toolShape } from "./shapeTool.js";
 import { clickAt, doublePress, swallowClick } from "../shared/ui/press.js";
 import { scrollBox } from "../shared/ui/placement.js";
 import { ARROWS, TransformHandles, arrowSign, pct } from "../markup/TransformHandles.jsx";
+import { usePageTools } from "../markup/PageTools.jsx";
 import { MAX_COORD, lassoTakes, normalizePicture, turnedBox } from "../markup/picture.js";
 import { pictureShape } from "./overPictures.js";
 import { selectedPictures } from "./selectionEdits.js";
@@ -919,7 +920,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
   selection, flash, clip = false, keys, hoverPreview = true, ruler = null, rulerUnits = "pt", aiWork = null, onCarry,
   onStroke, onEraseAlong, onEraseEnd, onEraseMany, onSelect, onAction, onMoveSelection, onJump, onPaste,
   onFingerScroll, onUndoGesture, onHoldStatus, onInkFeatures, onInkLive, onHaptic, onRuler,
-  chrome = true, zoom = null, onZoom, onZoomStroke }) {
+  chrome = true, zoom = null, onZoom, onZoomStroke, view = false }) {
   useInkVersion();
   const canvasRef = useRef(null);
   const wetRef = useRef(null);
@@ -953,7 +954,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
   // surface's size, which keeps the lasso's pictures on it: measured by this
   // layer, the page's own, never the zoom window's copy.
   useEffect(() => {
-    if (!chrome) return undefined;
+    if (!chrome || view) return undefined;
     return measureSurface(pageNumber, () => ({ css: wrapRef.current?.getBoundingClientRect().width || 0,
       width: live.current.width, height: live.current.height }));
   }, [pageNumber, chrome, wrapRef]);
@@ -961,7 +962,7 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
   const groups = [];
   for (const b of blocks || []) {
     // the drawing shown so far while a newer file of the group loads
-    const ink = inkStore.inkShown(b);
+    const ink = inkStore.inkShown(b, { restore: !view });
     if (!ink?.strokes?.length) continue;
     groups.push({ id: b.id, ink });
   }
@@ -1017,7 +1018,9 @@ export function InkLayer({ pageNumber, wrapRef, width, height, blocks, pictures,
     lassoPictures, width, height, groups, pictures: shownPictures, selBox, replay, clip, hoverPreview, ruler: rulerOn,
     onStroke, onEraseAlong, onEraseEnd, onEraseMany, onSelect, onMoveSelection, onJump, onPaste, onFingerScroll, onUndoGesture,
     onHoldStatus, onInkLive, onHaptic, onZoom, onZoomStroke };
-  useWetStrokes(pageNumber, wrapRef, wetRef, washRef, live);
+  // A view of another page draws no one's strokes in progress: those are
+  // kept by surface (a PDF page number), which pages of two documents share.
+  useWetStrokes(view ? null : pageNumber, wrapRef, wetRef, washRef, live);
   // Dense pages ("dense pages" above): culling past IDLE_STROKES strokes on
   // the surface, outlines built in idle time, and past RASTER_STROKES the
   // finished groups as pictures — not the group this layer's last stroke
@@ -2848,7 +2851,8 @@ export function InkReplayButton({ replay, className = "" }) {
 // was written during. Click: jump to it on the page.
 export function InkCard({ block, onJump }) {
   useInkVersion();
-  const ink = inkStore.inkShown(block);
+  const { preview } = usePageTools();
+  const ink = inkStore.inkShown(block, { restore: !preview });
   const replayState = useGroupFrame(ink ? [{ id: block.id, ink }] : [], null);
   const grain = useGrain(ink ? [ink] : []);
   const replay = {
