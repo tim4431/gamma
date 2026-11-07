@@ -100,6 +100,9 @@ test("Ctrl+P and the chat's pickers: a sub-page's row carries its path, and the 
   const pathOf = (id) => rows.find((r) => r.page.id === id).path;
   assert.equal(pathOf("week"), "Project › Notes");
   assert.equal(pathOf("lone"), "");
+  const moving = rankLibraryPages(pages, tree, "", { exclude: new Set(["proj"]) });
+  assert.equal(moving.find((r) => r.page.id === "week").path, "Project › Notes", "an excluded page still names the pages inside it");
+  assert.ok(!moving.some((r) => r.page.id === "proj"));
   const hits = rankLibraryPages(pages, tree, "project");
   assert.equal(hits[0].page.id, "proj", "the title hit first");
   assert.deepEqual(hits.slice(1).map((r) => r.page.id).sort(), ["notes", "todo", "week"], "then the pages inside it");

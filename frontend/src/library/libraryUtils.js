@@ -388,6 +388,15 @@ export function scorePaperMatch(text, page) {
   return score;
 }
 
+// Whether the link dialog's field holds a link rather than a search of the
+// pages: a web address, an arXiv id (with "arXiv:" or without) or a DOI
+// (with "doi:" or without), each of which normalizeLinkInput makes a URL.
+export function isLinkInput(value) {
+  const input = (value || "").trim();
+  return /^https?:\/\/\S+$/i.test(input) || /^arxiv:\s*\d{4}\.\d{4,5}(v\d+)?$/i.test(input)
+    || /^\d{4}\.\d{4,5}(v\d+)?$/.test(input) || /^(doi:\s*)?10\.\d{4,9}\/\S+$/i.test(input);
+}
+
 export function normalizeLinkInput(value) {
   const input = (value || "").trim();
   if (!input) return "";

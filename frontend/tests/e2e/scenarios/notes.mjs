@@ -395,7 +395,8 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       await wrap.hover();
       await wrap.locator(".dragHandle").click();
       await p2.locator(".ctxMenuItem", { hasText: "Move to page…" }).click();
-      const box = p2.getByPlaceholder("Filter pages…");
+      const dialog = p2.getByRole("dialog", { name: "Move block to page" });
+      const box = dialog.getByRole("textbox", { name: "Move block to page…" });
       await box.waitFor();
       // Ctrl+Z and F2 belong to the page behind the dialog: neither acts.
       await p2.keyboard.press("Control+z");
@@ -403,21 +404,20 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       await sleep(500); // an undo would have saved by now
       assertEq(await p2.locator(".titleEdit").count(), 0, "F2 does not rename behind the dialog");
       assertEq((await tree(alice2, src.id))[0]?.content, "to be moved now", "Ctrl+Z does not undo behind the dialog");
+      // The palette's keys (shared/ui/Palette.jsx): the field keeps the
+      // focus, ↑↓ move the selection round the matches.
       await box.fill("archive");
-      const items = p2.locator(".moveBlockList .ctxMenuItem");
+      const items = dialog.getByRole("option");
       await until(async () => (await items.count()) === 2);
-      const focused = (i) => items.nth(i).evaluate((el) => el === document.activeElement);
+      const selected = async () => (await items.evaluateAll((els) => els.map((el) => el.getAttribute("aria-selected")))).indexOf("true");
+      assertEq(await selected(), 0, "the best match is selected");
       await p2.keyboard.press("ArrowDown");
-      assertEq(await focused(0), true);
+      assertEq(await selected(), 1);
       await p2.keyboard.press("ArrowDown");
-      assertEq(await focused(1), true);
-      await p2.keyboard.press("ArrowDown");
-      assertEq(await focused(1), true, "the last page holds the focus");
+      assertEq(await selected(), 0, "the selection goes round");
       await p2.keyboard.press("ArrowUp");
-      await p2.keyboard.press("ArrowUp");
-      await until(() => box.evaluate((el) => el === document.activeElement));
-      await p2.keyboard.press("ArrowDown");
-      await p2.keyboard.press("ArrowDown");
+      assertEq(await selected(), 1);
+      assert(await box.evaluate((el) => el === document.activeElement), "the field keeps the focus");
       const pick = (await items.nth(1).innerText()).includes("beta") ? destB : destA;
       held = [];
       sent.length = 0;
