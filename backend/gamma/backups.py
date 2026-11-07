@@ -358,7 +358,9 @@ def stream_zip(name: str, chunk: int = 1 << 20):
         for f in sorted(path.rglob("*")):
             if not f.is_file():
                 continue
-            entry = zipfile.ZipInfo.from_file(f, f.relative_to(path).as_posix())
+            # a file dated before 1980 (a copy that kept a zeroed clock) goes
+            # in as 1980, the earliest a zip can say, instead of ending the download
+            entry = zipfile.ZipInfo.from_file(f, f.relative_to(path).as_posix(), strict_timestamps=False)
             entry.compress_type = zipfile.ZIP_DEFLATED
             with f.open("rb") as src, z.open(entry, "w") as dst:
                 while data := src.read(chunk):

@@ -112,7 +112,8 @@ def write_zip(ws: str, dest: Path, *, uploads: bool = True, by: str = "", label:
     with connect_users_db() as conn:
         names = account_names(conn, [owner, by])
     checks, stored, missing = {}, [], []
-    with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as z:
+    # strict_timestamps=False: an upload dated before 1980 goes in as 1980 (backups.stream_zip)
+    with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED, strict_timestamps=False) as z:
         for src in db_files:
             snap = Path(str(dest) + "." + src.name)
             try:

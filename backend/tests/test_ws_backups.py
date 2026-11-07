@@ -285,3 +285,20 @@ def test_export_all_and_mine(owner, other, guest):
     assert mine["account"]["used_bytes"] == ids[ws]["used_bytes"] + ids[play]["used_bytes"]
     assert "quota_mb" in mine["account"] and "max_upload_mb" not in mine["account"]
     assert owner.delete(f"/api/workspaces/{play}").status_code == 200
+
+
+def test_an_upload_dated_before_1980_still_snapshots(owner):
+    # A zip cannot say 1970 (a copy that kept a zeroed clock): such an upload
+    # goes into the workspace's zip dated 1980 rather than failing it.
+    import os
+    from gamma import storage
+    ws = workspace_of("bk_owner")
+    up = owner.post("/api/uploads", files={"file": ("old.pdf", b"%PDF-1.4 an old clock", "application/pdf")})
+    assert up.status_code == 200
+    os.utime(storage.open_path(ws, f"{up.json()['doc_id']}.pdf"), (0, 0))
+    r = owner.post(f"/api/workspaces/{ws}/backups", json={"label": "old.clock", "uploads": True})
+    assert r.status_code == 200, r.text
+    z = owner.get(f"/api/workspaces/{ws}/backups/{r.json()['name']}/download")
+    entry = zipfile.ZipFile(io.BytesIO(z.content)).getinfo(f"uploads/{up.json()['doc_id']}.pdf")
+    assert entry.date_time[0] == 1980
+    assert owner.delete(f"/api/workspaces/{ws}/backups/{r.json()['name']}").status_code == 200

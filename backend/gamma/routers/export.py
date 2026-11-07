@@ -104,7 +104,8 @@ def _write_zip(dest, entries, assets, uploads_dir, files=(), blobs=(), progress=
     files packed so far (the phase "packing"). PDFs and compressed media are
     stored (``_compression``), the rest deflated."""
     stored = [(f"assets/{name}", uploads_dir / name) for name in sorted(assets)] + list(files)
-    with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as z:
+    # strict_timestamps=False: a file dated before 1980 goes in as 1980 (backups.stream_zip)
+    with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED, strict_timestamps=False) as z:
         for arcname, text in entries:
             z.writestr(arcname, text, compress_type=_compression(arcname))
         for n, (arcname, path) in enumerate(stored):
