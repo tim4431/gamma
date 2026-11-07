@@ -618,8 +618,8 @@ synced yet" state (with *Sync after an edit* on, the pill spins from the
 edit until a poll confirms the round is done, since a one-page round is
 shorter than the poll interval). The first pass runs
 `FIRST_PASS_S` (5 s) after startup, so a copy whose first fill was cut short
-by a restart continues at once; "Sync now" (`POST /api/mirrors/{ws}/sync`,
-`?wait=1` for the answer) runs one on demand. Rounds of one mirror never
+by a restart continues at once; "Sync now" (`POST /api/mirrors/{ws}/sync`)
+runs one on demand. Rounds of one mirror never
 overlap: a second caller waits for the round lock and reads the mirror's
 row only once it holds it, so it runs with a page unpublished or a detach
 done while it waited. The loop itself never waits on that lock: a mirror
@@ -639,6 +639,27 @@ rounds to a pool of threads of its own (`workers`). What the person does
   retry list for the reattach);
 - a force is noted as `status.force` and applied by the next round under
   the lock (`_start_force`), never by the running one.
+
+**Sync now answers at once** (`sync_engine.ask_round`), so no request
+waits out a round a proxy would cut (a first fill of a big library takes
+minutes). It marks the status `asked_at` (`sync_clock.LinkTable.ask`) and
+starts the round in the background; the next round to start takes the
+mark off in the same write that sets `running` (`drop=(ASKED,)`), and a
+round already running when it was asked leaves it on for the round after
+it. From the answer to the round's end the status reads `asked_at` or
+`running`, so every Sync now in the web app (the pill, Settings' rows,
+the publish section) follows it with `GET /api/mirrors/{ws}` until
+neither is set (`syncLinks.js` `followSync`, every 2 s, the round's
+progress moving meanwhile) and then reports the round's outcome. A
+detached copy asks for none. A held round that runs nothing (detached
+meanwhile, a filter naming no page) takes the mark off too
+(`LinkTable.answered`), as do a detach and the startup reset, so nothing
+follows a round that will never come. So does a step that fails before
+the round's `running` (the token that no longer reads, a force started,
+the filter pruned): `_held_round` records it as the round's `last_error`
+before the exception goes on to the thread or the clock that logs it.
+`?wait=1` still runs the round in
+the request and answers with its status, for scripts and the tests.
 
 A round that cannot reach the remote records the error on the
 mirror and moves no cursor. A page that fails inside a round — whatever the
@@ -715,7 +736,8 @@ Shown while a clone is open, in the desktop app and in a browser alike.
 Click: a popover of icons and numbers.
 
 - The head: the clone's name with *remote · host*, a **Sync** icon button
-  and the gear.
+  (the round asked for, then followed to its end, spinning meanwhile; the
+  log is read again after it) and the gear.
 - The state line: the last round's `+3 −1 ~2`, the progress bars while a
   round runs, a *Resolve* button when conflicts wait (it opens the conflict
   cards, each resolved in place or opened on its block).
@@ -792,9 +814,11 @@ Settings jump to the block (`gamma:jump`).
   *unpushed edits*, *N conflicts*), *clone of X · origin host* and one short status line
   (progress and the file in flight while a round runs; *up to date 14:37 ·
   2 pages pulled* after; *local edits not pushed yet* while `pending_local`).
-  The list is read again every 2 s while any row's round runs
-  (`useMirrors`), so the progress moves.
-- Actions: Open, *Sync* (*Reattach* when detached), *Conflicts* (the same
+  The list is read again every 2 s while any row's round is asked for
+  or runs (`useMirrors`), so the progress moves.
+- Actions: Open, *Sync* (*Reattach* when detached; it follows the round
+  to its end, the row moving meanwhile, and the dialog's status line then
+  says how it went), *Conflicts* (the same
   cards, each resolved there or opened on its block) and a "more"
   `ActionMenu`: *Force pull*, *Force push* (off on a receive-only clone),
   *Detach*, and a danger *Remove origin*. The forces and the removal are
@@ -846,7 +870,8 @@ mirror's own answer apart.
     - a danger icon button that asks inline before it unpublishes;
     - the state line (`mirrorState` of the answer's `mirror`, the pill's
       icon and words) with a *Sync now* icon button
-      (`POST /api/mirrors/{ws}/sync?wait=1`). While the publication is
+      (`POST /api/mirrors/{ws}/sync`, then the publication followed to
+      the round's end, its progress on the state line). While the publication is
       detached the button is off, the state line says so (the answer's
       `mirror` carries `mode` and `detached`) and the answer's `reason`
       shows under the row;
@@ -1100,7 +1125,7 @@ is listed in `GET /api/mirrors` with the clones; the UI shows it apart
 | POST | `/api/mirrors` | `{remote_url, token, name?, mode?, workspace_id?, adopt?}` → the mirror (validated against the remote's `whoami` first; a read token or a viewer's role makes it `pull`; `workspace_id` links an existing workspace of the caller's under the `adopt` policy); the first fill runs in the background |
 | GET | `/api/mirrors/{ws}` | one mirror, with `conflicts_open` and `conflicts_newest` (the newest open conflict's id: the pair changes exactly when the open conflicts do), `pending_local` (a local write no round has pushed yet; two-way copies only), `poll_s`, `on_change`, `detached`, `interval_s` (0 = the loop is off), `page_filter` (null = every page) |
 | PATCH | `/api/mirrors/{ws}` | `{poll_s?, on_change?, mode?}` — the cadence and direction |
-| POST | `/api/mirrors/{ws}/sync[?wait=1]` | a round now |
+| POST | `/api/mirrors/{ws}/sync[?wait=1]` | a round now, in the background: `{status, conflicts_open}` at once, `status.asked_at` until the round starts ("Sync now answers at once"); `wait=1` runs it in the request |
 | POST | `/api/mirrors/{ws}/detach` | detach (the link is kept) |
 | POST | `/api/mirrors/{ws}/relink` | `{token?, remote_url?, adopt?}` — link again, a round in the background |
 | POST | `/api/mirrors/{ws}/force` | `{direction: pull \| push}` — replace one side with the other, in the background |
@@ -1150,8 +1175,11 @@ sync-on-change trigger, a remote on another data format pausing the round
 (either side older, then a remote that names none), a detach and a force
 asked for while a round runs,
 edits made while the remote had demoted the account, a force pull on a
-receive-only clone, and a conflict resolved after its block moved to
-another page are in `test_mirror.py` too. So are a drawing's pushes.
+receive-only clone, a conflict resolved after its block moved to
+another page, and Sync now answered before its round (asked while
+another runs, the ask outliving that round and taken off by the next;
+forgotten on a detach, by a round that runs nothing, at a restart and
+with the error of a step before the round) are in `test_mirror.py` too. So are a drawing's pushes.
 `base_ids` go when this copy holds the base and are left off when it
 does not, and a base the remote purged is uploaded first, so the merge
 there is three-way and clean. A push and a resend each leave one
@@ -1203,7 +1231,8 @@ reach was read, one trashed), a sub-page moved out of it (with a share
 editor's text pulled first, and never by a receive-only copy),
 unpublishing a page with one published on its own inside it, and the
 plan's cap counting the pages inside a published page. The browser scenario
-drives the popover's settings view, detach / link again and the merge chip;
+drives the row's Sync (asked without `?wait=1`, the clone read until its
+round is over), the popover's settings view, detach / link again and the merge chip;
 `publish.mjs` publishes end to end against a second Gamma started as the
 share host and a stand-in account server
 ([debugging.md](debugging.md)). The

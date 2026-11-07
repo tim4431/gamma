@@ -3,7 +3,8 @@
 // hooks reach the shell's internals): what a keeping reading records about
 // the Zotero links (refreshKeeping -> registry.setZoteroHost, the servers
 // startBackgroundHosts starts at launch), a resume made while a reading
-// runs, and one start per server however many ask. `npm test` in desktop/.
+// runs, one start per server however many ask, and a kept folder's sync
+// followed to the end of its round. `npm test` in desktop/.
 
 const test = require('node:test');
 const assert = require('node:assert/strict');
@@ -64,7 +65,7 @@ const electron = {
   session: {
     defaultSession: stub(),
     fromPartition: (name) => ({
-      fetch: async (url, init = {}) => fakes.get(name.replace(/^keeping-/, '')).answer(new URL(url).pathname, init),
+      fetch: async (url, init = {}) => fakes.get(name.replace(/^keeping-/, '')).answer(new URL(url).pathname, init, new URL(url).search),
     }),
   },
 };
@@ -293,4 +294,60 @@ test('a server is started once however many ask while it starts: the launch, the
   } finally {
     sidecar.start = realStart;
   }
+});
+
+test('a kept folder synced from the panel is followed to the end of its round, then the bar says how it went', async () => {
+  fresh();
+  const { srv, fake } = server('Folders');
+  const kept = { id: 'fl1', kind: 'folder', folder_id: 'f1', workspace_id: 'w1', dest: path.join(dir, 'Kept'), remote_url: '',
+    status: { last_sync: '2026-10-29T10:00:00Z', last_error: '', counts: {}, kept: [], folder_path: ['Kept lab'] } };
+  const ok = (body) => ({ ok: true, status: 200, json: async () => body });
+  // a round 15 minutes in when it is asked for (a long first fill): followed all the same, until its running comes down
+  const startedAt = Date.now() / 1000 - 900;
+  const asked = [];
+  const reads = [{ running: true, started_at: startedAt, progress: {} }, { running: true, started_at: startedAt, progress: {} },
+    { running: false, last_sync: '2026-11-06T10:00:00Z', last_error: '', counts: { added: 2, unchanged: 5 }, kept: [] }];
+  const answer = fake.answer;
+  fake.answer = async (p, init, search) => {
+    if (p === '/api/folder-links') return ok({ links: [kept] });
+    if (p === '/api/folder-links/fl1/sync') {
+      asked.push(`${init.method} ${search}`);
+      return ok({ ...kept, status: { ...kept.status, running: true, started_at: startedAt } });
+    }
+    if (p === '/api/folder-links/fl1') return ok({ ...kept, status: reads.shift() });
+    return answer(p, init, search);
+  };
+  // the next read of the link, a second on (the shell's timers of a second or more wait for the test)
+  const next = () => timers.find((t) => !t.cleared && t.ms === 1000);
+  const step = async () => {
+    await until(() => next(), 'the link is read again a second on');
+    const timer = next();
+    timer.cleared = true;
+    timer.fn();
+  };
+
+  const said = shell.notice();
+  const synced = shell.syncFolder(srv.id, 'fl1', false);
+  await step();
+  await step();
+  assert.equal(shell.notice(), said, 'nothing said while the round still runs');
+  await step();
+  const after = await synced;
+  assert.deepEqual(asked, ['POST '], 'the round is asked for, no request held open for it');
+  assert.equal(after.status.last_sync, '2026-11-06T10:00:00Z', 'the answer is the link as the round left it');
+  assert.equal(shell.notice(), '“Kept lab” is up to date: 2 added.');
+  assert.equal(reads.length, 0, 'read until its running came down, and no more');
+
+  // forced: the force asked for; a round already over in the answer is not read again
+  fake.answer = async (p, init, search) => {
+    if (p === '/api/folder-links/fl1/sync') {
+      asked.push(`${init.method} ${search}`);
+      return ok({ ...kept, status: { ...kept.status, running: false, last_error: 'the folder is gone' } });
+    }
+    if (p === '/api/folder-links/fl1') assert.fail('not read again');
+    return p === '/api/folder-links' ? ok({ links: [kept] }) : answer(p, init, search);
+  };
+  await shell.syncFolder(srv.id, 'fl1', true);
+  assert.deepEqual(asked, ['POST ', 'POST ?force=1']);
+  assert.equal(shell.notice(), '“Kept lab”: the folder is gone');
 });

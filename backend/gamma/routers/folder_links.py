@@ -162,15 +162,19 @@ def update_link(link_id: str, payload: LinkPatch, request: Request):
 
 @router.post("/{link_id}/sync")
 def sync_link(link_id: str, request: Request, wait: int = 0, full: int = 0, force: int = 0):
-    """A round now: in the background, or inline with ``wait=1`` (the
-    answer then carries the round's status). For a folder link ``full=1``
-    writes every file again, ``force=1`` replaces files changed on disk."""
+    """A round now, in a thread of its own: the answer comes at once, its
+    status reading ``running`` (the round it started, or one already
+    running, which answers it) until the round ends, which the client
+    follows with ``GET /{link_id}``. Inline with ``wait=1``, for scripts
+    (the answer then carries the round's status). For a folder link
+    ``full=1`` writes every file again, ``force=1`` replaces files changed
+    on disk."""
     link = _mine(request, link_id)
     if wait:
         folder_links.run_link(link_id, full=bool(full), force=bool(force))
-        return _info(folder_links.get_link(link_id) or link)
-    folder_links.run_in_background(link_id, full=bool(full), force=bool(force))
-    return _info(link)
+    else:
+        folder_links.run_in_background(link_id, full=bool(full), force=bool(force))
+    return _info(folder_links.get_link(link_id) or link)
 
 
 @router.delete("/{link_id}")

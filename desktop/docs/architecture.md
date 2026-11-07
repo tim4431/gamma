@@ -274,8 +274,14 @@ shown (each named by its tooltip):
   the round in the bar. A PDF a send could not deliver is no such file:
   Gamma's copy did not change, so there is nothing to replace it with,
   and the row counts it as *n not synced*, the reason in the tooltip. For a file it is
-  `sendFile`, a round waited for, and the bar says "main.pdf was sent to
+  `sendFile`, and the bar says "main.pdf was sent to
   Gamma.", "nothing new to send", why it is not sent yet, or the problem.
+  Both go through `roundOf`: `POST /api/folder-links/<id>/sync` answers
+  at once with the round's `running` set (the one it started, or one
+  already running), and the link is read every second until `running`
+  comes down, however long the round takes (the server reads `running`
+  from the round's lock, so a mark a stopped server left never reads as
+  a round), and no request stays open for it.
   A paused folder or file syncs too and stays paused.
 - A folder's upload arrow turns sending PDFs back on and off (`setPush`,
   above), the panel staying open; it reads pressed while on.

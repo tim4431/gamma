@@ -90,7 +90,8 @@ All in `backend/gamma/` unless named otherwise.
 | `cloud/gammacloud/zotero.py` | Gamma Cloud's Zotero broker ([cloud_accounts.md](cloud_accounts.md#connecting-zotero)) |
 
 Frontend, in `frontend/src/`: `collaboration/syncLinks.js` (pure: which
-API a link lives under and what a Zotero link's status means),
+API a link lives under, how Sync now follows its round and what a Zotero
+link's status means),
 `collaboration/MirrorPopover.jsx`, `MergeResolver.jsx` and
 `conflictKinds.js` (the clone's pill, cards and conflict words, given a
 Zotero `kind`), `collaboration/ZoteroPage.jsx` (the PDF card and the
@@ -2173,7 +2174,24 @@ _clock = sync_clock.register(ENGINE, rows=_rows, run=_held_round, client=CLIENT,
 `sync_in_background` (Sync now without `wait`, a force, a link made or
 reattached) asks the clock while its loop runs, so the pool bounds how
 many rounds run at once; without the loop it starts one thread per
-workspace, and none more while one waits for the round lock.
+workspace, and none more while one waits for the round lock. A link the
+clock leaves out (its workspace no longer its owner's personal one), whose
+request it would drop unrun, gets that thread too: its round says why it
+uses no key (`not_connected`) and takes Sync now's mark off.
+
+Sync now answers at once (`ask_round`): it marks the status `asked_at`
+(`LinkTable.ask`) and asks for a round in the background. The next round
+to start, the one asked for or the clock's, takes the mark off in the
+same write that sets `running`, so from Sync now's answer to the round's
+end the status reads one or the other; the web app follows it with `GET
+/api/zotero/links/{ws}` and reports the round's outcome
+([mirror.md](mirror.md#rounds-and-cadence)). A round already running
+when it is asked leaves the mark on for the round after it. A detached
+link asks for none; a detach (whose request the clock drops unrun), a
+held round of a detached link and the startup reset take the mark off,
+and so does what fails outside the round's own handling (the link read,
+the round set up): `_held_round` records it as the round's `last_error`
+and `error_kind` before the exception goes on to the thread or the clock.
 
 `sync_clock.LinkTable` is an engine's users.db table as the clock and the
 engine read it, the mirror's `mirrors` and the link's `zotero_links`
@@ -2391,7 +2409,7 @@ account routes are `routers/zotero.py`. The full contract is the
 | `GET /api/zotero/links/preview?library=&workspace_id=` | the link dialog's counts ([First link and force](#first-link-and-force)); 429, 503 |
 | `GET /api/zotero/links/{ws}` | `info` |
 | `PATCH /api/zotero/links/{ws}` | `{poll_s?, on_change?, mode?, download?, upload?, auto_tags?, send_unrecorded?}` → `info` |
-| `POST /api/zotero/links/{ws}/sync?wait=` | Sync now (lifts a wait on Zotero's full storage): `{status, conflicts_open}` |
+| `POST /api/zotero/links/{ws}/sync?wait=` | Sync now (lifts a wait on Zotero's full storage): `{status, conflicts_open}` at once, `status.asked_at` until a round starts and takes it off with its `running` (`ask_round`); `wait=1`, for scripts, answers once the round is over |
 | `POST /api/zotero/links/{ws}/fetch` | `{page_id}`: the page's PDF first (any member who may read the page) → `{queued: true}` |
 | `POST /api/zotero/links/{ws}/detach`, `/relink` (no body), `/force` `{direction}` | `info` |
 | `DELETE /api/zotero/links/{ws}` | forget the link; the workspace and the library stay → `{ok: true}` |
@@ -2713,7 +2731,7 @@ that leaked the key would fail its test).
 
 | Suite | What it covers |
 |---|---|
-| `test_zotero_sync.py` | the registry and API, the dialog's counts, conflicts, clock and status, listing and the feed, bounded rounds |
+| `test_zotero_sync.py` | the registry and API, the dialog's counts, conflicts, clock and status (Sync now answered before its round, its ask taken off by the round, a detach, a restart, an error before the round or a round of its own where the clock would drop it), listing and the feed, bounded rounds |
 | `test_zotero_sync_folders.py` | collections ↔ folders |
 | `test_zotero_sync_items.py` | first fill, records, retypes, trash and removals, both-sides and field conflicts, lost creates, re-parenting, the change-feed skip |
 | `test_zotero_sync_pdfs.py` | downloads, uploads, both sides replaced (in place and beside, with and without a copy, a lost answer, Take Zotero's back on Zotero's PDF), kept copies and the upload GC, full storage (a download it holds still counted when its item changes again), hashing, transfers, the wait while highlights are placed (stubbed and the real relocate job) and going in place once they are, a new attachment decided afresh, standalone PDFs removed for good |

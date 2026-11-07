@@ -37,7 +37,9 @@ log, read directly; a remote server's change feed, asked at most every
 on disk moved (a file link's file, the PDFs of a folder link that pushes),
 in the background when a link is made or asked to sync, and inline for a
 sync asked to wait. A remote link's round from the tick runs in a thread of
-its own. One round per link at a time (``_locks``); a round that failed is
+its own. One round per link at a time (``_locks``), and a link reads
+``running`` only while its round holds that lock, so a mark a server
+stopped mid-round left is not taken for a round; a round that failed is
 tried again after ``RETRY_S``. A paused link (``set_paused``) is left out
 of the tick and runs only when asked to sync.
 """
@@ -69,7 +71,6 @@ ASK_TIMEOUT_S = 15     # how long that question, or the check of a new link's to
 MAX_LINKS = 10         # folders per workspace
 MAX_FILE_LINKS = 50    # files followed per workspace
 RETRY_S = 300          # a link whose last round failed waits this long for the next try
-STALE_RUN_S = 600      # a "running" older than this (the process died) is not running
 KEPT_SHOWN = 50        # kept files listed in the status
 
 _COLS = ("id, workspace_id, folder_id, path, notes, created_by, created_at, cursor, status, remote_url, token, token_id, "
@@ -169,8 +170,13 @@ def _object_of(text: str) -> dict:
 
 
 def _row(r, with_token: bool = False) -> dict:
+    status = _object_of(r[8])
+    if status.get("running") and not _round_held(r[0]):
+        # a mark no round of this process holds (a server stopped mid-round left it): not running,
+        # however long a round that does hold it has run
+        status["running"] = False
     link = {"id": r[0], "workspace_id": r[1], "folder_id": r[2], "path": r[3], "notes": bool(r[4]),
-            "created_by": r[5], "created_at": r[6], "cursor": r[7] or "", "status": _object_of(r[8]),
+            "created_by": r[5], "created_at": r[6], "cursor": r[7] or "", "status": status,
             "remote_url": r[9] or "", "token_id": r[11] or "", "kind": r[12] or "folder", "page_id": r[13] or "",
             "push": bool(r[14]), "state": _object_of(r[15])}
     if with_token:
@@ -208,6 +214,14 @@ def dest_of(link: dict) -> Path:
 def _lock(link_id: str) -> threading.Lock:
     with _guard:
         return _locks.setdefault(link_id, threading.Lock())
+
+
+def _round_held(link_id: str) -> bool:
+    """Whether a round of the link holds its lock in this process (``_take``
+    to the end of ``_held``): what its ``running`` is read as."""
+    with _guard:
+        lock = _locks.get(link_id)
+    return lock is not None and lock.locked()
 
 
 def _server_of(link: dict) -> str:
@@ -607,32 +621,51 @@ def _failed(link: dict, error: str) -> dict:
     return status
 
 
+def _take(link_id: str) -> tuple[dict | None, float | None]:
+    """The link's round lock, taken without waiting, and the link marked
+    ``running`` (``started_at``): ``(link, started)``. ``(link, None)``
+    when a round is running already (the lock is not taken), ``(None,
+    None)`` for no such link."""
+    link = get_link(link_id)
+    if link is None:
+        return None, None
+    if not _lock(link_id).acquire(blocking=False):
+        return link, None
+    started = time.time()
+    try:
+        _write_status(link_id, {**link["status"], "running": True, "started_at": started})
+    except BaseException:
+        _lock(link_id).release()
+        raise
+    return link, started
+
+
+def _held(link_id: str, link: dict, started: float, full: bool, force: bool) -> dict:
+    """The round of a link ``_take`` marked running, its lock let go after
+    it: its status afterwards (``_folder_round``, ``_file_round``)."""
+    try:
+        link = get_link(link_id, with_token=True) or link
+        if link["kind"] == "file":
+            return _file_round(link, started)
+        return _folder_round(link, full, force)
+    except (gamma_sync.SyncError, LinkError, OSError) as e:
+        return _failed(link, str(e))
+    except Exception as e:  # noqa: BLE001 — never leave the link "running" with no reason shown
+        log.exception(f"[folders] {link['path']}: the round failed")
+        return _failed(link, f"unexpected error: {e!r}")
+    finally:
+        _lock(link_id).release()
+
+
 def run_link(link_id: str, *, full: bool = False, force: bool = False) -> dict | None:
     """One round of the link now, in this thread: its status afterwards
     (``_folder_round``, ``_file_round``), the current status when a round
     is already running, None for no such link. ``full`` and ``force`` are a
     folder link's."""
-    link = get_link(link_id)
-    if link is None:
-        return None
-    lock = _lock(link_id)
-    if not lock.acquire(blocking=False):
-        return link["status"]
-    try:
-        started = time.time()
-        _write_status(link_id, {**link["status"], "running": True, "started_at": started})
-        try:
-            link = get_link(link_id, with_token=True) or link
-            if link["kind"] == "file":
-                return _file_round(link, started)
-            return _folder_round(link, full, force)
-        except (gamma_sync.SyncError, LinkError, OSError) as e:
-            return _failed(link, str(e))
-        except Exception as e:  # noqa: BLE001 — never leave the link "running" with no reason shown
-            log.exception(f"[folders] {link['path']}: the round failed")
-            return _failed(link, f"unexpected error: {e!r}")
-    finally:
-        lock.release()
+    link, started = _take(link_id)
+    if started is None:
+        return link["status"] if link else None
+    return _held(link_id, link, started, full, force)
 
 
 def _folder_round(link: dict, full: bool, force: bool) -> dict:
@@ -685,9 +718,22 @@ def _file_round(link: dict, started: float) -> dict:
     return status
 
 
-def run_in_background(link_id: str, **kw) -> None:
-    threading.Thread(target=run_link, args=(link_id,), kwargs=kw, daemon=True,
-                     name=f"folder-link-{link_id[:8]}").start()
+def run_in_background(link_id: str, *, full: bool = False, force: bool = False) -> None:
+    """A round of the link in a thread of its own, marked ``running`` before
+    this returns (the lock taken here and let go by the round), so Sync
+    now's answer already says so and the client follows ``running`` down
+    to the round's end, and the tick's next look passes over it. A round
+    already running is left to answer it; no such link, nothing."""
+    link, started = _take(link_id)
+    if started is None:
+        return
+    try:
+        threading.Thread(target=_held, args=(link_id, link, started, full, force), daemon=True,
+                         name=f"folder-link-{link_id[:8]}").start()
+    except BaseException:
+        _failed(link, "the round could not start")
+        _lock(link_id).release()
+        raise
 
 
 def _newest_seq(ws: str) -> int:
@@ -738,7 +784,7 @@ def _disk_moved(link: dict) -> bool:
 
 def due(link: dict) -> bool:
     """Whether the loop runs the link now: never while it is paused, not
-    while a round runs (unless that mark is stale), not for ``RETRY_S``
+    while a round runs (``running``, read from its lock), not for ``RETRY_S``
     after a failure, and always when it has never synced. Otherwise a file
     link when its file moved (``gamma_sync.moved``), and a folder link when
     its source moved past the cursor it holds or, when it pushes, a PDF in
@@ -746,7 +792,7 @@ def due(link: dict) -> bool:
     st = link["status"]
     if st.get(PAUSED):
         return False
-    if st.get("running") and _age(st.get("started_at")) < STALE_RUN_S:
+    if st.get("running"):
         return False
     if st.get("last_error"):
         return _age(st.get("failed_at")) >= RETRY_S

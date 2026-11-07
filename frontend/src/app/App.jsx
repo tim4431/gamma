@@ -205,7 +205,8 @@ import { libraryAccess } from "../library/libraryAccess";
 import { MirrorPopover } from "../collaboration/MirrorPopover";
 import { MergeChip } from "../collaboration/MergeResolver";
 import {
-  ZOTERO_PDF_COMING, isZoteroPdfComing, linkGone, linkPath, pillLink, zoteroLibraryLabel, zoteroPdfCard, zoteroPdfSource, zoteroPdfState,
+  ZOTERO_PDF_COMING, followSync, isZoteroPdfComing, linkGone, linkPath, pillLink, zoteroLibraryLabel, zoteroPdfCard, zoteroPdfSource,
+  zoteroPdfState,
 } from "../collaboration/syncLinks.js";
 import { ZoteroPdfCard, ZoteroReadonlyBadge } from "../collaboration/ZoteroPage.jsx";
 import { fetchZoteroPdf } from "../transfers/zoteroApi";
@@ -7077,7 +7078,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setPublishBusy("sync");
     setPublishError("");
     try {
-      await apiJson(`${API}/mirrors/${encodeURIComponent(ws)}/sync?wait=1`, { method: "POST" });
+      // the round asked for, then followed through the publication's status (its progress on the state line)
+      await followSync(() => apiJson(`${API}${linkPath("mirror", ws, "/sync")}`, { method: "POST" }), async () => {
+        const mirror = await apiJson(`${API}${linkPath("mirror", ws)}`);
+        setPublishState((prev) => (prev?.mirror?.ws === ws ? { ...prev, mirror: { ...prev.mirror, status: mirror.status } } : prev));
+        return mirror;
+      });
     } catch (err) {
       setPublishError(err.message);
     }

@@ -18,6 +18,7 @@ from gamma.db import connect_pages_db, connect_users_db, page_now, ws_uploads_di
 from gamma.integrations import create_token
 
 PDF = b"%PDF-1.4 mirror test\n" + b"m" * 1500
+REAL_BACKGROUND = sync_engine.sync_in_background  # before ``_transport`` stubs it
 
 
 @pytest.fixture(autouse=True)
@@ -583,6 +584,96 @@ def test_a_mirrors_status_that_does_not_read_is_patched_over(client):
         with connect_users_db() as conn:
             conn.execute("DELETE FROM mirrors WHERE workspace_id = ?", (ws,))
             conn.commit()
+
+
+def _followed(local, timeout=20):
+    """What a client does after Sync now: read the mirror until no round is
+    ahead (neither ``asked_at`` nor ``running``); its status then."""
+    deadline = time.monotonic() + timeout
+    while True:
+        status = local.client.get(f"/api/mirrors/{local.ws}").json()["status"]
+        if not status.get("running") and not status.get("asked_at"):
+            return status
+        assert time.monotonic() < deadline, f"the round never ended: {status}"
+        time.sleep(0.02)
+
+
+def test_sync_now_answers_before_its_round_and_the_status_follows_the_round_to_its_end(monkeypatch):
+    """Sync now without ``wait``: the answer comes at once (a first fill
+    outlasts a proxy's 100 s), its status asking for a round (``asked_at``).
+    Asked while a round runs, the ask outlives that round's end, and the
+    round after it takes the ask off as it starts: the status reads one or
+    the other until the round asked for is over, and then holds its
+    outcome."""
+    remote, local, _ = _pair()
+    monkeypatch.setattr(sync_engine, "sync_in_background", REAL_BACKGROUND)
+    before = _sync(local)
+    page = remote.page("Brought by Sync now")
+    seen = []
+    real = sync_engine._round
+
+    def watched(ws, mirror, fetch):
+        seen.append(dict(sync_engine.get_mirror(ws)["status"]))  # as the round starts, under its lock
+        return real(ws, mirror, fetch)
+
+    monkeypatch.setattr(sync_engine, "_round", watched)
+    with sync_engine.round_lock(local.ws):  # a round running: the one asked for waits its turn
+        sync_engine._patch_status(local.ws, {"running": True})
+        r = local.client.post(f"/api/mirrors/{local.ws}/sync")
+        assert r.status_code == 200, r.text
+        asked = r.json()["status"]
+        assert asked["asked_at"] and asked["running"] is True and asked["last_sync"] == before["last_sync"]
+        sync_engine._patch_status(local.ws, {"running": False, "last_sync": page_now()})  # that round ends
+        assert local.client.get(f"/api/mirrors/{local.ws}").json()["status"]["asked_at"] == asked["asked_at"]
+    status = _followed(local)
+    assert [s.get("asked_at") for s in seen] == [asked["asked_at"]]  # the round after it is the one asked for
+    assert "asked_at" not in status and not status["last_error"] and status["pages_pulled"] == 1
+    assert page["id"] in local.pages() and r.json()["conflicts_open"] == 0
+
+
+def test_a_sync_now_no_round_answers_is_forgotten(monkeypatch):
+    """A detached clone's Sync now asks for nothing; an ask a detach finds,
+    a held round that runs nothing (detached, a publication naming no page)
+    and a restart each take it off, so no client follows it for ever."""
+    _, local, _ = _pair()
+    _sync(local)
+    asked = local.client.post(f"/api/mirrors/{local.ws}/sync").json()["status"]  # the stub runs no round
+    assert asked["asked_at"]
+    local.client.post(f"/api/mirrors/{local.ws}/detach").raise_for_status()
+    assert "asked_at" not in sync_engine.get_mirror(local.ws)["status"]
+    assert "asked_at" not in local.client.post(f"/api/mirrors/{local.ws}/sync").json()["status"]
+    sync_engine._links.ask(local.ws)  # asked just before the detach, run just after it
+    assert "asked_at" not in sync_engine.sync_workspace(local.ws)
+    sync_engine._save(local.ws, mode="pull", page_filter="[]")
+    sync_engine._links.ask(local.ws)
+    assert "asked_at" not in sync_engine.sync_workspace(local.ws)  # a filter naming no page: nothing travels
+    sync_engine._links.ask(local.ws)
+    sync_engine.reset_interrupted()
+    assert "asked_at" not in sync_engine.get_mirror(local.ws)["status"]
+
+
+def test_a_sync_now_whose_round_fails_before_it_starts_says_why_and_is_not_followed_for_ever(monkeypatch):
+    """A step before the round's own ``running`` that fails (here the token,
+    which no longer reads: the data directory's key changed) is the
+    round's error: Sync now's mark comes off with it and the status says
+    why, whoever runs the round (its background thread, the clock), so a
+    client following the status stops and shows the error."""
+    _, local, _ = _pair()
+    before = _sync(local)
+    monkeypatch.setattr(sync_engine, "sync_in_background", REAL_BACKGROUND)
+    with connect_users_db() as conn:
+        conn.execute("UPDATE mirrors SET token = ? WHERE workspace_id = ?", ("sealed under another key", local.ws))
+        conn.commit()
+    asked = local.client.post(f"/api/mirrors/{local.ws}/sync").json()["status"]
+    assert asked["asked_at"]
+    status = _followed(local)
+    assert status["last_error"] == "the stored token cannot be read: the data directory's key changed"
+    assert status["running"] is False and status["last_attempt"] and status["last_sync"] == before["last_sync"]
+    sync_engine._links.ask(local.ws)
+    lock = sync_engine._clock.lock(local.ws)
+    assert lock.acquire(blocking=False)
+    sync_engine._clock._held(local.ws, lock, pooled=False)  # the clock's round: it logs the error, lets the lock go
+    assert "asked_at" not in sync_engine.get_mirror(local.ws)["status"] and not lock.locked()
 
 
 def test_a_mirror_conflict_can_be_written_resolved_and_says_which_row_it_is(client):

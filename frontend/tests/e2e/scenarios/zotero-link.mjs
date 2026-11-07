@@ -120,7 +120,8 @@ export async function zoteroLinkScenarios(env) {
     const popoverOf = (page) => page.getByRole("dialog", { name: "Sync status", exact: true });
     const pillState = (page, state, what = `the pill reads ${state}`, timeout = 20000) =>
       until(() => pillOf(page).getAttribute("data-state").then((s) => s === state), { timeout, what });
-    // Sync now in the pill's popover (open), and the round it runs settled
+    // Sync now in the pill's popover (open), and the round it asks for settled: the answer comes at
+    // once, and the popover follows the link's status until the round is over (its Sync free again)
     async function syncFromPopover(page) {
       const pop = popoverOf(page);
       if (!(await pop.isVisible())) await pillOf(page).click();
@@ -129,8 +130,10 @@ export async function zoteroLinkScenarios(env) {
       await until(() => sync.isEnabled(), { timeout: 20000, what: "the popover's Sync free" });
       const done = page.waitForResponse((r) => r.request().method() === "POST" && /\/api\/zotero\/links\/[^/]+\/sync\b/.test(r.url()), { timeout: 30000 });
       await sync.click();
-      assertEq((await done).status(), 200, "Sync now ran its round");
-      await until(() => sync.isEnabled(), { timeout: 20000, what: "the round ended" });
+      const asked = await done;
+      assertEq(asked.status(), 200, "Sync now asked for its round");
+      assertEq(new URL(asked.url()).search, "", "no request held open for the round (no ?wait=1)");
+      await until(() => sync.isEnabled(), { timeout: 30000, what: "the round ended" });
     }
 
     let linkWs = "";

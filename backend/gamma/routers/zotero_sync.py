@@ -164,16 +164,17 @@ def update_link(ws: str, payload: LinkPatch, request: Request):
 
 @router.post("/{ws}/sync")
 def run_sync(ws: str, request: Request, wait: int = 0):
-    """One round now: ``wait=1`` runs it inline and answers with its status;
-    otherwise it runs in the background and the status before it is
-    returned. Sync now lifts a wait on Zotero's full storage: the PDFs it
-    held are tried again."""
-    link = _mine(request, ws)
+    """One round now, in the background: the answer comes at once, its
+    status carrying ``asked_at`` until a round starts and then ``running``
+    until it ends, which the client follows with ``GET /{ws}``
+    (``zotero_sync.ask_round``). ``wait=1``, for scripts, runs it inline
+    and answers with its status. Sync now lifts a wait on Zotero's full
+    storage: the PDFs it held are tried again."""
+    _mine(request, ws)
     zotero_sync.lift_quota(ws)
     if wait:
         return {"status": zotero_sync.sync_workspace(ws), "conflicts_open": zotero_sync.open_conflict_mark(ws)[0]}
-    zotero_sync.sync_in_background(ws)
-    return {"status": link["status"], "conflicts_open": zotero_sync.open_conflict_mark(ws)[0]}
+    return {"status": zotero_sync.ask_round(ws), "conflicts_open": zotero_sync.open_conflict_mark(ws)[0]}
 
 
 @router.post("/{ws}/fetch")

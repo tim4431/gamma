@@ -182,23 +182,36 @@ admin and is refused. An account delete's second start, which a running
 job's hold answered with a 400, now answers that job, as a workspace
 delete's does.
 
+Sync now no longer waits for its round. `POST /api/mirrors/{ws}/sync` and
+the Zotero link's answer at once, the status marked `asked_at` until a
+round starts and takes the mark off in the same write that sets
+`running`; a folder link's (`/api/folder-links/{id}/sync`) takes the
+round lock and writes `running` before it answers, as the off-site Copy
+now does. Every Sync now (the pill, Settings' rows, the publish section,
+the desktop app's folders and files) then reads the link until neither is
+set and reports the round's outcome, its progress moving meanwhile. A
+mark no round will answer (a detached link, a filter naming no page, a
+restart, a step before the round that fails, whose error the status
+then shows) is taken off, and a folder link reads `running` only while
+its round holds the lock, however long that round takes, so nothing
+follows for ever and nothing stops following a round still running. `?wait=1` stays, for
+scripts and the tests ([dev/mirror.md](../dev/mirror.md#rounds-and-cadence)).
+
 ## Still open
 
 In the order they matter:
 
-1. Sync now without `?wait=1`: post, then follow the status the round
-   already keeps.
-2. One request for the library's bulk actions (trash many pages, apply
+1. One request for the library's bulk actions (trash many pages, apply
    many page patches), on `ops.apply_batches`.
-3. The orphan purge in chunks (above).
-4. Empty Recently deleted: `purge_unused` once after the loop, one
+2. The orphan purge in chunks (above).
+3. Empty Recently deleted: `purge_unused` once after the loop, one
    connection, the `deleted_with` map read once.
-5. Progress for the off-site copies' first round and a folder link's
+4. Progress for the off-site copies' first round and a folder link's
    rounds (`say` is thrown away in `folder_links._folder_round`).
-6. A share view's export of a big shared folder (the share host sits
+5. A share view's export of a big shared folder (the share host sits
    behind Cloudflare and the share view has no jobs).
-7. A workspace being deleted taking no more changes (above), which needs
+6. A workspace being deleted taking no more changes (above), which needs
    the web app to learn a lost write right mid-session.
-8. Smaller: a publish that only changes the audience still runs a full
+7. Smaller: a publish that only changes the audience still runs a full
    round; unlinking Zotero clears marks page by page; the health table's
    and the backup list's scans (above).

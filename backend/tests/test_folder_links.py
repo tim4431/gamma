@@ -1,17 +1,22 @@
 """Folders kept on disk by the desktop app's own server (gamma/folder_links.py,
 routers/folder_links.py): a link's directory where the user picked it, its
-rounds by hand and from the loop's tick, a remote source read with a token
+rounds by hand (Sync now answered with its round running) and from the
+loop's tick, a remote source read with a token
 of another server, what a removal takes back, the paths it refuses, who may
 use the API, and that no other server keeps links at all."""
 
 import io
 import json
+import threading
+import time
 
 import pytest
 
 from conftest import account_of, fresh_client, login, make_folder, make_page, make_user, workspace_of
 from gamma import config, folder_links, gamma_sync
 from gamma.integrations import create_token
+
+REAL_BACKGROUND = folder_links.run_in_background  # before ``disk`` stubs it
 
 
 @pytest.fixture(scope="module")
@@ -131,6 +136,69 @@ def test_a_paused_link_runs_only_when_asked_and_no_round_undoes_the_pause(owner,
     monkeypatch.setattr(folder_links.LocalSource, "manifest", pausing)
     assert _sync(owner, link["id"])["paused_at"]
     assert folder_links.due(folder_links.get_link(link["id"])) is False
+    owner.delete(f"/api/folder-links/{link['id']}", params={"remove_files": 1}).raise_for_status()
+
+
+def test_sync_now_answers_with_its_round_running_and_the_status_follows_it_to_its_end(owner, disk, monkeypatch):
+    """Sync now without ``wait``: the round's thread starts with its
+    ``running`` already written, so the answer says so and a client reads
+    the link until ``running`` comes down, finding the round's outcome.
+    Asked again while it runs, the answer is that round, and no second one
+    starts."""
+    folder = make_folder(owner, "FL now")
+    make_page(owner, "FL now paper", {"folders": [folder]})
+    dest = disk / "Now"
+    link = _create(owner, folder=folder, path=str(dest))
+    monkeypatch.setattr(folder_links, "run_in_background", REAL_BACKGROUND)
+    gate, rounds = threading.Event(), []
+    real = folder_links._folder_round
+
+    def held(link_, full, force):
+        rounds.append(force)
+        assert gate.wait(10)
+        return real(link_, full, force)
+
+    monkeypatch.setattr(folder_links, "_folder_round", held)
+    r = owner.post(f"/api/folder-links/{link['id']}/sync", params={"force": 1})
+    assert r.status_code == 200, r.text
+    started = r.json()["status"]
+    assert started["running"] is True and started["started_at"] and "last_sync" not in started
+    again = owner.post(f"/api/folder-links/{link['id']}/sync").json()["status"]
+    assert again["running"] is True and again["started_at"] == started["started_at"]
+    assert folder_links.due(folder_links.get_link(link["id"])) is False  # the tick passes over it too
+    gate.set()
+    deadline = time.monotonic() + 20
+    while (status := owner.get(f"/api/folder-links/{link['id']}").json()["status"]).get("running"):
+        assert time.monotonic() < deadline, f"the round never ended: {status}"
+        time.sleep(0.02)
+    assert status["last_error"] == "" and status["counts"]["added"] == 1 and (dest / "FL now paper.md").is_file()
+    assert rounds == [True]  # one round, the one asked for first, with what it asked
+    owner.delete(f"/api/folder-links/{link['id']}", params={"remove_files": 1}).raise_for_status()
+
+
+def test_a_links_running_is_a_round_holding_it_however_long_that_round_runs(owner, disk):
+    """``running`` reads as the round's lock, not the mark's age: a round
+    15 minutes in still reads running (a client following Sync now waits
+    for it, and the tick passes over it), and a mark no round holds (a
+    server stopped mid-round left it) reads not running, so the link is
+    the tick's again at once."""
+    folder = make_folder(owner, "FL long")
+    make_page(owner, "FL long paper", {"folders": [folder]})
+    link = _create(owner, folder=folder, path=str(disk / "Long"))
+    lock = folder_links._lock(link["id"])
+    assert lock.acquire(blocking=False)  # a round of this process holds the link
+    try:
+        folder_links._write_status(link["id"], {"running": True, "started_at": time.time() - 900})
+        status = owner.get(f"/api/folder-links/{link['id']}").json()["status"]
+        assert status["running"] is True
+        assert folder_links.due(folder_links.get_link(link["id"])) is False
+        again = owner.post(f"/api/folder-links/{link['id']}/sync").json()["status"]  # answered by that round
+        assert again["running"] is True and again["started_at"] == status["started_at"]
+    finally:
+        lock.release()
+    # the same mark with no round holding it: what a server stopped mid-round leaves
+    assert owner.get(f"/api/folder-links/{link['id']}").json()["status"]["running"] is False
+    assert folder_links.due(folder_links.get_link(link["id"])) is True  # never synced: the tick runs it now
     owner.delete(f"/api/folder-links/{link['id']}", params={"remove_files": 1}).raise_for_status()
 
 

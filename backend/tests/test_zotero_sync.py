@@ -8,7 +8,8 @@ the link), the owner-only routes and their answers (a workspace no longer
 its owner's personal one uses no key), the dialog's counts (bounded, the
 last ones answered again while nothing changed, pairing as a first link
 does), the conflicts and the log (a resolved conflict taken once), the
-clock it registers (its pool, its debounce, background rounds coalesced),
+clock it registers (its pool, its debounce, background rounds coalesced,
+Sync now answered before its round),
 the status and its error kinds (a fill shown only while a round of it
 follows, a page waiting for quiet no unsent edit), Zotero's listing and
 Gamma's change feed into the queue, and the bounded round with its
@@ -759,6 +760,102 @@ def test_many_background_rounds_asked_while_one_waits_start_one_thread(me, made,
     assert ws in zotero_sync._clock.pending
     assert not [t for t in threading.enumerate() if t.name == f"zotero-{ws}" and t.is_alive()]
     drop_pending(ws)
+
+
+def test_sync_now_answers_before_its_round_and_the_status_follows_the_round(me, made, background, monkeypatch):
+    """Sync now without ``wait``: the answer comes at once with the round
+    asked for (``asked_at``), which the round takes off as it starts; a
+    client that reads the link until neither ``asked_at`` nor ``running``
+    is set finds the round's outcome. A detached link asks for none, and an
+    ask its detach finds (the clock drops a detached link's request unrun)
+    or a held round of a detached link meets is forgotten."""
+    ws = _link(me)
+    before = _sync(me, ws)
+    r = me.post(f"/api/zotero/links/{ws}/sync")
+    assert r.status_code == 200, r.text
+    asked = r.json()["status"]
+    assert asked["asked_at"] and not asked["running"] and asked["last_sync"] == before["last_sync"]
+    assert background[-1] == ws  # its round is the background's, not the request's
+    assert me.get(f"/api/zotero/links/{ws}").json()["status"]["asked_at"] == asked["asked_at"]
+    assert "asked_at" not in zotero_sync.sync_workspace(ws)  # the round asked for, run as the background runs it
+
+    monkeypatch.setattr(zotero_sync, "sync_in_background", REAL_BACKGROUND)  # a thread of its own (no loop here)
+    asked = me.post(f"/api/zotero/links/{ws}/sync").json()["status"]
+    assert asked["asked_at"]
+    deadline = time.monotonic() + 20
+    while (status := me.get(f"/api/zotero/links/{ws}").json()["status"]).get("running") or status.get("asked_at"):
+        assert time.monotonic() < deadline, f"the round never ended: {status}"
+        time.sleep(0.02)
+    assert status["last_sync"] > asked["last_sync"] and status["last_error"] == ""
+
+    monkeypatch.setattr(zotero_sync, "sync_in_background", background.append)
+    assert me.post(f"/api/zotero/links/{ws}/sync").json()["status"]["asked_at"]
+    me.post(f"/api/zotero/links/{ws}/detach").raise_for_status()
+    assert "asked_at" not in zotero_sync.get_link(ws)["status"]
+    assert "asked_at" not in me.post(f"/api/zotero/links/{ws}/sync").json()["status"]
+    zotero_sync.LINKS.ask(ws)  # asked just before the detach, held just after it
+    assert "asked_at" not in zotero_sync.sync_workspace(ws)
+    zotero_sync.LINKS.ask(ws)
+    zotero_sync.reset_interrupted()  # a restart: nothing runs what the last process was asked
+    assert "asked_at" not in zotero_sync.get_link(ws)["status"]
+    me.post(f"/api/zotero/links/{ws}/relink").raise_for_status()
+    _sync(me, ws)
+
+
+def test_a_sync_now_whose_round_fails_before_it_starts_says_why(me, made, background, monkeypatch):
+    """What fails before the round's own ``running`` (here the round set
+    up) is the round's error: Sync now's mark comes off with it and the
+    status says why, so a client following the status stops and shows it;
+    the exception still reaches whoever ran the round (the background
+    thread, the clock: both log it)."""
+    ws = _link(me)
+    before = _sync(me, ws)
+    assert me.post(f"/api/zotero/links/{ws}/sync").json()["status"]["asked_at"]
+
+    real = zotero_sync.Round
+
+    def broken(*a, **kw):
+        raise RuntimeError("the round could not be set up")
+
+    monkeypatch.setattr(zotero_sync, "Round", broken)
+    with pytest.raises(RuntimeError):
+        zotero_sync.sync_workspace(ws)
+    status = me.get(f"/api/zotero/links/{ws}").json()["status"]
+    assert "asked_at" not in status and status["running"] is False and status["last_sync"] == before["last_sync"]
+    assert (status["last_error"], status["error_kind"]) == ("the round could not be set up", "other")
+    monkeypatch.setattr(zotero_sync, "Round", real)
+    assert not _sync(me, ws)["last_error"]  # a clean round clears it
+
+
+def test_a_sync_now_the_clock_would_drop_unrun_gets_a_round_of_its_own(me, made, background, monkeypatch):
+    """With the clock's loop running, a round is the clock's to run, but
+    the clock leaves out a link whose workspace is no longer its owner's
+    personal one (and drops its request unrun): Sync now's round runs in a
+    thread instead, says why it uses no key and takes the mark off."""
+    ws = _link(me)
+    _sync(me, ws)
+    asked = []
+    monkeypatch.setattr(zotero_sync, "sync_in_background", REAL_BACKGROUND)
+    monkeypatch.setattr(zotero_sync._clock, "looping", lambda: True)
+    monkeypatch.setattr(zotero_sync._clock, "request", lambda ws_, delay=None: asked.append(ws_))
+    zotero_sync.sync_in_background(ws)
+    assert asked == [ws]  # a link the clock lists: its round
+    with connect_users_db() as conn:
+        conn.execute("UPDATE workspaces SET kind = 'shared' WHERE id = ?", (ws,))
+        conn.commit()
+    try:
+        assert me.post(f"/api/zotero/links/{ws}/sync").json()["status"]["asked_at"]
+        assert asked == [ws]
+        deadline = time.monotonic() + 20
+        while (status := zotero_sync.get_link(ws)["status"]).get("asked_at") or status.get("running"):
+            assert time.monotonic() < deadline, f"the round never came: {status}"
+            time.sleep(0.02)
+        assert status["error_kind"] == "not_connected"
+    finally:
+        with connect_users_db() as conn:
+            conn.execute("UPDATE workspaces SET kind = 'personal' WHERE id = ?", (ws,))
+            conn.commit()
+    _sync(me, ws)
 
 
 def test_a_rounds_error_is_worded_by_its_kind_and_a_clean_round_clears_it(me, made, fake, owner_id):
