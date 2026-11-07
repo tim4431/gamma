@@ -175,7 +175,7 @@
   min-width: 0;
 }
 
-:is(.statusPill .pillText, .reportPageName, .chatFileChipName, .attachName) {
+:is(.statusPill .pillText, .chatFileChipName, .attachName) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -4290,17 +4290,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
   min-height: 60px;
   max-height: 40vh;
 }
-.reportPageItem {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 6px;
-  border-radius: var(--radius-xs);
-  cursor: pointer;
-  font-size: var(--fs-xs);
-  color: var(--text-secondary);
-}
-.reportPageItem:hover { background: var(--bg-hover); }
 .reportModalBtns {
   display: flex;
   flex-wrap: wrap;
@@ -5988,19 +5977,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
   justify-content: center;
 }
 .linkTipBtn:hover { background: var(--bg-hover); }
-.linkRefQuote { font-style: italic; color: var(--text-tertiary); }
-.linkPageItem { background: none; border: none; width: 100%; text-align: left; font-family: inherit; font-weight: inherit; line-height: inherit; color: var(--text-secondary); justify-content: space-between; }
-.linkLikelyBadge {
-  flex-shrink: 0;
-  font-size: var(--fs-2xs);
-  font-weight: 600;
-  color: var(--accent);
-  background: var(--accent-bg-light);
-  border: 1px solid var(--accent-fill);
-  border-radius: var(--radius-full);
-  padding: 0 7px;
-  margin-left: 8px;
-}
 .blockLinkChip {
   display: inline-flex;
   align-items: center;
@@ -6050,7 +6026,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
   color: var(--text-primary);
 }
 .ctxMenuItem:hover:not(:disabled) { background: var(--bg-hover); }
-.moveBlockList .ctxMenuItem:focus-visible { background: var(--bg-hover); outline: none; }
 /* Menu rows with a leading glyph (e.g. the tab menu's pin/close). */
 .ctxMenuItemIconed {
   display: flex;
@@ -6485,9 +6460,6 @@ a.shareBrand:hover { background: var(--bg-hover); }
 }
 .importDrop.over { border-color: var(--accent); color: var(--text-primary); background: var(--bg-surface); }
 .confirmMessage { font-size: var(--fs-xs); color: var(--text-secondary); line-height: 1.5; }
-/* Move-block dialog: the page list scrolls; rows are the shared ctxMenuItem. */
-.moveBlockList { display: flex; flex-direction: column; max-height: 300px; overflow-y: auto; margin-top: 2px; }
-.moveBlockList .ctxMenuItem { border-radius: var(--radius-sm); }
 /* Three actions (Cancel / Fetch / Open in browser) don't fit the 420px confirm
    width — they wrapped onto two rows. */
 .linkPromptModal { width: min(520px, calc(100vw - 32px)); }
