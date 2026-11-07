@@ -1681,9 +1681,6 @@ html[data-shell] .app { padding-bottom: env(safe-area-inset-bottom); }
 }
 .rowHandles > .dragHandle {
   margin-right: 0;
-  font-size: var(--fs-lg);
-  font-weight: 600;
-  line-height: 1;
   cursor: grab;
   -webkit-user-drag: element;
 }

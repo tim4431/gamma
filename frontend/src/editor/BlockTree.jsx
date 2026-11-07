@@ -68,7 +68,7 @@ import { personColor } from "../collaboration/personColor.js";
 import { ContextMenu, MenuItem } from "../shared/ui/Menus";
 import { API, apiJson, assetUrl, blockLinkUrl, copyText, withShare } from "../shared/lib/utils";
 import { copyImage } from "../shared/lib/copyImage.js";
-import { BracesIcon, CopyIcon, ExportIcon, MessageSquareIcon, PlusIcon, SheetIcon, SparklesIcon, Trash2Icon } from "../shared/ui/Icons";
+import { BracesIcon, CopyIcon, ExportIcon, GripIcon, MessageSquareIcon, PlusIcon, SheetIcon, SparklesIcon, Trash2Icon } from "../shared/ui/Icons";
 import { T, t, tn } from "../shared/i18n/i18n.js";
 import { shortCount } from "../comments/comments.js";
 import { guideEvents } from "../guide/events.js";
@@ -2052,7 +2052,7 @@ const SortableBlockRow = React.memo(function SortableBlockRow({ block, ...rowPro
           onClick={onHandleClick}
           aria-label={t("Drag to move, click for menu")}
           title={t("Drag to move · click for menu")}
-        >⋮⋮</span>
+        ><GripIcon size={16} /></span>
       </span>
       {handleMenu ? (
         <ContextMenu x={handleMenu.x} y={handleMenu.y} onClose={() => setHandleMenu(null)}>

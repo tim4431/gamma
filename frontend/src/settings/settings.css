@@ -826,7 +826,7 @@
   width: var(--ctl-icon-btn-xs); height: var(--ctl-icon-btn); flex-shrink: 0; padding: 0;
   display: inline-flex; align-items: center; justify-content: center;
   border: none; border-radius: var(--radius-xs); background: transparent;
-  color: var(--text-muted); font-size: var(--fs-lg); font-weight: 600; line-height: 1;
+  color: var(--text-muted);
   cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
   transition: color var(--dur-fast), background var(--dur-fast);
 }

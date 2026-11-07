@@ -538,6 +538,12 @@ export const AlarmClockIcon = (p) => (
 export const MoreIcon = (p) => (
   <Icon {...p}><circle cx="12" cy="12" r="1" /><circle cx="19" cy="12" r="1" /><circle cx="5" cy="12" r="1" /></Icon>
 );
+// The ⋮⋮ grip that drags a note row or a bar item: an icon rather than two
+// ⋮ glyphs, whose width is the font's (34 px on Linux, where an 18 px handle
+// grew and pushed the row's + out of the pane).
+export const GripIcon = (p) => (
+  <Icon {...p}><circle cx="9" cy="5" r="1" /><circle cx="9" cy="12" r="1" /><circle cx="9" cy="19" r="1" /><circle cx="15" cy="5" r="1" /><circle cx="15" cy="12" r="1" /><circle cx="15" cy="19" r="1" /></Icon>
+);
 export const KeyboardIcon = (p) => (
   <Icon {...p}><rect x="2" y="5" width="20" height="14" rx="2" /><path d="M6 9h.01" /><path d="M10 9h.01" /><path d="M14 9h.01" /><path d="M18 9h.01" /><path d="M6 13h.01" /><path d="M18 13h.01" /><path d="M9 13h6" /><path d="M8 16h8" /></Icon>
 );
