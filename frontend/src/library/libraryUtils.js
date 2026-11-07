@@ -176,6 +176,20 @@ export function pageDescendants(pages, ids) {
   }
   return queue.slice(ids.length);
 }
+// Pages `ids` dropped on page `target` (a library row or card, a Pages
+// inside row, a crumb), from `pages` as above: `moving`, the topmost of
+// them (as the menu's moves take them) that are not right inside it
+// already, go inside it. `refused` says why none may: "self" when the
+// target is one of them (a drag let go where it began), "inside" when it is
+// a page inside one of them, where they cannot go, as Move into page…
+// leaves those out of its list; "" otherwise.
+export function pagesIntoPage(pages, ids, target) {
+  const tops = topmostPages(pages, ids);
+  if (tops.includes(target)) return { refused: "self", moving: [] };
+  if (pageDescendants(pages, tops).includes(target)) return { refused: "inside", moving: [] };
+  const parents = new Map((pages || []).map((page) => [page.id, page._parentPage]));
+  return { refused: "", moving: tops.filter((id) => parents.get(id) !== target) };
+}
 
 // App's page list (`pageBlocks`): the listing's rows, `_parentPage` added,
 // as the home view's cards and rows, the [[ and @ pickers and the chips

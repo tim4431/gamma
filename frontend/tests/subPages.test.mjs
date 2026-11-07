@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
   MAX_PAGE_DEPTH, PAGE_PATH_SEP, deleteConfirm, libraryTree, pageAncestors, pageBlocksOf, pageDescendants, pagePathLabel,
-  pagePlaceLabel, topPageOf, topmostPages,
+  pagePlaceLabel, pagesIntoPage, topPageOf, topmostPages,
 } from "../src/library/libraryUtils.js";
 import { movePageRows, rankLibraryPages } from "../src/library/librarySearch.js";
 import { mentionRows } from "../src/editor/mentions.js";
@@ -80,6 +80,24 @@ test("Delete and the moves keep to the topmost pages picked: one inside another 
   assert.deepEqual(topmostPages(undefined, ["a"]), ["a"]);
   const loop = [page("a", "A", "b"), page("b", "B", "a")];
   assert.deepEqual(topmostPages(loop, ["a"]), ["a"], "a cycle ends the walk");
+});
+
+test("pages dropped on a page go inside it, the topmost of them, never into themselves or a page inside them", () => {
+  // Project › Notes › Week 1 and Project › (untitled); Reading list beside them
+  assert.deepEqual(pagesIntoPage(PAGES, ["lone"], "notes"), { refused: "", moving: ["lone"] });
+  assert.deepEqual(pagesIntoPage(PAGES, ["week"], "lone"), { refused: "", moving: ["week"] }, "a page inside another goes too");
+  assert.deepEqual(pagesIntoPage(PAGES, ["notes", "week", "lone"], "todo"), { refused: "", moving: ["notes", "lone"] },
+    "a page inside a dropped one goes along inside it");
+  assert.deepEqual(pagesIntoPage(PAGES, ["week", "lone"], "notes"), { refused: "", moving: ["lone"] }, "one right inside it already stays");
+  assert.deepEqual(pagesIntoPage(PAGES, ["week"], "notes"), { refused: "", moving: [] }, "nothing to move: the status says so");
+  assert.deepEqual(pagesIntoPage(PAGES, ["notes"], "notes"), { refused: "self", moving: [] }, "let go where it began");
+  assert.deepEqual(pagesIntoPage(PAGES, ["lone", "notes"], "notes"), { refused: "self", moving: [] }, "on one of a selection");
+  assert.deepEqual(pagesIntoPage(PAGES, ["proj"], "week"), { refused: "inside", moving: [] }, "never into a page inside it");
+  assert.deepEqual(pagesIntoPage(PAGES, ["lone", "notes"], "week"), { refused: "inside", moving: [] }, "nor a selection into one inside one of it");
+  assert.deepEqual(pagesIntoPage(PAGES, ["proj", "week"], "week"), { refused: "inside", moving: [] },
+    "a picked page inside another picked one is no target either");
+  assert.deepEqual(pagesIntoPage(PAGES, ["orphan"], "lone"), { refused: "", moving: ["orphan"] });
+  assert.deepEqual(pagesIntoPage(undefined, ["a"], "b"), { refused: "", moving: ["a"] }, "pages the listing lacks: the server checks");
 });
 
 test("where a page is, its own title last: how Recently deleted names a sub-page's parent", () => {

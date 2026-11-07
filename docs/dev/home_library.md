@@ -153,10 +153,11 @@ and run one after another, so a name committed twice is made once.
 
 The home view does not join the trees' rooms. It reads the listing again
 after each of its own writes and when the window comes back (focus or
-visibility, at most every 15 s); that is when another device's changes
-show. The listing's pages are not live either, so one read keeps both in
-step. A view naming a folder or label the trees lack (deleted elsewhere, a
-stale link) goes back to the library's root (a share's folder).
+visibility, at most every 15 s), the open page's family with it
+("Sub-pages"); that is when another device's changes show. The listing's
+pages are not live either, so one read keeps both in step. A view naming
+a folder or label the trees lack (deleted elsewhere, a stale link) goes
+back to the library's root (a share's folder).
 
 The page header's label field (`page.labels` / `page.labelInput`) files
 the open page by both. Its suggestions are the folders (by path, a folder
@@ -296,8 +297,11 @@ shrinking first.
 - **Pages inside** (`editor/SubPagesPanel.jsx`), under the notes above
   Linked from: "N pages inside", the page's sub-pages in library order,
   each row with its glyph (a PDF's for one that carries a PDF) opening
-  that page, Back returning. Where `lib.organize`, a last row "New page
-  inside" makes another. Its fold is the browser pref `subPagesCollapsed`
+  that page, Back returning. Outside a share view a row has the library's
+  page menu on a right-click, a held finger or its "⋯" ("The context
+  menu" below), for that one page. Where `lib.organize`, a last row "New
+  page inside" makes another, and a row drags and takes a dropped page
+  ("Moving one" below). Its fold is the browser pref `subPagesCollapsed`
   ([settings.md](settings.md)); a page with no sub-pages shows nothing;
 - **the crumbs** (`editor/PageCrumbs.jsx`) at the top of the page header:
   the ancestors, top first, each a button that opens its page (Back
@@ -308,10 +312,14 @@ App reads `GET /pages/{id}/family` ([api.md](api.md) "Pages") for the open
 page: alongside its tree when the listing has the page, as the comments
 are (any other open, a link to a page the listing lacks, reads it once the
 tree has landed, so a page that is gone asks for nothing more); again after its own sub-page writes (a page made,
-either move, a Restore) and when another client's `set` on the open page's
-root changes its `parent_page`. Until the answer lands the page reads as
-having none. A page another device makes inside the open page, or moves
-into it, shows in its panel at the next open.
+either move, a drop, a Duplicate or a Delete from the page menu, a
+Restore), when another client's `set` on the open page's root changes its
+`parent_page`, and when the window comes back, with the listing (focus or
+visibility, at most every 15 s: "Folders and labels" above). A page
+another client makes inside the open page, or moves into or out of it,
+writes nothing to the open page's room ([collab.md](collab.md) "Ops"), so
+its panel shows that at the window's wake, as the listing does, or at the
+next open. Until the answer lands the page reads as having none.
 
 **Making one.** `/page` makes a sub-page of the open page and links it
 where it was typed ("Listing, sorting, filtering" below). **New page
@@ -339,6 +347,26 @@ inside it moves alone, the other staying inside it.
   selection is a sub-page) sends `{parent_page: null, folders: <its top's
   folders, or null>}` for each topmost sub-page, so the page lands in the
   folders it was listed under until then. "Moved N pages to the library."
+- **Drag and drop.** A page drag (a library row or card, a Pages inside
+  row) carries the page's id as its text, which the folder and label drops
+  read, and `PAGE_DRAG_TYPE` beside it, the one thing a drag-over can
+  read: the targets here take a page drag and nothing else (a folder, a
+  file, a block's ⋮⋮). Dropped on a page (a library row or card, the
+  pinned and Recently viewed strips' included, a Pages inside row, or a
+  crumb over the open page's title), the pages go inside it as Move into
+  page… puts them (`dropPagesInto`; `pagesIntoPage` in libraryUtils.js):
+  the topmost of the drag (the selection, from a row of it), less those
+  already right inside it ("Already inside “Title”."). A drop on one of
+  them does nothing, and one on a page inside one of them is refused ("A
+  page can’t go inside a page that is inside it."): the pages Move into
+  page… leaves out of its list. Dropped on the topbar's Home, the
+  library, the sub-pages among them go to the library as Move to library
+  sends them ("Already in the library." when there are none). So a
+  sub-page dragged out of the panel goes up a level on a crumb, into a
+  sibling on its row, and out to the library on Home. A drag from the
+  panel carries its one page: the library's selection is let go. A
+  target shows the drop as a folder does (`.dragOver`), and a drop of
+  sub-pages on a folder stays refused ("Filing by the top" above).
 
 **Shares.** A page share reaches the shared page and every page inside it
 (`ShareScope.allows_page`: one whose ancestors hold the shared page), and a
@@ -383,7 +411,7 @@ filing and shares), `test_sub_pages_lifecycle.py` (trash, restore, delete
 for good, the mirror and publishing), `test_sub_pages_ai.py`,
 `test_sub_pages_export.py`, `test_sub_pages_import.py` (a Notion export's
 tree), `frontend/tests/subPages.test.mjs` (the client
-helpers, App's page list and the pickers' matching), `refLists.test.mjs`
+helpers, the drop rule, App's page list and the pickers' matching), `refLists.test.mjs`
 (the `[[` picker's) and the browser suite's `sub-pages` group
 (`frontend/tests/e2e/scenarios/subPages.mjs`).
 
@@ -653,7 +681,10 @@ finger or the item's "⋯" ([ui-design.md](ui-design.md#one-behaviour-for-mouse-
 It is built from the `shared/ui/Menus.jsx`
 primitives, in groups split by dividers (`menuGroups`). Every page card
 surface opens the SAME page menu, the Recently-viewed strip and the pinned
-strip included:
+strip included, and so does a row of an open page's Pages inside panel
+(`openSubPageMenu`), for its one page and without Rename, which is the
+listing's; there its Open, Share…, Export… and Ask AI keep Back to the
+page the panel is on:
 
 - A page: Open (Enter) · Rename (F2) | New page inside (one page) | Pin ·
   Add label ▸ · Move to folder ▸ (a library page among them) · Move into

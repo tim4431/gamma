@@ -238,6 +238,7 @@ import {
   pageBlocksOf,
   pageDescendants,
   topmostPages,
+  pagesIntoPage,
   deleteConfirm,
   topPageOf,
   friendlyApiError,
@@ -399,6 +400,17 @@ function startFolderDrag(e, id) {
   e.dataTransfer.setData(FOLDER_DRAG_TYPE, id);
   e.dataTransfer.effectAllowed = "move";
 }
+// A page drag (a library row or card, a Pages inside row) carries its bare
+// id, what the folder and label drops read, and its own type beside it, so
+// a page or the topbar's Home takes a page drag and nothing else (a file,
+// a block's ⋮⋮, a text selection).
+const PAGE_DRAG_TYPE = "application/x-gamma-page";
+function startPageDrag(e, id) {
+  e.dataTransfer.setData("text/plain", id);
+  e.dataTransfer.setData(PAGE_DRAG_TYPE, id);
+  e.dataTransfer.effectAllowed = "move";
+}
+const isPageDrag = (e) => Array.from(e.dataTransfer?.types || []).includes(PAGE_DRAG_TYPE);
 
 // Home sort and kind filter are per-view choices: {"": "updated", "<folder
 // id>": "title", "#<label id>": …} (root = ""). A view without a sort of its
@@ -966,6 +978,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // folderFilter is the open folder's id ("" = the root), labelFilter the
   // open label's.
   const [folderFilter, setFolderFilter] = useState(initialFolder);
+  // The drop target a drag is over: a folder's or label's id (`before:` /
+  // `after:` one on a folder's edge, `crumb:` one of the folder path, the
+  // back rows' "__up__" / "__label_up__"), `page:<id>` a page, "library"
+  // the topbar's Home; null for none.
   const [folderDragOver, setFolderDragOver] = useState(null);
   const [newFolderOpen, setNewFolderOpen] = useState(false);
   const [newFolderName, setNewFolderName] = useState("");
@@ -1255,6 +1271,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     };
   }
 
+  // A Pages inside row's menu (editor/SubPagesPanel.jsx): the same page
+  // menu, for that one page, the library's selection let go (the panel
+  // lists none of it). `panel` marks where it opened: its Open and the
+  // rows that open the page first keep Back to the page the panel is on,
+  // and it has no Rename, which is the listing's.
+  function openSubPageMenu(id, name) {
+    return (e) => {
+      e.preventDefault();
+      clearSelection();
+      setHomeMenu({ kind: "page", id, name, x: e.clientX, y: e.clientY, el: e.currentTarget, panel: true });
+    };
+  }
+
   // Double-click / Enter / context-menu "Open": the old single-click behavior.
   // `block`: a block of the page to land on (openBlock).
   function openPage(id, block = "") {
@@ -1367,6 +1396,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     clearSelection();
     const result = await runBatch(ids, duplicatePage, { name: t("Duplicate {n} pages", { n: ids.length }), tasks, pool: 1 });
     await fetchHomeBlocks();
+    rereadFamily(); // a copy of a page inside the open one is beside it there
     batchStatus(tn("Copied {n} page.", "Copied {n} pages.", result.done.length), result, ids.length);
   }
 
@@ -1411,6 +1441,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         const tops = topmostPages(pageBlocks, ids);
         const result = await trashPages(tops, new Set([...ids, ...inside]));
         await fetchHomeBlocks();
+        rereadFamily(); // one of them may be inside the open page
         // what a Stop or a failure left is counted as the batch counts: its tops
         batchStatus(movedToTrash(allWent(result) ? ids.length : result.done.length), result, tops.length);
       },
@@ -1525,15 +1556,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // "Move to library": out of the page they are in, filed in their top's
   // folders, where they were listed until now. Only the topmost of `picked`
   // that are inside a page move: a page inside another of them stays inside it.
+  // Whether any did (none: every one is in the library already).
   function movePagesToLibrary(picked) {
     const ids = topmostPages(pageBlocks, picked).filter((id) => pagesById.get(id)?._parentPage);
-    if (!ids.length) return;
+    if (!ids.length) return false;
     const place = (id) => {
       const folders = topPageOf(pagesById, id)?._folders || [];
       return { parent_page: null, folders: folders.length ? folders : null };
     };
     placePages(ids, place, t("Move {n} pages to the library", { n: ids.length }),
       (n) => tn("Moved {n} page to the library.", "Moved {n} pages to the library.", n));
+    return true;
   }
 
   // Pin/unpin folders: `properties.pinned` (an ISO time; null unpins) on
@@ -1781,6 +1814,47 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const id = e.dataTransfer.getData("text/plain");
     if (!id) return null;
     return selectedPages.has(id) && selectedPages.size > 1 ? [...selectedPages] : [id];
+  }
+  // A drop target that takes page drags only (isPageDrag): `key` is what
+  // folderDragOver reads while one is over it, `onPages` gets the dropped
+  // ids. Nothing where the library cannot be changed.
+  const pageDragTarget = (key, onPages) => (lib.organize ? {
+    onDragOver: (e) => {
+      if (!isPageDrag(e)) return;
+      e.preventDefault();
+      e.dataTransfer.dropEffect = "move";
+      setFolderDragOver(key);
+    },
+    onDragLeave: () => setFolderDragOver(null),
+    onDrop: (e) => {
+      if (!isPageDrag(e)) return;
+      e.preventDefault();
+      setFolderDragOver(null);
+      const ids = droppedPageIds(e);
+      if (ids) onPages(ids);
+    },
+  } : {});
+  // A page as a drop target (a library row or card, a Pages inside row, a
+  // crumb over the open page's title): the pages dropped go inside it
+  // (dropPagesInto). `title` names it where the listing does not.
+  const pageDropProps = (id, title) => pageDragTarget(`page:${id}`, (ids) => dropPagesInto(ids, id, title));
+  const pageDropClass = (id) => (folderDragOver === `page:${id}` ? "dragOver" : "");
+  // The topbar's Home, the library: the pages inside other pages among the
+  // dropped ones go to the library, as Move to library takes them.
+  const libraryDropProps = pageDragTarget("library", (ids) => {
+    if (!movePagesToLibrary(ids)) setStatus(t("Already in the library."));
+  });
+
+  // Pages dropped on a page go inside it, as Move into page… puts them: the
+  // topmost of them, those not right inside it already (pagesIntoPage).
+  // Never into one of them or a page inside one, which the status says; a
+  // drag let go where it began does nothing.
+  function dropPagesInto(ids, target, title) {
+    const name = pagesById.get(target)?.content || title || t("Untitled");
+    const { refused, moving } = pagesIntoPage(pageBlocks, ids, target);
+    if (refused === "inside") setStatus(t("A page can’t go inside a page that is inside it."));
+    else if (moving.length) movePagesInto(moving, { id: target, content: name });
+    else if (!refused) setStatus(t("Already inside “{title}”.", { title: name }));
   }
 
   // The library's view, read when a folder goes: "Delete N pages too" may
@@ -4074,7 +4148,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The listing is read again when the window comes back (at most every
   // 15 s, like the prefs' wake pulls), so a folder or label another device
   // made, renamed, moved or deleted shows without a reload — the home view
-  // does not join the trees' rooms (docs/dev/home_library.md).
+  // does not join the trees' rooms (docs/dev/home_library.md). The open
+  // page's family with it: a page another client makes inside it, or moves
+  // into or out of it, writes nothing to its room, so its Pages inside
+  // panel follows then, as the listing does.
   useEffect(() => {
     if (!authUser?.user || shareMode) return undefined;
     let lastAt = Date.now();
@@ -4082,6 +4159,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (document.hidden || Date.now() - lastAt < 15000) return;
       lastAt = Date.now();
       fetchHomeBlocks({ still: true });
+      rereadFamily();
     };
     window.addEventListener("focus", onWake);
     document.addEventListener("visibilitychange", onWake);
@@ -4552,7 +4630,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The open page among pages (GET /pages/{id}/family): its ancestors, top
   // first, for the crumbs over its title, and the pages right inside it
   // for the Pages inside panel. Read on every open (familyRead, bumped by
-  // the opens) and again after this tab's own sub-page writes; a share view
+  // the opens), again after this tab's own sub-page writes and when the
+  // window comes back, with the listing (its wake, above); a share view
   // reads it with its token, the ancestors the share does not reach left
   // out. Until it lands the page reads as having none (`openFamily`). The
   // open of a listed page asks for it alongside the tree (prefetchFamily),
@@ -6958,10 +7037,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     copyText(withWorkspace(`${window.location.origin}/?page=${encodeURIComponent(id)}`))
       .then((ok) => setStatus(ok ? t("Link copied.") : t("Couldn't copy the link.")));
   }
-  function openPageThen(id, action) {
+  // `pushNav`: Back returns to the page it was asked from (a Pages inside
+  // row's menu).
+  function openPageThen(id, action, pushNav = false) {
     setHomeMenu(null);
     clearSelection();
-    openBlock(id, { restoreScroll: true, then: action });
+    openBlock(id, { restoreScroll: true, then: action, pushNav });
   }
   // The open page's Share popover (the topbar's link button, the page menu).
   function openPageShare(id) {
@@ -9583,11 +9664,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       collapsed={appPrefs.backlinksCollapsed} onCollapsedChange={appPrefs.setBacklinksCollapsed} />
   ) : null;
   // The pages inside the open page (editor/SubPagesPanel.jsx), above the
-  // Linked from panel: each row opens its page, and where the library may
-  // be changed a last row makes another.
+  // Linked from panel: each row opens its page and has the library's page
+  // menu (not in a share view), and where the library may be changed a
+  // last row makes another and a row drags as a library row does: onto
+  // another row or a crumb it goes inside that page, onto the topbar's
+  // Home to the library. A row takes a dropped page in too. A drag from
+  // the panel carries its one page: the library's selection is let go.
   const subPagesPanel = !homeMode && focusedBlockId ? (
     <SubPagesPanel pages={openFamily.subPages} onOpen={openFamilyPage}
       onNew={lib.organize ? () => createSubPage(focusedBlockId) : undefined}
+      onMenu={shareMode ? undefined : (page) => openSubPageMenu(page.id, page.title)}
+      rowProps={lib.organize ? (page) => ({
+        draggable: true,
+        onDragStart: (e) => { clearSelection(); startPageDrag(e, page.id); },
+        ...pageDropProps(page.id, page.title),
+        className: pageDropClass(page.id),
+      }) : undefined}
       collapsed={appPrefs.subPagesCollapsed} onCollapsedChange={appPrefs.setSubPagesCollapsed} />
   ) : null;
   const notesTail = !homeMode && !readOnly && focusedBlockId ? (
@@ -9667,7 +9759,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           {!homeMode && <div className="pageTitleRow">
             <div className="pageTitleMain">
             {/* the pages the open page is inside, each opening that page */}
-            <PageCrumbs ancestors={openFamily.ancestors} onOpen={openFamilyPage} />
+            <PageCrumbs ancestors={openFamily.ancestors} onOpen={openFamilyPage}
+              targetProps={lib.organize ? (page) => ({ ...pageDropProps(page.id, page.title), className: pageDropClass(page.id) }) : undefined} />
             {titleEditing && !readOnly && focusedBlockId ? (
               // A textarea so a long title wraps as it does when shown; a title
               // stays one line, so pasted line breaks become spaces.
@@ -10277,7 +10370,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     snap={recentThumbs ? pageSnaps[b._pageId]?.img : null}
                     kind={pageKindLabel(b._attachment)} time={formatRelativeTime(b._viewedAt)}
                     folders={b._folderChips} labels={b._labelChips} inside={b._path} pages={b._subPages} labelMode={fileLabels}
-                    className={selectedPages.has(b._pageId) ? "selected" : ""}
+                    className={`${pageDropClass(b._pageId)} ${selectedPages.has(b._pageId) ? "selected" : ""}`}
+                    {...pageDropProps(b._pageId)}
                     onClick={() => openPage(b._pageId)}
                     onMenu={openPageMenu(b._pageId, b.content)}>
                     <button
@@ -10313,7 +10407,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   ); })() : (() => { const b = item.block; return (
                     <PageCard
                       key={b._pageId}
-                      className={selectedPages.has(b._pageId) ? "selected" : ""}
+                      className={`${pageDropClass(b._pageId)} ${selectedPages.has(b._pageId) ? "selected" : ""}`}
                       glyph={<FileGlyph isPdf={!!b._attachment} />}
                       preview={b._preview}
                       title={b.content}
@@ -10322,7 +10416,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                       time={formatRelativeTime(b._updatedAt)}
                       folders={b._folderChips} labels={b._labelChips} inside={b._path} pages={b._subPages} labelMode={fileLabels}
                       draggable
-                      onDragStart={(e) => { e.dataTransfer.setData("text/plain", b._pageId); e.dataTransfer.effectAllowed = "move"; }}
+                      onDragStart={(e) => startPageDrag(e, b._pageId)}
+                      {...pageDropProps(b._pageId)}
                       checked={selecting && selectedPages.has(b._pageId)}
                       onClick={(e) => handlePageClick(b, e)}
                       onDoubleClick={() => openPage(b._pageId)}
@@ -10566,7 +10661,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         <PageCard
                           key={id}
                           data-motion-key={item.key}
-                          className={`${dim} ${selectedPages.has(id) ? "selected" : ""}`}
+                          className={`${dim} ${pageDropClass(id)} ${selectedPages.has(id) ? "selected" : ""}`}
                           data-guide="home.card"
                           glyph={<FileGlyph isPdf={!!b._attachment} />}
                           preview={b._preview}
@@ -10590,7 +10685,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                           ) : null}
                           draggable={lib.organize && !isEditing}
                           checked={selecting && selectedPages.has(id)}
-                          onDragStart={(e) => { e.dataTransfer.setData("text/plain", id); e.dataTransfer.effectAllowed = "move"; }}
+                          onDragStart={(e) => startPageDrag(e, id)}
+                          {...pageDropProps(id)}
                           onClick={(e) => handlePageClick(b, e)}
                           onDoubleClick={() => { if (!isEditing) openPage(id); }}
                           onMenu={openPageMenu(id, b.content)}
@@ -10721,10 +10817,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                         <div
                           key={id}
                           data-motion-key={item.key}
-                          className={`fileRow rowMenuHost ${dim} ${selectedPages.has(id) ? "selected" : ""}`}
+                          className={`fileRow rowMenuHost ${dim} ${pageDropClass(id)} ${selectedPages.has(id) ? "selected" : ""}`}
                           data-guide="home.card"
                           draggable={lib.organize && !isEditing}
-                          onDragStart={(e) => { e.dataTransfer.setData("text/plain", id); e.dataTransfer.effectAllowed = "move"; }}
+                          onDragStart={(e) => startPageDrag(e, id)}
+                          {...pageDropProps(id)}
                           onClick={(e) => handlePageClick(b, e)}
                           onDoubleClick={() => { if (!isEditing) openPage(id); }}
                           {...menuPress(menu)}
@@ -12153,11 +12250,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           <div className={`topbar ${phoneBareTop ? "phoneBare" : ""}`} {...customizePress("topbar", topbarSpace)}>
             {isPhone ? null : (
               <button
-                className={`iconBtn homeBtn ${homeMode ? "activeIcon" : ""}`}
+                className={`iconBtn homeBtn ${homeMode ? "activeIcon" : ""} ${folderDragOver === "library" ? "dragOver" : ""}`}
                 onClick={goHome}
                 data-guide="header.home"
                 title={t("Home")}
                 aria-label={t("Home")}
+                {...libraryDropProps}
               >
                 <HomeIcon size={16} />
               </button>
@@ -13399,14 +13497,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               // Open · Rename | New page inside | Pin · Add label · Move to
               // folder · Move into page… · Move to library · Duplicate | Copy
               // link · Share… · Export… · Ask AI | Delete — the same rows
-              // wherever the page was right-clicked.
+              // wherever the page was right-clicked (a Pages inside row's
+              // without Rename: openSubPageMenu).
               return menuGroups(
                 [
                   !many && (
                     <MenuItem key="open" icon={ExternalLinkIcon} keys={chordLabel("Enter")}
-                      onClick={() => { close(); clearSelection(); openBlock(homeMenu.id, { restoreScroll: true }); }}>{t("Open")}</MenuItem>
+                      onClick={() => { close(); clearSelection(); openBlock(homeMenu.id, { restoreScroll: true, pushNav: !!homeMenu.panel }); }}>{t("Open")}</MenuItem>
                   ),
-                  !many && lib.organize && (
+                  !many && lib.organize && !homeMenu.panel && (
                     <MenuItem key="rename" icon={PenIcon} keys={commandKeyLabel("app.renameTitle")}
                       onClick={() => { close(); clearSelection(); setHomeEditingId(homeMenu.id); }}>{t("Rename")}</MenuItem>
                   ),
@@ -13505,14 +13604,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   ),
                   !many && lib.organize && (
                     <MenuItem key="share" icon={ShareIcon} title={t("Share this page — a link, and who may view or edit it")}
-                      onClick={() => openPageThen(homeMenu.id, "share")}>{t("Share…")}</MenuItem>
+                      onClick={() => openPageThen(homeMenu.id, "share", homeMenu.panel)}>{t("Share…")}</MenuItem>
                   ),
                   !many && (
                     <MenuItem key="export" icon={ExportIcon} title={t("Download this page — the PDF with highlights and notes, Markdown, a Logseq graph, a Zotero library, or a Gamma export")}
-                      onClick={() => openPageThen(homeMenu.id, "export")}>{t("Export…")}</MenuItem>
+                      onClick={() => openPageThen(homeMenu.id, "export", homeMenu.panel)}>{t("Export…")}</MenuItem>
                   ),
                   !many && !shareMode && (
-                    <MenuItem key="ask" icon={SparklesIcon} onClick={() => openPageThen(homeMenu.id, "ask")}>{t("Ask AI about this page")}</MenuItem>
+                    <MenuItem key="ask" icon={SparklesIcon} onClick={() => openPageThen(homeMenu.id, "ask", homeMenu.panel)}>{t("Ask AI about this page")}</MenuItem>
                   ),
                   !many && (
                     <MenuItem key="props" icon={BracesIcon} onPointerEnter={BlockProperties.preload}
@@ -13521,7 +13620,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 ],
                 [
                   lib.organize && (
-                    <MenuItem key="delete" icon={TrashIcon} danger keys={commandKeyLabel("app.deletePages")}
+                    <MenuItem key="delete" icon={TrashIcon} danger keys={homeMenu.panel ? undefined : commandKeyLabel("app.deletePages")}
                       onClick={() => { close(); deletePages(ids); }}>{many ? t("Delete {n} pages", { n: ids.length }) : t("Delete")}</MenuItem>
                   ),
                 ],

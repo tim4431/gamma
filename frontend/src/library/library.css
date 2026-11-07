@@ -302,7 +302,7 @@
   font-size: inherit;
   color: inherit;
 }
-.pageCrumbs .crumbBtn:hover { color: var(--accent); }
+.pageCrumbs .crumbBtn:is(:hover, .dragOver) { color: var(--accent); }
 .pageCrumbs .crumbSep { flex-shrink: 0; }
 /* sort bar above the home file feed */
 .homeListBar {
@@ -476,6 +476,13 @@
 :is(.pageCard, .fileRow).selected {
   background: var(--accent-bg-light);
   border-color: var(--accent-fill);
+}
+/* a page dragged over a page's row goes inside it on a drop, as into a
+   folder's (a card wears the same .dragOver, with the folder tiles') */
+.fileRow.dragOver {
+  background: var(--accent-bg);
+  border-color: var(--accent-fill);
+  border-style: dashed;
 }
 .fileRowIcon {
   flex: 0 0 auto;
