@@ -81,7 +81,7 @@ def test_pages_added_on_two_devices_at_once_both_stay(guest):
 
 
 def test_a_page_with_sheets_exports_as_a_pdf_of_them(guest):
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
     page = _page(guest, "Lecture 3")
     k1 = generate_key_between(None, None)
     k2 = generate_key_between(k1, None)
@@ -109,7 +109,7 @@ def test_the_notebook_pdf_paints_a_pencil_with_one_tile_per_colour_for_every_she
     """A pencil is filled with the screen's grain (ink.GrainPatterns): every
     sheet of one size paints with the same pattern, and the document holds
     one tile image per colour and one soft mask, whatever the sheets."""
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
 
     def drawing(*colors):
         strokes = [{"id": f"p{i}", "brush": "pencil", "color": c, "size": 6, "ch": "xyt",

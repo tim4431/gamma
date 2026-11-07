@@ -7,7 +7,7 @@ import { MorphText } from "../shared/ui/MotionWidgets";
 import { copyText } from "../shared/lib/utils";
 import { fmtBytes } from "../shared/lib/format.js";
 import { bibliographyPreview, shareToken, sharedBibliographyUrl } from "./exportApi";
-import { CATEGORIES, exportFormatOf, hasReviewStep, offersSubPages, resolveExport, resolveImport, exportSummary } from "./transferFormats";
+import { CATEGORIES, exportFormatOf, hasReviewStep, notionFiles, offersSubPages, resolveExport, resolveImport, exportSummary } from "./transferFormats";
 import { canPickFolder, folderDrop } from "./folderZip.js";
 import { collectEntryFiles } from "../shared/lib/dropEntries.js";
 import { TaskProgress } from "../tasks/TasksTray";
@@ -260,7 +260,7 @@ function ExportSetup({ opts, setOpts, hasPdf, pdfStored, hasMeta, pageId, folder
     : <>
       <p className="reportModalHint">{t("Choose what to include.")}</p>
       <div className="transferReview">
-        <ExportPreview {...payload} />
+        <ExportPreview {...payload} filesRow={payload.format === "notion" ? notionFiles(payload) : null} />
         <div className="transferControls">
           {controls.map((control) => <ExportControl key={control.key} control={control} payload={payload} set={set} />)}
           {isZotero && !bundle ? <p className="reportModalHint">{t("Highlights travel inside PDF files. Turn on file bundling to include them.")}</p> : null}
@@ -292,6 +292,7 @@ const NEXT_STEP = {
   obsidian: T("Unzip it into a vault, or open the folder as one."),
   gamma: T("In the other Gamma: Import → Gamma export (.zip)."),
   notability: T("Open it in Notability: on the iPad or the Mac, open the .note from Files (or AirDrop it) and choose Notability. Unzip a folder's .zip first."),
+  notion: T("In Notion: Settings → Import → ZIP, then choose this file. Importing it again adds the pages a second time; it does not update them."),
 };
 // The reasons the server gives for a page an export left out
 // (routers/export.py), listed so the catalogs translate them.

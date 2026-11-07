@@ -126,7 +126,7 @@ export async function guideScenarios(env) {
       assert(!new URL(page.url()).searchParams.has("block"), "final step returns to the homepage");
       // The finish card: what the tour made, and what to try next.
       await page.waitForSelector('[data-guide-finish="first-run"] .guideCardFinish');
-      assertEq(await page.evaluate(() => JSON.parse(localStorage.getItem("gamma-guide:first-run")).state), "done", "done is recorded when the finish card shows");
+      assertEq(await page.evaluate(() => JSON.parse(localStorage.getItem("gamma-guide:alice:first-run")).state), "done", "done is recorded when the finish card shows");
       const made = await page.locator(".guideMade li").allTextContents();
       assertEq(made.length, 4, `the paper, the highlights, the note and the label: ${made.join(" | ")}`);
       assert(made[1].includes("2 highlights"), `both highlights are counted: ${made[1]}`);
@@ -134,7 +134,7 @@ export async function guideScenarios(env) {
       await page.locator('.guideNext [data-finish="tours"]').click();
       await page.waitForSelector('.userPopover [data-tour="ai-chat"]');
       assertEq(await page.locator(".guideCard").count(), 0, "a tile closes the finish card");
-      assertEq(await page.evaluate(() => JSON.parse(localStorage.getItem("gamma-guide:first-run")).state), "done", "closing it keeps done");
+      assertEq(await page.evaluate(() => JSON.parse(localStorage.getItem("gamma-guide:alice:first-run")).state), "done", "closing it keeps done");
       await page.goto(`${server.base}/?ws=${alice.ws}&block=${paperId}`);
       await page.waitForSelector('[data-guide="pdf.textLayer"] span:visible');
       // Manual re-entry through the Tours submenu.
@@ -220,7 +220,7 @@ export async function guideScenarios(env) {
       assertEq(await page.getByRole("button", { name: "Next slide", exact: true }).isDisabled(), true, "the last slide ends the deck");
       await page.getByRole("button", { name: "Dismiss guide", exact: true }).click();
       await until(async () => await page.locator(".guideCard").count() === 0);
-      assertEq(await page.evaluate(() => JSON.parse(localStorage.getItem("gamma-guide:first-run")).state), "dismissed");
+      assertEq(await page.evaluate(() => JSON.parse(localStorage.getItem("gamma-guide:newcomer:first-run")).state), "dismissed");
       await page.reload();
       await page.waitForSelector('[data-guide="header.home"]');
       await page.waitForTimeout(4000);
@@ -238,11 +238,12 @@ export async function guideScenarios(env) {
       await page.waitForSelector('[data-guide-offer="first-run"] .guideCard.welcomeDeck', { timeout: 15000 });
       for (let i = 1; i < 9; i++) await page.keyboard.press("ArrowRight");
       await page.getByRole("button", { name: "Open the Welcome page", exact: true }).click();
-      await until(async () => await page.locator(".guideCard").count() === 0);
+      // the deck goes; the PDF it opens may offer a tour of its own (suggestTours), so not every card
+      await until(async () => await page.locator('[data-guide-offer="first-run"]').count() === 0, { what: "the welcome deck closed" });
       await until(() => new URL(page.url()).searchParams.has("block"), { what: "a page opens" });
       const { block } = await arrival.api(`/api/blocks/${new URL(page.url()).searchParams.get("block")}/subtree`);
       assertEq(block.properties?.seeded, "welcome", "the seeded Welcome page");
-      assertEq(await page.evaluate(() => JSON.parse(localStorage.getItem("gamma-guide:first-run")).state), "done", "it answers the offer");
+      assertEq(await page.evaluate(() => JSON.parse(localStorage.getItem("gamma-guide:arrival:first-run")).state), "done", "it answers the offer");
       assertNoProblems(page);
     } finally { await ctx.close(); }
   });

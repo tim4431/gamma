@@ -13,6 +13,7 @@
 // (a source offset) on the rendered view.
 // `locateInSource`, `locateInRendered` and `gapInSource` are pure; the rest
 // reads the DOM.
+import { caretAt } from "../shared/lib/caret.js";
 
 const CTX = 40; // characters of context taken on each side of the click
 const GAP = 12; // markup characters a context character may skip over
@@ -74,15 +75,6 @@ export function locateInSource(source, ctx) {
 
 // Text that isn't the note's own: KaTeX's hidden MathML copy, tool buttons.
 const SKIP = ".katex-mathml, [data-markdown-copy-ignore], .mdImgTools, style, script";
-
-function caretAt(x, y) {
-  if (document.caretPositionFromPoint) {
-    const p = document.caretPositionFromPoint(x, y);
-    return p && { node: p.offsetNode, offset: p.offset };
-  }
-  const r = document.caretRangeFromPoint?.(x, y);
-  return r && { node: r.startContainer, offset: r.startOffset };
-}
 
 // The context for locateInSource of a caret at `offset` in text node `node`
 // (or anywhere in a KaTeX formula) inside `container`, a block's rendered

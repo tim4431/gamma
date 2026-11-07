@@ -179,6 +179,64 @@ def test_an_old_backup_is_normalized_and_given_the_current_shapes_before_the_swa
         assert _kind(conn, "oldPage") == "live"  # the change log (step 27's), the page touched
 
 
+def test_a_current_backup_comes_back_as_it_was_taken():
+    """A backup stamped at the base or above has been through every
+    normalizer already, so a replace and a merge leave its blocks as they
+    were taken: a typed ``{:width N}`` and a page titled like the old
+    automatic PDF titles stay as typed, and the note's time does not move
+    (the page's does: a restore touches every page it writes)."""
+    ws, c = _account("rc_current")
+    pid = _page(c, "PDF Notes - Kept as typed")
+    _insert(c, pid, "rcWidth", "see ![c](/api/uploads/i.png){:width 120}")
+    rows = ("SELECT id, content, properties, updated_at FROM unified_blocks WHERE id IN (?, 'rcWidth') "
+            "ORDER BY id = 'rcWidth'")
+    with _conn(ws) as conn:
+        before = conn.execute(rows, (pid,)).fetchall()
+    assert [r[1] for r in before] == ["PDF Notes - Kept as typed", "see ![c](/api/uploads/i.png){:width 120}"]
+    snap = ws_backup.backup_path(ws, ws_backup.create(ws, label="current", uploads=False)["name"])
+    other, _ = _account("rc_current_merge")
+    for into, mode in ((ws, "replace"), (other, "merge")):
+        ws_backup.restore_zip(into, snap, mode)
+        with _conn(into) as conn:
+            after = conn.execute(rows, (pid,)).fetchall()
+        assert [r[:2] + (json.loads(r[2]),) for r in after] == [r[:2] + (json.loads(r[2]),) for r in before], mode
+        if mode == "replace":
+            assert after[-1][3] == before[-1][3]
+
+
+def test_a_replace_gives_a_cached_data_db_connection_the_current_tables(tmp_path):
+    """A replace copies the backup's data.db over the live file in place,
+    so a connection cached to that file never applies the schema statements
+    again: the copy gets them before the swap. A data.db as an older Gamma
+    left it, without the manifests and the kept translations, then serves
+    both on the connection this thread had open before."""
+    from pathlib import Path
+
+    from gamma import pdf_meta, translate_store
+    from gamma.backups import snapshot_db
+    from gamma.db import connect_data_db, ws_db_path
+
+    ws, _ = _account("rc_data_shape")
+    with connect_data_db(ws) as conn:  # cached in this thread from here on
+        assert conn.execute("SELECT COUNT(*) FROM pdf_docs").fetchone() == (0,)
+    snapshot_db(Path(ws_db_path(ws, "pages.db")), tmp_path / "pages.db")
+    with closing(sqlite3.connect(str(tmp_path / "data.db"))) as conn:
+        conn.execute("CREATE TABLE page_snaps (page_id TEXT PRIMARY KEY, img TEXT NOT NULL, at TEXT NOT NULL)")
+        conn.commit()
+    zpath = tmp_path / "old-data.zip"
+    with zipfile.ZipFile(zpath, "w") as z:
+        z.write(tmp_path / "pages.db", "pages.db")
+        z.write(tmp_path / "data.db", "data.db")
+    assert ws_backup.restore_zip(ws, zpath, "replace")["restored"] == ["pages.db", "data.db"]
+
+    doc, src = "d" * 24, translate_store.src_hash("Hello")
+    translate_store.put(ws, doc, "de", "m", [(src, "Hallo")], False)
+    assert translate_store.lookup(ws, doc, "de", "m", [src]) == {src: "Hallo"}
+    assert pdf_meta.get(ws, doc) is None
+    with connect_data_db(ws) as conn:
+        assert conn.execute("SELECT COUNT(*) FROM pdf_translations").fetchone() == (1,)
+
+
 def test_a_backup_with_tombstones_restores_them_into_the_change_log(tmp_path):
     """A backup from before migration step 27 keeps its deleted pages in
     ``deleted_pages``: restored either way, they are deleted rows of the live

@@ -134,7 +134,7 @@ export async function motionScenarios(env) {
     await rowOf(page, id).locator(".blockRow").click();
     await page.locator(".blockEditorCm").first().waitFor();
     await page.keyboard.press("End");
-    await page.keyboard.press("Shift+Enter");
+    await page.keyboard.press("Enter");
   }
 
   await step("motion: a block added mid-outline fades in where it rests while the rows below glide down; a page opening moves nothing", async () => {
@@ -272,7 +272,7 @@ export async function motionScenarios(env) {
           for (const r of records) if (r.target.matches(rows) && r.target.hasAttribute("data-moving")) window.__drawn[name(r.target)] ??= top(r.target);
         }).observe(document.querySelector(".blockList") || document.body, { subtree: true, attributes: true, attributeFilter: ["data-moving"] });
       });
-      await page.keyboard.press("Shift+Enter");
+      await page.keyboard.press("Enter");
       await until(async () => (await page.locator(".sortableBlockWrap[data-block-id]").count()) === 5, { what: "the new row" });
       await arrived(rowOf(page, "gh3"));
       const { stood, drawn } = await page.evaluate(() => ({ stood: window.__stood, drawn: window.__drawn }));
@@ -811,7 +811,7 @@ export async function motionScenarios(env) {
   async function deleteRow(page, text) {
     await listRow(page, text).click({ button: "right" });
     await page.locator(".ctxMenuItem", { hasText: "Delete" }).click();
-    const confirm = page.locator(".confirmModal", { hasText: "Move this page to Recently deleted?" });
+    const confirm = page.locator(".confirmModal", { hasText: `Move "${text}" to Recently deleted?` });
     await confirm.getByRole("button", { name: "Delete", exact: true }).click();
   }
 

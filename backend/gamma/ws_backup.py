@@ -51,8 +51,8 @@ from .backups import snapshot_db
 from .blocks_store import (BLOCK_COLUMNS, FOLDERS, IN_LIBRARY, LABELS, PATH_SEP, TRASH, TREES,
                            delete_subtree, existing_in, fetch_subtree, filing, folder_paths, last_child_position,
                            named, new_block_id, touch_page, tree_children, tree_parents, tree_rows, write_lock)
-from .db import (PAGES_SCHEMA, account_names, connect_pages_db, connect_users_db, copy_chats, page_now,
-                 register_functions, safe_ws_id, ws_dir)
+from .db import (DATA_SCHEMA, PAGES_SCHEMA, account_names, connect_pages_db, connect_users_db, copy_chats,
+                 page_now, register_functions, safe_ws_id, ws_dir)
 from .logbuf import log
 from .normalize import (block_columns, block_fts, folder_blocks, highlight_shape, normalize_data_db,
                         normalize_pages_db, page_changes, page_ops_batch_id, pages_db_chats)
@@ -112,7 +112,8 @@ def write_zip(ws: str, dest: Path, *, uploads: bool = True, by: str = "", label:
     with connect_users_db() as conn:
         names = account_names(conn, [owner, by])
     checks, stored, missing = {}, [], []
-    with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED) as z:
+    # strict_timestamps=False: an upload dated before 1980 goes in as 1980 (backups.stream_zip)
+    with zipfile.ZipFile(dest, "w", zipfile.ZIP_DEFLATED, strict_timestamps=False) as z:
         for src in db_files:
             snap = Path(str(dest) + "." + src.name)
             try:
@@ -327,22 +328,27 @@ def _normalize_copies(tdir: Path) -> None:
     """Bring the unpacked databases to the current shapes before anything
     reads them or anything live is touched. pages.db, in this order: a copy
     stamped below the base (``migrations.WS_VERSION_BASE``; 0, a backup
-    from before the stamps, can be of any age up to it) goes through the
-    normalizers of the steps that walked every workspace: the block
-    table's hot fields (``normalize.block_columns``, step 26), the change
-    log (``page_changes``, step 27), the chats its data.db held
+    from before the stamps, can be of any age up to it, and a scoped Gamma
+    export carries no stamp) goes through the normalizers of the steps that
+    walked every workspace: the block table's hot fields
+    (``normalize.block_columns``, step 26), the change log
+    (``page_changes``, step 27), the chats its data.db held
     (``pages_db_chats``, step 28) and the op log's batch columns
     (``page_ops_batch_id``, step 33). Then every copy runs the workspace
     steps above its stamp (0 counting as the base,
     ``migrations.run_workspace_steps``; a copy stamped above this Gamma's
     ``SCHEMA_VERSION`` is refused — it was made by a newer release and
-    holds shapes this code cannot read), and the schema statements (an old
-    file lacks the op log), the notes index built from its rows
-    (``block_fts``, step 28), the folder and label trees (``folder_blocks``,
-    step 29), the content normalizers (whose rewrites the index follows)
-    and the highlight shape (``highlight_shape``, step 30) follow; the copy
-    is stamped current. data.db: ``normalize_data_db`` drops the tables
-    that moved out of it."""
+    holds shapes this code cannot read), the schema statements (an old
+    file lacks the op log) and the notes index built from its rows
+    (``block_fts``, step 28). A copy below the base then gets the folder
+    and label trees (``folder_blocks``, step 29), the content normalizers
+    (whose rewrites the index follows) and the highlight shape
+    (``highlight_shape``, step 30); one at the base or above has had them,
+    and its content stays as it is. The copy is stamped current. data.db:
+    ``normalize_data_db`` drops the tables that moved out of it, and the
+    schema statements (``DATA_SCHEMA``) add the tables it lacks: a replace
+    copies it over the live file in place, so the connections cached to
+    that file never apply them."""
     from . import migrations  # local: only a restore runs the step list
 
     data_db = tdir / "data.db"
@@ -370,9 +376,10 @@ def _normalize_copies(tdir: Path) -> None:
         for stmt in PAGES_SCHEMA:
             conn.execute(stmt)
         block_fts(conn)
-        folder_blocks(conn)
-        normalize_pages_db(conn)
-        highlight_shape(conn)
+        if stamp < migrations.WS_VERSION_BASE:
+            folder_blocks(conn)
+            normalize_pages_db(conn)
+            highlight_shape(conn)
         upload_gc.restart_clocks(conn)  # its orphan rows' 30 days start now, not when it was taken
         if stamp < migrations.SCHEMA_VERSION:
             conn.execute(f"PRAGMA user_version = {migrations.SCHEMA_VERSION}")
@@ -380,6 +387,9 @@ def _normalize_copies(tdir: Path) -> None:
     if data_db.exists():
         with closing(sqlite3.connect(str(data_db))) as conn:
             normalize_data_db(conn)
+            for stmt in DATA_SCHEMA:
+                conn.execute(stmt)
+            conn.commit()
 
 
 def _keep_current(ws: str, by: str, progress=jobs.no_progress) -> dict | None:

@@ -9,6 +9,7 @@ launcher, and desktop release workflows use these locations.
 | `backend/tests/` | Backend tests using temporary data directories |
 | `frontend/tests/` | `node --test` tests of the pure modules; `e2e/` the Playwright browser suite (`npm run e2e`, [debugging.md](debugging.md)) |
 | `tests/shared/` | JSON cases for rules mirrored between backend and frontend (search normalization, published pages' slugs, the ink and text merges, text boxes, notebook paper, the mirror's tree rules), read by both test suites (the mirror's tree rules and the text merge by the backend's alone) |
+| `tests/testrun.py` | What a pytest run does about its temp files and its stalls, shared by the server's and the account server's suites ([debugging.md](debugging.md#what-a-run-leaves-behind)). |
 | `frontend/src/` | React code grouped by function (`editor/`, `pdf/`, `settings/`, etc.), orchestration in `app/`, reused code/assets in `shared/`; [source map](../../frontend/src/README.md) |
 | `frontend/public/` | Files copied as-is into the frontend build |
 | `cloud/` | The Gamma Cloud account server (`gammacloud` package, `manage.py`, `tests/`, its own Dockerfile and requirements); imports nothing from `backend/` ([cloud_accounts.md](cloud_accounts.md)) |
@@ -16,7 +17,7 @@ launcher, and desktop release workflows use these locations.
 | `ipad/` | The native iPad app: a Swift shell over the web app with a native Pencil layer, and the Gamma server inside it (CPython 3.13 for iOS; its entry and pins are `backend/gamma_mobile.py` and `backend/requirements-mobile.txt`, shared with the Android app; `scripts/build-python.sh` the bundle's Python, wheels and web app, all generated and ignored); XcodeGen project ([ipad/README.md](../../ipad/README.md), [ipad.md](ipad.md)) |
 | `android/` | The Android app: a Kotlin shell over the web app with a native pen layer for any stylus, and the Gamma server inside it on Chaquopy's CPython 3.13 (the same entry and pins as the iPad's); a Gradle project whose build takes `backend/`, the built web app and `desktop/ui/` from the repository. `app/src/main/` the app, `app/src/test/` the JVM tests, `app/src/androidTest/` the device tests, `store/` the Play listing art (generated) ([android/README.md](../../android/README.md), [android.md](android.md)) |
 | `extension/` | Browser connector, loaded unpacked without a build step; `scripts/zip.sh` makes the zip a release attaches and the Chrome Web Store takes, which `desktop.yml` and `check.yml` both run |
-| `sites/` | The gammapdf.com website: static pages deployed as a Cloudflare Worker; its build copies the branding, demos and screenshot from `docs/assets/` and renders the user guide, the privacy policy, the terms and the account-deletion page (`DELETE_ACCOUNT.md`) as pages ([sites/README.md](../../sites/README.md)) |
+| `sites/` | The gammapdf.com website: static pages deployed as a Cloudflare Worker; its build copies the branding, badges, demos and screenshot from `docs/assets/` and the Inter font from `desktop/ui/fonts/`, shows `docker-compose.yml.example` on the front page, and renders the user guide, the privacy policy, the terms and the account-deletion page (`DELETE_ACCOUNT.md`) as pages ([sites/README.md](../../sites/README.md)) |
 | `docs/dev/` | Architecture, implementation notes, and plans |
 | `docs/research/` | Design research: surveys, findings, and the reasoning behind chosen shapes |
 | `docs/user_guide/` | The user guide (`user_guide.md`) and its animations (`assets/`), published at gammapdf.com/docs |
@@ -77,7 +78,7 @@ generated illustrations uses `branding.typewriter()`; see the
 | Location | Contents and consumers |
 |---|---|
 | `docs/assets/branding/` | Generated Gamma PDF logo, hero SVG/PNG pairs and README illustrations; edit sources in `design/brand/` and `tools/branding/` |
-| `docs/assets/badges/` | Store badges kept as files: Google's *Available in the Chrome Web Store* badge (used unmodified, only resized, by the README and gammapdf.com; the Microsoft Store badge is linked from Microsoft), and the README's iPad badge, `testflight-ipad.svg`, drawn in the Microsoft badge's frame and size with Apple's logo (simple-icons), since TestFlight has no badge of its own |
+| `docs/assets/badges/` | Store badges kept as files: Google's *Available in the Chrome Web Store* badge (used unmodified, only resized, by the README and the website; the Microsoft Store badge is linked from Microsoft), and the iPad badge both use, `testflight-ipad.svg`, drawn in the Microsoft badge's frame and size with Apple's logo (simple-icons), since TestFlight has no badge of its own |
 | `docs/assets/demos/` | README demos as small animated WebP images |
 | `docs/assets/screenshots/` | Documentation stills |
 | `backend/gamma/onboarding/welcome.md` | The seeded Welcome page ([onboarding.md](onboarding.md)); Docker copies it with `gamma/`, the desktop freeze adds it with `--add-data` |
@@ -88,7 +89,7 @@ generated illustrations uses `branding.typewriter()`; see the
 | `desktop/assets/entitlements.mac.plist` | macOS signing entitlements |
 | `desktop/assets/appx/` | Microsoft Store package tiles, splash screens, and scale variants |
 | `desktop/assets/store/` | Store listing artwork and listing text |
-| `desktop/ui/tokens.css`, `desktop/ui/fonts/` | The shell's committed copies of the design tokens and the Latin Inter file; `npm run copy-tokens` in `frontend/` refreshes them ([ui-design.md](ui-design.md#the-desktop-shell-and-the-extension)) |
+| `desktop/ui/tokens.css`, `desktop/ui/fonts/` | The shell's committed copies of the design tokens and the Latin Inter file; `npm run copy-tokens` in `frontend/` refreshes them ([ui-design.md](ui-design.md#the-desktop-shell-and-the-extension)), and the website's build copies the Inter file from here |
 | `extension/assets/icons/` | Connector toolbar, manifest, and notification icons |
 | `extension/tokens.css`, `extension/fonts/` | The Connector's committed copies of the same tokens and font, refreshed by the same command |
 | `android/app/src/main/res/mipmap-*/`, `mipmap-anydpi/`, `values/ic_launcher_background.xml` | The Android app's adaptive launcher icon, generated from the mark ([brand guide](../../design/brand/README.md)); hand-made pictures belong in vector-drawable XML, since the branding check treats every PNG or SVG under `res/` as brand output |
@@ -133,7 +134,7 @@ to `assets`. This lets the packager discover `assets/appx/` and the app icon.
 Its application file list includes `assets/icon.png` for the Electron window;
 Store artwork and signing inputs do not need to ship inside the application.
 
-`npm run store-art` delegates to the unified `tools/branding/build.mjs` generator,
+`npm run store-art` runs the unified `tools/branding/build.mjs` generator,
 which refreshes all brand outputs, including `desktop/assets/store/` and
 `desktop/assets/appx/`. It uses the frontend's locked Playwright/Chromium, Python 3,
 and the hero's system font stack; generation works offline. See the

@@ -341,11 +341,12 @@ export async function diagramScenarios(env) {
   });
 
   await step("diagrams: an svg figure in a note is a sanitized image, white, sized and shares the index", async () => {
-    // One block (a list item's continuation lines) holding three diagrams:
-    // a drawing, a flowchart and markup that is no drawing.
-    const indent = (text) => text.split("\n").map((line) => "  " + line).join("\n");
-    const figures = "- Figures\n" + indent([svgFence(levels), fence(flow), svgFence("<div>hi</div>")].join("\n"));
-    const imported = await alice.upload("/api/import/markdown", Buffer.from(figures), "Figures.md", "text/markdown");
+    // One block holding three diagrams: a drawing, a flowchart and markup
+    // that is no drawing.
+    const figures = ["Figures", svgFence(levels), fence(flow), svgFence("<div>hi</div>")].join("\n");
+    const imported = { block_id: (await alice.api("/api/pages", { method: "POST", body: { title: "Figures" } })).id };
+    await alice.api(`/api/pages/${imported.block_id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "figures", parent: imported.block_id, position: "a0", content: figures }] } });
     const stored = async () => {
       const tree = await alice.api(`/api/blocks/${imported.block_id}/subtree`);
       return (tree.block.children || []).map((b) => b.content).find((c) => c.startsWith("Figures")) || "";

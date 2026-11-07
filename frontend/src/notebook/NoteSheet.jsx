@@ -60,7 +60,7 @@ export function NoteSheet({ block, number }) {
   const marks = ctx?.marks.get(block.id) || NO_MARKS;
   const groups = marks.ink;
   // Its handwriting as one drawing, for the replay: every group's strokes.
-  const inks = useSame(groups.map((b) => inkStore.inkFor(b)).filter(Boolean));
+  const inks = useSame(groups.map((b) => inkStore.inkFor(b, { restore: !tools.preview })).filter(Boolean));
   const drawing = useMemo(() => ({ ...newCanvasInk(paper.width, paper.height), strokes: inks.flatMap((ink) => ink.strokes || []) }),
     [inks, paper.width, paper.height]);
   const playing = useOwnReplay(block.id);
@@ -72,26 +72,30 @@ export function NoteSheet({ block, number }) {
   };
   if (!ctx) return null;
   const scale = boxW ? Math.min(MAX_SCALE, boxW / paper.width) : 0;
-  const editable = !tools.readOnly;
+  // A view of the page (a read-only tools value with `preview`, PagePane)
+  // shows the controls the editable sheet has, and a press on one makes the
+  // page live (ctx.onActivate) instead of doing what it does there.
+  const editable = !tools.readOnly || (!!tools.preview && !!tools.canWrite);
+  const press = tools.preview ? () => ctx.onActivate?.(block.id) : null;
   return (
     <div ref={boxRef} className={"noteSheet" + armedClasses(tools)} data-sheet-id={block.id} data-guide="notes.sheet">
       <div className="noteSheetBar">
         {editable ? (
           <button type="button" className={"ctlBtn" + (ctx.inkOpen ? " modeActive" : "")} aria-pressed={ctx.inkOpen}
-            onClick={ctx.onPen} aria-label={t("Write on this page")} data-guide="sheet.pen"
+            onClick={press || ctx.onPen} aria-label={t("Write on this page")} data-guide="sheet.pen"
             title={ctx.inkOpen ? t("Close the markup tools (Esc)") : t("Handwriting: write on this page with a pen, highlighter or eraser")}>
             <PenIcon size={16} />
           </button>
         ) : null}
         {editable ? (
           <button type="button" className={"ctlBtn" + (paperOpen ? " modeActive" : "")} aria-expanded={paperOpen}
-            onClick={() => setPaperOpen((v) => !v)} aria-label={t("Paper of this page")} data-guide="sheet.paper" title={t("Paper: size, pattern and colour of this page")}>
+            onClick={press || (() => setPaperOpen((v) => !v))} aria-label={t("Paper of this page")} data-guide="sheet.paper" title={t("Paper: size, pattern and colour of this page")}>
             <SheetIcon size={16} />
           </button>
         ) : null}
         {drawing.strokes.length ? <InkReplayButton replay={replay} className="ctlBtn" /> : null}
         {ctx.onNotebookView ? (
-          <button type="button" className="ctlBtn" onClick={() => ctx.onNotebookView(block.id)} data-guide="sheet.notebookView"
+          <button type="button" className="ctlBtn" onClick={press || (() => ctx.onNotebookView(block.id))} data-guide="sheet.notebookView"
             aria-label={t("Notebook view")} title={t("Notebook view: the pages beside the notes")}>
             <NotebookIcon size={16} />
           </button>
@@ -113,7 +117,7 @@ export function NoteSheet({ block, number }) {
       ) : null}
       {editable ? (
         <div className="noteSheetFoot">
-          <button type="button" className="ctlBtn" onClick={() => ctx.onAddAfter(block.id)}
+          <button type="button" className="ctlBtn" onClick={press || (() => ctx.onAddAfter(block.id))}
             aria-label={t("Add page below")} title={t("Add a page after this one")}>
             <PlusIcon size={16} />
           </button>

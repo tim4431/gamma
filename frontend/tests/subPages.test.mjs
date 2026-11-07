@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
-  MAX_PAGE_DEPTH, PAGE_PATH_SEP, libraryTree, pageAncestors, pageDescendants, pagePathLabel, topPageOf,
+  MAX_PAGE_DEPTH, PAGE_PATH_SEP, deleteConfirm, libraryTree, pageAncestors, pageDescendants, pagePathLabel, topPageOf,
 } from "../src/library/libraryUtils.js";
 import { rankLibraryPages } from "../src/library/librarySearch.js";
 import { mentionRows } from "../src/editor/mentions.js";
@@ -69,6 +69,30 @@ test("a sub-page's path reads as its ancestors' titles; the pages inside some, p
   assert.deepEqual(pageDescendants(loop, ["a"]), ["b"], "a cycle ends the walk");
 });
 
+test("a delete's confirmation counts the pages inside and quotes one page by its title", () => {
+  const restore = "You can restore them from there for 30 days.";
+  assert.deepEqual(deleteConfirm(PAGES, ["lone"]), {
+    title: "Delete page",
+    message: "Move \"Reading list\" to Recently deleted? You can restore it from there for 30 days.",
+    inside: [],
+  });
+  assert.equal(deleteConfirm(PAGES, ["notes"]).message, `Move "Notes" and the 1 page inside it to Recently deleted? ${restore}`);
+  const proj = deleteConfirm(PAGES, ["proj"]);
+  assert.equal(proj.message, `Move "Project" and the 3 pages inside it to Recently deleted? ${restore}`);
+  assert.deepEqual(proj.inside, ["notes", "todo", "week"]);
+  assert.equal(deleteConfirm(PAGES, ["notes"], "Notes, renamed").message,
+    `Move "Notes, renamed" and the 1 page inside it to Recently deleted? ${restore}`, "the open page's own title wins");
+  assert.match(deleteConfirm(PAGES, ["missing"]).message, /^Move "Untitled" to/);
+
+  const two = deleteConfirm(PAGES, ["lone", "orphan"]);
+  assert.equal(two.title, "Delete 2 pages");
+  assert.equal(two.message, `Move these 2 pages to Recently deleted? ${restore}`);
+  assert.equal(deleteConfirm(PAGES, ["notes", "lone"]).message,
+    `Move these 2 pages and the 1 page inside them to Recently deleted? ${restore}`);
+  assert.equal(deleteConfirm(PAGES, ["proj", "notes", "lone"]).message,
+    `Move these 3 pages and the 2 pages inside them to Recently deleted? ${restore}`, "a page selected is not counted again inside");
+});
+
 test("Ctrl+P and the chat's pickers: a sub-page's row carries its path, and the path matches", () => {
   const tree = libraryTree();
   const pages = PAGES.map((p, i) => ({ ...p, updated_at: `2026-01-0${i + 1}` }));
@@ -76,6 +100,9 @@ test("Ctrl+P and the chat's pickers: a sub-page's row carries its path, and the 
   const pathOf = (id) => rows.find((r) => r.page.id === id).path;
   assert.equal(pathOf("week"), "Project › Notes");
   assert.equal(pathOf("lone"), "");
+  const moving = rankLibraryPages(pages, tree, "", { exclude: new Set(["proj"]) });
+  assert.equal(moving.find((r) => r.page.id === "week").path, "Project › Notes", "an excluded page still names the pages inside it");
+  assert.ok(!moving.some((r) => r.page.id === "proj"));
   const hits = rankLibraryPages(pages, tree, "project");
   assert.equal(hits[0].page.id, "proj", "the title hit first");
   assert.deepEqual(hits.slice(1).map((r) => r.page.id).sort(), ["notes", "todo", "week"], "then the pages inside it");

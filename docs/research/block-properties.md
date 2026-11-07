@@ -102,14 +102,13 @@ page: what it carries, where it is filed, what it is about.
 | where it came from | `web_url`, `web_meta` (a clip), `web_clips` (the "Web clips" page), `markdown_import` (the file's hash), `notion_id`, `aliases` (a zip import), `notability_import`, `goodnotes_import` (a note app's re-import key), `zotero_key`, `zotero_pdf`, `zotero_note`, `zotero_rdf`, `zotero_annotation`, `zotero_attachments` / `zotero_attachment`, `seeded` (the Welcome page and the Sketchbook) | [dev/extension.md](../dev/extension.md), [dev/import_export.md](../dev/import_export.md), [dev/zotero_sync.md](../dev/zotero_sync.md), [dev/onboarding.md](../dev/onboarding.md) |
 | in Recently deleted | `deleted_at`, `deleted_by`, `deleted_with` (on a sub-page deleted with a page: that page, whose restore brings it back) | [dev/home_library.md](../dev/home_library.md) "Recently deleted" |
 
-Keys no writer produces any more. `highlight_id` (the block id is the
-highlight's id since step 30), `link_highlight_id`, `sourceUrl`, the
-`folder` / `category` tags and `pdf_page` on a highlight are rewritten by
-`gamma/normalize.py` when a backup is restored, and no other code knows
-them. Two more stay in the rows that have them: `summary` (a page summary
-typed before July 2026, or the old Welcome page's canned one), which only
-the agent's page header still reads, and `guide_demo`, the first-run
-tour's old marker, which nothing reads.
+Keys no writer produces any more. `pdf_page` on a highlight is rewritten
+by `gamma/normalize.py` when a workspace is upgraded or a backup is
+restored; the properties panel tags one it still finds "Old key". Two stay
+in the rows that have them: `summary` (a page summary typed before July
+2026, or the old Welcome page's canned one), which only the agent's page
+header still reads, and `guide_demo`, the first-run tour's old marker,
+which nothing reads.
 
 ## Is it well defined?
 
@@ -312,8 +311,12 @@ says otherwise.
   apps still send: `rgba()` colours, `""` link keys and pins,
   `guide_demo` in old rows.
 - The old record shapes and the cached derivations above.
-- The Logseq `{:width N}` image size in content: the Logseq and Markdown
-  imports still store it as written, so its readers stay until the
-  imports convert it.
+- The Logseq `{:width N}` image size in content. The Logseq and Markdown
+  imports convert it to `![alt|N](url)`, but stored rows keep it: a
+  paste, the API or a mirror peer stores it as sent, an earlier release's
+  imports stored it as written, and a restore rewrites it only on a copy
+  stamped below `migrations.WS_VERSION_BASE` (a backup from before the
+  stamps, or a scoped Gamma export). So its readers stay: one per side,
+  `note_markup`'s image sizes and `mdMarks.js` `scanImageSyntax`.
 - A mirror whose remote predates the data-format check still syncs.
   Refusing it would stop syncing with servers on v0.2.15 to v0.2.17.

@@ -34,6 +34,14 @@ test('every other permission is granted, as Electron grants it without a handler
   assert.deepEqual(asked, []);
 });
 
+test('screen capture is granted, on macOS and elsewhere', async () => {
+  for (const platform of ['darwin', 'win32', 'linux']) {
+    const { asked, request } = setup({ platform, status: 'denied' });
+    assert.equal(await request('display-capture'), true);
+    assert.deepEqual(asked, []);
+  }
+});
+
 test('outside macOS the microphone is granted without asking the system', async () => {
   const { asked, denied, request } = setup({ platform: 'win32', status: 'denied' });
   assert.equal(await request('media', MIC), true);

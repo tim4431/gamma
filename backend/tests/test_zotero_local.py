@@ -537,6 +537,15 @@ def test_the_gamma_notes_region_takes_inserts_at_its_place_on_the_page(side):
 
 # --- note pictures ------------------------------------------------------------------------
 
+def test_a_keyed_pictures_size_is_read_from_its_alt_or_after_it():
+    attrs = {}
+    keyed = zl._keyed("![a|320](/api/uploads/ab12.png) ![b](/api/uploads/cd34.png){:width 120} "
+                      "`![c](/api/uploads/ef56.png){:width 9}`",
+                      {"ab12.png": "PICT2345", "cd34.png": "LGSK2345", "ef56.png": "CDEF2345"}.get, attrs)
+    assert keyed == ("\ue000PICT2345\ue001 \ue000LGSK2345\ue001 `![c](/api/uploads/ef56.png){:width 9}`")
+    assert attrs == {"PICT2345": ("a", "320"), "LGSK2345": ("b", "120")}
+
+
 def test_a_zotero_picture_goes_back_as_its_tag_and_a_pull_keeps_its_block(side):
     name, _ = storage.store_file(side.ws, PNG, ".png")
     mine, _ = storage.store_file(side.ws, PNG + b"gamma", ".png")

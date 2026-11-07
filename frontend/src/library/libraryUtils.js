@@ -2,7 +2,7 @@
 // usable by dialogs, home views, and future tests without coupling them to React.
 
 import { generateNKeysBetween } from "fractional-indexing";
-import { fmtDate, t } from "../shared/i18n/i18n.js";
+import { fmtDate, t, tn } from "../shared/i18n/i18n.js";
 import { itemTypeOf } from "../shared/lib/itemTypes.js";
 
 // How a folder's path reads: its names from the top, joined (the server's
@@ -155,6 +155,34 @@ export function pageDescendants(pages, ids) {
     }
   }
   return queue.slice(ids.length);
+}
+
+// The confirmation of deleting pages `ids` (the library's Delete and the
+// page header's trash button): {title, message, inside}. The pages inside
+// them go to Recently deleted with them (the server's cascade), so `inside`
+// holds their ids and the message counts them. One page is quoted by its
+// title: `title` when given (the open page's own, which may be newer), else
+// its entry's in `pages`.
+export function deleteConfirm(pages, ids, title) {
+  const inside = pageDescendants(pages, ids);
+  const n = inside.length;
+  if (ids.length === 1) {
+    const page = title || (pages || []).find((p) => p.id === ids[0])?.content || t("Untitled");
+    return {
+      title: t("Delete page"),
+      message: n ? tn("Move \"{page}\" and the {n} page inside it to Recently deleted? You can restore them from there for 30 days.",
+        "Move \"{page}\" and the {n} pages inside it to Recently deleted? You can restore them from there for 30 days.", n, { page })
+        : t("Move \"{page}\" to Recently deleted? You can restore it from there for 30 days.", { page }),
+      inside,
+    };
+  }
+  return {
+    title: t("Delete {n} pages", { n: ids.length }),
+    message: n ? tn("Move these {count} pages and the {n} page inside them to Recently deleted? You can restore them from there for 30 days.",
+      "Move these {count} pages and the {n} pages inside them to Recently deleted? You can restore them from there for 30 days.", n, { count: ids.length })
+      : t("Move these {n} pages to Recently deleted? You can restore them from there for 30 days.", { n: ids.length }),
+    inside,
+  };
 }
 
 // The folder or label a typed name means among `items` ({id, name}): the
@@ -358,6 +386,15 @@ export function scorePaperMatch(text, page) {
     if (word.length > 2 && normalizedText.includes(word)) score += 1;
   }
   return score;
+}
+
+// Whether the link dialog's field holds a link rather than a search of the
+// pages: a web address, an arXiv id (with "arXiv:" or without) or a DOI
+// (with "doi:" or without), each of which normalizeLinkInput makes a URL.
+export function isLinkInput(value) {
+  const input = (value || "").trim();
+  return /^https?:\/\/\S+$/i.test(input) || /^arxiv:\s*\d{4}\.\d{4,5}(v\d+)?$/i.test(input)
+    || /^\d{4}\.\d{4,5}(v\d+)?$/.test(input) || /^(doi:\s*)?10\.\d{4,9}\/\S+$/i.test(input);
 }
 
 export function normalizeLinkInput(value) {

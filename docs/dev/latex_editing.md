@@ -21,7 +21,7 @@ In Markdown `\[` is also an escaped bracket. Gamma keeps the two apart in
 three ways:
 
 - It writes a literal bracket with only its opener escaped: `[x]` becomes
-  `\[x]` (`text_box.escape_markdown`, `zotero_notes._escape`), because only
+  `\[x]` (`text_box.escape_markdown`, `zotero_notes.escape`), because only
   `[` opens a link, an image, a footnote, a task box or a `[[ref]]`. That
   leaves no closer to pair. An older note may still hold `\[x\]`.
 - A paste of the note source Gamma itself last copied (a copy or cut in an
@@ -46,7 +46,7 @@ its space, and so does one ending a padded one-line display formula, which
 remark-math strips. Neither kind converts in these places:
 
 - after an escaped backslash (`\\[2pt]`);
-- in code (fences of every shape and code spans);
+- in code: fences of every shape and code spans (`mdCode.js`, below);
 - inside a dollar formula the text already holds (`\text{for \(x\)}` in a
   `$$ … $$`);
 - inside an address. An address runs from `://` or `www.` to the next
@@ -94,6 +94,54 @@ previews show it so (`joinBlockText`, `AiGhostRow`). `dollarMath`'s `keep`
 is the text the AI read. The pairs and dollar spans that text holds in its
 prose stay as written. `tests/shared/pastemath.json` holds the cases both
 suites check.
+
+Where code is, the keys, a paste, the editor's marks and formulas and the chat
+read one way: `shared/lib/mdCode.js` (`codeFences`, `codeSpans`, `codeTest`,
+`mapProse`), with `paste_math._fences`, `_code_spans`, `_code_test` and
+`map_prose` its backend twins. `tests/shared/codefences.json` holds the cases both suites
+check, and `tests/mdCode.test.mjs` holds the reading to the renderer's own
+parser, on those cases and on random notes.
+
+`codeFences` keeps a stack of the quotes, list items and footnotes open at each
+line, as the parser does, so a fence ends with its container and a `> ``` ` in
+a plain fence is code. It does not read HTML blocks, `$$` blocks or indented
+code: a ``` line in a formula opens a fence, as it always has, and text the
+note's preprocessing would close a formula with stays out of it. A list starts
+wherever a marker stands, also under a paragraph, where the parser takes a
+number past 1 as text, and an empty item stays open across a blank line. Each
+fence carries `cont`, what a new line of its code starts with: a quote's marks,
+a list item's indent ([hotkeys.md](hotkeys.md)).
+
+A dollar in code is no math to `findMathAtCursor`, `scanMathSpans` and
+`_in_math`. Beside formulas `codeSpans(text, true)` reads code as the parser
+does, whichever starts first holding the other, so `` `$5` `` is code and
+`$\text{``a''}$` a formula (`codeTest`). A fence that opens inside a `$$` is
+none to them, so a TeX line starting with `~~~` loses nothing. A lone `$` ends
+with its paragraph: past a blank line the next dollar opens afresh, and a `$`
+on the next line can still close it.
+
+A paste of lines into marked code or display math goes through
+`fences.codePaste`, for a note's rows and for a comment's field alike: each line
+behind the marks, once, as `sourceCopy.js` records the marks a copy came with.
+
+A code span is CommonMark's, kept to one
+line: a run of backticks opens it and the next run of the same length
+closes it, so ``` ``a`b`` ``` is one span. A backslash escapes an opener's
+first backtick (`` \`x` `` is no code), never a closer's, since a backslash
+inside code is literal. The editor reads the same spans: `mdScan.protectedSpans`
+(where mentions, links and pictures are not read) and the inline-code mark
+of `mdMarks.scanMarks`, which hides a span's backtick runs whatever their
+length and whose Ctrl+E unwraps them whole.
+
+A chat reply's math follows a rule of its own, declared as the other half
+of a pair with `dollarMath`: `diagramMarkdown.normalizeChatMarkdown`
+([diagrams.md](diagrams.md) "The fence layer") turns every `\[ … \]` into a
+`$$` block and every `\( … \)` into `$ … $`. A model writes `\[ x \]` only
+as display math, while in a note `\[x\]` may be an escaped bracket, so a
+reply must not follow the note rule, and a note must not follow the
+reply's. The two share only where code is (`mdCode.mapProse`), so a reply's
+code spans, one backtick or two, and its fences stay as written.
+`tests/mdCode.test.mjs` checks the pair.
 
 Left open: a pasted formula can still pair with a lone `$` the note
 already had elsewhere (`Budget: $500` on the line above). The paste
@@ -226,7 +274,7 @@ outside the warmed set.
 Validation (from `frontend`):
 
 ```sh
-node --test tests/latexInput.test.mjs tests/latexCompletion.test.mjs tests/latexLint.test.mjs tests/pasteMath.test.mjs
+node --test tests/latexInput.test.mjs tests/latexCompletion.test.mjs tests/latexLint.test.mjs tests/pasteMath.test.mjs tests/mdCode.test.mjs
 npm run e2e:latex
 ```
 

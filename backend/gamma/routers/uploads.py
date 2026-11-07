@@ -19,6 +19,7 @@ from ..storage import (
     IMAGE_EXTENSIONS,
     INLINE_EXTENSIONS,
     SANDBOXED_EXTENSIONS,
+    UPLOAD_REF_RE,
     display_filename,
     find_upload_file,
     pdf_url,
@@ -243,6 +244,21 @@ def _pages_reference(conn, pages: list[str], filename: str) -> bool:
         "SELECT 1 FROM unified_blocks WHERE page_id IN (SELECT value FROM json_each(?)) "
         "AND (instr(content, ?) > 0 OR instr(properties, ?) > 0) LIMIT 1",
         (reach, needle, needle)).fetchone() is not None
+
+
+def _pages_upload_names(conn, pages: list[str]) -> set[str]:
+    """Every file ``_pages_reference`` says yes to, in one read, for a whole
+    export: that question costs a scan of the pages' blocks, and an export
+    would ask it of each of its files."""
+    reach = json.dumps(pages)
+    names = {f"{doc}.pdf" for doc, in conn.execute(
+        "SELECT doc_id FROM unified_blocks WHERE doc_id != '' AND id IN (SELECT value FROM json_each(?))",
+        (reach,))}
+    for content, props in conn.execute(
+            "SELECT content, properties FROM unified_blocks WHERE page_id IN (SELECT value FROM json_each(?)) "
+            "AND (instr(content, '/api/uploads/') > 0 OR instr(properties, '/api/uploads/') > 0)", (reach,)):
+        names.update(UPLOAD_REF_RE.findall(f"{content} {props}"))
+    return names
 
 
 @router.get("/pdf-info/{doc_id}")

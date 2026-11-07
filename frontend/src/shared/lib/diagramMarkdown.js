@@ -3,6 +3,8 @@
 // lib/svgSanitize.js). The two kinds share one index sequence in source
 // order: the nth diagram of a note, whatever its kind, is its nth rendered
 // one (docs/dev/diagrams.md).
+import { codeFences, mapProse } from "./mdCode.js";
+
 const DIAGRAM_LANG = /^(mermaid|svg)$/i;
 const diagramKind = (lang) => DIAGRAM_LANG.exec(lang || "")?.[1].toLowerCase() || null;
 
@@ -44,45 +46,22 @@ export function remarkDiagrams() {
   };
 }
 
-// A fence's opening line, with the quote/list prefix Markdown allows in front:
-// [, prefix, ticks, info string]. Quote marks as (?:[ \t]*>)*, the space after
-// one left to the next [ \t]*: an optional space of its own would backtrack
-// exponentially on "> > > …". The fence scanners here and editor/pasteMath.js
-// read a line by it.
-export const FENCE_LINE = /^((?:[ \t]*>)*(?:[ \t]*(?:[-+*]|\d+[.)])[ \t]+)?[ \t]*)(`{3,}|~{3,})([^\r\n]*)/;
-
 // The diagram fences of a note in source order — the same order the
 // rendered view shows them, so the nth diagram is the nth entry (quotes and
-// list items included, like mapOutsideCodeFences). Each: its `kind`
-// ("mermaid" | "svg"), the opener line's range {from, to} and its info
-// string split into {lang, meta, width}, plus `end`, where the whole fence
-// ends (the closing line's end; the text's end while it is still open,
-// `closed: false`).
+// list items included: mdCode.codeFences). Each: its `kind` ("mermaid" |
+// "svg"), the opener line's range {from, to} and its info string split into
+// {lang, meta, width}, plus `end`, where the whole fence ends (the closing
+// line's end; the text's end while it is still open, `closed: false`).
 export function scanDiagramFences(text) {
   const out = [];
-  let fence = null, open = null, pos = 0;
-  for (const line of (text || "").split("\n")) {
-    const end = pos + line.length;
-    const m = FENCE_LINE.exec(line);
-    if (fence) {
-      if (m && m[2][0] === fence[0] && m[2].length >= fence.length && !m[3].trim()) {
-        if (open) { open.end = end; open.closed = true; }
-        fence = null;
-        open = null;
-      }
-    } else if (m && !(m[2][0] === "`" && m[3].includes("`"))) {
-      fence = m[2];
-      const info = m[3].trim();
-      const lang = info.split(/\s+/)[0] || "";
-      const kind = diagramKind(lang);
-      if (kind) {
-        const meta = info.slice(lang.length).trim();
-        open = { kind, from: pos, to: end, prefix: m[1], ticks: m[2], lang, meta, width: diagramWidth(meta),
-          end: (text || "").length, closed: false };
-        out.push(open);
-      }
-    }
-    pos = end + 1;
+  for (const f of codeFences(text)) {
+    const info = f.info.trim();
+    const lang = info.split(/\s+/)[0] || "";
+    const kind = diagramKind(lang);
+    if (!kind) continue;
+    const meta = info.slice(lang.length).trim();
+    out.push({ kind, from: f.from, to: f.inner, prefix: f.prefix, ticks: f.ticks, lang, meta,
+      width: diagramWidth(meta), end: f.end, closed: f.closed });
   }
   return out;
 }
@@ -99,6 +78,12 @@ export function setDiagramWidth(text, idx, width) {
   return text.slice(0, f.from) + line + text.slice(f.to);
 }
 
+// A chat reply's math as the $ and $$ remark-math reads: every \[ … \] a
+// display block, every \( … \) inline. Not the note rule
+// (editor/pasteMath.dollarMath), on purpose: a model writes \[ x \] only as
+// display math, while in a note "\[x\]" may be an escaped bracket, so a
+// note converts only a pair shaped as a formula is written. What the two
+// share is where code is (mdCode.mapProse: fences and code spans).
 function normalizeMath(text) {
   return text
     .replace(/\\\[([\s\S]*?)\\\]/g, (_, m) => `\n$$\n${m}\n$$\n`)
@@ -109,25 +94,23 @@ function normalizeMath(text) {
         : `$${inner.replace(/\\\|/g, "\\Vert ").replace(/\|/g, "\\vert ")}$`);
 }
 
-// Preserve fenced source (including unfinished fences, tildes, and fences in
-// lists/quotes). Math normalization must never rewrite diagram labels or code.
+// `text` with `transform` applied outside its code fences (unfinished ones,
+// tildes, and fences in lists and quotes: mdCode.codeFences), each fence
+// kept with its closing line's line break. Inline code is left to the
+// transform: the rendered view's preprocessing reads it with the math.
 export function mapOutsideCodeFences(text, transform) {
-  let fence = null, prose = "", result = "";
-  for (const line of (text || "").match(/[^\n]*\n|[^\n]+$/g) || []) {
-    const marker = FENCE_LINE.exec(line);
-    if (fence) {
-      result += line;
-      if (marker && marker[2][0] === fence[0] && marker[2].length >= fence.length && !marker[3].trim()) fence = null;
-    } else if (marker && !(marker[2][0] === "`" && marker[3].includes("`"))) {
-      result += transform(prose) + line;
-      prose = "";
-      fence = marker[2];
-    } else prose += line;
+  let result = "", pos = 0;
+  for (const f of codeFences(text)) {
+    const end = text[f.end] === "\n" ? f.end + 1 : f.end;
+    result += transform(text.slice(pos, f.from)) + text.slice(f.from, end);
+    pos = end;
   }
-  return result + transform(prose);
+  return result + transform((text || "").slice(pos));
 }
 
-export const normalizeChatMarkdown = (text) => mapOutsideCodeFences(text, normalizeMath);
+// A reply's math, outside its fences and code spans, so diagram labels and
+// code stay as written.
+export const normalizeChatMarkdown = (text) => mapProse(text || "", normalizeMath);
 
 // A diagram's source as a fence of its kind, with enough backticks that
 // none in the source can close it.

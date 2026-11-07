@@ -145,12 +145,17 @@ export function createLibraryMatcher(query) {
 // hits the page's folder/label chips and, for a sub-page, the path of pages
 // it is in (libraryUtils.pagePathLabel, from the pages' `_parentPage`).
 // Ties, and the whole list with no query, go recently viewed first, then
-// open tabs, then the rest by last edit. Rows are {page, section, time,
-// path}: `section` is "pages" under a query, else "recent" / "tabs" /
-// "rest"; `time` is when a recent page was viewed, else its last edit;
-// `path` is the sub-page's path ("" for a library page).
-export function rankLibraryPages(pages, tree, query, { recentViews = [], openTabs = [], limit = 40 } = {}) {
+// open tabs, then the rest by last edit; `first` (page ids) goes before
+// them all, in its own order: a page picker's suggestions (PagePicker.jsx).
+// `exclude` (a Set of ids) are pages it does not list, which still name the
+// pages inside them in a row's path (a move picker leaves out the open page).
+// Rows are {page, section, time, path}: `section` is "pages" under a
+// query, else "first" / "recent" / "tabs" / "rest"; `time` is when a
+// recent page was viewed, else its last edit; `path` is the sub-page's
+// path ("" for a library page).
+export function rankLibraryPages(pages, tree, query, { recentViews = [], openTabs = [], first = [], exclude = null, limit = 40 } = {}) {
   const viewedAt = new Map(recentViews.map((r) => [r.id, r.at]));
+  const firstRank = new Map(first.map((id, i) => [id, i - first.length]));
   const recentRank = new Map(recentViews.map((r, i) => [r.id, i]));
   const tabs = new Set(openTabs.map((tab) => tab.id));
   const tabRank = recentViews.length;
@@ -161,12 +166,13 @@ export function rankLibraryPages(pages, tree, query, { recentViews = [], openTab
     return [...chips.folders, ...chips.labels].map((c) => c.name).concat(path || []);
   };
   return pages
+    .filter((page) => !exclude?.has(page.id))
     .map((page) => {
       const path = pagePathLabel(byId, page.id);
       return {
         page, path,
         score: match ? match(page.content, chipNames(page, path)) : 1,
-        rank: recentRank.get(page.id) ?? (tabs.has(page.id) ? tabRank : tabRank + 1),
+        rank: firstRank.get(page.id) ?? recentRank.get(page.id) ?? (tabs.has(page.id) ? tabRank : tabRank + 1),
       };
     })
     .filter((r) => r.score > 0)
@@ -175,7 +181,7 @@ export function rankLibraryPages(pages, tree, query, { recentViews = [], openTab
     .slice(0, limit)
     .map(({ page, path, rank }) => ({
       page, path,
-      section: match ? "pages" : rank < tabRank ? "recent" : rank === tabRank ? "tabs" : "rest",
+      section: match ? "pages" : rank < 0 ? "first" : rank < tabRank ? "recent" : rank === tabRank ? "tabs" : "rest",
       time: viewedAt.get(page.id) || page.updated_at,
     }));
 }

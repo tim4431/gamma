@@ -31,12 +31,9 @@ struct HostInfo: Encodable, Equatable {
     /// so (`pencil` with `phase`).
     var pencilPhases = true
     /// The `stroke` and `hold` samples carry the Pencil's barrel roll, a
-    /// seventh value (UITouch.rollAngle, iPadOS 17.5: an Apple Pencil Pro),
-    /// which turns a calligraphy pen's nib; the web shows its Lock angle.
-    var pencilRoll: Bool = {
-        if #available(iOS 17.5, *) { return true }
-        return false
-    }()
+    /// seventh value (UITouch.rollAngle: an Apple Pencil Pro), which turns a
+    /// calligraphy pen's nib; the web shows its Lock angle.
+    var pencilRoll = true
     /// The host plays `haptic` (PencilHaptics).
     var haptics = true
     /// The host holds the files the system opens in the app (OpenedFiles)
@@ -297,8 +294,8 @@ private func decodeWebValue<T: Decodable>(_ type: T.Type, from value: Any) throw
 
 enum PencilGesture: String, Encodable { case tap, squeeze }
 
-/// A squeeze's phase (iPadOS 17.5, an Apple Pencil Pro): its start and its
-/// cancel come as `squeeze`, its end as `pencil` (PencilGestures).
+/// A squeeze's phase (an Apple Pencil Pro): its start and its cancel come
+/// as `squeeze`, its end as `pencil` (PencilGestures).
 enum SqueezePhase: String, Encodable { case began, ended, cancelled }
 
 /// Native → web: `window.gammaNative.receive(msg)`, awaited.

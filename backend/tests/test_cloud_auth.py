@@ -848,13 +848,13 @@ def test_profile_pull_push_and_debounce(cloud, monkeypatch):
     assert cloud_sync.sync_profile(account_of("ca_mia")) == "same"
 
     # a change elsewhere is pulled by the hourly check
-    _elsewhere(cloud, "ca_mia", {"theme": "night", "enterNewNote": True})
-    assert cloud_sync.check(account_of("ca_mia")) == "ok" and get_profile(account_of("ca_mia"))[0] == {"theme": "night", "enterNewNote": True}
+    _elsewhere(cloud, "ca_mia", {"theme": "night", "enterNewBlock": True})
+    assert cloud_sync.check(account_of("ca_mia")) == "ok" and get_profile(account_of("ca_mia"))[0] == {"theme": "night", "enterNewBlock": True}
 
     # the cloud lost its copy: this one goes up again
     cloud.prefs["sub-ca_mia"].clear()
     assert cloud_sync.sync_profile(account_of("ca_mia")) == "pushed"
-    assert _cloud_copy(cloud, "ca_mia") == {"theme": "night", "enterNewNote": True}
+    assert _cloud_copy(cloud, "ca_mia") == {"theme": "night", "enterNewBlock": True}
     # only the profile travels: never the provider entries or the active entry
     assert {path for _, path in cloud.calls if path.startswith("/api/me/prefs")} == {"/api/me/prefs/profile"}
     # the merge base is never served by the generic prefs endpoints
@@ -865,12 +865,12 @@ def test_profile_pull_push_and_debounce(cloud, monkeypatch):
 def test_first_sync_asks_when_the_copies_differ(cloud, monkeypatch):
     monkeypatch.setattr(cloud_sync, "profile_changed", lambda username: None)
     make_user("ca_ria", "pw-ca_ria-123")
-    set_profile(account_of("ca_ria"), {"theme": "sepia", "enterNewNote": False})
-    _elsewhere(cloud, "ca_ria", {"theme": "light", "enterNewNote": True})
+    set_profile(account_of("ca_ria"), {"theme": "sepia", "enterNewBlock": False})
+    _elsewhere(cloud, "ca_ria", {"theme": "light", "enterNewBlock": True})
     c = link_account(cloud, "ca_ria")
     # neither copy replaced the other: the person chooses
-    assert get_profile(account_of("ca_ria"))[0] == {"theme": "sepia", "enterNewNote": False}
-    assert _cloud_copy(cloud, "ca_ria") == {"theme": "light", "enterNewNote": True}
+    assert get_profile(account_of("ca_ria"))[0] == {"theme": "sepia", "enterNewBlock": False}
+    assert _cloud_copy(cloud, "ca_ria") == {"theme": "light", "enterNewBlock": True}
     assert c.get("/api/auth/cloud/sync-status").json()["profile"]["state"] == "choose"
     assert c.get("/api/prefs/profile").json()["cloud_choice"] is True
     assert "cloud-sync-choice" in [n["id"] for n in c.get("/api/notices").json()["notices"]]
@@ -881,9 +881,9 @@ def test_first_sync_asks_when_the_copies_differ(cloud, monkeypatch):
     # merge: the defaults are the base, so each side keeps what it changed from them; an entry
     # neither side holds yet is at its default
     r = c.post("/api/auth/cloud/sync", json={"action": "merge",
-                                             "defaults": {"theme": "light", "enterNewNote": False, "pdfDarkPage": False}})
+                                             "defaults": {"theme": "light", "enterNewBlock": False, "pdfDarkPage": False}})
     assert r.status_code == 200 and r.json()["outcome"] == "merged" and r.json()["profile"]["state"] == "synced"
-    both = {"theme": "sepia", "enterNewNote": True, "pdfDarkPage": False}
+    both = {"theme": "sepia", "enterNewBlock": True, "pdfDarkPage": False}
     assert get_profile(account_of("ca_ria"))[0] == both and _cloud_copy(cloud, "ca_ria") == both
     assert c.get("/api/prefs/profile").json()["cloud_choice"] is False
     assert "cloud-sync-choice" not in [n["id"] for n in c.get("/api/notices").json()["notices"]]
@@ -906,7 +906,7 @@ def test_fetch_and_push_replace_one_copy(cloud, monkeypatch):
     assert _cloud_copy(cloud, "ca_sia") == {"theme": "sepia"} and get_profile(account_of("ca_sia"))[0] == {"theme": "sepia"}
     # fetch: the cloud's copy replaces this one, a newer change here included
     _elsewhere(cloud, "ca_sia", {"theme": "night"})
-    set_profile(account_of("ca_sia"), {"theme": "gray", "enterNewNote": True})
+    set_profile(account_of("ca_sia"), {"theme": "gray", "enterNewBlock": True})
     assert c.post("/api/auth/cloud/sync", json={"action": "fetch"}).json()["outcome"] == "pulled"
     assert get_profile(account_of("ca_sia"))[0] == {"theme": "night"}
     assert c.post("/api/auth/cloud/sync", json={"action": "sync"}).json()["outcome"] == "same"
@@ -923,13 +923,13 @@ def test_changes_on_two_servers_merge_per_preference(cloud, monkeypatch):
     monkeypatch.setattr(cloud_sync, "profile_changed", lambda username: None)
     c = link_account(cloud, "ca_tom")
     edit = lambda **entries: c.patch("/api/prefs/profile", json={"set": entries}).json()  # noqa: E731
-    edit(theme="light", language="en", enterNewNote=False)
+    edit(theme="light", language="en", enterNewBlock=False)
     assert cloud_sync.sync_profile(account_of("ca_tom")) == "pushed"
     # here the theme, elsewhere the language, before either synced: both kept
     edit(theme="dark")
-    _elsewhere(cloud, "ca_tom", {"theme": "light", "language": "zh", "enterNewNote": False})
+    _elsewhere(cloud, "ca_tom", {"theme": "light", "language": "zh", "enterNewBlock": False})
     assert cloud_sync.sync_profile(account_of("ca_tom")) == "merged"
-    both = {"theme": "dark", "language": "zh", "enterNewNote": False}
+    both = {"theme": "dark", "language": "zh", "enterNewBlock": False}
     assert get_profile(account_of("ca_tom"))[0] == both and _cloud_copy(cloud, "ca_tom") == both
     # one preference changed on both sides: the newer profile's value
     edit(theme="sepia")
@@ -938,6 +938,25 @@ def test_changes_on_two_servers_merge_per_preference(cloud, monkeypatch):
     _elsewhere(cloud, "ca_tom", {**both, "theme": "gray"})
     edit(theme="solarized")
     assert cloud_sync.sync_profile(account_of("ca_tom")) == "pushed" and _cloud_copy(cloud, "ca_tom")["theme"] == "solarized"
+
+
+def test_a_server_on_older_code_keeps_an_entry_it_does_not_know(cloud, monkeypatch):
+    monkeypatch.setattr(cloud_sync, "profile_changed", lambda username: None)
+    c = link_account(cloud, "ca_una")
+    edit = lambda **entries: c.patch("/api/prefs/profile", json={"set": entries}).json()  # noqa: E731
+    edit(theme="light", language="en")
+    assert cloud_sync.sync_profile(account_of("ca_una")) == "pushed"
+    before = _cloud_copy(cloud, "ca_una")
+    # a first load of newer code adds the entry, and the person then changes it
+    edit(enterNewBlock=True)
+    assert cloud_sync.sync_profile(account_of("ca_una")) == "pushed"
+    edit(enterNewBlock=False)
+    assert cloud_sync.sync_profile(account_of("ca_una")) == "pushed"
+    # the older server's copy lacks it, even when that copy is the newer one: its next sync takes the entry along
+    there = cloud_sync.merge_profiles(before, {**before, "theme": "dark"}, _cloud_copy(cloud, "ca_una"), local_newer=True)
+    assert there == {"theme": "dark", "language": "en", "enterNewBlock": False}
+    _elsewhere(cloud, "ca_una", there)
+    assert cloud_sync.sync_profile(account_of("ca_una")) == "pulled" and get_profile(account_of("ca_una"))[0] == there
 
 
 def test_a_stale_tab_does_not_undo_a_synced_change(cloud, monkeypatch):

@@ -24,7 +24,7 @@ export async function trashScenarios(env) {
       const row = page.locator(".fileRow", { hasText: "Doomed page" });
       await row.click({ button: "right" });
       await page.locator(".ctxMenuItem", { hasText: "Delete" }).click();
-      const confirm = page.locator(".confirmModal", { hasText: "Move this page to Recently deleted?" });
+      const confirm = page.locator(".confirmModal", { hasText: "Move \"Doomed page\" to Recently deleted?" });
       await confirm.waitFor();
       await confirm.getByRole("button", { name: "Delete", exact: true }).click();
       await row.waitFor({ state: "detached" });

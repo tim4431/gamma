@@ -73,7 +73,7 @@ mask and home-screen icons (full-bleed plates through the `bleed` option,
 and the Android app's launcher icon and Play Store art (below).
 They are generated copies because each package must remain self-contained.
 The website (`sites/`) keeps no copies: `sites/build.mjs` takes its favicon,
-logo, hero and illustrations from these paths at each build.
+logo and hero from these paths at each build.
 
 The Android app's launcher icon is adaptive, three layers the launcher masks
 to its own shape (`android/app/src/main/res/`): the plate colour

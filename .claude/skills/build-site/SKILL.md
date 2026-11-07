@@ -6,13 +6,15 @@ description: Build, check and deploy the gammapdf.com website from a branch by d
 # Deploy the website
 
 `.github/workflows/site.yml`, dispatched on a branch, runs the `check` job
-(a strict build: every include expanded, every internal link and anchor
-resolving, the pages present, a wrangler dry run) and, when it passes, the
+(a strict build: every include expanded, every internal link, picture and
+anchor resolving, the pages present, a wrangler dry run) and, when it passes, the
 `deploy` job (`wrangler deploy` of `sites/dist` as the `gammapdf-site`
 Worker on gammapdf.com + www). It builds what is PUSHED on that branch:
 `sites/` plus what the build copies and renders (the artwork and demos under
-`docs/assets/`, the favicon, `PRIVACY.md`, and the documents under `docs/`
-that become the site's `/docs/` pages). Never commit here.
+`docs/assets/`, the font under `desktop/ui/fonts/`, the favicon,
+`docker-compose.yml.example`, which the front page shows, `PRIVACY.md`,
+and the documents under `docs/` that become the site's `/docs/` pages). Never
+commit here.
 Details: [sites/README.md](../../../sites/README.md),
 [docs/dev/github_actions.md](../../../docs/dev/github_actions.md#siteyml).
 
@@ -29,7 +31,7 @@ for `main`.
 2. **What will ship**:
 
    ```bash
-   git status --short sites/ PRIVACY.md docs/ frontend/public/media/icons/
+   git status --short sites/ PRIVACY.md docs/ desktop/ui/fonts/ frontend/public/media/icons/ docker-compose.yml.example
    git fetch -q origin
    git log --oneline origin/<branch>..<branch>
    ```

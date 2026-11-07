@@ -39,9 +39,7 @@
     <rect class="m-chip" x="279" y="44" width="24" height="18" rx="3" />
     <ellipse class="m-ink" cx="291" cy="53" rx="7" ry="3.5" />
   </g>
-  <circle class="m-line-dim" cx="283" cy="72" r="1.4" />
   <rect class="m-line-dim" x="287" y="70.5" width="15" height="3" rx="1.5" />
-  <circle class="m-line-dim" cx="283" cy="82" r="1.4" />
   <rect class="m-line-dim" x="287" y="80.5" width="11" height="3" rx="1.5" />
 
   <!-- the pen keeps writing: a stroke under the second line -->

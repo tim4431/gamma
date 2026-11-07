@@ -342,6 +342,18 @@ def test_a_server_backup_of_a_damaged_workspace_records_it_and_tells_admins(data
     assert integrity.failures() == {} and notices.database_damage("admin") is None
 
 
+def test_a_failure_of_a_file_no_check_reads_raises_no_notice(data_dir):
+    """The checks cover users.db and the workspaces' files
+    (``integrity.db_files``). A failure recorded for another file, which
+    no passing check could clear, is not reported."""
+    stray = data_dir / "users" / "old" / "pages.db"
+    stray.parent.mkdir(parents=True)
+    stray.write_bytes(b"not a database")
+    integrity.record({"users/old/pages.db": "unreadable: file is not a database"}, "server backup old")
+    assert stray not in integrity.db_files()
+    assert integrity.failures() == {} and notices.database_damage("admin") is None
+
+
 def test_admins_check_every_database_on_demand():
     ws, _c = _account("bs_dmg")
     _aws, admin = _account("bs_admin", is_admin=1)

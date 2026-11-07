@@ -69,24 +69,24 @@ def _delete_rows(conn: sqlite3.Connection, doc_id: str) -> None:
 
 
 def ensure_schema(conn: sqlite3.Connection) -> None:
-    """Apply the schema. Rows an index written before ``pdf_fts_rows``
-    existed holds (an older Gamma, a restored backup) are taken over once,
-    in the transaction that creates that table."""
+    """Apply the schema. An index written before ``pdf_fts_rows`` existed
+    (an older Gamma, a restored backup) is brought up to it once, in the
+    transaction that creates that table: its rows are taken over, and a
+    ``pdf_fts_docs`` older still gains ``ver`` (0: re-indexed by the next
+    search)."""
     if conn.execute(_TABLE, ("pdf_fts_rows",)).fetchone():
         for stmt in SCHEMA:
             conn.execute(stmt)
-    else:
-        with write_txn(conn):
-            new = not conn.execute(_TABLE, ("pdf_fts_rows",)).fetchone()  # again, under the write lock
-            rows = conn.execute(_TABLE, ("pdf_fts",)).fetchone()
-            for stmt in SCHEMA:
-                conn.execute(stmt)
-            if new and rows:
-                conn.execute("INSERT OR IGNORE INTO pdf_fts_rows (doc_id, fts_rowid) SELECT doc_id, rowid FROM pdf_fts")
-    try:  # older DBs predate the ver column
-        conn.execute("ALTER TABLE pdf_fts_docs ADD COLUMN ver INTEGER NOT NULL DEFAULT 0")
-    except sqlite3.OperationalError:
-        pass
+        return
+    with write_txn(conn):
+        new = not conn.execute(_TABLE, ("pdf_fts_rows",)).fetchone()  # again, under the write lock
+        rows = conn.execute(_TABLE, ("pdf_fts",)).fetchone()
+        for stmt in SCHEMA:
+            conn.execute(stmt)
+        if new and rows:
+            conn.execute("INSERT OR IGNORE INTO pdf_fts_rows (doc_id, fts_rowid) SELECT doc_id, rowid FROM pdf_fts")
+        if "ver" not in {r[1] for r in conn.execute("PRAGMA table_info(pdf_fts_docs)")}:
+            conn.execute("ALTER TABLE pdf_fts_docs ADD COLUMN ver INTEGER NOT NULL DEFAULT 0")
 
 
 def store_doc(conn: sqlite3.Connection, doc_id: str, pages) -> None:

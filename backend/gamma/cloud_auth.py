@@ -126,6 +126,7 @@ from .server_settings import LOOPBACK_HOSTS, _get_raw, _set_raw, public_url_sett
 
 PROVIDER = "gamma-cloud"
 POLICIES = ("refuse", "claim", "provision", "invited")
+# The account server's built-in public client (cloud/gammacloud/config.py DESKTOP_CLIENT_ID).
 DEFAULT_CLIENT_ID = "gamma-desktop"
 # Every client asks for a refresh token (offline_access) and the preference
 # profile (prefs); the account server lets a confidential client have the

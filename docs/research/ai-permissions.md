@@ -56,6 +56,14 @@ Not taken: an "on request" policy where the model decides when to ask,
 since asking is the user's setting, not the model's call. Per-argument rules
 are left for when a tool needs them.
 
+## Later
+
+Deleting folders and labels began as Ask or Off only. In November 2026
+(issue #137) it took Allow like the rest, once its revert brought a
+folder's chats back, and the chat gained `delete_page` and a dialog that
+reverts several changes at once ([hard-limits.md](hard-limits.md) "What
+the AI's chat would not let a user choose").
+
 ## Sources
 
 - [Claude Code: configure permissions](https://code.claude.com/docs/en/permissions)

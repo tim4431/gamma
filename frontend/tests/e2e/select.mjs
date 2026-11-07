@@ -43,11 +43,13 @@ export const GROUPS = [
   { id: "diagrams", files: ["diagrams.mjs"], s: 19 },
   { id: "mentions", files: ["mentions.mjs"], s: 18 },
   { id: "ink-shapes", files: ["inkShapes.mjs"], s: 18 },
+  { id: "pen", files: ["pen.mjs"], s: 18 },
   { id: "notebooks", files: ["notebooks.mjs"], s: 17 },
   { id: "auth", files: ["auth.mjs"], s: 17 },
   { id: "inbox", files: ["inbox.mjs"], s: 15 },
   { id: "block-properties", files: ["blockProperties.mjs"], s: 15 },
   { id: "ink-ai", files: ["inkAi.mjs"], s: 17 },
+  { id: "tab-groups", files: ["tabGroups.mjs"], s: 25 },
   { id: "quick-open", files: ["quickOpen.mjs"], s: 14 },
   { id: "folders", files: ["folders.mjs"], s: 14 },
   { id: "sub-pages", files: ["subPages.mjs"], s: 14 },
@@ -81,16 +83,16 @@ const ALL = "all";
 const GUIDES = ["guide", "contextual-guide", "triggered-guide"];
 const CHAT = ["chat-navigation", "mentions", "contextual-guide", "triggered-guide", "notes-pdf-share", "touch"];
 // every group that opens a PDF in the viewer
-const PDF_VIEW = ["notes-pdf-share", "translation", "pdf-load", "pdf-touch", "ink", "ink-editing", "ink-shapes", "ink-zoom", "textbox", "pictures", "collab", "comments", "files", "transfers", "touch", "zotero-link", ...GUIDES];
+const PDF_VIEW = ["notes-pdf-share", "translation", "pdf-load", "pdf-touch", "ink", "ink-editing", "ink-shapes", "ink-zoom", "pen", "textbox", "pictures", "collab", "comments", "files", "transfers", "touch", "zotero-link", ...GUIDES];
 const EXPORTS = ["transfers", "files", "ink", "diagrams"];
 // what a change to the handwriting (src/ink/) can break: a text box's menu and a
 // picture's are placed and labelled by the ink layer's helpers; ipad, android: the host
 // claim path; comments: a press with a pen or the Text tool armed leaves a margin card alone;
 // ink-ai: the selection menu's Convert, its requests and the edits their answers make
-const INK = ["ink", "ink-editing", "ink-shapes", "ink-zoom", "ink-ai", "pdf-touch", "triggered-guide", "notebooks", "textbox", "pictures", "touch", "ipad", "android", "comments"];
+const INK = ["ink", "ink-editing", "ink-shapes", "ink-zoom", "ink-ai", "pen", "pdf-touch", "triggered-guide", "notebooks", "textbox", "pictures", "touch", "ipad", "android", "comments"];
 // what a page surface carries (ink, text boxes and pictures) and the tool strip, whose anchors the ink tour uses;
 // ink-ai: Convert to text places a text box
-const MARKUP = ["ink", "ink-editing", "ink-shapes", "ink-zoom", "ink-ai", "pdf-touch", "triggered-guide", "notebooks", "textbox", "pictures", "touch", "comments"];
+const MARKUP = ["ink", "ink-editing", "ink-shapes", "ink-zoom", "ink-ai", "pen", "pdf-touch", "triggered-guide", "notebooks", "textbox", "pictures", "touch", "comments"];
 
 // [glob, groups], first match wins. `**` spans folders, `*` stays in one.
 // ALL is for what every scenario goes through (the app shell, shared UI,
@@ -102,6 +104,7 @@ export const RULES = [
   ["frontend/tests/e2e/select.mjs", []],
   ["frontend/tests/e2e/latexEditor.mjs", []], // its own runner: npm run e2e:latex
   ["frontend/tests/e2e/harness.mjs", ALL],
+  ["frontend/tests/e2e/webkit.mjs", ALL],
   ["frontend/tests/e2e/run.mjs", ALL],
   ["frontend/tests/e2e/**", []],
   ["frontend/tests/**", []],
@@ -111,6 +114,10 @@ export const RULES = [
   ["frontend/src/shared/illustrations/**", GUIDES],
   ["frontend/src/shared/**", ALL],
   ["frontend/src/app/**", ALL],
+  // the tab groups' pure model and the read view of a page in a group that is not live
+  ["frontend/src/workspace/tabLayout.js", ["tab-groups"]],
+  ["frontend/src/workspace/PagePane.jsx", ["tab-groups"]],
+  ["frontend/src/workspace/**", ALL], // the frames every page stands in
   ["frontend/src/main.jsx", ALL],
   ["frontend/src/guide/**", GUIDES],
   // the handwriting state App composes (docs/dev/handwriting.md "Client"): a
@@ -253,6 +260,12 @@ export const RULES = [
   ["backend/gamma/block_index.py", ["notes-pdf-share", "quick-open"]],
   ["backend/gamma/routers/search.py", ["notes-pdf-share", "quick-open"]],
   ["backend/gamma/markdown_zip_import.py", [...EXPORTS, "sub-pages"]], // a Notion export's pages inside pages
+  ["backend/gamma/markdown_zip_links.py", [...EXPORTS, "sub-pages"]], // a parent: is read as a link
+  ["backend/gamma/notion_import.py", [...EXPORTS, "sub-pages"]],
+  ["backend/gamma/markdown_zip_dialects.py", [...EXPORTS, "sub-pages"]], // which directory is a page's
+  ["backend/gamma/notion_html.py", [...EXPORTS, "sub-pages"]], // an HTML page's links, a flat zip's tree
+  ["backend/gamma/notion_*.py", EXPORTS],
+  ["backend/gamma/export_walk.py", EXPORTS],
   ["backend/gamma/markdown_*.py", EXPORTS],
   ["backend/gamma/obsidian_export.py", EXPORTS],
   ["backend/gamma/logseq_*.py", EXPORTS],

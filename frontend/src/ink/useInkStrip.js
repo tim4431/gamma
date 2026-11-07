@@ -17,10 +17,10 @@ import {
 // focusedBlockId: the open page; leaving it disarms the tool. readOnly,
 // and inkStale (the build fence, buildFence.js): no tool that draws is
 // armed. inkTools / setInkToolsRaw: the account's preset list and its raw
-// writer (app/prefs.js); inkAutoPen, inkShapeKind, inkShapeFill and
-// inkEraserReturn: the account's preferences the strip follows.
+// writer (app/prefs.js); inkShapeKind, inkShapeFill and inkEraserReturn:
+// the account's preferences the strip follows.
 export function useInkStrip({ focusedBlockId, readOnly, inkStale, inkTools, setInkToolsRaw,
-  inkAutoPen, inkShapeKind, inkShapeFill, inkEraserReturn }) {
+  inkShapeKind, inkShapeFill, inkEraserReturn }) {
   // The strip: open, the armed tool (a preset id from inkTools, "eraser",
   // "select", "text" for text boxes, "shape" for the Shapes tool, or null
   // for the hand), which options row is open (false, true for the armed
@@ -50,7 +50,9 @@ export function useInkStrip({ focusedBlockId, readOnly, inkStale, inkTools, setI
     [inkUi.tool, readOnly, inkTools, inkStale, inkShapeKind, inkShapeFill, inkShapeStyle]);
   // The Text tool (docs/dev/text_boxes.md) takes every pointer, a stylus's too.
   const textArmed = inkUi.tool === "text" && !readOnly;
-  const inkPenTool = inkAutoPen && !readOnly && !textArmed && !inkStale ? inkPen : null;
+  // The stylus pen where a page may take ink at all; the surfaces it writes
+  // on with nothing armed are pencilActions.js penToolOn's.
+  const inkPenTool = !readOnly && !textArmed && !inkStale ? inkPen : null;
   // Arm a tool; a pen preset also becomes the stylus pen. The options row
   // closes unless the caller keeps it (a duplicate stays editable) or opens
   // it (`open`: the Shapes tool armed from More or S).
@@ -72,11 +74,12 @@ export function useInkStrip({ focusedBlockId, readOnly, inkStale, inkTools, setI
   useEffect(() => {
     const r = inkPrevRef.current;
     if (inkUi.tool === r.tool) return;
-    if (r.tool) r.previous = r.tool;
+    r.previous = r.tool;
     r.tool = inkUi.tool;
   }, [inkUi.tool]);
-  // The tool to go back to: the one armed before the current one, else the
-  // stylus pen (the Pencil's switchPrevious picks the same).
+  // The tool to go back to: the one armed before the current one, the hand
+  // among them, else the stylus pen (the Pencil's switchPrevious picks the
+  // same).
   const inkBack = () => backTool({ tools: inkVisible, pen: inkUi.pen }, { tool: inkUi.tool, previous: inkPrevRef.current.previous });
   // The Shapes tool (More → Shapes, S): armed with its row open, or the
   // tool armed before it given back.

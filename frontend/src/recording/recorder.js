@@ -89,7 +89,7 @@ export function createRecorder(stream, { onChunk, onSegment, onLevel, onState, s
 
   function startLevel() {
     try {
-      audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      audioCtx = new AudioContext();
       analyser = audioCtx.createAnalyser();
       analyser.fftSize = 512;
       audioCtx.createMediaStreamSource(stream).connect(analyser);

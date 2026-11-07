@@ -91,10 +91,10 @@ export function WorkspaceBackups({ value }) {
 
   function download(w, b) {
     // A plain navigation (or the app's fetch): the response is an attachment, so the page stays.
-    // No name of the page's own: the server's (gamma-backup-<workspace>-<name>.zip) names the
-    // file in a browser and in the apps alike.
-    const name = `gamma-backup-${b.name}.zip`;
-    saveUrl(`${API}/workspaces/${encodeURIComponent(w.id)}/backups/${encodeURIComponent(b.name)}/download`)
+    // The listing's filename is the download's Content-Disposition (gamma-backup-<workspace>-<name>.zip),
+    // so a host that saves the file names it as a browser does.
+    const name = b.filename || `gamma-backup-${b.name}.zip`;
+    saveUrl(`${API}/workspaces/${encodeURIComponent(w.id)}/backups/${encodeURIComponent(b.name)}/download`, name)
       .catch((err) => setStatus(t("Could not save {filename}: {message}", { filename: name, message: err.message })));
   }
 

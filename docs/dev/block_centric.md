@@ -194,8 +194,9 @@ tabs, markdown-import and web-clip pages, notes-as-PDF export,
 Old rows were historically tolerated forever by read-side shims, which means
 every renamed property or syntax lived twice in the code. The block-centric
 work replaced that with ONE idempotent normalization pass,
-`gamma/normalize.py`, which every backup restore applies to the imported
-files (`ws_backup._normalize_copies`). The versioned migration runner
+`gamma/normalize.py`, which a restore applies to imported files stamped
+below the base: a backup from before the workspace stamps, a scoped Gamma
+export (`ws_backup._normalize_copies`). The versioned migration runner
 ([migrations.md](migrations.md)) ran it in its baseline migration too,
 until that migration was dropped with every one below `MIN_UPGRADABLE`; a
 new content shape is rewritten by a function there that a numbered step's
@@ -208,8 +209,8 @@ longer lazy `ALTER TABLE` on connect.
 Per-workspace `pages.db`
 - `properties.sourceUrl` (camelCase, earliest pages) → `source_url`; the old
   key is removed.
-- Legacy Logseq image size `![alt](url){:width N}` in block content →
-  Obsidian `![alt|N](url)`.
+- Logseq image size `![alt](url){:width N}` in block content, outside
+  code → Obsidian `![alt|N](url)`.
 - Pages still titled `PDF Notes - <name>` with no `auto_title` marker: title
   becomes `<name>` and `auto_title` is set to it, so the metadata worker may
   still replace it and the prefix special-case in `metadata._save_props` can
@@ -358,8 +359,7 @@ stage.)*
   `doc_id` is still accepted as a compatibility input: it resolves to its
   page (`blocks_store.page_for_doc`), and a doc no page carries contributes
   nothing (the app cannot produce one — deleting a page drops its index
-  rows with it) — the frontend should send
-  `page_id`. `CONTEXT_INTRO` +
+  rows with it); the frontend sends `page_id`. `CONTEXT_INTRO` +
   `page_report_section` (title, `page_properties_line`, document text,
   highlights, notes); the long-paper machinery (excerpt label, document map,
   search relaxation, page cap) is unchanged.

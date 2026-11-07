@@ -92,16 +92,69 @@ activates it.
   gave a port from 9100 up, and this machine's dynamic range starts at 1024
   (`netsh interface ipv4 show dynamicport tcp`). It now asks again below 9100.
 
+## A false box the minimized runs brought to light
+
+Logging the boxes showed `Could not open the origin.`, `Could not clone the
+workspace.` and `Could not open the clone.` in most runs of the clone step, each
+with a `loadURL` rejected as `ERR_FAILED (-2)`. They were native boxes in the
+middle of a run, in the app as much as in the suite, and sometimes the rejection
+failed the step. A trace of the content view's navigation events gave the
+cause, and it was not the auto-login's `location.reload()`, the first guess:
+
+```
+LOADURL   ...:53310                 the server
+did-finish-load, LOADURL resolved
+LOADURL   ...:53310/?ws=B           the workspace, 12 ms later
+did-start-navigation  ?ws=B
+did-navigate-in-page  ?ws=A         the first page, booting, writes its own
+did-stop-loading                    ...which ends that page's load
+LOADURL rejected ERR_FAILED (-2)    loadURL takes it for the end of its own
+did-navigate ?ws=B, did-finish-load and the page lands 5 ms later
+```
+
+Electron's `stopLoadingListener` makes any `did-stop-loading` that comes before
+`did-finish-load` an `ERR_FAILED`. It hit 6 of 8 traced runs, headed as well as
+minimized. Waiting for the first load to stop would not have done: in the PDF
+step `loadURL` started with nothing loading and the old page's `replaceState`
+still landed inside it.
+
+The same overlap has a second form. When the address is written before the load
+has begun, `did-navigate-in-page` resolves `loadURL` instead, 1 ms before its
+`did-start-navigation`. The shell goes on, the next load cancels the one still
+in flight, and Electron pins that cancellation on the new load: it is rejected
+as ` (-3)`, naming the old URL, at the moment it has landed. That hit the step
+after the PDF's in about one run in seven. `loadPage` also lets that rejection go
+when it does come, which a load the shell does not wait for can still cause: a
+reload, or the auto-login's.
+
+The first fix, `did-fail-load` as the mark of a real failure, passed 5 of 5 full
+runs and a review still broke it: a load the shell's redirect guard cancels sends
+no `did-fail-load`, so a server behind an http-to-https redirect or a sign-in
+proxy would have sat on "Connecting" for the minute's wait, and a newer load's
+landing (Home, in that minute) counted as this one's. `desktop/lib/loadPage.js`
+now takes an ending for the false alarm only with an overlap to show for it, the
+load before still finishing or the page's address written during the load, never
+after the guard refused the load (`event.defaultPrevented` on `will-redirect`),
+and aborts the wait on a newer load. `security.e2e.js` opens a server whose
+redirect the guard refuses, alone and right after another load, in real
+Electron; each took 60 s against an earlier version of the fix. The
+suite's steps now fail on an error box, which caught the false alarm without the
+fix in 2 of 4 runs.
+
+A replay of `loadPage` through Electron's real `loadURL`, cut from the binary, ran
+some 5 million runs of 66,646 event orderings, and plain `loadURL` showed 3,004
+false `ERR_FAILED` where `loadPage` showed none. It also found the refused
+redirect and the real failure that a stale cancellation could hold up for the
+minute, both fixed. Four narrow orderings remain, accepted: each came from reading
+Chromium's source, none was seen in a run, and in the first three plain `loadURL`
+does the same. The old document's `did-finish-load` landing while this load is
+pending settles it early, since that event names no URL; so does the old page
+writing the exact address asked for; a newer load starting before this load's own
+`did-start-navigation` passes for this one; and a page landing more than a minute
+after a false alarm gets that alarm as its error.
+
 ## Still open
 
-- The clone step logs `Could not open the origin.` or `Could not clone the
-  workspace.` with a `loadURL` rejected as `ERR_FAILED (-2)` in most runs, and
-  in some the rejection fails the step. Those were native boxes in the middle
-  of a run until now. The likely cause, not yet proven: `openServer` can end in
-  the auto-login's `location.reload()`, and `openGammaWorkspace`'s `loadURL`
-  then starts under that reload. Whether a normal window hits it too was not
-  tested, since that takes a window on the screen; if it does, a user can see
-  that box.
 - `extension/tests/prerender.e2e.mjs` fails with `chrome is not defined`, on
   `dev` as it stood before the one switch too.
 - `shell.openPath` behind the launcher's *Open data folder* and

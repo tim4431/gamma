@@ -440,12 +440,14 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     await page.mouse.move(p.x, p.y);
     assertEq(await cursor.getAttribute("data-tool"), "eraser");
     assert((await cursor.boundingBox()).width > penSize, "the eraser shows its own, larger footprint");
-    await page.getByRole("button", { name: "Hand", exact: true }).tap();
+    await page.getByRole("button", { name: / pen · .* · key 1\b/ }).tap();
     await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", ...p, pointerType: "pen", buttons: 0 });
     await cursor.waitFor({ state: "visible" });
-    assertEq(await cursor.getAttribute("data-tool"), "pen", "stylus still previews in hand mode");
+    assertEq(await cursor.getAttribute("data-tool"), "pen", "a hovering stylus shows the armed pen");
+    await page.getByRole("button", { name: "Hand", exact: true }).tap();
+    await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: p.x + 2, y: p.y, pointerType: "pen", buttons: 0 });
+    await cursor.waitFor({ state: "hidden" }); // nothing armed on a PDF page: a pen writes nothing, so it shows nothing
     assertEq(await page.locator(paths).count(), 2, "hover adds no ink");
-    await page.mouse.move(5, 5); await cursor.waitFor({ state: "hidden" });
     assertNoProblems(page);
   });
 
@@ -478,16 +480,29 @@ export async function inkEditingScenarios({ server, browser, alice, bob, makePdf
     assertNoProblems(page);
   });
 
-  await step("ink edit: pen resumes writing after selection and menu stays inside a small viewport", async () => {
+  await step("ink edit: an armed pen writes over a selection, with nothing armed it moves one as a mouse does, and the menu stays inside a small viewport", async () => {
+    const penDrag = async (p, dx, dy) => {
+      await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", ...p, pointerType: "pen", button: "left", buttons: 1, force: 0.5 });
+      await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: p.x + dx, y: p.y + dy, pointerType: "pen", button: "left", buttons: 1, force: 0.7 });
+      await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: p.x + dx, y: p.y + dy, pointerType: "pen", button: "left", buttons: 0 });
+    };
+    await page.getByRole("button", { name: / pen · .* · key 1\b/ }).tap();
     await tapInk();
-    const p = await point(140, 220);
-    await cdp.send("Input.dispatchMouseEvent", { type: "mousePressed", ...p, pointerType: "pen", button: "left", buttons: 1, force: 0.5 });
-    await cdp.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: p.x + 50, y: p.y + 30, pointerType: "pen", button: "left", buttons: 1, force: 0.7 });
-    await cdp.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: p.x + 50, y: p.y + 30, pointerType: "pen", button: "left", buttons: 0 });
+    await penDrag(await point(140, 220), 50, 30);
     await until(async () => await page.locator(paths).count() === 3);
     assertEq(await menu().count(), 0, "pen writes instead of moving selected ink");
     await page.getByRole("button", { name: "Undo ink", exact: true }).tap();
     await until(async () => await page.locator(paths).count() === 2);
+    await page.getByRole("button", { name: "Hand", exact: true }).tap();
+    await tapInk();
+    const selected = () => page.locator(".inkSelectionHit").boundingBox();
+    const was = await selected();
+    const middle = { x: was.x + was.width / 2, y: was.y + was.height / 2 };
+    await penDrag(middle, 50, 30);
+    await until(async () => (await selected()).x > was.x + 40, { what: "the selection follows the pen" });
+    assertEq(await page.locator(paths).count(), 2, "a pen with nothing armed moves selected ink and writes none");
+    await penDrag({ x: middle.x + 50, y: middle.y + 30 }, -50, -30); // back, for the rest of this page's steps
+    await until(async () => Math.abs((await selected()).x - was.x) < 2, { what: "the selection back where it was" });
     await page.setViewportSize({ width: 740, height: 620 });
     // The page fits the narrower viewer a frame or more later (PdfViewer's
     // ResizeObserver); a tap placed on the page before then lands off the ink.

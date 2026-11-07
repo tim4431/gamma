@@ -1,0 +1,77 @@
+{
+  "_": "Notion's colours in Gamma's terms, shared by backend/gamma/notion_blocks.py (backend/tests/test_notion_blocks.py) and frontend/src/editor/mdMarks.js (frontend/tests/notionColors.test.mjs). text is mdMarks' TEXT_COLORS, brown the export's own value with no swatch, tint the alpha mdMarks' tint() adds, spans the opening tag each model colour reads as (yellow_bg alone is ==x== instead), pair the one span of a run with both colours. names maps Notion's names to the model's; callout_types and callout_colors are the two ways of a callout's colour.",
+  "text": {
+    "red": "#e5484d",
+    "orange": "#f76b15",
+    "yellow": "#d4a017",
+    "green": "#30a46c",
+    "blue": "#3b82f6",
+    "purple": "#8e4ec6",
+    "pink": "#e93d82",
+    "gray": "#8b8d98"
+  },
+  "brown": "#9f765a",
+  "tint": "55",
+  "spans": {
+    "red": "<span style=\"color:#e5484d\">",
+    "red_bg": "<span style=\"background:#e5484d55\">",
+    "orange": "<span style=\"color:#f76b15\">",
+    "orange_bg": "<span style=\"background:#f76b1555\">",
+    "yellow": "<span style=\"color:#d4a017\">",
+    "yellow_bg": "<span style=\"background:#d4a01755\">",
+    "green": "<span style=\"color:#30a46c\">",
+    "green_bg": "<span style=\"background:#30a46c55\">",
+    "blue": "<span style=\"color:#3b82f6\">",
+    "blue_bg": "<span style=\"background:#3b82f655\">",
+    "purple": "<span style=\"color:#8e4ec6\">",
+    "purple_bg": "<span style=\"background:#8e4ec655\">",
+    "pink": "<span style=\"color:#e93d82\">",
+    "pink_bg": "<span style=\"background:#e93d8255\">",
+    "gray": "<span style=\"color:#8b8d98\">",
+    "gray_bg": "<span style=\"background:#8b8d9855\">",
+    "brown": "<span style=\"color:#9f765a\">",
+    "brown_bg": "<span style=\"background:#9f765a55\">"
+  },
+  "pair": {
+    "color": [
+      "red",
+      "blue_bg"
+    ],
+    "span": "<span style=\"color:#e5484d; background:#3b82f655\">"
+  },
+  "names": {
+    "red": "red",
+    "red_background": "red_bg",
+    "red_bg": "red_bg",
+    "teal": "green",
+    "teal_background": "green_bg",
+    "brown": "brown",
+    "brown_background": "brown_bg",
+    "default": null,
+    "default_background": null,
+    "turquoise": null
+  },
+  "callout_types": {
+    "gray_background": "info",
+    "default": "info",
+    "brown_background": "info",
+    "red_background": "danger",
+    "orange_background": "warning",
+    "yellow_background": "warning",
+    "teal_background": "tip",
+    "green_background": "tip",
+    "blue_background": "note",
+    "purple_background": "important",
+    "pink_background": "important"
+  },
+  "callout_colors": {
+    "note": "blue_bg",
+    "info": "gray_bg",
+    "tip": "green_bg",
+    "warning": "yellow_bg",
+    "danger": "red_bg",
+    "important": "purple_bg",
+    "quote": "gray_bg",
+    "abstract": "gray_bg"
+  }
+}

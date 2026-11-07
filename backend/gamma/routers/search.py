@@ -9,9 +9,8 @@ thousand PDFs; missing papers are indexed lazily by a background job the
 first time a search runs, and the response reports how many are still
 pending so the UI can hint that results are incomplete.
 
-Extraction prefers PyMuPDF (MuPDF — proper word spacing and unicode) and
-falls back to PyPDF2 only when a file cannot be opened at all
-(gamma.pdf_text). Text is stored in normalized form (see gamma.textnorm) so
+Extraction is PyMuPDF's (MuPDF — proper word spacing and unicode;
+gamma.pdf_text). Text is stored in normalized form (see gamma.textnorm) so
 queries like "3000" hit "3,000-qubit" and a word MuPDF leaves hyphenated
 across a line break is whole again; queries are normalized the same way at
 search time. Bumping textnorm.INDEX_VERSION re-extracts the PDFs lazily.
@@ -54,8 +53,11 @@ def _extract_pages(path) -> list[str]:
 
 
 def _index_doc(ws: str, doc_id: str):
-    """Extract a PDF's text into the FTS index. Failures are recorded (pages=0)
-    so a broken file isn't re-parsed on every search."""
+    """Extract a PDF's text into the FTS index. A file that fails to read is
+    recorded with no text, so a broken file isn't re-parsed on every search.
+    A PyMuPDF that does not load (ImportError) records nothing: it is
+    raised, ending the indexing job with it, and the papers stay missing,
+    for a later search to index once the reader loads."""
     rows = []
     try:
         path = _pdf_path(ws, doc_id)
@@ -65,6 +67,8 @@ def _index_doc(ws: str, doc_id: str):
                 text = normalize_text(raw)
                 if text:
                     rows.append((i, text[:_MAX_PAGE_CHARS]))
+    except ImportError:
+        raise
     except Exception as e:
         log.warning(f"[pdf-search] indexing {doc_id} failed: {e}")
     with connect_data_db(ws) as conn:

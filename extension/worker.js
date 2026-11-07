@@ -5,7 +5,7 @@
 // worker being put to sleep.
 
 import {
-  api, ApiError, checkedDefaultFolder, checkedWorkspace, currentWorkspace, getSettings, rememberFolder, sameLibrary,
+  api, ApiError, checkedDefaultFolder, checkedWorkspace, currentWorkspace, getSettings, makeFolder, rememberFolder, sameLibrary,
   serverOrigin, whoAmI, writableWorkspaces,
 } from "./api.js";
 import {
@@ -168,7 +168,7 @@ let publisherCache = null;
 
 async function publisherStatus(force = false) {
   const auth = await checkAuth();
-  if (!auth.configured || !auth.auth || auth.is_guest || auth.user === "guest") return { supported: false };
+  if (!auth.configured || !auth.auth || auth.is_guest) return { supported: false };
   const fresh = publisherCache && Date.now() - publisherCache.at < PUBLISHER_TTL
     && publisherCache.user === auth.user && publisherCache.origin === auth.origin;
   if (!force && fresh) return publisherCache;
@@ -674,7 +674,7 @@ async function keepLog(tabId, log) {
   if (tabId != null) await setTabState(tabId, { log: text });
 }
 
-async function savePaper({ tabId, candidate, folder, folder_path, labels, title, source_url, asPage = false }) {
+async function savePaper({ tabId, candidate, folder, folder_path, make, labels, title, source_url, asPage = false }) {
   const settings = await getSettings();
   // Where this save goes, start to end: its uploaded bytes and the clip
   // that files them must land in the same library even if the choice
@@ -718,6 +718,13 @@ async function savePaper({ tabId, candidate, folder, folder_path, labels, title,
   // shows up: the tab's error set, a 401 forgetting the signed-in state.
   let filing;
   try {
+    // A folder named in the popup and not known to exist yet (`make`): done
+    // first, here, so a popup closing can't lose the save and a refusal stops
+    // it, rather than the paper landing elsewhere.
+    if (make) {
+      log.step(`making the folder "${make.name}"`);
+      await makeFolder(make, pin);
+    }
     // The popup names the folder (an id, or a typed new one's path); the
     // shortcut and the context menu save into the default one, if the
     // library still has it (checkedDefaultFolder: a deleted one is forgotten).

@@ -1,8 +1,8 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { normalizePerm, permStates, permissionPreset, presetPermissions, toolsForKind } from "../src/chat/chatSettings.js";
-import { resolveSettingsPane } from "../src/settings/settingsNavigation.js";
-import { searchSettings } from "../src/settings/settingsSearch.js";
+import { resolveSettingsPane, settingsSection } from "../src/settings/settingsNavigation.js";
+import { SETTINGS_SEARCH, searchSettings } from "../src/settings/settingsSearch.js";
 
 test("permission presets cover each chat kind's tools, and changes ask unless told otherwise", () => {
   for (const kind of ["folder", "pdf", "notes"]) {
@@ -49,21 +49,27 @@ test("a stored permission reads as a state", () => {
   assert.deepEqual(permStates("rename"), ["allow", "ask", "off"]);
 });
 
-test("deleting folders and labels only asks or is off; organizing them is a folder chat's change", () => {
-  assert.deepEqual(permStates("organize_delete"), ["ask", "off"]);
-  assert.equal(normalizePerm("organize_delete", "allow"), "ask", "an Allow stored for it asks");
-  assert.equal(normalizePerm("organize_delete", true), "ask");
-  assert.equal(normalizePerm("organize_delete", "off"), "off");
+test("the deletions take every state, ask by default and are a folder chat's changes", () => {
+  for (const key of ["organize_delete", "delete"]) {
+    assert.deepEqual(permStates(key), ["allow", "ask", "off"], key);
+    assert.equal(normalizePerm(key, "allow"), "allow", key);
+    assert.equal(normalizePerm(key, undefined), "ask", key);
+    assert.equal(normalizePerm(key, true), "ask", key);
+    assert.equal(normalizePerm(key, "off"), "off", key);
+  }
   assert.equal(normalizePerm("organize", undefined), "ask");
   assert.equal(normalizePerm("organize", "allow"), "allow");
   const all = presetPermissions("folder", "all");
   assert.equal(all.organize, "allow");
-  assert.equal(all.organize_delete, "ask", "Allow all still asks before a deletion");
+  assert.equal(all.organize_delete, "allow", "Allow all allows the deletions too");
+  assert.equal(all.delete, "allow");
   assert.equal(permissionPreset("folder", all), "all");
+  assert.equal(presetPermissions("folder", "ask").delete, "ask");
   assert.equal(presetPermissions("folder", "read").organize_delete, "off");
   assert.equal(presetPermissions("pdf", "all").organize, undefined);
   for (const kind of ["pdf", "notes"]) {
-    assert.deepEqual(toolsForKind(kind).filter((key) => key.startsWith("organize")), [], `a ${kind} chat has no organize*`);
+    assert.deepEqual(toolsForKind(kind).filter((key) => key.startsWith("organize") || key === "delete"), [],
+      `a ${kind} chat has no organize* and no delete`);
   }
 });
 
@@ -77,17 +83,21 @@ test("settings search finds controls on nested AI pages without exposing inacces
   assert.deepEqual(searchSettings("no-such-setting", allowed), []);
 });
 
-test("legacy settings destinations resolve to the reorganized pages", () => {
-  for (const old of ["viewer", "search"]) assert.equal(resolveSettingsPane(old), "reading");
-  assert.equal(resolveSettingsPane("notes"), "keyboard");
-  for (const old of ["context", "ai-advanced", "prompts"]) assert.equal(resolveSettingsPane(old), "assistant");
-  assert.equal(resolveSettingsPane("library"), "appearance");
-  for (const id of ["assistant", "tools"]) assert.equal(resolveSettingsPane(id), id);
-  assert.equal(resolveSettingsPane("general"), "appearance");
-  assert.equal(resolveSettingsPane("workspace"), "workspaces");
-  assert.equal(resolveSettingsPane("advanced"), "diagnostics");
-  assert.equal(resolveSettingsPane("account"), "account");
-  for (const bar of ["topbar", "viewer-tools"]) assert.equal(resolveSettingsPane(bar), "appearance", `${bar}: Appearance, at its section`);
+test("a section entry point opens its pane at a row the pane has; any other name is a pane's own", () => {
+  const sections = { handwriting: ["reading", "Reset presets"], topbar: ["appearance", "Top bar"], "viewer-tools": ["appearance", "Viewer tools"] };
+  for (const [name, [pane, label]] of Object.entries(sections)) {
+    assert.equal(resolveSettingsPane(name), pane, name);
+    assert.equal(settingsSection(name), label, name);
+    // the jump focuses the row whose data-setting is the label: a row's label or a section's title on that pane
+    assert.ok(SETTINGS_SEARCH.some((entry) => entry.pane === pane && (entry.label === label || entry.section === label)), `${name}: ${label} on ${pane}`);
+  }
+  for (const id of ["appearance", "reading", "assistant", "tools", "account", "server"]) {
+    assert.equal(resolveSettingsPane(id), id);
+    assert.equal(settingsSection(id), "");
+  }
+  // a name no pane has passes through (the dialog shows Appearance for it)
+  assert.equal(resolveSettingsPane("notes"), "notes");
+  assert.equal(settingsSection("notes"), "");
 });
 
 test("every preference declares one scope; the profile carries exactly the account-scoped ones", async () => {
@@ -100,7 +110,7 @@ test("every preference declares one scope; the profile carries exactly the accou
   }
   const account = new Set(ACCOUNT_PREFS);
   // Appearance, reading, library, chat behaviour, budgets and prompts follow the account…
-  for (const name of ["theme", "pdfDarkPage", "embAnnots", "translateLang", "enterNewNote", "searchDetailsHome",
+  for (const name of ["theme", "pdfDarkPage", "embAnnots", "translateLang", "enterNewBlock", "searchDetailsHome",
     "fileLabels", "recentThumbs", "agentEnabled", "agentPerms", "chatEffort", "chatContextChars", "toolRounds",
     "toolRoundsUnlimited", "chatSystem", "inkTools"]) {
     assert.ok(account.has(name), `${name} is account-scoped`);

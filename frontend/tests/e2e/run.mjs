@@ -28,7 +28,7 @@ import { fileURLToPath } from "node:url";
 import { inspect } from "node:util";
 import {
   Account, Server, argValue, assert, assertEq, assertNoProblems, flags, launchBrowser, makePdf,
-  openPage, results, sleep, step, until,
+  openPage, results, sleep, step, sweepRuns, until,
 } from "./harness.mjs";
 import { noteScenarios } from "./scenarios/notes.mjs";
 import { diagramScenarios } from "./scenarios/diagrams.mjs";
@@ -58,12 +58,14 @@ import { inkAiScenarios } from "./scenarios/inkAi.mjs";
 import { inkEditingScenarios } from "./scenarios/inkEditing.mjs";
 import { inkShapesScenarios } from "./scenarios/inkShapes.mjs";
 import { inkZoomScenarios } from "./scenarios/inkZoom.mjs";
+import { penScenarios } from "./scenarios/pen.mjs";
 import { pdfLoadScenarios } from "./scenarios/pdfload.mjs";
 import { pdfTouchScenarios } from "./scenarios/pdfTouch.mjs";
 import { ipadScenarios } from "./scenarios/ipad.mjs";
 import { androidScenarios } from "./scenarios/android.mjs";
 import { touchScenarios } from "./scenarios/touch.mjs";
 import { quickOpenScenarios } from "./scenarios/quickOpen.mjs";
+import { tabGroupScenarios } from "./scenarios/tabGroups.mjs";
 import { trashScenarios } from "./scenarios/trash.mjs";
 import { motionScenarios } from "./scenarios/motion.mjs";
 import { folderScenarios } from "./scenarios/folders.mjs";
@@ -90,6 +92,7 @@ const RUNNERS = {
   "ink-ai": inkAiScenarios,
   "ink-shapes": inkShapesScenarios,
   "ink-zoom": inkZoomScenarios,
+  "pen": penScenarios,
   "pdf-load": pdfLoadScenarios,
   "ink": inkScenarios,
   "notebooks": notebookScenarios,
@@ -115,6 +118,7 @@ const RUNNERS = {
   "cloud-sign-in": cloudSignInScenarios,
   "auth": authScenarios,
   "quick-open": quickOpenScenarios,
+  "tab-groups": tabGroupScenarios,
   "folders": folderScenarios,
   "sub-pages": subPageScenarios,
   "trash": trashScenarios,
@@ -138,6 +142,7 @@ else {
     process.exit(0);
   }
   if (!selected.length) { console.log("no browser-suite group covers these changes"); process.exit(0); }
+  sweepRuns();
   if (Math.min(jobs, selected.length) === 1) await sequential(selected);
   else await parallel(selected, jobs);
 }
@@ -208,6 +213,22 @@ async function stopEnv(env) {
   if (env?.server) await env.server.stop();
 }
 
+// A step with nothing to time it out (a stuck await, a browser that stopped
+// answering) would otherwise hold its run for good. A process with no step
+// finished this long ends itself; its backend and browser go with it. Not
+// under --headed, where a person may be paused on a step.
+function endOnStall(limit = 15 * 60 * 1000, every = 30000) {
+  if (flags.headed) return;
+  let seen = -1, since = 0;
+  setInterval(() => {
+    if (results.length !== seen) { seen = results.length; since = Date.now(); }
+    else if (Date.now() - since > limit) {
+      console.error(`no step finished in ${limit / 60000} min: ending this run`);
+      process.exit(1);
+    }
+  }, every).unref();
+}
+
 function summary(all, t0) {
   const failed = all.filter((r) => !r.ok);
   console.log(`\n${all.length - failed.length}/${all.length} steps passed in ${Math.round((Date.now() - t0) / 1000)} s` +
@@ -218,6 +239,7 @@ function summary(all, t0) {
 // One process, one backend, the groups in order, output as it happens.
 async function sequential(ids) {
   const t0 = Date.now();
+  endOnStall();
   let env;
   try {
     console.log("starting isolated backend...");
@@ -285,20 +307,21 @@ async function parallel(ids, jobs) {
 // collected per group and sent with its results; "kept: <dir>" and setup
 // errors print directly.
 async function worker() {
+  endOnStall();
   let env;
+  // The parent is done with this worker, or was killed: either way it goes.
+  process.on("disconnect", async () => {
+    await stopEnv(env);
+    // a scenario's stray handle (a fake server, a socket) must not keep the worker up
+    setTimeout(() => process.exit(0), 500).unref();
+  });
   try {
     env = await startEnv();
   } catch (e) {
     process.send({ setupFailed: inspect(e) });
   }
   process.on("message", async (m) => {
-    if (m.done) {
-      await stopEnv(env);
-      process.disconnect();
-      // a scenario's stray handle (a fake server, a socket) must not keep the worker up
-      setTimeout(() => process.exit(0), 500).unref();
-      return;
-    }
+    if (m.done) return process.disconnect();
     const run = RUNNERS[m.group];
     const before = results.length;
     const output = [];

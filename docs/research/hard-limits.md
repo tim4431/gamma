@@ -115,6 +115,45 @@ actions too) and 200 actions a message; 5,000
 characters of a translated selection, with a message; 1 GB of free disk
 before an export, a snapshot or a staged upload.
 
+## What the AI's chat would not let a user choose (November 2026)
+
+A second pass over the assistant's own rules, after a user asked for Allow
+on deletions (issue #137): the principle was to give the user every
+choice that has a way back. Built since, in
+[dev/ai.md](../dev/ai.md) and [dev/ai_tools.md](../dev/ai_tools.md):
+
+- **Delete folders and labels** was Ask or Off only (`ASK_ONLY`), because a
+  folder's chats stayed in the library chat's history after a revert. The
+  revert now moves them back, and the permission takes Allow like any
+  other; Allow all allows it, and a card's "Allow in this chat" and
+  "Always allow" work for it.
+- **Deleting pages** was not offered at all. `delete_page` moves them to
+  Recently deleted, 30 days, and its revert restores them; a restore's
+  revert sends them back.
+- **"Revert all"** took back the notes' changes of one reply only. "Revert…"
+  lists every change of the conversation that can still be reverted, for
+  any or all of them at once.
+
+Left as they are, each for a reason:
+
+| Rule | Where | Why it stays |
+|---|---|---|
+| Use journal sign-ins is Allow or Off, no Ask | `chat/chatSettings.js` `STATES_OF` | It is part of a fetch, not a call to approve |
+| Ask is Off where no card can show (no stream, no signed-in account) | `ai_tools.tool_states` `can_ask` | Nowhere to ask; it never turns into Allow |
+| A folder or label deletion too large to record its revert is refused | `ai_tools._tree_revert` (200,000 characters, `MAX_OPS` blocks) | It is what makes every deletion revertible |
+| A folder with a share link is not deleted | `_plan_delete_folder` | The deletion would stop the link for good |
+| The approval card waits 10 minutes, then declines | `ai_permissions.APPROVAL_TIMEOUT` | A thread waits in memory; timing out never allows |
+
+Product choices a setting could take, not decided:
+
+| Rule | Where | Setting today |
+|---|---|---|
+| `delete_block` deletes a subtree too large to record without a revert, where `delete_folder` refuses | `ai_tools._run_delete_block` (`_DELETE_REVERT_MAX`) | None; the result says it cannot be reverted |
+| Recently deleted keeps a page 30 days | `trash.KEEP_DAYS` | None |
+| 200 changes a message, apart from the rounds | `ai_tools.MAX_TOOL_ACTIONS` | Lifted only with Unlimited rounds |
+| 10 web searches and 20 saved papers a message; 12 rounds for a `read_paper` helper | `MAX_WEB_SEARCHES`, `MAX_SAVES`, `ai_agent.HELPER_ROUNDS` | None; Unlimited rounds does not lift them |
+| Unlimited rounds on a shared connection without a daily allowance | `routers/ai.py` (`withheld`) | The administrator's, not the user's |
+
 ## Order worth fixing
 
 1. Ink past 5,000 strokes or 4 MB: work is lost without a word.

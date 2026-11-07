@@ -28,15 +28,18 @@
 # it as `gamma-demo` on the shared network `gamma-edge`, resolved per
 # request, so a stopped demo is a 502 for its name and nothing else.
 #
-# The demo's guest logins are rate limited per client address, which the
-# Gamma image takes from X-Forwarded-For only when the connection comes from
-# an address its FORWARDED_ALLOW_IPS lists (uvicorn --proxy-headers): the
-# demo's compose file names gamma-edge's subnet, the share host's this
-# project's pinned network. Caddy does not trust the
-# X-Forwarded-For Cloudflare sends and would put Cloudflare's edge address
-# there, so every visitor behind one edge would share one limit: the demo's
-# proxy passes Cloudflare's CF-Connecting-IP instead (see the README's origin
-# lock-down note on who can set that header).
+# Every Gamma behind this Caddy (the share host at app.gammapdf.com and
+# share.gammapdf.com and its page hosts, the demo, the hosted servers) rate
+# limits per client address: sign-ins, guest logins, unknown share links.
+# The Gamma image takes that address from X-Forwarded-For only when the
+# connection comes from an address its FORWARDED_ALLOW_IPS lists (uvicorn
+# --proxy-headers): the share host names this project's pinned network, the
+# demo gamma-edge's subnet, a hosted server gamma-fleet's. Caddy does not
+# trust the X-Forwarded-For Cloudflare sends and would put Cloudflare's edge
+# address there, so every visitor behind one edge would share one limit:
+# each Gamma route passes Cloudflare's CF-Connecting-IP instead (see the
+# README's origin lock-down note on who can set that header). The account
+# server above reads CF-Connecting-IP itself.
 *.gammapdf.com {
 	tls internal
 	encode gzip
@@ -44,7 +47,9 @@
 	@share host app.gammapdf.com share.gammapdf.com
 	@demo host demo.gammapdf.com
 	handle @share {
-		reverse_proxy share:9001
+		reverse_proxy share:9001 {
+			header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+		}
 	}
 	handle @demo {
 		reverse_proxy gamma-demo:9001 {
@@ -52,15 +57,15 @@
 		}
 	}
 	handle @pages {
-		reverse_proxy share:9001
+		reverse_proxy share:9001 {
+			header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}
+		}
 	}
 	# Every other <label>.gammapdf.com is a hosted Gamma server: the fleet
 	# agent names its container gamma-<label> on the external network
 	# gamma-fleet, which Caddy joins (labels count from the right: com is 0,
 	# gammapdf 1, the label 2). The name is resolved per request, so a
-	# stopped or unknown server is a 502 for its name and nothing else. The
-	# container trusts gamma-fleet's subnet for X-Forwarded-For
-	# (FORWARDED_ALLOW_IPS), so Caddy passes Cloudflare's client address.
+	# stopped or unknown server is a 502 for its name and nothing else.
 	@hosted header_regexp hosted Host ^([a-z0-9][a-z0-9-]*)-user\.gammapdf\.com$
 	handle @hosted {
 		reverse_proxy gamma-{re.hosted.1}:9001 {

@@ -12,7 +12,7 @@
 .guideDim {
   position: absolute;
   inset: 0;
-  background: rgba(0, 0, 0, 0.42);
+  background: var(--scrim-tour);
   pointer-events: auto;
 }
 .guideMarks {
@@ -462,7 +462,7 @@
 .guideFootnote { font-size: var(--fs-xs); color: var(--text-muted); }
 
 /* The finish card, over a light scrim (clicking it closes the card). */
-.guideScrim { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.22); pointer-events: auto; }
+.guideScrim { position: absolute; inset: 0; background: var(--scrim-soft); pointer-events: auto; }
 .guideFinishBadge {
   width: 40px;
   height: 40px;

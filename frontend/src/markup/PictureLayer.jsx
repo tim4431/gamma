@@ -264,12 +264,13 @@ const PagePicture = React.memo(function PagePicture({ block, wrapRef, width, hei
   // The pointer is taken once the press moves. The press ends wherever its
   // pointer is let go, since it may leave the picture before it moves far
   // enough to take the pointer; another contact anywhere (a second finger:
-  // a pinch zooms) drops it, and so does Escape once it moves: the drag is
-  // taken back and the picture keeps its place and its selection (the key
-  // goes no further, so the selected picture's Escape does not let go).
+  // a pinch zooms, but under a pen it is a palm) drops it, and so does
+  // Escape once it moves: the drag is taken back and the picture keeps its
+  // place and its selection (the key goes no further, so the selected
+  // picture's Escape does not let go).
   const begin = (e) => {
-    const p = { id: e.pointerId, x: e.clientX, y: e.clientY, k: scale(), el: null, moved: false };
-    const other = (ev) => { if (ev.pointerId !== p.id) end(p, true); };
+    const p = { id: e.pointerId, x: e.clientX, y: e.clientY, k: scale(), el: null, moved: false, pen: e.pointerType === "pen" };
+    const other = (ev) => { if (ev.pointerId !== p.id && !p.pen) end(p, true); };
     const escape = (ev) => {
       if (ev.key !== "Escape" || !p.moved || p.dead) return;
       ev.preventDefault();
@@ -326,7 +327,7 @@ const PagePicture = React.memo(function PagePicture({ block, wrapRef, width, hei
   const onClick = (e) => {
     e.stopPropagation();
     if (replayState && !selected && playback.seekBefore(block.properties.t0)) return;
-    if (readOnly) { actions.onJump(block.id); return; }
+    if (readOnly) { actions.onJump?.(block.id); return; }
     if (!selected) actions.onPictureSelect(block.id);
   };
   // A right-click selects it, which opens its menu.

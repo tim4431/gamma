@@ -1,13 +1,16 @@
 import base64
 import hashlib
+import logging
 import secrets
 from contextlib import closing
 from urllib.parse import parse_qs, urlsplit
 
 import jwt
 from conftest import register, verify
+from fastapi.testclient import TestClient
 
 from gammacloud import config, db, oidc
+from gammacloud.app import create_app
 
 CALLBACK = "http://127.0.0.1:9001/api/auth/cloud/callback"
 
@@ -92,6 +95,16 @@ def test_full_desktop_flow(client):
     assert r.status_code == 400
     assert client.get("/api/me", headers=headers).status_code == 401
 
+
+def test_the_desktop_client_id_is_the_one_every_sidecar_sends(monkeypatch, caplog):
+    """Gamma's backend sends ``gamma-desktop`` (cloud_auth.DEFAULT_CLIENT_ID)
+    from every sidecar, so the id is fixed, and a deployment that sets
+    ``GAMMA_CLOUD_DESKTOP_CLIENT_ID`` is told at startup that nothing reads it."""
+    assert config.DESKTOP_CLIENT_ID == "gamma-desktop"
+    monkeypatch.setenv("GAMMA_CLOUD_DESKTOP_CLIENT_ID", "another-id")
+    with caplog.at_level(logging.WARNING, logger="gammacloud"), TestClient(create_app()):
+        pass
+    assert "GAMMA_CLOUD_DESKTOP_CLIENT_ID set but not read" in caplog.text
 
 def test_refresh_rotates(client):
     register(client)

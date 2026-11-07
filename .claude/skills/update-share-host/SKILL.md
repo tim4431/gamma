@@ -30,8 +30,9 @@ Rules:
   only as a rollback pin, below). Never restart `account` or `caddy`, never
   `down` the project: they are the `update-account-server` skill's. The
   project's `compose.yml` (the `watchtower` service and the `share` labels
-  included) and `Caddyfile` are that skill's too: if the host's copy lacks
-  `gamma-share-watchtower`, say so and point to its deploy-file step.
+  included) and `Caddyfile` are that skill's too: if `watchtower` is not
+  running, say so and point to that skill, which starts it again whether or
+  not the account server needs a deploy.
 - Never read out, copy off the host or overwrite `.env`, `share.env`,
   `data/` or `share-data/`.
 - Never commit, never merge on your own, and never dispatch `docker.yml` from
@@ -128,7 +129,9 @@ curl -s https://share.gammapdf.com/api/server-config | head -c 300              
 - `share` is `Up … (healthy)`; the image's healthcheck needs up to about
   30 s after start. Its revision label equals `<sha>`. `watchtower` is `Up`
   and its log names its next scheduled run (a `client version … is too old`
-  there means `DOCKER_API_VERSION` is missing from the host's `compose.yml`).
+  there means the host's `compose.yml` still names the archived
+  `containrrr/watchtower` image: the `update-account-server` skill's
+  deploy-file step brings the current one).
 - A 502 means Caddy cannot reach `share`: read `docker compose logs share`
   first (a refused data directory, a failed migration).
 

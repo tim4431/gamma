@@ -1,8 +1,12 @@
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { flushSync } from "react-dom";
 import { Panel, PanelGroup, PanelResizeHandle } from "react-resizable-panels";
+import { TabGroups } from "../workspace/TabGroups";
+import PagePane, { keepPaneTree } from "../workspace/PagePane";
+import { activate as activateGroupIn, activeGroup, groupById, groupOf, groupsOf, isSingle, joinAll, moveTab, normalizeLayout, reconcile as reconcileGroups, removeGroup, removeTab, reorderGroup, resizeSplit, singleLayout, splitGroup, tabOrder } from "../workspace/tabLayout.js";
 import PdfViewer, { preloadPdfEngine } from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
+import { penSelecting } from "../pdf/penSelect.js";
 import { briefRequest, chunkRequest, endTranslations, forgetTranslation, useTranslateJobs } from "./translateClient.js";
 import { scopeOf, snapshot as translateSnapshot, span as translateSpan } from "../pdf/translateState.js";
 import { exportFile, exportLayout, exportPages } from "../pdf/translateExport.js";
@@ -78,7 +82,7 @@ import {
   LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoreIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon,
   RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
   ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon, MicIcon, MessageSquareIcon, BellIcon,
-  PanelTopIcon, LocateIcon, TextSearchIcon, CloudDownloadIcon, BracesIcon,
+  PanelTopIcon, LocateIcon, TextSearchIcon, CloudDownloadIcon, BracesIcon, SplitColumnsIcon, SplitRowsIcon, OnePaneIcon,
 } from "../shared/ui/Icons";
 
 
@@ -115,7 +119,9 @@ import {
   placedToCheck,
   isHighlightBlock,
   isLinkBlock,
+  isPlainNote,
   makeNewBlock,
+  mergeIntoAbove,
   findBlock,
   moveSibling,
   removeBlockKeepChildren,
@@ -123,7 +129,6 @@ import {
 } from "../shared/model/blockModel";
 import { chordLabel, dispatch as dispatchHotkey, effectiveKeys, isTextField } from "../shared/lib/hotkeys.js";
 import { APP_COMMANDS, liveAppCommands } from "./appCommands.js";
-import { stepList } from "../shared/ui/listKeys.js";
 import { BLOCK_COMMANDS } from "../editor/blockCommands.js";
 import { commandById, commandChord } from "./commands.js";
 import { CommandMenuItem } from "./CommandMenuItem.jsx";
@@ -231,6 +236,7 @@ import {
   welcomePageOf,
   pagePathLabel,
   pageDescendants,
+  deleteConfirm,
   topPageOf,
   friendlyApiError,
   attachmentFile,
@@ -239,8 +245,6 @@ import {
   defaultPageTitle,
   metadataToDraft,
   citationKeyOf,
-  normalizeLinkInput,
-  scorePaperMatch,
   NO_LABEL,
   NO_LABEL_TITLE,
   PATH_SEP,
@@ -266,6 +270,8 @@ const ChatDock = lazySurface(() => import("../chat/ChatDock"));
 const SettingsDialog = lazySurface(() => import("../settings/SettingsDialog"));
 const GuideOverlay = lazySurface(() => import("../guide/GuideOverlay"));
 const QuickOpen = lazySurface(() => import("../library/QuickOpen"));
+const PagePicker = lazySurface(() => import("../library/PagePicker"));
+const LinkDialog = lazySurface(() => import("../pdf/LinkDialog"));
 const RecentlyDeleted = lazySurface(() => import("../library/RecentlyDeleted"));
 const ReportProblem = lazySurface(() => import("../support/ReportProblem"));
 const SharePopover = lazySurface(() => import("../sharing/SharePopover"), (m) => m.SharePopover);
@@ -454,8 +460,8 @@ const isAiPane = (pane) => AI_SETTINGS_PANES.includes(resolveSettingsPane(pane))
 // A block's text for a chat chip (cursor block, attached block): its note,
 // else its highlight quote.
 const blockChipText = (b) => (b.content || "").trim() || blockQuote(b).trim() || t("(empty block)");
-function captureViewerSnapshot() {
-  const scroller = document.querySelector(".pdfViewer");
+function captureViewerSnapshot(root) {
+  const scroller = root?.querySelector(".pdfViewer");
   if (!scroller) return null;
   const vr = scroller.getBoundingClientRect();
   if (vr.width < 60 || vr.height < 60) return null;
@@ -1018,6 +1024,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       }
       prefsUserRef.current = "";
       setOpenTabs([]);
+      setTabLayout(singleLayout([]));
       setRecentViews([]);
       pageSnapsRef.current = {};
       setPageSnaps({});
@@ -1037,6 +1044,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (!Array.isArray(localTabs)) localTabs = [];
     tabsReadRef.current.add(localTabs);
     setOpenTabs(localTabs);
+    let localLayout = null;
+    try { localLayout = JSON.parse(localStorage.getItem(`gamma-tab-layout:${u}`) || "null"); } catch {}
+    setTabLayout(normalizeLayout(localLayout, localTabs.map((tab) => tab.id)));
     let localRecents = [];
     try { localRecents = JSON.parse(localStorage.getItem(`gamma-recent-views:${u}`) || "[]"); } catch {}
     if (!Array.isArray(localRecents)) localRecents = [];
@@ -1314,8 +1324,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   async function duplicatePage(pageId) {
     const data = await apiJson(`${API}/blocks/${pageId}/subtree`);
     const src = data.block || {};
-    // (nor what a Zotero link says of the page it keeps, which a copy is not: docs/dev/zotero_sync.md)
-    const { doc_id: pdfId, zotero_pdf: _zoteroPdf, zotero_readonly: _readonly, zotero_author: _author, ...properties } = src.properties || {};
+    // (nor what a Zotero link says of the page it keeps, which a copy is not: docs/dev/zotero_sync.md;
+    // nor its Notion id, or an import of that page would find the copy)
+    const { doc_id: pdfId, zotero_pdf: _zoteroPdf, zotero_readonly: _readonly, zotero_author: _author, notion_id: _notionId, ...properties } = src.properties || {};
     if (pdfId && !properties.source_url) properties.source_url = `/api/uploads/${pdfId}.pdf`;
     const created = await apiJson(`${API}/blocks`, {
       method: "POST",
@@ -1384,19 +1395,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const allWent = (result) => !result.stopped && !result.failed.length;
 
   // The pages inside a page go to Recently deleted with it (the server's
-  // cascade), so the confirmation counts them and their tabs close too.
+  // cascade): the confirmation counts them (deleteConfirm) and their tabs
+  // close too.
   function deletePages(ids) {
-    const inside = pageDescendants(pageBlocks, ids);
-    const n = inside.length;
+    const { title, message, inside } = deleteConfirm(pageBlocks, ids);
     setConfirmBox({
-      title: ids.length === 1 ? t("Delete page") : t("Delete {n} pages", { n: ids.length }),
-      message: ids.length === 1
-        ? (n ? tn("Move this page and the {n} page inside it to Recently deleted? You can restore them from there for 30 days.",
-          "Move this page and the {n} pages inside it to Recently deleted? You can restore them from there for 30 days.", n)
-          : t("Move this page to Recently deleted? You can restore it from there for 30 days."))
-        : n ? tn("Move these {count} pages and the {n} page inside them to Recently deleted? You can restore them from there for 30 days.",
-          "Move these {count} pages and the {n} pages inside them to Recently deleted? You can restore them from there for 30 days.", n, { count: ids.length })
-        : t("Move these {n} pages to Recently deleted? You can restore them from there for 30 days.", { n: ids.length }),
+      title,
+      message,
       confirmLabel: t("Delete"),
       danger: true,
       onConfirm: async () => {
@@ -1414,14 +1419,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // it, whose tabs close too and are no place to go back to.
   function deleteOpenPage() {
     const id = focusedBlockId;
-    const inside = pageDescendants(pageBlocks, [id]);
-    const page = pageTitle || t("this page");
+    const { title, message, inside } = deleteConfirm(pageBlocks, [id], pageTitle);
     setConfirmBox({
-      title: T("Delete page"),
-      message: inside.length
-        ? tn("Move \"{page}\" and the {n} page inside it to Recently deleted? You can restore them from there for 30 days.",
-          "Move \"{page}\" and the {n} pages inside it to Recently deleted? You can restore them from there for 30 days.", inside.length, { page })
-        : t("Move \"{page}\" to Recently deleted? You can restore it from there for 30 days.", { page }),
+      title,
+      message,
       confirmLabel: t("Delete"),
       danger: true,
       onConfirm: async () => {
@@ -1502,17 +1503,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     rereadFamily();
     batchStatus(done(result.done.length), result, ids.length);
   }
-  // "Move into page…": a page picker (the move dialog) over every page but
-  // the moved ones and the pages inside them, where they cannot go.
-  async function pickPageParent(ids) {
-    const pages = await fetchHomeBlocks({ still: true });
-    const byId = new Map(pages.map((p) => [p.id, p]));
-    const out = new Set([...ids, ...pageDescendants(pages, ids)]);
-    setMoveBlockDialog({ pageIds: ids, query: "",
-      pages: pages.filter((p) => !out.has(p.id)).map((p) => ({ ...p, _path: pagePathLabel(byId, p.id) })) });
+  // "Move into page…": the move picker over every page but the moved ones
+  // and the pages inside them, where they cannot go (moveExclude).
+  function pickPageParent(ids) {
+    pickMovePage({ pageIds: ids });
   }
   function movePagesInto(ids, parent) {
-    setMoveBlockDialog(null);
     const title = parent.content || t("Untitled");
     placePages(ids, () => ({ parent_page: parent.id }), t("Move {n} pages into “{title}”", { n: ids.length, title }),
       (n) => tn("Moved {n} page into “{title}”.", "Moved {n} pages into “{title}”.", n, { title }));
@@ -1892,19 +1888,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     else if (folder) openTagMenu("folder", folder)(e);
     else if (label) openTagMenu("label", label)(e);
   }
-  const [pdfPageNumber, setPdfPageNumber] = useState(() => loadSession().pdfPageNumber || 1);
   const [pdfEffScale, setPdfEffScale] = useState(1); // actual render scale (incl. fit-width)
-  // Browser fullscreen (whole app, like F11). webkit-prefixed fallbacks are
-  // for iPadOS Safari, which never shipped the unprefixed API.
+  // Browser fullscreen (whole app, like F11).
   const [isFullscreen, setIsFullscreen] = useState(false);
   useEffect(() => {
-    const onFs = () => setIsFullscreen(!!(document.fullscreenElement || document.webkitFullscreenElement));
+    const onFs = () => setIsFullscreen(!!document.fullscreenElement);
     document.addEventListener("fullscreenchange", onFs);
-    document.addEventListener("webkitfullscreenchange", onFs);
-    return () => {
-      document.removeEventListener("fullscreenchange", onFs);
-      document.removeEventListener("webkitfullscreenchange", onFs);
-    };
+    return () => document.removeEventListener("fullscreenchange", onFs);
   }, []);
   // Use native fullscreen on touch devices too; app fullscreen is a fallback
   // for browsers where the Fullscreen API is unavailable or rejects the request.
@@ -1921,15 +1911,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     };
   }, [pseudoFullscreen]);
   function toggleFullscreen() {
-    if (document.fullscreenElement || document.webkitFullscreenElement) {
-      (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
+    if (document.fullscreenElement) {
+      document.exitFullscreen();
     } else if (pseudoFullscreen) {
       setPseudoFullscreen(false);
-    } else if (!(document.fullscreenEnabled || document.webkitFullscreenEnabled)) {
+    } else if (!document.fullscreenEnabled) {
       setPseudoFullscreen(true);
     } else {
-      const el = document.documentElement;
-      (el.requestFullscreen || el.webkitRequestFullscreen)?.call(el)?.catch?.(() => setPseudoFullscreen(true));
+      document.documentElement.requestFullscreen().catch(() => setPseudoFullscreen(true));
     }
   }
   // Mobile browsers may omit the synthetic click after a scroll. Handle a
@@ -2114,6 +2103,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Persistence happens inside the updater (not an effect) so a user switch
   // can't race an in-flight save into the wrong key.
   const [openTabs, setOpenTabs] = useState([]);
+  // The tabs' arrangement into groups side by side (workspace/tabLayout.js,
+  // docs/dev/tab_groups.md): this browser's, kept per account and workspace
+  // like the dock layout, while the tabs themselves stay the synced list
+  // above. One group is live and holds the page on screen in the work area;
+  // every other shows its page to read (workspace/PagePane.jsx). Set and
+  // kept in one step, as the tabs are, so an account switch cannot race a
+  // write into the wrong key.
+  const [tabLayout, setTabLayout] = useState(() => singleLayout([]));
+  const tabLayoutRef = useRef(tabLayout);
+  tabLayoutRef.current = tabLayout;
+  function keepTabLayout(next) {
+    tabLayoutRef.current = next;
+    setTabLayout(next);
+    const u = prefsUserRef.current;
+    if (u) { try { localStorage.setItem(`gamma-tab-layout:${u}`, JSON.stringify(next)); } catch {} }
+  }
   // Tabs read from this browser's cache or the server's copy: the strip
   // takes them without moving (OpenTabs `still`).
   const tabsReadRef = useRef(new WeakSet());
@@ -2194,11 +2199,81 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   function toggleTabPinned(id) {
     updateTabs((prev) => prev.map((t) => (t.id === id ? { ...t, pinned: t.pinned ? undefined : true } : t)));
   }
+  // Every change of the arrangement: the layout is kept, the synced tabs
+  // take its order, and the page on screen follows the live group's active
+  // tab (the library when it has none).
+  // `target`: what a press on a group's view of its page was on, which the
+  // page opening takes up (openBlock): {edit: {id, clickPos}} a note,
+  // {title: true} the title, {labels: true} its labels.
+  function applyLayout(next, target) {
+    const prev = tabLayoutRef.current;
+    // a second press on a view whose page is still opening, on a note, the
+    // title or the labels: the open takes this press's target instead
+    if (next === prev) {
+      const want = activeGroup(next)?.active || "";
+      const aimed = target?.edit || target?.title || target?.labels;
+      if (aimed && want && want === tabPick && want !== focusedBlockId) selectTab(want, target);
+      return;
+    }
+    keepTabLayout(next);
+    const order = tabOrder(next);
+    if (order.join("\n") !== tabOrder(prev).join("\n")) {
+      updateTabs((tabs) => [...tabs].sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id)));
+    }
+    const want = activeGroup(next)?.active || "";
+    if (want === (tabPick || focusedBlockId || "")) return;
+    if (want) selectTab(want, target);
+    else if (focusedBlockId) goHome(true, true);
+  }
+  // A group's tabs as its strip shows them, pinned first.
+  const groupTabs = (group) => orderTabs(group.tabs.map((id) => openTabs.find((tab) => tab.id === id)).filter(Boolean));
+  const activateTabGroup = (groupId, tabId, target) => applyLayout(activateGroupIn(tabLayoutRef.current, groupId, tabId), target);
+  const moveTabToGroup = (tabId, groupId, index) => applyLayout(moveTab(tabLayoutRef.current, tabId, groupId, index));
+  const splitTabGroup = (groupId, side, tabId) => applyLayout(splitGroup(tabLayoutRef.current, groupId, side, tabId));
+  // A tab into a group of its own beside the one it is in: the tab menu's
+  // and the palette's Split right and Split down. The only tab of a group
+  // opens an empty group beside it instead, where the library shows to
+  // pick that group's page.
+  const splitTab = (tabId, side) => {
+    const g = groupOf(tabLayoutRef.current, tabId);
+    if (g) splitTabGroup(g.id, side, g.tabs.length === 1 ? null : tabId);
+  };
+  const joinTabGroups = () => applyLayout(joinAll(tabLayoutRef.current));
+  const closeTabGroup = (groupId) => applyLayout(removeGroup(tabLayoutRef.current, groupId));
+  const resizeTabSplit = (splitId, sizes) => {
+    const next = resizeSplit(tabLayoutRef.current, splitId, sizes);
+    if (next !== tabLayoutRef.current) keepTabLayout(next);
+  };
+  // A strip's reorder: the dragged tab takes the target's place among the
+  // tabs as shown; dragging never crosses the pinned/unpinned boundary.
+  const reorderGroupTabs = (groupId, dragged, target) => {
+    const group = groupById(tabLayoutRef.current, groupId);
+    if (!group) return;
+    const shown = groupTabs(group);
+    const from = shown.findIndex((tab) => tab.id === dragged), to = shown.findIndex((tab) => tab.id === target);
+    if (from < 0 || to < 0 || from === to || !!shown[from].pinned !== !!shown[to].pinned) return;
+    const next = [...shown];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    applyLayout(reorderGroup(tabLayoutRef.current, groupId, next.map((tab) => tab.id)));
+  };
+  // Where a group's view of a page stands, kept where the page's opening
+  // reads it (openBlock): its PDF's scroll (tabScrollRef), its notes' top
+  // row (notesPlaceRef) and its zoom, the page's own (pageLayoutsRef), so
+  // the page made live opens exactly as its view showed it.
+  const paneScroll = useCallback((pageId, entry) => { tabScrollRef.current[pageId] = entry; }, []);
+  const paneNotesPlace = useCallback((pageId, place) => { notesPlaceRef.current[pageId] = place; }, []);
+  const paneZoom = useCallback((pageId, zoom) => {
+    const user = prefsUserRef.current;
+    const cur = pageLayoutsRef.current[pageId];
+    if (!zoom || !user || cur?.pdfScale === zoom) return;
+    pageLayoutsRef.current[pageId] = { ...(cur || {}), pdfScale: zoom };
+    try { localStorage.setItem(`gamma-page-layouts:${user}`, JSON.stringify(pageLayoutsRef.current)); } catch {}
+  }, []);
   // Last-read positions, synced like tabs so "jump to last read" follows the
   // account across browsers: blockId -> {page, at}. Per-paper entries merged
   // newest-wins, so two open windows only conflict when reading the SAME
-  // paper (last writer wins) — unlike the old single global session slot,
-  // which any window (or goHome's clearSession) could clobber.
+  // paper (last writer wins).
   const readPosRef = useRef({});
   const readPosLoadedRef = useRef(false); // first server response arrived
   const readPosPushTimerRef = useRef(null);
@@ -2550,6 +2625,45 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // it selected from the press's own commit, while the page it leaves stays
   // on screen until the new one's tree lands (openBlock). "" when none is.
   const [tabPick, setTabPick] = useState("");
+  // The arrangement follows the tabs and the page on screen: a tab opened
+  // lands in the live group, one closed leaves its group, and the page on
+  // screen (the one a press picked, while it opens) is its group's active
+  // tab, with that group live.
+  useEffect(() => {
+    if (shareMode || !prefsUserRef.current) return;
+    const next = reconcileGroups(tabLayoutRef.current, openTabs.map((tab) => tab.id), tabPick || focusedBlockId || null);
+    if (next !== tabLayoutRef.current) keepTabLayout(next);
+  }, [openTabs, focusedBlockId, tabPick, shareMode]); // eslint-disable-line react-hooks/exhaustive-deps
+  // The group the page on screen stands in, where TabGroups lays the page
+  // view over (`liveId`): the group of the page App holds, else (the
+  // library) the live one. A press on another group's view makes that
+  // group live at once, but its view stays, and the page on screen where
+  // it is, until the pressed page has opened: the two change places in the
+  // commit its tree lands in, so neither shows the other's page meanwhile.
+  // The library while a picked tab opens stays where it was too.
+  const shownGroupRef = useRef(null);
+  // The last page with a viewer on screen, whose notes the docked Notes
+  // window keeps while pages stand side by side (`notesPaper`, below).
+  const notesPaperRef = useRef(null);
+  const shownGroupId = (() => {
+    if (focusedBlockId) return groupOf(tabLayout, focusedBlockId)?.id || tabLayout.active;
+    if (tabPick && shownGroupRef.current && groupById(tabLayout, shownGroupRef.current)) return shownGroupRef.current;
+    return tabLayout.active;
+  })();
+  shownGroupRef.current = shownGroupId;
+  // A view of a page in a group that is not live, or in the docked Notes
+  // window (PagePane): what it opens at and what App lends it.
+  function paneProps(pageId) {
+    const saved = pageLayoutsRef.current[pageId];
+    return {
+      pageId, title: openTabs.find((tab) => tab.id === pageId)?.title,
+      overlay: (id, children) => collabRef.current.overlay(id, children),
+      scroll: tabScrollRef.current[pageId], startPage: readPosRef.current[pageId]?.page || 0,
+      zoom: saved?.pdfScale || pdfScale, pdfHidden: !!saved?.pdfHidden, notebookView: nbViewPages.has(pageId),
+      notesPlace: notesPlaceRef.current[pageId], shared: paneShared,
+      onScroll: paneScroll, onZoom: paneZoom, onNotesPlace: paneNotesPlace,
+    };
+  }
   // The latest openBlock call: an earlier open landing after it neither
   // posts nor takes down the "Opening…" of the one the reader is waiting on.
   const openSeqRef = useRef(0);
@@ -2593,9 +2707,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const p = pendingRestoreRef.current;
     if (!p || p.url !== url || restoreTokenRef.current !== p.token) return;
     const scroller = viewerWrapRef.current?.querySelector(".pdfViewer");
-    const targetTop = p.entry.top * ((scale || pdfEffScaleRef.current || p.entry.scale || 1) / (p.entry.scale || 1));
+    const ratio = (scale || pdfEffScaleRef.current || p.entry.scale || 1) / (p.entry.scale || 1);
+    const targetTop = p.entry.top * ratio;
     if (scroller && scroller.scrollHeight > targetTop) {
-      scroller.scrollTo({ top: targetTop, behavior: "instant" });
+      // and across, when it was kept (a zoom wider than the viewer)
+      scroller.scrollTo({ top: targetTop, ...(p.entry.left != null ? { left: p.entry.left * ratio } : null), behavior: "instant" });
       pendingRestoreRef.current = null;
       restoreTokenRef.current++; // the fallback loop is no longer needed
       if (restoringForRef.current === p.blockId) restoringForRef.current = null;
@@ -2841,7 +2957,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     fileLabels, setFileLabels,
     oaFallback, setOaFallback, metaAutoFetch, setMetaAutoFetch, pdfSaveLocal, setPdfSaveLocal,
     embAnnots, setEmbAnnots, smoothWheel, setSmoothWheel,
-    inkPenOnly, setInkPenOnly, inkAutoPen, setInkAutoPen, inkPressure, setInkPressure,
+    inkPenOnly, setInkPenOnly, inkPenWritesPdf, setInkPenWritesPdf, inkPressure, setInkPressure,
     inkFingerUndo, setInkFingerUndo, inkDrawHold, setInkDrawHold, inkScribbleErase, setInkScribbleErase,
     inkEraserReturn, setInkEraserReturn, inkEraserFilter, setInkEraserFilter,
     inkHoverPreview, setInkHoverPreview, inkPencilTap, setInkPencilTap, inkPencilSqueeze, setInkPencilSqueeze, inkHaptics, setInkHaptics,
@@ -2855,7 +2971,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     translateEffort, setTranslateEffort, translateParallel, setTranslateParallel,
     translateSpeed, setTranslateSpeed, translateKeep, setTranslateKeep,
     searchDetailsHome, setSearchDetailsHome, searchDetailsPaper, setSearchDetailsPaper,
-    enterNewNote, setEnterNewNote, backlinksVisible, setBacklinksVisible,
+    enterNewBlock, setEnterNewBlock, backlinksVisible, setBacklinksVisible,
     keybindings, setKeybindings,
     statusBarVisible, setStatusBarVisible, suggestTours, setSuggestTours, tourProgress, setTourProgress,
     inboxSystemNotifications, setInboxSystemNotifications,
@@ -2932,6 +3048,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     askedCloudChoice.current = true;
     setSettingsOpen((cur) => cur || "account");
   }, [profileSync.cloudChoice]);
+  // A link to a Settings pane (`/?settings=backups`, Gamma Cloud's Export
+  // for a read-only Pro server) opens it once the library is there, signed
+  // in first if need be; the parameter then leaves the address.
+  useEffect(() => {
+    if (!wsReady || shareMode) return;
+    const url = new URL(window.location.href);
+    const pane = url.searchParams.get("settings");
+    if (!pane) return;
+    url.searchParams.delete("settings");
+    window.history.replaceState(window.history.state, "", url.pathname + url.search + url.hash);
+    setSettingsOpen(pane);
+  }, [wsReady, shareMode]);
   // What wants a look (a newer release, errors in the log — app/notices.js):
   // the dot on the account button and on the Settings panes that resolve it;
   // "Settings…" lands on the strongest one.
@@ -3397,10 +3525,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [confirmBox, setConfirmBox] = useState(null); // {title, message, confirmLabel, danger, onConfirm, altLabel, altDanger, onAlt, onCancel}
   // Cancel, Escape and the backdrop all close it the same way, onCancel told.
   const cancelConfirm = () => { const fn = confirmBox?.onCancel; setConfirmBox(null); fn?.(); };
-  const [moveBlockDialog, setMoveBlockDialog] = useState(null); // {blockId | fragment | pageIds, query, pages}
+  // What the Move to page picker (library/PagePicker.jsx) moves: {blockId},
+  // an object's {fragment}, or {pageIds} (Move into page).
+  const [movePicker, setMovePicker] = useState(null);
   const [linkPrompt, setLinkPrompt] = useState(null); // external URL clicked inside the PDF
-  const [linkDialog, setLinkDialog] = useState(null); // {position, quote, editBlockId?} — making or changing a manual reference link
-  const [linkDialogInput, setLinkDialogInput] = useState("");
+  const [linkDialog, setLinkDialog] = useState(null); // {position, quote, editBlockId?, url?} — making or changing a manual reference link (pdf/LinkDialog.jsx)
   // A highlight copied via "Copy as reference point" — link dialogs in other
   // papers offer it as a target, so links can point at an exact passage.
   const [refPoint, setRefPoint] = useState(null); // {pageId, pageTitle, blockId, quote}
@@ -3866,6 +3995,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Committed on mouseup (not selectionchange) so the modifier key is known:
   // Ctrl+select APPENDS another passage, plain select replaces the set, and
   // a plain click in the PDF clears it. Clicking into the chat keeps it.
+  const penSelectionRef = useRef(null);
   useEffect(() => {
     function onMouseUp(e) {
       if (!viewerWrapRef.current?.contains(e.target)) {
@@ -3912,20 +4042,23 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // the passage up from selectionchange instead. No modifier exists there,
     // so it always replaces; and an emptied selection is left alone rather
     // than cleared, since a tap into the chat is indistinguishable from a tap
-    // that dismissed the selection — and that tap must keep it.
+    // that dismissed the selection — and that tap must keep it. A pen's drag
+    // has no mouseup either, and is read once, at its end (onPenSelection).
     let selTimer = null;
+    function readSelection() {
+      const sel = window.getSelection();
+      const text = sel ? sel.toString().trim() : "";
+      if (!text) return;
+      const node = sel.anchorNode;
+      const el = node?.nodeType === 3 ? node.parentElement : node;
+      if (!(viewerWrapRef.current && el && viewerWrapRef.current.contains(el))) return;
+      addPdfSelection(text, false, rangeSpot(sel.getRangeAt(0)));
+    }
+    penSelectionRef.current = readSelection;
     function onSelectionChange() {
       if (lastPointer() === "mouse") return;
       clearTimeout(selTimer);
-      selTimer = setTimeout(() => {
-        const sel = window.getSelection();
-        const text = sel ? sel.toString().trim() : "";
-        if (!text) return;
-        const node = sel.anchorNode;
-        const el = node?.nodeType === 3 ? node.parentElement : node;
-        if (!(viewerWrapRef.current && el && viewerWrapRef.current.contains(el))) return;
-        addPdfSelection(text, false, rangeSpot(sel.getRangeAt(0)));
-      }, 350);
+      if (!penSelecting()) selTimer = setTimeout(readSelection, 350);
     }
     document.addEventListener("mouseup", onMouseUp);
     document.addEventListener("selectionchange", onSelectionChange);
@@ -4086,7 +4219,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     if (!homeLoaded) return undefined;
-    return whenIdle(() => { preloadPdfEngine(); QuickOpen.preload(); }, 1500);
+    return whenIdle(() => { preloadPdfEngine(); QuickOpen.preload(); PagePicker.preload(); }, 1500);
   }, [homeLoaded]);
   // What a drag on the PDF does — text selection (default) or rectangle
   // drawing. A mouse holds Ctrl; a finger has no Ctrl, so a touch screen gets
@@ -4110,7 +4243,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setInkTools, pickInkTool, openInkStrip, toggleInkShape, previousTool, inkEraserLifted,
     revealInkStrip, openRulerRow, closeRulerRow, closeInkStripUi, toggleInkOptions, closeInkOptions,
     applyPencilUi, disarmInk, restorePen,
-  } = useInkStrip({ focusedBlockId, readOnly, inkStale, inkTools, setInkToolsRaw, inkAutoPen,
+  } = useInkStrip({ focusedBlockId, readOnly, inkStale, inkTools, setInkToolsRaw,
     inkShapeKind, inkShapeFill, inkEraserReturn });
   const [inkFlash, setInkFlash] = useState(null);
   // Sheets: the open page's (for handlers that run after an await); in the
@@ -4422,11 +4555,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // links, highlights, backlinks, search hits, citations) go through
   // pendingBlockScrollRef above and do focus.
   const landingRef = useRef(null); // {id, offset?, kept?} ("" = the top) until the page's rows render
+  // The open page's notes list (notesWindow's), never a tab group's view of
+  // another page that draws its notes with the same classes (PagePane).
+  const liveSidebarRef = useRef(null);
+  const liveNotesList = () => liveSidebarRef.current?.querySelector(":scope > .blockList") || null;
   useEffect(() => {
     const land = landingRef.current;
     if (!land) return;
     landingRef.current = null;
-    const list = document.querySelector(".sidebar .blockList");
+    const list = liveNotesList();
     if (!list) return;
     const row = land.id ? list.querySelector(`.blockRowWrap[data-block-id="${land.id}"]`) : null;
     if (!row) { list.scrollTop = 0; return; }
@@ -5042,9 +5179,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       pdfScale,
       pdfHidden,
       notesVisible,
-      pdfPageNumber,
     });
-  }, [focusedBlockId, pdfScale, pdfHidden, notesVisible, pdfPageNumber]);
+  }, [focusedBlockId, pdfScale, pdfHidden, notesVisible]);
 
   // Synced per-paper read position, fed by the scroll tracker on every scroll
   // (a ref so the tracker effect needn't re-register). Guarded: only while
@@ -5089,7 +5225,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (shareMode || !id || id !== focusedBlockId || !pdfUrl || pdfHidden) return false;
       if (pdfRenderedUrlRef.current !== pdfUrl) return false;
       if (restoringForRef.current === focusedBlockId || coarseRestorePendingRef.current) return false;
-      const img = captureViewerSnapshot();
+      const img = captureViewerSnapshot(viewerWrapRef.current);
       if (img) savePageSnap(id, img);
       return !!img;
     };
@@ -6147,6 +6283,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // action staged for an earlier page that never came is dropped.
       pendingBlockScrollRef.current = opts?.block || null;
       pendingPageActionRef.current = opts?.then ? { id: blockId, action: opts.then } : null;
+      // A press on a view of the page (a tab group's), which made it live:
+      // on a note, its editor opens with the caret where the press was.
+      handedPressRef.current = opts?.edit?.clickPos ? { id: opts.edit.id, clickPos: opts.edit.clickPos } : null;
       const props = block.properties || {};
       // Back on a page left with edits still unsaved (their save may be
       // retrying): they are laid over the fetched tree, and the page's
@@ -6159,7 +6298,18 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setFocusedBlockId(blockId);
       setFocusedBlock(block);
       rereadFamily();
-      setView(EMPTY_VIEW);
+      // The notes open folded as saved, or as a view of the page had them
+      // folded (`opts.folds`, a tab group's press), with the note to edit
+      // in sight.
+      const openView = opts?.folds ? { ...EMPTY_VIEW, folds: opts.folds } : EMPTY_VIEW;
+      setView(opts?.edit?.id ? revealBlock(childBlocks, openView, opts.edit.id) : openView);
+      // The caret goes where the press mapped in the note's source; a press
+      // that mapped nowhere leaves it where the editor puts it under the
+      // pointer; none at all (a button's), at the note's end.
+      if (opts?.edit?.id && !readOnly) {
+        const at = opts.edit.clickPos;
+        pendingFocusRef.current = { id: opts.edit.id, caret: at ? at.offset ?? undefined : "end", reopen: 1 };
+      }
       setPageTitle(block.content || t("Untitled"));
       setPageLabels(props.labels || []);
       setPageFolders(props.folders || []);
@@ -6204,9 +6354,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       const newUrl = withWorkspace(`${window.location.pathname}?block=${encodeURIComponent(blockId)}`);
       window.history.replaceState({}, "", newUrl);
       // Pages remember their own window arrangement; pages without one
-      // inherit whatever layout is currently on screen.
+      // inherit whatever layout is currently on screen. With pages side by
+      // side the windows are the groups' together and stay as they are
+      // (docs/dev/tab_groups.md): only what belongs to the page itself, its
+      // PDF shown or closed and its zoom, comes back with it.
       const savedUi = pageLayoutsRef.current[blockId];
-      if (savedUi?.layout) {
+      const sideBySide = !isPhone && !isSingle(tabLayoutRef.current);
+      if (sideBySide) setPdfHidden(!!savedUi?.pdfHidden);
+      else if (savedUi?.layout) {
         setLayout(savedUi.layout);
         setCollapsedWins(savedUi.collapsed || {});
         setPdfHidden(!!savedUi.pdfHidden);
@@ -6237,7 +6392,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       // scale ratio is then exactly 1 and the position lands exactly. A
       // notebook without a zoom of its own fits its sheets, never taking on
       // the zoom the last PDF was read at.
-      if (savedUi?.pdfScale) setPdfScale(savedUi.pdfScale);
+      // A press on a view of the page brings the zoom the view showed.
+      const zoom = opts?.zoom || savedUi?.pdfScale;
+      if (zoom) setPdfScale(zoom);
       else if (!attachment && sheetsOf(childBlocks).length) setPdfScale("page-width");
       if (opts?.restoreScroll) restorePdfScroll(tabScrollRef.current[blockId], blockId, openedPdfUrl);
       // "Ready." answers an "Opening…" the reader saw, for a page opened
@@ -6279,10 +6436,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // A tab pressed: selected at once, its page opened behind it. The tab of
   // the page on screen, pressed while another's page opens, takes that
   // press back: the page stays as it is, not read again.
-  function selectTab(id) {
+  function selectTab(id, target) {
     if (id === focusedBlockId) { dropTabPick(); return undefined; }
     setTabPick(id);
-    return openBlock(id, { restoreScroll: true });
+    const then = target?.title ? "title" : target?.labels ? "labels" : undefined;
+    return openBlock(id, { restoreScroll: true, edit: target?.edit, folds: target?.folds, zoom: target?.zoom, then });
   }
   // The pending open of a picked tab let go: neither its landing nor its
   // finally runs, so the page on screen stays, its tab selected again.
@@ -6306,6 +6464,17 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // were, not just to the same page. blockId -> {top, scale}, or for a page
   // with sheets {place} (notebook/sheetPlace.js), whichever view shows them.
   const tabScrollRef = useRef({});
+  // The press a view of a page handed over as it made its group live
+  // (PagePane's {edit: {id, clickPos}}): the editor of that note opening
+  // on the page takes it (BlockTree's takeClickPos), so the caret lands
+  // where the press was.
+  const handedPressRef = useRef(null);
+  const takeHandedPress = (id) => {
+    const h = handedPressRef.current;
+    if (!h || h.id !== id) return null;
+    handedPressRef.current = null;
+    return h.clickPos;
+  };
   // Where each page's notes stood when it was left, for this session:
   // blockId -> {id, offset} (captureScrollPos), the row at their top ("" the
   // top itself) and the pixels scrolled into it.
@@ -6351,7 +6520,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // The reader's place on the open page's sheets, off whichever view shows
   // them: the notebook view, else the notes.
   function readSheetPlace() {
-    const el = viewerWrapRef.current?.querySelector(".nbViewer") || document.querySelector(".sidebar .blockList");
+    const el = viewerWrapRef.current?.querySelector(".nbViewer") || liveNotesList();
     return el ? readPlace(el) : null;
   }
   const restoreTokenRef = useRef(0);   // bumped on navigation — kills in-flight restore loops
@@ -6366,7 +6535,12 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       for (const [k, h] of Object.entries(panelGroupRefs.current)) {
         try { if (h) sizes[k] = h.getLayout(); } catch {}
       }
-      pageLayoutsRef.current[focusedBlockId] = { layout, collapsed: collapsedWins, pdfHidden, chatHidden, notesVisible, sizes, pdfScale };
+      // Side by side the windows are the groups' (openBlock leaves them be):
+      // the page keeps its own arrangement and takes only what is its own.
+      const own = !isPhone && !isSingle(tabLayoutRef.current)
+        ? { ...(pageLayoutsRef.current[focusedBlockId] || {}), pdfHidden, pdfScale }
+        : { layout, collapsed: collapsedWins, pdfHidden, chatHidden, notesVisible, sizes, pdfScale };
+      pageLayoutsRef.current[focusedBlockId] = own;
       try {
         const keys = Object.keys(pageLayoutsRef.current);
         while (keys.length > 80) delete pageLayoutsRef.current[keys.shift()];
@@ -6377,7 +6551,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // far into it they are scrolled, which its tab lands on again
     // (notesPlaceRef). A page without a viewer also keeps that row in the
     // synced reading positions; a PDF's entry there is its PDF page.
-    const list = focusedBlockId ? document.querySelector(".sidebar .blockList") : null;
+    const list = focusedBlockId ? liveNotesList() : null;
     if (list) {
       let place = { id: "", offset: 0 };
       if (list.scrollTop > 8) {
@@ -6403,7 +6577,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (!pdfUrl || pdfRenderedUrlRef.current !== pdfUrl) return;
     const scroller = viewerWrapRef.current?.querySelector(".pdfViewer");
     if (focusedBlockId && scroller) {
-      tabScrollRef.current[focusedBlockId] = { top: scroller.scrollTop, scale: pdfEffScale };
+      tabScrollRef.current[focusedBlockId] = { top: scroller.scrollTop, left: scroller.scrollLeft, scale: pdfEffScale };
     }
   }
   function cancelPdfRestore() {
@@ -6417,6 +6591,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // next document.
   function leaveCurrentPage() {
     flushPendingSave();
+    // its tree as it stands, unsent edits and all, for the view of it a
+    // tab group shows next (PagePane), which then draws at once
+    if (focusedBlockId && focusedBlock) keepPaneTree(focusedBlockId, { ...focusedBlock, content: pageTitle }, blocksRef.current);
     seedBlockIdRef.current = null;
     captureScrollPos();
     cancelPdfRestore();
@@ -6445,9 +6622,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       if (pdfRenderedUrlRef.current === targetUrl) {
         const scroller = viewerWrapRef.current?.querySelector(".pdfViewer");
         const h = scroller ? scroller.scrollHeight : 0;
-        const targetTop = entry.top * ((pdfEffScaleRef.current || entry.scale || 1) / (entry.scale || 1));
+        const ratio = (pdfEffScaleRef.current || entry.scale || 1) / (entry.scale || 1);
+        const targetTop = entry.top * ratio;
         if (scroller && h > targetTop && h === lastH) {
-          scroller.scrollTo({ top: targetTop, behavior: "instant" });
+          scroller.scrollTo({ top: targetTop, ...(entry.left != null ? { left: entry.left * ratio } : null), behavior: "instant" });
           pendingRestoreRef.current = null;
           dbg("exact restore: applied, top", Math.round(targetTop));
           finish();
@@ -6554,8 +6732,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // taken back, and what is on screen stays.
     if (tabPick && id === tabPick && id !== focusedBlockId) { dropTabPick(); return; }
     if (id !== focusedBlockId) return;
-    const entry = [...tabHistoryRef.current].reverse().find((entry) =>
-      !entry.blockId || next.some((tab) => tab.id === entry.blockId));
+    // What shows next is found within the tab's group (docs/dev/tab_groups.md):
+    // the latest page still open there or library view in the tab history,
+    // else the group's neighbouring tab. A group emptied by the close goes,
+    // and the neighbouring group's page comes forward.
+    const group = groupOf(tabLayoutRef.current, id);
+    const stillHere = (blockId) => !!group?.tabs.includes(blockId) && next.some((tab) => tab.id === blockId);
+    const entry = [...tabHistoryRef.current].reverse().find((entry) => !entry.blockId || stillHere(entry.blockId));
+    const arranged = removeTab(tabLayoutRef.current, id, { prefer: entry?.blockId || null });
+    keepTabLayout(arranged);
+    const live = activeGroup(arranged);
+    if (group && live?.id !== group.id) {
+      return live?.active ? selectTab(live.active) : goHome(refresh, true);
+    }
     if (entry?.blockId) {
       return selectTab(entry.blockId);
     } else if (entry) {
@@ -6882,6 +7071,13 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     } else if (pending.action === "ask") {
       showChat();
       setTimeout(() => document.querySelector(".chatInputArea")?.focus(), 200);
+    } else if (pending.action === "title" && !readOnly) {
+      setTitleDraft(pageTitle || t("Untitled"));
+      setTitleEditing(true);
+    } else if (pending.action === "labels" && !shareMode) {
+      setLabelInput("");
+      setLabelSuggestionIdx(-1);
+      setLabelEditing(true);
     }
   }, [focusedBlockId]); // eslint-disable-line react-hooks/exhaustive-deps
   // Share a folder: the same popover under the topbar's link button, which
@@ -7041,7 +7237,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       importEmbeddedAnnots(focusedBlockId, docId, false, o.strip);
       return;
     }
-    if (["zotero", "markdown", "gamma", "notability", "goodnotes"].includes(o.source)) {
+    if (["zotero", "markdown", "notion", "gamma", "notability", "goodnotes"].includes(o.source)) {
       const review = (file) => setImportReview({ source: o.source, file, strip: o.strip,
         folder: homeMode && folderFilter ? folderFilter : "" });
       const { label, accept, multiple } = importSource(o.source);
@@ -7201,7 +7397,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           prompt: "Extract the exact title of this document. Reply with ONLY the title text — no quotes, no authors, no extra words.",
-          doc_id: docId,
+          page_id: focusedBlockId,
           history: [],
           model: chatSendModel || "",
         }),
@@ -7396,8 +7592,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // the options row closed — except while a held squeeze is open, whose
   // end goes back instead (noteSqueezeUse; the pass marks it used). A squeeze
   // that toggles the eraser (pencilActions.js) still toggles it: with the
-  // return on, the lift re-arms the pen and the next squeeze arms the
-  // eraser again.
+  // return on, the lift gives back the tool armed before it and the next
+  // squeeze arms the eraser again.
   function handleInkEraseEnd() {
     noteInkEraseHold();
     if (noteSqueezeUse()) return;
@@ -7773,7 +7969,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const ld = linkDialog;
     if (!ld) return;
     setLinkDialog(null);
-    setLinkDialogInput("");
     if (ld.editBlockId) {
       // Re-pointing (or clearing) the link on an existing highlight block
       setBlocks(updateBlockTree(blocks, ld.editBlockId, (b) => ({
@@ -7879,7 +8074,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const place = !notebook && hasSheets && !pendingBlockScrollRef.current && tabScrollRef.current[focusedBlockId]?.place;
     if (!place) return undefined;
     const raf = requestAnimationFrame(() => {
-      const list = document.querySelector(".sidebar .blockList");
+      const list = liveNotesList();
       if (list) showPlace(list, place);
     });
     return () => cancelAnimationFrame(raf);
@@ -7927,14 +8122,14 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }, [keybindings]);
   const pageTools = useMemo(() => ({
     readOnly,
-    ink: { tool: inkTool, penTool: inkPenTool, penOnly: inkPenOnly, pressure: inkPressure, eraserMode: inkEraserMode,
+    ink: { tool: inkTool, penTool: inkPenTool, penWritesPdf: inkPenWritesPdf, penOnly: inkPenOnly, pressure: inkPressure, eraserMode: inkEraserMode,
       eraserSize: inkEraserSize, eraserFilter: inkEraserFilter, drawHold: inkDrawHold,
       scribble: inkScribbleErase, fingerUndo: inkFingerUndo, lassoMode: inkLassoMode, lassoPictures: inkLassoPictures, clip: inkClip,
       keys: inkKeys, hoverPreview: inkHoverPreview, ruler: readOnly ? null : inkRuler, rulerUnits: inkRulerUnits,
       zoom: readOnly ? null : inkZoom, aiWork: inkAiWork },
     text: { armed: textArmed, style: textBoxStyle, zotero: zoteroLinked },
     actions: pageActions,
-  }), [readOnly, inkTool, inkPenTool, inkPenOnly, inkPressure, inkEraserMode, inkEraserSize, inkEraserFilter, inkClip, inkKeys,
+  }), [readOnly, inkTool, inkPenTool, inkPenWritesPdf, inkPenOnly, inkPressure, inkEraserMode, inkEraserSize, inkEraserFilter, inkClip, inkKeys,
     inkDrawHold, inkScribbleErase, inkFingerUndo, inkLassoMode, inkLassoPictures, inkHoverPreview, textArmed, textBoxStyle, zoteroLinked,
     pageActions, inkRuler, inkRulerUnits, inkZoom, inkAiWork]);
   // --- Recordings (docs/dev/recording.md) ---------------------------------------
@@ -8114,6 +8309,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   bindingsRef.current = keybindings;
   appCmdRef.current = {
     shareMode, homeMode, readOnly, hasPage: !!focusedBlockId, hasPdf: !!pdfUrl && !homeMode, commentsOn,
+    phone: isPhone, groups: groupsOf(tabLayout).length,
+    splitTab: (side) => { if (focusedBlockId) splitTab(focusedBlockId, side); },
+    joinGroups: joinTabGroups,
     search: (all) => {
       if (!all) {
         const homeFind = document.querySelector(".homeFindInput");
@@ -8180,7 +8378,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     share: () => openPageShare(focusedBlockId),
     metadata: () => openMetaPopover(),
     // under the page title, else centred
-    pageProperties: () => openProps(focusedBlockId, document.querySelector(".titleText")),
+    pageProperties: () => openProps(focusedBlockId, liveSidebarRef.current?.querySelector(".titleText") || null),
     attach: () => setOpenPopover((p) => (p === "attach" ? null : "attach")),
     reportProblem: () => { setOpenPopover(null); setReportOpen(true); },
     // The handwriting group (docs/dev/handwriting.md "Copy, cut and paste"):
@@ -8372,8 +8570,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       onPage: !!focusedBlockId,
       editable: !readOnly,
       // which Enter starts a new note (Settings → Keyboard): the Shift+Enter
-      // hint is for the default, where Enter breaks the line
-      enterNewNote: !!enterNewNote,
+      // hint is for an account whose Enter breaks the line
+      enterNewBlock: !!enterNewBlock,
       // the open paper's details are unverified (the ⓘ button's red "!"),
       // with the notes header that carries the button on screen
       unverifiedMeta: !!(focusedBlockId && !homeMode && pageMeta && metaSrc?.warn && !metaBusy)
@@ -8464,20 +8662,32 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     const obj = src ? findObject(src.content || "", kind, idx) : null;
     return obj ? { src, obj } : null;
   }
-  // The "move to page" picker, for a block (`blockId`) or an object
-  // (`fragment`); "Move into page…" picks with it too (`pageIds`, pickPageParent).
-  async function pickMovePage(what) {
-    try {
-      const d = await apiJson(`${API}/blocks/root/children`);
-      const pages = (d.children || []).filter((p) => p.id !== focusedBlockId);
-      setMoveBlockDialog({ ...what, query: "", pages });
-    } catch (err) { setStatus(t("Could not list pages: {message}", { message: err.message })); }
+  // The Move to page picker, for a block (`blockId`) or an object
+  // (`fragment`); "Move into page…" picks with it too (`pageIds`,
+  // pickPageParent). It opens at once over the listing, which is read again
+  // behind it, so a page made or deleted on another device since shows (not
+  // in a share view, whose listing is not the library's).
+  function pickMovePage(what) {
+    setMovePicker(what);
+    if (!shareMode) fetchHomeBlocks({ still: true });
   }
+  // Where it cannot go: the page a block or an object leaves, or the moved
+  // pages and the pages inside them. A sub-page is a page like any other
+  // (its row names the pages it is in), and a block's or an object's move
+  // offers the open page's own sub-pages first.
+  const moveExclude = useMemo(() => {
+    if (!movePicker) return null;
+    const ids = movePicker.pageIds || [focusedBlockId];
+    return new Set([...ids, ...(movePicker.pageIds ? pageDescendants(homeBlocks, ids) : [])]);
+  }, [movePicker, homeBlocks, focusedBlockId]);
+  const moveFirst = useMemo(() => (movePicker && !movePicker.pageIds
+    ? homeBlocks.filter((p) => p._parentPage === focusedBlockId).map((p) => p.id) : []), [movePicker, homeBlocks, focusedBlockId]);
+  // The link dialog's (pdf/LinkDialog.jsx): this page.
+  const linkExclude = useMemo(() => new Set([focusedBlockId]), [focusedBlockId]);
   // An image / table / diagram to the end of another page: a new block there
   // holding its markdown, the object cut from its block here. The local cut
   // stays undoable (an undo leaves the copy on the other page).
   async function doMoveFragment(frag, page) {
-    setMoveBlockDialog(null);
     const title = (page.content || t("Untitled")).slice(0, 60);
     const found = objectAt(frag.sourceId, frag.kind, frag.idx);
     if (!found) return;
@@ -8494,15 +8704,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setStatus(t("Move failed: {message}", { message: err.message }));
     }
   }
+  // The picker's pick: what it was opened for goes to `page`.
+  function moveToPicked(page) {
+    const what = movePicker;
+    setMovePicker(null);
+    if (what?.fragment) doMoveFragment(what.fragment, page);
+    else if (what?.pageIds) movePagesInto(what.pageIds, page);
+    else if (what?.blockId) doMoveBlock(what.blockId, page);
+  }
   // Move a block subtree to the end of another page: sync any queued edits
   // first, then re-parent server-side (reorder carries parent_id). The block
   // leaves this page through the room's delete, which the server logs with
   // the move: removed here as an edit it would go out as a delete of a block
   // that lives on the other page by then, which the server refuses (403).
   async function doMoveBlock(blockId, page) {
-    if (moveBlockDialog?.fragment) return doMoveFragment(moveBlockDialog.fragment, page);
-    if (moveBlockDialog?.pageIds) return movePagesInto(moveBlockDialog.pageIds, page);
-    setMoveBlockDialog(null);
     const title = (page.content || t("Untitled")).slice(0, 60);
     try {
       await persistBlocks(blocks);
@@ -8521,12 +8736,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       setStatus(t("Move failed: {message}", { message: err.message }));
     }
   }
-  const movePageMatches = (() => {
-    if (!moveBlockDialog) return [];
-    const q = moveBlockDialog.query.trim().toLowerCase();
-    const all = moveBlockDialog.pages;
-    return (q ? all.filter((p) => (p.content || "").toLowerCase().includes(q)) : all).slice(0, 12);
-  })();
   // Leaving home or changing folders drops the file-manager selection.
   useEffect(() => { clearSelection(); setHomeMenu(null); }, [folderFilter, labelFilter, homeMode]);
   // A folder or label the view names that the listing's trees lack (deleted
@@ -9118,12 +9327,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setTimeout(attempt, 100);
   }, [pdfHidden, highlights]);
 
-  // Jump to the last-read page when a document opens.
-  // Position comes from the account-synced per-paper map (read-pos pref),
-  // falling back to the legacy per-browser session slot only when it belongs
-  // to this page. Waits until this document's pages are rendered (however
-  // long that takes), then scrolls and holds the target until the layout
-  // stops shifting under it.
+  // Jump to the last-read page when a document opens, the page the
+  // account-synced per-paper map (read-pos pref) holds for it. Waits until
+  // this document's pages are rendered (however long that takes), then
+  // scrolls and holds the target until the layout stops shifting under it.
   useEffect(() => {
     coarseRestorePendingRef.current = false;
     if (pdfHidden || !pdfUrl) return;
@@ -9133,8 +9340,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // coarse last-read page is only for (re)opening a paper cold.
     if (tabScrollRef.current[fid]) { dbg("restore: exact tab position exists for", fid); return; }
     dbg("restore: waiting for doc;", fid, "entry:", readPosRef.current[fid] || null);
-    const sess = loadSession();
-    const sessSaved = fid && sess.focusedBlockId === fid ? sess.pdfPageNumber : 0;
     coarseRestorePendingRef.current = true;
     let cancelled = false;
     let tries = 0;
@@ -9171,7 +9376,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         return;
       }
       const entry = fid ? readPosRef.current[fid] : null;
-      const saved = entry?.page || sessSaved;
+      const saved = entry?.page;
       if (!saved || saved <= 1) { dbg("restore: nothing to restore (saved page", saved, ")"); done(); return; }
       dbg("restore: doc rendered, scrolling to page", saved);
       restoredPdfUrlRef.current = pdfUrl;
@@ -9227,17 +9432,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return () => { cancelled = true; done(); cancelCoarseRestoreRef.current = () => {}; };
   }, [pdfUrl, pdfHidden]);
 
-  // Track PDF scroll position — feeds the page indicator and the synced
-  // per-paper reading position.
+  // Track PDF scroll position — feeds the synced per-paper reading position.
   useEffect(() => {
     if (!pdfUrl || pdfHidden) return;
     let ticking = false;
-    let settle = 0;
     function onScroll(e) {
       // Fast bail without any DOM query: the notes/chat panes pass through
       // here too, but only the PDF scroller itself matters.
       const target = e.target;
-      if (!(target instanceof Element) || !target.classList.contains("pdfViewer")) return;
+      // the open page's viewer, never a tab group's view of another page
+      if (!(target instanceof Element) || !target.classList.contains("pdfViewer") || target.closest("[data-read-view]")) return;
       if (ticking) return;
       ticking = true;
       requestAnimationFrame(() => {
@@ -9260,16 +9464,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         }
         const n = found ? parseInt(found.dataset.page) : 0;
         if (!n) return;
-        // Record via the tracker, not a pdfPageNumber effect: scrolling
-        // within a page (or back to a page the state already shows) fires
-        // no state change, but must still re-assert this window's
-        // position over one pulled from another window.
+        // Every scroll records, within one page too: that re-asserts this
+        // window's position over one pulled from another window.
         recordScrollPageRef.current?.(n);
-        // The state (what the session restore saves) follows once the scroll
-        // rests: a flick through fifty pages is one render of the app, not
-        // fifty.
-        clearTimeout(settle);
-        settle = setTimeout(() => setPdfPageNumber(n), 300);
       });
     }
     // Capture-phase listener on the document: element scroll events don't
@@ -9280,7 +9477,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // and a remount silently drops a per-element listener, ending position
     // tracking for the rest of the session.
     document.addEventListener('scroll', onScroll, { capture: true, passive: true });
-    return () => { clearTimeout(settle); document.removeEventListener('scroll', onScroll, { capture: true }); };
+    return () => document.removeEventListener('scroll', onScroll, { capture: true });
   }, [pdfUrl, pdfHidden]);
 
   // Names the paper a citation pill points at, in the chat and in the notes:
@@ -9304,6 +9501,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     () => ({ openPage: openPageLink, openBlock: openBlockLink, citeSource }),
     [focusedBlockId, blocks, refCache, shareMode, homeBlocks, pageTitle],
   );
+
+  // What the views of pages in the tab groups (PagePane) take from App:
+  // the [[ref]] labels and their fetches, the library's labels, file chips,
+  // the notes' text size and keys, the PDF's looks, and what this account
+  // may do. Stable while none of these change, so a view's rows render
+  // again only for its own page.
+  const paneFnsRef = useRef(null);
+  paneFnsRef.current = { onFetchRefs, onCacheRef };
+  const paneShared = useMemo(() => ({
+    refCache, libTree, fileChipCtx, commentsOn, keybindings, enterNewBlock, pages: pageBlocks,
+    textScaleStyle: notesTextScale.style, darkPage: pdfDarkPage, hideEmbeddedAnnots: embAnnots === "hide",
+    canWrite: !readOnly, labels: !shareMode,
+    onFetchRefs: (...a) => paneFnsRef.current.onFetchRefs(...a), onCacheRef: (...a) => paneFnsRef.current.onCacheRef(...a),
+  }), [refCache, libTree, fileChipCtx, commentsOn, keybindings, enterNewBlock, pageBlocks, notesTextScale.style, pdfDarkPage, embAnnots, readOnly, shareMode]);
 
   // A share link that can't open yet: sign in (signed-in / specific-people
   // shares), or explain why not. "signin" is the blocked page's own sign-in,
@@ -9565,7 +9776,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // takes the center instead, whether or not the Notes dock is on.
   const centerNotes = viewerHidden || homeMode || pageOnly;
   const notesWindow = notesVisible || centerNotes ? (
-    <div className="sidebar" data-guide="dock.notes">
+    <div className="sidebar" data-guide="dock.notes" ref={liveSidebarRef}>
           {!homeMode && <div className="pageTitleRow">
             <div className="pageTitleMain">
             {/* the pages the open page is inside, each opening that page */}
@@ -10754,6 +10965,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     trackNoteSel(id, from, to);
                     collab.sendCursor({ block: id, anchor: from, head: to });
                   },
+                  takeClickPos: takeHandedPress,
                   onStartEdit: (id, editMode) => {
                     if (readOnly) return;
                     if (editMode) pendingFocusRef.current = id;
@@ -10779,7 +10991,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   mergeOpen,
                   onMergeOpen: setMergeOpen,
                   mergeNav,
-                  enterNewNote,
+                  enterNewBlock,
                   // `above` inserts before `id` instead (the "+" handle with
                   // Alt held).
                   onEnterSibling: (id, { above = false } = {}) => {
@@ -10789,6 +11001,49 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     startEditing(newId);
                     setBlocks(next);
                     setFocusedId(newId);
+                  },
+                  // The new-block key in a plain note (mdLines.newBlockPlan):
+                  // the text kept and the block made are one transition, one
+                  // undo step. The block goes first under open children, where
+                  // the caret is, else right below; a caret before the text
+                  // makes it above and stays. `keep` is the live editor's, which
+                  // the closure's tree can lag, and reaches an editor that
+                  // stays open through its value.
+                  onNewBlock: (id, plan) => {
+                    if (readOnly) return;
+                    const selection = blockRefs.current[id]?.current;
+                    if (selection) caretBeforeRef.current = { id, from: selection.selectionStart, to: selection.selectionEnd, keyed: !plan.stay };
+                    if (plan.stay) {
+                      setBlocks((prev) => setBlockText(prev, id, plan.keep));
+                      return;
+                    }
+                    const host = findBlock(blocks, id);
+                    const firstChild = !plan.above && !!host?.children?.length && !isFolded(host, view);
+                    const newBlock = makeNewBlock({ content: plan.next });
+                    setBlocks((prev) => addSiblingBlock(prev, id, { above: plan.above, keep: plan.keep, firstChild, newBlock }).blocks);
+                    if (plan.above) return;
+                    pendingFocusRef.current = { id: newBlock.id, caret: plan.caret };
+                    startEditing(newBlock.id);
+                    setFocusedId(newBlock.id);
+                  },
+                  // Backspace at the very start of a plain note
+                  // (blockModel.mergeIntoAbove): the block it removes takes no
+                  // comment thread with it, or nothing happens. A row that
+                  // only loses the empty one above stays open, through the
+                  // DOM move when that one was its parent.
+                  onMergeAbove: (id) => {
+                    if (readOnly) return;
+                    const plan = mergeIntoAbove(blocks, id, view);
+                    if (!plan || comments.threadsByBlock.get(plan.gone)?.length) return;
+                    caretBeforeRef.current = { id, from: 0, to: 0, keyed: true };
+                    if (plan.focusId === id) {
+                      keepEditorThrough(id, 0);
+                    } else {
+                      pendingFocusRef.current = { id: plan.focusId, caret: plan.caret };
+                      startEditing(plan.focusId);
+                      setFocusedId(plan.focusId);
+                    }
+                    setBlocks((prev) => mergeIntoAbove(prev, id, view)?.blocks || prev);
                   },
                   onAddChild: (id) => {
                     if (readOnly) return;
@@ -10927,8 +11182,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     // text paste would, and the caret goes to the end of the
                     // last pasted block. A highlight's or ink's block stays.
                     const host = findBlock(blocks, id);
-                    // (a block's fold and the moment it was made, `t0`, are bookkeeping, not content)
-                    const dropHost = replace && !!host && Object.keys(host.properties || {}).every((k) => k === "collapsed" || k === "t0");
+                    const dropHost = replace && !!host && isPlainNote(host);
                     let last = created[created.length - 1];
                     while (last.children.length) last = last.children[last.children.length - 1];
                     // Siblings after the pasting block (its own editor stays
@@ -10983,7 +11237,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     }
                     const above = frag ? py < r.top + r.height / 2 : (py - r.top) <= 16;
                     const td = parseInt((wrap || e.currentTarget).getAttribute("data-depth") || "0", 10);
-                    const nested = (px - r.left) > 50;
+                    const nested = (px - r.left) > 62;
                     const dt = { targetId: block.id, above, depth: nested ? td + 1 : td, rect: { top: r.top, left: r.left, width: r.width, bottom: r.bottom } };
                     _dragState.dropTarget = dt;
                     setDropTarget(dt);
@@ -11074,8 +11328,25 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
   // Slot the windows into dock columns / the bottom row (the notes in the
   // center are no window: centerNotes).
+  // The docked Notes window while pages stand side by side
+  // (docs/dev/tab_groups.md): the notes of the page on screen when it has
+  // a viewer; while the page on screen has its notes in its own group (a
+  // page without a PDF, the library), those of the last page with a viewer
+  // that was on screen and is still open in a group, drawn as a view of
+  // that page (PagePane `dock`). The window keeps its place, and the paper
+  // its notes beside the page being written; a press on them makes the
+  // paper's group live.
+  if (focusedBlockId && !centerNotes) notesPaperRef.current = focusedBlockId;
+  const notesPaper = (() => {
+    if (isPhone || isSingle(tabLayout) || !centerNotes || !notesVisible) return null;
+    // a paper another group shows: the last one on screen, else (after a
+    // reload) the first group's that has a PDF
+    const shown = groupsOf(tabLayout).map((g) => g.active).filter((id) => id && id !== focusedBlockId);
+    const kept = notesPaperRef.current;
+    return shown.includes(kept) ? kept : shown.find((id) => tabKinds.get(id) === "pdf") || null;
+  })();
   const winVisible = {
-    notes: Boolean(notesWindow) && !centerNotes,
+    notes: (Boolean(notesWindow) && !centerNotes) || !!notesPaper,
     chat: !chatHidden && (!shareMode || !!focusedBlockId),
     comments: !commentsHidden && !!focusedBlockId && !homeMode && commentsOn,
   };
@@ -11121,7 +11392,10 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (id === "notes") {
       return (
         <DockWindow title={title} guide="notes.grip" {...common} onClose={onClose}>
-          {notesWindow}
+          {notesPaper ? (
+            <PagePane key={notesPaper} dock {...paneProps(notesPaper)}
+              onActivate={(target) => { const g = groupOf(tabLayoutRef.current, notesPaper); if (g) activateTabGroup(g.id, notesPaper, target); }} />
+          ) : notesWindow}
         </DockWindow>
       );
     }
@@ -11319,7 +11593,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             icon={ImportIcon}
             data-guide="view.import"
             onClick={() => { setOpenPopover(null); setImportOpen(true); }}
-            title={t("Bring in notes and highlights: a Zotero library, Notability notes, GoodNotes notebooks, Markdown, a Logseq export, a Gamma export, or the annotations saved inside this PDF")}
+            title={t("Bring in notes and highlights: a Zotero library, Notability notes, GoodNotes notebooks, Notion pages, Markdown, a Logseq export, a Gamma export, or the annotations saved inside this PDF")}
           >{t("Import…")}</MenuItem>
         ),
       ],
@@ -12001,7 +12275,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     <MentionClock.Provider value={reminders.now}>
     <div
       ref={appRef}
-      className={`app layout-horizontal ${pseudoFullscreen ? "pseudoFullscreen" : ""} ${isPhone ? "phoneUI" : ""}`}
+      className={`app ${pseudoFullscreen ? "pseudoFullscreen" : ""} ${isPhone ? "phoneUI" : ""}`}
       data-drop={homeMode && lib.organize ? "upload" : focusedBlockId && !readOnly ? "files" : undefined}
       onDragOver={shareMode ? undefined : (e) => {
         if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes("Files")) return;
@@ -12011,7 +12285,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         // files themselves, and a page or a sheet takes pictures
         // (markup/PictureLayer.jsx).
         const dropHere = ((homeMode && lib.organize) || (focusedBlockId && !readOnly)) && !e.target.closest(".blockRowWrap")
-          && !picturesDrag(e);
+          && !e.target.closest("[data-read-view]") && !picturesDrag(e);
         appRef.current?.classList.toggle("dragOver", dropHere);
       }}
       onDragLeave={shareMode ? undefined : (e) => {
@@ -12020,6 +12294,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       onDrop={shareMode ? undefined : (e) => {
         appRef.current?.classList.remove("dragOver");
         if (!e.dataTransfer) return;
+        // A tab group's view of another page is not the page files go to.
+        if (e.target.closest?.("[data-read-view]")) { e.preventDefault(); return; }
         // Grab entries synchronously — the DataTransfer is neutered once the
         // handler returns. Folders only arrive via the entry API.
         const entries = Array.from(e.dataTransfer.items || [])
@@ -12077,29 +12353,24 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 <span className="navBackBadge"><span key={Math.min(navStackLen, 30)} className="countIn">{Math.min(navStackLen, 30)}</span></span>
               </button>
             ) : null}
-            <OpenTabs
-              tabs={openTabs}
-              activeId={tabPick || focusedBlockId}
-              still={tabsReadRef.current.has(openTabs)}
-              kindOf={tabKindOf}
-              menuOpen={openPopover === "tabs"}
-              onMenuOpenChange={(open) => setOpenPopover(open ? "tabs" : null)}
-              onReorder={(dragged, target) => updateTabs((prev) => {
-                const from = prev.findIndex((tab) => tab.id === dragged);
-                const to = prev.findIndex((tab) => tab.id === target);
-                if (from < 0 || to < 0 || from === to) return prev;
-                // Dragging never crosses the pinned/unpinned boundary.
-                if (!!prev[from].pinned !== !!prev[to].pinned) return prev;
-                const next = [...prev];
-                const [moved] = next.splice(from, 1);
-                next.splice(to, 0, moved);
-                return next;
-              })}
-              onOpen={selectTab}
-              onClose={closeTab}
-              onTogglePin={toggleTabPinned}
-              onContext={(tab, x, y) => { setTabMenu({ id: tab.id, pinned: !!tab.pinned, x, y }); guideEvents.emit("tab.menu"); }}
-            />
+            {/* With one group the strip is here, as always; split into
+                groups, each group's frame carries its own (TabGroups). */}
+            {isPhone || isSingle(tabLayout) ? (
+              <OpenTabs
+                groupId={activeGroup(tabLayout)?.id}
+                tabs={isPhone ? openTabs : groupTabs(activeGroup(tabLayout))}
+                activeId={tabPick || focusedBlockId}
+                still={tabsReadRef.current.has(openTabs)}
+                kindOf={tabKindOf}
+                menuOpen={openPopover === "tabs"}
+                onMenuOpenChange={(open) => setOpenPopover(open ? "tabs" : null)}
+                onReorder={(dragged, target) => reorderGroupTabs(activeGroup(tabLayout)?.id, dragged, target)}
+                onOpen={selectTab}
+                onClose={closeTab}
+                onTogglePin={toggleTabPinned}
+                onContext={(tab, x, y) => { setTabMenu({ id: tab.id, pinned: !!tab.pinned, x, y }); guideEvents.emit("tab.menu"); }}
+              />
+            ) : <div className="tabStrip" aria-hidden="true" />}
             {isPhone ? null : topbarActions}
           </div>
           {statusBarVisible ? <div className="status">{status}</div> : null}
@@ -12329,6 +12600,27 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       <Panel id="slot-center" order={2} minSize={30} className="dockSlot">
       <PanelGroup direction="vertical" autoSaveId="gamma-work-v" ref={(h) => { panelGroupRefs.current["work-v"] = h; }}>
       <Panel id="slot-main" order={1} minSize={20} className="dockSlot">
+      <TabGroups layout={tabLayout} liveId={shownGroupId} single={isPhone} tabsOf={groupTabs} activeTabId={tabPick || focusedBlockId}
+        onActivate={activateTabGroup} onMoveTab={moveTabToGroup} onSplit={splitTabGroup} onResize={resizeTabSplit}
+        sashMargins={SASH_MARGINS}
+        strip={{
+          still: tabsReadRef.current.has(openTabs), kindOf: tabKindOf,
+          menuOpenFor: typeof openPopover === "string" && openPopover.startsWith("tabs:") ? openPopover.slice(5) : null,
+          onMenuOpenChange: (groupId) => setOpenPopover(groupId ? `tabs:${groupId}` : null),
+          onReorder: reorderGroupTabs, onClose: closeTab, onTogglePin: toggleTabPinned,
+          onContext: (tab, x, y) => { setTabMenu({ id: tab.id, pinned: !!tab.pinned, x, y }); guideEvents.emit("tab.menu"); },
+        }}
+        renderPane={(group) => (group.active ? (
+          <PagePane key={group.active} {...paneProps(group.active)}
+            onActivate={(target) => activateTabGroup(group.id, undefined, target)} />
+        ) : (
+          <div className="pagePaneEmpty">
+            <p>{t("Nothing is open here. Drag a tab in, or open a page from the library.")}</p>
+            <button type="button" className="uiBtn sm" onClick={() => activateTabGroup(group.id)}>{t("Open a page here")}</button>
+            <button type="button" className="uiBtn sm" onClick={() => closeTabGroup(group.id)}>{t("Close this group")}</button>
+          </div>
+        ))}
+        live={(
       <div className={`main ${(viewerHidden || homeMode || pageOnly) ? "pdfHidden" : ""}`}>
         {pillShown ? (
           <div
@@ -12470,6 +12762,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               marginRef={pdfMarginRef}
               onMarginLost={() => setThreadPop((cur) => (cur?.margin
                 ? { ...cur, margin: false, anchor: highlightEl(cur.blockId) } : cur))}
+              onPenSelection={() => penSelectionRef.current?.()}
               onAreaSelection={(sel) => addChatPicture(regionPicture("area", focusedBlockId, sel.pageNumber,
                 regionBox({ boundingRect: sel.rect, width: sel.width, height: sel.height })))}
               // the selection popup's Comment: a highlight with its thread popover open on it
@@ -12501,7 +12794,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                 }
                 if (extras?.link) {
                   setLinkDialog({ position, quote });
-                  setLinkDialogInput("");
                   hideTip?.();
                   return;
                 }
@@ -12525,7 +12817,6 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   openThread(id, highlightEl(id), { compose: true, toggle: false, pdf: true });
                 } else if (action === "link") {
                   setLinkDialog({ position: null, quote: highlights.find((x) => x.id === id)?.quote || "", editBlockId: id });
-                  setLinkDialogInput("");
                 }
               }}
             />
@@ -12542,6 +12833,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
 
         {centerNotes ? notesWindow : null}
       </div>
+        )} />
       </Panel>
       {slotWins("bottom").length ? (
         <>
@@ -12733,17 +13025,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}>
             <div className="reportModalTitle">{t("Rename label")}</div>
             <div className="reportModalHint confirmMessage">{t("Renames “{name}” on every page that carries it.", { name: labelName(libTree, labelRenaming.id) })}</div>
-            <div className="shareRow">
-              <input
-                autoFocus
-                value={labelRenaming.draft}
-                onFocus={(e) => e.currentTarget.select()}
-                onChange={(e) => setLabelRenaming((s) => ({ ...s, draft: e.target.value }))}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") renameLabel(labelRenaming.id, labelRenaming.draft);
-                  else if (e.key === "Escape") setLabelRenaming(null);
-                }}
-              />
+            <input
+              autoFocus
+              className="aiKeyInput"
+              aria-label={t("Label name")}
+              value={labelRenaming.draft}
+              onFocus={(e) => e.currentTarget.select()}
+              onChange={(e) => setLabelRenaming((s) => ({ ...s, draft: e.target.value }))}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.nativeEvent.isComposing) renameLabel(labelRenaming.id, labelRenaming.draft);
+                else if (e.key === "Escape") setLabelRenaming(null);
+              }}
+            />
+            <div className="reportModalBtns">
+              <button className="uiBtn" onClick={() => setLabelRenaming(null)}>{t("Cancel")}</button>
               <button
                 className="uiBtn primary"
                 disabled={!labelRenaming.draft.trim()}
@@ -12753,48 +13048,26 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           </div>
         </DialogOverlay>
       ) : null}
-      {moveBlockDialog ? (
-        <DialogOverlay {...backdropPress(() => setMoveBlockDialog(null))}>
-          <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => stepList(e, e.currentTarget.querySelector("[data-find]"), [...e.currentTarget.querySelectorAll(".moveBlockList .ctxMenuItem")])}>
-            <div className="reportModalTitle">{moveBlockDialog.pageIds ? t("Move into page")
-              : moveBlockDialog.fragment ? t("Move to page") : t("Move block to page")}</div>
-            <div className="reportModalHint confirmMessage">{moveBlockDialog.pageIds
-              ? tn("The page goes inside the one you pick and is listed there, under Pages inside, rather than in the library.",
-                "The {n} pages go inside the one you pick and are listed there, under Pages inside, rather than in the library.", moveBlockDialog.pageIds.length)
-              : moveBlockDialog.fragment
-              ? t("It becomes a block of its own at the end of the chosen page.")
-              : t("The block and its sub-blocks move to the end of the chosen page.")}</div>
-            <div className="shareRow">
-              <input
-                autoFocus data-find
-                placeholder={t("Filter pages…")}
-                value={moveBlockDialog.query}
-                onChange={(e) => setMoveBlockDialog((s) => ({ ...s, query: e.target.value }))}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") setMoveBlockDialog(null);
-                  else if (e.key === "Enter" && movePageMatches.length && !e.nativeEvent.isComposing) {
-                    doMoveBlock(moveBlockDialog.blockId, movePageMatches[0]);
-                  }
-                }}
-              />
-            </div>
-            <div className="moveBlockList">
-              {movePageMatches.map((p) => (
-                <MenuItem key={p.id} icon={FileTextIcon} onClick={() => doMoveBlock(moveBlockDialog.blockId, p)}
-                  // a page inside another names where it is
-                  trailing={p._path ? <span className="ctxMenuKey">{p._path}</span> : null}
-                  onKeyDown={(e) => { if (e.key === "Escape") setMoveBlockDialog(null); }}>
-                  {p.content || t("Untitled")}
-                </MenuItem>
-              ))}
-              {!movePageMatches.length ? (
-                <div className="confirmMessage">{t("No matching page.")}</div>
-              ) : null}
-            </div>
-          </div>
-        </DialogOverlay>
-      ) : null}
+      {movePicker ? <LazyBoundary><PagePicker
+        label={movePicker.pageIds ? t("Move into page") : movePicker.fragment ? t("Move to page") : t("Move block to page")}
+        placeholder={movePicker.pageIds ? t("Move into page…") : movePicker.fragment ? t("Move to page…") : t("Move block to page…")}
+        note={movePicker.pageIds
+          ? tn("The page goes inside the one you pick and is listed there, under Pages inside, rather than in the library.",
+            "The {n} pages go inside the one you pick and are listed there, under Pages inside, rather than in the library.", movePicker.pageIds.length)
+          : movePicker.fragment
+          ? t("It becomes a block of its own at the end of the chosen page.")
+          : t("The block and its sub-blocks move to the end of the chosen page.")}
+        hint={t("↑↓ choose · Enter move · Esc close")}
+        pages={homeBlocks}
+        exclude={moveExclude}
+        tree={libTree}
+        recentViews={recentViews}
+        openTabs={openTabs}
+        first={moveFirst}
+        firstTitle={t("Inside this page")}
+        onPick={moveToPicked}
+        onClose={() => setMovePicker(null)}
+      /></LazyBoundary> : null}
       {linkPrompt ? (
         <DialogOverlay {...backdropPress(() => setLinkPrompt(null))}>
           <div className="reportModal confirmModal linkPromptModal" onClick={(e) => e.stopPropagation()}>
@@ -12834,72 +13107,19 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           </div>
         </DialogOverlay>
       ) : null}
-      {linkDialog ? (
-        <DialogOverlay {...backdropPress(() => setLinkDialog(null))}>
-          <div className="reportModal confirmModal" onClick={(e) => e.stopPropagation()}>
-            <div className="reportModalTitle">{linkDialog.editBlockId ? t("Change reference link") : t("Link reference to a page")}</div>
-            {linkDialog.quote ? (
-              <div className="reportModalHint linkRefQuote">“{linkDialog.quote.slice(0, 160)}{linkDialog.quote.length > 160 ? "…" : ""}”</div>
-            ) : null}
-            <div className="reportModalHint">{t("Paste a DOI, arXiv id, or URL — or pick one of your pages. The selection becomes a clickable link on the PDF.")}</div>
-            <div className="shareRow">
-              <input
-                autoFocus
-                placeholder={t("10.1103/…  ·  1810.11086  ·  https://…")}
-                value={linkDialogInput}
-                onChange={(e) => setLinkDialogInput(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && linkDialogInput.trim()) {
-                    e.preventDefault();
-                    createLinkHighlight({ url: normalizeLinkInput(linkDialogInput) });
-                  } else if (e.key === "Escape") { setLinkDialog(null); }
-                }}
-              />
-              <button
-                className="uiBtn primary"
-                disabled={!linkDialogInput.trim()}
-                onClick={() => createLinkHighlight({ url: normalizeLinkInput(linkDialogInput) })}
-              >{t("Link")}</button>
-            </div>
-            {refPoint && refPoint.pageId !== focusedBlockId ? (
-              <>
-                <div className="popoverSection">{t("Copied reference point")}</div>
-                <button
-                  className="reportPageItem linkPageItem"
-                  onClick={() => createLinkHighlight({ pageId: refPoint.pageId, blockId: refPoint.blockId })}
-                  title={t("Link to this exact highlight — clicking the link opens the paper and jumps to it")}
-                >
-                  <span className="reportPageName">{refPoint.pageTitle} — “{refPoint.quote.slice(0, 60)}{refPoint.quote.length > 60 ? "…" : ""}”</span>
-                  <span className="linkLikelyBadge">{t("highlight")}</span>
-                </button>
-              </>
-            ) : null}
-            <div className="popoverSection">{t("Your pages (best match first)")}</div>
-            <div className="reportPageList">
-              {(() => {
-                const cands = homeBlocks
-                  .filter((b) => b.id !== focusedBlockId)
-                  .map((b) => ({ b, score: scorePaperMatch(linkDialog.quote || "", b) }))
-                  .sort((x, y) => y.score - x.score
-                    || (y.b.updated_at || "").localeCompare(x.b.updated_at || ""));
-                if (!cands.length) return <div className="popoverHint">{t("No other pages in your library yet.")}</div>;
-                return cands.map(({ b, score }) => (
-                  <button key={b.id} className="reportPageItem linkPageItem" onClick={() => createLinkHighlight({ pageId: b.id })}>
-                    <span className="reportPageName">{b.content || t("Untitled")}</span>
-                    {score >= 6 ? <span className="linkLikelyBadge">{t("likely")}</span> : null}
-                  </button>
-                ));
-              })()}
-            </div>
-            <div className="reportModalBtns">
-              {linkDialog.editBlockId ? (
-                <button className="uiBtn" onClick={() => createLinkHighlight({})} title={t("Turn this back into a plain highlight")}>{t("Remove link")}</button>
-              ) : null}
-              <button className="uiBtn" onClick={() => setLinkDialog(null)}>{t("Cancel")}</button>
-            </div>
-          </div>
-        </DialogOverlay>
-      ) : null}
+      {linkDialog ? <LazyBoundary><LinkDialog
+        quote={linkDialog.quote || ""}
+        url={linkDialog.url || ""}
+        linked={!!linkDialog.editBlockId && !!highlights.find((x) => x.id === linkDialog.editBlockId)?.linkTarget}
+        pages={homeBlocks}
+        exclude={linkExclude}
+        tree={libTree}
+        recentViews={recentViews}
+        openTabs={openTabs}
+        refPoint={refPoint && refPoint.pageId !== focusedBlockId ? refPoint : null}
+        onLink={createLinkHighlight}
+        onClose={() => setLinkDialog(null)}
+      /></LazyBoundary> : null}
       {/* Mounted once first wanted, then kept, as when they loaded with the
           app (useLatch): closed, they render nothing and run no requests. */}
       {quickOpenMounted ? <LazyBoundary><QuickOpen
@@ -12950,8 +13170,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setRelocateExactChars: appPrefs.setRelocateExactChars,
           inkPenOnly,
           setInkPenOnly,
-          inkAutoPen,
-          setInkAutoPen,
+          inkPenWritesPdf,
+          setInkPenWritesPdf,
           inkPressure,
           setInkPressure,
           inkFingerUndo,
@@ -13021,7 +13241,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setStatus,
           refreshQuota, // keep the storage meters in sync without a re-login
         }}
-        keyboard={{ keybindings, setKeybindings, enterNewNote, setEnterNewNote }}
+        keyboard={{ keybindings, setKeybindings, enterNewBlock, setEnterNewBlock }}
         library={{
           // the batch metadata lookup (a background job) uses the same
           // prompt/model/context prefs as the per-paper fetch in the
@@ -13211,6 +13431,22 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             onClick={() => { setTabMenu(null); openProps(tabMenu.id, null, { at: { x: tabMenu.x, y: tabMenu.y } }); }}>
             {t("Page properties")}
           </MenuItem>
+          {!isPhone ? (
+            // Tab groups (docs/dev/tab_groups.md): this tab into a group of its
+            // own beside its group (the only tab of a group: an empty group
+            // beside it), and every tab back into one group.
+            <>
+              <MenuDivider />
+              <MenuItem icon={SplitColumnsIcon} title={t("Show this page in a group of its own, to the right")}
+                onClick={() => { setTabMenu(null); splitTab(tabMenu.id, "right"); }}>{t("Split right")}</MenuItem>
+              <MenuItem icon={SplitRowsIcon} title={t("Show this page in a group of its own, below")}
+                onClick={() => { setTabMenu(null); splitTab(tabMenu.id, "bottom"); }}>{t("Split down")}</MenuItem>
+              {!isSingle(tabLayout) ? (
+                <MenuItem icon={OnePaneIcon} title={t("Every tab back in one group")}
+                  onClick={() => { setTabMenu(null); joinTabGroups(); }}>{t("Join tab groups")}</MenuItem>
+              ) : null}
+            </>
+          ) : null}
           {lib.organize ? (
             <>
               <MenuDivider />
@@ -13503,8 +13739,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               className="ctxMenuItem"
               onClick={() => {
                 const h = highlights.find((x) => x.id === highlightMenu.id);
-                setLinkDialog({ position: null, quote: h?.quote || "", editBlockId: highlightMenu.id });
-                setLinkDialogInput(h?.linkTarget?.url || "");
+                setLinkDialog({ position: null, quote: h?.quote || "", editBlockId: highlightMenu.id, url: h?.linkTarget?.url || "" });
                 setHighlightMenu(null);
               }}
             >

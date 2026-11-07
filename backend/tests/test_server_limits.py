@@ -537,3 +537,29 @@ def test_docker_image_trusts_forwarded_headers_from_loopback_only():
     edge = re.search(r"^EDGE_SUBNET=(\S+)", (deploy / "demo" / ".env.example").read_text(encoding="utf-8"),
                      re.M).group(1)
     assert f"--subnet {edge} gamma-edge" in (deploy / "demo" / "README.md").read_text(encoding="utf-8")
+
+
+def test_every_proxied_gamma_gets_the_cloudflare_client_address():
+    """Behind Cloudflare, Caddy's own X-Forwarded-For would name Cloudflare's
+    edge, so every visitor behind one edge would share one rate limit: every
+    route to a Gamma (port 9001) in the Caddyfiles passes CF-Connecting-IP
+    as X-Forwarded-For instead. The account server (9002) reads
+    CF-Connecting-IP itself."""
+    root = Path(__file__).resolve().parents[2]
+    for caddyfile in (root / "cloud" / "deploy" / "Caddyfile", root / "cloud" / "fleet" / "deploy" / "Caddyfile"):
+        lines = caddyfile.read_text(encoding="utf-8").splitlines()
+        routes = 0
+        for i, line in enumerate(lines):
+            m = re.match(r"\s*reverse_proxy (\S+:9001)( \{)?$", line)
+            if not m:
+                continue
+            routes += 1
+            block = []
+            if m.group(2):
+                for inner in lines[i + 1:]:
+                    if inner.strip() == "}":
+                        break
+                    block.append(inner.strip())
+            assert "header_up X-Forwarded-For {http.request.header.CF-Connecting-IP}" in block, \
+                (caddyfile.name, m.group(1))
+        assert routes, caddyfile

@@ -119,7 +119,7 @@ Coming from Zotero? A folder is a collection and a label is a tag. Importing or 
 <a href="./docs/user_guide/user_guide.md#gamma-connector"><img alt="On a Physical Review Letters article page, the Gamma Connector's toolbar badge has found the paper; its popup shows the title and authors, files it under Quantum/Neutral atoms with a label, saves it, and the PDF opens in Gamma with its folder and label" src="./docs/assets/demos/demo-connector.webp" width="100%"></a>
 
 - **Gamma Connector** — the browser extension ([Chrome Web Store](https://chromewebstore.google.com/detail/gamma-connector/njpeklephhndnpakmlaancinpnabcomn) · [source](./extension/)) saves the paper you're reading in one click — PDF, metadata, folder, labels — from the arXiv / DOI / publisher tab, and clips links or selections into your notes. Its cookie button saves your **publisher sign-in per journal**, so the server can fetch that journal's PDFs on its own from then on.
-- **Import** — Zotero libraries, Logseq exports and Notability notes with their annotations and handwriting; Obsidian vaults, Notion exports and Markdown folders as notes. **Export** — annotated PDF, Markdown, an Obsidian vault, a Logseq graph, a Zotero library, a Notability note, or a Gamma zip another Gamma can merge.
+- **Import** — Zotero libraries, Logseq exports and Notability notes with their annotations and handwriting; Obsidian vaults, Notion exports (Markdown or HTML) and Markdown folders as notes. **Export** — annotated PDF, Markdown, an Obsidian vault, a Logseq graph, a Zotero library, a Notability note, a zip for Notion's importer, or a Gamma zip another Gamma can merge.
 
 → Guide: [Assistants](./docs/user_guide/user_guide.md#assistants) · [Gamma Connector](./docs/user_guide/user_guide.md#gamma-connector) · [Import and export](./docs/user_guide/user_guide.md#import-and-export) · [Backups and upgrades](./docs/user_guide/user_guide.md#backups-and-upgrades)
 
@@ -157,7 +157,7 @@ docker compose up -d
 
 Open <http://localhost:9001> and log in with the seeded `admin` password from `docker logs gamma` (printed once on first start). Accounts, notes and uploaded PDFs live under the container's `/data` volume and survive upgrades. Behind a reverse proxy, set `FORWARDED_ALLOW_IPS` to the proxy (the template shows how), or every visitor shares the proxy's rate limits.
 
-Upgrades: the template runs [Watchtower](https://containrrr.dev/watchtower/) beside Gamma, which pulls each new image and restarts the container; Gamma then upgrades its data directory as it starts, and each workspace as it is first opened, after snapshotting the databases. Remove that service to update by hand (`docker compose pull && docker compose up -d`). A very old data directory may need one intermediate release first; if so, the server shows a page at its usual address saying exactly which image to run once, and nothing is changed until you do ([how upgrades work](./docs/dev/migrations.md)).
+Upgrades: the template runs [Watchtower](https://github.com/nicholas-fedor/watchtower) beside Gamma, which pulls each new image and restarts the container; Gamma then upgrades its data directory as it starts, and each workspace as it is first opened, after snapshotting the databases. Remove that service to update by hand (`docker compose pull && docker compose up -d`). A very old data directory may need one intermediate release first; if so, the server shows a page at its usual address saying exactly which image to run once, and nothing is changed until you do ([how upgrades work](./docs/dev/migrations.md)).
 
 Backups: a workspace exports as one zip from Settings → Workspaces, and snapshots live in Settings → Backups. Administrators snapshot the whole instance from Settings → Server (restore those with the server stopped: `manage.py backups --restore`) and can keep off-site copies of the databases and uploaded files in an S3-compatible bucket (Settings → Backups → *Off-site copies*). See [Backups and upgrades](./docs/user_guide/user_guide.md#backups-and-upgrades) and the [backup internals](./docs/dev/workspaces.md#export-and-backups). If you bind-mount `/data` to a host folder, set `PUID`/`PGID` to your user's ids (`id -u` / `id -g`) so the files belong to you instead of root.
 
@@ -174,7 +174,7 @@ For assistants (Codex, Claude Code) signing in to a remotely hosted Gamma, an ad
 <details>
 <summary><b>Run from source (development)</b></summary>
 
-Requires Python 3.11+ and Node 18+.
+Requires Python 3.11+ and Node 22+.
 
 **Backend**
 

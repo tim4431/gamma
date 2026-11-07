@@ -126,6 +126,7 @@ export async function fileScenarios({ server, browser, alice, makePdf, step, unt
     ctx = await account.context(browser);
     page = await openPage(ctx, `${server.base}/?ws=${account.ws}&folder=${rydberg}`);
     const original = await account.api(`/api/blocks/${docPageId}`);
+    await account.api(`/api/blocks/${docPageId}`, { method: "PUT", body: { properties: { ...original.properties, notion_id: "a".repeat(32) } } });
     await page.locator(".fileRow", { hasText: "supplement.pdf" }).first().click({ button: "right" });
     await page.locator(".ctxMenuItem", { hasText: "Duplicate" }).click();
     const copyRow = page.locator(".fileRow", { hasText: "supplement.pdf (copy)" });
@@ -133,6 +134,7 @@ export async function fileScenarios({ server, browser, alice, makePdf, step, unt
     const pages = (await account.api("/api/blocks/root/children")).children;
     const copy = pages.find((p) => p.content === "supplement.pdf (copy)");
     assert(copy && !copy.properties.doc_id, "the copy doesn't carry the PDF's doc_id");
+    assert(!copy.properties.notion_id, "nor a Notion id: an import of that page would find the copy");
     assertEq(copy.properties.source_url, `/api/uploads/${original.properties.doc_id}.pdf`, "it shows the same file");
     const byDoc = await account.api(`/api/blocks/by-doc/${original.properties.doc_id}`);
     assertEq(byDoc.id, docPageId, "the PDF's page is still the original");

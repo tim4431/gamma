@@ -16,11 +16,12 @@ import FetchHandoffCards, { LiveHandoffCards } from "./FetchHandoffCards";
 import ReplyPapers from "./ReplyPapers";
 import ApprovalCard from "./ApprovalCard";
 import AgentChanges, { ACTION_ICONS } from "./AgentChanges";
-import { forReplay, markReverted } from "./aiRevert.js";
+import RevertChanges from "./RevertChanges";
+import { forReplay, markReverted, revertible } from "./aiRevert.js";
 import { GRANTS_KEY, conversationId, declinedSummary, grantsIn, readGrants, waitsForPapers, withGrant,
   withoutGrants, withoutPaperWait, writeGrants } from "./approvals.js";
 import { MAX_CHAT_REFERENCES } from "./paperMentions";
-import { READ_TOOLS, WRITE_TOOLS, asksOnly, permState, toolsForKind } from "./chatSettings";
+import { READ_TOOLS, WRITE_TOOLS, permState, toolsForKind } from "./chatSettings";
 import { addUsage, cachedPercent, contextUsed, conversationUsage, fmtTokens, liveUsage, usageDetail } from "./tokenUsage";
 import {
   areaPicturesNote, canContinueAfterLimit, continueAfterLimitPrompt, coverageNote, limitNote, shortenedNote, trimmedNote,
@@ -472,7 +473,7 @@ export default function ChatDock({
   // Home/folder view: the folder being viewed (its id; "" = library root) —
   // enables the folder-agent tools; null in the paper view. agentPerms is the
   // Settings per-chat-kind permission map ({folder, pdf, notes} → {list,
-  // read, block_read, search, rename, move, organize, organize_delete,
+  // read, block_read, search, rename, move, delete, organize, organize_delete,
   // block_edit, …}: chat/chatSettings.js has them all); setAgentPerms edits
   // it from the ⚙ popover), toolRounds the round budget and toolRoundsUnlimited whether it is lifted
   // (Settings → Tool limits); addTask / removeTask put a running Unlimited reply in Background tasks
@@ -581,9 +582,8 @@ export default function ChatDock({
     return () => window.removeEventListener("storage", onStorage);
   }, []);
   const activeUser = () => { try { return localStorage.getItem("gamma-active-user") || ""; } catch { return ""; } };
-  // A permission that only asks (chatSettings.js asksOnly) is never granted.
   const grantedHere = grantsIn(grantStore, activeUser(), conversationId(chatMessages))
-    .filter((key) => permState(chatToolPerms, key) === "ask" && !asksOnly(key));
+    .filter((key) => permState(chatToolPerms, key) === "ask");
   const updateGrants = (change) => setGrantStore((store) => {
     const next = change(store);
     writeGrants(next);
@@ -749,9 +749,16 @@ export default function ChatDock({
   // it touched reload where no live socket brought the ops (a folder or
   // label put back or deleted again: the library listing). The
   // conversation is the one the reply belongs to, even if the dock moved
-  // on while a "Revert all" ran.
+  // on while the revert dialog's run went on.
   const loadedRef = useRef(loadedHere);
   loadedRef.current = loadedHere;
+  // The reply whose "Revert…" opened the dialog that reverts several of the
+  // conversation's changes at once (chat/RevertChanges.jsx); it closes when
+  // the dock shows another conversation. A reply offers it while the
+  // conversation has two changes or more to take back.
+  const [revertFrom, setRevertFrom] = useState(null);
+  useEffect(() => setRevertFrom(null), [chatKey]);
+  const revertibleCount = useMemo(() => revertible(chatMessages).length, [chatMessages]);
   const changesReverted = (id, indexes, answer, reverted = true) => {
     const current = session.getSnapshot().replies.get(chatKey)?.messages
       || (chatKeyRef.current === chatKey ? loadedRef.current : null);
@@ -1549,7 +1556,7 @@ export default function ChatDock({
     };
     // Analyser feeds the live waveform; recording works fine without it.
     try {
-      const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      const audioCtx = new AudioContext();
       const analyser = audioCtx.createAnalyser();
       analyser.fftSize = 1024;
       audioCtx.createMediaStreamSource(stream).connect(analyser);
@@ -2141,7 +2148,8 @@ export default function ChatDock({
                     ) : null}
                     {!isUser && m.actions?.length ? (
                       <AgentChanges actions={m.actions} onOpenPage={onOpenPage} busy={busyHere}
-                        onReverted={!readOnly && m.id ? (indexes, answer, reverted) => changesReverted(m.id, indexes, answer, reverted) : undefined} />
+                        onReverted={!readOnly && m.id ? (indexes, answer, reverted) => changesReverted(m.id, indexes, answer, reverted) : undefined}
+                        onRevertMany={!readOnly && m.id && revertibleCount > 1 ? () => setRevertFrom(m.id) : undefined} />
                     ) : null}
                     {isUser && m.contextPages?.length ? <div className="chatMsgPdfs">
                       {m.contextPages.map((p) => <button type="button" key={p.id} className="crumbBtn" title={p.title} onClick={() => onOpenPage?.(p.id)}><BookIcon size={14} /><span className="linkChipText">{p.title}</span></button>)}
@@ -2479,6 +2487,10 @@ export default function ChatDock({
         </>
         )}
       </form>
+      ) : null}
+      {revertFrom ? (
+        <RevertChanges messages={chatMessages} fromId={revertFrom} busy={busyHere}
+          onReverted={(id, indexes, answer) => changesReverted(id, indexes, answer)} onClose={() => setRevertFrom(null)} />
       ) : null}
       {docPicker ? (
         <DialogOverlay {...backdropPress(() => setDocPicker(false))}>

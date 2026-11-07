@@ -316,9 +316,11 @@ def test_a_folder_deletion_reverts_with_its_subfolders_and_filings_and_redoes(or
     names = folder_names(c)
     assert (names[top], names[sub]) == (["orgF"], ["orgF", "sub"])
     assert (_filed(c, a, "folders"), _filed(c, b, "folders")) == ([keep, sub], [top])
-    # The folder's chat stays where the deletion filed it.
-    assert any(s["preview"].startswith("orgF sub chat") for s in _sessions(c, "home"))
-    assert c.get(f"/api/chats/{sub}").json()["messages"] == []
+    # The folder's chat comes back from the library chat's history, into the folder's own.
+    assert len(action["revert"]["chats"]) == 1 and set(action["revert"]["chats"].values()) == {sub}
+    assert any(s["preview"].startswith("orgF sub chat") for s in _sessions(c, sub))
+    assert not any(s["preview"].startswith("orgF sub chat") for s in _sessions(c, "home"))
+    entry = next(iter(action["revert"]["chats"]))  # a redo and a second revert move this same one
     # A redo does not stop a share made since.
     assert c.post(f"/api/share/folder/{top}").status_code == 200
     r = _revert(c, action, redo=True)
@@ -328,6 +330,10 @@ def test_a_folder_deletion_reverts_with_its_subfolders_and_filings_and_redoes(or
     assert _revert(c, action, redo=True).status_code == 200
     assert not {top, sub} & set(folder_names(c))
     assert (_filed(c, a, "folders"), _filed(c, b, "folders")) == ([keep], None)
+    assert [s["id"] for s in _sessions(c, "home") if s["preview"].startswith("orgF sub chat")] == [entry], (
+        "the redo files the same conversation again")
+    assert _revert(c, action).status_code == 200
+    assert [s["id"] for s in _sessions(c, sub)] == [entry]
 
 
 def test_a_folder_revert_stops_when_the_folder_above_is_gone(org):

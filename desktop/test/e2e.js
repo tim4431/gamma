@@ -45,11 +45,20 @@ async function assertWindowDown() {
   assert.equal(up, 0, 'the step left the window up');
 }
 
+// A box is what a user would see go wrong, in a step that may well go on to
+// pass: a false "Could not open the clone" did for a long time.
+async function assertNoErrorBox() {
+  if (!launched) return;
+  const boxes = await launched.evaluate(() => global.__gammaShell.errorBoxes.splice(0)).catch(() => []);
+  assert.deepEqual(boxes, [], 'the step opened an error box');
+}
+
 async function step(name, fn) {
   const t0 = Date.now();
   try {
     const note = await fn();
     await assertWindowDown();
+    await assertNoErrorBox();
     results.push({ name, ok: true, note: note || '', ms: Date.now() - t0 });
     console.log(`  ok    ${name}${note ? '  — ' + note : ''}`);
   } catch (e) {
@@ -57,6 +66,8 @@ async function step(name, fn) {
     console.log(`  FAIL  ${name}\n        ${String((e && e.stack) || e).split('\n').join('\n        ')}`);
     if (!continueOnFail) throw e;
   } finally {
+    // A failed step's boxes are its own, not the next step's.
+    if (launched) await launched.evaluate(() => { global.__gammaShell.errorBoxes.length = 0; }).catch(() => {});
     if (!headed && launched) {
       await launched.evaluate(({ BaseWindow }) => {
         for (const w of BaseWindow.getAllWindows()) if (!w.isMinimized()) w.minimize();
@@ -78,7 +89,7 @@ function packagedBinary() {
   return hit;
 }
 
-// A valid one-page PDF with real text (PyPDF2/PyMuPDF must parse it: the
+// A valid one-page PDF with real text (pypdf and PyMuPDF must parse it: the
 // annotated-PDF export and the search index read it back). `comment`: a
 // highlight over the text carrying it, as another reader saves one.
 function minimalPdf(text, comment) {
@@ -350,7 +361,7 @@ async function main() {
   process.env.GAMMA_CLOUD_ISSUER = cloud.issuer;
   process.env.GAMMA_CLOUD_POLICY = 'provision';
 
-  let app = await launch(profile, downloads);
+  let app;
   let bar, content;
   const ids = {};
   const urls = {};
@@ -359,6 +370,8 @@ async function main() {
   let backupZip;
 
   try {
+    // In the try: a first start that fails still removes the profile.
+    app = await launch(profile, downloads);
     await step('first start shows the launcher + shell bar', async () => {
       bar = await findPage(app, isBar);
       content = await findPage(app, isLauncher);
@@ -368,6 +381,9 @@ async function main() {
       assert(b.bar.height === 38 && b.content.y === 38, `layout ${JSON.stringify(b)}`);
       const version = await content.textContent('#version');
       assert(/Gamma desktop \d/.test(version), version);
+      // A packaged build runs its bundled server only (lib/sidecar.js resolveBackend).
+      await waitFor(async () => (await content.locator('#advanced').isHidden()) === packaged,
+        packaged ? 'no source-checkout settings in a packaged build' : 'the source-checkout settings in a dev run');
       return version.trim();
     });
 
@@ -435,7 +451,7 @@ async function main() {
       return `${sourceUrl} → ${mine}`;
     });
 
-    await step('page exports in every mode (frozen bundle: PyPDF2, ziamath fonts)', async () => {
+    await step('page exports in every mode (frozen bundle: pypdf, ziamath fonts)', async () => {
       const res = await content.evaluate(async (pageId) => {
         const out = {};
         const get = async (label, url) => {
@@ -1011,12 +1027,12 @@ async function main() {
     await step('a server that will not start is explained, not dumped', async () => {
       const log = [
         'INFO:     127.0.0.1:37568 - "GET /api/session HTTP/1.1" 200 OK',
-        '[startup] the data directory (C:\\data\\ws) is at schema version 13, newer than this Gamma (version 7). Run the Gamma release that wrote it.',
+        'sqlite3.OperationalError: unable to open database file',
         '--- server exited (code 1) ---',
       ].join('\n');
       const d = await hook(app, (s, log) => s.startup.diagnose(log, 'exit'), log);
-      assert.equal(d.action, 'update', JSON.stringify(d));
-      assert(/newer version of Gamma/i.test(d.summary), d.summary);
+      assert.equal(d.action, 'data', JSON.stringify(d));
+      assert(/could not open its database files/i.test(d.summary), d.summary);
 
       await hook(app, (s, arg) => {
         const e = new Error(arg.d.summary);
@@ -1025,9 +1041,9 @@ async function main() {
       }, { d, log, id: ids.alpha });
       await waitFor(() => isLauncher(content.url()), 'launcher shown');
       await content.waitForSelector('#fail:not([hidden])');
-      assert(/newer version of Gamma/i.test(await content.textContent('#failTitle')), 'summary shown');
-      assert(/schema version 13/.test(await content.textContent('#failDetail')), "the server's own line shown");
-      assert(/Check for updates/.test(await content.textContent('#failActs')), 'the fix is offered');
+      assert(/could not open its database files/i.test(await content.textContent('#failTitle')), 'summary shown');
+      assert(/unable to open database file/.test(await content.textContent('#failDetail')), "the server's own line shown");
+      assert(/Open data folder/.test(await content.textContent('#failActs .primary')), 'the fix is offered first');
       assert(await content.locator('#failLog').isHidden(), 'the raw log stays folded away');
       await content.click('#failClose');
       assert(await content.locator('#fail').isHidden(), 'dismissable');
@@ -1228,9 +1244,12 @@ async function main() {
     cloud.close();
     await sleep(500);
     if (!keep) {
+      // A server still exiting can write into the profile as it goes.
       try {
-        fs.rmSync(profile, { recursive: true, force: true });
-      } catch {}
+        fs.rmSync(profile, { recursive: true, force: true, maxRetries: 5, retryDelay: 200 });
+      } catch (e) {
+        console.error(`e2e: could not remove the profile ${profile}: ${e.message}`);
+      }
     }
   }
 

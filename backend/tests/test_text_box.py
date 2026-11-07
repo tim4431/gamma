@@ -12,8 +12,8 @@ from pathlib import Path
 import pytest
 from conftest import make_page, require_math_renderer
 from fractional_indexing import generate_key_between
-from PyPDF2 import PdfReader, PdfWriter
-from PyPDF2.generic import (ArrayObject, DictionaryObject, FloatObject, NameObject, NumberObject, RectangleObject,
+from pypdf import PdfReader, PdfWriter
+from pypdf.generic import (ArrayObject, DictionaryObject, FloatObject, NameObject, NumberObject, RectangleObject,
                             TextStringObject)
 
 from test_pdf_export import _open, _page_text

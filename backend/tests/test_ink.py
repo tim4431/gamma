@@ -37,7 +37,7 @@ def _ink(page=1, strokes=None, **space):
 
 
 def _blank_pdf(pages=1):
-    from PyPDF2 import PdfWriter
+    from pypdf import PdfWriter
     w = PdfWriter()
     for _ in range(pages):
         w.add_blank_page(width=PAGE_W, height=PAGE_H)
@@ -295,7 +295,7 @@ def test_a_colour_s_alpha_is_drawn_as_the_screen_draws_it():
     """The screen fills an rgba() colour under fill-opacity, so the two
     multiply, but paints a pencil with its grain tile, which takes the
     colour's r, g and b alone: every exporter draws the same opacity."""
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
     from gamma.pdf_export import annotate_pdf
 
     line = inkmod.encode_points([{"x": 100, "y": 100}, {"x": 140, "y": 120}, {"x": 180, "y": 100}], "xy")
@@ -425,7 +425,7 @@ def test_a_pencil_is_painted_with_its_grain_anchored_at_the_page_corner():
     assert "q /GSink500 gs\n/Pattern CS /Grain1f1f1f_1_0_0_1_0_792 SCN 3.00 w [6 6] 0 d" in ops
     assert "0.15 0.39 0.92 RG" in ops and "1.00 0.88 0.40 RG" in ops
     # the tile is smoothed when magnified, as on the screen (pdf.js draws it in blocks otherwise)
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
     from gamma.pdf_export import page_with_ink
     page = PdfReader(io.BytesIO(page_with_ink(_blank_pdf(), 1, [ink])[0])).pages[0]
     tiles = [p.get_object()["/Resources"]["/XObject"]["/Tile"] for p in page["/Resources"]["/Pattern"].values()]
@@ -840,7 +840,7 @@ def test_block_update_with_base_ids_merges_a_purged_base_by_deletions(guest):
 # --- PDF interchange ------------------------------------------------------------------
 
 def test_annotated_pdf_writes_ink_and_importer_reads_it_back():
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
     from gamma.pdf_export import annotate_pdf
     from gamma.routers.imports import _extract_pdf_annotations
 
@@ -873,7 +873,7 @@ def test_annotated_pdf_writes_ink_and_importer_reads_it_back():
 
 
 def test_annots_come_band_0_first_and_keep_their_bucket_index():
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
     from gamma.pdf_export import annotate_pdf, zotero_annot_key
 
     ink = inkmod.parse_ink(_ink(strokes=[
@@ -911,7 +911,7 @@ def test_an_exported_highlighter_multiplies_into_the_page():
     the /InkList painted at /CA would wash the black out to the colour.
     A pen's annotation keeps no appearance."""
     import pymupdf
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
     from gamma.pdf_export import annotate_pdf
 
     src = pymupdf.open()
@@ -936,8 +936,8 @@ def test_an_exported_highlighter_multiplies_into_the_page():
 
 
 def _pdf_with_ink_annotation(gamma_ink: str | None = None, border=None):
-    from PyPDF2 import PdfReader, PdfWriter
-    from PyPDF2.generic import ArrayObject, DictionaryObject, FloatObject, NameObject, TextStringObject
+    from pypdf import PdfReader, PdfWriter
+    from pypdf.generic import ArrayObject, DictionaryObject, FloatObject, NameObject, TextStringObject
 
     w = PdfWriter()
     w.add_blank_page(width=PAGE_W, height=PAGE_H)
@@ -972,7 +972,7 @@ def test_importer_reads_foreign_ink_without_private_key():
 def test_importer_reads_a_dashed_foreign_border_as_a_dashed_line():
     """A foreign /Ink whose border style is dashed imports dashed, whatever
     its /D array says: Gamma's pattern follows the width."""
-    from PyPDF2.generic import ArrayObject, FloatObject, NameObject
+    from pypdf.generic import ArrayObject, FloatObject, NameObject
     from gamma.routers.imports import _extract_pdf_annotations
 
     dashed = {NameObject("/S"): NameObject("/D"), NameObject("/D"): ArrayObject([FloatObject(3), FloatObject(2)])}
@@ -1005,7 +1005,7 @@ def test_foreign_ink_past_the_largest_number_is_refused_as_any_bad_annotation():
     skips the annotation as it skips any unreadable one; a version 1
     /GammaInk whose pressure is an integer past the largest double falls
     back to the /InkList, as any payload that does not parse."""
-    from PyPDF2.generic import ArrayObject, FloatObject, NameObject
+    from pypdf.generic import ArrayObject, FloatObject, NameObject
     from gamma.routers.imports import _extract_pdf_annotations
 
     for huge in (1e307, -1e307, float("inf"), float("nan")):
@@ -1026,7 +1026,7 @@ def test_dashed_ink_writes_a_dashed_border_and_comes_back_as_drawn():
     """/BS /S /D /D [on off] from a bucket's first stroke; the bucket key
     has no dash, so a dashed and a solid stroke of one look share a bucket,
     and /GammaInk carries each stroke's own dash back."""
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
     from gamma.pdf_export import annotate_pdf
     from gamma.routers.imports import _extract_pdf_annotations
 
@@ -1135,13 +1135,13 @@ def test_notes_pdf_keeps_the_caption_of_a_group_whose_file_is_not_stored_yet(gue
     assert r.status_code == 200, r.text
     r = guest.get(f"/api/pages/{page['id']}/export?mode=notes-pdf")
     assert r.status_code == 200, r.text
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
     text = PdfReader(io.BytesIO(r.content)).pages[0].extract_text()
     assert "a caption kept" in text and "handwriting, p." not in text
 
 
 def test_notebook_pdf_declares_the_states_its_ink_sets():
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
     from gamma.notebook import normalize_paper, notebook_pdf
 
     ink = inkmod.parse_ink(_ink(strokes=[_pencil(), {"id": "hl", "tool": "highlighter", "color": "#ffe066", "size": 8,
@@ -1157,7 +1157,7 @@ def test_notes_pdf_draws_the_strokes(guest):
     page, _ = _page_with_ink(guest, "Ink notes pdf")
     r = guest.get(f"/api/pages/{page['id']}/export?mode=notes-pdf")
     assert r.status_code == 200, r.text
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
     reader = PdfReader(io.BytesIO(r.content))
     stream = b"".join(p.get_contents().get_data() for p in reader.pages)
     assert b"1 J 1 j" in stream and stream.count(b" l S") == 4
@@ -1274,7 +1274,7 @@ def test_a_filled_closed_shape_draws_its_fill_under_its_outline():
     assert inkmod.pdf_path_resources(inkmod.pdf_path_ops(solid, lambda x, y: (x, y))) is None
     assert b" h f" not in inkmod.pdf_path_ops(inkmod.parse_ink(_ink(strokes=[_rect()])), lambda x, y: (x, y))
     # the AI's picture: the page's content stamped with the fill, its state declared
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
     from gamma.pdf_export import page_with_ink
     out, _ = page_with_ink(_blank_pdf(), 1, [ink])
     page = PdfReader(io.BytesIO(out)).pages[0]
@@ -1286,7 +1286,7 @@ def test_the_annotated_pdf_keeps_a_filled_shape_as_ink_and_brings_the_fill_back(
     """/Ink-pure: a filled rectangle is its outline in its bucket's /Ink, the
     fill only in /GammaInk; no /Square, /Circle or /Polygon is written for
     ink, and a Gamma import reads the fill back."""
-    from PyPDF2 import PdfReader
+    from pypdf import PdfReader
     from gamma.pdf_export import annotate_pdf
     from gamma.routers.imports import _extract_pdf_annotations
 

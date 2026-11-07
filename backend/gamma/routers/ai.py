@@ -132,11 +132,9 @@ class AIChatRequest(BaseModel):
     chat_key: str = ""
     # PDF passages the user selected — focus the answer on them:
     # `selections` = [{text, page (1-based, where the viewer saw it start),
-    # box ([x0, y0, x1, y1] fractions of that page, top-left origin)}]; the
-    # older `selection` string ("---"-joined text, no positions) is read
-    # when it is empty (ai_context.request_selections). What the question
-    # quotes of them shares `context_char_limit` (ai_context.passage_budget).
-    selection: str = ""
+    # box ([x0, y0, x1, y1] fractions of that page, top-left origin)}]
+    # (ai_context.request_selections). What the question quotes of them
+    # shares `context_char_limit` (ai_context.passage_budget).
     selections: list = Field(default_factory=list, max_length=MAX_SELECTIONS)
     # What the user pointed the message at inside the NOTES: the block their
     # cursor is on (the agent's "this block"), blocks they attached as chips
@@ -194,8 +192,7 @@ class AIChatRequest(BaseModel):
     # "ask" / "off", gamma/ai_permissions.py; a key left out allows reading
     # and asks before a change) — everything off degrades to a plain chat.
     # `granted` names the permissions this conversation allowed on an
-    # approval card ("Allow in this chat"): they run without asking (not an
-    # ask-only permission, `ai_permissions.ASK_ONLY`).
+    # approval card ("Allow in this chat"): they run without asking.
     # agent_system overrides the base agent prompt (the
     # scope/permission lines are always appended); tool_rounds overrides the
     # agent round budget and read_char_limit the per-read_page-call document
@@ -1504,7 +1501,7 @@ def ai_approval_answer(approval_id: str, payload: AIApprovalAnswer, request: Req
 
 
 class AIRevert(BaseModel):
-    kind: Literal["edit", "create", "move", "delete", "pages"]
+    kind: Literal["edit", "create", "move", "delete", "pages", "trash"]
     block_id: str = Field(default="", max_length=64)  # "" for "pages": a page tool's record names its pages
     revert: dict   # the action's `revert`, as the tool recorded it
     force: bool = False

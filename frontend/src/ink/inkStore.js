@@ -88,16 +88,24 @@ export function loadInk(url, known = null) {
 
 // The strokes to show for a block: its draft, else its file (fetch kicked
 // off when unseen — the caller re-renders on the store's next bump).
-export function inkFor(block) {
+// `restore: false`: a view of a page that is not the one open (a tab
+// group's, workspace/PagePane.jsx) draws what is there and changes nothing:
+// it never brings back the block's unsent strokes from the journal, which
+// the open page's restore (useInkDocument) would then save and offer to
+// discard as its own, and never drops a draft for the file its tree names.
+export function inkFor(block, { restore = true } = {}) {
   const id = block?.id;
   const url = block?.properties?.ink_url || "";
   if (id) {
     blockUrls.set(id, url);
-    restoreFor(block);
+    if (restore) restoreFor(block);
   }
   const d = drafts.get(id);
   if (d) {
-    if (!d.dirty && d.url !== url) { drafts.delete(id); }
+    // A clean draft another file has replaced goes, but not for a view:
+    // its tree is read once and can predate this tab's own save, whose
+    // drawing the draft still is.
+    if (!d.dirty && d.url !== url && restore) { drafts.delete(id); }
     else return seen(id, d.ink);
   }
   if (!url) return null;
@@ -112,8 +120,8 @@ function seen(id, ink) {
 // block now names is on its way (someone saved) — the one it showed last,
 // so a reload never blinks the group out. Edits read inkFor, never this:
 // they must wait for the file they change.
-export function inkShown(block) {
-  const ink = inkFor(block);
+export function inkShown(block, opts) {
+  const ink = inkFor(block, opts);
   if (ink || !block?.id) return ink;
   const url = block.properties?.ink_url || "";
   return url && loading.has(url) ? shown.get(block.id) || null : null;

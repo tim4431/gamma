@@ -6,7 +6,7 @@ Where every setting lives, and how the Settings dialog is built.
 
 | Layer | Storage | Examples |
 |---|---|---|
-| Per browser | `localStorage`, one `gamma-*` key per preference, all declared in `PREFS` ([frontend/src/app/prefDefs.js](../../frontend/src/app/prefDefs.js)) with scope `browser` — except `gamma-link-name`, the share view's display name for a visitor without an account, owned by `src/collaboration/linkName.js` because the fetch wrapper reads it outside React | what describes this device: the interface size (`gamma-ui-scale`, applied pre-paint by `index.html`), the status bar, the handwriting input rules, finger undo, the hover preview, the tool strip's eraser and lasso choices and, in the iPad app, what the Apple Pencil's gestures do and its haptics (`gamma-ink-*`: `gamma-ink-pen-only`, `gamma-ink-auto-pen`, `gamma-ink-pressure`, `gamma-ink-finger-undo`, `gamma-ink-hover-preview`, `gamma-ink-eraser`, `gamma-ink-eraser-size`, `gamma-ink-lasso`, `gamma-ink-lasso-pictures`, `gamma-ink-pencil-tap`, `gamma-ink-pencil-squeeze`, `gamma-ink-haptics`, the ruler's units `gamma-ink-ruler-units` and the zoom window's height `gamma-ink-zoom-height`; the presets themselves, `gamma-ink-tools`, and the Shapes tool's kind and fill are the account's), the style of new text boxes (`gamma-text-box-style`), whether Inbox items ring as system notifications (`gamma-inbox-notifications`, `inboxSystemNotifications`: the browser's permission is this device's; Settings → Appearance › Interface › Inbox notifications, [comments.md](comments.md) "The Inbox") and how a recording plays back (`gamma-replay-mode`, `gamma-replay-rate`, `gamma-replay-follow`; its lead-in `gamma-replay-lead-in` and the automatic transcript `gamma-recording-transcribe` are the account's), the metadata and translation model picks and dictation (they name this server's provider entries, like the chat model `gamma-chat-model`), whether a shown "Linked from" section is folded (`gamma-backlinks-collapsed`; whether it is shown at all is the account's `gamma-backlinks`) and whether a page's "N pages inside" section is (`gamma-sub-pages-collapsed`, `subPagesCollapsed`; it shows whenever the page has sub-pages, [home_library.md](home_library.md#sub-pages)); outside `PREFS`, diagnostics tracing (`gamma-debug-log`) |
+| Per browser | `localStorage`, one `gamma-*` key per preference, all declared in `PREFS` ([frontend/src/app/prefDefs.js](../../frontend/src/app/prefDefs.js)) with scope `browser` — except `gamma-link-name`, the share view's display name for a visitor without an account, owned by `src/collaboration/linkName.js` because the fetch wrapper reads it outside React | what describes this device: the interface size (`gamma-ui-scale`, applied pre-paint by `index.html`), the status bar, the handwriting input rules, finger undo, the hover preview, the tool strip's eraser and lasso choices and, in the iPad app, what the Apple Pencil's gestures do and its haptics (`gamma-ink-*`: `gamma-ink-pen-only`, `gamma-ink-pen-writes-pdf`, `gamma-ink-pressure`, `gamma-ink-finger-undo`, `gamma-ink-hover-preview`, `gamma-ink-eraser`, `gamma-ink-eraser-size`, `gamma-ink-lasso`, `gamma-ink-lasso-pictures`, `gamma-ink-pencil-tap`, `gamma-ink-pencil-squeeze`, `gamma-ink-haptics`, the ruler's units `gamma-ink-ruler-units` and the zoom window's height `gamma-ink-zoom-height`; the presets themselves, `gamma-ink-tools`, and the Shapes tool's kind and fill are the account's), the style of new text boxes (`gamma-text-box-style`), whether Inbox items ring as system notifications (`gamma-inbox-notifications`, `inboxSystemNotifications`: the browser's permission is this device's; Settings → Appearance › Interface › Inbox notifications, [comments.md](comments.md) "The Inbox") and how a recording plays back (`gamma-replay-mode`, `gamma-replay-rate`, `gamma-replay-follow`; its lead-in `gamma-replay-lead-in` and the automatic transcript `gamma-recording-transcribe` are the account's), the metadata and translation model picks and dictation (they name this server's provider entries, like the chat model `gamma-chat-model`), whether a shown "Linked from" section is folded (`gamma-backlinks-collapsed`; whether it is shown at all is the account's `gamma-backlinks`) and whether a page's "N pages inside" section is (`gamma-sub-pages-collapsed`, `subPagesCollapsed`; it shows whenever the page has sub-pages, [home_library.md](home_library.md#sub-pages)); outside `PREFS`, diagnostics tracing (`gamma-debug-log`) |
 | Per account, profile | the account-wide `profile` prefs key (`/api/prefs/profile`, one JSON object keyed by preference name), every `PREFS` entry with scope `account`; each also keeps its `gamma-*` localStorage key as the instant-paint cache, and `gamma-profile-seen` keeps the profile as this browser last took it from an account or sent it, whichever account that was (which local value is this browser's own, "Reading & editing" below) | appearance (theme — the pre-paint script in `index.html` reads `gamma-theme`, resolves System to light or dark the way App.jsx's theme effect does and sets `data-theme` with its `data-scheme`, so the first frame has the right tokens ([ui-design.md](ui-design.md#tokens)) — flip page colors, the colour palette (`palette`, the swatches highlights, pens and text boxes offer), whether tours are suggested, `suggestTours`, and which tours the account has seen, `tourProgress`, written by the guide and shown nowhere, [onboarding.md](onboarding.md#storage)), the interface language (`gamma-language`, read by `main.jsx` before the first render, [i18n.md](i18n.md)), reading and editing (imported annotations, smooth wheel scrolling, how search opens, how a replaced PDF's highlights are matched — `relocateMinMatch` and `relocateExactChars`, which the server's highlight run also reads from the profile as it starts ([highlight_relocation.md](highlight_relocation.md#the-thresholds)) — the handwriting habits `gamma-ink-draw-hold`, `gamma-ink-scribble-erase`, `gamma-ink-eraser-return` and `gamma-ink-eraser-filter`, the tool strip's presets `gamma-ink-tools`, and the Shapes tool's kind and fill `gamma-ink-shape-kind` and `gamma-ink-shape-fill`), translation (language, selection translation, effort, speed, parallel requests, whether translations are kept, `translateKeep`; the viewer's button is the strip's translate mode), the Enter key, library display and PDF fetching, the topbar's buttons and the viewer's side strip (`topbar`, `viewerTools`: their order, and where each item shows, [below](#bars-order-and-modes)), the strip's text highlighter's colour (`highlighterColor`: the last swatch picked for a text highlight, as a highlight stores it, set where it acts, [below](#bars-order-and-modes)), chat behaviour (tools switch, per-kind tool permissions, reasoning effort, speed, the login connection check, tool limits, snapshot clearing), context budgets, prompts, keyboard shortcuts (`keybindings`: command id → chord or null, [hotkeys.md](hotkeys.md)) |
 | Session only | React state, nothing stored | the Ctrl+scroll text size of the notes list and the chat transcript (`useTextScale` in [Widgets.jsx](../../frontend/src/shared/ui/Widgets.jsx)) — resets on reload |
 | Per account, synced | `/api/prefs/{key}` (small JSON KV: the account-wide keys in `users.db` `user_prefs`, the others in the workspace's `pages.db` `workspace_prefs`, [user_db.md](user_db.md)) | per account AND workspace, kept in that workspace and left out of its exports and backups: open tabs (`open-tabs`), the recently-viewed queue (`recent-views`), reading positions (`read-pos`) — they name one workspace's pages (pins are no pref: a pinned page or folder carries `properties.pinned` on its block, [home_library.md](home_library.md) "Pinned"); account-wide: active AI key (`ai-provider`) and the preference profile (`profile`, previous row). Server wins on load, localStorage (keyed `user@workspace`) is the instant-paint cache. The recents-card cover thumbnails are workspace data, through their own `/api/page-snaps` store (`page_snaps` in the workspace's `data.db` — over the prefs size cap) |
@@ -118,13 +118,16 @@ The tag is an icon and one muted word ("account" or "browser") in the
 small caption size; the sentence is its hover `title` and its
 `aria-label`, and `data-sync` carries the state for tests.
 
-The last open page and viewer layout use `app/sessionState.js`, separately from
-synced preferences. Its key is `gamma-session:<user>@<workspace>`. Reads wait
-for workspace selection; changing scope cancels pending saves. Saves are
-debounced (300 ms) and written early on `pagehide` and on going hidden
-(Firefox can stop a `pagehide` listener), so a reload or a close right after
-a change (closing the notes window, say) keeps it. Old unscoped
-session caches are ignored because their account owner cannot be determined.
+The last open page and its viewer layout (the zoom, whether the PDF is closed
+and whether Notes shows) use `app/sessionState.js`, separately from synced
+preferences; the PDF page a paper was last read at is the synced `read-pos`
+preference. The session's key is `gamma-session:<user>@<workspace>`, and
+nothing reads a key without the account, so another account that used the
+browser never sees it. Reads wait for workspace selection; changing scope
+cancels pending saves. Saves are debounced (300 ms) and written early on
+`pagehide` and on going hidden (Firefox can stop a `pagehide` listener), so a
+reload or a close right after a change (closing the notes window, say) keeps
+it.
 
 ## Periodic backup tasks
 
@@ -184,6 +187,10 @@ takes no second one, nor a restore; a workspace being deleted
 (`workspace-delete`) counts as one. Its list reloads once the job ends,
 wherever the job was started, and a deleted workspace leaves the pane. A restore into the open workspace reloads the tab that started
 it. Settings → Server's server backups work the same way (`server-backup`).
+A snapshot's Download saves it under the name the listing gives it
+(`filename`, its download's Content-Disposition,
+`gamma-backup-<workspace>-<name>.zip`), so a host that saves files
+([android.md](android.md) "Saving files") names it as a browser does.
 Settings → Workspaces → Data exports a workspace (a `workspace-export` job
 whose zip downloads by itself once ready) and merges or restores a zip into
 one (a `restore` job over the uploaded file); Export all is one
@@ -273,7 +280,7 @@ short hint what it does, and the hover `title` the rest.
 
 The account card:
 
-- **Account & sync** (pane id `account`; `sync` is an alias): the signed-in
+- **Account & sync** (pane id `account`): the signed-in
   account's row, storage meter and Gamma Cloud link row.
   Under it, the sync section
   ([SettingsSync.jsx](../../frontend/src/settings/SettingsSync.jsx)):
@@ -342,8 +349,8 @@ Preferences:
   order, with a grip to drag it and the modes it offers, and Reset,
   [below](#bars-order-and-modes)), and last **Suggest tours**
   (`suggestTours`: off, no tour or hint is offered by itself,
-  [onboarding.md](onboarding.md)). The old `library` pane id is an alias
-  of this pane, and `topbar` and `viewer-tools` open it at their sections.
+  [onboarding.md](onboarding.md)). `topbar` and `viewer-tools` open this
+  pane at their sections.
 - **Reading & editing**: how papers and notes behave, one section per
   subject. **PDFs**: imported annotations (a Keep / Remove segmented choice),
   open-access fallback, metadata auto-fetch and saving external PDFs.
@@ -427,7 +434,9 @@ Preferences:
   scope): two
   `IconChoices` tiles ("Draws with": pen only / pen and
   finger — the stored preference is `inkPenOnly`), the
-  stylus-draws-right-away and pressure switches, **Undo with fingers**
+  *Stylus draws on PDFs right away* switch (`inkPenWritesPdf`, off by
+  default; [handwriting.md](handwriting.md) "What the user sees") and the
+  pressure switch, **Undo with fingers**
   (`Segmented` Off / Tap / Double tap, `inkFingerUndo`, `oneOf(["off",
   "tap", "double"])`, default `double` where the primary pointer is coarse
   (`COARSE`, as `inkPenOnly`) and `off` elsewhere; hint "Two fingers undo,
@@ -454,8 +463,8 @@ Preferences:
     choice; default `system`; hint "What squeezing Apple Pencil Pro
     does", or "What a click of the pen's second button does").
   - Each of the two shows only where the host forwards its gesture: the
-    host's `pencilGestures` lists `tap` or `squeeze`, and a host that
-    lists none forwards both (the iPad app).
+    host's `pencilGestures` lists `tap` or `squeeze`, and a host without
+    the list forwards both (the iPad app).
   - Under `nativeHost()?.haptics`, **Haptics** (`Toggle`, `inkHaptics`,
     flag, default on; hint "A tick in Apple Pencil Pro when a shape
     snaps, the lasso selects or the tool changes", or "A tick when a shape
@@ -512,7 +521,7 @@ Preferences:
   differs from the default, red caps and "Also used by …" when two commands
   share a chord — and **Built in**, the outliner's fixed keys read-only, led
   by the Enter key's one choice: "Enter makes" New note / New line
-  (`enterNewNote`; the legacy `notes` pane id lands here).
+  (`enterNewBlock`).
 
 AI:
 
@@ -557,8 +566,7 @@ AI:
   **Prompts** is the accordion, with one Cancel / Save pair as its action.
   **Context size** holds the three text budgets and "Pictures per message"
   (the chat's picture budget, [ai.md](ai.md#pictures)), with the Standard /
-  Larger / Custom preset as its action. The old `ai-advanced`, `context` and `prompts` pane ids are
-  aliases of this pane, each jumping to its section.
+  Larger / Custom preset as its action.
 - **Tool usage** (pane id `tools`): **Tools**, the master switch and, per chat
   kind (folder / PDF / notes), a permission table (`AgentToolMatrix` in
   `AssistantTools.jsx`). Rows explain library reading, web research and changes;
@@ -846,10 +854,16 @@ one caption per pane. Picking one opens the pane and focuses the matching
 `tests/settingsSearch.test.mjs` fails when an entry's target is no
 `data-setting` its pane renders. The search box and the Keyboard filter
 carry their own × (the browser's is hidden).
-Legacy pane names resolve through `resolveSettingsPane`; old notes, search,
-viewer, context, ai-advanced and prompts entry points also jump to their
-section, as do `handwriting`, `topbar` and `viewer-tools`, the targets of
-the strip's and the bars' settings rows.
+Three names open a pane at one of its sections, the targets of the strip's
+and the bars' settings rows: `handwriting` (Reading & editing at Reset
+presets), `topbar` and `viewer-tools` (Appearance at the Top bar or the
+Viewer tools section). One table in `settingsNavigation.js` holds them:
+`resolveSettingsPane` gives the pane and `settingsSection` the row the
+dialog jumps to. Any other name is a pane's own. A link names one as
+`/?settings=<pane>` (Gamma Cloud's Export for a read-only Pro server is
+`/?settings=backups`, [billing.md](billing.md)): App opens Settings there
+once the library has loaded, after a sign-in if one is needed, and takes the
+parameter out of the address. A share view ignores it.
 
 The desktop surface has a persistent search header and labeled sidebar. On
 phones the Back button opens a labeled category list. All controls remain
@@ -1016,12 +1030,13 @@ both sections.
 under the icon (`.stripInkBtn`, the markup strip's `.inkToolInk`). Its
 right-click or long press opens the Highlight picker's swatches beside the
 strip; a pick is its colour and turns it on. While it is on, PdfViewer's
-`highlighter` prop is that colour: a text selection ended by a mouse or
-pen release (the `mouseup` path, not a finger's) goes to
+`highlighter` prop is that colour: a text selection ended by a mouse's
+`mouseup` or a pen's lift (`pdf/penSelect.js`), not a finger's, goes to
 `onSelectionFinished` with `{highlighter: true}` instead of opening the
 popup, and App adds it in `highlighterColor` with its note open for typing,
-as the popup's. App returns the new highlight's id, and once the mouse
-moves on (as the popup would, [ui-design.md](ui-design.md#the-pdf-viewer))
+as the popup's. App returns the new highlight's id, and at once for a pen,
+once the mouse moves on for a mouse (as the popup would,
+[ui-design.md](ui-design.md#the-pdf-viewer)),
 the popup opens over that highlight instead (`kind: "made"`, `PlainTip`'s
 `recolor`): its swatches change the highlight's colour and set
 `highlighterColor`, its Comment and Link act on it as its context menu's
@@ -1042,8 +1057,8 @@ the topbar's own background, not on a button, link, tab or popover, offers
 highlighter and the ⋯, which have their own menus, "Customize viewer
 tools…". The ⋯ menu ends with Customize….
 They call `openSettingsPane("topbar")` and `openSettingsPane("viewer-tools")`:
-pane aliases of Appearance (`settingsNavigation.js`) that the dialog's
-jump map in `SettingsDialog.jsx` takes to the section's header.
+section entry points of Appearance in `settingsNavigation.js`, which the
+dialog opens at the section's header.
 
 **The editor.**
 [settings/BarLayoutSection.jsx](../../frontend/src/settings/BarLayoutSection.jsx)
@@ -1140,10 +1155,11 @@ accept a `draft` value for dismissal protection. See
 
 ## Verification
 
-`npm test` covers permission presets, search visibility, legacy pane aliases
-and the panes' shared reads (`tests/settingsReads.test.mjs`).
+`npm test` covers permission presets, search visibility, the section entry
+points and the panes' shared reads (`tests/settingsReads.test.mjs`).
 After building, `npm run e2e -- --only settings` exercises the actual UI:
-preferences and reload, management navigation, prompt/connection draft guards,
+preferences and reload, management navigation, a `/?settings=backups` link,
+prompt/connection draft guards,
 the bars' layouts (a top bar row dragged by its grip, the header following
 it through a reload, an arrow key's move and what the live region says,
 Reset; a viewer tool hidden into the strip's ⋯ menu and its Customize…,

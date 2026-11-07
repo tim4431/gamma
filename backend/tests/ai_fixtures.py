@@ -13,7 +13,7 @@ from gamma.ai_tools import agent_tools
 
 ALL_TOOLS = agent_tools("folder")  # the full registry, for the wire tests
 ALL_PERMS = ("list", "read", "block_read", "view", "search", "web_search", "web_read",
-             "save", "rename", "move", "restore", "organize", "organize_delete", "block_edit")
+             "save", "rename", "move", "restore", "delete", "organize", "organize_delete", "block_edit")
 # Every tool runs without asking: for chats whose changes are not about approvals.
 ALLOW_ALL = {k: "allow" for k in ALL_PERMS}
 
@@ -144,7 +144,7 @@ class FakeResp:
 
 def payload(history):
     from types import SimpleNamespace
-    return SimpleNamespace(history=history, prompt="now do it", selection="")
+    return SimpleNamespace(history=history, prompt="now do it")
 
 
 # --- the translation wire (translate_context.user_turn and segments) ----------------

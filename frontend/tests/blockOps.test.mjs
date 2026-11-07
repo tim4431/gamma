@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { generateNKeysBetween } from "fractional-indexing";
-import { PLACED, applyOps, diffTrees, displacedRow, propsPatch, pushOp, seedPositions } from "../src/shared/model/blockOps.js";
+import { PLACED, applyOps, diffTrees, displacedRow, propsPatch, pushOp, seedPositions, withMerges } from "../src/shared/model/blockOps.js";
 import { blockPage, isHighlightBlock } from "../src/shared/model/blockModel.js";
 import { mergePicture } from "../src/markup/picture.js";
 import { mergeTextBox } from "../src/markup/textBox.js";
@@ -273,6 +273,66 @@ test("a diff of a large flat reorder stays minimal", () => {
   assert.deepEqual(ops.map((o) => o.id), ["n0", "n1", "n2"]);
   const got = applyOps(base, ops, PAGE, new Map(pos));
   assert.deepEqual(got.map((n) => n.id), rotated.map((n) => n.id));
+});
+
+test("withMerges folds a block joined to another into one op, marker and children with it", () => {
+  const merged = (before, after) => {
+    const { tree: base, pos } = served(before);
+    return withMerges(diffTrees(base, after, PAGE, pos), base, PAGE);
+  };
+  assert.deepEqual(merged([N("a", "one"), N("b", "two")], [N("a", "onetwo")]),
+    [{ op: "merge", id: "b", into: "a", base: "one" }]);
+  assert.deepEqual(merged([N("a", "one"), N("b", "- two\n- more")], [N("a", "onetwo\n- more")]),
+    [{ op: "merge", id: "b", into: "a", base: "one", marker: "- " }], "only the first line loses its marker");
+  assert.deepEqual(merged([N("a", "one"), N("b", "two", [N("k", "kid")]), N("z", "z")], [N("a", "onetwo", [N("k", "kid")]), N("z", "z")]),
+    [{ op: "merge", id: "b", into: "a", base: "one" }], "the children go with it");
+  assert.deepEqual(merged([N("p", "one", [N("b", "two", [N("k", "kid")])])], [N("p", "onetwo", [N("k", "kid")])]),
+    [{ op: "merge", id: "b", into: "p", base: "one" }], "into its parent");
+
+  const props = merged([N("a", "one"), N("b", "two")], [N("a", "onetwo", [], { color: "red" })]);
+  assert.deepEqual(props, [{ op: "set", id: "a", props: { color: "red" } }, { op: "merge", id: "b", into: "a", base: "one" }], "a property change stays a set");
+});
+
+test("withMerges leaves a delete and a set that are no join as they are", () => {
+  const kinds = (before, after) => {
+    const { tree: base, pos } = served(before);
+    return withMerges(diffTrees(base, after, PAGE, pos), base, PAGE).map((op) => op.op);
+  };
+  assert.deepEqual(kinds([N("a", "one"), N("b", "two")], [N("a", "one!")]), ["set", "delete"], "other text");
+  assert.deepEqual(kinds([N("a", "one"), N("b", "two")], [N("a", "twoone")]), ["set", "delete"], "at the start");
+  assert.deepEqual(kinds([N("a", "one"), N("b", "")], [N("a", "one")]), ["delete"], "an empty block");
+  assert.deepEqual(kinds([N("a", "one"), N("b", "two", [N("k", "kid")])], [N("a", "onetwo")]), ["set", "delete"], "its subtree went with it");
+  // two blocks removed, one join: the second finds the set taken
+  assert.deepEqual(kinds([N("a", "one"), N("b", "two"), N("c", "two")], [N("a", "onetwo")]), ["merge", "delete"]);
+  const { tree: base, pos } = served([N("a", "one")]);
+  const ops = diffTrees(base, [N("a", "two")], PAGE, pos);
+  assert.equal(withMerges(ops, base, PAGE), ops, "nothing to fold");
+});
+
+test("applyOps lays a merge over a tree as the server applies it, and passes one it would refuse", () => {
+  const { tree, pos } = served([N("a", "one", [N("low", "low")]), N("b", "- two", [N("k1", "kid1"), N("k2", "kid2")]), N("z", "z")]);
+  const out = applyOps(tree, [{ op: "merge", id: "b", into: "a", marker: "- " }], PAGE, pos);
+  assert.deepEqual(shape(out).map((n) => n.id), ["a", "z"]);
+  assert.equal(out[0].content, "onetwo");
+  assert.deepEqual(out[0].children.map((n) => n.id), ["low", "k1", "k2"]);
+
+  const nested = served([N("p", "one", [N("x", "x"), N("b", "two", [N("k", "kid")]), N("y", "y")])]);
+  const spliced = applyOps(nested.tree, [{ op: "merge", id: "b", into: "p" }], PAGE, nested.pos);
+  assert.equal(spliced[0].content, "onetwo");
+  assert.deepEqual(spliced[0].children.map((n) => n.id), ["x", "k", "y"]);
+
+  assert.equal(applyOps(tree, [{ op: "merge", id: "gone", into: "a" }], PAGE, pos), tree);
+  assert.equal(applyOps(tree, [{ op: "merge", id: "b", into: "gone" }], PAGE, pos), tree);
+  assert.equal(applyOps(tree, [{ op: "merge", id: "a", into: "low" }], PAGE, pos), tree, "into itself");
+});
+
+test("pushOp keeps a set behind a queued merge into its block", () => {
+  const q = [{ op: "set", id: "a", content: "one!", base: "one" }, { op: "merge", id: "b", into: "a" }];
+  pushOp(q, { op: "set", id: "a", content: "one!two?", base: "one!two" });
+  assert.equal(q.length, 3, "folded forward, the set would drop what the merge joins to it");
+  pushOp(q, { op: "set", id: "a", content: "one!two?!", base: "one!two?" });
+  assert.equal(q.length, 3);
+  assert.equal(q[2].base, "one!two");
 });
 
 test("a remote move displaces the open editor's row when it moves it, an ancestor, or reorders their siblings", () => {

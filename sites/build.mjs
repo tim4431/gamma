@@ -1,14 +1,17 @@
 // Assemble ./dist for `wrangler deploy`:
 //   ./site/**            copied as-is, `<!--#include name -->` expanded from ./templates
-//   ./dist/media/**      brand artwork, demos, the screenshot, the favicon and the store badge,
-//                        copied from the repository (the site keeps no copies),
-//                        plus any picture a rendered document shows
+//                        and `<!--#repofile path -->` from the repository (below);
+//                        site/media holds the front page's cuts of two demos and the
+//                        stills of its clips, from tools/readme-media/site-cuts.py
+//   ./dist/media/**      brand artwork, demos, the screenshot, the badges, the favicon and the Inter font
+//                        with its licence, copied from the repository (the site keeps no
+//                        copies), plus any picture a rendered document shows
 //   ./dist/<page>/       the repository's Markdown rendered through ./templates:
 //                        the privacy policy, the terms, the page on deleting a Gamma
 //                        Cloud account and the user guide (DOCS below)
 //   ./dist/sitemap.xml   every page above
 //
-// `node build.mjs --strict` fails on a broken internal link or anchor
+// `node build.mjs --strict` fails on a broken internal link, picture or anchor
 // (CI does this); without the flag they are warnings.
 import fs from 'node:fs';
 import path from 'node:path';
@@ -32,20 +35,11 @@ const MEDIA = {
   'logo.svg': 'docs/assets/branding/gamma-logo.svg',
   'app.webp': 'docs/assets/screenshots/hero-app.webp',
   'hero-light.png': 'docs/assets/branding/gamma-hero-light.png',
-  'library-light.svg': 'docs/assets/branding/gamma-library-light.svg',
-  'connections-light.svg': 'docs/assets/branding/gamma-connections-light.svg',
-  'workspaces-light.svg': 'docs/assets/branding/gamma-workspaces-light.svg',
-  'anywhere-light.svg': 'docs/assets/branding/gamma-anywhere-light.svg',
-  'demo-ink-import.webp': 'docs/assets/demos/demo-ink-import.webp',
-  'demo-notes.webp': 'docs/assets/demos/demo-notes.webp',
-  'demo-native-agentic.webp': 'docs/assets/demos/demo-native-agentic.webp',
-  'demo-agentic-notes.webp': 'docs/assets/demos/demo-agentic-notes.webp',
-  'demo-search.webp': 'docs/assets/demos/demo-search.webp',
-  'demo-reference-links.webp': 'docs/assets/demos/demo-reference-links.webp',
-  'demo-metadata.webp': 'docs/assets/demos/demo-metadata.webp',
-  'demo-connector.webp': 'docs/assets/demos/demo-connector.webp',
-  'demo-collab.webp': 'docs/assets/demos/demo-collab.webp',
+  'testflight-ipad.svg': 'docs/assets/badges/testflight-ipad.svg',
   'chrome-web-store.png': 'docs/assets/badges/chrome-web-store.png',
+  'demo-native-agentic.webp': 'docs/assets/demos/demo-native-agentic.webp',
+  'inter.woff2': 'desktop/ui/fonts/inter-latin-wght-normal.woff2',
+  'inter-OFL.txt': 'desktop/ui/fonts/OFL.txt',
 };
 
 // The Markdown pages. `source` is a .md file under the repository root; `at`
@@ -66,7 +60,9 @@ const warnings = [];
 const warn = msg => warnings.push(msg);
 
 const template = name => fs.readFileSync(path.join(TEMPLATES, `${name}.html`), 'utf8');
-const expand = html => html.replace(/<!--#include (\w+) -->/g, (_, name) => expand(template(name)));
+const expand = html => html
+  .replace(/<!--#include (\w+) -->/g, (_, name) => expand(template(name)))
+  .replace(/<!--#repofile (\S+) -->/g, (_, file) => repofile(file));
 const write = (rel, content) => {
   const out = path.join(DIST, rel);
   fs.mkdirSync(path.dirname(out), { recursive: true });
@@ -76,6 +72,13 @@ const walk = dir => fs.readdirSync(dir, { withFileTypes: true, recursive: true }
   .filter(entry => entry.isFile())
   .map(entry => path.join(entry.parentPath ?? entry.path, entry.name));
 const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+// A file of the repository shown on a page, so the page cannot drift from it.
+// Line ends as git holds them, whatever the checkout did to them.
+const repofile = file => {
+  const from = path.join(ROOT, file);
+  if (!fs.existsSync(from)) throw new Error(`Missing repository file: ${file}`);
+  return esc(fs.readFileSync(from, 'utf8').replace(/\r\n/g, '\n'));
+};
 const unescapeHtml = s => s.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'");
 const posix = p => p.split(path.sep).join('/');
 
@@ -243,8 +246,8 @@ const urlOf = f => {
 const urls = htmlFiles.map(urlOf).sort();
 write('sitemap.xml', `<?xml version="1.0" encoding="UTF-8"?>\n<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n${urls.map(u => `  <url><loc>${ORIGIN}${u}</loc></url>`).join('\n')}\n</urlset>\n`);
 
-// 5. Every internal link in every page lands on a page, and its anchor on an
-// id in that page.
+// 5. Every internal link, picture and clip in every page lands on a page or a
+// file, and a link's anchor on an id in that page.
 const idsByUrl = new Map(htmlFiles.map(f => [urlOf(f), new Set([...fs.readFileSync(f, 'utf8').matchAll(/\bid="([^"]+)"/g)].map(m => m[1]))]));
 const exists = url => {
   if (urls.includes(url)) return true;
@@ -254,7 +257,7 @@ const exists = url => {
 for (const f of htmlFiles) {
   const from = urlOf(f);
   const html = fs.readFileSync(f, 'utf8');
-  for (const [, href] of html.matchAll(/\bhref="([^"]+)"/g)) {
+  for (const [, href] of html.matchAll(/\b(?:href|src|srcset|data-clip)="([^"]+)"/g)) {
     if (!/^[/#]/.test(href) || href.startsWith('//')) continue;
     const [, p, hash] = href.match(/^([^#]*)(#.*)?$/);
     const target = p || from;

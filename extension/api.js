@@ -125,19 +125,70 @@ export async function checkedDefaultFolder(settings) {
   return { folder: "", folder_path: "" };
 }
 
-// The id of the folder a path names ("a/b", split as POST /api/clip splits
-// it: blank names left out, the rest trimmed) among GET /api/library/folders'
-// `folders` ({id, path}), or "". Compared name by name, so a folder itself
-// named "a/b" is not what typed "a/b" (folder a, subfolder b) files into.
-// An exact match first, else one differing only in case — as the server
-// (blocks_store.named) and the app (libraryUtils.findNamed) match names.
+// The names of a typed path ("a/b"), split as POST /api/clip splits it: blank
+// names left out, the rest trimmed.
+export const pathNames = (path) => path.split("/").map((name) => name.trim()).filter(Boolean);
+
+// The id of the folder a path names among GET /api/library/folders' `folders`
+// ({id, path}), or "". Compared name by name, so a folder itself named "a/b"
+// is not what typed "a/b" (folder a, subfolder b) files into. An exact match
+// first, else one differing only in case — as the server (blocks_store.named)
+// and the app (libraryUtils.findNamed) match names.
 export function folderByPath(folders, path) {
-  const names = path.split("/").map((name) => name.trim()).filter(Boolean);
+  const names = pathNames(path);
   const matches = (same) => (f) => f.path.length === names.length
     && f.path.every((name, i) => same(name.trim(), names[i]));
   const found = folders.find(matches((a, b) => a === b))
     || folders.find(matches((a, b) => a.toLowerCase() === b.toLowerCase()));
   return found ? found.id : "";
+}
+
+// GET /api/library/folders' `folders` as a tree: `{roots, byId}`, a node being
+// `{id, path, name, parent, kids}` (`parent` its node, null at the top). Each
+// level keeps the list's order, most recently used first, which a folder's
+// subfolders count toward. A folder's parent is the folder at the path above
+// it, so the children of siblings sharing a name all show under the first of
+// them; each row still files by its own id. A folder whose parent the list
+// lacks stays at the top under its whole path.
+export function folderTree(folders) {
+  const byId = new Map(), byPath = new Map();
+  for (const { id, path } of folders) {
+    const node = { id, path, name: path.at(-1), parent: null, kids: [] };
+    byId.set(id, node);
+    if (!byPath.has(JSON.stringify(path))) byPath.set(JSON.stringify(path), node);
+  }
+  const roots = [];
+  for (const node of byId.values()) {
+    node.parent = byPath.get(JSON.stringify(node.path.slice(0, -1))) || null;
+    if (node.parent) node.parent.kids.push(node);
+    else {
+      node.name = node.path.join(" / ");
+      roots.push(node);
+    }
+  }
+  return { roots, byId };
+}
+
+// The one of `kids` (folderTree's nodes) called `name`, matched as
+// folderByPath matches a name, or null.
+export function namedKid(kids, name) {
+  const wanted = name.trim();
+  return kids.find((f) => f.path.at(-1).trim() === wanted)
+    || kids.find((f) => f.path.at(-1).trim().toLowerCase() === wanted.toLowerCase()) || null;
+}
+
+// Makes the folder `name` under `parent` (an id, "" = the top level) as the
+// app's New folder does: one insert on the folder tree, there on every server
+// with folder ids. `id` is the caller's, so sending it twice makes one folder
+// (an insert is create-if-absent). `pin` as a save's requests take it.
+export async function makeFolder({ id, parent, name }, pin = {}) {
+  try {
+    await api("/pages/folders/ops",
+      { json: { client: "", ops: [{ op: "insert", id, parent: parent || "folders", content: name }] }, ...pin });
+  } catch (err) {
+    err.message = `Couldn't make the folder “${name}”: ${err.message}`;
+    throw err;
+  }
 }
 
 // Makes a save's folder the connected server's default; one named by path (a
@@ -175,11 +226,6 @@ export async function serverOrigin() {
 // The permission pattern for an origin ("http://host:9001/*").
 export function originPattern(origin) {
   return origin ? origin + "/*" : "";
-}
-
-export async function hasServerPermission(origin) {
-  if (!origin) return false;
-  return chrome.permissions.contains({ origins: [originPattern(origin)] });
 }
 
 async function readError(res) {

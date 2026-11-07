@@ -2,13 +2,16 @@
 // into a note as the $ … $ and $$ … $$ notes render (remark-math and
 // scanMathSpans read only dollars). It is converted on the way in, never on
 // screen: in Markdown "\[" is also an escaped bracket, and Gamma writes those
-// itself (text_box.escape_markdown, zotero_notes._escape: "\[n = 30\]"), so
+// itself (text_box.escape_markdown, zotero_notes.escape: "\[n = 30\]"), so
 // a \[ … \] converts only when it is shaped as a formula is written.
 // backend/gamma/paste_math.py applies the same rules to what the AI writes;
-// tests/shared/pastemath.json pins both. Pure: no DOM, no React.
+// tests/shared/pastemath.json pins both. Code is shared/lib/mdCode.js's
+// fences and spans. A chat reply's math is diagramMarkdown.normalizeMath,
+// a rule of its own: there a model's \[ x \] is always display math.
+// Pure: no DOM, no React.
 import { findMathAtCursor } from "./latexCompletion.js";
 import { escapedAt } from "./latexInput.js";
-import { FENCE_LINE } from "../shared/lib/diagramMarkdown.js";
+import { codeFences, codeSpans, mapProse } from "../shared/lib/mdCode.js";
 
 const DELIM = /\\[[\]()]/g;
 const ESCAPED = /\\[!-/:-@[-`{-~]/g;
@@ -26,71 +29,6 @@ const isWord = (c) => LETTER.test(c) && !CJK.test(c);
 // The character before (at) `at`, read as a whole code point; a space past the ends.
 const charBefore = (s, at) => (at < 1 ? " " : String.fromCodePoint(s.codePointAt(/[\udc00-\udfff]/.test(s[at - 1]) && at >= 2 ? at - 2 : at - 1)));
 const charAt = (s, at) => (at >= s.length ? " " : String.fromCodePoint(s.codePointAt(at)));
-
-// The code fences in `text`: `from` the opening line's start, `inner` its
-// end, `to` the closing line's start and `end` its end (the text's end
-// while it is open). Quoted, listed and ~~~ fences count (FENCE_LINE).
-function fences(text) {
-  const out = [];
-  let open = null, off = 0;
-  for (const line of text.split("\n")) {
-    const m = FENCE_LINE.exec(line);
-    if (open) {
-      if (m && m[2][0] === open.ticks[0] && m[2].length >= open.ticks.length && !m[3].trim()) {
-        out.push({ from: open.from, inner: open.inner, to: off, end: off + line.length });
-        open = null;
-      }
-    } else if (m && !(m[2][0] === "`" && m[3].includes("`"))) {
-      open = { from: off, inner: off + line.length, ticks: m[2] };
-    }
-    off += line.length + 1;
-  }
-  if (open) out.push({ from: open.from, inner: open.inner, to: text.length, end: text.length });
-  return out;
-}
-
-// The inline code spans in `text`, [from, to): a run of backticks to the
-// next run as long on its line (CommonMark's rule, kept to one line), found
-// in one pass.
-function codeSpans(text) {
-  const spans = [];
-  let off = 0;
-  for (const line of text.split("\n")) {
-    const runs = [...line.matchAll(/`+/g)];
-    const next = new Array(runs.length).fill(-1), last = new Map();
-    for (let k = runs.length - 1; k >= 0; k--) {
-      next[k] = last.get(runs[k][0].length) ?? -1;
-      last.set(runs[k][0].length, k);
-    }
-    for (let k = 0; k < runs.length; k++) {
-      if (next[k] < 0) continue;
-      const close = runs[next[k]];
-      spans.push([off + runs[k].index, off + close.index + close[0].length]);
-      k = next[k];
-    }
-    off += line.length + 1;
-  }
-  return spans;
-}
-
-// `text` with `fn` applied to what lies outside its fences and code spans.
-function mapProse(text, fn) {
-  let out = "", pos = 0;
-  for (const f of fences(text)) {
-    out += outsideCode(text.slice(pos, f.from), fn) + text.slice(f.from, f.end);
-    pos = f.end;
-  }
-  return out + outsideCode(text.slice(pos), fn);
-}
-
-function outsideCode(s, fn) {
-  let out = "", pos = 0;
-  for (const [from, to] of codeSpans(s)) {
-    out += fn(s.slice(pos, from)) + s.slice(from, to);
-    pos = to;
-  }
-  return out + fn(s.slice(pos));
-}
 
 // Whether a position in `s` is inside a web address or a link's target,
 // for positions asked in increasing order (it reads `s` once). An address
@@ -304,15 +242,7 @@ export function dollarMath(text, keep = "") {
 // What a paste at `pos` in `doc` puts in: `text` converted, unless it lands
 // in source — a code fence, inline code or math — where it stays as copied.
 export function pasteMath(doc, pos, text) {
-  const fenced = fences(doc), spans = codeSpans(doc);
-  if (fenced.some((f) => pos >= f.inner && pos <= f.to) || spans.some(([a, b]) => pos > a && pos < b)) return text;
-  // Dollars in code are no math: blanked before asking.
-  const code = [...fenced.map((f) => [f.from, f.end]), ...spans].sort((x, y) => x[0] - y[0]);
-  let prose = "", at = 0;
-  for (const [a, b] of code) {
-    if (a < at) continue;
-    prose += doc.slice(at, a) + doc.slice(a, b).replace(/[^\n]/g, " ");
-    at = b;
-  }
-  return findMathAtCursor(prose + doc.slice(at), pos) ? text : dollarMath(text);
+  if (codeFences(doc).some((f) => pos >= f.inner && pos <= f.mark)
+    || codeSpans(doc).some(([a, b]) => pos > a && pos < b)) return text;
+  return findMathAtCursor(doc, pos) ? text : dollarMath(text);
 }

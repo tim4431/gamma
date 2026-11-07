@@ -34,9 +34,9 @@
   <path class="m-glyph" d="M228 15h.01M231 15h.01M228 18h.01M231 18h.01M228 21h.01M231 21h.01" />
   <rect class="m-line" x="236" y="16" width="24" height="4" rx="2" />
   <path class="m-rule" d="M222 26H310" />
-  <circle class="m-line-dim" cx="230" cy="37" r="1.6" /><rect class="m-line-dim" x="235" y="35.25" width="60" height="3.5" rx="1.75" />
-  <circle class="m-line-dim" cx="230" cy="49" r="1.6" /><rect class="m-line-dim" x="235" y="47.25" width="48" height="3.5" rx="1.75" />
-  <circle class="m-line-dim" cx="230" cy="61" r="1.6" /><rect class="m-line-dim" x="235" y="59.25" width="56" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="235" y="35.25" width="60" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="235" y="47.25" width="48" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="235" y="59.25" width="56" height="3.5" rx="1.75" />
   <g class="m-appear" style="--m-at: 0.6">
     <rect class="m-chip" x="228" y="72" width="76" height="28" rx="5" />
     <path class="m-glyph-on" d="M235 80v8l7-4z" />
