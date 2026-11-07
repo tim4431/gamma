@@ -1,5 +1,5 @@
-// Note editing: page creation, the block editor's keys (Shift+Enter /
-// Enter-as-new-block pref / Tab / Shift+Tab / Backspace), the op save path +
+// Note editing: page creation, the block editor's keys (Enter / Shift+Enter
+// and the preference that swaps them / Tab / Shift+Tab / Backspace), the op save path +
 // reload, undo, the handle menu, the selection toolbar, markdown rendering
 // (todos, images) and the workspace on browser-fetched upload URLs. Runs in
 // a NON-default workspace: every request must name it explicitly, which is
@@ -115,17 +115,17 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     assertNoProblems(page);
   });
 
-  await step("notes: Shift+Enter / Tab / Shift+Tab / Backspace shape the tree", async () => {
+  await step("notes: Enter / Tab / Shift+Tab / Backspace shape the tree", async () => {
     await editRow(page, "first");
-    await page.keyboard.press("Shift+Enter");
+    await page.keyboard.press("Enter");
     await page.keyboard.type("second");
     await page.keyboard.press("Tab");
     await stillEditing(page, "second");
-    await page.keyboard.press("Shift+Enter");
+    await page.keyboard.press("Enter");
     await page.keyboard.type("third");
     await page.keyboard.press("Shift+Tab");
     await stillEditing(page, "third");
-    await page.keyboard.press("Shift+Enter");
+    await page.keyboard.press("Enter");
     // The new (empty) block's editor has the focus before Backspace removes it
     // (an empty CodeMirror doc shows its placeholder widget, so test for that).
     await page.waitForFunction(() => {
@@ -138,9 +138,9 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     assertNoProblems(page);
   });
 
-  await step("notes: plain Enter is a line break; Ctrl+Z inside the editor restores the text", async () => {
+  await step("notes: Shift+Enter is a line break; Ctrl+Z inside the editor restores the text", async () => {
     await editRow(page, "third");
-    await page.keyboard.press("Enter");
+    await page.keyboard.press("Shift+Enter");
     await page.keyboard.type("line two");
     await until(async () => JSON.stringify(await tree(alice2, pageId)).includes("third\\nline two"), { what: "line break saved" });
     await page.keyboard.press("Control+z");
@@ -153,14 +153,14 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
   // The editor shows a numbered marker as text in tabular figures
   // (BlockCmEditor's cmListNum): Inter's own "1" is narrower than "2", which
   // set the first item's text left of the others'.
-  await step("notes: Enter continues a numbered list, and its items' text lines up in the editor", async () => {
+  await step("notes: Shift+Enter continues a numbered list in the block, and its items' text lines up in the editor", async () => {
     const src = await alice2.api("/api/pages", { method: "POST", body: { title: "Numbered" } });
     await alice2.api(`/api/pages/${src.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
       { op: "insert", id: "numblk01", parent: src.id, position: "a0", content: "1. one" }] } });
     const p2 = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${src.id}`);
     try {
       await editRow(p2, "one");
-      for (const word of ["two", "three", "four", "seven"]) { await p2.keyboard.press("Enter"); await p2.keyboard.type(word); }
+      for (const word of ["two", "three", "four", "seven"]) { await p2.keyboard.press("Shift+Enter"); await p2.keyboard.type(word); }
       await until(async () => (await tree(alice2, src.id))[0]?.content === "1. one\n2. two\n3. three\n4. four\n5. seven", { what: "the list saved" });
       // Where each item's text starts: the first letter after "N. ".
       const starts = await p2.evaluate(() => [...document.querySelectorAll(".blockEditorCm .cm-line")].map((line) => {
@@ -182,7 +182,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
   // quote's level (or as copied: Paste as → As copied), lines copied out of
   // a quote join it instead of nesting, and Ctrl+Shift+. quotes or unquotes
   // the selected lines. It renders as one box.
-  await step("notes: a callout keeps its lines together: Enter continues its list, a paste stays in it, Ctrl+Shift+. quotes lines", async () => {
+  await step("notes: a callout keeps its lines together: Shift+Enter continues its list, a paste stays in it, Ctrl+Shift+. quotes lines", async () => {
     const src = await alice2.api("/api/pages", { method: "POST", body: { title: "Quotes" } });
     await alice2.api(`/api/pages/${src.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
       { op: "insert", id: "quoteblk1", parent: src.id, position: "a0", content: "> [!tip] Steps\n> - one" },
@@ -192,10 +192,10 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     try {
       await editRow(p2, "Steps");
       await p2.keyboard.press("Control+End");
-      await p2.keyboard.press("Enter");
+      await p2.keyboard.press("Shift+Enter");
       await p2.keyboard.type("two");
-      await p2.keyboard.press("Enter");
-      await p2.keyboard.press("Enter");
+      await p2.keyboard.press("Shift+Enter");
+      await p2.keyboard.press("Shift+Enter");
       await p2.keyboard.type("after the list");
       const listed = "> [!tip] Steps\n> - one\n> - two\n> after the list";
       await until(async () => (await content(0)) === listed, { what: "the list in the callout saved" });
@@ -207,7 +207,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
         document.activeElement.closest(".cm-content")
           .dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
       }, text);
-      await p2.keyboard.press("Enter");
+      await p2.keyboard.press("Shift+Enter");
       await pasteText("first\nsecond\n\nthird");
       const quoted = `${listed}\n> first\n> second\n>\n> third`;
       await until(async () => (await content(0)) === quoted, { what: "every pasted line in the quote" });
@@ -223,7 +223,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       // Lines copied out of a quote keep their marks; pasted into this one
       // they join it rather than make a quote inside it.
       await p2.keyboard.press("Control+End");
-      await p2.keyboard.press("Enter");
+      await p2.keyboard.press("Shift+Enter");
       await pasteText("> 1. this\n> 2. second");
       await until(async () => (await content(0)) === `${quoted}\n> 1. this\n> 2. second`, { what: "the copied quote's lines at the box's level" });
       await p2.keyboard.press("Escape");
@@ -476,11 +476,30 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     assertNoProblems(page);
   });
 
-  await step("notes: dragging a block's handle moves it; the drop line never outlives the drag (#88)", async () => {
+  await step("notes: dragging a block's handle moves it; the drop line steps in where a drop nests, in step with the row's text, and never outlives the drag (#88)", async () => {
     const handle = (text) => page.locator(".sortableBlockWrap", { hasText: text }).first().locator(".dragHandle").first().elementHandle();
     const line = page.locator(".dropIndicator");
-    // A handle drag shows the line and the drop moves the block.
+    // A drop nests once the pointer passes the start of the row's text, and the
+    // line says so: it steps in by one indent, clear of the handles' gutter.
     let drag = await startDrag(page, await handle("third"), "first");
+    await line.waitFor({ timeout: 5000 });
+    const dragOverText = (text, dx) => page.locator(".sortableBlockWrap", { hasText: text }).last().evaluate((wrap, dx) => {
+      const textLeft = wrap.querySelector(".blockRendered").getBoundingClientRect().left;
+      const row = wrap.querySelector(".blockRow");
+      row.dispatchEvent(new DragEvent("dragover", { bubbles: true, cancelable: true, dataTransfer: window.__e2eDrag.dt, clientX: textLeft + dx, clientY: row.getBoundingClientRect().top + 4 }));
+      return { textLeft, rowLeft: row.getBoundingClientRect().left };
+    }, dx);
+    for (const [text, sibling, nested] of [["first", -22, -8], ["second", -8, 6]]) {
+      for (const [dx, want, what] of [[-2, sibling, "a sibling"], [2, nested, "nested"]]) {
+        const { textLeft, rowLeft } = await dragOverText(text, dx);
+        await until(async () => Math.abs((await line.boundingBox()).x - (textLeft + want)) < 1, { what: `the line for ${what} on "${text}", ${want}px from its text` });
+        assert((await line.boundingBox()).x >= rowLeft, `the line for ${what} on "${text}" starts in the row, not over the handles`);
+      }
+    }
+    await drag.finish("elsewhere");
+    await line.waitFor({ state: "detached", timeout: 5000 });
+    // A handle drag shows the line and the drop moves the block.
+    drag = await startDrag(page, await handle("third"), "first");
     await line.waitFor({ timeout: 5000 });
     await drag.finish("drop");
     await line.waitFor({ state: "detached", timeout: 5000 });
@@ -506,7 +525,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
 
   await step("notes: a todo renders as a checkbox and clicking it writes [x]", async () => {
     await editRow(page, "third");
-    await page.keyboard.press("Shift+Enter");
+    await page.keyboard.press("Enter");
     await page.keyboard.type("- [ ] buy milk");
     await closeEditor(page);
     const box = row(page, "buy milk").locator("input.mdTaskCheckbox").first();
@@ -562,7 +581,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
   await step("notes: an uploaded image renders (URL carries the workspace) and survives reload", async () => {
     const up = await alice2.upload("/api/upload-image", PNG_1PX, "dot.png", "image/png");
     await editRow(page, "buy milk");
-    await page.keyboard.press("Shift+Enter");
+    await page.keyboard.press("Enter");
     await page.keyboard.type(`![](${up.url})`);
     await closeEditor(page);
     const check = async () => {
@@ -580,7 +599,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
   await step("notes: in the editor an image stays a picture with the caret beside it; right-click shows the source", async () => {
     const up = await alice2.upload("/api/upload-image", PNG_1PX, "dot2.png", "image/png");
     await editRow(page, "buy milk");
-    await page.keyboard.press("Enter"); // a line break; list continuation makes line 2 a new todo item
+    await page.keyboard.press("Shift+Enter"); // a line break; list continuation makes line 2 a new todo item
     await page.keyboard.type(`![](${up.url})`);
     const widgets = () => page.$$eval(".blockEditorCm .cmImgWidget img", (els) => els.map((e) => [e.getAttribute("src"), e.naturalWidth]));
     // The caret sits right after the image it just typed: the boundary keeps the picture.
@@ -603,9 +622,9 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
 
   await step("notes: one blank line is a paragraph break, a second one renders as an empty line", async () => {
     await editRow(page, "third");
-    await page.keyboard.press("Enter");
-    await page.keyboard.press("Enter");
-    await page.keyboard.press("Enter");
+    await page.keyboard.press("Shift+Enter");
+    await page.keyboard.press("Shift+Enter");
+    await page.keyboard.press("Shift+Enter");
     await page.keyboard.type("after gap");
     await closeEditor(page);
     await until(async () => JSON.stringify(await tree(alice2, pageId)).includes("third\\n\\n\\nafter gap"), { what: "blank lines saved" });
@@ -617,7 +636,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
   await step("notes: colored text via the / menu and a foldable [!note]- callout", async () => {
     await editRow(page, "after gap");
     await page.keyboard.press("Control+End");
-    await page.keyboard.press("Enter");
+    await page.keyboard.press("Shift+Enter");
     // The bare "/" list comes in groups, the footer hints at the colours;
     // a typed query is one ranked list, fuzzy, its letters marked where
     // they matched; each row names the command to type.
@@ -650,9 +669,9 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     }, null, { timeout: 5000 });
     await page.keyboard.type("hot");
     await page.keyboard.press("End");
-    await page.keyboard.press("Enter");
+    await page.keyboard.press("Shift+Enter");
     await page.keyboard.type("> [!note]- Proof");
-    await page.keyboard.press("Enter");
+    await page.keyboard.press("Shift+Enter");
     await page.keyboard.type("hidden body");
     await closeEditor(page);
     await until(async () => JSON.stringify(await tree(alice2, pageId)).includes('<span style=\\"color:#e5484d\\">hot</span>'), { what: "the color span saved as inline HTML" });
@@ -670,7 +689,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
   await step("notes: the selection toolbar formats selected text — bold, underline, a color — and waits for a mouse selection's release", async () => {
     await editRow(page, "Proof");
     await page.keyboard.press("Control+End");
-    await page.keyboard.press("Shift+Enter");
+    await page.keyboard.press("Enter");
     await page.keyboard.type("make this bold now");
     // A keyboard selection shows the bar at once, above the selected line.
     for (let i = 0; i < 4; i++) await page.keyboard.press("ArrowLeft");
@@ -737,7 +756,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     const up = await alice2.upload("/api/upload-image", PNG_1PX, "dot3.png", "image/png");
     await editRow(page, "second");
     await page.keyboard.press("Control+End");
-    await page.keyboard.press("Shift+Enter");
+    await page.keyboard.press("Enter");
     // Headings, a table and a list all render shorter than their source, so
     // the text below them sits lower in the editor than it did rendered.
     await page.keyboard.insertText(`![|200](${up.url})\n\n## Heading\n\n| col a | col b |\n| --- | --- |\n| 1 | 2 |\n| 3 | 4 |\n\n- item one\n- item two\n\nclick the **target** word`);
@@ -776,7 +795,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
   await step("notes: the gap line between two adjacent $$ formulas opens the editor on a new line between them", async () => {
     await editRow(page, "second");
     await page.keyboard.press("Control+End");
-    await page.keyboard.press("Shift+Enter");
+    await page.keyboard.press("Enter");
     await page.keyboard.insertText("$$x+1$$\n$$y+2$$");
     await closeEditor(page);
     await until(async () => JSON.stringify(await tree(alice2, pageId)).includes("$$x+1$$\\n$$y+2$$"), { what: "two formulas saved" });
@@ -835,6 +854,541 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       assertNoProblems(p2);
     } finally {
       await p2.close();
+    }
+  });
+
+  await step("notes: a plain row draws neither dot nor label; a placed row keeps p.N and a mark while edited; an empty row is blank until hovered or focused, and on a view-only page for good, and never copied; the + and the ⋮⋮ sit side by side on a row's first line", async () => {
+    const src = await alice2.api("/api/pages", { method: "POST", body: { title: "Rows" } });
+    const place = { pageNumber: 3, width: 600, height: 800, boundingRect: { x1: 10, y1: 10, x2: 90, y2: 30 }, rects: [{ x1: 10, y1: 10, x2: 90, y2: 30 }] };
+    const blocks = [
+      { id: "rplain", content: "A paragraph" },
+      { id: "rempty", content: "" },
+      { id: "rnext", content: "One line" },
+      { id: "rlast", content: "Another line" },
+      { id: "rhead", content: "# A heading" },
+      { id: "rhigh", content: "On a passage", props: { pdf_position: place, quote: "a quoted passage" } },
+      { id: "rbox", content: "", props: { text_box: { x: 40, y: 40 }, pdf_page: 2 } },
+    ];
+    await alice2.api(`/api/pages/${src.id}/ops`, { method: "POST", body: { client: "e2e", ops: blocks.map(({ id, content, props }, i) => (
+      { op: "insert", id, parent: src.id, position: `a${i}`, content, props })).concat(
+      { op: "insert", id: "rdeep", parent: "rlast", position: "a0", content: "Under a line" }) } });
+    const shown = (p, id, what) => p.locator(`.blockRowWrap[data-block-id="${id}"] > .blockRow ${what}`);
+    const wordShown = (p, id) => shown(p, id, ".blockPlaceholder").evaluate((el) => getComputedStyle(el).visibility === "visible");
+    const p2 = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${src.id}`);
+    try {
+      await p2.waitForSelector('.blockRowWrap[data-block-id="rhigh"] .blockRendered');
+      assertEq(await p2.locator(".blockRow .noteBulletDot").count(), 0, "no dot on a row at rest");
+      assertEq(await shown(p2, "rplain", ".blockMeta").count(), 0, "no label on a plain row");
+      assertEq(await shown(p2, "rplain", ".dotSlot").count(), 1, "the slot keeps the left edge");
+      assertEq(await shown(p2, "rhigh", ".blockMeta").innerText(), "p.3", "a placed row names its page");
+      assertEq(await shown(p2, "rhigh", ".highlightDot").count(), 1, "a highlight keeps its dot");
+
+      // The row's editor stands in for a highlight's dot; it keeps a quiet one.
+      await shown(p2, "rhigh", ".blockRendered").click();
+      await p2.waitForSelector(".blockEditorCm .cm-content", { timeout: 5000 });
+      assertEq(await shown(p2, "rhigh", ".noteBulletDot").count(), 1, "a highlight keeps a mark while edited");
+      await closeEditor(p2);
+
+      // An empty note's word comes with the row, in the row's own height.
+      await p2.mouse.move(0, 0);
+      await until(async () => !(await wordShown(p2, "rempty")), { what: "an empty row blank at rest" });
+      assert(await wordShown(p2, "rbox"), "any other empty row keeps its word");
+      const height = () => shown(p2, "rempty", ".blockRendered").evaluate((el) => el.getBoundingClientRect().height);
+      const line = await shown(p2, "rnext", ".blockRendered").evaluate((el) => el.getBoundingClientRect().height);
+      assert(Math.abs((await height()) - line) <= 1, `an empty row keeps a line's height: ${await height()}px, a line ${line}px`);
+      await p2.locator('.blockRowWrap[data-block-id="rempty"] > .blockRow').hover();
+      await until(() => wordShown(p2, "rempty"), { what: "the word on hover" });
+      await shown(p2, "rempty", ".blockRendered").click();
+      await p2.waitForSelector(".blockEditorCm .cm-content", { timeout: 5000 });
+      await closeEditor(p2);
+      await p2.mouse.move(0, 0);
+      assertEq(await p2.locator('.blockRowWrap[data-block-id="rempty"] > .blockRow.focused').count(), 1, "the row keeps the focus");
+      assert(await wordShown(p2, "rempty"), "the word on the focused row");
+
+      // On a row's first line, level with its text: the "+", then the ⋮⋮, then
+      // the row. They stay in the row's height, so over neither the next row
+      // nor their own text, and the row is no scroller to CodeMirror. A press
+      // reaches all of the "+", clear of the sash's margin at the pane's edge
+      // and of the guide line of the row above.
+      const handlesOf = (id) => p2.evaluate((id) => {
+        const wrap = document.querySelector(`.sortableBlockWrap[data-block-id="${id}"]`);
+        const box = (selector) => { const r = wrap.querySelector(selector).getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom }; };
+        const add = wrap.querySelector(".addHandle");
+        const hit = box(".addHandle");
+        const reached = [hit.left + 2, hit.right - 2].every((x) => document.elementFromPoint(x, (hit.top + hit.bottom) / 2)?.closest(".addHandle") === add);
+        return { add: hit, drag: box(".dragHandle"), row: box(".blockRow"), text: box(".blockRendered > :first-child"), reached,
+          scroller: wrap.scrollHeight > wrap.clientHeight || wrap.scrollWidth > wrap.clientWidth,
+          pane: document.querySelector(".sidebar").getBoundingClientRect().left,
+          guide: wrap.closest(".blockChildren")?.getBoundingClientRect().left ?? null };
+      }, id);
+      for (const id of ["rnext", "rhead", "rdeep"]) {
+        await p2.locator(`.blockRowWrap[data-block-id="${id}"] > .blockRow`).hover();
+        const at = await handlesOf(id);
+        assert(at.add.right <= at.drag.left + 0.5 && at.drag.right <= at.row.left + 0.5, `${id}: the +, the ⋮⋮, the row: ${JSON.stringify(at)}`);
+        assert(Math.abs(at.add.top - at.drag.top) < 0.5 && at.add.bottom <= at.row.bottom, `${id}: one line, in the row: ${JSON.stringify(at)}`);
+        assert(Math.abs((at.drag.top + at.drag.bottom) / 2 - (at.text.top + at.text.bottom) / 2) <= 1.5, `${id}: level with the text: ${JSON.stringify(at)}`);
+        assert(!at.scroller, `${id}: the row has nothing to scroll`);
+        assert(at.reached, `${id}: a press reaches the + from edge to edge: ${JSON.stringify(at)}`);
+        assert(at.add.left >= at.pane + 6, `${id}: clear of the sash's margin: ${JSON.stringify(at)}`);
+        if (at.guide != null) assert(at.add.left > at.guide + 1, `${id}: clear of the guide line: ${JSON.stringify(at)}`);
+      }
+      const order = async () => (await alice2.api(`/api/blocks/${src.id}/subtree`)).block.children.map((b) => b.id);
+      const wrap = p2.locator('.sortableBlockWrap[data-block-id="rnext"]');
+      const add = wrap.locator(".addHandle");
+      for (const [modifiers, past, what] of [[[], 1, "below"], [["Alt"], -1, "above"]]) {
+        await p2.locator('.blockRowWrap[data-block-id="rnext"] > .blockRow').hover();
+        await add.click({ modifiers });
+        await until(async () => (await order()).length === blocks.length + 1, { what: `the + adds a block ${what}` });
+        const ids = await order();
+        assert(!blocks.some((b) => b.id === ids[ids.indexOf("rnext") + past]), `it lands ${what} the row: ${ids}`);
+        await p2.waitForSelector(".blockEditorCm .cm-content", { timeout: 5000 });
+        await p2.keyboard.press("Backspace");
+        await until(async () => (await order()).length === blocks.length, { what: "that block gone again" });
+      }
+      assertNoProblems(p2);
+    } finally {
+      await p2.close();
+    }
+    await alice2.api(`/api/share/${src.id}`, { method: "POST" });
+    await alice2.api(`/api/share-settings/${src.id}`, { method: "PUT", body: { audience: "anyone", role: "view" } });
+    const { token } = await alice2.api(`/api/share-settings/${src.id}`);
+    const shareCtx = await browser.newContext({ viewport: { width: 1280, height: 860 } });
+    const viewer = await openPage(shareCtx, `${server.base}/?share=${token}`);
+    await viewer.waitForSelector('.blockRowWrap[data-block-id="rempty"] .blockRendered', { timeout: 15000 });
+    await viewer.locator('.blockRowWrap[data-block-id="rempty"] > .blockRow').hover();
+    assert(!(await wordShown(viewer, "rempty")), "a viewer never sees the word");
+    assertEq(await viewer.locator(".rowHandles").count(), 0, "a viewer has no handles");
+    // Copying across the gap leaves out the word that was never on screen.
+    const copied = await shown(viewer, "rplain", ".blockRendered").evaluate((el) => {
+      const last = document.querySelector('.blockRowWrap[data-block-id="rnext"] > .blockRow .blockRendered');
+      const range = document.createRange();
+      range.selectNodeContents(el);
+      range.setEnd(last, last.childNodes.length);
+      const selection = window.getSelection();
+      selection.removeAllRanges();
+      selection.addRange(range);
+      const clipboardData = new DataTransfer();
+      el.dispatchEvent(new ClipboardEvent("copy", { bubbles: true, cancelable: true, clipboardData }));
+      selection.removeAllRanges();
+      return { plain: clipboardData.getData("text/plain"), html: clipboardData.getData("text/html") };
+    });
+    assertEq(copied.plain, "A paragraph\n\nOne line", "a gap copies as nothing");
+    assert(copied.html.includes("One line") && !copied.html.includes("(empty)"), `the rich copy leaves the word out too: ${copied.html}`);
+    assertNoProblems(viewer);
+    await shareCtx.close();
+  });
+
+  // A new page of [id, content, children?, props?] rows, open in its own tab,
+  // with what the keys below need on it.
+  const keysPage = async (title, rows) => {
+    const made = await alice2.api("/api/pages", { method: "POST", body: { title } });
+    const ops = [];
+    const add = (list, parent) => list.forEach(([id, content, kids = [], props = {}], i) => {
+      ops.push({ op: "insert", id, parent, position: `a${i.toString(20).toUpperCase()}`, content, props });
+      add(kids, id);
+    });
+    add(rows, made.id);
+    await alice2.api(`/api/pages/${made.id}/ops`, { method: "POST", body: { client: "e2e", ops } });
+    const p = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${made.id}`);
+    await p.waitForSelector(".blockRow .blockRendered", { timeout: 15000 });
+    // The tree as nested [content, ...children], the server's.
+    const shape = async () => (await tree(alice2, made.id)).map(function line(b) { return [b.content, ...b.children.map(line)]; });
+    const held = (want, what) => until(async () => same(await shape(), want), { what: what || `tree ${JSON.stringify(want)}` });
+    const edit = async (id) => {
+      await p.locator(`.blockRowWrap[data-block-id="${id}"] > .blockRow .blockBody`).click();
+      await p.waitForFunction((id) => document.activeElement?.closest(".blockRowWrap")?.dataset.blockId === id, id, { timeout: 5000 });
+      await p.keyboard.press("Control+End");
+    };
+    const left = async (n) => { for (let i = 0; i < n; i++) await p.keyboard.press("ArrowLeft"); };
+    const editing = () => p.evaluate(() => document.activeElement?.closest(".blockRowWrap")?.dataset.blockId || null);
+    // The new-block key, with the caret across in the block it made.
+    const newBlock = async () => {
+      const was = await editing();
+      await p.keyboard.press("Enter");
+      await p.waitForFunction((was) => {
+        const id = document.activeElement?.closest(".blockRowWrap")?.dataset.blockId;
+        return !!id && id !== was;
+      }, was, { timeout: 5000 });
+    };
+    return { id: made.id, p, held, edit, left, editing, newBlock };
+  };
+
+  await step("notes: the new-block key splits at the caret, one undo step with the caret back; before the text it makes a block above and stays; open children take the new block first, folded ones keep theirs", async () => {
+    const { p, held, edit, left, editing, newBlock } = await keysPage("Split", [
+      ["ks1", "abcd"], ["ks2", "parent", [["ks3", "kid"]]], ["ks4", "folded", [["ks5", "hidden"]], { collapsed: true }],
+    ]);
+    const others = [["parent", ["kid"]], ["folded", ["hidden"]]];
+    try {
+      await edit("ks1");
+      // The caret moves after the last commit: undo must still find it.
+      await left(2);
+      await newBlock();
+      await p.keyboard.type("X");
+      await held([["ab"], ["Xcd"], ...others], "split at the caret, the caret at the new block's start");
+      await p.keyboard.press("Control+z");
+      await held([["ab"], ["cd"], ...others], "undo takes the typing back");
+      await p.keyboard.press("Control+z");
+      await held([["abcd"], ...others], "one more takes the split back, whole");
+      await until(async () => (await editing()) === "ks1", { what: "the first block's editor back" });
+      await p.keyboard.type("Y");
+      await held([["abYcd"], ...others], "the caret back where the split was");
+
+      // At the start of the text: the new block is above and the caret stays.
+      await p.keyboard.press("Control+Home");
+      await p.keyboard.press("Enter");
+      await p.keyboard.type("Z");
+      await held([[""], ["ZabYcd"], ...others], "a block above, no focus change");
+      await p.keyboard.press("Control+z");
+      await p.keyboard.press("Control+z");
+      await held([["abYcd"], ...others], "that is one step too");
+
+      await edit("ks2");
+      await newBlock();
+      await p.keyboard.type("first");
+      await held([["abYcd"], ["parent", ["first"], ["kid"]], ["folded", ["hidden"]]], "first under open children");
+      await edit("ks4");
+      await newBlock();
+      await p.keyboard.type("past");
+      await held([["abYcd"], ["parent", ["first"], ["kid"]], ["folded", ["hidden"]], ["past"]], "after the subtree of a folded block");
+      assertNoProblems(p);
+    } finally {
+      await p.close();
+    }
+  });
+
+  await step("notes: the new-block key goes on with a list, a count and an open box, the text after the caret taking the marker; an empty item ends the list, alone in place, at the end of several lines in a new block", async () => {
+    const { p, held, edit, left, editing, newBlock } = await keysPage("Lists", [
+      ["kl1", "- ab"], ["kl2", "3. three"], ["kl3", "- [x] done"], ["kl4", "- cd"], ["kl5", "- a\n- b"], ["kl6", "- a\n- b"],
+    ]);
+    const later = [["3. three"], ["- [x] done"], ["- cd"], ["- a\n- b"], ["- a\n- b"]];
+    try {
+      await edit("kl1");
+      await newBlock();
+      await p.keyboard.type("next");
+      await held([["- ab"], ["- next"], ...later], "the next item");
+      // An empty item that is the whole block ends: no block, the caret stays.
+      await newBlock();
+      await held([["- ab"], ["- next"], ["- "], ...later], "another item");
+      const item = await editing();
+      await p.keyboard.press("Enter");
+      await held([["- ab"], ["- next"], [""], ...later], "the empty item ends the list");
+      assertEq(await editing(), item, "no block made, the caret stays");
+      await p.keyboard.type("para");
+      await held([["- ab"], ["- next"], ["para"], ...later], "back to a paragraph");
+
+      await edit("kl2");
+      await newBlock();
+      await p.keyboard.type("four");
+      await held([["- ab"], ["- next"], ["para"], ["3. three"], ["4. four"], ["- [x] done"], ["- cd"], ["- a\n- b"], ["- a\n- b"]], "the count goes on");
+      await edit("kl3");
+      await newBlock();
+      await p.keyboard.type("open");
+      await held([["- ab"], ["- next"], ["para"], ["3. three"], ["4. four"], ["- [x] done"], ["- [ ] open"], ["- cd"], ["- a\n- b"], ["- a\n- b"]], "a new to-do starts unchecked");
+      await edit("kl4");
+      await left(1);
+      await newBlock();
+      await held([["- ab"], ["- next"], ["para"], ["3. three"], ["4. four"], ["- [x] done"], ["- [ ] open"], ["- c"], ["- d"], ["- a\n- b"], ["- a\n- b"]], "the text after the caret takes the marker");
+
+      // The last empty item of several lines goes, and a paragraph follows.
+      await edit("kl5");
+      await p.keyboard.press("Shift+Enter");
+      await newBlock();
+      await p.keyboard.type("after");
+      await held([["- ab"], ["- next"], ["para"], ["3. three"], ["4. four"], ["- [x] done"], ["- [ ] open"], ["- c"], ["- d"], ["- a\n- b"], ["after"], ["- a\n- b"]], "the list ends in a new paragraph");
+      await p.keyboard.press("Control+z");
+      await p.keyboard.press("Control+z");
+      await held([["- ab"], ["- next"], ["para"], ["3. three"], ["4. four"], ["- [x] done"], ["- [ ] open"], ["- c"], ["- d"], ["- a\n- b\n- "], ["- a\n- b"]], "one undo step brings the empty item back");
+
+      // Between two lines: each item keeps its own marker.
+      await edit("kl6");
+      await p.keyboard.press("ArrowUp");
+      await p.keyboard.press("End");
+      await newBlock();
+      await held([["- ab"], ["- next"], ["para"], ["3. three"], ["4. four"], ["- [x] done"], ["- [ ] open"], ["- c"], ["- d"], ["- a\n- b\n- "], ["- a"], ["- b"]], "the lines after the caret go along");
+      assertNoProblems(p);
+    } finally {
+      await p.close();
+    }
+  });
+
+  await step("notes: Backspace right after a list marker takes it in one press, on any line; a heading loses one character; an empty note goes, its children staying", async () => {
+    const { p, held, edit, left, editing } = await keysPage("Markers", [
+      ["kb1", "- item"], ["kb2", "1. num"], ["kb3", "- [ ] task"], ["kb4", "plain\n- inner"], ["kb5", "# head"], ["kb6", "> - quoted"],
+      ["kb7", "", [["kb8", "kid"]]], ["kb9", "after"],
+    ]);
+    try {
+      await edit("kb1");
+      await left(4);
+      await p.keyboard.press("Backspace");
+      await held([["item"], ["1. num"], ["- [ ] task"], ["plain\n- inner"], ["# head"], ["> - quoted"], ["", ["kid"]], ["after"]], "a bullet's marker");
+      await edit("kb2");
+      await left(3);
+      await p.keyboard.press("Backspace");
+      await edit("kb3");
+      await left(4);
+      await p.keyboard.press("Backspace");
+      await edit("kb4");
+      await left(5);
+      await p.keyboard.press("Backspace");
+      await edit("kb5");
+      await left(4);
+      await p.keyboard.press("Backspace");
+      await edit("kb6");
+      await left(6);
+      await p.keyboard.press("Backspace");
+      await held([["item"], ["num"], ["task"], ["plain\ninner"], ["#head"], ["> quoted"], ["", ["kid"]], ["after"]], "each marker in one press, the heading's character, the quote's marks kept");
+
+      await edit("kb7");
+      await p.keyboard.press("Backspace");
+      await held([["item"], ["num"], ["task"], ["plain\ninner"], ["#head"], ["> quoted"], ["kid"], ["after"]], "the empty parent goes, its child takes its place");
+      assertEq(await editing(), "kb6", "the caret goes to the block shown above");
+      assertNoProblems(p);
+    } finally {
+      await p.close();
+    }
+  });
+
+  await step("notes: Backspace at a note's start merges it into the block above, marker gone, children in order, one undo step; an empty block above goes instead; a thread, code or a fold above refuses", async () => {
+    const { id, p, held, edit, editing } = await keysPage("Merges", [
+      ["km1", "one"], ["km2", "- two\n- rest"],
+      ["kp1", "parent", [["kp2", "child", [["kp3", "grand"]]], ["kp4", "next"]]],
+      ["ke1", ""], ["ke2", "- stays"],
+      ["kc0", "before"], ["kc1", "open thread"], ["kc2", "resolved thread"],
+      ["kf0", "```\ncode\n```"], ["kf1", "under code"],
+      ["kt0", "text"], ["kt1", "> quoted"],
+      ["kd0", "folded", [["kd1", "hidden"]], { collapsed: true }], ["kd2", "under the fold"],
+    ]);
+    const tail = [
+      ["- stays"], ["before"], ["open thread"], ["resolved thread"], ["```\ncode\n```"], ["under code"],
+      ["text"], ["> quoted"], ["folded", ["hidden"]], ["under the fold"],
+    ];
+    const start = async (rowId) => { await edit(rowId); await p.keyboard.press("Control+Home"); };
+    try {
+      await alice2.api(`/api/pages/${id}/comments`, { method: "POST", body: { block_id: "kc1", body: "A question" } });
+      const shut = await alice2.api(`/api/pages/${id}/comments`, { method: "POST", body: { block_id: "kc2", body: "An answer" } });
+      await alice2.api(`/api/comments/${shut.comment.id}/resolve`, { method: "POST", body: { resolved: true } });
+      await p.reload();
+      await p.waitForSelector('.blockRowWrap[data-block-id="kc1"] .commentCtl', { state: "attached", timeout: 15000 });
+
+      await start("km2");
+      await p.keyboard.press("Backspace");
+      await held([["onetwo\n- rest"], ["parent", ["child", ["grand"]], ["next"]], [""], ...tail], "the first line's marker goes");
+      await until(async () => (await editing()) === "km1", { what: "the editor on the block above" });
+      await p.keyboard.type("X");
+      await held([["oneXtwo\n- rest"], ["parent", ["child", ["grand"]], ["next"]], [""], ...tail], "the caret at the seam");
+      await p.keyboard.press("Control+z");
+      await p.keyboard.press("Control+z");
+      await held([["one"], ["- two\n- rest"], ["parent", ["child", ["grand"]], ["next"]], [""], ...tail], "one undo step");
+      await until(async () => (await editing()) === "km2", { what: "the editor back on the merged block" });
+      await p.keyboard.type("Y");
+      await held([["one"], ["Y- two\n- rest"], ["parent", ["child", ["grand"]], ["next"]], [""], ...tail], "the caret back at its start");
+      await p.keyboard.press("Backspace");
+      await held([["one"], ["- two\n- rest"], ["parent", ["child", ["grand"]], ["next"]], [""], ...tail], "the typing gone");
+
+      await start("kp2");
+      await p.keyboard.press("Backspace");
+      await held([["one"], ["- two\n- rest"], ["parentchild", ["grand"], ["next"]], [""], ...tail], "into its parent, its children at its place");
+
+      await start("ke2");
+      await p.keyboard.press("Backspace");
+      await held([["one"], ["- two\n- rest"], ["parentchild", ["grand"], ["next"]], ...tail], "the empty block above goes");
+      assertEq(await editing(), "ke2", "and this one's editor stays");
+      await p.keyboard.type("Q");
+      await held([["one"], ["- two\n- rest"], ["parentchild", ["grand"], ["next"]], ["Q- stays"], ...tail.slice(1)], "with its caret at the start");
+      await p.keyboard.press("Backspace");
+
+      // None of these has anywhere to go: nothing moves, the editor stays.
+      for (const refused of ["kc1", "kc2", "kf1", "kt1", "kd2"]) {
+        await start(refused);
+        await p.keyboard.press("Backspace");
+        await sleep(150);
+        assertEq(await editing(), refused, `${refused} keeps its editor`);
+      }
+      await held([["one"], ["- two\n- rest"], ["parentchild", ["grand"], ["next"]], ...tail], "nothing merged");
+      assertNoProblems(p);
+    } finally {
+      await p.close();
+    }
+  });
+
+  await step("notes: the new-block key never cuts a formula, typed with its auto-paired closer, with the completion popup open or not; Tab still takes a completion", async () => {
+    const { id, p, held, edit, left, newBlock } = await keysPage("Formulas", [
+      ["fm1", "see"], ["fm2", "next"], ["fm3", "see $ab$ here"], ["fm4", "- item"], ["fm5", "tab"],
+    ]);
+    const popup = p.locator(".latexAcPopup");
+    try {
+      await edit("fm1");
+      await p.keyboard.type(" $x^2");
+      await newBlock();
+      await p.keyboard.type("A");
+      const typed = [["see $x^2$"], ["A"]];
+      await held([...typed, ["next"], ["see $ab$ here"], ["- item"], ["tab"]], "the closer stays with its formula, the caret in the new block");
+
+      // The popup opens unasked: Enter closes it and goes on to the same split.
+      await edit("fm2");
+      await p.keyboard.type(" $\\fr");
+      await popup.waitFor();
+      await newBlock();
+      await popup.waitFor({ state: "hidden" });
+      await p.keyboard.type("B");
+      typed.push(["next $\\fr$"], ["B"]);
+      await held([...typed, ["see $ab$ here"], ["- item"], ["tab"]], "the same with the popup open");
+
+      await edit("fm3");
+      await left(7);
+      await newBlock();
+      await p.keyboard.type("C");
+      typed.push(["see $ab$"], ["Chere"]);
+      await held([...typed, ["- item"], ["tab"]], "the text after the formula goes on, without its space");
+
+      await edit("fm4");
+      await p.keyboard.type(" $y");
+      await newBlock();
+      await p.keyboard.type("D");
+      typed.push(["- item $y$"], ["- D"]);
+      await held([...typed, ["tab"]], "a list goes on past it");
+
+      await edit("fm5");
+      await p.keyboard.type(" $\\fr");
+      await popup.waitFor();
+      await p.keyboard.press("Tab");
+      await popup.waitFor({ state: "hidden" });
+      await until(async () => (await tree(alice2, id)).at(-1)?.content.startsWith("tab $\\frac"), { what: "Tab takes the completion, no block made" });
+      assertNoProblems(p);
+    } finally {
+      await p.close();
+    }
+  });
+
+  await step("notes: a stray $ on the line above and a backslash before the auto-paired closer cut no formula", async () => {
+    const { p, held, edit, newBlock } = await keysPage("Stray dollars", [["sd1", "costs $5\nsee"], ["sd2", "next"]]);
+    try {
+      await edit("sd1");
+      await p.keyboard.type(" $x^2");
+      await newBlock();
+      await p.keyboard.type("A");
+      const typed = [["costs $5\nsee $x^2$"], ["A"]];
+      await held([...typed, ["next"]], "the closer stays with its formula, whatever the line above holds");
+
+      await edit("sd2");
+      await p.keyboard.type(" $\\");
+      await newBlock();
+      await p.keyboard.type("B");
+      await held([...typed, ["next $\\$"], ["B"]], "a backslash waiting for its command stays in the formula too");
+      assertNoProblems(p);
+    } finally {
+      await p.close();
+    }
+  });
+
+  await step("notes: in code and in $$ either Enter stays a line break; a highlight's row and a text box's do not split; /text drops a marker; a key that confirms a composed word makes no block", async () => {
+    const place = { pageNumber: 3, width: 600, height: 800, boundingRect: { x1: 10, y1: 10, x2: 90, y2: 30 }, rects: [{ x1: 10, y1: 10, x2: 90, y2: 30 }] };
+    const { p, held, edit, left, editing, newBlock } = await keysPage("Others", [
+      ["ko1", "```\ncode\n```"], ["ko2", "$$\nx\n$$"],
+      ["ko3", "on a passage", [], { pdf_position: place, quote: "a quoted passage" }],
+      ["ko4", "boxed", [], { text_box: { x: 40, y: 40 }, pdf_page: 2 }],
+      ["ko5", "- item"], ["ko6", "word"],
+    ]);
+    try {
+      await edit("ko1");
+      await p.keyboard.press("ArrowUp");
+      await p.keyboard.press("End");
+      await p.keyboard.press("Enter");
+      await p.keyboard.press("Shift+Enter");
+      await edit("ko2");
+      await p.keyboard.press("ArrowUp");
+      await p.keyboard.press("End");
+      await p.keyboard.press("Enter");
+      await p.keyboard.press("Shift+Enter");
+      await held([["```\ncode\n\n\n```"], ["$$\nx\n\n\n$$"], ["on a passage"], ["boxed"], ["- item"], ["word"]], "a line break in each");
+
+      await edit("ko3");
+      await left(3);
+      await newBlock();
+      await edit("ko4");
+      await left(2);
+      await newBlock();
+      await held([["```\ncode\n\n\n```"], ["$$\nx\n\n\n$$"], ["on a passage"], [""], ["boxed"], [""], ["- item"], ["word"]], "an empty sibling, the text whole");
+
+      await edit("ko5");
+      await p.keyboard.type(" /text");
+      await p.locator(".slashMenu .slashMenuItem.selected .slashMenuName", { hasText: "/text" }).waitFor();
+      await p.keyboard.press("Enter");
+      await held([["```\ncode\n\n\n```"], ["$$\nx\n\n\n$$"], ["on a passage"], [""], ["boxed"], [""], ["item "], ["word"]], "the marker gone");
+
+      // An Enter an input method takes for itself, as each browser marks it.
+      // The same event unmarked does make a block.
+      await edit("ko6");
+      const press = (init) => p.evaluate((init) => {
+        document.activeElement.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", bubbles: true, cancelable: true, ...init }));
+      }, init);
+      await press({ isComposing: true });
+      await press({ keyCode: 229 });
+      await sleep(200);
+      assertEq(await editing(), "ko6", "the caret stays");
+      assertEq(await p.locator(".blockRow").count(), 8, "no block made");
+      await press({});
+      await until(async () => (await p.locator(".blockRow").count()) === 9, { what: "the key itself makes one" });
+      assertNoProblems(p);
+    } finally {
+      await p.close();
+    }
+  });
+
+  await step("notes: a fence in a quote or a callout and a ~~~ one stay whole under either Enter, the quote's marks going on; a typed ~~~ fence is one block", async () => {
+    const { p, held, edit, left, newBlock } = await keysPage("Fenced", [
+      ["qf1", "> ```py\n> abcd\n> ```"], ["qf2", "> [!note] t\n> ```py\n> abcd\n> ```"], ["qf3", "~~~py\ncode1\ncode2\n~~~"], ["qf4", "word"],
+    ]);
+    const pres = (id) => p.locator(`.blockRowWrap[data-block-id="${id}"] > .blockRow .blockRendered pre`).count();
+    try {
+      for (const id of ["qf1", "qf2", "qf3"]) assertEq(await pres(id), 1, `${id} renders one code block`);
+      for (const [id, up] of [["qf1", 1], ["qf2", 1], ["qf3", 2]]) {
+        await edit(id);
+        for (let i = 0; i < up; i++) await p.keyboard.press("ArrowUp");
+        await p.keyboard.press("End");
+        await left(2);
+        await p.keyboard.press("Enter");
+        await p.keyboard.press("Shift+Enter");
+      }
+      await held([
+        ["> ```py\n> ab\n> \n> cd\n> ```"], ["> [!note] t\n> ```py\n> ab\n> \n> cd\n> ```"], ["~~~py\ncod\n\ne1\ncode2\n~~~"], ["word"],
+      ], "a line break in each, no block made");
+      await edit("qf4");
+      await newBlock();
+      await p.keyboard.type("~~~");
+      await p.keyboard.press("Enter");
+      await p.keyboard.type("x");
+      await p.keyboard.press("Enter");
+      await p.keyboard.type("~~~");
+      await newBlock();
+      await p.keyboard.type("next");
+      await held([
+        ["> ```py\n> ab\n> \n> cd\n> ```"], ["> [!note] t\n> ```py\n> ab\n> \n> cd\n> ```"], ["~~~py\ncod\n\ne1\ncode2\n~~~"], ["word"], ["~~~\nx\n~~~"], ["next"],
+      ], "the typed fence is one block, and the key leaves it from its closing line");
+      await p.evaluate(() => document.activeElement?.blur());
+      await p.waitForSelector(".blockEditorCm", { state: "detached", timeout: 5000 });
+      for (const id of ["qf1", "qf2", "qf3"]) assertEq(await pres(id), 1, `${id} still renders one code block`);
+      assertNoProblems(p);
+    } finally {
+      await p.close();
+    }
+  });
+
+  await step("notes: the new-block key on a hand-typed table is one undo step, the close's pretty-print with it", async () => {
+    const raw = "| a | b |\n|---|---|\n| 1 | 22 |";
+    const { id, p, held, edit, newBlock } = await keysPage("Table undo", [["ku1", raw]]);
+    try {
+      await edit("ku1");
+      await newBlock();
+      await until(async () => {
+        const rows = await tree(alice2, id);
+        return rows.length === 2 && rows[0].content !== raw;
+      }, { what: "the table pretty-printed and the new block saved" });
+      await p.keyboard.press("Control+z");
+      await held([[raw]], "one undo takes back the block and the print together");
+      assertNoProblems(p);
+    } finally {
+      await p.close();
     }
   });
 
@@ -954,7 +1508,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
     const p2 = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${pg.id}`);
     try {
       await editRow(p2, "above the paste");
-      await p2.keyboard.press("Shift+Enter");
+      await p2.keyboard.press("Enter");
       await p2.waitForFunction(() => {
         const ed = document.activeElement?.closest(".cm-content");
         return !!ed && (ed.querySelector(".cm-placeholder") != null || ed.textContent === "");
@@ -969,11 +1523,74 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       await p2.getByText("Pasted 4 blocks.").waitFor();
       await until(async () => same(await tree(alice2, pg.id), [
         { content: "above the paste", children: [] },
-        { content: "one", children: [{ content: "one a", children: [] }, { content: "one b", children: [] }] },
-        { content: "two", children: [] },
-      ]), { what: "the outline took the empty line's place" });
-      await until(async () => (await p2.locator(".blockEditorCm .cm-content").innerText()) === "two",
+        { content: "- one", children: [{ content: "- one a", children: [] }, { content: "- one b", children: [] }] },
+        { content: "- two", children: [] },
+      ]), { what: "the list took the empty line's place, its markers kept" });
+      await until(async () => (await p2.locator(".blockEditorCm .cm-content").innerText()).endsWith("two"),
         { what: "the caret ends in the last pasted block" });
+      await closeEditor(p2);
+      assertNoProblems(p2);
+    } finally {
+      await p2.close();
+    }
+  });
+
+  // Copy as markdown writes a subtree as an outline, each block one "- "
+  // (editor/sourceCopy.js): Paste as Blocks reads that text back as the blocks
+  // it was, a list block among them, where the same lines from anywhere else,
+  // or one block's own list, are a list.
+  await step("notes: Copy as markdown of a subtree, then Paste as Blocks, gives the blocks back as they were", async () => {
+    const pg = await alice2.api("/api/pages", { method: "POST", body: { title: "Copy blocks" } });
+    await alice2.api(`/api/pages/${pg.id}/ops`, { method: "POST", body: { client: "e2e", ops: [
+      { op: "insert", id: "cbtop", parent: pg.id, position: "a0", content: "plain top" },
+      { op: "insert", id: "cblist", parent: "cbtop", position: "a0", content: "- a list block" },
+      { op: "insert", id: "cbnum", parent: "cbtop", position: "a1", content: "1. a number" },
+      { op: "insert", id: "cbown", parent: pg.id, position: "a1", content: "- its own\n- list" },
+      { op: "insert", id: "cbend", parent: pg.id, position: "a2", content: "target" }] } });
+    const p2 = await openPage(ctx, `${server.base}/?ws=${second.id}&page=${pg.id}`);
+    const copied = async (id) => {
+      const wrap = p2.locator(`.sortableBlockWrap[data-block-id="${id}"]`).first();
+      await wrap.hover();
+      await wrap.locator(".dragHandle").first().click();
+      await p2.getByRole("menuitem", { name: "Copy as markdown", exact: true }).click();
+      await p2.getByText("Copied block as markdown").first().waitFor();
+    };
+    const pasteAsBlocks = async (text) => {
+      await p2.evaluate((clip) => {
+        const dt = new DataTransfer();
+        dt.setData("text/plain", clip);
+        document.activeElement.closest(".cm-content")
+          .dispatchEvent(new ClipboardEvent("paste", { clipboardData: dt, bubbles: true, cancelable: true }));
+      }, text);
+      await p2.locator(".slashMenu .slashMenuItem", { hasText: "Blocks" }).first().click();
+    };
+    const emptyLine = async (text) => {
+      await editRow(p2, text);
+      await p2.keyboard.press("End");
+      await p2.keyboard.press("Enter");
+      await p2.waitForFunction(() => {
+        const ed = document.activeElement?.closest(".cm-content");
+        return !!ed && (ed.querySelector(".cm-placeholder") != null || ed.textContent === "");
+      }, null, { timeout: 5000 });
+    };
+    const subtree = { content: "plain top", children: [
+      { content: "- a list block", children: [] }, { content: "1. a number", children: [] }] };
+    const own = { content: "- its own\n- list", children: [] };
+    try {
+      await copied("cbtop");
+      await emptyLine("target");
+      await pasteAsBlocks("- plain top\n  - - a list block\n  - 1. a number");
+      await p2.getByText("Pasted 3 blocks.").waitFor();
+      await until(async () => same(await tree(alice2, pg.id), [subtree, own, { content: "target", children: [] }, subtree]),
+        { what: "the subtree came back as the blocks it was" });
+      await closeEditor(p2);
+
+      await copied("cbown");
+      await emptyLine("target");
+      await pasteAsBlocks("- its own\n- list");
+      await p2.getByText("Pasted 2 blocks.").waitFor();
+      await until(async () => same((await tree(alice2, pg.id)).slice(3, 5).map((b) => b.content), ["- its own", "- list"]),
+        { what: "one block's own list stayed a list" });
       await closeEditor(p2);
       assertNoProblems(p2);
     } finally {
@@ -992,7 +1609,7 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
       await p2.route("**/api/markdown-blocks*", (route) => route.fulfill({
         status: 413, contentType: "application/json", body: JSON.stringify({ detail: "text exceeds 5 MB" }) }));
       await editRow(p2, "above the refused paste");
-      await p2.keyboard.press("Shift+Enter");
+      await p2.keyboard.press("Enter");
       await p2.waitForFunction(() => {
         const ed = document.activeElement?.closest(".cm-content");
         return !!ed && (ed.querySelector(".cm-placeholder") != null || ed.textContent === "");
@@ -1120,24 +1737,32 @@ export async function noteScenarios({ server, browser, alice, step, until, sleep
   });
   if (ctx) await ctx.close();
 
-  await step("notes: Enter-as-new-block preference, in the default workspace", async () => {
+  await step("notes: Enter-as-a-line-break preference, in the default workspace: the two keys swap, and a list goes on on either", async () => {
     // The Enter key is an account preference: the profile's copy wins over this browser's.
     const { value: profile } = await alice.api("/api/prefs/profile");
     const ctxD = await alice.context(browser);
     try {
-      await alice.api("/api/prefs/profile", { method: "PUT", body: { value: { ...(profile || {}), enterNewNote: true } } });
-      await ctxD.addInitScript(() => { try { localStorage.setItem("gamma-enter-new-note", "1"); } catch {} });
+      await alice.api("/api/prefs/profile", { method: "PUT", body: { value: { ...(profile || {}), enterNewBlock: false } } });
+      await ctxD.addInitScript(() => { try { localStorage.setItem("gamma-enter-new-block", "0"); } catch {} });
       const p = await openPage(ctxD, `${server.base}/?ws=${alice.defaultWs}`);
       const id = await newPageViaUi(p, "Default ws page");
       await p.keyboard.type("hello");
       await p.keyboard.press("Enter");
-      await p.keyboard.type("world");
+      await p.keyboard.type("there");
+      await p.keyboard.press("Shift+Enter");
+      await p.keyboard.type("- world");
+      await p.keyboard.press("Enter");
+      await p.keyboard.type("two");
+      await p.keyboard.press("Shift+Enter");
+      await p.keyboard.type("three");
       await closeEditor(p);
-      await until(async () => same(await tree(alice, id), [{ content: "hello", children: [] }, { content: "world", children: [] }]), { what: "two blocks saved" });
+      await until(async () => same(await tree(alice, id), [
+        { content: "hello\nthere", children: [] }, { content: "- world\n- two", children: [] }, { content: "- three", children: [] },
+      ]), { what: "the line breaks and the blocks saved" });
       assertNoProblems(p);
     } finally {
       await ctxD.close();
-      // Workers reuse Alice in later groups; Shift+Enter must keep its original meaning.
+      // Workers reuse Alice in later groups; Enter must keep its default meaning.
       await alice.api("/api/prefs/profile", { method: "PUT", body: { value: profile || {} } });
     }
   });

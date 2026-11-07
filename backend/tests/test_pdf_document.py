@@ -7,7 +7,7 @@ from conftest import make_folder, make_page, require_math_renderer, workspace_of
 from test_pdf_export import _object_kinds, _open
 
 from gamma.note_markup import MATH, TEXT
-from gamma.pdf_document import PAGE_H, chunks, inline, render_document
+from gamma.pdf_document import PAGE_H, _Canvas, chunks, inline, render_document
 from gamma.pdf_typeset import BOLD, ITALIC, LINK, MARK, MONO, STRIKE, UNDERLINE
 
 
@@ -134,6 +134,33 @@ def test_chunks_split_block_markdown_by_construct():
 def _lines(md):
     """Each text chunk's (text, style bits) spans."""
     return [[(p, st.bits) for _k, p, _lv, st in c["spans"]] for c in chunks(md) if c["kind"] == "text"]
+
+
+def _drawn_bullets(monkeypatch, *blocks):
+    """The markers beside the lines of a page of ``blocks``: "" is a dot."""
+    drawn, bullet = [], _Canvas._bullet
+    monkeypatch.setattr(_Canvas, "_bullet", lambda canvas, marker, *rest: (drawn.append(marker), bullet(canvas, marker, *rest)))
+    render_document([{"id": "p", "content": "Page", "properties": {}, "children": list(blocks)}])
+    return drawn
+
+
+def _note(content, *children, **props):
+    return {"id": content, "content": content, "properties": props, "children": list(children)}
+
+
+def test_a_nested_plain_note_draws_no_dot_and_a_list_keeps_its_marker(monkeypatch):
+    assert _drawn_bullets(monkeypatch, _note("top", _note("plain", _note("deeper")))) == []
+    assert _drawn_bullets(monkeypatch, _note("top", _note("- item"), _note("3. item"))) == ["", "3."]
+
+
+def test_a_nested_caption_with_no_drawing_draws_no_dot_as_a_plain_note(monkeypatch):
+    assert _drawn_bullets(monkeypatch, _note("top", _note("not stored yet", ink_url=""))) == []
+    assert _drawn_bullets(monkeypatch, _note("top", _note("file gone", ink_url="/api/uploads/gone.ink"))) == []
+
+
+def test_a_highlight_s_own_note_keeps_its_dot(monkeypatch):
+    place = {"pageNumber": 1, "boundingRect": {"x1": 0, "y1": 0, "x2": 1, "y2": 1}, "rects": []}
+    assert _drawn_bullets(monkeypatch, _note("my note", pdf_position=place, quote="a passage")) == [""]
 
 
 def test_a_mark_crosses_the_line_breaks_of_its_paragraph():

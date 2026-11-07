@@ -51,7 +51,7 @@ export const SECTION_PREFS = Object.freeze({
   }),
   keyboard: sections({
     Shortcuts: ["keybindings"],
-    "Built in": ["enterNewNote"],
+    "Built in": ["enterNewBlock"],
   }),
   connections: sections({
     "Connection check": ["aiLoginCheck"],

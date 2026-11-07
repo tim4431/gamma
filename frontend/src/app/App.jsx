@@ -119,7 +119,9 @@ import {
   placedToCheck,
   isHighlightBlock,
   isLinkBlock,
+  isPlainNote,
   makeNewBlock,
+  mergeIntoAbove,
   findBlock,
   moveSibling,
   removeBlockKeepChildren,
@@ -1323,8 +1325,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   async function duplicatePage(pageId) {
     const data = await apiJson(`${API}/blocks/${pageId}/subtree`);
     const src = data.block || {};
-    // (nor what a Zotero link says of the page it keeps, which a copy is not: docs/dev/zotero_sync.md)
-    const { doc_id: pdfId, zotero_pdf: _zoteroPdf, zotero_readonly: _readonly, zotero_author: _author, ...properties } = src.properties || {};
+    // (nor what a Zotero link says of the page it keeps, which a copy is not: docs/dev/zotero_sync.md;
+    // nor its Notion id, or an import of that page would find the copy)
+    const { doc_id: pdfId, zotero_pdf: _zoteroPdf, zotero_readonly: _readonly, zotero_author: _author, notion_id: _notionId, ...properties } = src.properties || {};
     if (pdfId && !properties.source_url) properties.source_url = `/api/uploads/${pdfId}.pdf`;
     const created = await apiJson(`${API}/blocks`, {
       method: "POST",
@@ -2982,7 +2985,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     translateEffort, setTranslateEffort, translateParallel, setTranslateParallel,
     translateSpeed, setTranslateSpeed, translateKeep, setTranslateKeep,
     searchDetailsHome, setSearchDetailsHome, searchDetailsPaper, setSearchDetailsPaper,
-    enterNewNote, setEnterNewNote, backlinksVisible, setBacklinksVisible,
+    enterNewBlock, setEnterNewBlock, backlinksVisible, setBacklinksVisible,
     keybindings, setKeybindings,
     statusBarVisible, setStatusBarVisible, suggestTours, setSuggestTours, tourProgress, setTourProgress,
     inboxSystemNotifications, setInboxSystemNotifications,
@@ -7236,7 +7239,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       importEmbeddedAnnots(focusedBlockId, docId, false, o.strip);
       return;
     }
-    if (["zotero", "markdown", "gamma", "notability", "goodnotes"].includes(o.source)) {
+    if (["zotero", "markdown", "notion", "gamma", "notability", "goodnotes"].includes(o.source)) {
       const review = (file) => setImportReview({ source: o.source, file, strip: o.strip,
         folder: homeMode && folderFilter ? folderFilter : "" });
       const { label, accept, multiple } = importSource(o.source);
@@ -8570,8 +8573,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       onPage: !!focusedBlockId,
       editable: !readOnly,
       // which Enter starts a new note (Settings → Keyboard): the Shift+Enter
-      // hint is for the default, where Enter breaks the line
-      enterNewNote: !!enterNewNote,
+      // hint is for an account whose Enter breaks the line
+      enterNewBlock: !!enterNewBlock,
       // the open paper's details are unverified (the ⓘ button's red "!"),
       // with the notes header that carries the button on screen
       unverifiedMeta: !!(focusedBlockId && !homeMode && pageMeta && metaSrc?.warn && !metaBusy)
@@ -9512,11 +9515,11 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const paneFnsRef = useRef(null);
   paneFnsRef.current = { onFetchRefs, onCacheRef };
   const paneShared = useMemo(() => ({
-    refCache, libTree, fileChipCtx, commentsOn, keybindings, enterNewNote, pages: pageBlocks,
+    refCache, libTree, fileChipCtx, commentsOn, keybindings, enterNewBlock, pages: pageBlocks,
     textScaleStyle: notesTextScale.style, darkPage: pdfDarkPage, hideEmbeddedAnnots: embAnnots === "hide",
     canWrite: !readOnly, labels: !shareMode,
     onFetchRefs: (...a) => paneFnsRef.current.onFetchRefs(...a), onCacheRef: (...a) => paneFnsRef.current.onCacheRef(...a),
-  }), [refCache, libTree, fileChipCtx, commentsOn, keybindings, enterNewNote, pageBlocks, notesTextScale.style, pdfDarkPage, embAnnots, readOnly, shareMode]);
+  }), [refCache, libTree, fileChipCtx, commentsOn, keybindings, enterNewBlock, pageBlocks, notesTextScale.style, pdfDarkPage, embAnnots, readOnly, shareMode]);
 
   // A share link that can't open yet: sign in (signed-in / specific-people
   // shares), or explain why not. "signin" is the blocked page's own sign-in,
@@ -10993,7 +10996,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                   mergeOpen,
                   onMergeOpen: setMergeOpen,
                   mergeNav,
-                  enterNewNote,
+                  enterNewBlock,
                   // `above` inserts before `id` instead (the "+" handle with
                   // Alt held).
                   onEnterSibling: (id, { above = false } = {}) => {
@@ -11003,6 +11006,49 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     startEditing(newId);
                     setBlocks(next);
                     setFocusedId(newId);
+                  },
+                  // The new-block key in a plain note (mdLines.newBlockPlan):
+                  // the text kept and the block made are one transition, one
+                  // undo step. The block goes first under open children, where
+                  // the caret is, else right below; a caret before the text
+                  // makes it above and stays. `keep` is the live editor's, which
+                  // the closure's tree can lag, and reaches an editor that
+                  // stays open through its value.
+                  onNewBlock: (id, plan) => {
+                    if (readOnly) return;
+                    const selection = blockRefs.current[id]?.current;
+                    if (selection) caretBeforeRef.current = { id, from: selection.selectionStart, to: selection.selectionEnd, keyed: !plan.stay };
+                    if (plan.stay) {
+                      setBlocks((prev) => setBlockText(prev, id, plan.keep));
+                      return;
+                    }
+                    const host = findBlock(blocks, id);
+                    const firstChild = !plan.above && !!host?.children?.length && !isFolded(host, view);
+                    const newBlock = makeNewBlock({ content: plan.next });
+                    setBlocks((prev) => addSiblingBlock(prev, id, { above: plan.above, keep: plan.keep, firstChild, newBlock }).blocks);
+                    if (plan.above) return;
+                    pendingFocusRef.current = { id: newBlock.id, caret: plan.caret };
+                    startEditing(newBlock.id);
+                    setFocusedId(newBlock.id);
+                  },
+                  // Backspace at the very start of a plain note
+                  // (blockModel.mergeIntoAbove): the block it removes takes no
+                  // comment thread with it, or nothing happens. A row that
+                  // only loses the empty one above stays open, through the
+                  // DOM move when that one was its parent.
+                  onMergeAbove: (id) => {
+                    if (readOnly) return;
+                    const plan = mergeIntoAbove(blocks, id, view);
+                    if (!plan || comments.threadsByBlock.get(plan.gone)?.length) return;
+                    caretBeforeRef.current = { id, from: 0, to: 0, keyed: true };
+                    if (plan.focusId === id) {
+                      keepEditorThrough(id, 0);
+                    } else {
+                      pendingFocusRef.current = { id: plan.focusId, caret: plan.caret };
+                      startEditing(plan.focusId);
+                      setFocusedId(plan.focusId);
+                    }
+                    setBlocks((prev) => mergeIntoAbove(prev, id, view)?.blocks || prev);
                   },
                   onAddChild: (id) => {
                     if (readOnly) return;
@@ -11141,8 +11187,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     // text paste would, and the caret goes to the end of the
                     // last pasted block. A highlight's or ink's block stays.
                     const host = findBlock(blocks, id);
-                    // (a block's fold and the moment it was made, `t0`, are bookkeeping, not content)
-                    const dropHost = replace && !!host && Object.keys(host.properties || {}).every((k) => k === "collapsed" || k === "t0");
+                    const dropHost = replace && !!host && isPlainNote(host);
                     let last = created[created.length - 1];
                     while (last.children.length) last = last.children[last.children.length - 1];
                     // Siblings after the pasting block (its own editor stays
@@ -11197,7 +11242,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     }
                     const above = frag ? py < r.top + r.height / 2 : (py - r.top) <= 16;
                     const td = parseInt((wrap || e.currentTarget).getAttribute("data-depth") || "0", 10);
-                    const nested = (px - r.left) > 50;
+                    const nested = (px - r.left) > 62;
                     const dt = { targetId: block.id, above, depth: nested ? td + 1 : td, rect: { top: r.top, left: r.left, width: r.width, bottom: r.bottom } };
                     _dragState.dropTarget = dt;
                     setDropTarget(dt);
@@ -11553,7 +11598,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             icon={ImportIcon}
             data-guide="view.import"
             onClick={() => { setOpenPopover(null); setImportOpen(true); }}
-            title={t("Bring in notes and highlights: a Zotero library, Notability notes, GoodNotes notebooks, Markdown, a Logseq export, a Gamma export, or the annotations saved inside this PDF")}
+            title={t("Bring in notes and highlights: a Zotero library, Notability notes, GoodNotes notebooks, Notion pages, Markdown, a Logseq export, a Gamma export, or the annotations saved inside this PDF")}
           >{t("Import…")}</MenuItem>
         ),
       ],
@@ -13275,7 +13320,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
           setStatus,
           refreshQuota, // keep the storage meters in sync without a re-login
         }}
-        keyboard={{ keybindings, setKeybindings, enterNewNote, setEnterNewNote }}
+        keyboard={{ keybindings, setKeybindings, enterNewBlock, setEnterNewBlock }}
         library={{
           // the batch metadata lookup (a background job) uses the same
           // prompt/model/context prefs as the per-paper fetch in the

@@ -22,11 +22,17 @@
 //            merges key by key into one changed meanwhile (PLACED);
 //   delete — the top-most removed subtrees, last (so a block that escaped
 //            a deleted parent is moved out before the parent goes).
+// withMerges then folds a block joined to another into one op:
+//   merge  — block `id` joined to the end of `into`, both as the server holds
+//            them when it arrives, children and all (gamma/ops.py merge);
+//            `base` is the text `into` had here, for a rescue of it to send
+//            (collabSession), since the tree here holds the join already.
 // applyOps is idempotent: inserting a known id re-parents it, moving or
 // deleting an unknown one is a no-op, and a parent the tree lacks leaves
 // the block where it is (a new one stays out); siblings stay sorted by key.
 import { generateKeyBetween } from "fractional-indexing";
 import { extractBlock, findBlock, sameJson, updateBlockTree } from "./blockModel.js";
+import { withoutFirstMarker } from "../../editor/mdLines.js";
 import { mergeTextBox, normalizeTextBox } from "../../markup/textBox.js";
 import { mergePicture, normalizePicture } from "../../markup/picture.js";
 
@@ -176,6 +182,43 @@ export function diffTrees(base, next, pageId, pos) {
   return ops;
 }
 
+// `ops` (a transition's diff from `base`) with each block joined to another
+// as one merge: a block removed, its children moved out of it, while another
+// block took its text, less a list or heading marker, at its end.
+// That is what Backspace at a block's start comes to, and the redo of it and
+// the undo of a split; read off the transition, as the undo history reads
+// what it records, since a flag set beside the tree outlives a transition
+// React skips. As a set and a delete it would lose text to a race: the set
+// refused and the delete sent alone, or the delete taking a block someone
+// else's join just filled. The merge's moves stay with it, so a refused one
+// leaves everything where it was.
+export function withMerges(ops, base, pageId) {
+  const was = indexTree(base, pageId);
+  const moves = new Map(ops.filter((op) => op.op === "move").map((op) => [op.id, op]));
+  const merges = new Map(), taken = new Set();
+  for (const del of ops) {
+    if (del.op !== "delete") continue;
+    const node = was.get(del.id).node, text = node.content || "";
+    const tail = text && withoutFirstMarker(text);
+    const kids = node.children || [];
+    const set = tail && kids.every((c) => moves.has(c.id))
+      && ops.find((op) => op.op === "set" && op.content === (op.base ?? "") + tail && !taken.has(op));
+    if (!set) continue;
+    taken.add(set);
+    for (const c of kids) if (moves.get(c.id).parent === set.id) taken.add(moves.get(c.id));
+    const marker = text.slice(0, text.length - tail.length);
+    merges.set(del, { op: "merge", id: del.id, into: set.id, base: set.base ?? "", ...(marker ? { marker } : {}) });
+  }
+  if (!merges.size) return ops;
+  return ops.flatMap((op) => {
+    if (merges.has(op)) return [merges.get(op)];
+    if (!taken.has(op)) return [op];
+    if (op.op !== "set" || !op.props) return [];
+    const { content, base: from, ...rest } = op;
+    return [rest];
+  });
+}
+
 // --- applying -----------------------------------------------------------------
 // The tree edits copy only the path to the block they change
 // (blockModel's updateBlockTree and extractBlock), so an untouched subtree
@@ -207,6 +250,27 @@ function placeUnder(tree, parent, node, pageId, pos) {
 // it must never vanish with the op — and a new one stays out.
 const placeable = (tree, parent, pageId) => parent === pageId || !!findBlock(tree || [], parent);
 
+// What `merge` comes to on `tree`, as the server applies it (gamma/ops.py
+// merge): none when it would be refused there.
+function mergedOps(tree, op, pageId, pos) {
+  const index = indexTree(tree, pageId);
+  const block = index.get(op.id), into = index.get(op.into);
+  if (!block || !into || someNode(block.node, (n) => n.id === op.into)) return [];
+  const key = (n) => pos.get(n.id) ?? n.position ?? null;
+  const kin = into.node.children || [];
+  const at = block.parent === op.into ? kin.findIndex((n) => n.id === op.id) : kin.length - 1;
+  let low = at >= 0 ? key(kin[at]) : null;
+  const next = block.parent === op.into && kin[at + 1] ? key(kin[at + 1]) : null;
+  const high = next !== null && (low === null || next > low) ? next : null;
+  const text = block.node.content || "", marker = op.marker || "";
+  const ops = (block.node.children || []).map((c) => {
+    low = generateKeyBetween(low, high);
+    return { op: "move", id: c.id, parent: op.into, position: low };
+  });
+  const tail = text.startsWith(marker) ? text.slice(marker.length) : text;
+  return [...ops, { op: "set", id: op.into, content: (into.node.content || "") + tail }, { op: "delete", id: op.id }];
+}
+
 export function applyOps(tree, ops, pageId, pos) {
   let out = tree;
   for (const op of ops || []) {
@@ -237,6 +301,8 @@ export function applyOps(tree, ops, pageId, pos) {
     } else if (op.op === "delete") {
       const ex = extractBlock(out, op.id);
       if (ex) out = ex.remaining;
+    } else if (op.op === "merge") {
+      out = applyOps(out, mergedOps(out, op, pageId, pos), pageId, pos);
     }
   }
   return out;
@@ -261,14 +327,16 @@ export function displacedRow(tree, ops, id, pageId) {
 }
 
 // Coalesce a queue of ops: a `set` for a block folds into the last `set`
-// for the same block when nothing structural about it sits in between,
-// never into the first `floor` ops (ones already sent under a batch's
+// for the same block when nothing structural about it sits in between (a
+// merge into the block counts: the set's text holds what that merge will
+// join), never into the first `floor` ops (ones already sent under a batch's
 // name, collabSession's hide). Returns the queued op it was folded into
 // (as it was before), or null when it was appended.
 export function pushOp(queue, op, floor = 0) {
   if (op.op === "set") {
     for (let i = queue.length - 1; i >= floor; i--) {
       const q = queue[i];
+      if (q.op === "merge" && q.into === op.id) break;
       if (q.id !== op.id) continue;
       if (q.op !== "set") break;
       const merged = { ...q };

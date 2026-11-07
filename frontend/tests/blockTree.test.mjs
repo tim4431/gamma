@@ -3,7 +3,7 @@
 // keystroke elsewhere), and a miss hands the same array back.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { countBlocks, indentBlock, insertChild, insertSibling, outdentBlock, removeBlockTree, sameShape, setBlockText, updateBlockTree } from "../src/shared/model/blockModel.js";
+import { countBlocks, indentBlock, insertChild, insertSibling, isPlainNote, outdentBlock, removeBlockTree, sameShape, setBlockText, updateBlockTree } from "../src/shared/model/blockModel.js";
 
 function tree() {
   return [
@@ -29,6 +29,16 @@ test("only the path to the edited block is copied", () => {
   assert.notEqual(after[0].children[1], before[0].children[1]);
   assert.equal(after[0].children[1].children[0].content, "changed");
   assert.equal(before[0].children[1].children[0].content, "deep", "the old tree is untouched");
+});
+
+test("a plain note carries nothing but its fold and when it was made", () => {
+  assert.equal(isPlainNote({ properties: {} }), true);
+  assert.equal(isPlainNote({}), true, "older blocks hold no properties at all");
+  assert.equal(isPlainNote({ properties: { collapsed: true, t0: 1 } }), true);
+  for (const properties of [
+    { pdf_position: { pageNumber: 1 } }, { text_box: {} }, { picture: {} }, { sheet: {} }, { ink_url: "" }, { audio_url: "x" },
+    { zotero_note: "k" }, { link_url: "https://x" }, { t0: 1, quote: "q" },
+  ]) assert.equal(isPlainNote({ properties }), false, JSON.stringify(properties));
 });
 
 test("a block not in the tree hands the same array back", () => {

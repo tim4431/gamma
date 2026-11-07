@@ -23,15 +23,15 @@
   <path class="m-glyph" d="M206 15h.01M209 15h.01M206 18h.01M209 18h.01M206 21h.01M209 21h.01" />
   <rect class="m-line" x="214" y="16" width="26" height="4" rx="2" />
   <path class="m-rule" d="M200 26H310" />
-  <circle class="m-line-dim" cx="208" cy="37" r="1.6" /><rect class="m-line-dim" x="213" y="35.25" width="80" height="3.5" rx="1.75" />
-  <circle class="m-line-dim" cx="208" cy="49" r="1.6" /><rect class="m-line-dim" x="213" y="47.25" width="64" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="213" y="35.25" width="80" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="213" y="47.25" width="64" height="3.5" rx="1.75" />
   <rect class="m-chip" x="206" y="58" width="98" height="26" rx="4" />
   <path class="m-mark" d="M212 66.75H282" />
   <rect class="m-line-dim" x="212" y="74" width="72" height="3.5" rx="1.75" />
-  <circle class="m-line-dim" cx="208" cy="97" r="1.6" /><rect class="m-line-dim" x="213" y="95.25" width="88" height="3.5" rx="1.75" />
-  <circle class="m-line-dim" cx="208" cy="109" r="1.6" /><rect class="m-line-dim" x="213" y="107.25" width="70" height="3.5" rx="1.75" />
-  <circle class="m-line-dim" cx="208" cy="121" r="1.6" /><rect class="m-line-dim" x="213" y="119.25" width="84" height="3.5" rx="1.75" />
-  <circle class="m-line-dim" cx="208" cy="133" r="1.6" /><rect class="m-line-dim" x="213" y="131.25" width="60" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="213" y="95.25" width="88" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="213" y="107.25" width="70" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="213" y="119.25" width="84" height="3.5" rx="1.75" />
+  <rect class="m-line-dim" x="213" y="131.25" width="60" height="3.5" rx="1.75" />
   <path class="m-link m-draw" pathLength="1" style="--m-at: 0.24" d="M153 60C178 60 182 71 205 71" />
   <rect class="m-link m-light" style="--m-at: 0.3" x="206" y="58" width="98" height="26" rx="4" />
   <rect class="m-link m-light" style="--m-at: 0.64" x="29" y="53.5" width="126" height="12.5" rx="2" />

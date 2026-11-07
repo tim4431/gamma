@@ -485,11 +485,11 @@ with zipfile.ZipFile(sys.argv[1], 'w') as z:
     try {
       await page.locator(".fileList").waitFor({ timeout: 15000 });
       const dialog = await openDialog(page, "Import");
-      await choice(dialog, "Markdown notes").click();
+      await choice(dialog, "Notion pages").click();
       const chooser = page.waitForEvent("filechooser");
-      await choice(dialog, "Choose file…").click();
+      await choice(dialog, "Choose .zip…").click();
       await (await chooser).setFiles(zip);
-      const review = page.getByRole("dialog", { name: "Review Markdown import", exact: true });
+      const review = page.getByRole("dialog", { name: "Review Notion import", exact: true });
       const target = review.getByRole("region", { name: "Library after import", exact: true });
       await target.getByText("Notion bottom", { exact: true }).waitFor({ timeout: 15000 });
       assert((await review.innerText()).includes("Library / Notion dest"), "the import goes to the open folder");

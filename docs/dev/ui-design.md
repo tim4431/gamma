@@ -1468,10 +1468,34 @@ selection in the editor. A blur while the window is unfocused (Alt+Tab or
 a file dialog) must not close the editor: `document.hasFocus()` gates the
 blur callback, and the browser restores the active element on return.
 
-The row gutter (`.rowHandles`) holds the drag/menu handle and an out-of-flow
-add button so one-line rows stay one line tall. Add uses the same sibling
-creation path as Enter: below by default, above with Alt+click; a home-library
-row creates a page. The handle menu copies a link or the subtree as Markdown,
+A row draws what its block is. Plain text is a paragraph: no dot and no label,
+only the empty `.dotSlot`, which keeps paragraphs, headings and highlight text
+on one left edge. A block placed on the PDF keeps `p.N` (`.blockMeta`) and its
+marker; while its editor is open the marker's button gives way to the quiet
+`.noteBulletDot`. A list's marker is its own Markdown, so `- x` shows one.
+`isPlainNote` in `blockModel.js` is the test for a block that holds only text:
+no property but its fold and `t0`. An empty plain note keeps its
+`.blockPlaceholder` for the row's height, `.blockPlaceholderQuiet`: the "(empty)"
+shows only on a hovered or focused row and never on a read-only page, since a
+gap between paragraphs is ordinary, and a copy across the row leaves it out
+(`data-markdown-copy-ignore`). Any other empty row, such as a picture or a text
+box, keeps its word as something to click.
+
+The row gutter (`.rowHandles`) holds the add button and the drag/menu handle
+side by side, as in Notion: "+", then ⋮⋮, then the row. Both stay within the
+row's height, on its first line and level with its text at any text size, a
+heading's taller line included (`--row-line`); on a tall block that is its top.
+The gutter is 36 px wide and starts 6 px left of the row's box, so it stays
+inside the row's own span whatever the depth: at depth, over the indent and
+clear of the parent's guide line; at the top level, over the pane's padding,
+which `.blockList` reaches into so the "+" is not clipped, and clear of the
+6 px hit margin of the sash beside the pane, which would take the press. A
+row's text therefore stands 12 px further right than the drag/menu handle alone
+needed. A read-only row has no gutter. `onBlockDragOver` counts in the same
+12 px: a drop nests past the row's text edge, 62 px from the row's box, and
+`BlockDropIndicator`'s line starts 40 px in, 22 px short of that edge.
+Add uses the same sibling creation path as Enter: below by default, above with Alt+click;
+a home-library row creates a page. The handle menu copies a link or the subtree as Markdown,
 shows the block's Properties ([The properties popover](#the-properties-popover)),
 attaches the block to chat (also Ctrl+click), duplicates with fresh IDs and
 without highlight anchors, moves to another page, or deletes.
@@ -1483,7 +1507,9 @@ Clipboard handling preserves Markdown storage:
 - Strict TSV offers Table / Text / Blocks; other multiline text offers Text /
   Blocks, or the placements below. Blocks uses `POST /api/markdown-blocks`,
   the Markdown import parser, and inserts siblings, replacing an empty block
-  without children.
+  without children. A list stays list blocks; Gamma's own Copy as markdown of
+  a block with sub-blocks, an outline of one `- ` per block, comes back as the
+  blocks it was (`sourceCopy.isOutlineCopy`, tested on the raw clipboard text).
 - Other multiline text keeps its shape and moves to the level of the line it
   lands on (`mdLines.pastePlacements`; not in a code fence or `$$` math). The
   chooser names the placements by that line's container: At this level (in
@@ -1594,7 +1620,7 @@ editor's other popups.
 | `editor/SelectionToolbar.jsx`, `editor/useSelectionToolbar.js` | the selection toolbar over a note's selected text (*The selection toolbar* above): the formatting commands as `ctlBtn`s pressed or disabled by their `state`, with `.pdfInkSep` separators, and the color row; the hook decides when it shows (after the mouse button's release, hidden on Escape and on an on-screen keyboard) |
 | `editor/clickToSource.js` | maps the rendered view back to the raw source by text (the layouts differ too much for coordinates): the clicked character a new editor opens on (`sourceOffsetAtPoint`), the gap line between two rendered blocks (`renderedBlocks`, `renderedGaps`, `blockStartInSource`, `gapInSource`), a Ctrl-selection's source range for the chat (`sourceRangeOfSelection`), and other people's carets placed on the rendered view (`renderedCaretRect`, via `locateInRendered`); `locateInSource` / `locateInRendered` / `gapInSource` are pure and unit-tested |
 | `editor/mdMarks.js` | the inline-mark table (regex + class per marker, inline code `mdCode.codeSpans`'s backtick runs, and a `close` where the closing delimiter differs: `<u>`…`</u>`, the colored run's `<span style>`…`</span>`) shared by the live renderer and the hotkeys, plus the pure `toggleMark`/`insertLink` transforms (wrap / unwrap / empty pair / per-line for multi-line selections) and `markedAt`, which reads the same target the toggle acts on. `scanMarks` allows proper nesting (`**a *b* c**`, `*a **b** c*`, a colored run in bold or bold in it; nothing inside inline code) and treats `***x***` as one bold+italic span with two `layers`, so Ctrl+B and Ctrl+I each peel off their own delimiters. `recolor` and `colorAt` are the color row's: a selection's runs restyled, split and merged, and the style they share |
-| `editor/mdLines.js` | the pure structure of a note's lines (`tests/mdLines.test.mjs`): `parseLine` splits one into where it sits (quote marks, nested `> > `, and indentation) and what it is (a bullet, number, to-do, heading or a callout's `[!type]` title) and its text, and everything else works on that. `enterPlan` is the line-break Enter's Obsidian-style continuation (`> - [x] ` continues as `> - [ ] `; on an empty item the list ends, then a quote level); `pastePlacements` moves pasted lines to the level of the line they land on (the clipboard bullet above); `retypeLine` is the "/" menu's line commands, which swap what a line is and keep where it sits (`/todo` on `> - item` is `> - [ ] item`; `/quote` adds a quote level; `/callout` turns the quote the line starts into a callout, else starts a box there, one level in); `toggleQuotePlan` is Toggle quote (Ctrl+Shift+.) over the selected lines. Every line of a quote carries its marks, a blank one a bare `>`, so it stays one box here, in Obsidian and on GitHub |
+| `editor/mdLines.js` | the pure structure of a note's lines (`tests/mdLines.test.mjs`): `parseLine` splits one into where it sits (quote marks, nested `> > `, and indentation) and what it is (a bullet, number, to-do, heading or a callout's `[!type]` title) and its text, and everything else works on that. `enterPlan` is the line-break Enter's Obsidian-style continuation (`> - [x] ` continues as `> - [ ] `; on an empty item the list ends, then a quote level); `newBlockPlan` is the new-note Enter in a plain note, which splits the block at the caret and goes on with its list, and `backspacePlan` takes a list marker in one press ([hotkeys.md](hotkeys.md)); `pastePlacements` moves pasted lines to the level of the line they land on (the clipboard bullet above); `retypeLine` is the "/" menu's line commands, which swap what a line is and keep where it sits (`/todo` on `> - item` is `> - [ ] item`; `/quote` adds a quote level; `/callout` turns the quote the line starts into a callout, else starts a box there, one level in); `toggleQuotePlan` is Toggle quote (Ctrl+Shift+.) over the selected lines. Every line of a quote carries its marks, a blank one a bare `>`, so it stays one box here, in Obsidian and on GitHub |
 | `editor/pasteMath.js`, `editor/sourceCopy.js` | pasted `\( \)` and `\[ \]` math as the `$` and `$$` a note renders (`dollarMath`, `pasteMath`; `tests/pasteMath.test.mjs` and `tests/shared/pastemath.json`, the cases `backend/gamma/paste_math.py` passes too), and the note source Gamma last copied, which a paste leaves as it is ([latex_editing.md](latex_editing.md)) |
 | `shared/lib/mdCode.js` | where Markdown source is code, the one reading a note's paste, the editor's protected spans and inline-code mark and the chat's math share: `codeFences` (quoted, listed and `~~~` fences too), `codeSpans` (CommonMark's backtick runs on a line, a two-backtick span with a backtick inside one span) and `mapProse` (a transform outside both); `paste_math._fences` and `_code_spans` are the backend's twins ([latex_editing.md](latex_editing.md)) |
 | `editor/slashCommands.js`, `editor/SlashMenu.jsx`, `editor/useSlashMenu.js` (their text-only insertions in `editor/slashInserts.js`) | the "/" command catalog and its matching (pure, `tests/slashCommands.test.mjs`): headings, to-do, lists, quote, callout, divider, equations, `/page` (a new library page, linked) and `/note` (a sheet of paper), table, code, mermaid, image, date, link, embed, highlight, and the `hidden` text/background color commands from `mdMarks.TEXT_COLORS` that show only when the query matches. The bare "/" list is the catalog in order under the `SLASH_GROUPS` titles (Text, Math, Insert, Link, Style); a typed query is one ranked list, by tier: the command's own name, a name it begins, a word of its label it begins, a keyword it begins, then a VS Code-style fuzzy match of the name or label (anchored on the first letter, jumping to word starts: `/cb` → Code block), like the `\command` completion's ([latex_editing.md](latex_editing.md)). A command that `needs` an ability (`newPage`, `sheet`, `image`, `embed`) is left out where the editor lacks it (`filterSlashCommands`' `can`: a share's editor makes no library page, a comment's field writes text only). `SlashMenuPopup` draws a row as an icon tile (`MENU_ICONS` by the item's `icon` key; the colors keep a tinted "A" `glyph`), the label over a one-line description, and the `/name` to type at the right, the matched letters marked with search's `mark.searchMark` in the name or the label, wherever they matched; a key-hint footer (Tab or Enter inserts). The same popup is the "Paste as" chooser shown after a URL paste (gamma block link → mention/synced block/URL, other URLs → URL/titled link), without names. `useSlashMenu.js` owns the menu's trigger (typed only, never inside math or a code fence), its keys and the run of a command, for a note row and a comment's field; BlockTree owns the "Paste as" chooser |
@@ -1608,7 +1634,7 @@ editor's other popups.
 | `editor/BlockProperties.jsx`, `editor/blockProps.js`, `editor/blockProperties.css` | the Properties popover ([above](#the-properties-popover)): the surface, loaded on first use (head, status chips, Details / JSON, the row menu, placement, the server read), and the pure model it draws (`tests/blockProps.test.mjs`): a block's kind by the server's `block_kind` order (`blockKind`, `effectiveKind`), its sections of rows, one `CATALOG` entry per key of the [block properties catalog](../research/block-properties.md#the-catalog) and the rest under Other keys, the status chips, the key and SQL paths; the menus' Properties rows and `block.properties` / `app.pageProperties` use `BracesIcon` |
 | `editor/noteSanitize.js` | `rehypeNoteSanitize`, the sanitizer every rendered note goes through between `rehype-raw` and KaTeX ([One control set, everywhere](#one-control-set-everywhere)) |
 | `editor/callouts.js` | remark plugin for `> [!note] Title` callouts (type aliases → note/tip/warning/danger/important/quote; each type's colour is a `--callout-*` token); Obsidian's `[!note]-` / `+` fold flag makes a native `<details>` with the title as `<summary>` (chevron in app.css) |
-| `editor/codeHighlight.js` | the highlight.js (`lib/common`) wrapper and the code card's copy button, shared by editor + renderer; token colors are theme-aware `.hljs-*` rules in app.css. The fence scanner is `editor/fences.js`: `scanFences` (used by mdPreprocess's exclusions and BlockTree's Enter/Tab-in-fence handling) and `fenceInnerAt` |
+| `editor/codeHighlight.js` | the highlight.js (`lib/common`) wrapper and the code card's copy button, shared by editor + renderer; token colors are theme-aware `.hljs-*` rules in app.css. The fence scanner is `editor/fences.js`: `scanFences` (mdPreprocess's exclusions and the source editor's cards) and `fenceInnerAt` (what Enter, Tab and the popups read as code, [hotkeys.md](hotkeys.md)) |
 | `editor/LatexEditor.jsx` | LaTeX aids while editing: the live preview docked to the editor column with a caret marker, the `\command` popup, `renderKatex`/`useCaretAnchored` shared helpers; `editor/latexCompletion.js` is the pure catalog (prefix/abbreviation/fuzzy tiers, snippets, Tab-out navigation) it re-exports; `editor/latexInput.js` supplies scalable delimiter pairing. See [LaTeX editing](latex_editing.md) for shortcuts and browser checks |
 | `library/trashList.js` | the Recently deleted list asked for ahead of its dialog, as the pointer or the focus reaches the trash button (`prefetchTrash`, `aheadTrash`, `dropTrash`; [home_library.md](home_library.md) "Recently deleted") |
 | `library/RecentlyDeleted.jsx` | the Recently deleted dialog: a `SubDialog` of `aiProvRow` rows (title, who deleted it and when, days left, folder, and "with N pages inside" for a page deleted with its sub-pages) with Restore and a delete-for-good icon button behind App's confirm box, Empty in its `DialogButtons` ([home_library.md](home_library.md) "Recently deleted") |

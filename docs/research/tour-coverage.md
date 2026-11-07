@@ -78,7 +78,7 @@ close and reopen through View.
 ## Notes
 
 - **Enter.** By default Enter breaks the line and Shift+Enter starts a new
-  note (`enterNewNote`, swappable in Settings → Keyboard), the reverse of
+  note (the Enter preference, swappable in Settings → Keyboard), the reverse of
   most outliners. Only the Welcome page says so. `block.created` and
   `block.indented` are catalogued and still emitted nowhere.
 - **No anchors and no teaching:** the ⋮⋮ handle (drag to reorder, more than

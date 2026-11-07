@@ -17,6 +17,25 @@ import {
 const N = (id, content = id, children = [], extra = {}) => ({ id, content, properties: {}, children, ...extra });
 const tree = () => [N("a", "a", [N("a1")]), N("b")];
 
+test("a split or a merge a key made carries the caret it started from, once", () => {
+  const s = createHistory([N("a", "abcd")]);
+  const caretBeforeRef = { current: { id: "a", from: 2, to: 2, keyed: true } };
+  // The editor has moved on, and the last commit saw the caret elsewhere.
+  s.prevCaret = { id: "a", from: 4, to: 4 };
+  s.prevEditing = "a";
+  const split = [N("a", "ab"), N("n", "cd")];
+  observeTree(s, split, { caretRef: { current: null }, caretBeforeRef }, "n");
+  assert.deepEqual(s.undo[0].caret, { id: "a", from: 2, to: 2 });
+  assert.equal(caretBeforeRef.current, null, "spent");
+  // Without one, a change of shape reads the caret as before: an editor
+  // change's selection stays with the content change it came from.
+  s.prevEditing = "a";
+  const old = { current: { id: "a", from: 1, to: 1 } };
+  observeTree(s, [N("n", "cd"), N("a", "ab")], { caretRef: { current: { id: "a", from: 2, to: 2 } }, caretBeforeRef: old }, "a");
+  assert.deepEqual(s.undo[1].caret, { id: "a", from: 2, to: 2 });
+  assert.deepEqual(old.current, { id: "a", from: 1, to: 1 });
+});
+
 test("undo descriptions name creations, deletions, text, moves, and properties", () => {
   assert.equal(describeTransition([], [N("a", "New note")]), "note creation: “New note”");
   assert.equal(describeTransition([N("a", "Old note")], []), "note deletion: “Old note”");

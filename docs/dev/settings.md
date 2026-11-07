@@ -518,7 +518,7 @@ Preferences:
   differs from the default, red caps and "Also used by …" when two commands
   share a chord — and **Built in**, the outliner's fixed keys read-only, led
   by the Enter key's one choice: "Enter makes" New note / New line
-  (`enterNewNote`; the legacy `notes` pane id lands here).
+  (`enterNewBlock`; the legacy `notes` pane id lands here).
 
 AI:
 

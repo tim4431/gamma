@@ -104,6 +104,7 @@ export const RULES = [
   ["frontend/tests/e2e/select.mjs", []],
   ["frontend/tests/e2e/latexEditor.mjs", []], // its own runner: npm run e2e:latex
   ["frontend/tests/e2e/harness.mjs", ALL],
+  ["frontend/tests/e2e/webkit.mjs", ALL],
   ["frontend/tests/e2e/run.mjs", ALL],
   ["frontend/tests/e2e/**", []],
   ["frontend/tests/**", []],
@@ -259,6 +260,12 @@ export const RULES = [
   ["backend/gamma/block_index.py", ["notes-pdf-share", "quick-open"]],
   ["backend/gamma/routers/search.py", ["notes-pdf-share", "quick-open"]],
   ["backend/gamma/markdown_zip_import.py", [...EXPORTS, "sub-pages"]], // a Notion export's pages inside pages
+  ["backend/gamma/markdown_zip_links.py", [...EXPORTS, "sub-pages"]], // a parent: is read as a link
+  ["backend/gamma/notion_import.py", [...EXPORTS, "sub-pages"]],
+  ["backend/gamma/markdown_zip_dialects.py", [...EXPORTS, "sub-pages"]], // which directory is a page's
+  ["backend/gamma/notion_html.py", [...EXPORTS, "sub-pages"]], // an HTML page's links, a flat zip's tree
+  ["backend/gamma/notion_*.py", EXPORTS],
+  ["backend/gamma/export_walk.py", EXPORTS],
   ["backend/gamma/markdown_*.py", EXPORTS],
   ["backend/gamma/obsidian_export.py", EXPORTS],
   ["backend/gamma/logseq_*.py", EXPORTS],

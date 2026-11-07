@@ -1,7 +1,7 @@
 """Reading a paper: highlight, draw, type on the page, notebooks, links, translation, recording."""
 import scene
 from scene import (AMBER, BAR, BAR_DARK, BLUE, CARD, CHIP, CHIP_INK, EDGE, FIG_EDGE, FIG_LINE, FONT, INK, MONO, MUTED, RED,
-                   SELECT, SOFT, TINT, YELLOW, anim, block, bullet, button, frame, hide, key, keytimes, line_y, move, panel,
+                   SELECT, SOFT, TINT, YELLOW, anim, block, button, frame, hide, key, keytimes, line_y, move, panel,
                    paper, path_length, path_points, pointer, show, strip, stroke, typed)
 
 PEN_TOOLS = ['pen', 'highlighter', 'eraser', 'lasso', 'text', 'undo']
@@ -27,10 +27,10 @@ def annotate():
                 + f'<text x="812" y="246" font-family="Georgia, serif" font-size="20" font-style="italic" fill="{MUTED}">“decoherence is dominated by</text>'
                 f'<text x="812" y="272" font-family="Georgia, serif" font-size="20" font-style="italic" fill="{MUTED}">intermediate-state scattering”</text>'
                 + show(loop, 2.2) + '</g>')
-    body.append('<g>' + bullet(800, 316) + typed('Key claim.', 822, 323, loop, 2.8, 4.2, 22) + show(loop, 2.6) + '</g>')
+    body.append('<g>' + typed('Key claim.', 822, 323, loop, 2.8, 4.2, 22) + show(loop, 2.6) + '</g>')
     # A circle drawn around the figure becomes an ink block.
     body.append(stroke('M232 404 C300 372 470 368 500 412 C528 458 320 488 232 462 C196 450 200 420 232 404', loop, 5.2, 6.8))
-    body.append('<g>' + bullet(800, 386) + block(822, 364, 180, 46)
+    body.append('<g>' + block(822, 364, 180, 46)
                 + f'<path d="M842 394 C854 372 874 372 884 384 C892 394 872 402 862 396" fill="none" stroke="{AMBER}" stroke-width="3" stroke-linecap="round"/>'
                 f'<text x="902" y="393" font-size="19" fill="{MUTED}">ink · p. 3</text>'
                 + show(loop, 7.0) + '</g>')
@@ -62,7 +62,7 @@ def _desk(page, tools):
     """The desk of pen() and text_box(): a paper with `page` drawn on it and the tool
     strip beside it, then the Notes window with one line already written."""
     return (paper(160, 80, 480, 460, 4) + page + tools
-            + panel(740, 80, 560, 460, 'Notes') + bullet(800, 206) + f'<rect x="822" y="201" width="300" height="10" rx="5" fill="{BAR}"/>')
+            + panel(740, 80, 560, 460, 'Notes') + f'<rect x="822" y="201" width="300" height="10" rx="5" fill="{BAR}"/>')
 
 
 def pen():
@@ -94,7 +94,7 @@ def pen():
     thumb = '<g transform="translate(846 258) scale(0.62) translate(-290 -214)" fill="none" stroke-width="5" stroke-linecap="round" stroke-linejoin="round">'
     ink = (thumb + f'<g stroke="{AMBER}"><path d="{circle}"/><path d="{arrow}"/><path d="{head}"/></g>'
            f'<g stroke="{RED}" opacity="0"><path d="{arrow}"/><path d="{head}"/>' + show(loop, 9.3) + '</g></g>')
-    body.append('<g opacity="0">' + bullet(800, 290) + block(822, 240, 330, 100) + ink
+    body.append('<g opacity="0">' + block(822, 240, 330, 100) + ink
                 + f'<text x="1006" y="297" font-size="19" fill="{MUTED}">ink · p. 2</text>' + show(loop, 5.0) + '</g>')
     pts, ts = [(640, 420), (at['pen'][0], at['pen'][1]), at['pen']], [0, 0.8, 1.0]
     p, t = _trace(circle, 1.9, 3.1)
@@ -135,7 +135,7 @@ def text_box():
                 + show(loop, 5.45) + '</g>')
     body.append(typed(words, bx + 12, by + 31, loop, 2.2, 4.4, 24))
     # The notes: the box as a block with its T marker.
-    body.append('<g opacity="0">' + bullet(800, 278) + block(822, 250, 400, 56)
+    body.append('<g opacity="0">' + block(822, 250, 400, 56)
                 + f'<rect x="838" y="264" width="28" height="28" rx="7" fill="{CHIP}"/>'
                 f'<text x="852" y="285" text-anchor="middle" font-size="19" font-weight="700" fill="{CHIP_INK}">T</text>'
                 f'<text x="882" y="286" font-size="21" fill="{INK}">{words}</text>' + show(loop, 4.8) + '</g>')
@@ -191,7 +191,7 @@ def notebook():
     first = _scribble(sx + 100, s1 + 48, [5, 3, 6])
     second = _scribble(sx + 100, s1 + 88, [4, 7], 2)
     low = _scribble(sx + 100, s1 + 208, [6, 2, 5], 4)
-    body = ['<g>' + bullet(300, 211) + typed('/note', 322, 219, loop, 0.6, 1.4, 22, family=MONO) + hide(loop, 2.2) + '</g>',
+    body = ['<g>' + typed('/note', 322, 219, loop, 0.6, 1.4, 22, family=MONO) + hide(loop, 2.2) + '</g>',
             '<g opacity="0">' + key(424, 193, 'Enter') + show(loop, 1.7, 2.05) + '</g>',
             '<g opacity="0">' + sheet(s1) + slide(16, 2.2, 2.6) + show(loop, 2.2, fade=0.3) + '</g>',
             '<g clip-path="url(#notesBody)"><g opacity="0">' + sheet(s2) + slide(90, 7.5, 8.1) + show(loop, 7.5, fade=0.3) + '</g></g>']
@@ -211,7 +211,7 @@ def notebook():
     pts += [(980, 520)]
     ts += [8.3]
     scene = ('<clipPath id="notesBody"><rect x="252" y="122" width="896" height="461" rx="12"/></clipPath>'
-             + panel(250, 40, 900, 545, 'Notes') + bullet(300, 160) + f'<rect x="322" y="155" width="340" height="10" rx="5" fill="{BAR}"/>'
+             + panel(250, 40, 900, 545, 'Notes') + f'<rect x="322" y="155" width="340" height="10" rx="5" fill="{BAR}"/>'
              + ''.join(body) + pointer(pts, loop, ts))
     return frame('A notebook sheet among the notes',
                  '/note is typed in an empty note block, and the block becomes a sheet of ruled paper. A pen writes two '
@@ -413,7 +413,7 @@ def record():
     body.append(_redraw(word, loop, reach2, reach2 + span, loop - 0.3, w_len, 3.5))
     # The note: typed during the recording, shaded in playback until the playhead reaches it.
     seen1, seen2 = p0 + mark_n / rate, tap + (mark_n - back) / rate
-    body.append('<g opacity="0"><g>' + bullet(800, 260) + typed('Proof idea', 822, 268, loop, n0, n1, 22)
+    body.append('<g opacity="0"><g>' + typed('Proof idea', 822, 268, loop, n0, n1, 22)
                 + anim('opacity', '1;1;0.3;0.3;1;1;0.3;0.3;1;1', loop, 0, 6.55, 6.7, seen1, seen1 + 0.1, tap, tap + 0.1, seen2, seen2 + 0.1, loop)
                 + '</g>' + show(loop, 3.8) + '</g>')
     # The pointer: Record, the pen, the word, the notes, Stop, Play, then a tap on the word.
@@ -424,7 +424,7 @@ def record():
     pts += [(1010, 260), (1010, 260), stop, stop, play, play, (700, 330), (700, 330), (318, 380), (318, 380), rest]
     ts += [3.6, 4.9, 5.3, 5.55, 6.25, 6.6, 7.2, 8.9, 9.3, 9.65, 10.5]
     desk = (paper(160, 80, 480, 460, 5) + tools + panel(740, 80, 560, 460, 'Notes')
-            + bullet(800, 206) + f'<rect x="822" y="201" width="300" height="10" rx="5" fill="{BAR}"/>')
+            + f'<rect x="822" y="201" width="300" height="10" rx="5" fill="{BAR}"/>')
     svg = desk + ''.join(body) + pointer(pts, loop, ts, press=[1.0, 1.55, 3.75, 5.45, 6.45, tap - 0.05])
     return frame('Record audio while you take notes',
                  'The microphone after the pen in the zoom column beside the paper is clicked, and a recording pill with '

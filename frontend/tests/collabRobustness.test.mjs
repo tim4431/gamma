@@ -128,6 +128,182 @@ test("a cycle drops the move and keeps the text edits of the same batch", async 
   assert.deepEqual(h.reloads, ["page-a"]);
 });
 
+// --- a block joined to another, two people at it --------------------------------
+
+const rows = (...texts) => texts.map((text, i) => block(`b${i}`, text, {}, `a${i}`));
+
+test("a join goes as one merge, and its ack lands the text the server joined", async (t) => {
+  const h = setup(t, async (url, init, body) => ack(1, [
+    { op: "set", id: "b0", content: "onetwothree" }, { op: "delete", id: "b1" }]), { tree: rows("one", "two") });
+  h.edit([block("b0", "onetwo", {}, "a0")]);
+  await h.session.flush();
+  assert.deepEqual(h.calls[0].body.ops, [{ op: "merge", id: "b1", into: "b0", base: "one" }]);
+  assert.equal(h.tree[0].content, "onetwothree", "someone else's join came first: the screen shows the whole text");
+});
+
+test("a merge whose target is gone is dropped alone: no delete goes out, and the refetch brings the block back", async (t) => {
+  const h = setup(t, async (url, init, body) => {
+    const index = body.ops.findIndex((op) => op.op === "merge");
+    if (index >= 0) throw httpError(404, "no such parent: b0", { missing: "b0", conflict: "missing", index });
+    return ack(1, body.ops);
+  }, { tree: rows("two", "three", "tail") });
+  h.edit([block("b0", "twothree", {}, "a0"), block("b2", "tail", {}, "a2")]);
+  h.edit([block("b0", "twothree", {}, "a0"), block("b2", "tail!", {}, "a2")]);
+  await h.session.flush();
+  assert.equal(h.calls.length, 2, "one refusal, then the rest");
+  assert.deepEqual(h.calls[1].body.ops, [{ op: "set", id: "b2", content: "tail!", base: "tail" }],
+    "no rescue of the target (whoever took it meant it to go), no delete alone");
+  assert.deepEqual(h.reloads, ["page-a"]);
+  assert.match(lastNotice(h, "rejected"), /Someone else deleted or moved/);
+  h.load("page-a", [block("b1", "three", {}, "a1"), block("b2", "tail!", {}, "a2")], 1);
+  assert.deepEqual(h.tree.map((n) => n.content), ["three", "tail!"], "the block is back");
+});
+
+// A server holding only `stored` (id -> text), taking a batch as gamma/ops.py
+// does: all of it, or a refusal naming the first block it lacks.
+function fakeServer(stored) {
+  return async (url, init, body) => {
+    const next = new Map(stored);
+    const need = (id, index) => {
+      if (id !== "page-a" && !next.has(id)) throw httpError(404, `no such block: ${id}`, { missing: id, conflict: "missing", index });
+    };
+    body.ops.forEach((op, index) => {
+      if (op.op === "insert") { need(op.parent, index); if (!next.has(op.id)) next.set(op.id, op.content); }
+      else if (op.op === "move") { need(op.id, index); need(op.parent, index); }
+      else if (op.op === "set") { need(op.id, index); if (op.content !== undefined) next.set(op.id, op.content); }
+      else if (op.op === "merge") {
+        need(op.into, index); need(op.id, index);
+        next.set(op.into, next.get(op.into) + next.get(op.id));
+        next.delete(op.id);
+      }
+    });
+    stored.clear();
+    for (const [id, text] of next) stored.set(id, text);
+    return ack(1, body.ops);
+  };
+}
+
+test("words typed in the block a merge joined, gone on the server, bring it back and the merge with it", async (t) => {
+  const stored = new Map([["b1", "three"]]);
+  const h = setup(t, fakeServer(stored), { tree: rows("two", "three") });
+  h.edit([block("b0", "twothree", {}, "a0")]);
+  h.edit([block("b0", "twothree and a paragraph", {}, "a0")]);
+  await h.session.flush();
+  assert.deepEqual(h.calls[1].body.ops.map((op) => op.op), ["insert", "move", "merge", "set"]);
+  assert.equal(h.calls[1].body.ops[0].content, "two", "the text from before the join: the merge adds its own");
+  assert.deepEqual([...stored.values()], ["twothree and a paragraph"]);
+  assert.equal(lastNotice(h, "rejected"), undefined);
+  assert.equal(h.session.hasPending(), false);
+});
+
+test("words typed in the target ahead of the merge survive its refusal too, joined once", async (t) => {
+  const stored = new Map([["b1", "three"]]);
+  const h = setup(t, fakeServer(stored), { tree: rows("two", "three") });
+  h.edit([block("b0", "two typed offline", {}, "a0"), block("b1", "three", {}, "a1")]);
+  h.edit([block("b0", "two typed offlinethree", {}, "a0")]);
+  await h.session.flush();
+  assert.equal(h.calls[1].body.ops[0].content, "two");
+  assert.deepEqual([...stored.values()], ["two typed offlinethree"]);
+  assert.equal(lastNotice(h, "rejected"), undefined);
+});
+
+test("words in the queue behind a refused merge, and a new note under its target, count as well", async (t) => {
+  for (const edit of [
+    (h) => h.edit([block("b0", "twothree!", {}, "a0")]),
+    (h) => h.edit([{ ...block("b0", "twothree", {}, "a0"), children: [block("n", "new")] }]),
+  ]) {
+    const answer = deferred();
+    const stored = new Map([["b1", "three"]]);
+    const serve = fakeServer(stored);
+    const h = setup(t, (url, init, body) => (h.calls.length === 1 ? answer.promise : serve(url, init, body)), { tree: rows("two", "three") });
+    h.edit([block("b0", "twothree", {}, "a0")]);
+    const saving = h.session.flush();
+    await settle();
+    edit(h);
+    answer.reject(httpError(404, "no such parent: b0", { missing: "b0", conflict: "missing", index: 0 }));
+    await saving;
+    await h.session.flush();
+    assert.match(stored.get("b0"), /^twothree/, "the block came back, joined");
+    assert.equal(stored.has("b1"), false, "not left beside it");
+    assert.equal(lastNotice(h, "rejected"), undefined);
+  }
+});
+
+test("a rescue of a block holding a merge's target sends the target from before the join", async (t) => {
+  const stored = new Map([["b3", "three"]]);
+  const tree = [{ ...block("p", "parent"), children: [block("b2", "two")] }, block("b3", "three", {}, "a1")];
+  const h = setup(t, fakeServer(stored), { tree });
+  h.edit([{ ...block("p", "parent!"), children: [block("b2", "twothree")] }]);
+  await h.session.flush();
+  assert.equal(h.calls[1].body.ops.find((op) => op.id === "b2" && op.op === "insert").content, "two");
+  assert.deepEqual([...stored.values()], ["parent!", "twothree"], "joined once");
+});
+
+test("a child our merge carried over that someone else's merge took from this tab comes back with a refetch", async (t) => {
+  const answer = deferred();
+  const tree = [...rows("one", "two"), { ...block("b2", "three", {}, "a2"), children: [block("c", "child")] }];
+  const h = setup(t, () => answer.promise, { tree });
+  h.edit([block("b0", "onetwo", {}, "a0"), tree[2]]);
+  const saving = h.session.flush();
+  await settle();
+  // alice's merge of three into two, ordered first: two is gone here, so its
+  // child's move finds no place and the delete takes the child along
+  h.message({ t: "ops", seq: 1, client: "other", ops: [
+    { op: "move", id: "c", parent: "b1", position: "a0" }, { op: "set", id: "b1", content: "twothree" }, { op: "delete", id: "b2" }] });
+  assert.deepEqual(h.tree.map((n) => n.id), ["b0"]);
+  answer.resolve(ack(2, [{ op: "move", id: "c", parent: "b0", position: "a0" },
+    { op: "set", id: "b0", content: "onetwothree" }, { op: "delete", id: "b1" }]));
+  await saving;
+  await settle();
+  assert.deepEqual(h.reloads, ["page-a"], "the ack's move found no block");
+});
+
+test("a merge's ack refetches nothing when this tab holds the children it moved", async (t) => {
+  const h = setup(t, async () => ack(1, [{ op: "move", id: "k", parent: "b0", position: "a1" },
+    { op: "set", id: "b0", content: "onetwo" }, { op: "delete", id: "b1" }]), { tree: [
+    block("b0", "one", {}, "a0"), { ...block("b1", "two", {}, "a1"), children: [block("k", "kid")] }] });
+  h.edit([{ ...block("b0", "onetwo", {}, "a0"), children: [block("k", "kid")] }]);
+  await h.session.flush();
+  assert.deepEqual(h.reloads, []);
+});
+
+test("typing after a merge in the queue goes behind it, from the joined text", async (t) => {
+  const h = setup(t, async (url, init, body) => ack(1, [...body.ops]), { tree: rows("one", "two") });
+  h.edit([block("b0", "onetwo", {}, "a0")]);
+  h.edit([block("b0", "onetwo!", {}, "a0")]);
+  await h.session.flush();
+  assert.deepEqual(h.calls[0].body.ops, [
+    { op: "merge", id: "b1", into: "b0", base: "one" }, { op: "set", id: "b0", content: "onetwo!", base: "onetwo" }]);
+});
+
+test("a remote edit of the target waits for our merge like one of our sets", async (t) => {
+  const answer = deferred();
+  const h = setup(t, () => answer.promise, { tree: rows("one", "two") });
+  h.edit([block("b0", "onetwo", {}, "a0")]);
+  const saving = h.session.flush();
+  await settle();
+  h.message({ t: "ops", seq: 1, client: "other", ops: [{ op: "set", id: "b0", content: "ONE" }] });
+  assert.equal(h.tree[0].content, "onetwo", "held back: the join on screen stays");
+  answer.resolve(ack(2, [{ op: "set", id: "b0", content: "ONEtwo" }, { op: "delete", id: "b1" }]));
+  await saving;
+  await settle();
+  assert.equal(h.tree[0].content, "ONEtwo");
+});
+
+test("a refetch lays a merge still queued over the page, and one that landed changes nothing", async (t) => {
+  const answer = deferred();
+  const h = setup(t, () => answer.promise, { tree: rows("one", "two") });
+  h.edit([block("b0", "onetwo", {}, "a0")]);
+  const saving = h.session.flush();
+  await settle();
+  h.load("page-a", [block("b0", "ONE", {}, "a0"), block("b1", "two?", {}, "a1")], 1);
+  assert.deepEqual(h.tree.map((n) => n.content), ["ONEtwo?"]);
+  h.load("page-a", [block("b0", "ONEtwo?", {}, "a0")], 1);
+  assert.deepEqual(h.tree.map((n) => n.content), ["ONEtwo?"], "not joined twice");
+  answer.resolve(ack(2, [{ op: "set", id: "b0", content: "ONEtwo?" }, { op: "delete", id: "b1" }]));
+  await saving;
+});
+
 test("the refetch after a conflict keeps the unsent text: it is still sent, from the base it was typed on", async (t) => {
   let answerResend;
   const h = setup(t, async (url, init, body) => {

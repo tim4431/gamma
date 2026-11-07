@@ -4,6 +4,8 @@
 // (markCommands.js). Apart from codeHighlight.js so node tests load them
 // without highlight.js and the DOM.
 
+import { parseLine } from "./mdLines.js";
+
 // All ``` fenced regions in the text, in order:
 //   [{from, to, innerFrom, innerTo, lang, closed}]
 // from/to include the fence marker lines (to = end of the closing line, or
@@ -45,10 +47,43 @@ export function scanFences(text) {
   return fences;
 }
 
-// The fence whose CODE the caret sits in (from the end of the opening ```
-// line through the start of the closing line) — where Enter must insert a
+// What a note renders as code, which is more than scanFences's cards: a fence
+// after a quote's or callout's marks, and a ~~~ one. It closes on its own mark
+// at least as long, at its own quote depth, or where its quote ends:
+//   [{innerFrom, innerTo, quote}]
+// innerFrom = start of the first code line, innerTo = where the closing line's
+// mark starts (text end while the fence is open), quote = the opening line's
+// marks, what a new line of its code starts with.
+function codeFences(text) {
+  const fences = [];
+  let open = null;
+  let pos = 0;
+  const close = (innerTo) => {
+    fences.push({ innerFrom: open.innerFrom, innerTo, quote: open.quote });
+    open = null;
+  };
+  for (const line of text.split("\n")) {
+    const { quote, depth } = parseLine(line);
+    const m = /^(`{3,}|~{3,})(.*)$/.exec(line.slice(quote.length));
+    if (open && depth < open.depth) close(pos - 1);
+    if (!open) {
+      if (m && !(m[1][0] === "`" && m[2].includes("`"))) {
+        open = { mark: m[1], quote, depth, innerFrom: pos + line.length + 1 };
+      }
+    } else if (m && depth === open.depth && m[1][0] === open.mark[0]
+      && m[1].length >= open.mark.length && !m[2].trim()) {
+      close(pos + quote.length);
+    }
+    pos += line.length + 1;
+  }
+  if (open) close(text.length);
+  return fences;
+}
+
+// The fence whose CODE the caret sits in (from the end of the opening line
+// through the start of the closing line's mark) — where Enter must insert a
 // line break instead of a new note, and math/slash popups stay quiet.
 export function fenceInnerAt(text, pos) {
-  if (!text || !text.includes("```")) return null;
-  return scanFences(text).find((f) => pos >= f.innerFrom - 1 && pos <= f.innerTo) || null;
+  if (!text || !(text.includes("```") || text.includes("~~~"))) return null;
+  return codeFences(text).find((f) => pos >= f.innerFrom - 1 && pos <= f.innerTo) || null;
 }
