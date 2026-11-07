@@ -121,7 +121,7 @@ export async function tabGroupScenarios({ server, browser, makePdf, step, until,
     const edited = await user.api("/api/pages", { method: "POST", body: { title: "Group edits" } });
     const rows = [];
     for (const content of ["first line", "", "last line"]) {
-      rows.push(await user.api("/api/blocks", { method: "POST", body: { parent_id: edited.id, content } }));
+      rows.push(await user.api("/api/blocks", { method: "POST", body: { parent_id: edited.id, content, before: rows.at(-1)?.position } }));
     }
     const lines = async () => (await user.api(`/api/blocks/${edited.id}/subtree`)).block.children.map((block) => block.content);
     const sash = () => page.locator(".tabSplit > .sash").first().boundingBox();
