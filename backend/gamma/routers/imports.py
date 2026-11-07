@@ -45,8 +45,8 @@ from ..goodnotes_import import import_goodnotes
 from ..ink import InkError, dumps as ink_dumps, from_pdf_ink, parse_ink, pdf_position as ink_position
 from ..pdf_text import GlyphPages, quote_under
 from ..pdf_export import (GAMMA_ALPHA, LOCKED, TEXT_BOX_TYPES, _resolve, annotation_flags, annotation_key,
-                          annotation_shown, display_size, drop_annotations, first_rect, page_frame, pdf_point_to_viewer,
-                          reply_parent)
+                          annotation_shown, copy_pdf, display_size, drop_annotations, first_rect, page_frame,
+                          pdf_point_to_viewer, reply_parent)
 from ..pdf_image import DecodeBudget, image_file, stream_data
 from ..text_box import escape_markdown, keep_on_surface, markdown_of, measure, normalize_text_box, plain_text
 from ..storage import (IMAGE_MEDIA_TYPES, content_digest, display_filename, find_upload_file, pdf_url, put_upload,
@@ -1125,7 +1125,9 @@ def _extract_pdf_annotations(reader, glyphs=None):
     reply shares its parent's rectangle. A reply to something not imported
     is left out. ``glyphs`` is a ``pdf_text.GlyphPages`` over the same
     file, read for the text under each highlight; None (a caller that only
-    needs which annotations make blocks) leaves the quotes empty."""
+    needs which annotations make blocks) leaves the quotes empty. A
+    PyMuPDF that does not load raises its ImportError: a block keeps the
+    quote it is made with, so none is made without."""
     found, replies, records, drawn = [], [], {}, _Drawn()
     for pnum, page in enumerate(reader.pages, start=1):
         try:
@@ -1167,6 +1169,8 @@ def _extract_pdf_annotations(reader, glyphs=None):
                     record.update(annot=obj, replies=[], zotero_key=_zotero_annotation_key(obj))
                     found.append(record)
                     records[id(obj)] = record
+            except ImportError:
+                raise
             except Exception as e:
                 log.warning(f"[pdf-annots] skipping annotation on p.{pnum}: {e}")
     # A reply may answer one listed after it, or another reply.
@@ -1242,7 +1246,7 @@ def _strip_embedded_annotations(ws: str, pdf_path, keep=frozenset()) -> tuple[in
     Note the file keeps its content-hash name even though its bytes change —
     the name is only a key (``doc_id`` property), never re-derived.
     ``pdf_path`` is the stored file's path."""
-    from pypdf import PdfReader, PdfWriter
+    from pypdf import PdfReader
 
     reader = PdfReader(os.fspath(pdf_path))
     doomed, keys = set(), set()
@@ -1261,10 +1265,8 @@ def _strip_embedded_annotations(ws: str, pdf_path, keep=frozenset()) -> tuple[in
     removed = sum(drop_annotations(page, doomed) for page in reader.pages) if doomed else 0
     if not removed:
         return 0, set()
-    writer = PdfWriter()
-    writer.append(reader)
     out = io.BytesIO()
-    writer.write(out)
+    copy_pdf(reader).write(out)
     # Stored whole, so a concurrent download never sees a half-written file.
     put_upload(ws, pdf_path.name, out.getvalue())
     return removed, keys
@@ -1329,7 +1331,9 @@ def import_embedded_annotations(ws: str, block_id: str, pdf_path, strip: bool, a
     row). ``found``
     counts the annotations that make blocks, replies included. Shared by
     the per-paper endpoint below and the Zotero library import.
-    ``pdf_path``: the stored file's path (``storage.find_upload_file``)."""
+    ``pdf_path``: the stored file's path (``storage.find_upload_file``).
+    ImportError, with nothing written, when a highlight needs its quote and
+    PyMuPDF does not load: the next import makes the block with it."""
     from pypdf import PdfReader
 
     from ..zotero_sync import get_link  # local: the engine reads the routers' change feed

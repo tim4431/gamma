@@ -6,9 +6,10 @@ pictures and reads as nothing in the rest (no pages, no outline, no
 glyphs); an empty text is an answer (a scanned page has no text layer),
 not a failure. A PyMuPDF that does not load is neither: its ImportError
 comes out of the reads that would otherwise answer nothing (page sizes,
-page count, outline, title guess) as it does from the text walk, so the
-search index and the manifest (pdf_meta), which keep an unreadable file's
-empty answer for good, store nothing and read the file once it loads.
+page count, outline, title guess, glyphs) as it does from the text walk, so
+the search index, the manifest (pdf_meta) and the highlight import, which
+keep an unreadable file's empty answer for good, store nothing and read the
+file once it loads.
 Used by the AI context builder, metadata lookup, /pdf-text-status, the
 search indexer, the manifest walk and the highlight import, so extraction
 fixes land once.
@@ -762,7 +763,8 @@ class GlyphPages:
     the file with PyMuPDF on the first page asked for and
     reads each page's glyphs once (``page``); a file it can't open, or a
     page without a text layer, has no glyphs, so its highlights import
-    without a quote. A context manager; close it when done. Each page's
+    without a quote, and a PyMuPDF that does not load raises its ImportError
+    from every read. A context manager; close it when done. Each page's
     read takes the lock once, like iter_page_texts.
 
     A glyph is ``(char, (left, bottom, right, top))`` in PDF user space,
@@ -855,6 +857,8 @@ class GlyphPages:
         if self._pdf is None and not self._failed:
             try:
                 self._pdf = _open(self._src)
+            except ImportError:
+                raise
             except Exception as e:
                 self._failed = True
                 log.warning(f"[pdf-text] PyMuPDF open failed ({e}); highlights import without quotes")

@@ -2,12 +2,13 @@
 annotation importer, note flattening, and the HTTP endpoint end to end."""
 
 import io
+from types import SimpleNamespace
 
 import pytest
 
 from conftest import make_page, require_math_renderer, workspace_of, guest_name
 
-from gamma.pdf_export import annotate_pdf, parse_css_color
+from gamma.pdf_export import annotate_pdf, first_rect, page_with_ink, parse_css_color
 
 PAGE_W, PAGE_H = 612, 792
 
@@ -148,6 +149,104 @@ def test_render_notes_with_dangling_reference():
     ])
     assert drawn == 1
     assert "Visible note" in _page_text(out)
+
+
+def _pdf_with_annots(annots: bytes, *more: bytes) -> bytes:
+    """One page whose /Annots is ``annots``, written by hand, since pypdf's
+    writer keeps no reference to an object the file lacks: object 4 is a
+    link, 5 a sticky note, ``more`` from 6 on."""
+    objs = [b"<</Type/Catalog/Pages 2 0 R>>", b"<</Type/Pages/Kids[3 0 R]/Count 1>>",
+            b"<</Type/Page/Parent 2 0 R/MediaBox[0 0 %d %d]/Annots %s>>" % (PAGE_W, PAGE_H, annots),
+            b"<</Type/Annot/Subtype/Link/Rect[10 10 50 50]/A<</S/URI/URI(https://example.com)>>>>",
+            b"<</Type/Annot/Subtype/Text/Rect[60 60 90 90]/Contents(kept)>>", *more]
+    out = io.BytesIO()
+    out.write(b"%PDF-1.7\n")
+    offsets = []
+    for n, obj in enumerate(objs, 1):
+        offsets.append(out.tell())
+        out.write(b"%d 0 obj\n%s\nendobj\n" % (n, obj))
+    xref = out.tell()
+    out.write(b"xref\n0 %d\n0000000000 65535 f \n" % (len(objs) + 1))
+    for offset in offsets:
+        out.write(b"%010d 00000 n \n" % offset)
+    out.write(b"trailer\n<</Size %d/Root 1 0 R>>\nstartxref\n%d\n%%%%EOF\n" % (len(objs) + 1, xref))
+    return out.getvalue()
+
+
+def _every_copy(source):
+    """What each of the server's copies of a stored PDF's pages makes of
+    ``source``: the annotated PDF, the notes PDF, one page for the agent, a
+    note app's composed PDF."""
+    from pypdf import PdfReader
+    from gamma.note_app_import import compose_pdf
+    from gamma.pdf_notes import render_notes
+
+    yield annotate_pdf(source, [{"position": _position(), "note": "mine"}])[0]
+    yield render_notes(source, [{"position": _position(), "blocks": [(0, "mine")]}])[0]
+    yield page_with_ink(source, 1, [], replaced=["1:/FreeText:0:0:9"])[0]
+    yield compose_pdf([SimpleNamespace(pdf="a", pdf_page=1)], [None], {"a": PdfReader(io.BytesIO(source))})
+
+
+def _annotations(pdf_bytes):
+    from pypdf import PdfReader
+    return [a.get_object() for a in PdfReader(io.BytesIO(pdf_bytes)).pages[0].get("/Annots") or []]
+
+
+@pytest.mark.parametrize("entry", [b"99 0 R", b"0 0 R", b"null", b"7", b"[1 2]"],
+                         ids=["lost object", "free object", "null", "number", "array"])
+def test_an_annots_entry_that_leads_nowhere_stops_no_copy(entry):
+    for out in _every_copy(_pdf_with_annots(b"[4 0 R %s 5 0 R]" % entry)):
+        kept = _annotations(out)
+        assert [str(a["/Subtype"]) for a in kept][:2] == ["/Link", "/Text"]
+        assert kept[0]["/A"]["/URI"] == "https://example.com"
+
+
+@pytest.mark.parametrize("annots", [b"99 0 R", b"7", b"/Name", b"<</A 1>>"],
+                         ids=["lost object", "number", "name", "dictionary"])
+def test_an_annots_that_is_no_array_stops_no_copy(annots):
+    for out in _every_copy(_pdf_with_annots(annots)):
+        assert all(a.get("/Subtype") != "/Link" for a in _annotations(out))
+
+
+@pytest.mark.parametrize("subtype", [b"/Link", b"/Text", b"/Widget"])
+@pytest.mark.parametrize("action", [b"99 0 R", b"null", b"7", b"<</URI(x)>>"],
+                         ids=["lost object", "null", "number", "no type"])
+def test_an_annotation_keeps_all_but_an_action_that_is_none(subtype, action):
+    source = _pdf_with_annots(b"[4 0 R 6 0 R]", b"<</Type/Annot/Subtype%s/Rect[1 1 9 9]/A %s>>" % (subtype, action))
+    for out in _every_copy(source):
+        link, broken = _annotations(out)[:2]
+        assert link["/A"]["/URI"] == "https://example.com"
+        assert str(broken["/Subtype"]) == subtype.decode() and "/A" not in broken
+
+
+@pytest.mark.parametrize("rect", [b"[99 0 R 1 9 9]", b"7", b"[/a /b /c /d]"], ids=["lost number", "number", "names"])
+def test_a_box_whose_rect_holds_no_numbers_stays_and_stops_nothing(rect):
+    from pypdf import PdfReader
+
+    source = _pdf_with_annots(b"[6 0 R]", b"<</Type/Annot/Subtype/FreeText/Rect %s/Contents(x)>>" % rect)
+    annot = PdfReader(io.BytesIO(source)).pages[0]["/Annots"][0].get_object()
+    assert first_rect(annot) is None
+    out, _written = annotate_pdf(source, [], replaced=["1:/FreeText:1:1:9"])
+    assert [str(a["/Subtype"]) for a in _annotations(out)] == ["/FreeText"]
+
+
+def test_a_strip_and_an_export_read_past_an_entry_that_leads_nowhere(guest):
+    source = _pdf_with_annots(b"[4 0 R 99 0 R null 6 0 R]",
+                              b"<</Type/Annot/Subtype/Highlight/Rect[100 100 300 120]/C[1 1 0]/Contents(note)"
+                              b"/QuadPoints[100 120 300 120 100 100 300 100]>>")
+    up = guest.post("/api/uploads", files={"file": ("a.pdf", source, "application/pdf")})
+    assert up.status_code == 200, up.text
+    doc_id = up.json()["doc_id"]
+    page = make_page(guest, "Damaged", properties={"doc_id": doc_id, "source_url": up.json()["source_url"]})
+
+    r = guest.get(f"/api/pages/{page['id']}/export-pdf")
+    assert r.status_code == 200, r.text
+    r = guest.post("/api/import/pdf-annotations", json={"block_id": page["id"], "doc_id": doc_id, "strip": True})
+    assert r.status_code == 200, r.text
+    assert (r.json()["imported"], r.json()["stripped"]) == (1, 1)
+    r = guest.get(f"/api/pages/{page['id']}/export-pdf")
+    assert r.status_code == 200, r.text
+    assert [str(a["/Subtype"]) for a in _annotations(r.content)] == ["/Link", "/Highlight"]
 
 
 def test_annotate_an_aes_pdf_restricted_by_its_owner_password_only():

@@ -48,7 +48,14 @@ project) and the NAS are not deployments; name one that is missing in the
 plan, since that project then stops following `main` by itself
 (with the user's agreement, `docker compose up -d --no-deps watchtower`
 in its folder starts it alone again, whether or not anything there needs
-a deploy; the share host's is in `/root/Container/gamma-account/`). A share
+a deploy; the share host's is in `/root/Container/gamma-account/`). Name
+one still on the archived `containrrr/watchtower` image too. The account
+and demo projects get `nickfedor/watchtower:1` with their `compose.yml`
+(their skills compare it, the demo's against `main`, so after a merge), but
+no deploy copies the NAS's `docker-compose.yml`: with the user's agreement,
+change its `image:` line by hand and take out the `DOCKER_API_VERSION` pin
+only the archived image needs, then
+`docker compose up -d --no-deps watchtower` in its folder. A share
 host whose image is a `sha-` tag runs a rollback pin
 (`compose.override.yml`): name it in the plan.
 

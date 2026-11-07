@@ -123,6 +123,16 @@ deletion. The boxes and pictures are written with either switch on:
 `highlights=0&notes=1` keeps them with the painted notes, and only both
 off (the stored file) leaves them out.
 
+A damaged PDF, or one a tool rewrote carelessly, can hold an `/Annots` entry
+that leads to no dictionary (a null, a reference to an object the file has
+lost) or an annotation whose `/A` is no action. A viewer passes over both,
+but `PdfWriter.append` and `add_page` raise on them, so every copy of a
+stored PDF's pages goes through `pdf_export.copy_pdf` or `copyable`, and
+every read of a page's annotations through `page_annotations`. Such an entry
+leaves the copy, and an annotation with a bad `/A` stays without it. The
+annotated PDF, the notes PDF, the agent's page, the strip and a note app's
+composed PDF all take this path.
+
 A page with sheets of paper and no PDF has none to annotate:
 `annotated_pdf` writes `notebook.notebook_pdf` instead. Each sheet is a PDF page of its paper's
 size, painted with the paper. Its pictures are drawn on it as placed, its
