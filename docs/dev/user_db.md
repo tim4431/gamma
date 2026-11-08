@@ -367,7 +367,9 @@ All state is SQLite + files on disk under a data directory (env
   `routers/search.py`; extracted again by the next search), with its
   `pdf_fts_rows` side table mapping a paper to its rows' rowids, so a
   paper's rows are deleted by rowid instead of a scan of the whole FTS
-  table. The index is built on demand (a search starts the workspace's
+  table, and each paper's count of indexed characters kept on its
+  `pdf_fts_docs` row (`chars`, what `GET /api/metadata/status` reads; an
+  index from before it gains the column and counts each paper once). The index is built on demand (a search starts the workspace's
   indexing job), a few hundred PDF pages per transaction; the rows of
   papers no block carries, by `doc_id` or by a duplicated page's upload
   address, are purged when a page or a PDF goes

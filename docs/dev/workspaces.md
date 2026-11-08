@@ -527,8 +527,9 @@ in the transaction that deletes the rows, so an owner made an editor or an
 admin demoted while the copy was written is refused there and the copy
 goes again. A guest's workspaces, which get no copy, are not held, so a guest's
 logout racing its expiry stays harmless. A snapshot of the workspace being
-written finishes before the snapshot folder goes, and one that waited for
-it finds the workspace gone (`ws_backup.remove_all`, `create`).
+written finishes, and answers, before the snapshot folder goes (both hold
+the workspace's snapshot lock), and one that waited for it finds the
+workspace gone (`ws_backup.remove_all`, `create`).
 
 A workspace a delete holds takes no more changes, since one made while
 its copy is written would be in neither the copy nor anywhere else once

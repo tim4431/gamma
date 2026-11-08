@@ -7275,8 +7275,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     setOpenPopover("share");
   }
   // Publishing to Gamma Cloud (sharing/SharePopover.jsx PublishSection). POST
-  // both publishes and changes an existing cloud share's audience / role; it
-  // runs a sync round, so it can take seconds. Refusals come back as the
+  // both publishes and changes an existing cloud share's audience / role; a
+  // publish runs a sync round, so it can take seconds (a change of a page
+  // already there runs none). Refusals come back as the
   // server's sentence and are shown in the section, never as an alert.
   const publishUrl = (pageId) => `${API}/pages/${encodeURIComponent(pageId)}/publish`;
   async function loadPublishState({ quiet = false } = {}) {

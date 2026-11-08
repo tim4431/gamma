@@ -112,9 +112,10 @@ again).
   indexed page's text (`pdf_index.doc_chars`, a full scan of `pdf_fts`) on
   each read, and the pane reads it again after every paper a metadata
   batch finishes. A count stored by the indexer would make it a lookup.
+  Closed below (2026-11-08).
 - **The Server pane's backup list** stats every file of every snapshot on
   each listing (`backups._dir_size`); the size could live in the
-  snapshot's manifest.
+  snapshot's manifest. Closed below (2026-11-08).
 - **Edits during a delete's final copy** were in neither the copy nor
   anywhere else once the rows went. Members other than the one deleting
   could keep editing for the minutes the zip takes. The web app learned it
@@ -287,7 +288,21 @@ In the order they matter:
    job is there to use, but the importing tab would have to follow a job
    on the other server across origins.
 2. Smaller: a folder link's round shows no progress while it sends PDFs
-   back, nor within one large PDF it fetches; a publish that only
-   changes the audience still runs a full round; unlinking Zotero clears
-   marks page by page; the health table's and the backup list's scans
-   (above).
+   back, nor within one large PDF it fetches.
+
+Four smaller ones (2026-11-08). A publish that only changes the cloud
+share's audience or role, on a page already published and there, runs no
+round: it checks the mirror and its token and sets the share
+([dev/mirror.md](../dev/mirror.md) "Publishing"). Unlinking Zotero takes
+the link's marks off every page in one statement, in the transaction
+that empties its tables, each page that lost one logged as a reload,
+instead of one transaction per page ([dev/zotero_sync.md](../dev/zotero_sync.md)).
+The health table reads each paper's count of characters from its
+`pdf_fts_docs` row, which `store_doc` writes and an older index fills
+once ([dev/user_db.md](../dev/user_db.md)), and the backup list reads each
+snapshot's size from its manifest and the lines of the workspaces added
+to it, measuring only a snapshot from before them
+([dev/migrations.md](../dev/migrations.md)). Testing the snapshot lock
+that `ws_backup.remove_all` takes turned up a snapshot that read its own
+zip back after letting the lock go, so a delete waiting on it took the
+zip first and the snapshot failed; it now answers under the lock.

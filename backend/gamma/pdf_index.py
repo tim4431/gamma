@@ -24,7 +24,8 @@ from .textnorm import INDEX_VERSION
 
 SCHEMA = (
     "CREATE VIRTUAL TABLE IF NOT EXISTS pdf_fts USING fts5(doc_id UNINDEXED, page UNINDEXED, content)",
-    "CREATE TABLE IF NOT EXISTS pdf_fts_docs (doc_id TEXT PRIMARY KEY, indexed_at TEXT NOT NULL, pages INTEGER, ver INTEGER NOT NULL DEFAULT 0)",
+    "CREATE TABLE IF NOT EXISTS pdf_fts_docs (doc_id TEXT PRIMARY KEY, indexed_at TEXT NOT NULL, pages INTEGER, "
+    "ver INTEGER NOT NULL DEFAULT 0, chars INTEGER)",
     "CREATE TABLE IF NOT EXISTS pdf_fts_rows (doc_id TEXT NOT NULL, fts_rowid INTEGER NOT NULL, "
     "PRIMARY KEY (doc_id, fts_rowid)) WITHOUT ROWID",
 )
@@ -69,15 +70,24 @@ def _delete_rows(conn: sqlite3.Connection, doc_id: str) -> None:
     conn.execute("DELETE FROM pdf_fts_rows WHERE doc_id = ?", (doc_id,))
 
 
+def _doc_columns(conn: sqlite3.Connection) -> set:
+    return {r[1] for r in conn.execute("PRAGMA table_info(pdf_fts_docs)")}
+
+
 def ensure_schema(conn: sqlite3.Connection) -> None:
     """Apply the schema. An index written before ``pdf_fts_rows`` existed
     (an older Gamma, a restored backup) is brought up to it once, in the
     transaction that creates that table: its rows are taken over, and a
     ``pdf_fts_docs`` older still gains ``ver`` (0: re-indexed by the next
-    search)."""
+    search). A ``pdf_fts_docs`` from before ``chars`` gains it, NULL, which
+    ``doc_chars`` fills."""
     if conn.execute(_TABLE, ("pdf_fts_rows",)).fetchone():
         for stmt in SCHEMA:
             conn.execute(stmt)
+        if "chars" not in _doc_columns(conn):
+            with write_txn(conn):
+                if "chars" not in _doc_columns(conn):  # again, under the write lock
+                    conn.execute("ALTER TABLE pdf_fts_docs ADD COLUMN chars INTEGER")
         return
     with write_txn(conn):
         new = not conn.execute(_TABLE, ("pdf_fts_rows",)).fetchone()  # again, under the write lock
@@ -86,14 +96,18 @@ def ensure_schema(conn: sqlite3.Connection) -> None:
             conn.execute(stmt)
         if new and rows:
             conn.execute("INSERT OR IGNORE INTO pdf_fts_rows (doc_id, fts_rowid) SELECT doc_id, rowid FROM pdf_fts")
-        if "ver" not in {r[1] for r in conn.execute("PRAGMA table_info(pdf_fts_docs)")}:
+        columns = _doc_columns(conn)
+        if "ver" not in columns:
             conn.execute("ALTER TABLE pdf_fts_docs ADD COLUMN ver INTEGER NOT NULL DEFAULT 0")
+        if "chars" not in columns:
+            conn.execute("ALTER TABLE pdf_fts_docs ADD COLUMN chars INTEGER")
 
 
 def store_doc(conn: sqlite3.Connection, doc_id: str, pages) -> None:
     """Replace a paper's rows with ``pages`` — ``(page number, normalized
     text)`` pairs; none records a paper without text, so a broken file isn't
-    re-parsed on every search — and stamp it current. STORE_CHUNK pages per
+    re-parsed on every search — and stamp it current, with its count of
+    characters (``chars``, what ``doc_chars`` reads). STORE_CHUNK pages per
     transaction (committed here); until the last one the paper counts as
     missing (``pdf_missing``), and an interrupted run leaves only rows the
     next one deletes."""
@@ -106,8 +120,8 @@ def store_doc(conn: sqlite3.Connection, doc_id: str, pages) -> None:
             _insert_rows(conn, doc_id, pages[start:start + STORE_CHUNK])
     with write_txn(conn):
         conn.execute(
-            "INSERT OR REPLACE INTO pdf_fts_docs (doc_id, indexed_at, pages, ver) VALUES (?, ?, ?, ?)",
-            (doc_id, page_now(), len(pages), INDEX_VERSION))
+            "INSERT OR REPLACE INTO pdf_fts_docs (doc_id, indexed_at, pages, ver, chars) VALUES (?, ?, ?, ?, ?)",
+            (doc_id, page_now(), len(pages), INDEX_VERSION, sum(len(content) for _, content in pages)))
 
 
 def drop_docs(conn: sqlite3.Connection, doc_ids) -> None:
@@ -161,10 +175,18 @@ def doc_pages(conn: sqlite3.Connection, doc_id: str, chars: int) -> list[tuple[i
 
 
 def doc_chars(conn: sqlite3.Connection) -> dict:
-    """{doc_id: characters of indexed text} for every paper with rows — one
-    pass over the index, never one per paper."""
+    """{doc_id: characters of indexed text} for every indexed paper: the
+    count ``store_doc`` keeps on its ``pdf_fts_docs`` row, a lookup, never
+    a pass over the text. A row stored before the count existed (NULL) is
+    counted once from its rows (through ``pdf_fts_rows``) and the count
+    kept."""
     ensure_schema(conn)
-    return dict(conn.execute("SELECT doc_id, SUM(LENGTH(content)) FROM pdf_fts GROUP BY doc_id").fetchall())
+    if conn.execute("SELECT 1 FROM pdf_fts_docs WHERE chars IS NULL LIMIT 1").fetchone():
+        with write_txn(conn):
+            conn.execute(
+                "UPDATE pdf_fts_docs SET chars = (SELECT COALESCE(SUM(LENGTH(f.content)), 0) FROM pdf_fts_rows r "
+                "JOIN pdf_fts f ON f.rowid = r.fts_rowid WHERE r.doc_id = pdf_fts_docs.doc_id) WHERE chars IS NULL")
+    return dict(conn.execute("SELECT doc_id, chars FROM pdf_fts_docs").fetchall())
 
 
 def pdf_missing(data_conn: sqlite3.Connection, doc_ids) -> list[str]:

@@ -947,7 +947,8 @@ mirror's own answer apart.
       Edit segmented as the section's action, its summary counting the
       pages inside. A change is
       `POST /api/pages/{id}/publish {audience, role}`, shown at once and
-      put back when the server refuses;
+      put back when the server refuses (no round runs for it: only the
+      share changes);
     - pages the plan has no room for (`status.capped`), named on a line
       under the state line: this page's wait with the share host's words,
       or how many pages inside published pages wait.
@@ -1098,6 +1099,10 @@ workspace there:
 4. `POST /api/share/{id}` on the share host under the mirror's token makes
    the share (default anyone / view; the request's `audience` / `role` set
    it, on a new link or an existing one through `PUT /api/share-settings`).
+   A change of `audience` / `role` on a page already published and
+   there (in the filter, its base saved, not on the retry list:
+   `publish._published_already`) checks the mirror and its token and
+   comes straight here: no round, its edits go at the next one.
    The answer is the link `<share host>/?share=<token>` (`url`; the token
    is the share host's, `<workspace id there>.<secret>`, taken as it is),
    the page's public address (`public_url`, below), the share and the

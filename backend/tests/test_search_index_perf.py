@@ -127,3 +127,27 @@ def test_an_index_older_than_its_version_column_gains_it_once(owner):
         conn.set_trace_callback(seen.append)
         pdf_index.ensure_schema(conn)
         assert not _ours(seen, r"ALTER|INSERT")
+
+
+def test_a_papers_characters_are_counted_as_it_is_stored(owner):
+    """The health table's counts (``doc_chars``) are a lookup of what
+    ``store_doc`` kept, never a pass over the text; an index from before
+    the count gains the column and counts each paper once."""
+    ws = workspace_of(USER)
+    with _data(ws) as conn:
+        pdf_index.store_doc(conn, "sipdoc30", [(1, "abc"), (2, "défgh")])
+        seen: list[str] = []
+        conn.set_trace_callback(seen.append)
+        assert pdf_index.doc_chars(conn)["sipdoc30"] == 8
+        assert not _ours(seen, r"(FROM|JOIN) pdf_fts\b")
+        conn.set_trace_callback(None)
+        conn.execute("ALTER TABLE pdf_fts_docs DROP COLUMN chars")  # the index as an older Gamma left it
+        conn.commit()
+        assert pdf_index.doc_chars(conn)["sipdoc30"] == 8
+        assert conn.execute("SELECT chars FROM pdf_fts_docs WHERE doc_id = 'sipdoc30'").fetchone() == (8,)
+        seen.clear()
+        conn.set_trace_callback(seen.append)
+        assert pdf_index.doc_chars(conn)["sipdoc30"] == 8
+        assert not _ours(seen, r"(FROM|JOIN) pdf_fts\b|ALTER|UPDATE")
+        pdf_index.drop_docs(conn, ["sipdoc30"])
+        conn.commit()

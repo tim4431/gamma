@@ -317,7 +317,10 @@ The row decides identity, never a property: a duplicated page or block
 carries `zotero_key` or `zotero_annotation` but has no row, and is new
 (the app's duplicate also drops `zotero_pdf`, `zotero_readonly` and
 `zotero_author`). `remove_link` takes the marks off every page and block,
-those in Recently deleted included.
+those in Recently deleted included, in one statement in the transaction
+that empties the link's tables; each live page that lost a mark is logged
+as a reload (`ops.log_reload`, so the change feed lists it) and its room
+refetches it after the commit.
 
 ## Keys and identity
 

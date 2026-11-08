@@ -1079,7 +1079,7 @@ def create(ws: str, *, label: str = "manual", uploads: bool = True, by: str = ""
         except BaseException:
             tmp.unlink(missing_ok=True)
             raise
-    return info(ws, name)
+        return info(ws, name)  # under the lock: a remove_all waiting on it would take the zip away first
 
 
 def delete(ws: str, name: str) -> bool:

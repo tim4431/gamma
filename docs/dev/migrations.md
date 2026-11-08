@@ -226,7 +226,9 @@ damage is recorded. A damaged copy raises the admins' `db-damage` notice.
   walks them is pending, and each workspace's added as its own steps run:
   rule 4), and after a finished upgrade keeps the newest
   `backups.KEEP_BACKUPS` of those; hand-made ones are never pruned.
-- **See / download / delete**: the same pane, `GET /api/admin/backups`,
+- **See / download / delete**: the same pane, `GET /api/admin/backups`
+  (each snapshot's size is the `size_bytes` its manifest, and each line of
+  a workspace added to it, recorded; one from before them is measured),
   `GET /api/admin/backups/{name}/download` (a zip of the directory,
   streamed as it is made, so the download starts at once),
   `DELETE /api/admin/backups/{name}`; `manage.py backups [--delete <name>]

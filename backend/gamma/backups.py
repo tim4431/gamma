@@ -19,7 +19,9 @@ A snapshot is written under a dot-name (``.<name>.part``) and renamed to its
 name once its manifest, written last, is in: a directory without a
 manifest is an interrupted snapshot and is never listed or pruned. Every
 database copy is quick-checked (``gamma/integrity.py``); the manifest's
-``integrity`` says how each one came out.
+``integrity`` says how each one came out, and its ``size_bytes`` what the
+copies take on disk, so a listing stats no file (a snapshot from before
+the field is measured instead).
 
 Restoring is a copy-back over the data directory with the server stopped
 (``manage.py backups --restore``): a whole-directory operation, deliberately
@@ -146,7 +148,7 @@ def create(label: str, uploads: bool = False, *, auto: bool = False, workspaces:
         (work / "manifest.json").write_text(json.dumps({
             "created_at": page_now(), "label": label, "schema_version": data_version(),
             "files": files, "workspaces": workspaces, "uploads": bool(uploads), "upload_files": upload_files,
-            "auto": auto, "integrity": checks, "complete": True,
+            "size_bytes": _dir_size(work), "auto": auto, "integrity": checks, "complete": True,
             "note": "Snapshot of the Gamma data directory (gamma/backups.py). Restore with "
                     "`manage.py backups --restore <name>` while the server is stopped.",
         }, indent=2), encoding="utf-8")
@@ -166,11 +168,11 @@ def add_workspace(name: str, ws: str) -> str:
     that copy, the one from before its upgrade. The copy is written under a
     dot-name and renamed once both files are in, then listed with its
     checks as a line of ``ADDED_LIST``, which ``info`` adds to the
-    manifest's ``files`` and ``integrity`` (one line each, so the walk over
-    every workspace never rewrites a growing manifest). Returns the
-    snapshot's path; raises FileNotFoundError for an unknown snapshot and
-    OSError when the copy cannot be written (nothing is left behind
-    then)."""
+    manifest's ``files``, ``integrity`` and ``size_bytes`` (one line each,
+    so the walk over every workspace never rewrites a growing manifest).
+    Returns the snapshot's path; raises FileNotFoundError for an unknown
+    snapshot and OSError when the copy cannot be written (nothing is left
+    behind then)."""
     path = backup_path(name)
     if not path or not (path / "manifest.json").is_file():
         raise FileNotFoundError(name)
@@ -190,7 +192,8 @@ def add_workspace(name: str, ws: str) -> str:
     except BaseException:
         shutil.rmtree(str(work), ignore_errors=True)
         raise
-    line = json.dumps({"workspace": ws, "at": page_now(), "files": sorted(checks), "integrity": checks})
+    line = json.dumps({"workspace": ws, "at": page_now(), "files": sorted(checks), "integrity": checks,
+                       "size_bytes": _dir_size(target)})
     with _adding, open(path / ADDED_LIST, "a", encoding="utf-8") as listed:
         listed.write(line + "\n")
     integrity.record(checks, f"server backup {name}")
@@ -240,12 +243,23 @@ def _dir_size(path: Path) -> int:
     return sum(f.stat().st_size for f in path.rglob("*") if f.is_file())
 
 
+def _size(path: Path, manifest: dict, added: list[dict]) -> int:
+    """What the snapshot at ``path`` takes: the sizes its manifest and the
+    workspaces added to it recorded, or, for a snapshot from before they
+    did, its files measured."""
+    sizes = [manifest.get("size_bytes"), *(a.get("size_bytes") for a in added)]
+    if all(isinstance(n, int) for n in sizes):
+        return sum(sizes)
+    return _dir_size(path)
+
+
 def info(name: str) -> dict | None:
     """The backup's manifest plus its name, path, size, ``damaged`` (the
     database copies that failed their check) and ``auto`` as pruning reads
     it (``is_auto``: an old manifest has no flag); None for an unknown name
     or an interrupted snapshot (no manifest). The workspaces added to it
-    later (``add_workspace``) are in its ``files`` and ``integrity``."""
+    later (``add_workspace``) are in its ``files``, ``integrity`` and
+    ``size_bytes``."""
     path = backup_path(name)
     manifest = _manifest(path) if path and path.is_dir() else None
     if manifest is None:
@@ -255,7 +269,7 @@ def info(name: str) -> dict | None:
         manifest["files"] = [*manifest.get("files", []), *(f for a in added for f in a.get("files", []))]
         manifest["integrity"] = {**manifest.get("integrity", {}),
                                  **{k: v for a in added for k, v in (a.get("integrity") or {}).items()}}
-    return {"name": name, "path": str(path), "size_bytes": _dir_size(path), **manifest,
+    return {"name": name, "path": str(path), **manifest, "size_bytes": _size(path, manifest, added),
             "auto": is_auto(manifest), "damaged": integrity.damaged(manifest.get("integrity"))}
 
 

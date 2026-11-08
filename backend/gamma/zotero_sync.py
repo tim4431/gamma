@@ -102,8 +102,8 @@ import threading
 import time
 from datetime import datetime, timezone
 
-from . import (config, sync_clock, sync_engine, workspaces, zotero_account, zotero_local, zotero_merge,
-               zotero_sync_items, zotero_sync_pages, zotero_sync_pdfs, zotero_sync_rows)
+from . import (collab, config, ops, sync_clock, sync_engine, workspaces, zotero_account, zotero_local,
+               zotero_merge, zotero_sync_items, zotero_sync_pages, zotero_sync_pdfs, zotero_sync_rows)
 from . import zotero_remote as zr
 from .blocks_store import FOLDERS, filed_folders, label_names, newest_change_seq, page_parents, with_sub_pages, write_lock
 from .db import connect_pages_db, connect_users_db, page_now
@@ -424,10 +424,15 @@ def remove_link(ws: str) -> None:
     and Zotero's items as they are; what the link kept in the workspace's
     pages.db (its objects, queue and state, the sync log and conflicts) goes,
     and so do the marks it left on pages and blocks (``zotero_pdf``,
-    ``zotero_readonly``), on the pages in Recently deleted too, so a page
-    brought back later takes a PDF like any other. A round in flight is
-    stopped first (at its next unit, or at once while it waits on Zotero
-    or moves a file)."""
+    ``zotero_readonly``, ``zotero_author``), on the pages in Recently
+    deleted too, so a page brought back later takes a PDF like any other.
+    The marks go in one statement, in the transaction that empties the
+    link's tables: each live page that lost one is logged as a reload
+    (``ops.log_reload``: the change feed and a catching-up client refetch
+    it) and its room reloads after the commit; a page in Recently deleted
+    is touched when it is brought back. A round in flight is stopped first
+    (at its next unit, or at once while it waits on Zotero or moves a
+    file)."""
     if not get_link(ws):
         return
     save_link(ws, mode="off")  # a round in flight stops at its next unit...
@@ -440,25 +445,20 @@ def remove_link(ws: str) -> None:
             zr.clear(conn)
             conn.execute("DELETE FROM sync_conflicts")
             conn.execute("DELETE FROM sync_log")
-            # a page in Recently deleted is no page an op may write: its marks go in place (no session has it
-            # open; bringing it back touches it, so a clone fetches it whole)
+            live = [page for (page,) in conn.execute(
+                f"SELECT id FROM unified_blocks WHERE parent_id = 'root' AND id IN (SELECT CASE WHEN page_id = '' "
+                f"THEN id ELSE page_id END FROM unified_blocks WHERE {_MARKED})")]
             conn.execute(f"UPDATE unified_blocks SET properties = json_remove(properties, '$.zotero_pdf', "
-                         f"'$.zotero_readonly', '$.zotero_author') WHERE ({_MARKED}) AND NOT EXISTS (SELECT 1 FROM "
-                         f"unified_blocks p WHERE p.id = CASE WHEN unified_blocks.page_id = '' THEN unified_blocks.id "
-                         f"ELSE unified_blocks.page_id END AND p.parent_id = 'root')")
+                         f"'$.zotero_readonly', '$.zotero_author') WHERE {_MARKED}")
+            for page in live:
+                ops.log_reload(conn, page, zotero_local.ACTOR, client=zotero_local.CLIENT)
             conn.commit()
-            marked = conn.execute(f"SELECT id, page_id FROM unified_blocks WHERE {_MARKED}").fetchall()
     _access_seen.pop(ws, None)
     _clock.pending.pop(ws, None)
-    by_page: dict[str, list] = {}
-    for block_id, page_id in marked:
-        by_page.setdefault(page_id or block_id, []).append(zotero_local.props_op(
-            block_id, {"zotero_pdf": None, "zotero_readonly": None, "zotero_author": None}))
-    for page_id, ops in by_page.items():
-        try:
-            zotero_local.apply(ws, page_id, ops)
-        except Exception as e:  # noqa: BLE001 — a mark left behind is no reason to keep the link
-            log.warning(f"[zotero] {ws}: the link's marks on {page_id} stayed: {e}")
+    for page in live:
+        collab.publish_reload(ws, page)
+    if live:
+        ops.notify_commit(ws, zotero_local.CLIENT)
 
 
 _MARKED = ("json_extract(properties, '$.zotero_pdf') IS NOT NULL "

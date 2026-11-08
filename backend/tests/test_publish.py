@@ -325,11 +325,19 @@ def test_publish_end_to_end(publishing, monkeypatch):
     assert anonymous().get(f"/api/blocks/{page['id']}", params={"share": token}).json()["properties"]["doc_id"] == doc
 
     # publishing again changes the share, not the link; an edit through it comes back
-    r = local.post(f"/api/pages/{page['id']}/publish", json={"role": "edit"})
+    insert(local, page["id"], "pb_n2", "written since")
+    rounds = []
+    with monkeypatch.context() as m:
+        real_round = sync_engine.sync_workspace
+        m.setattr(sync_engine, "sync_workspace", lambda ws, **kw: rounds.append(ws) or real_round(ws, **kw))
+        r = local.post(f"/api/pages/{page['id']}/publish", json={"role": "edit"})
     assert r.json()["share"]["token"] == token and r.json()["share"]["role"] == "edit"
+    assert r.json()["url"] == out["url"] and r.json()["mirror"]["ws"] == local_ws
+    assert rounds == [] and "pb_n2" not in texts(host, page["id"])  # only the share changed: no round
     ops(anonymous(), page["id"], [{"op": "set", "id": "pb_n1", "content": "my note, edited there"}], share=token)
     sync(local_ws)
-    assert texts(local, page["id"]) == {"pb_n1": "my note, edited there"}
+    assert texts(local, page["id"]) == {"pb_n1": "my note, edited there", "pb_n2": "written since"}
+    assert texts(host, page["id"]) == {"pb_n1": "my note, edited there", "pb_n2": "written since"}
 
     state = local.get(f"/api/pages/{page['id']}/publish").json()
     assert state["published"] is True and state["url"] == out["url"] and state["share"]["role"] == "edit"
@@ -354,7 +362,7 @@ def test_publish_end_to_end(publishing, monkeypatch):
     assert next(w for w in local.get("/api/workspaces/mine").json()["workspaces"] if w["id"] == local_ws)["publishing"] is False
     assert anonymous().get(f"/api/share/{token}").status_code == 404
     assert page["id"] not in page_ids(host)
-    assert texts(local, page["id"]) == {"pb_n1": "my note, edited there"}
+    assert texts(local, page["id"]) == {"pb_n1": "my note, edited there", "pb_n2": "written since"}
     sync(local_ws)                                   # the tombstone there never reaches the page here
     assert page["id"] in page_ids(local)
     assert local.get(f"/api/pages/{page['id']}/publish").json()["published"] is False
@@ -363,7 +371,7 @@ def test_publish_end_to_end(publishing, monkeypatch):
     # published again: new there, a new link
     again = local.post(f"/api/pages/{page['id']}/publish").json()
     assert again["share"]["token"] != token
-    assert texts(host, page["id"]) == {"pb_n1": "my note, edited there"}
+    assert texts(host, page["id"]) == {"pb_n1": "my note, edited there", "pb_n2": "written since"}
 
     # the mirror's token revoked on the share host: the next publish exchanges a new one
     with connect_users_db() as conn:
