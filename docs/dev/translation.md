@@ -1806,8 +1806,26 @@ under `skipped`.
    and each formula goes on the baseline at its placeholder's place as a
    picture of its box on the original page (`FORMULA_DPI`, 600; coarser
    past `FORMULA_PIXELS`) on a clear ground, drawn before any page changed.
-   A formula whose box is off its page, or that a page join moved from a
-   page turned otherwise, is written as its text.
+   Under each picture lies the formula's text, written but not painted
+   (render mode 3), as the overlay keeps it under its crop: copying a
+   sentence copies its formulas with it, in their place. The text goes where
+   the placeholder was drawn (`_formula_texts`, in place of its drawing on
+   the temporary page, which also takes the placeholders out), so it reads
+   between the words around it, stretched over the formula's box: its em the
+   formula's height, its run the formula's width. Each letter goes in the
+   first face that has it (`_formula_fonts`): Noto Sans Math, which MuPDF
+   builds in (SIL Open Font License), for ASCII, Greek, operators, arrows
+   and math alphanumerics, then Charis SIL, the translation's own, for the
+   accented Latin and the Cyrillic it lacks (µ, ·, é), then MuPDF's
+   fallback. So a file takes one font more, subset: on a stand-in layout of
+   the fixture paper (its own words as the translation, its 120 math spans
+   as formulas) the file came to 226 KB against 169 KB without the text, in
+   the same 0.45 s. MuPDF writes a character past U+FFFF into a ToUnicode
+   map as its bare number, which readers garble (math italic 𝑥 came back as
+   U+1D46), so every such entry of the temporary document becomes its UTF-16
+   surrogate pair (`_surrogates`), the translation's own too. A formula
+   whose box is off its page, or that a page join moved from a page turned
+   otherwise, is written as its text, visibly.
 
 The fonts the redaction left unused leave the file as it is written
 (`garbage=1`; merging duplicates as well would only add time under the
@@ -1855,7 +1873,11 @@ MuPDF's behaviour the writer depends on, each held by a test in
 - A picture in a line is reported 0.8 of its height above where it is drawn
   (`_IMAGE_DROP`), with its bottom on the baseline.
 - The writer draws the empty placeholder as an opaque pixel stretched over
-  its place, so the temporary pages' pictures are redacted away before use.
+  its place, so the temporary pages' pictures are taken out before use (each
+  drawing replaced by its formula's hidden text).
+- MuPDF 1.28's PDF device writes ignored text in render mode 3 and 1.27's
+  paints it, so the hidden text sets the mode itself; a test reads it back
+  under the formula's picture, painted nowhere, at every turn of the page.
 - A vector crop of a formula (the page shown through a clip) carries the
   whole page's text, invisible but read by pdf.js and any reader that
   ignores clips. That is why formulas are pictures.

@@ -40,7 +40,10 @@ file what the overlay does on screen (frontend/src/pdf/TransOverlay.jsx):
    was changed: the overlay's crop, at print resolution. A vector crop
    (the original page shown through a clip) would carry the whole page's
    text with it, invisible but there for every reader that ignores clips
-   (pdf.js among them), around every formula.
+   (pdf.js among them), around every formula. Under the picture lies the
+   formula's text, written where its placeholder was drawn and painted
+   nowhere, as the overlay keeps it under its crop: copying the words
+   around it copies the formula with them (``_formula_texts``).
 
 PyMuPDF is not thread-safe: every call on a document, a page or a writer
 runs under ``pdf_text._lock``, a turn per page.
@@ -48,8 +51,10 @@ runs under ``pdf_text._lock``, a turn per page.
 
 import collections
 import html
+import itertools
 import io
 import math
+import re
 
 from . import pdf_text
 
@@ -81,6 +86,7 @@ _IMAGE_DROP = 0.8
 _PLACEHOLDER = b'<svg xmlns="http://www.w3.org/2000/svg" width="1" height="1"/>'
 _PLACEHOLDER_NAME = "formula.svg"
 _DEFAULT_SPACES = ("DefaultGray", "DefaultRGB", "DefaultCMYK")
+_FORMULA_FONTS = []  # a formula's hidden text's faces, loaded on first use (_formula_fonts)
 # A page's sample, and the rules that read a block's ground and ink from it: the
 # overlay's (frontend/src/pdf/transPaint.js), which says why each is what it is.
 SAMPLE_SCALE = 2           # pixels per pt
@@ -168,15 +174,23 @@ def _block_html(block, lang, frames, frame):
             out.append(html.escape(part.get("text") or "", quote=False))
             continue
         u = frame.unit  # in the viewer's units, the same size on the page it goes on
-        x0, y0, x1, y1 = part["box"]
-        base = min(max(part["base"], y0), y1)
-        width, ascent, descent = (x1 - x0) * u, (base - y0) * u, (y1 - base) * u
-        if ascent <= 0:  # set on its top: the whole box stands above the line
-            ascent, descent = descent, 0.0
+        x0, _, x1, _ = part["box"]
+        width = (x1 - x0) * u
+        ascent, descent = (v * u for v in _rise(part))
         out.append(f'<img id="f{len(formulas)}" src="{_PLACEHOLDER_NAME}" '
                    f'style="width:{width:.3f}px;height:{ascent:.3f}px">')
         formulas.append((part, width, ascent, descent))
     return f'<p lang="{html.escape(lang)}">{"".join(out)}</p>', formulas
+
+
+def _rise(part):
+    """A formula's height above and below its baseline, in the viewer's
+    units: all of it above when its baseline is at its top or higher, so it
+    stands on the line."""
+    _, y0, _, y1 = part["box"]
+    base = min(max(part["base"], y0), y1)
+    ascent, descent = base - y0, y1 - base
+    return (descent, 0.0) if ascent <= 0 else (ascent, descent)
 
 
 def _is_cjk(lang: str) -> bool:
@@ -292,8 +306,9 @@ def _sheets(mupdf, todo, frames, lang):
     number → the formulas placed on it, the pages with anything drawn).
     The k-th page of the document is the k-th page of ``todo``. MuPDF's
     writer draws each formula's empty placeholder as a picture of a pixel
-    stretched over its place, opaque; a sheet has no other picture, so its
-    pictures are taken out (a redaction of images only) before it is used."""
+    stretched over its place, opaque; a sheet has no other picture, so each
+    drawing of one becomes its formula's hidden text (``_formula_texts``)
+    before the fonts are subset."""
     archive = mupdf.Archive()
     archive.add((_PLACEHOLDER, _PLACEHOLDER_NAME))
     out = io.BytesIO()
@@ -317,17 +332,135 @@ def _sheets(mupdf, todo, frames, lang):
     with pdf_text._lock:
         sheets = pdf_text._mupdf_open(out.getvalue())
         try:
-            for page in sheets:
-                if page.get_images():
-                    page.add_redact_annot(page.rect, fill=False)
-                    page.apply_redactions(images=mupdf.PDF_REDACT_IMAGE_REMOVE,
-                                          graphics=mupdf.PDF_REDACT_LINE_ART_NONE,
-                                          text=mupdf.PDF_REDACT_TEXT_NONE)
+            fonts = _formula_fonts(mupdf)
+            for page, placed in zip(sheets, formulas.values()):
+                _formula_texts(mupdf, page, placed, fonts)
             sheets.subset_fonts()
+            _surrogates(sheets)
             data = sheets.tobytes(garbage=1, deflate=True)
         finally:
             sheets.close()
         return pdf_text._mupdf_open(data), formulas, drawn
+
+
+def _formula_fonts(mupdf):
+    """The faces a formula's hidden text is set in, each letter in the first
+    that has it: Noto Sans Math, which MuPDF builds in (SIL Open Font
+    License), for ASCII, Greek, the operators, arrows and math alphanumerics,
+    then Charis SIL, the translation's own, for the accented Latin and the
+    Cyrillic Noto Sans Math lacks (µ, ·, é). So a file takes one font more,
+    subset, where MuPDF's fallback alone would add Noto Serif for a micro
+    sign. That fallback, the one ``Story`` takes, finds any other letter. A
+    MuPDF built without them starts in Times. Made under the lock, once."""
+    if not _FORMULA_FONTS:
+        low = mupdf.mupdf
+        for data, size in (low.fz_lookup_noto_math_font(), low.fz_lookup_builtin_font("Charis SIL", 0, 0)):
+            if size:
+                _FORMULA_FONTS.append(mupdf.Font(fontbuffer=low.raw_to_python_bytes(data, size)))
+        if not _FORMULA_FONTS:
+            _FORMULA_FONTS.append(mupdf.Font("tiro"))
+    return _FORMULA_FONTS
+
+
+def _show(mupdf, fonts, text):
+    """``text`` as MuPDF text at size 1 from the origin, each run of letters
+    in the first of ``fonts`` that has them (the first, with MuPDF's
+    fallback, for a letter none has). → (the text, its advance)."""
+    low = mupdf.mupdf
+    run, trm = low.FzText(), low.fz_make_matrix(1, 0, 0, 1, 0, 0)
+
+    def face(c):
+        return next((k for k, f in enumerate(fonts) if f.has_glyph(ord(c))), 0)
+
+    for k, letters in itertools.groupby(text, face):
+        trm = low.fz_show_string(run, fonts[k].this, trm, "".join(letters), 0, 0, 0, low.FZ_LANG_UNSET)
+    return run, trm.e
+
+
+def _hidden_text(mupdf, pdf, fonts, part):
+    """A formula's text as content that paints nothing (render mode 3), in
+    the space its placeholder is drawn in: the unit square over the formula's
+    part above the baseline, the baseline at 0. Its em is the formula's whole
+    height and its run the formula's width, so a reader's selection covers
+    the picture. → (content, {font name: xref}), the fonts named for their
+    objects so they meet no name of the sheet's own; None for a text of
+    blanks."""
+    text = (part.get("text") or "").strip()
+    if not text:
+        return None
+    low = mupdf.mupdf
+    run, advance = _show(mupdf, fonts, text)
+    if advance <= 0:
+        return None
+    ascent, descent = _rise(part)
+    resources, content = low.pdf_new_dict(pdf, 1), low.fz_new_buffer(256)
+    device = low.pdf_new_pdf_device(pdf, low.FzMatrix(), resources, content)
+    low.fz_ignore_text(device, run, low.FzMatrix(1 / advance, 0, 0, (ascent + descent) / ascent, 0, 0))
+    low.fz_close_device(device)
+    named = low.pdf_dict_gets(resources, "Font")
+    names = {low.pdf_to_name(low.pdf_dict_get_key(named, i)): low.pdf_to_num(low.pdf_dict_get_val(named, i))
+             for i in range(low.pdf_dict_len(named))}
+    chunk = re.sub(rb"/([A-Za-z0-9]+) (?=[0-9.]+ Tf)",
+                   lambda m: b"/Fm%d " % names[m[1].decode()] if m[1].decode() in names else m[0],
+                   low.fz_buffer_extract(content))
+    # MuPDF 1.28's device sets the render mode itself; 1.27's (the mobile
+    # builds') paints the text in the sheet's ink.
+    return b"q\n3 Tr\n" + chunk + b"Q\n", {f"Fm{xref}": xref for xref in names.values()}
+
+
+def _formula_texts(mupdf, page, placed, fonts) -> None:
+    """A sheet's formula placeholders put to use, under the lock: each
+    drawing of one (the writer's single content stream draws them in the
+    order the formulas were placed) becomes that formula's hidden text
+    (``_hidden_text``), and the pictures leave the page. Should the count
+    differ from the formulas', the drawings only go."""
+    names = [item[7] for item in page.get_images(full=True)]
+    if not names:
+        return
+    doc = page.parent
+    stream = page.get_contents()[0]
+    content = doc.xref_stream(stream)
+    draw = re.compile(rb"/(" + b"|".join(re.escape(n.encode()) for n in names) + rb") Do\b")
+    count = len(draw.findall(content))
+    pdf = mupdf._as_pdf_document(doc)
+    hidden = iter([_hidden_text(mupdf, pdf, fonts, part) for part, _ in placed] if count == len(placed)
+                  else [None] * count)
+    used = {}
+
+    def put(_match):
+        made = next(hidden)
+        if made is None:
+            return b""
+        used.update(made[1])
+        return made[0]
+
+    doc.update_stream(stream, draw.sub(put, content))
+    _put_resources(doc, page, "XObject", {name: "null" for name in names})
+    _put_resources(doc, page, "Font", {name: f"{xref} 0 R" for name, xref in used.items()})
+
+
+def _utf16(match) -> bytes:
+    code = int(match[1], 16) - 0x10000
+    return b"<%04x%04x>" % (0xD800 + (code >> 10), 0xDC00 + (code & 0x3FF))
+
+
+def _surrogates(doc) -> None:
+    """MuPDF writes a character past U+FFFF into a font's ToUnicode map as its
+    bare number (``<1d465>``), which readers garble (MuPDF and pdf.js read
+    U+1D46): each becomes its pair of UTF-16 surrogates (``<d835dc65>``). A
+    formula's math italic is one, and so are an emoji and a rare CJK letter in
+    the translation. The codes beside them are four digits."""
+    seen = set()
+    for xref in range(1, doc.xref_length()):
+        kind, value = doc.xref_get_key(xref, "ToUnicode")
+        if kind != "xref" or value in seen:
+            continue
+        seen.add(value)
+        cmap = int(value.split()[0])
+        data = doc.xref_stream(cmap)
+        fixed = re.sub(rb"<([0-9a-fA-F]{5,6})>", _utf16, data)
+        if fixed != data:
+            doc.update_stream(cmap, fixed)
 
 
 def _pictures(mupdf, doc, formulas, frames) -> dict:
@@ -516,18 +649,19 @@ def _masks(block):
     return out
 
 
-def _put_spaces(doc, page, spaces) -> None:
-    """Colour spaces into a page's /Resources /ColorSpace, by name. MuPDF sets
-    a key by its path only through direct dictionaries, so the path starts at
-    the last object on the way."""
+def _put_resources(doc, page, kind, entries) -> None:
+    """Entries into a page's /Resources of a ``kind`` (/ColorSpace, /Font…),
+    by name, ``"null"`` taking one out. MuPDF sets a key by its path only
+    through direct dictionaries, so the path starts at the last object on the
+    way."""
     owner, path = page.xref, ""
-    for key in ("Resources", "ColorSpace"):
-        kind, value = doc.xref_get_key(owner, path + key)
-        if kind == "xref":
+    for key in ("Resources", kind):
+        got, value = doc.xref_get_key(owner, path + key)
+        if got == "xref":
             owner, path = int(value.split()[0]), ""
         else:
             path += key + "/"
-    for name, value in spaces.items():
+    for name, value in entries.items():
         doc.xref_set_key(owner, path + name, value)
 
 
@@ -556,7 +690,7 @@ def _stamp(mupdf, page, frame, blocks, sheets, sheet_index, pictures):
         lost = [xref for xref in before if xref not in now]
         if lost:
             doc.xref_set_key(page.xref, "Annots", "[" + " ".join(f"{xref} 0 R" for xref in now + lost) + "]")
-        _put_spaces(doc, page, {name: value for name, value in spaces.items() if value != "null"})
+        _put_resources(doc, page, "ColorSpace", {name: value for name, value in spaces.items() if value != "null"})
         grounds = {}
         for block in blocks:
             grounds.setdefault(block.get("ground") or (255, 255, 255), []).append(block)

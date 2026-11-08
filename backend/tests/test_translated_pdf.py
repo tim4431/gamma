@@ -2,8 +2,8 @@
 docs/dev/translation.md "Exporting the translation"): the original lines go
 and only they, the translation is laid out in their place and shrunk to
 fit, upright on a turned page, a formula comes back as a picture of itself
-on the baseline, the original text stays out of the file even behind a
-clip, and one subset font serves every page. Then the export job that
+on the baseline with its text hidden under it, the original text stays out
+of the file even behind a clip, and one subset font serves every page. Then the export job that
 carries it (POST /api/jobs/export with ``translation``): the annotated PDF
 of the page with its translation, and what it refuses; and a folder's, with
 ``translations``, each paper's into its own PDF."""
@@ -564,6 +564,76 @@ def test_no_original_text_rides_along_with_a_formula_even_behind_a_clip():
     everything = _text(out, clip=False)
     assert "Beta" not in everything and "speaks" not in everything
     assert everything.count("Alpha line one") == 1 and everything.count("Kept paragraph") == 1
+
+
+def _hidden(page):
+    """The text a page writes but does not paint (render mode 3), and where:
+    ``[(text, box)]`` per span."""
+    return [("".join(chr(c[0]) for c in span["chars"]), _mupdf().Rect(span["bbox"]))
+            for span in page.get_texttrace() if span["type"] == 3]
+
+
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+def test_a_formulas_text_lies_hidden_under_its_picture_where_it_reads(rotation):
+    from pypdf import PdfReader
+
+    pymupdf = _mupdf()
+    data = _paper(rotation=rotation)
+    src = pymupdf.open(stream=data, filetype="pdf")[0]
+    block = {"lines": [_line_box(src, "Beta"), _line_box(src, "and more")], "size": 10,
+             "parts": ["Vor ", _formula(src), " und nach"]}
+    out = _write(data, [{"page": 1, "blocks": [block]}], "de")
+    page = pymupdf.open(stream=out, filetype="pdf")[0]
+    # copied with the words around it, in their order: the text stands where
+    # the placeholder was drawn, not after the paragraph
+    assert "Vor x und nach" in page.get_text("text").replace("\n", " ")
+    assert "Vor x und nach" in PdfReader(io.BytesIO(out)).pages[0].extract_text().replace("\n", " ")
+    # painted nowhere, under the picture and across it, turned with the page
+    (text, box), = _hidden(page)
+    picture = pymupdf.Rect(page.get_image_info()[0]["bbox"])
+    assert text == "x" and (picture + (-0.1, -0.1, 0.1, 0.1)).contains(box)
+    assert min(box.width / picture.width, box.height / picture.height) > 0.6
+    # the placeholders are gone: the page draws the formula's picture alone
+    assert len(page.get_images()) == 1
+
+
+def test_a_formulas_math_copies_as_itself_past_the_first_plane_too():
+    from pypdf import PdfReader
+
+    pymupdf = _mupdf()
+    data = _paper()
+    src = pymupdf.open(stream=data, filetype="pdf")[0]
+    math = "∑ᵢ 𝑥ᵢ² ⊗ ℝ → 𝒜"  # Noto Sans Math's, and math italic and script past U+FFFF
+    block = {"lines": [_line_box(src, "Beta"), _line_box(src, "and more")], "size": 10,
+             "parts": ["Vor ", {**_formula(src), "text": math}, " und 𝑓 nach"]}
+    out = _write(data, [{"page": 1, "blocks": [block]}], "de")
+    page = pymupdf.open(stream=out, filetype="pdf")[0]
+    assert "".join(text for text, _ in _hidden(page)) == math
+    for got in (page.get_text("text"), PdfReader(io.BytesIO(out)).pages[0].extract_text()):
+        assert f"Vor {math} und 𝑓 nach" in got.replace("\n", " ")
+    assert any("Noto Sans Math" in font[3] for font in page.get_fonts(full=True))
+
+
+def test_a_formulas_latin_letters_take_the_translations_face_not_a_third_one():
+    pymupdf = _mupdf()
+    data = _paper()
+    src = pymupdf.open(stream=data, filetype="pdf")[0]
+    block = {"lines": [_line_box(src, "Beta"), _line_box(src, "and more")], "size": 10,
+             "parts": ["Vor ", {**_formula(src), "text": "µ·é × α"}, " und nach"]}
+    page = pymupdf.open(stream=_write(data, [{"page": 1, "blocks": [block]}], "de"), filetype="pdf")[0]
+    assert "".join(text for text, _ in _hidden(page)) == "µ·é × α"
+    faces = {font[3].split("+")[-1] for font in page.get_fonts(full=True)}
+    assert faces == {"Charis SIL Regular", "Noto Sans Math Regular", "Helvetica", "Times-Italic"}, faces
+
+
+def test_a_formula_of_blanks_leaves_no_hidden_text():
+    pymupdf = _mupdf()
+    data = _paper()
+    src = pymupdf.open(stream=data, filetype="pdf")[0]
+    block = {"lines": [_line_box(src, "Beta"), _line_box(src, "and more")], "size": 10,
+             "parts": ["Vor ", {**_formula(src), "text": " "}, " und nach"]}
+    page = pymupdf.open(stream=_write(data, [{"page": 1, "blocks": [block]}], "de"), filetype="pdf")[0]
+    assert not _hidden(page) and len(page.get_images()) == 1
 
 
 def test_a_formula_from_another_page_is_drawn_from_that_page():

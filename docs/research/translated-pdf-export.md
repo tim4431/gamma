@@ -139,14 +139,60 @@ the same at print resolution, with a clear ground. On the fixture, all 154
 formulas as pictures took 1.31 s for the whole write, 1.73 s once the lines
 were masked as well. The file went from 215,993 to 160,324 bytes, smaller
 because the fonts the redaction left unused leave it. It holds one CJK font
-subset and no hidden text.
+subset and none of the original page's text (the formulas' own text came
+later, below).
+
+## The formula's text under its picture
+
+The overlay keeps a formula's extracted text under its crop, so copying a
+sentence copies its formulas. The file does the same with text written in
+render mode 3, which paints nothing. Glyphs that are never painted still
+need a font: each letter needs a glyph of its own, so that the font's
+ToUnicode map can give it back. The candidates, measured in November 2026:
+
+| Font | Where from | Licence | Size | Covers |
+|---|---|---|---|---|
+| Noto Sans Math | built into MuPDF (`fz_lookup_noto_math_font`) | SIL OFL | 253 KB, 2,655 glyphs | ASCII, 49 of 57 basic Greek, all of U+2200–22FF and U+2A00–2AFF, 99 of 112 arrows, 996 of 1,024 math alphanumerics; 6 of Latin-1's 96 (no µ, ·, é) |
+| Charis SIL | built into MuPDF, the translation's face | SIL OFL | 58 KB | all of Latin-1 and Cyrillic, part of Greek (no ε, η, ψ), some operators (∑, ≤) |
+| STIX Two Math, Latin Modern Math | would ship with the repo (not tried) | SIL OFL, GUST Font License | about 0.5 to 1 MB | all of the above |
+
+No font has to ship with the repo. The writer sets each letter in the first
+face that has it, Noto Sans Math and then Charis, and MuPDF's fallback
+(`fz_encode_character_with_fallback`) finds the rest. Started in Charis
+alone, the fallback brought in Noto Serif for a Greek letter, about 33 KB
+more. Started in Noto Sans Math alone, it brought in Noto
+Serif for µ. MuPDF's CFF subsetter keeps the shared subroutines, so a subset
+of a few glyphs still weighs 25 KB, and the ToUnicode map lists the whole
+font (9 KB).
+
+A stand-in layout of the fixture paper, its own words as the translation and
+MuPDF's 120 math spans as the formulas, came to 226 KB with the text and
+169 KB without it. The write took the same 0.45 s.
+
+Two findings shaped the writer:
+
+- **Where the text goes.** Text added after the paragraph's is read after
+  it: pdf.js orders a page's text as the content stream draws it, so a
+  selection across a sentence would leave its formulas out. The
+  placeholders' drawings are already in reading order, so each is replaced
+  with the formula's text, written in the placeholder's own space by a PDF
+  device of its own. A device of its own is needed because the writer leaves
+  out a `Tf` that repeats the last one, and that would make a moved chunk
+  depend on the state around it. The fonts are renamed for their objects so
+  they meet none of the sheet's names. MuPDF 1.28's device writes ignored
+  text in render mode 3, but 1.27's (the mobile builds) paints it, so the
+  writer sets the mode itself.
+- **Past U+FFFF.** MuPDF writes such a character into a ToUnicode map as its
+  bare number, `<1d465>` for 𝑥, which readers garble: MuPDF and pdf.js 4.4
+  both read U+1D46 (ᵆ), and an emoji in the translation came back as U+1F60
+  (ὠ). The writer turns each one into its UTF-16 surrogates (`<d835dc65>`).
+  With the surrogates, MuPDF, pypdf and pdf.js all give back
+  `∑ᵢ 𝑥ᵢ² ⊗ ℝ → 𝒜` and the emoji.
 
 ## Still open
 
 - Formulas as vector glyphs, which would need the isolation above without
   its cost: MuPDF's content filter with a culler, or the formula's glyph
   runs written again with the page's own font resources.
-- The formula's text in the file, which the overlay keeps under its crop
-  for copying. Writing it invisibly needs a font with math coverage.
 - Justified text and the paper's own typeface, where the overlay and the
   file both use a plain serif.
