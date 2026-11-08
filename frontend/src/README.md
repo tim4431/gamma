@@ -49,6 +49,10 @@ through barrel files. `main.jsx` remains the Vite entry point.
   `import "./HighlightReview"` would find the rules there and the component on
   Linux. `tests/pathCase.test.mjs` resolves every import both ways, and checks
   that no two tracked paths differ only by case.
+- New state goes into an owner beside its feature, not into `app/App.jsx`.
+  The owner is a `use…` hook or a store read through `useSyncExternalStore`,
+  and its pure part has a node test
+  ([decomposition plan](../../docs/dev/frontend-refactor.md#new-state)).
 - Import the owning module directly. `shared/model/blockModel.js` is the general
   page/block model, not an import adapter.
 - Keep styles with their owner when already separate. `main.jsx` deliberately

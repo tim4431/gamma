@@ -39,11 +39,15 @@ an area, and update its documentation with the code.
   thread. Check-then-write operations need a write lock or a database
   constraint. See [debugging gotchas](debugging.md#gotchas-worth-knowing).
 - **Frontend conventions:** reuse the command catalogs, preference registry,
-  design tokens, and shared controls. Translate user-visible strings through
-  `t` / `tn` / `T` and update the catalogs in the same change. An issue found
-  on one device that may reach other UI (logic, display or arrangement) gets
-  one clean, unified solution in the shared layer, not a patch for that device
-  or surface. See [hotkeys](hotkeys.md), [settings](settings.md),
+  design tokens, and shared controls. New state goes into an owner module
+  beside its feature (a hook or a store), not into `app/App.jsx`.
+  `frontend/tests/appState.test.mjs` holds App's hooks and size to a
+  baseline ([New state](frontend-refactor.md#new-state)). Translate
+  user-visible strings through `t` / `tn` / `T` and update the catalogs in
+  the same change. An issue found on one device that may reach other UI
+  (logic, display or arrangement) gets one clean, unified solution in the
+  shared layer, not a patch for that device or surface. See
+  [hotkeys](hotkeys.md), [settings](settings.md),
   [UI design](ui-design.md), [i18n](i18n.md), and the
   [source map](../../frontend/src/README.md).
 - **AI providers:** build per-user configuration through `ai_runtime(user)`;

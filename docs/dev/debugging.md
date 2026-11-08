@@ -295,6 +295,9 @@ them only after further relevant changes or when a failure needs investigation.
   run also re-renders images, because this machine's system fonts differ from
   the last renderer's, restore them with `git checkout` and keep only the
   ledger's lockfile line ([design/brand](../../design/brand/README.md)).
+- A change to `app/App.jsx` also runs `node --test tests/appState.test.mjs`
+  from `frontend/`. CI runs `npm test` only on the pull request to main,
+  weeks after a hook lands on dev.
 - UI behavior changes: build once after the final frontend edit so the suite
   sees current code, then `npm run e2e -- --changed`, which runs the groups
   the working tree's changes select (see [the browser suite](#browser-end-to-end-suite);
@@ -505,11 +508,13 @@ theme lists, every theme resolving, the contrast ratchet),
 `designTokens` (the raw-value ratchet on the stylesheets, and no
 `(pointer: coarse)` rule sizing a control but the text box's handle),
 `inert` (no string given to the `inert` prop in `src`, and React writing
-the attribute for true and removing it for false) and `uiConventions` (the
+the attribute for true and removing it for false), `uiConventions` (the
 conventions ratchet over `src/`: the press helpers, pointer.js,
 `pickFiles`, `composing` on a text field's Enter, the shared components'
-classes, the icon sizes, hover reveals that take a tap).
-The three ratchets are described in [ui-design.md](ui-design.md#ratchets). A
+classes, the icon sizes, hover reveals that take a tap) and `appState` (the
+ratchet on `app/App.jsx`'s state and effect hooks and its code lines). The
+three design ratchets are described in [ui-design.md](ui-design.md#ratchets),
+App's in [frontend-refactor.md](frontend-refactor.md#new-state). A
 module is testable there when its relative imports carry the `.js`
 extension (node resolves nothing else). Modules that import React can still be imported for their
 pure exports. A few tests render React itself. The markdown ones

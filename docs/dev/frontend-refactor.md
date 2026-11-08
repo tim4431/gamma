@@ -2,11 +2,13 @@
 
 The file organization is in place ([source map](../../frontend/src/README.md):
 functional folders directly under `src/`, alongside `app/` and `shared/`,
-without an extra `features/` layer), and so is the startup bundle split
-([Lazy boundaries](#lazy-boundaries)). The state decomposition below is
+without an extra `features/` layer), and so are the startup bundle split
+([Lazy boundaries](#lazy-boundaries)) and the rule that keeps new state
+out of App ([New state](#new-state)). The state decomposition below is
 still mostly a proposal: modules have moved, most of their state
-ownership has not been redesigned, and `app/App.jsx` is about 11,900
-lines. Three steps are taken: the block tree holds the document only, and
+ownership has not been redesigned, and `app/App.jsx` is still the largest
+file by far (its counts are in `frontend/tests/app-state-baseline.json`).
+Three steps are taken: the block tree holds the document only, and
 the viewer's own state (the open editor, their folding) is App's `view`
 beside it (`shared/model/blockModel.js`, [collab.md](collab.md)); the AI
 connect dialog's form state is `useProviderEditor`
@@ -96,6 +98,85 @@ with one that used to follow it. A chunk that cannot be fetched (a deploy
 replaced the hashed files under an open tab) leaves the fallback in place
 instead of unmounting the app; a reload fetches the new files. Sizes and
 what each first screen downloads: [the bundle note](../research/bundle.md).
+
+## New state
+
+Built, like the lazy boundaries. A feature's new state, and the effects
+that keep it, go into an owner module beside the feature, never into
+`app/App.jsx`. The owner is a `use…` hook, as the `ink/` owners,
+`comments/useComments.js` and `inbox/useInbox.js` are. State that must
+outlive a component, or be read outside React, is a store with listeners
+that components read through `useSyncExternalStore` (`pdf/translateState.js`,
+`recording/recorderStore.js`, `replay/playback.js`,
+`settings/settingsReads.js`). App calls the owner and hands its commands on.
+
+- **An owner is tested.** Its rules are a pure module with a node test,
+  since the frontend has no component tests: `ink/stripState.js` under
+  `useInkStrip.js`, `ink/inkSaver.js` under `useInkSave.js`,
+  `inbox/inboxText.js` under `useInbox.js`.
+- **An owner is narrow.** It takes the few inputs it reads and returns
+  state and stable commands. A hook that takes App's variables wholesale
+  moves code without giving it an owner.
+- **A fix adds no state to App.** A fix that needs one more value folds it
+  into state that App or an owner already holds: a failed read is a field
+  of that read's state, not a second flag. Or it takes out an App hook it
+  makes unneeded.
+
+`frontend/tests/appState.test.mjs` holds App to
+`frontend/tests/app-state-baseline.json`, and `frontend/tools/appState.mjs`
+does the counting (its commands below run from `frontend/`). It reads
+`app/App.jsx` with its comments, strings and regex literals blanked, and
+counts two things:
+
+- **Hooks:** the calls of `useState`, `useReducer`, `useRef`, `useEffect`
+  and `useLayoutEffect`, and of the shared helpers that each hold one state
+  for their caller: `usePersistedState`, `usePersistedFlag` and `useCopied`.
+  They are one sum, so moving a value from a state to a ref, or an effect
+  into a handler's ref read, is net zero.
+- **Code lines:** lines with code on them. Blank lines and comments, a JSX
+  comment's braces included, cost nothing.
+
+`useMemo` and `useCallback` are not counted. They are the glue a
+composition root keeps, and often the fix itself: a new row prop needs a
+stable identity ([Goal and current constraints](#goal-and-current-constraints)).
+The shared helpers of the same kind are not counted either: `useStableActions`,
+`useWheelPan` (a callback ref) and `useLatch`, the mount latch that
+[a new lazy surface](#lazy-boundaries) takes. Nor are `useSyncExternalStore`
+and the calls of owner hooks, `shared/`'s `useTextScale` among them, since
+they are how App composes its owners. The tool prints the uncounted hooks
+from React and `shared/` with their counts. A feature's own owner hooks are
+not listed.
+
+The test fails in four ways:
+
+- **A hook from React or `shared/` that the tool does not list.** The tool
+  reads named and default imports and calls on a namespace import, as
+  `React.useId()` or `W.useToggle()`. Such a hook goes
+  into the tool's `STATE` when it holds a value for its caller, as
+  `useCopied` does, and into `INFO` when it is glue or a shared owner.
+- **More hooks than the baseline.** The new state goes into an owner.
+  `node tools/appState.mjs --list` prints every counted call with its line.
+- **Fewer hooks than the baseline.** `node tools/appState.mjs --baseline`
+  records the lower count in the same commit, so the next feature cannot
+  spend it. The diff then shows App's progress.
+- **More code lines than the ceiling.** The ceiling is the smallest size
+  recorded plus 1,000 code lines. Move code out of App first, in a commit
+  of its own: dead code, a view section, or a group of handlers into its
+  feature's folder ([Proposed ownership](#proposed-ownership)).
+
+`--baseline` never raises anything. While App holds more hooks than
+recorded, it prints both counts, writes nothing and exits 1. It sets the
+ceiling to the lower of the recorded one and the current size plus 1,000.
+A hook newly counted is the one rise, and it is written into the
+baseline's `hooks` by hand, in the commit that changes the list. With no
+option the tool prints each hook's count (the uncounted ones too), the code
+lines and the ceiling.
+
+Only App is tracked (the tool's `FILES`). The other large components are
+their feature's own home already and hold many small components, so a
+per-file count would fail a subcomponent's local state. CI runs the test
+only on the pull request to main, so a change to `app/App.jsx` runs it
+locally ([test selection](debugging.md#local-changes-test-the-affected-modules)).
 
 ## Goal and current constraints
 
