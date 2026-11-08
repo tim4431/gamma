@@ -10,7 +10,7 @@ import time
 
 import pytest
 
-from ai_fixtures import segmented, texts_of
+from ai_fixtures import segmented, text_stream, texts_of
 from conftest import account_of, at_once, login, make_user, together, workspace_of
 
 BRIEF_SYSTEM = "You prepare a translator's brief"
@@ -324,21 +324,10 @@ def _stream_fake(monkeypatch, calls):
     each text of the request, as Anthropic SSE deltas."""
     import gamma.routers.translate as translate_mod
 
-    class Resp:
-        def __init__(self, text):
-            self.lines = [f'data: {json.dumps({"type": "content_block_delta", "delta": {"type": "text_delta", "text": text}})}\n'.encode(),
-                          b"data: [DONE]\n"]
-
-        def __iter__(self):
-            return iter(self.lines)
-
-        def close(self):
-            pass
-
     def fake_open(messages, system, entry, rt, **kw):
         batch = texts_of(messages)
         calls["translate"].append({"system": system, "batch": batch, "kw": kw})
-        return Resp(segmented([f"S:{t}" for t in batch]))
+        return text_stream([segmented([f"S:{t}" for t in batch])])
 
     monkeypatch.setattr(translate_mod, "_open_ai", fake_open)
     monkeypatch.setattr(translate_mod, "_TRANSLATE_STREAM_INTERVAL", 0)

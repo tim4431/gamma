@@ -1,10 +1,10 @@
 import { Account, wanted } from "../harness.mjs";
 
-// Settings → Language and Translation → Language (shared/i18n, docs/dev/i18n.md): the
-// interface follows the pick at once, the pane comes back after the
-// reload, the pick outlives the profile pull of the reloaded app and a
-// second reload, and English is back on "System" in an English browser. A
-// browser that has never seen the account comes up in the account's
+// Settings → Language and Translation → Interface language (shared/i18n,
+// docs/dev/i18n.md): the interface follows the pick at once, the pane comes
+// back after the reload, the pick outlives the profile pull of the reloaded
+// app and a second reload, and English is back on "System" in an English
+// browser. A browser that has never seen the account comes up in the account's
 // language and theme from the session, with no reload, and keeps its own
 // for a language or theme this app does not know.
 export async function i18nScenarios(env) {
@@ -47,12 +47,12 @@ export async function i18nScenarios(env) {
       const applied = () => page.evaluate(() => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(r, 50)))));
       // Observe both promises immediately so a failed picker reports a step
       // failure instead of leaving an unhandled response-wait rejection.
-      await Promise.all([nextPull(), pick(page, "Language", "中文")]);
+      await Promise.all([nextPull(), pick(page, "Interface language", "中文")]);
       await until(() => page.evaluate(() => document.documentElement.lang === "zh-CN"), { what: "the document language follows" });
       // The app reloaded under the new locale, on the same pane.
       await page.getByRole("dialog", { name: "设置", exact: true }).waitFor();
       assertEq(await page.getByRole("navigation", { name: "设置分类" }).getByRole("button", { name: "语言与翻译", exact: true }).getAttribute("aria-current"), "page", "the language pane reopens");
-      assertEq(await page.locator('.settingsPane [data-setting="语言"] .settingLabel').textContent(), "语言", "the row itself is translated");
+      assertEq(await page.locator('.settingsPane [data-setting="界面语言"] .settingLabel').textContent(), "界面语言", "the row itself is translated");
       assertEq(await page.evaluate(() => localStorage.getItem("gamma-language")), "zh", "the pick is stored");
       await applied();
       assertEq(await page.evaluate(() => document.documentElement.lang), "zh-CN", "the pick survives the profile pull");
@@ -64,7 +64,7 @@ export async function i18nScenarios(env) {
       assertEq(await page.evaluate(() => document.documentElement.lang), "zh-CN", "a reload paints Chinese from the stored pick");
       await openSettings(page, "账户与设置", "设置…");
       await page.getByRole("navigation", { name: "设置分类" }).getByRole("button", { name: "语言与翻译", exact: true }).click();
-      await Promise.all([nextPull(), pick(page, "语言", "系统")]);
+      await Promise.all([nextPull(), pick(page, "界面语言", "系统")]);
       await until(() => page.evaluate(() => document.documentElement.lang === "en"), { what: "System follows the English browser" });
       await settings(page).waitFor();
       await applied();

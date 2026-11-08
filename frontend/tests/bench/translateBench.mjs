@@ -10,8 +10,8 @@
 //
 // With no PDF it compiles the fixture paper (tests/fixtures/translate/paper.tex,
 // needs pdflatex on PATH). Pages are segmented and planned with the viewer's
-// own modules (pdf/pdfTranslate.js, pdf/translatePlan.js, pdf/pdfFonts.js)
-// under pdf.js in Node. Writes <out>/<label>.json and <out>/<label>.html; the
+// own modules (pdf/pdfTranslate.js, pdf/pageFlow.js, pdf/pageFigures.js,
+// pdf/translatePlan.js, pdf/pdfFonts.js) under pdf.js in Node. Writes <out>/<label>.json and <out>/<label>.html; the
 // default out directory is the OS temp dir.
 //
 // --live translates through an isolated Gamma server (the e2e harness: a free
@@ -36,8 +36,10 @@ import path from "node:path";
 import { execFileSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { segmentPage, textRuns } from "../../src/pdf/pdfTranslate.js";
-import { BREAK, ENDS_SENTENCE, TOKEN, chunkUnits, createPlanner, requestFields } from "../../src/pdf/translatePlan.js";
+import { ENDS_SENTENCE, TOKEN } from "../../src/pdf/pageFlow.js";
+import { BREAK, chunkUnits, createPlanner, requestFields } from "../../src/pdf/translatePlan.js";
 import { pageFaces } from "../../src/pdf/pdfFonts.js";
+import { figureRegions, markFigures } from "../../src/pdf/pageFigures.js";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const FRONTEND = path.resolve(HERE, "../..");
@@ -104,9 +106,9 @@ async function loadPdf(file, spec) {
     const page = await doc.getPage(pn);
     const vp = page.getViewport({ scale: 1 });
     const tc = await page.getTextContent();
-    const faces = await pageFaces(page, new Set(tc.items.map((it) => it.fontName)), { known });
+    const faces = await pageFaces(page, new Set(tc.items.map((it) => it.fontName)), known);
     const runs = textRuns(tc.items, vp.transform, { faces, styles: tc.styles });
-    pages.push({ pn, width: vp.width, height: vp.height, runs });
+    pages.push({ pn, width: vp.width, height: vp.height, runs, regions: await figureRegions(page) });
     page.cleanup();
   }
   await doc.destroy();
@@ -116,15 +118,21 @@ async function loadPdf(file, spec) {
 // --- planning ---------------------------------------------------------------
 
 // A whole-document job, pages in order: every page is in the job, so
-// paragraphs join across page breaks as they do in the viewer.
+// paragraphs join across page breaks as they do in the viewer, and the
+// reference lists and the text in figures stay original as they do there.
 function plan(pages) {
-  const paras = new Map(pages.map((p) => [p.pn, segmentPage(p.runs)]));
-  const planner = createPlanner({ paras: (pn) => paras.get(pn) || null, inJob: (pn) => paras.has(pn) });
+  const paras = new Map(pages.map((p) => {
+    const blocks = segmentPage(p.runs);
+    markFigures(blocks, p.regions);
+    return [p.pn, blocks];
+  }));
+  let refsLeft = 0;
+  const planner = createPlanner({ paras: (pn) => paras.get(pn) || null, inJob: (pn) => paras.has(pn), leave: () => { refsLeft += 1; } });
   const chunks = [];
   for (const p of pages) {
     for (const c of chunkUnits(planner.planPage(p.pn))) chunks.push({ pn: p.pn, ...c });
   }
-  return { paras, chunks };
+  return { paras, chunks, refsLeft };
 }
 
 // --- dry metrics ------------------------------------------------------------
@@ -159,13 +167,15 @@ function startsMid(text) {
 }
 
 function dryMetrics(docs) {
-  const m = { pages: 0, blocks: 0, kept: 0, units: 0, chunks: 0, chars: 0, endsMid: 0, startsMid: 0,
+  const m = { pages: 0, blocks: 0, kept: 0, figureBlocks: 0, refsLeft: 0, units: 0, chunks: 0, chars: 0, endsMid: 0, startsMid: 0,
               joined: 0, tokens: 0, mathChars: 0, glued: 0, contextMathChars: 0 };
   for (const d of docs) {
     m.pages += d.pages.length;
+    m.refsLeft += d.plan.refsLeft;
     for (const paras of d.plan.paras.values()) {
       m.blocks += paras.length;
       m.kept += paras.filter((p) => !p.translate).length;
+      m.figureBlocks += paras.filter((p) => p.figure).length;
     }
     m.chunks += d.plan.chunks.length;
     for (const c of d.plan.chunks) {
@@ -335,7 +345,7 @@ async function translateLive(docs, opts) {
         const started = Date.now();
         const body = {
           texts: c.texts, lang: opts.lang, model: "", effort: env.effort,
-          ...requestFields({ pageId: d.pageId, ...c.context }), ...(waitBrief ? {} : { wait_brief: false }),
+          ...requestFields({ pageId: d.pageId, ...c.context, waitBrief }),
         };
         let res = null;
         try {

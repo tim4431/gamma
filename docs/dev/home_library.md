@@ -773,7 +773,10 @@ version comes back live under the same ids, its chats and op log kept
 for good through `ops.delete_page`, the one path that drops a page's chats
 and index rows. It deletes the rows that went with the page too, each
 the same way. Delete permanently, Empty and the sweeper walk the listing,
-so they reach those rows only through their page. The sweeper runs at
+so they reach those rows only through their page. Empty and the sweeper
+purge data.db's rows of papers no block carries once at the end of a pass
+that deleted a page, not per page, because `pdf_index.purge_unused` reads
+every block's properties. The sweeper runs at
 startup and every hour (`lifespan`). It
 skips a workspace whose `pages.db` and WAL are unchanged since the last
 sweep, until the next expiry that sweep found (`trash._due`), so a host with

@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import { segmentPage } from "../src/pdf/pdfTranslate.js";
 import { BREAK } from "../src/pdf/translatePlan.js";
-import { FAILS_IN_A_ROW, createLimit, createTranslateJob } from "../src/pdf/translateJob.js";
+import { FAILS_IN_A_ROW, createLimit, createTranslateJob, focusPages, requestChunk } from "../src/pdf/translateJob.js";
 
 const PAPER = JSON.parse(fs.readFileSync(new URL("./fixtures/translatePaper.json", import.meta.url)));
 const PAGES = new Map(PAPER.pages.map((p) => [p.pn, segmentPage(p.runs)]));
@@ -87,11 +87,117 @@ test("a job fills its pages chunk by chunk and ends at full progress", async () 
   assert.deepEqual(s.asked.map((r) => r.context.waitBrief), s.asked.map((_, n) => n > 0),
     "the first chunk does not wait for the paper's brief, the others do");
   assert.deepEqual(v.statuses[0],
-    { running: true, progress: 0, label: "document", reading: false, error: null, untranslated: 0, unanswered: 0, medianMs: null });
+    { running: true, progress: 0, label: "document", focus: null, reading: false, error: null, refused: 0, untranslated: 0, unanswered: 0, unchanged: 0, unread: [], refsLeft: 0, refsOnly: false, medianMs: null });
   const { medianMs, ...end } = last(v.statuses);
   assert.deepEqual(end,
-    { running: false, progress: 1, label: "document", reading: false, error: null, untranslated: 0, unanswered: 0 });
+    { running: false, progress: 1, label: "document", focus: null, reading: false, error: null, refused: 0, untranslated: 0, unanswered: 0, unchanged: 0, unread: [], refsLeft: 0, refsOnly: false });
   assert.equal(typeof medianMs, "number");
+});
+
+// A paper of a page of text that ends in a list and a page of list alone, by
+// hand: the fixture's four references are too few for a list. A block as the
+// segmenter makes it, one column down the page.
+const PROSE = "the ensemble of atoms shares one excitation and loses its coherence when the blockade is broken by the motion of atoms.";
+function blocks(texts) {
+  let y = 60;
+  return texts.map((text) => {
+    const nLines = text.startsWith("[") ? 2 : 6;
+    const b = { text, src: text, spans: [], size: 9, nLines, indent: 0, translate: true, x1: 54, x2: 300, y1: y, y2: y + nLines * 10.5, lines: [] };
+    y = b.y2 + 2;
+    return b;
+  });
+}
+const REFS = Array.from({ length: 8 }, (_, k) => `[${k + 1}] A. Smith and B. Jones, Phys. Rev. Lett. ${96 + k}, 01040${k} (200${k}).`);
+const LISTED = () => new Map([[1, blocks([`Some text ${PROSE}`, ...REFS])], [2, blocks(REFS)]]);
+const isRef = (t) => t.startsWith("[");
+
+test("a left block makes its page done and asks for nothing, and progress does not count it", async () => {
+  const paper = LISTED();
+  const v = viewer(paper);
+  const s = server();
+  await v.job(s.translate).run();
+  assert.deepEqual(s.texts(), [`Some text ${PROSE}`]);
+  assert.ok([...v.entries.values()].every((e) => e.done), "both pages are done");
+  settled(v.entries);
+  assert.deepEqual([...v.entries.get(1).left], [1, 2, 3, 4, 5, 6, 7, 8]);
+  assert.deepEqual([...v.entries.get(2).left], [0, 1, 2, 3, 4, 5, 6, 7]);
+  assert.equal(v.entries.get(2).texts.every((t) => t === null), true, "the original shows");
+  assert.equal(v.entries.get(2).failed.size, 0, "left, and no failure");
+  const end = last(v.statuses);
+  assert.deepEqual([end.progress, end.untranslated, end.refsLeft, end.refsOnly], [1, 0, 16, false]);
+  assert.ok(v.statuses.every((st) => st.progress <= 1));
+});
+
+test("a paragraph does not run into a list's short head when the list's next page shows it is one", async () => {
+  const open = "We show here that the atoms in the cavity keep their phase over many cycles of the drive and that the coherence of the";
+  const head = "of the quantum theory of many atoms held in a cavity field, A. Smith, Phys. Rev. A 12, 345 (2001).";
+  const paper = new Map([[1, blocks([open])], [2, blocks([head, REFS[0]])], [3, blocks(REFS)]]);
+  const v = viewer(paper);
+  const s = server();
+  await v.job(s.translate).run();
+  assert.deepEqual(s.texts(), [open]);
+  assert.deepEqual([...v.entries.get(2).left], [0, 1]);
+});
+
+test("a page that is all references sends no request and says so in its status", async () => {
+  const paper = new Map([[2, LISTED().get(2)]]);
+  const v = viewer(paper);
+  const s = server();
+  await v.job(s.translate).run();
+  assert.equal(s.asked.length, 0);
+  assert.equal(v.entries.get(2).done, true);
+  const end = last(v.statuses);
+  assert.deepEqual([end.running, end.progress, end.refsLeft, end.refsOnly], [false, 1, 8, true]);
+});
+
+test("the next job leaves a left block again, and one with `references` brings it back", async () => {
+  const v = viewer(LISTED());
+  await v.job(server().translate).run();
+  const left = new Map([...v.entries].map(([pn, e]) => [pn, [...e.left]]));
+
+  // A plain job asks for nothing more.
+  const plain = server();
+  await v.job(plain.translate).run();
+  assert.equal(plain.asked.length, 0, "the page's text is filled, the list left again");
+  assert.deepEqual(new Map([...v.entries].map(([pn, e]) => [pn, [...e.left]])), left);
+  assert.ok([...v.entries.values()].every((e) => e.done));
+
+  // Asking for them: the list alone goes, its blocks fill and are left no more.
+  const refs = server();
+  await v.job(refs.translate, { references: true }).run();
+  assert.equal(refs.texts().length, 16);
+  assert.ok(refs.texts().every(isRef));
+  assert.ok([...v.entries.values()].every((e) => e.done && !e.left.size));
+  assert.ok(v.entries.get(2).texts.every((t) => t.startsWith("译")));
+  const end = last(v.statuses);
+  assert.deepEqual([end.progress, end.refsLeft], [1, 0]);
+
+  // A block with its translation stays: a later plain job leaves nothing.
+  const after = server();
+  await v.job(after.translate).run();
+  assert.equal(after.asked.length, 0);
+  assert.ok(v.entries.get(2).texts.every((t) => t.startsWith("译")));
+  assert.equal(last(v.statuses).refsLeft, 0);
+});
+
+test("a job asking for references that stops keeps what has not landed left, so they can be asked for again", async () => {
+  const v = viewer(LISTED());
+  await v.job(server().translate).run();
+  let job = null;
+  const halting = server(() => {
+    job.halt();
+    throw new Error("aborted");
+  });
+  job = v.job(halting.translate, { references: true, parallel: 1 });
+  await job.run();
+  const e = v.entries.get(1);
+  assert.equal(e.left.size, 8);
+  assert.equal(e.done, false, "its blocks are pending until a job leaves or lands them");
+  assert.equal(last(v.statuses).refsLeft, 0, "a stopped job says nothing of them");
+  const refs = server();
+  await v.job(refs.translate, { references: true }).run();
+  assert.equal(refs.texts().length, 16);
+  assert.ok([...v.entries.values()].every((x) => x.done && !x.left.size));
 });
 
 // The blocks named failed in the entries, as `pn:i`.
@@ -238,6 +344,49 @@ test("the paragraphs the server could not translate stay pending and count as un
   settled(v.entries);
 });
 
+test("a page that cannot be read gets no entry: it stays not done, the job's end says so, and the next job reads it", async () => {
+  const v = viewer();
+  const read = new Map();
+  let broken = true;
+  const over = {
+    segment: async (pn) => {
+      if (pn === 2 && broken) throw new Error("the range read dropped");
+      read.set(pn, PAGES.get(pn));
+      return read.get(pn);
+    },
+    cachedParas: (pn) => read.get(pn) || null,
+  };
+  await v.job(server().translate, over).run();
+  assert.equal(v.entries.has(2), false, "no entry, so no done page");
+  assert.equal(v.entries.get(1).done, true);
+  const end = last(v.statuses);
+  assert.deepEqual([end.error, end.untranslated, end.unanswered, end.unread], [null, 1, 0, [2]]);
+  settled(v.entries);
+
+  broken = false;
+  const again = server();
+  await v.job(again.translate, over).run();
+  assert.ok(again.asked.length > 0, "the next job asks for the page");
+  assert.deepEqual(v.pending(), []);
+  assert.equal(v.entries.get(2).done, true);
+  assert.deepEqual(last(v.statuses).unread, []);
+});
+
+test("a page still unread when its job is halted is not reported, and stays not done", async () => {
+  const v = viewer();
+  const read = new Map();
+  let job = null;
+  job = v.job(server().translate, {
+    pages: [2],
+    segment: async () => { job.halt(); throw new Error("the range read dropped"); },
+    cachedParas: (pn) => read.get(pn) || null,
+  });
+  await job.run();
+  assert.equal(v.entries.size, 0);
+  const end = last(v.statuses);
+  assert.deepEqual([end.untranslated, end.unread], [0, []]);
+});
+
 // A job over the long paper whose last page stays in segmentation until
 // `release`, so the chunks of the pages before it are all it has counted.
 function heldJob(v, translate, over = {}) {
@@ -348,6 +497,119 @@ test("a re-run seeds from the entries before it and asks only for the rest", asy
   assert.deepEqual(other.texts().sort(), everything.texts().sort());
 });
 
+// Page 1's paragraph the column break cut: its first block and its second.
+const CUT = [PAGES.get(1).findIndex((b) => b.text.includes("In the rotating frame the")), PAGES.get(1).findIndex((b) => b.text.includes("Hamiltonian reads"))];
+// A text "translated again".
+const anew = (texts) => ({ translations: texts.map((t) => zh(t).replaceAll("译", "再译")), failed: [] });
+// A viewer whose paper is translated, ready for a job on one paragraph.
+async function translatedViewer() {
+  const v = viewer();
+  await v.job(server().translate).run();
+  return v;
+}
+const focused = (v, s, i, over = {}) => v.job(s.translate, { pages: [1], label: "p.1", focus: { pn: 1, i }, fresh: true, ...over });
+
+test("a focused job asks for its block's paragraph alone, afresh and waiting for the brief, and leaves the page as it was", async () => {
+  const v = await translatedViewer();
+  const before = v.entries.get(1);
+  const s = server(anew);
+  await focused(v, s, CUT[1]).run();
+  assert.equal(s.asked.length, 1, "one request");
+  assert.deepEqual(s.asked[0].texts.length, 1, "for one text");
+  assert.ok(s.asked[0].texts[0].includes(BREAK), "the whole paragraph, both its parts");
+  assert.equal(s.asked[0].context.fresh, true);
+  assert.equal(s.asked[0].context.waitBrief, true, "a text asked afresh waits for the brief, the first too");
+  const after = v.entries.get(1);
+  for (const i of CUT) assert.ok(after.texts[i].startsWith("再译"), after.texts[i]);
+  after.texts.forEach((t, i) => { if (!CUT.includes(i)) assert.equal(t, before.texts[i]); });
+  assert.equal(after.done, true);
+  settled(v.entries);
+  const end = last(v.statuses);
+  assert.deepEqual([end.focus, end.progress, end.unchanged, end.untranslated], [{ pn: 1, i: CUT[1] }, 1, 0, 0]);
+});
+
+test("a focused job leaves a page beside it that holds another key's translation as it is, and asks for the part on its page", async () => {
+  const v = viewer();
+  await v.job(server().translate, { key: "ja|model" }).run();
+  const other = v.entries.get(2);
+  assert.ok(other.done && other.texts[1], "page 2 is translated under the other key");
+  // Page 1 alone under this key: its last paragraph runs on at page 2's top.
+  await v.job(server().translate, { pages: [1], label: "p.1" }).run();
+  assert.equal(v.entries.get(2), other);
+  const s = server(anew);
+  await focused(v, s, 27).run();
+  assert.equal(v.entries.get(2), other, "page 2 keeps the other key's entry");
+  assert.ok(!s.asked[0].texts[0].includes(BREAK), "the paragraph's part on page 1 alone");
+  assert.ok(v.entries.get(1).texts[27].startsWith("再译"));
+  assert.deepEqual(focusPages(1, "zh-CN|model", (pn) => v.entries.get(pn)), [0, 1], "page 2 is not the job's");
+  assert.deepEqual(focusPages(2, "ja|model", (pn) => v.entries.get(pn)), [2, 3]);
+  assert.deepEqual(focusPages(2, "zh-CN|model", () => null), [1, 2, 3], "pages with no entry are the job's");
+});
+
+test("a focused job shows no page as queued while its request is out, only its paragraph as busy", async () => {
+  const v = await translatedViewer();
+  let seen = null;
+  const s = server((texts) => {
+    seen = v.entries.get(1);
+    return anew(texts);
+  });
+  // A page with a paragraph never asked for: still nothing is washed as queued.
+  const e = v.entries.get(1);
+  const never = e.texts.findIndex((t, i) => typeof t === "string" && !CUT.includes(i) && t);
+  v.entries.set(1, { ...e, texts: e.texts.map((t, i) => (i === never ? undefined : t)), done: false });
+  await focused(v, s, CUT[0]).run();
+  assert.equal(seen.queued, false);
+  assert.deepEqual([...seen.busy].sort(), [...CUT].sort());
+  assert.equal(v.entries.get(1).texts[never], undefined, "the paragraph never asked for is still not");
+  assert.equal(v.entries.get(1).done, false);
+});
+
+test("a paragraph asked again that fails keeps the text it had, with no failed mark, and says so", async () => {
+  for (const answer of [
+    () => { throw new Error("provider down"); },
+    (texts) => ({ translations: texts, failed: texts.map((_, j) => j) }),
+  ]) {
+    const v = await translatedViewer();
+    const had = CUT.map((i) => v.entries.get(1).texts[i]);
+    await focused(v, server(answer), CUT[0], { retry: { pauseMs: 1 } }).run();
+    assert.deepEqual(CUT.map((i) => v.entries.get(1).texts[i]), had);
+    assert.deepEqual(failedBlocks(v), []);
+    const end = last(v.statuses);
+    assert.deepEqual([end.unchanged, end.untranslated, end.error], [1, 0, null]);
+  }
+});
+
+test("a paragraph that never had text, asked alone, is marked failed when it fails, and the page's other marks stay", async () => {
+  const v = await translatedViewer();
+  const e = v.entries.get(1);
+  const other = e.texts.findIndex((t, i) => !!t && !CUT.includes(i));
+  // Its paragraph came back as its source; another failed in an earlier job.
+  v.entries.set(1, { ...e, texts: e.texts.map((t, i) => (CUT.includes(i) ? null : t)), failed: new Set([other]) });
+  await focused(v, server(() => { throw new Error("provider down"); }), CUT[0], { retry: { pauseMs: 1 } }).run();
+  assert.deepEqual(failedBlocks(v).sort(), [other, ...CUT].map((i) => `1:${i}`).sort());
+  assert.deepEqual(CUT.map((i) => v.entries.get(1).texts[i]), [null, null], "the original still shows");
+  assert.equal(v.entries.get(1).done, true, "the page owes nothing more than it did");
+  assert.equal(last(v.statuses).untranslated, 1);
+});
+
+test("the reader's original blocks go through a job, less a block asked for again", async () => {
+  const v = await translatedViewer();
+  const e = v.entries.get(1);
+  const other = e.texts.findIndex((t, i) => !!t && !CUT.includes(i));
+  v.entries.set(1, { ...e, original: new Set([other, CUT[0]]) });
+  const s = server((texts) => {
+    // Turned on while the request is out.
+    const now = v.entries.get(1);
+    v.entries.set(1, { ...now, original: new Set([...now.original, CUT[1]].filter((i) => i !== other)) });
+    return anew(texts);
+  });
+  await focused(v, s, CUT[0]).run();
+  assert.equal(v.entries.get(1).original, undefined, "the landed blocks show their new text, the other one turned off meanwhile");
+  v.entries.set(1, { ...v.entries.get(1), original: new Set([other]) });
+  await v.job(server().translate, { pages: [1] }).run();
+  assert.deepEqual([...v.entries.get(1).original], [other], "a job that lands nothing there keeps it");
+});
+
 test("streamed text and the wait for the paper's brief reach the entries and the status", async () => {
   const v = viewer();
   let seen = null;
@@ -369,6 +631,85 @@ test("streamed text and the wait for the paper's brief reach the entries and the
   assert.deepEqual(seen, { reading: true, after: false, busy: true, partial: ["译正在"] });
   assert.equal(last(v.statuses).reading, false);
   settled(v.entries);
+});
+
+// A server whose chunks stream `share` of each text, longer than it for a share
+// over 1, and hear what the job says then.
+function streaming(share, then = translated) {
+  return server(async (texts, call, { onPartial }) => {
+    texts.forEach((t, j) => onPartial(j, "译".repeat(Math.ceil(t.length * share))));
+    return then(texts, call);
+  });
+}
+const runningProgress = (v) => v.statuses.filter((st) => st.running).map((st) => st.progress);
+const neverBack = (xs) => xs.every((x, k) => !k || x >= xs[k - 1]);
+
+test("the percentage counts streamed characters before anything lands, and a landing replaces their share", async () => {
+  const v = viewer();
+  let first = null;
+  const s = streaming(0.5, (texts, call) => {
+    if (call === 1) first = last(v.statuses).progress;
+    return translated(texts);
+  });
+  await v.job(s.translate, { parallel: 1 }).run();
+  assert.ok(first > 0, `the first chunk's streamed text shows: ${first}`);
+  assert.ok(neverBack(runningProgress(v)));
+  assert.equal(last(v.statuses).progress, 1);
+});
+
+test("streamed text longer than its source does not count past its unit, so 100% waits for the last reply", async () => {
+  const v = viewer();
+  const s = streaming(3, (texts) => {
+    assert.ok(last(v.statuses).progress < 1, "a reply is still out");
+    return translated(texts);
+  });
+  await v.job(s.translate, { parallel: 1 }).run();
+  assert.ok(neverBack(runningProgress(v)));
+  assert.equal(last(v.statuses).progress, 1);
+});
+
+test("the percentage does not go back as the total grows, or when a request asked again streams from its start", async () => {
+  const v = viewer(LONG);
+  let tries = 0;
+  const s = server(async (texts, call, { onPartial }) => {
+    tries += 1;
+    texts.forEach((t, j) => onPartial(j, t.slice(0, tries === 1 ? t.length : 3)));
+    if (tries === 1) throw new Error("the stream was cut");
+    return translated(texts);
+  });
+  await v.job(s.translate, { parallel: 1, retry: { pauseMs: 1 } }).run();
+  assert.ok(neverBack(runningProgress(v)), JSON.stringify(runningProgress(v)));
+  assert.equal(last(v.statuses).progress, 1);
+});
+
+test("streaming changes where a job ends in nothing: a lost chunk and a halt end where they would have", async () => {
+  const lost = (answer) => {
+    let failed = 0;
+    return async (texts, call, tools) => {
+      await answer(texts, call, tools);
+      if (failed < 2) { failed += 1; throw new Error("provider down"); }
+      return translated(texts);
+    };
+  };
+  const plain = viewer(), typing = viewer();
+  await plain.job(server(lost(async () => {})).translate, { parallel: 1 }).run();
+  await typing.job(server(lost(async (texts, call, { onPartial }) => texts.forEach((t, j) => onPartial(j, t)))).translate, { parallel: 1 }).run();
+  const end = last(plain.statuses).progress;
+  assert.ok(end > 0 && end < 1, `a chunk lost: ${end}`);
+  assert.equal(last(typing.statuses).progress, end);
+
+  // A halt with text streamed and nothing back ends at nothing done.
+  const v = viewer();
+  let job = null;
+  const s = server(async (texts, call, { onPartial }) => {
+    texts.forEach((t, j) => onPartial(j, t));
+    assert.ok(last(v.statuses).progress > 0);
+    job.halt();
+    return null;
+  });
+  job = v.job(s.translate, { parallel: 1 });
+  await job.run();
+  assert.equal(last(v.statuses).progress, 0);
 });
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -635,4 +976,56 @@ test("the median request time counts from when a request goes, not its wait for 
   assert.ok(s.asked.length >= 4);
   const { medianMs } = last(v.statuses);
   assert.ok(medianMs < 60, `median ${medianMs} ms`);
+});
+
+// A request answering with the given outcomes in turn: an Error is thrown,
+// anything else returned.
+const answering = (...outcomes) => {
+  const run = async () => {
+    run.calls += 1;
+    const o = outcomes.shift();
+    if (o instanceof Error) throw o;
+    return o;
+  };
+  run.calls = 0;
+  return run;
+};
+const refused = (retryAfter) => Object.assign(new Error("Too many AI requests"), { status: 429, retryAfter });
+const quick = { pauseMs: 1 };
+
+test("a chunk's failed request is asked once more, then the failure stands", async () => {
+  const ok = { translations: ["x"] };
+  let run = answering(new Error("network"), ok);
+  assert.equal(await requestChunk(run, null, quick), ok);
+  assert.equal(run.calls, 2);
+  run = answering(new Error("network"), new Error("still down"), ok);
+  await assert.rejects(requestChunk(run, null, quick), /still down/);
+  assert.equal(run.calls, 2);
+  // A stream cut off before its final line counts as a failure too.
+  run = answering(null, null);
+  assert.equal(await requestChunk(run, null, quick), null);
+  assert.equal(run.calls, 2);
+});
+
+test("a refusal because the account's calls are all in use waits as the server says", async () => {
+  const ok = { translations: ["x"] };
+  let run = answering(refused(0.005), refused(0.005), refused(0.005), new Error("blip"), ok);
+  assert.equal(await requestChunk(run, null, quick), ok, "the waits leave the one plain retry");
+  assert.equal(run.calls, 5);
+  // Past its patience the refusal stands; a 429 without Retry-After (the
+  // shared allowance used up) at once.
+  run = answering(refused(0.005), ok);
+  await assert.rejects(requestChunk(run, null, { pauseMs: 1, patienceMs: 0 }), /Too many/);
+  run = answering(Object.assign(new Error("allowance used up"), { status: 429 }), ok);
+  await assert.rejects(requestChunk(run, null, quick), /allowance/);
+  assert.equal(run.calls, 1);
+});
+
+test("halting ends a request's wait without asking again", async () => {
+  const ctl = new AbortController();
+  const run = answering(refused(60), { translations: ["x"] });
+  const asked = requestChunk(run, ctl.signal);
+  setTimeout(() => ctl.abort(), 5);
+  assert.equal(await asked, null);
+  assert.equal(run.calls, 1);
 });

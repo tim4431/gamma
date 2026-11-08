@@ -14,7 +14,7 @@ import { DEFAULT_TOOLS } from "../ink/ink.js";
 import { SQUEEZE_HOLDS } from "../ink/pencilActions.js";
 import { nativeHost } from "../shared/lib/host.js";
 import { DEFAULT_PICTURE_BUDGET, MAX_PICTURE_BUDGET } from "../chat/chatPictures.js";
-import { EFFORT_ORDER, SPEED_ORDER } from "../chat/modelPrefs.js";
+import { EFFORT_ORDER, SPEED_LABELS, SPEED_ORDER } from "../chat/modelPrefs.js";
 import { AppearanceSettings } from "./SettingsAppearance";
 import { AgentToolMatrix } from "./AssistantTools";
 import { OnlineSearchSettings } from "./OnlineSearch";
@@ -899,7 +899,7 @@ function ChatDefaults({ value, ai }) {
       <Row icon={ZapIcon} label={t("Default speed")} hint={t("Only models whose provider offers that tier")}
         title={t("Which service tier chats ask the provider for: \"fast\" buys its premium low-latency routing (Anthropic's fast mode, OpenAI's and Codex's Fast) at a higher price per token, \"flex\" trades latency for a lower one. A model whose provider offers neither is called as usual.")}>
         <MenuSelect label={t("Default speed")} value={ai.chatSpeed} onChange={ai.setChatSpeed}
-          options={[["", t("Default")], ...SPEED_ORDER.map((v) => [v, v])]} />
+          options={[["", t("Default")], ...SPEED_ORDER.map((v) => [v, t(SPEED_LABELS[v])])]} />
       </Row>
       <Toggle
         icon={RectSelectIcon}
@@ -1152,8 +1152,8 @@ export default function SettingsDialog({
   const syncState = useCloudSyncStatus(!!activePane, profileSync);
   // What the panes read, kept while the dialog is open (settingsReads.js).
   const reads = React.useMemo(() => createSettingsReads(), [!!activePane]); // eslint-disable-line react-hooks/exhaustive-deps
-  const who = React.useMemo(() => ({ admin: !!users?.isAdmin, signedIn: !!users?.me && !users.isGuest }),
-    [users?.isAdmin, users?.me, users?.isGuest]);
+  const who = React.useMemo(() => ({ admin: !!users?.isAdmin, signedIn: !!users?.me && !users.isGuest, lang: papers?.translateLang }),
+    [users?.isAdmin, users?.me, users?.isGuest, papers?.translateLang]);
   const [query, setQuery] = React.useState("");
   const [mobileIndex, setMobileIndex] = React.useState(false);
   const [jump, setJump] = React.useState(null);
@@ -1347,7 +1347,7 @@ export default function SettingsDialog({
                 </> : null}
                 {pane === "translation" ? <>
                   <PaneHead icon={LanguagesIcon} title={t("Language and Translation")} />
-                  <TranslationSettings value={paperValue} />
+                  <TranslationSettings value={paperValue} keybindings={keyboard?.keybindings} />
                 </> : null}
                 {pane === "keyboard" && keyboard ? <KeyboardSettings value={keyboard} /> : null}
                 {pane === "maintenance" ? <MaintenanceSettings value={library} /> : null}

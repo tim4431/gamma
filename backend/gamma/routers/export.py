@@ -1690,11 +1690,20 @@ class TranslatedFormula(_Finite):
 class TranslatedBlock(_Finite):
     """One translated paragraph: the boxes of its original lines, its font
     size, and its translation as text and formulas (none: its lines go,
-    nothing is written)."""
+    nothing is written). ``box`` is the room a one-line block has past its
+    line, ``foot`` where its text stops when the next block starts inside its
+    box, ``centred``, ``bold``, ``italic`` and ``indent`` (of its first line)
+    how the overlay sets it."""
     lines: list[_Box] = Field(min_length=1, max_length=1_000)
     size: float = Field(gt=0, le=1_000)
     parts: list[Union[Annotated[str, Field(max_length=100_000)], TranslatedFormula]] = Field(
         default_factory=list, max_length=10_000)
+    box: Union[_Box, None] = None
+    foot: Union[float, None] = None
+    centred: bool = False
+    bold: bool = False
+    italic: bool = False
+    indent: float = Field(default=0, ge=0, le=10_000)
 
 
 class TranslatedPage(_Finite):

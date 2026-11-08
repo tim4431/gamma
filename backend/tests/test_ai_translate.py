@@ -6,7 +6,7 @@ import json
 import pytest
 from fastapi.testclient import TestClient
 
-from ai_fixtures import segmented, texts_of
+from ai_fixtures import JsonResp, segmented, text_stream, texts_of
 
 
 @pytest.fixture(scope="module")
@@ -69,6 +69,44 @@ def test_translate_validation(carol):
     assert carol.post("/api/ai/translate", json={"texts": [1, 2], "lang": "zh-CN"}).status_code == 400
     assert carol.post("/api/ai/translate",
                       json={"texts": ["x" * 40000, "y" * 40000], "lang": "zh-CN"}).status_code == 413
+
+
+def _raw(c, path, body):
+    """POST ``body`` as ASCII JSON, which can carry a lone surrogate as its
+    escape, as a browser's JSON.stringify does."""
+    return c.post(path, content=json.dumps(body).encode(), headers={"Content-Type": "application/json"})
+
+
+@pytest.mark.parametrize("field", ["texts", "head", "before", "after", "section"])
+def test_half_a_character_is_translated_as_a_replacement_character(carol, monkeypatch, field):
+    """A client cuts in UTF-16 units, so a character outside the BMP can
+    arrive halved. It hashes, and reaches the model, as U+FFFD, the
+    browser's TextEncoder's reading of it."""
+    sent = []
+
+    def fake(messages, system, entry, rt, **kw):
+        sent.append(messages[-1]["content"])
+        return segmented([f"译:{t}" for t in texts_of(messages)])
+
+    monkeypatch.setattr("gamma.routers.translate._call_ai", fake)
+    cut = f"cut pair for {field} \ud835"
+    whole = f"cut pair for {field} \ufffd"
+    text = whole if field == "texts" else f"plain text beside the {field}"
+    body = {"texts": [cut if field == "texts" else text], "lang": "zh-CN", **({} if field == "texts" else {field: cut})}
+    r = _raw(carol, "/api/ai/translate", body)
+    assert r.status_code == 200, r.text
+    assert r.json()["translations"] == [f"译:{text}"]
+    assert "\ud835" not in sent[0]
+    if field != "head":  # the head goes to the brief, not to the chunk
+        assert whole in sent[0]
+
+
+def test_half_a_character_in_a_head_makes_a_brief(carol, monkeypatch):
+    monkeypatch.setattr("gamma.routers.translate._call_ai",
+                        lambda *a, **kw: '{"field": "optics", "terms": [{"source": "cavity", "target": "腔"}]}')
+    r = _raw(carol, "/api/ai/translate/brief", {"head": "the opening text, cut \ud835", "lang": "zh-CN"})
+    assert r.status_code == 200, r.text
+    assert json.loads(r.text.splitlines()[-1]) == {"ready": True}
 
 
 def test_translate_caches_per_paragraph(carol, monkeypatch):
@@ -293,7 +331,7 @@ def test_a_streamed_reply_the_output_cap_cut_asks_for_its_last_segment_again(car
     import gamma.routers.translate as translate_mod
 
     monkeypatch.setattr(translate_mod, "_open_ai",
-                        lambda *a, **kw: _StreamResp(["<s1>只有半"], stop="max_tokens"))
+                        lambda *a, **kw: text_stream(["<s1>只有半"], stop="max_tokens"))
     again = []
 
     def whole(messages, system, entry, rt, **kw):
@@ -329,22 +367,6 @@ def test_text_that_reads_as_a_segment_tag_goes_out_masked_and_comes_back_as_writ
     assert "the mean spin ‹S2› is small" in sent[0] and "see ‹s3›" in sent[0]
 
 
-class _StreamResp:
-    """An Anthropic SSE reply whose text arrives in the given pieces, ended
-    with the provider's ``stop`` reason when given."""
-    def __init__(self, pieces, stop=""):
-        events = [{"type": "content_block_delta", "delta": {"type": "text_delta", "text": t}} for t in pieces]
-        if stop:
-            events.append({"type": "message_delta", "delta": {"stop_reason": stop}})
-        self._lines = [("data: " + json.dumps(e) + "\n").encode() for e in events] + [b"data: [DONE]\n"]
-
-    def __iter__(self):
-        return iter(self._lines)
-
-    def close(self):
-        pass
-
-
 def test_translate_streams_partials(carol, monkeypatch):
     """stream: true answers NDJSON — a partial line per paragraph as the
     model writes it (every request index sharing that source text), then the
@@ -358,7 +380,7 @@ def test_translate_streams_partials(carol, monkeypatch):
         opened.append(texts_of(messages))
         assert kw.get("stream") is True
         assert kw["speed"] == "fast"
-        return _StreamResp(['```\n<s1>第一', '段</s1>\n<s2>第', '二段</s2>\n```'])
+        return text_stream(['```\n<s1>第一', '段</s1>\n<s2>第', '二段</s2>\n```'])
 
     monkeypatch.setattr(translate_mod, "_open_ai", fake_open)
     r = carol.post("/api/ai/translate", json={
@@ -399,20 +421,6 @@ def test_translate_stream_reports_upstream_failure_in_band(carol, monkeypatch):
 
 # --- machine-translation engines (Google Cloud Translation, Youdao) ----------
 
-class _FakeResp:
-    def __init__(self, body):
-        self.body = json.dumps(body).encode()
-
-    def read(self):
-        return self.body
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *a):
-        return False
-
-
 def _fake_urlopen(reply):
     """A urlopen stand-in for gamma.translate_engines: records each request,
     answers `reply(req)` as the JSON body."""
@@ -420,7 +428,7 @@ def _fake_urlopen(reply):
 
     def fake(req, timeout=None):
         calls.append(req)
-        return _FakeResp(reply(req))
+        return JsonResp(reply(req))
 
     return fake, calls
 
@@ -492,7 +500,7 @@ def test_translate_with_google(dave, monkeypatch):
     assert r.status_code == 200, r.text
     assert r.json() == {"translations": ["G:Google one.", "  ", "G:Google two.", "G:Google one."],
                         "model": "engine:google", "cached": False, "redone": 0, "failed": [],
-                        "brief": True}
+                        "effort": "", "brief": True}
     (req,) = calls
     assert req.get_header("X-goog-api-key") == "AIza-secret-key-9876"
     assert "key=" not in req.full_url
@@ -503,7 +511,7 @@ def test_translate_with_google(dave, monkeypatch):
                                              "model": "engine:google", "stream": True})
     assert [json.loads(line) for line in r.text.splitlines() if line.strip()] == [
         {"translations": ["G:Google two."], "model": "engine:google", "cached": True, "redone": 0, "failed": [],
-         "brief": True}]
+         "effort": "", "brief": True}]
     assert len(calls) == 1
 
 
@@ -820,7 +828,7 @@ def test_a_re_ask_that_fails_leaves_its_texts_verbatim(carol, monkeypatch):
 
 def test_a_streamed_chunk_that_comes_back_short_is_asked_again(carol, monkeypatch):
     import gamma.routers.translate as translate_mod
-    monkeypatch.setattr(translate_mod, "_open_ai", lambda *a, **k: _StreamResp(["<s1>只有", "一段</s1>"]))
+    monkeypatch.setattr(translate_mod, "_open_ai", lambda *a, **k: text_stream(["<s1>只有", "一段</s1>"]))
     fake, calls = _fake_call(lambda batch: [f"补:{t}" for t in batch])
     monkeypatch.setattr(translate_mod, "_call_ai", fake)
     r = carol.post("/api/ai/translate", json={
@@ -846,7 +854,7 @@ def test_a_request_holds_one_call_slot_for_its_call_and_its_re_ask(carol, monkey
 
     monkeypatch.setattr(translate_mod, "_TRANSLATE_STREAM_INTERVAL", 0)
     monkeypatch.setattr(translate_mod, "_call_ai", lambda messages, *a, **kw: first_only(messages, kw))
-    monkeypatch.setattr(translate_mod, "_open_ai", lambda messages, *a, **kw: _StreamResp([first_only(messages, kw)]))
+    monkeypatch.setattr(translate_mod, "_open_ai", lambda messages, *a, **kw: text_stream([first_only(messages, kw)]))
     texts = [f"a one-slot paragraph ({'streamed' if stream else 'plain'}) {k}" for k in range(3)]
     r = carol.post("/api/ai/translate", json={"texts": texts, "lang": "fr", "stream": stream})
     final = [json.loads(line) for line in r.text.splitlines() if line.strip()][-1] if stream else r.json()

@@ -4,6 +4,7 @@
 import { t } from "../shared/i18n/i18n.js";
 import { TOPBAR_ITEMS } from "../app/topbarItems.js";
 import { VIEWER_TOOL_ITEMS } from "../app/viewerToolItems.js";
+import { TRANSLATE_PARALLEL_MAX } from "../app/prefDefs.js";
 
 // Search names the actual setting, including settings on the second-level
 // AI pages. Each entry: the pane, the setting's label (the `data-setting` the
@@ -25,7 +26,7 @@ const hostOnly = (flags, entry) => ({ ...entry, host: [].concat(flags) });
 const entries = [
   e("server", t("Public server URL"), t("Assistant connections"), t("The address assistants use to reach Gamma; HTTPS unless localhost"), "public address HTTPS remote proxy OAuth MCP assistant sign-in"),
   e("appearance", t("Theme"), null, t("System, light, dark and five more"), "dark light gamma amber gold sepia solarized gray system colors"),
-  e("translation", t("Language"), t("Language"), t("Interface text only."), "interface text locale english chinese 中文 语言"),
+  e("translation", t("Interface language"), t("Language"), t("Interface text only."), "interface text locale english chinese 中文 语言"),
   e("appearance", t("Dark PDF pages"), t("PDF pages"), t("Light text on a dark page; figures invert too."), "flip invert page colors"),
   e("appearance", t("Color groups"), t("Colors"), t("Click a swatch to change its colour or opacity. Existing highlights and strokes keep their colours."), "palette swatches colours alpha opacity transparency add group delete"),
   e("appearance", t("Text highlights"), t("Colors"), t("Highlighting selected PDF text, and recolouring a highlight from its menu."), "palette highlight colours popup swatches"),
@@ -77,17 +78,18 @@ const entries = [
   e("reading", t("Transcribe recordings"), t("Recordings"), t("Write the spoken words under a recording when it ends"), "audio transcript speech to text whisper automatic"),
   e("reading", t("On the home page"), t("Search opens as"), t("Full panel: grouped result lists"), "search panel find bar expand results"),
   e("reading", t("On a page"), t("Search opens as"), t("Find bar: match counter and next / previous"), "search panel find bar expand results"),
-  e("translation", t("Translation button"), t("Viewer & selection"), t("On the viewer's strip; off, in its ⋯ menu. Nothing translates until you ask"), "translation shortcut viewer strip show hide"),
-  e("translation", t("Translate into"), t("Viewer & selection"), t("The translated view's language"), "translation language"),
+  e("translation", t("Translation button"), t("Viewer & selection"), t("Off, it moves to the ⋯ menu"), "translation shortcut viewer strip show hide"),
+  e("translation", t("Translate into"), t("Viewer & selection"), t("Also in the translate button's menu"), "translation language target"),
   e("translation", t("Translate a selection"), t("Viewer & selection"), t("A button next to the highlight colors"), "translation popup highlight selected text button"),
   e("translation", t("Translate on select"), t("Viewer & selection"), t("Without clicking the button first"), "translation popup selected text automatic"),
-  e("translation", t("Translate with"), t("Service"), t("A chat model, or a translation service below"), "translation model engine service AI Google Youdao"),
+  e("translation", t("Translate with"), t("Service"), t("A chat model reads the paper first and keeps its terms; a service is quick and needs no AI"), "translation model engine service AI Google Youdao"),
   e("translation", t("Translation services"), t("Service"), t("Microsoft for free; Google or Youdao with a key"), "translation engine API key Google Cloud Youdao Microsoft"),
-  e("translation", t("Keep translations"), t("Service"), t("So a paper read again shows at once"), "translation keep store save cache remember restart workspace"),
+  e("translation", t("Keep translations"), t("Service"), t("A paper translated again needs no AI call"), "translation keep store save cache remember restart workspace"),
   e("translation", t("Kept in this workspace"), t("Service"), t("Translated paragraphs and the papers' briefs, with Clear"), "translation kept stored cache clear delete forget size"),
+  e("translation", t("Glossary"), null, t("The workspace's terms and how to translate them"), "translation glossary terms terminology dictionary vocabulary rendering consistent words"),
   e("translation", t("Translation effort"), t("Speed"), t("Default asks for the model's lowest level, the fastest"), "translation reasoning thinking speed"),
   e("translation", t("Translation speed"), t("Speed"), t("Only models whose provider offers that tier"), "translation fast mode speed service tier priority flex latency"),
-  e("translation", t("Parallel requests"), t("Speed"), t("Translation calls in flight at once (1–4)"), "translation concurrency speed"),
+  e("translation", t("Parallel requests"), t("Speed"), t("How many chunks translate at once (1–{max})", { max: TRANSLATE_PARALLEL_MAX }), "translation concurrency speed parallel"),
   e("keyboard", t("Keyboard shortcuts"), null, t("Every command's keys, rebindable"), "keys hotkeys bindings rebind command palette VSCode"),
   e("keyboard", t("Enter makes"), t("Built in"), t("A new note or a new line; Shift+Enter makes the other"), "enter key new note line break notes shift return"),
   e("ai", t("Connections"), null, t("AI providers, keys and ChatGPT sign-in"), "provider credentials API key ChatGPT login service"),

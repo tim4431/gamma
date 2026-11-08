@@ -13,7 +13,7 @@ import { createPortal } from "react-dom";
 import { CheckIcon, ChevronDownIcon, ChevronRightIcon, MoreIcon } from "./Icons";
 import { useMenuAim } from "./menuAim";
 import { useLeave } from "./leave.js";
-import { VIEWPORT_PAD, growFrom, menuAnchor, placeFloating, surfaceSize, useFloatingPosition } from "./placement.js";
+import { flyoutPlace, growFrom, menuAnchor, placeFloating, surfaceSize, useFloatingPosition } from "./placement.js";
 import { pressAt, triggerPress } from "./press.js";
 import { t } from "../../shared/i18n/i18n.js";
 
@@ -213,20 +213,14 @@ function SubMenuItem({ id, icon: Icon, label, title, children, ...rest }) {
   const wrapRef = useRef(null);
   const [style, setStyle] = useState({ left: "100%", top: SUB_TOP_NUDGE });
 
-  // Side-flip + vertical clamp: prefer opening right, fall back to left when
-  // that would leave the viewport, and slide up so the panel always fits.
+  // Prefer opening right, fall back to left when that would leave the
+  // viewport, and over the menu under the row when neither side has room (a
+  // phone); slid up so the panel always fits (placement.js flyoutPlace).
   useLayoutEffect(() => {
     if (!open) return;
     const panel = panelRef.current, wrap = wrapRef.current;
     if (!panel || !wrap) return;
-    const pad = VIEWPORT_PAD;
-    const w = wrap.getBoundingClientRect();
-    const p = panel.getBoundingClientRect();
-    const flip = w.right + p.width > window.innerWidth - pad && w.left - p.width > pad;
-    let top = SUB_TOP_NUDGE;
-    if (w.top + top + p.height > window.innerHeight - pad) top = window.innerHeight - pad - p.height - w.top;
-    if (w.top + top < pad) top = pad - w.top;
-    setStyle(flip ? { right: "100%", top } : { left: "100%", top });
+    setStyle(flyoutPlace(wrap.getBoundingClientRect(), panel.getBoundingClientRect(), { nudge: SUB_TOP_NUDGE }));
   }, [open]);
 
   // Hand the settled rect to the pointer-intent guard (and take it back when

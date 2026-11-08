@@ -26,11 +26,17 @@
 // the queue's end, the chunks that came back without the brief while others
 // came back with it are asked once more, so the paper reads with one set of
 // terms; their paragraphs keep the text they have until the new one lands.
-import { chunkUnits, createPlanner, partials, requestChunk, results } from "./translatePlan.js";
+import { chunkUnits, createPlanner } from "./translatePlan.js";
+import { partials, results } from "./translateReply.js";
 
 // Chunks failing one after another with no success between them: the
 // provider is down, not one connection lost, and the job stops.
 export const FAILS_IN_A_ROW = 3;
+
+// Of a unit's characters, the most its streamed text counts for in the progress
+// shown (a target language runs longer or shorter than the source): the rest is
+// its landing, so the job says 100% only when the last reply is in.
+const STREAMED_SHARE = 0.9;
 
 // A failure every later request would meet too, which stops the job at
 // once: the shared AI allowance used up (a 429 without Retry-After; one
@@ -81,10 +87,63 @@ export function createLimit(n) {
   return { take };
 }
 
+// A chunk's request (`run`, resolving to the server's final reply), asked
+// again when it fails. A refusal because the account's AI calls are all in
+// use (a 429 with Retry-After: the server is still asking the model again
+// for other chunks) waits as long as the server says, up to `patienceMs` in
+// all; any other failure (the network, the provider, a stream cut off
+// before its final line) is asked once more after `pauseMs`. A 429 without
+// Retry-After (the server's shared allowance used up) is final. Resolves to
+// the reply, or null once `signal` (the job's) aborts; throws the last
+// failure.
+const RETRY_PAUSE_MS = 2000;
+const SLOT_PATIENCE_MS = 120000;
+export async function requestChunk(run, signal, { pauseMs = RETRY_PAUSE_MS, patienceMs = SLOT_PATIENCE_MS } = {}) {
+  const start = Date.now();
+  let retried = false;
+  for (;;) {
+    let err = null;
+    try {
+      const res = await run();
+      if (res) return res;
+    } catch (e) {
+      err = e;
+    }
+    if (signal?.aborted) return null;
+    const left = patienceMs - (Date.now() - start);
+    let wait;
+    if (err?.retryAfter > 0 && left > 0) wait = Math.min(err.retryAfter * 1000, left);
+    else if (!retried && !err?.retryAfter && err?.status !== 429) { wait = pauseMs; retried = true; }
+    else if (err) throw err;
+    else return null;
+    await pause(wait, signal);
+    if (signal?.aborted) return null;
+  }
+}
+
+function pause(ms, signal) {
+  return new Promise((resolve) => {
+    const done = () => { clearTimeout(id); signal?.removeEventListener("abort", done); resolve(); };
+    const id = setTimeout(done, ms);
+    signal?.addEventListener("abort", done);
+  });
+}
+
+// The pages a job on one paragraph of page `pn` (its menu's Translate again or
+// Translate this paragraph), under `key`, plans with: the page and those beside
+// it into which the paragraph may run, unless such a page has an entry under
+// another key (`entryOf(pn)`, the page's entry or none). That page holds another
+// language's or model's translation, which the job's entry would replace with
+// one block of this key's; the paragraph is then its part on `pn`. The
+// paragraph's menu takes its unit by the same pages (translateState.unitOf).
+export function focusPages(pn, key, entryOf) {
+  return [pn - 1, pn, pn + 1].filter((q) => q === pn || !entryOf(q) || entryOf(q).key === key);
+}
+
 // A page's entry, what the viewer draws over the page:
 // - `key`: the language and model it was made under; `paras`: the page's
 //   segmented blocks;
-// - `texts`: results by block index (translatePlan.results): a translation,
+// - `texts`: results by block index (translateReply.results): a translation,
 //   null for a block that came back as its source (the original shows;
 //   "Translate this page" asks again), "" for a block whose words went to
 //   the part before it (masked), missing while pending;
@@ -94,13 +153,30 @@ export function createLimit(n) {
 //   of the final text);
 // - `failed`: blocks the server could not translate in this job, or whose
 //   chunk's request failed (pending still, so the page is not done and the
-//   next job asks for them; the original shows meanwhile).
+//   next job asks for them; the original shows meanwhile);
+// - `left`: blocks of a reference list that stay original (null in `texts`,
+//   not pending, so the page can be done) until a job with `references` asks
+//   for them;
+// - `original`: blocks whose translation the reader turned off ("Show original
+//   here", translateState.setOriginal), present only when there are some. The
+//   reader's, not the job's: each entry the job hands out carries the set the
+//   page's entry holds as it goes, less a block that has just landed, which
+//   was asked for again.
 // The job's end drops `queued`, `busy` and `partial`: nothing is owed or in
 // flight any more, whether it finished, was halted or failed.
 //
 // What the job is given:
 // - `pages` in queue order, `label` for its status, `key` for its entries,
-//   `parallel` workers;
+//   `parallel` workers; `references`: the reference lists are translated too;
+// - `focus` ({pn, i}, with `pages` [pn]): the job asks for that block's unit
+//   alone, what the reader asked for on one paragraph (its menu's Translate
+//   again and Translate this paragraph): planned with the pages beside it
+//   segmented, a block with text included, a reference list's or a figure's
+//   too (translatePlan planBlock). It owes the page nothing else, so nothing
+//   else on it shows as queued, and the page's other failed blocks keep their
+//   marks. `fresh`: the server answers the texts afresh (requestFields), and
+//   they wait for the paper's brief, the first too. A unit that had text keeps
+//   it when its request fails, with no failed mark (`unchanged` in the status);
 // - `segment(pn)` segments a page and caches it; `cachedParas(pn)` is its
 //   blocks once segmented, else null;
 // - `seed(pn)` is the page's entry from before. Made under `key` from the
@@ -117,28 +193,39 @@ export function createLimit(n) {
 //   {head}), or a promise of it, so the document's opening text is read
 //   while the job already shows as running;
 // - `onPages(Map pn → entry)` hears the entries that changed;
-//   `onStatus({running, progress, label, reading, error, untranslated,
-//   medianMs})` the job's state: `reading` while a request waits for the
-//   server to read the paper for its brief (the stream's "stage" lines),
-//   and at the end `error` (why the job stopped: the last failed request's
-//   reason), `untranslated` (the paragraphs left in the original: those the
-//   server could not translate and those whose chunk's request failed),
-//   `unanswered` (the latter alone) and `medianMs` (its requests' median
-//   time once the model was
-//   writing, null when none reached the model: replies the server had kept
-//   or cached are not counted);
+//   `onStatus({running, progress, label, focus, reading, error, refused,
+//   untranslated, unanswered, unchanged, unread, refsLeft, refsOnly,
+//   medianMs})` the job's state: `focus` as given, null for none; `progress` by
+//   characters, streamed ones too while it runs, and at the end those of the
+//   replies that came back; `reading` while a request waits for the server to
+//   read the paper for its brief (the stream's "stage" lines), and at the end
+//   `error` (why the job stopped: the last failed request's reason) and
+//   `refused` (that request's HTTP status, 0 for none), `unchanged` (the
+//   paragraphs asked for again that keep the text they had: their request
+//   failed, or the server could not translate them), `untranslated` (the
+//   paragraphs left in the original: those the server could not translate and
+//   those whose chunk's request failed, and one for each page that could not
+//   be read), `unanswered` (the paragraphs of the failed requests alone),
+//   `unread` (the page numbers that could not be read), `refsLeft` (the blocks
+//   of reference lists it left original), `refsOnly` (those were all it found
+//   to do, so it asked the model for nothing) and `medianMs` (its requests'
+//   median time once the model was writing, null when none reached the
+//   model: replies the server had kept or cached are not counted);
 // - `limit`: a createLimit shared with the other jobs, which each chunk
 //   request goes through (the brief's request does not: one per job);
 // - `retry`: requestChunk's options.
 export function createTranslateJob({
-  pages, label, key, parallel, segment, cachedParas, seed, translate, brief = null, context, onPages, onStatus, limit = null, retry,
+  pages, label, key, parallel, references = false, focus = null, fresh = false, segment, cachedParas, seed, translate, brief = null, context, onPages, onStatus, limit = null, retry,
 }) {
   const ctl = new AbortController();
   const halted = () => ctl.signal.aborted;
   const aborted = new Promise((resolve) => ctl.signal.addEventListener("abort", resolve, { once: true }));
-  const inJob = new Set(pages);
+  // A focused job reads the pages beside its block: its paragraph may run
+  // into either, unless that page holds a translation under another key,
+  // which a job on one paragraph must not take over (focusPages).
+  const inJob = new Set(focus ? focusPages(focus.pn, key, seed) : pages);
 
-  let status = { running: true, progress: 0, label, reading: false, error: null, untranslated: 0, unanswered: 0, medianMs: null };
+  let status = { running: true, progress: 0, label, focus, reading: false, error: null, refused: 0, untranslated: 0, unanswered: 0, unchanged: 0, unread: [], refsLeft: 0, refsOnly: false, medianMs: null };
   const report = (patch) => {
     status = { ...status, ...patch };
     onStatus(status);
@@ -153,27 +240,47 @@ export function createTranslateJob({
   };
 
   // Per-page state, made on first use (a page's own turn, or a unit from a
-  // neighbouring page that a paragraph runs into): `out` becomes the entry's
-  // texts, `pending` holds the blocks still without a result.
+  // neighbouring page that a paragraph runs into), of a segmented page:
+  // `out` becomes the entry's texts, `pending` holds the blocks still without
+  // a result. Left blocks are pending again until the page's turn, which
+  // leaves them once more or asks for them; until they land they stay left.
+  // A focused job owes the page nothing else, so it keeps the page as it was:
+  // its untranslated and left blocks stay so, and its failed ones failed.
+  // `landed` holds the blocks landed since the page's entry was last handed
+  // out.
   const states = new Map();
   const stateOf = (pn) => {
     let st = states.get(pn);
     if (!st) {
-      const paras = cachedParas(pn) || [];
+      const paras = cachedParas(pn);
       const e = seed(pn);
-      const out = e && e.key === key && e.paras === paras ? e.texts.map((t) => (t === null ? undefined : t)) : [];
+      const same = e && e.key === key && e.paras === paras;
+      const out = same ? e.texts.map((t) => (t === null && !focus ? undefined : t)) : [];
       const pending = new Set();
-      paras.forEach((p, i) => { if (p.translate && out[i] == null) pending.add(i); });
-      st = { paras, out, pending, busy: new Set(), partial: {}, failed: new Set() };
+      paras.forEach((p, i) => { if (p.translate && out[i] === undefined) pending.add(i); });
+      st = { paras, out, pending, busy: new Set(), partial: {}, failed: new Set(focus && same ? e.failed : []),
+             left: new Set(same ? e.left : []), landed: new Set() };
       states.set(pn, st);
     }
     return st;
   };
+  // The blocks the reader shows in the original on page `pn`, from its entry
+  // as it is now, less those that just landed.
+  const originalOf = (pn, st) => {
+    const e = seed(pn);
+    const on = e && e.key === key && e.paras === st.paras && e.original;
+    if (!on?.size) return undefined;
+    const rest = [...on].filter((i) => !st.landed.has(i));
+    return rest.length ? new Set(rest) : undefined;
+  };
   const entryOf = (pn) => {
     const st = stateOf(pn);
     const done = st.pending.size === 0;
-    return { key, paras: st.paras, texts: st.out.slice(), done, queued: !done,
-             busy: new Set(st.busy), partial: { ...st.partial }, failed: new Set(st.failed) };
+    const original = originalOf(pn, st);
+    st.landed.clear();
+    return { key, paras: st.paras, texts: st.out.slice(), done, queued: focus ? false : !done,
+             busy: new Set(st.busy), partial: { ...st.partial }, failed: new Set(st.failed), left: new Set(st.left),
+             ...(original && { original }) };
   };
   // Each page's entry as last handed out, for the end to settle.
   const shown = new Map();
@@ -187,36 +294,49 @@ export function createTranslateJob({
 
   // The units that came back, their characters counted done, those the
   // server could not translate, and those whose chunk's request failed
-  // (both pending, for the next job).
+  // (both pending, for the next job), and those asked for again that keep
+  // the text they had.
   const landed = new Set();
   const lost = new Set();
   const unanswered = new Set();
+  const unchangedText = new Set();
   let totalChars = 0, doneChars = 0;
+  // The characters streamed of each unit on its way, which its reply replaces.
+  const streamed = new Map();
+  // Whether a unit had text before this job asked for it (Translate again).
+  const hadText = (u) => !landed.has(u) && u.targets.some((t) => stateOf(t.pn).out[t.i] != null);
   // A chunk's reply onto its pages. A unit asked again that fails keeps the
-  // text it has; one that failed before and comes back is no longer lost.
+  // text it has, unmarked; one that failed before and comes back is no
+  // longer lost.
   const land = (c, res) => {
     const failed = new Set(res.failed || []);
     c.units.forEach((u, j) => {
       if (failed.has(j)) {
         if (landed.has(u)) return;
+        if (hadText(u)) { unchangedText.add(u); return; }
         lost.add(u);
         for (const t of u.targets) stateOf(t.pn).failed.add(t.i);
         return;
       }
       if (!landed.has(u)) { landed.add(u); doneChars += u.chars; }
       lost.delete(u);
+      unchangedText.delete(u);
       for (const r of results(u, res.translations[j])) {
         const st = stateOf(r.pn);
         st.out[r.i] = r.text;
         st.pending.delete(r.i);
         st.failed.delete(r.i);
+        st.left.delete(r.i);
+        st.landed.add(r.i);
       }
     });
     paint(pagesOf(c.units));
   };
-  // A chunk whose request failed: its paragraphs keep the original.
+  // A chunk whose request failed: its paragraphs keep the original, or the
+  // text they had.
   const drop = (c) => {
     for (const u of c.units) {
+      if (hadText(u)) { unchangedText.add(u); continue; }
       unanswered.add(u);
       for (const t of u.targets) stateOf(t.pn).failed.add(t.i);
     }
@@ -252,19 +372,33 @@ export function createTranslateJob({
     onStatus(status);
     const briefUnderWay = askBrief();
     const shared = await context;
+    // The reference-list blocks this job left original.
+    let refsLeft = 0;
+    const leave = (pn, i) => {
+      const st = stateOf(pn);
+      st.out[i] = null;
+      st.pending.delete(i);
+      st.left.add(i);
+      refsLeft += 1;
+    };
+    // A focused job asks for its block's unit whatever its blocks hold.
     const planner = createPlanner({
       paras: cachedParas,
       inJob: (pn) => inJob.has(pn),
-      filled: (pn, i) => stateOf(pn).out[i] != null,
+      filled: focus ? () => false : (pn, i) => stateOf(pn).out[i] != null,
+      leave: references ? null : leave,
     });
     // Producer/consumer: the producer segments pages in queue order and
     // appends chunks; workers pick them up immediately. Idle workers wait on
-    // `wake` with a short timeout backstop — the timeout (not an event) is
-    // what lets them notice a halt or a failure.
+    // `wake`, which the producer calls after each page and as it ends, and
+    // it ends at a halt or a failure.
     const queue = [];
     // `failed`: the job stopped; `streak`: chunks failed since the last
     // that came back.
-    let failed = false, segDone = false, error = null, sent = 0, streak = 0;
+    let failed = false, segDone = false, error = null, refused = 0, sent = 0, streak = 0;
+    // The pages that could not be read. They get no entry, so they are not
+    // done: the next job reads them again.
+    const unread = new Set();
     // How long each request took once the model was writing; whether any
     // came back with the brief, and the chunks that came back without it.
     const times = [];
@@ -272,17 +406,31 @@ export function createTranslateJob({
     const without = [];
     let wake = null;
     const notify = () => { const w = wake; wake = null; w?.(); };
+    // How far a running job is: the characters landed and those streamed. While
+    // segmentation is still running the denominator is a lower bound, so this
+    // stops short of the end until the total is final. It never goes back, though
+    // the total grows and a request asked again streams from its start.
+    const reached = () => {
+      let chars = doneChars;
+      for (const n of streamed.values()) chars += n;
+      const p = totalChars ? chars / totalChars : 1;
+      return Math.max(status.progress, segDone ? p : Math.min(p, 0.95));
+    };
     const producer = async () => {
       for (const pn of pages) {
         if (halted() || failed) break;
-        // The page, and its neighbours in the job: a paragraph that runs
-        // over a page break is planned with both pages segmented.
-        for (const p of [pn, pn - 1, pn + 1]) {
+        // The page, and the pages within two of it in the job: a paragraph
+        // that runs over a page break is planned with both pages segmented,
+        // and whether a block on the page beside this one is in a reference
+        // list can take that page's neighbour to tell.
+        for (const p of [pn, pn - 1, pn + 1, pn - 2, pn + 2]) {
           if (p !== pn && !inJob.has(p)) continue;
           try { await segment(p); } catch {}
         }
         if (halted()) break;
-        const units = planner.planPage(pn);
+        if (!cachedParas(pn)) { unread.add(pn); continue; }
+        const unit = focus && planner.planBlock(focus.pn, focus.i);
+        const units = focus ? (unit ? [unit] : []) : planner.planPage(pn);
         const touched = pagesOf(units).add(pn);
         for (const chunk of chunkUnits(units)) {
           queue.push(chunk);
@@ -302,11 +450,10 @@ export function createTranslateJob({
           await new Promise((resolve) => {
             const prev = wake;
             wake = () => { prev?.(); resolve(); };
-            setTimeout(resolve, 200);
           });
           continue;
         }
-        const waitBrief = sent++ > 0;
+        const waitBrief = fresh || sent++ > 0;
         if (waitBrief) await briefUnderWay;
         if (halted()) return;
         let res = null;
@@ -319,6 +466,9 @@ export function createTranslateJob({
           if (halted() || !u) return;
           for (const r of partials(u, text)) stateOf(r.pn).partial[r.i] = r.text;
           paint(pns);
+          streamed.set(u, Math.min(text.length, u.chars * STREAMED_SHARE));
+          const p = reached();
+          if (Math.floor(p * 100) > Math.floor(status.progress * 100)) report({ progress: p });
         };
         let began = 0;
         const onStage = (stage) => {
@@ -330,14 +480,16 @@ export function createTranslateJob({
         try {
           res = await requestChunk(() => send(() => {
             began = Date.now();
-            return translate(c.texts, ctl.signal, onPartial, { ...shared, ...c.context, waitBrief }, onStage);
+            return translate(c.texts, ctl.signal, onPartial, { ...shared, ...c.context, waitBrief, fresh }, onStage);
           }), ctl.signal, retry);
         } catch (e) { err = e; }
         readingFor(c, false);
         for (const t of targets) { const st = stateOf(t.pn); st.busy.delete(t.i); delete st.partial[t.i]; }
+        for (const u of c.units) streamed.delete(u);
         if (halted()) return;
         if (!answers(res, c)) {
           error = err?.message || "";
+          refused = err?.status || 0;
           if (++streak >= FAILS_IN_A_ROW || finalRefusal(err)) {
             failed = true;
             return;
@@ -352,11 +504,7 @@ export function createTranslateJob({
         if (res.brief === true) withBrief = true;
         else if (res.brief === false) without.push(c);
         land(c, res);
-        // While segmentation is still running the denominator is a lower
-        // bound, so the progress shown stops short of the end until the
-        // total is final.
-        const p = totalChars ? doneChars / totalChars : 1;
-        report({ progress: segDone ? p : Math.min(p, 0.95) });
+        report({ progress: reached() });
       }
     };
     await Promise.all([producer(), ...Array.from({ length: parallel }, worker)]);
@@ -368,17 +516,21 @@ export function createTranslateJob({
         for (let c = without.shift(); c && !halted(); c = without.shift()) {
           let res = null;
           try {
-            res = await requestChunk(() => send(() => translate(c.texts, ctl.signal, null, { ...shared, ...c.context, waitBrief: true })),
+            res = await requestChunk(() => send(() => translate(c.texts, ctl.signal, null, { ...shared, ...c.context, waitBrief: true, fresh })),
               ctl.signal, retry);
           } catch {}
           if (!halted() && answers(res, c)) land(c, res);
         }
       }));
     }
+    // Settled with the blocks the reader shows in the original as they are
+    // now: they may have changed since the page's last paint.
     const settled = new Map();
     for (const [pn, e] of shown) {
       if (e.queued || e.busy.size || Object.keys(e.partial).length) {
-        settled.set(pn, { ...e, queued: false, busy: null, partial: null });
+        const { original: _, ...rest } = e;
+        const original = originalOf(pn, stateOf(pn));
+        settled.set(pn, { ...rest, queued: false, busy: null, partial: null, ...(original && { original }) });
       }
     }
     if (settled.size) onPages(settled);
@@ -388,8 +540,11 @@ export function createTranslateJob({
     // progress shown is while segmentation runs.
     const share = totalChars ? doneChars / totalChars : halted() ? 0 : 1;
     report({ running: false, reading: false, progress: halted() ? Math.min(share, 0.95) : share,
-             error: failed && !halted() ? error : null,
-             untranslated: halted() ? 0 : lost.size + unanswered.size, unanswered: halted() ? 0 : unanswered.size,
+             error: failed && !halted() ? error : null, refused: failed && !halted() ? refused : 0,
+             untranslated: halted() ? 0 : lost.size + unanswered.size + unread.size, unanswered: halted() ? 0 : unanswered.size,
+             unchanged: halted() ? 0 : unchangedText.size,
+             unread: halted() ? [] : [...unread],
+             refsLeft: halted() ? 0 : refsLeft, refsOnly: !halted() && refsLeft > 0 && !totalChars,
              medianMs: sorted.length ? (sorted[(sorted.length - 1) >> 1] + sorted[sorted.length >> 1]) / 2 : null });
   }
 

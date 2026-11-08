@@ -1,14 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { isMathRun, lineParts, spanBox, textTokens } from "../src/pdf/pdfMath.js";
+import { faceStyle, isMathRun, lineParts, spanBox, textTokens } from "../src/pdf/pdfMath.js";
 
 const run = (str, x, face, { h = 10, w = str.length * 5, y = 100, script = null, spaced = false, asc = 0.7, desc = -0.2 } = {}) =>
   ({ str, x, y, w, h, face, script, spaced, asc, desc });
 
 test("math runs: math fonts, symbol-heavy text, scripts and italic variables", () => {
-  assert.equal(isMathRun(run("V", 0, "KXFCTZ+CMMI10")), true);
+  assert.equal(isMathRun(run("V", 0, "CMMI10")), true);
   assert.equal(isMathRun(run("|", 0, "CMSY10")), true);
-  assert.equal(isMathRun(run("x", 0, "GPKYPV+KaTeX_Math Italic")), true);
+  assert.equal(isMathRun(run("x", 0, "KaTeX_Math Italic")), true);
   assert.equal(isMathRun(run("Ω", 0, "CMR10")), true, "uppercase Greek is set in the text font");
   assert.equal(isMathRun(run("6", 0, "CMR7", { script: "sup" })), true);
   assert.equal(isMathRun(run("x", 0, "TimesNewRomanPS-ItalicMT")), true);
@@ -63,6 +63,40 @@ test("citation markers and URLs in text are literal tokens", () => {
     { kind: "text", str: "short distance " }, { kind: "literal", str: "[19–21]" }, { kind: "text", str: ", but" },
   ]);
   assert.deepEqual(textTokens("plain [a] text"), [{ kind: "text", str: "plain [a] text" }]);
+});
+
+test("a face's weight and slant are in its name, as the papers on hand spell them", () => {
+  const styles = (names, bold, italic) => {
+    for (const name of names) assert.deepEqual(faceStyle(name), { bold, italic }, name);
+  };
+  styles(["CMBX10", "CMBX12", "CMB10", "CMSSBX10", "SFBX1000", "SFSX1095", "NimbusRomNo9L-Medi", "LMRoman10-Bold",
+    "Times-Bold", "TimesNewRomanPS-BoldMT", "Arial-BoldMT", "Calibri,Bold", "MinionPro-Bold", "HardingText-Semibold",
+    "Harding-Extrabold", "Whitney-Semibold", "GraphikNaturel-Semibold", "HelveticaNeueLTStd-Blk", "HelveticaNeueLTStd-Bd",
+    "URWGothicL-Demi", ".SFNS-Bold", "AdvOT19ee2aa8.B", "AdvOT3b30f6db.B+03"], true, false);
+  styles(["CMTI10", "CMTI9", "CMSL10", "CMSSI10", "SFTI1000", "SFSL1000", "SFSI1095", "NimbusRomNo9L-ReguItal",
+    "LMRoman10-Italic", "Times-Italic", "TimesNewRomanPS-ItalicMT", "MinionPro-It", "Helvetica-Oblique",
+    "GraphikNaturel-RegularItalic", "Whitney-BookItalic", "AdvOTb748f40a.I", "AdvOTdd3b7348.I+03"], false, true);
+  styles(["CMBXTI10", "SFBI1000", "NimbusRomNo9L-MediItal", "LMRoman10-BoldItalic", "TimesNewRomanPS-BoldItalicMT",
+    "Arial-BoldItalicMT", "AdvOT0123abcd.BI"], true, true);
+  styles(["CMR10", "CMSS10", "SFRM1000", "NimbusRomNo9L-Regu", "LMRoman10-Regular", "Times-Roman", "TimesNewRomanPSMT",
+    "MinionPro-Regular", "GraphikNaturel-Medium", "Helvetica", "HardingText-Regular", "AdvOT483a8203", "Academia-Regular", "Type3", ""], false, false);
+});
+
+test("a light CJK weight is no bold, and a word that holds 'ital' is no slant", () => {
+  const plain = { bold: false, italic: false };
+  for (const name of ["NotoSansCJKjp-DemiLight", "ABCDEF+NotoSansCJKsc-DemiLight", "DS-Digital", "Capitalis-Regular"]) {
+    assert.deepEqual(faceStyle(name), plain, name);
+  }
+  assert.deepEqual(faceStyle("Whitney-Demi"), { bold: true, italic: false });
+  assert.deepEqual(faceStyle("Whitney-DemiBold"), { bold: true, italic: false });
+  assert.deepEqual(faceStyle("URWPalladioL-Ital"), { bold: false, italic: true });
+  assert.deepEqual(faceStyle("FOO-ITAL"), { bold: false, italic: true });
+});
+
+test("a face's subset tag says nothing of its style", () => {
+  assert.deepEqual(faceStyle("KXFCTZ+CMBX12"), { bold: true, italic: false });
+  assert.deepEqual(faceStyle("ABCDEF+CMTI10"), { bold: false, italic: true });
+  assert.deepEqual(faceStyle(undefined), { bold: false, italic: false });
 });
 
 test("a font's name decides only for math families, and never for a run of prose", () => {

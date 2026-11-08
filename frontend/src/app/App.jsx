@@ -7,7 +7,8 @@ import { activate as activateGroupIn, activeGroup, groupById, groupOf, groupsOf,
 import PdfViewer, { preloadPdfEngine } from "../pdf/PdfViewer";
 import { highlightSpot, rangeSpot } from "../pdf/pdfSelectionSpot";
 import { penSelecting } from "../pdf/penSelect.js";
-import { briefRequest, chunkRequest, endTranslations, forgetTranslation, useTranslateJobs } from "./translateClient.js";
+import { addTerm, briefRequest, chunkRequest, endTranslations, forgetTranslation, lookupRequest, useTranslateJobs } from "./translateClient.js";
+import { createRecall, modelOfKey, openKey } from "../pdf/translateRecall.js";
 import { scopeOf, snapshot as translateSnapshot, span as translateSpan } from "../pdf/translateState.js";
 import { exportFile, exportLayout, exportPages } from "../pdf/translateExport.js";
 import { docIdOf } from "../pdf/pdfSource";
@@ -76,13 +77,14 @@ import { bibliographyPreview } from "../transfers/exportApi";
 import { collectEntryFiles } from "../shared/lib/dropEntries.js";
 import { useWheelPan } from "../shared/ui/wheelPan";
 import {
-  ActivityIcon, AlertCircleIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpDownIcon, ArrowUpIcon, BookIcon, BugIcon, CheckIcon, CloudIcon, CopyIcon, DownloadIcon, ExportIcon,
+  ActivityIcon, AlertCircleIcon, ArrowDownIcon, ArrowLeftIcon, ArrowUpDownIcon, ArrowUpIcon, BugIcon, CheckIcon, CloudIcon, CopyIcon, DownloadIcon, ExportIcon,
   ExternalLinkIcon, EyeIcon, EyeOffIcon, FileGlyph, FileIcon, FileTextIcon, FitWidthIcon, FolderGlyph, HighlightIcon,
   FilePlusIcon, PaperclipIcon, FolderIcon, FolderOpenIcon, FolderPlusIcon, HardDriveIcon, HelpCircleIcon, HomeIcon, ImportIcon, IndentIcon, InfoIcon, LabelGlyph, LabelIcon, OutdentIcon,
-  LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoreIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon,
+  LanguagesIcon, LanguagesOffIcon, LinkIcon, LogOutIcon, MaximizeIcon, MenuIcon, MinimizeIcon, MoreIcon, MoveVerticalIcon, PenIcon, PinIcon, PlusIcon, QuoteIcon,
   RectSelectIcon, RefreshIcon, SettingsIcon, SparklesIcon, TextCursorIcon, Trash2Icon, TrashIcon, TypeIcon, UploadIcon,
   ScissorsIcon, ShareIcon, UserIcon, UsersIcon, XIcon, ZoomInIcon, ZoomOutIcon, NotebookIcon, SheetIcon, MicIcon, MessageSquareIcon, BellIcon,
   PanelTopIcon, LocateIcon, TextSearchIcon, CloudDownloadIcon, BracesIcon, SplitColumnsIcon, SplitRowsIcon, OnePaneIcon,
+  StopIcon, GlobeIcon, ChevronRightIcon,
 } from "../shared/ui/Icons";
 
 
@@ -3082,7 +3084,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const [exportJobId, setExportJobId] = useState(null);
   // Starting, reopening and retrying jobs, and what to say when one ends
   // (tasks/useAppJobs.js); `tasks` above calls its onJobFinished.
-  const { startWorkspaceExport, runBackupImport, runExport, closeExport, leaveExportJob, openTask, retryTask, onJobFinished } = useAppJobs({
+  const { startWorkspaceExport, runBackupImport, runExport, exportStarting, closeExport, leaveExportJob, openTask, retryTask, onJobFinished } = useAppJobs({
     tasks, postPill, setStatus, setOpenPopover, setSettingsOpen,
     exportOpen, setExportOpen, exportJobId, setExportJobId, exportFolder, setExportFolder, importReview, setImportReview,
     pageId: focusedBlock?.id, shareMode, exportRawPdf, downloadExport, exportTranslation,
@@ -3726,12 +3728,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const translatePick = translateModelFor(translateModel, translateEngines, scopedAiModels);
   const translateSendModel = translatePick || chatSendModel;
   const translateLangLabel = (TRANSLATE_LANGS.find(([code]) => code === translateLang) || ["", ""])[1];
-  // What the viewer keeps translations under (its page entries' key): the
-  // language and what translates into it.
+  // The key the settings hold: the language and what translates into it.
+  // What the viewer keeps the page's PDF under is paperKey, below.
   const translateKey = `${translateLang}|${translateSendModel}`;
   const pdfTranslateCtl = useRef(null); // imperative surface set by PdfViewer
-  const [pdfTransState, setPdfTransState] = useState({ running: false, progress: 0, shown: true, pages: 0, current: false, translated: false, url: "" });
+  const [pdfTransState, setPdfTransState] = useState({ running: false, progress: 0, shown: true, pages: 0, current: false, translated: false, refsLeft: 0, url: "" });
   const [transMenu, setTransMenu] = useState(null); // {x, y} while the button's option menu is open
+  // A translated paragraph's menu while it is open: what the viewer says of
+  // the paragraph (PdfViewer onParagraphContext), indices, never nodes.
+  const [paraMenu, setParaMenu] = useState(null);
   const [toolsMenu, setToolsMenu] = useState(null); // {x, y} while the strip's ⋯ menu is open
   const toolsMoreRef = useRef(null); // the ⋯ button: its own press toggles the menu
   // The ⋯ going (its tools back on the strip, the viewer closed) takes its
@@ -3744,12 +3749,23 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     return { x: r.right + 8, y: r.top - 4 };
   }
   function openTransMenu(el) { setTransMenu(stripMenuAt(el)); }
-  const [translateChunk, translateBrief] = useMemo(() => {
-    const settings = { lang: translateLang, model: translateSendModel, effort: translateEffort, speed: translateSpeed, keep: translateKeep };
-    return [chunkRequest(settings), briefRequest(settings)];
-  }, [translateLang, translateSendModel, translateEffort, translateSpeed, translateKeep]);
-  useTranslateJobs({ screenUrl: pdfUrl, langLabel: translateLangLabel, postPill, addTask, updateTask, setStatus,
+  // The papers this browser last left showing their translation, per account
+  // and workspace (pdf/translateRecall.js): the viewer seeds those, and only
+  // those, from their kept translations as they open. `recallRead` moves on
+  // when a Forget lets one go, so paperKey reads the list again.
+  const translateRecall = useMemo(() => (authUser?.user && wsId && !shareMode
+    ? createRecall({ getItem: (k) => localStorage.getItem(k), setItem: (k, v) => localStorage.setItem(k, v) },
+      `gamma-translated:${authUser.user}@${wsId}`)
+    : null), [authUser?.user, wsId, shareMode]);
+  const [recallRead, setRecallRead] = useState(0);
+  // No chat model on offer and no service picked in Translate with (the free
+  // service, or nothing, stands in for a chat model): a paper left translated
+  // by a chat model then opens under that model's key (paperKey).
+  const translateNoChatModel = !scopedAiModels.length && !translateEngines.some((e) => e.id === translateModel);
+  useTranslateJobs({ screenUrl: pdfUrl, title: () => pageTitle, langLabel: translateLangLabel, postPill, addTask, updateTask, setStatus,
     retry: () => pdfTranslateCtl.current?.retryUntranslated(),
+    rerun: () => pdfTranslateCtl.current?.rerun(),
+    translateReferences: () => pdfTranslateCtl.current?.translateReferences(),
     followsChat: !translatePick, openSettings: () => openSettingsPane("translation"),
     // A page read through the link proxy has a copy for the export to read
     // only with Save external PDFs on; an upload always has its file.
@@ -7867,9 +7883,25 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // under, the page's file (an upload, a duplicated page's, or for a PDF
   // opened from its link the copy the proxy saves under the link's hash).
   const pdfTransScope = { url: pdfUrl, pageId: focusedBlockId, stored: !!docIdOf(pdfUrl), file: attachmentFile(pageAttach) };
-  // The file "Forget this translation" names: the page's, once the document
+  // The file "Forget this paper's translations" names: the page's, once the document
   // the viewer reports on (the one on screen) is the page's.
   const pdfTransFile = scopeOf(pdfTransState.url, pdfTransScope).file;
+  // What the viewer keeps the PDF on screen under (its page entries' key) and
+  // what its requests send: the settings' key, except for a paper this
+  // browser left translated by a chat model while none is on offer now (a
+  // connection removed): that paper opens under the key it was left under,
+  // from what the workspace keeps (pdf/translateRecall.js openKey), and a job
+  // on it asks that model, which needs its connection back. A selection
+  // always asks what the settings name (translateSelection).
+  const recalledKey = useMemo(() => (translateNoChatModel && pdfTransFile ? translateRecall?.keyOf(pdfTransFile) ?? null : null),
+    [translateNoChatModel, pdfTransFile, translateRecall, recallRead]); // eslint-disable-line react-hooks/exhaustive-deps
+  const paperKey = (translateNoChatModel && openKey(recalledKey, translateKey, { noChatModel: true })) || translateKey;
+  const paperModel = modelOfKey(paperKey);
+  const [translateChunk, translateBrief, translateLookup, translateSelection] = useMemo(() => {
+    const settings = { lang: translateLang, model: paperModel, effort: translateEffort, speed: translateSpeed, keep: translateKeep };
+    const own = paperModel === translateSendModel ? null : chunkRequest({ ...settings, model: translateSendModel });
+    return [chunkRequest(settings), briefRequest(settings), lookupRequest(settings), own];
+  }, [translateLang, paperModel, translateSendModel, translateEffort, translateSpeed, translateKeep]);
   // The translation the viewer shows over the page's PDF, which the page's
   // annotated PDF writes in place of the original text
   // (pdf/translateExport.js): only for the page's own stored file, the one
@@ -7878,18 +7910,34 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // page's translation still on screen while this one's PDF loads is never
   // read. Never in a share view, which cannot translate. The export reads it
   // as Export is pressed (tasks/useAppJobs.js runExport); the dialog says how
-  // many pages it holds.
+  // many pages it holds. A paper shown from its kept translations has only
+  // the pages near where the reader went seeded: the rest are seeded as the
+  // dialog opens on an annotated PDF (exportSeeding), through the lookup,
+  // with no model call (translateCtl.seedAll), so the dialog counts the pages
+  // the file will hold; until then it names no number and its Export waits.
+  // The export seeds again, which reads only what is still unseeded.
   const translatedFile = () => (shareMode ? "" : exportFile(pdfUrl, pageAttach));
-  function exportTranslation() {
+  async function exportTranslation() {
     const file = translatedFile();
-    const layout = file && exportLayout(translateSnapshot(pdfUrl), translateKey,
+    if (file) await pdfTranslateCtl.current?.seedAll(pdfUrl);
+    const layout = file && exportLayout(translateSnapshot(pdfUrl), paperKey,
       (pn, i, k) => translateSpan(pdfUrl, pn, i, k));
     return layout ? { doc_id: file, lang: translateLang, ...layout } : null;
   }
   function exportTranslated() {
-    const pages = translatedFile() ? exportPages(translateSnapshot(pdfUrl), translateKey) : 0;
-    return pages ? { pages, language: translateLangLabel || translateLang } : null;
+    const pages = translatedFile() ? exportPages(translateSnapshot(pdfUrl), paperKey) : 0;
+    return pages ? { pages, language: translateLangLabel || translateLang, counting: exportSeeding } : null;
   }
+  const [exportSeeding, setExportSeeding] = useState(false);
+  const exportsPdf = exportOpen && !exportFolder && exportOpts.format === "pdf";
+  useEffect(() => {
+    if (!exportsPdf || !translatedFile()) return;
+    let live = true;
+    setExportSeeding(true);
+    Promise.resolve(pdfTranslateCtl.current?.seedAll(pdfUrl)).catch(() => {})
+      .finally(() => { if (live) setExportSeeding(false); });
+    return () => { live = false; setExportSeeding(false); };
+  }, [exportsPdf, pdfUrl, paperKey]); // eslint-disable-line react-hooks/exhaustive-deps
   // The Export dialog, preset to a format (transfers/transferFormats.js).
   function exportAs(format) {
     setExportFolder(null);
@@ -8386,6 +8434,20 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     // menu and the selection menu share.
     ...inkCommandContext({ inkUi, inkTool, inkSelection, readOnly, inkClip },
       { copyInkSelection, pasteAtCentre, duplicateInkSelection, selectAllInk }),
+    // The translated view, where the translate button applies (a PDF on
+    // screen outside a share, as the viewer's tools are): the toggle shows or
+    // hides what is translated, or translates the page being read when
+    // nothing is, as the button's click. A closed PDF, or a phone's panel over
+    // it, starts no job the reader cannot see.
+    translation: !shareMode && !homeMode && pdfUrl && !viewerHidden && !(isPhone && phonePanel) ? {
+      ...pdfTransState,
+      toggle: () => {
+        if (pdfTransState.pages > 0) pdfTranslateCtl.current?.setShown(!pdfTransState.shown);
+        else pdfTranslateCtl.current?.translatePage();
+      },
+      page: () => pdfTranslateCtl.current?.translatePage(),
+      document: () => pdfTranslateCtl.current?.translateDoc(),
+    } : null,
   };
   // What the command palette lists right now: the app commands that apply,
   // then the block commands that work on the focused row without an editor.
@@ -12072,19 +12134,208 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // rectangle mode); a tour or a hint on screen shows them all, since their
   // steps point at them.
   const transLit = pdfTransState.running || (pdfTransState.pages > 0 && pdfTransState.shown);
-  // Translate's click, its name for that click and its glyph, shared by its
-  // button and its ⋯ row: stop a running job; on a translated page show or
-  // hide the translation (all pages); anywhere else translate this page,
-  // which also shows the rest.
+  // Translate's click, its name for that click and its glyph: stop a running
+  // job; on a translated page show the original or the translation (all
+  // pages); anywhere else translate this page, which also shows the rest.
+  // Its ⋯ row opens its menu instead.
   const translateClick = () => {
     if (pdfTransState.running) pdfTranslateCtl.current?.halt();
     else if (pdfTransState.current) pdfTranslateCtl.current?.setShown(!pdfTransState.shown);
     else pdfTranslateCtl.current?.translatePage();
   };
   const translateAction = pdfTransState.running ? t("Stop translating")
-    : pdfTransState.current ? (pdfTransState.shown ? t("Hide translation") : t("Show translation"))
+    : pdfTransState.current ? (pdfTransState.shown ? t("Show original") : t("Show translation"))
     : t("Translate");
   const TranslateGlyph = pdfTransState.pages > 0 && !pdfTransState.shown ? LanguagesOffIcon : LanguagesIcon;
+  const translateProgress = Math.round(pdfTransState.progress * 100);
+  // A PDF highlight's menu rows (its right-click or held finger, and the
+  // Highlight flyout of a translated paragraph's menu, where its rects take no
+  // pointer): its colour, link, reference point, place, comment, properties
+  // and Delete. `close` closes the menu they are in.
+  const highlightRows = (id, close) => {
+    const h = highlights.find((x) => x.id === id);
+    return (
+      <>
+        <div className="colorRow ctxMenuColors">
+          {pickerColors(palette, "highlight").map((c, i) => (
+            <button
+              key={c.hex + c.alpha + i}
+              type="button"
+              role="menuitem"
+              className="colorBtn"
+              style={{ background: swatchCss(c) }}
+              onClick={() => {
+                changeHighlightColor(id, highlightColor(c));
+                close();
+              }}
+              title={t("Change to {color}", { color: t(colorName(c)) })}
+              aria-label={t("Change to {color}", { color: t(colorName(c)) })}
+            />
+          ))}
+        </div>
+        <button
+          role="menuitem"
+          className="ctxMenuItem"
+          onClick={() => {
+            setLinkDialog({ position: null, quote: h?.quote || "", editBlockId: id, url: h?.linkTarget?.url || "" });
+            close();
+          }}
+        >
+          {h?.linkTarget ? t("Change link…") : t("Link to page…")}
+        </button>
+        {h?.linkTarget?.url ? (
+          <button
+            role="menuitem"
+            className="ctxMenuItem"
+            onClick={() => {
+              setLinkPrompt(h.linkTarget.url);
+              close();
+            }}
+          >
+            {t("Open link in browser…")}
+          </button>
+        ) : null}
+        <button
+          role="menuitem"
+          className="ctxMenuItem"
+          onClick={() => {
+            setRefPoint({
+              pageId: focusedBlockId,
+              pageTitle: pageTitle || t("Untitled"),
+              blockId: id,
+              quote: (h?.quote || "").slice(0, 200),
+            });
+            // Also a paste-able deep link: opening it jumps straight to
+            // this highlight (in the browser, chat notes, anywhere).
+            if (findBlock(blocks, id)) {
+              copyText(blockLinkUrl(id));
+            }
+            close();
+            setStatus(t("Reference point copied — paste the link, or pick it in another paper's link dialog."));
+          }}
+        >
+          {t("Copy as reference point")}
+        </button>
+        {/* a highlight drawn dashed (matched roughly, or an area placed by
+            estimate), pending: accepted where it is, it is drawn solid */}
+        {!readOnly && placedToCheck(h?.position) ? (
+          <button
+            role="menuitem"
+            className="ctxMenuItem"
+            onClick={() => { acceptHighlightPlace(id); close(); }}
+          >
+            {t("Accept")}
+          </button>
+        ) : null}
+        {!readOnly ? (
+          <button
+            role="menuitem"
+            className="ctxMenuItem"
+            onClick={() => { startHighlightMove(id); close(); }}
+          >
+            {t("Move to a selection…")}
+          </button>
+        ) : null}
+        {commentsOn ? (
+          <button
+            role="menuitem"
+            className="ctxMenuItem"
+            onClick={() => {
+              // the popover hangs from the highlight on the page
+              close();
+              openThread(id, highlightEl(id), { compose: true, toggle: false, pdf: true });
+            }}
+          >
+            {t("Comment")}
+          </button>
+        ) : null}
+        <button
+          role="menuitem"
+          className="ctxMenuItem"
+          onPointerEnter={BlockProperties.preload}
+          onClick={() => {
+            // the popover hangs from the highlight on the page
+            close();
+            openProps(id, highlightEl(id));
+          }}
+        >
+          {t("Properties")}
+        </button>
+        <button
+          role="menuitem"
+          className="ctxMenuItem"
+          onClick={() => {
+            deleteHighlight(id);
+            close();
+          }}
+        >
+          {t("Delete")}
+        </button>
+      </>
+    );
+  };
+  // The translate button's menu, from its right-click or held finger and
+  // from the ⋯ row of a hidden button (docs/dev/translation.md "The
+  // button"): what to translate, the translation shown or hidden, the
+  // language and the settings, then Forget, apart and asked first. The
+  // catalog's rows (pdf.*) grey out with the reason they do not apply.
+  const translateRows = (close) => {
+    const waiting = t("Wait for the translation under way to finish");
+    const cmdRow = (id, over) => (
+      <CommandMenuItem key={id} id={id} ctx={appCmdRef.current} bindings={keybindings} onRun={close} {...over} />
+    );
+    const { running, shown, pages } = pdfTransState;
+    const forget = () => {
+      close();
+      const url = pdfTransState.url, file = pdfTransFile, pageId = scopeOf(url, pdfTransScope).pageId;
+      setConfirmBox({
+        title: T("Forget this paper's translations?"),
+        message: t("Its translations in every language and model, and its brief, are forgotten for everyone in this workspace. Showing it translated again asks the model or service anew."),
+        confirmLabel: t("Forget"),
+        danger: true,
+        onConfirm: () => forgetTranslation(url, file, pageId, setStatus, translateRecall).then(() => setRecallRead((n) => n + 1)),
+      });
+    };
+    return menuGroups(
+      [
+        running ? (
+          <MenuItem key="stop" icon={StopIcon} onClick={() => { close(); pdfTranslateCtl.current?.halt(); }}>{t("Stop translating")}</MenuItem>
+        ) : null,
+        cmdRow("pdf.translatePage", { disabledTitle: running ? waiting : t("This page is translated") }),
+        cmdRow("pdf.translateDocument", { disabledTitle: running ? waiting : t("Every page is translated") }),
+        !running && pdfTransState.refsLeft > 0 ? (
+          <MenuItem key="refs" icon={QuoteIcon} onClick={() => { close(); pdfTranslateCtl.current?.translateReferences(); }}>
+            {t("Translate references too")}
+          </MenuItem>
+        ) : null,
+      ],
+      [
+        pages > 0 ? cmdRow("pdf.toggleTranslation", {
+          label: shown ? t("Show original") : t("Show translation"), icon: shown ? EyeOffIcon : EyeIcon,
+        }) : null,
+        <SubMenuItem key="lang" id="translateLang" icon={GlobeIcon} label={t("Translate into")}>
+          {TRANSLATE_LANGS.map(([code, name]) => (
+            <MenuItem key={code} role="menuitemradio" aria-checked={code === translateLang}
+              trailing={code === translateLang ? <CheckIcon size={14} /> : null}
+              onClick={() => { close(); setTranslateLang(code); }}>
+              {name}
+            </MenuItem>
+          ))}
+        </SubMenuItem>,
+        <MenuItem key="settings" icon={SettingsIcon} onClick={() => { close(); openSettingsPane("translation"); }}>
+          {t("Translation settings…")}
+        </MenuItem>,
+      ],
+      // A stored PDF's translations are kept on the server under the page's
+      // file, for the whole workspace: forgetting them there and here makes
+      // the next click translate afresh. For a writer of the workspace.
+      [
+        !running && pdfTransState.translated && pdfTransFile && !readOnly ? (
+          <MenuItem key="forget" icon={Trash2Icon} danger onClick={forget}>{t("Forget this paper's translations…")}</MenuItem>
+        ) : null,
+      ],
+    );
+  };
   const stripApplies = {
     zoom: true,
     ink: !readOnly,
@@ -12105,8 +12356,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   const stripMenuTools = stripPlaces.filter((x) => x.at === "menu");
   const toolsMore = !!(pdfUrl || notebook) && !viewerHidden && stripMenuTools.length > 0;
   // Each tool's button on the strip, by id: zoom is its three buttons,
-  // kept together (the tour points at them), and Translate's percentage
-  // follows it while it runs.
+  // kept together (the tour points at them).
   const viewerTool = {
     zoom: () => (
       <div className="pdfCtlGroup" data-guide="viewer.zoom">
@@ -12161,26 +12411,34 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         <span className="inkToolInk" style={{ background: highlighterPen }} />
       </button>
     ),
+    // While a job runs, the bar under the glyph fills with its progress, in
+    // the place the highlighter's colour takes, so the strip never moves; the
+    // click stops the job, and the stop glyph says so (app.css .pdfTransBtn).
     translate: () => (
-      <>
-        <button
-          data-guide="viewer.translate"
-          className={transLit ? "modeActive" : ""}
-          onClick={translateClick}
-          {...menuPress((e) => { e.preventDefault(); openTransMenu(e.currentTarget); })}
-          title={pdfTransState.running
-            ? t("Translating… {progress}% — click to stop (right-click for options)", { progress: Math.round(pdfTransState.progress * 100) })
-            : pdfTransState.current
-              ? (pdfTransState.shown
-                  ? t("Hide the translation (all pages; Alt peeks) — right-click for options")
-                  : t("Show the translation — right-click for options"))
-              : t("Translate this page into {translateLangLabel} — right-click: whole document & options", { translateLangLabel })}
-          aria-label={translateAction}
-        >
-          {pdfTransState.running ? <span className="pillSpin" aria-hidden="true" /> : <TranslateGlyph size={16} />}
-        </button>
-        {pdfTransState.running ? <div className="pdfTransPct">{Math.round(pdfTransState.progress * 100)}%</div> : null}
-      </>
+      <button
+        data-guide="viewer.translate"
+        className={"pdfTransBtn" + (transLit ? " modeActive" : "") + (pdfTransState.running ? " running" : "")}
+        onClick={translateClick}
+        {...menuPress((e) => { e.preventDefault(); openTransMenu(e.currentTarget); })}
+        title={pdfTransState.running
+          ? t("Translating… {progress}% — click to stop (right-click for options)", { progress: translateProgress })
+          : pdfTransState.current
+            ? (pdfTransState.shown
+                ? (commandKeyLabel("pdf.peekOriginal")
+                  ? t("Show the original (all pages; {key} peeks) — right-click for options", { key: commandKeyLabel("pdf.peekOriginal") })
+                  : t("Show the original (all pages) — right-click for options"))
+                : t("Show the translation — right-click for options"))
+            : t("Translate this page into {translateLangLabel} — right-click: whole document & options", { translateLangLabel })}
+        aria-label={translateAction}
+      >
+        <TranslateGlyph size={16} className="pdfTransGlyph" />
+        {pdfTransState.running ? <>
+          <StopIcon size={14} className="pdfTransStop" />
+          <span className="pdfTransBar" aria-hidden="true" data-progress={translateProgress}>
+            <span style={{ width: `${translateProgress}%` }} />
+          </span>
+        </> : null}
+      </button>
     ),
     paper: () => (
       <button
@@ -12235,7 +12493,15 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
         {highlighterOn ? t("Turn off the text highlighter") : t("Text highlighter")}
       </MenuItem>
     ),
-    translate: () => <MenuItem key="translate" icon={TranslateGlyph} onClick={stripRow(translateClick)}>{translateAction}</MenuItem>,
+    // A hidden translate button's row opens its menu beside the row, as a
+    // flyout would; that menu holds a flyout of its own (the language).
+    translate: () => (
+      <MenuItem key="translate" icon={TranslateGlyph} aria-haspopup="menu"
+        trailing={<ChevronRightIcon size={14} className="ctxSubChev" />}
+        onClick={(e) => { const at = stripMenuAt(e.currentTarget); setToolsMenu(null); setTransMenu(at); }}>
+        {t("Translate")}
+      </MenuItem>
+    ),
     paper: () => <MenuItem key="paper" icon={SheetIcon} onClick={stripRow(() => setPaperMenu(true))}>{t("Paper of this page")}</MenuItem>,
     notesView: () => (
       <MenuItem key="notesView" icon={FileTextIcon} onClick={stripRow(() => setNotebookView(focusedBlockId, false))}>{t("Notes view")}</MenuItem>
@@ -12513,35 +12779,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       )}
       {transMenu && (
         <ContextMenu x={transMenu.x} y={transMenu.y} onClose={() => setTransMenu(null)} aria-label={t("Translate")}>
-          {pdfTransState.running ? (
-            <MenuItem icon={XIcon} onClick={() => { setTransMenu(null); pdfTranslateCtl.current?.halt(); }}>
-              {t("Stop translating")}
-            </MenuItem>
-          ) : (
-            <>
-              <MenuItem icon={FileIcon} onClick={() => { setTransMenu(null); pdfTranslateCtl.current?.translatePage(); }}>
-                {t("Translate this page")}
-              </MenuItem>
-              <MenuItem icon={BookIcon} onClick={() => { setTransMenu(null); pdfTranslateCtl.current?.translateDoc(); }}>
-                {t("Translate whole document")}
-              </MenuItem>
-            </>
-          )}
-          {pdfTransState.pages > 0 ? (
-            <MenuItem icon={pdfTransState.shown ? EyeOffIcon : EyeIcon}
-              onClick={() => { setTransMenu(null); pdfTranslateCtl.current?.setShown(!pdfTransState.shown); }}>
-              {pdfTransState.shown ? t("Show original") : t("Show translation")}
-            </MenuItem>
-          ) : null}
-          {/* A stored PDF's translation is kept on the server, under the
-              page's file: forgetting it there and here makes the next click
-              translate afresh. For a writer of the workspace. */}
-          {!pdfTransState.running && pdfTransState.translated && pdfTransFile && !readOnly ? (
-            <MenuItem icon={Trash2Icon}
-              onClick={() => { setTransMenu(null); forgetTranslation(pdfTransState.url, pdfTransFile, scopeOf(pdfTransState.url, pdfTransScope).pageId, setStatus); }}>
-              {t("Forget this translation")}
-            </MenuItem>
-          ) : null}
+          {translateRows(() => setTransMenu(null))}
         </ContextMenu>
       )}
       {/* The highlighter's colours, the selection popup's: a pick is its
@@ -12710,15 +12948,24 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
               onPageInView={onPageInView}
               zoomHeight={appPrefs.inkZoomHeight} onZoomHeight={appPrefs.setInkZoomHeight} onZoomChange={changeInkZoom}
               darkPage={pdfDarkPage}
-              translateKey={translateKey}
+              translateKey={paperKey}
               translateScope={pdfTransScope}
               translateParallel={translateParallel}
               onTranslate={shareMode ? undefined : translateChunk}
+              onTranslateSelection={shareMode ? undefined : translateSelection}
               onTranslateBrief={shareMode ? undefined : translateBrief}
+              onTranslateLookup={shareMode ? undefined : translateLookup}
+              translateRecall={translateRecall}
+              // only a translation the workspace keeps comes back on a reload
+              translateKeeps={translateKeep && !readOnly}
+              // Add to glossary in the selection's translation: the
+              // workspace's terms, which only its writers change
+              onAddTerm={shareMode || readOnly ? null : addTerm}
               selTranslate={selTranslate ? (selTranslateAuto ? "auto" : "button") : ""}
               translateLangLabel={translateLangLabel}
               translateCtlRef={pdfTranslateCtl}
               onTranslateState={setPdfTransState}
+              onParagraphContext={setParaMenu}
               areaMode={areaSelectMode && !shareMode}
               areaKey={commandChord("pdf.areaDrag", keybindings)}
               peekKey={commandChord("pdf.peekOriginal", keybindings)}
@@ -12973,6 +13220,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
             : Math.max(pageDescendants(pageBlocks, [focusedBlock?.id || ""]).length, openFamily.subPages.length)}
           subPagesDirect={!pageBlocks.some((page) => page.id === focusedBlock?.id)}
           translated={exportFolder ? null : exportTranslated()}
+          // the translation shown being read, or the export started
+          busy={exportSeeding || exportStarting}
           onCancel={closeExport}
           onExport={runExport}
           onLeaveJob={leaveExportJob}
@@ -13717,127 +13966,66 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
       ) : null}
       {highlightMenu ? (
         <ContextMenu x={highlightMenu.x} y={highlightMenu.y} onClose={() => setHighlightMenu(null)}>
-            <div className="colorRow ctxMenuColors">
-              {pickerColors(palette, "highlight").map((c, i) => (
-                <button
-                  key={c.hex + c.alpha + i}
-                  type="button"
-                  role="menuitem"
-                  className="colorBtn"
-                  style={{ background: swatchCss(c) }}
-                  onClick={() => {
-                    changeHighlightColor(highlightMenu.id, highlightColor(c));
-                    setHighlightMenu(null);
-                  }}
-                  title={t("Change to {color}", { color: t(colorName(c)) })}
-                  aria-label={t("Change to {color}", { color: t(colorName(c)) })}
-                />
-              ))}
-            </div>
-            <button
-              role="menuitem"
-              className="ctxMenuItem"
-              onClick={() => {
-                const h = highlights.find((x) => x.id === highlightMenu.id);
-                setLinkDialog({ position: null, quote: h?.quote || "", editBlockId: highlightMenu.id, url: h?.linkTarget?.url || "" });
-                setHighlightMenu(null);
-              }}
-            >
-              {highlights.find((x) => x.id === highlightMenu.id)?.linkTarget ? t("Change link…") : t("Link to page…")}
-            </button>
-            {highlights.find((x) => x.id === highlightMenu.id)?.linkTarget?.url ? (
-              <button
-                role="menuitem"
-                className="ctxMenuItem"
-                onClick={() => {
-                  setLinkPrompt(highlights.find((x) => x.id === highlightMenu.id).linkTarget.url);
-                  setHighlightMenu(null);
-                }}
-              >
-                {t("Open link in browser…")}
-              </button>
-            ) : null}
-            <button
-              role="menuitem"
-              className="ctxMenuItem"
-              onClick={() => {
-                const h = highlights.find((x) => x.id === highlightMenu.id);
-                setRefPoint({
-                  pageId: focusedBlockId,
-                  pageTitle: pageTitle || t("Untitled"),
-                  blockId: highlightMenu.id,
-                  quote: (h?.quote || "").slice(0, 200),
-                });
-                // Also a paste-able deep link: opening it jumps straight to
-                // this highlight (in the browser, chat notes, anywhere).
-                if (findBlock(blocks, highlightMenu.id)) {
-                  copyText(blockLinkUrl(highlightMenu.id));
-                }
-                setHighlightMenu(null);
-                setStatus(t("Reference point copied — paste the link, or pick it in another paper's link dialog."));
-              }}
-            >
-              {t("Copy as reference point")}
-            </button>
-            {/* a highlight drawn dashed (matched roughly, or an area placed by
-                estimate), pending: accepted where it is, it is drawn solid */}
-            {!readOnly && placedToCheck(highlights.find((x) => x.id === highlightMenu.id)?.position) ? (
-            <button
-              role="menuitem"
-              className="ctxMenuItem"
-              onClick={() => { acceptHighlightPlace(highlightMenu.id); setHighlightMenu(null); }}
-            >
-              {t("Accept")}
-            </button>
-            ) : null}
-            {!readOnly ? (
-            <button
-              role="menuitem"
-              className="ctxMenuItem"
-              onClick={() => { startHighlightMove(highlightMenu.id); setHighlightMenu(null); }}
-            >
-              {t("Move to a selection…")}
-            </button>
-            ) : null}
-            {commentsOn ? (
-            <button
-              role="menuitem"
-              className="ctxMenuItem"
-              onClick={() => {
-                // the popover hangs from the highlight on the page
-                const id = highlightMenu.id;
-                setHighlightMenu(null);
-                openThread(id, highlightEl(id), { compose: true, toggle: false, pdf: true });
-              }}
-            >
-              {t("Comment")}
-            </button>
-            ) : null}
-            <button
-              role="menuitem"
-              className="ctxMenuItem"
-              onPointerEnter={BlockProperties.preload}
-              onClick={() => {
-                // the popover hangs from the highlight on the page
-                const id = highlightMenu.id;
-                setHighlightMenu(null);
-                openProps(id, highlightEl(id));
-              }}
-            >
-              {t("Properties")}
-            </button>
-            <button
-              role="menuitem"
-              className="ctxMenuItem"
-              onClick={() => {
-                deleteHighlight(highlightMenu.id);
-                setHighlightMenu(null);
-              }}
-            >
-              {t("Delete")}
-            </button>
+          {highlightRows(highlightMenu.id, () => setHighlightMenu(null))}
         </ContextMenu>
       ) : null}
+      {/* A translated paragraph's menu (PdfViewer onParagraphContext,
+          docs/dev/translation.md "A paragraph's menu"): its text to copy, and
+          for an editor what to do with its translation. A joined paragraph
+          acts as one. A row that starts a job waits while one runs on the
+          document; a service answers the same text the same way, so it has
+          no Translate again. */}
+      {paraMenu ? (() => {
+        const close = () => setParaMenu(null);
+        const ctl = pdfTranslateCtl.current;
+        const waiting = paraMenu.running ? { disabled: true, title: t("Wait for the translation under way to finish") } : null;
+        const ask = () => { close(); ctl?.translateUnit(paraMenu.url, paraMenu.pn, paraMenu.i); };
+        return (
+          <ContextMenu x={paraMenu.x} y={paraMenu.y} onClose={close}>
+            {menuGroups(
+              [
+                paraMenu.translation && (
+                  <MenuItem key="copy-translation" icon={CopyIcon} onClick={() => { close(); copyText(paraMenu.translation); }}>
+                    {t("Copy translation")}
+                  </MenuItem>
+                ),
+                <MenuItem key="copy-original" icon={FileTextIcon} onClick={() => { close(); copyText(paraMenu.source); }}>
+                  {t("Copy original")}
+                </MenuItem>,
+              ],
+              readOnly ? [] : [
+                paraMenu.translated && !paperModel.startsWith("engine:") && (
+                  <MenuItem key="again" icon={RefreshIcon} onClick={ask} {...waiting}>{t("Translate again")}</MenuItem>
+                ),
+                !paraMenu.translated && (
+                  <MenuItem key="translate" icon={LanguagesIcon} onClick={ask} {...waiting}>{t("Translate this paragraph")}</MenuItem>
+                ),
+                paraMenu.translated && !paraMenu.original && !paraMenu.peek && (
+                  <MenuItem key="original" icon={EyeOffIcon}
+                    onClick={() => { close(); ctl?.setOriginal(paraMenu.url, paraMenu.unit, true); }}>
+                    {t("Show original here")}
+                  </MenuItem>
+                ),
+                paraMenu.original && (
+                  <MenuItem key="translation" icon={EyeIcon}
+                    onClick={() => { close(); ctl?.setOriginal(paraMenu.url, paraMenu.unit, false); }}>
+                    {t("Show translation here")}
+                  </MenuItem>
+                ),
+              ],
+              // A highlight on the paragraph: its rects over the translation
+              // take no pointer, so its own menu is here.
+              [
+                paraMenu.highlight && highlights.some((h) => h.id === paraMenu.highlight) && (
+                  <SubMenuItem key="highlight" id="highlight" icon={HighlightIcon} label={t("Highlight")}>
+                    {highlightRows(paraMenu.highlight, close)}
+                  </SubMenuItem>
+                ),
+              ],
+            )}
+          </ContextMenu>
+        );
+      })() : null}
       {threadPop && focusedBlockId && commentsOn && !threadPop.margin ? (
         // One per app, keyed by its block: another block's is a fresh one.
         <LazyBoundary>

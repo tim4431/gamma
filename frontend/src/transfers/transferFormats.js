@@ -171,8 +171,9 @@ export function hasReviewStep(format, controls) {
 // `subPagesDirect`: that number counts only the pages right inside it (a
 // page share's view has no listing to count the rest), so the switch's
 // hint and the summary name no number.
-// `translated`: {pages, language} while the viewer shows the page's PDF
-// translated (pdf/translateExport.js exportPages), else null. An annotated
+// `translated`: {pages, language, counting} while the viewer shows the page's
+// PDF translated (pdf/translateExport.js exportPages; `counting` while the
+// pages kept but not yet seen are read in), else null. An annotated
 // PDF of the page writes that translation in place of the original text
 // (App adds it to the job's body), which its summary says; nothing else
 // changes, there is no switch for it.
@@ -257,6 +258,17 @@ export function notionFiles({ highlights, notes }) {
 
 function formatSummary({ payload, noPdfCopy, translated }, folder) {
   const { format, highlights, notes, comments } = payload;
+  // An annotated PDF takes the translation the viewer shows in place of the
+  // original text; the way to the original is to show it there first
+  // (translation.md "Exporting the translation": the dialog has no switch).
+  // While the pages kept and not yet seen are read (`counting`), it names no
+  // number: the count would be too low.
+  const swapped = !translated ? ""
+    : translated.counting ? t("The translation into {language} replaces the original text on the pages it covers, which are being counted. To export the original, show it first with the translate button.",
+      { language: translated.language })
+    : tn("The translation into {language} replaces the original text on {n} page. To export the original, show it first with the translate button.",
+      "The translation into {language} replaces the original text on {n} pages. To export the original, show it first with the translate button.",
+      translated.pages, { language: translated.language });
   switch (format) {
     case "bibtex":
       if (folder) return t("One .bib file with the citation entry of every paper in the folder. Clashing citation keys get a, b, … and a key you pinned on a page keeps its exact spelling. Pages without paper metadata are left out.");
@@ -284,16 +296,10 @@ function formatSummary({ payload, noPdfCopy, translated }, folder) {
       }
       if (noPdfCopy) return t("This PDF isn't stored on the server, so only the file itself can be exported.");
       if (!highlights && !notes && !comments) {
-        return translated
-          ? tn("The PDF as stored, with the translation into {language} shown on {n} page written in place of its original text. Nothing else is added.",
-            "The PDF as stored, with the translation into {language} shown on {n} pages written in place of their original text. Nothing else is added.",
-            translated.pages, { language: translated.language })
-          : t("The PDF file exactly as stored, with nothing added.");
+        return translated ? `${t("The PDF as stored, with nothing else added.")} ${swapped}` : t("The PDF file exactly as stored, with nothing added.");
       }
       return [t("The PDF with {annotations}{page}.", { annotations: highlights ? t("highlight annotations") : t("text box and picture annotations only"), page: cardsSummary(payload) }),
-        translated ? tn("The translation into {language} shown on {n} page of the PDF is written in place of its original text.",
-          "The translation into {language} shown on {n} pages of the PDF is written in place of their original text.",
-          translated.pages, { language: translated.language }) : ""].filter(Boolean).join(" ");
+        swapped].filter(Boolean).join(" ");
     case "notespdf":
       if (!highlights && !notes) return t("A new PDF with the title and metadata only — both switches are off.");
       return t("A new PDF of {page} — title, {quotes}{typeset}.", { page: folder ? t("every page in the folder") : t("this page"), quotes: highlights ? t("quoted highlights") : t("no quotes"), typeset: notes ? t(" and your notes, typeset") : "" });

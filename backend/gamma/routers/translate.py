@@ -1,19 +1,21 @@
 """PDF translation routes: /ai/translate behind the viewer's translated view,
 /ai/translate/brief that makes a paper's brief ahead of it, the workspace's
-kept translations (/translations*), and the machine-translation services'
-credentials (/translate/engines*).
+kept translations (/translations*) and glossary (/translate/terms), and the
+machine-translation services' credentials (/translate/engines*).
 
 The frontend segments a page into paragraph blocks
 (frontend/src/pdf/pdfTranslate.js) and sends their TEXT here; geometry never
 leaves the client. The paragraph cache and the kept translations are
 gamma/translate.py (over translate_store.py); the system prompt, the
 numbered segments the texts go out and come back in, and the paper's brief
-are translate_context.py; the allowlisted target languages are
+are translate_context.py; the glossary is translate_terms.py; the
+allowlisted target languages are
 translate_engines.TRANSLATE_LANGS (code → the name spliced into the prompt),
 shared with the services. docs/dev/translation.md describes the whole path.
 """
 
 import json
+import re
 import threading
 import time
 
@@ -21,7 +23,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from .. import ai_catalog, ai_usage, translate_context, translate_engines, translate_store
+from .. import ai_catalog, ai_usage, translate_context, translate_engines, translate_store, translate_terms
 from ..ai_client import (
     CallRefused,
     call_ai as _call_ai,
@@ -34,10 +36,11 @@ from ..ai_client import (
     wire_protocol as _wire_protocol,
 )
 from ..ai_protocols.base import truncated_stop
-from ..ai_settings import require_ai_runtime, resolve_model as _resolve_model
-from ..auth import can_write, require_user_id, require_ws
+from ..ai_settings import ai_runtime, is_server_id, own_entries, require_ai_runtime, resolve_model as _resolve_model
+from ..auth import actor_of, can_write, require_user_id, require_ws
 from ..db import safe_doc_id
 from ..logbuf import log
+from ..ops import StorableBody
 from ..translate import Kept, TranslateBatch, clear, forget, generation, translate_key
 from ..translate_engines import TRANSLATE_LANGS
 from .ai import (
@@ -59,6 +62,8 @@ _TRANSLATE_STREAM_INTERVAL = 0.05  # min seconds between streamed partial lines 
 # (ai_client.call_slot): past the door's check, the account's other calls
 # may have taken the last one before its stream got to it.
 _TRANSLATE_SLOT_WAIT = 120.0
+# A translation call's timeout, seconds: the chunk and its re-ask.
+_TRANSLATE_TIMEOUT = 180
 # Times a model call (the chunk, its re-ask, the brief) is tried again when
 # it failed before any of the reply came (ai_client.open_ai's ``retries``):
 # a connection to the provider that timed out, a provider busy for the
@@ -77,7 +82,10 @@ _BRIEF_TOKENS = 3000
 _BRIEF_TIMEOUT = 90
 
 
-class AITranslateRequest(BaseModel):
+# A StorableBody: the client cuts `head` and the context in UTF-16 units, so
+# half a character can arrive, and the keys and the head's hash cannot encode
+# it.
+class AITranslateRequest(StorableBody):
     texts: list = Field(default_factory=list)  # source paragraphs, viewer order
     lang: str = "zh-CN"   # target language code (TRANSLATE_LANGS key)
     model: str = ""       # model registry id, or "engine:<id>" (a translation service); "" = the user's default
@@ -104,6 +112,10 @@ class AITranslateRequest(BaseModel):
     # (Settings → Language and Translation → Keep translations). Kept ones
     # are read either way.
     keep: bool = True
+    # True: the reader asked for these texts afresh (the paragraph menu's
+    # Translate again): memory and the kept translations are not read, and
+    # what comes back replaces them, a kept row made with the brief included.
+    fresh: bool = False
     # The paper's text just before and after the texts, and the heading they
     # sit under: context the model reads but does not translate
     # (translate_context.user_turn cuts them to size).
@@ -112,7 +124,7 @@ class AITranslateRequest(BaseModel):
     section: str = ""
 
 
-class AITranslateBriefRequest(BaseModel):
+class AITranslateBriefRequest(StorableBody):
     page_id: str = ""     # the paper, as AITranslateRequest's
     # The document's opening text, for a page without a stored PDF (shown
     # from its source URL) or no page: the brief reads it instead.
@@ -138,7 +150,7 @@ def _model_levels(listing, rt: dict, entry: dict, what: str) -> list:
 
 def _translate_effort(requested: str, rt: dict, entry: dict) -> str:
     """The effort a translation call asks for: the user's pick
-    (Settings → Translation), else the model's lowest level
+    (Settings → Language and Translation), else the model's lowest level
     (translate_context.default_effort; "" when its levels are unknown)."""
     if (requested or "").strip():
         return resolve_effort(requested)
@@ -179,11 +191,12 @@ def _paper(request: Request, page_id: str, head: str):
 
 
 def _paper_keys(request: Request, user_id: str, ws: str, paper, lang: str, model: str,
-                keep: bool) -> tuple[str, Kept | None]:
+                keep: bool, stamp=None) -> tuple[str, Kept | None]:
     """``(brief key, kept)`` of the paper in ``lang`` by ``model``: its
     memory key (translate_context.brief_key; "" for no paper) and its kept
     translations and brief (None but for a paper whose PDF is stored in the
-    workspace). Both carry the document's generation, read once here: read
+    workspace), whose rows a text's glossary ``stamp`` names (Kept). Both
+    carry the document's generation, read once here: read
     twice, a forget in between would let a request that began before it
     keep its translations under the new one. The request adds to the kept
     ones when it asks to keep and its account may change the workspace (a
@@ -196,7 +209,16 @@ def _paper_keys(request: Request, user_id: str, ws: str, paper, lang: str, model
     key = translate_context.brief_key(user_id, ws, paper, lang, model, gen)
     if not paper.doc_id:
         return key, None
-    return key, Kept(ws, paper.doc_id, lang, model, keep and can_write(request), gen)
+    return key, Kept(ws, paper.doc_id, lang, model, keep and can_write(request), gen, stamp)
+
+
+def _final(batch: TranslateBatch, translated: list, model: str, effort: str, brief: bool,
+           redone: int = 0, failed: list | None = None) -> dict:
+    """A translation's final object, plain or the last NDJSON line, with
+    ``translated`` settled into ``batch``. A service asks for no effort
+    (""), and counts as having the brief (ai_translate)."""
+    return {"translations": batch.settle(translated), "model": model, "cached": not batch.miss,
+            "redone": redone, "failed": failed or [], "effort": effort, "brief": brief}
 
 
 def _ndjson(line: dict) -> str:
@@ -206,6 +228,17 @@ def _ndjson(line: dict) -> str:
 def _one_line(line: dict) -> StreamingResponse:
     """The whole answer as one NDJSON line, for a streaming client."""
     return StreamingResponse(iter([_ndjson(line)]), media_type="application/x-ndjson")
+
+
+def _check_texts(texts: list) -> None:
+    """One request's texts within the caps: 1 to _TRANSLATE_MAX_TEXTS strings
+    of _TRANSLATE_MAX_CHARS in all."""
+    if not texts or len(texts) > _TRANSLATE_MAX_TEXTS:
+        raise HTTPException(status_code=400, detail=f"texts must be 1–{_TRANSLATE_MAX_TEXTS} strings")
+    if any(not isinstance(t, str) for t in texts):
+        raise HTTPException(status_code=400, detail="texts must be strings")
+    if sum(len(t) for t in texts) > _TRANSLATE_MAX_CHARS:
+        raise HTTPException(status_code=413, detail="too much text in one request")
 
 
 def _check_door(rt: dict, entry: dict, user_id: str) -> None:
@@ -224,12 +257,7 @@ def ai_translate(payload: AITranslateRequest, request: Request):
     if lang not in TRANSLATE_LANGS:
         raise HTTPException(status_code=400, detail="unsupported target language")
     texts = payload.texts
-    if not isinstance(texts, list) or not texts or len(texts) > _TRANSLATE_MAX_TEXTS:
-        raise HTTPException(status_code=400, detail=f"texts must be 1–{_TRANSLATE_MAX_TEXTS} strings")
-    if any(not isinstance(t, str) for t in texts):
-        raise HTTPException(status_code=400, detail="texts must be strings")
-    if sum(len(t) for t in texts) > _TRANSLATE_MAX_CHARS:
-        raise HTTPException(status_code=413, detail="too much text in one request")
+    _check_texts(texts)
 
     def reply_with(final):
         # The whole answer at once; a streaming client reads it as the
@@ -238,12 +266,12 @@ def ai_translate(payload: AITranslateRequest, request: Request):
 
     ws, paper = _paper(request, payload.page_id, payload.head)
 
-    def keys(model, paper_key, brief):
-        return [translate_key(user_id, lang, model, paper_key, brief, t) for t in texts]
+    def keys(model, paper_key, brief, stamp=None):
+        return [translate_key(user_id, lang, model, paper_key, brief, t, stamp(t) if stamp else "") for t in texts]
 
-    # A machine-translation engine ("engine:<id>", Settings → Translation)
-    # needs no AI provider and takes no brief; anything else resolves to a
-    # chat model.
+    # A machine-translation engine ("engine:<id>", Settings → Language and
+    # Translation) needs no AI provider and takes no brief and no glossary
+    # (its keys carry no stamp); anything else resolves to a chat model.
     engine = translate_engines.engine_of(payload.model)
     if engine:
         engine_conf = translate_engines.credentials(user_id, engine)
@@ -251,7 +279,7 @@ def ai_translate(payload: AITranslateRequest, request: Request):
         # A service's translation is as good as it gets without a brief, so
         # it counts as made with one: it is kept so, and found so.
         paper_key, kept = _paper_keys(request, user_id, ws, paper, lang, model_id, payload.keep)
-        batch = TranslateBatch(texts, keys(model_id, paper_key, True), kept, brief=True)
+        batch = TranslateBatch(texts, keys(model_id, paper_key, True), kept, brief=True, fresh=payload.fresh)
         translated = []
         if batch.miss:
             # One engine call per batch limit, no streaming: the reply is
@@ -265,8 +293,7 @@ def ai_translate(payload: AITranslateRequest, request: Request):
             # instead. Not `failed`: a service answers the same text the
             # same way, so asking again would get the same.
             translated = [translate_context.checked(src, t) or src for src, t in zip(batch.miss_texts, translated)]
-        return reply_with({"translations": batch.settle(translated), "model": model_id,
-                           "cached": not batch.miss, "redone": 0, "failed": [], "brief": True})
+        return reply_with(_final(batch, translated, model_id, "", True))
 
     rt = require_ai_runtime(user_id)
     entry = _resolve_model(rt, payload.model)
@@ -275,9 +302,14 @@ def ai_translate(payload: AITranslateRequest, request: Request):
     speed = _translate_speed(payload.speed, rt, entry)
     count_usage = ai_usage.recorder("translate", entry, rt)
 
+    # The workspace's glossary (a page's workspace; none without a page):
+    # each call carries the terms its texts use, and a text that uses one is
+    # named by their stamp in memory and among the kept rows.
+    terms = translate_terms.glossary(ws, lang)
+    stamp = terms.stamp if terms else None
     # The paper's brief, made once per paper, language and model by the brief
     # request (ai_translate_brief), and its kept translations.
-    brief_key, kept = _paper_keys(request, user_id, ws, paper, lang, model_name, payload.keep)
+    brief_key, kept = _paper_keys(request, user_id, ws, paper, lang, model_name, payload.keep, stamp)
     prompt_cache = translate_context.cache_key(user_id, ws, paper, lang) if paper else ""
 
     def resolve(wait: bool):
@@ -288,7 +320,8 @@ def ai_translate(payload: AITranslateRequest, request: Request):
         same paragraphs."""
         brief = translate_context.wait_brief(brief_key, user_id, kept, wait) if paper else None
         has = brief is not None
-        return brief, TranslateBatch(texts, keys(model_name, brief_key, has), kept, brief=has)
+        return brief, TranslateBatch(texts, keys(model_name, brief_key, has, stamp), kept, brief=has,
+                                     fresh=payload.fresh)
 
     def with_brief(brief):
         # What the final object's `brief` says: the translations carry the
@@ -298,10 +331,16 @@ def ai_translate(payload: AITranslateRequest, request: Request):
 
     def request_parts(brief, batch_texts, alone):
         # Texts asked again apart (``alone``) keep the section, not the
-        # request's neighbours: they are the chunk's, not theirs.
+        # request's neighbours: they are the chunk's, not theirs. The terms
+        # are those of the texts this call sends.
         context = ("", "", payload.section) if alone else (payload.before, payload.after, payload.section)
-        return (translate_context.user_turn(batch_texts, *context),
+        return (translate_context.user_turn(batch_texts, *context, terms=terms.line(batch_texts)),
                 translate_context.system_prompt(lang, brief or ""))
+
+    def call_options(slot, brief, batch_texts):
+        return {"effort": effort, "speed": speed, "max_tokens": _translate_budget(batch_texts),
+                "timeout": _TRANSLATE_TIMEOUT, "cache_key": prompt_cache if brief else "", "slot": slot,
+                "retries": _UPSTREAM_RETRIES}
 
     # A call's reply comes with whether the output cap cut it off (the
     # provider's stop reason): its last segment, open at the end, is then
@@ -310,18 +349,15 @@ def ai_translate(payload: AITranslateRequest, request: Request):
         """``(reply, capped)``."""
         messages, system = request_parts(brief, batch_texts, alone)
         stops = []
-        reply = _call_ai(messages, system, entry, rt, effort=effort, speed=speed, max_tokens=_translate_budget(batch_texts),
-                         timeout=180, on_usage=count_usage, cache_key=prompt_cache if brief else "", slot=slot,
-                         retries=_UPSTREAM_RETRIES, on_stop=stops.append)
+        reply = _call_ai(messages, system, entry, rt, **call_options(slot, brief, batch_texts),
+                         on_usage=count_usage, on_stop=stops.append)
         return reply, any(truncated_stop(s) for s in stops)
 
     def stream_call(slot, brief, batch_texts):
         """The same call, streamed: yields ("partial", text-so-far) as the
         reply arrives, then ("reply", (full text, capped))."""
         messages, system = request_parts(brief, batch_texts, False)
-        resp = _open_ai(messages, system, entry, rt, effort=effort, speed=speed, max_tokens=_translate_budget(batch_texts),
-                        timeout=180, stream=True, cache_key=prompt_cache if brief else "", slot=slot,
-                        retries=_UPSTREAM_RETRIES)
+        resp = _open_ai(messages, system, entry, rt, **call_options(slot, brief, batch_texts), stream=True)
         acc = ""
         stops = []
         try:
@@ -344,8 +380,7 @@ def ai_translate(payload: AITranslateRequest, request: Request):
         # A segment the reply lacks (left out, doubled or empty), and one
         # that lost, doubled or invented a formula token (it would show the
         # wrong formula), are asked again together in ONE call, numbered
-        # afresh, with the section but not the chunk's neighbours: they are
-        # the chunk's, not theirs.
+        # afresh (``alone``).
         redo = [j for j, t in enumerate(translated) if t is None]
         if redo:
             log.warning(f"[ai_translate] {len(redo)} of {len(src)} segments came back missing, doubled "
@@ -362,12 +397,10 @@ def ai_translate(payload: AITranslateRequest, request: Request):
         # viewer shows the original there instead of erroring.
         failed = [j for j, t in enumerate(translated) if t is None]
         translated = [s if t is None else t for s, t in zip(src, translated)]
-        return {"translations": batch.settle(translated), "model": model_id, "cached": False,
-                "redone": len(redo), "failed": batch.at(failed), "effort": effort, "brief": with_brief(brief)}
+        return _final(batch, translated, model_id, effort, with_brief(brief), len(redo), batch.at(failed))
 
     def cached(brief, batch):
-        return {"translations": batch.settle([]), "model": model_id, "cached": True, "redone": 0,
-                "failed": [], "effort": effort, "brief": with_brief(brief)}
+        return _final(batch, [], model_id, effort, with_brief(brief))
 
     # A streamed request that will wait for the brief request starts its
     # response at once and waits inside the stream, where keepalive_lines
@@ -418,11 +451,9 @@ def ai_translate(payload: AITranslateRequest, request: Request):
             if not bt.miss:
                 yield _ndjson(cached(b, bt))
                 return
-            targets, n = bt.targets(), len(bt.miss_texts)
-            # The call and its re-ask run under one call slot, taken once the
-            # brief is settled (a request waiting for it holds none). It is
-            # waited for: past the door's check, the account's other calls
-            # may have taken the last one meanwhile.
+            targets, n = bt.targets, len(bt.miss_texts)
+            # One call slot again, but waited for: past the door's check, the
+            # account's other calls may have taken the last one meanwhile.
             with _call_slot(user_id, _TRANSLATE_SLOT_WAIT) as slot:
                 # The relay stops this stream only at its next line, which
                 # comes once the provider answers: a client that left while
@@ -531,6 +562,90 @@ def translations_stats(request: Request):
     return translate_store.stats(require_ws(request))
 
 
+class TranslationsLookupRequest(StorableBody):
+    page_id: str = ""     # the paper, as AITranslateRequest's
+    lang: str = "zh-CN"
+    model: str = ""       # as AITranslateRequest's: a registry id, a bare name, "engine:<id>", "" = the default
+    texts: list = Field(default_factory=list)  # the texts as a translation request would send them
+
+
+# An entry's id as ai_settings.new_provider_id makes it: 8 URL-safe
+# characters, no colon. A bare model name may hold a colon of its own
+# (Ollama's "qwen2.5:7b"), so a registry id is told from one by its entry's.
+_ENTRY_ID = re.compile(r"[A-Za-z0-9_-]{8}")
+
+
+def _registry_name(user_id: str, requested: str) -> str:
+    """The model name in a registry id, read from the id alone: a shared
+    entry's ``server:<entry>:<name>``, or ``<entry>:<name>`` whose entry is
+    one of the account's own or has an entry id's shape (an entry since
+    removed). "" for anything else (a bare name, "")."""
+    if is_server_id(requested):
+        parts = requested.split(":", 2)
+        return parts[2] if len(parts) == 3 else ""
+    entry, sep, name = requested.partition(":")
+    if not (sep and entry and name):
+        return ""
+    if _ENTRY_ID.fullmatch(entry) or any(e.get("id") == entry for e in own_entries(user_id)):
+        return name
+    return ""
+
+
+def _kept_model(user_id: str, requested: str) -> str:
+    """The model name the kept rows of a request for ``requested`` are under,
+    found without an AI provider to call: a service's ``engine:<id>``; a chat
+    model's bare name, from its registry id alone (``<entry>:<name>``, a
+    shared entry's ``server:<entry>:<name>``: ``_registry_name``), which is
+    what the viewer sends, so a lookup builds no AI runtime (no key
+    decrypted, no sign-in refreshed) and a member with no provider reads
+    what the others kept. Only a bare name, or none, is read through the
+    account's runtime: the model it lists under that name, else the name as
+    it is; with none named, the runtime's default; "" when nothing names
+    one."""
+    engine = translate_engines.engine_of(requested)
+    if engine:
+        return translate_engines.MODEL_PREFIX + engine
+    name = _registry_name(user_id, requested)
+    if name:
+        return name
+    rt = ai_runtime(user_id)
+    entry = _resolve_model(rt, requested)
+    if entry and (not requested or requested in (entry["id"], entry["model"])):
+        return entry["model"]
+    return requested
+
+
+# Sync def: it reads data.db.
+@router.post("/translations/lookup")
+def translations_lookup(payload: TranslationsLookupRequest, request: Request):
+    """The kept translations of ``texts`` in a paper (the page's stored file)
+    under ``lang`` and ``model``: {translations: [text or None per text],
+    model: the name they are kept under}. What the viewer seeds a paper this
+    browser last left translated from, with no model call: it needs no AI
+    provider, reads the workspace's rows alone (never the account's memory)
+    and writes nothing. Any member reads, as the stats. A row is named by
+    Kept.src, which the server works out from the text and the workspace's
+    glossary as /ai/translate does, so nothing about the key is the
+    client's to send, and a text that uses a term changed since it was kept
+    is not found. A paper without a stored file, or another workspace's
+    page, keeps nothing: every text is None."""
+    user_id = require_user_id(request)
+    ws = require_ws(request)
+    if payload.lang not in TRANSLATE_LANGS:
+        raise HTTPException(status_code=400, detail="unsupported target language")
+    _check_texts(payload.texts)
+    nothing = [None] * len(payload.texts)
+    model = _kept_model(user_id, payload.model)
+    paper = translate_context.paper_of(ws, payload.page_id) if payload.page_id else None
+    if not (model and paper and paper.doc_id):
+        return {"translations": nothing, "model": model}
+    doc_id = paper.doc_id
+    # A service's rows carry no stamp: it takes no terms.
+    terms = translate_terms.Glossary() if translate_engines.engine_of(model) else translate_terms.glossary(ws, payload.lang)
+    kept = Kept(ws, doc_id, payload.lang, model, False, generation(ws, doc_id), terms.stamp if terms else None)
+    return {"translations": kept.read(payload.texts), "model": model}
+
+
 @router.delete("/translations")
 def translations_clear(request: Request):
     """Drop the workspace's kept translations and briefs, and what the
@@ -560,7 +675,73 @@ def translations_forget(doc_id: str, request: Request, page: str = ""):
     return {"removed": removed}
 
 
-# --- Machine-translation engine credentials (Settings → Reading) --------------
+# --- The workspace's glossary (Settings → Language and Translation › Glossary)
+# Like the kept translations, the workspace's: any member reads it, an
+# editor changes it. Each write answers the language's terms as the read
+# does, so the settings pane shows what the server holds.
+
+# A StorableBody: the selection translator's Add to glossary cuts its
+# prefill, and half a character may arrive, which pages.db cannot store.
+class TranslationTermRequest(StorableBody):
+    lang: str = "zh-CN"
+    source: str = ""
+    target: str = ""
+    was: str = ""  # an edit: the source the term had
+
+
+def _terms_lang(lang: str) -> str:
+    if lang not in TRANSLATE_LANGS:
+        raise HTTPException(status_code=400, detail="unsupported target language")
+    return lang
+
+
+def _terms(request: Request, ws: str, lang: str) -> dict:
+    """{terms: [{source, target, by, at}], max, max_chars, can_edit}."""
+    return {"terms": translate_terms.listing(ws, lang), "max": translate_terms.MAX_TERMS,
+            "max_chars": translate_terms.TERM_MAX_CHARS, "can_edit": can_write(request)}
+
+
+def _term_write(request: Request, lang: str, write) -> dict:
+    ws = require_ws(request, write=True)
+    lang = _terms_lang(lang)
+    try:
+        write(ws, lang)
+    except translate_terms.TermError as e:
+        raise HTTPException(status_code=e.status, detail=str(e))
+    return _terms(request, ws, lang)
+
+
+@router.get("/translate/terms")
+def translate_terms_list(request: Request, lang: str = "zh-CN"):
+    """The workspace's terms in ``lang``, by source."""
+    ws = require_ws(request)
+    return _terms(request, ws, _terms_lang(lang))
+
+
+@router.post("/translate/terms")
+def translate_term_add(payload: TranslationTermRequest, request: Request):
+    """Add ``source → target``: 409 when the language has the source already
+    (whatever its case) or holds MAX_TERMS."""
+    by = actor_of(request)
+    return _term_write(request, payload.lang, lambda ws, lang: translate_terms.add(
+        ws, lang, payload.source, payload.target, by))
+
+
+@router.put("/translate/terms")
+def translate_term_edit(payload: TranslationTermRequest, request: Request):
+    """Change the term ``was`` to ``source → target``: 404 without ``was``,
+    409 when ``source`` is another term the language has."""
+    by = actor_of(request)
+    return _term_write(request, payload.lang, lambda ws, lang: translate_terms.edit(
+        ws, lang, payload.was, payload.source, payload.target, by))
+
+
+@router.delete("/translate/terms")
+def translate_term_remove(request: Request, lang: str = "zh-CN", source: str = ""):
+    return _term_write(request, lang, lambda ws, lang: translate_terms.remove(ws, lang, source))
+
+
+# --- Machine-translation engine credentials (Settings → Language and Translation)
 # Write-only like the AI keys: GET masks the secrets. Guests can't store keys
 # (a guest account is a throwaway, docs/dev/guests.md).
 

@@ -105,6 +105,25 @@
   --lh-read: 1.55;
 }
 
+/* The face a translated PDF page is set in, the third stack beside the
+   interface's and the monospace: a Latin serif with lining figures first, so a
+   digit reads as one beside the formulas cropped from the page, and the serif
+   CJK faces after it, which differ by language. Any element with a language
+   starts over from the default, so a Simplified Chinese layer under a Japanese
+   interface does not inherit the Japanese faces. */
+:root, [lang] {
+  --font-page: "Times New Roman", Times, "Liberation Serif", "Nimbus Roman", "Songti SC", SimSun, "Noto Serif CJK SC", serif;
+}
+:lang(zh-TW) {
+  --font-page: "Times New Roman", Times, "Liberation Serif", "Nimbus Roman", "Songti TC", PMingLiU, "Noto Serif CJK TC", serif;
+}
+:lang(ja) {
+  --font-page: "Times New Roman", Times, "Liberation Serif", "Nimbus Roman", "Hiragino Mincho ProN", "Yu Mincho", "MS PMincho", "Noto Serif CJK JP", serif;
+}
+:lang(ko) {
+  --font-page: "Times New Roman", Times, "Liberation Serif", "Nimbus Roman", AppleMyungjo, Batang, "Noto Serif CJK KR", serif;
+}
+
 /* Type sizes, each a job: captions, badges, kinds and key caps (2xs); meta,
    hints, section labels and tabs (xs); buttons, menus and dialog fields,
    the default (sm); list rows, the settings rail, text fields and chat

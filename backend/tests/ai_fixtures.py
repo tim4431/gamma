@@ -142,6 +142,30 @@ class FakeResp:
         pass
 
 
+def text_stream(pieces, stop=""):
+    """An Anthropic SSE reply whose text arrives in the given pieces, ended
+    with the provider's ``stop`` reason when given."""
+    events = [{"type": "content_block_delta", "delta": {"type": "text_delta", "text": t}} for t in pieces]
+    return FakeResp(events + ([{"type": "message_delta", "delta": {"stop_reason": stop}}] if stop else []))
+
+
+class JsonResp:
+    """What urlopen returns for a JSON ``body``: a machine-translation
+    service's answer (gamma.translate_engines)."""
+
+    def __init__(self, body):
+        self.body = json.dumps(body).encode()
+
+    def read(self):
+        return self.body
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
 def payload(history):
     from types import SimpleNamespace
     return SimpleNamespace(history=history, prompt="now do it")

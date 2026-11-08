@@ -892,6 +892,21 @@ PAGES_SCHEMA = [
         PRIMARY KEY (page_id, seq)
     ) WITHOUT ROWID""",
     "CREATE UNIQUE INDEX IF NOT EXISTS idx_page_ops_batch ON page_ops(page_id, client, batch_id) WHERE batch_id != ''",
+    # translation_terms = the workspace's glossary for the PDF translated
+    # view (gamma/translate_terms.py): per target language, one translation
+    # (`target`) per source term, the source compared without case; `by`
+    # who set it (an account id), `at` when. What people write, so here and
+    # not in data.db: a backup and a replace carry it; a merge, a Gamma page
+    # export and a mirror do not (docs/dev/translation.md "The glossary").
+    # Additive: no step (docs/dev/migrations.md rule 2).
+    """CREATE TABLE IF NOT EXISTS translation_terms (
+        lang TEXT NOT NULL,
+        source TEXT NOT NULL COLLATE NOCASE,
+        target TEXT NOT NULL,
+        by TEXT NOT NULL DEFAULT '',
+        at TEXT NOT NULL,
+        PRIMARY KEY (lang, source)
+    ) WITHOUT ROWID""",
     WORKSPACE_PREFS_SCHEMA,
     *CHATS_SCHEMA,
     *COMMENTS_SCHEMA,
@@ -900,11 +915,13 @@ PAGES_SCHEMA = [
 
 # data.db = what the workspace can lose and rebuild: the file may be
 # deleted, and everything in it comes back on demand: the cover
-# thumbnails, the viewer's PDF manifests and the kept translations below,
-# and the PDF text index (pdf_fts, extracted again by the next search),
-# whose tables gamma/pdf_index.py applies itself (pdf_index.SCHEMA), since
-# that is where an index older than its side table is taken over. Nothing
-# a person wrote lives here: the chats and the notes index are in pages.db.
+# thumbnails, the viewer's PDF manifests and the kept translations below
+# (made again by a model, so the one thing here that costs tokens to come
+# back), and the PDF text index (pdf_fts, extracted again by the next
+# search), whose tables gamma/pdf_index.py applies itself
+# (pdf_index.SCHEMA), since that is where an index older than its side
+# table is taken over. Nothing a person wrote lives here: the chats, the
+# notes index and the translation glossary are in pages.db.
 DATA_SCHEMA = [
     # page_snaps = the recents-card cover thumbnails (small JPEG data URLs
     # captured client-side from the rendered viewer), shared by the
@@ -919,7 +936,8 @@ DATA_SCHEMA = [
     # The kept translations of the PDF translated view and the papers'
     # briefs (gamma/translate_store.py), asked of the model again, at its
     # cost, when they are gone. src: the first 32 hex digits of the SHA-256
-    # of the source text as sent (tokens and breaks included); brief: made
+    # of the source text as sent (tokens and breaks included) and the stamp
+    # of the glossary terms it uses (translate_store.src_hash); brief: made
     # with the paper's brief.
     "CREATE TABLE IF NOT EXISTS pdf_translations (doc_id TEXT NOT NULL, lang TEXT NOT NULL, "
     "model TEXT NOT NULL, src TEXT NOT NULL, text TEXT NOT NULL, brief INTEGER NOT NULL DEFAULT 0, "

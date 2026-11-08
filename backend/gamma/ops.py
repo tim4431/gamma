@@ -1000,7 +1000,7 @@ def ensure_filing(ws: str, conn, *, paths=(), labels=(), under: str = "",
     return folder_ids, label_ids
 
 
-def delete_page(ws: str, conn, page_id: str, *, actor: str, client: str = "") -> dict:
+def delete_page(ws: str, conn, page_id: str, *, actor: str, client: str = "", sweep: bool = True) -> dict:
     """Delete a page for good with the pages inside it, in one transaction
     committed here. Each page goes the same way (``_purge``): its subtree
     (its notes index rows with it), its comments (``comments.purge``), its
@@ -1014,9 +1014,11 @@ def delete_page(ws: str, conn, page_id: str, *, actor: str, client: str = "") ->
     and the rows of Recently deleted that went there with it
     (``deleted_with``, ``trash_page``). Then the upload names the pages
     held go to the orphan check, data.db's rows of papers no block carries
-    any more are purged, and each page's room is told to reload (which
-    surfaces the 404). Returns ``{deleted_ids, dropped_uploads}`` over
-    every page deleted.
+    any more are purged (``sweep`` False leaves that to a caller deleting
+    many pages, which purges once after them: ``pdf_index.purge_unused``
+    reads every block's properties), and each page's room is told to reload
+    (which surfaces the 404). Returns ``{deleted_ids, dropped_uploads}``
+    over every page deleted.
 
     Deleting a page in the app moves it to the trash (``trash_page``); this
     runs on Delete permanently, Empty, the 30-day purge (gamma/trash.py) and
@@ -1035,7 +1037,8 @@ def delete_page(ws: str, conn, page_id: str, *, actor: str, client: str = "") ->
     deleted_ids = [r[0] for r in rows]
     dropped = sorted(subtree_refs(rows))
     upload_gc.schedule(ws, dropped)
-    pdf_index.purge_unused(ws, conn)
+    if sweep:
+        pdf_index.purge_unused(ws, conn)
     for page in pages:
         collab.publish_reload(ws, page)
         notify_commit(ws, client, page)

@@ -12,10 +12,11 @@ import pytest
 from fractional_indexing import generate_key_between
 
 from conftest import account_of, login, make_folder, make_label, make_page, make_user, workspace_of
-from gamma import trash
+from gamma import pdf_index, trash
 from gamma.ai_tools import run_agent_tool
 from gamma.blocks_store import TRASH
-from gamma.db import connect_pages_db
+from gamma.db import connect_data_db, connect_pages_db
+from gamma.trash import KEEP_DAYS
 
 
 @pytest.fixture(scope="module")
@@ -416,3 +417,81 @@ def test_the_sweeper_leaves_an_unchanged_workspace_alone_until_a_page_is_due(own
     swept = trash.sweep(now=deleted_at + timedelta(days=30, minutes=1))
     assert ws in reads and page["id"] in swept.get(ws, []), "due: swept, and the page went"
     assert _row(ws, page["id"]) is None
+
+
+def _indexed(ws):
+    with connect_data_db(ws) as conn:
+        pdf_index.ensure_schema(conn)
+        return {r[0] for r in conn.execute("SELECT doc_id FROM pdf_fts_docs")}
+
+
+def _stale_paper(ws, doc_id):
+    """A paper in data.db that no block carries."""
+    with connect_data_db(ws) as conn:
+        pdf_index.store_doc(conn, doc_id, [(1, "text")])
+
+
+def _trash_pages(c, *titles):
+    pages = [make_page(c, title)["id"] for title in titles]
+    for page in pages:
+        c.delete(f"/api/blocks/{page}").raise_for_status()
+    return pages
+
+
+@pytest.fixture
+def sweeps(monkeypatch):
+    """The workspaces ``pdf_index.purge_unused`` ran on, in order."""
+    calls = []
+    real = pdf_index.purge_unused
+    monkeypatch.setattr(pdf_index, "purge_unused", lambda w, conn: (calls.append(w), real(w, conn)))
+    return calls
+
+
+def test_a_pass_over_the_trash_sweeps_the_papers_once(sweeps):
+    """That sweep reads every block's properties, so Empty and the 30-day
+    purge run it after their pages, not per page. A single delete runs its
+    own, and a pass that deleted nothing runs none."""
+    make_user("tr_sweeps", "pw")
+    c, ws = login("tr_sweeps", "pw"), workspace_of("tr_sweeps")
+
+    assert c.delete("/api/trash").json() == {"deleted": []}
+    assert sweeps == []
+
+    pages = _trash_pages(c, "Empty a", "Empty b", "Empty c")
+    _stale_paper(ws, "e1" * 12)
+    assert sorted(c.delete("/api/trash").json()["deleted"]) == sorted(pages)
+    assert sweeps == [ws] and "e1" * 12 not in _indexed(ws)
+
+    sweeps.clear()
+    pages = _trash_pages(c, "Due a", "Due b")
+    deleted_at = datetime.fromisoformat(_trashed(c)[pages[0]]["deleted_at"].replace("Z", "+00:00"))
+    assert trash.purge_expired(ws, now=deleted_at + timedelta(days=1)) == []
+    assert sweeps == []
+    _stale_paper(ws, "e2" * 12)
+    later = datetime.now(timezone.utc) + timedelta(days=KEEP_DAYS + 1)
+    assert sorted(trash.purge_expired(ws, now=later)) == sorted(pages)
+    assert sweeps == [ws] and "e2" * 12 not in _indexed(ws)
+
+    sweeps.clear()
+    [page] = _trash_pages(c, "One")
+    c.delete(f"/api/trash/{page}").raise_for_status()
+    assert sweeps == [ws]
+
+
+def test_a_pass_that_breaks_midway_still_sweeps_what_it_deleted(sweeps, monkeypatch):
+    make_user("tr_sweeps_broken", "pw")
+    c, ws = login("tr_sweeps_broken", "pw"), workspace_of("tr_sweeps_broken")
+    breaks, goes = _trash_pages(c, "Breaks", "Goes")  # the listing has the last deleted first
+    real = trash.delete_page
+
+    def delete_page(ws, conn, page_id, **kw):
+        if page_id == breaks:
+            raise RuntimeError("the disk went")
+        return real(ws, conn, page_id, **kw)
+
+    monkeypatch.setattr(trash, "delete_page", delete_page)
+    _stale_paper(ws, "e3" * 12)
+    with pytest.raises(RuntimeError):
+        trash.empty(ws)
+    assert _row(ws, goes) is None and _row(ws, breaks)[0] == TRASH
+    assert sweeps == [ws] and "e3" * 12 not in _indexed(ws)
