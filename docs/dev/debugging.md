@@ -306,6 +306,10 @@ them only after further relevant changes or when a failure needs investigation.
   than the change, e.g. a one-line edit in a shared module selects every
   group. Check that the intended steps actually ran. A pure-module change
   does not automatically require a build or browser run.
+- Import changes (a new dependency, a lazy surface, a module newly imported
+  into App's graph): `npm run budget` after the build, which reports the
+  startup bytes and fails on a broken lazy boundary
+  ([the startup budget](frontend-refactor.md#the-startup-budget)).
 - Leave the developer's screen and keyboard alone. One switch decides for every
   suite, `tools/headed.cjs`: the browser suites and the extension's run headless
   and the desktop scripts keep their window minimized, unless a run passes

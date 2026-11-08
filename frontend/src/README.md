@@ -57,8 +57,8 @@ through barrel files. `main.jsx` remains the Vite entry point.
   page/block model, not an import adapter.
 - Keep styles with their owner when already separate. `main.jsx` deliberately
   loads application, library, then settings CSS in that order to preserve the cascade.
-- Keep tests in `frontend/tests/`; run `npm run lint`, `npm test`, `npm run build`, and
-  `npm run e2e` from `frontend/` (the browser suite needs the backend dependencies
+- Keep tests in `frontend/tests/`; run `npm run lint`, `npm test`, `npm run build`,
+  `npm run budget` and `npm run e2e` from `frontend/` (the browser suite needs the backend dependencies
   and a Playwright browser). `npm run test:perf` runs the timing budgets of the
   pure hot paths, on an idle machine
   ([docs/dev/debugging.md](../../docs/dev/debugging.md#performance-budgets)).

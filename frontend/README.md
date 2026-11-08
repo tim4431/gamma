@@ -8,6 +8,7 @@ The oldest browsers it runs in are Safari 16.4, Chrome and Edge 111 and Firefox 
 npm install
 npm run dev      # :5173
 npm run build    # → dist/  (FastAPI serves this in prod)
+npm run budget   # startup bytes and lazy boundaries of dist/ (build first)
 npm test         # pure-module tests
 npm run lint     # Biome: bug-finding rules only (docs/dev/debugging.md)
 npm run e2e      # browser suite against an isolated backend (build first)

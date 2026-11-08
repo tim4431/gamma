@@ -1,9 +1,9 @@
 # Pull-request check: the fast half of what a merge to main would build,
 # so a broken main (whose merge publishes the Docker image) is caught on
-# the PR instead. Backend tests, frontend lint, unit tests + build, the desktop
-# shell's unit tests, the browser suite against an isolated backend, the
-# extension's tests and zip, the mobile apps' pins resolved, and the timing
-# budgets, reported but never failing; no installers.
+# the PR instead. Backend tests, frontend lint, unit tests + build + startup
+# budget, the desktop shell's unit tests, the browser suite against an
+# isolated backend, the extension's tests and zip, the mobile apps' pins
+# resolved, and the timing budgets, reported but never failing; no installers.
 # The account server (cloud/) is checked by cloud.yml and the website
 # (sites/) by site.yml instead, so a PR that only touches those skips this
 # (docker.yml's paths-ignore is the same list: keep the two alike). The
@@ -114,6 +114,8 @@ jobs:
           npm run lint
           npm test
           npm run build
+          # the startup graph's bytes and its lazy boundaries: tools/bundleBudget.mjs
+          npm run budget
       # the desktop shell's unit tests: its pure modules (desktop/lib/) and
       # main.js under a stand-in for Electron, with Node's built-ins alone,
       # so no install; the Electron suite itself is run by hand

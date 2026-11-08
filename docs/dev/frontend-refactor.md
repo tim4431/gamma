@@ -87,8 +87,9 @@ screen downloads only what it paints.
   `vite.config.js`), so its bytes start arriving with the entry's.
 
 Adding one: import the module only through `lazySurface` (one static import
-anywhere in the `App` chunk's graph puts it back), and move the small
-exports App itself needs into a module of their own, as
+anywhere in the `App` chunk's graph puts it back, and `npm run budget`
+fails on that), and move the small exports App itself needs into a module
+of their own, as
 `settings/providerEditor.js`, `settings/workspaceRoles.js` and the
 `settingsNavigation.js` / `settingsSearch.js` split did. A surface that
 used to stay mounted while closed mounts on first use and then stays, so its
@@ -98,6 +99,45 @@ with one that used to follow it. A chunk that cannot be fetched (a deploy
 replaced the hashed files under an open tab) leaves the fallback in place
 instead of unmounting the app; a reload fetches the new files. Sizes and
 what each first screen downloads: [the bundle note](../research/bundle.md).
+
+### The startup budget
+
+`npm run budget` (`tools/bundleBudget.mjs`) reads a build: `frontend/dist`
+after `npm run build`, or another with `--dist <dir>`. `check.yml`'s
+frontend job runs it after the build, and the merge skill after its scratch
+build. The startup graph is what `index.html` loads before App renders: its
+module entry and its modulepreloads (the `App` chunk), followed through
+their static imports, never through `import()`. Startup CSS is the head's
+stylesheets. A file's Brotli bytes are its `.br` copy's size, which is what
+the backend sends. It fails, one line per broken rule, when:
+
+- `index.html` has other than one module entry.
+- A module the source imports with a literal `import("…")` (each
+  `lazySurface`, pdf.js, mermaid) has no chunk of its own, or its chunk is
+  in the startup graph. `App` must be modulepreloaded instead.
+- The build has other than one pdf.js worker.
+- A measured file of 1 KB or more has no `.br` or no `.gz` copy
+  (`precompress` in `vite.config.js`).
+- Startup JS (Brotli and raw) or startup CSS (Brotli) is over its ceiling,
+  or more than 20% under it.
+
+The ceilings are in `frontend/tests/bundle-budget.json`, each with the date
+it was set, the bytes it was set on and why. `npm run budget -- --reset
+"<reason>"` sets every ceiling 10% over the build, rounded up to 1,000
+bytes; figure names after the reason (`startupJsBrotli`, `startupJsRaw`,
+`startupCssBrotli`) reset only those. It refuses a build that breaks one of
+the other rules. A change that grows startup past a
+ceiling takes something off the first screen, or raises the ceiling in the
+same change with a reason that says what grew. A change that leaves a figure
+more than 20% under its ceiling, which is about 12% under the build a reset
+set it on, lowers it the same way, so the saving is kept. Raw bytes are gated
+beside Brotli because the iPad and Android apps load the build from a server
+on the device, where the download is free and parsing is not. The lazy
+chunks' sizes, the pdf.js worker, the locale catalogs and the build's total
+JS are printed, not gated. Chunks are found by Vite's default file names
+(`[name]-[hash].js`), so a `chunkFileNames` or `manualChunks` setting makes
+the lazy rule fail until the tool reads it. Why the ceilings sit where they
+do: [the bundle note](../research/bundle.md#a-month-later-november-2026).
 
 ## New state
 
