@@ -184,8 +184,15 @@ code, kbd { font-family: var(--font-mono); }
 /* The workspace row over the views reads as the first row of their form,
    and a notice under it sits as close as the rows do. */
 .workspaceBar { padding-bottom: 0; }
-.workspaceBar:not(.hidden) + #found > .form { padding-top: 8px; }
+.workspaceBar:not(.hidden) ~ #found > .form { padding-top: 8px; }
 .workspaceBar:not(.hidden) ~ #existing .msg, .workspaceBar:not(.hidden) ~ #nothing .msg { margin-top: 10px; }
+/* The "no paper" notice heads the form under it: one gap between them. */
+#nothing:not(.hidden) + #found > .form { padding-top: 0; }
+/* "Add to another folder…" and Undo belong to the button over them, and
+   keep clear of the tab's own links (Clip, the save log) in the row below. */
+#existing .actions { padding-bottom: 6px; }
+#existing .minor { padding-bottom: 16px; }
+.undoBtn:hover:not(:disabled) { color: var(--danger); }
 .msg.ok { background: color-mix(in srgb, var(--ok) 13%, transparent); color: var(--ok); }
 .msg.err { background: var(--danger-bg); color: var(--danger); }
 /* The amber is one value in every theme; as text on its tint it leans

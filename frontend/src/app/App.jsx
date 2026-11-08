@@ -230,7 +230,6 @@ import {
   folderChain,
   folderPath,
   folderPositions,
-  folderEntries,
   folderNeighbour,
   folderSubtree,
   folderTargets,
@@ -260,6 +259,11 @@ import {
   NO_LABEL,
   NO_LABEL_TITLE,
   PATH_SEP,
+  folderAtPath,
+  folderCompletion,
+  folderInside,
+  folderMatches,
+  folderPathNames,
 } from "../library/libraryUtils";
 import { createLibraryMatcher } from "../library/librarySearch";
 import { prefetchTrash } from "../library/trashList";
@@ -7062,7 +7066,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     try {
       if (s.kind === "folder") addOpenPageFolder(s.id);
       else if (s.kind === "label") addOpenPageLabel(s.id);
-      else if (s.kind === "newFolder") addOpenPageFolder((await ensureFolders([[s.name]]))([s.name]));
+      else if (s.kind === "newFolder") addOpenPageFolder((await ensureFolders([s.path]))(s.path));
       else addOpenPageLabel(await makeLabel(s.name));
     } catch (err) {
       setStatus(t("Could not file the page: {message}", { message: err.message }));
@@ -7075,7 +7079,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
     if (!name) return;
     const label = findNamed(libTree.labels.values(), name);
     // (a page inside another takes labels only: its folders are its top's)
-    const folder = !openSubPage && (findNamed(folderEntries(libTree), name) || findNamed(libTree.folders.values(), name));
+    const folder = !openSubPage && (folderAtPath(libTree, name) || findNamed(libTree.folders.values(), name));
     pickLabelSuggestion(label ? { kind: "label", id: label.id }
       : folder ? { kind: "folder", id: folder.id } : { kind: "newLabel", name });
   }
@@ -10061,20 +10065,25 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                     const chips = filingChips(libTree, openSubPage ? { labels: filed.labels } : filed);
                     const q = labelInput.trim();
                     const ql = q.toLowerCase();
-                    const labelSugs = q ? [...libTree.labels.values()]
+                    // A path ending in "/" is a folder opened, not a name
+                    // being typed: its subfolders are the whole list, with
+                    // no label and nothing new to make among them.
+                    const listing = q && !openSubPage ? folderInside(libTree, q) : null;
+                    const labelSugs = q && !listing ? [...libTree.labels.values()]
                       .filter((l) => l.name.toLowerCase().includes(ql) && !filed.labels.includes(l.id))
                       .sort((a, b) => a.name.localeCompare(b.name)) : [];
-                    const folderSugs = q && !openSubPage ? folderEntries(libTree)
-                      .filter((f) => f.name.toLowerCase().includes(ql) && !filed.folders.includes(f.id))
-                      .sort((a, b) => a.name.localeCompare(b.name)) : [];
-                    // A name no label has can become one, or a top-level folder.
-                    const topFolders = siblingFolders(libTree, "");
+                    const folderSugs = q && !openSubPage ? folderMatches(libTree, q, filed.folders) : [];
+                    // A name no label has can become one, or a folder at the
+                    // path typed (its missing parents made with it).
+                    const newFolder = folderPathNames(q);
                     const suggestions = [
                       ...folderSugs.map((f) => ({ kind: "folder", ...f })),
                       ...labelSugs.map((l) => ({ kind: "label", ...l })),
                     ].slice(0, 8);
-                    if (q && !findNamed(libTree.labels.values(), q)) suggestions.push({ kind: "newLabel", name: q });
-                    if (q && !openSubPage && !findNamed(topFolders, q)) suggestions.push({ kind: "newFolder", name: q });
+                    if (q && !listing && !findNamed(libTree.labels.values(), q)) suggestions.push({ kind: "newLabel", name: q });
+                    if (q && !listing && !openSubPage && newFolder.length && !folderAtPath(libTree, q)) {
+                      suggestions.push({ kind: "newFolder", path: newFolder, name: newFolder.join(PATH_SEP) });
+                    }
                     return (
                     <div className="categoryTagInputContainer">
                       <div className="categoryTagInputWrap">
@@ -10110,9 +10119,16 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
                               e.preventDefault();
                               pickLabelSuggestion(suggestions[labelSuggestionIdx]);
                             } else if (e.key === "Tab" && !e.shiftKey && suggestions.length) {
-                              // Tab completes: the highlighted suggestion, else the first.
+                              // Tab completes, as a shell or VS Code does: the
+                              // highlighted suggestion, else the first, written
+                              // out in full and ending in the separator when it
+                              // holds subfolders, so Tab after Tab walks down
+                              // the tree. With nothing left to write it picks.
                               e.preventDefault();
-                              pickLabelSuggestion(suggestions[labelSuggestionIdx] || suggestions[0]);
+                              const s = suggestions[labelSuggestionIdx] || suggestions[0];
+                              const path = s.kind === "folder" ? folderCompletion(libTree, s.id) : "";
+                              if (path && path !== labelInput) { setLabelSuggestionIdx(-1); setLabelInput(path); }
+                              else pickLabelSuggestion(s);
                             } else if (e.key === "Enter" || e.key === "Escape") {
                               e.preventDefault();
                               closeLabelEditor();

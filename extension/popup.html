@@ -70,8 +70,31 @@
       </div>
     </div>
 
+    <!-- A paper in the library: found by the look-up, or just saved. The
+         quiet row under "Open in Gamma" takes back what the save did: file
+         it somewhere else, or undo it altogether. -->
+    <div id="existing" class="hidden">
+      <div id="existing-msg" class="msg ok"><span id="existing-where">Already in your library</span><span id="existing-as"></span>.<span id="existing-note"></span></div>
+      <div class="actions">
+        <button id="open-existing" class="uiBtn primary block">Open in Gamma</button>
+      </div>
+      <div class="minor">
+        <button id="refile" class="linkBtn quiet" type="button"></button>
+        <button id="undo" class="linkBtn quiet undoBtn hidden" type="button"></button>
+      </div>
+    </div>
+
+    <!-- Why this page shows no paper. The folder and labels below file the
+         page's URL as they file a paper, so the notice reads as their head. -->
+    <div id="nothing" class="hidden">
+      <div class="msg info" id="nothing-msg">No paper or PDF detected on this page. You can still save the page's URL — Gamma will look for a PDF behind it.</div>
+    </div>
+
+    <!-- The form that files a page into the library: the same folder and
+         labels whether the page holds a paper or only its own URL, then the
+         one action under them. -->
     <div id="found" class="hidden">
-      <div class="form">
+      <div id="filing" class="form">
         <div class="row"><label for="folder">Folder</label>
           <div class="selectWrap">
             <div id="folder-box" class="field tagField single">
@@ -89,21 +112,10 @@
           </div>
         </div>
       </div>
-      <div class="actions"><button id="save" class="uiBtn primary block">Save to Gamma</button></div>
-    </div>
-
-    <!-- A paper in the library: found by the look-up, or just saved. -->
-    <div id="existing" class="hidden">
-      <div id="existing-msg" class="msg ok"><span id="existing-where">Already in your library</span><span id="existing-as"></span>.<span id="existing-note"></span></div>
       <div class="actions">
-        <button id="open-existing" class="uiBtn primary block">Open in Gamma</button>
-        <button id="refile" class="linkBtn">Add to another folder…</button>
+        <button id="save" class="uiBtn primary block hidden">Save to Gamma</button>
+        <button id="save-anyway" class="uiBtn primary block hidden">Save this URL anyway</button>
       </div>
-    </div>
-
-    <div id="nothing" class="hidden">
-      <div class="msg info" id="nothing-msg">No paper or PDF detected on this page. You can still save the page's URL — Gamma will look for a PDF behind it.</div>
-      <div class="actions"><button id="save-anyway" class="uiBtn block">Save this URL anyway</button></div>
     </div>
 
     <div id="progress" class="progress hidden"><span class="spinner"></span><span id="progress-text"></span></div>
