@@ -214,5 +214,8 @@ its first call into the worker, and passed 5 runs of 5 headless after that.
   explained, not dumped* and *launcher lists sizes, …* press all three.
 - *Help → Check for Updates…* showed its box under the harness too. It now goes
   through `ask`, which records the box and answers with its last button, and
-  the *updater* step clicks the menu item. Both passed in a full run on
-  Ubuntu under `xvfb-run -a` on 7 November 2026.
+  the *updater* step clicks the menu item. Both passed in a full `--headed`
+  run on Ubuntu under `xvfb-run -a` on 7 November 2026. The same run
+  minimized failed 32 of 35 there, at the launcher's clicks, from the second
+  step on, Playwright waiting for those buttons to be visible
+  ([desktop/docs/checklist.md](../../desktop/docs/checklist.md#last-run)).

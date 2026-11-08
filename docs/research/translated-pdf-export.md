@@ -345,3 +345,9 @@ the formula it belongs to. How it works now:
   shows its translation in the serif, its blocks naming the old ids. Its
   blocks would need their `font` found again in the new document (by name,
   among the page's fonts) without losing what their entries are tied to.
+- A composite font's program given a Unicode cmap from the ToUnicode
+  leaves out a ligature's CID (one that names several characters), and an
+  OpenType program (`otf`) keeps its own cmap untouched, so a letter the
+  paper drew only inside a ligature, or one that cmap does not map, sends
+  the block to the serif (`gamma/pdf_font_cmap.py`,
+  [dev/translation.md](../dev/translation.md#exporting-the-translation)).

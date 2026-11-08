@@ -557,6 +557,13 @@ Decisions, in the order they come up:
 4. **Phone layout for D**, if D: the native host has none; the web view
    would carry the phone until it does.
 
+All four are settled since, in the 2026-11-01 check's [plan](#the-plan)
+and the app built on it ([dev/android.md](../dev/android.md)): more than A,
+a Play app; B's shell over C's server on the device, as the iPad went, D
+dropped with the core it would have hosted; a personal Play account; and
+no phone layout of its own, the web app's compact layout carrying the
+phone.
+
 Unverified or unmeasured: Javet's Android minSdk; Chaquopy's cold start in
 seconds; CI minutes per shape; pen latency in milliseconds for Chrome
 versus the front buffer; Play ratings of the comparables; the share of

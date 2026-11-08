@@ -289,6 +289,11 @@ In the order they matter:
    on the other server across origins.
 2. Smaller: a folder link's round shows no progress while it sends PDFs
    back, nor within one large PDF it fetches.
+3. Smaller: a workspace's delete holds back what passes its gates after it
+   starts, not a request or an AI tool call already running then, nor the
+   background rounds (a clone's fill, a Zotero link's round, the indexer),
+   any of which can still write after the final copy read the database
+   ([dev/workspaces.md](../dev/workspaces.md) "Deleting a workspace").
 
 Four smaller ones (2026-11-08). A publish that only changes the cloud
 share's audience or role, on a page already published and there, runs no
