@@ -2,7 +2,8 @@
 # so a broken main (whose merge publishes the Docker image) is caught on
 # the PR instead. Backend tests, frontend lint, unit tests + build, the desktop
 # shell's unit tests, the browser suite against an isolated backend, the
-# extension's tests and zip, the mobile apps' pins resolved; no installers.
+# extension's tests and zip, the mobile apps' pins resolved, and the timing
+# budgets, reported but never failing; no installers.
 # The account server (cloud/) is checked by cloud.yml and the website
 # (sites/) by site.yml instead, so a PR that only touches those skips this
 # (docker.yml's paths-ignore is the same list: keep the two alike). The
@@ -117,6 +118,67 @@ jobs:
       # main.js under a stand-in for Electron, with Node's built-ins alone,
       # so no install; the Electron suite itself is run by hand
       - run: node --test desktop/test/*.test.js
+
+  # The timing budgets (docs/dev/debugging.md "Performance budgets"): the
+  # frontend's pure hot paths (npm run test:perf) and the server's
+  # (tests/test_perf.py), each case's p50, p95 and budget written to the
+  # run's summary. Reported, never red: the budgets were set at about 5x an
+  # idle desktop's p95, a shared runner is slower and its neighbours vary,
+  # and a check that fails because the runner was slow has no cause in the
+  # repo to fix. A breach is a failed step in a green job: an annotation
+  # on the run names it (`gh run view <id>`), and the merge skill names it
+  # in its report; the structural tests stay the blocking guard.
+  perf:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: backend/requirements*.txt
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt -r requirements-dev.txt
+      - working-directory: frontend
+        run: npm ci
+      - run: |
+          {
+            echo "### Timing budgets (ms, reported only)"
+            echo
+            echo "| Suite | Case | p50 | p95 | Budget | |"
+            echo "|---|---|--:|--:|--:|---|"
+          } >> "$GITHUB_STEP_SUMMARY"
+      - id: fe
+        working-directory: frontend
+        continue-on-error: true
+        run: npm run test:perf
+      - id: be
+        working-directory: backend
+        continue-on-error: true
+        run: python -m pytest tests/test_perf.py -m perf -q
+      # A suite can fail with no row over budget (a case's own check, a
+      # file that does not load, a crash), so each suite's outcome goes
+      # under the table, and a failed one is also an annotation on the run.
+      - if: always()
+        env:
+          FE: ${{ steps.fe.outcome }}
+          BE: ${{ steps.be.outcome }}
+        run: |
+          {
+            echo
+            echo "Frontend suite: $FE. Backend suite: $BE."
+          } >> "$GITHUB_STEP_SUMMARY"
+          for s in "frontend:$FE" "backend:$BE"; do
+            [ "${s#*:}" = success ] || echo "::warning title=perf suite::the ${s%%:*} timing suite ended in ${s#*:}; its log says which case and why"
+          done
 
   # The browser suite (frontend/tests/e2e): a real backend from this
   # checkout over a throwaway data dir, Playwright's Chromium driving the

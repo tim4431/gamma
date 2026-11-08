@@ -118,7 +118,6 @@ import {
   reviewUndone,
   placedToCheck,
   isHighlightBlock,
-  isLinkBlock,
   isPlainNote,
   makeNewBlock,
   mergeIntoAbove,
@@ -151,7 +150,8 @@ import { useMarks } from "../markup/MarkupLayers";
 import { MarkupToolbar } from "../markup/MarkupToolbar";
 import { PageToolsContext } from "../markup/PageTools";
 import { makeStableActions, useStableActions } from "../shared/lib/stableActions.js";
-import { keepIfSame, sameMap, sameObject } from "../shared/lib/keepIfSame.js";
+import { keepIfSame, keepIfSameJson, sameMap, sameObject } from "../shared/lib/keepIfSame.js";
+import { blocksById, pageHighlights, recordingList, sheetNumbersOf, stampedList } from "./treeDerived.js";
 import { isTextBox, normalizeTextBox } from "../markup/textBox.js";
 import { useTextBoxes } from "../markup/useTextBoxes";
 import { isPicture, normalizePicture, turnedBox } from "../markup/picture.js";
@@ -188,7 +188,7 @@ import * as recorderStore from "../recording/recorderStore.js";
 import { RecordingContext } from "../recording/RecordingContext.js";
 import { RecordingPill } from "../recording/RecordingPill";
 import { PlayerBar } from "../recording/PlayerBar";
-import { isRecordingBlock, recordingAt, normalizeRecording } from "../recording/recording.js";
+import { recordingAt, normalizeRecording } from "../recording/recording.js";
 import { usePageCollab } from "../collaboration/usePageCollab";
 import { retryableStatus } from "../collaboration/collabSession.js";
 import { applyOps, applyPatch, displacedRow } from "../shared/model/blockOps";
@@ -8173,7 +8173,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   }
 
   const treeBlocks = useMemo(() => flattenBlocks(blocks), [blocks]);
-  const treeById = useMemo(() => new Map(treeBlocks.map((b) => [b.id, b])), [treeBlocks]);
+  const treeById = useMemo(() => blocksById(treeBlocks), [treeBlocks]);
   // Every row's [[ref]] and Gamma-link labels, resolved once per tree
   // change (editor/refLabels.js); a row's entry keeps its identity while
   // its labels read the same, so a memoized row (BlockTree.jsx) does not
@@ -8215,7 +8215,7 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // Kept by identity while the numbering is the same (nbSheets is derived
   // from the tree on every edit): a row prop of every block.
   const sheetNumbersPrev = useRef(new Map());
-  const sheetNumbers = useMemo(() => keepIfSame(sheetNumbersPrev, new Map(nbSheets.map((s) => [s.id, s.index + 1])), sameMap),
+  const sheetNumbers = useMemo(() => keepIfSame(sheetNumbersPrev, sheetNumbersOf(nbSheets), sameMap),
     [nbSheets]);
   nbSheetsRef.current = nbSheets;
   // The page tools every surface's layers read (markup/PageTools.jsx), and
@@ -8270,21 +8270,9 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // was written, each list kept while its contents are the same, so the
   // player's marks and the rows' glyphs re-render only for a real change.
   const prevRecRef = useRef({ json: "", value: [] });
-  const recordingBlocks = useMemo(() => {
-    const next = flattenBlocks(blocks).filter(isRecordingBlock).map((b) => ({ id: b.id, properties: b.properties }));
-    const json = JSON.stringify(next);
-    if (json === prevRecRef.current.json) return prevRecRef.current.value;
-    prevRecRef.current = { json, value: next };
-    return next;
-  }, [blocks]);
+  const recordingBlocks = useMemo(() => keepIfSameJson(prevRecRef, recordingList(blocks)), [blocks]);
   const prevStampedRef = useRef({ json: "", value: [] });
-  const stampedBlocks = useMemo(() => {
-    const next = flattenBlocks(blocks).filter((b) => Number.isFinite(b.properties?.t0)).map((b) => ({ id: b.id, t0: b.properties.t0 }));
-    const json = JSON.stringify(next);
-    if (json === prevStampedRef.current.json) return prevStampedRef.current.value;
-    prevStampedRef.current = { json, value: next };
-    return next;
-  }, [blocks]);
+  const stampedBlocks = useMemo(() => keepIfSameJson(prevStampedRef, stampedList(blocks)), [blocks]);
   // Only the id of the recording playing, so App never re-renders for a frame.
   const playingRecordingId = useSyncExternalStore(playback.subscribe, () => playback.now()?.scope.recording || null);
   const recordingNow = useSyncExternalStore(recorderStore.subscribe, recorderStore.coarseNow);
@@ -9314,21 +9302,8 @@ function LibraryApp({ publicPage = null, initialServerConfig = null }) {
   // content is identical keeps the viewer's per-page memo effective (otherwise
   // each keystroke re-rendered every PdfPage's overlays).
   const prevHighlightsRef = useRef({ json: "", value: [] });
-  const highlights = useMemo(() => {
-    const byId = new Map(treeBlocks.map((b) => [b.id, b]));
-    const next = blocksToHighlights(blocks).map((h) => {
-      const b = byId.get(h.id), p = b?.properties || {};
-      // its open comment threads: the note badge shows for them too
-      const threads = comments.countByBlock.get(h.id) || 0;
-      const out = threads ? { ...h, threadCount: threads } : h;
-      return isLinkBlock(b)
-        ? { ...out, linkTarget: { url: p.link_url || "", pageId: p.link_page_id || "", blockId: p.link_block_id || "" } } : out;
-    });
-    const json = JSON.stringify(next);
-    if (json === prevHighlightsRef.current.json) return prevHighlightsRef.current.value;
-    prevHighlightsRef.current = { json, value: next };
-    return next;
-  }, [blocks, treeBlocks, comments.countByBlock]);
+  const highlights = useMemo(() => keepIfSameJson(prevHighlightsRef, pageHighlights(blocks, treeBlocks, comments.countByBlock)),
+    [blocks, treeBlocks, comments.countByBlock]);
   // The page's highlights to review after its PDF was replaced, in document
   // order: the pending ones (drawn dashed until accepted or moved), the
   // Document menu's Accept all, and with the lost ones (hollow) the review

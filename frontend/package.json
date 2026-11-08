@@ -9,6 +9,7 @@
     "preview": "vite preview --host 127.0.0.1 --port 4173",
     "test": "node --test tests/*.test.mjs",
     "lint": "biome lint --error-on-warnings",
+    "test:perf": "node --expose-gc --test --test-concurrency=1 --test-reporter=spec tests/perf/*.perf.mjs",
     "e2e": "node tests/e2e/run.mjs",
     "e2e:latex": "node tests/e2e/latexEditor.mjs",
     "i18n": "node tools/i18n.mjs",

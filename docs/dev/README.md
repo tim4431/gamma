@@ -55,6 +55,8 @@ an area, and update its documentation with the code.
   changes need diff and link checks, not application builds. Broaden coverage
   when shared contracts or uncertain impact warrant it. See the
   [test selection policy](debugging.md#local-changes-test-the-affected-modules).
+  A change to a hot path runs the [timing budgets](debugging.md#performance-budgets)
+  before and after.
 
 ## Topic reference
 
@@ -63,7 +65,7 @@ These describe the implementation unless explicitly marked as plans.
 | Topic | Reference |
 |---|---|
 | Source layout, assets, and documentation conventions | [Repository](repository.md) |
-| Run commands, test selection, browser tests, and diagnostics | [Running, testing, and debugging](debugging.md) |
+| Run commands, test selection, browser tests, timing budgets, and diagnostics | [Running, testing, and debugging](debugging.md) |
 | CI, packaging, and release workflows | [GitHub Actions](github_actions.md) |
 | HTTP endpoints and authorization | [API](api.md) |
 | Search normalization, indexing, and result highlighting | [Search](api.md#search-searchpy-gammablock_indexpy-gammapdf_indexpy) |

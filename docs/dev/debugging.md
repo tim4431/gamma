@@ -614,6 +614,88 @@ is right as it is:
 - A page global read inside a scenario's `page.evaluate` is written
   `window.x`, since the lint knows only the ES, browser and Node globals.
 
+### Performance budgets
+
+```bash
+cd frontend && npm run test:perf                               # ~15 s on an idle machine
+cd backend && python -m pytest tests/test_perf.py -m perf -q   # ~10 s; -s prints each case's numbers
+```
+
+The timing budgets hold the pure hot paths to fixed times. Neither
+`npm test` nor the backend suite runs them. Each case first checks what it
+computed, then times it: 3 untimed warmups, then 20 timed runs. Its
+nearest-rank p95 (the 19th of the 20 sorted runs, so the single slowest is
+left out) is held to the case's budget. A cold case builds fresh data in a
+setup that runs outside the timed span. A garbage collection runs between
+the runs on both sides (`node --expose-gc` in `test:perf`, `gc.collect()`
+in Python), so one run does not pay for the last one's garbage.
+
+The frontend's cases are `frontend/tests/perf/*.perf.mjs`, run one file at
+a time (`--test-concurrency=1`):
+
+- `keystroke.perf.mjs`: 200 keystrokes at the last note of a 1,000-block
+  page, with every walk App runs for a key: `updateBlockTree`, the render's
+  memos (`app/treeDerived.js`, `sheetsOf`, `refLabelsByBlock` and the keeps
+  of `shared/lib/keepIfSame.js`), the history's `observeTree` and the
+  collab session's `diffTrees`. The biggest pieces are also timed alone, so
+  a breach points at its piece. React's render is not timed.
+- `ops.perf.mjs`: `applyOps` of a peer's batch, one set and 50 inserts.
+- `ink.perf.mjs`: on a 500-stroke drawing, the outline caches (cold, a
+  peer's file, a merged save, a restyle), the eraser's flush warm and cold,
+  and `mergeInk`.
+- `search.perf.mjs`: a PDF page's search text (`runChars`,
+  `normalizeChars`). The viewer's query loop and the scroll tracker are
+  inline in their components and are not timed.
+- `fixtures.mjs` builds the seeded data: the page, the drawing and a PDF
+  page's text runs. `measure.mjs` has `measure` and `budget`, which
+  `tests/perfMeasure.test.mjs` checks under `npm test`.
+
+The server's cases are `backend/tests/test_perf.py`: the subtree read of a
+page of the same shape, in-process and through the API; `commit_ops` of 20
+keystrokes, of a 50-op batch and of a stale set merged into a
+20,000-character block; `textmerge.merge` and `map_offset`; and
+`ink.merge_ink` and `parse_ink` on 500 strokes. They are marked `perf`.
+`pytest.ini`'s `addopts = -m "not perf"` leaves them out of every run, and
+`-m perf` on the command line takes its place. So
+`pytest tests/test_perf.py` without `-m perf` deselects every case and
+exits with code 5. Under xdist (`-n`) the module skips, since its numbers
+would mean nothing beside the other workers.
+
+The budgets are about 5x the p95 an idle Ryzen 9 9950X3D measured (Node
+22.23, Python 3.12, November 2026), rounded up. Cases near a millisecond
+have about 6 to 8x (the warm eraser flush, a restyle, the one-set
+`applyOps`), since a timer's jitter and one collection are a large share
+of them: they guard against a lost cache or prefilter, not against a small
+slowdown. Run them on an idle machine. With every core busy the
+p95s grew 2 to 3x, and other worktrees' test runs on the same machine
+count. A case over its budget fails with its p95, its budget and the
+machine the budgets were set on.
+
+- A breach on your machine: find its cause, timing the change before and
+  after on the same idle machine. Never raise a budget to make a case
+  pass. A budget changes only with its reason in the commit: the case
+  grew, or the fixture did.
+- On CI the `perf` job of `check.yml` runs both suites and only reports
+  them ([github_actions.md](github_actions.md#checkyml)). A case over its
+  budget there prints a `::warning` line, which the run shows as an
+  annotation (`gh run view <id>`); `npm run test:perf` uses the spec
+  reporter because TAP would prefix that line with `# `.
+- Adding a case: take its data from `tests/perf/fixtures.mjs` (or
+  `test_perf.py`'s `page_tree`), check what it computed before timing it,
+  and set its budget to about 5x your idle p95, with the machine named in
+  the commit.
+- A performance fix still lands with a structural test, which stays the
+  blocking guard: `tests/blockTree.test.mjs` (only the edited path is
+  copied), `tests/refLabels.test.mjs` (labels keep their identity),
+  `test_subtree_response.py` (the subtree is encoded off the event loop),
+  `test_search_index_perf.py` (the index's SQL) and `test_block_columns.py`
+  (the page read by `page_id`).
+- `tests/bench/inkCache.bench.mjs` and `inkErase.bench.mjs` time the ink
+  scenarios against another copy of `src/ink`, such as an older commit's
+  export, for a before and after
+  ([handwriting.md](handwriting.md#client)).
+  `translateBench.mjs` measures translation quality, not time.
+
 ### Browser end-to-end suite
 
 ```bash

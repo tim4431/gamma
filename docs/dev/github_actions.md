@@ -22,7 +22,7 @@ Watchtower (the `update-demo-server`, `update-share-host` and
 
 | Workflow | File | Runs when | Produces |
 |---|---|---|---|
-| `check` | `check.yml` | every pull request to `main`, except one that only touches the account server or the website | pass/fail: brand asset consistency, the mobile apps' pins resolved, the backend suite on the apps' Python 3.13 and pins (`backend-mobile`), backend pytest, the frontend lint, unit tests + build and the desktop shell's unit tests, the browser suite (two shards on two runners, 3 workers each), extension unit tests + zip (~5 min) |
+| `check` | `check.yml` | every pull request to `main`, except one that only touches the account server or the website | pass/fail: brand asset consistency, the mobile apps' pins resolved, the backend suite on the apps' Python 3.13 and pins (`backend-mobile`), backend pytest, the frontend lint, unit tests + build and the desktop shell's unit tests, the browser suite (two shards on two runners, 3 workers each), extension unit tests + zip (~5 min); reported only: the timing budgets, a table in the run's summary |
 | `desktop` | `desktop.yml` | manual dispatch only (`release` skill) | Windows installer, macOS dmg + zip, Debian/Ubuntu deb, the update-feed files, the Android APK (when signed), the browser extension's `gamma-connector-<version>.zip` and the AI plugins → GitHub Release `v<version>`; after it, the MSIX to the Microsoft Store and the Android bundle to Google Play's internal track when their secrets exist; a Docker tag `<version>`; from `main`, an empty commit on `main` with the next `ipad-test-release-NNN` marker (TestFlight) |
 | `chrome-store` | `chrome-store.yml` | dispatched by the desktop release (from `main`, not a pre-release) when the `CWS_*` variables exist; daily at 09:17 UTC for a release the store skipped; manual dispatch with a tag | the release's Connector zip uploaded to the Chrome Web Store and submitted for review (API V2) |
 | `docker` | `docker.yml` | every push to `main` except one that only touches the account server or the website; dispatched by the desktop release with a version; manual dispatch from any branch (a `sha-<short>` image only) | `ghcr.io/tim4431/gamma:sha-<short>` on every run; `:latest` only from `main`; `:<version>` and `:<major.minor>` when dispatched with a version; linux/amd64 + arm64 |
@@ -452,7 +452,21 @@ tests (Node 22, `node --test extension/tests/*.test.mjs` — the pure
 modules; its `.e2e.mjs` files need Playwright's full Chromium and are run
 by hand) followed by the release's zip of the extension
 (`extension/scripts/zip.sh` with a pre-release version, whose manifest
-must come out split into `version` and `version_name`). No installers. A PR that changes only
+must come out split into `version` and `version_name`). The seventh, `perf`,
+runs the timing budgets ([debugging.md](debugging.md#performance-budgets)):
+`npm run test:perf` and `python -m pytest tests/test_perf.py -m perf`, each
+case's p50, p95 and budget written as a row of one table in the run's
+summary, with each suite's outcome under the table. Both steps are
+`continue-on-error`, so a breach shows as a failed step in a green job and
+never blocks a merge; `gh pr checks` shows the job as passed. The run's
+annotations carry it: a `perf budget` warning for each case over its
+budget, and a `perf suite` warning for each suite that failed, which also
+covers a case whose own check failed or a file that did not load. The budgets were set at about
+5x an idle desktop's p95; a shared runner is slower than that desktop and
+its neighbours vary, and a check that fails because the runner was slow has
+no cause in the repo to fix, which the `merge` skill's rule for a red check
+would demand. The structural tests in the other jobs stay the blocking
+guard. No installers. A PR that changes only
 `cloud/`, `cloud.yml`, the `update-account-server`, `update-demo-server` or
 `update-share-host` skill or [cloud_accounts.md](cloud_accounts.md) — or only `sites/`, `site.yml`, the
 `build-site` skill, `PRIVACY.md` or `TERMS.md` — skips it (`paths-ignore`); `cloud.yml`

@@ -114,7 +114,8 @@ instead, and the merge waits.
 5. **Wait for the checks**: `gh pr checks <n> --watch` (`check`: the
    mobile pins, the backend suite on the apps' Python 3.13 and pins
    (`backend-mobile`), backend pytest, frontend lint, unit tests + build, the desktop
-   shell's unit tests, the browser suite in two shards, extension zip;
+   shell's unit tests, the browser suite in two shards, extension zip, and
+   `perf`, the timing budgets, a table in the run's summary and never red;
    ~5 min, skipped for a PR that only touches the account server or the
    website; `ipad`: the iPad app on a simulator, ~40 min, and `android`:
    the Android unit tests, release build and emulator, ~30 min, when the
@@ -134,7 +135,17 @@ instead, and the merge waits.
    One whose cause is outside the repo (a runner, npm or PyPI outage, a
    GitHub incident; the log says so) gets one `gh run rerun <id> --failed`,
    named in the report. After three red rounds, stop and report what is
-   still failing. Never merge over a red check.
+   still failing. Never merge over a red check. The `perf` job is green
+   even when one of its suites failed, so `gh pr checks` never shows a
+   breach: read `gh run view <id>`, whose annotations name each case over
+   its budget (`perf budget`) and each suite that failed (`perf suite`).
+   A failed suite with no case over budget failed a case's own check,
+   did not load or crashed; its log says which:
+   `gh run view <id> --log --job "$(gh run view <id> --json jobs --jq '.jobs[] | select(.name == "perf") | .databaseId')" | grep -E 'not ok|✖|FAILED|over its budget|Error'`.
+   Name the case and its numbers in the report, and reproduce it on an
+   idle machine (`npm run test:perf`, `python -m pytest tests/test_perf.py
+   -m perf -s`). It is not fixed as part of the merge, and a breach never
+   by raising its budget ([debugging.md](../../../docs/dev/debugging.md#performance-budgets)).
 
 6. **Merge**: `gh pr merge <n> --merge`. First, the data format: the
    share host follows `main`'s `:latest` through its Watchtower, so a

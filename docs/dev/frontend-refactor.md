@@ -117,7 +117,11 @@ profile has measured this yet
 ([research/performance.md](../research/performance.md)). The React Compiler
 was tried on this code and compiles none of `LibraryApp`, `BlockRow` or
 `BlockTree` ([research/react-19.md](../research/react-19.md)), so hand
-memoization stays the rule until the state owners below exist.
+memoization stays the rule until the state owners below exist. The pure
+walks App runs for a key are timed and held to a budget in
+`tests/perf/keystroke.perf.mjs`, through `app/treeDerived.js`, which holds
+the memos' bodies while the memos stay in App
+([debugging.md](debugging.md#performance-budgets)).
 
 The goal is a small composition root with explicit state owners and commands.
 Extraction should remove coupled responsibilities, not merely move long

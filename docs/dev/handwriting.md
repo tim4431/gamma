@@ -54,8 +54,12 @@ Download SVG are [handwriting_ai.md](handwriting_ai.md).
     `inkSurfaces.test.mjs`, `inkHistory.test.mjs`, `inkEdits.test.mjs`,
     `selectionEdits.test.mjs` and `inkCommands.test.mjs`;
   - the Convert menu's: `inkAi.test.mjs` and `inkSvg.test.mjs`;
-  - the benchmarks `bench/inkCache.bench.mjs` and `bench/inkErase.bench.mjs`,
-    which are not part of `npm test`.
+  - the timing budgets of the outline caches, the eraser's flush and the
+    stroke merge, `perf/ink.perf.mjs` (`npm run test:perf`,
+    [debugging.md](debugging.md#performance-budgets)), and the benchmarks
+    `bench/inkCache.bench.mjs` and `bench/inkErase.bench.mjs`, which time
+    the same scenarios against another copy of `src/ink`. None of them is
+    part of `npm test`.
 - Shared fixtures in `tests/shared/` are read by
   `backend/tests/test_shared_fixtures.py` and the node tests:
   - `inkv2.json`, `inkwidth.json`, `inkdash.json`, `inkmerge.json`,
@@ -1544,11 +1548,14 @@ reach.
       eraser's test on the same geometry (the strokes the partial eraser
       would cut), `hitStrokes(ink, x, y, radius, keep)` at one point.
     - `frontend/tests/inkErase.test.mjs` pins the cuts.
+    - `frontend/tests/perf/ink.perf.mjs` (`npm run test:perf`) holds one
+      flush of a 20-point path over a 500-stroke drawing to a budget, warm
+      and cold, once it has checked that the flush leaves no sample inside
+      the swept band.
     - `frontend/tests/bench/inkErase.bench.mjs` (not part of `npm test`)
-      times one flush of a 20-point path over a 500-stroke drawing, against
-      any copy of `src/ink`, and counts the samples a flush leaves inside
-      the swept band. It runs a copy without `eraseAlong` as its layer ran
-      it, the point eraser at each of the path's points.
+      times the same flush against any copy of `src/ink`, for a before and
+      after. It runs a copy without `eraseAlong` as its layer ran it, the
+      point eraser at each of the path's points.
   - `translateStrokes` only touches the first sample's two absolute
     integers (and a shape record's points, below).
   - `transformStrokes` scales/rotates selected XY samples around a shared
@@ -1666,9 +1673,12 @@ reach.
       `strokePlaceholder(stroke)` is the stand-in a dense group draws
       meanwhile (the samples as a stroked polyline at the mean drawn
       width).
+    - `frontend/tests/perf/ink.perf.mjs` (`npm run test:perf`) holds the
+      outlines of a 500-stroke drawing to budgets: cold, and after a reload,
+      a merged save and a restyle, each of them checking how many outlines
+      it kept.
     - `frontend/tests/bench/inkCache.bench.mjs` (not part of `npm test`)
-      times the outlines of a 500-stroke drawing cold and after a reload, a
-      merged save and a restyle, against any copy of `src/ink`.
+      times the same scenarios against any copy of `src/ink`.
   - `nearestInkStroke` resolves a touch to the nearest stroke edge (a
     band-1 stroke wins over a band-0 one within the radius, then the
     topmost).
